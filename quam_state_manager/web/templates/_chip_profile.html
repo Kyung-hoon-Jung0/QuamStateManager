@@ -1,0 +1,44 @@
+{# Chip profile — the design facts a human knows before calibrating (docs/135).
+   Enumerated cases only; answers live in state.json extras.sm_profile so the
+   profile travels with the chip. Staging only — Apply to live makes it real. #}
+<div id="chip-profile-panel" class="chip-profile-panel">
+  <h3 style="margin:0.2rem 0 0.4rem">Chip profile
+    <small class="muted">{{ answers|length }} of {{ fields|length }} answered
+      — answers travel with the chip in state.json</small></h3>
+  {% if readonly %}
+  <p class="muted">Read-only archive — open the live chip to declare its profile.</p>
+  {% endif %}
+  <form hx-post="/chip-profile/set" hx-target="#chip-profile-status" hx-swap="innerHTML">
+    <table class="chip-profile-table" style="width:100%">
+      <tbody>
+      {% for f in fields %}
+        <tr>
+          <td style="vertical-align:top; padding:0.35rem 0.5rem 0.35rem 0; width:55%">
+            <label for="cp-{{ f.key }}"><strong>{{ f.question }}</strong></label>
+            <div class="muted" style="font-size:0.85em">{{ f.help }}</div>
+            {% if f.key in invalid %}
+            <div class="warn" style="font-size:0.85em">state.json carries
+              <code>{{ invalid[f.key] }}</code> — not a listed case; pick one below.</div>
+            {% endif %}
+          </td>
+          <td style="vertical-align:top; padding:0.35rem 0">
+            <select id="cp-{{ f.key }}" name="{{ f.key }}" {% if readonly %}disabled{% endif %}>
+              <option value="unknown" {% if f.key not in answers %}selected{% endif %}>unknown — ask me later</option>
+              {% for c in f.cases %}
+              <option value="{{ c }}" {% if answers.get(f.key) == c %}selected{% endif %}>{{ c.replace('_', ' ') }}</option>
+              {% endfor %}
+            </select>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% if not readonly %}
+    <button type="submit">Stage profile answers</button>
+    <span class="muted" style="font-size:0.85em">stages into the working copy —
+      Save + Apply to live makes it permanent; rules gated on an unanswered
+      field stay silent and keep asking</span>
+    {% endif %}
+  </form>
+  <div id="chip-profile-status"></div>
+</div>

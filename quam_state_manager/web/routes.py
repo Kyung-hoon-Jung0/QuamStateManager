@@ -21747,6 +21747,94 @@ def autofit_ledger():
 
 # ---- Autofit GUI diagnose (docs/56 §6R → GUI tier) -----------------------
 
+# -- Chip profile (docs/135): design facts as enumerated cases -------------
+# The case space is code-curated (core/autofit/chip_profile.FIELDS); the
+# chip's ANSWERS live in its own state.json under extras.sm_profile, so the
+# profile travels with the chip. These routes only STAGE through the audited
+# edit machinery -- working copy only, never a direct live write (the
+# chip-name pattern, docs/20).
+
+@bp.route("/chip-profile", methods=["GET"])
+def chip_profile_form():
+    """The question form: every field, its case space, the chip's answers."""
+    from quam_state_manager.core.autofit import chip_profile as cp
+    ctx = _active_ctx()
+    store = ctx.get("store") if ctx else None
+    if not ctx or ctx.get("type") != "quam" or store is None:
+        return render_template("_status.html", message="No state loaded",
+                               level="warning"), 400
+    with store._lock:
+        reading = cp.read_profile(store.state)
+    return render_template(
+        "_chip_profile.html", fields=cp.FIELDS, answers=reading.answers,
+        invalid=reading.invalid, missing=reading.missing,
+        readonly=(ctx.get("origin") or "live") != "live")
+
+
+@bp.route("/chip-profile/set", methods=["POST"])
+def chip_profile_set():
+    """Stage profile answers into ``extras.sm_profile.<field>``.
+
+    Only changed fields are staged; a value outside the field's case space is
+    refused at the door. "unknown" stores verbatim -- it means "ask me later"
+    and reads back as unanswered."""
+    from quam_state_manager.core.autofit import chip_profile as cp
+    ctx = _active_ctx()
+    modifier = ctx.get("modifier") if ctx else None
+    if not ctx or ctx.get("type") != "quam" or modifier is None:
+        return render_template("_status.html", message="No state loaded",
+                               level="warning"), 400
+    if (ctx.get("origin") or "live") != "live":
+        return render_template(
+            "_status.html", level="warning",
+            message="Read-only archive -- open the live chip to declare "
+                    "its profile"), 409
+    sets: dict[str, str] = {}
+    for f in cp.FIELDS:
+        v = (request.form.get(f.key) or "").strip()
+        if not v:
+            continue
+        if v != cp.UNKNOWN and v not in f.cases:
+            return render_template(
+                "_status.html", level="error",
+                message=f"'{v}' is not a listed case for {f.key}"), 400
+        sets[f.key] = v
+    if not sets:
+        return render_template("_status.html", message="Nothing to stage",
+                               level="warning"), 400
+    store = modifier.store
+    try:
+        with store._lock:
+            extras = store.state.get("extras")
+            prof = extras.get("sm_profile") if isinstance(extras, dict) else None
+        changed = {k: v for k, v in sets.items()
+                   if not (isinstance(prof, dict) and prof.get(k) == v)}
+        if not changed:
+            return render_template(
+                "_status.html", level="info",
+                message="Profile unchanged -- nothing staged")
+        if not isinstance(extras, dict):
+            modifier.create_subtree("extras", {"sm_profile": changed})
+        elif not isinstance(prof, dict):
+            modifier.create_subtree("extras.sm_profile", changed)
+        else:
+            for leaf, value in changed.items():
+                if leaf in prof:
+                    modifier.set_value(f"extras.sm_profile.{leaf}", value)
+                else:
+                    modifier.create_subtree(f"extras.sm_profile.{leaf}", value)
+        _invalidate_engine_cache(ctx)
+    except (KeyError, TypeError, ValueError) as e:
+        return render_template("_status.html", message=str(e),
+                               level="error"), 400
+    n = len(changed)
+    body = render_template(
+        "_status.html", level="success",
+        message=f"{n} profile answer{'s' if n != 1 else ''} staged -- "
+                "Save + Apply to live makes them travel with the chip")
+    return make_response(body + _tray_oob())
+
+
 @bp.route("/dataset/<uid>/autofit-diagnose", methods=["POST"])
 def dataset_autofit_diagnose(uid):
     """Before/after diagnosis panel for one saved run: gate verdicts +

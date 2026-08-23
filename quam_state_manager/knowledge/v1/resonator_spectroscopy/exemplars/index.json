@@ -5,9 +5,9 @@
  "rendered": [
   {
    "case": "S1",
-   "exemplar": "AS_10TQ9TC/#305/q7",
-   "file": "exemplars/S1/AS_10TQ9TC_305_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#305/q7",
+   "file": "exemplars/S1/lab-A_305_q7.png",
+   "chip": "lab-A",
    "run": "#305",
    "qubit": "q7",
    "markers_drawn": [
@@ -20,9 +20,9 @@
   },
   {
    "case": "S1",
-   "exemplar": "IQCC_QOP37/#71/qA1",
-   "file": "exemplars/S1/IQCC_QOP37_71_qA1.png",
-   "chip": "IQCC_QOP37",
+   "exemplar": "lab-C/#71/qA1",
+   "file": "exemplars/S1/lab-C_71_qA1.png",
+   "chip": "lab-C",
    "run": "#71",
    "qubit": "qA1",
    "markers_drawn": [
@@ -35,9 +35,9 @@
   },
   {
    "case": "S1",
-   "exemplar": "KRISS_CR/#150/qA2",
-   "file": "exemplars/S1/KRISS_CR_150_qA2.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#150/qA2",
+   "file": "exemplars/S1/lab-D_150_qA2.png",
+   "chip": "lab-D",
    "run": "#150",
    "qubit": "qA2",
    "markers_drawn": [
@@ -50,9 +50,9 @@
   },
   {
    "case": "S1",
-   "exemplar": "SNU_1Q/#2/q9",
-   "file": "exemplars/S1/SNU_1Q_2_q9.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#2/q9",
+   "file": "exemplars/S1/lab-E_2_q9.png",
+   "chip": "lab-E",
    "run": "#2",
    "qubit": "q9",
    "markers_drawn": [
@@ -65,9 +65,9 @@
   },
   {
    "case": "S1",
-   "exemplar": "IQCC_gilboa/#3/qA1",
-   "file": "exemplars/S1/IQCC_gilboa_3_qA1.png",
-   "chip": "IQCC_gilboa",
+   "exemplar": "lab-C_gilboa/#3/qA1",
+   "file": "exemplars/S1/lab-C_gilboa_3_qA1.png",
+   "chip": "lab-C_gilboa",
    "run": "#3",
    "qubit": "qA1",
    "markers_drawn": [
@@ -80,9 +80,9 @@
   },
   {
    "case": "S1",
-   "exemplar": "CQT/#151/q7",
-   "file": "exemplars/S1/CQT_151_q7.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#151/q7",
+   "file": "exemplars/S1/lab-B_151_q7.png",
+   "chip": "lab-B",
    "run": "#151",
    "qubit": "q7",
    "markers_drawn": [
@@ -95,9 +95,9 @@
   },
   {
    "case": "S2",
-   "exemplar": "AS_10TQ9TC/#338/q6",
-   "file": "exemplars/S2/AS_10TQ9TC_338_q6.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#338/q6",
+   "file": "exemplars/S2/lab-A_338_q6.png",
+   "chip": "lab-A",
    "run": "#338",
    "qubit": "q6",
    "markers_drawn": [
@@ -110,9 +110,9 @@
   },
   {
    "case": "S2",
-   "exemplar": "IQCC_QOP37/#298/qB4",
-   "file": "exemplars/S2/IQCC_QOP37_298_qB4.png",
-   "chip": "IQCC_QOP37",
+   "exemplar": "lab-C/#298/qB4",
+   "file": "exemplars/S2/lab-C_298_qB4.png",
+   "chip": "lab-C",
    "run": "#298",
    "qubit": "qB4",
    "markers_drawn": [
@@ -125,9 +125,9 @@
   },
   {
    "case": "S2",
-   "exemplar": "CQT/#93/q2",
-   "file": "exemplars/S2/CQT_93_q2.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#93/q2",
+   "file": "exemplars/S2/lab-B_93_q2.png",
+   "chip": "lab-B",
    "run": "#93",
    "qubit": "q2",
    "markers_drawn": [
@@ -140,9 +140,9 @@
   },
   {
    "case": "S2",
-   "exemplar": "KRISS_CR/#146/qA3",
-   "file": "exemplars/S2/KRISS_CR_146_qA3.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#146/qA3",
+   "file": "exemplars/S2/lab-D_146_qA3.png",
+   "chip": "lab-D",
    "run": "#146",
    "qubit": "qA3",
    "markers_drawn": [
@@ -155,9 +155,9 @@
   },
   {
    "case": "S2",
-   "exemplar": "SNU_1Q/#17/q6",
-   "file": "exemplars/S2/SNU_1Q_17_q6.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#17/q6",
+   "file": "exemplars/S2/lab-E_17_q6.png",
+   "chip": "lab-E",
    "run": "#17",
    "qubit": "q6",
    "markers_drawn": [
@@ -170,9 +170,9 @@
   },
   {
    "case": "S2b",
-   "exemplar": "CQT/#151/q3",
-   "file": "exemplars/S2b/CQT_151_q3.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#151/q3",
+   "file": "exemplars/S2b/lab-B_151_q3.png",
+   "chip": "lab-B",
    "run": "#151",
    "qubit": "q3",
    "markers_drawn": [
@@ -185,9 +185,9 @@
   },
   {
    "case": "S2b",
-   "exemplar": "IQCC_QOP37/#298/qD4",
-   "file": "exemplars/S2b/IQCC_QOP37_298_qD4.png",
-   "chip": "IQCC_QOP37",
+   "exemplar": "lab-C/#298/qD4",
+   "file": "exemplars/S2b/lab-C_298_qD4.png",
+   "chip": "lab-C",
    "run": "#298",
    "qubit": "qD4",
    "markers_drawn": [
@@ -200,9 +200,9 @@
   },
   {
    "case": "S2b",
-   "exemplar": "AS_10TQ9TC/#21/q7",
-   "file": "exemplars/S2b/AS_10TQ9TC_21_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#21/q7",
+   "file": "exemplars/S2b/lab-A_21_q7.png",
+   "chip": "lab-A",
    "run": "#21",
    "qubit": "q7",
    "markers_drawn": [
@@ -215,9 +215,9 @@
   },
   {
    "case": "S2b",
-   "exemplar": "SNU_1Q/#17/q4",
-   "file": "exemplars/S2b/SNU_1Q_17_q4.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#17/q4",
+   "file": "exemplars/S2b/lab-E_17_q4.png",
+   "chip": "lab-E",
    "run": "#17",
    "qubit": "q4",
    "markers_drawn": [
@@ -230,9 +230,9 @@
   },
   {
    "case": "S2b",
-   "exemplar": "KRISS_CR/#146/qD5",
-   "file": "exemplars/S2b/KRISS_CR_146_qD5.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#146/qD5",
+   "file": "exemplars/S2b/lab-D_146_qD5.png",
+   "chip": "lab-D",
    "run": "#146",
    "qubit": "qD5",
    "markers_drawn": [
@@ -245,9 +245,9 @@
   },
   {
    "case": "S2c",
-   "exemplar": "AS_10TQ9TC/#227/q5",
-   "file": "exemplars/S2c/AS_10TQ9TC_227_q5.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#227/q5",
+   "file": "exemplars/S2c/lab-A_227_q5.png",
+   "chip": "lab-A",
    "run": "#227",
    "qubit": "q5",
    "markers_drawn": [
@@ -260,9 +260,9 @@
   },
   {
    "case": "S2c",
-   "exemplar": "AS_10TQ9TC/#234/q5",
-   "file": "exemplars/S2c/AS_10TQ9TC_234_q5.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#234/q5",
+   "file": "exemplars/S2c/lab-A_234_q5.png",
+   "chip": "lab-A",
    "run": "#234",
    "qubit": "q5",
    "markers_drawn": [
@@ -275,9 +275,9 @@
   },
   {
    "case": "S2c",
-   "exemplar": "KRISS_CR/#146/qC2",
-   "file": "exemplars/S2c/KRISS_CR_146_qC2.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#146/qC2",
+   "file": "exemplars/S2c/lab-D_146_qC2.png",
+   "chip": "lab-D",
    "run": "#146",
    "qubit": "qC2",
    "markers_drawn": [
@@ -290,9 +290,9 @@
   },
   {
    "case": "S2d",
-   "exemplar": "AS_10TQ9TC/#329/q6",
-   "file": "exemplars/S2d/AS_10TQ9TC_329_q6.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#329/q6",
+   "file": "exemplars/S2d/lab-A_329_q6.png",
+   "chip": "lab-A",
    "run": "#329",
    "qubit": "q6",
    "markers_drawn": [
@@ -305,9 +305,9 @@
   },
   {
    "case": "S3",
-   "exemplar": "IQCC_QOP37/#298/qB3",
-   "file": "exemplars/S3/IQCC_QOP37_298_qB3.png",
-   "chip": "IQCC_QOP37",
+   "exemplar": "lab-C/#298/qB3",
+   "file": "exemplars/S3/lab-C_298_qB3.png",
+   "chip": "lab-C",
    "run": "#298",
    "qubit": "qB3",
    "markers_drawn": [
@@ -320,9 +320,9 @@
   },
   {
    "case": "S3",
-   "exemplar": "KRISS_CR/#147/qA4",
-   "file": "exemplars/S3/KRISS_CR_147_qA4.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#147/qA4",
+   "file": "exemplars/S3/lab-D_147_qA4.png",
+   "chip": "lab-D",
    "run": "#147",
    "qubit": "qA4",
    "markers_drawn": [
@@ -335,9 +335,9 @@
   },
   {
    "case": "S3",
-   "exemplar": "KRISS_CR/#146/qB2",
-   "file": "exemplars/S3/KRISS_CR_146_qB2.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#146/qB2",
+   "file": "exemplars/S3/lab-D_146_qB2.png",
+   "chip": "lab-D",
    "run": "#146",
    "qubit": "qB2",
    "markers_drawn": [
@@ -350,9 +350,9 @@
   },
   {
    "case": "S3",
-   "exemplar": "KRISS_CR/#139/qA2",
-   "file": "exemplars/S3/KRISS_CR_139_qA2.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#139/qA2",
+   "file": "exemplars/S3/lab-D_139_qA2.png",
+   "chip": "lab-D",
    "run": "#139",
    "qubit": "qA2",
    "markers_drawn": [
@@ -365,9 +365,9 @@
   },
   {
    "case": "S3b",
-   "exemplar": "KRISS_CR/#141/qA3",
-   "file": "exemplars/S3b/KRISS_CR_141_qA3.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#141/qA3",
+   "file": "exemplars/S3b/lab-D_141_qA3.png",
+   "chip": "lab-D",
    "run": "#141",
    "qubit": "qA3",
    "markers_drawn": [
@@ -380,9 +380,9 @@
   },
   {
    "case": "S3b",
-   "exemplar": "KRISS_CR/#153/qA4",
-   "file": "exemplars/S3b/KRISS_CR_153_qA4.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#153/qA4",
+   "file": "exemplars/S3b/lab-D_153_qA4.png",
+   "chip": "lab-D",
    "run": "#153",
    "qubit": "qA4",
    "markers_drawn": [
@@ -395,9 +395,9 @@
   },
   {
    "case": "S3c",
-   "exemplar": "KRISS_CR/#139/qA2",
-   "file": "exemplars/S3c/KRISS_CR_139_qA2.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#139/qA2",
+   "file": "exemplars/S3c/lab-D_139_qA2.png",
+   "chip": "lab-D",
    "run": "#139",
    "qubit": "qA2",
    "markers_drawn": [
@@ -410,9 +410,9 @@
   },
   {
    "case": "S3c",
-   "exemplar": "KRISS_CR/#144/qA5",
-   "file": "exemplars/S3c/KRISS_CR_144_qA5.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#144/qA5",
+   "file": "exemplars/S3c/lab-D_144_qA5.png",
+   "chip": "lab-D",
    "run": "#144",
    "qubit": "qA5",
    "markers_drawn": [
@@ -425,9 +425,9 @@
   },
   {
    "case": "S3c",
-   "exemplar": "KRISS_CR/#146/qB4",
-   "file": "exemplars/S3c/KRISS_CR_146_qB4.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#146/qB4",
+   "file": "exemplars/S3c/lab-D_146_qB4.png",
+   "chip": "lab-D",
    "run": "#146",
    "qubit": "qB4",
    "markers_drawn": [
@@ -440,9 +440,9 @@
   },
   {
    "case": "S3d",
-   "exemplar": "CQT/#134/q6",
-   "file": "exemplars/S3d/CQT_134_q6.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#134/q6",
+   "file": "exemplars/S3d/lab-B_134_q6.png",
+   "chip": "lab-B",
    "run": "#134",
    "qubit": "q6",
    "markers_drawn": [
@@ -455,9 +455,9 @@
   },
   {
    "case": "S3d",
-   "exemplar": "KRISS_CR/#154/qA4",
-   "file": "exemplars/S3d/KRISS_CR_154_qA4.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#154/qA4",
+   "file": "exemplars/S3d/lab-D_154_qA4.png",
+   "chip": "lab-D",
    "run": "#154",
    "qubit": "qA4",
    "markers_drawn": [
@@ -470,9 +470,9 @@
   },
   {
    "case": "S3e",
-   "exemplar": "KRISS_CR/#154/qA4",
-   "file": "exemplars/S3e/KRISS_CR_154_qA4.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#154/qA4",
+   "file": "exemplars/S3e/lab-D_154_qA4.png",
+   "chip": "lab-D",
    "run": "#154",
    "qubit": "qA4",
    "markers_drawn": [
@@ -485,9 +485,9 @@
   },
   {
    "case": "S3e",
-   "exemplar": "KRISS_CR/#154/qA2",
-   "file": "exemplars/S3e/KRISS_CR_154_qA2.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#154/qA2",
+   "file": "exemplars/S3e/lab-D_154_qA2.png",
+   "chip": "lab-D",
    "run": "#154",
    "qubit": "qA2",
    "markers_drawn": [
@@ -500,9 +500,9 @@
   },
   {
    "case": "S3f",
-   "exemplar": "KRISS_CR/#147/qB1",
-   "file": "exemplars/S3f/KRISS_CR_147_qB1.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#147/qB1",
+   "file": "exemplars/S3f/lab-D_147_qB1.png",
+   "chip": "lab-D",
    "run": "#147",
    "qubit": "qB1",
    "markers_drawn": [
@@ -515,9 +515,9 @@
   },
   {
    "case": "S3f",
-   "exemplar": "KRISS_CR/#147/qD3",
-   "file": "exemplars/S3f/KRISS_CR_147_qD3.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#147/qD3",
+   "file": "exemplars/S3f/lab-D_147_qD3.png",
+   "chip": "lab-D",
    "run": "#147",
    "qubit": "qD3",
    "markers_drawn": [
@@ -530,9 +530,9 @@
   },
   {
    "case": "S4",
-   "exemplar": "SNU_1Q/#27/q11",
-   "file": "exemplars/S4/SNU_1Q_27_q11.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#27/q11",
+   "file": "exemplars/S4/lab-E_27_q11.png",
+   "chip": "lab-E",
    "run": "#27",
    "qubit": "q11",
    "markers_drawn": [
@@ -545,9 +545,9 @@
   },
   {
    "case": "S4",
-   "exemplar": "SNU_1Q/#27/q15",
-   "file": "exemplars/S4/SNU_1Q_27_q15.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#27/q15",
+   "file": "exemplars/S4/lab-E_27_q15.png",
+   "chip": "lab-E",
    "run": "#27",
    "qubit": "q15",
    "markers_drawn": [
@@ -560,9 +560,9 @@
   },
   {
    "case": "S4",
-   "exemplar": "CQT/#133/q2",
-   "file": "exemplars/S4/CQT_133_q2.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#133/q2",
+   "file": "exemplars/S4/lab-B_133_q2.png",
+   "chip": "lab-B",
    "run": "#133",
    "qubit": "q2",
    "markers_drawn": [
@@ -575,9 +575,9 @@
   },
   {
    "case": "S4",
-   "exemplar": "KRISS_CR/#150/qA1",
-   "file": "exemplars/S4/KRISS_CR_150_qA1.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#150/qA1",
+   "file": "exemplars/S4/lab-D_150_qA1.png",
+   "chip": "lab-D",
    "run": "#150",
    "qubit": "qA1",
    "markers_drawn": [
@@ -590,9 +590,9 @@
   },
   {
    "case": "S4",
-   "exemplar": "CQT/#134/q5",
-   "file": "exemplars/S4/CQT_134_q5.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#134/q5",
+   "file": "exemplars/S4/lab-B_134_q5.png",
+   "chip": "lab-B",
    "run": "#134",
    "qubit": "q5",
    "markers_drawn": [],
@@ -603,9 +603,9 @@
   },
   {
    "case": "S4b",
-   "exemplar": "KRISS_CR/#150/qA1",
-   "file": "exemplars/S4b/KRISS_CR_150_qA1.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#150/qA1",
+   "file": "exemplars/S4b/lab-D_150_qA1.png",
+   "chip": "lab-D",
    "run": "#150",
    "qubit": "qA1",
    "markers_drawn": [
@@ -618,9 +618,9 @@
   },
   {
    "case": "S4b",
-   "exemplar": "KRISS_CR/#155/qA4",
-   "file": "exemplars/S4b/KRISS_CR_155_qA4.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#155/qA4",
+   "file": "exemplars/S4b/lab-D_155_qA4.png",
+   "chip": "lab-D",
    "run": "#155",
    "qubit": "qA4",
    "markers_drawn": [
@@ -633,9 +633,9 @@
   },
   {
    "case": "S4b",
-   "exemplar": "IQCC_QOP37/#112/qA1",
-   "file": "exemplars/S4b/IQCC_QOP37_112_qA1.png",
-   "chip": "IQCC_QOP37",
+   "exemplar": "lab-C/#112/qA1",
+   "file": "exemplars/S4b/lab-C_112_qA1.png",
+   "chip": "lab-C",
    "run": "#112",
    "qubit": "qA1",
    "markers_drawn": [
@@ -648,9 +648,9 @@
   },
   {
    "case": "S4b",
-   "exemplar": "KRISS_CR/#146/qC1",
-   "file": "exemplars/S4b/KRISS_CR_146_qC1.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#146/qC1",
+   "file": "exemplars/S4b/lab-D_146_qC1.png",
+   "chip": "lab-D",
    "run": "#146",
    "qubit": "qC1",
    "markers_drawn": [
@@ -663,9 +663,9 @@
   },
   {
    "case": "S4c",
-   "exemplar": "KRISS_CR/#139/qA1",
-   "file": "exemplars/S4c/KRISS_CR_139_qA1.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#139/qA1",
+   "file": "exemplars/S4c/lab-D_139_qA1.png",
+   "chip": "lab-D",
    "run": "#139",
    "qubit": "qA1",
    "markers_drawn": [],
@@ -676,9 +676,9 @@
   },
   {
    "case": "S4c",
-   "exemplar": "KRISS_CR/#144/qA1",
-   "file": "exemplars/S4c/KRISS_CR_144_qA1.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#144/qA1",
+   "file": "exemplars/S4c/lab-D_144_qA1.png",
+   "chip": "lab-D",
    "run": "#144",
    "qubit": "qA1",
    "markers_drawn": [],
@@ -689,9 +689,9 @@
   },
   {
    "case": "S4c",
-   "exemplar": "KRISS_CR/#153/qA3",
-   "file": "exemplars/S4c/KRISS_CR_153_qA3.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#153/qA3",
+   "file": "exemplars/S4c/lab-D_153_qA3.png",
+   "chip": "lab-D",
    "run": "#153",
    "qubit": "qA3",
    "markers_drawn": [],
@@ -702,9 +702,9 @@
   },
   {
    "case": "S4d",
-   "exemplar": "KRISS_CR/#152/qA5",
-   "file": "exemplars/S4d/KRISS_CR_152_qA5.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#152/qA5",
+   "file": "exemplars/S4d/lab-D_152_qA5.png",
+   "chip": "lab-D",
    "run": "#152",
    "qubit": "qA5",
    "markers_drawn": [],
@@ -715,9 +715,9 @@
   },
   {
    "case": "S4d",
-   "exemplar": "KRISS_CR/#153/qA6",
-   "file": "exemplars/S4d/KRISS_CR_153_qA6.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#153/qA6",
+   "file": "exemplars/S4d/lab-D_153_qA6.png",
+   "chip": "lab-D",
    "run": "#153",
    "qubit": "qA6",
    "markers_drawn": [],
@@ -728,9 +728,9 @@
   },
   {
    "case": "S4d",
-   "exemplar": "SNU_1Q/#1/q7",
-   "file": "exemplars/S4d/SNU_1Q_1_q7.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#1/q7",
+   "file": "exemplars/S4d/lab-E_1_q7.png",
+   "chip": "lab-E",
    "run": "#1",
    "qubit": "q7",
    "markers_drawn": [],
@@ -741,9 +741,9 @@
   },
   {
    "case": "S4d",
-   "exemplar": "KRISS_CR/#154/qA6",
-   "file": "exemplars/S4d/KRISS_CR_154_qA6.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#154/qA6",
+   "file": "exemplars/S4d/lab-D_154_qA6.png",
+   "chip": "lab-D",
    "run": "#154",
    "qubit": "qA6",
    "markers_drawn": [],
@@ -754,9 +754,9 @@
   },
   {
    "case": "S5",
-   "exemplar": "SNU_1Q/#2/q5",
-   "file": "exemplars/S5/SNU_1Q_2_q5.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#2/q5",
+   "file": "exemplars/S5/lab-E_2_q5.png",
+   "chip": "lab-E",
    "run": "#2",
    "qubit": "q5",
    "markers_drawn": [],
@@ -767,9 +767,9 @@
   },
   {
    "case": "S5",
-   "exemplar": "SNU_1Q/#2/q6",
-   "file": "exemplars/S5/SNU_1Q_2_q6.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#2/q6",
+   "file": "exemplars/S5/lab-E_2_q6.png",
+   "chip": "lab-E",
    "run": "#2",
    "qubit": "q6",
    "markers_drawn": [],
@@ -780,9 +780,9 @@
   },
   {
    "case": "S5",
-   "exemplar": "CQT/#162/q20",
-   "file": "exemplars/S5/CQT_162_q20.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#162/q20",
+   "file": "exemplars/S5/lab-B_162_q20.png",
+   "chip": "lab-B",
    "run": "#162",
    "qubit": "q20",
    "markers_drawn": [],
@@ -793,9 +793,9 @@
   },
   {
    "case": "S5",
-   "exemplar": "KRISS_CR/#145/qB1",
-   "file": "exemplars/S5/KRISS_CR_145_qB1.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#145/qB1",
+   "file": "exemplars/S5/lab-D_145_qB1.png",
+   "chip": "lab-D",
    "run": "#145",
    "qubit": "qB1",
    "markers_drawn": [],
@@ -806,9 +806,9 @@
   },
   {
    "case": "S5",
-   "exemplar": "SNU_1Q/#23/q17",
-   "file": "exemplars/S5/SNU_1Q_23_q17.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#23/q17",
+   "file": "exemplars/S5/lab-E_23_q17.png",
+   "chip": "lab-E",
    "run": "#23",
    "qubit": "q17",
    "markers_drawn": [],
@@ -819,9 +819,9 @@
   },
   {
    "case": "S5b",
-   "exemplar": "IQCC_QOP37/#518/qC1",
-   "file": "exemplars/S5b/IQCC_QOP37_518_qC1.png",
-   "chip": "IQCC_QOP37",
+   "exemplar": "lab-C/#518/qC1",
+   "file": "exemplars/S5b/lab-C_518_qC1.png",
+   "chip": "lab-C",
    "run": "#518",
    "qubit": "qC1",
    "markers_drawn": [],
@@ -832,9 +832,9 @@
   },
   {
    "case": "S5b",
-   "exemplar": "CQT/#162/q20",
-   "file": "exemplars/S5b/CQT_162_q20.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#162/q20",
+   "file": "exemplars/S5b/lab-B_162_q20.png",
+   "chip": "lab-B",
    "run": "#162",
    "qubit": "q20",
    "markers_drawn": [],
@@ -845,9 +845,9 @@
   },
   {
    "case": "S5b",
-   "exemplar": "CQT/#163/q20",
-   "file": "exemplars/S5b/CQT_163_q20.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#163/q20",
+   "file": "exemplars/S5b/lab-B_163_q20.png",
+   "chip": "lab-B",
    "run": "#163",
    "qubit": "q20",
    "markers_drawn": [],
@@ -858,9 +858,9 @@
   },
   {
    "case": "S5c",
-   "exemplar": "CQT/#165/q10",
-   "file": "exemplars/S5c/CQT_165_q10.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#165/q10",
+   "file": "exemplars/S5c/lab-B_165_q10.png",
+   "chip": "lab-B",
    "run": "#165",
    "qubit": "q10",
    "markers_drawn": [],
@@ -871,9 +871,9 @@
   },
   {
    "case": "S5c",
-   "exemplar": "KRISS_CR/#145/qA1",
-   "file": "exemplars/S5c/KRISS_CR_145_qA1.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#145/qA1",
+   "file": "exemplars/S5c/lab-D_145_qA1.png",
+   "chip": "lab-D",
    "run": "#145",
    "qubit": "qA1",
    "markers_drawn": [],
@@ -884,9 +884,9 @@
   },
   {
    "case": "S5c",
-   "exemplar": "KRISS_CR/#145/qB2",
-   "file": "exemplars/S5c/KRISS_CR_145_qB2.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#145/qB2",
+   "file": "exemplars/S5c/lab-D_145_qB2.png",
+   "chip": "lab-D",
    "run": "#145",
    "qubit": "qB2",
    "markers_drawn": [],
@@ -897,9 +897,9 @@
   },
   {
    "case": "S5d",
-   "exemplar": "KRISS_CR/#143/qA1",
-   "file": "exemplars/S5d/KRISS_CR_143_qA1.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#143/qA1",
+   "file": "exemplars/S5d/lab-D_143_qA1.png",
+   "chip": "lab-D",
    "run": "#143",
    "qubit": "qA1",
    "markers_drawn": [],
@@ -910,9 +910,9 @@
   },
   {
    "case": "S5d",
-   "exemplar": "KRISS_CR/#145/qA6",
-   "file": "exemplars/S5d/KRISS_CR_145_qA6.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#145/qA6",
+   "file": "exemplars/S5d/lab-D_145_qA6.png",
+   "chip": "lab-D",
    "run": "#145",
    "qubit": "qA6",
    "markers_drawn": [],
@@ -923,9 +923,9 @@
   },
   {
    "case": "S5d",
-   "exemplar": "KRISS_CR/#146/qB4",
-   "file": "exemplars/S5d/KRISS_CR_146_qB4.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#146/qB4",
+   "file": "exemplars/S5d/lab-D_146_qB4.png",
+   "chip": "lab-D",
    "run": "#146",
    "qubit": "qB4",
    "markers_drawn": [
@@ -938,9 +938,9 @@
   },
   {
    "case": "S6",
-   "exemplar": "CQT/#151/q6",
-   "file": "exemplars/S6/CQT_151_q6.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#151/q6",
+   "file": "exemplars/S6/lab-B_151_q6.png",
+   "chip": "lab-B",
    "run": "#151",
    "qubit": "q6",
    "markers_drawn": [
@@ -953,9 +953,9 @@
   },
   {
    "case": "S6",
-   "exemplar": "CQT/#151/q4",
-   "file": "exemplars/S6/CQT_151_q4.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#151/q4",
+   "file": "exemplars/S6/lab-B_151_q4.png",
+   "chip": "lab-B",
    "run": "#151",
    "qubit": "q4",
    "markers_drawn": [],
@@ -966,9 +966,9 @@
   },
   {
    "case": "S6",
-   "exemplar": "SNU_1Q/#31/q11",
-   "file": "exemplars/S6/SNU_1Q_31_q11.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#31/q11",
+   "file": "exemplars/S6/lab-E_31_q11.png",
+   "chip": "lab-E",
    "run": "#31",
    "qubit": "q11",
    "markers_drawn": [
@@ -981,9 +981,9 @@
   },
   {
    "case": "S6",
-   "exemplar": "SNU_1Q/#1/q3",
-   "file": "exemplars/S6/SNU_1Q_1_q3.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#1/q3",
+   "file": "exemplars/S6/lab-E_1_q3.png",
+   "chip": "lab-E",
    "run": "#1",
    "qubit": "q3",
    "markers_drawn": [
@@ -996,9 +996,9 @@
   },
   {
    "case": "S6b",
-   "exemplar": "AS_10TQ9TC/#312/q6",
-   "file": "exemplars/S6b/AS_10TQ9TC_312_q6.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#312/q6",
+   "file": "exemplars/S6b/lab-A_312_q6.png",
+   "chip": "lab-A",
    "run": "#312",
    "qubit": "q6",
    "markers_drawn": [
@@ -1011,9 +1011,9 @@
   },
   {
    "case": "S6b",
-   "exemplar": "AS_10TQ9TC/#328/q6",
-   "file": "exemplars/S6b/AS_10TQ9TC_328_q6.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#328/q6",
+   "file": "exemplars/S6b/lab-A_328_q6.png",
+   "chip": "lab-A",
    "run": "#328",
    "qubit": "q6",
    "markers_drawn": [
@@ -1026,9 +1026,9 @@
   },
   {
    "case": "S6b",
-   "exemplar": "SNU_1Q/#27/q11",
-   "file": "exemplars/S6b/SNU_1Q_27_q11.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#27/q11",
+   "file": "exemplars/S6b/lab-E_27_q11.png",
+   "chip": "lab-E",
    "run": "#27",
    "qubit": "q11",
    "markers_drawn": [
@@ -1041,9 +1041,9 @@
   },
   {
    "case": "S6b",
-   "exemplar": "IQCC_QOP37/#223/qA2",
-   "file": "exemplars/S6b/IQCC_QOP37_223_qA2.png",
-   "chip": "IQCC_QOP37",
+   "exemplar": "lab-C/#223/qA2",
+   "file": "exemplars/S6b/lab-C_223_qA2.png",
+   "chip": "lab-C",
    "run": "#223",
    "qubit": "qA2",
    "markers_drawn": [
@@ -1056,9 +1056,9 @@
   },
   {
    "case": "S6c",
-   "exemplar": "CQT/#163/q2",
-   "file": "exemplars/S6c/CQT_163_q2.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#163/q2",
+   "file": "exemplars/S6c/lab-B_163_q2.png",
+   "chip": "lab-B",
    "run": "#163",
    "qubit": "q2",
    "markers_drawn": [
@@ -1071,9 +1071,9 @@
   },
   {
    "case": "S6c",
-   "exemplar": "SNU_1Q/#13/q11",
-   "file": "exemplars/S6c/SNU_1Q_13_q11.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#13/q11",
+   "file": "exemplars/S6c/lab-E_13_q11.png",
+   "chip": "lab-E",
    "run": "#13",
    "qubit": "q11",
    "markers_drawn": [
@@ -1086,9 +1086,9 @@
   },
   {
    "case": "S7",
-   "exemplar": "KRISS_CR/#146/qC4",
-   "file": "exemplars/S7/KRISS_CR_146_qC4.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#146/qC4",
+   "file": "exemplars/S7/lab-D_146_qC4.png",
+   "chip": "lab-D",
    "run": "#146",
    "qubit": "qC4",
    "markers_drawn": [
@@ -1101,9 +1101,9 @@
   },
   {
    "case": "S7",
-   "exemplar": "KRISS_CR/#146/qB1",
-   "file": "exemplars/S7/KRISS_CR_146_qB1.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#146/qB1",
+   "file": "exemplars/S7/lab-D_146_qB1.png",
+   "chip": "lab-D",
    "run": "#146",
    "qubit": "qB1",
    "markers_drawn": [
@@ -1116,9 +1116,9 @@
   },
   {
    "case": "S7",
-   "exemplar": "CQT/#151/q5",
-   "file": "exemplars/S7/CQT_151_q5.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#151/q5",
+   "file": "exemplars/S7/lab-B_151_q5.png",
+   "chip": "lab-B",
    "run": "#151",
    "qubit": "q5",
    "markers_drawn": [],
@@ -1129,9 +1129,9 @@
   },
   {
    "case": "S7",
-   "exemplar": "KRISS_CR/#146/qD3",
-   "file": "exemplars/S7/KRISS_CR_146_qD3.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#146/qD3",
+   "file": "exemplars/S7/lab-D_146_qD3.png",
+   "chip": "lab-D",
    "run": "#146",
    "qubit": "qD3",
    "markers_drawn": [
@@ -1144,9 +1144,9 @@
   },
   {
    "case": "S7b",
-   "exemplar": "AS_10TQ9TC/#328/q7",
-   "file": "exemplars/S7b/AS_10TQ9TC_328_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#328/q7",
+   "file": "exemplars/S7b/lab-A_328_q7.png",
+   "chip": "lab-A",
    "run": "#328",
    "qubit": "q7",
    "markers_drawn": [
@@ -1159,9 +1159,9 @@
   },
   {
    "case": "S7b",
-   "exemplar": "AS_10TQ9TC/#338/q7",
-   "file": "exemplars/S7b/AS_10TQ9TC_338_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#338/q7",
+   "file": "exemplars/S7b/lab-A_338_q7.png",
+   "chip": "lab-A",
    "run": "#338",
    "qubit": "q7",
    "markers_drawn": [
@@ -1174,9 +1174,9 @@
   },
   {
    "case": "S7b",
-   "exemplar": "SNU_1Q/#17/q9",
-   "file": "exemplars/S7b/SNU_1Q_17_q9.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#17/q9",
+   "file": "exemplars/S7b/lab-E_17_q9.png",
+   "chip": "lab-E",
    "run": "#17",
    "qubit": "q9",
    "markers_drawn": [
@@ -1189,9 +1189,9 @@
   },
   {
    "case": "S7b",
-   "exemplar": "SNU_1Q/#20/q9",
-   "file": "exemplars/S7b/SNU_1Q_20_q9.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#20/q9",
+   "file": "exemplars/S7b/lab-E_20_q9.png",
+   "chip": "lab-E",
    "run": "#20",
    "qubit": "q9",
    "markers_drawn": [
@@ -1204,9 +1204,9 @@
   },
   {
    "case": "S7c",
-   "exemplar": "KRISS_CR/#146/qA2",
-   "file": "exemplars/S7c/KRISS_CR_146_qA2.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#146/qA2",
+   "file": "exemplars/S7c/lab-D_146_qA2.png",
+   "chip": "lab-D",
    "run": "#146",
    "qubit": "qA2",
    "markers_drawn": [
@@ -1219,9 +1219,9 @@
   },
   {
    "case": "S7c",
-   "exemplar": "KRISS_CR/#146/qA6",
-   "file": "exemplars/S7c/KRISS_CR_146_qA6.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#146/qA6",
+   "file": "exemplars/S7c/lab-D_146_qA6.png",
+   "chip": "lab-D",
    "run": "#146",
    "qubit": "qA6",
    "markers_drawn": [
@@ -1234,9 +1234,9 @@
   },
   {
    "case": "S7c",
-   "exemplar": "KRISS_CR/#147/qA2",
-   "file": "exemplars/S7c/KRISS_CR_147_qA2.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#147/qA2",
+   "file": "exemplars/S7c/lab-D_147_qA2.png",
+   "chip": "lab-D",
    "run": "#147",
    "qubit": "qA2",
    "markers_drawn": [
@@ -1249,9 +1249,9 @@
   },
   {
    "case": "S7d",
-   "exemplar": "KRISS_CR/#146/qA1",
-   "file": "exemplars/S7d/KRISS_CR_146_qA1.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#146/qA1",
+   "file": "exemplars/S7d/lab-D_146_qA1.png",
+   "chip": "lab-D",
    "run": "#146",
    "qubit": "qA1",
    "markers_drawn": [
@@ -1264,9 +1264,9 @@
   },
   {
    "case": "S7d",
-   "exemplar": "KRISS_CR/#144/qA5",
-   "file": "exemplars/S7d/KRISS_CR_144_qA5.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#144/qA5",
+   "file": "exemplars/S7d/lab-D_144_qA5.png",
+   "chip": "lab-D",
    "run": "#144",
    "qubit": "qA5",
    "markers_drawn": [
@@ -1279,9 +1279,9 @@
   },
   {
    "case": "S7d",
-   "exemplar": "KRISS_CR/#147/qA1",
-   "file": "exemplars/S7d/KRISS_CR_147_qA1.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#147/qA1",
+   "file": "exemplars/S7d/lab-D_147_qA1.png",
+   "chip": "lab-D",
    "run": "#147",
    "qubit": "qA1",
    "markers_drawn": [
@@ -1294,9 +1294,9 @@
   },
   {
    "case": "S7e",
-   "exemplar": "CQT/#151/q5",
-   "file": "exemplars/S7e/CQT_151_q5.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#151/q5",
+   "file": "exemplars/S7e/lab-B_151_q5.png",
+   "chip": "lab-B",
    "run": "#151",
    "qubit": "q5",
    "markers_drawn": [],
@@ -1307,9 +1307,9 @@
   },
   {
    "case": "S7e",
-   "exemplar": "CQT/#157/q8",
-   "file": "exemplars/S7e/CQT_157_q8.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#157/q8",
+   "file": "exemplars/S7e/lab-B_157_q8.png",
+   "chip": "lab-B",
    "run": "#157",
    "qubit": "q8",
    "markers_drawn": [],
@@ -1320,9 +1320,9 @@
   },
   {
    "case": "S7e",
-   "exemplar": "KRISS_CR/#155/qB2",
-   "file": "exemplars/S7e/KRISS_CR_155_qB2.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#155/qB2",
+   "file": "exemplars/S7e/lab-D_155_qB2.png",
+   "chip": "lab-D",
    "run": "#155",
    "qubit": "qB2",
    "markers_drawn": [
@@ -1335,9 +1335,9 @@
   },
   {
    "case": "S7e",
-   "exemplar": "KRISS_CR/#147/qA5",
-   "file": "exemplars/S7e/KRISS_CR_147_qA5.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#147/qA5",
+   "file": "exemplars/S7e/lab-D_147_qA5.png",
+   "chip": "lab-D",
    "run": "#147",
    "qubit": "qA5",
    "markers_drawn": [
@@ -1350,9 +1350,9 @@
   },
   {
    "case": "S7f",
-   "exemplar": "IQCC_QOP37/#70/qA1",
-   "file": "exemplars/S7f/IQCC_QOP37_70_qA1.png",
-   "chip": "IQCC_QOP37",
+   "exemplar": "lab-C/#70/qA1",
+   "file": "exemplars/S7f/lab-C_70_qA1.png",
+   "chip": "lab-C",
    "run": "#70",
    "qubit": "qA1",
    "markers_drawn": [],
@@ -1363,9 +1363,9 @@
   },
   {
    "case": "S7g",
-   "exemplar": "CQT/#160/q8",
-   "file": "exemplars/S7g/CQT_160_q8.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#160/q8",
+   "file": "exemplars/S7g/lab-B_160_q8.png",
+   "chip": "lab-B",
    "run": "#160",
    "qubit": "q8",
    "markers_drawn": [],
@@ -1376,9 +1376,9 @@
   },
   {
    "case": "S7g",
-   "exemplar": "CQT/#169/q18",
-   "file": "exemplars/S7g/CQT_169_q18.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#169/q18",
+   "file": "exemplars/S7g/lab-B_169_q18.png",
+   "chip": "lab-B",
    "run": "#169",
    "qubit": "q18",
    "markers_drawn": [],
@@ -1389,9 +1389,9 @@
   },
   {
    "case": "S7g",
-   "exemplar": "CQT/#170/q18",
-   "file": "exemplars/S7g/CQT_170_q18.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#170/q18",
+   "file": "exemplars/S7g/lab-B_170_q18.png",
+   "chip": "lab-B",
    "run": "#170",
    "qubit": "q18",
    "markers_drawn": [],
@@ -1402,9 +1402,9 @@
   },
   {
    "case": "S7g",
-   "exemplar": "CQT/#164/q18",
-   "file": "exemplars/S7g/CQT_164_q18.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#164/q18",
+   "file": "exemplars/S7g/lab-B_164_q18.png",
+   "chip": "lab-B",
    "run": "#164",
    "qubit": "q18",
    "markers_drawn": [],
@@ -1415,9 +1415,9 @@
   },
   {
    "case": "S8",
-   "exemplar": "SNU_1Q/#17/q9",
-   "file": "exemplars/S8/SNU_1Q_17_q9.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#17/q9",
+   "file": "exemplars/S8/lab-E_17_q9.png",
+   "chip": "lab-E",
    "run": "#17",
    "qubit": "q9",
    "markers_drawn": [
@@ -1430,9 +1430,9 @@
   },
   {
    "case": "S8",
-   "exemplar": "SNU_1Q/#5/q3",
-   "file": "exemplars/S8/SNU_1Q_5_q3.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#5/q3",
+   "file": "exemplars/S8/lab-E_5_q3.png",
+   "chip": "lab-E",
    "run": "#5",
    "qubit": "q3",
    "markers_drawn": [
@@ -1445,9 +1445,9 @@
   },
   {
    "case": "S8",
-   "exemplar": "CQT/#92/q2",
-   "file": "exemplars/S8/CQT_92_q2.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#92/q2",
+   "file": "exemplars/S8/lab-B_92_q2.png",
+   "chip": "lab-B",
    "run": "#92",
    "qubit": "q2",
    "markers_drawn": [
@@ -1460,9 +1460,9 @@
   },
   {
    "case": "S8",
-   "exemplar": "SNU_1Q/#13/q17",
-   "file": "exemplars/S8/SNU_1Q_13_q17.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#13/q17",
+   "file": "exemplars/S8/lab-E_13_q17.png",
+   "chip": "lab-E",
    "run": "#13",
    "qubit": "q17",
    "markers_drawn": [
@@ -1475,9 +1475,9 @@
   },
   {
    "case": "S8",
-   "exemplar": "CQT/#133/q1",
-   "file": "exemplars/S8/CQT_133_q1.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#133/q1",
+   "file": "exemplars/S8/lab-B_133_q1.png",
+   "chip": "lab-B",
    "run": "#133",
    "qubit": "q1",
    "markers_drawn": [
@@ -1490,9 +1490,9 @@
   },
   {
    "case": "S8b",
-   "exemplar": "AS_10TQ9TC/#6/q8",
-   "file": "exemplars/S8b/AS_10TQ9TC_6_q8.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#6/q8",
+   "file": "exemplars/S8b/lab-A_6_q8.png",
+   "chip": "lab-A",
    "run": "#6",
    "qubit": "q8",
    "markers_drawn": [
@@ -1505,9 +1505,9 @@
   },
   {
    "case": "S8b",
-   "exemplar": "AS_10TQ9TC/#234/q5",
-   "file": "exemplars/S8b/AS_10TQ9TC_234_q5.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#234/q5",
+   "file": "exemplars/S8b/lab-A_234_q5.png",
+   "chip": "lab-A",
    "run": "#234",
    "qubit": "q5",
    "markers_drawn": [
@@ -1520,9 +1520,9 @@
   },
   {
    "case": "S8b",
-   "exemplar": "IQCC_QOP37/#111/qA2",
-   "file": "exemplars/S8b/IQCC_QOP37_111_qA2.png",
-   "chip": "IQCC_QOP37",
+   "exemplar": "lab-C/#111/qA2",
+   "file": "exemplars/S8b/lab-C_111_qA2.png",
+   "chip": "lab-C",
    "run": "#111",
    "qubit": "qA2",
    "markers_drawn": [
@@ -1535,9 +1535,9 @@
   },
   {
    "case": "S8b",
-   "exemplar": "SNU_1Q/#12/q17",
-   "file": "exemplars/S8b/SNU_1Q_12_q17.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#12/q17",
+   "file": "exemplars/S8b/lab-E_12_q17.png",
+   "chip": "lab-E",
    "run": "#12",
    "qubit": "q17",
    "markers_drawn": [
@@ -1550,9 +1550,9 @@
   },
   {
    "case": "S9",
-   "exemplar": "SNU_1Q/#1/q8",
-   "file": "exemplars/S9/SNU_1Q_1_q8.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#1/q8",
+   "file": "exemplars/S9/lab-E_1_q8.png",
+   "chip": "lab-E",
    "run": "#1",
    "qubit": "q8",
    "markers_drawn": [
@@ -1565,9 +1565,9 @@
   },
   {
    "case": "S9",
-   "exemplar": "SNU_1Q/#2/q4",
-   "file": "exemplars/S9/SNU_1Q_2_q4.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#2/q4",
+   "file": "exemplars/S9/lab-E_2_q4.png",
+   "chip": "lab-E",
    "run": "#2",
    "qubit": "q4",
    "markers_drawn": [
@@ -1580,9 +1580,9 @@
   },
   {
    "case": "S9",
-   "exemplar": "SNU_1Q/#27/q5",
-   "file": "exemplars/S9/SNU_1Q_27_q5.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#27/q5",
+   "file": "exemplars/S9/lab-E_27_q5.png",
+   "chip": "lab-E",
    "run": "#27",
    "qubit": "q5",
    "markers_drawn": [
@@ -1595,9 +1595,9 @@
   },
   {
    "case": "S9",
-   "exemplar": "CQT/#134/q6",
-   "file": "exemplars/S9/CQT_134_q6.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#134/q6",
+   "file": "exemplars/S9/lab-B_134_q6.png",
+   "chip": "lab-B",
    "run": "#134",
    "qubit": "q6",
    "markers_drawn": [
@@ -1610,9 +1610,9 @@
   },
   {
    "case": "S9b",
-   "exemplar": "SNU_1Q/#23/q9",
-   "file": "exemplars/S9b/SNU_1Q_23_q9.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#23/q9",
+   "file": "exemplars/S9b/lab-E_23_q9.png",
+   "chip": "lab-E",
    "run": "#23",
    "qubit": "q9",
    "markers_drawn": [],
@@ -1623,9 +1623,9 @@
   },
   {
    "case": "S9b",
-   "exemplar": "SNU_1Q/#23/q15",
-   "file": "exemplars/S9b/SNU_1Q_23_q15.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#23/q15",
+   "file": "exemplars/S9b/lab-E_23_q15.png",
+   "chip": "lab-E",
    "run": "#23",
    "qubit": "q15",
    "markers_drawn": [],
@@ -1636,9 +1636,9 @@
   },
   {
    "case": "S9b",
-   "exemplar": "CQT/#94/q2",
-   "file": "exemplars/S9b/CQT_94_q2.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#94/q2",
+   "file": "exemplars/S9b/lab-B_94_q2.png",
+   "chip": "lab-B",
    "run": "#94",
    "qubit": "q2",
    "markers_drawn": [],
@@ -1649,9 +1649,9 @@
   },
   {
    "case": "S9b",
-   "exemplar": "CQT/#134/q5",
-   "file": "exemplars/S9b/CQT_134_q5.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#134/q5",
+   "file": "exemplars/S9b/lab-B_134_q5.png",
+   "chip": "lab-B",
    "run": "#134",
    "qubit": "q5",
    "markers_drawn": [],
@@ -1662,9 +1662,9 @@
   },
   {
    "case": "S9b",
-   "exemplar": "CQT/#160/q8",
-   "file": "exemplars/S9b/CQT_160_q8.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#160/q8",
+   "file": "exemplars/S9b/lab-B_160_q8.png",
+   "chip": "lab-B",
    "run": "#160",
    "qubit": "q8",
    "markers_drawn": [],
@@ -1675,9 +1675,9 @@
   },
   {
    "case": "S9b",
-   "exemplar": "CQT/#151/q4",
-   "file": "exemplars/S9b/CQT_151_q4.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#151/q4",
+   "file": "exemplars/S9b/lab-B_151_q4.png",
+   "chip": "lab-B",
    "run": "#151",
    "qubit": "q4",
    "markers_drawn": [],
@@ -1688,9 +1688,9 @@
   },
   {
    "case": "S9c",
-   "exemplar": "SNU_1Q/#13/q15",
-   "file": "exemplars/S9c/SNU_1Q_13_q15.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#13/q15",
+   "file": "exemplars/S9c/lab-E_13_q15.png",
+   "chip": "lab-E",
    "run": "#13",
    "qubit": "q15",
    "markers_drawn": [],
@@ -1701,9 +1701,9 @@
   },
   {
    "case": "S9c",
-   "exemplar": "CQT/#161/q8",
-   "file": "exemplars/S9c/CQT_161_q8.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#161/q8",
+   "file": "exemplars/S9c/lab-B_161_q8.png",
+   "chip": "lab-B",
    "run": "#161",
    "qubit": "q8",
    "markers_drawn": [],
@@ -1714,9 +1714,9 @@
   },
   {
    "case": "X1",
-   "exemplar": "SNU_1Q/#12/q10",
-   "file": "exemplars/X1/SNU_1Q_12_q10.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#12/q10",
+   "file": "exemplars/X1/lab-E_12_q10.png",
+   "chip": "lab-E",
    "run": "#12",
    "qubit": "q10",
    "markers_drawn": [
@@ -1729,9 +1729,9 @@
   },
   {
    "case": "X1",
-   "exemplar": "SNU_1Q/#13/q10",
-   "file": "exemplars/X1/SNU_1Q_13_q10.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#13/q10",
+   "file": "exemplars/X1/lab-E_13_q10.png",
+   "chip": "lab-E",
    "run": "#13",
    "qubit": "q10",
    "markers_drawn": [
@@ -1744,9 +1744,9 @@
   },
   {
    "case": "X1",
-   "exemplar": "KRISS_CR/#140/qA3",
-   "file": "exemplars/X1/KRISS_CR_140_qA3.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#140/qA3",
+   "file": "exemplars/X1/lab-D_140_qA3.png",
+   "chip": "lab-D",
    "run": "#140",
    "qubit": "qA3",
    "markers_drawn": [
@@ -1759,9 +1759,9 @@
   },
   {
    "case": "X1",
-   "exemplar": "KRISS_CR/#146/qA3",
-   "file": "exemplars/X1/KRISS_CR_146_qA3.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#146/qA3",
+   "file": "exemplars/X1/lab-D_146_qA3.png",
+   "chip": "lab-D",
    "run": "#146",
    "qubit": "qA3",
    "markers_drawn": [
@@ -1774,9 +1774,9 @@
   },
   {
    "case": "X1",
-   "exemplar": "CQT/#134/q6",
-   "file": "exemplars/X1/CQT_134_q6.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#134/q6",
+   "file": "exemplars/X1/lab-B_134_q6.png",
+   "chip": "lab-B",
    "run": "#134",
    "qubit": "q6",
    "markers_drawn": [
@@ -1789,9 +1789,9 @@
   },
   {
    "case": "X1",
-   "exemplar": "CQT/#151/q6",
-   "file": "exemplars/X1/CQT_151_q6.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#151/q6",
+   "file": "exemplars/X1/lab-B_151_q6.png",
+   "chip": "lab-B",
    "run": "#151",
    "qubit": "q6",
    "markers_drawn": [
@@ -1804,9 +1804,9 @@
   },
   {
    "case": "X2",
-   "exemplar": "AS_10TQ9TC/#338/q6",
-   "file": "exemplars/X2/AS_10TQ9TC_338_q6.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#338/q6",
+   "file": "exemplars/X2/lab-A_338_q6.png",
+   "chip": "lab-A",
    "run": "#338",
    "qubit": "q6",
    "markers_drawn": [
@@ -1819,9 +1819,9 @@
   },
   {
    "case": "X2",
-   "exemplar": "AS_10TQ9TC/#339/q7",
-   "file": "exemplars/X2/AS_10TQ9TC_339_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#339/q7",
+   "file": "exemplars/X2/lab-A_339_q7.png",
+   "chip": "lab-A",
    "run": "#339",
    "qubit": "q7",
    "markers_drawn": [
@@ -1834,9 +1834,9 @@
   },
   {
    "case": "X2",
-   "exemplar": "AS_10TQ9TC/#340/q6",
-   "file": "exemplars/X2/AS_10TQ9TC_340_q6.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#340/q6",
+   "file": "exemplars/X2/lab-A_340_q6.png",
+   "chip": "lab-A",
    "run": "#340",
    "qubit": "q6",
    "markers_drawn": [
@@ -1849,9 +1849,9 @@
   },
   {
    "case": "X3",
-   "exemplar": "AS_10TQ9TC/#328/q7",
-   "file": "exemplars/X3/AS_10TQ9TC_328_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#328/q7",
+   "file": "exemplars/X3/lab-A_328_q7.png",
+   "chip": "lab-A",
    "run": "#328",
    "qubit": "q7",
    "markers_drawn": [
@@ -1864,9 +1864,9 @@
   },
   {
    "case": "X3",
-   "exemplar": "AS_10TQ9TC/#338/q7",
-   "file": "exemplars/X3/AS_10TQ9TC_338_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#338/q7",
+   "file": "exemplars/X3/lab-A_338_q7.png",
+   "chip": "lab-A",
    "run": "#338",
    "qubit": "q7",
    "markers_drawn": [
@@ -1879,9 +1879,9 @@
   },
   {
    "case": "X3",
-   "exemplar": "SNU_1Q/#13/q11",
-   "file": "exemplars/X3/SNU_1Q_13_q11.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#13/q11",
+   "file": "exemplars/X3/lab-E_13_q11.png",
+   "chip": "lab-E",
    "run": "#13",
    "qubit": "q11",
    "markers_drawn": [
@@ -1894,9 +1894,9 @@
   },
   {
    "case": "F1",
-   "exemplar": "AS_10TQ9TC/#6/q8",
-   "file": "exemplars/F1/AS_10TQ9TC_6_q8.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#6/q8",
+   "file": "exemplars/F1/lab-A_6_q8.png",
+   "chip": "lab-A",
    "run": "#6",
    "qubit": "q8",
    "markers_drawn": [
@@ -1909,9 +1909,9 @@
   },
   {
    "case": "F1",
-   "exemplar": "IQCC_QOP37/#231/qA2",
-   "file": "exemplars/F1/IQCC_QOP37_231_qA2.png",
-   "chip": "IQCC_QOP37",
+   "exemplar": "lab-C/#231/qA2",
+   "file": "exemplars/F1/lab-C_231_qA2.png",
+   "chip": "lab-C",
    "run": "#231",
    "qubit": "qA2",
    "markers_drawn": [
@@ -1924,9 +1924,9 @@
   },
   {
    "case": "F1",
-   "exemplar": "SNU_1Q/#27/q6",
-   "file": "exemplars/F1/SNU_1Q_27_q6.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#27/q6",
+   "file": "exemplars/F1/lab-E_27_q6.png",
+   "chip": "lab-E",
    "run": "#27",
    "qubit": "q6",
    "markers_drawn": [
@@ -1939,9 +1939,9 @@
   },
   {
    "case": "F1",
-   "exemplar": "KRISS_CR/#146/qC5",
-   "file": "exemplars/F1/KRISS_CR_146_qC5.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#146/qC5",
+   "file": "exemplars/F1/lab-D_146_qC5.png",
+   "chip": "lab-D",
    "run": "#146",
    "qubit": "qC5",
    "markers_drawn": [
@@ -1954,9 +1954,9 @@
   },
   {
    "case": "F2",
-   "exemplar": "SNU_1Q/#17/q4",
-   "file": "exemplars/F2/SNU_1Q_17_q4.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#17/q4",
+   "file": "exemplars/F2/lab-E_17_q4.png",
+   "chip": "lab-E",
    "run": "#17",
    "qubit": "q4",
    "markers_drawn": [
@@ -1969,9 +1969,9 @@
   },
   {
    "case": "F2",
-   "exemplar": "SNU_1Q/#5/q8",
-   "file": "exemplars/F2/SNU_1Q_5_q8.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#5/q8",
+   "file": "exemplars/F2/lab-E_5_q8.png",
+   "chip": "lab-E",
    "run": "#5",
    "qubit": "q8",
    "markers_drawn": [
@@ -1984,9 +1984,9 @@
   },
   {
    "case": "F2",
-   "exemplar": "CQT/#92/q2",
-   "file": "exemplars/F2/CQT_92_q2.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#92/q2",
+   "file": "exemplars/F2/lab-B_92_q2.png",
+   "chip": "lab-B",
    "run": "#92",
    "qubit": "q2",
    "markers_drawn": [
@@ -1999,9 +1999,9 @@
   },
   {
    "case": "F2",
-   "exemplar": "IQCC_QOP37/#298/qB3",
-   "file": "exemplars/F2/IQCC_QOP37_298_qB3.png",
-   "chip": "IQCC_QOP37",
+   "exemplar": "lab-C/#298/qB3",
+   "file": "exemplars/F2/lab-C_298_qB3.png",
+   "chip": "lab-C",
    "run": "#298",
    "qubit": "qB3",
    "markers_drawn": [
@@ -2014,9 +2014,9 @@
   },
   {
    "case": "F3",
-   "exemplar": "AS_10TQ9TC/#6/q9",
-   "file": "exemplars/F3/AS_10TQ9TC_6_q9.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#6/q9",
+   "file": "exemplars/F3/lab-A_6_q9.png",
+   "chip": "lab-A",
    "run": "#6",
    "qubit": "q9",
    "markers_drawn": [
@@ -2029,9 +2029,9 @@
   },
   {
    "case": "F3",
-   "exemplar": "AS_10TQ9TC/#234/q5",
-   "file": "exemplars/F3/AS_10TQ9TC_234_q5.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#234/q5",
+   "file": "exemplars/F3/lab-A_234_q5.png",
+   "chip": "lab-A",
    "run": "#234",
    "qubit": "q5",
    "markers_drawn": [
@@ -2044,9 +2044,9 @@
   },
   {
    "case": "F3",
-   "exemplar": "IQCC_QOP37/#233/qA2",
-   "file": "exemplars/F3/IQCC_QOP37_233_qA2.png",
-   "chip": "IQCC_QOP37",
+   "exemplar": "lab-C/#233/qA2",
+   "file": "exemplars/F3/lab-C_233_qA2.png",
+   "chip": "lab-C",
    "run": "#233",
    "qubit": "qA2",
    "markers_drawn": [
@@ -2059,9 +2059,9 @@
   },
   {
    "case": "F4",
-   "exemplar": "CQT/#92/q2",
-   "file": "exemplars/F4/CQT_92_q2.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#92/q2",
+   "file": "exemplars/F4/lab-B_92_q2.png",
+   "chip": "lab-B",
    "run": "#92",
    "qubit": "q2",
    "markers_drawn": [
@@ -2074,9 +2074,9 @@
   },
   {
    "case": "F4",
-   "exemplar": "CQT/#133/q1",
-   "file": "exemplars/F4/CQT_133_q1.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#133/q1",
+   "file": "exemplars/F4/lab-B_133_q1.png",
+   "chip": "lab-B",
    "run": "#133",
    "qubit": "q1",
    "markers_drawn": [
@@ -2089,9 +2089,9 @@
   },
   {
    "case": "F4",
-   "exemplar": "SNU_1Q/#5/q3",
-   "file": "exemplars/F4/SNU_1Q_5_q3.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#5/q3",
+   "file": "exemplars/F4/lab-E_5_q3.png",
+   "chip": "lab-E",
    "run": "#5",
    "qubit": "q3",
    "markers_drawn": [
@@ -2104,9 +2104,9 @@
   },
   {
    "case": "F4",
-   "exemplar": "KRISS_CR/#147/qB1",
-   "file": "exemplars/F4/KRISS_CR_147_qB1.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#147/qB1",
+   "file": "exemplars/F4/lab-D_147_qB1.png",
+   "chip": "lab-D",
    "run": "#147",
    "qubit": "qB1",
    "markers_drawn": [
@@ -2119,9 +2119,9 @@
   },
   {
    "case": "F5",
-   "exemplar": "KRISS_CR/#146/qA2",
-   "file": "exemplars/F5/KRISS_CR_146_qA2.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#146/qA2",
+   "file": "exemplars/F5/lab-D_146_qA2.png",
+   "chip": "lab-D",
    "run": "#146",
    "qubit": "qA2",
    "markers_drawn": [
@@ -2134,9 +2134,9 @@
   },
   {
    "case": "F5",
-   "exemplar": "KRISS_CR/#147/qA2",
-   "file": "exemplars/F5/KRISS_CR_147_qA2.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#147/qA2",
+   "file": "exemplars/F5/lab-D_147_qA2.png",
+   "chip": "lab-D",
    "run": "#147",
    "qubit": "qA2",
    "markers_drawn": [
@@ -2149,9 +2149,9 @@
   },
   {
    "case": "F6",
-   "exemplar": "SNU_1Q/#1/q3",
-   "file": "exemplars/F6/SNU_1Q_1_q3.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#1/q3",
+   "file": "exemplars/F6/lab-E_1_q3.png",
+   "chip": "lab-E",
    "run": "#1",
    "qubit": "q3",
    "markers_drawn": [
@@ -2164,9 +2164,9 @@
   },
   {
    "case": "F6",
-   "exemplar": "IQCC_QOP37/#298/qB3",
-   "file": "exemplars/F6/IQCC_QOP37_298_qB3.png",
-   "chip": "IQCC_QOP37",
+   "exemplar": "lab-C/#298/qB3",
+   "file": "exemplars/F6/lab-C_298_qB3.png",
+   "chip": "lab-C",
    "run": "#298",
    "qubit": "qB3",
    "markers_drawn": [
@@ -2179,9 +2179,9 @@
   },
   {
    "case": "F6",
-   "exemplar": "IQCC_QOP37/#298/qD3",
-   "file": "exemplars/F6/IQCC_QOP37_298_qD3.png",
-   "chip": "IQCC_QOP37",
+   "exemplar": "lab-C/#298/qD3",
+   "file": "exemplars/F6/lab-C_298_qD3.png",
+   "chip": "lab-C",
    "run": "#298",
    "qubit": "qD3",
    "markers_drawn": [
@@ -2194,9 +2194,9 @@
   },
   {
    "case": "F7",
-   "exemplar": "IQCC_QOP37/#298/qB3",
-   "file": "exemplars/F7/IQCC_QOP37_298_qB3.png",
-   "chip": "IQCC_QOP37",
+   "exemplar": "lab-C/#298/qB3",
+   "file": "exemplars/F7/lab-C_298_qB3.png",
+   "chip": "lab-C",
    "run": "#298",
    "qubit": "qB3",
    "markers_drawn": [
@@ -2209,9 +2209,9 @@
   },
   {
    "case": "F7",
-   "exemplar": "KRISS_CR/#147/qA1",
-   "file": "exemplars/F7/KRISS_CR_147_qA1.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#147/qA1",
+   "file": "exemplars/F7/lab-D_147_qA1.png",
+   "chip": "lab-D",
    "run": "#147",
    "qubit": "qA1",
    "markers_drawn": [
@@ -2224,9 +2224,9 @@
   },
   {
    "case": "F8",
-   "exemplar": "AS_10TQ9TC/#338/q6",
-   "file": "exemplars/F8/AS_10TQ9TC_338_q6.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#338/q6",
+   "file": "exemplars/F8/lab-A_338_q6.png",
+   "chip": "lab-A",
    "run": "#338",
    "qubit": "q6",
    "markers_drawn": [
@@ -2239,9 +2239,9 @@
   },
   {
    "case": "F8",
-   "exemplar": "AS_10TQ9TC/#340/q7",
-   "file": "exemplars/F8/AS_10TQ9TC_340_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#340/q7",
+   "file": "exemplars/F8/lab-A_340_q7.png",
+   "chip": "lab-A",
    "run": "#340",
    "qubit": "q7",
    "markers_drawn": [
@@ -2254,9 +2254,9 @@
   },
   {
    "case": "F8",
-   "exemplar": "CQT/#151/q7",
-   "file": "exemplars/F8/CQT_151_q7.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#151/q7",
+   "file": "exemplars/F8/lab-B_151_q7.png",
+   "chip": "lab-B",
    "run": "#151",
    "qubit": "q7",
    "markers_drawn": [
@@ -2269,9 +2269,9 @@
   },
   {
    "case": "F8",
-   "exemplar": "CQT/#157/q8",
-   "file": "exemplars/F8/CQT_157_q8.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#157/q8",
+   "file": "exemplars/F8/lab-B_157_q8.png",
+   "chip": "lab-B",
    "run": "#157",
    "qubit": "q8",
    "markers_drawn": [],
@@ -2282,9 +2282,9 @@
   },
   {
    "case": "F9",
-   "exemplar": "AS_10TQ9TC/#328/q6",
-   "file": "exemplars/F9/AS_10TQ9TC_328_q6.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#328/q6",
+   "file": "exemplars/F9/lab-A_328_q6.png",
+   "chip": "lab-A",
    "run": "#328",
    "qubit": "q6",
    "markers_drawn": [
@@ -2297,9 +2297,9 @@
   },
   {
    "case": "F9",
-   "exemplar": "AS_10TQ9TC/#340/q7",
-   "file": "exemplars/F9/AS_10TQ9TC_340_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#340/q7",
+   "file": "exemplars/F9/lab-A_340_q7.png",
+   "chip": "lab-A",
    "run": "#340",
    "qubit": "q7",
    "markers_drawn": [
@@ -2312,9 +2312,9 @@
   },
   {
    "case": "F10",
-   "exemplar": "SNU_1Q/#17/q9",
-   "file": "exemplars/F10/SNU_1Q_17_q9.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#17/q9",
+   "file": "exemplars/F10/lab-E_17_q9.png",
+   "chip": "lab-E",
    "run": "#17",
    "qubit": "q9",
    "markers_drawn": [
@@ -2327,9 +2327,9 @@
   },
   {
    "case": "F10",
-   "exemplar": "SNU_1Q/#19/q5",
-   "file": "exemplars/F10/SNU_1Q_19_q5.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#19/q5",
+   "file": "exemplars/F10/lab-E_19_q5.png",
+   "chip": "lab-E",
    "run": "#19",
    "qubit": "q5",
    "markers_drawn": [
@@ -2342,9 +2342,9 @@
   },
   {
    "case": "F10",
-   "exemplar": "SNU_1Q/#20/q4",
-   "file": "exemplars/F10/SNU_1Q_20_q4.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#20/q4",
+   "file": "exemplars/F10/lab-E_20_q4.png",
+   "chip": "lab-E",
    "run": "#20",
    "qubit": "q4",
    "markers_drawn": [
@@ -2357,9 +2357,9 @@
   },
   {
    "case": "F11",
-   "exemplar": "SNU_1Q/#23/q4",
-   "file": "exemplars/F11/SNU_1Q_23_q4.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#23/q4",
+   "file": "exemplars/F11/lab-E_23_q4.png",
+   "chip": "lab-E",
    "run": "#23",
    "qubit": "q4",
    "markers_drawn": [
@@ -2372,9 +2372,9 @@
   },
   {
    "case": "F11",
-   "exemplar": "SNU_1Q/#24/q11",
-   "file": "exemplars/F11/SNU_1Q_24_q11.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#24/q11",
+   "file": "exemplars/F11/lab-E_24_q11.png",
+   "chip": "lab-E",
    "run": "#24",
    "qubit": "q11",
    "markers_drawn": [
@@ -2387,9 +2387,9 @@
   },
   {
    "case": "F12",
-   "exemplar": "SNU_1Q/#19/q10",
-   "file": "exemplars/F12/SNU_1Q_19_q10.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#19/q10",
+   "file": "exemplars/F12/lab-E_19_q10.png",
+   "chip": "lab-E",
    "run": "#19",
    "qubit": "q10",
    "markers_drawn": [
@@ -2402,9 +2402,9 @@
   },
   {
    "case": "F12",
-   "exemplar": "SNU_1Q/#5/q3",
-   "file": "exemplars/F12/SNU_1Q_5_q3.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#5/q3",
+   "file": "exemplars/F12/lab-E_5_q3.png",
+   "chip": "lab-E",
    "run": "#5",
    "qubit": "q3",
    "markers_drawn": [
@@ -2417,9 +2417,9 @@
   },
   {
    "case": "F12",
-   "exemplar": "SNU_1Q/#12/q15",
-   "file": "exemplars/F12/SNU_1Q_12_q15.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#12/q15",
+   "file": "exemplars/F12/lab-E_12_q15.png",
+   "chip": "lab-E",
    "run": "#12",
    "qubit": "q15",
    "markers_drawn": [
@@ -2432,9 +2432,9 @@
   },
   {
    "case": "F13",
-   "exemplar": "SNU_1Q/#1/q1",
-   "file": "exemplars/F13/SNU_1Q_1_q1.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#1/q1",
+   "file": "exemplars/F13/lab-E_1_q1.png",
+   "chip": "lab-E",
    "run": "#1",
    "qubit": "q1",
    "markers_drawn": [],
@@ -2445,9 +2445,9 @@
   },
   {
    "case": "F13",
-   "exemplar": "CQT/#94/q2",
-   "file": "exemplars/F13/CQT_94_q2.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#94/q2",
+   "file": "exemplars/F13/lab-B_94_q2.png",
+   "chip": "lab-B",
    "run": "#94",
    "qubit": "q2",
    "markers_drawn": [],
@@ -2458,9 +2458,9 @@
   },
   {
    "case": "F13",
-   "exemplar": "IQCC_QOP37/#518/qC1",
-   "file": "exemplars/F13/IQCC_QOP37_518_qC1.png",
-   "chip": "IQCC_QOP37",
+   "exemplar": "lab-C/#518/qC1",
+   "file": "exemplars/F13/lab-C_518_qC1.png",
+   "chip": "lab-C",
    "run": "#518",
    "qubit": "qC1",
    "markers_drawn": [],
@@ -2471,9 +2471,9 @@
   },
   {
    "case": "F13",
-   "exemplar": "CQT/#170/q18",
-   "file": "exemplars/F13/CQT_170_q18.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#170/q18",
+   "file": "exemplars/F13/lab-B_170_q18.png",
+   "chip": "lab-B",
    "run": "#170",
    "qubit": "q18",
    "markers_drawn": [],
@@ -2484,9 +2484,9 @@
   },
   {
    "case": "F14",
-   "exemplar": "CQT/#92/q2",
-   "file": "exemplars/F14/CQT_92_q2.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#92/q2",
+   "file": "exemplars/F14/lab-B_92_q2.png",
+   "chip": "lab-B",
    "run": "#92",
    "qubit": "q2",
    "markers_drawn": [
@@ -2499,9 +2499,9 @@
   },
   {
    "case": "F14",
-   "exemplar": "CQT/#96/q2",
-   "file": "exemplars/F14/CQT_96_q2.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#96/q2",
+   "file": "exemplars/F14/lab-B_96_q2.png",
+   "chip": "lab-B",
    "run": "#96",
    "qubit": "q2",
    "markers_drawn": [],
@@ -2512,9 +2512,9 @@
   },
   {
    "case": "F14",
-   "exemplar": "SNU_1Q/#27/q17",
-   "file": "exemplars/F14/SNU_1Q_27_q17.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#27/q17",
+   "file": "exemplars/F14/lab-E_27_q17.png",
+   "chip": "lab-E",
    "run": "#27",
    "qubit": "q17",
    "markers_drawn": [
@@ -2527,9 +2527,9 @@
   },
   {
    "case": "F14",
-   "exemplar": "CQT/#169/q18",
-   "file": "exemplars/F14/CQT_169_q18.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#169/q18",
+   "file": "exemplars/F14/lab-B_169_q18.png",
+   "chip": "lab-B",
    "run": "#169",
    "qubit": "q18",
    "markers_drawn": [],
@@ -2540,9 +2540,9 @@
   },
   {
    "case": "F15",
-   "exemplar": "CQT/#95/q2",
-   "file": "exemplars/F15/CQT_95_q2.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#95/q2",
+   "file": "exemplars/F15/lab-B_95_q2.png",
+   "chip": "lab-B",
    "run": "#95",
    "qubit": "q2",
    "markers_drawn": [],
@@ -2553,9 +2553,9 @@
   },
   {
    "case": "F15",
-   "exemplar": "CQT/#163/q20",
-   "file": "exemplars/F15/CQT_163_q20.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#163/q20",
+   "file": "exemplars/F15/lab-B_163_q20.png",
+   "chip": "lab-B",
    "run": "#163",
    "qubit": "q20",
    "markers_drawn": [],
@@ -2566,9 +2566,9 @@
   },
   {
    "case": "F15",
-   "exemplar": "SNU_1Q/#24/q17",
-   "file": "exemplars/F15/SNU_1Q_24_q17.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#24/q17",
+   "file": "exemplars/F15/lab-E_24_q17.png",
+   "chip": "lab-E",
    "run": "#24",
    "qubit": "q17",
    "markers_drawn": [],
@@ -2579,9 +2579,9 @@
   },
   {
    "case": "F16",
-   "exemplar": "SNU_1Q/#13/q10",
-   "file": "exemplars/F16/SNU_1Q_13_q10.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#13/q10",
+   "file": "exemplars/F16/lab-E_13_q10.png",
+   "chip": "lab-E",
    "run": "#13",
    "qubit": "q10",
    "markers_drawn": [
@@ -2594,9 +2594,9 @@
   },
   {
    "case": "F16",
-   "exemplar": "SNU_1Q/#17/q10",
-   "file": "exemplars/F16/SNU_1Q_17_q10.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#17/q10",
+   "file": "exemplars/F16/lab-E_17_q10.png",
+   "chip": "lab-E",
    "run": "#17",
    "qubit": "q10",
    "markers_drawn": [
@@ -2609,9 +2609,9 @@
   },
   {
    "case": "F16",
-   "exemplar": "SNU_1Q/#1/q3",
-   "file": "exemplars/F16/SNU_1Q_1_q3.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#1/q3",
+   "file": "exemplars/F16/lab-E_1_q3.png",
+   "chip": "lab-E",
    "run": "#1",
    "qubit": "q3",
    "markers_drawn": [
@@ -2624,9 +2624,9 @@
   },
   {
    "case": "F17",
-   "exemplar": "CQT/#94/q2",
-   "file": "exemplars/F17/CQT_94_q2.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#94/q2",
+   "file": "exemplars/F17/lab-B_94_q2.png",
+   "chip": "lab-B",
    "run": "#94",
    "qubit": "q2",
    "markers_drawn": [],
@@ -2637,9 +2637,9 @@
   },
   {
    "case": "F17",
-   "exemplar": "CQT/#158/q8",
-   "file": "exemplars/F17/CQT_158_q8.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#158/q8",
+   "file": "exemplars/F17/lab-B_158_q8.png",
+   "chip": "lab-B",
    "run": "#158",
    "qubit": "q8",
    "markers_drawn": [],
@@ -2650,9 +2650,9 @@
   },
   {
    "case": "F17",
-   "exemplar": "SNU_1Q/#2/q2",
-   "file": "exemplars/F17/SNU_1Q_2_q2.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#2/q2",
+   "file": "exemplars/F17/lab-E_2_q2.png",
+   "chip": "lab-E",
    "run": "#2",
    "qubit": "q2",
    "markers_drawn": [],
@@ -2663,9 +2663,9 @@
   },
   {
    "case": "F18",
-   "exemplar": "AS_10TQ9TC/#227/q5",
-   "file": "exemplars/F18/AS_10TQ9TC_227_q5.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#227/q5",
+   "file": "exemplars/F18/lab-A_227_q5.png",
+   "chip": "lab-A",
    "run": "#227",
    "qubit": "q5",
    "markers_drawn": [
@@ -2678,9 +2678,9 @@
   },
   {
    "case": "F18",
-   "exemplar": "AS_10TQ9TC/#234/q5",
-   "file": "exemplars/F18/AS_10TQ9TC_234_q5.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#234/q5",
+   "file": "exemplars/F18/lab-A_234_q5.png",
+   "chip": "lab-A",
    "run": "#234",
    "qubit": "q5",
    "markers_drawn": [
@@ -2693,9 +2693,9 @@
   },
   {
    "case": "F19",
-   "exemplar": "CQT/#165/q10",
-   "file": "exemplars/F19/CQT_165_q10.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#165/q10",
+   "file": "exemplars/F19/lab-B_165_q10.png",
+   "chip": "lab-B",
    "run": "#165",
    "qubit": "q10",
    "markers_drawn": [],
@@ -2706,9 +2706,9 @@
   },
   {
    "case": "F19",
-   "exemplar": "KRISS_CR/#145/qB1",
-   "file": "exemplars/F19/KRISS_CR_145_qB1.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#145/qB1",
+   "file": "exemplars/F19/lab-D_145_qB1.png",
+   "chip": "lab-D",
    "run": "#145",
    "qubit": "qB1",
    "markers_drawn": [],
@@ -2719,9 +2719,9 @@
   },
   {
    "case": "F19",
-   "exemplar": "KRISS_CR/#146/qA6",
-   "file": "exemplars/F19/KRISS_CR_146_qA6.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#146/qA6",
+   "file": "exemplars/F19/lab-D_146_qA6.png",
+   "chip": "lab-D",
    "run": "#146",
    "qubit": "qA6",
    "markers_drawn": [
@@ -2734,9 +2734,9 @@
   },
   {
    "case": "F20",
-   "exemplar": "KRISS_CR/#141/qA3",
-   "file": "exemplars/F20/KRISS_CR_141_qA3.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#141/qA3",
+   "file": "exemplars/F20/lab-D_141_qA3.png",
+   "chip": "lab-D",
    "run": "#141",
    "qubit": "qA3",
    "markers_drawn": [
@@ -2749,9 +2749,9 @@
   },
   {
    "case": "F20",
-   "exemplar": "KRISS_CR/#154/qA1",
-   "file": "exemplars/F20/KRISS_CR_154_qA1.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#154/qA1",
+   "file": "exemplars/F20/lab-D_154_qA1.png",
+   "chip": "lab-D",
    "run": "#154",
    "qubit": "qA1",
    "markers_drawn": [
@@ -2764,9 +2764,9 @@
   },
   {
    "case": "F20",
-   "exemplar": "KRISS_CR/#143/qA1",
-   "file": "exemplars/F20/KRISS_CR_143_qA1.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#143/qA1",
+   "file": "exemplars/F20/lab-D_143_qA1.png",
+   "chip": "lab-D",
    "run": "#143",
    "qubit": "qA1",
    "markers_drawn": [],
@@ -2777,9 +2777,9 @@
   },
   {
    "case": "F21",
-   "exemplar": "KRISS_CR/#150/qA4",
-   "file": "exemplars/F21/KRISS_CR_150_qA4.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#150/qA4",
+   "file": "exemplars/F21/lab-D_150_qA4.png",
+   "chip": "lab-D",
    "run": "#150",
    "qubit": "qA4",
    "markers_drawn": [
@@ -2792,9 +2792,9 @@
   },
   {
    "case": "F21",
-   "exemplar": "KRISS_CR/#153/qA4",
-   "file": "exemplars/F21/KRISS_CR_153_qA4.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#153/qA4",
+   "file": "exemplars/F21/lab-D_153_qA4.png",
+   "chip": "lab-D",
    "run": "#153",
    "qubit": "qA4",
    "markers_drawn": [
@@ -2807,9 +2807,9 @@
   },
   {
    "case": "F21",
-   "exemplar": "KRISS_CR/#155/qA4",
-   "file": "exemplars/F21/KRISS_CR_155_qA4.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#155/qA4",
+   "file": "exemplars/F21/lab-D_155_qA4.png",
+   "chip": "lab-D",
    "run": "#155",
    "qubit": "qA4",
    "markers_drawn": [
@@ -2822,9 +2822,9 @@
   },
   {
    "case": "F22",
-   "exemplar": "KRISS_CR/#139/qA2",
-   "file": "exemplars/F22/KRISS_CR_139_qA2.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#139/qA2",
+   "file": "exemplars/F22/lab-D_139_qA2.png",
+   "chip": "lab-D",
    "run": "#139",
    "qubit": "qA2",
    "markers_drawn": [
@@ -2837,9 +2837,9 @@
   },
   {
    "case": "F22",
-   "exemplar": "KRISS_CR/#146/qB4",
-   "file": "exemplars/F22/KRISS_CR_146_qB4.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#146/qB4",
+   "file": "exemplars/F22/lab-D_146_qB4.png",
+   "chip": "lab-D",
    "run": "#146",
    "qubit": "qB4",
    "markers_drawn": [
@@ -2852,9 +2852,9 @@
   },
   {
    "case": "F22",
-   "exemplar": "KRISS_CR/#155/qB1",
-   "file": "exemplars/F22/KRISS_CR_155_qB1.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#155/qB1",
+   "file": "exemplars/F22/lab-D_155_qB1.png",
+   "chip": "lab-D",
    "run": "#155",
    "qubit": "qB1",
    "markers_drawn": [
@@ -2867,9 +2867,9 @@
   },
   {
    "case": "F23",
-   "exemplar": "CQT/#134/q6",
-   "file": "exemplars/F23/CQT_134_q6.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#134/q6",
+   "file": "exemplars/F23/lab-B_134_q6.png",
+   "chip": "lab-B",
    "run": "#134",
    "qubit": "q6",
    "markers_drawn": [
@@ -2882,9 +2882,9 @@
   },
   {
    "case": "F23",
-   "exemplar": "SNU_1Q/#1/q8",
-   "file": "exemplars/F23/SNU_1Q_1_q8.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#1/q8",
+   "file": "exemplars/F23/lab-E_1_q8.png",
+   "chip": "lab-E",
    "run": "#1",
    "qubit": "q8",
    "markers_drawn": [
@@ -2897,9 +2897,9 @@
   },
   {
    "case": "F23",
-   "exemplar": "SNU_1Q/#27/q15",
-   "file": "exemplars/F23/SNU_1Q_27_q15.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#27/q15",
+   "file": "exemplars/F23/lab-E_27_q15.png",
+   "chip": "lab-E",
    "run": "#27",
    "qubit": "q15",
    "markers_drawn": [
@@ -2912,9 +2912,9 @@
   },
   {
    "case": "F24",
-   "exemplar": "SNU_1Q/#27/q11",
-   "file": "exemplars/F24/SNU_1Q_27_q11.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#27/q11",
+   "file": "exemplars/F24/lab-E_27_q11.png",
+   "chip": "lab-E",
    "run": "#27",
    "qubit": "q11",
    "markers_drawn": [
@@ -2927,9 +2927,9 @@
   },
   {
    "case": "F24",
-   "exemplar": "SNU_1Q/#31/q11",
-   "file": "exemplars/F24/SNU_1Q_31_q11.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#31/q11",
+   "file": "exemplars/F24/lab-E_31_q11.png",
+   "chip": "lab-E",
    "run": "#31",
    "qubit": "q11",
    "markers_drawn": [
@@ -2942,9 +2942,9 @@
   },
   {
    "case": "F24",
-   "exemplar": "SNU_1Q/#35/q11",
-   "file": "exemplars/F24/SNU_1Q_35_q11.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#35/q11",
+   "file": "exemplars/F24/lab-E_35_q11.png",
+   "chip": "lab-E",
    "run": "#35",
    "qubit": "q11",
    "markers_drawn": [
@@ -2957,9 +2957,9 @@
   },
   {
    "case": "F24",
-   "exemplar": "IQCC_QOP37/#223/qA2",
-   "file": "exemplars/F24/IQCC_QOP37_223_qA2.png",
-   "chip": "IQCC_QOP37",
+   "exemplar": "lab-C/#223/qA2",
+   "file": "exemplars/F24/lab-C_223_qA2.png",
+   "chip": "lab-C",
    "run": "#223",
    "qubit": "qA2",
    "markers_drawn": [
@@ -2972,9 +2972,9 @@
   },
   {
    "case": "F25",
-   "exemplar": "SNU_1Q/#23/q9",
-   "file": "exemplars/F25/SNU_1Q_23_q9.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#23/q9",
+   "file": "exemplars/F25/lab-E_23_q9.png",
+   "chip": "lab-E",
    "run": "#23",
    "qubit": "q9",
    "markers_drawn": [],
@@ -2985,9 +2985,9 @@
   },
   {
    "case": "F25",
-   "exemplar": "SNU_1Q/#24/q9",
-   "file": "exemplars/F25/SNU_1Q_24_q9.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#24/q9",
+   "file": "exemplars/F25/lab-E_24_q9.png",
+   "chip": "lab-E",
    "run": "#24",
    "qubit": "q9",
    "markers_drawn": [
@@ -3000,9 +3000,9 @@
   },
   {
    "case": "F25",
-   "exemplar": "SNU_1Q/#23/q15",
-   "file": "exemplars/F25/SNU_1Q_23_q15.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#23/q15",
+   "file": "exemplars/F25/lab-E_23_q15.png",
+   "chip": "lab-E",
    "run": "#23",
    "qubit": "q15",
    "markers_drawn": [],
@@ -3013,9 +3013,9 @@
   },
   {
    "case": "F26",
-   "exemplar": "AS_10TQ9TC/#328/q7",
-   "file": "exemplars/F26/AS_10TQ9TC_328_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#328/q7",
+   "file": "exemplars/F26/lab-A_328_q7.png",
+   "chip": "lab-A",
    "run": "#328",
    "qubit": "q7",
    "markers_drawn": [
@@ -3028,9 +3028,9 @@
   },
   {
    "case": "F26",
-   "exemplar": "AS_10TQ9TC/#338/q7",
-   "file": "exemplars/F26/AS_10TQ9TC_338_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#338/q7",
+   "file": "exemplars/F26/lab-A_338_q7.png",
+   "chip": "lab-A",
    "run": "#338",
    "qubit": "q7",
    "markers_drawn": [
@@ -3043,9 +3043,9 @@
   },
   {
    "case": "F26",
-   "exemplar": "SNU_1Q/#13/q11",
-   "file": "exemplars/F26/SNU_1Q_13_q11.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#13/q11",
+   "file": "exemplars/F26/lab-E_13_q11.png",
+   "chip": "lab-E",
    "run": "#13",
    "qubit": "q11",
    "markers_drawn": [
@@ -3058,9 +3058,9 @@
   },
   {
    "case": "F27",
-   "exemplar": "SNU_1Q/#13/q10",
-   "file": "exemplars/F27/SNU_1Q_13_q10.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#13/q10",
+   "file": "exemplars/F27/lab-E_13_q10.png",
+   "chip": "lab-E",
    "run": "#13",
    "qubit": "q10",
    "markers_drawn": [
@@ -3073,9 +3073,9 @@
   },
   {
    "case": "F27",
-   "exemplar": "SNU_1Q/#13/q11",
-   "file": "exemplars/F27/SNU_1Q_13_q11.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#13/q11",
+   "file": "exemplars/F27/lab-E_13_q11.png",
+   "chip": "lab-E",
    "run": "#13",
    "qubit": "q11",
    "markers_drawn": [
@@ -3088,9 +3088,9 @@
   },
   {
    "case": "F27",
-   "exemplar": "SNU_1Q/#13/q17",
-   "file": "exemplars/F27/SNU_1Q_13_q17.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#13/q17",
+   "file": "exemplars/F27/lab-E_13_q17.png",
+   "chip": "lab-E",
    "run": "#13",
    "qubit": "q17",
    "markers_drawn": [
@@ -3103,9 +3103,9 @@
   },
   {
    "case": "F28",
-   "exemplar": "KRISS_CR/#153/qA4",
-   "file": "exemplars/F28/KRISS_CR_153_qA4.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#153/qA4",
+   "file": "exemplars/F28/lab-D_153_qA4.png",
+   "chip": "lab-D",
    "run": "#153",
    "qubit": "qA4",
    "markers_drawn": [
@@ -3118,9 +3118,9 @@
   },
   {
    "case": "F29",
-   "exemplar": "SNU_1Q/#12/q17",
-   "file": "exemplars/F29/SNU_1Q_12_q17.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#12/q17",
+   "file": "exemplars/F29/lab-E_12_q17.png",
+   "chip": "lab-E",
    "run": "#12",
    "qubit": "q17",
    "markers_drawn": [
@@ -3133,9 +3133,9 @@
   },
   {
    "case": "F29",
-   "exemplar": "SNU_1Q/#23/q6",
-   "file": "exemplars/F29/SNU_1Q_23_q6.png",
-   "chip": "SNU_1Q",
+   "exemplar": "lab-E/#23/q6",
+   "file": "exemplars/F29/lab-E_23_q6.png",
+   "chip": "lab-E",
    "run": "#23",
    "qubit": "q6",
    "markers_drawn": [
@@ -3148,9 +3148,9 @@
   },
   {
    "case": "F30",
-   "exemplar": "CQT/#158/q8",
-   "file": "exemplars/F30/CQT_158_q8.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#158/q8",
+   "file": "exemplars/F30/lab-B_158_q8.png",
+   "chip": "lab-B",
    "run": "#158",
    "qubit": "q8",
    "markers_drawn": [],
@@ -3161,9 +3161,9 @@
   },
   {
    "case": "F30",
-   "exemplar": "CQT/#169/q18",
-   "file": "exemplars/F30/CQT_169_q18.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#169/q18",
+   "file": "exemplars/F30/lab-B_169_q18.png",
+   "chip": "lab-B",
    "run": "#169",
    "qubit": "q18",
    "markers_drawn": [],
@@ -3174,9 +3174,9 @@
   },
   {
    "case": "F31",
-   "exemplar": "KRISS_CR/#147/qA3",
-   "file": "exemplars/F31/KRISS_CR_147_qA3.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#147/qA3",
+   "file": "exemplars/F31/lab-D_147_qA3.png",
+   "chip": "lab-D",
    "run": "#147",
    "qubit": "qA3",
    "markers_drawn": [
@@ -3189,9 +3189,9 @@
   },
   {
    "case": "F31",
-   "exemplar": "KRISS_CR/#146/qB1",
-   "file": "exemplars/F31/KRISS_CR_146_qB1.png",
-   "chip": "KRISS_CR",
+   "exemplar": "lab-D/#146/qB1",
+   "file": "exemplars/F31/lab-D_146_qB1.png",
+   "chip": "lab-D",
    "run": "#146",
    "qubit": "qB1",
    "markers_drawn": [
@@ -3205,47 +3205,47 @@
  ],
  "missing": [
   {
-   "exemplar": "IQCC_QOP37/#163/q2",
+   "exemplar": "lab-C/#163/q2",
    "case": "S8b",
    "why": "run folder not found on this machine"
   },
   {
-   "exemplar": "IQCC_QOP37/#110/qA1",
+   "exemplar": "lab-C/#110/qA1",
    "case": "X4",
    "why": "cube unreadable or target absent"
   },
   {
-   "exemplar": "IQCC_QOP37/#110/qA2",
+   "exemplar": "lab-C/#110/qA2",
    "case": "X4",
    "why": "cube unreadable or target absent"
   },
   {
-   "exemplar": "KRISS_CR/#112/qA1",
+   "exemplar": "lab-D/#112/qA1",
    "case": "F5",
    "why": "run folder not found on this machine"
   },
   {
-   "exemplar": "IQCC_QOP37/#163/q2",
+   "exemplar": "lab-C/#163/q2",
    "case": "F6",
    "why": "run folder not found on this machine"
   },
   {
-   "exemplar": "IQCC_QOP37/#351/qA1",
+   "exemplar": "lab-C/#351/qA1",
    "case": "F9",
    "why": "run folder not found on this machine"
   },
   {
-   "exemplar": "AS_10TQ9TC/#17/q5",
+   "exemplar": "lab-A/#17/q5",
    "case": "F16",
    "why": "run folder not found on this machine"
   },
   {
-   "exemplar": "IQCC_QOP37/#163/q2",
+   "exemplar": "lab-C/#163/q2",
    "case": "F17",
    "why": "run folder not found on this machine"
   },
   {
-   "exemplar": "IQCC_QOP37/#163/q2",
+   "exemplar": "lab-C/#163/q2",
    "case": "F29",
    "why": "run folder not found on this machine"
   }

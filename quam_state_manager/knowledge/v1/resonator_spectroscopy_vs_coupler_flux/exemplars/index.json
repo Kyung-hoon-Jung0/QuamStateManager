@@ -5,9 +5,9 @@
  "rendered": [
   {
    "case": "C1",
-   "exemplar": "AS_10TQ9TC/#230_07_resonator_spectroscopy_vs_coupler_flux_195913/coupler_q6_q7",
-   "file": "exemplars/C1/AS_10TQ9TC_230_coupler_q6_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#230_07_resonator_spectroscopy_vs_coupler_flux_195913/coupler_q6_q7",
+   "file": "exemplars/C1/lab-A_230_coupler_q6_q7.png",
+   "chip": "lab-A",
    "run": "#230_07_resonator_spectroscopy_vs_coupler_flux_195913",
    "qubit": "coupler_q6_q7",
    "markers_drawn": [
@@ -26,9 +26,9 @@
   },
   {
    "case": "C1",
-   "exemplar": "AS_10TQ9TC/#16_07_resonator_spectroscopy_vs_coupler_flux_042946/coupler_q6_q7",
-   "file": "exemplars/C1/AS_10TQ9TC_16_coupler_q6_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#16_07_resonator_spectroscopy_vs_coupler_flux_042946/coupler_q6_q7",
+   "file": "exemplars/C1/lab-A_16_coupler_q6_q7.png",
+   "chip": "lab-A",
    "run": "#16_07_resonator_spectroscopy_vs_coupler_flux_042946",
    "qubit": "coupler_q6_q7",
    "markers_drawn": [
@@ -47,9 +47,9 @@
   },
   {
    "case": "C1",
-   "exemplar": "CQT/#295_07_resonator_spectroscopy_vs_coupler_flux_101121/q4-5",
-   "file": "exemplars/C1/CQT_295_q4-5.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#295_07_resonator_spectroscopy_vs_coupler_flux_101121/q4-5",
+   "file": "exemplars/C1/lab-B_295_q4-5.png",
+   "chip": "lab-B",
    "run": "#295_07_resonator_spectroscopy_vs_coupler_flux_101121",
    "qubit": "q4-5",
    "markers_drawn": [
@@ -68,9 +68,9 @@
   },
   {
    "case": "C1",
-   "exemplar": "AS_10TQ9TC/#229_07_resonator_spectroscopy_vs_coupler_flux_195856/coupler_q6_q7",
-   "file": "exemplars/C1/AS_10TQ9TC_229_coupler_q6_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#229_07_resonator_spectroscopy_vs_coupler_flux_195856/coupler_q6_q7",
+   "file": "exemplars/C1/lab-A_229_coupler_q6_q7.png",
+   "chip": "lab-A",
    "run": "#229_07_resonator_spectroscopy_vs_coupler_flux_195856",
    "qubit": "coupler_q6_q7",
    "markers_drawn": [
@@ -89,9 +89,9 @@
   },
   {
    "case": "C2",
-   "exemplar": "AS_10TQ9TC/#15_07_resonator_spectroscopy_vs_coupler_flux_042919/coupler_q6_q7",
-   "file": "exemplars/C2/AS_10TQ9TC_15_coupler_q6_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#15_07_resonator_spectroscopy_vs_coupler_flux_042919/coupler_q6_q7",
+   "file": "exemplars/C2/lab-A_15_coupler_q6_q7.png",
+   "chip": "lab-A",
    "run": "#15_07_resonator_spectroscopy_vs_coupler_flux_042919",
    "qubit": "coupler_q6_q7",
    "markers_drawn": [
@@ -110,9 +110,9 @@
   },
   {
    "case": "C2",
-   "exemplar": "AS_10TQ9TC/#20_07_resonator_spectroscopy_vs_coupler_flux_043518/coupler_q6_q7",
-   "file": "exemplars/C2/AS_10TQ9TC_20_coupler_q6_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#20_07_resonator_spectroscopy_vs_coupler_flux_043518/coupler_q6_q7",
+   "file": "exemplars/C2/lab-A_20_coupler_q6_q7.png",
+   "chip": "lab-A",
    "run": "#20_07_resonator_spectroscopy_vs_coupler_flux_043518",
    "qubit": "coupler_q6_q7",
    "markers_drawn": [
@@ -131,9 +131,9 @@
   },
   {
    "case": "C2",
-   "exemplar": "AS_10TQ9TC/#18_07_resonator_spectroscopy_vs_coupler_flux_043402/coupler_q6_q7",
-   "file": "exemplars/C2/AS_10TQ9TC_18_coupler_q6_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#18_07_resonator_spectroscopy_vs_coupler_flux_043402/coupler_q6_q7",
+   "file": "exemplars/C2/lab-A_18_coupler_q6_q7.png",
+   "chip": "lab-A",
    "run": "#18_07_resonator_spectroscopy_vs_coupler_flux_043402",
    "qubit": "coupler_q6_q7",
    "markers_drawn": [
@@ -152,9 +152,9 @@
   },
   {
    "case": "C2",
-   "exemplar": "AS_10TQ9TC/#17_07_resonator_spectroscopy_vs_coupler_flux_043043/coupler_q6_q7",
-   "file": "exemplars/C2/AS_10TQ9TC_17_coupler_q6_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#17_07_resonator_spectroscopy_vs_coupler_flux_043043/coupler_q6_q7",
+   "file": "exemplars/C2/lab-A_17_coupler_q6_q7.png",
+   "chip": "lab-A",
    "run": "#17_07_resonator_spectroscopy_vs_coupler_flux_043043",
    "qubit": "coupler_q6_q7",
    "markers_drawn": [
@@ -173,9 +173,9 @@
   },
   {
    "case": "C3",
-   "exemplar": "AS_10TQ9TC/#14_07_resonator_spectroscopy_vs_coupler_flux_042859/coupler_q6_q7",
-   "file": "exemplars/C3/AS_10TQ9TC_14_coupler_q6_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#14_07_resonator_spectroscopy_vs_coupler_flux_042859/coupler_q6_q7",
+   "file": "exemplars/C3/lab-A_14_coupler_q6_q7.png",
+   "chip": "lab-A",
    "run": "#14_07_resonator_spectroscopy_vs_coupler_flux_042859",
    "qubit": "coupler_q6_q7",
    "markers_drawn": [],
@@ -191,9 +191,9 @@
   },
   {
    "case": "C4",
-   "exemplar": "CQT/#492_07_resonator_spectroscopy_vs_coupler_flux_182702/q3-8",
-   "file": "exemplars/C4/CQT_492_q3-8.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#492_07_resonator_spectroscopy_vs_coupler_flux_182702/q3-8",
+   "file": "exemplars/C4/lab-B_492_q3-8.png",
+   "chip": "lab-B",
    "run": "#492_07_resonator_spectroscopy_vs_coupler_flux_182702",
    "qubit": "q3-8",
    "markers_drawn": [
@@ -212,9 +212,9 @@
   },
   {
    "case": "C4",
-   "exemplar": "CQT/#1225_07_resonator_spectroscopy_vs_coupler_flux_024116/q14-15",
-   "file": "exemplars/C4/CQT_1225_q14-15.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#1225_07_resonator_spectroscopy_vs_coupler_flux_024116/q14-15",
+   "file": "exemplars/C4/lab-B_1225_q14-15.png",
+   "chip": "lab-B",
    "run": "#1225_07_resonator_spectroscopy_vs_coupler_flux_024116",
    "qubit": "q14-15",
    "markers_drawn": [
@@ -233,9 +233,9 @@
   },
   {
    "case": "C4",
-   "exemplar": "CQT/#494_07_resonator_spectroscopy_vs_coupler_flux_183045/q3-8",
-   "file": "exemplars/C4/CQT_494_q3-8.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#494_07_resonator_spectroscopy_vs_coupler_flux_183045/q3-8",
+   "file": "exemplars/C4/lab-B_494_q3-8.png",
+   "chip": "lab-B",
    "run": "#494_07_resonator_spectroscopy_vs_coupler_flux_183045",
    "qubit": "q3-8",
    "markers_drawn": [
@@ -254,9 +254,9 @@
   },
   {
    "case": "C4",
-   "exemplar": "CQT/#1238_07_resonator_spectroscopy_vs_coupler_flux_030255/q10-15",
-   "file": "exemplars/C4/CQT_1238_q10-15.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#1238_07_resonator_spectroscopy_vs_coupler_flux_030255/q10-15",
+   "file": "exemplars/C4/lab-B_1238_q10-15.png",
+   "chip": "lab-B",
    "run": "#1238_07_resonator_spectroscopy_vs_coupler_flux_030255",
    "qubit": "q10-15",
    "markers_drawn": [
@@ -275,9 +275,9 @@
   },
   {
    "case": "C4",
-   "exemplar": "CQT/#1271_07_resonator_spectroscopy_vs_coupler_flux_041455/q14-18",
-   "file": "exemplars/C4/CQT_1271_q14-18.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#1271_07_resonator_spectroscopy_vs_coupler_flux_041455/q14-18",
+   "file": "exemplars/C4/lab-B_1271_q14-18.png",
+   "chip": "lab-B",
    "run": "#1271_07_resonator_spectroscopy_vs_coupler_flux_041455",
    "qubit": "q14-18",
    "markers_drawn": [
@@ -296,9 +296,9 @@
   },
   {
    "case": "C5",
-   "exemplar": "CQT/#446_07_resonator_spectroscopy_vs_coupler_flux_171915/q1-4",
-   "file": "exemplars/C5/CQT_446_q1-4.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#446_07_resonator_spectroscopy_vs_coupler_flux_171915/q1-4",
+   "file": "exemplars/C5/lab-B_446_q1-4.png",
+   "chip": "lab-B",
    "run": "#446_07_resonator_spectroscopy_vs_coupler_flux_171915",
    "qubit": "q1-4",
    "markers_drawn": [
@@ -317,9 +317,9 @@
   },
   {
    "case": "C6",
-   "exemplar": "CQT/#259_07_resonator_spectroscopy_vs_coupler_flux_092808/q1-4",
-   "file": "exemplars/C6/CQT_259_q1-4.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#259_07_resonator_spectroscopy_vs_coupler_flux_092808/q1-4",
+   "file": "exemplars/C6/lab-B_259_q1-4.png",
+   "chip": "lab-B",
    "run": "#259_07_resonator_spectroscopy_vs_coupler_flux_092808",
    "qubit": "q1-4",
    "markers_drawn": [
@@ -338,9 +338,9 @@
   },
   {
    "case": "C6",
-   "exemplar": "CQT/#294_07_resonator_spectroscopy_vs_coupler_flux_101018/q3-4",
-   "file": "exemplars/C6/CQT_294_q3-4.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#294_07_resonator_spectroscopy_vs_coupler_flux_101018/q3-4",
+   "file": "exemplars/C6/lab-B_294_q3-4.png",
+   "chip": "lab-B",
    "run": "#294_07_resonator_spectroscopy_vs_coupler_flux_101018",
    "qubit": "q3-4",
    "markers_drawn": [
@@ -359,9 +359,9 @@
   },
   {
    "case": "C6",
-   "exemplar": "CQT/#297_07_resonator_spectroscopy_vs_coupler_flux_101237/q4-5",
-   "file": "exemplars/C6/CQT_297_q4-5.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#297_07_resonator_spectroscopy_vs_coupler_flux_101237/q4-5",
+   "file": "exemplars/C6/lab-B_297_q4-5.png",
+   "chip": "lab-B",
    "run": "#297_07_resonator_spectroscopy_vs_coupler_flux_101237",
    "qubit": "q4-5",
    "markers_drawn": [
@@ -380,9 +380,9 @@
   },
   {
    "case": "C7",
-   "exemplar": "CQT/#298_07_resonator_spectroscopy_vs_coupler_flux_101333/q4-9",
-   "file": "exemplars/C7/CQT_298_q4-9.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#298_07_resonator_spectroscopy_vs_coupler_flux_101333/q4-9",
+   "file": "exemplars/C7/lab-B_298_q4-9.png",
+   "chip": "lab-B",
    "run": "#298_07_resonator_spectroscopy_vs_coupler_flux_101333",
    "qubit": "q4-9",
    "markers_drawn": [
@@ -401,9 +401,9 @@
   },
   {
    "case": "C7",
-   "exemplar": "CQT/#299_07_resonator_spectroscopy_vs_coupler_flux_101411/q4-9",
-   "file": "exemplars/C7/CQT_299_q4-9.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#299_07_resonator_spectroscopy_vs_coupler_flux_101411/q4-9",
+   "file": "exemplars/C7/lab-B_299_q4-9.png",
+   "chip": "lab-B",
    "run": "#299_07_resonator_spectroscopy_vs_coupler_flux_101411",
    "qubit": "q4-9",
    "markers_drawn": [
@@ -422,9 +422,9 @@
   },
   {
    "case": "C7",
-   "exemplar": "AS_10TQ9TC/#309_07_resonator_spectroscopy_vs_coupler_flux_082718/coupler_q6_q7",
-   "file": "exemplars/C7/AS_10TQ9TC_309_coupler_q6_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#309_07_resonator_spectroscopy_vs_coupler_flux_082718/coupler_q6_q7",
+   "file": "exemplars/C7/lab-A_309_coupler_q6_q7.png",
+   "chip": "lab-A",
    "run": "#309_07_resonator_spectroscopy_vs_coupler_flux_082718",
    "qubit": "coupler_q6_q7",
    "markers_drawn": [
@@ -443,9 +443,9 @@
   },
   {
    "case": "C7",
-   "exemplar": "CQT/#258_07_resonator_spectroscopy_vs_coupler_flux_092731/q1-4",
-   "file": "exemplars/C7/CQT_258_q1-4.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#258_07_resonator_spectroscopy_vs_coupler_flux_092731/q1-4",
+   "file": "exemplars/C7/lab-B_258_q1-4.png",
+   "chip": "lab-B",
    "run": "#258_07_resonator_spectroscopy_vs_coupler_flux_092731",
    "qubit": "q1-4",
    "markers_drawn": [
@@ -464,9 +464,9 @@
   },
   {
    "case": "C9",
-   "exemplar": "AS_10TQ9TC/#310_07_resonator_spectroscopy_vs_coupler_flux_083041/coupler_q6_q7",
-   "file": "exemplars/C9/AS_10TQ9TC_310_coupler_q6_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#310_07_resonator_spectroscopy_vs_coupler_flux_083041/coupler_q6_q7",
+   "file": "exemplars/C9/lab-A_310_coupler_q6_q7.png",
+   "chip": "lab-A",
    "run": "#310_07_resonator_spectroscopy_vs_coupler_flux_083041",
    "qubit": "coupler_q6_q7",
    "markers_drawn": [
@@ -485,9 +485,9 @@
   },
   {
    "case": "C10",
-   "exemplar": "CQT/#312_07_resonator_spectroscopy_vs_coupler_flux_102441/q4-9",
-   "file": "exemplars/C10/CQT_312_q4-9.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#312_07_resonator_spectroscopy_vs_coupler_flux_102441/q4-9",
+   "file": "exemplars/C10/lab-B_312_q4-9.png",
+   "chip": "lab-B",
    "run": "#312_07_resonator_spectroscopy_vs_coupler_flux_102441",
    "qubit": "q4-9",
    "markers_drawn": [
@@ -506,9 +506,9 @@
   },
   {
    "case": "C10",
-   "exemplar": "CQT/#311_07_resonator_spectroscopy_vs_coupler_flux_102410/q4-9",
-   "file": "exemplars/C10/CQT_311_q4-9.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#311_07_resonator_spectroscopy_vs_coupler_flux_102410/q4-9",
+   "file": "exemplars/C10/lab-B_311_q4-9.png",
+   "chip": "lab-B",
    "run": "#311_07_resonator_spectroscopy_vs_coupler_flux_102410",
    "qubit": "q4-9",
    "markers_drawn": [
@@ -527,9 +527,9 @@
   },
   {
    "case": "C13",
-   "exemplar": "CQT/#1174_07_resonator_spectroscopy_vs_coupler_flux_014604/q13-14",
-   "file": "exemplars/C13/CQT_1174_q13-14.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#1174_07_resonator_spectroscopy_vs_coupler_flux_014604/q13-14",
+   "file": "exemplars/C13/lab-B_1174_q13-14.png",
+   "chip": "lab-B",
    "run": "#1174_07_resonator_spectroscopy_vs_coupler_flux_014604",
    "qubit": "q13-14",
    "markers_drawn": [
@@ -548,9 +548,9 @@
   },
   {
    "case": "C13",
-   "exemplar": "CQT/#1177_07_resonator_spectroscopy_vs_coupler_flux_014920/q13-14",
-   "file": "exemplars/C13/CQT_1177_q13-14.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#1177_07_resonator_spectroscopy_vs_coupler_flux_014920/q13-14",
+   "file": "exemplars/C13/lab-B_1177_q13-14.png",
+   "chip": "lab-B",
    "run": "#1177_07_resonator_spectroscopy_vs_coupler_flux_014920",
    "qubit": "q13-14",
    "markers_drawn": [
@@ -569,9 +569,9 @@
   },
   {
    "case": "C13",
-   "exemplar": "CQT/#1176_07_resonator_spectroscopy_vs_coupler_flux_014759/q13-14",
-   "file": "exemplars/C13/CQT_1176_q13-14.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#1176_07_resonator_spectroscopy_vs_coupler_flux_014759/q13-14",
+   "file": "exemplars/C13/lab-B_1176_q13-14.png",
+   "chip": "lab-B",
    "run": "#1176_07_resonator_spectroscopy_vs_coupler_flux_014759",
    "qubit": "q13-14",
    "markers_drawn": [
@@ -590,9 +590,9 @@
   },
   {
    "case": "C13",
-   "exemplar": "CQT/#1175_07_resonator_spectroscopy_vs_coupler_flux_014702/q13-14",
-   "file": "exemplars/C13/CQT_1175_q13-14.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#1175_07_resonator_spectroscopy_vs_coupler_flux_014702/q13-14",
+   "file": "exemplars/C13/lab-B_1175_q13-14.png",
+   "chip": "lab-B",
    "run": "#1175_07_resonator_spectroscopy_vs_coupler_flux_014702",
    "qubit": "q13-14",
    "markers_drawn": [
@@ -611,9 +611,9 @@
   },
   {
    "case": "C14",
-   "exemplar": "CQT/#489_07_resonator_spectroscopy_vs_coupler_flux_182144/q3-8",
-   "file": "exemplars/C14/CQT_489_q3-8.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#489_07_resonator_spectroscopy_vs_coupler_flux_182144/q3-8",
+   "file": "exemplars/C14/lab-B_489_q3-8.png",
+   "chip": "lab-B",
    "run": "#489_07_resonator_spectroscopy_vs_coupler_flux_182144",
    "qubit": "q3-8",
    "markers_drawn": [
@@ -632,9 +632,9 @@
   },
   {
    "case": "C15",
-   "exemplar": "AS_10TQ9TC/#230_07_resonator_spectroscopy_vs_coupler_flux_195913/coupler_q6_q7",
-   "file": "exemplars/C15/AS_10TQ9TC_230_coupler_q6_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#230_07_resonator_spectroscopy_vs_coupler_flux_195913/coupler_q6_q7",
+   "file": "exemplars/C15/lab-A_230_coupler_q6_q7.png",
+   "chip": "lab-A",
    "run": "#230_07_resonator_spectroscopy_vs_coupler_flux_195913",
    "qubit": "coupler_q6_q7",
    "markers_drawn": [
@@ -653,9 +653,9 @@
   },
   {
    "case": "C15",
-   "exemplar": "AS_10TQ9TC/#16_07_resonator_spectroscopy_vs_coupler_flux_042946/coupler_q6_q7",
-   "file": "exemplars/C15/AS_10TQ9TC_16_coupler_q6_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#16_07_resonator_spectroscopy_vs_coupler_flux_042946/coupler_q6_q7",
+   "file": "exemplars/C15/lab-A_16_coupler_q6_q7.png",
+   "chip": "lab-A",
    "run": "#16_07_resonator_spectroscopy_vs_coupler_flux_042946",
    "qubit": "coupler_q6_q7",
    "markers_drawn": [
@@ -674,9 +674,9 @@
   },
   {
    "case": "C16",
-   "exemplar": "AS_10TQ9TC/#16_07_resonator_spectroscopy_vs_coupler_flux_042946/coupler_q6_q7",
-   "file": "exemplars/C16/AS_10TQ9TC_16_coupler_q6_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#16_07_resonator_spectroscopy_vs_coupler_flux_042946/coupler_q6_q7",
+   "file": "exemplars/C16/lab-A_16_coupler_q6_q7.png",
+   "chip": "lab-A",
    "run": "#16_07_resonator_spectroscopy_vs_coupler_flux_042946",
    "qubit": "coupler_q6_q7",
    "markers_drawn": [
@@ -695,9 +695,9 @@
   },
   {
    "case": "C17",
-   "exemplar": "CQT/#493_07_resonator_spectroscopy_vs_coupler_flux_182834/q3-8",
-   "file": "exemplars/C17/CQT_493_q3-8.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#493_07_resonator_spectroscopy_vs_coupler_flux_182834/q3-8",
+   "file": "exemplars/C17/lab-B_493_q3-8.png",
+   "chip": "lab-B",
    "run": "#493_07_resonator_spectroscopy_vs_coupler_flux_182834",
    "qubit": "q3-8",
    "markers_drawn": [
@@ -716,9 +716,9 @@
   },
   {
    "case": "F1",
-   "exemplar": "CQT/#489_07_resonator_spectroscopy_vs_coupler_flux_182144/q3-8",
-   "file": "exemplars/F1/CQT_489_q3-8.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#489_07_resonator_spectroscopy_vs_coupler_flux_182144/q3-8",
+   "file": "exemplars/F1/lab-B_489_q3-8.png",
+   "chip": "lab-B",
    "run": "#489_07_resonator_spectroscopy_vs_coupler_flux_182144",
    "qubit": "q3-8",
    "markers_drawn": [
@@ -737,9 +737,9 @@
   },
   {
    "case": "F1",
-   "exemplar": "CQT/#1174_07_resonator_spectroscopy_vs_coupler_flux_014604/q13-14",
-   "file": "exemplars/F1/CQT_1174_q13-14.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#1174_07_resonator_spectroscopy_vs_coupler_flux_014604/q13-14",
+   "file": "exemplars/F1/lab-B_1174_q13-14.png",
+   "chip": "lab-B",
    "run": "#1174_07_resonator_spectroscopy_vs_coupler_flux_014604",
    "qubit": "q13-14",
    "markers_drawn": [
@@ -758,9 +758,9 @@
   },
   {
    "case": "F1",
-   "exemplar": "CQT/#1176_07_resonator_spectroscopy_vs_coupler_flux_014759/q13-14",
-   "file": "exemplars/F1/CQT_1176_q13-14.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#1176_07_resonator_spectroscopy_vs_coupler_flux_014759/q13-14",
+   "file": "exemplars/F1/lab-B_1176_q13-14.png",
+   "chip": "lab-B",
    "run": "#1176_07_resonator_spectroscopy_vs_coupler_flux_014759",
    "qubit": "q13-14",
    "markers_drawn": [
@@ -779,9 +779,9 @@
   },
   {
    "case": "F2",
-   "exemplar": "CQT/#1177_07_resonator_spectroscopy_vs_coupler_flux_014920/q13-14",
-   "file": "exemplars/F2/CQT_1177_q13-14.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#1177_07_resonator_spectroscopy_vs_coupler_flux_014920/q13-14",
+   "file": "exemplars/F2/lab-B_1177_q13-14.png",
+   "chip": "lab-B",
    "run": "#1177_07_resonator_spectroscopy_vs_coupler_flux_014920",
    "qubit": "q13-14",
    "markers_drawn": [
@@ -800,9 +800,9 @@
   },
   {
    "case": "F2",
-   "exemplar": "CQT/#489_07_resonator_spectroscopy_vs_coupler_flux_182144/q3-8",
-   "file": "exemplars/F2/CQT_489_q3-8.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#489_07_resonator_spectroscopy_vs_coupler_flux_182144/q3-8",
+   "file": "exemplars/F2/lab-B_489_q3-8.png",
+   "chip": "lab-B",
    "run": "#489_07_resonator_spectroscopy_vs_coupler_flux_182144",
    "qubit": "q3-8",
    "markers_drawn": [
@@ -821,9 +821,9 @@
   },
   {
    "case": "F2",
-   "exemplar": "CQT/#1174_07_resonator_spectroscopy_vs_coupler_flux_014604/q13-14",
-   "file": "exemplars/F2/CQT_1174_q13-14.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#1174_07_resonator_spectroscopy_vs_coupler_flux_014604/q13-14",
+   "file": "exemplars/F2/lab-B_1174_q13-14.png",
+   "chip": "lab-B",
    "run": "#1174_07_resonator_spectroscopy_vs_coupler_flux_014604",
    "qubit": "q13-14",
    "markers_drawn": [
@@ -842,9 +842,9 @@
   },
   {
    "case": "F3",
-   "exemplar": "CQT/#1225_07_resonator_spectroscopy_vs_coupler_flux_024116/q14-15",
-   "file": "exemplars/F3/CQT_1225_q14-15.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#1225_07_resonator_spectroscopy_vs_coupler_flux_024116/q14-15",
+   "file": "exemplars/F3/lab-B_1225_q14-15.png",
+   "chip": "lab-B",
    "run": "#1225_07_resonator_spectroscopy_vs_coupler_flux_024116",
    "qubit": "q14-15",
    "markers_drawn": [
@@ -863,9 +863,9 @@
   },
   {
    "case": "F3",
-   "exemplar": "CQT/#494_07_resonator_spectroscopy_vs_coupler_flux_183045/q3-8",
-   "file": "exemplars/F3/CQT_494_q3-8.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#494_07_resonator_spectroscopy_vs_coupler_flux_183045/q3-8",
+   "file": "exemplars/F3/lab-B_494_q3-8.png",
+   "chip": "lab-B",
    "run": "#494_07_resonator_spectroscopy_vs_coupler_flux_183045",
    "qubit": "q3-8",
    "markers_drawn": [
@@ -884,9 +884,9 @@
   },
   {
    "case": "F3",
-   "exemplar": "CQT/#446_07_resonator_spectroscopy_vs_coupler_flux_171915/q1-4",
-   "file": "exemplars/F3/CQT_446_q1-4.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#446_07_resonator_spectroscopy_vs_coupler_flux_171915/q1-4",
+   "file": "exemplars/F3/lab-B_446_q1-4.png",
+   "chip": "lab-B",
    "run": "#446_07_resonator_spectroscopy_vs_coupler_flux_171915",
    "qubit": "q1-4",
    "markers_drawn": [
@@ -905,9 +905,9 @@
   },
   {
    "case": "F3",
-   "exemplar": "CQT/#298_07_resonator_spectroscopy_vs_coupler_flux_101333/q4-9",
-   "file": "exemplars/F3/CQT_298_q4-9.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#298_07_resonator_spectroscopy_vs_coupler_flux_101333/q4-9",
+   "file": "exemplars/F3/lab-B_298_q4-9.png",
+   "chip": "lab-B",
    "run": "#298_07_resonator_spectroscopy_vs_coupler_flux_101333",
    "qubit": "q4-9",
    "markers_drawn": [
@@ -926,9 +926,9 @@
   },
   {
    "case": "F4",
-   "exemplar": "CQT/#1271_07_resonator_spectroscopy_vs_coupler_flux_041455/q14-18",
-   "file": "exemplars/F4/CQT_1271_q14-18.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#1271_07_resonator_spectroscopy_vs_coupler_flux_041455/q14-18",
+   "file": "exemplars/F4/lab-B_1271_q14-18.png",
+   "chip": "lab-B",
    "run": "#1271_07_resonator_spectroscopy_vs_coupler_flux_041455",
    "qubit": "q14-18",
    "markers_drawn": [
@@ -947,9 +947,9 @@
   },
   {
    "case": "F4",
-   "exemplar": "CQT/#1238_07_resonator_spectroscopy_vs_coupler_flux_030255/q10-15",
-   "file": "exemplars/F4/CQT_1238_q10-15.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#1238_07_resonator_spectroscopy_vs_coupler_flux_030255/q10-15",
+   "file": "exemplars/F4/lab-B_1238_q10-15.png",
+   "chip": "lab-B",
    "run": "#1238_07_resonator_spectroscopy_vs_coupler_flux_030255",
    "qubit": "q10-15",
    "markers_drawn": [
@@ -968,9 +968,9 @@
   },
   {
    "case": "F4",
-   "exemplar": "CQT/#493_07_resonator_spectroscopy_vs_coupler_flux_182834/q3-8",
-   "file": "exemplars/F4/CQT_493_q3-8.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#493_07_resonator_spectroscopy_vs_coupler_flux_182834/q3-8",
+   "file": "exemplars/F4/lab-B_493_q3-8.png",
+   "chip": "lab-B",
    "run": "#493_07_resonator_spectroscopy_vs_coupler_flux_182834",
    "qubit": "q3-8",
    "markers_drawn": [
@@ -989,9 +989,9 @@
   },
   {
    "case": "F5",
-   "exemplar": "CQT/#299_07_resonator_spectroscopy_vs_coupler_flux_101411/q4-9",
-   "file": "exemplars/F5/CQT_299_q4-9.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#299_07_resonator_spectroscopy_vs_coupler_flux_101411/q4-9",
+   "file": "exemplars/F5/lab-B_299_q4-9.png",
+   "chip": "lab-B",
    "run": "#299_07_resonator_spectroscopy_vs_coupler_flux_101411",
    "qubit": "q4-9",
    "markers_drawn": [
@@ -1010,9 +1010,9 @@
   },
   {
    "case": "F5",
-   "exemplar": "CQT/#1175_07_resonator_spectroscopy_vs_coupler_flux_014702/q13-14",
-   "file": "exemplars/F5/CQT_1175_q13-14.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#1175_07_resonator_spectroscopy_vs_coupler_flux_014702/q13-14",
+   "file": "exemplars/F5/lab-B_1175_q13-14.png",
+   "chip": "lab-B",
    "run": "#1175_07_resonator_spectroscopy_vs_coupler_flux_014702",
    "qubit": "q13-14",
    "markers_drawn": [
@@ -1031,9 +1031,9 @@
   },
   {
    "case": "F5",
-   "exemplar": "CQT/#1176_07_resonator_spectroscopy_vs_coupler_flux_014759/q13-14",
-   "file": "exemplars/F5/CQT_1176_q13-14.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#1176_07_resonator_spectroscopy_vs_coupler_flux_014759/q13-14",
+   "file": "exemplars/F5/lab-B_1176_q13-14.png",
+   "chip": "lab-B",
    "run": "#1176_07_resonator_spectroscopy_vs_coupler_flux_014759",
    "qubit": "q13-14",
    "markers_drawn": [
@@ -1052,9 +1052,9 @@
   },
   {
    "case": "F6",
-   "exemplar": "CQT/#312_07_resonator_spectroscopy_vs_coupler_flux_102441/q4-9",
-   "file": "exemplars/F6/CQT_312_q4-9.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#312_07_resonator_spectroscopy_vs_coupler_flux_102441/q4-9",
+   "file": "exemplars/F6/lab-B_312_q4-9.png",
+   "chip": "lab-B",
    "run": "#312_07_resonator_spectroscopy_vs_coupler_flux_102441",
    "qubit": "q4-9",
    "markers_drawn": [
@@ -1073,9 +1073,9 @@
   },
   {
    "case": "F6",
-   "exemplar": "CQT/#311_07_resonator_spectroscopy_vs_coupler_flux_102410/q4-9",
-   "file": "exemplars/F6/CQT_311_q4-9.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#311_07_resonator_spectroscopy_vs_coupler_flux_102410/q4-9",
+   "file": "exemplars/F6/lab-B_311_q4-9.png",
+   "chip": "lab-B",
    "run": "#311_07_resonator_spectroscopy_vs_coupler_flux_102410",
    "qubit": "q4-9",
    "markers_drawn": [
@@ -1094,9 +1094,9 @@
   },
   {
    "case": "F6",
-   "exemplar": "CQT/#259_07_resonator_spectroscopy_vs_coupler_flux_092808/q1-4",
-   "file": "exemplars/F6/CQT_259_q1-4.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#259_07_resonator_spectroscopy_vs_coupler_flux_092808/q1-4",
+   "file": "exemplars/F6/lab-B_259_q1-4.png",
+   "chip": "lab-B",
    "run": "#259_07_resonator_spectroscopy_vs_coupler_flux_092808",
    "qubit": "q1-4",
    "markers_drawn": [
@@ -1115,9 +1115,9 @@
   },
   {
    "case": "F7",
-   "exemplar": "CQT/#1174_07_resonator_spectroscopy_vs_coupler_flux_014604/q13-14",
-   "file": "exemplars/F7/CQT_1174_q13-14.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#1174_07_resonator_spectroscopy_vs_coupler_flux_014604/q13-14",
+   "file": "exemplars/F7/lab-B_1174_q13-14.png",
+   "chip": "lab-B",
    "run": "#1174_07_resonator_spectroscopy_vs_coupler_flux_014604",
    "qubit": "q13-14",
    "markers_drawn": [
@@ -1136,9 +1136,9 @@
   },
   {
    "case": "F7",
-   "exemplar": "CQT/#489_07_resonator_spectroscopy_vs_coupler_flux_182144/q3-8",
-   "file": "exemplars/F7/CQT_489_q3-8.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#489_07_resonator_spectroscopy_vs_coupler_flux_182144/q3-8",
+   "file": "exemplars/F7/lab-B_489_q3-8.png",
+   "chip": "lab-B",
    "run": "#489_07_resonator_spectroscopy_vs_coupler_flux_182144",
    "qubit": "q3-8",
    "markers_drawn": [
@@ -1157,9 +1157,9 @@
   },
   {
    "case": "F7",
-   "exemplar": "AS_10TQ9TC/#310_07_resonator_spectroscopy_vs_coupler_flux_083041/coupler_q6_q7",
-   "file": "exemplars/F7/AS_10TQ9TC_310_coupler_q6_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#310_07_resonator_spectroscopy_vs_coupler_flux_083041/coupler_q6_q7",
+   "file": "exemplars/F7/lab-A_310_coupler_q6_q7.png",
+   "chip": "lab-A",
    "run": "#310_07_resonator_spectroscopy_vs_coupler_flux_083041",
    "qubit": "coupler_q6_q7",
    "markers_drawn": [
@@ -1178,9 +1178,9 @@
   },
   {
    "case": "F8",
-   "exemplar": "CQT/#1248_07_resonator_spectroscopy_vs_coupler_flux_031541/q9-10",
-   "file": "exemplars/F8/CQT_1248_q9-10.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#1248_07_resonator_spectroscopy_vs_coupler_flux_031541/q9-10",
+   "file": "exemplars/F8/lab-B_1248_q9-10.png",
+   "chip": "lab-B",
    "run": "#1248_07_resonator_spectroscopy_vs_coupler_flux_031541",
    "qubit": "q9-10",
    "markers_drawn": [
@@ -1199,9 +1199,9 @@
   },
   {
    "case": "F8",
-   "exemplar": "CQT/#295_07_resonator_spectroscopy_vs_coupler_flux_101121/q4-5",
-   "file": "exemplars/F8/CQT_295_q4-5.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#295_07_resonator_spectroscopy_vs_coupler_flux_101121/q4-5",
+   "file": "exemplars/F8/lab-B_295_q4-5.png",
+   "chip": "lab-B",
    "run": "#295_07_resonator_spectroscopy_vs_coupler_flux_101121",
    "qubit": "q4-5",
    "markers_drawn": [
@@ -1220,9 +1220,9 @@
   },
   {
    "case": "F9",
-   "exemplar": "AS_10TQ9TC/#230_07_resonator_spectroscopy_vs_coupler_flux_195913/coupler_q6_q7",
-   "file": "exemplars/F9/AS_10TQ9TC_230_coupler_q6_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#230_07_resonator_spectroscopy_vs_coupler_flux_195913/coupler_q6_q7",
+   "file": "exemplars/F9/lab-A_230_coupler_q6_q7.png",
+   "chip": "lab-A",
    "run": "#230_07_resonator_spectroscopy_vs_coupler_flux_195913",
    "qubit": "coupler_q6_q7",
    "markers_drawn": [
@@ -1241,9 +1241,9 @@
   },
   {
    "case": "F9",
-   "exemplar": "AS_10TQ9TC/#229_07_resonator_spectroscopy_vs_coupler_flux_195856/coupler_q6_q7",
-   "file": "exemplars/F9/AS_10TQ9TC_229_coupler_q6_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#229_07_resonator_spectroscopy_vs_coupler_flux_195856/coupler_q6_q7",
+   "file": "exemplars/F9/lab-A_229_coupler_q6_q7.png",
+   "chip": "lab-A",
    "run": "#229_07_resonator_spectroscopy_vs_coupler_flux_195856",
    "qubit": "coupler_q6_q7",
    "markers_drawn": [
@@ -1262,9 +1262,9 @@
   },
   {
    "case": "F10",
-   "exemplar": "AS_10TQ9TC/#229_07_resonator_spectroscopy_vs_coupler_flux_195856/coupler_q6_q7",
-   "file": "exemplars/F10/AS_10TQ9TC_229_coupler_q6_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#229_07_resonator_spectroscopy_vs_coupler_flux_195856/coupler_q6_q7",
+   "file": "exemplars/F10/lab-A_229_coupler_q6_q7.png",
+   "chip": "lab-A",
    "run": "#229_07_resonator_spectroscopy_vs_coupler_flux_195856",
    "qubit": "coupler_q6_q7",
    "markers_drawn": [
@@ -1283,9 +1283,9 @@
   },
   {
    "case": "F10",
-   "exemplar": "AS_10TQ9TC/#309_07_resonator_spectroscopy_vs_coupler_flux_082718/coupler_q6_q7",
-   "file": "exemplars/F10/AS_10TQ9TC_309_coupler_q6_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#309_07_resonator_spectroscopy_vs_coupler_flux_082718/coupler_q6_q7",
+   "file": "exemplars/F10/lab-A_309_coupler_q6_q7.png",
+   "chip": "lab-A",
    "run": "#309_07_resonator_spectroscopy_vs_coupler_flux_082718",
    "qubit": "coupler_q6_q7",
    "markers_drawn": [
@@ -1304,9 +1304,9 @@
   },
   {
    "case": "F10",
-   "exemplar": "AS_10TQ9TC/#20_07_resonator_spectroscopy_vs_coupler_flux_043518/coupler_q6_q7",
-   "file": "exemplars/F10/AS_10TQ9TC_20_coupler_q6_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#20_07_resonator_spectroscopy_vs_coupler_flux_043518/coupler_q6_q7",
+   "file": "exemplars/F10/lab-A_20_coupler_q6_q7.png",
+   "chip": "lab-A",
    "run": "#20_07_resonator_spectroscopy_vs_coupler_flux_043518",
    "qubit": "coupler_q6_q7",
    "markers_drawn": [
@@ -1325,9 +1325,9 @@
   },
   {
    "case": "F11",
-   "exemplar": "AS_10TQ9TC/#16_07_resonator_spectroscopy_vs_coupler_flux_042946/coupler_q6_q7",
-   "file": "exemplars/F11/AS_10TQ9TC_16_coupler_q6_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#16_07_resonator_spectroscopy_vs_coupler_flux_042946/coupler_q6_q7",
+   "file": "exemplars/F11/lab-A_16_coupler_q6_q7.png",
+   "chip": "lab-A",
    "run": "#16_07_resonator_spectroscopy_vs_coupler_flux_042946",
    "qubit": "coupler_q6_q7",
    "markers_drawn": [
@@ -1346,9 +1346,9 @@
   },
   {
    "case": "F11",
-   "exemplar": "AS_10TQ9TC/#17_07_resonator_spectroscopy_vs_coupler_flux_043043/coupler_q6_q7",
-   "file": "exemplars/F11/AS_10TQ9TC_17_coupler_q6_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#17_07_resonator_spectroscopy_vs_coupler_flux_043043/coupler_q6_q7",
+   "file": "exemplars/F11/lab-A_17_coupler_q6_q7.png",
+   "chip": "lab-A",
    "run": "#17_07_resonator_spectroscopy_vs_coupler_flux_043043",
    "qubit": "coupler_q6_q7",
    "markers_drawn": [
@@ -1367,9 +1367,9 @@
   },
   {
    "case": "F11",
-   "exemplar": "CQT/#1175_07_resonator_spectroscopy_vs_coupler_flux_014702/q13-14",
-   "file": "exemplars/F11/CQT_1175_q13-14.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#1175_07_resonator_spectroscopy_vs_coupler_flux_014702/q13-14",
+   "file": "exemplars/F11/lab-B_1175_q13-14.png",
+   "chip": "lab-B",
    "run": "#1175_07_resonator_spectroscopy_vs_coupler_flux_014702",
    "qubit": "q13-14",
    "markers_drawn": [
@@ -1388,9 +1388,9 @@
   },
   {
    "case": "F12",
-   "exemplar": "AS_10TQ9TC/#18_07_resonator_spectroscopy_vs_coupler_flux_043402/coupler_q6_q7",
-   "file": "exemplars/F12/AS_10TQ9TC_18_coupler_q6_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#18_07_resonator_spectroscopy_vs_coupler_flux_043402/coupler_q6_q7",
+   "file": "exemplars/F12/lab-A_18_coupler_q6_q7.png",
+   "chip": "lab-A",
    "run": "#18_07_resonator_spectroscopy_vs_coupler_flux_043402",
    "qubit": "coupler_q6_q7",
    "markers_drawn": [
@@ -1409,9 +1409,9 @@
   },
   {
    "case": "F12",
-   "exemplar": "AS_10TQ9TC/#310_07_resonator_spectroscopy_vs_coupler_flux_083041/coupler_q6_q7",
-   "file": "exemplars/F12/AS_10TQ9TC_310_coupler_q6_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#310_07_resonator_spectroscopy_vs_coupler_flux_083041/coupler_q6_q7",
+   "file": "exemplars/F12/lab-A_310_coupler_q6_q7.png",
+   "chip": "lab-A",
    "run": "#310_07_resonator_spectroscopy_vs_coupler_flux_083041",
    "qubit": "coupler_q6_q7",
    "markers_drawn": [
@@ -1430,9 +1430,9 @@
   },
   {
    "case": "F12",
-   "exemplar": "AS_10TQ9TC/#20_07_resonator_spectroscopy_vs_coupler_flux_043518/coupler_q6_q7",
-   "file": "exemplars/F12/AS_10TQ9TC_20_coupler_q6_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#20_07_resonator_spectroscopy_vs_coupler_flux_043518/coupler_q6_q7",
+   "file": "exemplars/F12/lab-A_20_coupler_q6_q7.png",
+   "chip": "lab-A",
    "run": "#20_07_resonator_spectroscopy_vs_coupler_flux_043518",
    "qubit": "coupler_q6_q7",
    "markers_drawn": [
@@ -1451,9 +1451,9 @@
   },
   {
    "case": "F13",
-   "exemplar": "CQT/#1226_07_resonator_spectroscopy_vs_coupler_flux_024527/q14-15",
-   "file": "exemplars/F13/CQT_1226_q14-15.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#1226_07_resonator_spectroscopy_vs_coupler_flux_024527/q14-15",
+   "file": "exemplars/F13/lab-B_1226_q14-15.png",
+   "chip": "lab-B",
    "run": "#1226_07_resonator_spectroscopy_vs_coupler_flux_024527",
    "qubit": "q14-15",
    "markers_drawn": [
@@ -1472,9 +1472,9 @@
   },
   {
    "case": "F13",
-   "exemplar": "CQT/#1225_07_resonator_spectroscopy_vs_coupler_flux_024116/q14-15",
-   "file": "exemplars/F13/CQT_1225_q14-15.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#1225_07_resonator_spectroscopy_vs_coupler_flux_024116/q14-15",
+   "file": "exemplars/F13/lab-B_1225_q14-15.png",
+   "chip": "lab-B",
    "run": "#1225_07_resonator_spectroscopy_vs_coupler_flux_024116",
    "qubit": "q14-15",
    "markers_drawn": [
@@ -1493,9 +1493,9 @@
   },
   {
    "case": "F13",
-   "exemplar": "CQT/#294_07_resonator_spectroscopy_vs_coupler_flux_101018/q3-4",
-   "file": "exemplars/F13/CQT_294_q3-4.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#294_07_resonator_spectroscopy_vs_coupler_flux_101018/q3-4",
+   "file": "exemplars/F13/lab-B_294_q3-4.png",
+   "chip": "lab-B",
    "run": "#294_07_resonator_spectroscopy_vs_coupler_flux_101018",
    "qubit": "q3-4",
    "markers_drawn": [
@@ -1514,9 +1514,9 @@
   },
   {
    "case": "F14",
-   "exemplar": "CQT/#297_07_resonator_spectroscopy_vs_coupler_flux_101237/q4-5",
-   "file": "exemplars/F14/CQT_297_q4-5.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#297_07_resonator_spectroscopy_vs_coupler_flux_101237/q4-5",
+   "file": "exemplars/F14/lab-B_297_q4-5.png",
+   "chip": "lab-B",
    "run": "#297_07_resonator_spectroscopy_vs_coupler_flux_101237",
    "qubit": "q4-5",
    "markers_drawn": [
@@ -1535,9 +1535,9 @@
   },
   {
    "case": "F14",
-   "exemplar": "AS_10TQ9TC/#230_07_resonator_spectroscopy_vs_coupler_flux_195913/coupler_q6_q7",
-   "file": "exemplars/F14/AS_10TQ9TC_230_coupler_q6_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#230_07_resonator_spectroscopy_vs_coupler_flux_195913/coupler_q6_q7",
+   "file": "exemplars/F14/lab-A_230_coupler_q6_q7.png",
+   "chip": "lab-A",
    "run": "#230_07_resonator_spectroscopy_vs_coupler_flux_195913",
    "qubit": "coupler_q6_q7",
    "markers_drawn": [
@@ -1556,9 +1556,9 @@
   },
   {
    "case": "F14",
-   "exemplar": "CQT/#494_07_resonator_spectroscopy_vs_coupler_flux_183045/q3-8",
-   "file": "exemplars/F14/CQT_494_q3-8.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#494_07_resonator_spectroscopy_vs_coupler_flux_183045/q3-8",
+   "file": "exemplars/F14/lab-B_494_q3-8.png",
+   "chip": "lab-B",
    "run": "#494_07_resonator_spectroscopy_vs_coupler_flux_183045",
    "qubit": "q3-8",
    "markers_drawn": [
@@ -1577,9 +1577,9 @@
   },
   {
    "case": "F15",
-   "exemplar": "CQT/#311_07_resonator_spectroscopy_vs_coupler_flux_102410/q4-9",
-   "file": "exemplars/F15/CQT_311_q4-9.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#311_07_resonator_spectroscopy_vs_coupler_flux_102410/q4-9",
+   "file": "exemplars/F15/lab-B_311_q4-9.png",
+   "chip": "lab-B",
    "run": "#311_07_resonator_spectroscopy_vs_coupler_flux_102410",
    "qubit": "q4-9",
    "markers_drawn": [
@@ -1598,9 +1598,9 @@
   },
   {
    "case": "F15",
-   "exemplar": "CQT/#1225_07_resonator_spectroscopy_vs_coupler_flux_024116/q14-15",
-   "file": "exemplars/F15/CQT_1225_q14-15.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#1225_07_resonator_spectroscopy_vs_coupler_flux_024116/q14-15",
+   "file": "exemplars/F15/lab-B_1225_q14-15.png",
+   "chip": "lab-B",
    "run": "#1225_07_resonator_spectroscopy_vs_coupler_flux_024116",
    "qubit": "q14-15",
    "markers_drawn": [
@@ -1619,9 +1619,9 @@
   },
   {
    "case": "F15",
-   "exemplar": "CQT/#494_07_resonator_spectroscopy_vs_coupler_flux_183045/q3-8",
-   "file": "exemplars/F15/CQT_494_q3-8.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#494_07_resonator_spectroscopy_vs_coupler_flux_183045/q3-8",
+   "file": "exemplars/F15/lab-B_494_q3-8.png",
+   "chip": "lab-B",
    "run": "#494_07_resonator_spectroscopy_vs_coupler_flux_183045",
    "qubit": "q3-8",
    "markers_drawn": [
@@ -1640,9 +1640,9 @@
   },
   {
    "case": "F16",
-   "exemplar": "CQT/#1271_07_resonator_spectroscopy_vs_coupler_flux_041455/q14-18",
-   "file": "exemplars/F16/CQT_1271_q14-18.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#1271_07_resonator_spectroscopy_vs_coupler_flux_041455/q14-18",
+   "file": "exemplars/F16/lab-B_1271_q14-18.png",
+   "chip": "lab-B",
    "run": "#1271_07_resonator_spectroscopy_vs_coupler_flux_041455",
    "qubit": "q14-18",
    "markers_drawn": [
@@ -1661,9 +1661,9 @@
   },
   {
    "case": "F16",
-   "exemplar": "CQT/#493_07_resonator_spectroscopy_vs_coupler_flux_182834/q3-8",
-   "file": "exemplars/F16/CQT_493_q3-8.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#493_07_resonator_spectroscopy_vs_coupler_flux_182834/q3-8",
+   "file": "exemplars/F16/lab-B_493_q3-8.png",
+   "chip": "lab-B",
    "run": "#493_07_resonator_spectroscopy_vs_coupler_flux_182834",
    "qubit": "q3-8",
    "markers_drawn": [
@@ -1682,9 +1682,9 @@
   },
   {
    "case": "F17",
-   "exemplar": "AS_10TQ9TC/#18_07_resonator_spectroscopy_vs_coupler_flux_043402/coupler_q6_q7",
-   "file": "exemplars/F17/AS_10TQ9TC_18_coupler_q6_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#18_07_resonator_spectroscopy_vs_coupler_flux_043402/coupler_q6_q7",
+   "file": "exemplars/F17/lab-A_18_coupler_q6_q7.png",
+   "chip": "lab-A",
    "run": "#18_07_resonator_spectroscopy_vs_coupler_flux_043402",
    "qubit": "coupler_q6_q7",
    "markers_drawn": [
@@ -1703,9 +1703,9 @@
   },
   {
    "case": "F17",
-   "exemplar": "CQT/#299_07_resonator_spectroscopy_vs_coupler_flux_101411/q4-9",
-   "file": "exemplars/F17/CQT_299_q4-9.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#299_07_resonator_spectroscopy_vs_coupler_flux_101411/q4-9",
+   "file": "exemplars/F17/lab-B_299_q4-9.png",
+   "chip": "lab-B",
    "run": "#299_07_resonator_spectroscopy_vs_coupler_flux_101411",
    "qubit": "q4-9",
    "markers_drawn": [
@@ -1724,9 +1724,9 @@
   },
   {
    "case": "F18",
-   "exemplar": "CQT/#1226_07_resonator_spectroscopy_vs_coupler_flux_024527/q14-15",
-   "file": "exemplars/F18/CQT_1226_q14-15.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#1226_07_resonator_spectroscopy_vs_coupler_flux_024527/q14-15",
+   "file": "exemplars/F18/lab-B_1226_q14-15.png",
+   "chip": "lab-B",
    "run": "#1226_07_resonator_spectroscopy_vs_coupler_flux_024527",
    "qubit": "q14-15",
    "markers_drawn": [
@@ -1745,9 +1745,9 @@
   },
   {
    "case": "F19",
-   "exemplar": "CQT/#446_07_resonator_spectroscopy_vs_coupler_flux_171915/q1-4",
-   "file": "exemplars/F19/CQT_446_q1-4.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#446_07_resonator_spectroscopy_vs_coupler_flux_171915/q1-4",
+   "file": "exemplars/F19/lab-B_446_q1-4.png",
+   "chip": "lab-B",
    "run": "#446_07_resonator_spectroscopy_vs_coupler_flux_171915",
    "qubit": "q1-4",
    "markers_drawn": [
@@ -1766,9 +1766,9 @@
   },
   {
    "case": "F19",
-   "exemplar": "CQT/#259_07_resonator_spectroscopy_vs_coupler_flux_092808/q1-4",
-   "file": "exemplars/F19/CQT_259_q1-4.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#259_07_resonator_spectroscopy_vs_coupler_flux_092808/q1-4",
+   "file": "exemplars/F19/lab-B_259_q1-4.png",
+   "chip": "lab-B",
    "run": "#259_07_resonator_spectroscopy_vs_coupler_flux_092808",
    "qubit": "q1-4",
    "markers_drawn": [
@@ -1787,9 +1787,9 @@
   },
   {
    "case": "F20",
-   "exemplar": "CQT/#1238_07_resonator_spectroscopy_vs_coupler_flux_030255/q10-15",
-   "file": "exemplars/F20/CQT_1238_q10-15.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#1238_07_resonator_spectroscopy_vs_coupler_flux_030255/q10-15",
+   "file": "exemplars/F20/lab-B_1238_q10-15.png",
+   "chip": "lab-B",
    "run": "#1238_07_resonator_spectroscopy_vs_coupler_flux_030255",
    "qubit": "q10-15",
    "markers_drawn": [
@@ -1808,9 +1808,9 @@
   },
   {
    "case": "F20",
-   "exemplar": "CQT/#1248_07_resonator_spectroscopy_vs_coupler_flux_031541/q9-10",
-   "file": "exemplars/F20/CQT_1248_q9-10.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#1248_07_resonator_spectroscopy_vs_coupler_flux_031541/q9-10",
+   "file": "exemplars/F20/lab-B_1248_q9-10.png",
+   "chip": "lab-B",
    "run": "#1248_07_resonator_spectroscopy_vs_coupler_flux_031541",
    "qubit": "q9-10",
    "markers_drawn": [
@@ -1829,9 +1829,9 @@
   },
   {
    "case": "F20",
-   "exemplar": "CQT/#1271_07_resonator_spectroscopy_vs_coupler_flux_041455/q14-18",
-   "file": "exemplars/F20/CQT_1271_q14-18.png",
-   "chip": "CQT",
+   "exemplar": "lab-B/#1271_07_resonator_spectroscopy_vs_coupler_flux_041455/q14-18",
+   "file": "exemplars/F20/lab-B_1271_q14-18.png",
+   "chip": "lab-B",
    "run": "#1271_07_resonator_spectroscopy_vs_coupler_flux_041455",
    "qubit": "q14-18",
    "markers_drawn": [
@@ -1850,9 +1850,9 @@
   },
   {
    "case": "F22",
-   "exemplar": "AS_10TQ9TC/#15_07_resonator_spectroscopy_vs_coupler_flux_042919/coupler_q6_q7",
-   "file": "exemplars/F22/AS_10TQ9TC_15_coupler_q6_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#15_07_resonator_spectroscopy_vs_coupler_flux_042919/coupler_q6_q7",
+   "file": "exemplars/F22/lab-A_15_coupler_q6_q7.png",
+   "chip": "lab-A",
    "run": "#15_07_resonator_spectroscopy_vs_coupler_flux_042919",
    "qubit": "coupler_q6_q7",
    "markers_drawn": [
@@ -1871,9 +1871,9 @@
   },
   {
    "case": "F22",
-   "exemplar": "AS_10TQ9TC/#19_07_resonator_spectroscopy_vs_coupler_flux_043434/coupler_q6_q7",
-   "file": "exemplars/F22/AS_10TQ9TC_19_coupler_q6_q7.png",
-   "chip": "AS_10TQ9TC",
+   "exemplar": "lab-A/#19_07_resonator_spectroscopy_vs_coupler_flux_043434/coupler_q6_q7",
+   "file": "exemplars/F22/lab-A_19_coupler_q6_q7.png",
+   "chip": "lab-A",
    "run": "#19_07_resonator_spectroscopy_vs_coupler_flux_043434",
    "qubit": "coupler_q6_q7",
    "markers_drawn": [

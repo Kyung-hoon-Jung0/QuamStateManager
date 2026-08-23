@@ -1,6 +1,6 @@
 # qubit_spectroscopy_vs_power — case manual (v1)
 
-**Authored:** 2026-08-21 · **Source:** docs/133: 519 runs / 1150 targets across 5 labs (AS_10TQ9TC, CQT, IQCC_QOP37, KRISS_CR, SNU_1Q), every figure viewed; blind re-reading of 80 rows
+**Authored:** 2026-08-21 · **Source:** docs/133: 519 runs / 1150 targets across 5 labs (lab-A, lab-B, lab-C, lab-D, lab-E), every figure viewed; blind re-reading of 80 rows
 
 **Physics.** A drive-detuning sweep repeated over a range of DRIVE POWERS. It is supposed to choose both the qubit frequency and the power the 1-D sweep will then use. Below the onset power there is nothing; just above it the line is narrow and its position is stationary, and that stationary frequency is the answer; higher still the line broadens, Stark-shifts, and grows a two-photon 0->2 partner half an anharmonicity below it that can become the STRONGEST feature in the map. The brightest part of the map is therefore the wrong place to read the frequency.
 
@@ -16,7 +16,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions, bou
 
 **Prescription:** Adopt the stem frequency. Hand on a power at the bottom of the column's detectable range, below the knee where the fan starts — never the row where the signal is strongest, and never the sweep's own top row. Treat the reported width as a linewidth only if the fitted/intrinsic ratio is near unity; otherwise keep the frequency and discard the width.
 
-**Exemplars:** CQT/#527/q9, CQT/#708/q7, CQT/#774/q14, CQT/#850/q14, CQT/#804/q13, CQT/#999/q20, CQT/#1088/q14, CQT/#1344/q5, CQT/#1346/q5, CQT/#52/q1, SNU_1Q/#106/q10, SNU_1Q/#70/q10, IQCC_QOP37/#240/qB1, IQCC_QOP37/#416/qD4, IQCC_QOP37/#255/qD3
+**Exemplars:** lab-B/#527/q9, lab-B/#708/q7, lab-B/#774/q14, lab-B/#850/q14, lab-B/#804/q13, lab-B/#999/q20, lab-B/#1088/q14, lab-B/#1344/q5, lab-B/#1346/q5, lab-B/#52/q1, lab-E/#106/q10, lab-E/#70/q10, lab-C/#240/qB1, lab-C/#416/qD4, lab-C/#255/qD3
 
 ### P2 — Two-photon partner emerging only in the hot rows  (seen 24x)
 
@@ -24,7 +24,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions, bou
 
 **Prescription:** Adopt the fundamental — the upper, low-power-surviving column. Choose a power below the row where the partner emerges. Check the offset against the run's own fitted anharmonicity, not the stored default; on several chips here the fitted value runs below the stored one and separations that look wrong against stored match fitted closely. A companion ABOVE the line, or at a small fraction of that offset, is not a two-photon partner.
 
-**Exemplars:** CQT/#527/q9, CQT/#708/q7, CQT/#1035/q7, CQT/#1088/q10, CQT/#614/q9, CQT/#38/q2, SNU_1Q/#70/q10, SNU_1Q/#106/q10, IQCC_QOP37/#116/qA2, IQCC_QOP37/#240/qD1, IQCC_QOP37/#61/qA1, IQCC_QOP37/#256/qD3
+**Exemplars:** lab-B/#527/q9, lab-B/#708/q7, lab-B/#1035/q7, lab-B/#1088/q10, lab-B/#614/q9, lab-B/#38/q2, lab-E/#70/q10, lab-E/#106/q10, lab-C/#116/qA2, lab-C/#240/qD1, lab-C/#61/qA1, lab-C/#256/qD3
 
 ### P3 — Multi-photon ladder — equal downward steps  (seen 10x)
 
@@ -32,7 +32,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions, bou
 
 **Prescription:** Adopt the TOP rung — the one that survives lowest in power — and choose a power below the first jump. A reported value one or more equal steps below the top rung is a multi-photon line; reject it, and reject a chosen power taken from the row where the track jumps off the fundamental. If the reported value lies BELOW the bottom rung it is on empty map: abstain.
 
-**Exemplars:** CQT/#579/q10, SNU_1Q/#61/q9, SNU_1Q/#30/q6, SNU_1Q/#30/q4, SNU_1Q/#107/q15, SNU_1Q/#124/q15, SNU_1Q/#123/q15
+**Exemplars:** lab-B/#579/q10, lab-E/#61/q9, lab-E/#30/q6, lab-E/#30/q4, lab-E/#107/q15, lab-E/#124/q15, lab-E/#123/q15
 
 ### P4 — Stark bend — vertical low, bending at the top  (seen 12x)
 
@@ -40,7 +40,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions, bou
 
 **Prescription:** Read the plateau, not the bend. Reject any reported frequency that lies off the stationary segment in the direction of the bend, and reject a chosen power taken from the bent region. If there is no stationary segment anywhere, this is P8 — abstain on the power and treat the frequency as provisional.
 
-**Exemplars:** SNU_1Q/#30/q10, CQT/#544/q5, CQT/#648/q8, CQT/#1344/q9, CQT/#1346/q9, CQT/#1344/q5, CQT/#1245/q10, SNU_1Q/#22/q17
+**Exemplars:** lab-E/#30/q10, lab-B/#544/q5, lab-B/#648/q8, lab-B/#1344/q9, lab-B/#1346/q9, lab-B/#1344/q5, lab-B/#1245/q10, lab-E/#22/q17
 
 ### P5 — Empty map, complete record (centre-return / noise track)  (seen 45x)
 
@@ -48,7 +48,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions, bou
 
 **Prescription:** Abstain. Write nothing — not the frequency, not the power, not the anharmonicity. Repeats of the identical map returning frequencies scattered over many linewidths, and fitted anharmonicities differing by half again between blank maps of the same qubit, are the proof rather than noise to be averaged. Re-run with more averaging, a corrected power range, or hand the target to the 1-D node.
 
-**Exemplars:** CQT/#725/q12, CQT/#734/q12, CQT/#967/q19, CQT/#1113/q6, CQT/#1120/q6, CQT/#1165/q16, CQT/#1344/q17, CQT/#1346/q17, CQT/#249/q3, CQT/#250/q3, SNU_1Q/#32/q11, SNU_1Q/#34/q11, SNU_1Q/#36/q11, SNU_1Q/#44/q11, SNU_1Q/#108/q17, SNU_1Q/#116/q17
+**Exemplars:** lab-B/#725/q12, lab-B/#734/q12, lab-B/#967/q19, lab-B/#1113/q6, lab-B/#1120/q6, lab-B/#1165/q16, lab-B/#1344/q17, lab-B/#1346/q17, lab-B/#249/q3, lab-B/#250/q3, lab-E/#32/q11, lab-E/#34/q11, lab-E/#36/q11, lab-E/#44/q11, lab-E/#108/q17, lab-E/#116/q17
 
 ### P6 — Legitimate centre answer — the benign look-alike of P5  (seen 12x)
 
@@ -56,7 +56,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions, bou
 
 **Prescription:** Adopt. The discriminator is the picture, never the number: centre-plus-column is fine, centre-plus-nothing is P5. Always open the RAW panel before calling a map empty, and be aware the colour scale can be swamped by a high-power background so that a genuine low-power ridge is invisible in the rendered figure.
 
-**Exemplars:** CQT/#614/q9, CQT/#671/q11, CQT/#141/q2, SNU_1Q/#107/q15, IQCC_QOP37/#17/qA1, IQCC_QOP37/#116/qA2, IQCC_QOP37/#240/qB1, IQCC_QOP37/#240/qB2
+**Exemplars:** lab-B/#614/q9, lab-B/#671/q11, lab-B/#141/q2, lab-E/#107/q15, lab-C/#17/qA1, lab-C/#116/qA2, lab-C/#240/qB1, lab-C/#240/qB2
 
 ### P7 — The answer is in the picture and the node did not take it  (seen 14x)
 
@@ -64,7 +64,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions, bou
 
 **Prescription:** Reject the reported value and adopt the column. An internal contradiction between the track and the reported frequency is by itself sufficient grounds — no other evidence is needed. Where a widened re-run of the same target exists, it reports the column.
 
-**Exemplars:** CQT/#872/q14, CQT/#691/q6, CQT/#12/q2, CQT/#1344/q12, CQT/#1344/q15, CQT/#1344/q19, CQT/#969/q6, SNU_1Q/#45/q10, SNU_1Q/#62/q10, SNU_1Q/#66/q10, SNU_1Q/#123/q15
+**Exemplars:** lab-B/#872/q14, lab-B/#691/q6, lab-B/#12/q2, lab-B/#1344/q12, lab-B/#1344/q15, lab-B/#1344/q19, lab-B/#969/q6, lab-E/#45/q10, lab-E/#62/q10, lab-E/#66/q10, lab-E/#123/q15
 
 ### P8 — Saturation band only — the sweep floor was above the onset  (seen 16x)
 
@@ -72,7 +72,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions, bou
 
 **Prescription:** Do not hand on a power. If several of the lowest rows in which anything is significant agree on one place, that place is the best available frequency estimate and anything read from the broadened rows is not. Re-run with the power floor lowered a few dB at a time until a flat floor appears in the peak-height trace. Expect the following 1-D runs to show only saturated plateaus until this is fixed.
 
-**Exemplars:** CQT/#526/q8, CQT/#648/q8, CQT/#1346/q15, CQT/#1346/q19, CQT/#1070/q14, SNU_1Q/#21/q17, SNU_1Q/#22/q15, IQCC_QOP37/#237/qA1
+**Exemplars:** lab-B/#526/q8, lab-B/#648/q8, lab-B/#1346/q15, lab-B/#1346/q19, lab-B/#1070/q14, lab-E/#21/q17, lab-E/#22/q15, lab-C/#237/qA1
 
 ### P9 — The sweep never reached the onset (too COLD)  (seen 8x)
 
@@ -80,7 +80,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions, bou
 
 **Prescription:** Abstain and raise the power ceiling. 'Chosen power == top row of the sweep' is the tell that no onset was crossed. A sweep_too_hot flag on such a run is inverted and must be ignored — on this corpus the flag fired on maps whose real problem was that they never got hot enough to see the qubit at all.
 
-**Exemplars:** CQT/#760/q17, CQT/#762/q17, CQT/#773/q17, CQT/#833/q8, CQT/#724/q6, CQT/#1165/q6
+**Exemplars:** lab-B/#760/q17, lab-B/#762/q17, lab-B/#773/q17, lab-B/#833/q8, lab-B/#724/q6, lab-B/#1165/q6
 
 ### P10 — Fixed non-broadening stripe (spur / leakage tone)  (seen 12x)
 
@@ -88,7 +88,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions, bou
 
 **Prescription:** Never adopt. A driven transition power-broadens and its contrast saturates; a constant-width, ever-brightening line does neither. Identify the stripe once from the map and then dismiss the matching narrow spike in every 1-D trace of that qubit. A run reporting a linewidth SMALLER than its own intrinsic linewidth has almost certainly measured one of these.
 
-**Exemplars:** SNU_1Q/#11/q10, SNU_1Q/#21/q10, SNU_1Q/#11/q17, SNU_1Q/#28/q17, IQCC_QOP37/#237/qA3, IQCC_QOP37/#240/qD2, IQCC_QOP37/#416/qC5, CQT/#649/q11
+**Exemplars:** lab-E/#11/q10, lab-E/#21/q10, lab-E/#11/q17, lab-E/#28/q17, lab-C/#237/qA3, lab-C/#240/qD2, lab-C/#416/qC5, lab-B/#649/q11
 
 ### P11 — Two comparable columns — which one is the qubit  (seen 8x)
 
@@ -96,7 +96,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions, bou
 
 **Prescription:** Adopt the column that survives to the LOWEST swept power. The alternating track is a warning that two lines are competing, not evidence about which one is right. Their separation is far too small for the anharmonicity check to apply, so do not reason about it as a two-photon pair. If both members die at low power, abstain and re-run wider with more averaging.
 
-**Exemplars:** CQT/#888/q14, CQT/#1088/q14, CQT/#876/q14, CQT/#1070/q14, CQT/#649/q11, IQCC_QOP37/#416/qD1
+**Exemplars:** lab-B/#888/q14, lab-B/#1088/q14, lab-B/#876/q14, lab-B/#1070/q14, lab-B/#649/q11, lab-C/#416/qD1
 
 ### P12 — Interference comb or chevron fringe pattern — not a spectrum  (seen 3x)
 
@@ -104,7 +104,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions, bou
 
 **Prescription:** Abstain — there is no lineshape anywhere in the picture, so choosing a band is arbitrary. Every power in such a sweep drives the qubit through many multiples of pi. For the chevron case the span is also in the wrong place: the resonance can only be at the apex, so re-centre so the apex is inside the window and drop the drive range before re-running.
 
-**Exemplars:** CQT/#908/q15, CQT/#1112/q15, CQT/#968/q15
+**Exemplars:** lab-B/#908/q15, lab-B/#1112/q15, lab-B/#968/q15
 
 ### P13 — Row-wide background rise mistaken for an onset  (seen 2x)
 
@@ -112,7 +112,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions, bou
 
 **Prescription:** Abstain. An onset that happens at every frequency at once is a drive-power background, not a spectroscopic line. Do not let the strong high-power background set the colour scale either — it will bury a genuine low-power ridge elsewhere in the same map.
 
-**Exemplars:** SNU_1Q/#22/q9, SNU_1Q/#69/q9
+**Exemplars:** lab-E/#22/q9, lab-E/#69/q9
 
 ### P14 — Dead acquisition (blank panel)  (seen 2x)
 
@@ -120,7 +120,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions, bou
 
 **Prescription:** Re-run the same target with identical settings before drawing any conclusion. Distinguish it from P5: P5 has noise texture and a wandering track, a dropout has neither. Do not record the qubit as lost or moved on the strength of a dropout.
 
-**Exemplars:** IQCC_QOP37/#116/qA1, SNU_1Q/#63/q10
+**Exemplars:** lab-C/#116/qA1, lab-E/#63/q10
 
 ### P15 — A perfect map of the wrong window  (seen 7x)
 
@@ -128,17 +128,17 @@ Geometry and prescriptions are chip-independent by rule: relative positions, bou
 
 **Prescription:** Do not adopt on shape alone. A widen_range banner means the two-photon check was NOT performed, not that there is no partner. Widen the span at least once per qubit until it reaches half an anharmonicity below the candidate and re-run; only then is a clean map evidence about identity as well as about position.
 
-**Exemplars:** CQT/#932/q18, IQCC_QOP37/#17/qA1, IQCC_QOP37/#17/qA2, IQCC_QOP37/#237/qA1, IQCC_QOP37/#255/qD3
+**Exemplars:** lab-B/#932/q18, lab-C/#17/qA1, lab-C/#17/qA2, lab-C/#237/qA1, lab-C/#255/qD3
 
 ## Flags (orthogonal to the case)
 
 ### PF1 — success carries zero information  (seen 194x)
 
-**Signature:** The success field is True on 182 of 182 vs_power targets in one CQT session and on all twelve target-runs of another — including two whose maps are pure noise from top to bottom. At IQCC it is wrong in both directions in the same run: a visibly perfect narrow line marked failed while two shapeless saturated humps beside it are marked successful, and fits whose recorded r-squared sits below the r-squared threshold recorded in the same file passed anyway. One run reports success with a NEGATIVE r-squared.
+**Signature:** The success field is True on 182 of 182 vs_power targets in one lab-B session and on all twelve target-runs of another — including two whose maps are pure noise from top to bottom. At lab-C it is wrong in both directions in the same run: a visibly perfect narrow line marked failed while two shapeless saturated humps beside it are marked successful, and fits whose recorded r-squared sits below the r-squared threshold recorded in the same file passed anyway. One run reports success with a NEGATIVE r-squared.
 
 **Prescription:** Never use success as evidence, in either direction. Read the picture. A failure flag is often a width or peak-dominance complaint on a correct centre; a success flag is often nothing at all.
 
-**Exemplars:** CQT/#574/q6, CQT/#725/q12, CQT/#1085/q8, CQT/#603/q10, IQCC_QOP37/#236/qA3, IQCC_QOP37/#238/qA3, SNU_1Q/#74/q9, SNU_1Q/#68/q9
+**Exemplars:** lab-B/#574/q6, lab-B/#725/q12, lab-B/#1085/q8, lab-B/#603/q10, lab-C/#236/qA3, lab-C/#238/qA3, lab-E/#74/q9, lab-E/#68/q9
 
 ### PF2 — power_warning = sweep_too_hot is wrong in both directions  (seen 91x)
 
@@ -146,7 +146,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions, bou
 
 **Prescription:** Treat it only as a prompt to look at the peak-height floor. Never let it decide anything on its own, and never read it as a statement about the frequency — where the stem is stationary the flag costs nothing, and where there is no stem the flag is not what tells you so.
 
-**Exemplars:** CQT/#527/q9, CQT/#141/q2, CQT/#1088/q8, CQT/#969/q6, CQT/#1165/q6, CQT/#1245/q10, SNU_1Q/#21/q10, IQCC_QOP37/#416/qC4
+**Exemplars:** lab-B/#527/q9, lab-B/#141/q2, lab-B/#1088/q8, lab-B/#969/q6, lab-B/#1165/q6, lab-B/#1245/q10, lab-E/#21/q10, lab-C/#416/qC4
 
 ### PF3 — fringe_detected is a false positive everywhere it was checked  (seen 35x)
 
@@ -154,7 +154,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions, bou
 
 **Prescription:** Ignore the flag; read the SHAPE of the peak-height trace instead. Flat scatter with no trend = there is no qubit here. Monotone rise = real feature. Rise then turnover in the top few dB = genuine over-drive. That shape separates 'there is a qubit' from 'there is not' faster than the map itself does.
 
-**Exemplars:** CQT/#850/q14, CQT/#999/q20, CQT/#1035/q7, CQT/#968/q15, CQT/#52/q1, IQCC_QOP37/#17/qA2, IQCC_QOP37/#240/qB1, IQCC_QOP37/#61/qA1
+**Exemplars:** lab-B/#850/q14, lab-B/#999/q20, lab-B/#1035/q7, lab-B/#968/q15, lab-B/#52/q1, lab-C/#17/qA2, lab-C/#240/qB1, lab-C/#61/qA1
 
 ### PF4 — width tells — fwhm against intrinsic_fwhm  (seen 24x)
 
@@ -162,7 +162,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions, bou
 
 **Prescription:** Keep the frequency, discard the width and every amplitude derived from it whenever the ratio is large. Treat fitted==intrinsic and fitted<intrinsic as hard evidence that the run measured one slice of noise or a fixed spur. Width and centre fail independently — a map can have the largest broadening ratio of a session and still report an unshifted centre.
 
-**Exemplars:** CQT/#708/q7, CQT/#526/q8, CQT/#249/q3, CQT/#250/q3, CQT/#671/q11, SNU_1Q/#11/q10, SNU_1Q/#22/q15, IQCC_QOP37/#256/qD3
+**Exemplars:** lab-B/#708/q7, lab-B/#526/q8, lab-B/#249/q3, lab-B/#250/q3, lab-B/#671/q11, lab-E/#11/q10, lab-E/#22/q15, lab-C/#256/qD3
 
 ### PF5 — anharmonicity_fitted regressing to the stored value is not confirmation  (seen 10x)
 
@@ -170,7 +170,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions, bou
 
 **Prescription:** Agreement with the stored value is neutral evidence. Disagreement in a good map is informative and should be preferred over the stored default when checking a partner offset. Scatter across repeats of the same blank map is proof of fabrication; a value no transmon supports is proof on its own.
 
-**Exemplars:** CQT/#250/q3, CQT/#1113/q6, CQT/#1120/q6, CQT/#1088/q6, SNU_1Q/#21/q5, CQT/#41/q2, CQT/#500/q3
+**Exemplars:** lab-B/#250/q3, lab-B/#1113/q6, lab-B/#1120/q6, lab-B/#1088/q6, lab-E/#21/q5, lab-B/#41/q2, lab-B/#500/q3
 
 ### PF6 — ef_warning, and the silent ef miss  (seen 58x)
 
@@ -178,7 +178,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions, bou
 
 **Prescription:** Read a missing or warned ef fit as UNCHECKED, never as 'no partner'. Where the ef fit does succeed on a good map it has been reliable in this corpus — every fitted anharmonicity on a readable map matched the stored value closely and every marker landed on a visible line. Where the map is blank, the ef fit is manufactured.
 
-**Exemplars:** IQCC_QOP37/#61/qA2, IQCC_QOP37/#17/qA1, IQCC_QOP37/#237/qA1, CQT/#52/q1, CQT/#932/q18, CQT/#649/q11
+**Exemplars:** lab-C/#61/qA2, lab-C/#17/qA1, lab-C/#237/qA1, lab-B/#52/q1, lab-B/#932/q18, lab-B/#649/q11
 
 ### PF7 — the chosen power sits on a boundary of the sweep  (seen 14x)
 
@@ -186,7 +186,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions, bou
 
 **Prescription:** Treat a boundary power as unusable regardless of how good the frequency is. In the corpus a bottom-row choice was directly followed by a 1-D plate of smooth-bowl NO FITs and a top-row choice by 1-D plates of saturated plateaus. Re-derive the power from the visible extent of the column, or re-run the sweep with the range shifted.
 
-**Exemplars:** CQT/#760/q17, CQT/#724/q6, CQT/#833/q8, CQT/#544/q5, CQT/#500/q3, IQCC_QOP37/#416/qC4, SNU_1Q/#117/q17
+**Exemplars:** lab-B/#760/q17, lab-B/#724/q6, lab-B/#833/q8, lab-B/#544/q5, lab-B/#500/q3, lab-C/#416/qC4, lab-E/#117/q17
 
 ### PF8 — optimal_power is a property of the sweep window and its sampling  (seen 10x)
 
@@ -194,7 +194,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions, bou
 
 **Prescription:** Never compare optimal_power across runs with different windows or steps, and never carry one forward as if it were a property of the qubit. Require a frequency step finer than the low-power linewidth before believing any power recommendation. Fix the sampling before touching the drive.
 
-**Exemplars:** IQCC_QOP37/#255/qD3, IQCC_QOP37/#256/qD3, IQCC_QOP37/#17/qA1, IQCC_QOP37/#61/qA1, IQCC_QOP37/#237/qA1, IQCC_QOP37/#240/qA1, IQCC_QOP37/#116/qA2, IQCC_QOP37/#118/qA2
+**Exemplars:** lab-C/#255/qD3, lab-C/#256/qD3, lab-C/#17/qA1, lab-C/#61/qA1, lab-C/#237/qA1, lab-C/#240/qA1, lab-C/#116/qA2, lab-C/#118/qA2
 
 ### PF9 — the per-power peak track is an independent diagnostic  (seen 40x)
 
@@ -202,7 +202,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions, bou
 
 **Prescription:** Read the track before the number. Full-span wandering at every row = abstain regardless of what the record says. Track-on-column with the marker off it = adopt the column (case P7). Track alternating between two columns = case P11, decide by low-power survival, not by the track.
 
-**Exemplars:** CQT/#574/q6, CQT/#967/q19, CQT/#12/q2, CQT/#872/q14, SNU_1Q/#32/q11, SNU_1Q/#45/q10, CQT/#1245/q10, CQT/#888/q14
+**Exemplars:** lab-B/#574/q6, lab-B/#967/q19, lab-B/#12/q2, lab-B/#872/q14, lab-E/#32/q11, lab-E/#45/q10, lab-B/#1245/q10, lab-B/#888/q14
 
 ### PF10 — an impossible derived amplitude invalidates the run  (seen 15x)
 
@@ -210,7 +210,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions, bou
 
 **Prescription:** Treat an impossible amplitude as a louder alarm than any r-squared, and never pass it downstream. It is the cheapest available tell that a fitted transition is not the one that drives the qubit. An amplitude larger than anything the map actually measured is not a measurement either.
 
-**Exemplars:** CQT/#581/q10, CQT/#1477/q15, CQT/#733/q12, CQT/#826/q8, CQT/#874/q14, SNU_1Q/#64/q9, SNU_1Q/#104/q15, SNU_1Q/#115/q17, IQCC_QOP37/#241/qC1
+**Exemplars:** lab-B/#581/q10, lab-B/#1477/q15, lab-B/#733/q12, lab-B/#826/q8, lab-B/#874/q14, lab-E/#64/q9, lab-E/#104/q15, lab-E/#115/q17, lab-C/#241/qC1
 
 ### PF11 — the rendered figure is not the data  (seen 4x)
 
@@ -218,7 +218,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions, bou
 
 **Prescription:** Open the raw panel on every call, and re-read the cube rather than the image whenever a map looks blank or a feature looks marginal. A verdict of 'nothing there' taken from an overlay alone is not safe.
 
-**Exemplars:** CQT/#141/q2, SNU_1Q/#30/q9, SNU_1Q/#45/q9, SNU_1Q/#61/q9
+**Exemplars:** lab-B/#141/q2, lab-E/#30/q9, lab-E/#45/q9, lab-E/#61/q9
 
 ## Cases that need BOTH node types
 
@@ -230,7 +230,7 @@ Each of these is invisible inside a single run. They are the reason the two fami
 
 **Prescription:** Reject and take the feature about half an anharmonicity ABOVE it. Confirm either with the companion map — where the partner exists only above a threshold power and its ef marker lands on it — or with the one-run drop-the-drive test (J2). Never adopt a 1-D fit whose centre moved down by about half an anharmonicity from the previously accepted value, however good the statistics.
 
-**Exemplars:** CQT/#497/q3, CQT/#498/q3, CQT/#1121/q7, SNU_1Q/#47/q9, SNU_1Q/#50/q9, CQT/#692/q6, CQT/#1219/q15, CQT/#1254/q20, CQT/#1431/q20, CQT/#732/q12, CQT/#1253/q11, SNU_1Q/#114/q17
+**Exemplars:** lab-B/#497/q3, lab-B/#498/q3, lab-B/#1121/q7, lab-E/#47/q9, lab-E/#50/q9, lab-B/#692/q6, lab-B/#1219/q15, lab-B/#1254/q20, lab-B/#1431/q20, lab-B/#732/q12, lab-B/#1253/q11, lab-E/#114/q17
 
 ### J2 — The drop-the-drive test — the cheap in-family substitute for a map  (seen 10x)
 
@@ -238,7 +238,7 @@ Each of these is invisible inside a single run. They are the reason the two fami
 
 **Prescription:** Spend the one run. Adopt the survivor. This costs one 1-D and settles what neither run alone can, and in this corpus it was decisive on four qubits across two labs. Do not read a repeat at the SAME drive as confirmation — nothing changed, so nothing could.
 
-**Exemplars:** SNU_1Q/#48/q9, CQT/#1122/q7, CQT/#958/q14, CQT/#919/q18, CQT/#693/q6, CQT/#1581/q11
+**Exemplars:** lab-E/#48/q9, lab-B/#1122/q7, lab-B/#958/q14, lab-B/#919/q18, lab-B/#693/q6, lab-B/#1581/q11
 
 ### J3 — Power-grown companion at a small fraction of an anharmonicity  (seen 18x)
 
@@ -246,7 +246,7 @@ Each of these is invisible inside a single run. They are the reason the two fami
 
 **Prescription:** Adopt the member present at the LOWEST power in the map, or the survivor of the drop-the-drive test. Relative height at a single drive says nothing. Explicitly do NOT reason about this pair as a two-photon pairing — the offset is the wrong size, and in one case the wrong sign as well.
 
-**Exemplars:** CQT/#956/q14, CQT/#971/q14, CQT/#1106/q14, CQT/#1088/q14, CQT/#1071/q10, CQT/#1085/q10, CQT/#1088/q10, IQCC_QOP37/#239/qC2, IQCC_QOP37/#240/qC2, IQCC_QOP37/#241/qC2
+**Exemplars:** lab-B/#956/q14, lab-B/#971/q14, lab-B/#1106/q14, lab-B/#1088/q14, lab-B/#1071/q10, lab-B/#1085/q10, lab-B/#1088/q10, lab-C/#239/qC2, lab-C/#240/qC2, lab-C/#241/qC2
 
 ### J4 — Fixed spur, proved by what does NOT move  (seen 22x)
 
@@ -254,7 +254,7 @@ Each of these is invisible inside a single run. They are the reason the two fami
 
 **Prescription:** Dismiss it everywhere, and identify it once from the map so it can be dismissed cheaply thereafter. A two-photon partner is rigidly tied to its fundamental and must travel with it; a spur does not. Prefer the feature with a LINESHAPE over the taller bare spike — a spike narrower than the sweep can resolve cannot be a line. Where the spike forest cannot be resolved, narrow the span rather than argue about heights.
 
-**Exemplars:** CQT/#858/q9, CQT/#859/q9, CQT/#870/q9, IQCC_QOP37/#237/qA3, IQCC_QOP37/#241/qB1, CQT/#649/q11, CQT/#652/q11, CQT/#68/q2, CQT/#261/q4, CQT/#1106/q11
+**Exemplars:** lab-B/#858/q9, lab-B/#859/q9, lab-B/#870/q9, lab-C/#237/qA3, lab-C/#241/qB1, lab-B/#649/q11, lab-B/#652/q11, lab-B/#68/q2, lab-B/#261/q4, lab-B/#1106/q11
 
 ### J5 — The following 1-D plate is the map's report card  (seen 25x)
 
@@ -262,7 +262,7 @@ Each of these is invisible inside a single run. They are the reason the two fami
 
 **Prescription:** Read the plate, not the map's flags, to judge the hand-off. Below onset: raise the handed-on power by a bounded step and re-run the 1-D — do not re-run the map. Above onset: lower it. Do not adopt widths or amplitudes from either kind of plate. Also verify the choice actually reached the drive: one 1-D plate was byte-for-byte unchanged from before the map that preceded it by minutes.
 
-**Exemplars:** CQT/#1344/q14, CQT/#1345/q14, CQT/#1345/q5, CQT/#1245/q10, CQT/#1247/q10, CQT/#500/q3, CQT/#42/q2, IQCC_QOP37/#238/qA1, IQCC_QOP37/#416/qC4
+**Exemplars:** lab-B/#1344/q14, lab-B/#1345/q14, lab-B/#1345/q5, lab-B/#1245/q10, lab-B/#1247/q10, lab-B/#500/q3, lab-B/#42/q2, lab-C/#238/qA1, lab-C/#416/qC4
 
 ### J6 — The map rescues a qubit the 1-D lost  (seen 8x)
 
@@ -270,7 +270,7 @@ Each of these is invisible inside a single run. They are the reason the two fami
 
 **Prescription:** Adopt the map's column and re-centre the 1-D window on it. A 1-D null does not mean the qubit is absent; check whether a map exists before repeating the 1-D at higher drive. A null with a strong excursion clipped by a window edge is always a window problem, never a power problem.
 
-**Exemplars:** CQT/#998/q20, CQT/#999/q20, CQT/#803/q13, CQT/#804/q13, CQT/#543/q5, CQT/#544/q5, CQT/#400/q13
+**Exemplars:** lab-B/#998/q20, lab-B/#999/q20, lab-B/#803/q13, lab-B/#804/q13, lab-B/#543/q5, lab-B/#544/q5, lab-B/#400/q13
 
 ### J7 — A failed map's twophoton_freq is still a usable ruler  (seen 1x)
 
@@ -278,7 +278,7 @@ Each of these is invisible inside a single run. They are the reason the two fami
 
 **Prescription:** Never adopt such a run's frequency, power, width or anharmonicity. Do use the emitted partner position as a ruler: if your 1-D answer coincides with it, you are sitting on the two-photon line. The same arithmetic can be done by hand from any anharmonicity you trust, so a failed map is not required for the check — only convenient.
 
-**Exemplars:** CQT/#1224/q15, CQT/#1219/q15, CQT/#1215/q15
+**Exemplars:** lab-B/#1224/q15, lab-B/#1219/q15, lab-B/#1215/q15
 
 ### J8 — Broadening merges the pair and drags the centre onto the wrong member  (seen 8x)
 
@@ -286,7 +286,7 @@ Each of these is invisible inside a single run. They are the reason the two fami
 
 **Prescription:** When the fitted width approaches the known splitting, the centre is no longer a frequency measurement — abstain and re-measure at lower drive. Note the mirror case honestly: on a qubit whose sharper runs had been taking the LOWER companion, merging can accidentally land the merged centre on the true line. That is luck, not a method, and it does not license the broadened plate.
 
-**Exemplars:** CQT/#1125/q14, CQT/#1128/q14, CQT/#1421/q18, CQT/#1239/q10, CQT/#1247/q10, CQT/#1125/q10, CQT/#1128/q10
+**Exemplars:** lab-B/#1125/q14, lab-B/#1128/q14, lab-B/#1421/q18, lab-B/#1239/q10, lab-B/#1247/q10, lab-B/#1125/q10, lab-B/#1128/q10
 
 ### J9 — The self-confirming stage — the window re-centres on the wrong answer  (seen 8x)
 
@@ -294,7 +294,7 @@ Each of these is invisible inside a single run. They are the reason the two fami
 
 **Prescription:** After any frequency change larger than a linewidth, re-verify once on a span wide enough to still contain the rejected candidate. Narrow the span to RESOLVE, widen it to IDENTIFY. Two or three consecutive identical mistakes mean the window, not the fitter, is the problem — re-centre rather than re-run.
 
-**Exemplars:** CQT/#923/q18, CQT/#1106/q14, CQT/#932/q18, CQT/#642/q10, CQT/#602/q10, CQT/#641/q10, CQT/#682/q10
+**Exemplars:** lab-B/#923/q18, lab-B/#1106/q14, lab-B/#932/q18, lab-B/#642/q10, lab-B/#602/q10, lab-B/#641/q10, lab-B/#682/q10
 
 ### J10 — A blank map is not evidence of absence  (seen 8x)
 
@@ -302,7 +302,7 @@ Each of these is invisible inside a single run. They are the reason the two fami
 
 **Prescription:** Discard the map's centre-return; do not record the qubit as absent. Raise the map's power ceiling or its averaging and re-run, or work that target from the 1-D family. The 1-D node is sometimes the more sensitive instrument of the pair, and a vs_power 'nothing there' does not outrank it.
 
-**Exemplars:** CQT/#1165/q6, CQT/#1141/q6, CQT/#1113/q6, CQT/#1120/q6, SNU_1Q/#116/q17, SNU_1Q/#117/q17, SNU_1Q/#115/q17
+**Exemplars:** lab-B/#1165/q6, lab-B/#1141/q6, lab-B/#1113/q6, lab-B/#1120/q6, lab-E/#116/q17, lab-E/#117/q17, lab-E/#115/q17
 
 ### J11 — Two maps of one qubit disagree; the 1-D family arbitrates  (seen 12x)
 
@@ -310,7 +310,7 @@ Each of these is invisible inside a single run. They are the reason the two fami
 
 **Prescription:** Never average them. Adopt the one the low-drive 1-D confirms; if neither is confirmed, abstain. Compare their sweep floors and frequency steps first — the coarser-step or higher-floor run is the one that will have reported the hotter power. A single vs_power run in this regime carries no more authority than the 1-D run it is supposed to arbitrate.
 
-**Exemplars:** CQT/#37/q2, CQT/#38/q2, SNU_1Q/#28/q10, SNU_1Q/#22/q10, SNU_1Q/#29/q10, IQCC_QOP37/#255/qD3, IQCC_QOP37/#256/qD3, CQT/#1344/q9, CQT/#1346/q9
+**Exemplars:** lab-B/#37/q2, lab-B/#38/q2, lab-E/#28/q10, lab-E/#22/q10, lab-E/#29/q10, lab-C/#255/qD3, lab-C/#256/qD3, lab-B/#1344/q9, lab-B/#1346/q9
 
 ### J12 — A narrow-span 1-D cannot exonerate itself  (seen 10x)
 
@@ -318,7 +318,7 @@ Each of these is invisible inside a single run. They are the reason the two fami
 
 **Prescription:** Either widen the 1-D span at least once per qubit until it reaches half an anharmonicity below the candidate, or defer the identity check to the map. Treat a narrow-span clean peak as a REFINEMENT of an identity established elsewhere, never as the identification. Reproducibility at a fixed span is not identification.
 
-**Exemplars:** IQCC_QOP37/#414/qC1, IQCC_QOP37/#17/qA1, CQT/#1215/q15, CQT/#1216/q15, CQT/#923/q18, CQT/#1220/q15
+**Exemplars:** lab-C/#414/qC1, lab-C/#17/qA1, lab-B/#1215/q15, lab-B/#1216/q15, lab-B/#923/q18, lab-B/#1220/q15
 
 ### J13 — The broadened 1-D diagnosed against the map's own intrinsic width  (seen 35x)
 
@@ -326,7 +326,7 @@ Each of these is invisible inside a single run. They are the reason the two fami
 
 **Prescription:** Keep the frequency, but only to a fraction of the hump width — the scatter between back-to-back repeats in this regime is the honest error bar, and it is coarser than the digits the node reports. Discard the width, the saturation amplitude and the pi-pulse amplitude. The ratio of the 1-D fitted width to the MAP's intrinsic width for the same target is what turns 'this qubit is broad' into 'this measurement was hot'.
 
-**Exemplars:** IQCC_QOP37/#115/qA1, IQCC_QOP37/#236/qA1, IQCC_QOP37/#239/qB2, IQCC_QOP37/#241/qB2, CQT/#1181/q13, CQT/#1125/q20, CQT/#1128/q20, CQT/#718/q7, CQT/#401/q2
+**Exemplars:** lab-C/#115/qA1, lab-C/#236/qA1, lab-C/#239/qB2, lab-C/#241/qB2, lab-B/#1181/q13, lab-B/#1125/q20, lab-B/#1128/q20, lab-B/#718/q7, lab-B/#401/q2
 
 ### J14 — The handed-on amplitude convicts the pair  (seen 15x)
 
@@ -334,7 +334,7 @@ Each of these is invisible inside a single run. They are the reason the two fami
 
 **Prescription:** Treat an impossible amplitude as a harder alarm than any fit statistic and refuse to pass it on. Then diagnose which of the three it is: re-check the frequency against the map's stem for a ladder member, and re-derive the power from a map with a measured plateau.
 
-**Exemplars:** CQT/#581/q10, CQT/#1477/q15, CQT/#1620/q15, CQT/#733/q12, CQT/#826/q8, SNU_1Q/#64/q9, SNU_1Q/#104/q15, IQCC_QOP37/#241/qC1
+**Exemplars:** lab-B/#581/q10, lab-B/#1477/q15, lab-B/#1620/q15, lab-B/#733/q12, lab-B/#826/q8, lab-E/#64/q9, lab-E/#104/q15, lab-C/#241/qC1
 
 ### J15 — Sign flip — the line is there as a DIP  (seen 4x)
 
@@ -342,7 +342,7 @@ Each of these is invisible inside a single run. They are the reason the two fami
 
 **Prescription:** Check the sign before changing anything else. A null immediately after a confident detection at the same frequency is a rotation problem, not a lost qubit and not a power problem. Related whole-batch version: when most panels of one plate show the same monotone baseline ramp, that is a readout condition, not many qubits disappearing at once.
 
-**Exemplars:** CQT/#468/q8, CQT/#469/q8, SNU_1Q/#122/q15, CQT/#1084/q20
+**Exemplars:** lab-B/#468/q8, lab-B/#469/q8, lab-E/#122/q15, lab-B/#1084/q20
 
 ## Rules
 
@@ -441,72 +441,72 @@ P3 (the multi-photon ladder) has no signal of its own: the reader can land on th
 
 ## Cross-lab evidence
 
-Three labs and at least three node generations are represented: CQT (four sessions, roughly 400 targets, 20-qubit chips), SNU_1Q (one two-day session, ~8 multiplexed targets plus dedicated single-qubit runs) and IQCC_QOP37 (two sessions, 62 targets on lettered qubits). Their records differ, their failure modes do not.
+Three labs and at least three node generations are represented: lab-B (four sessions, roughly 400 targets, 20-qubit chips), lab-E (one two-day session, ~8 multiplexed targets plus dedicated single-qubit runs) and lab-C (two sessions, 62 targets on lettered qubits). Their records differ, their failure modes do not.
 
-Record differences worth knowing. CQT's node emits power_warning, ef_warning (widen_range / anharm_smaller), fringe_detected / fringe_power, twophoton_freq, anharmonicity_fitted and anharmonicity_stored, and its 08-13/14 generation additionally carries a repair path that pegs the fitted width at a bound, an edge-exclusion guard, a peak-dominance test and a periodicity guard — the last of which correctly refused a regular-ripple trace that a noise-only threshold would have passed. SNU_1Q's node emits onset_found and marks correct fits FAILED with some regularity. IQCC's node splits success from success_shape and labels panels "freq OK, shape poor", which is the only place in the corpus where the record itself distinguishes a good centre from a bad width — and it is exactly the distinction the other two nodes conflate.
+Record differences worth knowing. lab-B's node emits power_warning, ef_warning (widen_range / anharm_smaller), fringe_detected / fringe_power, twophoton_freq, anharmonicity_fitted and anharmonicity_stored, and its 08-13/14 generation additionally carries a repair path that pegs the fitted width at a bound, an edge-exclusion guard, a peak-dominance test and a periodicity guard — the last of which correctly refused a regular-ripple trace that a noise-only threshold would have passed. lab-E's node emits onset_found and marks correct fits FAILED with some regularity. lab-C's node splits success from success_shape and labels panels "freq OK, shape poor", which is the only place in the corpus where the record itself distinguishes a good centre from a bad width — and it is exactly the distinction the other two nodes conflate.
 
-What is common to all three: the two-photon trap (CQT q3/q6/q15/q20, SNU q9/q17, IQCC's ef markers), the centre-return on an empty map, the fixed non-broadening spur, and the fact that `success` is uninformative. The fringe flag is a false positive in every lab where its diagnostic trace was actually examined.
+What is common to all three: the two-photon trap (lab-B q3/q6/q15/q20, lab-E q9/q17, lab-C's ef markers), the centre-return on an empty map, the fixed non-broadening spur, and the fact that `success` is uninformative. The fringe flag is a false positive in every lab where its diagnostic trace was actually examined.
 
-What differs in emphasis. CQT's dominant failure is DRIVE: lines saturated into plateaus and multi-photon ladders, with power broadening of an order of magnitude routine and AC-Stark shifts large enough to walk a reported centre steadily downward over consecutive runs. IQCC's dominant failure is SAMPLING: its lines are narrow, so a frequency step comparable to the linewidth pins the fitted width to the step, empties the low-power map rows and inflates the chosen power — and across a deliberate factor-of-ten drive ladder IQCC measured essentially NO Stark shift (a monotone creep of about a tenth of a linewidth on one qubit, nothing on the other) while power broadening was a factor of about five. SNU sits between, with the distinctive addition of very strong razor-thin leakage tones that dominate several maps.
+What differs in emphasis. lab-B's dominant failure is DRIVE: lines saturated into plateaus and multi-photon ladders, with power broadening of an order of magnitude routine and AC-Stark shifts large enough to walk a reported centre steadily downward over consecutive runs. lab-C's dominant failure is SAMPLING: its lines are narrow, so a frequency step comparable to the linewidth pins the fitted width to the step, empties the low-power map rows and inflates the chosen power — and across a deliberate factor-of-ten drive ladder lab-C measured essentially NO Stark shift (a monotone creep of about a tenth of a linewidth on one qubit, nothing on the other) while power broadening was a factor of about five. lab-E sits between, with the distinctive addition of very strong razor-thin leakage tones that dominate several maps.
 
 One practical consequence of the lab differences: a rule tuned on one chip's drive behaviour will not transfer. The invariants that did transfer are geometric — stationary-versus-bending track, low-power survival, funnel-versus-stripe, half-an-anharmonicity-below-and-only-above-a-threshold — which is why every case here is written in those terms.
 
 ## Open questions
 
 1. Can a 1-D run ever convict itself of the two-photon lock from its own record alone? The corpus contains no example. Every diagnosis required either the map's measured offset, a drive change, or a later run at a narrower span — and the bad fits carried high SNR, narrow width, clean Lorentzian shape and good r-squared throughout. Whether any purely within-run statistic separates them is unresolved.
-2. CQT q8 on 2026-08-15 was never settled: the vs_power maps place a weak band near the sweep centre, one late 1-D pair agree on a much broader line well above it, a third resolves something higher still, and one 1-D fitted the drive chain's own bandwidth envelope. Three mutually inconsistent answers, none cross-confirmed. The corpus cannot say which, if any, is the qubit.
-3. CQT q11 on 2026-08-15: the node's ef fit labelled the strongest fixed column the two-photon line, and the picture refutes that (present at the coldest power, never narrows, never moves). But nothing in the session measured that qubit's real anharmonicity, so the correct partner was never located.
+2. lab-B q8 on 2026-08-15 was never settled: the vs_power maps place a weak band near the sweep centre, one late 1-D pair agree on a much broader line well above it, a third resolves something higher still, and one 1-D fitted the drive chain's own bandwidth envelope. Three mutually inconsistent answers, none cross-confirmed. The corpus cannot say which, if any, is the qubit.
+3. lab-B q11 on 2026-08-15: the node's ef fit labelled the strongest fixed column the two-photon line, and the picture refutes that (present at the coldest power, never narrows, never moves). But nothing in the session measured that qubit's real anharmonicity, so the correct partner was never located.
 4. No threshold could be derived for 'the sweep reached below onset'. The flat floor of the peak-height trace is the only evidence and it is buried in noise on exactly the weak targets where the question matters most. power_warning was observed both false-positive and inverted, so its true-positive rate is unknown from this corpus and the flag cannot be repaired from these data.
-5. When anharmonicity_fitted and anharmonicity_stored disagree, which should be trusted? IQCC's good maps matched stored closely every time; CQT #500 measured a fitted value clearly below stored, and it is the fitted value that identified the partner correctly. The corpus does not settle whether a large fitted-versus-stored discrepancy on a good map is a real anharmonicity or a fit artefact.
-6. Whether a 1-D spike at the right place but only marginally above the noise (CQT #1132 q6, CQT #1137 q6, CQT #400 q11) can ever be legitimately adopted. In every corpus instance it looked correct only because the answer was already known from elsewhere, and the same picture at a different moment produced a different answer.
-7. The IQCC chips showed essentially no AC-Stark shift over a controlled factor-of-ten drive ladder while CQT's is large and directional. The manual cannot say which is typical, so 'the plateau is the answer' is stated as geometry rather than as a claim about how large the penalty for ignoring it is.
-8. Whether the multiplex-only feature seen on SNU q11 (present in every 8-qubit run, absent from every dedicated single-qubit run of the same qubit) is crosstalk from another drive line or something else. It was never isolated, and q11 was never measured successfully at all.
-9. The IQCC 2026-07-30 session is truncated in the source annotations (run 416, target qD2 incomplete), so any pattern that would have emerged only from the rest of that session is missing here. The five 07-30 targets that are present are cited; nothing beyond them was inferred.
-10. For CQT q17 on 2026-08-15 and q15/q16/q19 on 2026-08-16, no ground truth was ever established, so those targets contribute only negative evidence (what a non-measurement looks like) and cannot calibrate any positive case.
+5. When anharmonicity_fitted and anharmonicity_stored disagree, which should be trusted? lab-C's good maps matched stored closely every time; lab-B #500 measured a fitted value clearly below stored, and it is the fitted value that identified the partner correctly. The corpus does not settle whether a large fitted-versus-stored discrepancy on a good map is a real anharmonicity or a fit artefact.
+6. Whether a 1-D spike at the right place but only marginally above the noise (lab-B #1132 q6, lab-B #1137 q6, lab-B #400 q11) can ever be legitimately adopted. In every corpus instance it looked correct only because the answer was already known from elsewhere, and the same picture at a different moment produced a different answer.
+7. The lab-C chips showed essentially no AC-Stark shift over a controlled factor-of-ten drive ladder while lab-B's is large and directional. The manual cannot say which is typical, so 'the plateau is the answer' is stated as geometry rather than as a claim about how large the penalty for ignoring it is.
+8. Whether the multiplex-only feature seen on lab-E q11 (present in every 8-qubit run, absent from every dedicated single-qubit run of the same qubit) is crosstalk from another drive line or something else. It was never isolated, and q11 was never measured successfully at all.
+9. The lab-C 2026-07-30 session is truncated in the source annotations (run 416, target qD2 incomplete), so any pattern that would have emerged only from the rest of that session is missing here. The five 07-30 targets that are present are cited; nothing beyond them was inferred.
+10. For lab-B q17 on 2026-08-15 and q15/q16/q19 on 2026-08-16, no ground truth was ever established, so those targets contribute only negative evidence (what a non-measurement looks like) and cannot calibrate any positive case.
 
 ## Fit-vs-figure disagreements
 
-- CQT #574 q6 (vs_power) — success, a frequency and a fitted anharmonicity reported from a map with no column anywhere; the track traverses the full span at every power.
-- CQT #691 q6 (vs_power) — success at a frequency where the run's own raw rows contain nothing; the only monotonically power-growing feature is elsewhere.
-- CQT #725 q12 (vs_power) — success, frequency, chosen power and anharmonicity from a map with zero significant rows; power_warning is the only honest field in the record.
-- CQT #760 q17 / #762 q17 / #773 q17 (vs_power) — three successes and three frequencies spread over many linewidths from three indistinguishable noise maps, each choosing its own topmost row as the working power.
-- CQT #872 q14 (vs_power) — reports approximately the sweep centre while the map's only column, the argmax in every significant row, stands many linewidths away; the next map on a wider span reports that column.
-- CQT #967 q19 (vs_power) — blank map returning success, a linewidth far narrower than any real line on the chip, an intrinsic width, a fringe power and a sweep-too-hot verdict.
-- CQT #1113 q6 / #1120 q6 / #1088 q6 (vs_power) — three blank maps, all success, returning three fitted anharmonicities differing by more than half from one another.
-- CQT #1165 q16 (vs_power) — uniform speckle returning success, a two-photon frequency, a fitted anharmonicity and an ef-succeeded flag.
-- CQT #1344 q17 and #1346 q17 (vs_power) — two centre-returns in one morning, both success, both with an anharmonicity attached, over maps containing no line at all.
-- CQT #1344 q12 / q15 / q19 (vs_power) — reported centres sitting between features or half a window away from the only coherent structure in each map.
-- CQT #249 q3 and #250 q3 (2026-08-14, vs_power) — success on maps that are pure noise from bottom to top; #249 reports an intrinsic width numerically identical to its fitted width, #250 reports a fitted width SMALLER than its own intrinsic width.
-- CQT #12 q2 (2026-08-13, vs_power) — a frequency written into the state that the run's own raw panel contradicts by tens of fitted linewidths; success true, power_warning empty.
-- CQT #1085 q8 (1-D) — success reported with a NEGATIVE r-squared, on a small low-side peak while the map and the dedicated 1-D put the qubit inside the rising ramp above it.
-- CQT #834 q8 (1-D) — the drive chain's own bandwidth envelope fitted as a single Lorentzian two orders of magnitude wider than any confirmed line, recorded as success.
-- CQT #1160 q19 (1-D) — a wandering baseline hump fitted and stamped success, twenty seconds after the identical picture on the opposite side of the window was not.
-- CQT #603 q10 (1-D) — node recorded failure on a clean, resolved, apex-centred fit that agrees with the previous good run.
-- CQT #682 q11, #944 q18, #891 q14, #893 q14, #1000 q20 (1-D) — recorded failures on fits whose centres the figures support; the complaint is width or peak-dominance, not frequency.
-- CQT #803 q13 (1-D) — NO FIT recorded while the panel carries the strongest excursion in it, many times the noise, cut by the window edge; the vs_power run four minutes later puts the line exactly there.
-- CQT #400 q13 (2026-08-14, 1-D) — the strongest single feature in a twenty-panel figure discarded by the edge-peak guard and recorded NO FIT.
-- CQT #469 q8 (2026-08-14, 1-D) — NO FIT recorded while the line is plainly present as the largest negative excursion of the trace, the readout rotation having flipped by about half a turn.
-- CQT #199 q14 and #200 q14 (2026-08-13, 1-D) — node reports failure via the peak-dominance test because of two much narrower neighbouring spurs, although the centre is right and reproduces across three spans.
-- CQT #527 q9 (vs_power) — power_warning says the sweep was too hot while the picture shows a full plateau plus empty rows below it.
-- CQT #141 q2 (2026-08-13, vs_power) — sweep_too_hot false positive: the column visibly fades out toward low power, so the response did fall below onset.
-- CQT #1088 q8 (vs_power) — sweep_too_hot stamped although the map shows the line stationary down to the bottom row.
-- CQT #969 q6 (vs_power) — the only visible line appears at HIGH power and is absent at low power, yet the node stamped sweep_too_hot; the flag is inverted.
-- CQT #1165 q6 (vs_power) — sweep_too_hot stamped on a map whose power ceiling was below the drive at which the qubit becomes visible at all.
-- CQT #1245 q10 (vs_power) — the fringe diagnostic rises monotonically from the very lowest swept power with no flat floor, so the sweep never reached below onset, and power_warning stayed EMPTY.
-- SNU_1Q #21 q10 (vs_power) — the sweep began above the onset and power_warning was not set; the run reported the razor-thin non-broadening artefact as the qubit.
-- SNU_1Q #30 q10 (vs_power) — the fully Stark-dragged value at the top of the power sweep reported as the frequency, with no power_warning, over a map whose lower half is a dead-vertical plateau.
-- SNU_1Q #45 q10 / #62 q10 / #66 q10 (vs_power) — three consecutive maps with a clean stationary plateau on screen and the node's own track sitting on it, each reporting a centre-return in blank space; #62 additionally stamps sweep_too_hot on a sweep that plainly reached below onset.
-- SNU_1Q #108 q17 / #116 q17 / #117 q17 (vs_power) — frequencies, two-photon partners and anharmonicities reported from maps that are pure noise, in the same window where the 1-D node resolves a clean two-peak structure minutes earlier and later.
-- SNU_1Q #32 q11 / #34 q11 / #36 q11 / #44 q11 (vs_power) — four dedicated repeats of pure white noise, all success, answers scattering by many linewidths and fitted anharmonicities by a comparable amount.
-- SNU_1Q #68 q9 (1-D) — the two-photon line fitted with success set and no flag of any kind, unlike the earlier instances of the same trap on the same qubit.
-- SNU_1Q #49 q9 and #74 q9 (1-D) — correct, well-centred fits marked FAILED; #74 is the best-conditioned measurement of its sequence.
-- SNU_1Q #115 q17 / #118 q17 / #122 q17 (1-D) — the correct member of the pair chosen, marked FAILED, with a derived x180 amplitude many times the physical output range.
-- IQCC_QOP37 #236 qA3 (1-D) — a visibly perfect narrow line with an exact fit marked failed, while two grossly broadened humps in the same run are marked successful; its recorded quality numbers clear every threshold recorded in the same file and the passed neighbour's do not.
-- IQCC_QOP37 #238 qA3 (1-D) — same picture, same frequency, now marked successful; the flag flipped with nothing physical changed.
-- IQCC_QOP37 #236 qA2 / #238 qA2 / #239 qA2 (1-D) — recorded r-squared below the r-squared threshold recorded in the same file, outcome recorded successful.
-- IQCC_QOP37 #412 qC4 / #414 qC5 / #414 qC4 / #415 qC3 (1-D) — passed with r-squared below the node's own declared threshold.
-- IQCC_QOP37 #414 qD4 (1-D) — r-squared under half, marked successful; the identical repeat two minutes later moves the centre by more than a tenth of a linewidth, so the number is not reproducible.
-- IQCC_QOP37 #61 qA2 (vs_power) — the two-photon line is plainly visible in the raw map at the offset the stored anharmonicity predicts, no fitted anharmonicity was produced, and NO ef warning was recorded: a silent miss.
-- IQCC_QOP37 #416 qC4 (vs_power) — tagged sweep_too_hot on a map the picture flatly contradicts, and the chosen power is the second-lowest row of its own sweep, where the line is faintest; the next four 1-D runs on that qubit produced one marginal fit, two outright failures and one displaced answer.
-- IQCC_QOP37 #115 qA1 (1-D) — recorded fitted width nearly double the run's own recorded data width, i.e. the Lorentzian escaped the feature, and the outcome recorded successful.
-- IQCC_QOP37 #116 qA1 (vs_power) — the one case in the corpus where a failure flag and the picture agree: a uniform blank panel with every fit field null. Recorded here because it is the calibration point for how rarely that happens.
+- lab-B #574 q6 (vs_power) — success, a frequency and a fitted anharmonicity reported from a map with no column anywhere; the track traverses the full span at every power.
+- lab-B #691 q6 (vs_power) — success at a frequency where the run's own raw rows contain nothing; the only monotonically power-growing feature is elsewhere.
+- lab-B #725 q12 (vs_power) — success, frequency, chosen power and anharmonicity from a map with zero significant rows; power_warning is the only honest field in the record.
+- lab-B #760 q17 / #762 q17 / #773 q17 (vs_power) — three successes and three frequencies spread over many linewidths from three indistinguishable noise maps, each choosing its own topmost row as the working power.
+- lab-B #872 q14 (vs_power) — reports approximately the sweep centre while the map's only column, the argmax in every significant row, stands many linewidths away; the next map on a wider span reports that column.
+- lab-B #967 q19 (vs_power) — blank map returning success, a linewidth far narrower than any real line on the chip, an intrinsic width, a fringe power and a sweep-too-hot verdict.
+- lab-B #1113 q6 / #1120 q6 / #1088 q6 (vs_power) — three blank maps, all success, returning three fitted anharmonicities differing by more than half from one another.
+- lab-B #1165 q16 (vs_power) — uniform speckle returning success, a two-photon frequency, a fitted anharmonicity and an ef-succeeded flag.
+- lab-B #1344 q17 and #1346 q17 (vs_power) — two centre-returns in one morning, both success, both with an anharmonicity attached, over maps containing no line at all.
+- lab-B #1344 q12 / q15 / q19 (vs_power) — reported centres sitting between features or half a window away from the only coherent structure in each map.
+- lab-B #249 q3 and #250 q3 (2026-08-14, vs_power) — success on maps that are pure noise from bottom to top; #249 reports an intrinsic width numerically identical to its fitted width, #250 reports a fitted width SMALLER than its own intrinsic width.
+- lab-B #12 q2 (2026-08-13, vs_power) — a frequency written into the state that the run's own raw panel contradicts by tens of fitted linewidths; success true, power_warning empty.
+- lab-B #1085 q8 (1-D) — success reported with a NEGATIVE r-squared, on a small low-side peak while the map and the dedicated 1-D put the qubit inside the rising ramp above it.
+- lab-B #834 q8 (1-D) — the drive chain's own bandwidth envelope fitted as a single Lorentzian two orders of magnitude wider than any confirmed line, recorded as success.
+- lab-B #1160 q19 (1-D) — a wandering baseline hump fitted and stamped success, twenty seconds after the identical picture on the opposite side of the window was not.
+- lab-B #603 q10 (1-D) — node recorded failure on a clean, resolved, apex-centred fit that agrees with the previous good run.
+- lab-B #682 q11, #944 q18, #891 q14, #893 q14, #1000 q20 (1-D) — recorded failures on fits whose centres the figures support; the complaint is width or peak-dominance, not frequency.
+- lab-B #803 q13 (1-D) — NO FIT recorded while the panel carries the strongest excursion in it, many times the noise, cut by the window edge; the vs_power run four minutes later puts the line exactly there.
+- lab-B #400 q13 (2026-08-14, 1-D) — the strongest single feature in a twenty-panel figure discarded by the edge-peak guard and recorded NO FIT.
+- lab-B #469 q8 (2026-08-14, 1-D) — NO FIT recorded while the line is plainly present as the largest negative excursion of the trace, the readout rotation having flipped by about half a turn.
+- lab-B #199 q14 and #200 q14 (2026-08-13, 1-D) — node reports failure via the peak-dominance test because of two much narrower neighbouring spurs, although the centre is right and reproduces across three spans.
+- lab-B #527 q9 (vs_power) — power_warning says the sweep was too hot while the picture shows a full plateau plus empty rows below it.
+- lab-B #141 q2 (2026-08-13, vs_power) — sweep_too_hot false positive: the column visibly fades out toward low power, so the response did fall below onset.
+- lab-B #1088 q8 (vs_power) — sweep_too_hot stamped although the map shows the line stationary down to the bottom row.
+- lab-B #969 q6 (vs_power) — the only visible line appears at HIGH power and is absent at low power, yet the node stamped sweep_too_hot; the flag is inverted.
+- lab-B #1165 q6 (vs_power) — sweep_too_hot stamped on a map whose power ceiling was below the drive at which the qubit becomes visible at all.
+- lab-B #1245 q10 (vs_power) — the fringe diagnostic rises monotonically from the very lowest swept power with no flat floor, so the sweep never reached below onset, and power_warning stayed EMPTY.
+- lab-E #21 q10 (vs_power) — the sweep began above the onset and power_warning was not set; the run reported the razor-thin non-broadening artefact as the qubit.
+- lab-E #30 q10 (vs_power) — the fully Stark-dragged value at the top of the power sweep reported as the frequency, with no power_warning, over a map whose lower half is a dead-vertical plateau.
+- lab-E #45 q10 / #62 q10 / #66 q10 (vs_power) — three consecutive maps with a clean stationary plateau on screen and the node's own track sitting on it, each reporting a centre-return in blank space; #62 additionally stamps sweep_too_hot on a sweep that plainly reached below onset.
+- lab-E #108 q17 / #116 q17 / #117 q17 (vs_power) — frequencies, two-photon partners and anharmonicities reported from maps that are pure noise, in the same window where the 1-D node resolves a clean two-peak structure minutes earlier and later.
+- lab-E #32 q11 / #34 q11 / #36 q11 / #44 q11 (vs_power) — four dedicated repeats of pure white noise, all success, answers scattering by many linewidths and fitted anharmonicities by a comparable amount.
+- lab-E #68 q9 (1-D) — the two-photon line fitted with success set and no flag of any kind, unlike the earlier instances of the same trap on the same qubit.
+- lab-E #49 q9 and #74 q9 (1-D) — correct, well-centred fits marked FAILED; #74 is the best-conditioned measurement of its sequence.
+- lab-E #115 q17 / #118 q17 / #122 q17 (1-D) — the correct member of the pair chosen, marked FAILED, with a derived x180 amplitude many times the physical output range.
+- lab-C #236 qA3 (1-D) — a visibly perfect narrow line with an exact fit marked failed, while two grossly broadened humps in the same run are marked successful; its recorded quality numbers clear every threshold recorded in the same file and the passed neighbour's do not.
+- lab-C #238 qA3 (1-D) — same picture, same frequency, now marked successful; the flag flipped with nothing physical changed.
+- lab-C #236 qA2 / #238 qA2 / #239 qA2 (1-D) — recorded r-squared below the r-squared threshold recorded in the same file, outcome recorded successful.
+- lab-C #412 qC4 / #414 qC5 / #414 qC4 / #415 qC3 (1-D) — passed with r-squared below the node's own declared threshold.
+- lab-C #414 qD4 (1-D) — r-squared under half, marked successful; the identical repeat two minutes later moves the centre by more than a tenth of a linewidth, so the number is not reproducible.
+- lab-C #61 qA2 (vs_power) — the two-photon line is plainly visible in the raw map at the offset the stored anharmonicity predicts, no fitted anharmonicity was produced, and NO ef warning was recorded: a silent miss.
+- lab-C #416 qC4 (vs_power) — tagged sweep_too_hot on a map the picture flatly contradicts, and the chosen power is the second-lowest row of its own sweep, where the line is faintest; the next four 1-D runs on that qubit produced one marginal fit, two outright failures and one displaced answer.
+- lab-C #115 qA1 (1-D) — recorded fitted width nearly double the run's own recorded data width, i.e. the Lorentzian escaped the feature, and the outcome recorded successful.
+- lab-C #116 qA1 (vs_power) — the one case in the corpus where a failure flag and the picture agree: a uniform blank panel with every fit field null. Recorded here because it is the calibration point for how rarely that happens.

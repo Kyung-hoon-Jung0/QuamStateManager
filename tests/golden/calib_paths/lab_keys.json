@@ -1,0 +1,13 @@
+{
+  "_comment": "internal provenance only -- shipped knowledge carries the keys, never the names (docs/134 naming doctrine)",
+  "lab-A": "AS_10TQ9TC",
+  "lab-B": "CQT",
+  "lab-C": "IQCC_QOP37",
+  "lab-D": "KRISS_CR",
+  "lab-E": "SNU_1Q",
+  "archives": {
+    "lab-B": [
+      "D:\\work\\Customer_Codes\\CQT\\data"
+    ]
+  }
+}

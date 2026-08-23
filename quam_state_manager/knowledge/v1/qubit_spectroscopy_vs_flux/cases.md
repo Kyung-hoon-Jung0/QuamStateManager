@@ -1,6 +1,6 @@
 # qubit_spectroscopy_vs_flux — case manual (v1)
 
-**Authored:** 2026-08-21 · **Source:** docs/131: 57 runs / 165 targets across 5 labs (AS_10TQ9TC, CQT, IQCC_QOP37, KRISS_CR, SNU_1Q), every figure viewed; blind re-classification 8/10
+**Authored:** 2026-08-21 · **Source:** docs/131: 57 runs / 165 targets across 5 labs (lab-A, lab-B, lab-C, lab-D, lab-E), every figure viewed; blind re-classification 8/10
 
 This file and `cases.json` are generated from ONE source. Geometry and prescription language is chip-independent by rule: relative positions, shapes and bounded knob moves only — never absolute frequencies, powers or fluxes, and never a size expressed as a fraction of the swept window.
 
@@ -14,11 +14,11 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Adoptable as-is. Confirm with ONE identical repeat before writing; if the turning point sits within about one flux column of either edge, shift the flux window by roughly half its span toward that edge and re-run first. If the extremum region spans more than about a quarter of the swept flux columns, treat it as the broad-crest case instead.
 
-**Exemplars:** AS_10TQ9TC/#38/q6, AS_10TQ9TC/#46/q7, IQCC_QOP37/#432/qD3, IQCC_QOP37/#425/qC1, AS_10TQ9TC/#245/q7, IQCC_QOP37/#437/qC3
+**Exemplars:** lab-A/#38/q6, lab-A/#46/q7, lab-C/#432/qD3, lab-C/#425/qC1, lab-A/#245/q7, lab-C/#437/qC3
 
-![F1 — AS_10TQ9TC #38 q6](exemplars/F1/AS_10TQ9TC_38_q6.png)
-![F1 — AS_10TQ9TC #46 q7](exemplars/F1/AS_10TQ9TC_46_q7.png)
-![F1 — IQCC_QOP37 #432 qD3](exemplars/F1/IQCC_QOP37_432_qD3.png)
+![F1 — lab-A #38 q6](exemplars/F1/lab-A_38_q6.png)
+![F1 — lab-A #46 q7](exemplars/F1/lab-A_46_q7.png)
+![F1 — lab-C #432 qD3](exemplars/F1/lab-C_432_qD3.png)
 
 ### F1b — Broad-crest arch — frequency determined, flux weakly determined  (seen 13x)
 
@@ -26,11 +26,11 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Adopt the extremum FREQUENCY; hold the flux offset. Narrow the flux window to roughly a third of its current span, centred on the crest, and/or raise shots by 2-4x, then re-run. Write the offset only if two identical runs agree on its sign and land within the crest width.
 
-**Exemplars:** AS_10TQ9TC/#237/q6, AS_10TQ9TC/#243/q8, IQCC_QOP37/#430/qD1, IQCC_QOP37/#425/qD3, IQCC_QOP37/#437/qC1
+**Exemplars:** lab-A/#237/q6, lab-A/#243/q8, lab-C/#430/qD1, lab-C/#425/qD3, lab-C/#437/qC1
 
-![F1b — AS_10TQ9TC #237 q6](exemplars/F1b/AS_10TQ9TC_237_q6.png)
-![F1b — AS_10TQ9TC #243 q8](exemplars/F1b/AS_10TQ9TC_243_q8.png)
-![F1b — IQCC_QOP37 #430 qD1](exemplars/F1b/IQCC_QOP37_430_qD1.png)
+![F1b — lab-A #237 q6](exemplars/F1b/lab-A_237_q6.png)
+![F1b — lab-A #243 q8](exemplars/F1b/lab-A_243_q8.png)
+![F1b — lab-C #430 qD1](exemplars/F1b/lab-C_430_qD1.png)
 
 ### F1i — Inverted arch — extremum is a MINIMUM inside the window  (seen 2x)
 
@@ -38,10 +38,10 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Treat exactly like the full arch, but check that the record's orientation field says the lower branch and that the value lands in the lower sweet-spot slot; a fit reporting the opposite orientation on this shape is disqualified. Confirm with one identical repeat, and confirm with the lab that the lower extremum is an acceptable idle point before writing an offset.
 
-**Exemplars:** SNU_1Q/#125/q10, SNU_1Q/#86/q10
+**Exemplars:** lab-E/#125/q10, lab-E/#86/q10
 
-![F1i — SNU_1Q #125 q10](exemplars/F1i/SNU_1Q_125_q10.png)
-![F1i — SNU_1Q #86 q10](exemplars/F1i/SNU_1Q_86_q10.png)
+![F1i — lab-E #125 q10](exemplars/F1i/lab-E_125_q10.png)
+![F1i — lab-E #86 q10](exemplars/F1i/lab-E_86_q10.png)
 
 ### F1p — Shoulder / plateau arch — extremum present but not localizable  (seen 2x)
 
@@ -49,10 +49,10 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Do not write a flux offset. Extend or shift the flux window by roughly half to one full current span toward the flat side to bring the return flank into view, keeping the frequency span; re-run. If the flat stretch persists over the extended window, escalate to a flux-response check rather than more spectroscopy.
 
-**Exemplars:** SNU_1Q/#85/q10, CQT/#150/q2
+**Exemplars:** lab-E/#85/q10, lab-B/#150/q2
 
-![F1p — SNU_1Q #85 q10](exemplars/F1p/SNU_1Q_85_q10.png)
-![F1p — CQT #150 q2](exemplars/F1p/CQT_150_q2.png)
+![F1p — lab-E #85 q10](exemplars/F1p/lab-E_85_q10.png)
+![F1p — lab-B #150 q2](exemplars/F1p/lab-B_150_q2.png)
 
 ### F1s — Blob-chain arch — readable turning point, no traceable line  (seen 3x)
 
@@ -60,10 +60,10 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Increase flux point density by 2-3x over the SAME flux span (do not widen anything) and re-run; optionally refine the frequency step by about 2x to sharpen each column's peak. A refusal on this geometry is a tracer limitation, not evidence of absence — never mark the qubit dead from it.
 
-**Exemplars:** IQCC_QOP37/#437/qC5, IQCC_QOP37/#433/qC2
+**Exemplars:** lab-C/#437/qC5, lab-C/#433/qC2
 
-![F1s — IQCC_QOP37 #437 qC5](exemplars/F1s/IQCC_QOP37_437_qC5.png)
-![F1s — IQCC_QOP37 #433 qC2](exemplars/F1s/IQCC_QOP37_433_qC2.png)
+![F1s — lab-C #437 qC5](exemplars/F1s/lab-C_437_qC5.png)
+![F1s — lab-C #433 qC2](exemplars/F1s/lab-C_433_qC2.png)
 
 ### F2 — Monotonic ridge — no turning point inside the window  (seen 2x)
 
@@ -71,10 +71,10 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Shift the flux window by roughly one full current span in the direction the feature is climbing (or widen it about 2x if the period is unknown) and re-run. Never write the extrapolated vertex, regardless of what the extrapolation flag says.
 
-**Exemplars:** AS_10TQ9TC/#37/q6, AS_10TQ9TC/#37/q7
+**Exemplars:** lab-A/#37/q6, lab-A/#37/q7
 
-![F2 — AS_10TQ9TC #37 q6](exemplars/F2/AS_10TQ9TC_37_q6.png)
-![F2 — AS_10TQ9TC #37 q7](exemplars/F2/AS_10TQ9TC_37_q7.png)
+![F2 — lab-A #37 q6](exemplars/F2/lab-A_37_q6.png)
+![F2 — lab-A #37 q7](exemplars/F2/lab-A_37_q7.png)
 
 ### F3 — Flat line — a feature exists but does not move with flux  (seen 5x)
 
@@ -82,11 +82,11 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Do not write a flux offset; the frequency may be usable. Widen the flux window by 3-10x and re-run once to rule out a window far narrower than the period; if the band is still flat over the wide window, escalate to a flux-line / wiring / crosstalk check rather than repeating spectroscopy.
 
-**Exemplars:** CQT/#16/q2, CQT/#35/q2, IQCC_QOP37/#419/qC2, KRISS_CR/#90/qA1
+**Exemplars:** lab-B/#16/q2, lab-B/#35/q2, lab-C/#419/qC2, lab-D/#90/qA1
 
-![F3 — CQT #16 q2](exemplars/F3/CQT_16_q2.png)
-![F3 — CQT #35 q2](exemplars/F3/CQT_35_q2.png)
-![F3 — IQCC_QOP37 #419 qC2](exemplars/F3/IQCC_QOP37_419_qC2.png)
+![F3 — lab-B #16 q2](exemplars/F3/lab-B_16_q2.png)
+![F3 — lab-B #35 q2](exemplars/F3/lab-B_35_q2.png)
+![F3 — lab-C #419 qC2](exemplars/F3/lab-C_419_qC2.png)
 
 ### F3m — Multiple parallel flux-independent bands  (seen 2x)
 
@@ -94,10 +94,10 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Reduce drive amplitude by about 2x (power broadening and multi-photon branches), widen the frequency span enough to contain every visible band, and widen the flux window 3-5x so that whichever band responds to flux reveals itself. Never adopt a value while more than one candidate band is present.
 
-**Exemplars:** CQT/#36/q2, CQT/#149/q2
+**Exemplars:** lab-B/#36/q2, lab-B/#149/q2
 
-![F3m — CQT #36 q2](exemplars/F3m/CQT_36_q2.png)
-![F3m — CQT #149 q2](exemplars/F3m/CQT_149_q2.png)
+![F3m — lab-B #36 q2](exemplars/F3m/lab-B_36_q2.png)
+![F3m — lab-B #149 q2](exemplars/F3m/lab-B_149_q2.png)
 
 ### F4 — Partial ridge — feature visible over only part of the flux range  (seen 11x)
 
@@ -105,11 +105,11 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Narrow the flux window to roughly the populated sub-range (about half the current span) and re-run, or raise shots 2x if the loss is contrast-driven. If the fragment is only a couple of columns wide, treat it as reconnaissance and do not adopt any number from it.
 
-**Exemplars:** AS_10TQ9TC/#237/q7, IQCC_QOP37/#433/qC1, IQCC_QOP37/#434/qC2, AS_10TQ9TC/#38/q7
+**Exemplars:** lab-A/#237/q7, lab-C/#433/qC1, lab-C/#434/qC2, lab-A/#38/q7
 
-![F4 — AS_10TQ9TC #237 q7](exemplars/F4/AS_10TQ9TC_237_q7.png)
-![F4 — IQCC_QOP37 #433 qC1](exemplars/F4/IQCC_QOP37_433_qC1.png)
-![F4 — IQCC_QOP37 #434 qC2](exemplars/F4/IQCC_QOP37_434_qC2.png)
+![F4 — lab-A #237 q7](exemplars/F4/lab-A_237_q7.png)
+![F4 — lab-C #433 qC1](exemplars/F4/lab-C_433_qC1.png)
+![F4 — lab-C #434 qC2](exemplars/F4/lab-C_434_qC2.png)
 
 ### F4f — Arch truncated by the FREQUENCY window  (seen 8x)
 
@@ -117,11 +117,11 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Widen the frequency span by about 2x, or narrow the flux window by about half, so both flanks stay inside the band; keep the other axis fixed so the change is attributable. Do not trust a curvature term derived from flanks that were clipped.
 
-**Exemplars:** AS_10TQ9TC/#36/q6, AS_10TQ9TC/#238/q5, IQCC_QOP37/#433/qD1, IQCC_QOP37/#433/qC3
+**Exemplars:** lab-A/#36/q6, lab-A/#238/q5, lab-C/#433/qD1, lab-C/#433/qC3
 
-![F4f — AS_10TQ9TC #36 q6](exemplars/F4f/AS_10TQ9TC_36_q6.png)
-![F4f — AS_10TQ9TC #238 q5](exemplars/F4f/AS_10TQ9TC_238_q5.png)
-![F4f — IQCC_QOP37 #433 qD1](exemplars/F4f/IQCC_QOP37_433_qD1.png)
+![F4f — lab-A #36 q6](exemplars/F4f/lab-A_36_q6.png)
+![F4f — lab-A #238 q5](exemplars/F4f/lab-A_238_q5.png)
+![F4f — lab-C #433 qD1](exemplars/F4f/lab-C_433_qD1.png)
 
 ### F4e — Extremum riding the edge of the frequency band  (seen 2x)
 
@@ -129,10 +129,10 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Shift the frequency window by about half its span in the direction the extremum is pinned, keeping the span and the flux window fixed, and re-run. Do not adopt the extremum frequency or the curvature from a boundary-pinned apex.
 
-**Exemplars:** SNU_1Q/#79/q10, CQT/#35/q2
+**Exemplars:** lab-E/#79/q10, lab-B/#35/q2
 
-![F4e — SNU_1Q #79 q10](exemplars/F4e/SNU_1Q_79_q10.png)
-![F4e — CQT #35 q2](exemplars/F4e/CQT_35_q2.png)
+![F4e — lab-E #79 q10](exemplars/F4e/lab-E_79_q10.png)
+![F4e — lab-B #35 q2](exemplars/F4e/lab-B_35_q2.png)
 
 ### F5 — Interrupted / anticrossing ridge  (seen 4x)
 
@@ -140,11 +140,11 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Narrow the flux window to one side of the interruption (about half the span) and re-run so the fit never spans the crossing; raise shots 2x to confirm the break is real. If the break repeats at the same flux across runs, escalate to a TLS / resonator-crossing investigation instead of re-fitting.
 
-**Exemplars:** AS_10TQ9TC/#37/q7, AS_10TQ9TC/#239/q7, AS_10TQ9TC/#243/q7
+**Exemplars:** lab-A/#37/q7, lab-A/#239/q7, lab-A/#243/q7
 
-![F5 — AS_10TQ9TC #37 q7](exemplars/F5/AS_10TQ9TC_37_q7.png)
-![F5 — AS_10TQ9TC #239 q7](exemplars/F5/AS_10TQ9TC_239_q7.png)
-![F5 — AS_10TQ9TC #243 q7](exemplars/F5/AS_10TQ9TC_243_q7.png)
+![F5 — lab-A #37 q7](exemplars/F5/lab-A_37_q7.png)
+![F5 — lab-A #239 q7](exemplars/F5/lab-A_239_q7.png)
+![F5 — lab-A #243 q7](exemplars/F5/lab-A_243_q7.png)
 
 ### F5b — Second parallel branch inside the arch  (seen 1x)
 
@@ -152,9 +152,9 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Reduce drive amplitude by about 2x to suppress the weaker branch and re-run; verify the fit tracks the stronger branch. Do not adopt a value while the assignment between the two branches is undecided.
 
-**Exemplars:** AS_10TQ9TC/#36/q6
+**Exemplars:** lab-A/#36/q6
 
-![F5b — AS_10TQ9TC #36 q6](exemplars/F5b/AS_10TQ9TC_36_q6.png)
+![F5b — lab-A #36 q6](exemplars/F5b/lab-A_36_q6.png)
 
 ### F6 — Featureless map — data present, no feature  (seen 62x)
 
@@ -162,11 +162,11 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Write nothing. Escalate ONE knob at a time: shots 2-4x, then drive amplitude ~2x, then frequency span ~2x around the last known frequency. If sibling qubits on the same multiplexed sheet are readable at these settings, re-run this qubit alone before concluding anything about it.
 
-**Exemplars:** SNU_1Q/#82/q9, IQCC_QOP37/#421/qD1, CQT/#13/q2, CQT/#201/q14, IQCC_QOP37/#425/qC4
+**Exemplars:** lab-E/#82/q9, lab-C/#421/qD1, lab-B/#13/q2, lab-B/#201/q14, lab-C/#425/qC4
 
-![F6 — SNU_1Q #82 q9](exemplars/F6/SNU_1Q_82_q9.png)
-![F6 — IQCC_QOP37 #421 qD1](exemplars/F6/IQCC_QOP37_421_qD1.png)
-![F6 — CQT #13 q2](exemplars/F6/CQT_13_q2.png)
+![F6 — lab-E #82 q9](exemplars/F6/lab-E_82_q9.png)
+![F6 — lab-C #421 qD1](exemplars/F6/lab-C_421_qD1.png)
+![F6 — lab-B #13 q2](exemplars/F6/lab-B_13_q2.png)
 
 ### F6b — Blank panel — no data at all  (seen 3x)
 
@@ -174,11 +174,11 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Stop sweeping. Check acquisition for that channel (readout/data path, de-multiplexed vs multiplexed execution) and repeat the identical run; do not change sweep ranges in response, and never mark the qubit absent on this evidence.
 
-**Exemplars:** IQCC_QOP37/#424/qC1, IQCC_QOP37/#424/qC2, IQCC_QOP37/#424/qC3
+**Exemplars:** lab-C/#424/qC1, lab-C/#424/qC2, lab-C/#424/qC3
 
-![F6b — IQCC_QOP37 #424 qC1](exemplars/F6b/IQCC_QOP37_424_qC1.png)
-![F6b — IQCC_QOP37 #424 qC2](exemplars/F6b/IQCC_QOP37_424_qC2.png)
-![F6b — IQCC_QOP37 #424 qC3](exemplars/F6b/IQCC_QOP37_424_qC3.png)
+![F6b — lab-C #424 qC1](exemplars/F6b/lab-C_424_qC1.png)
+![F6b — lab-C #424 qC2](exemplars/F6b/lab-C_424_qC2.png)
+![F6b — lab-C #424 qC3](exemplars/F6b/lab-C_424_qC3.png)
 
 ### F6c — Non-ridge background structure only  (seen 4x)
 
@@ -186,11 +186,11 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Treat as empty for adoption purposes. Re-run the same window at 2x shots after checking for a drifting background or a background-level step coinciding with a sweep boundary; if the gradient or step reproduces, investigate the source before any further fitting.
 
-**Exemplars:** AS_10TQ9TC/#34/q6, AS_10TQ9TC/#37/q6, AS_10TQ9TC/#35/q6
+**Exemplars:** lab-A/#34/q6, lab-A/#37/q6, lab-A/#35/q6
 
-![F6c — AS_10TQ9TC #34 q6](exemplars/F6c/AS_10TQ9TC_34_q6.png)
-![F6c — AS_10TQ9TC #37 q6](exemplars/F6c/AS_10TQ9TC_37_q6.png)
-![F6c — AS_10TQ9TC #35 q6](exemplars/F6c/AS_10TQ9TC_35_q6.png)
+![F6c — lab-A #34 q6](exemplars/F6c/lab-A_34_q6.png)
+![F6c — lab-A #37 q6](exemplars/F6c/lab-A_37_q6.png)
+![F6c — lab-A #35 q6](exemplars/F6c/lab-A_35_q6.png)
 
 ### F7 — Multi-period window  (seen 0x)
 
@@ -204,11 +204,11 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Do the OPPOSITE of what an empty map suggests: widen the frequency span 4-10x, or narrow the flux range 3-5x, and increase flux point density; change one of these at a time. The segments' near-vertical slope is itself the measurement telling you which axis is mis-scaled.
 
-**Exemplars:** AS_10TQ9TC/#34/q6, AS_10TQ9TC/#35/q6, AS_10TQ9TC/#34/q7
+**Exemplars:** lab-A/#34/q6, lab-A/#35/q6, lab-A/#34/q7
 
-![F8 — AS_10TQ9TC #34 q6](exemplars/F8/AS_10TQ9TC_34_q6.png)
-![F8 — AS_10TQ9TC #35 q6](exemplars/F8/AS_10TQ9TC_35_q6.png)
-![F8 — AS_10TQ9TC #34 q7](exemplars/F8/AS_10TQ9TC_34_q7.png)
+![F8 — lab-A #34 q6](exemplars/F8/lab-A_34_q6.png)
+![F8 — lab-A #35 q6](exemplars/F8/lab-A_35_q6.png)
+![F8 — lab-A #34 q7](exemplars/F8/lab-A_34_q7.png)
 
 ## Flags (orthogonal to map geometry)
 
@@ -220,11 +220,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Hard-block the write. The success flag on this family tracks fit convergence, not the presence of a feature; require an independent connected-feature test under the drawn curve before any value from the run is ingested.
 
-**Exemplars:** CQT/#13/q2, SNU_1Q/#83/q9, IQCC_QOP37/#422/qC3, CQT/#187/q16, IQCC_QOP37/#426/qD3
+**Exemplars:** lab-B/#13/q2, lab-E/#83/q9, lab-C/#422/qC3, lab-B/#187/q16, lab-C/#426/qD3
 
-![X1 — CQT #13 q2](exemplars/X1/CQT_13_q2.png)
-![X1 — SNU_1Q #83 q9](exemplars/X1/SNU_1Q_83_q9.png)
-![X1 — IQCC_QOP37 #422 qC3](exemplars/X1/IQCC_QOP37_422_qC3.png)
+![X1 — lab-B #13 q2](exemplars/X1/lab-B_13_q2.png)
+![X1 — lab-E #83 q9](exemplars/X1/lab-E_83_q9.png)
+![X1 — lab-C #422 qC3](exemplars/X1/lab-C_422_qC3.png)
 
 ### X2 — Refusal of a readable figure  (seen 14x)
 
@@ -232,11 +232,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Never treat as evidence of absence. Re-run the same qubit alone with a finer frequency step and/or 2-4x shots (and denser flux points if the response is one blob per column); the same measurement commonly fits on a later identical repeat.
 
-**Exemplars:** AS_10TQ9TC/#243/q5, AS_10TQ9TC/#244/q7, SNU_1Q/#86/q10, IQCC_QOP37/#437/qC5, AS_10TQ9TC/#238/q7
+**Exemplars:** lab-A/#243/q5, lab-A/#244/q7, lab-E/#86/q10, lab-C/#437/qC5, lab-A/#238/q7
 
-![X2 — AS_10TQ9TC #243 q5](exemplars/X2/AS_10TQ9TC_243_q5.png)
-![X2 — AS_10TQ9TC #244 q7](exemplars/X2/AS_10TQ9TC_244_q7.png)
-![X2 — SNU_1Q #86 q10](exemplars/X2/SNU_1Q_86_q10.png)
+![X2 — lab-A #243 q5](exemplars/X2/lab-A_243_q5.png)
+![X2 — lab-A #244 q7](exemplars/X2/lab-A_244_q7.png)
+![X2 — lab-E #86 q10](exemplars/X2/lab-E_86_q10.png)
 
 ### X3 — Curvature sign inverted against the figure  (seen 3x)
 
@@ -244,10 +244,10 @@ A flag can sit on ANY case.
 
 **Prescription:** Disqualify the entire record, not just the offset — an inverted curvature invalidates the frequency and the period fields too. Re-run unchanged once; if the inversion repeats, escalate to the analysis owner.
 
-**Exemplars:** AS_10TQ9TC/#36/q6, AS_10TQ9TC/#35/q6
+**Exemplars:** lab-A/#36/q6, lab-A/#35/q6
 
-![X3 — AS_10TQ9TC #36 q6](exemplars/X3/AS_10TQ9TC_36_q6.png)
-![X3 — AS_10TQ9TC #35 q6](exemplars/X3/AS_10TQ9TC_35_q6.png)
+![X3 — lab-A #36 q6](exemplars/X3/lab-A_36_q6.png)
+![X3 — lab-A #35 q6](exemplars/X3/lab-A_35_q6.png)
 
 ### X4 — Fit centred off the visible feature  (seen 8x)
 
@@ -255,11 +255,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Do not adopt. Re-run with the flux window narrowed to about a third around the visible extremum so the fit has no room to drift, and compare the marker position against the feature before ingesting.
 
-**Exemplars:** AS_10TQ9TC/#243/q6, IQCC_QOP37/#434/qC2, AS_10TQ9TC/#36/q6, AS_10TQ9TC/#243/q8
+**Exemplars:** lab-A/#243/q6, lab-C/#434/qC2, lab-A/#36/q6, lab-A/#243/q8
 
-![X4 — AS_10TQ9TC #243 q6](exemplars/X4/AS_10TQ9TC_243_q6.png)
-![X4 — IQCC_QOP37 #434 qC2](exemplars/X4/IQCC_QOP37_434_qC2.png)
-![X4 — AS_10TQ9TC #36 q6](exemplars/X4/AS_10TQ9TC_36_q6.png)
+![X4 — lab-A #243 q6](exemplars/X4/lab-A_243_q6.png)
+![X4 — lab-C #434 qC2](exemplars/X4/lab-C_434_qC2.png)
+![X4 — lab-A #36 q6](exemplars/X4/lab-A_36_q6.png)
 
 ### X5 — Extremum pinned to a sweep boundary sample  (seen 5x)
 
@@ -267,11 +267,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Treat a boundary value as a LIMIT, never a measurement. Shift the flux window by about half its span in that direction and re-run; block the write regardless of the extrapolation flag.
 
-**Exemplars:** AS_10TQ9TC/#37/q6, SNU_1Q/#80/q9, KRISS_CR/#90/qA1, SNU_1Q/#84/q9
+**Exemplars:** lab-A/#37/q6, lab-E/#80/q9, lab-D/#90/qA1, lab-E/#84/q9
 
-![X5 — AS_10TQ9TC #37 q6](exemplars/X5/AS_10TQ9TC_37_q6.png)
-![X5 — SNU_1Q #80 q9](exemplars/X5/SNU_1Q_80_q9.png)
-![X5 — KRISS_CR #90 qA1](exemplars/X5/KRISS_CR_90_qA1.png)
+![X5 — lab-A #37 q6](exemplars/X5/lab-A_37_q6.png)
+![X5 — lab-E #80 q9](exemplars/X5/lab-E_80_q9.png)
+![X5 — lab-D #90 qA1](exemplars/X5/lab-D_90_qA1.png)
 
 ### X6 — Extremum outside the swept range — marker exists only in the legend  (seen 2x)
 
@@ -279,10 +279,10 @@ A flag can sit on ANY case.
 
 **Prescription:** Discard the value. Recognise the missing in-axes marker as the visual tell for an out-of-range vertex; shift or widen the flux window and re-run.
 
-**Exemplars:** IQCC_QOP37/#433/qD3, CQT/#186/q16
+**Exemplars:** lab-C/#433/qD3, lab-B/#186/q16
 
-![X6 — IQCC_QOP37 #433 qD3](exemplars/X6/IQCC_QOP37_433_qD3.png)
-![X6 — CQT #186 q16](exemplars/X6/CQT_186_q16.png)
+![X6 — lab-C #433 qD3](exemplars/X6/lab-C_433_qD3.png)
+![X6 — lab-B #186 q16](exemplars/X6/lab-B_186_q16.png)
 
 ### X7 — Extrapolation flag false while the vertex is unsupported  (seen 18x)
 
@@ -290,11 +290,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Never use this flag as a safety net; it was false in essentially every unsupported fit across all five labs. Gate on fit support plus visible feature instead.
 
-**Exemplars:** CQT/#44/q2, SNU_1Q/#80/q9, CQT/#13/q2, SNU_1Q/#84/q9
+**Exemplars:** lab-B/#44/q2, lab-E/#80/q9, lab-B/#13/q2, lab-E/#84/q9
 
-![X7 — CQT #44 q2](exemplars/X7/CQT_44_q2.png)
-![X7 — SNU_1Q #80 q9](exemplars/X7/SNU_1Q_80_q9.png)
-![X7 — CQT #13 q2](exemplars/X7/CQT_13_q2.png)
+![X7 — lab-B #44 q2](exemplars/X7/lab-B_44_q2.png)
+![X7 — lab-E #80 q9](exemplars/X7/lab-E_80_q9.png)
+![X7 — lab-B #13 q2](exemplars/X7/lab-B_13_q2.png)
 
 ### X8 — Fit support covers only part of the swept flux axis  (seen 12x)
 
@@ -302,11 +302,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Require the drawn/recorded fit bounds to bracket the vertex with data on BOTH sides before adoption. Otherwise narrow the sweep to the supported sub-range and re-run so support and window coincide.
 
-**Exemplars:** CQT/#43/q2, SNU_1Q/#84/q9, IQCC_QOP37/#433/qD1, SNU_1Q/#56/q9
+**Exemplars:** lab-B/#43/q2, lab-E/#84/q9, lab-C/#433/qD1, lab-E/#56/q9
 
-![X8 — CQT #43 q2](exemplars/X8/CQT_43_q2.png)
-![X8 — SNU_1Q #84 q9](exemplars/X8/SNU_1Q_84_q9.png)
-![X8 — IQCC_QOP37 #433 qD1](exemplars/X8/IQCC_QOP37_433_qD1.png)
+![X8 — lab-B #43 q2](exemplars/X8/lab-B_43_q2.png)
+![X8 — lab-E #84 q9](exemplars/X8/lab-E_84_q9.png)
+![X8 — lab-C #433 qD1](exemplars/X8/lab-C_433_qD1.png)
 
 ### X9 — Degenerate fit — drawn curve is visually straight or flat  (seen 6x)
 
@@ -314,11 +314,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Block: an extremum on a visually straight curve is unconstrained even within the fit's own geometry. Re-run only after the map itself shows curvature.
 
-**Exemplars:** CQT/#15/q2, CQT/#44/q2, SNU_1Q/#87/q9
+**Exemplars:** lab-B/#15/q2, lab-B/#44/q2, lab-E/#87/q9
 
-![X9 — CQT #15 q2](exemplars/X9/CQT_15_q2.png)
-![X9 — CQT #44 q2](exemplars/X9/CQT_44_q2.png)
-![X9 — SNU_1Q #87 q9](exemplars/X9/SNU_1Q_87_q9.png)
+![X9 — lab-B #15 q2](exemplars/X9/lab-B_15_q2.png)
+![X9 — lab-B #44 q2](exemplars/X9/lab-B_44_q2.png)
+![X9 — lab-E #87 q9](exemplars/X9/lab-E_87_q9.png)
 
 ### X10 — Marker does not lie on the fit's own curve  (seen 2x)
 
@@ -326,10 +326,10 @@ A flag can sit on ANY case.
 
 **Prescription:** Treat as a rendering/record inconsistency and quarantine the run; check the plotting and fit code paths rather than the physics.
 
-**Exemplars:** IQCC_QOP37/#426/qD3, IQCC_QOP37/#426/qC3
+**Exemplars:** lab-C/#426/qD3, lab-C/#426/qC3
 
-![X10 — IQCC_QOP37 #426 qD3](exemplars/X10/IQCC_QOP37_426_qD3.png)
-![X10 — IQCC_QOP37 #426 qC3](exemplars/X10/IQCC_QOP37_426_qC3.png)
+![X10 — lab-C #426 qD3](exemplars/X10/lab-C_426_qD3.png)
+![X10 — lab-C #426 qC3](exemplars/X10/lab-C_426_qC3.png)
 
 ### X11 — Sibling disagreement inside one run  (seen 8x)
 
@@ -337,11 +337,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Suspect a run-level cause rather than a per-qubit one; do not ingest any offset from that run until a repeat reproduces the sign, and re-run the refused panels individually.
 
-**Exemplars:** AS_10TQ9TC/#243/q6, AS_10TQ9TC/#243/q8, AS_10TQ9TC/#237/q5
+**Exemplars:** lab-A/#243/q6, lab-A/#243/q8, lab-A/#237/q5
 
-![X11 — AS_10TQ9TC #243 q6](exemplars/X11/AS_10TQ9TC_243_q6.png)
-![X11 — AS_10TQ9TC #243 q8](exemplars/X11/AS_10TQ9TC_243_q8.png)
-![X11 — AS_10TQ9TC #237 q5](exemplars/X11/AS_10TQ9TC_237_q5.png)
+![X11 — lab-A #243 q6](exemplars/X11/lab-A_243_q6.png)
+![X11 — lab-A #243 q8](exemplars/X11/lab-A_243_q8.png)
+![X11 — lab-A #237 q5](exemplars/X11/lab-A_237_q5.png)
 
 ### X12 — Cross-run contradiction between settings  (seen 20x)
 
@@ -349,11 +349,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Do not average. Prefer the run whose panel shows a connected feature under the curve; discard the other. Treat a systematic offset that tracks the sweep setting as proof the wide-setting fits are noise.
 
-**Exemplars:** IQCC_QOP37/#421/qD1, IQCC_QOP37/#434/qC1, IQCC_QOP37/#426/qC2
+**Exemplars:** lab-C/#421/qD1, lab-C/#434/qC1, lab-C/#426/qC2
 
-![X12 — IQCC_QOP37 #421 qD1](exemplars/X12/IQCC_QOP37_421_qD1.png)
-![X12 — IQCC_QOP37 #434 qC1](exemplars/X12/IQCC_QOP37_434_qC1.png)
-![X12 — IQCC_QOP37 #426 qC2](exemplars/X12/IQCC_QOP37_426_qC2.png)
+![X12 — lab-C #421 qD1](exemplars/X12/lab-C_421_qD1.png)
+![X12 — lab-C #434 qC1](exemplars/X12/lab-C_434_qC1.png)
+![X12 — lab-C #426 qC2](exemplars/X12/lab-C_426_qC2.png)
 
 ### X13 — Identical parameters, different map  (seen 6x)
 
@@ -361,11 +361,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Freeze adoption for that qubit and repeat at least twice more unchanged; the variable is the instrument state, not the settings, so parameter escalation will not resolve it.
 
-**Exemplars:** CQT/#148/q2, CQT/#149/q2, SNU_1Q/#80/q9, SNU_1Q/#81/q9
+**Exemplars:** lab-B/#148/q2, lab-B/#149/q2, lab-E/#80/q9, lab-E/#81/q9
 
-![X13 — CQT #148 q2](exemplars/X13/CQT_148_q2.png)
-![X13 — CQT #149 q2](exemplars/X13/CQT_149_q2.png)
-![X13 — SNU_1Q #80 q9](exemplars/X13/SNU_1Q_80_q9.png)
+![X13 — lab-B #148 q2](exemplars/X13/lab-B_148_q2.png)
+![X13 — lab-B #149 q2](exemplars/X13/lab-B_149_q2.png)
+![X13 — lab-E #80 q9](exemplars/X13/lab-E_80_q9.png)
 
 ### X14 — Succeeds only where the map is unreadable  (seen 3x)
 
@@ -373,11 +373,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Read the pattern as a fitter property, never as a measurement: discard all such successes and judge the qubit only from the runs where its neighbours are readable.
 
-**Exemplars:** IQCC_QOP37/#422/qC3, IQCC_QOP37/#423/qC3, IQCC_QOP37/#426/qC3
+**Exemplars:** lab-C/#422/qC3, lab-C/#423/qC3, lab-C/#426/qC3
 
-![X14 — IQCC_QOP37 #422 qC3](exemplars/X14/IQCC_QOP37_422_qC3.png)
-![X14 — IQCC_QOP37 #423 qC3](exemplars/X14/IQCC_QOP37_423_qC3.png)
-![X14 — IQCC_QOP37 #426 qC3](exemplars/X14/IQCC_QOP37_426_qC3.png)
+![X14 — lab-C #422 qC3](exemplars/X14/lab-C_422_qC3.png)
+![X14 — lab-C #423 qC3](exemplars/X14/lab-C_423_qC3.png)
+![X14 — lab-C #426 qC3](exemplars/X14/lab-C_426_qC3.png)
 
 ### X15 — Asymmetric flanks — window not centred on the extremum  (seen 6x)
 
@@ -385,11 +385,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Re-centre: shift the flux window by roughly the offset between the visible extremum and the window centre, keeping the span, and re-run before adopting. Asymmetry is also the best available explanation for a fitter struggling on an otherwise readable panel.
 
-**Exemplars:** AS_10TQ9TC/#238/q5, AS_10TQ9TC/#243/q5, IQCC_QOP37/#425/qD1
+**Exemplars:** lab-A/#238/q5, lab-A/#243/q5, lab-C/#425/qD1
 
-![X15 — AS_10TQ9TC #238 q5](exemplars/X15/AS_10TQ9TC_238_q5.png)
-![X15 — AS_10TQ9TC #243 q5](exemplars/X15/AS_10TQ9TC_243_q5.png)
-![X15 — IQCC_QOP37 #425 qD1](exemplars/X15/IQCC_QOP37_425_qD1.png)
+![X15 — lab-A #238 q5](exemplars/X15/lab-A_238_q5.png)
+![X15 — lab-A #243 q5](exemplars/X15/lab-A_243_q5.png)
+![X15 — lab-C #425 qD1](exemplars/X15/lab-C_425_qD1.png)
 
 ### X16 — Response polarity is dark, not bright  (seen 5x)
 
@@ -397,11 +397,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Detect a contrast EXTREMUM of either sign per panel; never hard-code 'bright ridge'. Verify any automated tracer on both polarities before trusting a sheet.
 
-**Exemplars:** AS_10TQ9TC/#244/q5, IQCC_QOP37/#433/qC3, AS_10TQ9TC/#36/q6
+**Exemplars:** lab-A/#244/q5, lab-C/#433/qC3, lab-A/#36/q6
 
-![X16 — AS_10TQ9TC #244 q5](exemplars/X16/AS_10TQ9TC_244_q5.png)
-![X16 — IQCC_QOP37 #433 qC3](exemplars/X16/IQCC_QOP37_433_qC3.png)
-![X16 — AS_10TQ9TC #36 q6](exemplars/X16/AS_10TQ9TC_36_q6.png)
+![X16 — lab-A #244 q5](exemplars/X16/lab-A_244_q5.png)
+![X16 — lab-C #433 qC3](exemplars/X16/lab-C_433_qC3.png)
+![X16 — lab-A #36 q6](exemplars/X16/lab-A_36_q6.png)
 
 ### X17 — Curvature term incoherent across repeats  (seen 7x)
 
@@ -409,11 +409,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Require sign agreement and same-order-of-magnitude agreement across at least two repeats before writing any curvature-derived quantity; a term that swings this far is describing noise.
 
-**Exemplars:** SNU_1Q/#83/q9, SNU_1Q/#84/q9, CQT/#43/q2
+**Exemplars:** lab-E/#83/q9, lab-E/#84/q9, lab-B/#43/q2
 
-![X17 — SNU_1Q #83 q9](exemplars/X17/SNU_1Q_83_q9.png)
-![X17 — SNU_1Q #84 q9](exemplars/X17/SNU_1Q_84_q9.png)
-![X17 — CQT #43 q2](exemplars/X17/CQT_43_q2.png)
+![X17 — lab-E #83 q9](exemplars/X17/lab-E_83_q9.png)
+![X17 — lab-E #84 q9](exemplars/X17/lab-E_84_q9.png)
+![X17 — lab-B #43 q2](exemplars/X17/lab-B_43_q2.png)
 
 ### X18 — Period fields derived from a boundary or from a single branch  (seen 2x)
 
@@ -421,10 +421,10 @@ A flag can sit on ANY case.
 
 **Prescription:** Leave period fields empty unless at least two extrema of the same kind are inside the window; never derive a period from a boundary sample.
 
-**Exemplars:** KRISS_CR/#90/qA1, CQT/#13/q2
+**Exemplars:** lab-D/#90/qA1, lab-B/#13/q2
 
-![X18 — KRISS_CR #90 qA1](exemplars/X18/KRISS_CR_90_qA1.png)
-![X18 — CQT #13 q2](exemplars/X18/CQT_13_q2.png)
+![X18 — lab-D #90 qA1](exemplars/X18/lab-D_90_qA1.png)
+![X18 — lab-B #13 q2](exemplars/X18/lab-B_13_q2.png)
 
 ### X19 — State written from an unsupported fit  (seen 3x)
 
@@ -432,11 +432,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Block writes behind the connected-feature test. Where a frequency is defensible but the flux is not, split the write: adopt the frequency, refuse the offset.
 
-**Exemplars:** CQT/#16/q2, CQT/#150/q2, SNU_1Q/#80/q9
+**Exemplars:** lab-B/#16/q2, lab-B/#150/q2, lab-E/#80/q9
 
-![X19 — CQT #16 q2](exemplars/X19/CQT_16_q2.png)
-![X19 — CQT #150 q2](exemplars/X19/CQT_150_q2.png)
-![X19 — SNU_1Q #80 q9](exemplars/X19/SNU_1Q_80_q9.png)
+![X19 — lab-B #16 q2](exemplars/X19/lab-B_16_q2.png)
+![X19 — lab-B #150 q2](exemplars/X19/lab-B_150_q2.png)
+![X19 — lab-E #80 q9](exemplars/X19/lab-E_80_q9.png)
 
 ### X20 — Numbers recorded despite a failure verdict  (seen 2x)
 
@@ -444,10 +444,10 @@ A flag can sit on ANY case.
 
 **Prescription:** Never harvest values from failed records; treat any non-empty field on a failed verdict as a defect to report upstream.
 
-**Exemplars:** IQCC_QOP37/#433/qD3, CQT/#186/q16
+**Exemplars:** lab-C/#433/qD3, lab-B/#186/q16
 
-![X20 — IQCC_QOP37 #433 qD3](exemplars/X20/IQCC_QOP37_433_qD3.png)
-![X20 — CQT #186 q16](exemplars/X20/CQT_186_q16.png)
+![X20 — lab-C #433 qD3](exemplars/X20/lab-C_433_qD3.png)
+![X20 — lab-B #186 q16](exemplars/X20/lab-B_186_q16.png)
 
 ### X21 — Patch set inconsistent with the verdicts  (seen 2x)
 
@@ -455,10 +455,10 @@ A flag can sit on ANY case.
 
 **Prescription:** Reconcile verdict-to-patch mapping per run before trusting the chip state; a missing patch is silent and leaves the chip half-updated.
 
-**Exemplars:** IQCC_QOP37/#420/qD3, IQCC_QOP37/#420/qD1
+**Exemplars:** lab-C/#420/qD3, lab-C/#420/qD1
 
-![X21 — IQCC_QOP37 #420 qD3](exemplars/X21/IQCC_QOP37_420_qD3.png)
-![X21 — IQCC_QOP37 #420 qD1](exemplars/X21/IQCC_QOP37_420_qD1.png)
+![X21 — lab-C #420 qD3](exemplars/X21/lab-C_420_qD3.png)
+![X21 — lab-C #420 qD1](exemplars/X21/lab-C_420_qD1.png)
 
 ### X22 — Feature present but low contrast / discontinuous  (seen 7x)
 
@@ -466,11 +466,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Raise shots 2-4x and refine the frequency step by about 2x over the same windows before adopting; if the fit succeeds only at low contrast, require a higher-contrast repeat to confirm.
 
-**Exemplars:** AS_10TQ9TC/#39/q7, AS_10TQ9TC/#237/q7, AS_10TQ9TC/#38/q7
+**Exemplars:** lab-A/#39/q7, lab-A/#237/q7, lab-A/#38/q7
 
-![X22 — AS_10TQ9TC #39 q7](exemplars/X22/AS_10TQ9TC_39_q7.png)
-![X22 — AS_10TQ9TC #237 q7](exemplars/X22/AS_10TQ9TC_237_q7.png)
-![X22 — AS_10TQ9TC #38 q7](exemplars/X22/AS_10TQ9TC_38_q7.png)
+![X22 — lab-A #39 q7](exemplars/X22/lab-A_39_q7.png)
+![X22 — lab-A #237 q7](exemplars/X22/lab-A_237_q7.png)
+![X22 — lab-A #38 q7](exemplars/X22/lab-A_38_q7.png)
 
 ### X23 — Flux axis under-sampled for the swept span  (seen 9x)
 
@@ -478,11 +478,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Increase flux point density with the span, or narrow the span; never widen the flux range without either adding columns or widening the frequency span.
 
-**Exemplars:** IQCC_QOP37/#433/qC1, AS_10TQ9TC/#34/q6, CQT/#186/q16
+**Exemplars:** lab-C/#433/qC1, lab-A/#34/q6, lab-B/#186/q16
 
-![X23 — IQCC_QOP37 #433 qC1](exemplars/X23/IQCC_QOP37_433_qC1.png)
-![X23 — AS_10TQ9TC #34 q6](exemplars/X23/AS_10TQ9TC_34_q6.png)
-![X23 — CQT #186 q16](exemplars/X23/CQT_186_q16.png)
+![X23 — lab-C #433 qC1](exemplars/X23/lab-C_433_qC1.png)
+![X23 — lab-A #34 q6](exemplars/X23/lab-A_34_q6.png)
+![X23 — lab-B #186 q16](exemplars/X23/lab-B_186_q16.png)
 
 ### X24 — Reconnaissance run mistaken for a measurement  (seen 12x)
 
@@ -490,11 +490,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Mark such runs as search steps and exclude them from adoption by policy, even when they report success; require a settled-settings repeat before any write.
 
-**Exemplars:** AS_10TQ9TC/#34/q6, IQCC_QOP37/#423/qD1, SNU_1Q/#56/q9
+**Exemplars:** lab-A/#34/q6, lab-C/#423/qD1, lab-E/#56/q9
 
-![X24 — AS_10TQ9TC #34 q6](exemplars/X24/AS_10TQ9TC_34_q6.png)
-![X24 — IQCC_QOP37 #423 qD1](exemplars/X24/IQCC_QOP37_423_qD1.png)
-![X24 — SNU_1Q #56 q9](exemplars/X24/SNU_1Q_56_q9.png)
+![X24 — lab-A #34 q6](exemplars/X24/lab-A_34_q6.png)
+![X24 — lab-C #423 qD1](exemplars/X24/lab-C_423_qD1.png)
+![X24 — lab-E #56 q9](exemplars/X24/lab-E_56_q9.png)
 
 ## Rules
 
@@ -587,17 +587,17 @@ Axes are NORMALISED and UNLABELLED: no absolute frequency, power or flux leaves 
 
 ## Cross-lab evidence
 
-INVARIANT ACROSS ALL FIVE LABS (AS_10TQ9TC, CQT, IQCC_QOP37, SNU_1Q, KRISS_CR)\n\n1. The physics geometry: a connected contrast feature whose frequency traces a smooth rise-and-fall (or fall-and-rise) against flux, with the turning point being the quantity of interest. Every good panel in every lab has the same shape, and the same three sub-shapes recur everywhere: well-peaked, broad-crested, and truncated by an axis.\n\n2. The overlay convention: a fitted parabola, a diamond/point extremum marker, and a vertical idle-offset line through the marker; on refusal, no overlay at all and an all-empty (all-NaN) record. This held in all five labs and is the single most reliable cross-lab reading aid.\n\n3. The dominant defect: the success flag reports parabola convergence, not the presence of a feature. Confidently reported extrema on featureless maps occurred at CQT (q2, q14, q16), IQCC (four to five qubits per wide-span run), SNU (q9, both nights) and KRISS (qA1). It is a family-level property of the analysis, not one lab's setup.\n\n4. The mirror defect: refusal of a plainly readable figure occurred at AS (q5/q7 across four group runs), IQCC (qC5 at full drive) and SNU (q10, fitted on an identical later repeat). Also family-level.\n\n5. The extrapolation flag is useless everywhere. `vertex_extrapolated` read false on boundary-pinned vertices, on part-of-range fits and on pure-noise fits, in every lab that reported it.\n\n6. The coupled-axis failure (widen flux, keep frequency span -> arch survives only near the extremum) reproduced at IQCC (#433/#434) and AS (#34-#36 in the opposite direction), on different chips and different sweep hardware.\n\n7. Escalation grammar is the same everywhere: shots, frequency span, frequency step, flux points, flux span, drive amplitude, multiplexed on/off. The one knob that rescued genuinely weak qubits was drive amplitude (IQCC #437) or frequency step (SNU #79), never flux range.\n\nLOOKED UNIVERSAL, IS ACTUALLY ONE LAB'S CONVENTION OR ONE SESSION'S ACCIDENT\n\nA. "Bright ridge". NOT universal, and not even per-lab: in a single AS figure one qubit renders as a DARK dip on a bright ground while its neighbour renders as a bright ridge on a dark ground, and an IQCC panel (#433/qC3) shows the response as a dark trough while its siblings are bright. Per-panel colour normalisation makes brightness incomparable even within one file. Any rule phrased in terms of brightness will silently skip half the panels.\n\nB. "The sweet spot is the maximum". This is a convention of the labs whose qubits were measured near an upper flux sweet spot. SNU q10 (#86, #125) shows a clean U with a MINIMUM inside the window, the record's orientation field says lower, and the value is written into the lower sweet-spot slot. KRISS is the only record in the batch reporting both an upper and a lower optimum in one fit — and its lower one is a sweep-boundary artefact. Orientation must be read from the record and checked against the picture, never assumed.\n\nC. "Panels are one qubit each". CQT, SNU and KRISS runs are single-qubit full-width panels; AS and IQCC are multiplexed multi-panel sheets with independent per-panel normalisation and independent per-panel verdicts. A rule written against either style breaks on the other.\n\nD. Background texture is a lab/rendering signature, not a diagnostic. CQT and SNU featureless maps show heavy horizontal ROW striping at constant frequency plus column banding at the flux pitch; IQCC and AS show per-column blocks of speckle. Both mean the same thing ("data present, no feature"), and neither should be read as structure.\n\nE. "Coarse flux sampling" is relative. IQCC group runs use about a dozen flux columns (so a real arch renders as one blob per column), SNU uses roughly thirty-one, CQT uses dense grids. The blob-chain geometry is a consequence of the column count relative to the feature width, not a property of any lab.\n\nF. Blank uniform panels (no data at all) were seen only at IQCC, and only in a de-multiplexed repeat of a multiplexed run — three of seven panels blank in one figure. Treat as an execution-mode hazard of that setup, not as a general shape.\n\nG. Flux axis quantity and units differ between labs (voltage offsets, current, QDAC bias on the 03c twin). Absolute offsets, curvature magnitudes and "how wide is wide" are never comparable across labs; only the geometry and the relative knob moves are.\n\nH. Data-hygiene artefact in this annotation set: batch 4 contains placeholder rows named with a "_dup_guard" suffix that duplicate a real qubit's verdict and are explicitly marked "ignore-this-row". They are not measurements and must be dropped before any counting or ingestion.
+INVARIANT ACROSS ALL FIVE LABS (lab-A, lab-B, lab-C, lab-E, lab-D)\n\n1. The physics geometry: a connected contrast feature whose frequency traces a smooth rise-and-fall (or fall-and-rise) against flux, with the turning point being the quantity of interest. Every good panel in every lab has the same shape, and the same three sub-shapes recur everywhere: well-peaked, broad-crested, and truncated by an axis.\n\n2. The overlay convention: a fitted parabola, a diamond/point extremum marker, and a vertical idle-offset line through the marker; on refusal, no overlay at all and an all-empty (all-NaN) record. This held in all five labs and is the single most reliable cross-lab reading aid.\n\n3. The dominant defect: the success flag reports parabola convergence, not the presence of a feature. Confidently reported extrema on featureless maps occurred at lab-B (q2, q14, q16), lab-C (four to five qubits per wide-span run), lab-E (q9, both nights) and lab-D (qA1). It is a family-level property of the analysis, not one lab's setup.\n\n4. The mirror defect: refusal of a plainly readable figure occurred at AS (q5/q7 across four group runs), lab-C (qC5 at full drive) and lab-E (q10, fitted on an identical later repeat). Also family-level.\n\n5. The extrapolation flag is useless everywhere. `vertex_extrapolated` read false on boundary-pinned vertices, on part-of-range fits and on pure-noise fits, in every lab that reported it.\n\n6. The coupled-axis failure (widen flux, keep frequency span -> arch survives only near the extremum) reproduced at lab-C (#433/#434) and AS (#34-#36 in the opposite direction), on different chips and different sweep hardware.\n\n7. Escalation grammar is the same everywhere: shots, frequency span, frequency step, flux points, flux span, drive amplitude, multiplexed on/off. The one knob that rescued genuinely weak qubits was drive amplitude (lab-C #437) or frequency step (lab-E #79), never flux range.\n\nLOOKED UNIVERSAL, IS ACTUALLY ONE LAB'S CONVENTION OR ONE SESSION'S ACCIDENT\n\nA. "Bright ridge". NOT universal, and not even per-lab: in a single AS figure one qubit renders as a DARK dip on a bright ground while its neighbour renders as a bright ridge on a dark ground, and an lab-C panel (#433/qC3) shows the response as a dark trough while its siblings are bright. Per-panel colour normalisation makes brightness incomparable even within one file. Any rule phrased in terms of brightness will silently skip half the panels.\n\nB. "The sweet spot is the maximum". This is a convention of the labs whose qubits were measured near an upper flux sweet spot. lab-E q10 (#86, #125) shows a clean U with a MINIMUM inside the window, the record's orientation field says lower, and the value is written into the lower sweet-spot slot. lab-D is the only record in the batch reporting both an upper and a lower optimum in one fit — and its lower one is a sweep-boundary artefact. Orientation must be read from the record and checked against the picture, never assumed.\n\nC. "Panels are one qubit each". lab-B, lab-E and lab-D runs are single-qubit full-width panels; AS and lab-C are multiplexed multi-panel sheets with independent per-panel normalisation and independent per-panel verdicts. A rule written against either style breaks on the other.\n\nD. Background texture is a lab/rendering signature, not a diagnostic. lab-B and lab-E featureless maps show heavy horizontal ROW striping at constant frequency plus column banding at the flux pitch; lab-C and AS show per-column blocks of speckle. Both mean the same thing ("data present, no feature"), and neither should be read as structure.\n\nE. "Coarse flux sampling" is relative. lab-C group runs use about a dozen flux columns (so a real arch renders as one blob per column), lab-E uses roughly thirty-one, lab-B uses dense grids. The blob-chain geometry is a consequence of the column count relative to the feature width, not a property of any lab.\n\nF. Blank uniform panels (no data at all) were seen only at lab-C, and only in a de-multiplexed repeat of a multiplexed run — three of seven panels blank in one figure. Treat as an execution-mode hazard of that setup, not as a general shape.\n\nG. Flux axis quantity and units differ between labs (voltage offsets, current, QDAC bias on the 03c twin). Absolute offsets, curvature magnitudes and "how wide is wide" are never comparable across labs; only the geometry and the relative knob moves are.\n\nH. Data-hygiene artefact in this annotation set: batch 4 contains placeholder rows named with a "_dup_guard" suffix that duplicate a real qubit's verdict and are explicitly marked "ignore-this-row". They are not measurements and must be dropped before any counting or ingestion.
 
 ## Open questions
 
 1. Adoption threshold for a broad crest: what fraction of the swept flux span may the level top occupy before the flux offset is refused, and how many identical repeats (and what agreement window) license a write? Observed scatter was sub-column on peaked arches and sign-flipping on flat-topped ones, with no principled boundary between them.
-2. Is a LOWER (minimum) sweet spot an acceptable idle point for these devices, or must the loop always drive toward the upper branch? SNU q10 was fitted and its lower value recorded; nothing in the family's fields says whether that is a valid operating point or a mis-identified branch.
-3. Offset write semantics per generation: at IQCC the written flux target differs from the reported idle offset (increment), elsewhere it appears to be an assignment. Which nodes assign and which increment must be confirmed per lab/generation before any automated write, or the loop will double-apply.
+2. Is a LOWER (minimum) sweet spot an acceptable idle point for these devices, or must the loop always drive toward the upper branch? lab-E q10 was fitted and its lower value recorded; nothing in the family's fields says whether that is a valid operating point or a mis-identified branch.
+3. Offset write semantics per generation: at lab-C the written flux target differs from the reported idle offset (increment), elsewhere it appears to be an assignment. Which nodes assign and which increment must be confirmed per lab/generation before any automated write, or the loop will double-apply.
 4. What is the operational definition of 'a connected feature' that should gate the success flag — column-to-column contrast continuity, a minimum contrast-to-background ratio, a minimum number of consecutive populated columns — and can it be added inside the node rather than as an external check?
 5. Retry ordering for a refusal on a readable panel: frequency step first, shots first, or drive amplitude first? The evidence shows drive rescued weak qubits and frequency step rescued unresolved ones, but never both tried in a controlled order.
-6. For the CQT q2 flat bands seen over BOTH wide and narrow flux windows: is the flux line unresponsive/mis-wired, is the visible line not this qubit's transition, or is the qubit far off its expected frequency? This needs a hardware/wiring decision, not more spectroscopy.
-7. Are the never-visible qubits (one IQCC qubit appeared under no setting of the session) dead, outside the searched frequency range, or under-driven? Define the stopping criterion that lets the loop declare a qubit out of scope instead of looping.
+6. For the lab-B q2 flat bands seen over BOTH wide and narrow flux windows: is the flux line unresponsive/mis-wired, is the visible line not this qubit's transition, or is the qubit far off its expected frequency? This needs a hardware/wiring decision, not more spectroscopy.
+7. Are the never-visible qubits (one lab-C qubit appeared under no setting of the session) dead, outside the searched frequency range, or under-driven? Define the stopping criterion that lets the loop declare a qubit out of scope instead of looping.
 8. Should the loop be allowed to classify a run as reconnaissance from its parameter diff against the last accepted run, and is that diff reliably available in the run metadata across generations?
 9. Which flags hard-block a write versus warn: proposed hard blocks are featureless-map success, curvature-sign inversion, boundary/out-of-range vertex, partial fit support, and blank panel — this list needs an owner's sign-off.
 10. Sign and unit convention of the reported quadratic term across generations (and of the QDAC twin's current axis), so that cross-run coherence checks are comparing like with like.
@@ -606,68 +606,68 @@ INVARIANT ACROSS ALL FIVE LABS (AS_10TQ9TC, CQT, IQCC_QOP37, SNU_1Q, KRISS_CR)\n
 
 ## Fit-vs-figure disagreements
 
-- AS_10TQ9TC/#34/q6 — full arch drawn over a panel holding only isolated near-vertical segments and a featureless brightness gradient; apex marker touches nothing.
-- AS_10TQ9TC/#35/q6 — near-straight fit with a MINIMUM marked on no visible feature, opposite curvature sign to the same qubit's previous run.
-- AS_10TQ9TC/#36/q6 — map shows an unambiguous maximum with the turning point inside the window; the fit lies on the descending flank and marks a minimum low and to the right where the ridge has already left the panel.
-- AS_10TQ9TC/#36/q7 — clear continuous ridge with a rounded turning point on screen, no fit curve, marker or offset line drawn.
-- AS_10TQ9TC/#37/q6 — ridge is still descending at the left edge; apex marker and idle-offset line planted exactly on the first swept flux column while the record denies extrapolating.
-- AS_10TQ9TC/#237/q5 — highest-contrast arch on the sheet, turning point plainly inside the window, refused while two shallower panels beside it were accepted.
-- AS_10TQ9TC/#238/q5 — sharper version of the same arch, still no overlay of any kind.
-- AS_10TQ9TC/#238/q7 — bright ridge with an unambiguous rounded top and a contiguous right flank, refused.
-- AS_10TQ9TC/#239/q5 — same strong arch as its multiplexed twin, still refused; de-multiplexing changed neither map nor verdict.
-- AS_10TQ9TC/#239/q7 — clear rounded top and descending right flank, refused.
-- AS_10TQ9TC/#243/q5 — cleanest version of this arch in the batch, fourth consecutive refusal; the next single-qubit run at the same settings succeeded.
-- AS_10TQ9TC/#243/q7 — clear rounded top left of centre, refused for the fourth consecutive run.
-- AS_10TQ9TC/#244/q7 — continuous bright arch with the turning point inside the window; record is all-NaN with success false.
-- CQT/#13/q2 — uniform speckle with no line anywhere; a shallow inverted curve reported successful with BOTH an upper and a lower sweet spot, the lower one at the flux-range edge.
-- CQT/#14/q2 — featureless speckle; upward-opening parabola with a marked minimum, opposite curvature sign to the immediately preceding run on the same qubit.
-- CQT/#15/q2 — featureless speckle; the drawn fit is visually a straight horizontal line yet a finite vertex flux and curvature are reported.
-- CQT/#16/q2 — a single flux-INDEPENDENT horizontal band; the fit bends imperceptibly and places a sweet-spot flux the band itself does not distinguish, and this run patched the chip.
-- CQT/#35/q2 — broad flux-independent bright region clipped by the bottom of the frequency window; fit drawn over only part of the flux axis with a vertex the region cannot support.
-- CQT/#36/q2 — three parallel flux-independent bands; the fitter silently follows the middle one and reports a sweet-spot flux none of them supports.
-- CQT/#43/q2 — featureless speckle (same parameters as a run that showed three bands); tight inverted arch over a short stretch of flux, curvature two orders of magnitude away from its siblings.
-- CQT/#44/q2 — featureless speckle; the drawn curve is essentially monotonic across the window yet a vertex inside the range is reported with no extrapolation warning.
-- CQT/#148/q2 — empty narrowed-window map; clearly curved upward parabola with a marked minimum near the centre on plain background.
-- CQT/#149/q2 — two flux-independent horizontal bands; fit lies along the upper one with invisible curvature and marks a flux position the band does not distinguish.
-- CQT/#186/q16 — featureless coarse map; verdict failed yet a concrete vertex is emitted, lying outside the swept flux range so no marker can be drawn inside the axes.
-- CQT/#187/q16 — featureless map; parabola over a short central stretch reported successful, texture under the curve identical to texture elsewhere.
-- CQT/#201/q14 — featureless map; upward-opening parabola with its minimum on speckle indistinguishable from the rest of the panel.
-- IQCC_QOP37/#421/qD1 — broad parabola over uniform striped speckle; crest claim far below the same qubit's readable moderate-span runs of the same hour.
-- IQCC_QOP37/#421/qD3 — shallow parabola over speckle with no band tracking either arm.
-- IQCC_QOP37/#421/qC1 — parabola over speckle; isolated bright cells near the arm form no band.
-- IQCC_QOP37/#421/qC2 — parabola over speckle; apex region indistinguishable from background.
-- IQCC_QOP37/#422/qD1 — broad shallow parabola over speckle; crest claim drifts further down as the span widens.
-- IQCC_QOP37/#422/qD3 — parabola over speckle, no column-to-column continuity anywhere.
-- IQCC_QOP37/#422/qC3 — parabola over uniform speckle for a qubit that fails every readable run of the session.
-- IQCC_QOP37/#422/qC1 — parabola over speckle; crest claim well below the moderate-span value.
-- IQCC_QOP37/#422/qC2 — wide parabola over speckle with no feature crossing more than one column.
-- IQCC_QOP37/#423/qD1 — parabola over finely striped speckle; doubling the flux points produced no ridge at this span.
-- IQCC_QOP37/#423/qD3 — parabola over speckle, crest claim inconsistent with the readable siblings.
-- IQCC_QOP37/#423/qC3 — parabola over speckle with the marker offset from its own apex.
-- IQCC_QOP37/#423/qC1 — parabola over speckle, no continuity beyond a single column.
-- IQCC_QOP37/#423/qC2 — parabola over speckle, crest disagrees with the moderate-span runs.
-- IQCC_QOP37/#424/qD1 — parabola over speckle; sequential (de-multiplexed) acquisition changed nothing.
-- IQCC_QOP37/#424/qD3 — parabola over speckle, both arms over indistinguishable background.
-- IQCC_QOP37/#426/qD1 — parabola over speckle taken minutes after the same qubit's clean arch at the moderate span, and systematically low against it.
-- IQCC_QOP37/#426/qD3 — parabola over speckle AND the marker sits above the drawn curve rather than on its apex.
-- IQCC_QOP37/#426/qC3 — parabola over speckle with the marker off its own curve; qubit fails every readable run.
-- IQCC_QOP37/#426/qC1 — parabola over speckle; isolated cells near the apex form no band.
-- IQCC_QOP37/#426/qC2 — parabola over speckle, crest below the moderate-span value.
-- IQCC_QOP37/#433/qD1 — success reported from a short, nearly flat arc confined to the few columns nearest the sweep centre; apex frequency disagrees with three preceding identical-qubit runs by far more than those runs disagreed among themselves.
-- IQCC_QOP37/#433/qD3 — monotonic branch with nothing following it; failed verdict yet a sweet-spot flux far outside the swept range and no marker inside the axes.
-- IQCC_QOP37/#434/qD1 — full arch drawn over dense streak noise; apex region carries no brightening at all.
-- IQCC_QOP37/#434/qC1 — wide arch whose curvature is anchored only by isolated outer-column cells, with no feature at the apex.
-- IQCC_QOP37/#434/qC2 — drawn apex sits one row below the bright block directly above it, with no continuous ridge anywhere on the panel.
-- IQCC_QOP37/#437/qC5 — every flux column carries a blob and their heights trace a clean symmetric rise-and-fall with the turning point inside the window; record is empty with all fields NaN.
-- SNU_1Q/#80/q9 — curve falls monotonically from the leftmost swept column; marker and offset line sit on that boundary column over a map with no feature, and the extrapolation flag reads false.
-- SNU_1Q/#81/q9 — identical parameters to the run before it, opposite side of the sweep centre and a far-away frequency, again from a panel with no visible feature.
-- SNU_1Q/#83/q9 — featureless map at the lowest averaging in the batch; fit drawn over the right half only, sweet spot reported in full.
-- SNU_1Q/#84/q9 — featureless map; parabola supported only by the right-hand columns with its apex near the sweep edge and no extrapolation warning.
-- SNU_1Q/#85/q10 — strong continuous ridge descending into a broad plateau, refused outright; the extremum is real, only its flux position is ill-conditioned.
-- SNU_1Q/#86/q10 — continuous ridge forming a clean U with the minimum comfortably inside the window, refused; an identical repeat hours later fitted it perfectly.
-- SNU_1Q/#87/q9 — featureless map; marker and offset line drawn while no fit curve is visible at all.
-- SNU_1Q/#56/q9 — featureless wide-flux map; curve over the central portion only, complete sweet-spot claim reported.
-- SNU_1Q/#57/q9 — featureless map; a visually convincing symmetric arch over nothing, disagreeing with its one-minute-earlier partner on both offset and frequency.
+- lab-A/#34/q6 — full arch drawn over a panel holding only isolated near-vertical segments and a featureless brightness gradient; apex marker touches nothing.
+- lab-A/#35/q6 — near-straight fit with a MINIMUM marked on no visible feature, opposite curvature sign to the same qubit's previous run.
+- lab-A/#36/q6 — map shows an unambiguous maximum with the turning point inside the window; the fit lies on the descending flank and marks a minimum low and to the right where the ridge has already left the panel.
+- lab-A/#36/q7 — clear continuous ridge with a rounded turning point on screen, no fit curve, marker or offset line drawn.
+- lab-A/#37/q6 — ridge is still descending at the left edge; apex marker and idle-offset line planted exactly on the first swept flux column while the record denies extrapolating.
+- lab-A/#237/q5 — highest-contrast arch on the sheet, turning point plainly inside the window, refused while two shallower panels beside it were accepted.
+- lab-A/#238/q5 — sharper version of the same arch, still no overlay of any kind.
+- lab-A/#238/q7 — bright ridge with an unambiguous rounded top and a contiguous right flank, refused.
+- lab-A/#239/q5 — same strong arch as its multiplexed twin, still refused; de-multiplexing changed neither map nor verdict.
+- lab-A/#239/q7 — clear rounded top and descending right flank, refused.
+- lab-A/#243/q5 — cleanest version of this arch in the batch, fourth consecutive refusal; the next single-qubit run at the same settings succeeded.
+- lab-A/#243/q7 — clear rounded top left of centre, refused for the fourth consecutive run.
+- lab-A/#244/q7 — continuous bright arch with the turning point inside the window; record is all-NaN with success false.
+- lab-B/#13/q2 — uniform speckle with no line anywhere; a shallow inverted curve reported successful with BOTH an upper and a lower sweet spot, the lower one at the flux-range edge.
+- lab-B/#14/q2 — featureless speckle; upward-opening parabola with a marked minimum, opposite curvature sign to the immediately preceding run on the same qubit.
+- lab-B/#15/q2 — featureless speckle; the drawn fit is visually a straight horizontal line yet a finite vertex flux and curvature are reported.
+- lab-B/#16/q2 — a single flux-INDEPENDENT horizontal band; the fit bends imperceptibly and places a sweet-spot flux the band itself does not distinguish, and this run patched the chip.
+- lab-B/#35/q2 — broad flux-independent bright region clipped by the bottom of the frequency window; fit drawn over only part of the flux axis with a vertex the region cannot support.
+- lab-B/#36/q2 — three parallel flux-independent bands; the fitter silently follows the middle one and reports a sweet-spot flux none of them supports.
+- lab-B/#43/q2 — featureless speckle (same parameters as a run that showed three bands); tight inverted arch over a short stretch of flux, curvature two orders of magnitude away from its siblings.
+- lab-B/#44/q2 — featureless speckle; the drawn curve is essentially monotonic across the window yet a vertex inside the range is reported with no extrapolation warning.
+- lab-B/#148/q2 — empty narrowed-window map; clearly curved upward parabola with a marked minimum near the centre on plain background.
+- lab-B/#149/q2 — two flux-independent horizontal bands; fit lies along the upper one with invisible curvature and marks a flux position the band does not distinguish.
+- lab-B/#186/q16 — featureless coarse map; verdict failed yet a concrete vertex is emitted, lying outside the swept flux range so no marker can be drawn inside the axes.
+- lab-B/#187/q16 — featureless map; parabola over a short central stretch reported successful, texture under the curve identical to texture elsewhere.
+- lab-B/#201/q14 — featureless map; upward-opening parabola with its minimum on speckle indistinguishable from the rest of the panel.
+- lab-C/#421/qD1 — broad parabola over uniform striped speckle; crest claim far below the same qubit's readable moderate-span runs of the same hour.
+- lab-C/#421/qD3 — shallow parabola over speckle with no band tracking either arm.
+- lab-C/#421/qC1 — parabola over speckle; isolated bright cells near the arm form no band.
+- lab-C/#421/qC2 — parabola over speckle; apex region indistinguishable from background.
+- lab-C/#422/qD1 — broad shallow parabola over speckle; crest claim drifts further down as the span widens.
+- lab-C/#422/qD3 — parabola over speckle, no column-to-column continuity anywhere.
+- lab-C/#422/qC3 — parabola over uniform speckle for a qubit that fails every readable run of the session.
+- lab-C/#422/qC1 — parabola over speckle; crest claim well below the moderate-span value.
+- lab-C/#422/qC2 — wide parabola over speckle with no feature crossing more than one column.
+- lab-C/#423/qD1 — parabola over finely striped speckle; doubling the flux points produced no ridge at this span.
+- lab-C/#423/qD3 — parabola over speckle, crest claim inconsistent with the readable siblings.
+- lab-C/#423/qC3 — parabola over speckle with the marker offset from its own apex.
+- lab-C/#423/qC1 — parabola over speckle, no continuity beyond a single column.
+- lab-C/#423/qC2 — parabola over speckle, crest disagrees with the moderate-span runs.
+- lab-C/#424/qD1 — parabola over speckle; sequential (de-multiplexed) acquisition changed nothing.
+- lab-C/#424/qD3 — parabola over speckle, both arms over indistinguishable background.
+- lab-C/#426/qD1 — parabola over speckle taken minutes after the same qubit's clean arch at the moderate span, and systematically low against it.
+- lab-C/#426/qD3 — parabola over speckle AND the marker sits above the drawn curve rather than on its apex.
+- lab-C/#426/qC3 — parabola over speckle with the marker off its own curve; qubit fails every readable run.
+- lab-C/#426/qC1 — parabola over speckle; isolated cells near the apex form no band.
+- lab-C/#426/qC2 — parabola over speckle, crest below the moderate-span value.
+- lab-C/#433/qD1 — success reported from a short, nearly flat arc confined to the few columns nearest the sweep centre; apex frequency disagrees with three preceding identical-qubit runs by far more than those runs disagreed among themselves.
+- lab-C/#433/qD3 — monotonic branch with nothing following it; failed verdict yet a sweet-spot flux far outside the swept range and no marker inside the axes.
+- lab-C/#434/qD1 — full arch drawn over dense streak noise; apex region carries no brightening at all.
+- lab-C/#434/qC1 — wide arch whose curvature is anchored only by isolated outer-column cells, with no feature at the apex.
+- lab-C/#434/qC2 — drawn apex sits one row below the bright block directly above it, with no continuous ridge anywhere on the panel.
+- lab-C/#437/qC5 — every flux column carries a blob and their heights trace a clean symmetric rise-and-fall with the turning point inside the window; record is empty with all fields NaN.
+- lab-E/#80/q9 — curve falls monotonically from the leftmost swept column; marker and offset line sit on that boundary column over a map with no feature, and the extrapolation flag reads false.
+- lab-E/#81/q9 — identical parameters to the run before it, opposite side of the sweep centre and a far-away frequency, again from a panel with no visible feature.
+- lab-E/#83/q9 — featureless map at the lowest averaging in the batch; fit drawn over the right half only, sweet spot reported in full.
+- lab-E/#84/q9 — featureless map; parabola supported only by the right-hand columns with its apex near the sweep edge and no extrapolation warning.
+- lab-E/#85/q10 — strong continuous ridge descending into a broad plateau, refused outright; the extremum is real, only its flux position is ill-conditioned.
+- lab-E/#86/q10 — continuous ridge forming a clean U with the minimum comfortably inside the window, refused; an identical repeat hours later fitted it perfectly.
+- lab-E/#87/q9 — featureless map; marker and offset line drawn while no fit curve is visible at all.
+- lab-E/#56/q9 — featureless wide-flux map; curve over the central portion only, complete sweet-spot claim reported.
+- lab-E/#57/q9 — featureless map; a visually convincing symmetric arch over nothing, disagreeing with its one-minute-earlier partner on both offset and frequency.
 
 ## Blind verification
 

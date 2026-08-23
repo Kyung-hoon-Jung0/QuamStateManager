@@ -1,6 +1,6 @@
 # resonator_spectroscopy — case manual (v1)
 
-**Authored:** 2026-08-21 · **Source:** docs/132: 75 runs / 257 targets across 6 labs (AS_10TQ9TC, CQT, IQCC_QOP37, IQCC_gilboa, KRISS_CR, SNU_1Q) and two node generations, every amplitude figure viewed; blind re-classification 7/12
+**Authored:** 2026-08-21 · **Source:** docs/132: 75 runs / 257 targets across 6 labs (lab-A, lab-B, lab-C, lab-C_gilboa, lab-D, lab-E) and two node generations, every amplitude figure viewed; blind re-classification 7/12
 
 **Physics.** A 1-D sweep of the readout drive across the readout resonator, plotted as the magnitude R = sqrt(I^2+Q^2), so the resonance is a transmission NOTCH. The lineshape is routinely Fano-asymmetric — a companion peak beside the notch, often the TALLER excursion in the panel — and the runs ship phase and IQ-circle panels that settle whether an amplitude feature is a real resonance.
 
@@ -14,7 +14,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Adopt the centre. If the reported FWHM is within ~3 frequency steps, halve the step (or halve the span at fixed point count) once before adopting the width. Otherwise no knob move; re-run only for repeatability.
 
-**Exemplars:** AS_10TQ9TC/#305/q7, IQCC_QOP37/#71/qA1, KRISS_CR/#150/qA2, SNU_1Q/#2/q9, IQCC_gilboa/#3/qA1, CQT/#151/q7
+**Exemplars:** lab-A/#305/q7, lab-C/#71/qA1, lab-D/#150/qA2, lab-E/#2/q9, lab-C_gilboa/#3/qA1, lab-B/#151/q7
 
 ### S2 — fano_asymmetric  (seen 48x)
 
@@ -22,7 +22,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Keep the window. Adopt the centre if the fit sits on the notch; expect the symmetric-Lorentzian shape verdict to fail and do not adopt the width. If the width matters, narrow the span to ~3-5 fitted linewidths so the rebound peak leaves the window, or refit with an asymmetric model. If a detector refuses on dominance, relax the dominance requirement or exclude the rebound peak from the prominence reference — do not widen.
 
-**Exemplars:** AS_10TQ9TC/#338/q6, IQCC_QOP37/#298/qB4, CQT/#93/q2, KRISS_CR/#146/qA3, SNU_1Q/#17/q6
+**Exemplars:** lab-A/#338/q6, lab-C/#298/qB4, lab-B/#93/q2, lab-D/#146/qA3, lab-E/#17/q6
 
 ### S2b — notch_on_structured_background  (seen 30x)
 
@@ -30,7 +30,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Centre adoptable. Refit with a curved (quadratic or higher) baseline, or crop to ±3-5 linewidths and refit. Do not widen — widening adds background, not information.
 
-**Exemplars:** CQT/#151/q3, IQCC_QOP37/#298/qD4, AS_10TQ9TC/#21/q7, SNU_1Q/#17/q4, KRISS_CR/#146/qD5
+**Exemplars:** lab-B/#151/q3, lab-C/#298/qD4, lab-A/#21/q7, lab-E/#17/q4, lab-D/#146/qD5
 
 ### S2c — notch_on_stepped_baseline  (seen 4x)
 
@@ -38,7 +38,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Centre adoptable. Fit the two wings' baselines independently (step baseline) or crop to the wing with the longer clean stretch. Check whether the sweep is segmented; if the width matters, re-acquire the region in one unsegmented sweep at the same span/step.
 
-**Exemplars:** AS_10TQ9TC/#227/q5, AS_10TQ9TC/#234/q5, KRISS_CR/#146/qC2
+**Exemplars:** lab-A/#227/q5, lab-A/#234/q5, lab-D/#146/qC2
 
 ### S2d — split_bottom_notch  (seen 1x)
 
@@ -46,7 +46,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Treat the centre as coarse only. Halve the frequency step over ±2 fitted widths and refit; if two minima persist with one phase turn, report the width as an upper bound. Do not widen the span.
 
-**Exemplars:** AS_10TQ9TC/#329/q6
+**Exemplars:** lab-A/#329/q6
 
 ### S3 — wrong_feature_fit  (seen 14x)
 
@@ -54,7 +54,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Do not adopt, and do not re-measure first — refit with the centre seeded at the strongest phase turn / listed candidate, bounding the centre to a few candidate widths and the width to within an order of the candidate width. Re-measure only if no candidate survives those bounds.
 
-**Exemplars:** IQCC_QOP37/#298/qB3, KRISS_CR/#147/qA4, KRISS_CR/#146/qB2, KRISS_CR/#139/qA2
+**Exemplars:** lab-C/#298/qB3, lab-D/#147/qA4, lab-D/#146/qB2, lab-D/#139/qA2
 
 ### S3b — step_edge_fit  (seen 2x)
 
@@ -62,7 +62,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Reject the value outright; a step is not a resonance. Exclude the segment boundary from the fit window, or re-acquire the region in a single unsegmented sweep, then refit.
 
-**Exemplars:** KRISS_CR/#141/qA3, KRISS_CR/#153/qA4
+**Exemplars:** lab-D/#141/qA3, lab-D/#153/qA4
 
 ### S3c — ripple_trough_fit  (seen 4x)
 
@@ -70,7 +70,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Reject. Re-run with the span changed by a non-integer factor (x0.5 or x1.5) about the same centre: a real resonance keeps its frequency, a ripple minimum does not. Require a phase turn / IQ radius collapse before any adoption.
 
-**Exemplars:** KRISS_CR/#139/qA2, KRISS_CR/#144/qA5, KRISS_CR/#146/qB4
+**Exemplars:** lab-D/#139/qA2, lab-D/#144/qA5, lab-D/#146/qB4
 
 ### S3d — wrong_resonator_fit  (seen 3x)
 
@@ -78,7 +78,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Do not adopt from a wide window. Run a narrow confirmation (span x1/5, re-centred) for BOTH targets separately; break candidate ties by which target's window the notch sits nearest the centre of, never by prominence rank alone.
 
-**Exemplars:** CQT/#134/q6, KRISS_CR/#154/qA4
+**Exemplars:** lab-B/#134/q6, lab-D/#154/qA4
 
 ### S3e — duplicate_assignment  (seen 2x)
 
@@ -86,7 +86,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Reject both values. Re-run the two targets non-multiplexed (or in separate groups) at the same span/step and adopt only if the centres differ by more than a few linewidths. Add a same-run duplicate-frequency check to the loop.
 
-**Exemplars:** KRISS_CR/#154/qA4, KRISS_CR/#154/qA2
+**Exemplars:** lab-D/#154/qA4, lab-D/#154/qA2
 
 ### S3f — seed_reported_as_fit  (seen 2x)
 
@@ -94,7 +94,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Reject the record; no re-measurement needed. Refit with the seed taken from the strongest phase turn and require the optimiser to report convergence — a non-converged fit must return failure, never the seed.
 
-**Exemplars:** KRISS_CR/#147/qB1, KRISS_CR/#147/qD3
+**Exemplars:** lab-D/#147/qB1, lab-D/#147/qD3
 
 ### S4 — multi_resonator_window  (seen 22x)
 
@@ -102,7 +102,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Adopt only after a confirmation run per candidate at span x1/5 re-centred on that candidate. If candidates sit within a few linewidths, disambiguate physically (power sweep, or which one moves with this qubit's flux) rather than by depth.
 
-**Exemplars:** SNU_1Q/#27/q11, SNU_1Q/#27/q15, CQT/#133/q2, KRISS_CR/#150/qA1, CQT/#134/q5
+**Exemplars:** lab-E/#27/q11, lab-E/#27/q15, lab-B/#133/q2, lab-D/#150/qA1, lab-B/#134/q5
 
 ### S4b — shared_feedline_comb  (seen 45x)
 
@@ -110,7 +110,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Never adopt from the wide panel. Take the assigned centre as a seed, re-run each target non-multiplexed with the span cut to a few percent of the band, and enforce that no two targets were assigned the same notch.
 
-**Exemplars:** KRISS_CR/#150/qA1, KRISS_CR/#155/qA4, IQCC_QOP37/#112/qA1, KRISS_CR/#146/qC1
+**Exemplars:** lab-D/#150/qA1, lab-D/#155/qA4, lab-C/#112/qA1, lab-D/#146/qC1
 
 ### S4c — unassigned_target  (seen 9x)
 
@@ -118,7 +118,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** First separate 'target outside the window' from 'inside but unassigned'. If inside, re-run the target alone at the same span and step; if it repeats, seed the fit from the nearest unclaimed comb notch and refit rather than re-acquiring.
 
-**Exemplars:** KRISS_CR/#139/qA1, KRISS_CR/#144/qA1, KRISS_CR/#153/qA3
+**Exemplars:** lab-D/#139/qA1, lab-D/#144/qA1, lab-D/#153/qA3
 
 ### S4d — target_outside_window  (seen 8x)
 
@@ -126,7 +126,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Extend the span on the side the target is known or expected to lie, by roughly the missing offset plus a margin, or re-centre on the last known value. Do not raise shots — the acquisition is fine, the window is wrong.
 
-**Exemplars:** KRISS_CR/#152/qA5, KRISS_CR/#153/qA6, SNU_1Q/#1/q7, KRISS_CR/#154/qA6
+**Exemplars:** lab-D/#152/qA5, lab-D/#153/qA6, lab-E/#1/q7, lab-D/#154/qA6
 
 ### S5 — empty_window  (seen 16x)
 
@@ -134,7 +134,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Widen the span x3-4 about the same centre, or step the centre by about one span into territory not yet covered. Keep shots unchanged for the first widening.
 
-**Exemplars:** SNU_1Q/#2/q5, SNU_1Q/#2/q6, CQT/#162/q20, KRISS_CR/#145/qB1, SNU_1Q/#23/q17
+**Exemplars:** lab-E/#2/q5, lab-E/#2/q6, lab-B/#162/q20, lab-D/#145/qB1, lab-E/#23/q17
 
 ### S5b — no_signal_noise_floor  (seen 3x)
 
@@ -142,7 +142,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Stop sweeping — no span or step change can help. Diagnose the readout chain for this line (drive, LO, switch, cabling) and re-run at the SAME span only after the level is restored.
 
-**Exemplars:** IQCC_QOP37/#518/qC1, CQT/#162/q20, CQT/#163/q20
+**Exemplars:** lab-C/#518/qC1, lab-B/#162/q20, lab-B/#163/q20
 
 ### S5c — structured_background_no_notch  (seen 11x)
 
@@ -150,7 +150,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Refuse and move the window: shift the centre by about one span or widen x2-3. Median-filter one sample before computing any prominence statistic so a single-sample spike cannot set the panel maximum.
 
-**Exemplars:** CQT/#165/q10, KRISS_CR/#145/qA1, KRISS_CR/#145/qB2
+**Exemplars:** lab-B/#165/q10, lab-D/#145/qA1, lab-D/#145/qB2
 
 ### S5d — ripple_dominated_window  (seen 13x)
 
@@ -158,7 +158,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Refuse. Change the span by a non-integer factor (x0.5 or x1.5) and re-run — ripple minima move with the window, a resonance does not. If ripple persists everywhere, remove it (reference trace / background subtraction) before any dip statistic is trusted.
 
-**Exemplars:** KRISS_CR/#143/qA1, KRISS_CR/#145/qA6, KRISS_CR/#146/qB4
+**Exemplars:** lab-D/#143/qA1, lab-D/#145/qA6, lab-D/#146/qB4
 
 ### S6 — edge_clipped_notch  (seen 9x)
 
@@ -166,7 +166,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Re-centre the window on the marked minimum keeping the span (or halving it). Do not merely widen — a width fitted from one wing is not a measurement.
 
-**Exemplars:** CQT/#151/q6, CQT/#151/q4, SNU_1Q/#31/q11, SNU_1Q/#1/q3
+**Exemplars:** lab-B/#151/q6, lab-B/#151/q4, lab-E/#31/q11, lab-E/#1/q3
 
 ### S6b — feature_entering_at_far_edge  (seen 7x)
 
@@ -174,7 +174,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Adopt the fitted centre and record 'something just outside this window'. To resolve it, take ONE extra sweep re-centred beyond that edge at the same span; do not widen the fitting window in place, which only adds unmodelled background to a good fit.
 
-**Exemplars:** AS_10TQ9TC/#312/q6, AS_10TQ9TC/#328/q6, SNU_1Q/#27/q11, IQCC_QOP37/#223/qA2
+**Exemplars:** lab-A/#312/q6, lab-A/#328/q6, lab-E/#27/q11, lab-C/#223/qA2
 
 ### S6c — notch_wider_than_window  (seen 3x)
 
@@ -182,7 +182,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Adopt the centre only. Widen the span x3-5 about the same centre and refit before recording any width or Q; more shots will not help.
 
-**Exemplars:** CQT/#163/q2, SNU_1Q/#13/q11
+**Exemplars:** lab-B/#163/q2, lab-E/#13/q11
 
 ### S7 — shallow_low_contrast_notch  (seen 11x)
 
@@ -190,7 +190,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Raise readout drive a few dB at the same span and step. If drive is already at its useful limit, increase shots x2-4. Widening is the wrong move here.
 
-**Exemplars:** KRISS_CR/#146/qC4, KRISS_CR/#146/qB1, CQT/#151/q5, KRISS_CR/#146/qD3
+**Exemplars:** lab-D/#146/qC4, lab-D/#146/qB1, lab-B/#151/q5, lab-D/#146/qD3
 
 ### S7b — noise_limited_notch  (seen 8x)
 
@@ -198,7 +198,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Increase shots x2-4 (or restore drive if the panel's overall level has collapsed since the previous run) at the SAME span and step. Do not change the sweep geometry.
 
-**Exemplars:** AS_10TQ9TC/#328/q7, AS_10TQ9TC/#338/q7, SNU_1Q/#17/q9, SNU_1Q/#20/q9
+**Exemplars:** lab-A/#328/q7, lab-A/#338/q7, lab-E/#17/q9, lab-E/#20/q9
 
 ### S7c — sub_step_width_fit  (seen 9x)
 
@@ -206,7 +206,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Reject the width unconditionally and the centre unless a phase turn confirms it. Re-run with the step reduced x4-10 over a span narrowed to a few of the previously reported widths, and enforce a fitted-width floor of about 2 steps in the fitter.
 
-**Exemplars:** KRISS_CR/#146/qA2, KRISS_CR/#146/qA6, KRISS_CR/#147/qA2
+**Exemplars:** lab-D/#146/qA2, lab-D/#146/qA6, lab-D/#147/qA2
 
 ### S7d — overbroad_fit_no_feature  (seen 7x)
 
@@ -214,7 +214,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Reject. Bound the fitted width to within about an order of the detected candidate width and refit; if nothing survives the bound, return failure rather than a bowl.
 
-**Exemplars:** KRISS_CR/#146/qA1, KRISS_CR/#144/qA5, KRISS_CR/#147/qA1
+**Exemplars:** lab-D/#146/qA1, lab-D/#144/qA5, lab-D/#147/qA1
 
 ### S7e — phase_only_resonance  (seen 9x)
 
@@ -222,7 +222,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Do not widen and do not coarsen the step: both make it worse. Raise drive several dB and/or increase shots x4 at the same window; if the loop can, fit the complex response rather than |S21|.
 
-**Exemplars:** CQT/#151/q5, CQT/#157/q8, KRISS_CR/#155/qB2, KRISS_CR/#147/qA5
+**Exemplars:** lab-B/#151/q5, lab-B/#157/q8, lab-D/#155/qB2, lab-D/#147/qA5
 
 ### S7f — inverted_peak_response  (seen 1x)
 
@@ -230,7 +230,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Do not accept a dip-only refusal. Restore the off-resonant carrier (raise readout drive) and re-run at identical span and step — the same window then shows a notch; or fit with a sign-agnostic model. Widening is useless, the feature is already centred.
 
-**Exemplars:** IQCC_QOP37/#70/qA1
+**Exemplars:** lab-C/#70/qA1
 
 ### S7g — peak_flanked_by_nulls  (seen 7x)
 
@@ -238,7 +238,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Widen x2-3 to expose both nulls and check which excursions carry the phase winding, then narrow onto one null (span x1/5) before fitting. Treat the envelope as a readout-chain interference to be removed, not a lineshape to fit.
 
-**Exemplars:** CQT/#160/q8, CQT/#169/q18, CQT/#170/q18, CQT/#164/q18
+**Exemplars:** lab-B/#160/q8, lab-B/#169/q18, lab-B/#170/q18, lab-B/#164/q18
 
 ### S8 — shape_poor_freq_ok  (seen 32x)
 
@@ -246,7 +246,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Adopt the centre; do NOT adopt the width or the goodness of fit. Refit with a curved baseline, or narrow the span x1/2 to x1/5, if the width is needed. No re-acquisition is required.
 
-**Exemplars:** SNU_1Q/#17/q9, SNU_1Q/#5/q3, CQT/#92/q2, SNU_1Q/#13/q17, CQT/#133/q1
+**Exemplars:** lab-E/#17/q9, lab-E/#5/q3, lab-B/#92/q2, lab-E/#13/q17, lab-B/#133/q1
 
 ### S8b — unphysical_fit_shape_accepted  (seen 50x)
 
@@ -254,7 +254,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Adopt the centre; treat width and r2 as unreported. Recompute a residual over the window actually displayed before writing any width, and gate on that residual rather than on the node's r2.
 
-**Exemplars:** AS_10TQ9TC/#6/q8, AS_10TQ9TC/#234/q5, IQCC_QOP37/#111/qA2, SNU_1Q/#12/q17, IQCC_QOP37/#163/q2
+**Exemplars:** lab-A/#6/q8, lab-A/#234/q5, lab-C/#111/qA2, lab-E/#12/q17, lab-C/#163/q2
 
 ### S9 — ambiguous_candidates  (seen 9x)
 
@@ -262,7 +262,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Do not adopt on prominence alone. Run one narrow confirmation per top candidate (span x1/5, re-centred); adopt only the candidate that keeps its frequency AND shows a phase turn / IQ radius collapse.
 
-**Exemplars:** SNU_1Q/#1/q8, SNU_1Q/#2/q4, SNU_1Q/#27/q5, CQT/#134/q6
+**Exemplars:** lab-E/#1/q8, lab-E/#2/q4, lab-E/#27/q5, lab-B/#134/q6
 
 ### S9b — false_no_dip  (seen 17x)
 
@@ -270,7 +270,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Re-run ONCE at identical settings to separate flaky from deterministic. If it repeats, lower the dip-SNR / dominance requirement or score prominence against a LOCAL baseline window instead of the panel extremes. Never widen — widening usually worsens dominance.
 
-**Exemplars:** SNU_1Q/#23/q9, SNU_1Q/#23/q15, CQT/#94/q2, CQT/#134/q5, CQT/#160/q8, CQT/#151/q4
+**Exemplars:** lab-E/#23/q9, lab-E/#23/q15, lab-B/#94/q2, lab-B/#134/q5, lab-B/#160/q8, lab-B/#151/q4
 
 ### S9c — steep_background_notch  (seen 3x)
 
@@ -278,7 +278,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Adopt only after a phase/IQ confirmation. Re-centre so the notch has comparable background on both sides (shift the centre by roughly the current offset, keep the span) and refit with a sloped or curved baseline.
 
-**Exemplars:** SNU_1Q/#13/q15, CQT/#161/q8
+**Exemplars:** lab-E/#13/q15, lab-B/#161/q8
 
 ### X1 — cross_run_centre_conflict  (seen 12x)
 
@@ -286,7 +286,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Write neither value. Re-run both windows back-to-back at identical settings, then take one wide sweep covering both centres; adopt only a centre that reproduces twice and is unique in the wide sweep.
 
-**Exemplars:** SNU_1Q/#12/q10, SNU_1Q/#13/q10, KRISS_CR/#140/qA3, KRISS_CR/#146/qA3, CQT/#134/q6, CQT/#151/q6
+**Exemplars:** lab-E/#12/q10, lab-E/#13/q10, lab-D/#140/qA3, lab-D/#146/qA3, lab-B/#134/q6, lab-B/#151/q6
 
 ### X2 — tracking_drift_window_trailing  (seen 9x)
 
@@ -294,7 +294,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Extrapolate the next centre from the last two runs instead of re-using the last one, and widen the span x1.5-2 on the trailing side. Re-estimate the drift rate every few runs.
 
-**Exemplars:** AS_10TQ9TC/#338/q6, AS_10TQ9TC/#339/q7, AS_10TQ9TC/#340/q6
+**Exemplars:** lab-A/#338/q6, lab-A/#339/q7, lab-A/#340/q6
 
 ### X3 — contrast_collapse_session  (seen 7x)
 
@@ -302,7 +302,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Compare the off-resonant level against the previous run of the same target; if it has fallen more than ~3x, restore drive (or diagnose the readout chain) before drawing any conclusion from dip statistics, and re-run at unchanged span and step.
 
-**Exemplars:** AS_10TQ9TC/#328/q7, AS_10TQ9TC/#338/q7, SNU_1Q/#13/q11
+**Exemplars:** lab-A/#328/q7, lab-A/#338/q7, lab-E/#13/q11
 
 ### X4 — foreign_payload_no_fit_record  (seen 2x)
 
@@ -310,7 +310,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Do not consume the outcome flag: a success with no frequency field is a failure at the loop level. Re-run the intended node explicitly and verify the figure set before ingesting anything.
 
-**Exemplars:** IQCC_QOP37/#110/qA1, IQCC_QOP37/#110/qA2
+**Exemplars:** lab-C/#110/qA1, lab-C/#110/qA2
 
 ## Flags (orthogonal to the case)
 
@@ -320,7 +320,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Never adopt width or goodness of fit from such a fit. Refit with a curved or two-sided baseline, or crop to ±3-5 linewidths.
 
-**Exemplars:** AS_10TQ9TC/#6/q8, IQCC_QOP37/#231/qA2, SNU_1Q/#27/q6, KRISS_CR/#146/qC5
+**Exemplars:** lab-A/#6/q8, lab-C/#231/qA2, lab-E/#27/q6, lab-D/#146/qC5
 
 ### F2 — fitted_floor_below_zero_magnitude  (seen 45x)
 
@@ -328,7 +328,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Refuse the width regardless of r2 and flag the fit; constrain the model floor to be non-negative and refit.
 
-**Exemplars:** SNU_1Q/#17/q4, SNU_1Q/#5/q8, CQT/#92/q2, IQCC_QOP37/#298/qB3
+**Exemplars:** lab-E/#17/q4, lab-E/#5/q8, lab-B/#92/q2, lab-C/#298/qB3
 
 ### F3 — goodness_of_fit_is_windowed_not_whole_panel  (seen 90x)
 
@@ -336,7 +336,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Recompute the residual over the displayed window before gating on it; treat the node's r2 as a local core-fit number only.
 
-**Exemplars:** AS_10TQ9TC/#6/q9, AS_10TQ9TC/#234/q5, IQCC_QOP37/#233/qA2
+**Exemplars:** lab-A/#6/q9, lab-A/#234/q5, lab-C/#233/qA2
 
 ### F4 — fwhm_grid_quantized_or_seed_value  (seen 14x)
 
@@ -344,7 +344,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Treat the width as unmeasured. If the frequency is also round and no feature sits there, reject the whole record as an unconverged seed.
 
-**Exemplars:** CQT/#92/q2, CQT/#133/q1, SNU_1Q/#5/q3, KRISS_CR/#147/qB1
+**Exemplars:** lab-B/#92/q2, lab-B/#133/q1, lab-E/#5/q3, lab-D/#147/qB1
 
 ### F5 — fwhm_at_or_below_one_frequency_step  (seen 14x)
 
@@ -352,7 +352,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Reject the width unconditionally; accept the centre only with a phase confirmation. Enforce a ~2-step fitted-width floor.
 
-**Exemplars:** KRISS_CR/#146/qA2, KRISS_CR/#147/qA2, KRISS_CR/#112/qA1
+**Exemplars:** lab-D/#146/qA2, lab-D/#147/qA2, lab-D/#112/qA1
 
 ### F6 — fwhm_far_exceeds_detected_candidate_width  (seen 12x)
 
@@ -360,7 +360,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** A cheap machine-readable reject: refit bounded to within an order of the candidate width, or return failure.
 
-**Exemplars:** SNU_1Q/#1/q3, IQCC_QOP37/#298/qB3, IQCC_QOP37/#163/q2, IQCC_QOP37/#298/qD3
+**Exemplars:** lab-E/#1/q3, lab-C/#298/qB3, lab-C/#163/q2, lab-C/#298/qD3
 
 ### F7 — centre_far_from_winning_candidate  (seen 6x)
 
@@ -368,7 +368,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Reject and refit from the candidate; this is repairable from the record alone with no re-measurement.
 
-**Exemplars:** IQCC_QOP37/#298/qB3, KRISS_CR/#147/qA1
+**Exemplars:** lab-C/#298/qB3, lab-D/#147/qA1
 
 ### F8 — notch_biased_off_window_centre  (seen 15x)
 
@@ -376,7 +376,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Re-centre stored values on the measured centres before the next pass; no span change needed while the notch stays well inside.
 
-**Exemplars:** AS_10TQ9TC/#338/q6, AS_10TQ9TC/#340/q7, CQT/#151/q7, CQT/#157/q8
+**Exemplars:** lab-A/#338/q6, lab-A/#340/q7, lab-B/#151/q7, lab-B/#157/q8
 
 ### F9 — node_reported_success_but_no_state_patch  (seen 8x)
 
@@ -384,7 +384,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Reconcile per-target verdicts against the patch list every run; treat an unwritten success as not-yet-calibrated, not as done.
 
-**Exemplars:** AS_10TQ9TC/#328/q6, AS_10TQ9TC/#340/q7, IQCC_QOP37/#351/qA1
+**Exemplars:** lab-A/#328/q6, lab-A/#340/q7, lab-C/#351/qA1
 
 ### F10 — partial_write_back_tail_of_target_list  (seen 16x)
 
@@ -392,7 +392,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Assert patch count equals success count per run; investigate the write-back scope before trusting any session's stored values.
 
-**Exemplars:** SNU_1Q/#17/q9, SNU_1Q/#19/q5, SNU_1Q/#20/q4
+**Exemplars:** lab-E/#17/q9, lab-E/#19/q5, lab-E/#20/q4
 
 ### F11 — sibling_failure_suppresses_all_patches  (seen 13x)
 
@@ -400,7 +400,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Make write-back per-target; until then, re-run the good targets separately to get their values recorded.
 
-**Exemplars:** SNU_1Q/#23/q4, SNU_1Q/#24/q11
+**Exemplars:** lab-E/#23/q4, lab-E/#24/q11
 
 ### F12 — written_despite_shape_verdict_false  (seen 20x)
 
@@ -408,7 +408,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Acceptable for the frequency, dangerous for anything downstream that reads the width; write frequency and width through separate gates.
 
-**Exemplars:** SNU_1Q/#19/q10, SNU_1Q/#5/q3, SNU_1Q/#12/q15
+**Exemplars:** lab-E/#19/q10, lab-E/#5/q3, lab-E/#12/q15
 
 ### F13 — escalation_ladder_configured_but_disabled  (seen 60x)
 
@@ -416,7 +416,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Either enable the ladder or record that escalation is manual; never assume a NO DIP verdict means the node tried and failed to widen.
 
-**Exemplars:** SNU_1Q/#1/q1, CQT/#94/q2, IQCC_QOP37/#518/qC1, CQT/#170/q18
+**Exemplars:** lab-E/#1/q1, lab-B/#94/q2, lab-C/#518/qC1, lab-B/#170/q18
 
 ### F14 — manual_escalation_substituted_for_ladder  (seen 20x)
 
@@ -424,7 +424,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Read such chains as ONE escalation, not as independent runs; the last run of the chain is the only adoptable one.
 
-**Exemplars:** CQT/#92/q2, CQT/#96/q2, SNU_1Q/#27/q17, CQT/#169/q18
+**Exemplars:** lab-B/#92/q2, lab-B/#96/q2, lab-E/#27/q17, lab-B/#169/q18
 
 ### F15 — identical_repeat_after_a_failure  (seen 8x)
 
@@ -432,7 +432,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Legitimate exactly once as a flake test; a second identical repeat is wasted time — change drive, shots, span or centre.
 
-**Exemplars:** CQT/#95/q2, CQT/#163/q20, SNU_1Q/#24/q17
+**Exemplars:** lab-B/#95/q2, lab-B/#163/q20, lab-E/#24/q17
 
 ### F16 — phase_panel_unusable_runaway  (seen 10x)
 
@@ -440,7 +440,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Record 'cross-check unavailable', which is NOT the same as failing the cross-check; fall back to the IQ panel and mark the conclusion as amplitude-only.
 
-**Exemplars:** SNU_1Q/#13/q10, AS_10TQ9TC/#17/q5, SNU_1Q/#17/q10, SNU_1Q/#1/q3
+**Exemplars:** lab-E/#13/q10, lab-A/#17/q5, lab-E/#17/q10, lab-E/#1/q3
 
 ### F17 — iq_panel_delay_dominated_or_undersampled  (seen 18x)
 
@@ -448,7 +448,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Do not apply the 'closed circle' test; use the RADIUS COLLAPSE at resonance instead, and if the step is too coarse for that, record the cross-check as unavailable.
 
-**Exemplars:** CQT/#94/q2, CQT/#158/q8, SNU_1Q/#2/q2, IQCC_QOP37/#163/q2
+**Exemplars:** lab-B/#94/q2, lab-B/#158/q8, lab-E/#2/q2, lab-C/#163/q2
 
 ### F18 — multiplexed_figure_layout_illegible_panel  (seen 8x)
 
@@ -456,7 +456,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Cap annotation/verdict confidence at medium for that panel and re-plot the target alone if the fine structure matters.
 
-**Exemplars:** AS_10TQ9TC/#227/q5, AS_10TQ9TC/#234/q5
+**Exemplars:** lab-A/#227/q5, lab-A/#234/q5
 
 ### F19 — single_sample_spike_dominates_panel  (seen 12x)
 
@@ -464,7 +464,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Median-filter one sample before scoring prominence; never let a one-sample feature be a candidate.
 
-**Exemplars:** CQT/#165/q10, KRISS_CR/#145/qB1, KRISS_CR/#146/qA6
+**Exemplars:** lab-B/#165/q10, lab-D/#145/qB1, lab-D/#146/qA6
 
 ### F20 — segment_stitching_step_present  (seen 9x)
 
@@ -472,7 +472,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Exclude segment boundaries from fit windows; a fit centred on a step is always rejectable without further evidence.
 
-**Exemplars:** KRISS_CR/#141/qA3, KRISS_CR/#154/qA1, KRISS_CR/#143/qA1
+**Exemplars:** lab-D/#141/qA3, lab-D/#154/qA1, lab-D/#143/qA1
 
 ### F21 — phase_unwrap_sawtooth_present  (seen 6x)
 
@@ -480,7 +480,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Require a co-located amplitude excursion before treating any sharp phase feature as a resonance; ignore ramp-then-drop shapes.
 
-**Exemplars:** KRISS_CR/#150/qA4, KRISS_CR/#153/qA4, KRISS_CR/#155/qA4
+**Exemplars:** lab-D/#150/qA4, lab-D/#153/qA4, lab-D/#155/qA4
 
 ### F22 — standing_wave_ripple_background  (seen 15x)
 
@@ -488,7 +488,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Test by changing the span a non-integer factor; remove the ripple (reference trace) before trusting any dip statistic on that line.
 
-**Exemplars:** KRISS_CR/#139/qA2, KRISS_CR/#146/qB4, KRISS_CR/#155/qB1
+**Exemplars:** lab-D/#139/qA2, lab-D/#146/qB4, lab-D/#155/qB1
 
 ### F23 — ambiguity_flag_overridden_by_writing_a_value  (seen 6x)
 
@@ -496,7 +496,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Gate the write on the ambiguity flag; require a per-candidate narrow confirmation before any value is stored.
 
-**Exemplars:** CQT/#134/q6, SNU_1Q/#1/q8, SNU_1Q/#27/q15
+**Exemplars:** lab-B/#134/q6, lab-E/#1/q8, lab-E/#27/q15
 
 ### F24 — unlisted_second_genuine_candidate  (seen 8x)
 
@@ -504,7 +504,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Never read an empty or short candidate list as proof of uniqueness; scan the panel independently for a second radius collapse before adopting.
 
-**Exemplars:** SNU_1Q/#27/q11, SNU_1Q/#31/q11, SNU_1Q/#35/q11, IQCC_QOP37/#223/qA2
+**Exemplars:** lab-E/#27/q11, lab-E/#31/q11, lab-E/#35/q11, lab-C/#223/qA2
 
 ### F25 — refusal_not_reproducible  (seen 5x)
 
@@ -512,7 +512,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** One identical repeat distinguishes flaky from deterministic; a flaky refusal is a threshold defect, not evidence about the chip.
 
-**Exemplars:** SNU_1Q/#23/q9, SNU_1Q/#24/q9, SNU_1Q/#23/q15
+**Exemplars:** lab-E/#23/q9, lab-E/#24/q9, lab-E/#23/q15
 
 ### F26 — low_contrast_vs_session_baseline  (seen 10x)
 
@@ -520,7 +520,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Compare against the previous run of the same target before interpreting any depth/SNR number; restore drive rather than changing the sweep.
 
-**Exemplars:** AS_10TQ9TC/#328/q7, AS_10TQ9TC/#338/q7, SNU_1Q/#13/q11
+**Exemplars:** lab-A/#328/q7, lab-A/#338/q7, lab-E/#13/q11
 
 ### F27 — window_moved_with_the_value  (seen 8x)
 
@@ -528,7 +528,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Record window centre alongside the value; to attribute, repeat the OLD window once before adopting the new value.
 
-**Exemplars:** SNU_1Q/#13/q10, SNU_1Q/#13/q11, SNU_1Q/#13/q17
+**Exemplars:** lab-E/#13/q10, lab-E/#13/q11, lab-E/#13/q17
 
 ### F28 — fit_drawn_as_peak_not_notch  (seen 1x)
 
@@ -536,7 +536,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Reject immediately — in a notch family a peak-shaped model is a sign-of-fit failure, independent of r2.
 
-**Exemplars:** KRISS_CR/#153/qA4
+**Exemplars:** lab-D/#153/qA4
 
 ### F29 — shape_verdict_permissive  (seen 25x)
 
@@ -544,7 +544,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** Do not use success_shape as a width gate; compute your own residual and non-negativity check.
 
-**Exemplars:** SNU_1Q/#12/q17, IQCC_QOP37/#163/q2, SNU_1Q/#23/q6
+**Exemplars:** lab-E/#12/q17, lab-C/#163/q2, lab-E/#23/q6
 
 ### F30 — coarse_step_destroys_the_cross_check  (seen 5x)
 
@@ -552,7 +552,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** When escalating by span, do not also coarsen the step past the point where phase advance per sample stays small; re-run the chosen candidate at a fine step before adopting.
 
-**Exemplars:** CQT/#158/q8, CQT/#169/q18
+**Exemplars:** lab-B/#158/q8, lab-B/#169/q18
 
 ### F31 — multi_dip_cluster_unflagged_old_generation  (seen 5x)
 
@@ -560,7 +560,7 @@ Geometry and prescriptions are chip-independent by rule: relative positions and 
 
 **Prescription:** On old-generation records, derive your own candidate list from the trace before adopting a centre near a cluster.
 
-**Exemplars:** KRISS_CR/#147/qA3, KRISS_CR/#146/qB1
+**Exemplars:** lab-D/#147/qA3, lab-D/#146/qB1
 
 ## Rules
 
@@ -660,68 +660,68 @@ The reader reports the SHAPE it measured; whether the record found the notch is 
 
 ## Node generations
 
-WHAT THE NEWER NODE GIVES A READER. `dip_snr` plus `candidates` (each with its own prominence and width) turns a bad fit into a repairable record: the two most powerful machine-checkable tells in this whole corpus are distance(reported centre, winning candidate) and ratio(reported FWHM, candidate width), both of which stay near unity on every healthy target and blow up on every runaway — and both are computable with no re-measurement and no figure. `ambiguous` exposes the dominance tie the old node cannot express (an old-gen fit on the flank of a three-dip cluster looks identical in the record to a clean fit). `success_shape` splits 'centre usable' from 'lineshape usable', which is exactly the split this family needs, since the recurring failure is a symmetric Lorentzian on a Fano or structured background — under the old node the same situation is a plain FAILURE and a perfectly good frequency is discarded (KRISS #152 refused four A-group centres that agree with the accepted #150 values to tens of kHz). The escalation parameters (`min_dip_snr`, `dip_dominance`, `escalate_on_no_dip`, `max_escalation_span_in_mhz`) let a reader reconstruct WHY a refusal happened and whether widening was attempted. The old node offers only frequency / fwhm / r2 / success, plus NaN + an UNASSIGNED stamp as its single refusal channel. WHAT A RULE MUST NOT ASSUME. (1) That candidates or success_shape exist at all — every rule must degrade to frequency/fwhm/r2/success. (2) That success_shape=true means the lineshape is good: it is permissive, and passes fits whose floor is below zero magnitude and whose wing misses the data. (3) That success_shape=false means the frequency is bad: in this corpus the centre was on the correct notch in essentially every shape-poor target. (4) That success=false or dip_snr=0 means the window is empty: NO DIP with an empty candidate list was returned over dominant, symmetric, phase- and IQ-confirmed notches, both from threshold fragility (accepted in the runs either side at identical settings) and from dominance failure (a larger neighbouring peak, or a far-side plateau as low as the notch floor). (5) That the candidate list is complete or that ambiguous=false means uniqueness: genuine second notches — sometimes the deepest excursion in the panel, clipped at the edge — went unlisted with ambiguous=false. (6) That the escalation ladder ran: `escalate_on_no_dip` was false in every new-generation run here even where `max_escalation_span_in_mhz` was configured, and the widening was performed by hand across subsequent runs instead — so a chain of runs at growing span is ONE escalation, and only its last run is adoptable. (7) That r2 is comparable across generations or backgrounds: the old wide node's r2 is scored against strongly structured, segment-levelled backgrounds and a smooth broad bowl over a ripple scores well; the new node's r2 is windowed. (8) That a success flag implies a write — patch lists were empty, partial, or suppressed by a sibling's failure in both generations. (9) That the node's identity guarantees the payload: one run filed under this family shipped a different analysis entirely, with success=true and no frequency at all.
+WHAT THE NEWER NODE GIVES A READER. `dip_snr` plus `candidates` (each with its own prominence and width) turns a bad fit into a repairable record: the two most powerful machine-checkable tells in this whole corpus are distance(reported centre, winning candidate) and ratio(reported FWHM, candidate width), both of which stay near unity on every healthy target and blow up on every runaway — and both are computable with no re-measurement and no figure. `ambiguous` exposes the dominance tie the old node cannot express (an old-gen fit on the flank of a three-dip cluster looks identical in the record to a clean fit). `success_shape` splits 'centre usable' from 'lineshape usable', which is exactly the split this family needs, since the recurring failure is a symmetric Lorentzian on a Fano or structured background — under the old node the same situation is a plain FAILURE and a perfectly good frequency is discarded (lab-D #152 refused four A-group centres that agree with the accepted #150 values to tens of kHz). The escalation parameters (`min_dip_snr`, `dip_dominance`, `escalate_on_no_dip`, `max_escalation_span_in_mhz`) let a reader reconstruct WHY a refusal happened and whether widening was attempted. The old node offers only frequency / fwhm / r2 / success, plus NaN + an UNASSIGNED stamp as its single refusal channel. WHAT A RULE MUST NOT ASSUME. (1) That candidates or success_shape exist at all — every rule must degrade to frequency/fwhm/r2/success. (2) That success_shape=true means the lineshape is good: it is permissive, and passes fits whose floor is below zero magnitude and whose wing misses the data. (3) That success_shape=false means the frequency is bad: in this corpus the centre was on the correct notch in essentially every shape-poor target. (4) That success=false or dip_snr=0 means the window is empty: NO DIP with an empty candidate list was returned over dominant, symmetric, phase- and IQ-confirmed notches, both from threshold fragility (accepted in the runs either side at identical settings) and from dominance failure (a larger neighbouring peak, or a far-side plateau as low as the notch floor). (5) That the candidate list is complete or that ambiguous=false means uniqueness: genuine second notches — sometimes the deepest excursion in the panel, clipped at the edge — went unlisted with ambiguous=false. (6) That the escalation ladder ran: `escalate_on_no_dip` was false in every new-generation run here even where `max_escalation_span_in_mhz` was configured, and the widening was performed by hand across subsequent runs instead — so a chain of runs at growing span is ONE escalation, and only its last run is adoptable. (7) That r2 is comparable across generations or backgrounds: the old wide node's r2 is scored against strongly structured, segment-levelled backgrounds and a smooth broad bowl over a ripple scores well; the new node's r2 is windowed. (8) That a success flag implies a write — patch lists were empty, partial, or suppressed by a sibling's failure in both generations. (9) That the node's identity guarantees the payload: one run filed under this family shipped a different analysis entirely, with success=true and no frequency at all.
 
 ## Cross-lab evidence
 
-SIX LABS, TWO GENERATIONS. AS_10TQ9TC (11 runs, all new gen, one chip over two days): a per-resonator shape split that stayed stable for ten hours — q6/q8 always Fano-bracketed, q5/q7 always a clean V or stepped baseline — plus session-scale contrast collapse and monotonic drift. CQT (many runs, new gen): peak-dominant panels, a chip-wide peak-flanked-by-nulls interference envelope, and the corpus's densest cluster of refusals over readable notches. IQCC_QOP37 (new gen for singles, old-gen wide node too): the cleanest reference notches AND the only inverted (peak) response, plus the only foreign-payload runs. IQCC_gilboa: one run only, one textbook notch — too thin to generalise from. KRISS_CR (all old-gen wide `02_resonator_spectroscopy_wide_pyloop`): whole-band shared-feedline sweeps where the job is assignment, and the home of stitching steps, unwrap sawtooths, ripple-dominated windows, sub-step needle fits, UNASSIGNED stamps and a duplicate assignment. SNU_1Q (new gen): honest per-panel titles (NO DIP / freq OK, shape poor / AMBIG), shaded accept bands, two-resonator qubits, and the write-back defects. INVARIANT ACROSS ALL LABS AND BOTH GENERATIONS (the chip-independence evidence): the resonance is the notch and the tallest excursion is routinely not it; Fano asymmetry is a per-RESONATOR property, not a per-chip or per-node one, and it survives an order-of-magnitude change in contrast, which is why shape and not depth is the reliable identifier; a straight-line background arm on a curved, stepped or sloped background leaves the data at one or both window ends in essentially every accepted fit everywhere, while r2 stays 0.97-0.99 — so the reported goodness number is not a whole-window figure of merit anywhere; a genuine resonance turns the phase exactly once at the notch and is flat across the flanking peak, on every lab's chip; and depth alone never separates a resonance from a ripple trough, a step or a spike. LOOKED UNIVERSAL BUT IS ONE LAB'S (OR ONE NODE'S) CONVENTION: (1) the promised four-figure set — only some labs/runs ship amplitude+phase+detrended_phase+iq_circle; KRISS's wide node ships a wide panel plus a local phase zoom with UNASSIGNED stamps, SNU ships amplitude+IQ, and some IQCC runs ship a completely different (ground/excited) figure set, so 'the cross-check is available to this family and no other' is true only where the node actually emitted it. (2) The 'closed circle in the IQ plane' test — every delay-uncompensated chip here shows a many-turn spiral instead; the transferable signature is the radius collapse. (3) The segment-stitching step and the phase-unwrap sawtooth are artefacts of the KRISS/IQCC wide node's plotting and levelling, not chip physics. (4) The unequal-panel multiplexed layout that caps annotation confidence is AS_10TQ9TC's plotting. (5) min_dip_snr=6.0 / dip_dominance=2.0 are a shared configuration convention (SNU, CQT), not a node property. (6) escalate_on_no_dip=false in EVERY new-generation run of all six labs is a deployment convention — it looked like the node lacking escalation, and it is the ladder being switched off. (7) Node naming: `03_resonator_spectroscopy_single` vs the older `02_resonator_spectroscopy` / `02_resonator_spectroscopy_wide_pyloop` — the wide variant is a different experiment (band survey, assignment) wearing the same family name.
+SIX LABS, TWO GENERATIONS. lab-A (11 runs, all new gen, one chip over two days): a per-resonator shape split that stayed stable for ten hours — q6/q8 always Fano-bracketed, q5/q7 always a clean V or stepped baseline — plus session-scale contrast collapse and monotonic drift. lab-B (many runs, new gen): peak-dominant panels, a chip-wide peak-flanked-by-nulls interference envelope, and the corpus's densest cluster of refusals over readable notches. lab-C (new gen for singles, old-gen wide node too): the cleanest reference notches AND the only inverted (peak) response, plus the only foreign-payload runs. lab-C_gilboa: one run only, one textbook notch — too thin to generalise from. lab-D (all old-gen wide `02_resonator_spectroscopy_wide_pyloop`): whole-band shared-feedline sweeps where the job is assignment, and the home of stitching steps, unwrap sawtooths, ripple-dominated windows, sub-step needle fits, UNASSIGNED stamps and a duplicate assignment. lab-E (new gen): honest per-panel titles (NO DIP / freq OK, shape poor / AMBIG), shaded accept bands, two-resonator qubits, and the write-back defects. INVARIANT ACROSS ALL LABS AND BOTH GENERATIONS (the chip-independence evidence): the resonance is the notch and the tallest excursion is routinely not it; Fano asymmetry is a per-RESONATOR property, not a per-chip or per-node one, and it survives an order-of-magnitude change in contrast, which is why shape and not depth is the reliable identifier; a straight-line background arm on a curved, stepped or sloped background leaves the data at one or both window ends in essentially every accepted fit everywhere, while r2 stays 0.97-0.99 — so the reported goodness number is not a whole-window figure of merit anywhere; a genuine resonance turns the phase exactly once at the notch and is flat across the flanking peak, on every lab's chip; and depth alone never separates a resonance from a ripple trough, a step or a spike. LOOKED UNIVERSAL BUT IS ONE LAB'S (OR ONE NODE'S) CONVENTION: (1) the promised four-figure set — only some labs/runs ship amplitude+phase+detrended_phase+iq_circle; lab-D's wide node ships a wide panel plus a local phase zoom with UNASSIGNED stamps, lab-E ships amplitude+IQ, and some lab-C runs ship a completely different (ground/excited) figure set, so 'the cross-check is available to this family and no other' is true only where the node actually emitted it. (2) The 'closed circle in the IQ plane' test — every delay-uncompensated chip here shows a many-turn spiral instead; the transferable signature is the radius collapse. (3) The segment-stitching step and the phase-unwrap sawtooth are artefacts of the lab-D/lab-C wide node's plotting and levelling, not chip physics. (4) The unequal-panel multiplexed layout that caps annotation confidence is lab-A's plotting. (5) min_dip_snr=6.0 / dip_dominance=2.0 are a shared configuration convention (lab-E, lab-B), not a node property. (6) escalate_on_no_dip=false in EVERY new-generation run of all six labs is a deployment convention — it looked like the node lacking escalation, and it is the ladder being switched off. (7) Node naming: `03_resonator_spectroscopy_single` vs the older `02_resonator_spectroscopy` / `02_resonator_spectroscopy_wide_pyloop` — the wide variant is a different experiment (band survey, assignment) wearing the same family name.
 
 ## Open questions
 
-1. AS_10TQ9TC #328 and #340 report every target successful with sound fits and write NOTHING (empty patch list) while the neighbouring identical runs write. Is this a write-back rule (e.g. change below a threshold) or a defect? There is no figure signature at all.
-2. KRISS_CR #153 qA3 is stamped UNASSIGNED although the target IS inside the swept window (#152 and #154 fit it) — was the notch genuinely absent in that acquisition, or did the assignment step drop it? The panels cannot separate the two.
-3. SNU_1Q q17 was refused NO DIP twice in a row (#23, #24) over a span that the later wide run #27 shows DOES contain a deep notch. Readout dropout for those two runs, or a windowing/threshold effect? Unresolved.
-4. SNU_1Q #27's wide run returns centres several linewidths from the narrow runs for q4, q6 and q10, with a broad local MAXIMUM where the narrow runs put the notch. Did the resonators move, or were the narrow windows reading something else? At most one description can be true of the same chip state.
-5. CQT q8/q18's peak-flanked-by-two-nulls geometry: readout-chain interference envelope (nulls are the resonance) or an over-coupled/inverted response? Never tested by re-measuring at raised drive, which is the one experiment that would settle it.
-6. AS_10TQ9TC #329 q6's split notch floor (two minima, one phase turn): two coupled modes, a TLS, or a power-induced bistability? One instance only, never repeated.
-7. What changed between IQCC_QOP37 #70 (peak, refused) and #71 (notch, accepted) ninety seconds later? The off-resonant level rose by a large factor, so drive is the obvious inference — but no field in the record names it.
-8. The narrow, recurring second candidate near the high-frequency edge on IQCC_QOP37 qA2: a real neighbouring resonator or a spur? It is far narrower than any lineshape in the same panel and crosses the detection floor in some repeats and not others.
-9. KRISS_CR #154's duplicate assignment (two targets carrying the same fit to eleven significant figures, both successful) — a fit-object reuse bug or a genuine mis-assignment of one notch to two targets? No figure evidence can distinguish them.
-10. SNU_1Q write-back consistently covers only the last four entries of an eight-target list. Configuration (a shortened patch scope) or defect? Four confirmed successes per run are silently lost either way.
-11. The definitive ripple test — change the span by a non-integer factor and see whether the minima move — was never run at KRISS_CR, so 'ripple trough' versus 'broad over-coupled resonance riding a ripple' remains an inference for #144 qA5 and #146 qB4.
-12. SNU_1Q q11 and q15 each carry two genuine resonances in one span. Two readout resonators on the same line, or a resonator plus a mode/spur? Which one is the qubit's readout was never established independently (e.g. by flux dependence).
+1. lab-A #328 and #340 report every target successful with sound fits and write NOTHING (empty patch list) while the neighbouring identical runs write. Is this a write-back rule (e.g. change below a threshold) or a defect? There is no figure signature at all.
+2. lab-D #153 qA3 is stamped UNASSIGNED although the target IS inside the swept window (#152 and #154 fit it) — was the notch genuinely absent in that acquisition, or did the assignment step drop it? The panels cannot separate the two.
+3. lab-E q17 was refused NO DIP twice in a row (#23, #24) over a span that the later wide run #27 shows DOES contain a deep notch. Readout dropout for those two runs, or a windowing/threshold effect? Unresolved.
+4. lab-E #27's wide run returns centres several linewidths from the narrow runs for q4, q6 and q10, with a broad local MAXIMUM where the narrow runs put the notch. Did the resonators move, or were the narrow windows reading something else? At most one description can be true of the same chip state.
+5. lab-B q8/q18's peak-flanked-by-two-nulls geometry: readout-chain interference envelope (nulls are the resonance) or an over-coupled/inverted response? Never tested by re-measuring at raised drive, which is the one experiment that would settle it.
+6. lab-A #329 q6's split notch floor (two minima, one phase turn): two coupled modes, a TLS, or a power-induced bistability? One instance only, never repeated.
+7. What changed between lab-C #70 (peak, refused) and #71 (notch, accepted) ninety seconds later? The off-resonant level rose by a large factor, so drive is the obvious inference — but no field in the record names it.
+8. The narrow, recurring second candidate near the high-frequency edge on lab-C qA2: a real neighbouring resonator or a spur? It is far narrower than any lineshape in the same panel and crosses the detection floor in some repeats and not others.
+9. lab-D #154's duplicate assignment (two targets carrying the same fit to eleven significant figures, both successful) — a fit-object reuse bug or a genuine mis-assignment of one notch to two targets? No figure evidence can distinguish them.
+10. lab-E write-back consistently covers only the last four entries of an eight-target list. Configuration (a shortened patch scope) or defect? Four confirmed successes per run are silently lost either way.
+11. The definitive ripple test — change the span by a non-integer factor and see whether the minima move — was never run at lab-D, so 'ripple trough' versus 'broad over-coupled resonance riding a ripple' remains an inference for #144 qA5 and #146 qB4.
+12. lab-E q11 and q15 each carry two genuine resonances in one span. Two readout resonators on the same line, or a resonator plus a mode/spur? Which one is the qubit's readout was never established independently (e.g. by flux dependence).
 13. Whether the reported r2 is computed on a fitting sub-window in all implementations, or only in some: it is inferred from the drawn curve versus the number everywhere, never confirmed from the analysis code.
 
 ## Fit-vs-figure disagreements
 
-- CQT/#94/q2 — no fit drawn; a narrow floor-reaching V with a rounded peak beside it is the sharpest, narrowest feature in the panel and was accepted in the two immediately preceding runs.
-- CQT/#95/q2 — byte-identical repeat: the same readable notch, again no fit and an empty candidate list, so the refusal is deterministic rather than noise-driven.
-- CQT/#96/q2 — at the widest span the notch is MORE distinctive relative to its surroundings and the verdict is unchanged; no fit drawn.
-- CQT/#134/q5 — two full-depth notches, each carrying its own sharp phase step, and the node drew no fit with an empty candidate list; the neighbouring target's analysis listed both.
-- CQT/#151/q4 — the only localized phase step in the whole window sits on a near-edge shallow minimum; no fit was drawn.
-- CQT/#151/q5 — magnitude is a noisy band with no dip, while the phase carries one sharp narrow spike left of centre; refused, so an amplitude-only test can never pass here.
-- CQT/#157/q8 — a broad shallow bowl in magnitude with a large (ragged) phase turn over exactly that bowl; refused, and the later escalation coarsened the step, which cannot help.
-- CQT/#160/q8 — both floor-reaching nulls carry the phase winding and the tall peak between them carries none; dip_snr 0, no candidates, no fit.
-- CQT/#161/q8 — the phase wraps a full turn inside the broad depression, so a coherent feature is present; still refused with dip_snr 0 and no candidates.
-- CQT/#164/q18 — phase is dead flat across the tallest excursion (the peak) and violently disturbed only at the floor-reaching depression; refused with no candidates.
-- CQT/#169/q18 — the widened span exposes a peak flanked by two floor-reaching nulls; neither null was offered as a candidate and no fit was drawn.
-- CQT/#170/q18 — finer step and heavier averaging reproduce the same geometry exactly; still dip_snr 0, no candidates, no fit, so the refusal is not a sampling or noise problem.
-- IQCC_QOP37/#70/qA1 — a tall narrow magnitude PEAK on a noise-floor background whose sweep points trace a large closed IQ loop; the dip-only model drew nothing, and the same window succeeded as a notch in the next run.
-- IQCC_QOP37/#298/qB3 — the fit band sits far out on featureless plateau, the drawn model plunges below zero magnitude, the phase is on a smooth ramp at the marked centre, and the node's own candidate list holds the shallow mid-span notch where a phase kink sits.
-- KRISS_CR/#139/qA2 — the marker is centred on one trough of a regular ripple whose neighbours are of comparable depth and spacing; the drawn curve is a wide shallow bowl and a very tall narrow spike sits immediately beside it.
-- KRISS_CR/#141/qA3 — the fit sits on a flat-to-flat segment-stitching STEP and is drawn as a rising line, not a bowl; the band's genuine comb notches on either side were not chosen, and the value was reported successful.
-- KRISS_CR/#144/qA5 — the marked minimum is one trough of a ripple with a visibly DEEPER trough adjacent, a tall narrow spike on its high side, and a fitted width far broader than any comb notch this chip shows.
-- KRISS_CR/#146/qA2 — the fit is locked to a single deepest sample inside a cluster of one- and two-sample needles; the reported width is smaller than one sweep step and the curve is drawn as a vertical line with no flanks.
-- KRISS_CR/#146/qA6 — same single-sample needle geometry between two plateaus, reported width about one sweep step, with the flanking data following nothing.
-- KRISS_CR/#146/qB2 — a broad shallow bowl whose own minimum does not coincide with the panel's sharp one-or-two-sample drop; the fit follows the rising background rather than the feature, at essentially zero r2.
-- KRISS_CR/#147/qA1 — the one sharp deep phase spike lies immediately LEFT of the line and the line sits on the recovery; the fitted width is orders wider than that feature and the value is ~4 MHz from the session's converged answer.
-- KRISS_CR/#147/qA3 — two or three sharp phase spikes are packed just left of the line, which sits at the right-hand edge of the cluster on the recovery rather than on any of them.
-- KRISS_CR/#147/qA4 — a deep phase dip and a sharp positive spike both sit LEFT of the line; at the line the trace has already returned toward baseline and shows no turn.
-- KRISS_CR/#147/qA6 — a tall sharp POSITIVE phase peak sits well left of the line and the line rests on a small step on its falling side, with no vertical turn anywhere.
-- KRISS_CR/#147/qB1 — the only sharp phase excursion is far to the left near the panel edge while the line sits on a flat stretch; frequency and width are exact round seed values (7157000000 Hz / 6250000 Hz).
-- KRISS_CR/#147/qB5 — the line sits on a smooth rising phase slope and the only broad minimum in the window lies well to its left; no turn at the line.
-- KRISS_CR/#147/qD3 — the line sits on a rising edge with the window's one sharp spike just to its left; frequency and width are again round seed values reported as a fit.
-- KRISS_CR/#147/qD4 — the line sits at the top of a broad positive phase hump; the excursion there is smooth and no vertical turn exists in the local window.
-- KRISS_CR/#153/qA4 — the drawn fit is an UPWARD Lorentzian peak centred just right of the panel's deep narrow downward spike, on a phase-unwrap ramp; the value is ~10 MHz from the same target's answer in the runs either side and the width is an order too large.
-- SNU_1Q/#1/q3 — the shaded accept band is the strip at the extreme LEFT window edge, the drawn fit is a rising curve rather than a notch, the phase is a single monotone decay with no turn inside the panel, and the reported width is ~14x the single candidate's own width.
-- SNU_1Q/#23/q9 — a dominant, symmetric, high-contrast notch whose IQ radius collapses onto the origin at zero detuning was reported NO DIP with dip_snr 0 and an empty candidate list; the runs immediately before and after accept the identical feature.
-- SNU_1Q/#23/q15 — a genuine notch (IQ radius collapse at its detuning) refused as NO DIP because a Fano peak several times the notch depth sits immediately beside it; fitted successfully in the runs before and after.
+- lab-B/#94/q2 — no fit drawn; a narrow floor-reaching V with a rounded peak beside it is the sharpest, narrowest feature in the panel and was accepted in the two immediately preceding runs.
+- lab-B/#95/q2 — byte-identical repeat: the same readable notch, again no fit and an empty candidate list, so the refusal is deterministic rather than noise-driven.
+- lab-B/#96/q2 — at the widest span the notch is MORE distinctive relative to its surroundings and the verdict is unchanged; no fit drawn.
+- lab-B/#134/q5 — two full-depth notches, each carrying its own sharp phase step, and the node drew no fit with an empty candidate list; the neighbouring target's analysis listed both.
+- lab-B/#151/q4 — the only localized phase step in the whole window sits on a near-edge shallow minimum; no fit was drawn.
+- lab-B/#151/q5 — magnitude is a noisy band with no dip, while the phase carries one sharp narrow spike left of centre; refused, so an amplitude-only test can never pass here.
+- lab-B/#157/q8 — a broad shallow bowl in magnitude with a large (ragged) phase turn over exactly that bowl; refused, and the later escalation coarsened the step, which cannot help.
+- lab-B/#160/q8 — both floor-reaching nulls carry the phase winding and the tall peak between them carries none; dip_snr 0, no candidates, no fit.
+- lab-B/#161/q8 — the phase wraps a full turn inside the broad depression, so a coherent feature is present; still refused with dip_snr 0 and no candidates.
+- lab-B/#164/q18 — phase is dead flat across the tallest excursion (the peak) and violently disturbed only at the floor-reaching depression; refused with no candidates.
+- lab-B/#169/q18 — the widened span exposes a peak flanked by two floor-reaching nulls; neither null was offered as a candidate and no fit was drawn.
+- lab-B/#170/q18 — finer step and heavier averaging reproduce the same geometry exactly; still dip_snr 0, no candidates, no fit, so the refusal is not a sampling or noise problem.
+- lab-C/#70/qA1 — a tall narrow magnitude PEAK on a noise-floor background whose sweep points trace a large closed IQ loop; the dip-only model drew nothing, and the same window succeeded as a notch in the next run.
+- lab-C/#298/qB3 — the fit band sits far out on featureless plateau, the drawn model plunges below zero magnitude, the phase is on a smooth ramp at the marked centre, and the node's own candidate list holds the shallow mid-span notch where a phase kink sits.
+- lab-D/#139/qA2 — the marker is centred on one trough of a regular ripple whose neighbours are of comparable depth and spacing; the drawn curve is a wide shallow bowl and a very tall narrow spike sits immediately beside it.
+- lab-D/#141/qA3 — the fit sits on a flat-to-flat segment-stitching STEP and is drawn as a rising line, not a bowl; the band's genuine comb notches on either side were not chosen, and the value was reported successful.
+- lab-D/#144/qA5 — the marked minimum is one trough of a ripple with a visibly DEEPER trough adjacent, a tall narrow spike on its high side, and a fitted width far broader than any comb notch this chip shows.
+- lab-D/#146/qA2 — the fit is locked to a single deepest sample inside a cluster of one- and two-sample needles; the reported width is smaller than one sweep step and the curve is drawn as a vertical line with no flanks.
+- lab-D/#146/qA6 — same single-sample needle geometry between two plateaus, reported width about one sweep step, with the flanking data following nothing.
+- lab-D/#146/qB2 — a broad shallow bowl whose own minimum does not coincide with the panel's sharp one-or-two-sample drop; the fit follows the rising background rather than the feature, at essentially zero r2.
+- lab-D/#147/qA1 — the one sharp deep phase spike lies immediately LEFT of the line and the line sits on the recovery; the fitted width is orders wider than that feature and the value is ~4 MHz from the session's converged answer.
+- lab-D/#147/qA3 — two or three sharp phase spikes are packed just left of the line, which sits at the right-hand edge of the cluster on the recovery rather than on any of them.
+- lab-D/#147/qA4 — a deep phase dip and a sharp positive spike both sit LEFT of the line; at the line the trace has already returned toward baseline and shows no turn.
+- lab-D/#147/qA6 — a tall sharp POSITIVE phase peak sits well left of the line and the line rests on a small step on its falling side, with no vertical turn anywhere.
+- lab-D/#147/qB1 — the only sharp phase excursion is far to the left near the panel edge while the line sits on a flat stretch; frequency and width are exact round seed values (7157000000 Hz / 6250000 Hz).
+- lab-D/#147/qB5 — the line sits on a smooth rising phase slope and the only broad minimum in the window lies well to its left; no turn at the line.
+- lab-D/#147/qD3 — the line sits on a rising edge with the window's one sharp spike just to its left; frequency and width are again round seed values reported as a fit.
+- lab-D/#147/qD4 — the line sits at the top of a broad positive phase hump; the excursion there is smooth and no vertical turn exists in the local window.
+- lab-D/#153/qA4 — the drawn fit is an UPWARD Lorentzian peak centred just right of the panel's deep narrow downward spike, on a phase-unwrap ramp; the value is ~10 MHz from the same target's answer in the runs either side and the width is an order too large.
+- lab-E/#1/q3 — the shaded accept band is the strip at the extreme LEFT window edge, the drawn fit is a rising curve rather than a notch, the phase is a single monotone decay with no turn inside the panel, and the reported width is ~14x the single candidate's own width.
+- lab-E/#23/q9 — a dominant, symmetric, high-contrast notch whose IQ radius collapses onto the origin at zero detuning was reported NO DIP with dip_snr 0 and an empty candidate list; the runs immediately before and after accept the identical feature.
+- lab-E/#23/q15 — a genuine notch (IQ radius collapse at its detuning) refused as NO DIP because a Fano peak several times the notch depth sits immediately beside it; fitted successfully in the runs before and after.
 
 ## Blind verification
 
 7/12 — the weakest agreement of any family in this study; the disputes are the clean-notch / Fano boundary, which is a real judgement call rather than a reading error
 
-Independent pass over all 12: 7 agree, 5 disagree. Method: for each row I read the amplitude panel, cross-checked phase / detrended-phase / IQ-circle where the verdict was in doubt (the cross-check this family uniquely allows), pulled the raw cube (netCDF-classic for the AS/CQT runs, real HDF5 for IQCC/KRISS) to measure dip depth, left/right half-widths and the baseline step, and read the node's own fit block for generation and split verdicts.
+Independent pass over all 12: 7 agree, 5 disagree. Method: for each row I read the amplitude panel, cross-checked phase / detrended-phase / IQ-circle where the verdict was in doubt (the cross-check this family uniquely allows), pulled the raw cube (netCDF-classic for the AS/lab-B runs, real HDF5 for lab-C/lab-D) to measure dip depth, left/right half-widths and the baseline step, and read the node's own fit block for generation and split verdicts.
 
 The five disagreements fall into three groups.
 

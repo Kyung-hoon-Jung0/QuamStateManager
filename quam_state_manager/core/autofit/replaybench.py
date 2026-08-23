@@ -34,7 +34,8 @@ from typing import Any, Callable
 
 import re
 
-from quam_state_manager.core.autofit import knowledge, mapcases as MC
+from quam_state_manager.core.autofit import knowledge
+from quam_state_manager.core.autofit import chip_profile, mapcases as MC
 from quam_state_manager.core.autofit.families import normalize_node_name
 from quam_state_manager.core.autofit.pathreplay import (
     FutureBlindError, RunView, Session, load_run)
@@ -339,6 +340,11 @@ class Result:
     # these two a session ends on is a real choice and is made by the caller.
     adopted_values: dict = field(default_factory=dict)
     consensus_state: dict = field(default_factory=dict)
+    # docs/135: profile fields whose absence deactivated a branched reading
+    # (the GUI should ask these), and measured shapes that contradicted a
+    # declared profile case (alarms, never corrections)
+    pending_profile_questions: list = field(default_factory=list)
+    profile_contradictions: list = field(default_factory=list)
 
 
 def _params_match(proposal: dict, params: dict, rel: float = 0.15) -> bool:
@@ -359,6 +365,7 @@ def _params_match(proposal: dict, params: dict, rel: float = 0.15) -> bool:
 
 def replay(family: str, session: Session, target: str, *,
            pack: dict | None = None,
+           profile: dict | None = None,
            signal_fn: Callable[..., MC.ShapeSignal] = MC.signal_for) -> Result:
     """Walk one target of one session, future-blind."""
     # ``family`` may be a callable, so one session can mix node types: the
@@ -378,6 +385,8 @@ def replay(family: str, session: Session, target: str, *,
     steps: list[Step] = []
     state: dict[str, Any] = {}
     prior_keys: list[str] = []
+    pending_qs: list[str] = []
+    contradictions: list[str] = []
     first_value: dict = {}
     first_at: str | None = None
     runs_to_first = 0
@@ -406,7 +415,18 @@ def replay(family: str, session: Session, target: str, *,
                         params=view.params, outcomes=view.outcomes,
                         prior_keys=prior_keys)
         prior_keys.append(sig.key or "")
-        case_id = smap.get(sig.key or "")
+        # docs/135: a signal_map entry may branch on a chip-profile field;
+        # with the field unanswered the DEFAULT (conservative) case stands
+        # and the question is queued — never a guessed branch. A measured
+        # shape contradicting a declared case is stamped as an alarm.
+        case_id, pending = knowledge.resolve_signal(fpack, sig.key or "",
+                                                    profile)
+        if pending and pending not in pending_qs:
+            pending_qs.append(pending)
+        alarm = chip_profile.contradiction(fam, sig.key or "", profile or {})
+        if alarm:
+            contradictions.append(f"{view.run_id}: {alarm}")
+            sig.reasons.append(alarm)
         case = by_id.get(case_id) or {}
         action = _ACTIONS.get(sig.key or "", RETUNE)
         adopted: dict = {}
@@ -537,7 +557,9 @@ def replay(family: str, session: Session, target: str, *,
                   first_value_at=first_at, runs_to_first_value=runs_to_first,
                   runs_consumed=len(steps), unresolved=first_at is None,
                   revisions=revisions, unscoreable_proposals=unscoreable,
-                  adopted_values=vouched, consensus_state=consensus)
+                  adopted_values=vouched, consensus_state=consensus,
+                  pending_profile_questions=pending_qs,
+                  profile_contradictions=contradictions)
 
 
 def score(result: Result, key: dict, *, rule: str = "recency") -> dict:
@@ -634,4 +656,37 @@ def score(result: Result, key: dict, *, rule: str = "recency") -> dict:
         if s.case and (s.case == want or str(want).startswith(s.case)):
             agree += 1
     out["case_agreement"] = f"{agree}/{total}" if total else "n/a"
+
+    # Two-tier scoring (docs/135, the A/B/C doctrine): a key whose
+    # ideal_path steps carry ``step_class`` tags is scored on TWO axes —
+    # B-steps on direction (the manual's case IS the named direction, so
+    # B-agreement is case agreement restricted to B-tagged steps) and the
+    # conclusion only at C-points. An untagged key produces none of these
+    # rows and scores byte-identically to before. Until the engine
+    # executes closure_rules the conclusion is still read at termination;
+    # ``c_points`` names where the key says closure was licensed, so the
+    # step-③ retag can measure early/late conclusions honestly.
+    tags = {p.get("run", "").split("_")[0]: p.get("step_class")
+            for p in (key.get("ideal_path") or [])
+            if p.get("run") and p.get("step_class")}
+    if tags:
+        b_agree = b_total = 0
+        for s in result.steps:
+            tok = s.run_id.split("_")[0]
+            if tags.get(tok) != "B":
+                continue
+            want = exp.get(tok)
+            if not want:
+                continue
+            b_total += 1
+            if s.case and (s.case == want or str(want).startswith(s.case)):
+                b_agree += 1
+        out["b_direction_agreement"] = (f"{b_agree}/{b_total}"
+                                        if b_total else "n/a")
+        out["c_points"] = [r for r, c in tags.items() if c == "C"]
+        out["conclusion_scored_at"] = "termination"
+    if result.pending_profile_questions:
+        out["pending_profile_questions"] = list(result.pending_profile_questions)
+    if result.profile_contradictions:
+        out["profile_contradictions"] = list(result.profile_contradictions)
     return out

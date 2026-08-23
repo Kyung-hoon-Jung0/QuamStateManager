@@ -95,8 +95,11 @@ class TestFutureBlindnessSurvivesGeneralisation:
     def test_replay_signature_takes_no_future(self):
         import inspect
         sig = inspect.signature(RB.replay)
+        # "profile" is NOT future information: it is the chip's declared
+        # design facts (extras.sm_profile), written by a human before any
+        # run exists and never derived from later runs (docs/135)
         assert set(sig.parameters) == {"family", "session", "target", "pack",
-                                       "signal_fn"}
+                                       "signal_fn", "profile"}
 
 
 class TestTheReaderOnlyVouchesForWhatItMeasured:

@@ -1,6 +1,6 @@
 # qubit_spectroscopy — case manual (v1)
 
-**Authored:** 2026-08-21 · **Source:** docs/131: 71 runs / 217 targets across 5 labs (AS_10TQ9TC, CQT, IQCC_QOP37, KRISS_CR, SNU_1Q), every figure viewed; blind re-classification 8/10
+**Authored:** 2026-08-21 · **Source:** docs/131: 71 runs / 217 targets across 5 labs (lab-A, lab-B, lab-C, lab-D, lab-E), every figure viewed; blind re-classification 8/10
 
 This file and `cases.json` are generated from ONE source. Geometry and prescription language is chip-independent by rule: relative positions, shapes and bounded knob moves only — never absolute frequencies, powers or fluxes, and never a size expressed as a fraction of the swept window.
 
@@ -14,11 +14,11 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Adoptable. Before writing, take ONE reproduction at the same span/step/shots with the multiplexing flag toggled (or simply repeated) and require the absolute centre to agree to well inside the fitted width; if the previous run wrote a new centre, re-check that the fitted offset from the new window centre has SHRUNK rather than repeated. Do not narrow the span further just because the fit looks good — a tighter window buys nothing and costs the floor.
 
-**Exemplars:** AS_10TQ9TC/#45_08_qubit_spectroscopy_061005/q6, CQT/#1253_08_qubit_spectroscopy_033636/q7, IQCC_QOP37/#418_08_qubit_spectroscopy_195956/qD4, KRISS_CR/#11_08_qubit_spectroscopy_041945/qA1, SNU_1Q/#52_08_qubit_spectroscopy_222641/q10
+**Exemplars:** lab-A/#45_08_qubit_spectroscopy_061005/q6, lab-B/#1253_08_qubit_spectroscopy_033636/q7, lab-C/#418_08_qubit_spectroscopy_195956/qD4, lab-D/#11_08_qubit_spectroscopy_041945/qA1, lab-E/#52_08_qubit_spectroscopy_222641/q10
 
-![Q1 — AS_10TQ9TC #45_08_qubit_spectroscopy_061005 q6](exemplars/Q1/AS_10TQ9TC_45_q6.png)
-![Q1 — CQT #1253_08_qubit_spectroscopy_033636 q7](exemplars/Q1/CQT_1253_q7.png)
-![Q1 — IQCC_QOP37 #418_08_qubit_spectroscopy_195956 qD4](exemplars/Q1/IQCC_QOP37_418_qD4.png)
+![Q1 — lab-A #45_08_qubit_spectroscopy_061005 q6](exemplars/Q1/lab-A_45_q6.png)
+![Q1 — lab-B #1253_08_qubit_spectroscopy_033636 q7](exemplars/Q1/lab-B_1253_q7.png)
+![Q1 — lab-C #418_08_qubit_spectroscopy_195956 qD4](exemplars/Q1/lab-C_418_qD4.png)
 
 ### Q2 — empty window  (seen 12x)
 
@@ -26,11 +26,11 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Never adoptable, whatever numbers the record carries. Widen the span by roughly 3-5x about the same centre at an unchanged step-per-span ratio; if still empty, raise the drive amplitude by ~2-5x on the widened span (an empty window at low drive is routinely a drive-level effect, not a missing qubit). If both moves leave the band flat, stop sweeping frequency and escalate to the resonator/readout-rotation and flux nodes — the readout, not the drive, is the likelier fault.
 
-**Exemplars:** KRISS_CR/#5_08_qubit_spectroscopy_040123/qA1, IQCC_QOP37/#427_08_qubit_spectroscopy_205244/qC4, CQT/#1253_08_qubit_spectroscopy_033636/q16, SNU_1Q/#49_08_qubit_spectroscopy_222345/q10, SNU_1Q/#67_08_qubit_spectroscopy_231355/q9
+**Exemplars:** lab-D/#5_08_qubit_spectroscopy_040123/qA1, lab-C/#427_08_qubit_spectroscopy_205244/qC4, lab-B/#1253_08_qubit_spectroscopy_033636/q16, lab-E/#49_08_qubit_spectroscopy_222345/q10, lab-E/#67_08_qubit_spectroscopy_231355/q9
 
-![Q2 — KRISS_CR #5_08_qubit_spectroscopy_040123 qA1](exemplars/Q2/KRISS_CR_5_qA1.png)
-![Q2 — IQCC_QOP37 #427_08_qubit_spectroscopy_205244 qC4](exemplars/Q2/IQCC_QOP37_427_qC4.png)
-![Q2 — CQT #1253_08_qubit_spectroscopy_033636 q16](exemplars/Q2/CQT_1253_q16.png)
+![Q2 — lab-D #5_08_qubit_spectroscopy_040123 qA1](exemplars/Q2/lab-D_5_qA1.png)
+![Q2 — lab-C #427_08_qubit_spectroscopy_205244 qC4](exemplars/Q2/lab-C_427_qC4.png)
+![Q2 — lab-B #1253_08_qubit_spectroscopy_033636 q16](exemplars/Q2/lab-B_1253_q16.png)
 
 ### Q3 — edge feature / monotonic wall  (seen 9x)
 
@@ -38,11 +38,11 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Never adoptable — a centre constrained by one flank is not a measurement. Re-centre the window onto the apparent feature and widen the span by ~1.5-3x so that both flanks and a stretch of floor fall inside; keep drive and shots unchanged so the comparison is clean. If the structure is a monotonic ramp with no crest anywhere, widen in the direction of the rise by a full window before changing anything else.
 
-**Exemplars:** AS_10TQ9TC/#352_08_qubit_spectroscopy_102706/q6, IQCC_QOP37/#417_08_qubit_spectroscopy_194728/qC1, CQT/#1253_08_qubit_spectroscopy_033636/q6, CQT/#1254_08_qubit_spectroscopy_035232/q17, SNU_1Q/#68_08_qubit_spectroscopy_231823/q10
+**Exemplars:** lab-A/#352_08_qubit_spectroscopy_102706/q6, lab-C/#417_08_qubit_spectroscopy_194728/qC1, lab-B/#1253_08_qubit_spectroscopy_033636/q6, lab-B/#1254_08_qubit_spectroscopy_035232/q17, lab-E/#68_08_qubit_spectroscopy_231823/q10
 
-![Q3 — AS_10TQ9TC #352_08_qubit_spectroscopy_102706 q6](exemplars/Q3/AS_10TQ9TC_352_q6.png)
-![Q3 — IQCC_QOP37 #417_08_qubit_spectroscopy_194728 qC1](exemplars/Q3/IQCC_QOP37_417_qC1.png)
-![Q3 — CQT #1253_08_qubit_spectroscopy_033636 q6](exemplars/Q3/CQT_1253_q6.png)
+![Q3 — lab-A #352_08_qubit_spectroscopy_102706 q6](exemplars/Q3/lab-A_352_q6.png)
+![Q3 — lab-C #417_08_qubit_spectroscopy_194728 qC1](exemplars/Q3/lab-C_417_qC1.png)
+![Q3 — lab-B #1253_08_qubit_spectroscopy_033636 q6](exemplars/Q3/lab-B_1253_q6.png)
 
 ### Q4 — multiple credible features  (seen 45x)
 
@@ -50,11 +50,11 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Do not adopt from this panel. Re-run at a drive amplitude reduced by ~3-5x on the SAME span: a drive-induced companion (two-photon, |1>-|2>, saturation sideband) collapses or moves while the 0-1 line persists at the same absolute frequency. Then narrow the span to ~2-3x the surviving feature's fitted width and confirm. If two features both survive the drive change with comparable prominence, escalate — this node cannot decide which is the qubit.
 
-**Exemplars:** AS_10TQ9TC/#23_08_qubit_spectroscopy_044954/q6, CQT/#1250_08_qubit_spectroscopy_031805/q9, CQT/#1254_08_qubit_spectroscopy_035232/q11, SNU_1Q/#47_08_qubit_spectroscopy_222205/q9, AS_10TQ9TC/#32_08_qubit_spectroscopy_050601/q7
+**Exemplars:** lab-A/#23_08_qubit_spectroscopy_044954/q6, lab-B/#1250_08_qubit_spectroscopy_031805/q9, lab-B/#1254_08_qubit_spectroscopy_035232/q11, lab-E/#47_08_qubit_spectroscopy_222205/q9, lab-A/#32_08_qubit_spectroscopy_050601/q7
 
-![Q4 — AS_10TQ9TC #23_08_qubit_spectroscopy_044954 q6](exemplars/Q4/AS_10TQ9TC_23_q6.png)
-![Q4 — CQT #1250_08_qubit_spectroscopy_031805 q9](exemplars/Q4/CQT_1250_q9.png)
-![Q4 — CQT #1254_08_qubit_spectroscopy_035232 q11](exemplars/Q4/CQT_1254_q11.png)
+![Q4 — lab-A #23_08_qubit_spectroscopy_044954 q6](exemplars/Q4/lab-A_23_q6.png)
+![Q4 — lab-B #1250_08_qubit_spectroscopy_031805 q9](exemplars/Q4/lab-B_1250_q9.png)
+![Q4 — lab-B #1254_08_qubit_spectroscopy_035232 q11](exemplars/Q4/lab-B_1254_q11.png)
 
 ### Q5 — weak feature at the noise margin  (seen 22x)
 
@@ -62,11 +62,11 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Do not adopt from one panel. Increase the shot count by ~4x at unchanged span, step and drive (buys ~2x in noise) and repeat; a real line grows in prominence while the floor shrinks. If the margin does not improve, step the drive DOWN by ~2x (over-drive can bury a line in a lifted floor) and repeat once more. Adopt only on two repeats agreeing on absolute centre; if the feature is only credible because earlier runs put it in the same place, record that dependency explicitly.
 
-**Exemplars:** AS_10TQ9TC/#27_08_qubit_spectroscopy_045740/q7, IQCC_QOP37/#417_08_qubit_spectroscopy_194728/qC4, SNU_1Q/#72_08_qubit_spectroscopy_235240/q9, CQT/#1254_08_qubit_spectroscopy_035232/q19, IQCC_QOP37/#436_08_qubit_spectroscopy_223724/qC4
+**Exemplars:** lab-A/#27_08_qubit_spectroscopy_045740/q7, lab-C/#417_08_qubit_spectroscopy_194728/qC4, lab-E/#72_08_qubit_spectroscopy_235240/q9, lab-B/#1254_08_qubit_spectroscopy_035232/q19, lab-C/#436_08_qubit_spectroscopy_223724/qC4
 
-![Q5 — AS_10TQ9TC #27_08_qubit_spectroscopy_045740 q7](exemplars/Q5/AS_10TQ9TC_27_q7.png)
-![Q5 — IQCC_QOP37 #417_08_qubit_spectroscopy_194728 qC4](exemplars/Q5/IQCC_QOP37_417_qC4.png)
-![Q5 — SNU_1Q #72_08_qubit_spectroscopy_235240 q9](exemplars/Q5/SNU_1Q_72_q9.png)
+![Q5 — lab-A #27_08_qubit_spectroscopy_045740 q7](exemplars/Q5/lab-A_27_q7.png)
+![Q5 — lab-C #417_08_qubit_spectroscopy_194728 qC4](exemplars/Q5/lab-C_417_qC4.png)
+![Q5 — lab-E #72_08_qubit_spectroscopy_235240 q9](exemplars/Q5/lab-E_72_q9.png)
 
 ### Q6 — resolved but broadened  (seen 11x)
 
@@ -74,11 +74,11 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** The centre is usually usable; the width and everything derived from it are not. Reduce the drive amplitude by ~3-10x at unchanged span/step and repeat. Expect the width to shrink; repeat the reduction until the width stops shrinking, and adopt from THAT run. If the width does not respond to drive at all, the broadening is not power broadening — re-centre the window first (a badly off-centre window can present a line as a broad hump) and only then suspect the qubit.
 
-**Exemplars:** KRISS_CR/#158_08_qubit_spectroscopy_115018/qA1, KRISS_CR/#118_08_qubit_spectroscopy_090012/qA1, CQT/#1254_08_qubit_spectroscopy_035232/q14, SNU_1Q/#52_08_qubit_spectroscopy_222641/q9, CQT/#1254_08_qubit_spectroscopy_035232/q7
+**Exemplars:** lab-D/#158_08_qubit_spectroscopy_115018/qA1, lab-D/#118_08_qubit_spectroscopy_090012/qA1, lab-B/#1254_08_qubit_spectroscopy_035232/q14, lab-E/#52_08_qubit_spectroscopy_222641/q9, lab-B/#1254_08_qubit_spectroscopy_035232/q7
 
-![Q6 — KRISS_CR #158_08_qubit_spectroscopy_115018 qA1](exemplars/Q6/KRISS_CR_158_qA1.png)
-![Q6 — KRISS_CR #118_08_qubit_spectroscopy_090012 qA1](exemplars/Q6/KRISS_CR_118_qA1.png)
-![Q6 — CQT #1254_08_qubit_spectroscopy_035232 q14](exemplars/Q6/CQT_1254_q14.png)
+![Q6 — lab-D #158_08_qubit_spectroscopy_115018 qA1](exemplars/Q6/lab-D_158_qA1.png)
+![Q6 — lab-D #118_08_qubit_spectroscopy_090012 qA1](exemplars/Q6/lab-D_118_qA1.png)
+![Q6 — lab-B #1254_08_qubit_spectroscopy_035232 q14](exemplars/Q6/lab-B_1254_q14.png)
 
 ### Q7 — saturated flat top / split line  (seen 9x)
 
@@ -86,11 +86,11 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Never adopt centre or width. Cut the drive amplitude by at least 5x at unchanged span and step and re-measure; the block should resolve into one crest (or into a set of narrow lines — see the comb case). Adopt only from the low-drive run. If the split survives a large drive reduction, it is not saturation and must be escalated as a genuine doublet.
 
-**Exemplars:** CQT/#1239_08_qubit_spectroscopy_030349/q10, CQT/#1240_08_qubit_spectroscopy_030414/q10, SNU_1Q/#51_08_qubit_spectroscopy_222512/q9, CQT/#1272_08_qubit_spectroscopy_041553/q18, CQT/#1279_08_qubit_spectroscopy_042132/q18
+**Exemplars:** lab-B/#1239_08_qubit_spectroscopy_030349/q10, lab-B/#1240_08_qubit_spectroscopy_030414/q10, lab-E/#51_08_qubit_spectroscopy_222512/q9, lab-B/#1272_08_qubit_spectroscopy_041553/q18, lab-B/#1279_08_qubit_spectroscopy_042132/q18
 
-![Q7 — CQT #1239_08_qubit_spectroscopy_030349 q10](exemplars/Q7/CQT_1239_q10.png)
-![Q7 — CQT #1240_08_qubit_spectroscopy_030414 q10](exemplars/Q7/CQT_1240_q10.png)
-![Q7 — SNU_1Q #51_08_qubit_spectroscopy_222512 q9](exemplars/Q7/SNU_1Q_51_q9.png)
+![Q7 — lab-B #1239_08_qubit_spectroscopy_030349 q10](exemplars/Q7/lab-B_1239_q10.png)
+![Q7 — lab-B #1240_08_qubit_spectroscopy_030414 q10](exemplars/Q7/lab-B_1240_q10.png)
+![Q7 — lab-E #51_08_qubit_spectroscopy_222512 q9](exemplars/Q7/lab-E_51_q9.png)
 
 ### Q8 — merged multi-peak (multi-peak AND power-broadened)  (seen 3x)
 
@@ -98,11 +98,11 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Do not adopt. This shape is only diagnosable as a PAIR: re-run the identical span with the drive reduced by ~5x and read the two panels together. If the merged humps resolve into discrete narrow lines, the low-drive panel is the measurement and the count/spacing of the lines is the finding. Never fit a single Lorentzian across the merged group and never derive a drive amplitude from its width.
 
-**Exemplars:** CQT/#1247_08_qubit_spectroscopy_031321/q10, CQT/#1249_08_qubit_spectroscopy_031652/q10, CQT/#1244_08_qubit_spectroscopy_030719/q10
+**Exemplars:** lab-B/#1247_08_qubit_spectroscopy_031321/q10, lab-B/#1249_08_qubit_spectroscopy_031652/q10, lab-B/#1244_08_qubit_spectroscopy_030719/q10
 
-![Q8 — CQT #1247_08_qubit_spectroscopy_031321 q10](exemplars/Q8/CQT_1247_q10.png)
-![Q8 — CQT #1249_08_qubit_spectroscopy_031652 q10](exemplars/Q8/CQT_1249_q10.png)
-![Q8 — CQT #1244_08_qubit_spectroscopy_030719 q10](exemplars/Q8/CQT_1244_q10.png)
+![Q8 — lab-B #1247_08_qubit_spectroscopy_031321 q10](exemplars/Q8/lab-B_1247_q10.png)
+![Q8 — lab-B #1249_08_qubit_spectroscopy_031652 q10](exemplars/Q8/lab-B_1249_q10.png)
+![Q8 — lab-B #1244_08_qubit_spectroscopy_030719 q10](exemplars/Q8/lab-B_1244_q10.png)
 
 ### Q9 — periodic comb  (seen 5x)
 
@@ -110,11 +110,11 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Do not adopt any member from this panel. Keep the drive low and widen the span by ~2-3x to map how far the comb extends and whether the spacing stays constant; a comb bounded on one side and regularly spaced points at a systematic cause (sideband/aliasing/multi-photon ladder) rather than at stray defects. Escalate: this node's single-line model cannot settle which member is the 0-1 transition.
 
-**Exemplars:** CQT/#1244_08_qubit_spectroscopy_030719/q10, CQT/#1243_08_qubit_spectroscopy_030617/q10, CQT/#1254_08_qubit_spectroscopy_035232/q6, CQT/#1253_08_qubit_spectroscopy_033636/q11
+**Exemplars:** lab-B/#1244_08_qubit_spectroscopy_030719/q10, lab-B/#1243_08_qubit_spectroscopy_030617/q10, lab-B/#1254_08_qubit_spectroscopy_035232/q6, lab-B/#1253_08_qubit_spectroscopy_033636/q11
 
-![Q9 — CQT #1244_08_qubit_spectroscopy_030719 q10](exemplars/Q9/CQT_1244_q10.png)
-![Q9 — CQT #1243_08_qubit_spectroscopy_030617 q10](exemplars/Q9/CQT_1243_q10.png)
-![Q9 — CQT #1254_08_qubit_spectroscopy_035232 q6](exemplars/Q9/CQT_1254_q6.png)
+![Q9 — lab-B #1244_08_qubit_spectroscopy_030719 q10](exemplars/Q9/lab-B_1244_q10.png)
+![Q9 — lab-B #1243_08_qubit_spectroscopy_030617 q10](exemplars/Q9/lab-B_1243_q10.png)
+![Q9 — lab-B #1254_08_qubit_spectroscopy_035232 q6](exemplars/Q9/lab-B_1254_q6.png)
 
 ### Q10 — narrow core on a broad pedestal  (seen 9x)
 
@@ -122,11 +122,11 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Adopt the CENTRE only; refuse the width and every quantity derived from it. Refine the frequency step by ~2-3x so the core is sampled by many points, and reduce the drive by ~2x, then repeat: if the pedestal shrinks with drive and the core does not, the core is the line. Escalate to a dedicated linewidth/power measurement rather than letting this node's single-Lorentzian width propagate.
 
-**Exemplars:** IQCC_QOP37/#412_08_qubit_spectroscopy_193052/qC4, IQCC_QOP37/#414_08_qubit_spectroscopy_193414/qC5, IQCC_QOP37/#417_08_qubit_spectroscopy_194728/qD1, SNU_1Q/#54_08_qubit_spectroscopy_222719/q10, SNU_1Q/#71_08_qubit_spectroscopy_235157/q10, AS_10TQ9TC/#356_08_qubit_spectroscopy_103223/q6
+**Exemplars:** lab-C/#412_08_qubit_spectroscopy_193052/qC4, lab-C/#414_08_qubit_spectroscopy_193414/qC5, lab-C/#417_08_qubit_spectroscopy_194728/qD1, lab-E/#54_08_qubit_spectroscopy_222719/q10, lab-E/#71_08_qubit_spectroscopy_235157/q10, lab-A/#356_08_qubit_spectroscopy_103223/q6
 
-![Q10 — IQCC_QOP37 #412_08_qubit_spectroscopy_193052 qC4](exemplars/Q10/IQCC_QOP37_412_qC4.png)
-![Q10 — IQCC_QOP37 #414_08_qubit_spectroscopy_193414 qC5](exemplars/Q10/IQCC_QOP37_414_qC5.png)
-![Q10 — IQCC_QOP37 #417_08_qubit_spectroscopy_194728 qD1](exemplars/Q10/IQCC_QOP37_417_qD1.png)
+![Q10 — lab-C #412_08_qubit_spectroscopy_193052 qC4](exemplars/Q10/lab-C_412_qC4.png)
+![Q10 — lab-C #414_08_qubit_spectroscopy_193414 qC5](exemplars/Q10/lab-C_414_qC5.png)
+![Q10 — lab-C #417_08_qubit_spectroscopy_194728 qD1](exemplars/Q10/lab-C_417_qD1.png)
 
 ### Q11 — under-sampled line (unresolved spike)  (seen 6x)
 
@@ -134,11 +134,11 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Refine the frequency step by at least 3x (or narrow the span at a fixed point count) until roughly 8-10 samples fall across the fitted width; do NOT change drive first — raising the drive leaves this shape unchanged, refining the step fixes it. The centre may be within a step of correct but is grid-locked, so re-derive it after the step refinement rather than adopting it.
 
-**Exemplars:** IQCC_QOP37/#53_08_qubit_spectroscopy_214302/qA1, IQCC_QOP37/#54_08_qubit_spectroscopy_214347/qA2, IQCC_QOP37/#56_08_qubit_spectroscopy_214554/qA1
+**Exemplars:** lab-C/#53_08_qubit_spectroscopy_214302/qA1, lab-C/#54_08_qubit_spectroscopy_214347/qA2, lab-C/#56_08_qubit_spectroscopy_214554/qA1
 
-![Q11 — IQCC_QOP37 #53_08_qubit_spectroscopy_214302 qA1](exemplars/Q11/IQCC_QOP37_53_qA1.png)
-![Q11 — IQCC_QOP37 #54_08_qubit_spectroscopy_214347 qA2](exemplars/Q11/IQCC_QOP37_54_qA2.png)
-![Q11 — IQCC_QOP37 #56_08_qubit_spectroscopy_214554 qA1](exemplars/Q11/IQCC_QOP37_56_qA1.png)
+![Q11 — lab-C #53_08_qubit_spectroscopy_214302 qA1](exemplars/Q11/lab-C_53_qA1.png)
+![Q11 — lab-C #54_08_qubit_spectroscopy_214347 qA2](exemplars/Q11/lab-C_54_qA2.png)
+![Q11 — lab-C #56_08_qubit_spectroscopy_214554 qA1](exemplars/Q11/lab-C_56_qA1.png)
 
 ### Q12 — window too narrow for the line  (seen 4x)
 
@@ -146,11 +146,11 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Adopt the centre if it reproduces; refuse the width, baseline and contrast. Widen the span by ~2-3x about the same centre at unchanged drive and shots so that a flat floor is visible beyond both flanks, then re-fit. Distinguish from the edge case (feature against a boundary) and from the broadened case (flanks DO reach a floor, just slowly).
 
-**Exemplars:** AS_10TQ9TC/#33_08_qubit_spectroscopy_050627/q6, AS_10TQ9TC/#33_08_qubit_spectroscopy_050627/q7, AS_10TQ9TC/#28_08_qubit_spectroscopy_045932/q7
+**Exemplars:** lab-A/#33_08_qubit_spectroscopy_050627/q6, lab-A/#33_08_qubit_spectroscopy_050627/q7, lab-A/#28_08_qubit_spectroscopy_045932/q7
 
-![Q12 — AS_10TQ9TC #33_08_qubit_spectroscopy_050627 q6](exemplars/Q12/AS_10TQ9TC_33_q6.png)
-![Q12 — AS_10TQ9TC #33_08_qubit_spectroscopy_050627 q7](exemplars/Q12/AS_10TQ9TC_33_q7.png)
-![Q12 — AS_10TQ9TC #28_08_qubit_spectroscopy_045932 q7](exemplars/Q12/AS_10TQ9TC_28_q7.png)
+![Q12 — lab-A #33_08_qubit_spectroscopy_050627 q6](exemplars/Q12/lab-A_33_q6.png)
+![Q12 — lab-A #33_08_qubit_spectroscopy_050627 q7](exemplars/Q12/lab-A_33_q7.png)
+![Q12 — lab-A #28_08_qubit_spectroscopy_045932 q7](exemplars/Q12/lab-A_28_q7.png)
 
 ### Q13 — apex clipped by the value axis  (seen 3x)
 
@@ -158,11 +158,11 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Never adopt — the panel cannot confirm the claimed centre. First re-render with the full value range; if the clipping is in the acquired data rather than the plot, reduce the drive amplitude by ~2-5x (or the readout gain) and repeat at the same span. Re-run the target alone at full panel size if it was one tile of a many-qubit sheet, to rule out a rendering artefact of the grid.
 
-**Exemplars:** CQT/#1255_08_qubit_spectroscopy_035402/q18, CQT/#1254_08_qubit_spectroscopy_035232/q18, CQT/#1253_08_qubit_spectroscopy_033636/q18
+**Exemplars:** lab-B/#1255_08_qubit_spectroscopy_035402/q18, lab-B/#1254_08_qubit_spectroscopy_035232/q18, lab-B/#1253_08_qubit_spectroscopy_033636/q18
 
-![Q13 — CQT #1255_08_qubit_spectroscopy_035402 q18](exemplars/Q13/CQT_1255_q18.png)
-![Q13 — CQT #1254_08_qubit_spectroscopy_035232 q18](exemplars/Q13/CQT_1254_q18.png)
-![Q13 — CQT #1253_08_qubit_spectroscopy_033636 q18](exemplars/Q13/CQT_1253_q18.png)
+![Q13 — lab-B #1255_08_qubit_spectroscopy_035402 q18](exemplars/Q13/lab-B_1255_q18.png)
+![Q13 — lab-B #1254_08_qubit_spectroscopy_035232 q18](exemplars/Q13/lab-B_1254_q18.png)
+![Q13 — lab-B #1253_08_qubit_spectroscopy_033636 q18](exemplars/Q13/lab-B_1253_q18.png)
 
 ### Q14 — fit with no lineshape at all  (seen 1x)
 
@@ -170,9 +170,9 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Never adoptable; treat a success verdict on this shape as a defect in the acceptance rule. Re-derive the readout rotation for the target and re-run at the same settings, because this shape has been produced by a rotation flipped relative to the target's sibling runs (the response then reads as a dip while the model fits a rise). If the polarity is confirmed correct, treat the window as empty and follow that case's prescription.
 
-**Exemplars:** AS_10TQ9TC/#26_08_qubit_spectroscopy_045721/q6
+**Exemplars:** lab-A/#26_08_qubit_spectroscopy_045721/q6
 
-![Q14 — AS_10TQ9TC #26_08_qubit_spectroscopy_045721 q6](exemplars/Q14/AS_10TQ9TC_26_q6.png)
+![Q14 — lab-A #26_08_qubit_spectroscopy_045721 q6](exemplars/Q14/lab-A_26_q6.png)
 
 ### Q15 — spike forest (no resolved lineshape)  (seen 6x)
 
@@ -180,11 +180,11 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Never adopt. Repeat once at identical settings: instrumental spurs recur at exactly the same positions while noise spikes move. Then raise the drive by ~2-3x — a real, very narrow line broadens and grows flanks, a spur does not. If the spikes persist unchanged in position and width across both moves, mask them and treat the window as empty (widen the span). Never let the fitter choose among spikes by height.
 
-**Exemplars:** CQT/#1253_08_qubit_spectroscopy_033636/q11, CQT/#1253_08_qubit_spectroscopy_033636/q12, SNU_1Q/#64_08_qubit_spectroscopy_230131/q10, SNU_1Q/#67_08_qubit_spectroscopy_231355/q10
+**Exemplars:** lab-B/#1253_08_qubit_spectroscopy_033636/q11, lab-B/#1253_08_qubit_spectroscopy_033636/q12, lab-E/#64_08_qubit_spectroscopy_230131/q10, lab-E/#67_08_qubit_spectroscopy_231355/q10
 
-![Q15 — CQT #1253_08_qubit_spectroscopy_033636 q11](exemplars/Q15/CQT_1253_q11.png)
-![Q15 — CQT #1253_08_qubit_spectroscopy_033636 q12](exemplars/Q15/CQT_1253_q12.png)
-![Q15 — SNU_1Q #64_08_qubit_spectroscopy_230131 q10](exemplars/Q15/SNU_1Q_64_q10.png)
+![Q15 — lab-B #1253_08_qubit_spectroscopy_033636 q11](exemplars/Q15/lab-B_1253_q11.png)
+![Q15 — lab-B #1253_08_qubit_spectroscopy_033636 q12](exemplars/Q15/lab-B_1253_q12.png)
+![Q15 — lab-E #64_08_qubit_spectroscopy_230131 q10](exemplars/Q15/lab-E_64_q10.png)
 
 ## Flags (orthogonal to map geometry)
 
@@ -196,11 +196,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Refuse the value. Re-run at a drive reduced ~3-5x on the same span and see which candidate survives; then narrow the window around the survivor to ~2-3x its width. Record the ignored candidate's position — a later node sweeping that region needs to know it exists.
 
-**Exemplars:** AS_10TQ9TC/#23_08_qubit_spectroscopy_044954/q6, CQT/#1253_08_qubit_spectroscopy_033636/q10, SNU_1Q/#68_08_qubit_spectroscopy_231823/q10, SNU_1Q/#47_08_qubit_spectroscopy_222205/q9
+**Exemplars:** lab-A/#23_08_qubit_spectroscopy_044954/q6, lab-B/#1253_08_qubit_spectroscopy_033636/q10, lab-E/#68_08_qubit_spectroscopy_231823/q10, lab-E/#47_08_qubit_spectroscopy_222205/q9
 
-![F01 — AS_10TQ9TC #23_08_qubit_spectroscopy_044954 q6](exemplars/F01/AS_10TQ9TC_23_q6.png)
-![F01 — CQT #1253_08_qubit_spectroscopy_033636 q10](exemplars/F01/CQT_1253_q10.png)
-![F01 — SNU_1Q #68_08_qubit_spectroscopy_231823 q10](exemplars/F01/SNU_1Q_68_q10.png)
+![F01 — lab-A #23_08_qubit_spectroscopy_044954 q6](exemplars/F01/lab-A_23_q6.png)
+![F01 — lab-B #1253_08_qubit_spectroscopy_033636 q10](exemplars/F01/lab-B_1253_q10.png)
+![F01 — lab-E #68_08_qubit_spectroscopy_231823 q10](exemplars/F01/lab-E_68_q10.png)
 
 ### F02 — fitted centre in the dip between two crests  (seen 5x)
 
@@ -208,11 +208,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Refuse the value outright; this is not 'slightly off peak', it is a centre placed where the data are lowest. Reduce drive ≥5x and re-measure. If the split survives, fit two components or escalate.
 
-**Exemplars:** CQT/#1239_08_qubit_spectroscopy_030349/q10, CQT/#1240_08_qubit_spectroscopy_030414/q10, CQT/#1241_08_qubit_spectroscopy_030532/q10, CQT/#1247_08_qubit_spectroscopy_031321/q10, CQT/#1272_08_qubit_spectroscopy_041553/q18
+**Exemplars:** lab-B/#1239_08_qubit_spectroscopy_030349/q10, lab-B/#1240_08_qubit_spectroscopy_030414/q10, lab-B/#1241_08_qubit_spectroscopy_030532/q10, lab-B/#1247_08_qubit_spectroscopy_031321/q10, lab-B/#1272_08_qubit_spectroscopy_041553/q18
 
-![F02 — CQT #1239_08_qubit_spectroscopy_030349 q10](exemplars/F02/CQT_1239_q10.png)
-![F02 — CQT #1240_08_qubit_spectroscopy_030414 q10](exemplars/F02/CQT_1240_q10.png)
-![F02 — CQT #1241_08_qubit_spectroscopy_030532 q10](exemplars/F02/CQT_1241_q10.png)
+![F02 — lab-B #1239_08_qubit_spectroscopy_030349 q10](exemplars/F02/lab-B_1239_q10.png)
+![F02 — lab-B #1240_08_qubit_spectroscopy_030414 q10](exemplars/F02/lab-B_1240_q10.png)
+![F02 — lab-B #1241_08_qubit_spectroscopy_030532 q10](exemplars/F02/lab-B_1241_q10.png)
 
 ### F03 — fit planted on a noise excursion in a blank window  (seen 5x)
 
@@ -220,11 +220,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Never adopt, and never let the derived amplitudes leave the node. Treat as an empty window and follow that prescription. A fitter that emits a full parameter set from a flat band should be made to refuse instead.
 
-**Exemplars:** AS_10TQ9TC/#25_08_qubit_spectroscopy_045653/q7, KRISS_CR/#5_08_qubit_spectroscopy_040123/qA2, SNU_1Q/#64_08_qubit_spectroscopy_230131/q9, SNU_1Q/#67_08_qubit_spectroscopy_231355/q9
+**Exemplars:** lab-A/#25_08_qubit_spectroscopy_045653/q7, lab-D/#5_08_qubit_spectroscopy_040123/qA2, lab-E/#64_08_qubit_spectroscopy_230131/q9, lab-E/#67_08_qubit_spectroscopy_231355/q9
 
-![F03 — AS_10TQ9TC #25_08_qubit_spectroscopy_045653 q7](exemplars/F03/AS_10TQ9TC_25_q7.png)
-![F03 — KRISS_CR #5_08_qubit_spectroscopy_040123 qA2](exemplars/F03/KRISS_CR_5_qA2.png)
-![F03 — SNU_1Q #64_08_qubit_spectroscopy_230131 q9](exemplars/F03/SNU_1Q_64_q9.png)
+![F03 — lab-A #25_08_qubit_spectroscopy_045653 q7](exemplars/F03/lab-A_25_q7.png)
+![F03 — lab-D #5_08_qubit_spectroscopy_040123 qA2](exemplars/F03/lab-D_5_qA2.png)
+![F03 — lab-E #64_08_qubit_spectroscopy_230131 q9](exemplars/F03/lab-E_64_q9.png)
 
 ### F04 — fit anchored on a narrow spur while a broad line is present  (seen 6x)
 
@@ -232,11 +232,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Refuse. Mask candidates narrower than a floor set by the sweep step (require several samples across the fitted width) and re-fit. Confirm by lowering the drive: the broad response collapses into a fittable line, the spur is unchanged.
 
-**Exemplars:** SNU_1Q/#47_08_qubit_spectroscopy_222205/q9, SNU_1Q/#50_08_qubit_spectroscopy_222449/q9, AS_10TQ9TC/#23_08_qubit_spectroscopy_044954/q7
+**Exemplars:** lab-E/#47_08_qubit_spectroscopy_222205/q9, lab-E/#50_08_qubit_spectroscopy_222449/q9, lab-A/#23_08_qubit_spectroscopy_044954/q7
 
-![F04 — SNU_1Q #47_08_qubit_spectroscopy_222205 q9](exemplars/F04/SNU_1Q_47_q9.png)
-![F04 — SNU_1Q #50_08_qubit_spectroscopy_222449 q9](exemplars/F04/SNU_1Q_50_q9.png)
-![F04 — AS_10TQ9TC #23_08_qubit_spectroscopy_044954 q7](exemplars/F04/AS_10TQ9TC_23_q7.png)
+![F04 — lab-E #47_08_qubit_spectroscopy_222205 q9](exemplars/F04/lab-E_47_q9.png)
+![F04 — lab-E #50_08_qubit_spectroscopy_222449 q9](exemplars/F04/lab-E_50_q9.png)
+![F04 — lab-A #23_08_qubit_spectroscopy_044954 q7](exemplars/F04/lab-A_23_q7.png)
 
 ### F05 — fitted width disagrees with the visible feature  (seen 20x)
 
@@ -244,11 +244,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Adopt the centre only if it reproduces; refuse the width and every derived amplitude. Widen the span until a flat floor is visible on both sides so the fitter's baseline is constrained, then re-fit before believing any width.
 
-**Exemplars:** AS_10TQ9TC/#27_08_qubit_spectroscopy_045740/q6, CQT/#1254_08_qubit_spectroscopy_035232/q3, IQCC_QOP37/#414_08_qubit_spectroscopy_193414/qD1, SNU_1Q/#53_08_qubit_spectroscopy_222659/q9, AS_10TQ9TC/#356_08_qubit_spectroscopy_103223/q6
+**Exemplars:** lab-A/#27_08_qubit_spectroscopy_045740/q6, lab-B/#1254_08_qubit_spectroscopy_035232/q3, lab-C/#414_08_qubit_spectroscopy_193414/qD1, lab-E/#53_08_qubit_spectroscopy_222659/q9, lab-A/#356_08_qubit_spectroscopy_103223/q6
 
-![F05 — AS_10TQ9TC #27_08_qubit_spectroscopy_045740 q6](exemplars/F05/AS_10TQ9TC_27_q6.png)
-![F05 — CQT #1254_08_qubit_spectroscopy_035232 q3](exemplars/F05/CQT_1254_q3.png)
-![F05 — IQCC_QOP37 #414_08_qubit_spectroscopy_193414 qD1](exemplars/F05/IQCC_QOP37_414_qD1.png)
+![F05 — lab-A #27_08_qubit_spectroscopy_045740 q6](exemplars/F05/lab-A_27_q6.png)
+![F05 — lab-B #1254_08_qubit_spectroscopy_035232 q3](exemplars/F05/lab-B_1254_q3.png)
+![F05 — lab-C #414_08_qubit_spectroscopy_193414 qD1](exemplars/F05/lab-C_414_qD1.png)
 
 ### F06 — fit crest below the data apex  (seen 16x)
 
@@ -256,11 +256,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Refuse the contrast/height and anything derived from them; the centre may still be usable. Refine the step across the core and re-fit; if a broad pedestal is genuinely present, the panel needs two components, not one.
 
-**Exemplars:** SNU_1Q/#54_08_qubit_spectroscopy_222719/q10, SNU_1Q/#71_08_qubit_spectroscopy_235157/q10, IQCC_QOP37/#414_08_qubit_spectroscopy_193414/qC4, IQCC_QOP37/#436_08_qubit_spectroscopy_223724/qD2
+**Exemplars:** lab-E/#54_08_qubit_spectroscopy_222719/q10, lab-E/#71_08_qubit_spectroscopy_235157/q10, lab-C/#414_08_qubit_spectroscopy_193414/qC4, lab-C/#436_08_qubit_spectroscopy_223724/qD2
 
-![F06 — SNU_1Q #54_08_qubit_spectroscopy_222719 q10](exemplars/F06/SNU_1Q_54_q10.png)
-![F06 — SNU_1Q #71_08_qubit_spectroscopy_235157 q10](exemplars/F06/SNU_1Q_71_q10.png)
-![F06 — IQCC_QOP37 #414_08_qubit_spectroscopy_193414 qC4](exemplars/F06/IQCC_QOP37_414_qC4.png)
+![F06 — lab-E #54_08_qubit_spectroscopy_222719 q10](exemplars/F06/lab-E_54_q10.png)
+![F06 — lab-E #71_08_qubit_spectroscopy_235157 q10](exemplars/F06/lab-E_71_q10.png)
+![F06 — lab-C #414_08_qubit_spectroscopy_193414 qC4](exemplars/F06/lab-C_414_qC4.png)
 
 ### F07 — fitted baseline disagrees with the data floor  (seen 8x)
 
@@ -268,11 +268,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Refuse width and contrast; treat the reported goodness-of-fit as describing the baseline error, not the line. Widen until a flat floor is present on both sides and re-fit before adopting anything but the centre.
 
-**Exemplars:** IQCC_QOP37/#429_08_qubit_spectroscopy_212349/qD3, CQT/#1250_08_qubit_spectroscopy_031805/q9, SNU_1Q/#50_08_qubit_spectroscopy_222449/q9, CQT/#1256_08_qubit_spectroscopy_035427/q18
+**Exemplars:** lab-C/#429_08_qubit_spectroscopy_212349/qD3, lab-B/#1250_08_qubit_spectroscopy_031805/q9, lab-E/#50_08_qubit_spectroscopy_222449/q9, lab-B/#1256_08_qubit_spectroscopy_035427/q18
 
-![F07 — IQCC_QOP37 #429_08_qubit_spectroscopy_212349 qD3](exemplars/F07/IQCC_QOP37_429_qD3.png)
-![F07 — CQT #1250_08_qubit_spectroscopy_031805 q9](exemplars/F07/CQT_1250_q9.png)
-![F07 — SNU_1Q #50_08_qubit_spectroscopy_222449 q9](exemplars/F07/SNU_1Q_50_q9.png)
+![F07 — lab-C #429_08_qubit_spectroscopy_212349 qD3](exemplars/F07/lab-C_429_qD3.png)
+![F07 — lab-B #1250_08_qubit_spectroscopy_031805 q9](exemplars/F07/lab-B_1250_q9.png)
+![F07 — lab-E #50_08_qubit_spectroscopy_222449 q9](exemplars/F07/lab-E_50_q9.png)
 
 ### F08 — fit drawn over only part of the feature  (seen 2x)
 
@@ -280,9 +280,9 @@ A flag can sit on ANY case.
 
 **Prescription:** Treat the panel as unverified: the fit's agreement with the data cannot be judged where it is not drawn. Re-fit over the full feature or refuse.
 
-**Exemplars:** CQT/#1242_08_qubit_spectroscopy_030553/q10
+**Exemplars:** lab-B/#1242_08_qubit_spectroscopy_030553/q10
 
-![F08 — CQT #1242_08_qubit_spectroscopy_030553 q10](exemplars/F08/CQT_1242_q10.png)
+![F08 — lab-B #1242_08_qubit_spectroscopy_030553 q10](exemplars/F08/lab-B_1242_q10.png)
 
 ### F09 — fitted width pinned at a bound  (seen 7x)
 
@@ -290,11 +290,11 @@ A flag can sit on ANY case.
 
 **Prescription:** The record is reporting a limit, not a measurement — never adopt the width or any derived drive amplitude. Refine the step until the width moves off the bound; if it will not, the line is unresolved at this sampling.
 
-**Exemplars:** IQCC_QOP37/#53_08_qubit_spectroscopy_214302/qA1, IQCC_QOP37/#56_08_qubit_spectroscopy_214554/qA2, CQT/#1244_08_qubit_spectroscopy_030719/q10
+**Exemplars:** lab-C/#53_08_qubit_spectroscopy_214302/qA1, lab-C/#56_08_qubit_spectroscopy_214554/qA2, lab-B/#1244_08_qubit_spectroscopy_030719/q10
 
-![F09 — IQCC_QOP37 #53_08_qubit_spectroscopy_214302 qA1](exemplars/F09/IQCC_QOP37_53_qA1.png)
-![F09 — IQCC_QOP37 #56_08_qubit_spectroscopy_214554 qA2](exemplars/F09/IQCC_QOP37_56_qA2.png)
-![F09 — CQT #1244_08_qubit_spectroscopy_030719 q10](exemplars/F09/CQT_1244_q10.png)
+![F09 — lab-C #53_08_qubit_spectroscopy_214302 qA1](exemplars/F09/lab-C_53_qA1.png)
+![F09 — lab-C #56_08_qubit_spectroscopy_214554 qA2](exemplars/F09/lab-C_56_qA2.png)
+![F09 — lab-B #1244_08_qubit_spectroscopy_030719 q10](exemplars/F09/lab-B_1244_q10.png)
 
 ### F10 — centre quantised to the sweep grid  (seen 12x)
 
@@ -302,11 +302,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Do not treat two such runs as an agreeing pair. Require an interpolated (non-grid) centre before adopting, and re-derive after refining the step. A zero-offset report on a window centred by the previous run is a seed fallback until proven otherwise.
 
-**Exemplars:** IQCC_QOP37/#428_08_qubit_spectroscopy_210353/qC1, IQCC_QOP37/#429_08_qubit_spectroscopy_212349/qC1, IQCC_QOP37/#55_08_qubit_spectroscopy_214427/qA1, IQCC_QOP37/#53_08_qubit_spectroscopy_214302/qA2
+**Exemplars:** lab-C/#428_08_qubit_spectroscopy_210353/qC1, lab-C/#429_08_qubit_spectroscopy_212349/qC1, lab-C/#55_08_qubit_spectroscopy_214427/qA1, lab-C/#53_08_qubit_spectroscopy_214302/qA2
 
-![F10 — IQCC_QOP37 #428_08_qubit_spectroscopy_210353 qC1](exemplars/F10/IQCC_QOP37_428_qC1.png)
-![F10 — IQCC_QOP37 #429_08_qubit_spectroscopy_212349 qC1](exemplars/F10/IQCC_QOP37_429_qC1.png)
-![F10 — IQCC_QOP37 #55_08_qubit_spectroscopy_214427 qA1](exemplars/F10/IQCC_QOP37_55_qA1.png)
+![F10 — lab-C #428_08_qubit_spectroscopy_210353 qC1](exemplars/F10/lab-C_428_qC1.png)
+![F10 — lab-C #429_08_qubit_spectroscopy_212349 qC1](exemplars/F10/lab-C_429_qC1.png)
+![F10 — lab-C #55_08_qubit_spectroscopy_214427 qA1](exemplars/F10/lab-C_55_qA1.png)
 
 ### F11 — derived drive amplitude implausible  (seen 25x)
 
@@ -314,11 +314,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Use as a cheap independent veto: refuse the whole target when it fires, even if the node reported success and the panel looks acceptable. It is downstream of the width, so it fires exactly when the width is garbage. Do not clamp it — refuse and re-measure.
 
-**Exemplars:** AS_10TQ9TC/#25_08_qubit_spectroscopy_045653/q7, IQCC_QOP37/#436_08_qubit_spectroscopy_223724/qC1, SNU_1Q/#64_08_qubit_spectroscopy_230131/q10, SNU_1Q/#55_08_qubit_spectroscopy_222913/q10, AS_10TQ9TC/#26_08_qubit_spectroscopy_045721/q6
+**Exemplars:** lab-A/#25_08_qubit_spectroscopy_045653/q7, lab-C/#436_08_qubit_spectroscopy_223724/qC1, lab-E/#64_08_qubit_spectroscopy_230131/q10, lab-E/#55_08_qubit_spectroscopy_222913/q10, lab-A/#26_08_qubit_spectroscopy_045721/q6
 
-![F11 — AS_10TQ9TC #25_08_qubit_spectroscopy_045653 q7](exemplars/F11/AS_10TQ9TC_25_q7.png)
-![F11 — IQCC_QOP37 #436_08_qubit_spectroscopy_223724 qC1](exemplars/F11/IQCC_QOP37_436_qC1.png)
-![F11 — SNU_1Q #64_08_qubit_spectroscopy_230131 q10](exemplars/F11/SNU_1Q_64_q10.png)
+![F11 — lab-A #25_08_qubit_spectroscopy_045653 q7](exemplars/F11/lab-A_25_q7.png)
+![F11 — lab-C #436_08_qubit_spectroscopy_223724 qC1](exemplars/F11/lab-C_436_qC1.png)
+![F11 — lab-E #64_08_qubit_spectroscopy_230131 q10](exemplars/F11/lab-E_64_q10.png)
 
 ### F12 — contrast scale not comparable  (seen 10x)
 
@@ -326,11 +326,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Never gate acceptance on contrast alone, and never compare contrast across targets, runs or labs. Use peak-height-to-noise-band and flank resolution instead. If a contrast threshold exists in the acceptance rule, it must be replaced by an absolute (non-ratio) measure.
 
-**Exemplars:** AS_10TQ9TC/#28_08_qubit_spectroscopy_045932/q7, CQT/#1253_08_qubit_spectroscopy_033636/q2, CQT/#1253_08_qubit_spectroscopy_033636/q14, AS_10TQ9TC/#236_08_qubit_spectroscopy_201850/q7
+**Exemplars:** lab-A/#28_08_qubit_spectroscopy_045932/q7, lab-B/#1253_08_qubit_spectroscopy_033636/q2, lab-B/#1253_08_qubit_spectroscopy_033636/q14, lab-A/#236_08_qubit_spectroscopy_201850/q7
 
-![F12 — AS_10TQ9TC #28_08_qubit_spectroscopy_045932 q7](exemplars/F12/AS_10TQ9TC_28_q7.png)
-![F12 — CQT #1253_08_qubit_spectroscopy_033636 q2](exemplars/F12/CQT_1253_q2.png)
-![F12 — CQT #1253_08_qubit_spectroscopy_033636 q14](exemplars/F12/CQT_1253_q14.png)
+![F12 — lab-A #28_08_qubit_spectroscopy_045932 q7](exemplars/F12/lab-A_28_q7.png)
+![F12 — lab-B #1253_08_qubit_spectroscopy_033636 q2](exemplars/F12/lab-B_1253_q2.png)
+![F12 — lab-B #1253_08_qubit_spectroscopy_033636 q14](exemplars/F12/lab-B_1253_q14.png)
 
 ### F13 — refusal of a readable figure  (seen 9x)
 
@@ -338,11 +338,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Do not discard the run — it is frequently the most informative one in the session. Record the centre as a candidate, identify which gate fired (width, derived amplitude, shape), and confirm with one repeat. Where the gate is a width threshold, the correct response is a drive/step change, not a re-run at the same settings.
 
-**Exemplars:** CQT/#1243_08_qubit_spectroscopy_030617/q10, CQT/#1254_08_qubit_spectroscopy_035232/q7, CQT/#1254_08_qubit_spectroscopy_035232/q3, SNU_1Q/#49_08_qubit_spectroscopy_222345/q9, SNU_1Q/#53_08_qubit_spectroscopy_222659/q9
+**Exemplars:** lab-B/#1243_08_qubit_spectroscopy_030617/q10, lab-B/#1254_08_qubit_spectroscopy_035232/q7, lab-B/#1254_08_qubit_spectroscopy_035232/q3, lab-E/#49_08_qubit_spectroscopy_222345/q9, lab-E/#53_08_qubit_spectroscopy_222659/q9
 
-![F13 — CQT #1243_08_qubit_spectroscopy_030617 q10](exemplars/F13/CQT_1243_q10.png)
-![F13 — CQT #1254_08_qubit_spectroscopy_035232 q7](exemplars/F13/CQT_1254_q7.png)
-![F13 — CQT #1254_08_qubit_spectroscopy_035232 q3](exemplars/F13/CQT_1254_q3.png)
+![F13 — lab-B #1243_08_qubit_spectroscopy_030617 q10](exemplars/F13/lab-B_1243_q10.png)
+![F13 — lab-B #1254_08_qubit_spectroscopy_035232 q7](exemplars/F13/lab-B_1254_q7.png)
+![F13 — lab-B #1254_08_qubit_spectroscopy_035232 q3](exemplars/F13/lab-B_1254_q3.png)
 
 ### F14 — success contradicted by the figure  (seen 12x)
 
@@ -350,11 +350,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Block adoption on figure evidence regardless of the verdict. Treat the pair (verdict, geometry) as the unit of truth; a success flag alone is never sufficient to write a value to the chip.
 
-**Exemplars:** AS_10TQ9TC/#26_08_qubit_spectroscopy_045721/q6, CQT/#1239_08_qubit_spectroscopy_030349/q10, IQCC_QOP37/#429_08_qubit_spectroscopy_212349/qD3, CQT/#1247_08_qubit_spectroscopy_031321/q10
+**Exemplars:** lab-A/#26_08_qubit_spectroscopy_045721/q6, lab-B/#1239_08_qubit_spectroscopy_030349/q10, lab-C/#429_08_qubit_spectroscopy_212349/qD3, lab-B/#1247_08_qubit_spectroscopy_031321/q10
 
-![F14 — AS_10TQ9TC #26_08_qubit_spectroscopy_045721 q6](exemplars/F14/AS_10TQ9TC_26_q6.png)
-![F14 — CQT #1239_08_qubit_spectroscopy_030349 q10](exemplars/F14/CQT_1239_q10.png)
-![F14 — IQCC_QOP37 #429_08_qubit_spectroscopy_212349 qD3](exemplars/F14/IQCC_QOP37_429_qD3.png)
+![F14 — lab-A #26_08_qubit_spectroscopy_045721 q6](exemplars/F14/lab-A_26_q6.png)
+![F14 — lab-B #1239_08_qubit_spectroscopy_030349 q10](exemplars/F14/lab-B_1239_q10.png)
+![F14 — lab-C #429_08_qubit_spectroscopy_212349 qD3](exemplars/F14/lab-C_429_qD3.png)
 
 ### F15 — verdict unstable across identical repeats  (seen 6x)
 
@@ -362,11 +362,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Never let a single verdict decide. Require agreement of the FIGURE across two repeats, and treat a flipped verdict with unchanged geometry as a defect to be reported against the gate. Do not respond by changing the physics knobs.
 
-**Exemplars:** IQCC_QOP37/#57_08_qubit_spectroscopy_214703/qA1, SNU_1Q/#49_08_qubit_spectroscopy_222345/q9, SNU_1Q/#73_08_qubit_spectroscopy_235753/q9, SNU_1Q/#74_08_qubit_spectroscopy_235908/q9
+**Exemplars:** lab-C/#57_08_qubit_spectroscopy_214703/qA1, lab-E/#49_08_qubit_spectroscopy_222345/q9, lab-E/#73_08_qubit_spectroscopy_235753/q9, lab-E/#74_08_qubit_spectroscopy_235908/q9
 
-![F15 — IQCC_QOP37 #57_08_qubit_spectroscopy_214703 qA1](exemplars/F15/IQCC_QOP37_57_qA1.png)
-![F15 — SNU_1Q #49_08_qubit_spectroscopy_222345 q9](exemplars/F15/SNU_1Q_49_q9.png)
-![F15 — SNU_1Q #73_08_qubit_spectroscopy_235753 q9](exemplars/F15/SNU_1Q_73_q9.png)
+![F15 — lab-C #57_08_qubit_spectroscopy_214703 qA1](exemplars/F15/lab-C_57_qA1.png)
+![F15 — lab-E #49_08_qubit_spectroscopy_222345 q9](exemplars/F15/lab-E_49_q9.png)
+![F15 — lab-E #73_08_qubit_spectroscopy_235753 q9](exemplars/F15/lab-E_73_q9.png)
 
 ### F16 — success with no state written  (seen 14x)
 
@@ -374,11 +374,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Treat as an unexplained partial acceptance, not as a silent pass. Determine whether the frequency was withheld deliberately (a jump the node distrusted) and, if so, surface that as a first-class verdict; a value that is good enough to report is either adoptable or must say why it is not.
 
-**Exemplars:** KRISS_CR/#30_08_qubit_spectroscopy_072905/qA2, KRISS_CR/#118_08_qubit_spectroscopy_090012/qA1, SNU_1Q/#50_08_qubit_spectroscopy_222449/q10, IQCC_QOP37/#428_08_qubit_spectroscopy_210353/qD4, AS_10TQ9TC/#236_08_qubit_spectroscopy_201850/q8
+**Exemplars:** lab-D/#30_08_qubit_spectroscopy_072905/qA2, lab-D/#118_08_qubit_spectroscopy_090012/qA1, lab-E/#50_08_qubit_spectroscopy_222449/q10, lab-C/#428_08_qubit_spectroscopy_210353/qD4, lab-A/#236_08_qubit_spectroscopy_201850/q8
 
-![F16 — KRISS_CR #30_08_qubit_spectroscopy_072905 qA2](exemplars/F16/KRISS_CR_30_qA2.png)
-![F16 — KRISS_CR #118_08_qubit_spectroscopy_090012 qA1](exemplars/F16/KRISS_CR_118_qA1.png)
-![F16 — SNU_1Q #50_08_qubit_spectroscopy_222449 q10](exemplars/F16/SNU_1Q_50_q10.png)
+![F16 — lab-D #30_08_qubit_spectroscopy_072905 qA2](exemplars/F16/lab-D_30_qA2.png)
+![F16 — lab-D #118_08_qubit_spectroscopy_090012 qA1](exemplars/F16/lab-D_118_qA1.png)
+![F16 — lab-E #50_08_qubit_spectroscopy_222449 q10](exemplars/F16/lab-E_50_q10.png)
 
 ### F17 — patched value differs from the fitted centre  (seen 1x)
 
@@ -386,9 +386,9 @@ A flag can sit on ANY case.
 
 **Prescription:** Hard stop. The applied value must equal the fitted centre shown to the operator. Until reconciled, refuse to chain runs (each run's window will be seeded by a value the previous panel did not claim).
 
-**Exemplars:** CQT/#1256_08_qubit_spectroscopy_035427/q18
+**Exemplars:** lab-B/#1256_08_qubit_spectroscopy_035427/q18
 
-![F17 — CQT #1256_08_qubit_spectroscopy_035427 q18](exemplars/F17/CQT_1256_q18.png)
+![F17 — lab-B #1256_08_qubit_spectroscopy_035427 q18](exemplars/F17/lab-B_1256_q18.png)
 
 ### F18 — non-convergent re-centring  (seen 6x)
 
@@ -396,11 +396,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Stop re-centring after two repeats of the same offset. Instead double the span at the UNCHANGED centre and look for the feature on the other side (see mirror ambiguity), and check whether the applied value equals the fitted centre. Never keep writing.
 
-**Exemplars:** AS_10TQ9TC/#30_08_qubit_spectroscopy_050108/q6, AS_10TQ9TC/#31_08_qubit_spectroscopy_050147/q6, AS_10TQ9TC/#30_08_qubit_spectroscopy_050108/q7
+**Exemplars:** lab-A/#30_08_qubit_spectroscopy_050108/q6, lab-A/#31_08_qubit_spectroscopy_050147/q6, lab-A/#30_08_qubit_spectroscopy_050108/q7
 
-![F18 — AS_10TQ9TC #30_08_qubit_spectroscopy_050108 q6](exemplars/F18/AS_10TQ9TC_30_q6.png)
-![F18 — AS_10TQ9TC #31_08_qubit_spectroscopy_050147 q6](exemplars/F18/AS_10TQ9TC_31_q6.png)
-![F18 — AS_10TQ9TC #30_08_qubit_spectroscopy_050108 q7](exemplars/F18/AS_10TQ9TC_30_q7.png)
+![F18 — lab-A #30_08_qubit_spectroscopy_050108 q6](exemplars/F18/lab-A_30_q6.png)
+![F18 — lab-A #31_08_qubit_spectroscopy_050147 q6](exemplars/F18/lab-A_31_q6.png)
+![F18 — lab-A #30_08_qubit_spectroscopy_050108 q7](exemplars/F18/lab-A_30_q7.png)
 
 ### F19 — mirror-offset ambiguity  (seen 2x)
 
@@ -408,10 +408,10 @@ A flag can sit on ANY case.
 
 **Prescription:** Before adopting from any narrow window, run once at ≥2x span with the same centre. Adopt the feature that survives the widening. If both persist, escalate — this is a drive-chain/image question, not a fitting question.
 
-**Exemplars:** AS_10TQ9TC/#32_08_qubit_spectroscopy_050601/q6, AS_10TQ9TC/#32_08_qubit_spectroscopy_050601/q7
+**Exemplars:** lab-A/#32_08_qubit_spectroscopy_050601/q6, lab-A/#32_08_qubit_spectroscopy_050601/q7
 
-![F19 — AS_10TQ9TC #32_08_qubit_spectroscopy_050601 q6](exemplars/F19/AS_10TQ9TC_32_q6.png)
-![F19 — AS_10TQ9TC #32_08_qubit_spectroscopy_050601 q7](exemplars/F19/AS_10TQ9TC_32_q7.png)
+![F19 — lab-A #32_08_qubit_spectroscopy_050601 q6](exemplars/F19/lab-A_32_q6.png)
+![F19 — lab-A #32_08_qubit_spectroscopy_050601 q7](exemplars/F19/lab-A_32_q7.png)
 
 ### F20 — cross-run intermittency  (seen 5x)
 
@@ -419,11 +419,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Never adopt from a single lucky repeat. Require at least two agreeing repeats on absolute centre, and mark the target as unstable so downstream nodes know its value is provisional. Investigate the target's readout/flux rather than its drive frequency.
 
-**Exemplars:** IQCC_QOP37/#427_08_qubit_spectroscopy_205244/qC4, IQCC_QOP37/#428_08_qubit_spectroscopy_210353/qC4, IQCC_QOP37/#429_08_qubit_spectroscopy_212349/qC4, IQCC_QOP37/#436_08_qubit_spectroscopy_223724/qC4
+**Exemplars:** lab-C/#427_08_qubit_spectroscopy_205244/qC4, lab-C/#428_08_qubit_spectroscopy_210353/qC4, lab-C/#429_08_qubit_spectroscopy_212349/qC4, lab-C/#436_08_qubit_spectroscopy_223724/qC4
 
-![F20 — IQCC_QOP37 #427_08_qubit_spectroscopy_205244 qC4](exemplars/F20/IQCC_QOP37_427_qC4.png)
-![F20 — IQCC_QOP37 #428_08_qubit_spectroscopy_210353 qC4](exemplars/F20/IQCC_QOP37_428_qC4.png)
-![F20 — IQCC_QOP37 #429_08_qubit_spectroscopy_212349 qC4](exemplars/F20/IQCC_QOP37_429_qC4.png)
+![F20 — lab-C #427_08_qubit_spectroscopy_205244 qC4](exemplars/F20/lab-C_427_qC4.png)
+![F20 — lab-C #428_08_qubit_spectroscopy_210353 qC4](exemplars/F20/lab-C_428_qC4.png)
+![F20 — lab-C #429_08_qubit_spectroscopy_212349 qC4](exemplars/F20/lab-C_429_qC4.png)
 
 ### F21 — width unstable across repeats with a stable centre  (seen 9x)
 
@@ -431,11 +431,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Refuse the width and all derived amplitudes for that target until the pedestal/core question is resolved by a step refinement or a two-component fit. A centre that is stable across the swing is still usable.
 
-**Exemplars:** IQCC_QOP37/#417_08_qubit_spectroscopy_194728/qD4, IQCC_QOP37/#429_08_qubit_spectroscopy_212349/qC5, IQCC_QOP37/#415_08_qubit_spectroscopy_193532/qC4, IQCC_QOP37/#59_08_qubit_spectroscopy_215031/qA1
+**Exemplars:** lab-C/#417_08_qubit_spectroscopy_194728/qD4, lab-C/#429_08_qubit_spectroscopy_212349/qC5, lab-C/#415_08_qubit_spectroscopy_193532/qC4, lab-C/#59_08_qubit_spectroscopy_215031/qA1
 
-![F21 — IQCC_QOP37 #417_08_qubit_spectroscopy_194728 qD4](exemplars/F21/IQCC_QOP37_417_qD4.png)
-![F21 — IQCC_QOP37 #429_08_qubit_spectroscopy_212349 qC5](exemplars/F21/IQCC_QOP37_429_qC5.png)
-![F21 — IQCC_QOP37 #415_08_qubit_spectroscopy_193532 qC4](exemplars/F21/IQCC_QOP37_415_qC4.png)
+![F21 — lab-C #417_08_qubit_spectroscopy_194728 qD4](exemplars/F21/lab-C_417_qD4.png)
+![F21 — lab-C #429_08_qubit_spectroscopy_212349 qC5](exemplars/F21/lab-C_429_qC5.png)
+![F21 — lab-C #415_08_qubit_spectroscopy_193532 qC4](exemplars/F21/lab-C_415_qC4.png)
 
 ### F22 — recurring narrow spur at a fixed offset  (seen 20x)
 
@@ -443,11 +443,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Mask by width, not by height: never allow a candidate narrower than a step-derived floor. Record its position so it is not repeatedly rediscovered, and escalate once to decide whether it is instrumental (LO/clock) or a genuine very narrow transition.
 
-**Exemplars:** IQCC_QOP37/#429_08_qubit_spectroscopy_212349/qD2, IQCC_QOP37/#428_08_qubit_spectroscopy_210353/qC2, SNU_1Q/#54_08_qubit_spectroscopy_222719/q9, SNU_1Q/#48_08_qubit_spectroscopy_222234/q9, KRISS_CR/#158_08_qubit_spectroscopy_115018/qA2
+**Exemplars:** lab-C/#429_08_qubit_spectroscopy_212349/qD2, lab-C/#428_08_qubit_spectroscopy_210353/qC2, lab-E/#54_08_qubit_spectroscopy_222719/q9, lab-E/#48_08_qubit_spectroscopy_222234/q9, lab-D/#158_08_qubit_spectroscopy_115018/qA2
 
-![F22 — IQCC_QOP37 #429_08_qubit_spectroscopy_212349 qD2](exemplars/F22/IQCC_QOP37_429_qD2.png)
-![F22 — IQCC_QOP37 #428_08_qubit_spectroscopy_210353 qC2](exemplars/F22/IQCC_QOP37_428_qC2.png)
-![F22 — SNU_1Q #54_08_qubit_spectroscopy_222719 q9](exemplars/F22/SNU_1Q_54_q9.png)
+![F22 — lab-C #429_08_qubit_spectroscopy_212349 qD2](exemplars/F22/lab-C_429_qD2.png)
+![F22 — lab-C #428_08_qubit_spectroscopy_210353 qC2](exemplars/F22/lab-C_428_qC2.png)
+![F22 — lab-E #54_08_qubit_spectroscopy_222719 q9](exemplars/F22/lab-E_54_q9.png)
 
 ### F23 — spur at the window edge  (seen 8x)
 
@@ -455,11 +455,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Exclude a margin at each boundary from candidate selection (a fixed fraction of the span), and require both flanks to be inside the window. If the edge structure is the only candidate, re-centre and widen rather than fitting it.
 
-**Exemplars:** IQCC_QOP37/#427_08_qubit_spectroscopy_205244/qC1, IQCC_QOP37/#428_08_qubit_spectroscopy_210353/qC1, IQCC_QOP37/#415_08_qubit_spectroscopy_193532/qC1, CQT/#1253_08_qubit_spectroscopy_033636/q12
+**Exemplars:** lab-C/#427_08_qubit_spectroscopy_205244/qC1, lab-C/#428_08_qubit_spectroscopy_210353/qC1, lab-C/#415_08_qubit_spectroscopy_193532/qC1, lab-B/#1253_08_qubit_spectroscopy_033636/q12
 
-![F23 — IQCC_QOP37 #427_08_qubit_spectroscopy_205244 qC1](exemplars/F23/IQCC_QOP37_427_qC1.png)
-![F23 — IQCC_QOP37 #428_08_qubit_spectroscopy_210353 qC1](exemplars/F23/IQCC_QOP37_428_qC1.png)
-![F23 — IQCC_QOP37 #415_08_qubit_spectroscopy_193532 qC1](exemplars/F23/IQCC_QOP37_415_qC1.png)
+![F23 — lab-C #427_08_qubit_spectroscopy_205244 qC1](exemplars/F23/lab-C_427_qC1.png)
+![F23 — lab-C #428_08_qubit_spectroscopy_210353 qC1](exemplars/F23/lab-C_428_qC1.png)
+![F23 — lab-C #415_08_qubit_spectroscopy_193532 qC1](exemplars/F23/lab-C_415_qC1.png)
 
 ### F24 — sloping or stepped instrument baseline  (seen 14x)
 
@@ -467,11 +467,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Judge prominence against the LOCAL floor around the feature, never against the panel's overall range. Widen enough that the local floor is flat on both sides; if the tilt persists at every span, fit with a baseline term or refuse the width, and treat the tilt as an instrument finding.
 
-**Exemplars:** AS_10TQ9TC/#22_08_qubit_spectroscopy_044933/q6, AS_10TQ9TC/#27_08_qubit_spectroscopy_045740/q6, AS_10TQ9TC/#353_08_qubit_spectroscopy_102744/q7, CQT/#1249_08_qubit_spectroscopy_031652/q10
+**Exemplars:** lab-A/#22_08_qubit_spectroscopy_044933/q6, lab-A/#27_08_qubit_spectroscopy_045740/q6, lab-A/#353_08_qubit_spectroscopy_102744/q7, lab-B/#1249_08_qubit_spectroscopy_031652/q10
 
-![F24 — AS_10TQ9TC #22_08_qubit_spectroscopy_044933 q6](exemplars/F24/AS_10TQ9TC_22_q6.png)
-![F24 — AS_10TQ9TC #27_08_qubit_spectroscopy_045740 q6](exemplars/F24/AS_10TQ9TC_27_q6.png)
-![F24 — AS_10TQ9TC #353_08_qubit_spectroscopy_102744 q7](exemplars/F24/AS_10TQ9TC_353_q7.png)
+![F24 — lab-A #22_08_qubit_spectroscopy_044933 q6](exemplars/F24/lab-A_22_q6.png)
+![F24 — lab-A #27_08_qubit_spectroscopy_045740 q6](exemplars/F24/lab-A_27_q6.png)
+![F24 — lab-A #353_08_qubit_spectroscopy_102744 q7](exemplars/F24/lab-A_353_q7.png)
 
 ### F25 — readout polarity inverted relative to siblings  (seen 1x)
 
@@ -479,9 +479,9 @@ A flag can sit on ANY case.
 
 **Prescription:** Refuse the run and re-derive the readout rotation before re-measuring. Make the fitter polarity-agnostic. Never compare contrast or height across a polarity flip. Within a consistent session, peak-vs-dip is cosmetic; a flip BETWEEN runs of one target is a defect.
 
-**Exemplars:** AS_10TQ9TC/#26_08_qubit_spectroscopy_045721/q6
+**Exemplars:** lab-A/#26_08_qubit_spectroscopy_045721/q6
 
-![F25 — AS_10TQ9TC #26_08_qubit_spectroscopy_045721 q6](exemplars/F25/AS_10TQ9TC_26_q6.png)
+![F25 — lab-A #26_08_qubit_spectroscopy_045721 q6](exemplars/F25/lab-A_26_q6.png)
 
 ### F26 — one flank truncated at the window edge  (seen 10x)
 
@@ -489,11 +489,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Adopt the centre with a reproduction; refuse the width. Shift and/or widen the span by ~1.5-2x so both flanks reach the floor, then re-fit. Distinguish from the edge case (crest itself at the boundary) and from the too-narrow case (both sides truncated).
 
-**Exemplars:** AS_10TQ9TC/#28_08_qubit_spectroscopy_045932/q6, AS_10TQ9TC/#29_08_qubit_spectroscopy_050005/q7, AS_10TQ9TC/#31_08_qubit_spectroscopy_050147/q7
+**Exemplars:** lab-A/#28_08_qubit_spectroscopy_045932/q6, lab-A/#29_08_qubit_spectroscopy_050005/q7, lab-A/#31_08_qubit_spectroscopy_050147/q7
 
-![F26 — AS_10TQ9TC #28_08_qubit_spectroscopy_045932 q6](exemplars/F26/AS_10TQ9TC_28_q6.png)
-![F26 — AS_10TQ9TC #29_08_qubit_spectroscopy_050005 q7](exemplars/F26/AS_10TQ9TC_29_q7.png)
-![F26 — AS_10TQ9TC #31_08_qubit_spectroscopy_050147 q7](exemplars/F26/AS_10TQ9TC_31_q7.png)
+![F26 — lab-A #28_08_qubit_spectroscopy_045932 q6](exemplars/F26/lab-A_28_q6.png)
+![F26 — lab-A #29_08_qubit_spectroscopy_050005 q7](exemplars/F26/lab-A_29_q7.png)
+![F26 — lab-A #31_08_qubit_spectroscopy_050147 q7](exemplars/F26/lab-A_31_q7.png)
 
 ### F27 — unmodelled edge wall beside a fitted peak  (seen 10x)
 
@@ -501,11 +501,11 @@ A flag can sit on ANY case.
 
 **Prescription:** The fitted centre may still be adoptable, but the run is incomplete: extend the span in the direction of the wall by about one window and re-measure, so the wall's own structure is identified before it is inherited by a later node.
 
-**Exemplars:** CQT/#1253_08_qubit_spectroscopy_033636/q18, CQT/#1254_08_qubit_spectroscopy_035232/q15, CQT/#1239_08_qubit_spectroscopy_030349/q10, CQT/#1254_08_qubit_spectroscopy_035232/q9
+**Exemplars:** lab-B/#1253_08_qubit_spectroscopy_033636/q18, lab-B/#1254_08_qubit_spectroscopy_035232/q15, lab-B/#1239_08_qubit_spectroscopy_030349/q10, lab-B/#1254_08_qubit_spectroscopy_035232/q9
 
-![F27 — CQT #1253_08_qubit_spectroscopy_033636 q18](exemplars/F27/CQT_1253_q18.png)
-![F27 — CQT #1254_08_qubit_spectroscopy_035232 q15](exemplars/F27/CQT_1254_q15.png)
-![F27 — CQT #1239_08_qubit_spectroscopy_030349 q10](exemplars/F27/CQT_1239_q10.png)
+![F27 — lab-B #1253_08_qubit_spectroscopy_033636 q18](exemplars/F27/lab-B_1253_q18.png)
+![F27 — lab-B #1254_08_qubit_spectroscopy_035232 q15](exemplars/F27/lab-B_1254_q15.png)
+![F27 — lab-B #1239_08_qubit_spectroscopy_030349 q10](exemplars/F27/lab-B_1239_q10.png)
 
 ### F28 — secondary credible feature unmodelled  (seen 35x)
 
@@ -513,11 +513,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Allow adoption of the fitted centre if it reproduces, but record every additional credible feature's position and width alongside it. A single-line record over a multi-feature window is a silent loss of information a later sweep will pay for.
 
-**Exemplars:** AS_10TQ9TC/#32_08_qubit_spectroscopy_050601/q7, CQT/#1253_08_qubit_spectroscopy_033636/q4, AS_10TQ9TC/#356_08_qubit_spectroscopy_103223/q7, CQT/#1254_08_qubit_spectroscopy_035232/q1
+**Exemplars:** lab-A/#32_08_qubit_spectroscopy_050601/q7, lab-B/#1253_08_qubit_spectroscopy_033636/q4, lab-A/#356_08_qubit_spectroscopy_103223/q7, lab-B/#1254_08_qubit_spectroscopy_035232/q1
 
-![F28 — AS_10TQ9TC #32_08_qubit_spectroscopy_050601 q7](exemplars/F28/AS_10TQ9TC_32_q7.png)
-![F28 — CQT #1253_08_qubit_spectroscopy_033636 q4](exemplars/F28/CQT_1253_q4.png)
-![F28 — AS_10TQ9TC #356_08_qubit_spectroscopy_103223 q7](exemplars/F28/AS_10TQ9TC_356_q7.png)
+![F28 — lab-A #32_08_qubit_spectroscopy_050601 q7](exemplars/F28/lab-A_32_q7.png)
+![F28 — lab-B #1253_08_qubit_spectroscopy_033636 q4](exemplars/F28/lab-B_1253_q4.png)
+![F28 — lab-A #356_08_qubit_spectroscopy_103223 q7](exemplars/F28/lab-A_356_q7.png)
 
 ### F29 — window moved by the previous run  (seen 8x)
 
@@ -525,11 +525,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Compare absolute frequency, never offset-from-window-centre, when reasoning across runs. Before treating two runs as a repeat, confirm the swept ranges overlap; if they do not, they are not a repeat.
 
-**Exemplars:** CQT/#1257_08_qubit_spectroscopy_035514/q18, CQT/#1256_08_qubit_spectroscopy_035427/q18, AS_10TQ9TC/#30_08_qubit_spectroscopy_050108/q6
+**Exemplars:** lab-B/#1257_08_qubit_spectroscopy_035514/q18, lab-B/#1256_08_qubit_spectroscopy_035427/q18, lab-A/#30_08_qubit_spectroscopy_050108/q6
 
-![F29 — CQT #1257_08_qubit_spectroscopy_035514 q18](exemplars/F29/CQT_1257_q18.png)
-![F29 — CQT #1256_08_qubit_spectroscopy_035427 q18](exemplars/F29/CQT_1256_q18.png)
-![F29 — AS_10TQ9TC #30_08_qubit_spectroscopy_050108 q6](exemplars/F29/AS_10TQ9TC_30_q6.png)
+![F29 — lab-B #1257_08_qubit_spectroscopy_035514 q18](exemplars/F29/lab-B_1257_q18.png)
+![F29 — lab-B #1256_08_qubit_spectroscopy_035427 q18](exemplars/F29/lab-B_1256_q18.png)
+![F29 — lab-A #30_08_qubit_spectroscopy_050108 q6](exemplars/F29/lab-A_30_q6.png)
 
 ### F30 — drive-dependent identity  (seen 12x)
 
@@ -537,11 +537,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Never diagnose a shape from one panel when a sibling at another amplitude exists; read the ladder. Where two targets need opposite drive levels, run them separately rather than choosing a compromise amplitude that satisfies neither.
 
-**Exemplars:** SNU_1Q/#49_08_qubit_spectroscopy_222345/q10, SNU_1Q/#48_08_qubit_spectroscopy_222234/q9, CQT/#1243_08_qubit_spectroscopy_030617/q10, CQT/#1254_08_qubit_spectroscopy_035232/q15
+**Exemplars:** lab-E/#49_08_qubit_spectroscopy_222345/q10, lab-E/#48_08_qubit_spectroscopy_222234/q9, lab-B/#1243_08_qubit_spectroscopy_030617/q10, lab-B/#1254_08_qubit_spectroscopy_035232/q15
 
-![F30 — SNU_1Q #49_08_qubit_spectroscopy_222345 q10](exemplars/F30/SNU_1Q_49_q10.png)
-![F30 — SNU_1Q #48_08_qubit_spectroscopy_222234 q9](exemplars/F30/SNU_1Q_48_q9.png)
-![F30 — CQT #1243_08_qubit_spectroscopy_030617 q10](exemplars/F30/CQT_1243_q10.png)
+![F30 — lab-E #49_08_qubit_spectroscopy_222345 q10](exemplars/F30/lab-E_49_q10.png)
+![F30 — lab-E #48_08_qubit_spectroscopy_222234 q9](exemplars/F30/lab-E_48_q9.png)
+![F30 — lab-B #1243_08_qubit_spectroscopy_030617 q10](exemplars/F30/lab-B_1243_q10.png)
 
 ### F31 — honest refusal / honest no-fit  (seen 20x)
 
@@ -549,11 +549,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Record as correct behaviour and do not 'fix' it. This is the majority behaviour in every lab here and is the baseline against which the two mismatch flags must be measured; suppressing it would trade honest refusals for silent bad writes.
 
-**Exemplars:** CQT/#1253_08_qubit_spectroscopy_033636/q16, IQCC_QOP37/#417_08_qubit_spectroscopy_194728/qC1, KRISS_CR/#5_08_qubit_spectroscopy_040123/qA1, IQCC_QOP37/#53_08_qubit_spectroscopy_214302/qA1, AS_10TQ9TC/#23_08_qubit_spectroscopy_044954/q7
+**Exemplars:** lab-B/#1253_08_qubit_spectroscopy_033636/q16, lab-C/#417_08_qubit_spectroscopy_194728/qC1, lab-D/#5_08_qubit_spectroscopy_040123/qA1, lab-C/#53_08_qubit_spectroscopy_214302/qA1, lab-A/#23_08_qubit_spectroscopy_044954/q7
 
-![F31 — CQT #1253_08_qubit_spectroscopy_033636 q16](exemplars/F31/CQT_1253_q16.png)
-![F31 — IQCC_QOP37 #417_08_qubit_spectroscopy_194728 qC1](exemplars/F31/IQCC_QOP37_417_qC1.png)
-![F31 — KRISS_CR #5_08_qubit_spectroscopy_040123 qA1](exemplars/F31/KRISS_CR_5_qA1.png)
+![F31 — lab-B #1253_08_qubit_spectroscopy_033636 q16](exemplars/F31/lab-B_1253_q16.png)
+![F31 — lab-C #417_08_qubit_spectroscopy_194728 qC1](exemplars/F31/lab-C_417_qC1.png)
+![F31 — lab-D #5_08_qubit_spectroscopy_040123 qA1](exemplars/F31/lab-D_5_qA1.png)
 
 ### F32 — multiplex-only single-bin spike  (seen 9x)
 
@@ -561,11 +561,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Treat multiplexed panels as centre-confirming only after one sequential (or repeated) reproduction. Mask by width. Do not conclude 'multiplexing causes spurs' generally — in another lab a multiplex on/off A/B produced no visible difference at all.
 
-**Exemplars:** IQCC_QOP37/#415_08_qubit_spectroscopy_193532/qD2, IQCC_QOP37/#415_08_qubit_spectroscopy_193532/qC5, IQCC_QOP37/#417_08_qubit_spectroscopy_194728/qC2, IQCC_QOP37/#415_08_qubit_spectroscopy_193532/qC2
+**Exemplars:** lab-C/#415_08_qubit_spectroscopy_193532/qD2, lab-C/#415_08_qubit_spectroscopy_193532/qC5, lab-C/#417_08_qubit_spectroscopy_194728/qC2, lab-C/#415_08_qubit_spectroscopy_193532/qC2
 
-![F32 — IQCC_QOP37 #415_08_qubit_spectroscopy_193532 qD2](exemplars/F32/IQCC_QOP37_415_qD2.png)
-![F32 — IQCC_QOP37 #415_08_qubit_spectroscopy_193532 qC5](exemplars/F32/IQCC_QOP37_415_qC5.png)
-![F32 — IQCC_QOP37 #417_08_qubit_spectroscopy_194728 qC2](exemplars/F32/IQCC_QOP37_417_qC2.png)
+![F32 — lab-C #415_08_qubit_spectroscopy_193532 qD2](exemplars/F32/lab-C_415_qD2.png)
+![F32 — lab-C #415_08_qubit_spectroscopy_193532 qC5](exemplars/F32/lab-C_415_qC5.png)
+![F32 — lab-C #417_08_qubit_spectroscopy_194728 qC2](exemplars/F32/lab-C_417_qC2.png)
 
 ## Rules
 
@@ -662,81 +662,81 @@ Axes are NORMALISED and UNLABELLED: no absolute frequency, power or flux leaves 
 
 INVARIANT ACROSS ALL FIVE LABS (this is the chip-independence evidence).
 
-1. The reference shape is identical everywhere: one symmetric resolved feature, both flanks decaying onto a locally flat floor visible beyond the feature on both sides, fit tracking crest and both tails. AS #45, CQT #1253, IQCC #418, KRISS #11 and SNU #52 panels are interchangeable in geometry despite completely different spans, step sizes, shot counts, drive pulses and qubit-naming schemes.
+1. The reference shape is identical everywhere: one symmetric resolved feature, both flanks decaying onto a locally flat floor visible beyond the feature on both sides, fit tracking crest and both tails. AS #45, lab-B #1253, lab-C #418, lab-D #11 and lab-E #52 panels are interchangeable in geometry despite completely different spans, step sizes, shot counts, drive pulses and qubit-naming schemes.
 
-2. Drive amplitude is the master knob for shape in every lab: narrow line -> broad rounded hump -> flat/double-crested top -> merged humps, with the reverse ladder resolving a block back into discrete lines. Observed independently at CQT (q10 amplitude ladder), SNU (q9 ladder), KRISS (qA1 across days) and AS (#26/#52-equivalent behaviour). The taxonomy needed the same three cases (broad-resolved, saturated, merged-multi-peak) at four labs that never shared code.
+2. Drive amplitude is the master knob for shape in every lab: narrow line -> broad rounded hump -> flat/double-crested top -> merged humps, with the reverse ladder resolving a block back into discrete lines. Observed independently at lab-B (q10 amplitude ladder), lab-E (q9 ladder), lab-D (qA1 across days) and AS (#26/#52-equivalent behaviour). The taxonomy needed the same three cases (broad-resolved, saturated, merged-multi-peak) at four labs that never shared code.
 
-3. Fitters emit a full centre+width+derived-amplitude set from a blank noise band in every lab that produced a blank band (AS #25 q7, KRISS #5 qA2, SNU #64/#67 q9, CQT #1253 q19). This is not one lab's fitter.
+3. Fitters emit a full centre+width+derived-amplitude set from a blank noise band in every lab that produced a blank band (AS #25 q7, lab-D #5 qA2, lab-E #64/#67 q9, lab-B #1253 q19). This is not one lab's fitter.
 
-4. Derived saturation/x180 amplitudes being orders of magnitude out of family is a reliable, figure-independent garbage tell at AS, IQCC, SNU and CQT alike.
+4. Derived saturation/x180 amplitudes being orders of magnitude out of family is a reliable, figure-independent garbage tell at AS, lab-C, lab-E and lab-B alike.
 
-5. Sample-wide spurs at FIXED positions, recurring across runs with different spans/shots/drive, appear at IQCC (per-qubit spurs incl. one hard against a window edge), SNU (q9's low-side spur in every panel), KRISS (#158 qA2) and CQT (#1253 q20). Width, not height, separates them from lines everywhere.
+5. Sample-wide spurs at FIXED positions, recurring across runs with different spans/shots/drive, appear at lab-C (per-qubit spurs incl. one hard against a window edge), lab-E (q9's low-side spur in every panel), lab-D (#158 qA2) and lab-B (#1253 q20). Width, not height, separates them from lines everywhere.
 
-6. Verdict/figure mismatch occurs in BOTH directions in every lab: readable centred lines refused (CQT #1243, #1254 q3/q7; SNU #49 q9; IQCC #57 qA1) and figure-refuted panels accepted (AS #26 q6; CQT #1239-#1242, #1247; IQCC #429 qD3). No lab's verdict may be trusted alone.
+6. Verdict/figure mismatch occurs in BOTH directions in every lab: readable centred lines refused (lab-B #1243, #1254 q3/q7; lab-E #49 q9; lab-C #57 qA1) and figure-refuted panels accepted (AS #26 q6; lab-B #1239-#1242, #1247; lab-C #429 qD3). No lab's verdict may be trusted alone.
 
-7. The two-width-scale shape (sharp core on a broad pedestal) was invented independently by the IQCC and SNU annotators, and the broad-but-resolved case independently by the KRISS, SNU and CQT annotators — new cases converged from separate labs, which is what makes them chip-independent rather than local.
+7. The two-width-scale shape (sharp core on a broad pedestal) was invented independently by the lab-C and lab-E annotators, and the broad-but-resolved case independently by the lab-D, lab-E and lab-B annotators — new cases converged from separate labs, which is what makes them chip-independent rather than local.
 
 8. Honest refusals dominate everywhere: no lab refused an unambiguously readable line more often than it accepted one, and NO-FIT/empty-window records were honest in all five.
 
 WHAT LOOKED UNIVERSAL BUT IS ONE LAB'S CONVENTION.
 
-a. "A broad flat-topped block means something is wrong." At CQT the DEFAULT 08 recipe drives with the x180 pulse at full amplitude, so saturated blocks are the normal opening panel there; AS, IQCC and KRISS open with a low-power saturation pulse and a block is exceptional. The CASE is the same; the base rate is a lab convention and must never be turned into a prior.
+a. "A broad flat-topped block means something is wrong." At lab-B the DEFAULT 08 recipe drives with the x180 pulse at full amplitude, so saturated blocks are the normal opening panel there; AS, lab-C and lab-D open with a low-power saturation pulse and a block is exceptional. The CASE is the same; the base rate is a lab convention and must never be turned into a prior.
 
-b. "Multiplexing produces single-bin spurs." True at IQCC (spikes present only in multiplexed panels). AS ran an explicit multiplex-on/off A/B at identical span and shots (#29/#30/#31) and found NO visible difference — that is what let AS rule out crosstalk. Do not generalise either result.
+b. "Multiplexing produces single-bin spurs." True at lab-C (spikes present only in multiplexed panels). AS ran an explicit multiplex-on/off A/B at identical span and shots (#29/#30/#31) and found NO visible difference — that is what let AS rule out crosstalk. Do not generalise either result.
 
-c. "A missing dashed curve means the node refused." Panel annotation is lab-specific: IQCC stamps amber titles with "freq OK / shape poor" and "not applied" while still DRAWING a fit and still reporting success; CQT and IQCC both print "NO FIT" but CQT also draws fits on refused runs. The presence/absence of a curve, the colour of a title and the success flag are three different channels and their coupling differs per lab.
+c. "A missing dashed curve means the node refused." Panel annotation is lab-specific: lab-C stamps amber titles with "freq OK / shape poor" and "not applied" while still DRAWING a fit and still reporting success; lab-B and lab-C both print "NO FIT" but lab-B also draws fits on refused runs. The presence/absence of a curve, the colour of a title and the success flag are three different channels and their coupling differs per lab.
 
-d. "The floor is flat." AS panels routinely ride a strongly sloping or stepped instrument baseline that the fit can absorb into its wings; IQCC and KRISS floors are flat. Acceptance criteria must therefore be phrased as "the floor is locally flat AROUND the feature", never "the panel is flat".
+d. "The floor is flat." AS panels routinely ride a strongly sloping or stepped instrument baseline that the fit can absorb into its wings; lab-C and lab-D floors are flat. Acceptance criteria must therefore be phrased as "the floor is locally flat AROUND the feature", never "the panel is flat".
 
-e. "Contrast is a quality number." Its scale is set by where the rotated baseline sits: AS #28 q7 and CQT #1253 q2/q14 report contrasts orders of magnitude above their same-figure siblings purely because their baselines sit on zero. It is not comparable across targets in one figure, let alone across labs.
+e. "Contrast is a quality number." Its scale is set by where the rotated baseline sits: AS #28 q7 and lab-B #1253 q2/q14 report contrasts orders of magnitude above their same-figure siblings purely because their baselines sit on zero. It is not comparable across targets in one figure, let alone across labs.
 
 f. "Peak up." AS #26 q6 has a readout rotation flipped ~half a turn relative to its own sibling runs, making the feature a downward spike and defeating a one-polarity fitter. Peak-vs-dip is cosmetic within a consistent session and is a hard defect between runs of one target.
 
-g. "Centres are interpolated." Grid-quantised centres (bit-identical across repeats, offsets of exactly zero or exactly half a step) were only DEMONSTRATED at IQCC, because only there were byte-identical repeats compared record-to-record. This is very likely a fitter property, not a lab property — the difference is detection opportunity, so the check must be run everywhere.
+g. "Centres are interpolated." Grid-quantised centres (bit-identical across repeats, offsets of exactly zero or exactly half a step) were only DEMONSTRATED at lab-C, because only there were byte-identical repeats compared record-to-record. This is very likely a fitter property, not a lab property — the difference is detection opportunity, so the check must be run everywhere.
 
-h. Absolute settings share nothing across labs: spans differ by more than an order of magnitude (AS narrow-span/high-shot, CQT thousand-wide hunts, IQCC coarse-step ladders), as do step sizes, shot counts and drive conventions. Every prescription in this manual is therefore a RELATIVE move; any absolute number would be one lab's habit.
+h. Absolute settings share nothing across labs: spans differ by more than an order of magnitude (AS narrow-span/high-shot, lab-B thousand-wide hunts, lab-C coarse-step ladders), as do step sizes, shot counts and drive conventions. Every prescription in this manual is therefore a RELATIVE move; any absolute number would be one lab's habit.
 
 i. Naming conventions differ completely (q1..q20, q6/q7, qA1/qA2, qC4/qD3). No rule may key on a target's name, and pair/partner reasoning must come from the run's target list, not from name adjacency.
 
 ## Open questions
 
 1. Should the fitter be polarity-agnostic, or should the readout rotation be pinned before 08 runs at all? AS #26 q6 shows a half-turn rotation flip turning the response into a dip and producing an ACCEPTED fit with no lineshape. Decide whether a polarity differing from a target's sibling runs invalidates the run automatically.
-2. Does a width gate belong in the acceptance rule? It refused clean, correctly centred, high-contrast lines at CQT (#1243, #1254 q3 and q7) and at IQCC (#53-#57 'shape poor'), while accepting centres placed in the dip of a saturated block. If the answer is yes, the gate must at minimum be drive-aware.
+2. Does a width gate belong in the acceptance rule? It refused clean, correctly centred, high-contrast lines at lab-B (#1243, #1254 q3 and q7) and at lab-C (#53-#57 'shape poor'), while accepting centres placed in the dip of a saturated block. If the answer is yes, the gate must at minimum be drive-aware.
 3. Should 08 ever write saturation_amp / x180_amp at all, or only frequency and readout rotation, leaving drive amplitudes to power Rabi? They are unbounded extrapolations from a width the node frequently cannot measure, and in this corpus they exceeded normalized full scale several times.
 4. What is the minimum number of samples across the fitted FWHM for an adoptable width, and should a width from a window with no visible floor on both sides ever be adoptable?
-5. In the pedestal+core shape (IQCC qC4/qC5/qD1, SNU q10), which component is the qubit linewidth, should the panel be fitted with two components, and which width does the downstream consumer want?
+5. In the pedestal+core shape (lab-C qC4/qC5/qD1, lab-E q10), which component is the qubit linewidth, should the panel be fitted with two components, and which width does the downstream consumer want?
 6. Is the AS mirror ambiguity (a feature at nearly equal-and-opposite offsets from one window centre) a drive-chain image/aliasing artefact? If so the fix is hardware or LO configuration, not fitting, and the widen-once rule is only a detector.
-7. What produces the regularly spaced combs at CQT — a multi-photon ladder, |1>-|2>, a TLS forest, or an instrumental sideband comb? Spacing is the discriminator and this node cannot use it; decide which experiment settles it.
-8. Are the persistent one-sample spurs at fixed offsets (IQCC per-qubit spurs, SNU q9's low-side spur, the IQCC window-edge spur) instrumental lines that must be permanently masked, or genuine very narrow transitions worth investigating once?
-9. How many agreeing repeats does an intermittent target need before its value may be adopted, and should such a target be marked unstable for downstream nodes? IQCC qC4 gave resolved / empty / empty / resolved / marginal under byte-identical repeats.
+7. What produces the regularly spaced combs at lab-B — a multi-photon ladder, |1>-|2>, a TLS forest, or an instrumental sideband comb? Spacing is the discriminator and this node cannot use it; decide which experiment settles it.
+8. Are the persistent one-sample spurs at fixed offsets (lab-C per-qubit spurs, lab-E q9's low-side spur, the lab-C window-edge spur) instrumental lines that must be permanently masked, or genuine very narrow transitions worth investigating once?
+9. How many agreeing repeats does an intermittent target need before its value may be adopted, and should such a target be marked unstable for downstream nodes? lab-C qC4 gave resolved / empty / empty / resolved / marginal under byte-identical repeats.
 10. What is the stop rule when a chip is drifting mid-session? AS #28-#31 shows four self-consistent fits each returning the same offset from a centre the previous run moved, i.e. the value chasing itself, and the operator only escaped by doubling the span.
 11. Should contrast be redefined as an absolute rather than a ratio quantity so it is comparable across targets and labs, and should the current definition be removed from any acceptance rule until then?
-12. Which side owns the offset seen at CQT #1256 q18, where the applied frequency was not the fitted centre printed on the figure? Until that is resolved, no chained sequence of 08 runs at that lab is interpretable.
-13. When two targets in one multiplexed run need opposite drive levels (SNU q9 and q10), should the loop split them into separate runs automatically, and on what evidence?
+12. Which side owns the offset seen at lab-B #1256 q18, where the applied frequency was not the fitted centre printed on the figure? Until that is resolved, no chained sequence of 08 runs at that lab is interpretable.
+13. When two targets in one multiplexed run need opposite drive levels (lab-E q9 and q10), should the loop split them into separate runs automatically, and on what evidence?
 14. Should a batch/multiplexed pass be allowed to write state at all, or only to propose candidates that a sequential confirmation run adopts?
 
 ## Fit-vs-figure disagreements
 
-- AS_10TQ9TC/#25_08_qubit_spectroscopy_045653/q7 — featureless noise on a mildly tilted baseline; the fit is nearly a flat line with a small bump whose centre marker sits essentially ON the window centre (reported offset ~zero), i.e. the fitter fell back to its seed. Largest excursion in the panel is at the low-frequency edge and is not the fitted one; largest derived x180 amplitude in the batch with the lowest reported goodness-of-fit.
-- AS_10TQ9TC/#26_08_qubit_spectroscopy_045721/q6 — SUCCESS whose dashed curve is a nearly straight segment following a rising baseline: no crest, no flanks, no inflection anywhere. Centre marker sits on a single-sample downward excursion matched by others elsewhere; readout rotation is flipped ~half a turn versus every sibling run of this qubit, and reported contrast is at the numerical floor.
-- AS_10TQ9TC/#352_08_qubit_spectroscopy_102706/q7 — the dominant structure is a shoulder entering the window already at maximum and running off the left boundary; the fit is placed instead on a two-to-three-sample spike in the right half that is barely taller than several other noise excursions in the same stretch. Derived drive amplitudes far above every sibling in the session.
-- CQT/#1239_08_qubit_spectroscopy_030349/q10 — wide flat-topped block with two crests separated by a shallow dip; the fit's centre line lands IN the dip (a local minimum of the data) and the fitted curve is far wider and lower than either crest. Reported width more than an order of magnitude above the requested target peak width, on a success verdict.
-- CQT/#1240_08_qubit_spectroscopy_030414/q10 — identical repeat of the preceding panel: same double-crested block, fit centre again in the dip between the crests, fitted curve much broader and lower than the crests it straddles.
-- CQT/#1241_08_qubit_spectroscopy_030532/q10 — third identical repeat; the dip between the crests is deeper here and the fit centre still falls in it. Worst reported goodness-of-fit of the three repeats, and the reported centre moved between supposedly identical runs by more than the crest separation makes meaningful.
-- CQT/#1247_08_qubit_spectroscopy_031321/q10 — the low-drive comb has merged into three broad humps; the fit sits on the tallest, whose top is flat and double-crested, with its centre line in the dip between those two crests. Two further credible humps are left entirely unmodelled and the fitted curve is wider than the hump it covers.
-- CQT/#1253_08_qubit_spectroscopy_033636/q15 — no isolated peak: a shallow rise in the left third, then a steep monotonic climb to the right boundary that leaves the window still rising and holds the panel's largest values. The dashed fit lies almost flat over the shallow left region and never approaches the rising limb.
-- CQT/#1253_08_qubit_spectroscopy_033636/q19 — dense scatter of uniform amplitude across the whole width with no coherent raised group; the fit is a narrow blip drawn over two or three adjacent noise points left of centre. The record's own goodness-of-fit is below zero.
-- CQT/#1254_08_qubit_spectroscopy_035232/q16 — a scatter band with no isolated raised group anywhere and a slight overall upward drift on the right; the fit is a very narrow blip over two or three adjacent noise points left of centre. Empty in both the low-drive and full-drive passes.
-- KRISS_CR/#5_08_qubit_spectroscopy_040123/qA2 — dense edge-to-edge scatter of constant spread with no smooth feature; a narrow fit is drawn onto the single tallest upward excursion just left of centre, its crest barely clearing the surrounding band and its width comparable to one or two individual noise excursions. Centre, width and derived amplitudes are all reported.
-- SNU_1Q/#47_08_qubit_spectroscopy_222205/q9 — two entirely different features share the panel: a few-sample spike far toward the low-frequency edge and a broad rounded hump nearer the middle with flanks spanning many samples. The fit and its marker sit on the narrow spike; the broad hump — which is the qubit's response, since it changes shape with drive while the spike does not — is left completely untraced.
-- SNU_1Q/#50_08_qubit_spectroscopy_222449/q9 — same two-feature panel at full drive; the fit is again planted on the narrow spur AND its dashed wings sit clearly above the local scatter band on both sides rather than settling onto it, so the curve floats over the data away from its crest. Worst reported fit quality of this qubit's attempts that session.
-- SNU_1Q/#64_08_qubit_spectroscopy_230131/q9 — a noise band of essentially constant thickness from edge to edge with no local change in centreline or thickness; the fit is a hair-thin vertical sliver planted on one sample left of centre, narrower than the band's own point-to-point scatter, and the derived saturation and x180 amplitudes land far beyond normalized full scale.
-- SNU_1Q/#67_08_qubit_spectroscopy_231355/q9 — uniform flat band end to end, fit again a thin sliver standing on a single sample with no shoulders on either side; the record's own goodness-of-fit is NEGATIVE (the fitted curve describes the data worse than a flat line) yet a centre and a linewidth are reported.
-- SNU_1Q/#68_08_qubit_spectroscopy_231823/q10 — a tall narrow spike stands well inside the window on the low-frequency side and is ignored; the fit is planted instead on a much narrower feature close to the high-frequency boundary, drawn as a near-vertical sliver with only a sliver of baseline beyond it, while high contrast and SNR are claimed.
+- lab-A/#25_08_qubit_spectroscopy_045653/q7 — featureless noise on a mildly tilted baseline; the fit is nearly a flat line with a small bump whose centre marker sits essentially ON the window centre (reported offset ~zero), i.e. the fitter fell back to its seed. Largest excursion in the panel is at the low-frequency edge and is not the fitted one; largest derived x180 amplitude in the batch with the lowest reported goodness-of-fit.
+- lab-A/#26_08_qubit_spectroscopy_045721/q6 — SUCCESS whose dashed curve is a nearly straight segment following a rising baseline: no crest, no flanks, no inflection anywhere. Centre marker sits on a single-sample downward excursion matched by others elsewhere; readout rotation is flipped ~half a turn versus every sibling run of this qubit, and reported contrast is at the numerical floor.
+- lab-A/#352_08_qubit_spectroscopy_102706/q7 — the dominant structure is a shoulder entering the window already at maximum and running off the left boundary; the fit is placed instead on a two-to-three-sample spike in the right half that is barely taller than several other noise excursions in the same stretch. Derived drive amplitudes far above every sibling in the session.
+- lab-B/#1239_08_qubit_spectroscopy_030349/q10 — wide flat-topped block with two crests separated by a shallow dip; the fit's centre line lands IN the dip (a local minimum of the data) and the fitted curve is far wider and lower than either crest. Reported width more than an order of magnitude above the requested target peak width, on a success verdict.
+- lab-B/#1240_08_qubit_spectroscopy_030414/q10 — identical repeat of the preceding panel: same double-crested block, fit centre again in the dip between the crests, fitted curve much broader and lower than the crests it straddles.
+- lab-B/#1241_08_qubit_spectroscopy_030532/q10 — third identical repeat; the dip between the crests is deeper here and the fit centre still falls in it. Worst reported goodness-of-fit of the three repeats, and the reported centre moved between supposedly identical runs by more than the crest separation makes meaningful.
+- lab-B/#1247_08_qubit_spectroscopy_031321/q10 — the low-drive comb has merged into three broad humps; the fit sits on the tallest, whose top is flat and double-crested, with its centre line in the dip between those two crests. Two further credible humps are left entirely unmodelled and the fitted curve is wider than the hump it covers.
+- lab-B/#1253_08_qubit_spectroscopy_033636/q15 — no isolated peak: a shallow rise in the left third, then a steep monotonic climb to the right boundary that leaves the window still rising and holds the panel's largest values. The dashed fit lies almost flat over the shallow left region and never approaches the rising limb.
+- lab-B/#1253_08_qubit_spectroscopy_033636/q19 — dense scatter of uniform amplitude across the whole width with no coherent raised group; the fit is a narrow blip drawn over two or three adjacent noise points left of centre. The record's own goodness-of-fit is below zero.
+- lab-B/#1254_08_qubit_spectroscopy_035232/q16 — a scatter band with no isolated raised group anywhere and a slight overall upward drift on the right; the fit is a very narrow blip over two or three adjacent noise points left of centre. Empty in both the low-drive and full-drive passes.
+- lab-D/#5_08_qubit_spectroscopy_040123/qA2 — dense edge-to-edge scatter of constant spread with no smooth feature; a narrow fit is drawn onto the single tallest upward excursion just left of centre, its crest barely clearing the surrounding band and its width comparable to one or two individual noise excursions. Centre, width and derived amplitudes are all reported.
+- lab-E/#47_08_qubit_spectroscopy_222205/q9 — two entirely different features share the panel: a few-sample spike far toward the low-frequency edge and a broad rounded hump nearer the middle with flanks spanning many samples. The fit and its marker sit on the narrow spike; the broad hump — which is the qubit's response, since it changes shape with drive while the spike does not — is left completely untraced.
+- lab-E/#50_08_qubit_spectroscopy_222449/q9 — same two-feature panel at full drive; the fit is again planted on the narrow spur AND its dashed wings sit clearly above the local scatter band on both sides rather than settling onto it, so the curve floats over the data away from its crest. Worst reported fit quality of this qubit's attempts that session.
+- lab-E/#64_08_qubit_spectroscopy_230131/q9 — a noise band of essentially constant thickness from edge to edge with no local change in centreline or thickness; the fit is a hair-thin vertical sliver planted on one sample left of centre, narrower than the band's own point-to-point scatter, and the derived saturation and x180 amplitudes land far beyond normalized full scale.
+- lab-E/#67_08_qubit_spectroscopy_231355/q9 — uniform flat band end to end, fit again a thin sliver standing on a single sample with no shoulders on either side; the record's own goodness-of-fit is NEGATIVE (the fitted curve describes the data worse than a flat line) yet a centre and a linewidth are reported.
+- lab-E/#68_08_qubit_spectroscopy_231823/q10 — a tall narrow spike stands well inside the window on the low-frequency side and is ignored; the fit is planted instead on a much narrower feature close to the high-frequency boundary, drawn as a near-vertical sliver with only a sliver of baseline beyond it, while high contrast and SNR are claimed.
 
 ## Blind verification
 
-8 of 10 agree. Method: located each run folder via the 'folder' field in b4_qubit_spectroscopy__*.json (runs live under D:\work\dataset\AS_10TQ9TC\ and D:\work\Customer_Codes\CQT\data\), viewed figures.amplitude.png myself — cropping and upscaling the target panel out of the 5x5 20-qubit sheets for #1253/#1254 — and formed a judgment before reading the claimed case. For the two calls that hinged on a marginal feature I additionally re-derived the rotated-I trace from ds_raw.h5 (NetCDF-classic, read via scipy.io.netcdf_file) rather than trusting the eye or the node's own reported SNR. Two disagreements, both in the same direction — the claimed case is more generous to the fit than the figure supports: (1) #27/q7 claimed Q5 weak/broad is really Q2 empty window; the window is pure noise on a slope, every detrended residual is under 3 sigma and scattered, and the fit centre is not even a local maximum in the smoothed residuals, so the reported peak_snr=3.5 is not backed by anything visible. (2) #31/q6 claimed Q1 clean peak is really Q3 edge-clipped; f0 is 4.90 MHz from the left window edge against a 5.94 MHz HWHM, so the half-max point lies outside the sweep and the rising flank is never measured, even though the fit itself is good (r2=0.92) and a maximum is visible. The eight agreements include two over-driven x180 runs (#1242, #1254) where Q7 and Q4 both partly apply; I resolved them on whether the lobes return to baseline between features (they do in #1254 -> Q4, they do not in #1242 -> Q7), and the claimed labels match that rule. No NEW: case was needed — the seven draft cases covered every figure.
+8 of 10 agree. Method: located each run folder via the 'folder' field in b4_qubit_spectroscopy__*.json (runs live under D:\work\dataset\lab-A\ and D:\work\Customer_Codes\lab-B\data\), viewed figures.amplitude.png myself — cropping and upscaling the target panel out of the 5x5 20-qubit sheets for #1253/#1254 — and formed a judgment before reading the claimed case. For the two calls that hinged on a marginal feature I additionally re-derived the rotated-I trace from ds_raw.h5 (NetCDF-classic, read via scipy.io.netcdf_file) rather than trusting the eye or the node's own reported SNR. Two disagreements, both in the same direction — the claimed case is more generous to the fit than the figure supports: (1) #27/q7 claimed Q5 weak/broad is really Q2 empty window; the window is pure noise on a slope, every detrended residual is under 3 sigma and scattered, and the fit centre is not even a local maximum in the smoothed residuals, so the reported peak_snr=3.5 is not backed by anything visible. (2) #31/q6 claimed Q1 clean peak is really Q3 edge-clipped; f0 is 4.90 MHz from the left window edge against a 5.94 MHz HWHM, so the half-max point lies outside the sweep and the rising flank is never measured, even though the fit itself is good (r2=0.92) and a maximum is visible. The eight agreements include two over-driven x180 runs (#1242, #1254) where Q7 and Q4 both partly apply; I resolved them on whether the lobes return to baseline between features (they do in #1254 -> Q4, they do not in #1242 -> Q7), and the claimed labels match that rule. No NEW: case was needed — the seven draft cases covered every figure.
 
 ## Cases that need the vs-power run beside this one
 
@@ -750,7 +750,7 @@ Shared verbatim with the `qubit_spectroscopy_vs_power` manual. Each is invisible
 
 **Prescription:** Reject and take the feature about half an anharmonicity ABOVE it. Confirm either with the companion map — where the partner exists only above a threshold power and its ef marker lands on it — or with the one-run drop-the-drive test (J2). Never adopt a 1-D fit whose centre moved down by about half an anharmonicity from the previously accepted value, however good the statistics.
 
-**Exemplars:** CQT/#497/q3, CQT/#498/q3, CQT/#1121/q7, SNU_1Q/#47/q9, SNU_1Q/#50/q9, CQT/#692/q6, CQT/#1219/q15, CQT/#1254/q20, CQT/#1431/q20, CQT/#732/q12, CQT/#1253/q11, SNU_1Q/#114/q17
+**Exemplars:** lab-B/#497/q3, lab-B/#498/q3, lab-B/#1121/q7, lab-E/#47/q9, lab-E/#50/q9, lab-B/#692/q6, lab-B/#1219/q15, lab-B/#1254/q20, lab-B/#1431/q20, lab-B/#732/q12, lab-B/#1253/q11, lab-E/#114/q17
 
 ### J2 — The drop-the-drive test — the cheap in-family substitute for a map  (seen 10x)
 
@@ -758,7 +758,7 @@ Shared verbatim with the `qubit_spectroscopy_vs_power` manual. Each is invisible
 
 **Prescription:** Spend the one run. Adopt the survivor. This costs one 1-D and settles what neither run alone can, and in this corpus it was decisive on four qubits across two labs. Do not read a repeat at the SAME drive as confirmation — nothing changed, so nothing could.
 
-**Exemplars:** SNU_1Q/#48/q9, CQT/#1122/q7, CQT/#958/q14, CQT/#919/q18, CQT/#693/q6, CQT/#1581/q11
+**Exemplars:** lab-E/#48/q9, lab-B/#1122/q7, lab-B/#958/q14, lab-B/#919/q18, lab-B/#693/q6, lab-B/#1581/q11
 
 ### J3 — Power-grown companion at a small fraction of an anharmonicity  (seen 18x)
 
@@ -766,7 +766,7 @@ Shared verbatim with the `qubit_spectroscopy_vs_power` manual. Each is invisible
 
 **Prescription:** Adopt the member present at the LOWEST power in the map, or the survivor of the drop-the-drive test. Relative height at a single drive says nothing. Explicitly do NOT reason about this pair as a two-photon pairing — the offset is the wrong size, and in one case the wrong sign as well.
 
-**Exemplars:** CQT/#956/q14, CQT/#971/q14, CQT/#1106/q14, CQT/#1088/q14, CQT/#1071/q10, CQT/#1085/q10, CQT/#1088/q10, IQCC_QOP37/#239/qC2, IQCC_QOP37/#240/qC2, IQCC_QOP37/#241/qC2
+**Exemplars:** lab-B/#956/q14, lab-B/#971/q14, lab-B/#1106/q14, lab-B/#1088/q14, lab-B/#1071/q10, lab-B/#1085/q10, lab-B/#1088/q10, lab-C/#239/qC2, lab-C/#240/qC2, lab-C/#241/qC2
 
 ### J4 — Fixed spur, proved by what does NOT move  (seen 22x)
 
@@ -774,7 +774,7 @@ Shared verbatim with the `qubit_spectroscopy_vs_power` manual. Each is invisible
 
 **Prescription:** Dismiss it everywhere, and identify it once from the map so it can be dismissed cheaply thereafter. A two-photon partner is rigidly tied to its fundamental and must travel with it; a spur does not. Prefer the feature with a LINESHAPE over the taller bare spike — a spike narrower than the sweep can resolve cannot be a line. Where the spike forest cannot be resolved, narrow the span rather than argue about heights.
 
-**Exemplars:** CQT/#858/q9, CQT/#859/q9, CQT/#870/q9, IQCC_QOP37/#237/qA3, IQCC_QOP37/#241/qB1, CQT/#649/q11, CQT/#652/q11, CQT/#68/q2, CQT/#261/q4, CQT/#1106/q11
+**Exemplars:** lab-B/#858/q9, lab-B/#859/q9, lab-B/#870/q9, lab-C/#237/qA3, lab-C/#241/qB1, lab-B/#649/q11, lab-B/#652/q11, lab-B/#68/q2, lab-B/#261/q4, lab-B/#1106/q11
 
 ### J5 — The following 1-D plate is the map's report card  (seen 25x)
 
@@ -782,7 +782,7 @@ Shared verbatim with the `qubit_spectroscopy_vs_power` manual. Each is invisible
 
 **Prescription:** Read the plate, not the map's flags, to judge the hand-off. Below onset: raise the handed-on power by a bounded step and re-run the 1-D — do not re-run the map. Above onset: lower it. Do not adopt widths or amplitudes from either kind of plate. Also verify the choice actually reached the drive: one 1-D plate was byte-for-byte unchanged from before the map that preceded it by minutes.
 
-**Exemplars:** CQT/#1344/q14, CQT/#1345/q14, CQT/#1345/q5, CQT/#1245/q10, CQT/#1247/q10, CQT/#500/q3, CQT/#42/q2, IQCC_QOP37/#238/qA1, IQCC_QOP37/#416/qC4
+**Exemplars:** lab-B/#1344/q14, lab-B/#1345/q14, lab-B/#1345/q5, lab-B/#1245/q10, lab-B/#1247/q10, lab-B/#500/q3, lab-B/#42/q2, lab-C/#238/qA1, lab-C/#416/qC4
 
 ### J6 — The map rescues a qubit the 1-D lost  (seen 8x)
 
@@ -790,7 +790,7 @@ Shared verbatim with the `qubit_spectroscopy_vs_power` manual. Each is invisible
 
 **Prescription:** Adopt the map's column and re-centre the 1-D window on it. A 1-D null does not mean the qubit is absent; check whether a map exists before repeating the 1-D at higher drive. A null with a strong excursion clipped by a window edge is always a window problem, never a power problem.
 
-**Exemplars:** CQT/#998/q20, CQT/#999/q20, CQT/#803/q13, CQT/#804/q13, CQT/#543/q5, CQT/#544/q5, CQT/#400/q13
+**Exemplars:** lab-B/#998/q20, lab-B/#999/q20, lab-B/#803/q13, lab-B/#804/q13, lab-B/#543/q5, lab-B/#544/q5, lab-B/#400/q13
 
 ### J7 — A failed map's twophoton_freq is still a usable ruler  (seen 1x)
 
@@ -798,7 +798,7 @@ Shared verbatim with the `qubit_spectroscopy_vs_power` manual. Each is invisible
 
 **Prescription:** Never adopt such a run's frequency, power, width or anharmonicity. Do use the emitted partner position as a ruler: if your 1-D answer coincides with it, you are sitting on the two-photon line. The same arithmetic can be done by hand from any anharmonicity you trust, so a failed map is not required for the check — only convenient.
 
-**Exemplars:** CQT/#1224/q15, CQT/#1219/q15, CQT/#1215/q15
+**Exemplars:** lab-B/#1224/q15, lab-B/#1219/q15, lab-B/#1215/q15
 
 ### J8 — Broadening merges the pair and drags the centre onto the wrong member  (seen 8x)
 
@@ -806,7 +806,7 @@ Shared verbatim with the `qubit_spectroscopy_vs_power` manual. Each is invisible
 
 **Prescription:** When the fitted width approaches the known splitting, the centre is no longer a frequency measurement — abstain and re-measure at lower drive. Note the mirror case honestly: on a qubit whose sharper runs had been taking the LOWER companion, merging can accidentally land the merged centre on the true line. That is luck, not a method, and it does not license the broadened plate.
 
-**Exemplars:** CQT/#1125/q14, CQT/#1128/q14, CQT/#1421/q18, CQT/#1239/q10, CQT/#1247/q10, CQT/#1125/q10, CQT/#1128/q10
+**Exemplars:** lab-B/#1125/q14, lab-B/#1128/q14, lab-B/#1421/q18, lab-B/#1239/q10, lab-B/#1247/q10, lab-B/#1125/q10, lab-B/#1128/q10
 
 ### J9 — The self-confirming stage — the window re-centres on the wrong answer  (seen 8x)
 
@@ -814,7 +814,7 @@ Shared verbatim with the `qubit_spectroscopy_vs_power` manual. Each is invisible
 
 **Prescription:** After any frequency change larger than a linewidth, re-verify once on a span wide enough to still contain the rejected candidate. Narrow the span to RESOLVE, widen it to IDENTIFY. Two or three consecutive identical mistakes mean the window, not the fitter, is the problem — re-centre rather than re-run.
 
-**Exemplars:** CQT/#923/q18, CQT/#1106/q14, CQT/#932/q18, CQT/#642/q10, CQT/#602/q10, CQT/#641/q10, CQT/#682/q10
+**Exemplars:** lab-B/#923/q18, lab-B/#1106/q14, lab-B/#932/q18, lab-B/#642/q10, lab-B/#602/q10, lab-B/#641/q10, lab-B/#682/q10
 
 ### J10 — A blank map is not evidence of absence  (seen 8x)
 
@@ -822,7 +822,7 @@ Shared verbatim with the `qubit_spectroscopy_vs_power` manual. Each is invisible
 
 **Prescription:** Discard the map's centre-return; do not record the qubit as absent. Raise the map's power ceiling or its averaging and re-run, or work that target from the 1-D family. The 1-D node is sometimes the more sensitive instrument of the pair, and a vs_power 'nothing there' does not outrank it.
 
-**Exemplars:** CQT/#1165/q6, CQT/#1141/q6, CQT/#1113/q6, CQT/#1120/q6, SNU_1Q/#116/q17, SNU_1Q/#117/q17, SNU_1Q/#115/q17
+**Exemplars:** lab-B/#1165/q6, lab-B/#1141/q6, lab-B/#1113/q6, lab-B/#1120/q6, lab-E/#116/q17, lab-E/#117/q17, lab-E/#115/q17
 
 ### J11 — Two maps of one qubit disagree; the 1-D family arbitrates  (seen 12x)
 
@@ -830,7 +830,7 @@ Shared verbatim with the `qubit_spectroscopy_vs_power` manual. Each is invisible
 
 **Prescription:** Never average them. Adopt the one the low-drive 1-D confirms; if neither is confirmed, abstain. Compare their sweep floors and frequency steps first — the coarser-step or higher-floor run is the one that will have reported the hotter power. A single vs_power run in this regime carries no more authority than the 1-D run it is supposed to arbitrate.
 
-**Exemplars:** CQT/#37/q2, CQT/#38/q2, SNU_1Q/#28/q10, SNU_1Q/#22/q10, SNU_1Q/#29/q10, IQCC_QOP37/#255/qD3, IQCC_QOP37/#256/qD3, CQT/#1344/q9, CQT/#1346/q9
+**Exemplars:** lab-B/#37/q2, lab-B/#38/q2, lab-E/#28/q10, lab-E/#22/q10, lab-E/#29/q10, lab-C/#255/qD3, lab-C/#256/qD3, lab-B/#1344/q9, lab-B/#1346/q9
 
 ### J12 — A narrow-span 1-D cannot exonerate itself  (seen 10x)
 
@@ -838,7 +838,7 @@ Shared verbatim with the `qubit_spectroscopy_vs_power` manual. Each is invisible
 
 **Prescription:** Either widen the 1-D span at least once per qubit until it reaches half an anharmonicity below the candidate, or defer the identity check to the map. Treat a narrow-span clean peak as a REFINEMENT of an identity established elsewhere, never as the identification. Reproducibility at a fixed span is not identification.
 
-**Exemplars:** IQCC_QOP37/#414/qC1, IQCC_QOP37/#17/qA1, CQT/#1215/q15, CQT/#1216/q15, CQT/#923/q18, CQT/#1220/q15
+**Exemplars:** lab-C/#414/qC1, lab-C/#17/qA1, lab-B/#1215/q15, lab-B/#1216/q15, lab-B/#923/q18, lab-B/#1220/q15
 
 ### J13 — The broadened 1-D diagnosed against the map's own intrinsic width  (seen 35x)
 
@@ -846,7 +846,7 @@ Shared verbatim with the `qubit_spectroscopy_vs_power` manual. Each is invisible
 
 **Prescription:** Keep the frequency, but only to a fraction of the hump width — the scatter between back-to-back repeats in this regime is the honest error bar, and it is coarser than the digits the node reports. Discard the width, the saturation amplitude and the pi-pulse amplitude. The ratio of the 1-D fitted width to the MAP's intrinsic width for the same target is what turns 'this qubit is broad' into 'this measurement was hot'.
 
-**Exemplars:** IQCC_QOP37/#115/qA1, IQCC_QOP37/#236/qA1, IQCC_QOP37/#239/qB2, IQCC_QOP37/#241/qB2, CQT/#1181/q13, CQT/#1125/q20, CQT/#1128/q20, CQT/#718/q7, CQT/#401/q2
+**Exemplars:** lab-C/#115/qA1, lab-C/#236/qA1, lab-C/#239/qB2, lab-C/#241/qB2, lab-B/#1181/q13, lab-B/#1125/q20, lab-B/#1128/q20, lab-B/#718/q7, lab-B/#401/q2
 
 ### J14 — The handed-on amplitude convicts the pair  (seen 15x)
 
@@ -854,7 +854,7 @@ Shared verbatim with the `qubit_spectroscopy_vs_power` manual. Each is invisible
 
 **Prescription:** Treat an impossible amplitude as a harder alarm than any fit statistic and refuse to pass it on. Then diagnose which of the three it is: re-check the frequency against the map's stem for a ladder member, and re-derive the power from a map with a measured plateau.
 
-**Exemplars:** CQT/#581/q10, CQT/#1477/q15, CQT/#1620/q15, CQT/#733/q12, CQT/#826/q8, SNU_1Q/#64/q9, SNU_1Q/#104/q15, IQCC_QOP37/#241/qC1
+**Exemplars:** lab-B/#581/q10, lab-B/#1477/q15, lab-B/#1620/q15, lab-B/#733/q12, lab-B/#826/q8, lab-E/#64/q9, lab-E/#104/q15, lab-C/#241/qC1
 
 ### J15 — Sign flip — the line is there as a DIP  (seen 4x)
 
@@ -862,4 +862,4 @@ Shared verbatim with the `qubit_spectroscopy_vs_power` manual. Each is invisible
 
 **Prescription:** Check the sign before changing anything else. A null immediately after a confident detection at the same frequency is a rotation problem, not a lost qubit and not a power problem. Related whole-batch version: when most panels of one plate show the same monotone baseline ramp, that is a readout condition, not many qubits disappearing at once.
 
-**Exemplars:** CQT/#468/q8, CQT/#469/q8, SNU_1Q/#122/q15, CQT/#1084/q20
+**Exemplars:** lab-B/#468/q8, lab-B/#469/q8, lab-E/#122/q15, lab-B/#1084/q20

@@ -1,6 +1,6 @@
 # resonator_spectroscopy_vs_coupler_flux — case manual (v1)
 
-**Authored:** 2026-08-21 · **Source:** docs/131: 34 runs / 34 targets across 2 labs (AS_10TQ9TC, CQT), every figure viewed; blind re-classification 5/5
+**Authored:** 2026-08-21 · **Source:** docs/131: 34 runs / 34 targets across 2 labs (lab-A, lab-B), every figure viewed; blind re-classification 5/5
 
 This file and `cases.json` are generated from ONE source. Geometry and prescription language is chip-independent by rule: relative positions, shapes and bounded knob moves only — never absolute frequencies, powers or fluxes, and never a size expressed as a fraction of the swept window.
 
@@ -14,11 +14,11 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Nothing needs widening. Confirm before adopting: repeat once with the flux window narrowed to roughly half its present span, centred on the claimed idle extremum, and the frequency span narrowed ~2x; require the extremum to reproduce to within a small fraction of the crest's flat region. If the modulation depth exceeds the dip-band thickness (curve dominates), also confirm the frequency window is centred on the same band as the previous run before comparing any number.
 
-**Exemplars:** AS_10TQ9TC/#230_07_resonator_spectroscopy_vs_coupler_flux_195913/coupler_q6_q7, AS_10TQ9TC/#16_07_resonator_spectroscopy_vs_coupler_flux_042946/coupler_q6_q7, CQT/#295_07_resonator_spectroscopy_vs_coupler_flux_101121/q4-5, AS_10TQ9TC/#229_07_resonator_spectroscopy_vs_coupler_flux_195856/coupler_q6_q7
+**Exemplars:** lab-A/#230_07_resonator_spectroscopy_vs_coupler_flux_195913/coupler_q6_q7, lab-A/#16_07_resonator_spectroscopy_vs_coupler_flux_042946/coupler_q6_q7, lab-B/#295_07_resonator_spectroscopy_vs_coupler_flux_101121/q4-5, lab-A/#229_07_resonator_spectroscopy_vs_coupler_flux_195856/coupler_q6_q7
 
-![C1 — AS_10TQ9TC #230_07_resonator_spectroscopy_vs_coupler_flux_195913 coupler_q6_q7](exemplars/C1/AS_10TQ9TC_230_coupler_q6_q7.png)
-![C1 — AS_10TQ9TC #16_07_resonator_spectroscopy_vs_coupler_flux_042946 coupler_q6_q7](exemplars/C1/AS_10TQ9TC_16_coupler_q6_q7.png)
-![C1 — CQT #295_07_resonator_spectroscopy_vs_coupler_flux_101121 q4-5](exemplars/C1/CQT_295_q4-5.png)
+![C1 — lab-A #230_07_resonator_spectroscopy_vs_coupler_flux_195913 coupler_q6_q7](exemplars/C1/lab-A_230_coupler_q6_q7.png)
+![C1 — lab-A #16_07_resonator_spectroscopy_vs_coupler_flux_042946 coupler_q6_q7](exemplars/C1/lab-A_16_coupler_q6_q7.png)
+![C1 — lab-B #295_07_resonator_spectroscopy_vs_coupler_flux_101121 q4-5](exemplars/C1/lab-B_295_q4-5.png)
 
 ### C2 — R3_partial_period_single_turning_point  (seen 5x)
 
@@ -26,11 +26,11 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Widen the flux window by roughly 2-4x, preferentially on the side where the trace is still descending steeply, holding frequency span, step and shots constant, until a second turning point enters the frame. Do not spend the budget on shots — a flat top is a conditioning limit, not a noise limit. Report the idle offset with an uncertainty of order the flat-top width; do not report a period.
 
-**Exemplars:** AS_10TQ9TC/#15_07_resonator_spectroscopy_vs_coupler_flux_042919/coupler_q6_q7, AS_10TQ9TC/#20_07_resonator_spectroscopy_vs_coupler_flux_043518/coupler_q6_q7, AS_10TQ9TC/#18_07_resonator_spectroscopy_vs_coupler_flux_043402/coupler_q6_q7, AS_10TQ9TC/#17_07_resonator_spectroscopy_vs_coupler_flux_043043/coupler_q6_q7
+**Exemplars:** lab-A/#15_07_resonator_spectroscopy_vs_coupler_flux_042919/coupler_q6_q7, lab-A/#20_07_resonator_spectroscopy_vs_coupler_flux_043518/coupler_q6_q7, lab-A/#18_07_resonator_spectroscopy_vs_coupler_flux_043402/coupler_q6_q7, lab-A/#17_07_resonator_spectroscopy_vs_coupler_flux_043043/coupler_q6_q7
 
-![C2 — AS_10TQ9TC #15_07_resonator_spectroscopy_vs_coupler_flux_042919 coupler_q6_q7](exemplars/C2/AS_10TQ9TC_15_coupler_q6_q7.png)
-![C2 — AS_10TQ9TC #20_07_resonator_spectroscopy_vs_coupler_flux_043518 coupler_q6_q7](exemplars/C2/AS_10TQ9TC_20_coupler_q6_q7.png)
-![C2 — AS_10TQ9TC #18_07_resonator_spectroscopy_vs_coupler_flux_043402 coupler_q6_q7](exemplars/C2/AS_10TQ9TC_18_coupler_q6_q7.png)
+![C2 — lab-A #15_07_resonator_spectroscopy_vs_coupler_flux_042919 coupler_q6_q7](exemplars/C2/lab-A_15_coupler_q6_q7.png)
+![C2 — lab-A #20_07_resonator_spectroscopy_vs_coupler_flux_043518 coupler_q6_q7](exemplars/C2/lab-A_20_coupler_q6_q7.png)
+![C2 — lab-A #18_07_resonator_spectroscopy_vs_coupler_flux_043402 coupler_q6_q7](exemplars/C2/lab-A_18_coupler_q6_q7.png)
 
 ### C3 — R2a_flat_window_limited  (seen 1x)
 
@@ -38,9 +38,9 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Widen the flux window by 3-5x in both directions, holding shots, frequency span and frequency step fixed; that single move is what converts this figure into a readable arch. Never write 'this coupler does not move this resonator' from a figure taken at the session's narrowest flux window.
 
-**Exemplars:** AS_10TQ9TC/#14_07_resonator_spectroscopy_vs_coupler_flux_042859/coupler_q6_q7
+**Exemplars:** lab-A/#14_07_resonator_spectroscopy_vs_coupler_flux_042859/coupler_q6_q7
 
-![C3 — AS_10TQ9TC #14_07_resonator_spectroscopy_vs_coupler_flux_042859 coupler_q6_q7](exemplars/C3/AS_10TQ9TC_14_coupler_q6_q7.png)
+![C3 — lab-A #14_07_resonator_spectroscopy_vs_coupler_flux_042859 coupler_q6_q7](exemplars/C3/lab-A_14_coupler_q6_q7.png)
 
 ### C4 — R2b_flat_over_wide_flux_at_correct_zoom  (seen 7x)
 
@@ -48,11 +48,11 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Treat the frequency claim as usable and the flux offsets as unusable. Before recording flatness as physics, run two bounded controls: narrow the frequency span 2-4x around the reported resonator frequency (rules out zoom-induced flatness), and widen the flux window 2x (rules out under-sweep). Then run an out-of-figure control on the same bias line — the qubit-flux node, or a flux setting known to move something else — because this figure cannot distinguish weak coupling from a bias line that never reached the chip. If several pairs in one pass are all flat, escalate to the wiring control before accepting any of them.
 
-**Exemplars:** CQT/#492_07_resonator_spectroscopy_vs_coupler_flux_182702/q3-8, CQT/#1225_07_resonator_spectroscopy_vs_coupler_flux_024116/q14-15, CQT/#494_07_resonator_spectroscopy_vs_coupler_flux_183045/q3-8, CQT/#1238_07_resonator_spectroscopy_vs_coupler_flux_030255/q10-15, CQT/#1271_07_resonator_spectroscopy_vs_coupler_flux_041455/q14-18
+**Exemplars:** lab-B/#492_07_resonator_spectroscopy_vs_coupler_flux_182702/q3-8, lab-B/#1225_07_resonator_spectroscopy_vs_coupler_flux_024116/q14-15, lab-B/#494_07_resonator_spectroscopy_vs_coupler_flux_183045/q3-8, lab-B/#1238_07_resonator_spectroscopy_vs_coupler_flux_030255/q10-15, lab-B/#1271_07_resonator_spectroscopy_vs_coupler_flux_041455/q14-18
 
-![C4 — CQT #492_07_resonator_spectroscopy_vs_coupler_flux_182702 q3-8](exemplars/C4/CQT_492_q3-8.png)
-![C4 — CQT #1225_07_resonator_spectroscopy_vs_coupler_flux_024116 q14-15](exemplars/C4/CQT_1225_q14-15.png)
-![C4 — CQT #494_07_resonator_spectroscopy_vs_coupler_flux_183045 q3-8](exemplars/C4/CQT_494_q3-8.png)
+![C4 — lab-B #492_07_resonator_spectroscopy_vs_coupler_flux_182702 q3-8](exemplars/C4/lab-B_492_q3-8.png)
+![C4 — lab-B #1225_07_resonator_spectroscopy_vs_coupler_flux_024116 q14-15](exemplars/C4/lab-B_1225_q14-15.png)
+![C4 — lab-B #494_07_resonator_spectroscopy_vs_coupler_flux_183045 q3-8](exemplars/C4/lab-B_494_q3-8.png)
 
 ### C5 — flat_at_this_frequency_zoom  (seen 1x)
 
@@ -60,9 +60,9 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Narrow the frequency span by 3-10x around the reported resonator frequency, keeping the same flux range and step, and re-read the shape. Record the flat verdict only together with the frequency zoom it was read at; a flat verdict from a wide-span frame is an answer to 'is there an anticrossing or a large push', not to 'does this coupler move the resonator'.
 
-**Exemplars:** CQT/#446_07_resonator_spectroscopy_vs_coupler_flux_171915/q1-4
+**Exemplars:** lab-B/#446_07_resonator_spectroscopy_vs_coupler_flux_171915/q1-4
 
-![C5 — CQT #446_07_resonator_spectroscopy_vs_coupler_flux_171915 q1-4](exemplars/C5/CQT_446_q1-4.png)
+![C5 — lab-B #446_07_resonator_spectroscopy_vs_coupler_flux_171915 q1-4](exemplars/C5/lab-B_446_q1-4.png)
 
 ### C6 — sub_linewidth_coherent_modulation  (seen 3x)
 
@@ -70,11 +70,11 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Do not prescribe more shots; averaging does not change a sub-linewidth swing. Increase the flux point count ~2x and narrow the frequency span ~2x so the swing rises further above the marker scatter; if a period is wanted, widen the flux window ~2x to bring a second trough in. Adopt the crest position, treat the period as provisional until a wider-window sibling reproduces it.
 
-**Exemplars:** CQT/#259_07_resonator_spectroscopy_vs_coupler_flux_092808/q1-4, CQT/#294_07_resonator_spectroscopy_vs_coupler_flux_101018/q3-4, CQT/#297_07_resonator_spectroscopy_vs_coupler_flux_101237/q4-5
+**Exemplars:** lab-B/#259_07_resonator_spectroscopy_vs_coupler_flux_092808/q1-4, lab-B/#294_07_resonator_spectroscopy_vs_coupler_flux_101018/q3-4, lab-B/#297_07_resonator_spectroscopy_vs_coupler_flux_101237/q4-5
 
-![C6 — CQT #259_07_resonator_spectroscopy_vs_coupler_flux_092808 q1-4](exemplars/C6/CQT_259_q1-4.png)
-![C6 — CQT #294_07_resonator_spectroscopy_vs_coupler_flux_101018 q3-4](exemplars/C6/CQT_294_q3-4.png)
-![C6 — CQT #297_07_resonator_spectroscopy_vs_coupler_flux_101237 q4-5](exemplars/C6/CQT_297_q4-5.png)
+![C6 — lab-B #259_07_resonator_spectroscopy_vs_coupler_flux_092808 q1-4](exemplars/C6/lab-B_259_q1-4.png)
+![C6 — lab-B #294_07_resonator_spectroscopy_vs_coupler_flux_101018 q3-4](exemplars/C6/lab-B_294_q3-4.png)
+![C6 — lab-B #297_07_resonator_spectroscopy_vs_coupler_flux_101237 q4-5](exemplars/C6/lab-B_297_q4-5.png)
 
 ### C7 — near_flat_marginal_modulation  (seen 4x)
 
@@ -82,11 +82,11 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Do not adopt the offsets or the period from this figure alone. Widen the flux window 2-4x to bring multiple periods into view (this is what converts marginal ripple into a legible pattern), and only then narrow the frequency span ~2x. Adopt nothing until an immediate sibling taken with a different flux window AND a different frequency step reproduces the same extremum ORDERING at nearly the same flux positions — that cross-run predicate, not any single figure, is what separates weak-but-real from fit-to-noise. Doubling shots here is measured to change nothing.
 
-**Exemplars:** CQT/#298_07_resonator_spectroscopy_vs_coupler_flux_101333/q4-9, CQT/#299_07_resonator_spectroscopy_vs_coupler_flux_101411/q4-9, AS_10TQ9TC/#309_07_resonator_spectroscopy_vs_coupler_flux_082718/coupler_q6_q7, CQT/#258_07_resonator_spectroscopy_vs_coupler_flux_092731/q1-4
+**Exemplars:** lab-B/#298_07_resonator_spectroscopy_vs_coupler_flux_101333/q4-9, lab-B/#299_07_resonator_spectroscopy_vs_coupler_flux_101411/q4-9, lab-A/#309_07_resonator_spectroscopy_vs_coupler_flux_082718/coupler_q6_q7, lab-B/#258_07_resonator_spectroscopy_vs_coupler_flux_092731/q1-4
 
-![C7 — CQT #298_07_resonator_spectroscopy_vs_coupler_flux_101333 q4-9](exemplars/C7/CQT_298_q4-9.png)
-![C7 — CQT #299_07_resonator_spectroscopy_vs_coupler_flux_101411 q4-9](exemplars/C7/CQT_299_q4-9.png)
-![C7 — AS_10TQ9TC #309_07_resonator_spectroscopy_vs_coupler_flux_082718 coupler_q6_q7](exemplars/C7/AS_10TQ9TC_309_coupler_q6_q7.png)
+![C7 — lab-B #298_07_resonator_spectroscopy_vs_coupler_flux_101333 q4-9](exemplars/C7/lab-B_298_q4-9.png)
+![C7 — lab-B #299_07_resonator_spectroscopy_vs_coupler_flux_101411 q4-9](exemplars/C7/lab-B_299_q4-9.png)
+![C7 — lab-A #309_07_resonator_spectroscopy_vs_coupler_flux_082718 coupler_q6_q7](exemplars/C7/lab-A_309_coupler_q6_q7.png)
 
 ### C8 — R7_noisy_scattered_trace  (seen 0x)
 
@@ -100,9 +100,9 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Reduce the frequency step by 3-5x so that at least 5-10 frequency points span the modulation depth, trading shots down if the budget requires it; keep the flux window unchanged so the result is comparable with the coarse sibling. Never adopt an offset from a two-row staircase, and never let its disagreement with a finer-step sibling be read as chip drift.
 
-**Exemplars:** AS_10TQ9TC/#310_07_resonator_spectroscopy_vs_coupler_flux_083041/coupler_q6_q7
+**Exemplars:** lab-A/#310_07_resonator_spectroscopy_vs_coupler_flux_083041/coupler_q6_q7
 
-![C9 — AS_10TQ9TC #310_07_resonator_spectroscopy_vs_coupler_flux_083041 coupler_q6_q7](exemplars/C9/AS_10TQ9TC_310_coupler_q6_q7.png)
+![C9 — lab-A #310_07_resonator_spectroscopy_vs_coupler_flux_083041 coupler_q6_q7](exemplars/C9/lab-A_310_coupler_q6_q7.png)
 
 ### C10 — R6_multi_period  (seen 2x)
 
@@ -110,10 +110,10 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Adopt the period (this is the only geometry that constrains it well) and adopt the crest as the idle point. Never adopt the minimum offset as a unique parking point — either record all degenerate troughs, or re-run with the flux window narrowed ~2x around the single trough you intend to use. If the period is wanted more precisely, narrow the frequency span ~2x rather than adding shots.
 
-**Exemplars:** CQT/#312_07_resonator_spectroscopy_vs_coupler_flux_102441/q4-9, CQT/#311_07_resonator_spectroscopy_vs_coupler_flux_102410/q4-9
+**Exemplars:** lab-B/#312_07_resonator_spectroscopy_vs_coupler_flux_102441/q4-9, lab-B/#311_07_resonator_spectroscopy_vs_coupler_flux_102410/q4-9
 
-![C10 — CQT #312_07_resonator_spectroscopy_vs_coupler_flux_102441 q4-9](exemplars/C10/CQT_312_q4-9.png)
-![C10 — CQT #311_07_resonator_spectroscopy_vs_coupler_flux_102410 q4-9](exemplars/C10/CQT_311_q4-9.png)
+![C10 — lab-B #312_07_resonator_spectroscopy_vs_coupler_flux_102441 q4-9](exemplars/C10/lab-B_312_q4-9.png)
+![C10 — lab-B #311_07_resonator_spectroscopy_vs_coupler_flux_102410 q4-9](exemplars/C10/lab-B_311_q4-9.png)
 
 ### C11 — R4_anticrossing  (seen 0x)
 
@@ -133,11 +133,11 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Do not re-run the same node hoping a narrower window helps — narrowing and widening were both tried here and neither helps, because the failure is polarity, not framing. Flip the extractor to seek maxima (or fit |S21| with inverted sign), or change the readout demodulation angle / drive amplitude one step so the feature reads as a dip, then re-classify. Every number from a bright-ridge run must be discarded, including the resonator frequency.
 
-**Exemplars:** CQT/#1174_07_resonator_spectroscopy_vs_coupler_flux_014604/q13-14, CQT/#1177_07_resonator_spectroscopy_vs_coupler_flux_014920/q13-14, CQT/#1176_07_resonator_spectroscopy_vs_coupler_flux_014759/q13-14, CQT/#1175_07_resonator_spectroscopy_vs_coupler_flux_014702/q13-14
+**Exemplars:** lab-B/#1174_07_resonator_spectroscopy_vs_coupler_flux_014604/q13-14, lab-B/#1177_07_resonator_spectroscopy_vs_coupler_flux_014920/q13-14, lab-B/#1176_07_resonator_spectroscopy_vs_coupler_flux_014759/q13-14, lab-B/#1175_07_resonator_spectroscopy_vs_coupler_flux_014702/q13-14
 
-![C13 — CQT #1174_07_resonator_spectroscopy_vs_coupler_flux_014604 q13-14](exemplars/C13/CQT_1174_q13-14.png)
-![C13 — CQT #1177_07_resonator_spectroscopy_vs_coupler_flux_014920 q13-14](exemplars/C13/CQT_1177_q13-14.png)
-![C13 — CQT #1176_07_resonator_spectroscopy_vs_coupler_flux_014759 q13-14](exemplars/C13/CQT_1176_q13-14.png)
+![C13 — lab-B #1174_07_resonator_spectroscopy_vs_coupler_flux_014604 q13-14](exemplars/C13/lab-B_1174_q13-14.png)
+![C13 — lab-B #1177_07_resonator_spectroscopy_vs_coupler_flux_014920 q13-14](exemplars/C13/lab-B_1177_q13-14.png)
+![C13 — lab-B #1176_07_resonator_spectroscopy_vs_coupler_flux_014759 q13-14](exemplars/C13/lab-B_1176_q13-14.png)
 
 ### C14 — NEW:edge_latched_spurious_fit  (seen 1x)
 
@@ -145,9 +145,9 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Reject the record entirely (frequency and offsets alike) and immediately re-frame: reduce the frequency span 2-4x and shift its centre onto the visible stripe, keeping the flux range fixed. This is a framing repair, not a physics question — the corrected sibling run recovers the resonance on the first attempt.
 
-**Exemplars:** CQT/#489_07_resonator_spectroscopy_vs_coupler_flux_182144/q3-8
+**Exemplars:** lab-B/#489_07_resonator_spectroscopy_vs_coupler_flux_182144/q3-8
 
-![C14 — CQT #489_07_resonator_spectroscopy_vs_coupler_flux_182144 q3-8](exemplars/C14/CQT_489_q3-8.png)
+![C14 — lab-B #489_07_resonator_spectroscopy_vs_coupler_flux_182144 q3-8](exemplars/C14/lab-B_489_q3-8.png)
 
 ### C15 — NEW:localised_column_discontinuity  (seen 2x)
 
@@ -155,10 +155,10 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Re-run with the flux window narrowed to a small interval bracketing the anomalous columns and the flux point density raised 2-4x, to decide whether the step resolves into a narrow avoided crossing or is a bias-line/TLS glitch. Exclude those columns from the sinusoid fit before adopting any offset; do not adopt an extremum that sits within a few columns of the discontinuity.
 
-**Exemplars:** AS_10TQ9TC/#230_07_resonator_spectroscopy_vs_coupler_flux_195913/coupler_q6_q7, AS_10TQ9TC/#16_07_resonator_spectroscopy_vs_coupler_flux_042946/coupler_q6_q7
+**Exemplars:** lab-A/#230_07_resonator_spectroscopy_vs_coupler_flux_195913/coupler_q6_q7, lab-A/#16_07_resonator_spectroscopy_vs_coupler_flux_042946/coupler_q6_q7
 
-![C15 — AS_10TQ9TC #230_07_resonator_spectroscopy_vs_coupler_flux_195913 coupler_q6_q7](exemplars/C15/AS_10TQ9TC_230_coupler_q6_q7.png)
-![C15 — AS_10TQ9TC #16_07_resonator_spectroscopy_vs_coupler_flux_042946 coupler_q6_q7](exemplars/C15/AS_10TQ9TC_16_coupler_q6_q7.png)
+![C15 — lab-A #230_07_resonator_spectroscopy_vs_coupler_flux_195913 coupler_q6_q7](exemplars/C15/lab-A_230_coupler_q6_q7.png)
+![C15 — lab-A #16_07_resonator_spectroscopy_vs_coupler_flux_042946 coupler_q6_q7](exemplars/C15/lab-A_16_coupler_q6_q7.png)
 
 ### C16 — NEW:asymmetric_window_one_sided_period  (seen 1x)
 
@@ -166,9 +166,9 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Accept the period as the session's working value but immediately schedule one confirmation run whose window is symmetric about the newly-claimed extremum (roughly the extended side's span, re-centred), not about zero. Never compare an extremum from an asymmetric window against a symmetric sibling as if the two covered the same physics; note the asymmetry in the record.
 
-**Exemplars:** AS_10TQ9TC/#16_07_resonator_spectroscopy_vs_coupler_flux_042946/coupler_q6_q7
+**Exemplars:** lab-A/#16_07_resonator_spectroscopy_vs_coupler_flux_042946/coupler_q6_q7
 
-![C16 — AS_10TQ9TC #16_07_resonator_spectroscopy_vs_coupler_flux_042946 coupler_q6_q7](exemplars/C16/AS_10TQ9TC_16_coupler_q6_q7.png)
+![C16 — lab-A #16_07_resonator_spectroscopy_vs_coupler_flux_042946 coupler_q6_q7](exemplars/C16/lab-A_16_coupler_q6_q7.png)
 
 ### C17 — NEW:sub_period_coverage_phase_unconstrained  (seen 1x)
 
@@ -176,9 +176,9 @@ This file and `cases.json` are generated from ONE source. Geometry and prescript
 
 **Prescription:** Widen the flux window by 2-3x until at least 1.5 fitted periods are covered, holding the frequency framing fixed; if the trace is still straight at that width, re-classify as C4 and run the bias-line control. Refuse the record's offsets outright — extrema at the two ends of the range are a fit artefact, not a measurement.
 
-**Exemplars:** CQT/#493_07_resonator_spectroscopy_vs_coupler_flux_182834/q3-8
+**Exemplars:** lab-B/#493_07_resonator_spectroscopy_vs_coupler_flux_182834/q3-8
 
-![C17 — CQT #493_07_resonator_spectroscopy_vs_coupler_flux_182834 q3-8](exemplars/C17/CQT_493_q3-8.png)
+![C17 — lab-B #493_07_resonator_spectroscopy_vs_coupler_flux_182834 q3-8](exemplars/C17/lab-B_493_q3-8.png)
 
 ## Flags (orthogonal to map geometry)
 
@@ -190,11 +190,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Reject every scalar in the record, including the resonator frequency. Re-frame: reduce frequency span 2-4x and recentre on the visible band; if the feature is a bright ridge, flip the extractor polarity instead. Never re-run the identical settings.
 
-**Exemplars:** CQT/#489_07_resonator_spectroscopy_vs_coupler_flux_182144/q3-8, CQT/#1174_07_resonator_spectroscopy_vs_coupler_flux_014604/q13-14, CQT/#1176_07_resonator_spectroscopy_vs_coupler_flux_014759/q13-14
+**Exemplars:** lab-B/#489_07_resonator_spectroscopy_vs_coupler_flux_182144/q3-8, lab-B/#1174_07_resonator_spectroscopy_vs_coupler_flux_014604/q13-14, lab-B/#1176_07_resonator_spectroscopy_vs_coupler_flux_014759/q13-14
 
-![F1 — CQT #489_07_resonator_spectroscopy_vs_coupler_flux_182144 q3-8](exemplars/F1/CQT_489_q3-8.png)
-![F1 — CQT #1174_07_resonator_spectroscopy_vs_coupler_flux_014604 q13-14](exemplars/F1/CQT_1174_q13-14.png)
-![F1 — CQT #1176_07_resonator_spectroscopy_vs_coupler_flux_014759 q13-14](exemplars/F1/CQT_1176_q13-14.png)
+![F1 — lab-B #489_07_resonator_spectroscopy_vs_coupler_flux_182144 q3-8](exemplars/F1/lab-B_489_q3-8.png)
+![F1 — lab-B #1174_07_resonator_spectroscopy_vs_coupler_flux_014604 q13-14](exemplars/F1/lab-B_1174_q13-14.png)
+![F1 — lab-B #1176_07_resonator_spectroscopy_vs_coupler_flux_014759 q13-14](exemplars/F1/lab-B_1176_q13-14.png)
 
 ### F2 — markers_pinned_to_frequency_window_boundary  (seen 3x)
 
@@ -202,11 +202,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Automatic reject, no interpretation. Recentre the frequency window on the actual feature and reduce its span 2-4x; add a pipeline guard that refuses any fit whose markers occupy an extreme row across most of the flux axis.
 
-**Exemplars:** CQT/#1177_07_resonator_spectroscopy_vs_coupler_flux_014920/q13-14, CQT/#489_07_resonator_spectroscopy_vs_coupler_flux_182144/q3-8, CQT/#1174_07_resonator_spectroscopy_vs_coupler_flux_014604/q13-14
+**Exemplars:** lab-B/#1177_07_resonator_spectroscopy_vs_coupler_flux_014920/q13-14, lab-B/#489_07_resonator_spectroscopy_vs_coupler_flux_182144/q3-8, lab-B/#1174_07_resonator_spectroscopy_vs_coupler_flux_014604/q13-14
 
-![F2 — CQT #1177_07_resonator_spectroscopy_vs_coupler_flux_014920 q13-14](exemplars/F2/CQT_1177_q13-14.png)
-![F2 — CQT #489_07_resonator_spectroscopy_vs_coupler_flux_182144 q3-8](exemplars/F2/CQT_489_q3-8.png)
-![F2 — CQT #1174_07_resonator_spectroscopy_vs_coupler_flux_014604 q13-14](exemplars/F2/CQT_1174_q13-14.png)
+![F2 — lab-B #1177_07_resonator_spectroscopy_vs_coupler_flux_014920 q13-14](exemplars/F2/lab-B_1177_q13-14.png)
+![F2 — lab-B #489_07_resonator_spectroscopy_vs_coupler_flux_182144 q3-8](exemplars/F2/lab-B_489_q3-8.png)
+![F2 — lab-B #1174_07_resonator_spectroscopy_vs_coupler_flux_014604 q13-14](exemplars/F2/lab-B_1174_q13-14.png)
 
 ### F3 — extrema_unsupported_by_visible_modulation  (seen 12x)
 
@@ -214,11 +214,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Never consume an offset without first checking that the map curves by more than the marker scatter. Report such fields as unset rather than as numbers; if a value is genuinely needed, widen the flux window 2-4x and re-measure.
 
-**Exemplars:** CQT/#1225_07_resonator_spectroscopy_vs_coupler_flux_024116/q14-15, CQT/#494_07_resonator_spectroscopy_vs_coupler_flux_183045/q3-8, CQT/#446_07_resonator_spectroscopy_vs_coupler_flux_171915/q1-4, CQT/#298_07_resonator_spectroscopy_vs_coupler_flux_101333/q4-9
+**Exemplars:** lab-B/#1225_07_resonator_spectroscopy_vs_coupler_flux_024116/q14-15, lab-B/#494_07_resonator_spectroscopy_vs_coupler_flux_183045/q3-8, lab-B/#446_07_resonator_spectroscopy_vs_coupler_flux_171915/q1-4, lab-B/#298_07_resonator_spectroscopy_vs_coupler_flux_101333/q4-9
 
-![F3 — CQT #1225_07_resonator_spectroscopy_vs_coupler_flux_024116 q14-15](exemplars/F3/CQT_1225_q14-15.png)
-![F3 — CQT #494_07_resonator_spectroscopy_vs_coupler_flux_183045 q3-8](exemplars/F3/CQT_494_q3-8.png)
-![F3 — CQT #446_07_resonator_spectroscopy_vs_coupler_flux_171915 q1-4](exemplars/F3/CQT_446_q1-4.png)
+![F3 — lab-B #1225_07_resonator_spectroscopy_vs_coupler_flux_024116 q14-15](exemplars/F3/lab-B_1225_q14-15.png)
+![F3 — lab-B #494_07_resonator_spectroscopy_vs_coupler_flux_183045 q3-8](exemplars/F3/lab-B_494_q3-8.png)
+![F3 — lab-B #446_07_resonator_spectroscopy_vs_coupler_flux_171915 q1-4](exemplars/F3/lab-B_446_q1-4.png)
 
 ### F4 — fitted_period_of_the_order_of_the_swept_range  (seen 9x)
 
@@ -226,11 +226,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Treat a period of this order as 'period not identifiable', never as a measured coupler period. Widen the flux window until at least 1.5-2 fitted periods fit inside it before the period is allowed to enter any record or downstream calculation.
 
-**Exemplars:** CQT/#1271_07_resonator_spectroscopy_vs_coupler_flux_041455/q14-18, CQT/#1238_07_resonator_spectroscopy_vs_coupler_flux_030255/q10-15, CQT/#493_07_resonator_spectroscopy_vs_coupler_flux_182834/q3-8
+**Exemplars:** lab-B/#1271_07_resonator_spectroscopy_vs_coupler_flux_041455/q14-18, lab-B/#1238_07_resonator_spectroscopy_vs_coupler_flux_030255/q10-15, lab-B/#493_07_resonator_spectroscopy_vs_coupler_flux_182834/q3-8
 
-![F4 — CQT #1271_07_resonator_spectroscopy_vs_coupler_flux_041455 q14-18](exemplars/F4/CQT_1271_q14-18.png)
-![F4 — CQT #1238_07_resonator_spectroscopy_vs_coupler_flux_030255 q10-15](exemplars/F4/CQT_1238_q10-15.png)
-![F4 — CQT #493_07_resonator_spectroscopy_vs_coupler_flux_182834 q3-8](exemplars/F4/CQT_493_q3-8.png)
+![F4 — lab-B #1271_07_resonator_spectroscopy_vs_coupler_flux_041455 q14-18](exemplars/F4/lab-B_1271_q14-18.png)
+![F4 — lab-B #1238_07_resonator_spectroscopy_vs_coupler_flux_030255 q10-15](exemplars/F4/lab-B_1238_q10-15.png)
+![F4 — lab-B #493_07_resonator_spectroscopy_vs_coupler_flux_182834 q3-8](exemplars/F4/lab-B_493_q3-8.png)
 
 ### F5 — harmonic_ambiguity_period_flips_between_siblings  (seen 4x)
 
@@ -238,11 +238,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Do not average or arbitrate between the periods. Widen the flux window 2-4x so that multiple periods are unambiguously in view, and adopt the period only from that run; record 'period not identifiable' for the earlier siblings.
 
-**Exemplars:** CQT/#299_07_resonator_spectroscopy_vs_coupler_flux_101411/q4-9, CQT/#1175_07_resonator_spectroscopy_vs_coupler_flux_014702/q13-14, CQT/#1176_07_resonator_spectroscopy_vs_coupler_flux_014759/q13-14
+**Exemplars:** lab-B/#299_07_resonator_spectroscopy_vs_coupler_flux_101411/q4-9, lab-B/#1175_07_resonator_spectroscopy_vs_coupler_flux_014702/q13-14, lab-B/#1176_07_resonator_spectroscopy_vs_coupler_flux_014759/q13-14
 
-![F5 — CQT #299_07_resonator_spectroscopy_vs_coupler_flux_101411 q4-9](exemplars/F5/CQT_299_q4-9.png)
-![F5 — CQT #1175_07_resonator_spectroscopy_vs_coupler_flux_014702 q13-14](exemplars/F5/CQT_1175_q13-14.png)
-![F5 — CQT #1176_07_resonator_spectroscopy_vs_coupler_flux_014759 q13-14](exemplars/F5/CQT_1176_q13-14.png)
+![F5 — lab-B #299_07_resonator_spectroscopy_vs_coupler_flux_101411 q4-9](exemplars/F5/lab-B_299_q4-9.png)
+![F5 — lab-B #1175_07_resonator_spectroscopy_vs_coupler_flux_014702 q13-14](exemplars/F5/lab-B_1175_q13-14.png)
+![F5 — lab-B #1176_07_resonator_spectroscopy_vs_coupler_flux_014759 q13-14](exemplars/F5/lab-B_1176_q13-14.png)
 
 ### F6 — degenerate_extrema_min_offset_not_unique  (seen 5x)
 
@@ -250,11 +250,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Adopt the crest, not the trough, as the single-valued parking point; or record the full set of degenerate minima. If one trough must be chosen, re-run with the flux window narrowed ~2x around the intended trough so the choice is made by the sweep, not by the fitter.
 
-**Exemplars:** CQT/#312_07_resonator_spectroscopy_vs_coupler_flux_102441/q4-9, CQT/#311_07_resonator_spectroscopy_vs_coupler_flux_102410/q4-9, CQT/#259_07_resonator_spectroscopy_vs_coupler_flux_092808/q1-4
+**Exemplars:** lab-B/#312_07_resonator_spectroscopy_vs_coupler_flux_102441/q4-9, lab-B/#311_07_resonator_spectroscopy_vs_coupler_flux_102410/q4-9, lab-B/#259_07_resonator_spectroscopy_vs_coupler_flux_092808/q1-4
 
-![F6 — CQT #312_07_resonator_spectroscopy_vs_coupler_flux_102441 q4-9](exemplars/F6/CQT_312_q4-9.png)
-![F6 — CQT #311_07_resonator_spectroscopy_vs_coupler_flux_102410 q4-9](exemplars/F6/CQT_311_q4-9.png)
-![F6 — CQT #259_07_resonator_spectroscopy_vs_coupler_flux_092808 q1-4](exemplars/F6/CQT_259_q1-4.png)
+![F6 — lab-B #312_07_resonator_spectroscopy_vs_coupler_flux_102441 q4-9](exemplars/F6/lab-B_312_q4-9.png)
+![F6 — lab-B #311_07_resonator_spectroscopy_vs_coupler_flux_102410 q4-9](exemplars/F6/lab-B_311_q4-9.png)
+![F6 — lab-B #259_07_resonator_spectroscopy_vs_coupler_flux_092808 q1-4](exemplars/F6/lab-B_259_q1-4.png)
 
 ### F7 — success_reported_on_an_unusable_fit  (seen 7x)
 
@@ -262,11 +262,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Add a pre-adoption gate independent of the fitter's own residual: require the marker series to lie on the same band as the visible feature, to be off both frequency-window boundary rows, and to show a peak-to-peak swing exceeding the marker scatter. Escalate any run failing the gate to a re-frame rather than to a write.
 
-**Exemplars:** CQT/#1174_07_resonator_spectroscopy_vs_coupler_flux_014604/q13-14, CQT/#489_07_resonator_spectroscopy_vs_coupler_flux_182144/q3-8, AS_10TQ9TC/#310_07_resonator_spectroscopy_vs_coupler_flux_083041/coupler_q6_q7
+**Exemplars:** lab-B/#1174_07_resonator_spectroscopy_vs_coupler_flux_014604/q13-14, lab-B/#489_07_resonator_spectroscopy_vs_coupler_flux_182144/q3-8, lab-A/#310_07_resonator_spectroscopy_vs_coupler_flux_083041/coupler_q6_q7
 
-![F7 — CQT #1174_07_resonator_spectroscopy_vs_coupler_flux_014604 q13-14](exemplars/F7/CQT_1174_q13-14.png)
-![F7 — CQT #489_07_resonator_spectroscopy_vs_coupler_flux_182144 q3-8](exemplars/F7/CQT_489_q3-8.png)
-![F7 — AS_10TQ9TC #310_07_resonator_spectroscopy_vs_coupler_flux_083041 coupler_q6_q7](exemplars/F7/AS_10TQ9TC_310_coupler_q6_q7.png)
+![F7 — lab-B #1174_07_resonator_spectroscopy_vs_coupler_flux_014604 q13-14](exemplars/F7/lab-B_1174_q13-14.png)
+![F7 — lab-B #489_07_resonator_spectroscopy_vs_coupler_flux_182144 q3-8](exemplars/F7/lab-B_489_q3-8.png)
+![F7 — lab-A #310_07_resonator_spectroscopy_vs_coupler_flux_083041 coupler_q6_q7](exemplars/F7/lab-A_310_coupler_q6_q7.png)
 
 ### F8 — resonance_near_window_edge_flank_clipped  (seen 2x)
 
@@ -274,10 +274,10 @@ A flag can sit on ANY case.
 
 **Prescription:** Recentre the frequency window on the band (shift centre, keep or slightly widen span) before the next run on this target; do not deepen the flux sweep until the band is centred.
 
-**Exemplars:** CQT/#1248_07_resonator_spectroscopy_vs_coupler_flux_031541/q9-10, CQT/#295_07_resonator_spectroscopy_vs_coupler_flux_101121/q4-5
+**Exemplars:** lab-B/#1248_07_resonator_spectroscopy_vs_coupler_flux_031541/q9-10, lab-B/#295_07_resonator_spectroscopy_vs_coupler_flux_101121/q4-5
 
-![F8 — CQT #1248_07_resonator_spectroscopy_vs_coupler_flux_031541 q9-10](exemplars/F8/CQT_1248_q9-10.png)
-![F8 — CQT #295_07_resonator_spectroscopy_vs_coupler_flux_101121 q4-5](exemplars/F8/CQT_295_q4-5.png)
+![F8 — lab-B #1248_07_resonator_spectroscopy_vs_coupler_flux_031541 q9-10](exemplars/F8/lab-B_1248_q9-10.png)
+![F8 — lab-B #295_07_resonator_spectroscopy_vs_coupler_flux_101121 q4-5](exemplars/F8/lab-B_295_q4-5.png)
 
 ### F9 — frequency_window_moved_to_a_different_resonator_band  (seen 2x)
 
@@ -285,10 +285,10 @@ A flag can sit on ANY case.
 
 **Prescription:** Before pooling, differencing or trending any two records of one target, compare the frequency window centres. Where they differ by more than a band width, treat the runs as different observables and refuse to combine them; re-run the intended band explicitly.
 
-**Exemplars:** AS_10TQ9TC/#230_07_resonator_spectroscopy_vs_coupler_flux_195913/coupler_q6_q7, AS_10TQ9TC/#229_07_resonator_spectroscopy_vs_coupler_flux_195856/coupler_q6_q7
+**Exemplars:** lab-A/#230_07_resonator_spectroscopy_vs_coupler_flux_195913/coupler_q6_q7, lab-A/#229_07_resonator_spectroscopy_vs_coupler_flux_195856/coupler_q6_q7
 
-![F9 — AS_10TQ9TC #230_07_resonator_spectroscopy_vs_coupler_flux_195913 coupler_q6_q7](exemplars/F9/AS_10TQ9TC_230_coupler_q6_q7.png)
-![F9 — AS_10TQ9TC #229_07_resonator_spectroscopy_vs_coupler_flux_195856 coupler_q6_q7](exemplars/F9/AS_10TQ9TC_229_coupler_q6_q7.png)
+![F9 — lab-A #230_07_resonator_spectroscopy_vs_coupler_flux_195913 coupler_q6_q7](exemplars/F9/lab-A_230_coupler_q6_q7.png)
+![F9 — lab-A #229_07_resonator_spectroscopy_vs_coupler_flux_195856 coupler_q6_q7](exemplars/F9/lab-A_229_coupler_q6_q7.png)
 
 ### F10 — cross_session_operating_point_drift  (seen 3x)
 
@@ -296,11 +296,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Never pool or average records from different sessions of this family without first checking the figure's frequency band and the sign of the claimed offset. On detecting a sign flip across sessions, re-measure both the resonator centre and the arch in one fresh run before adopting anything; treat the older record as describing a different chip state.
 
-**Exemplars:** AS_10TQ9TC/#229_07_resonator_spectroscopy_vs_coupler_flux_195856/coupler_q6_q7, AS_10TQ9TC/#309_07_resonator_spectroscopy_vs_coupler_flux_082718/coupler_q6_q7, AS_10TQ9TC/#20_07_resonator_spectroscopy_vs_coupler_flux_043518/coupler_q6_q7
+**Exemplars:** lab-A/#229_07_resonator_spectroscopy_vs_coupler_flux_195856/coupler_q6_q7, lab-A/#309_07_resonator_spectroscopy_vs_coupler_flux_082718/coupler_q6_q7, lab-A/#20_07_resonator_spectroscopy_vs_coupler_flux_043518/coupler_q6_q7
 
-![F10 — AS_10TQ9TC #229_07_resonator_spectroscopy_vs_coupler_flux_195856 coupler_q6_q7](exemplars/F10/AS_10TQ9TC_229_coupler_q6_q7.png)
-![F10 — AS_10TQ9TC #309_07_resonator_spectroscopy_vs_coupler_flux_082718 coupler_q6_q7](exemplars/F10/AS_10TQ9TC_309_coupler_q6_q7.png)
-![F10 — AS_10TQ9TC #20_07_resonator_spectroscopy_vs_coupler_flux_043518 coupler_q6_q7](exemplars/F10/AS_10TQ9TC_20_coupler_q6_q7.png)
+![F10 — lab-A #229_07_resonator_spectroscopy_vs_coupler_flux_195856 coupler_q6_q7](exemplars/F10/lab-A_229_coupler_q6_q7.png)
+![F10 — lab-A #309_07_resonator_spectroscopy_vs_coupler_flux_082718 coupler_q6_q7](exemplars/F10/lab-A_309_coupler_q6_q7.png)
+![F10 — lab-A #20_07_resonator_spectroscopy_vs_coupler_flux_043518 coupler_q6_q7](exemplars/F10/lab-A_20_coupler_q6_q7.png)
 
 ### F11 — sibling_disagreement_on_period_or_extremum  (seen 6x)
 
@@ -308,11 +308,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Escalate: run one arbitration measurement whose flux window is wide enough to contain the disputed extremum with margin (2-3x the disputed separation), at the finest frequency step of the group. Until then adopt neither value. Check F13 first — a control/target switch is a legitimate cause of apparent disagreement.
 
-**Exemplars:** AS_10TQ9TC/#16_07_resonator_spectroscopy_vs_coupler_flux_042946/coupler_q6_q7, AS_10TQ9TC/#17_07_resonator_spectroscopy_vs_coupler_flux_043043/coupler_q6_q7, CQT/#1175_07_resonator_spectroscopy_vs_coupler_flux_014702/q13-14
+**Exemplars:** lab-A/#16_07_resonator_spectroscopy_vs_coupler_flux_042946/coupler_q6_q7, lab-A/#17_07_resonator_spectroscopy_vs_coupler_flux_043043/coupler_q6_q7, lab-B/#1175_07_resonator_spectroscopy_vs_coupler_flux_014702/q13-14
 
-![F11 — AS_10TQ9TC #16_07_resonator_spectroscopy_vs_coupler_flux_042946 coupler_q6_q7](exemplars/F11/AS_10TQ9TC_16_coupler_q6_q7.png)
-![F11 — AS_10TQ9TC #17_07_resonator_spectroscopy_vs_coupler_flux_043043 coupler_q6_q7](exemplars/F11/AS_10TQ9TC_17_coupler_q6_q7.png)
-![F11 — CQT #1175_07_resonator_spectroscopy_vs_coupler_flux_014702 q13-14](exemplars/F11/CQT_1175_q13-14.png)
+![F11 — lab-A #16_07_resonator_spectroscopy_vs_coupler_flux_042946 coupler_q6_q7](exemplars/F11/lab-A_16_coupler_q6_q7.png)
+![F11 — lab-A #17_07_resonator_spectroscopy_vs_coupler_flux_043043 coupler_q6_q7](exemplars/F11/lab-A_17_coupler_q6_q7.png)
+![F11 — lab-B #1175_07_resonator_spectroscopy_vs_coupler_flux_014702 q13-14](exemplars/F11/lab-B_1175_q13-14.png)
 
 ### F12 — precision_reported_beyond_what_the_data_localises  (seen 3x)
 
@@ -320,11 +320,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Attach an uncertainty of order the flat-top / plateau width to every offset from a broad or quantised extremum, and gate adoption on that uncertainty rather than on the fitter's formal error. If better precision is needed, change conditioning (narrow the frequency step, widen the flux window to bring in the second turning point) — never add shots.
 
-**Exemplars:** AS_10TQ9TC/#18_07_resonator_spectroscopy_vs_coupler_flux_043402/coupler_q6_q7, AS_10TQ9TC/#310_07_resonator_spectroscopy_vs_coupler_flux_083041/coupler_q6_q7, AS_10TQ9TC/#20_07_resonator_spectroscopy_vs_coupler_flux_043518/coupler_q6_q7
+**Exemplars:** lab-A/#18_07_resonator_spectroscopy_vs_coupler_flux_043402/coupler_q6_q7, lab-A/#310_07_resonator_spectroscopy_vs_coupler_flux_083041/coupler_q6_q7, lab-A/#20_07_resonator_spectroscopy_vs_coupler_flux_043518/coupler_q6_q7
 
-![F12 — AS_10TQ9TC #18_07_resonator_spectroscopy_vs_coupler_flux_043402 coupler_q6_q7](exemplars/F12/AS_10TQ9TC_18_coupler_q6_q7.png)
-![F12 — AS_10TQ9TC #310_07_resonator_spectroscopy_vs_coupler_flux_083041 coupler_q6_q7](exemplars/F12/AS_10TQ9TC_310_coupler_q6_q7.png)
-![F12 — AS_10TQ9TC #20_07_resonator_spectroscopy_vs_coupler_flux_043518 coupler_q6_q7](exemplars/F12/AS_10TQ9TC_20_coupler_q6_q7.png)
+![F12 — lab-A #18_07_resonator_spectroscopy_vs_coupler_flux_043402 coupler_q6_q7](exemplars/F12/lab-A_18_coupler_q6_q7.png)
+![F12 — lab-A #310_07_resonator_spectroscopy_vs_coupler_flux_083041 coupler_q6_q7](exemplars/F12/lab-A_310_coupler_q6_q7.png)
+![F12 — lab-A #20_07_resonator_spectroscopy_vs_coupler_flux_043518 coupler_q6_q7](exemplars/F12/lab-A_20_coupler_q6_q7.png)
 
 ### F13 — measure_qubit_switch_masquerading_as_disagreement  (seen 3x)
 
@@ -332,11 +332,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Read measure_qubit (and resolve pair label -> watched qubit) before flagging any sibling disagreement or before treating two records as independent. Group records by the WATCHED RESONATOR, not by the pair label, when surveying which couplers move what.
 
-**Exemplars:** CQT/#1226_07_resonator_spectroscopy_vs_coupler_flux_024527/q14-15, CQT/#1225_07_resonator_spectroscopy_vs_coupler_flux_024116/q14-15, CQT/#294_07_resonator_spectroscopy_vs_coupler_flux_101018/q3-4
+**Exemplars:** lab-B/#1226_07_resonator_spectroscopy_vs_coupler_flux_024527/q14-15, lab-B/#1225_07_resonator_spectroscopy_vs_coupler_flux_024116/q14-15, lab-B/#294_07_resonator_spectroscopy_vs_coupler_flux_101018/q3-4
 
-![F13 — CQT #1226_07_resonator_spectroscopy_vs_coupler_flux_024527 q14-15](exemplars/F13/CQT_1226_q14-15.png)
-![F13 — CQT #1225_07_resonator_spectroscopy_vs_coupler_flux_024116 q14-15](exemplars/F13/CQT_1225_q14-15.png)
-![F13 — CQT #294_07_resonator_spectroscopy_vs_coupler_flux_101018 q3-4](exemplars/F13/CQT_294_q3-4.png)
+![F13 — lab-B #1226_07_resonator_spectroscopy_vs_coupler_flux_024527 q14-15](exemplars/F13/lab-B_1226_q14-15.png)
+![F13 — lab-B #1225_07_resonator_spectroscopy_vs_coupler_flux_024116 q14-15](exemplars/F13/lab-B_1225_q14-15.png)
+![F13 — lab-B #294_07_resonator_spectroscopy_vs_coupler_flux_101018 q3-4](exemplars/F13/lab-B_294_q3-4.png)
 
 ### F14 — frequency_shift_misread_as_modulation_depth  (seen 5x)
 
@@ -344,11 +344,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Never read frequency_shift as coupler strength and never difference it across runs. If modulation depth is wanted, take it from the fitted peak-to-peak swing on the figure. Refresh the stored reference before interpreting a large shift as physics.
 
-**Exemplars:** CQT/#297_07_resonator_spectroscopy_vs_coupler_flux_101237/q4-5, AS_10TQ9TC/#230_07_resonator_spectroscopy_vs_coupler_flux_195913/coupler_q6_q7, CQT/#494_07_resonator_spectroscopy_vs_coupler_flux_183045/q3-8
+**Exemplars:** lab-B/#297_07_resonator_spectroscopy_vs_coupler_flux_101237/q4-5, lab-A/#230_07_resonator_spectroscopy_vs_coupler_flux_195913/coupler_q6_q7, lab-B/#494_07_resonator_spectroscopy_vs_coupler_flux_183045/q3-8
 
-![F14 — CQT #297_07_resonator_spectroscopy_vs_coupler_flux_101237 q4-5](exemplars/F14/CQT_297_q4-5.png)
-![F14 — AS_10TQ9TC #230_07_resonator_spectroscopy_vs_coupler_flux_195913 coupler_q6_q7](exemplars/F14/AS_10TQ9TC_230_coupler_q6_q7.png)
-![F14 — CQT #494_07_resonator_spectroscopy_vs_coupler_flux_183045 q3-8](exemplars/F14/CQT_494_q3-8.png)
+![F14 — lab-B #297_07_resonator_spectroscopy_vs_coupler_flux_101237 q4-5](exemplars/F14/lab-B_297_q4-5.png)
+![F14 — lab-A #230_07_resonator_spectroscopy_vs_coupler_flux_195913 coupler_q6_q7](exemplars/F14/lab-A_230_coupler_q6_q7.png)
+![F14 — lab-B #494_07_resonator_spectroscopy_vs_coupler_flux_183045 q3-8](exemplars/F14/lab-B_494_q3-8.png)
 
 ### F15 — survey_mode_success_that_never_reached_the_chip  (seen 22x)
 
@@ -356,11 +356,11 @@ A flag can sit on ANY case.
 
 **Prescription:** Display survey vs calibration mode alongside the outcome in every record view, and never let a survey-mode success arm an adoption. Nothing in this family should be written to state from a run whose own node declined to write.
 
-**Exemplars:** CQT/#311_07_resonator_spectroscopy_vs_coupler_flux_102410/q4-9, CQT/#1225_07_resonator_spectroscopy_vs_coupler_flux_024116/q14-15, CQT/#494_07_resonator_spectroscopy_vs_coupler_flux_183045/q3-8
+**Exemplars:** lab-B/#311_07_resonator_spectroscopy_vs_coupler_flux_102410/q4-9, lab-B/#1225_07_resonator_spectroscopy_vs_coupler_flux_024116/q14-15, lab-B/#494_07_resonator_spectroscopy_vs_coupler_flux_183045/q3-8
 
-![F15 — CQT #311_07_resonator_spectroscopy_vs_coupler_flux_102410 q4-9](exemplars/F15/CQT_311_q4-9.png)
-![F15 — CQT #1225_07_resonator_spectroscopy_vs_coupler_flux_024116 q14-15](exemplars/F15/CQT_1225_q14-15.png)
-![F15 — CQT #494_07_resonator_spectroscopy_vs_coupler_flux_183045 q3-8](exemplars/F15/CQT_494_q3-8.png)
+![F15 — lab-B #311_07_resonator_spectroscopy_vs_coupler_flux_102410 q4-9](exemplars/F15/lab-B_311_q4-9.png)
+![F15 — lab-B #1225_07_resonator_spectroscopy_vs_coupler_flux_024116 q14-15](exemplars/F15/lab-B_1225_q14-15.png)
+![F15 — lab-B #494_07_resonator_spectroscopy_vs_coupler_flux_183045 q3-8](exemplars/F15/lab-B_494_q3-8.png)
 
 ### F16 — extremum_at_the_edge_of_the_swept_flux_range  (seen 2x)
 
@@ -368,10 +368,10 @@ A flag can sit on ANY case.
 
 **Prescription:** Refuse the value as extrapolated. Widen the flux window by at least 1.5x on that side and re-measure; only an extremum with visible curvature on BOTH sides of it is adoptable.
 
-**Exemplars:** CQT/#1271_07_resonator_spectroscopy_vs_coupler_flux_041455/q14-18, CQT/#493_07_resonator_spectroscopy_vs_coupler_flux_182834/q3-8
+**Exemplars:** lab-B/#1271_07_resonator_spectroscopy_vs_coupler_flux_041455/q14-18, lab-B/#493_07_resonator_spectroscopy_vs_coupler_flux_182834/q3-8
 
-![F16 — CQT #1271_07_resonator_spectroscopy_vs_coupler_flux_041455 q14-18](exemplars/F16/CQT_1271_q14-18.png)
-![F16 — CQT #493_07_resonator_spectroscopy_vs_coupler_flux_182834 q3-8](exemplars/F16/CQT_493_q3-8.png)
+![F16 — lab-B #1271_07_resonator_spectroscopy_vs_coupler_flux_041455 q14-18](exemplars/F16/lab-B_1271_q14-18.png)
+![F16 — lab-B #493_07_resonator_spectroscopy_vs_coupler_flux_182834 q3-8](exemplars/F16/lab-B_493_q3-8.png)
 
 ### F17 — averaging_applied_to_a_conditioning_limit  (seen 2x)
 
@@ -379,10 +379,10 @@ A flag can sit on ANY case.
 
 **Prescription:** Redirect the budget: narrow the frequency step, narrow the frequency span around the band, add flux points, or widen the flux window to bring a second turning point in. Treat 'more shots changed nothing' as positive evidence that the effect is weak-but-real rather than noisy.
 
-**Exemplars:** AS_10TQ9TC/#18_07_resonator_spectroscopy_vs_coupler_flux_043402/coupler_q6_q7, CQT/#299_07_resonator_spectroscopy_vs_coupler_flux_101411/q4-9
+**Exemplars:** lab-A/#18_07_resonator_spectroscopy_vs_coupler_flux_043402/coupler_q6_q7, lab-B/#299_07_resonator_spectroscopy_vs_coupler_flux_101411/q4-9
 
-![F17 — AS_10TQ9TC #18_07_resonator_spectroscopy_vs_coupler_flux_043402 coupler_q6_q7](exemplars/F17/AS_10TQ9TC_18_coupler_q6_q7.png)
-![F17 — CQT #299_07_resonator_spectroscopy_vs_coupler_flux_101411 q4-9](exemplars/F17/CQT_299_q4-9.png)
+![F17 — lab-A #18_07_resonator_spectroscopy_vs_coupler_flux_043402 coupler_q6_q7](exemplars/F17/lab-A_18_coupler_q6_q7.png)
+![F17 — lab-B #299_07_resonator_spectroscopy_vs_coupler_flux_101411 q4-9](exemplars/F17/lab-B_299_q4-9.png)
 
 ### F18 — second_unmodelled_flux_independent_trace_in_window  (seen 1x)
 
@@ -390,9 +390,9 @@ A flag can sit on ANY case.
 
 **Prescription:** Record the presence of the second trace with the run. Where it is within a few band widths of the fitted one, narrow the frequency span so it leaves the frame, or constrain the extractor to a band around the stored resonator value, before trusting repeats.
 
-**Exemplars:** CQT/#1226_07_resonator_spectroscopy_vs_coupler_flux_024527/q14-15
+**Exemplars:** lab-B/#1226_07_resonator_spectroscopy_vs_coupler_flux_024527/q14-15
 
-![F18 — CQT #1226_07_resonator_spectroscopy_vs_coupler_flux_024527 q14-15](exemplars/F18/CQT_1226_q14-15.png)
+![F18 — lab-B #1226_07_resonator_spectroscopy_vs_coupler_flux_024527 q14-15](exemplars/F18/lab-B_1226_q14-15.png)
 
 ### F19 — flat_verdict_recorded_without_its_frequency_zoom  (seen 2x)
 
@@ -400,10 +400,10 @@ A flag can sit on ANY case.
 
 **Prescription:** Always store the frequency span (and step) alongside a flat verdict and refuse to consume a flat verdict taken at a span many times the chip's typical modulation. Re-read at a 3-10x tighter span before the verdict is allowed to close a target.
 
-**Exemplars:** CQT/#446_07_resonator_spectroscopy_vs_coupler_flux_171915/q1-4, CQT/#259_07_resonator_spectroscopy_vs_coupler_flux_092808/q1-4
+**Exemplars:** lab-B/#446_07_resonator_spectroscopy_vs_coupler_flux_171915/q1-4, lab-B/#259_07_resonator_spectroscopy_vs_coupler_flux_092808/q1-4
 
-![F19 — CQT #446_07_resonator_spectroscopy_vs_coupler_flux_171915 q1-4](exemplars/F19/CQT_446_q1-4.png)
-![F19 — CQT #259_07_resonator_spectroscopy_vs_coupler_flux_092808 q1-4](exemplars/F19/CQT_259_q1-4.png)
+![F19 — lab-B #446_07_resonator_spectroscopy_vs_coupler_flux_171915 q1-4](exemplars/F19/lab-B_446_q1-4.png)
+![F19 — lab-B #259_07_resonator_spectroscopy_vs_coupler_flux_092808 q1-4](exemplars/F19/lab-B_259_q1-4.png)
 
 ### F20 — no_control_that_the_coupler_bias_reached_the_chip  (seen 7x)
 
@@ -411,11 +411,11 @@ A flag can sit on ANY case.
 
 **Prescription:** On the second flat pair in a pass, stop surveying and run an out-of-figure control: the qubit-flux node on the same physical line, or a coupler bias setting known to move a different observable. Carry the ambiguity explicitly in the record instead of letting a flat map imply physics.
 
-**Exemplars:** CQT/#1238_07_resonator_spectroscopy_vs_coupler_flux_030255/q10-15, CQT/#1248_07_resonator_spectroscopy_vs_coupler_flux_031541/q9-10, CQT/#1271_07_resonator_spectroscopy_vs_coupler_flux_041455/q14-18
+**Exemplars:** lab-B/#1238_07_resonator_spectroscopy_vs_coupler_flux_030255/q10-15, lab-B/#1248_07_resonator_spectroscopy_vs_coupler_flux_031541/q9-10, lab-B/#1271_07_resonator_spectroscopy_vs_coupler_flux_041455/q14-18
 
-![F20 — CQT #1238_07_resonator_spectroscopy_vs_coupler_flux_030255 q10-15](exemplars/F20/CQT_1238_q10-15.png)
-![F20 — CQT #1248_07_resonator_spectroscopy_vs_coupler_flux_031541 q9-10](exemplars/F20/CQT_1248_q9-10.png)
-![F20 — CQT #1271_07_resonator_spectroscopy_vs_coupler_flux_041455 q14-18](exemplars/F20/CQT_1271_q14-18.png)
+![F20 — lab-B #1238_07_resonator_spectroscopy_vs_coupler_flux_030255 q10-15](exemplars/F20/lab-B_1238_q10-15.png)
+![F20 — lab-B #1248_07_resonator_spectroscopy_vs_coupler_flux_031541 q9-10](exemplars/F20/lab-B_1248_q9-10.png)
+![F20 — lab-B #1271_07_resonator_spectroscopy_vs_coupler_flux_041455 q14-18](exemplars/F20/lab-B_1271_q14-18.png)
 
 ### F21 — refusal_of_a_readable_figure  (seen 0x)
 
@@ -429,10 +429,10 @@ A flag can sit on ANY case.
 
 **Prescription:** Consume the idle offset, refuse to synthesise the missing period, and if the period is needed schedule a widening run (2-4x flux window) rather than re-running the same settings hoping the fields fill.
 
-**Exemplars:** AS_10TQ9TC/#15_07_resonator_spectroscopy_vs_coupler_flux_042919/coupler_q6_q7, AS_10TQ9TC/#19_07_resonator_spectroscopy_vs_coupler_flux_043434/coupler_q6_q7
+**Exemplars:** lab-A/#15_07_resonator_spectroscopy_vs_coupler_flux_042919/coupler_q6_q7, lab-A/#19_07_resonator_spectroscopy_vs_coupler_flux_043434/coupler_q6_q7
 
-![F22 — AS_10TQ9TC #15_07_resonator_spectroscopy_vs_coupler_flux_042919 coupler_q6_q7](exemplars/F22/AS_10TQ9TC_15_coupler_q6_q7.png)
-![F22 — AS_10TQ9TC #19_07_resonator_spectroscopy_vs_coupler_flux_043434 coupler_q6_q7](exemplars/F22/AS_10TQ9TC_19_coupler_q6_q7.png)
+![F22 — lab-A #15_07_resonator_spectroscopy_vs_coupler_flux_042919 coupler_q6_q7](exemplars/F22/lab-A_15_coupler_q6_q7.png)
+![F22 — lab-A #19_07_resonator_spectroscopy_vs_coupler_flux_043434 coupler_q6_q7](exemplars/F22/lab-A_19_coupler_q6_q7.png)
 
 ## Rules
 
@@ -523,31 +523,31 @@ Axes are NORMALISED and UNLABELLED: no absolute frequency, power or flux leaves 
 
 ## Cross-lab evidence
 
-SCOPE CAVEAT FIRST: the task framing says five labs and chips, but the annotations carry exactly TWO lab identifiers across the three batches — AS_10TQ9TC (12 runs, all one coupler, coupler_q6_q7, across four sessions) and CQT (22 runs over ~11 pair labels, on at least two distinct chips/campaigns: the 2026-08-16 daytime q1-4/q3-4/q4-5/q4-9/q3-8 survey and the overnight q13-14/q14-15/q10-15/q9-10/q14-18 pass). Everything below is a two-lab comparison; any claim of five-lab universality would be unsupported by this evidence.
+SCOPE CAVEAT FIRST: the task framing says five labs and chips, but the annotations carry exactly TWO lab identifiers across the three batches — lab-A (12 runs, all one coupler, coupler_q6_q7, across four sessions) and lab-B (22 runs over ~11 pair labels, on at least two distinct chips/campaigns: the 2026-08-16 daytime q1-4/q3-4/q4-5/q4-9/q3-8 survey and the overnight q13-14/q14-15/q10-15/q9-10/q14-18 pass). Everything below is a two-lab comparison; any claim of five-lab universality would be unsupported by this evidence.
 
 WHAT IS INVARIANT (chip- and lab-independent, and therefore safe to build the taxonomy on):
 - The plot idiom is identical: flux on x, frequency on y, an amplitude map with a flux-independent band, extracted dip markers, a magenta fitted sinusoid, and two dashed vertical lines for max and min. Every geometric case in this manual is expressed in that idiom alone.
-- The dominant physics is the same in both labs: the resonator's flux excursion is SMALLER than its own dip-band linewidth. C6 (sub-linewidth coherent modulation) and C2 (single broad arch) are the normal shapes in AS_10TQ9TC and in CQT alike; C1 with the curve dominating the band appears once per lab at most and is the exception.
+- The dominant physics is the same in both labs: the resonator's flux excursion is SMALLER than its own dip-band linewidth. C6 (sub-linewidth coherent modulation) and C2 (single broad arch) are the normal shapes in lab-A and in lab-B alike; C1 with the curve dominating the band appears once per lab at most and is the exception.
 - The fitter's degenerate behaviour is identical in both labs: on a featureless map it emits an idle offset and a minimum offset exactly half a returned period apart, with the period of the order of the swept flux range, and reports success. Same signature, different chips, different sessions.
-- The escalation reflex is the same in both labs and is the strongest cross-lab regularity in the corpus: when a map reads flat, the operator WIDENS. AS_10TQ9TC widened the flux window (#14 -> #15) and CQT widened the flux window (#295 -> #297, #299 -> #311); CQT also widened the frequency span (#258 -> #446, #489). Both directions of widening appear in both labs.
-- 'Success' means 'a curve was fitted' in both labs. Empty patches / update_flux_min False were observed across whole CQT sessions and no adoption occurred anywhere in the corpus.
+- The escalation reflex is the same in both labs and is the strongest cross-lab regularity in the corpus: when a map reads flat, the operator WIDENS. lab-A widened the flux window (#14 -> #15) and lab-B widened the flux window (#295 -> #297, #299 -> #311); lab-B also widened the frequency span (#258 -> #446, #489). Both directions of widening appear in both labs.
+- 'Success' means 'a curve was fitted' in both labs. Empty patches / update_flux_min False were observed across whole lab-B sessions and no adoption occurred anywhere in the corpus.
 - frequency_shift is fitted-minus-stored in both labs, and is misleading in both.
-- Broad-crest non-localisation is lab-independent: added shots failed to sharpen an extremum in AS_10TQ9TC (#18) and failed to lift a ripple in CQT (#299).
+- Broad-crest non-localisation is lab-independent: added shots failed to sharpen an extremum in lab-A (#18) and failed to lift a ripple in lab-B (#299).
 
 WHAT DIFFERED (and must not be generalised):
-- Sampling strategy. AS_10TQ9TC is one coupler chased intensively — seven runs in ten minutes, then revisits at +15 h and +28 h, with the flux window as the primary knob and deliberate asymmetric windows. CQT is a breadth survey — one or a few runs per pair, marching across the couplers around a qubit at fixed settings, with the frequency span as the primary knob. Consequently AS_10TQ9TC supplies the cross-session-drift and asymmetric-window evidence and CQT supplies the cross-pair-flatness and framing-failure evidence; neither lab alone would have produced this taxonomy.
-- Target labelling. AS_10TQ9TC names the coupler directly (coupler_q6_q7); CQT names the PAIR (q1-4, q13-14) and selects the watched qubit through measure_qubit. The pair-label/observable trap (RU-9, F13) is a CQT convention, not a family property — a loop that assumes 'target = coupler' will mis-group CQT records, and one that assumes 'target = pair, resolve via measure_qubit' will over-think AS_10TQ9TC ones.
-- Contrast polarity. Bright-ridge resonators (C13) appear only in the CQT overnight q13-14 series. Every AS_10TQ9TC figure and every other CQT figure shows a dark dip. So 'the resonator is a dark dip' looked universal and is NOT — it is a per-chip/per-readout-configuration fact, and it is the single assumption whose failure produced four consecutive worthless records in minutes.
-- Framing failures. Edge-latched fits (C14) and markers pinned to a window boundary (F2) occur only in CQT, where the very wide exploratory frequency spans are used. AS_10TQ9TC's tighter spans never produced one. This is a consequence of the lab's sweep convention, not of the chip.
-- Instrumental quantisation. The two-row staircase (C9) occurs once, in AS_10TQ9TC, and arose from a deliberate shots-for-step trade. It is a knob-choice defect that any lab can reproduce.
-- Flatness prevalence. CQT's overnight pass is flat on six consecutive pairs; AS_10TQ9TC's single coupler always curves once the window is wide enough. The 'all couplers are flat' pattern is therefore a property of that CQT chip/pass, and is exactly the pattern that requires the RU-6 bias-line control before it may be called physics.
-- Multi-period visibility. Only CQT reached clean two-period maps (#311/#312), because only CQT opened the flux range that far on a coupler whose swing was legible. AS_10TQ9TC obtained a period only via an asymmetric one-sided push.
+- Sampling strategy. lab-A is one coupler chased intensively — seven runs in ten minutes, then revisits at +15 h and +28 h, with the flux window as the primary knob and deliberate asymmetric windows. lab-B is a breadth survey — one or a few runs per pair, marching across the couplers around a qubit at fixed settings, with the frequency span as the primary knob. Consequently lab-A supplies the cross-session-drift and asymmetric-window evidence and lab-B supplies the cross-pair-flatness and framing-failure evidence; neither lab alone would have produced this taxonomy.
+- Target labelling. lab-A names the coupler directly (coupler_q6_q7); lab-B names the PAIR (q1-4, q13-14) and selects the watched qubit through measure_qubit. The pair-label/observable trap (RU-9, F13) is a lab-B convention, not a family property — a loop that assumes 'target = coupler' will mis-group lab-B records, and one that assumes 'target = pair, resolve via measure_qubit' will over-think lab-A ones.
+- Contrast polarity. Bright-ridge resonators (C13) appear only in the lab-B overnight q13-14 series. Every lab-A figure and every other lab-B figure shows a dark dip. So 'the resonator is a dark dip' looked universal and is NOT — it is a per-chip/per-readout-configuration fact, and it is the single assumption whose failure produced four consecutive worthless records in minutes.
+- Framing failures. Edge-latched fits (C14) and markers pinned to a window boundary (F2) occur only in lab-B, where the very wide exploratory frequency spans are used. lab-A's tighter spans never produced one. This is a consequence of the lab's sweep convention, not of the chip.
+- Instrumental quantisation. The two-row staircase (C9) occurs once, in lab-A, and arose from a deliberate shots-for-step trade. It is a knob-choice defect that any lab can reproduce.
+- Flatness prevalence. lab-B's overnight pass is flat on six consecutive pairs; lab-A's single coupler always curves once the window is wide enough. The 'all couplers are flat' pattern is therefore a property of that lab-B chip/pass, and is exactly the pattern that requires the RU-6 bias-line control before it may be called physics.
+- Multi-period visibility. Only lab-B reached clean two-period maps (#311/#312), because only lab-B opened the flux range that far on a coupler whose swing was legible. lab-A obtained a period only via an asymmetric one-sided push.
 
-LOOKED UNIVERSAL, ISN'T — the explicit warnings: (1) 'the resonator shows as a dark dip' (CQT q13-14 disproves it); (2) 'the target label names the coupler' (CQT pair labels + measure_qubit disprove it); (3) 'a flat map means the coupler does not couple' (both labs disprove it, from opposite causes — narrow flux window in AS_10TQ9TC, wide frequency span in CQT); (4) 'a big frequency_shift means a strong coupler' (it is a stale-reference re-centring in both labs); (5) 'sibling disagreement means one run is wrong' (a measure_qubit switch in CQT makes it correct); (6) 'more shots improve the number' (refuted in both labs).
+LOOKED UNIVERSAL, ISN'T — the explicit warnings: (1) 'the resonator shows as a dark dip' (lab-B q13-14 disproves it); (2) 'the target label names the coupler' (lab-B pair labels + measure_qubit disprove it); (3) 'a flat map means the coupler does not couple' (both labs disprove it, from opposite causes — narrow flux window in lab-A, wide frequency span in lab-B); (4) 'a big frequency_shift means a strong coupler' (it is a stale-reference re-centring in both labs); (5) 'sibling disagreement means one run is wrong' (a measure_qubit switch in lab-B makes it correct); (6) 'more shots improve the number' (refuted in both labs).
 
 ## Open questions
 
-1. Weak vs absent: the corpus cannot separate 'this coupler genuinely does not push this resonator' from 'the coupler bias never reached the chip', and one CQT pass is flat on six consecutive pairs. What is the accepted out-of-figure control — the qubit-flux node on the same bias line, a known-good coupler bias setting, or a room-temperature line check — and at what point in a survey must the loop stop and run it?
+1. Weak vs absent: the corpus cannot separate 'this coupler genuinely does not push this resonator' from 'the coupler bias never reached the chip', and one lab-B pass is flat on six consecutive pairs. What is the accepted out-of-figure control — the qubit-flux node on the same bias line, a known-good coupler bias setting, or a room-temperature line check — and at what point in a survey must the loop stop and run it?
 2. What is the expected second-order coupler-to-readout push on a tunable-coupler chip of this design, expressed as a fraction of the resonator linewidth? Without that number, 'sub-linewidth swing is normal physics' (C6) rests on the corpus's own consistency rather than on theory, and a genuinely dead coupler could hide inside the case.
 3. How should the two-yardstick threshold in RU-1 be operationalised numerically — what multiple of the marker scatter, and what fraction of the band FWHM, marks the boundary between C6 (adopt the crest) and C7 (adopt nothing)? The annotations describe this comparison qualitatively and every borderline verdict in the corpus was marked confidence 'med'.
 4. Should the family's node be changed to REFUSE rather than report success when its own markers are not on the visible band, when they sit on a frequency-window boundary row, when fewer than N distinct frequency rows span the modulation, or when the fitted period exceeds the swept range? Every catastrophic record here passed the node's success test.
@@ -556,18 +556,18 @@ LOOKED UNIVERSAL, ISN'T — the explicit warnings: (1) 'the resonator shows as a
 7. Across sessions the same coupler's idle offset changed sign and its resonator centre moved. Is that genuine chip drift (retuning, thermal cycle, bias history), a change of flux quantum branch, or a bookkeeping/reference change? The answer determines whether cross-session records may ever be trended at all.
 8. What flux-step density and frequency-step resolution should be mandated per run so that a period is identifiable and a crest is localisable, given that shots are demonstrably the wrong currency here? Concretely: how many frequency points must span the expected modulation depth, and how many flux points per expected period?
 9. Should this node's flux offsets ever be adoptable automatically, or is the family survey-only by policy — the coupler idle point being set instead by the two-qubit-gate or coupler-spectroscopy families, with this node reduced to a diagnostic that reports resonator frequency plus a qualitative coupling verdict?
-10. One CQT run's frequency window moved to a different resonator band between two runs seconds apart under the same target label. Was that an operator retune, a stored-value change, or a node/parameter defect? It determines whether F9 needs an automatic guard or only a comparison rule.
+10. One lab-B run's frequency window moved to a different resonator band between two runs seconds apart under the same target label. Was that an operator retune, a stored-value change, or a node/parameter defect? It determines whether F9 needs an automatic guard or only a comparison rule.
 11. Are the localised single-column discontinuities (C15) narrow avoided crossings, TLS, or bias-line glitches? They sit near claimed extrema and therefore bias adopted offsets, and the corpus has no run dense enough in flux to resolve them.
 12. Where multiple pair labels resolve to one watched resonator, should the survey record be keyed by (coupler, watched resonator) rather than by pair, and should the loop deliberately measure both control and target resonators for each coupler as standard?
 
 ## Fit-vs-figure disagreements
 
-- CQT/#489_07_resonator_spectroscopy_vs_coupler_flux_182144/q3-8 — the real resonance is a broad dark horizontal stripe in the upper map, yet nearly all markers hug the bottom boundary of the frequency window and the fitted sinusoid ripples along that boundary through many periods; the reported resonator frequency lands at the window edge, the claimed shift is large while the visible band does not move at all, and only two stray markers touch the true stripe.
-- CQT/#493_07_resonator_spectroscopy_vs_coupler_flux_182834/q3-8 — the record asserts a maximum and a minimum at specific flux values on an image that is uniform everywhere: a dead-straight dark line with no curvature, marker scatter uniform along its length, and a fitted period comparable to the entire narrowed sweep, so the extrema fall near the two opposite ends of the range purely as the degenerate solution of a sinusoid fitted to a flat line over less than one period.
-- CQT/#1174_07_resonator_spectroscopy_vs_coupler_flux_014604/q13-14 — the only structure is a bright ridge, which the minimum-seeking extractor cannot reach: the markers form two clouds (one on the upper window boundary, one in the dark field below) leaving the ridge bare, and the fitted single-arch cosine crests several ridge thicknesses ABOVE the ridge, so the reported resonator frequency lies on a phantom crest and the reported shift contradicts the two same-pair siblings minutes later.
-- CQT/#1175_07_resonator_spectroscopy_vs_coupler_flux_014702/q13-14 — halving the frequency span did not help because the failure is polarity: the bright band is flat and unmarked while every marker sits in the unstructured dark cloud below it, and the fitted curve threads that cloud through several complete cycles with an amplitude no larger than the scatter; the returned period is roughly a quarter of the immediately preceding run's on the same pair.
-- CQT/#1176_07_resonator_spectroscopy_vs_coupler_flux_014759/q13-14 — at four times the flux width the bright band is still perfectly straight and still bare of markers; the fit degenerated further into dozens of identical fine cycles across the range whose peak-to-peak height is a small part of the marker scatter it lies in, and the two extremum lines collapse onto nearly the same flux column.
-- CQT/#1177_07_resonator_spectroscopy_vs_coupler_flux_014920/q13-14 — zooming in converted the noise cloud into a hard edge artefact: the markers form a thin continuous line jammed against the LOWER boundary of the frequency window, far below the still-straight bright band, and the fitted curve lies along that boundary with one shallow hump, so the reported resonator frequency is a property of the sweep bounds rather than of the chip — the fourth mutually inconsistent value for this pair inside four minutes.
+- lab-B/#489_07_resonator_spectroscopy_vs_coupler_flux_182144/q3-8 — the real resonance is a broad dark horizontal stripe in the upper map, yet nearly all markers hug the bottom boundary of the frequency window and the fitted sinusoid ripples along that boundary through many periods; the reported resonator frequency lands at the window edge, the claimed shift is large while the visible band does not move at all, and only two stray markers touch the true stripe.
+- lab-B/#493_07_resonator_spectroscopy_vs_coupler_flux_182834/q3-8 — the record asserts a maximum and a minimum at specific flux values on an image that is uniform everywhere: a dead-straight dark line with no curvature, marker scatter uniform along its length, and a fitted period comparable to the entire narrowed sweep, so the extrema fall near the two opposite ends of the range purely as the degenerate solution of a sinusoid fitted to a flat line over less than one period.
+- lab-B/#1174_07_resonator_spectroscopy_vs_coupler_flux_014604/q13-14 — the only structure is a bright ridge, which the minimum-seeking extractor cannot reach: the markers form two clouds (one on the upper window boundary, one in the dark field below) leaving the ridge bare, and the fitted single-arch cosine crests several ridge thicknesses ABOVE the ridge, so the reported resonator frequency lies on a phantom crest and the reported shift contradicts the two same-pair siblings minutes later.
+- lab-B/#1175_07_resonator_spectroscopy_vs_coupler_flux_014702/q13-14 — halving the frequency span did not help because the failure is polarity: the bright band is flat and unmarked while every marker sits in the unstructured dark cloud below it, and the fitted curve threads that cloud through several complete cycles with an amplitude no larger than the scatter; the returned period is roughly a quarter of the immediately preceding run's on the same pair.
+- lab-B/#1176_07_resonator_spectroscopy_vs_coupler_flux_014759/q13-14 — at four times the flux width the bright band is still perfectly straight and still bare of markers; the fit degenerated further into dozens of identical fine cycles across the range whose peak-to-peak height is a small part of the marker scatter it lies in, and the two extremum lines collapse onto nearly the same flux column.
+- lab-B/#1177_07_resonator_spectroscopy_vs_coupler_flux_014920/q13-14 — zooming in converted the noise cloud into a hard edge artefact: the markers form a thin continuous line jammed against the LOWER boundary of the frequency window, far below the still-straight bright band, and the fitted curve lies along that boundary with one shallow hump, so the reported resonator frequency is a property of the sweep bounds rather than of the chip — the fourth mutually inconsistent value for this pair inside four minutes.
 
 ## Blind verification
 

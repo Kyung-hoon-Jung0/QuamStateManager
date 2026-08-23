@@ -210,10 +210,41 @@ class TestExemplarImages:
 
     def test_both_pilot_chips_are_represented(self):
         chips = {r["chip"] for r in self._index()["rendered"]}
-        assert chips == {"AS_10TQ9TC", "CQT"}, \
+        # docs/135 naming doctrine: shipped knowledge carries lab KEYS, never
+        # customer names (tests/golden/calib_paths/lab_keys.json is the
+        # internal provenance map)
+        assert chips == {"lab-A", "lab-B"}, \
             "a manual taught from one chip is a manual about that chip"
 
     def test_the_note_states_why_the_axes_carry_no_numbers(self):
         note = self._index()["note"].lower()
         assert "normalised" in note or "normalized" in note
         assert "absolute" in note
+
+
+class TestNoCustomerNamesShipped:
+    """docs/135 naming doctrine (user-directed, binding): shipped knowledge
+    artifacts — packs, judge packs, exemplar filenames — carry lab KEYS,
+    never a customer name. The names below live in this TEST (not shipped);
+    the provenance map is tests/golden/calib_paths/lab_keys.json."""
+
+    NAMES = ("CQT", "AS_10TQ9TC", "IQCC", "KRISS", "SNU",
+             "Novera", "HorizonQuantum")
+
+    def test_shipped_knowledge_carries_no_lab_name(self):
+        import re
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[1] / "quam_state_manager"
+        # substring match on purpose (strictest); HorizonQuantum rather
+        # than bare Horizon, which would flag the English word horizontal
+        pat = re.compile("|".join(self.NAMES),
+                         re.IGNORECASE)
+        offenders = []
+        for base in (root / "knowledge", root / "core" / "autofit" / "judge_packs"):
+            for f in sorted(base.rglob("*")):
+                if f.suffix.lower() in (".json", ".md", ".txt"):
+                    if pat.search(f.read_text(encoding="utf-8")):
+                        offenders.append(str(f))
+                elif f.suffix.lower() == ".png" and pat.search(f.name):
+                    offenders.append(str(f))
+        assert not offenders, offenders[:10]
