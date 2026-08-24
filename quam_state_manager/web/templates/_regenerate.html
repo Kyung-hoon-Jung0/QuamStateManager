@@ -25,11 +25,19 @@
 <script>
 (function () {
   function boot() {
-    function say(msg, cls) {
+    function say(msg, cls, infos) {
       var s = document.getElementById("regen-status");
       if (!s) return;
       s.hidden = false; s.className = "regen-status " + (cls || "");
       s.textContent = msg;
+      // Informational notes ride a second, muted line — textContent only,
+      // so a chip name can never inject markup here.
+      (infos || []).forEach(function (t) {
+        var d = document.createElement("div");
+        d.className = "regen-status-info";
+        d.textContent = "ℹ " + t;
+        s.appendChild(d);
+      });
     }
     function hydrate(folder) {
       say("Reading chip & reconstructing spec…");
@@ -57,11 +65,16 @@
           (res.mixed_gates ? " · mixed gates" : "");
         var t = document.querySelector("#regen-body .gen-title");
         if (t) t.textContent = "Re-generate config";
+        // docs/135: two lists, two voices. `notes` are things that could
+        // bite (⚠, warn styling); `info_notes` state what was carried and
+        // are not problems — a QDAC carry dressed as a warning is what sent
+        // a user hunting for a driver that was installed all along.
         var notes = res.notes || [];
+        var infos = res.info_notes || [];
         say(notes.length
               ? "⚠ " + notes.join("  ")
               : "Pre-filled from the source chip — edit ports · bands · qubits/pairs, then pick a NEW output folder (step 7) and Generate. Calibrated values are carried over.",
-            notes.length ? "regen-status-warn" : "");
+            notes.length ? "regen-status-warn" : "", infos);
       }).catch(function (e) { say("✗ " + e, "regen-status-err"); });
     }
     hydrate(null);   // the currently loaded chip

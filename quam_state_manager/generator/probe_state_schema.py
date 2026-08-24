@@ -210,12 +210,25 @@ def _import_class(path: str):
     qualnames (``mod.Outer.Inner``). Raises on total failure."""
     parts = path.split(".")
     last_exc: Exception | None = None
+    best_exc: Exception | None = None
     for cut in range(len(parts) - 1, 0, -1):
         mod_name = ".".join(parts[:cut])
         try:
             mod = importlib.import_module(mod_name)
         except Exception as exc:  # noqa: BLE001
             last_exc = exc
+            # docs/136 — keep the exception that EXPLAINS the failure. A module
+            # that exists and blew up while importing (a missing dependency of
+            # its own, a syntax error) is the real cause; "no module named
+            # <this exact name>" only says this split was the wrong one, and
+            # the next, shorter split then reports a symptom that hides it.
+            # On the customer's env the real cause is a missing qdac2-driver
+            # and the symptom was "quam_config has no attribute
+            # qdac_components" — two very different things to go and fix.
+            if best_exc is None and not (
+                    isinstance(exc, ModuleNotFoundError)
+                    and getattr(exc, "name", None) == mod_name):
+                best_exc = exc
             continue
         obj = mod
         try:
@@ -225,7 +238,7 @@ def _import_class(path: str):
             last_exc = exc
             continue
         return obj
-    raise last_exc or ImportError(f"cannot import {path!r}")
+    raise best_exc or last_exc or ImportError(f"cannot import {path!r}")
 
 
 def _json_safe(value):

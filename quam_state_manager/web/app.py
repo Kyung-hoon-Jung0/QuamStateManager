@@ -20,6 +20,7 @@ import os
 import re
 import shutil
 import sys
+import threading
 from datetime import timedelta
 from pathlib import Path
 
@@ -593,6 +594,29 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
         import logging
         logging.getLogger(__name__).warning(
             "scheduler scope migration failed", exc_info=True)
+
+    # Warm the conda env inventory off the request path (docs/135). The
+    # ~4 s `conda env list --json` is the single largest wait in the
+    # Generate / Re-generate wizard's step-5 auto-allocate chain; the memo
+    # in config_generator makes every LATER call free, and filling it while
+    # the user is still on the landing page makes the first one free too.
+    # Daemon + best-effort: a machine without conda, or a slow one, just
+    # falls back to paying for it on demand, exactly as before.
+    # `testing=True` is not the only test entry point — a dozen test modules
+    # build a real app — so the suite also sets SM_DISABLE_ENV_WARMUP, which
+    # keeps a 4 s background subprocess (and a race against the cache-reset
+    # fixture) out of every one of them.
+    if not testing and os.environ.get("SM_DISABLE_ENV_WARMUP") != "1":
+        def _warm_envs():
+            try:
+                from quam_state_manager.core import config_generator as _cg
+                _cg.discover_envs()
+            except Exception:
+                import logging
+                logging.getLogger(__name__).debug(
+                    "env inventory warm-up failed", exc_info=True)
+        threading.Thread(target=_warm_envs, name="sm-env-warm",
+                         daemon=True).start()
 
     from quam_state_manager.web.routes import bp
     app.register_blueprint(bp)

@@ -55,6 +55,33 @@ def _close(a: Any, b: Any) -> bool:
     return a == b
 
 
+def populate_view(spec: Any) -> dict:
+    """``spec.populate`` plus the QDAC bias cells as a ``"qdac"`` pseudo-group.
+
+    docs/136 — the Populate step's QDAC section writes onto
+    ``spec.qdac.qubits[qid]``, deliberately: that is the single home
+    ``run_build`` reads and the step-4 band edits, and a ``populate.qdac``
+    bucket would be a second source of truth for the same eight fields. But
+    populate-protect diffs ``spec.populate``, so without this view every QDAC
+    edit made in the wizard reads as unchanged and the tier-1 carry silently
+    reverts it to the source chip's value on a re-generate.
+
+    The wizard's baseline snapshot builds the same shape, so the two sides of
+    the diff agree. Pure; never raises on a malformed spec.
+    """
+    from quam_state_manager.core import qdac as _qdac
+
+    populate = (spec or {}).get("populate") if isinstance(spec, dict) else None
+    out = dict(populate) if isinstance(populate, dict) else {}
+    biased = _qdac.spec_biased_qubits(spec)
+    if biased:
+        out["qdac"] = {
+            qid: {k: v for k, v in fields.items() if k in _qdac.QDAC_FIELDS}
+            for qid, fields in biased.items()
+        }
+    return out
+
+
 def changed_fields(spec_populate: Any, baseline: Any,
                    touched: Iterable[Iterable[str]] | None = None
                    ) -> list[tuple[str, str, str]]:
@@ -201,6 +228,8 @@ def protect_paths(changed: list[tuple[str, str, str]], spec_populate: Any,
     a derived value (z-port delay) was NOT auto-protected because the old
     value looks hand-tuned (docs/31 makes delay user-overridable post-build).
     """
+    from quam_state_manager.core import qdac as _qdac
+
     protect: set[str] = set()
     conflicts: list[str] = []
     if not changed:
@@ -288,6 +317,16 @@ def protect_paths(changed: list[tuple[str, str, str]], spec_populate: Any,
                         add(f"{pp}.band")
                     else:
                         add(f"{pp}.full_scale_power_dbm")
+        elif group == "qdac":
+            # docs/136 — the bias line is `z` on a QDAC-only qubit and a
+            # SIBLING of z on a bias-tee one, so the field name is read off the
+            # rebuilt chip rather than assumed. A degraded rebuild (no
+            # quam_config in the env) has no bias line at all; `add` then finds
+            # no path and protects nothing, which is right — there is no
+            # value there to defend.
+            found = _qdac.bias_line_of((new_state.get("qubits") or {}).get(rid))
+            if found and fname in _qdac.QDAC_FIELDS:
+                add(f"qubits.{rid}.{found[0]}.{fname}")
         elif group == "flux":
             base = f"qubits.{rid}.z"
             if fname in ("independent_offset", "joint_offset", "min_offset",

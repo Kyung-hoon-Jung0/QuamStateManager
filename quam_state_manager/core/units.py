@@ -119,6 +119,11 @@ _FIELD_FIXED: dict[str, tuple[str, str]] = {
     "coupler_decouple_offset": ("volt", "V"),
     "coupler_interaction_offset": ("volt", "V"),
     "mutual_flux_bias": ("volt", "V"),
+    # docs/136: the QDAC-II channel's idle DC bias. Its own key rather than
+    # borrowing `z_joint_offset`'s — they are volts for the same reason but
+    # not the same field, and a later change to one must not silently move
+    # the other.
+    "qdac_dc_offset": ("volt", "V"),
 }
 
 # SI base-unit label per dimension, for "you are editing raw X" hints.

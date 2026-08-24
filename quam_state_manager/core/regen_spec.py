@@ -34,6 +34,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from quam_state_manager.core import qdac
+
 # Exact-spec sidecar. Written next to a rebuilt chip so a later re-generate uses
 # the EXACT spec that built it instead of the best-effort reconstruction. Lives
 # in a SUBFOLDER: QUAM's ``Quam.load()`` reads every top-level ``.json`` in a
@@ -50,6 +52,19 @@ def _parse_port(ptr: Any) -> tuple[str, int, int, int] | None:
     if not m:
         return None
     return m.group(1), int(m.group(2)), int(m.group(3)), int(m.group(4))
+
+
+_NAT_RE = re.compile(r"(\d+)")
+
+
+def _nat_key(s: str) -> tuple:
+    """Sort key that reads q2 before q11 (digit runs compare as numbers).
+
+    Each part is tagged so an int never has to compare against a str — a
+    qubit list with mixed naming schemes sorts instead of raising.
+    """
+    return tuple((1, int(t), "") if t.isdigit() else (0, 0, t)
+                 for t in _NAT_RE.split(str(s)))
 
 
 def _fem_type(category: str) -> str | None:
@@ -398,7 +413,14 @@ def _extract_populate(state: dict, root: dict) -> dict:
 class ReconstructedSpec:
     spec: dict
     mixed_gates: bool = False
+    # Things that could bite: a defaulted qubit, a slot kept without channel
+    # evidence, a mixed-gate chip. Rendered with a warning glyph.
     notes: list[str] = field(default_factory=list)
+    # Statements of fact about what was carried, which nothing is wrong with
+    # (docs/135). Kept SEPARATE because the renderer prefixes every `notes`
+    # entry with ⚠ — dressing "your 11 QDAC-biased qubits came across fine"
+    # as a warning is how a user ends up hunting for a missing driver.
+    info_notes: list[str] = field(default_factory=list)
     exact: bool = False   # True when loaded from an exact spec sidecar (not inferred)
 
 
@@ -446,9 +468,20 @@ def load_spec_sidecar(folder: Path | str, state: dict, wiring: dict) -> dict | N
 
 def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
     """Best-effort spec from a chip's ``state`` + ``wiring`` dicts."""
-    wire = wiring.get("wiring", {})
-    net = wiring.get("network", {}) or {}
+    # wiring.json nests everything under an outer "wiring" key. A caller that
+    # unwrapped it first used to get {} here — and then a spec with every qubit
+    # and every pair but ZERO lines, returned without a word. A rebuild from
+    # that produces a chip with no readout, no drive and no flux, and the only
+    # symptom is a build that quietly makes almost nothing. Sniff the shape
+    # instead: the inner dict is the one that holds qubits/qubit_pairs.
+    wire = wiring.get("wiring") if isinstance(wiring, dict) else None
+    if not isinstance(wire, dict):
+        wire = (wiring if isinstance(wiring, dict)
+                and any(k in wiring for k in ("qubits", "qubit_pairs"))
+                else {})
+    net = (wiring.get("network") if isinstance(wiring, dict) else None) or {}
     notes: list[str] = []
+    info_notes: list[str] = []
 
     fems: dict[int, set[tuple[int, str]]] = defaultdict(set)
 
@@ -748,12 +781,56 @@ def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
     qdac_qubits: dict = {}
     for q in qubits:
         qd = state_qubits.get(q)
-        z = qd.get("z") if isinstance(qd, dict) else None
-        cls = str(z.get("__class__") or "") if isinstance(z, dict) else ""
-        if "qdacbias" in cls.replace("_", "").lower():
-            qdac_qubits[q] = {k: z[k] for k in (
-                "channel", "dc_offset", "trigger_port", "dwell", "slew_rate",
-                "output_range", "output_filter", "settle_time") if k in z}
+        # docs/136: ask the one QDAC reader, not `z`'s class name. A bias-tee
+        # qubit's bias line is a SIBLING of `z` (z stays the pulse line), so the
+        # old `z`-only test read every one of them as a plain flux-tunable qubit
+        # and a re-generate dropped the DC bias without saying anything.
+        found = qdac.bias_line_of(qd)
+        if found:
+            _bias_field, z = found
+            fields = {k: z[k] for k in qdac.QDAC_FIELDS if k in z}
+            if qdac.bias_mode(qd) == "bias_tee":
+                fields["bias_tee"] = True
+            # docs/135 ⑤ — carry the OPX digital output this qubit's trigger is
+            # ACTUALLY cabled to. Without it the rebuild re-allocates a fresh
+            # DEDICATED port per biased qubit, and a lab that drives one OPX
+            # digital output into one QDAC ext input — sharing it across every
+            # qubit armed on that input, which is how the real 20Q chip is
+            # wired: 11 qubits on 4 ports, port N ↔ extN — would come back from
+            # a re-generate needing 11 cables where the bench has 4. Silently.
+            qw = (wire.get("qubits") or {}).get(q)
+            qt = (qw or {}).get("qt") if isinstance(qw, dict) else None
+            pin = _parse_port(qt.get("digital_output") if isinstance(qt, dict) else None)
+            if pin and pin[0].startswith("digital"):
+                fields["trigger_pin"] = {"con": pin[1], "slot": pin[2], "port": pin[3]}
+            qdac_qubits[q] = fields
+    # A pin is only usable if the rebuild will actually declare that FEM. One
+    # pointing at a slot this reconstruction does not know would be a dangling
+    # reference in the rebuilt chip; dropping it hands that qubit back to the
+    # allocator, which is the honest degrade — and it is said out loud.
+    known_slots = {(con, s) for con, sl in fems.items() for s, _ in sl}
+    dropped_pins = []
+    for q, fields in qdac_qubits.items():
+        pin = fields.get("trigger_pin")
+        if pin and (pin["con"], pin["slot"]) not in known_slots:
+            del fields["trigger_pin"]
+            dropped_pins.append(q)
+    if dropped_pins:
+        notes.append(
+            f"QDAC trigger port for {', '.join(sorted(dropped_pins, key=_nat_key))} "
+            "sits on a FEM this chip does not declare — those triggers will be "
+            "re-allocated rather than kept on their current port.")
+
+    # docs/135 ⑤ review (CRITICAL): carry the chip's own QPU ROOT class. The
+    # build used to derive it from line types alone, so a chip rooted at a
+    # customer subclass — which is often the whole reason the subclass exists,
+    # e.g. one that widens `qubits` to accept QdacBiasedFixedFrequencyTransmon
+    # and declares the `qdac` field — was rebuilt onto the stock class and the
+    # result could not be loaded. Recorded here, honoured by run_build, and
+    # degraded there (with a warning) if the class is not importable.
+    root_cls = state.get("__class__")
+    quam_class = root_cls if isinstance(root_cls, str) and "." in root_cls else None
+
     qdac_spec = None
     if qdac_qubits:
         inst = state.get("qdac") if isinstance(state.get("qdac"), dict) else {}
@@ -765,14 +842,24 @@ def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
             "lib": inst.get("lib", "@py"),
             "qubits": qdac_qubits,
         }
-        notes.append(
-            f"{len(qdac_qubits)} QDAC-biased qubit(s) carried into the spec "
-            f"({', '.join(sorted(qdac_qubits))}) — the rebuild needs an env "
-            "with quam_config.qdac_components.")
+        # Plain statement of fact, not an alarm (docs/135): whether the env
+        # can actually rebuild these is a question the capability check
+        # answers for real (instr.qdac / wire.qdac_trigger_line) — this note
+        # used to assert the requirement as if it were already unmet.
+        # Natural order (q2 < q11), not lexical (q11 < q2) — a 20-qubit list
+        # read as scrambled otherwise.
+        listed = ", ".join(sorted(qdac_qubits, key=_nat_key))
+        info_notes.append(
+            f"{len(qdac_qubits)} qubit(s) are flux-biased by the QDAC-II "
+            f"rather than an OPX port ({listed}) — carried into the spec as "
+            "they are. Whether this environment can rebuild them "
+            "(quam_config.qdac_components) is what the review step's "
+            "environment check reports; nothing here has probed it.")
 
     spec = {
         "network": {"host": net.get("host"), "cluster_name": net.get("cluster_name"),
                     "port": net.get("port")},
+        "quam_class": quam_class,
         "instruments": {"controllers": controllers, "opx_plus": [], "octaves": []},
         "qubits": qubits,
         "qubit_pairs": pairs,
@@ -794,4 +881,5 @@ def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
         notes.append(
             f"{cr_shared} of {cr_total} CR lines share their control's xy "
             "port — mixed layout; rebuilt from the explicit per-line pins.")
-    return ReconstructedSpec(spec=spec, mixed_gates=mixed, notes=notes)
+    return ReconstructedSpec(spec=spec, mixed_gates=mixed, notes=notes,
+                             info_notes=info_notes)

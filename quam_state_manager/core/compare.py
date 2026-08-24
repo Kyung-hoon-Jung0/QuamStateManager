@@ -52,7 +52,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from quam_state_manager.core import safe_io, units
+from quam_state_manager.core import qdac, safe_io, units
 from quam_state_manager.core.compare_sources import (
     CompareSource,
     SourcePool,
@@ -338,6 +338,19 @@ def _instruments(merged: dict) -> list[str]:
         out.add("octaves")
     if merged.get("mixers"):
         out.add("mixers")
+    # docs/136 — the QDAC-II is an instrument, and it was the one this list did
+    # not know about. Two chips of the same architecture, one flux-biased from
+    # an LF-FEM and one from an external DC source, compared as having
+    # identical hardware. `_chip_type` is deliberately left alone: it feeds a
+    # `== "fixed_frequency"` gate-inference test (routes.py), and a new value
+    # there would silently take the other branch.
+    biased = qdac.biased_qubits(merged)
+    if biased:
+        out.add(f"qdac/{len(biased)} biased")
+        tees = sum(1 for q in (merged.get("qubits") or {}).values()
+                   if qdac.bias_mode(q) == "bias_tee")
+        if tees:
+            out.add(f"qdac/{tees} bias-tee")
     return sorted(out)
 
 

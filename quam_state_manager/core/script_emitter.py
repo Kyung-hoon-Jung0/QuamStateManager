@@ -42,6 +42,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from pprint import pformat
 
+from quam_state_manager.core import qdac_lf_recipe
 from quam_state_manager.core.regen_script import _fmt
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,13 @@ _RUN_BUILD_PATH = Path(__file__).resolve().parent.parent / "generator" / "run_bu
 # emit time (and fails the golden test) — the moment run_build refactors,
 # this list is the single thing to update.
 _RUNTIME_CONSTS = ("_BAND_TO_DELAY_NS", "_CZ_VARIANTS", "_PULSE_HOMES")
+# docs/136 — emitted ONLY for a chip that declares a QDAC. On every other chip
+# this is ~200 lines of dead weight, and a recipe nobody wants to read is not
+# an editable recipe.
+_QDAC_CONSTS = ("QDAC_COMPONENTS_MODULE",)
+_QDAC_FUNCS = ("_import_qdac_components", "_find_bias_tee_class",
+               "_attach_qdac_bias", "_inject_qdac_state",
+               "_inject_qdac_trigger_wiring")
 _RUNTIME_FUNCS = (
     "_norm_index", "_parse_pair", "_quam_pair_id", "_norm_pair_qubits",
     "_match_populate_pairs",
@@ -97,7 +105,7 @@ def _run_build():
     return _rb_module
 
 
-def _runtime_block() -> str:
+def _runtime_block(extra_consts: tuple = (), extra_funcs: tuple = ()) -> str:
     """The verbatim run_build machinery 02 embeds (cached per process)."""
     mod = _run_build()
     parts = [
@@ -108,10 +116,10 @@ def _runtime_block() -> str:
         "# ======================================================================",
         "",
     ]
-    for name in _RUNTIME_CONSTS:
+    for name in tuple(_RUNTIME_CONSTS) + tuple(extra_consts):
         parts.append(f"{name} = {getattr(mod, name)!r}")
     parts.append("")
-    for name in _RUNTIME_FUNCS:
+    for name in tuple(_RUNTIME_FUNCS) + tuple(extra_funcs):
         parts.append(inspect.getsource(getattr(mod, name)).rstrip("\n"))
         parts.append("")
     return "\n".join(parts)
@@ -175,9 +183,18 @@ def _pair_pin(allocation, element, line_type) -> str | None:
     return None
 
 
-def _quam_cls_import(flux_tunable: bool, zz_lines: bool) -> list[str]:
+def _quam_cls_import(flux_tunable: bool, zz_lines: bool,
+                     quam_class: str | None = None) -> list[str]:
     """The QuamCls import block: flux root, ZZ-drive root (guarded — older
     builders predate FixedFrequencyZZDriveQuam), or plain fixed-frequency."""
+    # docs/136 — an explicit root wins over the derived one. A QDAC chip is
+    # rooted at a customer subclass (its `qubits` union accepts the QDAC-biased
+    # transmon and it declares the `qdac` field); loading it as stock
+    # FluxTunableQuam fails on the first QDAC qubit, so a recipe that derived
+    # the root from line types would not open the chip it just wrote.
+    if quam_class and "." in quam_class:
+        mod, _, cls = quam_class.rpartition(".")
+        return [f"from {mod} import {cls} as QuamCls"]
     if flux_tunable:
         return ["from quam_builder.architecture.superconducting.qpu import ("
                 "FluxTunableQuam as QuamCls)"]
@@ -262,7 +279,7 @@ def _emit_wiring(spec: dict, allocation: dict, chip: str, stamp: str) -> str:
     w(")")
     w("from quam_builder.builder.qop_connectivity import build_quam_wiring")
     w("from quam_builder.builder.superconducting import build_quam")
-    for ln_ in _quam_cls_import(flux_tunable, zz_lines):
+    for ln_ in _quam_cls_import(flux_tunable, zz_lines, spec.get("quam_class")):
         w(ln_)
     w("")
     w("# ============================ EDIT: network ============================")
@@ -415,7 +432,30 @@ def _emit_wiring(spec: dict, allocation: dict, chip: str, stamp: str) -> str:
 
 # --- 02_build_machine.py -----------------------------------------------------
 
-def _emit_build(spec: dict, chip: str, stamp: str) -> str:
+def _qdac_pins(spec: dict, allocation: dict) -> dict:
+    """``{qid: [con, slot, port]}`` — each QDAC qubit's trigger output.
+
+    A pin in the spec wins (it records how the bench is actually cabled); the
+    build's own allocation fills in the rest. Resolved HERE, at emit time,
+    because by the time someone runs the recipe the ports are a fact about a
+    bench rather than a choice — re-allocating them from an emitted script
+    could hand the same chip a different cable map on every run.
+    """
+    out: dict = {}
+    for qid, fields in ((spec.get("qdac") or {}).get("qubits") or {}).items():
+        pin = (fields or {}).get("trigger_pin")
+        if isinstance(pin, dict) and all(
+                isinstance(pin.get(k), int) for k in ("con", "slot", "port")):
+            out[qid] = [pin["con"], pin["slot"], pin["port"]]
+            continue
+        for ch in ((allocation.get(qid) or {}).get("qt") or []):
+            if all(isinstance(ch.get(k), int) for k in ("con", "slot", "port")):
+                out[qid] = [ch["con"], ch["slot"], ch["port"]]
+                break
+    return out
+
+
+def _emit_build(spec: dict, chip: str, stamp: str, allocation: dict | None = None) -> str:
     lines = spec.get("lines", []) or []
     flux_tunable = any(ln.get("line") in ("flux", "coupler") for ln in lines)
     zz_lines = any(ln.get("line") == "zz_drive" for ln in lines)
@@ -451,7 +491,7 @@ def _emit_build(spec: dict, chip: str, stamp: str) -> str:
     w('STATE_DIR = sys.argv[1] if len(sys.argv) > 1 else "./quam_state"')
     w('os.environ["QUAM_STATE_PATH"] = os.path.abspath(STATE_DIR)')
     w("")
-    for ln_ in _quam_cls_import(flux_tunable, zz_lines):
+    for ln_ in _quam_cls_import(flux_tunable, zz_lines, spec.get("quam_class")):
         w(ln_)
     w("")
     w("# ============================ EDIT: populate ==========================")
@@ -471,11 +511,48 @@ def _emit_build(spec: dict, chip: str, stamp: str) -> str:
     w("CR_PORT_MODE = %r" % cr_port_mode)
     w("PAIR_LINES = %s" % pformat(pair_line_data, indent=4, width=88))
     w("")
-    w(_runtime_block())
+
+    # -- QDAC-II (docs/136) — emitted only when the chip declares one --------
+    qdac_spec = spec.get("qdac") or {}
+    qdac_qubits = qdac_spec.get("qubits") or {}
+    if qdac_qubits:
+        pins = _qdac_pins(spec, allocation or {})
+        w("# ============================ EDIT: QDAC-II ==========================")
+        w("# An external DC source biasing %d of this chip's qubits. Needs the"
+          % len(qdac_qubits))
+        w("# customer-local quam_config.qdac_components; without it the qubits")
+        w("# below build with NO bias component and the script says so.")
+        w("#")
+        w("# QDAC_PINS is the OPX digital output whose marker arms each qubit's")
+        w("# channel. One output drives one QDAC ext trigger input and arms every")
+        w("# channel on it, so several qubits sharing a pin is normal cabling,")
+        w("# not a mistake. These are the ports the wizard allocated/you pinned —")
+        w("# edit them to match your bench.")
+        w("QDAC = %s" % pformat(
+            {k: v for k, v in qdac_spec.items() if k != "qubits"},
+            indent=4, width=88, sort_dicts=True))
+        w("QDAC_QUBITS = %s" % pformat(qdac_qubits, indent=4, width=88, sort_dicts=True))
+        w("QDAC_PINS = %s" % pformat(pins, indent=4, width=88, sort_dicts=True))
+        w("")
+
+    if qdac_qubits:
+        w(_runtime_block(_QDAC_CONSTS, _QDAC_FUNCS))
+    else:
+        w(_runtime_block())
     w("# =============================== run ==================================")
     w("machine = QuamCls.load()")
     w('_spec = {"populate": POPULATE, "qubit_pairs": QUBIT_PAIRS,')
     w('         "cr_port_mode": CR_PORT_MODE, "lines": PAIR_LINES}')
+    if qdac_qubits:
+        # BEFORE apply_populate: its z.operations guards, and _finalize_pair_
+        # gates', both branch on the qubit's final class.
+        w("_qdac_warnings = []")
+        w("_qdac_wired = _attach_qdac_bias(machine, QDAC_QUBITS,")
+        w("                               {q: tuple(p) for q, p in QDAC_PINS.items()},")
+        w("                               _qdac_warnings)")
+        w("for _w in _qdac_warnings:")
+        w('    print(f"WARNING: {_w}", file=sys.stderr)')
+        w("")
     w('apply_populate(machine, POPULATE, handle_pairs=(PAIR_GATE == ""))')
     w("for _w in _apply_dual_upconverters(machine, _spec):")
     w('    print(f"WARNING: {_w}", file=sys.stderr)')
@@ -486,6 +563,29 @@ def _emit_build(spec: dict, chip: str, stamp: str) -> str:
     w("    _pin_cores(machine)")
     w("machine.save()")
     w("")
+    if qdac_qubits:
+        # Both of these are FILE patches, and both must be post-save: the QPU
+        # root class declares no `qdac` field (so `machine.qdac = ...` would be
+        # rejected), and quam_builder's wiring vocabulary has no "qt" line type
+        # (so the trigger's wiring entry cannot go through machine.wiring).
+        # Same reasoning, and the same code, as the wizard's own build.
+        w("_qdac_inst = dict(QDAC)")
+        w('_qdac_inst.pop("qubits", None)')
+        w('_qdac_inst.pop("share_cables", None)')
+        w("try:")
+        w("    from quam_config.qdac_components import QdacInstrument as _QI")
+        w('    _qdac_inst = {k: _qdac_inst.get(k) for k in')
+        w('                  ("id", "communication_type", "ip_address", "port",')
+        w('                   "usb_device", "lib")}')
+        w('    _qdac_inst.setdefault("id", "qdac")')
+        w('    _qdac_inst["__class__"] = f"{_QI.__module__}.{_QI.__name__}"')
+        w("except Exception as _exc:")
+        w('    print(f"WARNING: no QdacInstrument class ({_exc}) — top-level '
+          '\'qdac\' entry not written.", file=sys.stderr)')
+        w("    _qdac_inst = None")
+        w("_inject_qdac_state(Path(STATE_DIR) / \"state.json\", _qdac_inst)")
+        w("_inject_qdac_trigger_wiring(Path(STATE_DIR) / \"wiring.json\", _qdac_wired)")
+        w("")
     w("# Readout-LO constraint lock (the wizard's post-save fix-up): each MW")
     w("# input port's downconverter_frequency becomes a JSON pointer to its")
     w("# paired output port's upconverter_frequency (one physical LO).")
@@ -501,7 +601,7 @@ def _emit_build(spec: dict, chip: str, stamp: str) -> str:
 
 # --- 03_generate_config.py ---------------------------------------------------
 
-def _emit_config_check(chip: str, stamp: str) -> str:
+def _emit_config_check(chip: str, stamp: str, quam_class: str | None = None) -> str:
     out: list[str] = []
     w = out.append
     w("#!/usr/bin/env python")
@@ -524,6 +624,22 @@ def _emit_config_check(chip: str, stamp: str) -> str:
     w("    FluxTunableQuam, FixedFrequencyQuam,")
     w(")")
     w("")
+    if quam_class and "." in quam_class:
+        # docs/136 — this chip is rooted at a class the stock list does not
+        # contain (a QDAC chip's root widens `qubits` and declares `qdac`).
+        # Trying the stock roots FIRST would not merely be slower: each failed
+        # load raises deep inside quam's type validation, and the loop's
+        # `except Exception: continue` would swallow the real reason this
+        # chip's own root failed, if it did.
+        _mod, _, _cls = quam_class.rpartition(".")
+        w("# This chip's own root class (it holds components the stock roots")
+        w("# cannot type). Tried first; the stock roots remain as a fallback.")
+        w("try:")
+        w("    from %s import %s as _ChipRoot" % (_mod, _cls))
+        w("except Exception as _exc:")
+        w("    print(f'NOTE: %s is not importable here ({_exc}) — "
+          "falling back to the stock roots.', file=sys.stderr)" % quam_class)
+        w("    _ChipRoot = None")
     w("# Load with whichever architecture the state carries (the ZZ-drive root")
     w("# is guarded — older quam_builder predates it).")
     w("try:")
@@ -532,7 +648,8 @@ def _emit_config_check(chip: str, stamp: str) -> str:
     w("except ImportError:")
     w("    FixedFrequencyZZDriveQuam = None")
     w("machine = None")
-    w("for _cls in (FluxTunableQuam, FixedFrequencyZZDriveQuam, FixedFrequencyQuam):")
+    w("for _cls in (%sFluxTunableQuam, FixedFrequencyZZDriveQuam, FixedFrequencyQuam):"
+      % ("_ChipRoot, " if (quam_class and "." in quam_class) else ""))
     w("    if _cls is None:")
     w("        continue")
     w("    try:")
@@ -579,6 +696,76 @@ def _emit_readme(spec: dict, versions: dict, chip: str, stamp: str) -> str:
         + (", …" if len(qubits) > 12 else ""),
         f"- {len(pairs)} qubit pairs · 2Q gate family: `{gate}`",
         f"- {len(ctrls)} OPX1000 chassis, {fems} FEMs",
+    ]
+    # docs/136 — the QDAC is a component, and the one part of this bundle that
+    # needs a package outside the QM stack. Saying so in the README is the
+    # difference between "it didn't work" and "install quam_config".
+    qdac_qubits = (spec.get("qdac") or {}).get("qubits") or {}
+    if qdac_qubits:
+        tees = sorted((q for q, f in qdac_qubits.items() if (f or {}).get("bias_tee")),
+                      key=lambda q: (len(str(q)), str(q)))
+        out += [
+            f"- QDAC-II DC bias on {len(qdac_qubits)} qubit(s)"
+            + (f", {len(tees)} through a bias tee ({', '.join(tees)})" if tees else ""),
+            "  - needs `quam_config.qdac_components` importable (customer-local,"
+            " not part of the QM stack); without it those qubits build with **no"
+            " bias component** and `02` says which",
+            "  - `QDAC_PINS` in `02_build_machine.py` is the OPX digital output"
+            " that arms each channel — one output drives one QDAC ext input and"
+            " arms every channel on it, so a shared pin is normal cabling",
+        ]
+        if tees:
+            out.append(
+                "  - a bias-tee qubit needs a transmon class that keeps `z` a"
+                " FluxLine and carries a `QdacBiasLine` beside it; `02` looks"
+                " for one by shape and degrades with a named warning if this"
+                " env has none")
+    if spec.get("quam_class"):
+        out.append(f"- root class: `{spec['quam_class']}`")
+
+    # docs/137 — the bias-tee bundle carries two extra files in the LAB's own
+    # idiom, and one change SM cannot make for them.
+    if qdac_lf_recipe.wanted(spec):
+        out += [
+            "",
+            "## Bias-tee qubits — two extra files, and one thing you must add",
+            "",
+            f"This chip has {len(qdac_lf_recipe.qdac.spec_bias_tee_qubits(spec))}"
+            " qubit(s) carrying **both** a QDAC-II DC bias and an LF-FEM flux"
+            " line. Your `build_quam_qdac.py` decides between those two per"
+            " qubit id — one `if`, two branches — so it has nowhere to put a"
+            " qubit that is both. Worse, its bias assignment is unconditional"
+            " on `z`, so on a qubit that did get a flux line the `FluxLine` is"
+            " overwritten by the `QdacBiasLine` **silently**: no exception, a"
+            " chip that builds, and a flux line that stopped existing.",
+            "",
+            f"- `{qdac_lf_recipe.BUILDER_FILENAME}` — the combined builder."
+            " Copy it into your `quam_config/` package beside"
+            " `build_quam_qdac.py`. It is a transcription of your own"
+            " `_add_transmons_with_qdac` with four named divergences; read them"
+            " side by side.",
+            f"- `{qdac_lf_recipe.GENERATOR_FILENAME}` — the top-level script."
+            " Run it from `quam_config/`; it takes the output folder as its"
+            " one argument.",
+            "",
+            "**What you must add yourself** (SM will not write into your tree):",
+            "",
+            "```python",
+            qdac_lf_recipe.SNIPPET.rstrip(),
+            "```",
+            "",
+            "Both emitted files refuse to run without it. That is deliberate:"
+            " a chip whose DC bias silently did not attach looks exactly like a"
+            " working one, and by the time `Quam.load()` fails in the next"
+            " process the good `state.json` has already been overwritten.",
+            "",
+            "Every flux and coupler line in the generator is **explicitly"
+            " pinned**. Do not replace them with unpinned `add_*_lines` calls:"
+            " those cable by allocation order, so adding one line moves every"
+            " later coupler to a different port — with no error, and nothing"
+            " visibly wrong until a CZ misbehaves.",
+        ]
+    out += [
         "",
         "## Run order",
         "",
@@ -630,12 +817,21 @@ def emit_bundle(spec: dict, allocation: dict | None, versions: dict | None,
     """
     chip = chip_name or "chip"
     stamp = stamp or datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    return {
+    bundle = {
         "01_make_wiring.py": _emit_wiring(spec, allocation or {}, chip, stamp),
-        "02_build_machine.py": _emit_build(spec, chip, stamp),
-        "03_generate_config.py": _emit_config_check(chip, stamp),
+        "02_build_machine.py": _emit_build(spec, chip, stamp, allocation or {}),
+        "03_generate_config.py": _emit_config_check(chip, stamp,
+                                                   spec.get("quam_class")),
         "README.md": _emit_readme(spec, versions or {}, chip, stamp),
     }
+    # docs/137 — a bias-tee chip additionally gets the two files that build it
+    # through the LAB'S OWN builder. They are a different idiom from 01-03 on
+    # purpose: 01-03 reproduce the chip from the stock quam_builder stack,
+    # while these go through quam_config, which is the path the lab's
+    # calibration nodes actually load. A chip with no bias-tee qubit gets a
+    # bundle byte-identical to before.
+    bundle.update(qdac_lf_recipe.emit_files(spec, allocation or {}, chip, stamp))
+    return bundle
 
 
 def write_bundle(scripts_dir, bundle: dict) -> list:

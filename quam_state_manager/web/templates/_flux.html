@@ -19,11 +19,27 @@
         <tr>
             <th class="sortable" data-col="0" data-type="str">ID</th>
             <th class="sortable" data-col="1" data-type="str">Active</th>
+            {# docs/136: only a chip that MIXES bias sources needs these — an
+               all-LF-FEM chip renders byte-identically to before. Before this
+               a QDAC-biased qubit was a row here with four empty cells,
+               because `has_z` is structural and a QdacBiasLine is a `z` too. #}
+            {% if qdac_rows %}
+            <th class="sortable" data-col="2" data-type="str">Source</th>
+            <th class="sortable" data-col="3" data-type="num">Joint Offset <span class="unit">(V)</span></th>
+            <th class="sortable" data-col="4" data-type="num">Independent Offset <span class="unit">(V)</span></th>
+            <th class="sortable" data-col="5" data-type="str">Flux Point</th>
+            <th class="sortable" data-col="6" data-type="num">Delay <span class="unit">(ns)</span></th>
+            <th class="sortable" data-col="7" data-type="num">QDAC ch</th>
+            <th class="sortable" data-col="8" data-type="num">DC offset <span class="unit">(V)</span></th>
+            <th class="sortable" data-col="9" data-type="str">Trigger</th>
+            <th class="sortable" data-col="10" data-type="str">Grid</th>
+            {% else %}
             <th class="sortable" data-col="2" data-type="num">Joint Offset <span class="unit">(V)</span></th>
             <th class="sortable" data-col="3" data-type="num">Independent Offset <span class="unit">(V)</span></th>
             <th class="sortable" data-col="4" data-type="str">Flux Point</th>
             <th class="sortable" data-col="5" data-type="num">Delay <span class="unit">(ns)</span></th>
             <th class="sortable" data-col="6" data-type="str">Grid</th>
+            {% endif %}
         </tr>
     </thead>
     <tbody>
@@ -32,15 +48,31 @@
         <tr class="clickable-row{% if not q.is_active %} row-inactive{% endif %}" data-qubit-id="{{ q.id }}" hx-get="/qubit/{{ q.id }}" hx-target="#inspector-pane" hx-swap="innerHTML" hx-indicator="#inspector-pane">
             <td><strong>{{ q.id }}</strong></td>
             <td>{% if q.is_active %}<span class="cell-good" aria-label="Active" title="Listed in active_qubit_names">&#10003;</span>{% else %}<span class="muted" aria-label="Inactive" title="Not in active_qubit_names">off</span>{% endif %}</td>
+            {% if qdac_rows %}
+            <td>
+                {%- if q.bias_mode == 'bias_tee' -%}
+                <span class="flux-src flux-src-tee" title="Bias tee — the QDAC-II holds the DC operating point while the LF-FEM port plays pulses on top of it">QDAC + LF-FEM</span>
+                {%- elif q.bias_mode == 'qdac' -%}
+                <span class="flux-src flux-src-qdac" title="Flux-biased from a QDAC-II channel — no OPX analog port, so this qubit cannot play a flux pulse">QDAC-II</span>
+                {%- else -%}
+                <span class="flux-src flux-src-opx" title="Flux-biased from an OPX LF-FEM analog port">LF-FEM</span>
+                {%- endif -%}
+            </td>
+            {% endif %}
             <td>{{ q.z_joint_offset | qty('z_joint_offset') }}</td>
             <td>{{ q.z_independent_offset | qty('z_independent_offset') }}</td>
             <td>{{ q.z_flux_point or '-' }}</td>
             <td>{{ q.z_delay_ns if q.z_delay_ns is not none else '-' }}</td>
+            {% if qdac_rows %}
+            <td>{{ q.qdac_channel if q.qdac_channel is not none else '-' }}</td>
+            <td>{{ q.qdac_dc_offset | qty('qdac_dc_offset') }}</td>
+            <td>{% if q.qdac_trigger_port %}{{ q.qdac_trigger_port }}{% if q.qdac_trigger_port_label %} <small class="muted" title="the OPX digital output cabled to that QDAC ext input">{{ q.qdac_trigger_port_label }}</small>{% endif %}{% else %}-{% endif %}</td>
+            {% endif %}
             <td>{{ q.grid_location or '-' }}</td>
         </tr>
     {% endfor %}
     {% else %}
-        <tr><td colspan="7" class="muted" style="text-align:center;padding:2rem">No flux channels found in this state file.</td></tr>
+        <tr><td colspan="{{ 11 if qdac_rows else 7 }}" class="muted" style="text-align:center;padding:2rem">No flux channels found in this state file.</td></tr>
     {% endif %}
     </tbody>
 </table>

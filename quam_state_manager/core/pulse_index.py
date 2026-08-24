@@ -24,6 +24,7 @@ import copy
 import logging
 from typing import Any
 
+from quam_state_manager.core import qdac
 from quam_state_manager.core.loader import _walk
 from quam_state_manager.core.pointer_path import pointer_to_abs, resolve_field_target
 from quam_state_manager.core.pointer_resolver import is_pointer
@@ -297,6 +298,29 @@ def list_pulses(merged: dict, *, with_used_by: bool = True) -> list[dict]:
                     merged, path, body, owner_kind="qubit", owner=qubit_name,
                     channel=channel, op_name=op_name, gate=None,
                     reverse_index=reverse_index, op_referrers=op_referrers))
+
+        # docs/136 — the QDAC trigger marker. It is a real pulse on a real OPX
+        # digital output, but it lives one level deeper than any other qubit
+        # pulse (`<bias>.opx_trigger_out.operations.trigger`), so the loop
+        # above cannot see it. On the customer's 20-qubit chip that is eleven
+        # pulses missing from a page that prints a definite total.
+        #
+        # The bias field is asked for rather than assumed: it is `z` on a
+        # QDAC-only qubit and a sibling of `z` on a bias-tee one.
+        found = qdac.bias_line_of(qubit)
+        if found:
+            bias_field, bias = found
+            trig = bias.get("opx_trigger_out")
+            trig_ops = trig.get("operations") if isinstance(trig, dict) else None
+            if isinstance(trig_ops, dict):
+                for op_name, body in trig_ops.items():
+                    path = (f"qubits.{qubit_name}.{bias_field}"
+                            f".opx_trigger_out.operations.{op_name}")
+                    rows.append(_row_for_pulse(
+                        merged, path, body, owner_kind="qubit", owner=qubit_name,
+                        channel=f"{bias_field}.opx_trigger_out", op_name=op_name,
+                        gate=None, reverse_index=reverse_index,
+                        op_referrers=op_referrers))
 
     for pair_name, pair in (merged.get("qubit_pairs") or {}).items():
         if not isinstance(pair, dict):

@@ -65,12 +65,23 @@ def top_level_keys(config: dict) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def _element_keys_for(config: dict, target_prefix: str) -> list[str]:
-    """Element keys starting with ``"<target_prefix>."``."""
+    """Element keys starting with ``"<target_prefix>."``.
+
+    Plus the one element a qubit owns that is NOT dot-joined: the QDAC-II
+    trigger marker, whose element id is built from the qubit id directly
+    (``Channel(id=f"{qid}_qdac_trigger")``, run_build). Without it a QDAC
+    qubit's Config Viewer slice omitted the only element that actually drives
+    its bias (docs/136). Matched by its exact full name, not by an ``_``
+    prefix rule — a looser rule would start pulling unrelated elements into
+    whichever qubit's name happened to be their prefix.
+    """
     elements = config.get("elements") or {}
     if not isinstance(elements, dict):
         return []
     prefix = f"{target_prefix}."
-    return sorted(k for k in elements.keys() if k.startswith(prefix))
+    trigger = f"{target_prefix}_qdac_trigger"
+    return sorted(k for k in elements.keys()
+                  if k.startswith(prefix) or k == trigger)
 
 
 def _pulse_names_referenced_by(elements: dict, element_keys: Iterable[str]) -> list[str]:

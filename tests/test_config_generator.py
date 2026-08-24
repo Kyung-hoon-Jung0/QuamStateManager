@@ -560,6 +560,71 @@ class TestEnvDiscovery:
         assert discover_envs() == []
 
 
+class TestEnvDiscoveryCache:
+    """docs/135: ``conda env list --json`` measured 4.0 s on a real machine and
+    sat in front of the wizard's whole auto-allocate chain, re-answering an
+    unchanged question. It is memoized on the inventory's mtimes."""
+
+    @pytest.fixture(autouse=True)
+    def _no_local_environments_txt(self, monkeypatch):
+        monkeypatch.setattr(
+            config_generator, "_envs_from_environments_txt", lambda: [])
+
+    def _fake_conda(self, monkeypatch, calls, envs=("C:/envs/LabA",)):
+        monkeypatch.setattr(config_generator, "find_conda_executable", lambda: "conda")
+
+        def run(args, timeout=60):
+            calls.append(list(args))
+            return 0, json.dumps({"envs": list(envs)}), ""
+
+        monkeypatch.setattr(config_generator, "_run_command", run)
+
+    def test_second_call_does_not_respawn_conda(self, monkeypatch):
+        calls = []
+        self._fake_conda(monkeypatch, calls)
+        first = discover_envs()
+        second = discover_envs()
+        assert len(calls) == 1, f"conda ran {len(calls)}x for one unchanged inventory"
+        assert [e["name"] for e in first] == [e["name"] for e in second]
+
+    def test_refresh_forces_a_rescan(self, monkeypatch):
+        calls = []
+        self._fake_conda(monkeypatch, calls)
+        discover_envs()
+        discover_envs(refresh=True)
+        assert len(calls) == 2
+
+    def test_a_changed_inventory_invalidates_it(self, monkeypatch, tmp_path):
+        """The key is the registry + every env's PARENT dir; touching the dir
+        an env lives in (what creating/removing one does) must re-scan."""
+        envs_dir = tmp_path / "envs"
+        (envs_dir / "LabA").mkdir(parents=True)
+        calls = []
+        self._fake_conda(monkeypatch, calls, envs=(str(envs_dir / "LabA"),))
+        discover_envs()
+        discover_envs()
+        assert len(calls) == 1
+        (envs_dir / "LabB").mkdir()          # a new env appears
+        discover_envs()
+        assert len(calls) == 2, "a changed envs directory must re-scan"
+
+    def test_a_failed_scan_is_never_cached(self, monkeypatch):
+        """A transient conda failure must not stick as "no envs on this
+        machine" for the rest of the process."""
+        calls = []
+        monkeypatch.setattr(config_generator, "find_conda_executable", lambda: "conda")
+
+        def run(args, timeout=60):
+            calls.append(list(args))
+            return (1, "", "boom") if len(calls) == 1 else (
+                0, json.dumps({"envs": ["C:/envs/LabA"]}), "")
+
+        monkeypatch.setattr(config_generator, "_run_command", run)
+        assert discover_envs() == []
+        assert [e["name"] for e in discover_envs()] == ["LabA"]
+        assert len(calls) == 2
+
+
 class TestEnvironmentsTxtDiscovery:
     """~/.conda/environments.txt is conda's own dialect-free env registry —
     one absolute path per line, maintained on every OS. It needs no ``conda``

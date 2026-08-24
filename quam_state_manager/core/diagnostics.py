@@ -175,6 +175,9 @@ _CHECK_CATALOG: list[tuple[str, list[tuple[str, str, str]]]] = [
         ("warning", "Readout LO spacing", "Two MW-FEM input downconverter LOs on one FEM differ by at least 10 MHz when both read simultaneously."),
         ("recommendation", "Band-edge headroom", "Flags an LO sitting near a band edge when an overlapping band would seat it more centrally (optional, the LO still works)."),
         ("info", "Downconverter link", "A readout input's downconverter_frequency is a pointer to its paired output's upconverter (they share one LO) — offers a one-click link."),
+        ("error", "QDAC-II instrument reachable", "A chip with QDAC-biased qubits declares a top-level `qdac` instrument, and it carries the address its communication_type needs (IP for Ethernet, device index for USB)."),
+        ("error", "QDAC-II channels valid and unique", "Each bias line's channel is an integer in 1–24 (the instrument's own range) and no two qubits share one channel — one channel is one physical output driving one bias line."),
+        ("error", "QDAC-II trigger cabling consistent", "trigger_port is one of ext1–ext4; every qubit landing on one OPX digital output declares the SAME ext (the port and the ext are two names for one cable), and no ext is fed from two different outputs."),
     ]),
     ("values", [
         ("error", "Finite numbers", "No leaf holds NaN or Infinity."),
@@ -276,6 +279,7 @@ def _lint_state_uncached(store) -> list[Finding]:
     findings.extend(_pair_drive_carrier_findings(store))
     findings.extend(_f01_range_findings(root))
     findings.extend(_lffem_output_bw_findings(root))
+    findings.extend(_qdac_findings(root))
     findings.extend(_resonator_if_floor_findings(root))
     findings.extend(_downconverter_spacing_findings(root))
     findings.extend(_waveform_findings_cached(store))
@@ -1747,6 +1751,156 @@ def _lffem_output_port_of(root: dict, comp: Any) -> dict | None:
     if not str(port.get("__class__") or "").endswith("LFFEMAnalogOutputPort"):
         return None
     return port
+
+
+#: The QDAC-II has channels 1..24 inclusive. Not a guess — the customer's own
+#: driver asserts exactly this range and says so in the message it raises
+#: (``qdac_2_driver/channel.py``: "The QDAC-II has channels 1 to 24
+#: inclusive, but given was channel number {n}").
+_QDAC_CHANNELS = (1, 24)
+
+#: The four physical external-trigger BNC inputs, from the customer's own
+#: ``QdacBiasLine.trigger_port`` annotation (``Literal["ext1".."ext4"]``).
+_QDAC_EXTS = ("ext1", "ext2", "ext3", "ext4")
+
+# Deliberately NOT checked: `dc_offset` against `output_range`. It reads like a
+# voltage bound and is not one — the driver documents `output_range` as the
+# CURRENT range (low = ±200 nA, high = ±10 mA), so it constrains no voltage at
+# all. A plausible-looking rule with no source behind it is exactly what this
+# module must not ship (docs/136).
+
+
+def _qdac_findings(root: dict) -> list[Finding]:
+    """QDAC-II bias checks (docs/136).
+
+    Nothing here existed before: ``_iter_channels`` defines a channel as "a
+    dict carrying ``opx_output``", which a ``QdacBiasLine`` never is, so a
+    QDAC-biased qubit contributed **zero** channels to every check built on it
+    — eleven of twenty qubits on the customer's chip were unlinted.
+
+    The load-bearing one is the ext↔port correspondence. One OPX digital
+    output feeds one QDAC ext input and arms every channel armed on it, so the
+    port and the ext are two names for ONE cable. When they disagree nothing
+    else in the app notices; at run time it simply arms the wrong channels.
+    """
+    from quam_state_manager.core import qdac as _qdac
+
+    findings: list[Finding] = []
+    qubits = root.get("qubits") if isinstance(root.get("qubits"), dict) else {}
+    biased = _qdac.biased_qubits(root)
+    if not biased:
+        return findings
+
+    # ── the instrument itself ────────────────────────────────────────────
+    inst = _qdac.instrument(root)
+    if inst is None:
+        findings.append(Finding(
+            "error", "connectivity_qdac_instrument", "qdac",
+            f"{len(biased)} qubit(s) are QDAC-biased but the chip declares no "
+            "QDAC-II instrument",
+            detail="Nothing can open a connection to the bias source: the "
+                   "top-level `qdac` entry is missing, so `apply_qdac_offsets` "
+                   "has no address to reach and every DC bias below is "
+                   "unreachable at run time.",
+            jump_path="qdac"))
+    else:
+        comm = inst.get("communication_type") or "Ethernet"
+        if comm == "Ethernet" and not inst.get("ip_address"):
+            findings.append(Finding(
+                "warning", "connectivity_qdac_instrument", "qdac",
+                "the QDAC-II is set to Ethernet but has no IP address",
+                detail="`communication_type` is \"Ethernet\", so `ip_address` "
+                       "is what `connect()` builds its VISA address from.",
+                jump_path="qdac.ip_address"))
+        elif comm == "USB" and inst.get("usb_device") is None:
+            findings.append(Finding(
+                "warning", "connectivity_qdac_instrument", "qdac",
+                "the QDAC-II is set to USB but has no device index",
+                detail="`communication_type` is \"USB\", so `usb_device` is "
+                       "what `connect()` builds its VISA address from.",
+                jump_path="qdac.usb_device"))
+
+    # ── per-qubit fields ─────────────────────────────────────────────────
+    lo, hi = _QDAC_CHANNELS
+    by_channel: dict[Any, list[str]] = {}
+    for qid in sorted(biased, key=lambda q: (len(q), q)):
+        found = _qdac.bias_line_of(qubits.get(qid) or {})
+        if found is None:                     # pragma: no cover - biased() found it
+            continue
+        field, bias = found
+        base = f"qubits.{qid}.{field}"
+
+        ch = bias.get("channel")
+        if isinstance(ch, bool) or not isinstance(ch, int):
+            findings.append(Finding(
+                "error", "connectivity_qdac_channel", qid,
+                f"QDAC channel is {ch!r}, not a channel number",
+                detail="A QDAC-II output channel is an integer between "
+                       f"{lo} and {hi}.",
+                jump_path=f"{base}.channel"))
+        else:
+            if not (lo <= ch <= hi):
+                findings.append(Finding(
+                    "error", "connectivity_qdac_channel", qid,
+                    f"QDAC channel {ch} is outside the instrument's range",
+                    detail=f"The QDAC-II has channels {lo} to {hi} inclusive "
+                           "(the driver refuses anything else).",
+                    jump_path=f"{base}.channel"))
+            by_channel.setdefault(ch, []).append(qid)
+
+        ext = bias.get("trigger_port")
+        if ext is not None and ext not in _QDAC_EXTS:
+            findings.append(Finding(
+                "error", "connectivity_qdac_trigger", qid,
+                f"trigger input {ext!r} is not one of the QDAC-II's four",
+                detail="The QDAC-II has four external trigger inputs: "
+                       + ", ".join(_QDAC_EXTS) + ".",
+                jump_path=f"{base}.trigger_port"))
+
+    for ch, owners in sorted(by_channel.items(),
+                             key=lambda kv: (kv[0] is None, kv[0])):
+        if len(owners) > 1:
+            findings.append(Finding(
+                "error", "connectivity_qdac_channel", ", ".join(owners),
+                f"{len(owners)} qubits share QDAC channel {ch}",
+                detail="One QDAC-II channel is one physical output driving one "
+                       "bias line. Two qubits on it would be biased together, "
+                       "at whichever voltage was written last.",
+                jump_path=f"qubits.{owners[0]}"))
+
+    # ── the cabling: a port and an ext are two names for one cable ───────
+    groups = _qdac.ext_groups(root)
+    for (con, slot, port), entry in sorted(groups.items()):
+        where = f"{con}/fem{slot}/p{port}"
+        if entry["conflict"]:
+            findings.append(Finding(
+                "error", "connectivity_qdac_trigger", where,
+                "one digital output, two different QDAC trigger inputs ("
+                + ", ".join(sorted(entry["conflict"])) + ")",
+                detail="This OPX digital output is one cable into one QDAC-II "
+                       "ext BNC, so every qubit on it must declare the same "
+                       "`trigger_port`. As written, a trigger here would arm "
+                       "the wrong channels at run time — and nothing else in "
+                       "the app would notice. Qubits: "
+                       + ", ".join(entry["qubits"]) + ".",
+                jump_path=f"qubits.{entry['qubits'][0]}"))
+
+    ext_ports: dict[str, list[str]] = {}
+    for (con, slot, port), entry in groups.items():
+        if entry["ext"]:
+            ext_ports.setdefault(entry["ext"], []).append(
+                f"{con}/fem{slot}/p{port}")
+    for ext, ports in sorted(ext_ports.items()):
+        if len(set(ports)) > 1:
+            findings.append(Finding(
+                "error", "connectivity_qdac_trigger", ext,
+                f"{ext} is fed from {len(set(ports))} different digital outputs",
+                detail="A QDAC-II ext input takes ONE cable. Two OPX outputs "
+                       "claiming the same input describes hardware that cannot "
+                       "be patched: " + ", ".join(sorted(set(ports))) + ".",
+                jump_path="wiring.qubits"))
+
+    return findings
 
 
 def _lffem_output_bw_findings(root: dict) -> list[Finding]:

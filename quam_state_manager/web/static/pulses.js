@@ -868,9 +868,37 @@ window.PulsesPage = (function () {
         createValidateName();
     }
 
+    // docs/136 — a QDAC-biased qubit's `z` IS the QDAC bias line: a DC level
+    // with no `operations` dict, physically unable to play a pulse. The form
+    // offered it anyway, and the created pulse landed on a component that
+    // cannot use it. Disabled with the reason on it, never silently dropped —
+    // and only for the QDAC-ONLY shape: a bias-tee qubit's `z` is a real flux
+    // line and playing pulses on it is the whole point of the tee.
+    function createSyncQdacChannel() {
+        var root = createRoot();
+        if (!root) return;
+        var qdacOnly = root._qdacOnly || {};
+        var qubitSel = root.querySelector('select[name="qubit"]');
+        var chanSel = root.querySelector('select[name="channel"]');
+        if (!qubitSel || !chanSel) return;
+        var blocked = !!qdacOnly[qubitSel.value];
+        Array.prototype.forEach.call(chanSel.options, function (opt) {
+            if (opt.value !== 'z' && opt.textContent.trim() !== 'z') return;
+            opt.disabled = blocked;
+            opt.title = blocked
+                ? qubitSel.value + '.z is a QDAC-II DC bias line — it holds a '
+                  + 'voltage and has no operations, so it cannot play a pulse.'
+                : '';
+        });
+        if (blocked && (chanSel.value === 'z' || chanSel.value === '')) {
+            chanSel.value = 'xy';
+        }
+    }
+
     function createValidateName() {
         var root = createRoot();
         if (!root || !root._existing) return;
+        createSyncQdacChannel();
         var nameInput = document.getElementById('pulse-create-name');
         if (!nameInput) return;
         var kindRadio = root.querySelector('input[name="target_kind"]:checked');
@@ -903,6 +931,8 @@ window.PulsesPage = (function () {
         root._pairChannels = parseEmbeddedJson('pulse-pair-channels-data') || {};
         root._pairsInfo = parseEmbeddedJson('pulse-pairs-info-data') || {};
         root._gateDefs = parseEmbeddedJson('pulse-gate-defs-data') || {};
+        root._qdacOnly = parseEmbeddedJson('pulse-qdac-only-data') || {};
+        createSyncQdacChannel();
 
         var typeSel = document.getElementById('pulse-create-type');
         if (typeSel) {
@@ -1048,6 +1078,7 @@ window.PulsesPage = (function () {
         createSlotSelected: createSlotSelected,
         createPairChannels: createPairChannels,
         createValidateName: createValidateName,
+        createSyncQdacChannel: createSyncQdacChannel,
         envStripProbe: envStripProbe
     };
 })();

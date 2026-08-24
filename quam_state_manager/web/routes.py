@@ -70,6 +70,7 @@ from quam_state_manager.core import (
     working_copy,
 )
 from quam_state_manager.core import compare as compare_engine
+from quam_state_manager.core import qdac as qdac_mod
 from quam_state_manager.core import compare_sources
 from quam_state_manager.core.dataset import DatasetStore
 from quam_state_manager.core.differ import Differ
@@ -338,6 +339,14 @@ _BULK_CHIP_TERMS: tuple[tuple[str, str], ...] = (
     ("readout", "Readout"),
     ("resonator", "Resonator"),
     ("flux", "Flux"),
+    # docs/136: QDAC-II bias is a component, so it gets a word. It only earns a
+    # chip on a chip that HAS one — `_hits` is unchanged and still refuses a
+    # term that reaches no column — and what makes it reachable is that
+    # `qubit_columns` now names the band "QDAC bias+" and seeds "qdac" into
+    # those columns' search text. Before that the string appeared in no column
+    # anywhere: `__class__` is skipped and the fields are called `channel`,
+    # `dc_offset`, `trigger_port`.
+    ("qdac", "QDAC"),
     ("coupler", "Coupler"),
     ("amp", "Amp"),
     ("power", "Power"),
@@ -931,7 +940,7 @@ def _drift_count(seen: dict) -> int | None:
     if not live or not work:
         return None
     try:
-        return len(Differ().diff(work, live))
+        return len(Differ().diff(work, live, ignore_keys=set()))
     except Exception:       # noqa: BLE001 — a count is never worth an error page
         logger.debug("drift count failed", exc_info=True)
         return None
@@ -1065,7 +1074,8 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict, *,
             if pre_pull is not None:
                 try:
                     ctx["_auto_pulled"] = {"count": len(
-                        Differ().diff(pre_pull, (store.state, store.wiring)))}
+                        Differ().diff(pre_pull, (store.state, store.wiring),
+                                      ignore_keys=set()))}
                 except Exception:  # noqa: BLE001
                     ctx["_auto_pulled"] = {"count": 0}
         elif result != working_copy.RECONCILE_LIVE_UNREADABLE:
@@ -2080,15 +2090,20 @@ def _change_count() -> int:
     return len(store.change_log) if store else 0
 
 
-def _chip_channel_flags(store: QuamStore | None) -> tuple[bool, bool, bool]:
-    """Chip-wide (has_resonator, has_flux, has_coupler) — raw structural scan
-    (not engine.get_qubit()/get_pair(), which builds a full flattened dict per
-    row just to check one key). Drives the sidebar's Resonators/Flux/Couplers
-    nav items: shown only when at least one qubit/pair actually has that
-    channel (a fixed-frequency chip has no Flux; a chip without couplers —
-    CR-only or single-qubit — has no Couplers)."""
+def _chip_channel_flags(store: QuamStore | None) -> tuple[bool, bool, bool, bool]:
+    """Chip-wide (has_resonator, has_flux, has_coupler, has_qdac) — raw
+    structural scan (not engine.get_qubit()/get_pair(), which builds a full
+    flattened dict per row just to check one key). Drives the sidebar's
+    Resonators/Flux/Couplers/QDAC-II nav items: shown only when at least one
+    qubit/pair actually has that channel (a fixed-frequency chip has no Flux;
+    a chip without couplers — CR-only or single-qubit — has no Couplers).
+
+    docs/136: `has_flux` deliberately still counts a QDAC-biased qubit. Its `z`
+    IS a bias line and it belongs on the Flux page — which now says which
+    source each row uses instead of leaving four cells empty. `has_qdac` is the
+    separate question the QDAC page asks."""
     if store is None:
-        return False, False, False
+        return False, False, False, False
     qubits = store.merged.get("qubits", {})
     pairs = store.merged.get("qubit_pairs", {})
     has_resonator = any(isinstance(q, dict) and isinstance(q.get("resonator"), dict)
@@ -2097,7 +2112,9 @@ def _chip_channel_flags(store: QuamStore | None) -> tuple[bool, bool, bool]:
                   for q in qubits.values())
     has_coupler = any(isinstance(p, dict) and isinstance(p.get("coupler"), dict)
                       for p in pairs.values())
-    return has_resonator, has_flux, has_coupler
+    has_qdac = any(qdac_mod.bias_line_of(q) is not None
+                   for q in qubits.values() if isinstance(q, dict))
+    return has_resonator, has_flux, has_coupler, has_qdac
 
 
 # ── extras.data_folder chip↔data pairing (docs/20 v2 Step 5) ───────────────
@@ -3100,7 +3117,7 @@ def _ctx(**extra: Any) -> dict[str, Any]:
     store = _store()
     path = _active_path()
     ident = _active_chip_identity()
-    has_resonator, has_flux, has_coupler = _chip_channel_flags(store)
+    has_resonator, has_flux, has_coupler, has_qdac = _chip_channel_flags(store)
     return {
         "active_path": path,
         # The chip-level name (shared across per-experiment loads), not the
@@ -3184,6 +3201,7 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         "has_resonator": has_resonator,
         "has_flux": has_flux,
         "has_coupler": has_coupler,
+        "has_qdac": has_qdac,
         "workspace": _ws(),
         **extra,
     }
@@ -3194,6 +3212,68 @@ _QUBIT_KNOWN_OPS = {
     "resonator": {"readout"},
     "z": set(),
 }
+
+
+def _qdac_qubit_section(name: str, store: QuamStore) -> dict | None:
+    """The "QDAC-II bias" inspector section for one qubit, or None (docs/136).
+
+    Built from the bias line the chip actually has, at whatever field name it
+    sits under, so a bias-tee qubit (``z`` for pulses, a sibling for the DC
+    point) renders as correctly as a QDAC-only one. Adds one read-only row the
+    state does not hold as a leaf: the physical OPX digital output the trigger
+    marker is cabled to, which otherwise takes a two-hop pointer walk to learn
+    and appears on no other qubit surface.
+    """
+    from quam_state_manager.core import qdac as _qdac
+
+    qubit_obj = (store.merged.get("qubits") or {}).get(name) or {}
+    found = _qdac.bias_line_of(qubit_obj)
+    if found is None:
+        return None
+    field_name, bias = found
+
+    props: list[dict] = []
+    for key in _qdac.QDAC_FIELDS:
+        if key not in bias:
+            continue          # a lab's class need not carry every knob
+        dot_path = f"qubits.{name}.{field_name}.{key}"
+        raw = bias.get(key)
+        try:
+            raw = store.get_value(dot_path)
+        except (KeyError, TypeError):
+            pass
+        ptr = is_pointer(raw)
+        self_ref = is_self_ref(raw) if ptr else False
+        value = raw
+        if ptr and not self_ref:
+            try:
+                _res = store.resolve_pointer(raw, tuple(dot_path.split(".")))
+                if _res != raw:
+                    value = _res
+            except Exception:            # noqa: BLE001 — display must not break
+                pass
+        props.append({
+            "key": key, "value": value, "raw": raw, "dot_path": dot_path,
+            "is_pointer": ptr and not self_ref, "is_self_ref": self_ref,
+            "dangling": False,
+            "editable": not isinstance(value, (list, dict)),
+            "ptr_name": None,
+        })
+
+    trig = _qdac.trigger_ref(qubit_obj, store.merged, name)
+    if trig:
+        con = trig["con"][3:] if trig["con"].startswith("con") else trig["con"]
+        props.append({
+            # Read-only: the value is not a leaf anywhere — it is where a
+            # two-hop pointer chain lands. Re-cabling happens in the wiring
+            # surfaces, not by typing a port number here.
+            "key": "trigger cabled to", "value": f"con{con}/fem{trig['slot']}"
+                                                 f"/p{trig['port']}",
+            "raw": trig["ref"], "dot_path": None,
+            "is_pointer": False, "is_self_ref": False, "dangling": False,
+            "editable": False, "ptr_name": None,
+        })
+    return {"name": "QDAC-II bias", "props": props} if props else None
 
 
 def _build_qubit_sections(name: str, qubit_data: dict[str, Any], store: QuamStore) -> list[dict]:
@@ -3267,6 +3347,27 @@ def _build_qubit_sections(name: str, qubit_data: dict[str, Any], store: QuamStor
     for s in sections:
         for p in s["props"]:
             p.pop("_present", None)
+
+    # docs/136: the QDAC-II bias section, DERIVED rather than mapped.
+    #
+    # The static map above is FluxLine-shaped — joint_offset, flux_point,
+    # opx_output.delay — and a QDAC-biased qubit has none of those paths, so
+    # every one of its Flux props read None-and-absent and the whole section
+    # was dropped by the rule right above. On the customer's chip that left
+    # eleven of twenty qubits with NO bias information anywhere on their own
+    # page, while the Live-Edit grid showed all eight fields. A static map
+    # cannot fix this: the bias line is not always at `z` (a bias-tee qubit
+    # keeps `z` for pulses), so the paths are not knowable in advance.
+    qdac_section = _qdac_qubit_section(name, store)
+    if qdac_section is not None:
+        # Beside the flux story, not after the gates: on a bias-tee qubit the
+        # two sections are one story — DC point here, pulses there.
+        anchor = next((i for i, s in enumerate(sections)
+                       if s["name"] == "Flux"), None)
+        if anchor is None:
+            anchor = next((i for i, s in enumerate(sections)
+                           if s["name"] == "Gate Fidelity"), len(sections)) - 1
+        sections.insert(anchor + 1, qdac_section)
 
     # Surface any operations not covered by the static map — newly-added pulses
     # render automatically, one section per (channel, op_name).
@@ -4503,7 +4604,7 @@ def qubits():
 
 
 def _channel_scoped_qubits_page(*, has_key: str, page_name: str,
-                                template_stub: str):
+                                template_stub: str, **extra):
     engine = _engine()
     if not engine:
         return render_template("_empty_state.html", page=page_name)
@@ -4524,6 +4625,13 @@ def _channel_scoped_qubits_page(*, has_key: str, page_name: str,
 
     wiring_json = _wiring_json()
 
+    # docs/136: does this page need to say WHERE the bias comes from? Only a
+    # chip that mixes sources does — on an all-LF-FEM chip the Source column
+    # would answer a question nobody asked, so the table renders exactly as it
+    # always has. Judged over the whole scope, not the current page, so
+    # paging never changes the columns under the reader.
+    qdac_rows = any(q.get("has_qdac") for q in scoped_qubits)
+
     template = f"_{template_stub}.html" if _is_htmx() else f"{template_stub}.html"
     return render_template(
         template,
@@ -4537,6 +4645,8 @@ def _channel_scoped_qubits_page(*, has_key: str, page_name: str,
             total=total,
             per_page=per_page,
             wiring_json=wiring_json,
+            qdac_rows=qdac_rows,
+            **extra,
         ),
     )
 
@@ -4551,6 +4661,32 @@ def resonators():
 def flux():
     return _channel_scoped_qubits_page(
         has_key="has_z", page_name="flux", template_stub="flux")
+
+
+@bp.route("/qdac")
+def qdac_page():
+    """The QDAC-II component page (docs/136).
+
+    Same channel-scoped shape as /flux and /resonators, narrowed to the qubits
+    the QDAC actually biases, plus the one thing no per-qubit page can show:
+    the instrument itself and the trigger CABLING — which OPX digital output
+    feeds which ext input, and who shares it. That grouping is the fact the
+    rest of the app had nowhere to put, and it is the fact that explains why a
+    shared port is correct rather than a collision.
+    """
+    store = _store()
+    root = store.merged if store else {}
+    groups = []
+    for (con, slot, port), entry in sorted(qdac_mod.ext_groups(root).items()):
+        groups.append({
+            "port": f"{con}/fem{slot}/p{port}",
+            "ext": entry["ext"],
+            "qubits": entry["qubits"],
+            "conflict": sorted(entry["conflict"]),
+        })
+    return _channel_scoped_qubits_page(
+        has_key="has_qdac", page_name="qdac", template_stub="qdac",
+        instrument=qdac_mod.instrument(root), cabling=groups)
 
 
 @bp.route("/bulk")
@@ -8212,7 +8348,7 @@ def wiring_view():
         return render_template("_empty_state.html", page="the chip topology")
 
     store = _store()
-    topology = engine.get_topology()
+    topology = _topology_with_derived_rb(engine)
     wiring_json = _wiring_json()
 
     history_count = len(_history().list_snapshots(_active_path())) if store else 0
@@ -10155,9 +10291,16 @@ def pulse_create_form():
     # existing op names per target, for client-side duplicate validation
     existing: dict[str, list[str]] = {}
     has_xy_detuned = False
+    # docs/136 — qubits whose `z` IS the QDAC bias line. Their z cannot play a
+    # pulse (no operations dict, a DC level by construction), so the create
+    # form disables that channel for them. Bias-tee qubits are deliberately
+    # NOT here: their `z` is a real flux line.
+    qdac_only: dict[str, bool] = {}
     for qubit_name, qubit in (store.merged.get("qubits") or {}).items():
         if not isinstance(qubit, dict):
             continue
+        if qdac_mod.bias_mode(qubit) == "qdac":
+            qdac_only[qubit_name] = True
         for channel in PULSE_CHANNELS:
             chan = qubit.get(channel)
             ops = chan.get("operations") if isinstance(chan, dict) else None
@@ -10214,6 +10357,7 @@ def pulse_create_form():
         pairs_map=pairs_map,
         pair_channels_map=pair_channels_map,
         has_xy_detuned=has_xy_detuned,
+        qdac_only_json=json.dumps(qdac_only),
         existing_json=json.dumps(existing),
         catalog_json=catalog_json,
         sel_qubit=sel_qubit if sel_qubit in qubit_names else "",
@@ -10598,6 +10742,19 @@ def _pulse_create_locked(store, modifier, spec, fields, target_kind,
         chan = qubit_obj.get(channel) if isinstance(qubit_obj, dict) else None
         ops = chan.get("operations") if isinstance(chan, dict) else None
         if not isinstance(ops, dict):
+            # docs/136 — "not yet" is the wrong story for a QDAC bias line.
+            # It is a DC source: it holds a voltage and steps on a trigger,
+            # and no amount of configuration will make it play a waveform.
+            # Say which it is, because the two have different answers.
+            if qdac_mod.is_bias_line(chan):
+                return render_template(
+                    "_status.html",
+                    message=(f"{qubit}.{channel} is a QDAC-II DC bias line, "
+                             "not an OPX output — it holds a voltage and steps "
+                             "on a trigger, so it cannot play a pulse. Flux "
+                             "pulses on this qubit need an LF-FEM port (a bias "
+                             "tee keeps both)."),
+                    level="error"), 400
             return render_template(
                 "_status.html",
                 message=(f"{qubit!r} has no {channel}.operations dict — "
@@ -11996,7 +12153,16 @@ def state_review():
             "_status.html",
             message=f"Could not read the live state: {exc}", level="error")
 
-    entries = Differ().diff(store, (live_state, live_wiring))
+    # docs/136 — `ignore_keys=set()`: a class migration IS a difference, and
+    # every LIVE-facing comparison now says so (this review, its JSON twin,
+    # the drift count + summary, the auto-pull count, the overwrite preflight).
+    # The default skips `__class__`, so when a lab's out-of-band edit moved
+    # eleven qubits from FluxTunableTransmon to QdacBiasedFixedFrequencyTransmon
+    # the banner reported the live chip had changed and this screen answered
+    # "No differences" — the worst of both answers, and the user's reasonable
+    # reading was "nothing important happened". docs/128 set the precedent for
+    # the two version-compare routes; the live doors were still blind.
+    entries = Differ().diff(store, (live_state, live_wiring), ignore_keys=set())
 
     # Paths the user has actually edited in this session (incl. on-the-fly
     # accepts, which land in the change log). A row on one of these holds the
@@ -12049,7 +12215,8 @@ def state_live_diff():
     # never escape as a Werkzeug HTML 500 (which the client's r.json() would mis-parse
     # as a "network error"). Any failure here is reported as structured JSON.
     try:
-        entries = Differ().diff(store, (live_state, live_wiring))
+        entries = Differ().diff(store, (live_state, live_wiring),
+                                ignore_keys=set())
         payload = {
             "ok": True,
             "total": len(entries),
@@ -12217,7 +12384,7 @@ def _compute_drift(ctx, *, full: bool = False) -> dict | None:
                 return {"count": c["count"], "baseline_utc": c["baseline_utc"]}
         return None
     entries = Differ().diff((base["state"], base["wiring"]),
-                            (live_state, live_wiring))
+                            (live_state, live_wiring), ignore_keys=set())
     summary = Differ.summary(entries)
     with _drift_lock:
         ctx["_drift"] = {"state_mtime": sm, "wiring_mtime": wm,
@@ -12951,7 +13118,8 @@ def state_overwrite_live_preflight():
     live_changes = None
     try:
         live_state, live_wiring = working_copy.read_live(ctx["working_copy"])
-        live_changes = len(Differ().diff(store, (live_state, live_wiring)))
+        live_changes = len(Differ().diff(store, (live_state, live_wiring),
+                                         ignore_keys=set()))
     except (FileNotFoundError, OSError, ValueError):
         logger.info("overwrite-live preflight could not read the live files",
                     exc_info=True)
@@ -16634,7 +16802,59 @@ def api_topology():
     engine = _engine()
     if not engine:
         return jsonify({"error": "No state loaded"}), 400
-    return jsonify(engine.get_topology())
+    return jsonify(_topology_with_derived_rb(engine))
+
+
+def _rb_run_folder(load_id):
+    """``load_id -> the run's folder``, or None if no loaded folder has it.
+
+    docs/138 — the per-GATE fidelity a Standard-RB run computed lives in that
+    run's own `data.json`, and the chip records which run it was. This is the
+    same bare-run-id lookup `/dataset/by-run` already does; deliberately WITHOUT
+    its rescan-and-retry, because this runs while rendering a page and a missing
+    run is a blank field, not an error worth a filesystem sweep for.
+    """
+    try:
+        rid = int(load_id)
+    except (TypeError, ValueError):
+        return None
+    for entry in _active_dataset_stores(fast=True):
+        try:
+            run = entry["store"].get_run(rid)
+        except Exception:  # noqa: BLE001 — one bad folder never breaks a render
+            continue
+        if run is not None:
+            # get_run returns a DICT (folder_path stringified), not the RunInfo
+            # object — `getattr(run, "folder_path")` silently yielded None and
+            # every derivation came back blank while the offline test, which
+            # resolved folders itself, passed.
+            folder = run.get("folder_path") if isinstance(run, dict) else                 getattr(run, "folder_path", None)
+            if folder:
+                return folder
+    return None
+
+
+def _topology_with_derived_rb(engine):
+    """`engine.get_topology()`, plus the per-gate fidelity derived from each
+    Standard-RB run. The cached topology itself is never mutated."""
+    import copy
+
+    from quam_state_manager.core import rb_gate_fidelity
+
+    topo = engine.get_topology()
+    try:
+        if not any(r.get("level") == "clifford"
+                   for e in (topo.get("edges") or [])
+                   for r in (e.get("gate_fidelities") or [])):
+            return topo                      # nothing to enrich; skip the copy
+        topo = copy.deepcopy(topo)           # get_topology's result is CACHED
+        n = rb_gate_fidelity.derive_for_edges(topo.get("edges"), _rb_run_folder)
+        if n:
+            logger.debug("topology: derived per-gate RB fidelity for %d row(s)", n)
+    except Exception:  # noqa: BLE001 — an enrichment never breaks the page
+        logger.exception("deriving per-gate RB fidelity failed")
+        return engine.get_topology()
+    return topo
 
 
 @bp.route("/api/topology-mtime")
@@ -18630,9 +18850,21 @@ def dataset_ndview_data(uid):
         from quam_state_manager.core import click_targets
         v = cube_meta["default_view"]
         entity_kind = v.get("entity")
+        # docs/136 — which qubits are QDAC-biased comes from the OPEN chip, not
+        # the run's own snapshot: the popup writes into the open chip, and a
+        # path derived from a different chip's shape is a path that may not be
+        # there. No chip open ⇒ no overrides, which is the pre-QDAC behaviour.
+        qdac_paths = None
+        try:
+            _st = _store()
+            if _st is not None:
+                qdac_paths = click_targets.qdac_path_overrides(_st.merged) or None
+        except Exception:  # noqa: BLE001 — a candidate list never 500s a cube
+            qdac_paths = None
         extra["click"] = {
             "candidates": click_targets.candidates_for(
-                run.experiment_name, v.get("x"), v.get("y"), entity_kind),
+                run.experiment_name, v.get("x"), v.get("y"), entity_kind,
+                qdac_paths),
             "experiment": run.experiment_name,
         }
         if getattr(run, "has_quam_state", False):
@@ -19431,9 +19663,15 @@ def regenerate_page():
 
 @bp.route("/generate/envs")
 def generate_envs():
-    """List conda environments (fast — QM-stack probing is done separately)."""
+    """List conda environments (fast — QM-stack probing is done separately).
+
+    ``?refresh=1`` forces the ~4 s ``conda env list`` rescan past the
+    mtime-keyed memo (docs/135) — for an env created by something the
+    inventory stat cannot see.
+    """
+    refresh = request.args.get("refresh") in ("1", "true", "yes")
     return jsonify({
-        "envs": config_generator.discover_envs(),
+        "envs": config_generator.discover_envs(refresh=refresh),
         "selected": config_generator.get_selected_env(current_app.instance_path),
     })
 
@@ -19762,9 +20000,22 @@ def generate_build():
     # can't be probed (a transient probe failure shouldn't block a valid build —
     # the build itself will surface any real error).
     probe = config_generator.probe_capabilities(python_path, current_app.instance_path)
-    report = capabilities.assess(
-        spec, {"capabilities": probe.get("capabilities"),
-               "versions": probe.get("versions")})
+    manifest = {"capabilities": probe.get("capabilities"),
+                "versions": probe.get("versions"),
+                "qpu_roots": probe.get("qpu_roots")}
+    # docs/136 — the ROOT class gate. A QDAC chip built onto a stock root
+    # cannot be loaded at all, and the build reports success while writing it.
+    # When the user has not named a root, fill in one this env can actually
+    # hold the chip with; when nothing can, refuse rather than write a file
+    # that will not open. Unknown (no manifest) is never a blocker.
+    root = capabilities.qpu_root_check(spec, manifest)
+    if root["blocker"]:
+        return jsonify({"ok": False, "capability_blockers": [root["blocker"]],
+                        "error": ("This environment can't root a chip with "
+                                  "QDAC-biased qubits.")}), 400
+    if root["chosen"] and not (spec.get("quam_class") or "").strip():
+        spec["quam_class"] = root["chosen"]
+    report = capabilities.assess(spec, manifest)
     if report["manifest_ok"]:
         if report["blockers"]:
             return jsonify({
@@ -19863,6 +20114,9 @@ def regenerate_reconstruct():
         "spec": rec.spec,
         "mixed_gates": rec.mixed_gates,
         "notes": notes,
+        # Statements of fact about the reconstruction (docs/135) — rendered
+        # without the warning glyph the `notes` list wears.
+        "info_notes": list(rec.info_notes),
         "flavor": flavor,
         "source_folder": str(folder),
         "source_name": ident["name"] if ident else Path(folder).name,
@@ -19927,9 +20181,22 @@ def regenerate_build():
     # Capability guard (independent of the stray-JSON force). Same contract as
     # /generate/build: blockers refuse; degrades need `ack_degrades`.
     probe = config_generator.probe_capabilities(python_path, current_app.instance_path)
-    report = capabilities.assess(
-        spec, {"capabilities": probe.get("capabilities"),
-               "versions": probe.get("versions")})
+    manifest = {"capabilities": probe.get("capabilities"),
+                "versions": probe.get("versions"),
+                "qpu_roots": probe.get("qpu_roots")}
+    # docs/136 — the ROOT class gate. A QDAC chip built onto a stock root
+    # cannot be loaded at all, and the build reports success while writing it.
+    # When the user has not named a root, fill in one this env can actually
+    # hold the chip with; when nothing can, refuse rather than write a file
+    # that will not open. Unknown (no manifest) is never a blocker.
+    root = capabilities.qpu_root_check(spec, manifest)
+    if root["blocker"]:
+        return jsonify({"ok": False, "capability_blockers": [root["blocker"]],
+                        "error": ("This environment can't root a chip with "
+                                  "QDAC-biased qubits.")}), 400
+    if root["chosen"] and not (spec.get("quam_class") or "").strip():
+        spec["quam_class"] = root["chosen"]
+    report = capabilities.assess(spec, manifest)
     if report["manifest_ok"]:
         if report["blockers"]:
             return jsonify({

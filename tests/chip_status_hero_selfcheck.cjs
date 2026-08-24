@@ -127,7 +127,7 @@ function mount(win, topo, findings) {
   const diagBtn = hero.querySelector('[data-hero-metric="diag"]');
   ok(!!diagBtn, 'physical: Diagnostics metric offered');
   diagBtn.dispatchEvent(new win.Event('click', { bubbles: true }));
-  ok(win.localStorage.getItem('quam_topo_hero_metric') === 'diag', 'metric switch persists to localStorage');
+  ok(win.localStorage.getItem('quam_topo_hero_metric_v2') === 'diag', 'metric switch persists to localStorage');
   const q2d = hero.querySelector('[data-hero-qubit="qA2"]');
   ok(q2d && q2d.getAttribute('class').indexOf('hs-fail') !== -1, 'diagnostics view: qA2 (1 error) wears hs-fail');
   const q1d = hero.querySelector('[data-hero-qubit="qA1"]');
@@ -278,8 +278,11 @@ function part5() {
      'compact: toggling back restores r=37');
 
   const eb = hero.querySelector('[data-hero-metric="rb2q_standard"]');
-  ok(!!eb, 'edge metric: 2Q RB patch offered');
-  ok(!!hero.querySelector('[data-hero-metric="cz_fidelity"]'), 'edge metric: 2Q Bell patch offered');
+  ok(!!eb, 'edge metric: 2Q Clifford (SRB) patch offered');
+  ok(!!hero.querySelector('[data-hero-metric="cz_fidelity"]'), 'edge metric: 2Q gate fid. patch offered');
+  // docs/138 — the Clifford patch must SAY it is per-Clifford. It used to read
+  // "2Q RB", indistinguishable from the interleaved gate number beside it.
+  ok(/Clifford/.test(eb.textContent), 'the Clifford patch names itself (' + eb.textContent + ')');
   eb.click();
   const evals = hero.querySelectorAll('.topo-hero-eval');
   ok(evals.length === 1, '2Q RB: exactly the measured edge prints a value (got '
@@ -306,7 +309,7 @@ function part5() {
   ok(hero.querySelectorAll('.topo-hero-node-neutral').length === 3,
      'edge mode: stones go neutral (edges carry the numbers)');
   ok(hero.querySelectorAll('.topo-hero-val').length === 0, 'edge mode: no stale node values');
-  ok(win.localStorage.getItem('quam_topo_hero_metric') === 'rb2q_standard', 'edge metric persists');
+  ok(win.localStorage.getItem('quam_topo_hero_metric_v2') === 'rb2q_standard', 'edge metric persists');
   const legend = hero.querySelector('.topo-hero-legend');
   ok(legend && !!legend.querySelector('.topo-hero-lg-grad'), 'edge mode: gradient legend renders');
 
@@ -322,9 +325,87 @@ function part5() {
     ok(pop && /q1-2/.test(pop.textContent), 'pair popup names the pair');
     ok(pop && /95\.10%/.test(pop.textContent), 'pair popup lists the per-gate RB fidelity');
     ok(pop && /detuning/.test(pop.textContent), 'pair popup lists the parameters section');
+    heroPrefersTheGateNumber();
     finish();
   }, 400);
 }
+
+// ── docs/138: the hero must open on the GATE number, not the Clifford one ──
+// Reported from the real chip: the map's top said 97.1% while the per-pulse
+// sections underneath said 99.09% and 99.34% for the same pair. Same
+// measurement campaign, two different quantities, and the smaller one on top.
+function heroPrefersTheGateNumber() {
+  const win = makeWorld();
+  // A pair measured the way the lab measures: three CZ pulses, each with a
+  // Standard (per-Clifford) and an Interleaved (per-gate) RB number. Values
+  // are the real ones from #3424's q19-20.
+  const topo = {
+    nodes: [
+      { id: 'q19', grid_location: '0,0', f_01: 4.8e9 },
+      { id: 'q20', grid_location: '1,0', f_01: 5.1e9 },
+    ],
+    edges: [
+      { pair_id: 'q19-20', source: 'q19', target: 'q20', has_cz: true,
+        gate_kind: 'cz', directed: false, active: null,
+        // what query.py now derives: the edge carries the GATE number and
+        // names the pulse it came from
+        cz_fidelity: 0.9933625133477547, fidelity_source: 'interleaved_rb',
+        best_gate: 'cz_flattop',
+        gate_fidelities: [
+          { gate: 'cz_flattop', metric: 'StandardRB', value: 0.9706080538741072, level: 'clifford' },
+          { gate: 'cz_flattop', metric: 'InterleavedRB', value: 0.9933625133477547, level: 'gate' },
+          { gate: 'cz_gaussian_bipolar', metric: 'StandardRB', value: 0.9704607418362303, level: 'clifford' },
+          { gate: 'cz_gaussian_bipolar', metric: 'InterleavedRB', value: 0.9909351938233361, level: 'gate' },
+          { gate: 'cz_unipolar', metric: 'StandardRB', value: 0.9671621994719876, level: 'clifford' },
+          { gate: 'cz_unipolar', metric: 'InterleavedRB', value: 0.9856971280318174, level: 'gate' },
+          { gate: 'cz_flattop', metric: 'StandardRB_alpha', value: 0.960811, level: 'decay' },
+        ] },
+    ],
+  };
+  mount(win, topo, []);
+  const hero = win.document.getElementById('topo-hero');
+
+  const irb = hero.querySelector('[data-hero-metric="rb2q_interleaved"]');
+  const srb = hero.querySelector('[data-hero-metric="rb2q_standard"]');
+  ok(!!irb && !!srb, 'RB: both the gate and the Clifford patch are offered');
+  ok(/IRB|gate/.test(irb.textContent), 'RB: the gate patch names itself');
+  ok(/Clifford/.test(srb.textContent), 'RB: the Clifford patch names itself');
+
+  // ORDER is the default: the gate metric must come before the Clifford one,
+  // so a chip with no Bell_State opens on 99.3, not 97.1.
+  const patches = Array.prototype.map.call(
+    hero.querySelectorAll('[data-hero-metric]'),
+    function (b) { return b.getAttribute('data-hero-metric'); });
+  ok(patches.indexOf('rb2q_interleaved') < patches.indexOf('rb2q_standard'),
+     'RB: the gate number is offered BEFORE the Clifford number (' + patches.join(',') + ')');
+
+  irb.click();
+  let ev = hero.querySelectorAll('.topo-hero-eval');
+  ok(ev[0] && /99\.3/.test(ev[0].textContent),
+     'RB: best shows the best INTERLEAVED value (' + (ev[0] && ev[0].textContent) + ')');
+
+  // Clicking a pulse shows THAT pulse's interleaved number — the value the
+  // per-pulse section further down the page prints.
+  const gb = hero.querySelector('[data-hero-gate="cz_gaussian_bipolar"]');
+  ok(!!gb, 'RB: the pulse bar offers each CZ variant');
+  gb.click();
+  ev = hero.querySelectorAll('.topo-hero-eval');
+  ok(ev[0] && /99\.1/.test(ev[0].textContent),
+     'RB: picking gaussian_bipolar shows ITS interleaved value, matching the '
+     + 'section below (' + (ev[0] && ev[0].textContent) + ')');
+
+  // And the Clifford number is still reachable, and is a DIFFERENT number.
+  hero.querySelector('[data-hero-metric="rb2q_standard"]').click();
+  ev = hero.querySelectorAll('.topo-hero-eval');
+  ok(ev[0] && /97\.0/.test(ev[0].textContent),
+     'RB: the Clifford patch still shows the Clifford value ('
+     + (ev[0] && ev[0].textContent) + ')');
+
+  // A stale pre-docs/138 choice must not pin the old default.
+  ok(win.localStorage.getItem('quam_topo_hero_metric') === null,
+     'RB: the old un-versioned metric key is not written any more');
+}
+
 
 function finish() {
   if (fails) { console.error(fails + ' check(s) FAILED'); process.exit(1); }

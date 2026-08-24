@@ -12,7 +12,7 @@ import logging
 import operator
 from typing import Any
 
-from quam_state_manager.core import chip_health, cr_semantics
+from quam_state_manager.core import chip_health, cr_semantics, qdac
 from quam_state_manager.core.loader import QuamStore
 from quam_state_manager.core.pointer_resolver import is_pointer, is_self_ref
 
@@ -154,11 +154,47 @@ class QueryEngine:
         result["z_flux_point"] = z.get("flux_point")
         # LF-FEM output delay (ns) — auto-set by the generator to align with
         # the qubit's MW-FEM band; editable from the detail page.
-        z_port = z.get("opx_output") if isinstance(z, dict) else None
+        #
+        # docs/136: `z.opx_output` is a POINTER on every real chip
+        # ("#/wiring/qubits/q2/z/opx_output" -> "#/ports/analog_outputs/..."),
+        # so the old `isinstance(z_port, dict)` guard was false always and the
+        # branch behind it never ran. /flux, /couplers and the qubit inspector
+        # all printed "not set" while the Live-Edit grid — which resolves the
+        # same dot-path through `resolve_field_target` — printed 78. One app,
+        # two answers, for a value that was there the whole time. Resolve the
+        # pointer chain first (`_resolve` follows it to the port dict), then
+        # read the leaf; an inline dict still passes through untouched.
+        z_port = _resolve(self.store, z.get("opx_output"), base + ("z", "opx_output"))
         result["z_delay_ns"] = (
             _resolve(self.store, z_port.get("delay"), base + ("z", "opx_output", "delay"))
             if isinstance(z_port, dict) else None
         )
+
+        # docs/136: how this qubit's flux bias is actually sourced —
+        # "opx" (LF-FEM port) / "qdac" (QDAC-II channel) / "bias_tee" (both:
+        # QDAC holds the DC point, the LF-FEM plays pulses on top) / None.
+        # `has_z` above is structural and says only "there is a z dict", which
+        # is true of a QDAC-biased qubit too — that is why /flux listed eleven
+        # rows it could not fill.
+        bias_mode = qdac.bias_mode(q)
+        result["bias_mode"] = bias_mode
+        bias_found = qdac.bias_line_of(q)
+        result["has_qdac"] = bias_found is not None
+        if bias_found is not None:
+            bias_field, bias = bias_found
+            bias_base = base + (bias_field,)
+            for field in qdac.QDAC_FIELDS:
+                result["qdac_" + field] = _resolve(
+                    self.store, bias.get(field), bias_base + (field,))
+            trig = qdac.trigger_ref(q, self.store.merged, name)
+            result["qdac_trigger_port_label"] = (
+                f"con{trig['con'][3:] if trig['con'].startswith('con') else trig['con']}"
+                f"/fem{trig['slot']}/p{trig['port']}" if trig else None
+            )
+        else:
+            for field in qdac.QDAC_FIELDS:
+                result["qdac_" + field] = None
+            result["qdac_trigger_port_label"] = None
 
         gf = q.get("gate_fidelity") or {}
         result["gate_fidelity_avg"] = gf.get("averaged") if isinstance(gf, dict) else None
@@ -337,7 +373,11 @@ class QueryEngine:
         result["coupler_decouple_offset"] = coupler.get("decouple_offset")
         result["coupler_interaction_offset"] = coupler.get("interaction_offset")
         # LF-FEM coupler delay (ns) — auto-set from the moving qubit's xy band.
-        coupler_port = coupler.get("opx_output") if isinstance(coupler, dict) else None
+        # Same dead guard as `z_delay_ns` above, same fix (docs/136): the value
+        # is a pointer chain, so resolve it before reading `delay`. On the real
+        # 20Q chip every coupler port carries 141 and /couplers printed "-".
+        coupler_port = _resolve(
+            self.store, coupler.get("opx_output"), base + ("coupler", "opx_output"))
         result["coupler_delay_ns"] = (
             _resolve(
                 self.store, coupler_port.get("delay"),
@@ -518,7 +558,28 @@ class QueryEngine:
                     row[col_name] = resolved if not isinstance(resolved, str) or not resolved.startswith("#") else raw
                 else:
                     row[col_name] = raw
+            # docs/136 — a QDAC-biased qubit has NO z line in wiring.json at
+            # all, so every column above is blank for it and the table said
+            # nothing about where its bias comes from. The columns are added
+            # only when at least one qubit has a QDAC (below), so a chip
+            # without one renders exactly as before.
+            bias = qdac.bias_line_of(self.store.merged.get("qubits", {}).get(name))
+            if bias:
+                _field, node = bias
+                row["qdac_channel"] = node.get("channel")
+                ref = qdac.trigger_ref(
+                    self.store.merged.get("qubits", {}).get(name),
+                    self.store.merged, name)
+                # `con` already carries its own prefix — it is the raw path
+                # segment ("con1"), not an index.
+                row["qdac_trigger"] = (
+                    f"{ref['con']}/{ref['slot']}/{ref['port']}"
+                    + (f" ({ref['ext']})" if ref.get("ext") else "")) if ref else None
             rows.append(row)
+        if any("qdac_channel" in r for r in rows):
+            for r in rows:
+                r.setdefault("qdac_channel", None)
+                r.setdefault("qdac_trigger", None)
         return rows
 
     # ------------------------------------------------------------------
@@ -590,6 +651,13 @@ class QueryEngine:
                 "xy_port": _extract_port_label(self.store, q, name, "xy"),
                 "rr_port": _extract_port_label(self.store, q, name, "resonator"),
                 "z_port": _extract_port_label(self.store, q, name, "z"),
+                # docs/136 — how this qubit is flux-biased. `z_port` is None on
+                # a QDAC-only qubit (it has no OPX analog port), so the map's
+                # flux stub, which keys on z_port, drew nothing for over half
+                # this chip and the /flux highlight lit almost none of it.
+                "bias_mode": qdac.bias_mode(q),
+                "qdac_channel": (
+                    (qdac.bias_line_of(q) or (None, {}))[1].get("channel")),
                 # Calibration recency (epoch ms; client renders "N days ago").
                 # gate_fidelity_updated_at = the 1Q-fidelity measurement time;
                 # last_calibrated = the freshest *updated_at anywhere in the qubit.
@@ -674,6 +742,35 @@ class QueryEngine:
             # (macro ladders beyond Bell_State would alter CZ chips' edges,
             # which are pinned byte-equal).
             fidelity_source = "macro" if best_fidelity is not None else None
+
+            # docs/138 — a chip that measures its CZ by INTERLEAVED RB has a
+            # real, per-gate fidelity and was still drawn grey, because only
+            # Bell_State was consulted. InterleavedRB is 1 - EPG: the gate's own
+            # error, from the interleaved/reference alpha ratio. It is the same
+            # quantity Bell_State approximates, measured better.
+            #
+            # StandardRB is deliberately NOT a fallback here. It is 1 - EPC, a
+            # CLIFFORD fidelity, and a Clifford is ~1.5 gates — colouring the
+            # edge with it would understate every gate on the chip. There is no
+            # conversion available: `average_gates_per_clifford` is a node
+            # namespace value and is in neither state.json nor the saved run.
+            if best_fidelity is None:
+                for _g, _gate in macros.items():
+                    if not isinstance(_gate, dict):
+                        continue
+                    _f = _gate.get("fidelity") or {}
+                    if not isinstance(_f, dict):
+                        continue
+                    for _k in ("InterleavedRB", "IRB"):
+                        _v = _f.get(_k)
+                        if (isinstance(_v, (int, float)) and not isinstance(_v, bool)
+                                and chip_health.physicality("cz_fidelity", _v)
+                                and (best_fidelity is None or _v > best_fidelity)):
+                            best_fidelity = _v
+                            best_gate = _g
+                            best_fid_obj = _f
+                            fidelity_source = "interleaved_rb"
+
             if best_fidelity is None:
                 _fb = cr_semantics.fidelity(p)
                 if (_fb is not None and _fb["source"] == "channel"
@@ -884,11 +981,28 @@ class QueryEngine:
 
             z_ref = _get_nested(qw, "z", "opx_output")
             if z_ref:
-                add_assignment(z_ref, "z", qname, {
+                z_details = {
                     "flux_point": z.get("flux_point"),
                     "joint_offset": z.get("joint_offset"),
                     "independent_offset": z.get("independent_offset"),
-                })
+                }
+                # docs/136 — the bias tee. This qubit's DC operating point comes
+                # from a QDAC-II channel while THIS OPX port plays pulses on top
+                # of it, so the port is shared between two instruments and the
+                # diagram has to say so: reading `joint_offset` alone (or worse,
+                # its absence) would describe half the hardware. The QDAC facts
+                # ride along so one hover answers "what drives this line?"
+                # completely, rather than sending the reader to another page.
+                bias_found = qdac.bias_line_of(q)
+                if bias_found is not None:
+                    _, bias_node = bias_found
+                    z_details.update({
+                        "qdac_shared": True,
+                        "qdac_channel": bias_node.get("channel"),
+                        "qdac_dc_offset": bias_node.get("dc_offset"),
+                        "qdac_trigger_port": bias_node.get("trigger_port"),
+                    })
+                add_assignment(z_ref, "z", qname, z_details)
 
         for pair_name, pw in wiring_pairs.items():
             p = (root.get("qubit_pairs") or {}).get(pair_name) or {}
@@ -950,13 +1064,23 @@ class QueryEngine:
         # ② is skipped when ① already placed the same (element, port).
         placed_digital: set[tuple[str, tuple]] = set()
 
+        # docs/136 — which qubits' digital markers are QDAC-II triggers, and
+        # which ext input each is cabled to. A generic "digital" label cannot
+        # explain why three qubits legitimately share one port; the ext is the
+        # reason, so it travels with the assignment.
+        qdac_ext: dict[str, Any] = {}
+        for _qid, _q in (root.get("qubits") or {}).items():
+            _found = qdac.bias_line_of(_q)
+            if _found is not None:
+                qdac_ext[_qid] = _found[1].get("trigger_port")
+
         def add_digital(element: str, marker: str, source: str, ref: str,
                         ch_entry: dict) -> None:
             final = _follow_port_ref(root, ref) or ref
             parsed = _parse_port_ref(final)
             if parsed is not None and (element, parsed) in placed_digital:
                 return
-            add_assignment(final, "digital", element, {
+            details = {
                 "label": f"{element}.{marker}",
                 "marker": marker,
                 "source": source,
@@ -964,7 +1088,11 @@ class QueryEngine:
                 "buffer": ch_entry.get("buffer"),
                 "shareable": ch_entry.get("shareable"),
                 "inverted": ch_entry.get("inverted"),
-            })
+            }
+            if element in qdac_ext:
+                details["qdac_trigger"] = True
+                details["qdac_ext"] = qdac_ext[element]
+            add_assignment(final, "digital", element, details)
             if parsed is not None:
                 placed_digital.add((element, parsed))
 
@@ -1006,6 +1134,12 @@ class QueryEngine:
                     "buffer": None,
                     "shareable": None,
                     "inverted": None,
+                    # The wiring-only fallback: the state channel degraded away
+                    # (or was never built), but a `qt` line is a QDAC trigger by
+                    # definition — so it says so even here, where the ext is
+                    # only known if the bias line survived.
+                    "qdac_trigger": True,
+                    "qdac_ext": qdac_ext.get(qname),
                 })
                 if parsed is not None:
                     placed_digital.add((qname, parsed))
@@ -1133,8 +1267,51 @@ def _cm_diag(confusion_matrix: Any, idx: int) -> float | None:
         return None
 
 
+#: What a 2Q RB number actually MEASURES (docs/138). These are not
+#: interchangeable and the difference is a factor of `average_gates_per_clifford`:
+#:
+#:   StandardRB     = 1 - EPC   the average CLIFFORD fidelity
+#:   InterleavedRB  = 1 - EPG   the CZ GATE fidelity, from the alpha ratio
+#:
+#: Verified three ways against the customer's own chip and code: arithmetically
+#: (StandardRB reproduces exactly from `(d-1)/d*(1-alpha)` with d=4;
+#: InterleavedRB from `(d-1)/d*(1-a_int/a_ref)`), from the lab's node docstrings
+#: ("fitted average Clifford fidelity" vs "fitted CZ-gate fidelity"), and from
+#: their `compute_srb_fidelity`, which computes `average_gate_fidelity =
+#: 1 - epc/average_gates_per_clifford` and then stores only the CLIFFORD one.
+#:
+#: SM cannot convert the Clifford number into a gate number: that divisor is a
+#: node-namespace value and appears nowhere in state.json or in the run's saved
+#: artefacts. So the honest move is to say which one each number is, never to
+#: derive one from the other.
+_RB_LEVEL = {
+    "StandardRB": "clifford",
+    "InterleavedRB": "gate",
+    "IRB": "gate",                      # LabA's name for the same thing
+    "Bell_State": "state",
+}
+
+
+def _rb_level(metric: Any) -> str | None:
+    """``"gate"`` / ``"clifford"`` / ``"state"`` / ``"decay"`` / None.
+
+    ``*_alpha`` is the RB exponential's decay base — a fit parameter, not a
+    fidelity. It was being rendered as a percentage under a "Gate fidelity"
+    heading, which reads as "this gate is 93.8% good" when it means nothing of
+    the sort.
+    """
+    if not isinstance(metric, str):
+        return None
+    if metric.endswith("_alpha"):
+        return "decay"
+    return _RB_LEVEL.get(metric)
+
+
 def _extract_pair_gate_fidelities(macros: dict) -> list[dict]:
-    """Search all gate macros for fidelity data, return list of found results."""
+    """Search all gate macros for fidelity data, return list of found results.
+
+    Each row carries a ``level`` saying what it measures — see :data:`_RB_LEVEL`.
+    """
     results = []
     if not isinstance(macros, dict):
         return results
@@ -1172,10 +1349,12 @@ def _extract_pair_gate_fidelities(macros: dict) -> list[dict]:
                             break
                 if len(entry) > 2:  # has at least one numeric value
                     entry["load_id"] = gate_load_id
+                    entry["level"] = _rb_level(metric_name)
                     results.append(entry)
             elif isinstance(metric_val, (int, float)):
                 results.append({"gate": gate_name, "metric": metric_name,
-                                "value": metric_val, "load_id": gate_load_id})
+                                "value": metric_val, "load_id": gate_load_id,
+                                "level": _rb_level(metric_name)})
     return results
 
 

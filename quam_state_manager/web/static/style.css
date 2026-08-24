@@ -1443,6 +1443,33 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
 .sidebar-nav .nav-sub-row:has(> a.active) {
     background: var(--pico-primary-background); border-radius: 4px;
 }
+/* docs/136 r4 (customer-reported): the row pill above painted a DIFFERENT box
+   than a plain active link's. Pico bleeds every nav anchor over the li's
+   padding with negative margins; a div/li container gets no such bleed, so
+   its pill sat indented (x+11), taller (45px vs 36 - the 1.9em toggle set the
+   flex row height), and mis-aligned on the right - while a sub-item's anchor
+   DID bleed inside its padded ul and overlapped the parent pill by 2px.
+   Measured in a real browser, root font 21px, so everything below uses the
+   same Pico vars the anchors use rather than any px/rem guess.
+   The containers take the anchors' exact bleed (top+sides only - a bottom
+   bleed would pull the subnav up under the pill), the inner anchors go
+   margin:0 so the bleed is not applied twice, and the sub-items keep the
+   horizontal bleed (their right edge aligns with every other pill) but only
+   HALF the vertical one, which is what removed the overlap. Result, measured:
+   plain, sub-row and floatable pills all x2/w240/h36; sub pill gap 3px. */
+.sidebar-nav .nav-sub-row {
+    margin: calc(var(--pico-nav-link-spacing-vertical) * -1)
+            calc(var(--pico-nav-link-spacing-horizontal) * -1) 0;
+}
+.sidebar-nav .nav-sub-row > a { margin: 0; }
+.sidebar-nav .nav-sub-row .nav-print { margin: 0; }
+.sidebar-nav .nav-subitems li a {
+    margin: calc(var(--pico-nav-link-spacing-vertical) * -0.5)
+            calc(var(--pico-nav-link-spacing-horizontal) * -1);
+}
+.sidebar-nav li.nav-floatable { padding: 0; }
+.sidebar-nav li.nav-floatable > a { margin: 0; }
+.sidebar-nav li.nav-floatable .nav-float-btn { margin: 0 .2rem 0 0; }
 .sidebar-nav li.nav-floatable:has(> a.active) > a.active,
 .sidebar-nav .nav-sub-row:has(> a.active) > a.active { background: transparent; }
 .sidebar-nav li.nav-floatable:has(> a.active) .nav-float-btn,
@@ -2251,6 +2278,43 @@ th.sortable.sort-desc::after { content: '\25BC'; opacity: 0.8; }
 .cell-best { background: var(--cell-best-bg); }
 .cell-worst { background: var(--cell-worst-bg); }
 
+/* docs/136 — where a qubit's flux bias actually comes from. Three states, and
+   the third is not a blend of the other two: a bias-tee qubit has a QDAC DC
+   point AND an LF-FEM pulse line, so it reads as its own thing rather than as
+   "QDAC, sort of". Muted borders, no fills: this is a fact about the wiring,
+   not a health verdict, and a table full of coloured pills would imply one. */
+.flux-src {
+    display: inline-block; padding: 0.05rem 0.4rem; border-radius: 0.75rem;
+    border: 1px solid var(--pico-muted-border-color);
+    font-size: 0.78em; white-space: nowrap; line-height: 1.5;
+}
+.flux-src-opx { color: var(--color-text-muted, var(--pico-muted-color)); }
+.flux-src-qdac { color: var(--color-accent); border-color: var(--color-accent); }
+.flux-src-tee {
+    /* docs/136 r2 — the same amber as the bias-tee port on the wiring diagram
+       (UI_CONFIG.roleColors.z_qdac), so "bias tee" is ONE colour app-wide. A
+       darker text shade of it here for AA contrast on the light background;
+       the dash is kept as the "two sources on one line" secondary cue. */
+    color: #9a7d00; border-color: #d4ac0d;
+    background: rgba(241, 196, 15, 0.13);
+    border-style: dashed;
+}
+
+/* docs/136 — the QDAC-II page. The cabling table is the only place in the app
+   that states which qubits share one trigger cable, which is what makes a
+   shared port read as correct rather than as a collision. */
+.qdac-instrument { margin: 0 0 .6rem; font-size: .88em; }
+.qdac-cabling { margin: 0 0 .9rem; }
+.qdac-cabling > summary { cursor: pointer; font-weight: 600; font-size: .9em; }
+.qdac-cabling-table { margin-top: .4rem; width: auto; }
+.qdac-cabling-table td, .qdac-cabling-table th { padding: .2rem .6rem; }
+.qdac-cabling-bad td { background: var(--color-error-bg, transparent); }
+.qdac-chip {
+    display: inline-block; margin: 0 .2rem .15rem 0; padding: 0 .35rem;
+    border: 1px solid var(--pico-muted-border-color); border-radius: .7rem;
+    font-size: .8em;
+}
+
 /* r15 (docs/69): entity list pages list ALL entities; rows outside the
    state's active_* name lists are marked "off" and gently dimmed — never
    hidden. Hover restores full strength so dimmed rows stay inspectable. */
@@ -2888,6 +2952,37 @@ input.edit-input {
 /* ---------------------------------------------------------------- */
 #instrument-diagram { overflow-x: auto; padding: 0.5rem 0; }
 .instrument-svg { display: block; }
+
+/* Animated "still working" ellipsis (docs/135): . → .. → ... → repeat.
+   Pure CSS so it survives the re-renders a wizard step triggers and needs
+   no inline script (the app's CSP forbids unsafe-eval/inline handlers).
+   Reserved width keeps the label from jittering as dots come and go. */
+.sm-dots { display: inline-block; width: 1.2em; text-align: left; }
+.sm-dots i { font-style: normal; }
+/* One keyframe set PER DOT, no animation-delay: a delay shifts a periodic
+   timeline, so after the first cycle the dots settle into staggered blinks
+   instead of counting up. Dot 1 is always on; dots 2 and 3 switch on a third
+   and two thirds of the way through, so the cycle really reads . → .. → ...
+   and then starts over. */
+.sm-dots i:nth-child(2) { opacity: 0; animation: smDot2 1.2s steps(1, end) infinite; }
+.sm-dots i:nth-child(3) { opacity: 0; animation: smDot3 1.2s steps(1, end) infinite; }
+@keyframes smDot2 { 0% { opacity: 0; } 33%, 100% { opacity: 1; } }
+@keyframes smDot3 { 0% { opacity: 0; } 66%, 100% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+    .sm-dots i { animation: none; opacity: 1; }
+}
+
+/* Rack-wider-than-pane bar (docs/135). Sticky at left: 0 so it stays put
+   while the rack scrolls sideways under it — a hint that scrolls out of
+   view is exactly as useless as no hint. */
+.iw-fitbar {
+    position: sticky; left: 0;
+    display: flex; align-items: center; gap: 0.6rem;
+    margin: 0 0 0.35rem; padding: 0.18rem 0.1rem;
+    font-size: 0.78rem;
+}
+.iw-fitbar-note { color: var(--pico-muted-color); }
+.iw-fitbar-btn { margin: 0; padding: 0.08rem 0.5rem; white-space: nowrap; }
 .instrument-svg .port-group { transition: opacity 0.12s; }
 .instrument-svg .port-group:hover circle { opacity: 0.82; filter: drop-shadow(0 0 5px rgba(0,0,0,0.28)); }
 
@@ -3383,10 +3478,15 @@ td.col-delta .val-delta { margin-left: 0; }
 .nav-with-sub { display: block; }
 .nav-sub-row { display: flex; align-items: center; gap: .25rem; }
 .nav-sub-row > a { flex: 1 1 auto; }
-.nav-sub-toggle {
+/* Scoped under .sidebar-nav so Pico's nav-button padding cannot outrank it
+   (it did: computed padding was 7.875px despite the 0 here, and 1.9em of the
+   sidebar font is a ~30px glyph - together they made the row 45px tall and
+   the active pill visibly fatter than its neighbours; docs/136 r4). */
+.sidebar-nav .nav-sub-toggle {
     flex: 0 0 auto; background: none; border: none; cursor: pointer;
-    color: var(--pico-contrast); font-size: 1.9em; line-height: 1;
-    padding: 0 .3rem; border-radius: 3px; transition: transform .12s;
+    color: var(--pico-contrast); font-size: 1.45em; line-height: 1;
+    margin: 0; padding: 0 .3rem; height: auto;
+    border-radius: 3px; transition: transform .12s;
 }
 .nav-sub-toggle:hover { color: var(--pico-primary); }
 .nav-sub-toggle[aria-expanded="false"] { transform: rotate(-90deg); }
@@ -3585,7 +3685,20 @@ td.col-delta .val-delta { margin-left: 0; }
 .cm-edge .cm-edge-line, .cm-edge .cm-arrow, .cm-edge .cm-coupler { transition: opacity .12s; }
 .cm-off { opacity: .35; }
 
+/* docs/136 — the QDAC-II bias mark. A QDAC-biased qubit has no OPX analog
+   port, so `.cm-flux` (which keys on z_port) drew nothing for it and the map
+   showed over half the customer's chip as having no flux bias at all. Its own
+   short bar, dashed on a bias tee where both sources feed one line. */
+.cm-qdac { stroke: var(--pico-muted-border-color, rgba(128,128,128,.65)); stroke-width: 2.5; stroke-linecap: round; }
+.cm-qdac-tee { stroke-dasharray: 3 2; }
+
 /* highlight modes (docs/91 §3.3) — emphasis only, nothing appears/disappears */
+.cm-hl-qdac .cm-edge-line, .cm-hl-qdac .cm-arrow, .cm-hl-qdac .cm-coupler,
+.cm-hl-qdac .cm-res, .cm-hl-qdac .cm-feed, .cm-hl-qdac .cm-freq { opacity: .22; }
+.cm-hl-qdac .cm-stone, .cm-hl-qdac .cm-id { opacity: .5; }
+.cm-hl-qdac .cm-flux { opacity: .35; }
+.cm-hl-qdac .cm-qdac { stroke: var(--pico-primary); stroke-width: 3.5; opacity: 1; }
+
 .cm-hl-qubits .cm-edge-line, .cm-hl-qubits .cm-arrow, .cm-hl-qubits .cm-coupler,
 .cm-hl-qubits .cm-res, .cm-hl-qubits .cm-flux, .cm-hl-qubits .cm-feed,
 .cm-hl-qubits .cm-freq { opacity: .22; }
@@ -6954,6 +7067,50 @@ button.recents-item:focus {
     margin-left: 1.6rem;   /* aligns under the qubit label, past the checkbox */
 }
 .gen-qdac-fields:empty { display: none; }
+/* docs/136 — the per-qubit bias SOURCE picker replaced the on/off checkbox.
+   A row is tinted by which of the three shapes it is in, so a mixed chip is
+   readable at a glance rather than field-by-field. */
+.gen-qdac-rowhead { display: inline-flex; align-items: center; gap: 0.4rem; }
+.gen-qdac-source {
+    margin: 0; width: auto;
+    --pico-form-element-spacing-vertical: var(--compact-field-pico-sv);
+    --pico-form-element-spacing-horizontal: var(--compact-field-pico-sh);
+    font-size: 0.8em;
+}
+.gen-qdac-row[data-source="qdac"] > .gen-qdac-rowhead > span:first-child,
+.gen-qdac-row[data-source="tee"] > .gen-qdac-rowhead > span:first-child {
+    font-weight: 600;
+}
+.gen-qdac-row[data-source="tee"] { border-left: 3px dashed var(--color-accent); padding-left: 0.4rem; }
+.gen-qdac-row[data-source="qdac"] { border-left: 3px solid var(--color-accent); padding-left: 0.4rem; }
+
+/* docs/136 WS7 — trigger cabling (step 5). One row per QDAC ext input. */
+.gen-qdac-cabling { margin: 0.6rem 0; }
+.gen-qdac-cabling-head {
+    display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap;
+    margin-bottom: 0.25rem;
+}
+.gen-qdac-share { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.85em; margin: 0; }
+.gen-qdac-share input { margin: 0; }
+.gen-qdac-cablecount { margin-left: auto; font-size: 0.8em; }
+.gen-qdac-cable-tbl { width: 100%; font-size: 0.85em; }
+.gen-qdac-cable-tbl th, .gen-qdac-cable-tbl td { padding: 0.2rem 0.4rem; vertical-align: middle; }
+.gen-qdac-cable-tbl td:nth-child(2) { font-family: var(--font-mono); white-space: nowrap; }
+.gen-qdac-cell { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.gen-qdac-chip {
+    display: inline-flex; align-items: center; gap: 0.2rem;
+    padding: 0.05rem 0.3rem; border-radius: 0.6rem;
+    background: var(--pico-code-background-color);
+    border: 1px solid var(--pico-muted-border-color);
+    font-family: var(--font-mono); font-size: 0.92em;
+}
+.gen-qdac-chip select {
+    margin: 0; width: auto; border: none; background: transparent;
+    --pico-form-element-spacing-vertical: 0;
+    --pico-form-element-spacing-horizontal: 0.1rem;
+    font-size: 0.85em; padding-right: 1rem;
+}
+.gen-qdac-loose td { opacity: 0.85; }
 .gen-qdac-fields label {
     display: flex; flex-direction: column; font-size: 0.72em;
     color: var(--pico-muted-color); gap: 0.1rem; margin: 0;
@@ -7025,6 +7182,22 @@ button.recents-item:focus {
 #gen-drag-ghost .gen-drag-ghost-dot.gen-drag-ghost-grip { border-radius: 0.15em; }
 #gen-drag-ghost.gen-drag-ghost-ok  { border-color: #2ea043; }
 #gen-drag-ghost.gen-drag-ghost-bad { border-color: #d0342c; }
+/* docs/135: the port's own circle rides with the cursor. `overflow:visible`
+   because an SVG root clips by default and the circle's stroke sits half
+   outside the geometry bbox the viewBox is cut from. With a real glyph the
+   box gets out of its way — no border/background competing with the port. */
+#gen-drag-ghost .gen-drag-ghost-glyph { flex: none; display: block; overflow: visible; }
+#gen-drag-ghost.gen-drag-ghost-hasglyph {
+    padding: 0.1rem 0.45rem 0.1rem 0.1rem;
+    background: color-mix(in srgb, var(--pico-card-background-color) 88%, transparent);
+    border-color: color-mix(in srgb, var(--pico-primary) 45%, transparent);
+}
+#gen-drag-ghost.gen-drag-ghost-hasglyph.gen-drag-ghost-ok  { border-color: #2ea043; }
+#gen-drag-ghost.gen-drag-ghost-hasglyph.gen-drag-ghost-bad { border-color: #d0342c; }
+/* The original stays visible but clearly not-the-one-you-are-holding.
+   Set on the lifted node itself (one circle, or a whole cell for a feedline
+   grip) so dragging one qubit off a shared port never greys out its peers. */
+.iw-port-lifted { opacity: 0.3; }
 .iw-port-grip { cursor: grab; }
 .iw-port-grip:hover { fill: var(--pico-primary) !important; }
 /* Wiring validation (step 5) */
@@ -7579,6 +7752,9 @@ tr.gen-pop-row-linked > td {
 .regen-status { margin: 0.35rem 0; font-size: 0.85em; line-height: 1.45; color: var(--pico-muted-color); }
 .regen-status-err  { color: var(--color-error-text); }
 .regen-status-warn { color: var(--color-warning-text); }
+/* docs/135: a statement of fact about what was carried — muted, never the
+   warning colour, and never inheriting the warn colour of a sibling line. */
+.regen-status-info { color: var(--pico-muted-color); margin-top: 0.15rem; }
 /* the reused wizard sits flush under the source bar (no extra top rhythm) */
 .regen-wizard .gen-header { margin-top: 0.25rem; }
 

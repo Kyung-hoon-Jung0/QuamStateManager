@@ -417,10 +417,294 @@ class TestQdacInversion:
         # No OPX flux line invented for the QDAC qubit; q2 keeps its real one.
         flux = [ln["element"] for ln in rec.spec["lines"] if ln["line"] == "flux"]
         assert flux == ["q2"]
-        # The carry is announced, never silent.
-        assert any("QDAC-biased" in n for n in rec.notes)
+        # The carry is announced, never silent — and reads as a statement of
+        # fact, not as an unmet requirement (docs/135): the env's ability to
+        # rebuild it is the capability check's answer, not this note's.
+        note = next((n for n in rec.info_notes if "QDAC-II" in n), None)
+        assert note, f"QDAC carry not announced: {rec.info_notes}"
+        assert "carried into the spec" in note
+        assert "needs an env" not in note
+        # And it does NOT ride the warning list — the renderer prefixes every
+        # `notes` entry with ⚠.
+        assert not any("QDAC" in n for n in rec.notes), rec.notes
+
+    def test_qdac_qubit_list_is_naturally_ordered(self):
+        """q2 before q11 — a lexical list on a 20-qubit chip reads scrambled."""
+        state, wiring = self._qdac_state_wiring()
+        bias = dict(state["qubits"]["q1"]["z"])
+        for name in ("q11", "q2", "q3"):
+            state["qubits"][name] = {"z": dict(bias)}
+            wiring["wiring"]["qubits"][name] = {
+                "xy": {"opx_output": "#/ports/mw_outputs/con1/1/4"}}
+        rec = reconstruct_spec(state, wiring)
+        note = next(n for n in rec.info_notes if "QDAC-II" in n)
+        assert "(q1, q2, q3, q11)" in note, note
 
     def test_plain_chip_gets_no_qdac_key(self):
         state, wiring = _tiny()
         rec = reconstruct_spec(state, wiring)
         assert "qdac" not in rec.spec
+
+    def _shared_trigger_chip(self):
+        """Two QDAC qubits cabled to ONE digital output — how a real bench
+        wires it: one OPX digital out per QDAC ext trigger INPUT, shared by
+        every qubit armed on that input (docs/135 ⑤)."""
+        state, wiring = self._qdac_state_wiring()
+        state["qubits"]["q3"] = {"z": dict(state["qubits"]["q1"]["z"], channel=15)}
+        wiring["wiring"]["qubits"]["q1"]["qt"] = {
+            "digital_output": "#/ports/digital_outputs/con1/4/1"}
+        wiring["wiring"]["qubits"]["q3"] = {
+            "xy": {"opx_output": "#/ports/mw_outputs/con1/1/4"},
+            "qt": {"digital_output": "#/ports/digital_outputs/con1/4/1"}}
+        return state, wiring
+
+    def test_the_existing_trigger_port_is_carried(self):
+        state, wiring = self._shared_trigger_chip()
+        rec = reconstruct_spec(state, wiring)
+        qs = rec.spec["qdac"]["qubits"]
+        # Same port for both — a re-generate must not re-cable the bench.
+        assert qs["q1"]["trigger_pin"] == {"con": 1, "slot": 4, "port": 1}
+        assert qs["q3"]["trigger_pin"] == {"con": 1, "slot": 4, "port": 1}
+
+    def test_a_pin_on_an_undeclared_fem_is_dropped_out_loud(self):
+        """An unusable pin degrades to auto-allocation — never a dangling
+        reference in the rebuilt chip — and says so."""
+        state, wiring = self._shared_trigger_chip()
+        wiring["wiring"]["qubits"]["q3"]["qt"] = {
+            "digital_output": "#/ports/digital_outputs/con1/9/1"}   # no slot 9
+        rec = reconstruct_spec(state, wiring)
+        qs = rec.spec["qdac"]["qubits"]
+        assert "trigger_pin" not in qs["q3"]
+        assert qs["q1"]["trigger_pin"] == {"con": 1, "slot": 4, "port": 1}
+        assert any("q3" in n and "re-allocated" in n for n in rec.notes), rec.notes
+
+    def test_a_qubit_with_no_trigger_wiring_gets_no_pin(self):
+        state, wiring = self._qdac_state_wiring()   # q1 has no qt line
+        rec = reconstruct_spec(state, wiring)
+        assert "trigger_pin" not in rec.spec["qdac"]["qubits"]["q1"]
+        assert not rec.notes, rec.notes
+
+
+class TestTheChipsOwnRootClassIsCarried:
+    """docs/135 ⑤ review (CRITICAL): the build derived the QPU ROOT class from
+    line types alone. A chip rooted at a customer subclass — often the very
+    reason the subclass exists — was rebuilt onto the stock class, and the
+    result could not be loaded: stock FluxTunableQuam types `qubits` as
+    Dict[str, FluxTunableTransmon] (so the first QdacBiasedFixedFrequencyTransmon
+    fails validation) and declares no `qdac` field (so the injected top-level
+    entry raises too). Build and merge both reported success."""
+
+    def test_the_root_class_rides_the_spec(self):
+        state, wiring = _tiny()
+        state["__class__"] = "quam_config.my_quam.Quam"
+        rec = reconstruct_spec(state, wiring)
+        assert rec.spec["quam_class"] == "quam_config.my_quam.Quam"
+        assert config_generator.validate_spec(rec.spec) == []
+
+    def test_a_chip_with_no_root_marker_carries_none(self):
+        state, wiring = _tiny()
+        rec = reconstruct_spec(state, wiring)
+        assert rec.spec["quam_class"] is None
+        assert config_generator.validate_spec(rec.spec) == []
+
+    def test_a_bare_name_is_not_treated_as_an_import_path(self):
+        state, wiring = _tiny()
+        state["__class__"] = "FluxTunableQuam"      # no module — unusable
+        rec = reconstruct_spec(state, wiring)
+        assert rec.spec["quam_class"] is None
+
+
+class TestQdacTriggerPinsAreHonoured:
+    """docs/135 ⑤: the build's isolated trigger pass allocates a DEDICATED
+    port per biased qubit. That re-cables a bench that shares one OPX digital
+    output per QDAC ext input, so a pin carried by reconstruct wins."""
+
+    def _spec(self, **pins):
+        return {
+            "qdac": {"qubits": {
+                q: ({"channel": i + 1} | ({"trigger_pin": p} if p else {}))
+                for i, (q, p) in enumerate(pins.items())}},
+            # A pin is only honoured on a slot the chassis declares (review
+            # finding: the reconstruct-time guard cannot see a step-3 edit).
+            "instruments": {"controllers": [
+                {"con": 1, "fems": [{"slot": 4, "fem": "lf"}]}]},
+        }
+
+    def test_all_pinned_needs_no_allocator_at_all(self):
+        from quam_state_manager.generator import run_build
+        spec = self._spec(q1={"con": 1, "slot": 4, "port": 1},
+                          q9={"con": 1, "slot": 4, "port": 1},
+                          q3={"con": 1, "slot": 4, "port": 2})
+        # instruments=None proves the allocator was never reached — this path
+        # must not depend on qualang_tools being importable at all.
+        pins, warnings, allocation = run_build._allocate_qdac_triggers(spec, None)
+        assert pins == {"q1": (1, 4, 1), "q9": (1, 4, 1), "q3": (1, 4, 2)}
+        assert warnings == []
+        # ...and the dry run can draw them: read_allocation's own shape.
+        assert set(allocation) == {"q1", "q9", "q3"}
+        ch = allocation["q1"]["qt"][0]
+        assert (ch["con"], ch["slot"], ch["port"]) == (1, 4, 1)
+        assert ch["io_type"] == "digital"
+        assert ch["instrument_id"] == "lf-fem"
+
+    def test_sharing_survives(self):
+        from quam_state_manager.generator import run_build
+        spec = self._spec(q1={"con": 1, "slot": 4, "port": 1},
+                          q9={"con": 1, "slot": 4, "port": 1})
+        pins, _, _ = run_build._allocate_qdac_triggers(spec, None)
+        assert len(set(pins.values())) == 1, "two qubits must keep ONE port"
+
+    def test_a_malformed_pin_falls_back_and_says_so(self):
+        from quam_state_manager.generator import run_build
+        spec = {"qdac": {"qubits": {"q1": {"channel": 1, "trigger_pin": {"con": 1}}}}}
+        pins, warnings, _ = run_build._allocate_qdac_triggers(spec, None)
+        assert "q1" not in pins
+        assert any("auto-allocated" in w for w in warnings), warnings
+
+    def test_no_qdac_qubits_is_still_a_clean_no_op(self):
+        from quam_state_manager.generator import run_build
+        assert run_build._allocate_qdac_triggers({}, None) == ({}, [], {})
+
+    def test_a_pin_on_a_slot_the_chassis_no_longer_declares_is_refused(self):
+        """The reconstruct-time guard runs ONCE, at hydration — step 3 lets the
+        user delete a FEM afterwards. Re-tested at the point of use, or the
+        pin reaches `create=True` and lands a digital port on a FEM the built
+        chip does not declare."""
+        from quam_state_manager.generator import run_build
+        spec = self._spec(q1={"con": 1, "slot": 9, "port": 1})
+        spec["instruments"] = {"controllers": [{"con": 1, "fems": [{"slot": 4, "fem": "lf"}]}]}
+        pins, warnings, allocation = run_build._allocate_qdac_triggers(spec, None)
+        assert "q1" not in pins
+        assert allocation == {}
+        assert any("no longer declares" in w for w in warnings), warnings
+
+
+class TestAllocateModeShowsTheTriggers:
+    """docs/135 ⑤: the dry run behind the wizard's diagram used to skip the
+    isolated QDAC trigger pass entirely, so a chip whose biased qubits each
+    get an OPX digital output previewed with no digital column at all while
+    /instrument showed one. Pinned here because the merge is the only thing
+    standing between the two surfaces agreeing."""
+
+    def _patch(self, monkeypatch, qt_alloc):
+        from quam_state_manager.generator import run_build
+        monkeypatch.setattr(run_build, "build_instruments", lambda spec: object())
+        monkeypatch.setattr(run_build, "allocate_full",
+                            lambda spec, instr: (object(), ["main-warning"]))
+        monkeypatch.setattr(run_build, "read_allocation", lambda conn: {
+            "q1": {"xy": [{"con": 1, "slot": 1, "port": 1, "io_type": "output"}]}})
+        monkeypatch.setattr(run_build, "_allocate_qdac_triggers",
+                            lambda spec, instr: ({}, ["qdac-warning"], qt_alloc))
+        return run_build
+
+    def test_the_trigger_pass_rides_along(self, monkeypatch):
+        qt = {"q1": {"qt": [{"con": 1, "slot": 4, "port": 1, "io_type": "digital"}]},
+              "q9": {"qt": [{"con": 1, "slot": 4, "port": 1, "io_type": "digital"}]}}
+        run_build = self._patch(monkeypatch, qt)
+        out = run_build.run_allocate({"qdac": {"qubits": {"q1": {}, "q9": {}}}})
+        a = out["allocation"]
+        # The qt line is an ADDITION to a qubit that already has analog lines,
+        # never a replacement — that is what made the diagram whole.
+        assert a["q1"]["xy"], "the main allocation must survive the merge"
+        assert a["q1"]["qt"][0]["port"] == 1
+        assert a["q9"]["qt"][0]["port"] == 1, "a qubit with only a trigger still appears"
+        assert "main-warning" in out["warnings"]
+        assert "qdac-warning" in out["warnings"]
+
+    def test_a_chip_with_no_qdac_is_byte_identical(self, monkeypatch):
+        run_build = self._patch(monkeypatch, {})
+        out = run_build.run_allocate({})
+        assert out["allocation"] == {
+            "q1": {"xy": [{"con": 1, "slot": 1, "port": 1, "io_type": "output"}]}}
+        assert out["warnings"] == ["main-warning", "qdac-warning"]
+
+
+class TestQdacTriggerPinsAreReserved:
+    """docs/135 ⑤ review: the auto pass cannot see a pin. The main allocation
+    consumes only ANALOG lines, so the digital pool it walks is fresh and it
+    hands the first unpinned qubit the first free digital output — the very
+    port the pinned qubits are cabled to. A QDAC channel waits on the ext
+    input its own cable drives, so a double-booked port means one qubit
+    pulses the wrong ext line and its bias never arms."""
+
+    def _spec(self, pinned, unpinned, ext=None):
+        ext = ext or {}
+        qubits = {q: {"channel": i + 1, "trigger_pin": p}
+                  for i, (q, p) in enumerate(pinned.items())}
+        for j, q in enumerate(unpinned):
+            qubits[q] = {"channel": 90 + j}
+        for q, e in ext.items():
+            qubits.setdefault(q, {})["trigger_port"] = e
+        return {"qdac": {"qubits": qubits},
+                "instruments": {"controllers": [
+                    {"con": 1, "fems": [{"slot": 4, "fem": "lf"}]}]}}
+
+    def test_same_ext_input_means_the_same_cable(self):
+        """A qubit armed on ext1 belongs on the port already cabled to ext1 —
+        the allocator's idea of "free" is irrelevant to physical cabling, and
+        the earlier fix's relocate-to-any-free-port produced exactly the
+        extN↔portN mismatch it existed to prevent."""
+        from quam_state_manager.generator import run_build
+        spec = self._spec({"q1": {"con": 1, "slot": 4, "port": 2}}, ["qNEW"],
+                          ext={"q1": "ext2", "qNEW": "ext2"})
+        # instruments=None: this resolves without the allocator at all.
+        pins, warnings, allocation = run_build._allocate_qdac_triggers(spec, None)
+        assert pins["qNEW"] == (1, 4, 2), pins
+        assert any("already cabled to ext2" in w for w in warnings), warnings
+        assert allocation["qNEW"]["qt"][0]["port"] == 2
+
+    def test_a_different_ext_input_does_not_join_the_cable(self):
+        from quam_state_manager.generator import run_build
+        spec = self._spec({"q1": {"con": 1, "slot": 4, "port": 2}}, ["qNEW"],
+                          ext={"q1": "ext2", "qNEW": "ext3"})
+        pins, _, _ = run_build._allocate_qdac_triggers(spec, None)
+        assert pins.get("qNEW") != (1, 4, 2)
+
+    def _fake_alloc(self, monkeypatch, giving):
+        """Stand in for the allocator, which needs qualang_tools + a real
+        instruments pool. `giving` is what it hands each unpinned qubit."""
+        from quam_state_manager.generator import run_build
+        monkeypatch.setattr(run_build, "read_allocation", lambda conn: {
+            q: {"qt": [{"instrument_id": "lf-fem", "con": c, "slot": s,
+                        "port": p, "io_type": "output", "signal_type": "digital"}]}
+            for q, (c, s, p) in giving.items()})
+
+    def test_a_collision_is_moved_and_announced(self, monkeypatch):
+        pytest.importorskip("qualang_tools.wirer")
+        from quam_state_manager.generator import run_build
+        import qualang_tools.wirer as _w
+        monkeypatch.setattr(_w, "allocate_wiring", lambda *a, **k: None)
+        spec = self._spec({"q1": {"con": 1, "slot": 4, "port": 1}}, ["qNEW"])
+        self._fake_alloc(monkeypatch, {"qNEW": (1, 4, 1)})   # onto q1's cable
+        pins, warnings, allocation = run_build._allocate_qdac_triggers(spec, object())
+        assert pins["q1"] == (1, 4, 1), "the pinned cable never moves"
+        assert pins["qNEW"] != (1, 4, 1), "an unpinned trigger must not share a pinned cable"
+        assert pins["qNEW"][:2] == (1, 4), "it stays on the same FEM"
+        assert any("already cabled to a pinned trigger" in w for w in warnings), warnings
+        # and the preview must show where it actually went, not where the
+        # allocator first put it
+        ch = allocation["qNEW"]["qt"][0]
+        assert (ch["con"], ch["slot"], ch["port"]) == pins["qNEW"]
+
+    def test_two_unpinned_qubits_do_not_collide_with_each_other(self, monkeypatch):
+        pytest.importorskip("qualang_tools.wirer")
+        from quam_state_manager.generator import run_build
+        import qualang_tools.wirer as _w
+        monkeypatch.setattr(_w, "allocate_wiring", lambda *a, **k: None)
+        spec = self._spec({"q1": {"con": 1, "slot": 4, "port": 1}}, ["qA", "qB"])
+        self._fake_alloc(monkeypatch, {"qA": (1, 4, 1), "qB": (1, 4, 1)})
+        pins, _, _ = run_build._allocate_qdac_triggers(spec, object())
+        assert len({pins["q1"], pins["qA"], pins["qB"]}) == 3, pins
+
+    def test_a_full_fem_degrades_instead_of_double_booking(self, monkeypatch):
+        pytest.importorskip("qualang_tools.wirer")
+        from quam_state_manager.generator import run_build
+        import qualang_tools.wirer as _w
+        monkeypatch.setattr(_w, "allocate_wiring", lambda *a, **k: None)
+        spec = self._spec({f"q{i}": {"con": 1, "slot": 4, "port": i}
+                           for i in range(1, 9)}, ["qNEW"])
+        self._fake_alloc(monkeypatch, {"qNEW": (1, 4, 1)})
+        pins, warnings, allocation = run_build._allocate_qdac_triggers(spec, object())
+        assert "qNEW" not in pins
+        assert "qNEW" not in allocation, "never draw a port it will not get"
+        assert any("could not be placed" in w for w in warnings), warnings

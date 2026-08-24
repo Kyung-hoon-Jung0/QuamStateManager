@@ -45,10 +45,19 @@
     </p>
     {% endif %}
     {% if alert.env.count %}
+    {# docs/136 — a class the env cannot import is NOT a field, and the
+       findings are aggregated, so the finding count is not the place count.
+       Both were saying something false on the customer's QDAC chip. #}
     <p class="tfx-alert-line tfx-alert-env">
-      <strong>{{ alert.env.count }}</strong> field{{ 's' if alert.env.count != 1 }}
-      {{ "don't" if alert.env.count != 1 else "doesn't" }} match the selected
-      environment's schema{% if alert.env.entries %}
+      {% if alert.env.classes %}<strong>{{ alert.env.classes }}</strong>
+      class{{ 'es' if alert.env.classes != 1 }}
+      {{ 'are' if alert.env.classes != 1 else 'is' }} not importable in the
+      selected environment{% if alert.env.fields %}, and{% endif %}{% endif %}
+      {% if alert.env.fields %}<strong>{{ alert.env.fields }}</strong>
+      field{{ 's' if alert.env.fields != 1 }}
+      {{ "don't" if alert.env.fields != 1 else "doesn't" }} match its
+      schema{% endif %}{% if alert.env.places > alert.env.count %}
+      &mdash; <strong>{{ alert.env.places }}</strong> places in this state{% endif %}{% if alert.env.entries %}
       (e.g. <code>{{ alert.env.entries[0].location }}</code> —
       {{ alert.env.entries[0].message }}){% endif %}.
       <strong>SM will not change these</strong> — the library may have changed.

@@ -54,6 +54,24 @@ DEFAULT_PROPERTIES = [
     "grid_location",
 ]
 
+# docs/136 — the bias column above is `z_joint_offset`, which a QDAC-biased
+# qubit does not have: on the customer's 20-qubit chip the export printed a
+# blank flux value for 11 of 20 rows with nothing saying why. These columns are
+# appended only when the chip actually has a QDAC, so an export from any other
+# chip is byte-identical to before.
+QDAC_PROPERTIES = ["bias_mode", "qdac_channel", "qdac_dc_offset"]
+
+
+def default_properties(store) -> list[str]:
+    """`DEFAULT_PROPERTIES`, plus the QDAC columns when the chip has a QDAC."""
+    from quam_state_manager.core import qdac as _qdac
+
+    try:
+        has = bool(_qdac.biased_qubits(store.merged))
+    except Exception:  # noqa: BLE001 — an export never fails over a column choice
+        has = False
+    return DEFAULT_PROPERTIES + (QDAC_PROPERTIES if has else [])
+
 
 class Saver:
     """Persist a QuamStore back to disk and export summaries."""
@@ -118,7 +136,8 @@ class Saver:
         with bare headers (legacy pipelines).
         """
         path = Path(path)
-        props = properties if properties is not None else DEFAULT_PROPERTIES[1:]
+        props = (properties if properties is not None
+                 else default_properties(self.store)[1:])
 
         engine = QueryEngine(self.store)
         rows = engine.summary_table(props)
@@ -155,7 +174,8 @@ class Saver:
         behaves as in :meth:`export_csv`.
         """
         path = Path(path)
-        props = properties if properties is not None else DEFAULT_PROPERTIES[1:]
+        props = (properties if properties is not None
+                 else default_properties(self.store)[1:])
 
         engine = QueryEngine(self.store)
         rows = engine.summary_table(props)

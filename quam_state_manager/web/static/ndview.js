@@ -592,7 +592,12 @@
 
         if (cands.length && ent) {
             var paths = cands.map(function (cd) {
-                return cd.path.replace('{q}', ent).replace('{p}', ent);
+                // docs/136: a candidate may name a DIFFERENT path for some
+                // entities. The flux target is `z.joint_offset` on an
+                // OPX-biased qubit and `z.dc_offset` on a QDAC-biased one —
+                // the same physical quantity, on two different components.
+                var byEnt = cd.path_by_entity && cd.path_by_entity[ent];
+                return (byEnt || cd.path).replace('{q}', ent).replace('{p}', ent);
             });
             fetch('/field/peek?' + paths.map(function (pp) {
                 return 'dot_path=' + encodeURIComponent(pp);   // server reads getlist("dot_path")

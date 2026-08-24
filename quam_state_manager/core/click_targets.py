@@ -23,6 +23,7 @@ with the clicked point's entity client-side.
 from __future__ import annotations
 
 import re
+from typing import Any
 
 # ── tier 1: node-name → dim-bound targets ──────────────────────────────────
 # {normalized-name-prefix: [{dim_match, path, label}]}
@@ -74,8 +75,30 @@ def _normalize(name: str) -> str:
     return n.lower()
 
 
+def qdac_path_overrides(merged: Any) -> dict[str, str]:
+    """``{qubit_id: "qubits.<q>.<bias>.dc_offset"}`` for QDAC-biased qubits.
+
+    docs/136 — the flux heuristic below offers ``z.joint_offset``, which a
+    QDAC-biased qubit does not have: on the customer's 20-qubit chip a click
+    on a flux axis offered eleven of twenty qubits a field that is not there.
+    The same physical quantity lives on the bias line's ``dc_offset``, and the
+    bias line is not always ``z`` (a bias-tee qubit keeps ``z`` as its pulse
+    line), so the field name is READ, never assumed.
+    """
+    from quam_state_manager.core import qdac as _qdac
+
+    out: dict[str, str] = {}
+    qubits = merged.get("qubits") if isinstance(merged, dict) else None
+    for qid, qubit in (qubits or {}).items():
+        found = _qdac.bias_line_of(qubit)
+        if found:
+            out[qid] = f"qubits.{qid}.{found[0]}.dc_offset"
+    return out
+
+
 def candidates_for(experiment_name: str, x_dim: str | None,
-                   y_dim: str | None, entity_kind: str | None) -> list[dict]:
+                   y_dim: str | None, entity_kind: str | None,
+                   qdac_paths: dict[str, str] | None = None) -> list[dict]:
     """Ranked candidates: ``[{axis, dim, path, label, tier}]`` (≤4).
 
     ``dim`` is the exact dim NAME the candidate's value lives on — the client
@@ -125,6 +148,10 @@ def candidates_for(experiment_name: str, x_dim: str | None,
                 for path, label in h["paths"]:
                     if path not in seen:
                         seen.add(path)
-                        out.append({"axis": axis, "dim": dim, "path": path,
-                                    "label": label, "tier": "coord"})
+                        cand = {"axis": axis, "dim": dim, "path": path,
+                                "label": label, "tier": "coord"}
+                        if qdac_paths and path == "qubits.{q}.z.joint_offset":
+                            cand["path_by_entity"] = dict(qdac_paths)
+                            cand["label"] = "Flux joint offset / QDAC DC offset"
+                        out.append(cand)
     return out[:4]
