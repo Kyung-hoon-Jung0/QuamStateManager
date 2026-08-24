@@ -1376,6 +1376,15 @@ def _pulse_peak(store, row: dict) -> tuple[float | None, str | None]:
                     peak = m
         return peak, None
 
+    if payload.get("digital_only"):
+        # A bare digital-marker Pulse (e.g. a QDAC trigger) is a VALID pulse
+        # with no analog waveform — quam serializes it as digital_waveforms
+        # only and generate_config() accepts it, so there is nothing for a
+        # DAC-range check to say. These became visible when pulse_index
+        # started enumerating trigger markers (docs/136); the synth payload's
+        # "digital marker only" line is a preview statement, not a defect.
+        return None, None
+
     if not payload.get("spec_key"):
         # The pulse class isn't recognized by the synthesizer (a custom/builder
         # class). We can't evaluate it — but it is NOT an invalid waveform, so

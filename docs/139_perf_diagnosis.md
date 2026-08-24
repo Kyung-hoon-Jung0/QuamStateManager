@@ -92,6 +92,21 @@ Pinned by `tests/test_fingerprint_sidecar.py` (10 tests, **7/7 mutations
 caught** — load-call, setdefault, mtime gate, bad-entry skip, dirty gate,
 scan-flush, token exclusion).
 
+## Follow-up (2026-08-25, customer-reported): the 11 false waveform errors
+
+After pulling the docs/135-139 push, the customer's working chip showed 11
+Diagnostics ERRORS: `qubits.qN.z.opx_trigger_out.operations.trigger` -
+"pulse parameters produce an invalid waveform". Cause: docs/136 made
+`pulse_index` enumerate the QDAC trigger pulses (one level deeper than other
+qubit pulses), so the waveform DAC-range lint SAW them for the first time -
+and `_pulse_peak` did not know the synth payload's `digital_only` marker, so
+a digital-marker-only bare `Pulse` (waveform None by design; quam serializes
+it as digital_waveforms only, and `generate_config()` accepts it - the
+running 20Q chip is the proof) fell through to the hard-error branch. Fixed:
+`digital_only` payloads return (None, None) - recognized, valid, nothing for
+a DAC check to say. Pinned by
+`test_digital_marker_only_pulse_is_never_a_finding` (mutation-checked).
+
 ## Status
 
 Fix 2 (Param History) implemented and measured, above. Fix 1 (Live State

@@ -183,6 +183,16 @@ class TestRobustness:
         state.pop("ports")
         assert _wf(QuamStore.from_dicts(state, wiring)) == []
 
+    def test_digital_marker_only_pulse_is_never_a_finding(self):
+        # The customer's QDAC trigger (docs/136 made pulse_index enumerate
+        # these; docs/139 follow-up): a bare quam Pulse carrying only a
+        # digital marker. quam serializes it as digital_waveforms only and
+        # generate_config() accepts it — the running 20Q chip is the proof —
+        # so "invalid waveform" was a false alarm, 11 times over.
+        op = {"__class__": "quam.components.pulses.Pulse", "length": 100,
+              "id": None, "digital_marker": "ON"}
+        assert _wf(_store(extra_z_op=op)) == []
+
     def test_mw_bound_is_intrinsic_without_ports(self):
         state, wiring = _chip(readout_amp=1.5)
         state.pop("ports")
