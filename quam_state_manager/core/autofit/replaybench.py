@@ -349,6 +349,10 @@ class Result:
     # docs/137: what the session-end closure pass did (CL-CLUSTER executed) —
     # a consensus held against a lone outlier, or a contested field dropped
     closure_notes: list = field(default_factory=list)
+    # docs/138: every vouched read kept as (value, params, run_id) so the
+    # cross-family pass can judge a disagreement against the maps' own
+    # swept windows instead of an invented scale
+    value_reads: dict = field(default_factory=dict)
 
 
 def _params_match(proposal: dict, params: dict, rel: float = 0.15) -> bool:
@@ -697,11 +701,150 @@ def replay(family: str, session: Session, target: str, *,
                   steps=steps, final_state=state, first_value=first_value,
                   first_value_at=first_at, runs_to_first_value=runs_to_first,
                   runs_consumed=len(steps), unresolved=first_at is None,
-                  closure_notes=closure_notes,
+                  closure_notes=closure_notes, value_reads=value_reads,
                   revisions=revisions, unscoreable_proposals=unscoreable,
                   adopted_values=vouched, consensus_state=consensus,
                   pending_profile_questions=pending_qs,
                   profile_contradictions=contradictions)
+
+
+_FLUX_SPAN_PARAMS = ("min_flux_offset_in_v", "max_flux_offset_in_v")
+
+
+def _last_read(res: "Result", fname: str):
+    rs = (res.value_reads or {}).get(fname) or []
+    return rs[-1] if rs else None
+
+
+def _flux_span(read) -> float | None:
+    """The swept flux window of one read, from ITS OWN parameters."""
+    if not read:
+        return None
+    p = read[1] or {}
+    lo, hi = p.get(_FLUX_SPAN_PARAMS[0]), p.get(_FLUX_SPAN_PARAMS[1])
+    if isinstance(lo, (int, float)) and not isinstance(lo, bool) \
+            and isinstance(hi, (int, float)) and not isinstance(hi, bool) \
+            and float(hi) > float(lo):
+        return float(hi) - float(lo)
+    return None
+
+
+def _session_day(res: "Result") -> str:
+    return (res.session_id or "").rsplit("__", 1)[-1]
+
+
+def cross_close(results: list, *, doc: dict | None = None,
+                profile: dict | None = None) -> list[str]:
+    """Execute the shipped cross-family closure rules (C2, docs/138) over
+    the Results of ONE physical target read through several families.
+
+    A C1 closure ends a session; a C2 closure ends a QUESTION two families
+    share. Strictly data-gated like everything else in this module: with no
+    cross doc, or none of its rules active under the chip's answers (an
+    unanswered gating field means silence, never a default), every Result
+    is byte-identical. Notes go onto the affected Results' ``closure_notes``
+    and are returned. The power-family partner may be any object carrying
+    ``family`` / ``final_state`` / ``closure_notes`` — its walk lives in
+    ``pathreplay`` and is not re-run here.
+    """
+    notes: list[str] = []
+    if not results or doc is None:
+        return notes
+    by_fam: dict[str, Any] = {}
+    for r in results:
+        by_fam.setdefault(r.family, r)
+
+    def active(rule_id: str, family: str) -> dict | None:
+        for r in knowledge.cross_rules_for(doc, family, profile):
+            if r.get("id") == rule_id:
+                return r
+        return None
+
+    def stamp(text: str, *targets) -> None:
+        for t in targets:
+            t.closure_notes.append(text)
+        notes.append(text)
+
+    # X-COUPLER-DECISION — the resonator map verifies, the qubit map
+    # decides. Profile-gated (weak_flat_normal): on such a chip an
+    # operating point proposed from the resonator-vs-coupler-flux map
+    # alone is never licensed; its frequency reading (the verification
+    # half) is untouched.
+    rc = by_fam.get("resonator_spectroscopy_vs_coupler_flux")
+    if rc is not None and active("X-COUPLER-DECISION", rc.family):
+        _vf, sf = MC.VALUE_FIELDS.get(rc.family, (None, None))
+        if sf and sf in rc.final_state:
+            dropped = rc.final_state.pop(sf)
+            qmap = by_fam.get("qubit_spectroscopy_vs_coupler_flux")
+            stamp(f"X-COUPLER-DECISION: un-vouching {sf}={dropped:.6g} — "
+                  f"on this profile the resonator responds weakly to "
+                  f"coupler flux by design, so its map is verification "
+                  f"only; the operating-point decision lives in the "
+                  f"qubit-spectroscopy-vs-coupler-flux map"
+                  + (" (read this session)" if qmap is not None
+                     else " (not read this session)"), rc)
+
+    # X-PARKING-AGREE — the two flux maps of one qubit see one sweet
+    # spot. A disagreement is judged against the maps' OWN swept windows
+    # (the wider one — the conservative direction), never an invented
+    # volt figure; with no window recoverable the rule stays silent.
+    ra = by_fam.get("resonator_spectroscopy_vs_flux")
+    rq = by_fam.get("qubit_spectroscopy_vs_flux")
+    if ra is not None and rq is not None \
+            and active("X-PARKING-AGREE", ra.family):
+        offs = []
+        for r in (ra, rq):
+            _vf, sf = MC.VALUE_FIELDS.get(r.family, (None, None))
+            v = r.final_state.get(sf) if sf else None
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                offs.append((float(v), sf, r))
+        if len(offs) == 2:
+            (va, sfa, res_a), (vq, sfq, res_q) = offs
+            spans = [s for s in (_flux_span(_last_read(res_a, sfa)),
+                                 _flux_span(_last_read(res_q, sfq)))
+                     if s is not None]
+            if spans and abs(va - vq) > SWEEP_TOL_FRAC * max(spans):
+                older = (res_a if _session_day(res_a) <= _session_day(res_q)
+                         else res_q)
+                for _v, sf_i, r_i in offs:
+                    r_i.final_state.pop(sf_i, None)
+                stamp(f"X-PARKING-AGREE: the two flux maps of this qubit "
+                      f"disagree about the sweet spot ({va:.6g} vs "
+                      f"{vq:.6g}, beyond {SWEEP_TOL_FRAC:.0%} of the wider "
+                      f"map's own swept window) — neither parking write is "
+                      f"closed; the direction is to re-measure the staler "
+                      f"map ({older.family}, {_session_day(older)}), never "
+                      f"to average", res_a, res_q)
+
+    # X-TWO-DIP-POWER — a contested dip identity closes through the
+    # power axis. The trigger is the walk's own contested state (two
+    # disagreeing groups of frequency readings ARE the two candidate
+    # lines); the closing number comes from the power run's node fitter,
+    # never from this module.
+    rs = by_fam.get("resonator_spectroscopy")
+    rp = by_fam.get("resonator_spectroscopy_vs_power")
+    if rs is not None and rp is not None \
+            and active("X-TWO-DIP-POWER", rs.family):
+        vf = MC.VALUE_FIELDS.get(rs.family, (None, None))[0]
+        contested = (vf and vf not in rs.final_state
+                     and any("CONTESTED" in n and vf in n
+                             for n in rs.closure_notes))
+        pv = (rp.final_state or {}).get("resonator_frequency",
+                                        (rp.final_state or {}).get(vf))
+        if contested and isinstance(pv, (int, float)) \
+                and not isinstance(pv, bool) and math.isfinite(pv):
+            rs.final_state[vf] = float(pv)
+            # the conclusion now exists, and the flag must say so — the
+            # in-session bookkeeping (first_value_at) stays None because
+            # the 1-D walk itself never took a value; the CLOSURE did
+            if hasattr(rs, "unresolved"):
+                rs.unresolved = False
+            stamp(f"X-TWO-DIP-POWER: the 1-D window left {vf} CONTESTED; "
+                  f"closing through the power axis at {float(pv):.6g} — "
+                  f"the punch-out is the disambiguator the 1-D trace does "
+                  f"not have", rs)
+
+    return notes
 
 
 def score(result: Result, key: dict, *, rule: str = "recency") -> dict:

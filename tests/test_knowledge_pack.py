@@ -248,3 +248,24 @@ class TestNoCustomerNamesShipped:
                 elif f.suffix.lower() == ".png" and pat.search(f.name):
                     offenders.append(str(f))
         assert not offenders, offenders[:10]
+
+    def test_shipped_code_carries_no_lab_name(self):
+        """docs/138: the docs/135 scrub reached pack data; this clause
+        reaches shipped CODE (comments included). Word-boundary match so
+        identifiers like isNumeric never flag; vendor bundles excluded."""
+        import re
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[1] / "quam_state_manager"
+        vendor = ("plotly", "htmx", "split", "pico")
+        pat = re.compile(r"(?<![A-Za-z0-9_])("
+                         + "|".join(self.NAMES)
+                         + r")(?![A-Za-z0-9])", re.IGNORECASE)
+        offenders = []
+        files = list(root.rglob("*.py")) + [
+            f for f in (root / "web" / "static").rglob("*.js")
+            if not any(v in f.name.lower() for v in vendor)]
+        for f in sorted(files):
+            text = f.read_text(encoding="utf-8", errors="replace")
+            for m in pat.finditer(text):
+                offenders.append(f"{f.name}: {m.group(0)}")
+        assert not offenders, offenders[:10]

@@ -403,7 +403,7 @@ def _cosine_bipolar(p):
     NOT the deprecated ``_CosineBipolarPulse``: this class takes an explicit
     total ``length`` (no smoothing/padding fields) and splits the non-flat
     remainder into rise/switch/fall THIRDS (extra 1 sample → the switch,
-    extra 2 → rise+fall). Golden-pinned bit-for-bit against the cqt env
+    extra 2 → rise+fall). Golden-pinned bit-for-bit against the lab-B customer env
     (``tests/golden/waveform_golden_qb04.json``, docs/126 ⑦a).
     """
     def halfcos(n: int):

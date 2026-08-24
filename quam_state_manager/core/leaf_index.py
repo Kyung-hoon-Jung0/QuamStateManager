@@ -22,9 +22,9 @@ transitions, and the whole-chip history becomes SMALLER than the eleven-property
 index it sits beside:
 
     chip          snapshots   numeric paths   change points   file    (old index)
-    KRISS               111           8,721           9,410   1.45 MB      6.1 MB
+    lab-D               111           8,721           9,410   1.45 MB      6.1 MB
     17Q                 264           9,018          12,374   1.59 MB     13.4 MB
-    Novera_1Q         1,154           1,675          10,104   0.61 MB     26.9 MB
+    1Q QPU            1,154           1,675          10,104   0.61 MB     26.9 MB
 
     one path's full history: 0.01-0.06 ms      full rebuild: 0.9-2.7 s
 

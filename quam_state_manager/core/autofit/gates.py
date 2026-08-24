@@ -66,7 +66,7 @@ def _z_floor(fc) -> float:
 
     The same §27 argument as ``_spectral_floor``: a significance floor is a
     claim about the lab's SNR, and one constant cannot serve every chip. On
-    the CQT corpus 98 of 318 neighbor-corroborated qubit-spectroscopy claims
+    the lab-B corpus 98 of 318 neighbor-corroborated qubit-spectroscopy claims
     sat below the module default of 5 — a third of the confirmed-good fits
     read as "no signal". Families that declare nothing keep the default.
     """
@@ -134,7 +134,7 @@ def _row_of(reader, handle, idx) -> np.ndarray:
 # generation's own analysis code.
 #   I -> state          use_state_discrimination=True saves the fitted
 #                       population trace as 'state' and writes no I/Q at all
-#                       (423 CQT targets sat unverifiable on this alone)
+#                       (423 lab-B targets sat unverifiable on this alone)
 #   snr -> D            readout-freq-opt: this generation saves the |g>-|e>
 #                       distance D — the very quantity its fit maximizes
 #   state_target -> state_moving   coupler-node rename (target = moving qubit)
@@ -282,12 +282,12 @@ def _feature_check(raw_path: Path, fc: FeatureCheck, target: str, kind: str,
         # z_min buys a MIDDLE zone, not a lower localization bar. Between the
         # floors a global SEARCH is unreliable both ways — max-of-N on a flat
         # window already sits near z≈3.3, and dropping straight into the
-        # claim-vs-argmax comparison turned 91 corroborated-good CQT claims
+        # claim-vs-argmax comparison turned 91 corroborated-good lab-B claims
         # into "wrong_peak" (the argmax was a noise spike). TESTING the
         # claim's own region carries no look-elsewhere penalty: smooth by the
         # feature's own width (point noise shrinks by √w) and read the
         # deviation within ±tol of the claim. SIGN-AGNOSTIC deliberately —
-        # measured on the corroborated CQT claims, the qubit feature in
+        # measured on the corroborated lab-B claims, the qubit feature in
         # |IQ| is a dip as often as a peak (median smoothed deviation −44σ
         # with mode="peak"), because only the node's ROTATED projection has a
         # guaranteed orientation. A noise window tops out at |z|≈3.6 under

@@ -6,7 +6,10 @@
   {
    "id": "X-JOINT-QSPEC",
    "name": "the qubit-spectroscopy pair is one workflow",
-   "families": ["qubit_spectroscopy", "qubit_spectroscopy_vs_power"],
+   "families": [
+    "qubit_spectroscopy",
+    "qubit_spectroscopy_vs_power"
+   ],
    "trigger": "a 1-D qubit-spectroscopy value is proposed while a power run of the same session has reported an anharmonicity",
    "conclusion": "adopt_only_if_consistent",
    "text": "A 1-D qubit-spectroscopy value is only identifiable against the anharmonicity the power run reports: the two-photon partner sits half an anharmonicity below the fundamental and grows faster with drive, and nothing inside the single run can tell the two apart. The two node types are one workflow and must be read as one session.",
@@ -16,32 +19,45 @@
   {
    "id": "X-TWO-DIP-POWER",
    "name": "a contested dip identity closes through the power axis",
-   "families": ["resonator_spectroscopy", "resonator_spectroscopy_vs_power"],
+   "families": [
+    "resonator_spectroscopy",
+    "resonator_spectroscopy_vs_power"
+   ],
    "trigger": "a 1-D resonator window resolves two dips and their identity is contested",
    "conclusion": "defer_to_power_run",
    "text": "The power run is the disambiguator the 1-D window does not have: a readout resonator punches out to its power-independent bare position above the knee, and the profile's two_dip_identity field names what the other dip is. A contested two-dip choice made from the 1-D trace alone is not closed.",
-   "executed_by": null,
+   "executed_by": "replaybench.cross_close (docs/138)",
    "source": "docs/132 + docs/134 field two_dip_identity"
   },
   {
    "id": "X-PARKING-AGREE",
    "name": "the two flux maps of one qubit must agree on the sweet spot",
-   "families": ["resonator_spectroscopy_vs_flux", "qubit_spectroscopy_vs_flux"],
+   "families": [
+    "resonator_spectroscopy_vs_flux",
+    "qubit_spectroscopy_vs_flux"
+   ],
    "trigger": "a flux parking offset is written from one map while the other family's map of the same qubit locates the extremum elsewhere",
    "conclusion": "re_measure_the_disagreeing_map",
    "text": "The resonator-vs-flux ridge extremum and the qubit-vs-flux arch vertex are the same physical sweet spot seen through two windows. A parking write whose offset disagrees with the other map's extremum by more than that map's own feature width is not closed - one of the two maps is stale or mis-read, and the direction is to re-measure the disagreeing one, never to average them.",
-   "executed_by": null,
+   "executed_by": "replaybench.cross_close (docs/138)",
    "source": "docs/134 section 4 (the pilot flux chain re-anchors exactly this way)"
   },
   {
    "id": "X-COUPLER-DECISION",
    "name": "the resonator map verifies, the qubit map decides",
-   "families": ["resonator_spectroscopy_vs_coupler_flux", "qubit_spectroscopy_vs_coupler_flux"],
-   "requires_profile": {"res_vs_coupler_response": ["weak_flat_normal"]},
+   "families": [
+    "resonator_spectroscopy_vs_coupler_flux",
+    "qubit_spectroscopy_vs_coupler_flux"
+   ],
+   "requires_profile": {
+    "res_vs_coupler_response": [
+     "weak_flat_normal"
+    ]
+   },
    "trigger": "a coupler operating point is proposed from the resonator-vs-coupler-flux map alone",
    "conclusion": "defer_to_qubit_map",
    "text": "On this profile the resonator responds weakly to coupler flux by design: its map is verification only, and the coupler operating-point decision lives in the qubit-spectroscopy-vs-coupler-flux map (the avoided crossing). Concluding a coupler point from the resonator map alone is never licensed on this profile.",
-   "executed_by": null,
+   "executed_by": "replaybench.cross_close (docs/138)",
    "source": "docs/134 section 3 field res_vs_coupler_response + the pilot workflow (the 10-node decides, the 07-node verifies)"
   }
  ]

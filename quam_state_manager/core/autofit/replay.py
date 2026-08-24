@@ -222,7 +222,7 @@ def _sandbox_fix(sandbox: Path, fam, target: str, q_patches: list[dict],
 
     def set_dotted(dotted: str, value):
         # structural list walk, the modifier's rule: a digit segment indexes a
-        # LIST parent (confusion_matrix/0/0 — 295 of 1,755 real CQT revert
+        # LIST parent (confusion_matrix/0/0 — 295 of 1,755 real lab-B revert
         # targets die as dict lookups without this), and stays a dict key for
         # number-keyed dicts (ports."1")
         node = state

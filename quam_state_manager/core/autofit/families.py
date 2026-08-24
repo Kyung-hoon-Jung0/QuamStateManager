@@ -197,7 +197,7 @@ class FeatureCheck:
     # default, which the 1-D families keep.
     spectral_min: float | None = None
     # peak/dip modes: per-family prominence-z floor (same §27 argument as
-    # spectral_min — a floor is a claim about the lab's SNR). On the CQT chip
+    # spectral_min — a floor is a claim about the lab's SNR). On the lab-B chip
     # 98 of 318 neighbor-CORROBORATED qubit-spec claims sit below the module
     # default of 5 (corroborated z bottoms out at 2.35), and z does not
     # separate right claims from wrong ones anyway — it only answers "is
@@ -653,7 +653,7 @@ _register(Family(
     value_key="freq_offset",
     # The node's own quality numbers are the detector here — the spectral
     # check cannot separate a garbage Ramsey from a good one (measured on the
-    # CQT corpus: garbage traces reach peak/median 531 via slow drift while a
+    # lab-B corpus: garbage traces reach peak/median 531 via slow drift while a
     # fast real fringe bottoms out at 12). snr<1 OR r2<0.3 flags 31 of 483
     # node-accepted targets and ZERO of the r2≥0.5 ones — suspects only, so
     # they queue for a look rather than reverting a calibration.
@@ -663,7 +663,7 @@ _register(Family(
                              reason="the node's own fit explains <30% of "
                                     "the trace")],
     plausibility=[
-        # CQT-corpus recalibration (docs/127, the §15.2 method): ±5 MHz fired
+        # lab-B-corpus recalibration (docs/127, the §15.2 method): ±5 MHz fired
         # on 26 node-accepted offsets, ~20 of them CONFIRMED good (r² up to
         # 0.997, and the node's own next run shows the correction landing —
         # q14's 39.8 MHz drift measured, written, and the follow-up reads
