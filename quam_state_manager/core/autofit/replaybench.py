@@ -52,6 +52,13 @@ _PACK_ALIASES = {
     "resonator_spectroscopy_single": "resonator_spectroscopy",
     "resonator_spectroscopy_wide_pyloop": "resonator_spectroscopy",
     "resonator_spectroscopy_wide_python_loop": "resonator_spectroscopy",
+    # the QDAC-bias variants (docs/119's lab) are the SAME measurement
+    # through a different bias source: params and fit_results are
+    # byte-identical in schema to the 06/09 nodes (verified on the real
+    # archive, docs/139) — without these the chain walk would treat a
+    # QDAC-biased qubit's flux maps as an unknown family and abstain
+    "resonator_spectroscopy_vs_flux_qdac": "resonator_spectroscopy_vs_flux",
+    "qubit_spectroscopy_vs_flux_qdac": "qubit_spectroscopy_vs_flux",
 }
 
 

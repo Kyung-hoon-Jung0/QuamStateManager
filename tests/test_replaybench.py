@@ -403,6 +403,19 @@ class TestClosureWalk:
         assert not res.unresolved
 
 
+class TestQdacAliases:
+    """docs/139: the QDAC-bias flux nodes are the SAME measurement through a
+    different bias source (params + fit_results schema byte-identical on the
+    real archive) — without the alias the chain walk treats a QDAC-biased
+    qubit's flux maps as an unknown family and abstains on everything."""
+
+    def test_qdac_flux_nodes_map_to_their_families(self):
+        assert RB.pack_family_for(
+            "#153_02e_resonator_spectroscopy_vs_flux_qdac_150413")             == "resonator_spectroscopy_vs_flux"
+        assert RB.pack_family_for(
+            "#437_03c_qubit_spectroscopy_vs_flux_qdac_165721")             == "qubit_spectroscopy_vs_flux"
+
+
 class TestAbcRetag:
     """docs/136: every step of the 73 targets carries a step_class tag
     derived DETERMINISTICALLY from the key's own correct_decision (rule
