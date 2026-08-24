@@ -363,3 +363,43 @@ class TestProfileRoutes:
         assert b"nothing staged" in r.data.lower()
         ctx = next(iter(app.config["contexts"].values()))
         assert not ctx["store"].change_log, "no-op must not dirty the tray"
+
+# ---------------------------------------------------------------------------
+# C2: cross-family closure (docs/137)
+# ---------------------------------------------------------------------------
+
+class TestCrossClosure:
+    def test_shipped_cross_rules_load_clean(self):
+        doc = knowledge.load_cross()
+        assert doc is not None
+        assert [r["id"] for r in doc["cross_closure_rules"]] == [
+            "X-JOINT-QSPEC", "X-TWO-DIP-POWER", "X-PARKING-AGREE",
+            "X-COUPLER-DECISION"]
+        assert doc["cross_lint_dropped"] == []
+        assert len(doc["cross_hash"]) == 16
+
+    def test_profile_gate_and_family_filter(self):
+        doc = knowledge.load_cross()
+        fam = "resonator_spectroscopy_vs_coupler_flux"
+        with_p = knowledge.cross_rules_for(
+            doc, fam, {"res_vs_coupler_response": "weak_flat_normal"})
+        assert [r["id"] for r in with_p] == ["X-COUPLER-DECISION"]
+        assert knowledge.cross_rules_for(doc, fam, {}) == [], \
+            "an unanswered gating field means silence, not a default"
+        both = knowledge.cross_rules_for(doc, "qubit_spectroscopy", {})
+        assert [r["id"] for r in both] == ["X-JOINT-QSPEC"]
+
+    def test_lint_drops_bad_cross_rules(self, monkeypatch, tmp_path):
+        d = tmp_path / "v1" / "_cross"
+        d.mkdir(parents=True)
+        (d / "closure.json").write_text(json.dumps({"cross_closure_rules": [
+            {"id": "X-ABS", "families": ["a", "b"],
+             "trigger": "shift beyond 5 MHz", "text": "x"},
+            {"id": "X-ONE", "families": ["a"], "trigger": "t", "text": "x"},
+            {"id": "X-OK", "families": ["a", "b"], "trigger": "t",
+             "text": "x"}]}), encoding="utf-8")
+        monkeypatch.setattr(knowledge, "_ROOT", tmp_path)
+        doc = knowledge.load_cross()
+        assert [r["id"] for r in doc["cross_closure_rules"]] == ["X-OK"]
+        assert set(doc["cross_lint_dropped"]) == {"X-ABS", "X-ONE"}
+

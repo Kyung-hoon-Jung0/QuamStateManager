@@ -332,6 +332,77 @@ class TestTheFourFamilyBenchmarkDoesNotRegress:
             f"{len(bad)}/{len(rows)} over-adopted (measured 12/73)"
 
 
+class TestClosureWalk:
+    """docs/137: the session-end closure pass. Three mechanisms, each pinned
+    with the shape that motivated it, plus the dormancy guarantee."""
+
+    _CFAM = "resonator_spectroscopy_vs_coupler_flux"
+    _CNODE = "07_resonator_spectroscopy_vs_coupler_flux"
+
+    def test_a_nan_is_not_a_value(self, tmp_path):
+        # the reader vouches the SHAPE, the fit failed -> record carries NaN;
+        # vouching it made six sessions "resolved" with a non-answer
+        freq, sweep, z = _arch()
+        v = load_run(_cube_folder(
+            tmp_path, "#1_06_resonator_spectroscopy_vs_flux_1", "q1",
+            freq, sweep, z,
+            fit={"resonator_frequency": float("nan"),
+                 "idle_offset": float("nan"), "success": True},
+            params=_FLUX_PARAMS))
+        res = RB.replay(_FAM_FLUX, Session("s", [v]), "q1")
+        assert res.final_state == {}
+        assert res.unresolved
+
+    def _coupler_views(self, tmp_path, specs):
+        # each run gets its OWN map (arch centred per spec) with a fit at
+        # that map's apex — a fit disagreeing with its map is refused by the
+        # reader before any closure logic runs, so the disagreement between
+        # RUNS must be real, not injected into the record
+        views = []
+        for i, (centre, mq) in enumerate(specs):
+            freq, sweep, z = _arch(centre=centre, seed=i)
+            apex = (centre + 9.0) * 1e5 + 5e9      # amp/2 = 9 rows
+            params = dict(_FLUX_PARAMS, measure_qubit=mq)
+            views.append(load_run(_cube_folder(
+                tmp_path, f"#{i}_{self._CNODE}_{i}", "q1-2", freq, sweep, z,
+                fit={"resonator_frequency": apex, "idle_offset": 0.0,
+                     "success": True},
+                params=params)))
+        return views
+
+    def test_a_minority_identity_read_never_overwrites_the_majority(
+            self, tmp_path):
+        # measure_qubit=control is a DIFFERENT resonator: its frequency must
+        # not ride the recency ratchet over the target-resonator reads
+        views = self._coupler_views(tmp_path, [
+            (30, "target"), (30, "target"), (6, "control")])
+        res = RB.replay(self._CFAM, Session("s", views), "q1-2")
+        assert res.final_state["resonator_frequency"] == pytest.approx(
+            39.0 * 1e5 + 5e9, rel=2e-4)
+        assert any("identity" in n for n in res.closure_notes)
+
+    def test_contested_never_vouches_when_cl_cluster_ships(self, tmp_path):
+        # two same-setting readings disagreeing beyond tolerance: one
+        # observation each, no independent confirmation -> no value
+        views = self._coupler_views(tmp_path, [(30, "target"), (6, "target")])
+        pack = dict(knowledge.load_family(self._CFAM) or {})
+        pack["closure_rules"] = list(pack.get("closure_rules") or []) + [
+            {"id": "CL-CLUSTER"}]
+        res = RB.replay(self._CFAM, Session("s", views), "q1-2", pack=pack)
+        assert "resonator_frequency" not in res.final_state
+        assert res.unresolved
+        assert any("CONTESTED" in n for n in res.closure_notes)
+
+    def test_without_the_rule_the_ratchet_is_byte_identical(self, tmp_path):
+        # knowledge stays strictly optional: the shipped coupler pack has no
+        # CL-CLUSTER, so the same disagreeing pair keeps the last reading
+        views = self._coupler_views(tmp_path, [(30, "target"), (6, "target")])
+        res = RB.replay(self._CFAM, Session("s", views), "q1-2")
+        assert res.final_state["resonator_frequency"] == pytest.approx(
+            15.0 * 1e5 + 5e9, rel=2e-4)
+        assert not res.unresolved
+
+
 class TestAbcRetag:
     """docs/136: every step of the 73 targets carries a step_class tag
     derived DETERMINISTICALLY from the key's own correct_decision (rule

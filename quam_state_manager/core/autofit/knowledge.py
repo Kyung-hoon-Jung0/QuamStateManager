@@ -262,3 +262,59 @@ def resolve_signal(pack: dict[str, Any], signal: str,
             if got in cmap:
                 return cmap[got], None
     return entry.get("default"), None
+
+# --- C2: cross-family closure (docs/137) -----------------------------------
+
+def load_cross(version: str = "v1") -> dict[str, Any] | None:
+    """Load the cross-family closure rules — the C2 layer.
+
+    One shared file (``knowledge/<version>/_cross/closure.json``) rather than
+    per-pack entries, because a C2 rule is ABOUT the seam between two
+    families and belongs to neither. Same Clause-B lint and profile-gate
+    validation as closure_rules; a rule naming fewer than two families is
+    dropped (a one-family rule is a C1 rule in the wrong file). ``cross_hash``
+    joins the verdict context the same way ``manual_hash`` does. Returns
+    None when the file is absent — C2 is strictly optional.
+    """
+    p = _ROOT / version / "_cross" / "closure.json"
+    try:
+        doc = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    kept, dropped = [], []
+    for r in doc.get("cross_closure_rules") or []:
+        fams = r.get("families")
+        bad = (_lint_violation(r.get("trigger", ""))
+               or _lint_violation(r.get("text", ""))
+               or _bad_profile_gate(r.get("requires_profile")))
+        if bad is None and not (isinstance(fams, list) and len(fams) >= 2):
+            bad = "families must name at least two families"
+        if bad:
+            dropped.append((r.get("id"), bad))
+            continue
+        kept.append(r)
+    for rid, bad in dropped:
+        logger.warning("knowledge %s/_cross: rule %s dropped by lint (%r)",
+                       version, rid, bad)
+    doc["cross_closure_rules"] = kept
+    doc["cross_lint_dropped"] = [rid for rid, _ in dropped]
+    basis = json.dumps({"cross_closure_rules": kept},
+                       sort_keys=True).encode("utf-8")
+    doc["cross_hash"] = hashlib.sha1(basis).hexdigest()[:16]
+    return doc
+
+
+def cross_rules_for(doc: dict[str, Any] | None, family: str,
+                    answers: dict[str, str] | None = None) -> list:
+    """The ACTIVE cross rules touching one family under the chip's answers
+    (profile-gated exactly like ``active_view``: an unanswered gating field
+    means the rule stays silent)."""
+    out = []
+    for r in (doc or {}).get("cross_closure_rules") or []:
+        if family not in (r.get("families") or []):
+            continue
+        state, _pend = _gate_state(r.get("requires_profile"), answers or {})
+        if state == "active":
+            out.append(r)
+    return out
+

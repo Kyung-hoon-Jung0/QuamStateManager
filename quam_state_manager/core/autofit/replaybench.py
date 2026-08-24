@@ -29,6 +29,7 @@ rides along in the ledger so a human can see what it would have advised.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -345,6 +346,9 @@ class Result:
     # declared profile case (alarms, never corrections)
     pending_profile_questions: list = field(default_factory=list)
     profile_contradictions: list = field(default_factory=list)
+    # docs/137: what the session-end closure pass did (CL-CLUSTER executed) —
+    # a consensus held against a lone outlier, or a contested field dropped
+    closure_notes: list = field(default_factory=list)
 
 
 def _params_match(proposal: dict, params: dict, rel: float = 0.15) -> bool:
@@ -361,6 +365,101 @@ def _params_match(proposal: dict, params: dict, rel: float = 0.15) -> bool:
         if scale == 0 or abs(a - b) / scale > rel:
             return False
     return True
+
+
+def _agreement_groups(reads: list, tol: float) -> list:
+    """Greedy grouping of (value, params, run_id) reads by value tolerance."""
+    groups: list[list] = []
+    for r in reads:
+        for g in groups:
+            if any(abs(m[0] - r[0]) <= tol for m in g):
+                g.append(r)
+                break
+        else:
+            groups.append([r])
+    return groups
+
+
+def _independent_support(group: list) -> int:
+    """How many OBSERVATIONS a group carries under CL-CLUSTER: repeats that
+    share their sweep settings are ONE observation (they inherit each
+    other's blind spots), so support counts distinct parameter settings.
+    Two reads with no comparable numeric knobs count as distinct — the
+    generous direction, which only ever keeps the old behavior."""
+    reps: list = []
+    for _v, params, _rid in group:
+        if not reps or all(not _params_match(params, q) for q in reps):
+            reps.append(params)
+    return len(reps)
+
+
+def _split_identity(state: dict, reads: dict, field_name: str,
+                    notes: list) -> None:
+    """A read is OF something, and ``measure_qubit`` names it.
+
+    The coupler-flux node sweeps the resonator of whichever pair member it
+    was told to measure: a read taken with ``measure_qubit=control`` is a
+    DIFFERENT physical resonator from one taken with ``target``, and letting
+    the recency ratchet overwrite one with the other conflated two
+    resonators on a real archive session (the sweep-value corroboration
+    across the two is exactly what makes that session good — the FREQUENCY
+    is what must not mix). Node semantics, not a tuned band: the vouched
+    value is the most-read identity's most recent read; minority-identity
+    reads are reported, never mixed. Sessions with one identity (or no
+    ``measure_qubit`` param) are byte-identical.
+
+    Deliberately NOT a consensus-overturn rule: an early draft re-vouched
+    the biggest agreeing group over a lone final reading, which silently
+    re-introduced agreement-over-recency and broke a real target where the
+    last reading was the RIGHT line (docs/133 §6 chose recency, with the
+    circularity caveat on record)."""
+    rs = reads.get(field_name) or []
+    if len(rs) < 2 or field_name not in state:
+        return
+    idents: dict[Any, list] = {}
+    for r in rs:
+        idents.setdefault((r[1] or {}).get("measure_qubit"), []).append(r)
+    if len(idents) < 2:
+        return
+    main = max(idents.values(), key=len)
+    if len(main) == max(len(v) for v in idents.values() if v is not main):
+        return          # a tie names nothing — keep the ratchet's answer
+    last_main = main[-1]
+    if abs(float(state[field_name]) - float(last_main[0])) > 0:
+        notes.append(
+            f"identity: the final {field_name} reading came from a "
+            f"different measure_qubit than the session's "
+            f"{len(main)}-read majority — vouching the majority identity's "
+            f"most recent value {last_main[0]:.6g} ({last_main[2]}); a "
+            f"minority-identity read is a different resonator, not a "
+            f"re-measurement")
+        state[field_name] = float(last_main[0])
+
+
+def _close_value_field(state: dict, reads: dict, field_name: str,
+                       tol: float, notes: list) -> bool:
+    """Execute CL-CLUSTER's contested clause on one value field at session
+    end. Returns True when the field ended CONTESTED (dropped from state):
+    the session's readings disagree beyond tolerance and NO group of them
+    carries independent confirmation (same-setting repeats are one
+    observation) — the session must not vouch a value; the direction is
+    the rule's own: a changed window or power, or a later session."""
+    rs = reads.get(field_name) or []
+    if len(rs) < 2 or field_name not in state:
+        return False
+    groups = _agreement_groups(rs, tol)
+    if len(groups) < 2:
+        return False
+    if all(_independent_support(g) <= 1 for g in groups):
+        del state[field_name]
+        notes.append(
+            f"CL-CLUSTER: {field_name} is CONTESTED — "
+            f"{len(groups)} disagreeing readings, none independently "
+            f"confirmed (same-setting repeats are one observation); the "
+            f"session does not vouch a value, the direction is a changed "
+            f"window or power, or a later session")
+        return True
+    return False
 
 
 def replay(family: str, session: Session, target: str, *,
@@ -387,6 +486,8 @@ def replay(family: str, session: Session, target: str, *,
     prior_keys: list[str] = []
     pending_qs: list[str] = []
     contradictions: list[str] = []
+    value_reads: dict[str, list] = {}
+    closure_notes: list[str] = []
     first_value: dict = {}
     first_at: str | None = None
     runs_to_first = 0
@@ -456,7 +557,13 @@ def replay(family: str, session: Session, target: str, *,
             # vouched plateau on 31 of the 38 it will speak for at all.
             own = sig.corrected.get(value_field)
             v = own if isinstance(own, (int, float)) else fit.get(value_field)
-            if isinstance(v, (int, float)) and not isinstance(v, bool):
+            # A NaN is not a value (docs/137): when the reader vouches the
+            # SHAPE but the node's fit failed, the record carries NaN — and
+            # NaN passes isinstance. Vouching it made a session "resolved"
+            # with a non-answer, which scored as over-adoption six times on
+            # the tagged benchmark. Numbers come from the node's own fitter
+            # or not at all.
+            if isinstance(v, (int, float)) and not isinstance(v, bool)                     and math.isfinite(v):
                 # THE trap of this pair of node types. The two-photon 0->2
                 # transition sits half an anharmonicity BELOW the fundamental
                 # and grows faster with drive, so at too much power a 1-D fit
@@ -498,8 +605,12 @@ def replay(family: str, session: Session, target: str, *,
                 reasons.append(f"refusing the chosen {sweep_field}: it is an "
                                f"artifact of where the sweep ended, not a "
                                f"measurement")
-            elif isinstance(sv, (int, float)) and not isinstance(sv, bool):
+            elif isinstance(sv, (int, float)) and not isinstance(sv, bool)                     and math.isfinite(sv):
                 adopted[sweep_field] = float(sv)
+            elif isinstance(sv, float) and not math.isfinite(sv):
+                refused.append(sweep_field)
+                reasons.append(f"the record's {sweep_field} is NaN — the "
+                               f"fit failed; a NaN is not a value")
         elif action == ADOPT_FREQ and sweep_field:
             refused.append(sweep_field)
             reasons.append(f"the ridge never turned inside the window, so no "
@@ -533,6 +644,9 @@ def replay(family: str, session: Session, target: str, *,
                 held = float(got)
                 held_power = drive_power_dbm(view, target)
             state.update(adopted)
+            for fk, fv in adopted.items():
+                value_reads.setdefault(fk, []).append(
+                    (float(fv), dict(view.params or {}), view.run_id))
 
         steps.append(Step(
             index=pos, run_id=view.run_id, signal=sig.key, case=case_id,
@@ -550,12 +664,40 @@ def replay(family: str, session: Session, target: str, *,
                 vouched.setdefault(k, []).append(float(v))
     consensus = {k: c for k, vs in vouched.items()
                  if (c := _largest_cluster(vs)) is not None}
+
+    # Session-end closure (docs/137). Value fields only — the sweep side is
+    # deliberately out of scope: the flat-map case refuses sweep reads by
+    # design, so the walk's sweep evidence is systematically thinner than
+    # the archive's and a contested-drop there would punish that honesty.
+    sweep_fields = {sf for _vf, sf in
+                    (MC.VALUE_FIELDS.get(f, (None, None))
+                     for f in packs) if sf}
+    # identity first — node semantics, unconditional (like the NaN guard):
+    # reads taken of different measure_qubit are different resonators
+    for fk in list(state.keys()):
+        if fk not in sweep_fields:
+            _split_identity(state, value_reads, fk, closure_notes)
+    # CL-CLUSTER's contested clause is EXECUTED, not just loaded, when a
+    # consulted pack ships the rule. Without it, behavior is byte-identical
+    # (knowledge stays strictly optional).
+    if any(any(r.get("id") == "CL-CLUSTER"
+               for r in (pk.get("closure_rules") or []))
+           for pk in packs.values()):
+        for fk in list(state.keys()):
+            if fk not in sweep_fields:
+                _close_value_field(state, value_reads, fk, FREQ_TOL_HZ,
+                                   closure_notes)
+        if closure_notes and first_at is not None \
+                and not any(k not in sweep_fields for k in state):
+            first_at = None      # every value field ended contested
+
     return Result(family=("+".join(sorted(set(seen_families))) if joint
                           else family),
                   session_id=session.session_id, target=target,
                   steps=steps, final_state=state, first_value=first_value,
                   first_value_at=first_at, runs_to_first_value=runs_to_first,
                   runs_consumed=len(steps), unresolved=first_at is None,
+                  closure_notes=closure_notes,
                   revisions=revisions, unscoreable_proposals=unscoreable,
                   adopted_values=vouched, consensus_state=consensus,
                   pending_profile_questions=pending_qs,
