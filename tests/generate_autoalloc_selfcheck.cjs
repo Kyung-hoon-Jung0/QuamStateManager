@@ -147,9 +147,18 @@ function statusText(win) {
     const body = allocCalls(log)[0].body;
     ok(body && body.spec && (body.spec.qubits || []).length === 3,
       'A1: the request carried the spec (3 qubits)');
-    ok(diagramHost(win).textContent.indexOf('Allocating channels') >= 0,
-      'A1: in-flight placeholder says "Allocating channels…" (got: ' +
+    ok(diagramHost(win).textContent.indexOf('Checking wiring') >= 0,
+      'A1: in-flight placeholder says "Checking wiring…" (got: ' +
       diagramHost(win).textContent.trim() + ')');
+    // docs/135: and it VISIBLY waits — a frozen sentence over a multi-second
+    // subprocess reads exactly like the dead button this whole file is about.
+    ok(diagramHost(win).querySelectorAll('.sm-dots i').length === 3,
+      'A1: the waiting line carries the animated ellipsis');
+    const st = win.document.getElementById('gen-allocate-status');
+    ok(st && st.textContent.indexOf('Checking wiring') >= 0 &&
+       st.querySelectorAll('.sm-dots i').length === 3,
+      'A1: the BUTTON says it is working too (got: ' +
+      (st ? st.textContent.trim() : 'no status el') + ')');
     await settle();
     ok(!!G.state.allocation && !!G.state.allocation.q1,
       'A1: allocation stored from the auto run');
@@ -173,9 +182,12 @@ function statusText(win) {
     ]);
     const G = buildWizard(win);        // init() started loadEnvs; nothing resolved yet
     G.goToStep(5);
-    ok(diagramHost(win).textContent.indexOf('Waiting for a Python environment') >= 0,
-      'A2: pre-env placeholder is the honest waiting line (got: ' +
+    ok(diagramHost(win).textContent.indexOf('Finding a Python environment') >= 0 &&
+       diagramHost(win).textContent.indexOf('selected automatically') >= 0,
+      'A2: pre-env placeholder names the phase it is in (got: ' +
       diagramHost(win).textContent.trim() + ')');
+    ok(diagramHost(win).querySelectorAll('.sm-dots i').length === 3,
+      'A2: the env-waiting line animates too (docs/135)');
     ok(allocCalls(log).length === 0, 'A2: no allocation attempt before an env exists');
     await settle(10);                  // envs → probes → auto-pick → allocate
     // The auto-pick is CLIENT-SIDE only (review [7]): /generate/select-env
@@ -544,16 +556,18 @@ function statusText(win) {
     const fluxEls = () => G.state.spec.lines
       .filter(l => l.line === 'flux').map(l => l.element).sort().join(',');
     ok(fluxEls() === 'q1,q2', 'A13: QDAC-biased q3 derives no OPX flux (got ' + fluxEls() + ')');
-    // Uncheck q3's QDAC box — the explicit act must (re)create its z line.
+    // Move q3's source back to LF-FEM — the explicit act must (re)create its
+    // z line. docs/136 turned the on/off checkbox into a three-way source
+    // picker (LF-FEM / QDAC / bias tee); the inventory contract is unchanged.
     G.goToStep(4);
-    let q3chk = null;
+    let q3sel = null;
     win.document.querySelectorAll('#gen-qdac-list .gen-qdac-row').forEach(r => {
-      if (r.textContent.indexOf('q3') >= 0) q3chk = r.querySelector('input[type=checkbox]');
+      if (r.getAttribute('data-qubit') === 'q3') q3sel = r.querySelector('.gen-qdac-source');
     });
-    ok(!!q3chk && q3chk.checked, 'A13: q3 renders QDAC-checked');
-    if (q3chk) {
-      q3chk.checked = false;
-      q3chk.dispatchEvent(new win.Event('change', { bubbles: true }));
+    ok(!!q3sel && q3sel.value === 'qdac', 'A13: q3 renders as QDAC-sourced');
+    if (q3sel) {
+      q3sel.value = 'opx';
+      q3sel.dispatchEvent(new win.Event('change', { bubbles: true }));
     }
     G.goToStep(5); await settle();
     ok(fluxEls() === 'q1,q2,q3',

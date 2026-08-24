@@ -1,0 +1,120 @@
+{# docs/136 — the QDAC-II component page.
+
+   Same channel-scoped shape as _flux.html / _resonators.html, narrowed to the
+   qubits the QDAC actually biases, plus the two things no per-qubit surface
+   can show: the instrument itself, and the trigger CABLING. #}
+<div class="table-header-row">
+    <h2>QDAC-II <small class="muted">({{ total }} biased qubit{{ '' if total == 1 else 's' }})</small></h2>
+    <div class="table-filter">
+        <input type="search" placeholder="Filter QDAC channels..." autocomplete="off"
+               oninput="filterTable(this, 'qdac-table')">
+        <small id="qdac-table-filter-count" class="muted"></small>
+    </div>
+</div>
+
+{% if instrument %}
+<p class="qdac-instrument muted">
+    <strong>{{ instrument.id or 'qdac' }}</strong>
+    &middot; {{ instrument.communication_type or 'Ethernet' }}
+    {%- if (instrument.communication_type or 'Ethernet') == 'USB' %}
+        &middot; device {{ instrument.usb_device if instrument.usb_device is not none else '—' }}
+    {%- else %}
+        &middot; {{ instrument.ip_address or '—' }}:{{ instrument.port if instrument.port is not none else '—' }}
+    {%- endif %}
+    &middot; VISA backend <code>{{ instrument.lib or '@py' }}</code>
+</p>
+{% else %}
+<p class="qdac-instrument diag-error-text">
+    These qubits are QDAC-biased but the chip declares no top-level
+    <code>qdac</code> instrument — nothing can reach the bias source.
+    See Diagnostics.
+</p>
+{% endif %}
+
+{# The cabling. One OPX digital output feeds one QDAC ext input and arms every
+   channel armed on it, so several qubits on one port is the DESIGN. This table
+   is the only place the app states that grouping, which is what makes a shared
+   port read as correct rather than as a collision. #}
+{% if cabling %}
+<details class="qdac-cabling" open>
+    <summary>Trigger cabling <span class="muted">— {{ cabling | length }} cable{{ '' if cabling|length == 1 else 's' }}</span></summary>
+    <table class="data-table qdac-cabling-table">
+        <thead>
+            <tr>
+                <th>QDAC input</th>
+                <th>OPX digital output</th>
+                <th>Armed qubits</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for c in cabling %}
+            <tr{% if c.conflict %} class="qdac-cabling-bad"{% endif %}>
+                <td>
+                    {%- if c.conflict -%}
+                    <span class="diag-error-text" title="One cable cannot reach two different QDAC trigger inputs — a trigger here would arm the wrong channels">{{ c.conflict | join(' / ') }} &#9888;</span>
+                    {%- else -%}
+                    {{ c.ext or '—' }}
+                    {%- endif -%}
+                </td>
+                <td><code>{{ c.port }}</code></td>
+                <td>{% for q in c.qubits %}<span class="qdac-chip">{{ q }}</span>{% endfor %}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</details>
+{% endif %}
+
+{% set cmap_highlight = 'qdac' %}
+{% set cmap_label = '— QDAC-biased qubits highlighted' %}
+{% include '_component_map.html' %}
+
+<table id="qdac-table" class="data-table" role="grid">
+    <thead>
+        <tr>
+            <th class="sortable" data-col="0" data-type="str">ID</th>
+            <th class="sortable" data-col="1" data-type="str">Active</th>
+            <th class="sortable" data-col="2" data-type="str">Bias</th>
+            <th class="sortable" data-col="3" data-type="num">Channel</th>
+            <th class="sortable" data-col="4" data-type="num">DC offset <span class="unit">(V)</span></th>
+            <th class="sortable" data-col="5" data-type="str">Trigger</th>
+            <th class="sortable" data-col="6" data-type="num">Dwell <span class="unit">(s)</span></th>
+            <th class="sortable" data-col="7" data-type="num">Slew rate <span class="unit">(V/s)</span></th>
+            <th class="sortable" data-col="8" data-type="str">Range</th>
+            <th class="sortable" data-col="9" data-type="str">Filter</th>
+            <th class="sortable" data-col="10" data-type="num">Settle <span class="unit">(ns)</span></th>
+        </tr>
+    </thead>
+    <tbody>
+    {% if qubits %}
+    {% for q in qubits %}
+        <tr class="clickable-row{% if not q.is_active %} row-inactive{% endif %}" data-qubit-id="{{ q.id }}" hx-get="/qubit/{{ q.id }}" hx-target="#inspector-pane" hx-swap="innerHTML" hx-indicator="#inspector-pane">
+            <td><strong>{{ q.id }}</strong></td>
+            <td>{% if q.is_active %}<span class="cell-good" aria-label="Active" title="Listed in active_qubit_names">&#10003;</span>{% else %}<span class="muted" aria-label="Inactive" title="Not in active_qubit_names">off</span>{% endif %}</td>
+            <td>
+                {%- if q.bias_mode == 'bias_tee' -%}
+                <span class="flux-src flux-src-tee" title="Bias tee — the QDAC-II holds the DC operating point while an LF-FEM port plays pulses on top of it">QDAC + LF-FEM</span>
+                {%- else -%}
+                <span class="flux-src flux-src-qdac" title="Flux-biased from a QDAC-II channel only — this qubit has no OPX analog port and cannot play a flux pulse">QDAC-II</span>
+                {%- endif -%}
+            </td>
+            <td>{{ q.qdac_channel if q.qdac_channel is not none else '-' }}</td>
+            <td>{{ q.qdac_dc_offset | qty('qdac_dc_offset') }}</td>
+            <td>{% if q.qdac_trigger_port %}{{ q.qdac_trigger_port }}{% if q.qdac_trigger_port_label %} <small class="muted" title="the OPX digital output cabled to that QDAC ext input">{{ q.qdac_trigger_port_label }}</small>{% endif %}{% else %}<span class="muted" title="No trigger marker — this channel only ever holds a static DC bias">static</span>{% endif %}</td>
+            <td>{{ q.qdac_dwell if q.qdac_dwell is not none else '-' }}</td>
+            <td>{{ q.qdac_slew_rate if q.qdac_slew_rate is not none else '-' }}</td>
+            <td>{{ q.qdac_output_range or '-' }}</td>
+            <td>{{ q.qdac_output_filter or '-' }}</td>
+            <td>{{ q.qdac_settle_time if q.qdac_settle_time is not none else '-' }}</td>
+        </tr>
+    {% endfor %}
+    {% else %}
+        <tr><td colspan="11" class="muted" style="text-align:center;padding:2rem">No QDAC-biased qubits in this state file.</td></tr>
+    {% endif %}
+    </tbody>
+</table>
+
+{% set base_url = "/qdac" %}
+{% set extra_qs = "" %}
+{% set storage_key = "quam_qdac_per_page" %}
+{% include "_pagination.html" %}

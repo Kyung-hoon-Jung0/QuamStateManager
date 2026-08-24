@@ -153,6 +153,13 @@ var UI_CONFIG = {
         twpa_ro:   '#a93226',   /* TWPA readout        — dark red */
         twpa_in:   '#d63384',   /* TWPA input          — magenta  */
         digital:   '#54617a',   /* Digital output / trigger — slate */
+        z_qdac:    '#f1c40f',   /* Bias-tee flux port (z + QDAC-II) — amber.
+                                   Its own colour on purpose (docs/136 r2):
+                                   the dashed-ring mark was invisible at port
+                                   size. Amber is the widest free hue gap in
+                                   this palette — gold rr_in is orange-family
+                                   and lives on MW-FEM input columns, never
+                                   beside an LF-FEM z output. */
         fallback:  '#999999',   /* any unrecognised role — gray   */
     },
 
@@ -7917,6 +7924,136 @@ var _popupHideTimer = null;
  * Build an SVG chassis diagram with dual sub-columns per FEM (outputs left, inputs right).
  * Colored port circles encode role; hover shows details, dblclick shows raw wiring JSON.
  */
+/* ---- instrument rack sizing (docs/135) -------------------------------
+ * Two honest presentations of one drawing, never a third silent one:
+ *   Fit  — the viewBox scales the WHOLE rack into the host width
+ *   1:1  — intrinsic size; the host's `overflow-x:auto` scrolls (full-size
+ *          port labels and drag targets)
+ * With no recorded preference the default is Fit while it stays legible
+ * (see _INSTR_FIT_FLOOR), 1:1 below that. The viewer's own choice always
+ * wins and rides localStorage, so it survives the re-renders every wizard
+ * edit triggers. This lives inside the renderer, so it applies to EVERY
+ * mount (page, wizard, compare, floating panel).
+ */
+var _INSTR_FIT_KEY = 'quam_instrument_fit';
+// Below this the labels inside the port circles stop being readable, so
+// scaling the rack down would trade one unusable view for another —
+// scrolling a full-size rack is the honest fallback. Measured on the real
+// 20Q chip: an 8-FEM rack in a 1194px pane lands at 0.63.
+var _INSTR_FIT_FLOOR = 0.55;
+// The viewer's choice for THIS page. localStorage carries it to the next one
+// but is never the only copy — see _applyInstrumentFit.
+var _instrFitChoice = null;
+
+function _applyInstrumentFit(container) {
+    _watchInstrumentResize(container);   // armed even while it currently fits
+    var svgs = container.querySelectorAll('svg.instrument-svg');
+    var widest = 0;
+    Array.prototype.forEach.call(svgs, function(svg) {
+        widest = Math.max(widest, parseFloat(svg.dataset.natW) || 0);
+    });
+    var avail = container.clientWidth || widest;
+    var scale = widest ? Math.min(1, avail / widest) : 1;
+    // The viewer's explicit choice always wins; with none recorded, show the
+    // WHOLE rack whenever it stays legible — the complaint this fixes was
+    // "half my FEMs aren't there", and a rack the viewer must discover by
+    // scrolling answers that only halfway.
+    // localStorage is best-effort, never the only copy: a browser with site
+    // data blocked (Safari private, Chrome "block all cookies", a webview
+    // with no user-data dir) throws on setItem, and a mode kept ONLY in
+    // storage makes the toggle silently inert. _instrFitChoice is the truth
+    // for this page; storage just carries it to the next one.
+    var stored = _instrFitChoice;
+    if (stored === null) {
+        try { stored = localStorage.getItem(_INSTR_FIT_KEY); } catch (e) { /* blocked */ }
+    }
+    var fit = stored === '1' ? true
+            : stored === '0' ? false
+            : scale >= _INSTR_FIT_FLOOR;
+
+    Array.prototype.forEach.call(svgs, function(svg) {
+        var w = parseFloat(svg.dataset.natW) || 0;
+        var h = parseFloat(svg.dataset.natH) || 0;
+        if (!w || !h) return;
+        if (fit) {
+            // NEVER magnify. `width:100%` on a viewBox'd svg scales UP as
+            // happily as down, so a rack narrower than its pane — every chip
+            // smaller than the 8-FEM one this was measured on — would be
+            // blown up past natural size, in a picture whose whole job is to
+            // be a faithful rack. Cap at the drawing's own width.
+            svg.style.width = 'min(100%, ' + w + 'px)';
+            if (!svg.style.width) svg.style.width = Math.min(avail, w) + 'px';  // no min() support
+            svg.style.height = 'auto';
+            svg.style.maxWidth = w + 'px';
+        } else {
+            svg.style.width = w + 'px';
+            svg.style.height = h + 'px';
+            svg.style.maxWidth = 'none';   // the crop this replaced
+        }
+    });
+    var old = container.querySelector('.iw-fitbar');
+    if (old) old.remove();
+    // Only speak when the drawing does not fit on its own — an 8-FEM rack in
+    // a wide pane needs no chrome.
+    if (!svgs.length || widest <= container.clientWidth + 1) return;
+    var bar = document.createElement('div');
+    bar.className = 'iw-fitbar';
+    var note = document.createElement('span');
+    note.className = 'iw-fitbar-note';
+    note.textContent = fit
+        ? 'Whole rack scaled to fit — switch to 1:1 for full-size ports.'
+        : '↔ Wider than this pane — scroll sideways, or fit it all in view.';
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn-xs outline iw-fitbar-btn';
+    btn.textContent = fit ? '1:1' : 'Fit width';
+    btn.title = fit ? 'Show the rack at full size (scrolls sideways)'
+                    : 'Scale the whole rack into this pane';
+    btn.addEventListener('click', function() {
+        var next = fit ? '0' : '1';
+        _instrFitChoice = next;                  // in-memory first: always takes effect
+        try {
+            localStorage.setItem(_INSTR_FIT_KEY, next);
+            // The write landed, so storage is the record again and the
+            // in-memory override stops shadowing it — otherwise this page
+            // would ignore a change made in another tab for the rest of the
+            // session. The override exists exactly while storage cannot hold
+            // the value.
+            _instrFitChoice = null;
+        } catch (e) { /* blocked — the override stays, and the button works */ }
+        // Every rack on the page follows one choice, not just this container.
+        var hosts = document.querySelectorAll('#instrument-diagram, .gen-wiring-diagram, [id$="-wiring-diagram"]');
+        Array.prototype.forEach.call(hosts, function(h) {
+            if (h.querySelector('svg.instrument-svg')) _applyInstrumentFit(h);
+        });
+        if (!container.querySelector('.iw-fitbar')) _applyInstrumentFit(container);
+    });
+    bar.appendChild(note);
+    bar.appendChild(btn);
+    container.insertBefore(bar, container.firstChild);
+}
+
+/* The rack's host changes width without the window doing so — the sidebar
+ * collapses, the split pane is dragged, a wizard panel swaps. Re-decide on
+ * the CONTAINER's own resize (the docs/122 lesson: a window-resize listener
+ * never sees any of those). One observer per container, and it never
+ * re-enters while it is itself resizing. */
+function _watchInstrumentResize(container) {
+    if (container._iwFitObs || typeof ResizeObserver !== 'function') return;
+    var busy = false;
+    container._iwFitObs = new ResizeObserver(function() {
+        if (busy) return;
+        busy = true;
+        requestAnimationFrame(function() {
+            busy = false;
+            if (container.isConnected && container.querySelector('svg.instrument-svg')) {
+                _applyInstrumentFit(container);
+            }
+        });
+    });
+    container._iwFitObs.observe(container);
+}
+
 window.renderInstrumentWiring = function(containerId, data, rawWiring, options) {
     var container = document.getElementById(containerId);
     if (!container) return;
@@ -7996,7 +8133,22 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
         svg.setAttribute('width', svgW);
         svg.setAttribute('height', svgH);
         svg.setAttribute('class', 'instrument-svg');
-        svg.setAttribute('style', 'max-width:100%;');
+        // docs/135 — NEVER crop the rack. The old `max-width:100%` with NO
+        // viewBox shrank the ELEMENT's box while the drawing kept its own
+        // coordinates, so every FEM past the container width was painted
+        // outside the visible box — and because the element itself fitted,
+        // the host's `overflow-x:auto` never produced a scrollbar either.
+        // A real 20Q chip's rack is 1884px with the DIG column, 1356 without;
+        // the user reported "3 MW + 4 LF" on /instrument and "3 MW + 2 LF,
+        // cut off" in the wizard, at their own two window widths — one chip,
+        // two different answers, neither of them the truth (3 MW + 5 LF).
+        // The viewBox makes the drawing scalable; `_applyInstrumentFit`
+        // (defined above) picks scale-to-fit vs intrinsic-size-and-scroll,
+        // and neither one ever clips.
+        svg.setAttribute('viewBox', '0 0 ' + svgW + ' ' + svgH);
+        svg.setAttribute('preserveAspectRatio', 'xMinYMin meet');
+        svg.dataset.natW = svgW;
+        svg.dataset.natH = svgH;
 
         // Controller title
         svg.appendChild(_svgText(svgW / 2, 22, ctrlName + ' \u2014 OPX1000 Wiring', 14, '600', '#333', 'middle'));
@@ -8125,6 +8277,10 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
         container.appendChild(svg);
     });
 
+    // docs/135: size the rack(s) now that they are in the document, and offer
+    // the overview when the rack is wider than its host.
+    _applyInstrumentFit(container);
+
     // Keep popup alive when mouse enters it (cursor-popup mode only)
     var popup = onPortHover ? null : document.getElementById('port-popup');
     if (popup) {
@@ -8197,6 +8353,13 @@ function _renderPortCell(svg, cx, cy, r, roleColors, assignments, rawWiring, por
 /** Create a colored SVG circle for a port assignment with hover and double-click handlers. */
 function _appendPortCircle(svg, cx, cy, r, roleColors, assignment, rawWiring, editable, onPortHover) {
     var color = roleColors[assignment.role] || '#999';
+    // docs/136 r2 — a bias-tee flux port is z + QDAC on one physical line, and
+    // it gets its OWN colour. The first pass marked it with a dashed slate
+    // ring over the z blue ("still a z port"), and the customer's verdict was
+    // that it is invisible at port size. A distinct fill is the honest signal:
+    // this port is not like the others, and the hover names both instruments.
+    var qdacShared = !!assignment.qdac_shared;
+    if (qdacShared) color = roleColors.z_qdac || '#f1c40f';
     var g = _svgEl('g');
     g.style.cursor = editable ? 'grab' : 'pointer';
     g.setAttribute('class', 'iw-port-circle');
@@ -8204,8 +8367,13 @@ function _appendPortCircle(svg, cx, cy, r, roleColors, assignment, rawWiring, ed
     if (assignment.role != null) g.setAttribute('data-role', assignment.role);
 
     var circle = _svgEl('circle');
-    _svgAttrs(circle, {cx: cx, cy: cy, r: r, fill: color, stroke: 'rgba(0,0,0,0.15)', 'stroke-width': 1.5});
+    // The bias-tee port keeps a solid slate outline — the digital hue, tying
+    // it to the trigger cable that arms its QDAC channel.
+    _svgAttrs(circle, {cx: cx, cy: cy, r: r, fill: color,
+                       stroke: qdacShared ? (roleColors.digital || '#54617a') : 'rgba(0,0,0,0.15)',
+                       'stroke-width': qdacShared ? 2 : 1.5});
     g.appendChild(circle);
+    if (qdacShared) g.setAttribute('data-qdac-shared', '1');
 
     // Strip .role suffix for display: "qA1.xy" → "qA1" (role is encoded by color)
     var label = assignment.label || '';
@@ -8224,7 +8392,9 @@ function _appendPortCircle(svg, cx, cy, r, roleColors, assignment, rawWiring, ed
     } else {
         fontSize = 7;  // multi-member feedline sub-circles
     }
-    var txt = _svgText(cx, cy + Math.round(fontSize * 0.36), display, fontSize, '700', UI_CONFIG.instrumentWiring.portLabelColor, 'middle');
+    // White text fails on the amber bias-tee fill — dark label there instead.
+    var txt = _svgText(cx, cy + Math.round(fontSize * 0.36), display, fontSize, '700',
+        qdacShared ? '#1f2430' : UI_CONFIG.instrumentWiring.portLabelColor, 'middle');
     txt.setAttribute('font-family', 'monospace');
     g.appendChild(txt);
 
@@ -8356,13 +8526,27 @@ function _getPopupFields(a) {
         {key: 'LO (downconv)',value: _fmtVal(a.lo_frequency, 'GHz')},
         {key: 'band',         value: a.band},
     ];
-    if (r === 'z') return [
-        {key: 'flux point',   value: a.flux_point},
-        {key: 'joint offset', value: _fmtNum(a.joint_offset, 4)},
-        {key: 'indep offset', value: _fmtNum(a.independent_offset, 4)},
-        {key: 'output mode',  value: a.output_mode},
-        {key: 'upsampling',   value: a.upsampling_mode},
-    ];
+    if (r === 'z') {
+        var zf = [
+            {key: 'flux point',   value: a.flux_point},
+            {key: 'joint offset', value: _fmtNum(a.joint_offset, 4)},
+            {key: 'indep offset', value: _fmtNum(a.independent_offset, 4)},
+            {key: 'output mode',  value: a.output_mode},
+            {key: 'upsampling',   value: a.upsampling_mode},
+        ];
+        // docs/136 — a bias-tee line is driven by TWO instruments and one
+        // hover has to answer for both. The QDAC holds the DC operating point
+        // (which is why `joint offset` above may be 0 and mean nothing) while
+        // this OPX port plays the pulses; showing only one half would read as
+        // a complete description of the line and be wrong.
+        if (a.qdac_shared) {
+            zf.push({key: '— bias tee —', value: 'QDAC-II + LF-FEM'});
+            zf.push({key: 'QDAC channel', value: a.qdac_channel});
+            zf.push({key: 'QDAC DC offset', value: _fmtNum(a.qdac_dc_offset, 4)});
+            zf.push({key: 'QDAC trigger', value: a.qdac_trigger_port});
+        }
+        return zf;
+    }
     if (r === 'coupler') return [
         {key: 'flux point',     value: a.flux_point},
         {key: 'decouple ofs',   value: _fmtNum(a.decouple_offset, 4)},
@@ -8390,14 +8574,20 @@ function _getPopupFields(a) {
     if (r === 'twpa_in') return [
         {key: 'RO freq',    value: _fmtVal(a.rf_frequency, 'GHz')},
     ];
-    if (r === 'digital') return [
-        {key: 'marker',     value: a.marker},
-        {key: 'line',       value: a.source || null},
-        {key: 'delay',      value: _fmtVal(a.delay, 'ns')},
-        {key: 'buffer',     value: _fmtVal(a.buffer, 'ns')},
-        {key: 'shareable',  value: a.shareable == null ? null : String(a.shareable)},
-        {key: 'inverted',   value: a.inverted == null ? null : String(a.inverted)},
-    ];
+    if (r === 'digital') {
+        var df = [{key: 'marker', value: a.marker}];
+        // docs/136 — on a QDAC trigger the ext input is the ONLY thing that
+        // explains why several qubits legitimately land on one port: the OPX
+        // output feeds one ext BNC and that arms every channel armed on it.
+        // Without it a shared port reads as a wiring collision.
+        if (a.qdac_trigger) df.push({key: 'QDAC input', value: a.qdac_ext});
+        df.push({key: 'line',      value: a.source || null});
+        df.push({key: 'delay',     value: _fmtVal(a.delay, 'ns')});
+        df.push({key: 'buffer',    value: _fmtVal(a.buffer, 'ns')});
+        df.push({key: 'shareable', value: a.shareable == null ? null : String(a.shareable)});
+        df.push({key: 'inverted',  value: a.inverted == null ? null : String(a.inverted)});
+        return df;
+    }
     return [];
 }
 
@@ -16768,7 +16958,14 @@ window.ExplorerChips = (function () {
     var CUSTOM_KEY = 'quam_bulk_custom_chips';
     var CURATED = [
         ['freq', 'Freq'], ['readout', 'Readout'], ['resonator', 'Resonator'],
-        ['flux', 'Flux'], ['coupler', 'Coupler'], ['amp', 'Amp'],
+        ['flux', 'Flux'],
+        // docs/136 — QDAC-II bias is a component of its own. Here the honesty
+        // gate is the raw document haystack, so this chip renders on a chip
+        // whose state carries the top-level `qdac` instrument or a
+        // QdacBiasLine `__class__`; Live Edit reaches the same word through
+        // its columns' section + search text. Both surfaces or neither.
+        ['qdac', 'QDAC'],
+        ['coupler', 'Coupler'], ['amp', 'Amp'],
         ['power', 'Power'], ['length', 'Length'], ['delay', 'Delay'],
         ['offset', 'Offset'], ['filter', 'Filter'], ['phase', 'Phase'],
         ['port', 'Port'],

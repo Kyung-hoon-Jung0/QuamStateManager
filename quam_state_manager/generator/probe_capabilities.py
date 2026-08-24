@@ -217,10 +217,148 @@ def _probe_one(desc: dict) -> tuple[bool, str]:
     return False, last_err
 
 
+# --- QPU root classes (docs/136) -------------------------------------------
+# The chip's ROOT class decides what the chip can CONTAIN, and the build used
+# to derive it from line types alone. On a QDAC chip that produced stock
+# `FluxTunableQuam`, whose `qubits` is typed `Dict[str, FluxTunableTransmon]`
+# and which declares no `qdac` field — so the build reported success and the
+# result could not be loaded at all. `regen_spec` fixed this for re-generate by
+# carrying the source chip's own `__class__`; a FRESH build has no source to
+# carry from, so the env is asked what it can offer.
+#
+# A curated home list, never `walk_packages` — importing the whole env to find
+# a class is slow, and on a customer tree it executes arbitrary module-level
+# code. The lab's own root comes first: a customer subclass exists precisely
+# because the stock ones cannot hold that lab's chip.
+_QPU_ROOT_HOMES: tuple[tuple[str, str], ...] = (
+    ("quam_config", "Quam"),
+    ("quam_config.my_quam", "Quam"),
+    ("quam_builder.architecture.superconducting.qpu", "FluxTunableQuam"),
+    ("quam_builder.architecture.superconducting.qpu", "FixedFrequencyQuam"),
+    ("quam_builder.architecture.superconducting.qpu", "FixedFrequencyZZDriveQuam"),
+)
+
+
+def _annotation_text(cls, field: str) -> str:
+    """The DECLARED type of one dataclass field, as text.
+
+    Deliberately textual. ``from __future__ import annotations`` leaves these
+    as strings, forward references may not resolve outside their defining
+    module, and ``get_type_hints`` raises on either — while the question here
+    ("does this field's declared type mention a QDAC component?") is answerable
+    from the text and answerable safely.
+    """
+    fields = getattr(cls, "__dataclass_fields__", None) or {}
+    spec = fields.get(field)
+    if spec is None:
+        return ""
+    ann = getattr(spec, "type", None)
+    return ann if isinstance(ann, str) else str(ann)
+
+
+def _bias_tee_shape(qubit_cls) -> dict | None:
+    """Can this transmon class hold a QDAC DC bias AND an OPX pulse line?
+
+    That is the bias-tee shape: the QDAC holds the operating point while an
+    LF-FEM port plays pulses on top of it. Returns the FIELD NAME the bias
+    line lives under, because it is the lab's choice — no such class exists
+    upstream, so whoever writes it names it.
+    """
+    fields = getattr(qubit_cls, "__dataclass_fields__", None) or {}
+    z_text = _annotation_text(qubit_cls, "z")
+    if "qdacbias" in z_text.replace("_", "").lower():
+        return None            # `z` IS the bias line — QDAC-only, not a tee
+    if not z_text:
+        return None
+    for name in fields:
+        if name == "z":
+            continue
+        text = _annotation_text(qubit_cls, name)
+        if "qdacbias" in text.replace("_", "").lower():
+            return {"field": name, "z_type": z_text}
+    return None
+
+
+def qpu_roots() -> list[dict]:
+    """Which QPU root classes this env can import, and what each can HOLD.
+
+    The wizard offers these as the chip's root class, defaulting to the first
+    that can hold what the spec declares. Never raises: an env with none of
+    them returns an empty list and the caller degrades.
+    """
+    out: list[dict] = []
+    seen: set[str] = set()
+    for mod_name, cls_name in _QPU_ROOT_HOMES:
+        path = f"{mod_name}.{cls_name}"
+        try:
+            mod = importlib.import_module(mod_name)
+        except Exception as exc:  # noqa: BLE001 — absent is an answer, not an error
+            out.append({"path": path, "importable": False,
+                        "detail": f"{type(exc).__name__}: {exc}"})
+            continue
+        cls = getattr(mod, cls_name, None)
+        if cls is None:
+            out.append({"path": path, "importable": False,
+                        "detail": f"{cls_name} not in {mod_name}"})
+            continue
+        # The same class can be reachable by two names (quam_config.Quam is
+        # quam_config.my_quam.Quam); report the canonical one once.
+        real = f"{getattr(cls, '__module__', mod_name)}.{cls_name}"
+        if real in seen:
+            continue
+        seen.add(real)
+
+        qubits_text = _annotation_text(cls, "qubits")
+        fields = getattr(cls, "__dataclass_fields__", None) or {}
+        holds_qdac = ("qdac" in fields
+                      and "qdacbias" in qubits_text.replace("_", "").lower())
+
+        # Look for the qubit classes where they are DEFINED or imported, not
+        # only in the module this root happened to be reached through.
+        # `quam_config` re-exports `Quam` but not the transmon classes, and the
+        # canonical-name dedup above then means `quam_config.my_quam` — the
+        # module that actually imports them — is never scanned. Measured: the
+        # probe reported "no bias-tee class" for an env whose build then found
+        # and used one. A capability report that is wrong in the SAFE direction
+        # is still wrong; the wizard would promise a degrade that never came.
+        scan: list = []
+        for candidate in (getattr(cls, "__module__", None), mod_name):
+            if not candidate:
+                continue
+            try:
+                m = sys.modules.get(candidate) or importlib.import_module(candidate)
+            except Exception:  # noqa: BLE001 — a home that will not import is not a fault
+                continue
+            if m not in scan:
+                scan.append(m)
+
+        bias_tee = None
+        for m in scan:
+            for member in list(getattr(m, "__dict__", {}).values()):
+                if not hasattr(member, "__dataclass_fields__"):
+                    continue
+                name = getattr(member, "__name__", "")
+                if name and name in qubits_text:
+                    shape = _bias_tee_shape(member)
+                    if shape:
+                        bias_tee = dict(shape,
+                                        cls=f"{member.__module__}.{name}")
+                        break
+            if bias_tee:
+                break
+
+        out.append({
+            "path": real, "importable": True, "holds_qdac": bool(holds_qdac),
+            "bias_tee": bias_tee, "qubits_type": qubits_text[:400],
+            "detail": "ok",
+        })
+    return out
+
+
 def detect() -> dict:
     """Introspect the installed stack; return the capability manifest.
 
-    ``{"versions": {...}, "capabilities": {id: {"available": bool, "detail": str}}}``.
+    ``{"versions": {...}, "capabilities": {id: {...}}, "qpu_roots": [...]}``.
     Never raises — a probe of a broken env still returns a manifest (all absent).
     """
     caps: dict[str, dict] = {}
@@ -230,7 +368,13 @@ def detect() -> dict:
         except Exception as exc:  # noqa: BLE001 — defensive; a bad descriptor never kills the probe
             ok, detail = False, f"probe error: {type(exc).__name__}: {exc}"
         caps[cid] = {"available": ok, "detail": detail}
-    return {"versions": _library_versions(), "capabilities": caps}
+    try:
+        roots = qpu_roots()
+    except Exception as exc:  # noqa: BLE001 — a root probe never kills the manifest
+        roots = [{"path": "", "importable": False,
+                  "detail": f"probe error: {type(exc).__name__}: {exc}"}]
+    return {"versions": _library_versions(), "capabilities": caps,
+            "qpu_roots": roots}
 
 
 def main() -> int:

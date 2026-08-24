@@ -137,11 +137,11 @@ def run_regenerate(
     pop_conflicts: list[str] = []
     if populate_baseline is not None:
         from . import regen_populate
+        pop_view = regen_populate.populate_view(spec)
         changed = regen_populate.changed_fields(
-            spec.get("populate") or {}, populate_baseline, populate_touched)
+            pop_view, populate_baseline, populate_touched)
         protect, pop_conflicts = regen_populate.protect_paths(
-            changed, spec.get("populate") or {},
-            old_state, old_wiring, new_state, new_wiring)
+            changed, pop_view, old_state, old_wiring, new_state, new_wiring)
 
     result = regen_merge.merge_states(old_state, new_state,
                                       class_schemas=class_schemas,

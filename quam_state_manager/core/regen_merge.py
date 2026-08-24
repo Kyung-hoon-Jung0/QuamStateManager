@@ -198,6 +198,24 @@ def _merge(old: Any, new: Any, path: str, stats: MergeStats,
             if legal is not None and k not in legal:
                 stats.schema_dropped.append(f"{path}.{k}" if path else k)
                 continue
+            # docs/136 — the same gate, one level down: the FIELD is legal but
+            # its old VALUE is an object of a class this build never wrote.
+            # The case that found it: a QDAC chip re-generated in an env
+            # without quam_config degrades to a qubit with no `z` at all, and
+            # grafting the old `QdacBiasLine` back onto it produces a state
+            # whose `z` is typed for something else — Quam.load() fails on the
+            # first such qubit, with the build reporting success.
+            #
+            # Only under a TAGGED parent (legal is not None). An untagged
+            # container — `operations`, `macros`, `extras` — has no declared
+            # types to violate, and that is where a user's own added pulse
+            # class legitimately lives; gating there would break the tier-2
+            # graft this whole branch exists for.
+            if (legal is not None and schemas and isinstance(ov, dict)
+                    and isinstance(ov.get("__class__"), str)
+                    and ov["__class__"] not in schemas):
+                stats.schema_dropped.append(f"{path}.{k}" if path else k)
+                continue
             out[k] = copy.deepcopy(ov)
             n = _count_leaves(ov)
             stats.grafted += n

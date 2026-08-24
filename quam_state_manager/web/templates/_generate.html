@@ -40,6 +40,15 @@
       <p id="gen-env-empty" class="muted gen-env-empty" hidden>
         No conda environments found &mdash; enter a custom interpreter path below.
       </p>
+      {# docs/135: the env inventory is memoized on the envs dirs' mtimes, which
+         catches every normal create/remove. This is the way out for the case it
+         cannot see (an env registered somewhere the stat does not reach). #}
+      <p class="muted gen-env-rescan-row">
+        <button type="button" class="btn-xs outline gen-env-rescan"
+                onclick="QuamGen.rescanEnvs(this)"
+                title="Re-run the full conda scan (a few seconds) instead of the cached inventory">
+          Rescan environments</button>
+      </p>
       <div class="gen-env-custom">
         <label for="gen-env-custom-path" class="muted gen-env-custom-label">Custom interpreter <b>or venv folder</b> (uv/.venv supported):</label>
         <div class="gen-env-custom-row">
@@ -167,6 +176,20 @@
             <span>Qubit flux (z)</span>
             <span class="muted gen-line-hw-note" id="gen-line-lf-note"></span>
           </label>
+          {# docs/136 — where the z bias COMES FROM. Orthogonal to whether the
+             architecture has a z line at all (the checkbox above), so it is
+             its own control and hides entirely on a fixed-frequency chip. #}
+          <label class="gen-line-toggle" id="gen-line-flux-source" hidden
+                 title="Where each qubit's DC flux bias comes from. LF-FEM is an OPX analog port. QDAC-II is an external DC source armed by an OPX digital trigger — it holds a DC level and cannot play a pulse. Bias tee is both on the same qubit: the QDAC holds the operating point while the LF-FEM plays pulses on top of it.">
+            <span>Flux source</span>
+            <select id="gen-flux-source">
+              <option value="opx">LF-FEM (OPX port)</option>
+              <option value="qdac">QDAC-II (external DC)</option>
+              <option value="tee">Both &mdash; bias tee</option>
+              <option value="mixed">Per qubit&hellip;</option>
+            </select>
+            <span class="muted gen-line-hw-note" id="gen-flux-source-note"></span>
+          </label>
           <label class="gen-line-toggle" id="gen-line-pair-gate"
                  title="Derived from the architecture — the 2-qubit gate seeded on every pair">
             <span>Gate</span>
@@ -260,12 +283,12 @@
           + Add TWPA</button>
       </div>
 
-      {# ---- QDAC-II bias band #}
-      <div class="gen-band">
-        <div class="gen-band-head"><span class="gen-band-title">QDAC-II bias</span> <span class="muted">&mdash; optional</span></div>
+      {# ---- QDAC-II band (docs/136: a component, not an add-on) #}
+      <div class="gen-band" id="gen-qdac-band" hidden>
+        <div class="gen-band-head"><span class="gen-band-title">QDAC-II</span> <span class="muted" id="gen-qdac-band-sub">&mdash; DC flux bias</span></div>
         <p class="muted gen-oneline"
-           title="Generated only when the selected env can import the customer's quam_config.qdac_components module (no upstream qualang_tools/quam_builder support exists) — otherwise the build degrades gracefully and these qubits build with no z/bias component.">
-          Mark qubits whose Z bias comes from an external QDAC-II instead of an OPX flux port. Trigger wiring auto-allocates a digital output.</p>
+           title="Generated only when the selected env can import the customer's quam_config.qdac_components module (no upstream qualang_tools/quam_builder support exists) — otherwise the build degrades gracefully and says which qubits lost their bias.">
+          Per-qubit bias source and QDAC channel. Trigger wiring auto-allocates a digital output; group the cables on step 5.</p>
         <div class="gen-qdac-instrument">
           <label>Link
             <select id="gen-qdac-comm">
@@ -304,6 +327,10 @@
         <p class="muted">Run Auto-allocate to see the wiring diagram.</p>
       </div>
       <div id="gen-wiring-issues" class="gen-wiring-issues"></div>
+      {# docs/136 WS7 — the QDAC trigger cabling, AFTER auto-allocation. One
+         OPX digital output drives one QDAC ext input and arms every channel
+         on it, so the grouping (not the port hunt) is the real decision. #}
+      <div id="gen-qdac-cabling" class="gen-qdac-cabling" hidden></div>
       <div id="gen-wiring-table" class="gen-wiring-table"></div>
     </section>
 
@@ -406,6 +433,14 @@
       <div id="gen-pop-sec-flux">
         <h4>Flux</h4>
         <div id="gen-pop-flux" class="gen-pop-host"></div>
+      </div>
+
+      {# docs/136 WS6 — the QDAC bias seeds. Rows are the QDAC-biased qubits
+         only; the cells write onto spec.qdac.qubits[qid], the same entry the
+         step-4 band edits, so the two views can never disagree. #}
+      <div id="gen-pop-sec-qdac" hidden>
+        <h4>QDAC-II bias <span class="muted">&mdash; the DC operating point and how it steps</span></h4>
+        <div id="gen-pop-qdac" class="gen-pop-host"></div>
       </div>
 
       <div id="gen-pop-sec-pulses">

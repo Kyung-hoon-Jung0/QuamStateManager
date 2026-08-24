@@ -399,11 +399,11 @@
 
   // -- step 1: environment picker --------------------------------------
 
-  function loadEnvs() {
+  function loadEnvs(refresh) {
     var list = document.getElementById("gen-env-list");
     if (!list) return;
     _envNoneUsable = false;   // a rescan re-opens the question
-    fetch("/generate/envs")
+    fetch("/generate/envs" + (refresh ? "?refresh=1" : ""))
       .then(function (r) { return r.json(); })
       .then(renderEnvList)
       .catch(function () {
@@ -1420,6 +1420,16 @@
   // Drop every populate entry (per-qubit buckets + per-pair keys) whose id/endpoint
   // is no longer a live qubit. `valid` = { qid: true } for the surviving qubits.
   function prunePopulate(valid) {
+    // docs/136: spec.qdac.qubits is keyed by qubit id like every populate
+    // bucket, and it was the one map nothing pruned. Lowering the qubit count
+    // left an orphan entry, which validate_spec rejects with "is not a
+    // declared qubit" — a 400 from step 8 naming a qubit no longer on screen.
+    var qd = state.spec.qdac;
+    if (qd && qd.qubits) {
+      Object.keys(qd.qubits).forEach(function (qid) {
+        if (!valid[qid]) delete qd.qubits[qid];
+      });
+    }
     var pop = state.spec.populate; if (!pop) return;
     ["qubit", "resonator", "flux", "pulses"].forEach(function (grp) {
       if (!pop[grp]) return;
@@ -1603,13 +1613,141 @@
     });
   }
 
-  // -- step 4: QDAC-II bias ----------------------------------------------
-  // Simple, TWPA-style: no auto-allocated resource pool, no step-5 diagram
-  // integration. The user marks which existing qubits are QDAC-biased and
-  // enters (or accepts defaults for) their channel/trigger/bias fields.
+  // -- step 4: QDAC-II, the flux source ----------------------------------
+  // docs/136 promoted this from a TWPA-style add-on band to a component: the
+  // z bias SOURCE is a first-class choice, made once for the chip and
+  // overridable per qubit. Three shapes exist and the spec says which by
+  // structure alone — no mode field on the chip, because two qubits on the
+  // same chip can legitimately differ:
+  //
+  //   opx       no entry in spec.qdac.qubits; a "flux" line in spec.lines
+  //   qdac      an entry; NO flux line (the QDAC replaces z)
+  //   bias_tee  an entry with bias_tee:true; AND a flux line — the QDAC holds
+  //             the DC operating point, the LF-FEM plays pulses on top
+  //
+  // The `bias_tee` flag is what separates the third from a MISTAKE (a qubit
+  // switched to QDAC while its flux line lingered), which validate_spec still
+  // rejects. See core/qdac.py for the reader that mirrors this on built chips.
 
   function isQdacBiased(qid) {
     return !!(state.spec.qdac && state.spec.qdac.qubits && state.spec.qdac.qubits[qid]);
+  }
+
+  function isBiasTee(qid) {
+    return !!(isQdacBiased(qid) && state.spec.qdac.qubits[qid].bias_tee);
+  }
+
+  // "opx" | "qdac" | "tee" for one qubit. A qubit with no QDAC entry is "opx"
+  // whether or not the architecture gives it a flux line at all — this reports
+  // on the QDAC, and "no bias" and "OPX bias" are the same answer to that.
+  function fluxSourceOf(qid) {
+    if (!isQdacBiased(qid)) return "opx";
+    return isBiasTee(qid) ? "tee" : "qdac";
+  }
+
+  // The chip-level answer: one of the three, or "mixed" when qubits differ.
+  function chipFluxSource() {
+    var qs = state.spec.qubits || [];
+    if (!qs.length) return "opx";
+    var first = fluxSourceOf(qs[0]);
+    for (var i = 1; i < qs.length; i++) {
+      if (fluxSourceOf(qs[i]) !== first) return "mixed";
+    }
+    return first;
+  }
+
+  // Move ONE qubit between the three shapes. Everything that depends on the
+  // shape is derived, so this only has to get the spec right: the QDAC entry
+  // (present/absent, flagged/not) and the frozen regen line inventory, which
+  // decides whether deriveLines is allowed to (re)create the flux line.
+  function setQubitFluxSource(qid, mode) {
+    var qd = (state.spec.qdac = state.spec.qdac || qdacInstrumentDefaults());
+    qd.qubits = qd.qubits || {};
+    if (mode === "opx") {
+      delete qd.qubits[qid];
+    } else {
+      if (!qd.qubits[qid]) qd.qubits[qid] = qdacDefaults();
+      if (mode === "tee") qd.qubits[qid].bias_tee = true;
+      else delete qd.qubits[qid].bias_tee;
+    }
+    // Switching a qubit's bias source is an explicit act on its flux line —
+    // teach the frozen regen inventory (docs/134 review [4]): a qubit that
+    // gains an OPX line must be allowed to have one even when the source
+    // chip, biased via QDAC, had none.
+    var rli = state.regenLineInventory;
+    if (rli) {
+      if (mode === "qdac") delete rli.lines[qid + "|flux"];
+      else rli.lines[qid + "|flux"] = true;
+    }
+  }
+
+  function applyFluxSource(mode) {
+    if (mode === "mixed") return;          // a state, not a command
+    (state.spec.qubits || []).forEach(function (qid) {
+      setQubitFluxSource(qid, mode);
+    });
+    deriveLines();
+    renderFluxSource();
+    renderQdacBand();
+  }
+
+  // Keep the selector, its note and the band's visibility in step with the
+  // spec. Called from render() and from every mutation that can change the
+  // answer (qubit count, architecture, per-qubit override).
+  function renderFluxSource() {
+    var row = document.getElementById("gen-line-flux-source");
+    var sel = document.getElementById("gen-flux-source");
+    var note = document.getElementById("gen-flux-source-note");
+    var band = document.getElementById("gen-qdac-band");
+    var sub = document.getElementById("gen-qdac-band-sub");
+    var mode = chipFluxSource();
+    // A DC bias source is a question on EVERY architecture, not just a
+    // flux-tunable one: the chip that motivated all of this is FIXED-frequency
+    // qubits biased by a QDAC (QdacBiasedFixedFrequencyTransmon). Gating this
+    // row on state.qubitFlux made the whole component unreachable for exactly
+    // that shape. What the architecture decides is which SOURCES are possible.
+    var lfOk = (hasLfFem() || hasOpxPlus()) && state.qubitFlux;
+    if (row) row.hidden = !(state.spec.qubits || []).length;
+    if (sel) {
+      var opt = sel.querySelector('option[value="mixed"]');
+      // "Per qubit…" is only ever a REPORT of the current spec, never an
+      // instruction — offering it as a command would mean "make them differ",
+      // which names no particular arrangement.
+      if (opt) opt.hidden = (mode !== "mixed");
+      Array.prototype.forEach.call(sel.options, function (o) {
+        if (o.value !== "opx" && o.value !== "tee") return;
+        // Both play PULSES on an OPX port, so both need a z line to play them
+        // on. Disabled with the reason, never hidden — the option is real,
+        // the architecture just does not have it yet.
+        o.disabled = !lfOk;
+        o.title = lfOk ? ""
+          : "needs a flux-tunable architecture with an LF-FEM (steps 3-4)";
+      });
+      // With no OPX z line, "opx" does not mean "biased from an LF-FEM" — it
+      // means this qubit has no QDAC entry, i.e. no DC bias at all. Say that.
+      var first = sel.querySelector('option[value="opx"]');
+      if (first) {
+        first.textContent = lfOk ? "LF-FEM (OPX port)" : "None (no DC bias)";
+      }
+      sel.value = mode;
+    }
+    var n = (state.spec.qubits || []).filter(isQdacBiased).length;
+    var tees = (state.spec.qubits || []).filter(isBiasTee).length;
+    if (note) {
+      note.textContent =
+          mode === "opx" ? (lfOk ? "(one LF-FEM analog port per qubit)"
+                                 : "(no DC bias on these qubits)")
+        : mode === "qdac" ? "(" + n + " qubit" + (n === 1 ? "" : "s") + " on the QDAC; no LF-FEM z ports)"
+        : mode === "tee" ? "(QDAC DC + LF-FEM pulses on every qubit)"
+        : "(" + n + " on the QDAC, " + tees + " through a bias tee)";
+    }
+    if (band) band.hidden = n === 0;
+    if (sub) {
+      sub.textContent = tees
+        ? "— DC bias; " + tees + " qubit" + (tees === 1 ? "" : "s") +
+          " share their LF-FEM port through a bias tee"
+        : "— DC flux bias";
+    }
   }
 
   function qdacDefaults() {
@@ -1707,37 +1845,35 @@
     state.spec.qubits.forEach(function (qid) {
       var row = document.createElement("div");
       row.className = "gen-qdac-row";
+      row.setAttribute("data-qubit", qid);
+      row.setAttribute("data-source", fluxSourceOf(qid));
       var head = document.createElement("span");
-      var chk = document.createElement("input");
-      chk.type = "checkbox";
-      chk.checked = isQdacBiased(qid);
+      head.className = "gen-qdac-rowhead";
       var label = document.createElement("span");
       label.textContent = qid;
-      head.appendChild(chk);
+      var pick = document.createElement("select");
+      pick.className = "gen-qdac-source";
+      pick.setAttribute("aria-label", qid + " flux source");
+      [["opx", "LF-FEM"], ["qdac", "QDAC"], ["tee", "Bias tee"]].forEach(function (o) {
+        var opt = document.createElement("option");
+        opt.value = o[0];
+        opt.textContent = o[1];
+        pick.appendChild(opt);
+      });
+      pick.value = fluxSourceOf(qid);
       head.appendChild(label);
+      head.appendChild(pick);
       row.appendChild(head);
 
       var fields = document.createElement("div");
       fields.className = "gen-qdac-fields";
-      if (chk.checked) renderQdacFields(fields, qd.qubits[qid]);
+      if (isQdacBiased(qid)) renderQdacFields(fields, qd.qubits[qid]);
       row.appendChild(fields);
 
-      chk.addEventListener("change", function () {
-        if (chk.checked) {
-          qd.qubits[qid] = qdacDefaults();
-        } else {
-          delete qd.qubits[qid];
-        }
-        // Switching a qubit's bias source is an explicit act on its flux
-        // line — teach the frozen regen inventory (docs/134 review [4]):
-        // un-QDAC'ing a qubit must (re)create its OPX z line even when the
-        // source chip, biased via QDAC, had none.
-        var rli = state.regenLineInventory;
-        if (rli) {
-          if (chk.checked) delete rli.lines[qid + "|flux"];
-          else rli.lines[qid + "|flux"] = true;
-        }
+      pick.addEventListener("change", function () {
+        setQubitFluxSource(qid, pick.value);
         deriveLines();          // the qubit's flux line must appear/disappear
+        renderFluxSource();     // the chip-level answer may have become "mixed"
         renderQdacBand();       // re-render to show/hide the field grid
       });
       list.appendChild(row);
@@ -2029,6 +2165,7 @@
     renderQdacInstrument();
     renderQdacBand();
     syncLineTypeToggles();
+    renderFluxSource();     // after syncLineTypeToggles — it owns state.qubitFlux
     renderNamingUi();
     // The board is always visible now — repaint it on every qubits-step
     // render (count changes, renames, draft restore, regenerate hydration).
@@ -2167,6 +2304,16 @@
       });
     }
     if (nmApply) nmApply.addEventListener("click", applyNamingScheme);
+
+    // The chip-level flux source (docs/136). A bulk setter over the per-qubit
+    // shape — never a mode field of its own, so a per-qubit override can never
+    // disagree with it.
+    var fluxSrc = document.getElementById("gen-flux-source");
+    if (fluxSrc) {
+      fluxSrc.addEventListener("change", function () {
+        applyFluxSource(fluxSrc.value);
+      });
+    }
 
     // QDAC-II instrument fields (per-qubit fields are bound inline by
     // renderQdacFields on every render, same as the naming controls above).
@@ -2389,7 +2536,9 @@
       if (wantDrive) {
         lines.push({ element: q, line: "drive", channel: pinned[q + "|drive"] || null });
       }
-      if (wantFlux && !isQdacBiased(q) && keepOptional(q, "flux")) {
+      // docs/136: a QDAC qubit has no OPX flux line — EXCEPT a bias-tee one,
+      // where the LF-FEM port is exactly the half that plays pulses.
+      if (wantFlux && (!isQdacBiased(q) || isBiasTee(q)) && keepOptional(q, "flux")) {
         lines.push({ element: q, line: "flux", channel: pinned[q + "|flux"] || null });
       }
     });
@@ -2516,6 +2665,220 @@
     if (window.armPlainResize) window.armPlainResize("gen-wiring-tbl", "quam_gen_wiring_cols");
   }
 
+  // -- step 5: QDAC trigger cabling (docs/136 WS7) ------------------------
+  // One OPX digital output drives one QDAC ext trigger INPUT, and every QDAC
+  // channel armed on that input fires from it. So the real decision is not
+  // "which port for q9" — it is "which ext input is q9 armed on", and the
+  // cable follows. The customer's 20Q chip is 11 qubits on 4 cables, in
+  // round-robin order; auto-allocation gives each qubit a DEDICATED port,
+  // which is correct but is 11 cables where the bench has 4.
+  //
+  // Flow (user-directed): auto-allocate first, then group here. Assigning an
+  // ext is one dropdown per qubit, or one press for the whole chip.
+
+  var QDAC_EXTS = ["ext1", "ext2", "ext3", "ext4"];
+
+  function qdacShareCables() {
+    var qd = state.spec.qdac;
+    return !qd || qd.share_cables !== false;   // absent ⇒ on
+  }
+
+  function qdacTriggerAlloc(qid) {
+    var qt = ((state.allocation || {})[qid] || {}).qt;
+    return (qt && qt[0]) ? qt[0] : null;
+  }
+
+  function pinTriple(ch) {
+    return ch ? { con: ch.con, slot: ch.slot, port: ch.port } : null;
+  }
+
+  function triplePin(t) {
+    return t ? ("con" + t.con + " / slot " + t.slot + " / port " + t.port) : "";
+  }
+
+  // Group same-ext qubits onto ONE cable and pin it, so the diagram, the
+  // review step and the build all describe the same bench. The cable is the
+  // LOWEST allocated port among the group's members — an arbitrary but stable
+  // choice, and stable is what matters: re-entering the step must not shuffle
+  // which physical output a group sits on.
+  function applyQdacSharing() {
+    var qd = state.spec.qdac;
+    if (!qd || !qd.qubits) return;
+    var share = qdacShareCables();
+    var groups = {};
+    Object.keys(qd.qubits).forEach(function (qid) {
+      var ext = qd.qubits[qid].trigger_port;
+      if (!ext) return;
+      (groups[ext] || (groups[ext] = [])).push(qid);
+    });
+    Object.keys(qd.qubits).forEach(function (qid) {
+      var entry = qd.qubits[qid];
+      var ext = entry.trigger_port;
+      if (!share || !ext || (groups[ext] || []).length < 2) {
+        // A lone qubit on an ext keeps whatever the allocator gave it —
+        // pinning a port nothing else shares would freeze an arbitrary
+        // allocation for no gain, and a later FEM change would strand it.
+        //
+        // Only a pin THIS grouping created is withdrawn. A pin carried in by
+        // regen_spec records how the bench is actually cabled today (docs/135
+        // ⑤); dropping it because the wizard would not have chosen it is how
+        // a re-generate hands a lab a chip expecting cables it does not have.
+        if (entry.pin_source === "group") {
+          delete entry.trigger_pin;
+          delete entry.pin_source;
+        }
+        return;
+      }
+      // A CARRIED pin (regen: how the bench is cabled today) is evidence; an
+      // allocation is a guess. So a carried pin IS the group's cable — taking
+      // the numeric minimum instead could pin the unpinned members to a port
+      // the carried member will never move to, splitting one ext across two
+      // physical outputs. Two members carrying DIFFERENT pins stay split, on
+      // purpose: that is what the chip says, and Diagnostics reports it.
+      var cable = null, carried = null;
+      groups[ext].forEach(function (member) {
+        var other = qd.qubits[member];
+        var t = other.trigger_pin || pinTriple(qdacTriggerAlloc(member));
+        if (!t) return;
+        if (!carried && other.trigger_pin && other.pin_source !== "group") {
+          carried = other.trigger_pin;
+        }
+        if (!cable || t.con < cable.con || (t.con === cable.con &&
+            (t.slot < cable.slot || (t.slot === cable.slot && t.port < cable.port)))) {
+          cable = t;
+        }
+      });
+      cable = carried || cable;
+      if (cable && !(entry.trigger_pin && entry.pin_source !== "group")) {
+        entry.trigger_pin = { con: cable.con, slot: cable.slot, port: cable.port };
+        entry.pin_source = "group";
+      }
+    });
+    // Mirror the grouping into the local allocation so the step-5 diagram
+    // draws the cable that will actually be built rather than the pre-grouping
+    // one. Without this the picture disagrees with the spec on the same screen.
+    Object.keys(qd.qubits).forEach(function (qid) {
+      var t = qd.qubits[qid].trigger_pin;
+      var ch = qdacTriggerAlloc(qid);
+      if (t && ch) { ch.con = t.con; ch.slot = t.slot; ch.port = t.port; }
+    });
+  }
+
+  function renderQdacCabling() {
+    var host = document.getElementById("gen-qdac-cabling");
+    if (!host) return;
+    var qd = state.spec.qdac;
+    var qids = (state.spec.qubits || []).filter(isQdacBiased);
+    if (!qd || !qids.length) { host.hidden = true; host.innerHTML = ""; return; }
+    host.hidden = false;
+    applyQdacSharing();
+
+    var byExt = {};
+    var loose = [];
+    qids.forEach(function (qid) {
+      var ext = qd.qubits[qid].trigger_port;
+      if (ext && QDAC_EXTS.indexOf(ext) >= 0) (byExt[ext] || (byExt[ext] = [])).push(qid);
+      else loose.push(qid);
+    });
+
+    function chips(list) {
+      return list.map(function (qid) {
+        var opts = ['<option value="">(own cable)</option>'].concat(
+          QDAC_EXTS.map(function (e) {
+            return '<option value="' + e + '"' +
+              (qd.qubits[qid].trigger_port === e ? " selected" : "") + ">" + e + "</option>";
+          })).join("");
+        return '<span class="gen-qdac-chip" data-qubit="' + qid + '">' + qid +
+          '<select class="gen-qdac-ext" aria-label="' + qid +
+          ' trigger input">' + opts + "</select></span>";
+      }).join("");
+    }
+
+    var rows = QDAC_EXTS.filter(function (e) { return (byExt[e] || []).length; })
+      .map(function (e) {
+        var members = byExt[e];
+        var cable = qd.qubits[members[0]].trigger_pin ||
+                    pinTriple(qdacTriggerAlloc(members[0]));
+        return "<tr><td><strong>" + e + "</strong></td><td>" +
+          (cable ? triplePin(cable) : '<span class="muted">auto</span>') +
+          '</td><td class="gen-qdac-cell">' + chips(members) +
+          '</td><td class="muted">' + members.length + " qubit" +
+          (members.length === 1 ? "" : "s") + "</td></tr>";
+      }).join("");
+    if (loose.length) {
+      rows += '<tr class="gen-qdac-loose"><td><span class="muted">(unassigned)</span>' +
+        '</td><td class="muted">one cable each</td><td class="gen-qdac-cell">' +
+        chips(loose) + '</td><td class="muted">' + loose.length + "</td></tr>";
+    }
+
+    var cableCount = qdacShareCables()
+      ? Object.keys(byExt).length + loose.length
+      : qids.length;
+    host.innerHTML =
+      '<div class="gen-qdac-cabling-head">' +
+        '<span class="gen-band-sublabel">QDAC trigger cabling</span>' +
+        '<label class="gen-qdac-share"><input type="checkbox" id="gen-qdac-share"' +
+          (qdacShareCables() ? " checked" : "") +
+          '> Share one cable per ext input</label>' +
+        '<button type="button" class="outline btn-sm" id="gen-qdac-rr" ' +
+          'title="Assign ext1..ext4 cyclically down the qubit list — the pattern the 20-qubit reference chip is cabled in">' +
+          "Round-robin ext1&ndash;4</button>" +
+        '<button type="button" class="outline btn-sm" id="gen-qdac-clear">Clear</button>' +
+        '<span class="muted gen-qdac-cablecount">' + cableCount + " cable" +
+          (cableCount === 1 ? "" : "s") + " to plug</span>" +
+      "</div>" +
+      '<p class="muted gen-oneline">One OPX digital output drives one QDAC ' +
+        "ext trigger input and arms every channel on it. Assign a qubit's ext " +
+        "input and it joins that cable." +
+        (loose.length && qdacShareCables()
+          ? " <strong>" + loose.length + "</strong> qubit" +
+            (loose.length === 1 ? " has" : "s have") + " no ext input yet — " +
+            "each gets its own dedicated output."
+          : "") + "</p>" +
+      '<table class="gen-qdac-cable-tbl"><thead><tr><th>QDAC input</th>' +
+      "<th>OPX digital output</th><th>Qubits armed</th><th></th>" +
+      "</tr></thead><tbody>" + rows + "</tbody></table>";
+
+    host.querySelectorAll(".gen-qdac-ext").forEach(function (sel) {
+      sel.addEventListener("change", function () {
+        var qid = sel.closest(".gen-qdac-chip").getAttribute("data-qubit");
+        qd.qubits[qid].trigger_port = sel.value || null;
+        renderQdacCabling();
+        renderWiringDiagram();
+      });
+    });
+    var share = document.getElementById("gen-qdac-share");
+    if (share) {
+      share.addEventListener("change", function () {
+        qd.share_cables = share.checked;
+        renderQdacCabling();
+        renderWiringDiagram();
+      });
+    }
+    var rr = document.getElementById("gen-qdac-rr");
+    if (rr) {
+      rr.addEventListener("click", function () {
+        qids.forEach(function (qid, i) {
+          qd.qubits[qid].trigger_port = QDAC_EXTS[i % QDAC_EXTS.length];
+        });
+        renderQdacCabling();
+        renderWiringDiagram();
+      });
+    }
+    var clr = document.getElementById("gen-qdac-clear");
+    if (clr) {
+      clr.addEventListener("click", function () {
+        qids.forEach(function (qid) {
+          qd.qubits[qid].trigger_port = null;
+          delete qd.qubits[qid].trigger_pin;
+          delete qd.qubits[qid].pin_source;
+        });
+        renderQdacCabling();
+        renderWiringDiagram();
+      });
+    }
+  }
+
   // -- step 5: wiring diagram — reuses the Instrument Wiring renderer ----
 
   // Regroup the element-centric allocation into the controller-centric shape
@@ -2535,19 +2898,57 @@
       Object.keys(allocation[element] || {}).forEach(function (lineType) {
         (allocation[element][lineType] || []).forEach(function (ch) {
           var isInput = ch.io_type === "input";
-          var role = ROLE[lineType] || lineType;
+          // "qt" is the QDAC-II trigger line (docs/119): a DIGITAL output, and
+          // the /instrument page has drawn it in its own DIG sub-column since
+          // docs/126 #22. This regroup knew only analog in/out, so on a
+          // QDAC chip the wizard's diagram silently dropped every trigger
+          // line the build was about to create (docs/135 ⑤).
+          var isDigital = lineType === "qt" || ch.io_type === "digital" ||
+                          ch.signal_type === "digital";
+          var role = isDigital ? "digital" : (ROLE[lineType] || lineType);
           if (role === "rr" && isInput) role = "rr_in";
           if (role === "twpa_ro" && isInput) role = "twpa_in";
           var ctrl = controllers[ch.con] || (controllers[ch.con] = {});
           var fem = ctrl[ch.slot] || (ctrl[ch.slot] = {
             type: ch.instrument_id || "mw-fem",
-            output_ports: {}, input_ports: {}
+            output_ports: {}, input_ports: {}, digital_ports: {}
           });
-          var bucket = isInput ? fem.input_ports : fem.output_ports;
-          (bucket[ch.port] || (bucket[ch.port] = [])).push({
-            role: role, element: element, label: element + "." + role,
-            port_type: (ch.instrument_id || "") + (isInput ? "-input" : "-output")
-          });
+          if (!fem.digital_ports) fem.digital_ports = {};   // FEM seen analog-first
+          var bucket = isDigital ? fem.digital_ports
+                     : isInput ? fem.input_ports : fem.output_ports;
+          var entry;
+          if (isDigital) {
+            entry = {
+              role: "digital", element: element, label: element + ".trigger",
+              marker: "trigger", source: "qt",
+              port_type: (ch.instrument_id || "") + "-digital"
+            };
+            // Same hover facts /instrument's DIG column shows (docs/136 r3):
+            // the ext input is the only thing that explains why several
+            // qubits legitimately share this one port.
+            if (isQdacBiased(element)) {
+              entry.qdac_trigger = true;
+              entry.qdac_ext = state.spec.qdac.qubits[element].trigger_port;
+            }
+          } else {
+            entry = {
+              role: role, element: element, label: element + "." + role,
+              port_type: (ch.instrument_id || "") + (isInput ? "-input" : "-output")
+            };
+            // docs/136 r3 — the bias-tee mark must survive into the wizard.
+            // /instrument stamps qdac_shared server-side (query.py) and the
+            // port renders amber; this regroup built the same diagram from
+            // the ALLOCATION and never stamped it, so the same physical port
+            // was amber on one page and plain z blue one click later.
+            if (role === "z" && isBiasTee(element)) {
+              var teeFields = state.spec.qdac.qubits[element] || {};
+              entry.qdac_shared = true;
+              entry.qdac_channel = teeFields.channel;
+              entry.qdac_dc_offset = teeFields.dc_offset;
+              entry.qdac_trigger_port = teeFields.trigger_port;
+            }
+          }
+          (bucket[ch.port] || (bucket[ch.port] = [])).push(entry);
         });
       });
     });
@@ -2558,7 +2959,7 @@
         var c = controllers[ctrl.con] || (controllers[ctrl.con] = {});
         if (!c[fem.slot]) {
           c[fem.slot] = { type: fem.fem === "mw" ? "mw-fem" : "lf-fem",
-                          output_ports: {}, input_ports: {} };
+                          output_ports: {}, input_ports: {}, digital_ports: {} };
         }
       });
     });
@@ -2633,6 +3034,16 @@
     renderMonitor();
   }
 
+  // A waiting line that VISIBLY waits (docs/135). The allocation dry run
+  // spawns a Python subprocess that imports the whole QM stack — seconds,
+  // legitimately — and a frozen sentence reads exactly like a hung button.
+  // The dots are CSS-animated (no timer to leak across re-renders, no
+  // inline script for the CSP to block).
+  function busyHtml(label) {
+    return label + '<span class="sm-dots" aria-hidden="true">' +
+           '<i>.</i><i>.</i><i>.</i></span>';
+  }
+
   function renderWiringDiagram() {
     var host = document.getElementById("gen-wiring-diagram");
     if (!host) return;
@@ -2642,9 +3053,10 @@
       // Honest waiting states (docs/134): allocating right now, nothing to
       // allocate yet, waiting for an env (auto-selected once probing
       // finishes), or manual fallback (an auto attempt failed — the button
-      // is the retry).
+      // is the retry). Each waiting state names the phase it is IN, so the
+      // seconds are accounted for rather than merely spent (docs/135).
       host.innerHTML = _allocInFlight
-        ? '<p class="muted">Allocating channels&hellip;</p>'
+        ? '<p class="muted">' + busyHtml("Checking wiring") + '</p>'
         : (!state.spec.qubits || !state.spec.qubits.length)
           ? '<p class="muted">Add qubits in step 4 first.</p>'
           : !state.env
@@ -2652,8 +3064,9 @@
                ? '<p class="muted">No usable Python environment &mdash; install ' +
                  'the QM stack (qualang_tools, quam_builder, quam) in one, ' +
                  'then pick it in step 1.</p>'
-               : '<p class="muted">Waiting for a Python environment &mdash; the ' +
-                 'first usable env from step 1 is selected automatically&hellip;</p>')
+               : '<p class="muted">' + busyHtml("Finding a Python environment") +
+                 '<br><small>the first usable env from step 1 is selected ' +
+                 'automatically</small></p>')
             : '<p class="muted">Run Auto-allocate to see the wiring diagram.</p>';
       return;
     }
@@ -2700,14 +3113,78 @@
   // transformed ancestor; pointer-events:none so elementFromPoint still sees
   // the port under the cursor; zoom-corrected like the slot menu.
   var _dragGhost = null;
+  var _dragGhostSrc = null;
 
-  function showDragGhost(drag, ev) {
+  var SVG_NS = "http://www.w3.org/2000/svg";
+
+  // docs/135: the thing under the cursor should LOOK like the thing you
+  // picked up. The label box alone read as "some text is following me"
+  // rather than "I am holding this port", so the port's own circle rides
+  // along with it — CLONED out of the rack, never re-drawn: role colour,
+  // radius, label truncation and the chord-fitted font size all live in
+  // app.js's _appendPortCircle and a second copy of that would drift.
+  // Returns null on anything unexpected (a detached node, a realm without
+  // getBBox) and the caller falls back to the original dot.
+  function portGlyph(srcEl) {
+    if (!srcEl || typeof srcEl.getBBox !== "function" ||
+        typeof srcEl.getBoundingClientRect !== "function") return null;
+    var bb, rect;
+    try { bb = srcEl.getBBox(); rect = srcEl.getBoundingClientRect(); }
+    catch (e) { return null; }
+    if (!bb || !bb.width || !bb.height || !rect.width || !rect.height) return null;
+    var pad = 2;                          // the circle's stroke sits half outside its bbox
+    var svg = document.createElementNS(SVG_NS, "svg");
+    // Sized from the ON-SCREEN rect, so the glyph matches the rack whether it
+    // is drawn 1:1 or scaled to fit (docs/135 ②) — but floored, because a
+    // feedline sub-circle on a fit-scaled rack is ~15 px and a speck under
+    // the cursor is not an affordance.
+    // getBoundingClientRect returns SCREEN px, but the ghost is placed in the
+    // ZOOMED coordinate space (moveDragGhost divides clientX/Y by uiZoom, and
+    // the CSS zoom then multiplies everything back) — so a width taken
+    // straight from the rect gets scaled a second time and the carried port
+    // comes out uiZoom× too big at any quam_ui_scale ≠ 100%.
+    var z = (typeof uiZoom === "function" && uiZoom()) || 1;
+    var w = rect.width / z, h = rect.height / z;
+    var MIN_GLYPH = 24;
+    var k = Math.max(1, MIN_GLYPH / Math.max(w, h));
+    svg.setAttribute("width", Math.round(w * k) + 2 * pad);
+    svg.setAttribute("height", Math.round(h * k) + 2 * pad);
+    svg.setAttribute("viewBox",
+      (bb.x - pad) + " " + (bb.y - pad) + " " +
+      (bb.width + 2 * pad) + " " + (bb.height + 2 * pad));
+    svg.setAttribute("class", "gen-drag-ghost-glyph");
+    var clone = srcEl.cloneNode(true);
+    // A drop-target ring left over from a previous hover is about the TARGET,
+    // not about what is being carried.
+    if (clone.classList) clone.classList.remove("iw-port-ok", "iw-port-bad");
+    if (clone.style) clone.style.cursor = "";
+    svg.appendChild(clone);
+    return svg;
+  }
+
+  function showDragGhost(drag, ev, srcEl) {
     removeDragGhost();
     var g = document.createElement("div");
     g.id = "gen-drag-ghost";
-    var dot = document.createElement("span");
-    dot.className = "gen-drag-ghost-dot" + (drag.whole ? " gen-drag-ghost-grip" : "");
-    g.appendChild(dot);
+    // Carry what is actually being moved: one circle for a single line, the
+    // WHOLE cell for a feedline grip (the grip rect on its own is a grey bar
+    // that says nothing about the feedline it drags).
+    var lift = srcEl;
+    if (drag.whole && srcEl && srcEl.closest) lift = srcEl.closest(".iw-port") || srcEl;
+    var glyph = portGlyph(lift);
+    if (glyph) {
+      g.appendChild(glyph);
+      g.classList.add("gen-drag-ghost-hasglyph");
+      // The original dims while its copy is in the air — without this the
+      // port appears to be in two places at once. Dim exactly what was
+      // lifted, so dragging one qubit off a feedline does not grey out the
+      // other qubits sharing that port.
+      if (lift.classList) { lift.classList.add("iw-port-lifted"); _dragGhostSrc = lift; }
+    } else {
+      var dot = document.createElement("span");
+      dot.className = "gen-drag-ghost-dot" + (drag.whole ? " gen-drag-ghost-grip" : "");
+      g.appendChild(dot);
+    }
     var lbl = document.createElement("span");
     lbl.className = "gen-drag-ghost-label";
     lbl.textContent = (drag.whole ? "feedline" : (drag.element || "?")) +
@@ -2730,6 +3207,13 @@
       _dragGhost.parentNode.removeChild(_dragGhost);
     }
     _dragGhost = null;
+    // Un-dim the source. A completed drop re-renders the rack anyway, but a
+    // cancelled one (Escape, invalid target, mouseup on nothing) does not —
+    // and a port left faded looks broken.
+    if (_dragGhostSrc && _dragGhostSrc.classList) {
+      _dragGhostSrc.classList.remove("iw-port-lifted");
+    }
+    _dragGhostSrc = null;
   }
 
   function femTypeAt(con, slot) {
@@ -2815,7 +3299,50 @@
       var wantTwpaIo = (src.role === "twpa_in") ? "input" : "output";
       return targetFem === "mw-fem" && t.io === wantTwpaIo;
     }
+    if (src.role === "digital") {
+      // A QDAC trigger cable. Both FEM flavors physically carry digital
+      // outputs, so any DECLARED slot qualifies; the target must be a
+      // digital port that is empty — dropping onto one already carrying
+      // another cable would merge two ext inputs onto one physical output.
+      if (t.io !== "digital" || !targetFem) return false;
+      return qtElementsAtPort(t.con, t.slot, t.port).length === 0;
+    }
     return targetFem === "lf-fem" && t.io === "output";           // z / coupler
+  }
+
+  // Which qubits' QDAC trigger cables sit on one digital output. Scans the
+  // allocation's `qt` entries ONLY — a wirer-allocated qt channel may carry
+  // io_type "output" with signal_type "digital", so the generic
+  // linesAtPort(io) match would misfile it.
+  function qtElementsAtPort(con, slot, port) {
+    var out = [];
+    Object.keys(state.allocation || {}).forEach(function (element) {
+      ((state.allocation[element] || {}).qt || []).forEach(function (ch) {
+        if (String(ch.con) === String(con) && String(ch.slot) === String(slot) &&
+            String(ch.port) === String(port)) out.push(element);
+      });
+    });
+    return out;
+  }
+
+  // docs/136 r3 — move a QDAC trigger CABLE to another digital output. Every
+  // qubit armed on the source port moves together, and the pin is recorded as
+  // USER evidence (no pin_source) — unlike a "group" pin, the sharing pass
+  // never withdraws it, exactly like a regen-carried one.
+  function applyQdacTriggerEdit(src, t) {
+    var qd = (state.spec.qdac = state.spec.qdac || qdacInstrumentDefaults());
+    qd.qubits = qd.qubits || {};
+    qtElementsAtPort(src.con, src.slot, src.port).forEach(function (qid) {
+      ((state.allocation[qid] || {}).qt || []).forEach(function (ch) {
+        ch.con = t.con; ch.slot = t.slot; ch.port = t.port;
+      });
+      if (qd.qubits[qid]) {
+        qd.qubits[qid].trigger_pin = { con: t.con, slot: t.slot, port: t.port };
+        delete qd.qubits[qid].pin_source;
+      }
+    });
+    renderQdacCabling();
+    renderWiringDiagram();
   }
 
   // Move every channel of one allocation entry matching `io` to a new port.
@@ -2987,6 +3514,23 @@
     var host = document.getElementById("gen-wiring-diagram");
     if (!host) return;
     host.querySelectorAll(".iw-port-circle, .iw-port-grip").forEach(function (el) {
+      // docs/136 r3 — QDAC trigger ports are draggable now. The docs/135
+      // rationale ("an edit nothing could carry out") went stale the moment
+      // spec.qdac.qubits[q].trigger_pin existed: that is exactly the home
+      // this edit writes to, and the build honours it verbatim. The drag
+      // moves the whole CABLE — every qubit armed on this ext input —
+      // because the physical object being moved is one marker cable into
+      // one QDAC ext input; peeling a single qubit off its cable would
+      // split one ext across two ports, the exact mis-wiring Diagnostics
+      // exists to flag.
+      var cell = el.closest && el.closest(".iw-port");
+      if (cell && cell.getAttribute("data-io") === "digital") {
+        var qel = el.getAttribute && el.getAttribute("data-element");
+        if (!qel || !isQdacBiased(qel)) {
+          el.style.cursor = "default";   // a non-QDAC digital marker: no home
+          return;
+        }
+      }
       el.addEventListener("mousedown", onWireDragStart);
     });
   }
@@ -3011,7 +3555,7 @@
       hoverPort: null, valid: false
     };
     renderMonitor();
-    showDragGhost(_wireDrag, ev);
+    showDragGhost(_wireDrag, ev, el);
     document.addEventListener("mousemove", onWireDragMove);
     document.addEventListener("mouseup", onWireDragEnd);
     document.addEventListener("keydown", onWireDragKey);
@@ -3051,7 +3595,9 @@
     if (cell) {
       var target = readCell(cell);
       if (isValidDrop(drag, target)) {
-        if (!drag.whole && (drag.role === "rr" || drag.role === "rr_in")) {
+        if (drag.role === "digital") {
+          applyQdacTriggerEdit(drag, target);    // the whole trigger cable
+        } else if (!drag.whole && (drag.role === "rr" || drag.role === "rr_in")) {
           applyQubitReadoutEdit(drag, target);   // a circle → move one qubit
         } else {
           applyPortEdit(drag, target);           // grip / drive → whole port
@@ -3080,6 +3626,7 @@
   function enterWiringStep() {
     deriveLines();
     renderWiringTable();
+    renderQdacCabling();
     renderWiringDiagram();
     maybeAutoAllocate();
   }
@@ -3187,8 +3734,8 @@
     var sigAtRequest = topoSig();
     _allocInFlight = true;
     if (btn) btn.disabled = true;
-    if (status) status.textContent = "Allocating…";
-    if (!state.allocation) renderWiringDiagram();   // "Allocating channels…"
+    if (status) status.innerHTML = busyHtml("Checking wiring");
+    if (!state.allocation) renderWiringDiagram();   // "Checking wiring…"
 
     fetch("/generate/allocate", {
       method: "POST",
@@ -3209,6 +3756,10 @@
           _allocTopoSig = sigAtRequest;   // the spec this response was computed FOR
           if (status) status.textContent = "Allocated.";
           renderWiringTable();
+          // docs/136 WS7: grouping runs on the FRESH allocation — before the
+          // diagram, so the picture shows the grouped cables, not the
+          // dedicated ports the allocator handed out a moment earlier.
+          renderQdacCabling();
           renderWiringDiagram();
           var warns = res.result.warnings || [];
           if (warns.length) showMessage(warns.join(" "), "warn");
@@ -3461,6 +4012,27 @@
       options: ["", "direct", "amplified"] },
     { field: "upsampling_mode", label: "upsampling", kind: "select",
       options: ["", "mw", "pulse"] }
+  ];
+  // Per-qubit QDAC-II bias seeds (docs/136 WS6). Units are FIXED labels, not
+  // the stage-wide unit selectors: `dwell` is in seconds and `settle_time` in
+  // nanoseconds on the SAME component (confirmed against the customer's
+  // qdac_components.py — settle_time feeds `wait(int(settle_time)//4)`, a QUA
+  // clock-cycle count), so one shared `dim` would silently convert one of
+  // them by 1e9. `dc_offset` is a real voltage and does ride the volt
+  // selector, like every other offset on the Populate step.
+  // These cells write onto spec.qdac.qubits[qid] — see popBucketWrite.
+  var POP_QDAC_COLS = [
+    { field: "dc_offset", label: "DC offset", dim: "volt" },
+    { field: "channel", label: "channel" },
+    { field: "trigger_port", label: "trigger in", kind: "select",
+      options: ["", "ext1", "ext2", "ext3", "ext4"] },
+    { field: "dwell", label: "dwell", unit: "s" },
+    { field: "slew_rate", label: "slew rate", unit: "V/s" },
+    { field: "output_range", label: "range", kind: "select",
+      options: ["", "low", "high"] },
+    { field: "output_filter", label: "filter", kind: "select",
+      options: ["", "dc", "med", "high"] },
+    { field: "settle_time", label: "settle", unit: "ns" }
   ];
   // Per-pair 2Q-gate seed values. The columns shown depend on the chip's gate
   // (step 4): a CZ chip tunes the flux pulse + its variant; a CR chip tunes the
@@ -3743,6 +4315,47 @@
   // to SI base for dimensioned numeric fields. For amp, `group`/`rid` are
   // needed to look up the row's FSP (a regular numeric column ignores them).
   // A blank value clears the key.
+  // -- where a populate row's values actually live (docs/136) -------------
+  // Every group but "qdac" writes into spec.populate[group][rid]. The QDAC
+  // bias fields write onto the qubit's own spec.qdac.qubits[rid] entry — the
+  // single home run_build already reads and regen_spec already inverts. A
+  // populate.qdac bucket would be a SECOND source of truth for the same eight
+  // fields, and the two would drift the first time someone edited the band on
+  // step 4 and the table on step 6.
+
+  function popBucketRead(group, rid) {
+    if (group === "qdac") {
+      return ((state.spec.qdac || {}).qubits || {})[rid] || {};
+    }
+    return ((state.spec.populate[group] || {})[rid]) || {};
+  }
+
+  // The writable bucket, or null when there is nowhere to write. Only "qdac"
+  // ever returns null: a qubit becomes QDAC-biased through the step-4 source
+  // picker, never by someone typing a dwell time into a table — creating the
+  // entry here would silently rewire the chip from the Populate step.
+  function popBucketWrite(group, rid) {
+    if (group === "qdac") {
+      return ((state.spec.qdac || {}).qubits || {})[rid] || null;
+    }
+    var pop = state.spec.populate;
+    pop[group] = pop[group] || {};
+    pop[group][rid] = pop[group][rid] || {};
+    return pop[group][rid];
+  }
+
+  // Drop an emptied bucket. Never for "qdac" — there the entry's EXISTENCE is
+  // the statement "this qubit is QDAC-biased", so clearing every field must
+  // leave a qubit biased by a QDAC with default settings, not an OPX one.
+  function popBucketPrune(group, rid) {
+    if (group === "qdac") return;
+    var pop = state.spec.populate;
+    if (pop[group] && pop[group][rid] &&
+        Object.keys(pop[group][rid]).length === 0) {
+      delete pop[group][rid];
+    }
+  }
+
   function setPopValue(bucket, col, raw, group, rid) {
     raw = (raw == null ? "" : String(raw)).trim();
     if (raw === "") {
@@ -3764,7 +4377,7 @@
   }
 
   function buildPopCell(group, rid, col) {
-    var current = (((state.spec.populate[group] || {})[rid]) || {})[col.field];
+    var current = popBucketRead(group, rid)[col.field];
     var input;
     if (col.kind === "select") {
       input = document.createElement("select");
@@ -3819,11 +4432,11 @@
     // a big chip. The change handler re-commits + clears dirty on blur.
     input.addEventListener("input", function () {
       input.dataset.dirty = "1";
-      var pop = state.spec.populate;
-      pop[group] = pop[group] || {};
-      pop[group][rid] = pop[group][rid] || {};
-      setPopValue(pop[group][rid], col, input.value, group, rid);
-      if (Object.keys(pop[group][rid]).length === 0) delete pop[group][rid];
+      var bucket = popBucketWrite(group, rid);
+      if (bucket) {
+        setPopValue(bucket, col, input.value, group, rid);
+        popBucketPrune(group, rid);
+      }
       // As-you-type inline validation (debounced per cell; keystroke storms
       // collapse to one run). Read-only decoration — the heavier LO / power
       // recomputes stay on the change handler.
@@ -3847,13 +4460,11 @@
       // the achieved value — while still SKIPPING sibling cells that are also
       // dirty (a multi-cell blur-race flush), preserving their typed input.
       input.dataset.dirty = "";
-      var pop = state.spec.populate;
-      pop[group] = pop[group] || {};
-      pop[group][rid] = pop[group][rid] || {};
-      setPopValue(pop[group][rid], col, input.value, group, rid);
-      markPopulateTouched(group, rid, col.field);   // populate-protect (docs/72)
-      if (Object.keys(pop[group][rid]).length === 0) {
-        delete pop[group][rid];
+      var bucket = popBucketWrite(group, rid);
+      if (bucket) {
+        setPopValue(bucket, col, input.value, group, rid);
+        markPopulateTouched(group, rid, col.field);   // populate-protect (docs/72)
+        popBucketPrune(group, rid);
       }
       // Only an RF_freq edit re-derives the LOs, so a hand-typed LO sticks.
       if (col.field === "RF_freq") recomputeLOs();
@@ -3929,15 +4540,12 @@
       window.NumberInput.attach(input);
     }
     input.addEventListener("change", function () {
-      var pop = state.spec.populate;
-      pop[group] = pop[group] || {};
       rowIds.forEach(function (rid) {
-        pop[group][rid] = pop[group][rid] || {};
-        setPopValue(pop[group][rid], col, input.value, group, rid);
+        var bucket = popBucketWrite(group, rid);
+        if (!bucket) return;
+        setPopValue(bucket, col, input.value, group, rid);
         markPopulateTouched(group, rid, col.field);   // populate-protect
-        if (Object.keys(pop[group][rid]).length === 0) {
-          delete pop[group][rid];
-        }
+        popBucketPrune(group, rid);
       });
       refreshColumnCells(group, col);
       if (col.field === "RF_freq") recomputeLOs();
@@ -3977,7 +4585,7 @@
       '"][data-rid][data-field="' + col.field + '"]').forEach(function (input) {
       if (input.dataset.dirty === "1") return;   // don't clobber an uncommitted edit
       var rid = input.dataset.rid;
-      var v = (((state.spec.populate[group] || {})[rid]) || {})[col.field];
+      var v = popBucketRead(group, rid)[col.field];
       if (v == null) input.value = "";
       else if (col.kind === "select") input.value = String(v);
       else if (col.dim === "amp") {
@@ -4472,6 +5080,7 @@
     if (group === "resonator") return POP_RESONATOR_COLS;
     if (group === "flux") return POP_FLUX_COLS;
     if (group === "pulses") return POP_PULSE_FIELDS;
+    if (group === "qdac") return POP_QDAC_COLS;
     if (group === "pairs") return pairPopCols();
     return [];
   }
@@ -5601,11 +6210,14 @@
     var secFlux      = document.getElementById("gen-pop-sec-flux");
     var secPulses    = document.getElementById("gen-pop-sec-pulses");
     var secPairs     = document.getElementById("gen-pop-sec-pairs");
+    var secQdac      = document.getElementById("gen-pop-sec-qdac");
+    var qdacQubits   = qubits.filter(isQdacBiased);
     if (secQubit)     secQubit.hidden     = !mw;
     if (secResonator) secResonator.hidden = !mw;
     if (secFlux)      secFlux.hidden      = !wantFlux;
     if (secPulses)    secPulses.hidden    = !mw;
     if (secPairs)     secPairs.hidden     = !pairs.length;
+    if (secQdac)      secQdac.hidden      = !qdacQubits.length;
 
     // Show a note listing which sections are hidden and why.
     var hiddenNote = document.getElementById("gen-pop-hidden-note");
@@ -5637,6 +6249,14 @@
         qubits.length ? buildPopTable("flux", qubits, POP_FLUX_COLS, "Qubit") : null,
         noQubits);
       renderFluxDelaySummary(qubits);
+    }
+    if (qdacQubits.length) {
+      // Only the QDAC-biased qubits get a row. A "Set all →" over every qubit
+      // would be an invitation to bias the whole chip from a table, which the
+      // step-4 source picker is the place for (popBucketWrite declines it).
+      setPopHost("gen-pop-qdac",
+        buildPopTable("qdac", qdacQubits, POP_QDAC_COLS, "Qubit"),
+        noQubits);
     }
     if (pairs.length) {
       setPopHost("gen-pop-pairs",
@@ -5704,13 +6324,18 @@
     resonator: { LO_frequency: 1 },
     pairs: { target_qubit_LO_frequency: 1, target_qubit_IF_frequency: 1 }
   };
-  var PRESET_SECTIONS = ["pulses", "qubit", "resonator", "flux", "pairs"];
+  // docs/136: "qdac" reads and writes spec.qdac.qubits, not spec.populate —
+  // capturePresetSections / applyPreset go through the popBucket* helpers for
+  // exactly that reason. A preset can seed the bias settings of qubits that
+  // ARE QDAC-biased; it can never make a qubit QDAC-biased.
+  var PRESET_SECTIONS = ["pulses", "qubit", "resonator", "flux", "qdac", "pairs"];
 
   function presetSectionCols(sec) {
     if (sec === "qubit") return POP_QUBIT_COLS;
     if (sec === "resonator") return POP_RESONATOR_COLS;
     if (sec === "flux") return POP_FLUX_COLS;
     if (sec === "pulses") return POP_PULSE_FIELDS;
+    if (sec === "qdac") return POP_QDAC_COLS;
     if (sec === "pairs") return pairPopCols();
     return [];
   }
@@ -5721,6 +6346,7 @@
         .filter(function (p) { return p[0] && p[1]; })
         .map(function (p) { return p[0] + "-" + p[1]; });
     }
+    if (sec === "qdac") return state.spec.qubits.filter(isQdacBiased);
     return state.spec.qubits;
   }
 
@@ -5733,6 +6359,7 @@
     return {
       qubit: mw, resonator: mw, pulses: mw,
       flux: lf && state.qubitFlux,
+      qdac: presetRowIds("qdac").length > 0,
       pairs: presetRowIds("pairs").length > 0
     };
   }
@@ -5741,17 +6368,26 @@
   // shape ({defaults, overrides} per section). Pure read.
   function capturePresetSections(sectionNames) {
     var out = {};
-    var pop = state.spec.populate || {};
     sectionNames.forEach(function (sec) {
-      var bucket = pop[sec] || {};
+      // Every existing section still reads the rids its own populate bucket
+      // HOLDS — deliberately not presetRowIds(). A pair bucket may be keyed in
+      // the SHORT second-member form ("q1-2", r16 0-1) while presetRowIds
+      // renders the full one, so asking by name would capture nothing on such
+      // a chip and a saved preset would silently lose its pair values.
+      // "qdac" is the exception because it has no populate bucket at all: its
+      // values live on the qubit's own QDAC entry.
+      var pop = state.spec.populate || {};
+      var rowsHere = (sec === "qdac")
+        ? presetRowIds("qdac")
+        : Object.keys(pop[sec] || {});
       var skip = PRESET_SKIP_FIELDS[sec] || {};
       var defaults = {}, overrides = {};
       presetSectionCols(sec).forEach(function (col) {
         var f = col.field;
         if (skip[f]) return;
         var valued = [];
-        Object.keys(bucket).forEach(function (rid) {
-          var v = (bucket[rid] || {})[f];
+        rowsHere.forEach(function (rid) {
+          var v = popBucketRead(sec, rid)[f];
           if (v != null && v !== "") valued.push([rid, v]);
         });
         if (!valued.length) return;
@@ -5774,7 +6410,6 @@
   // fields not in the chip's current column set (e.g. cr_* on a CZ chip)
   // drop with a note. Returns the report; the caller re-renders + recomputes.
   function applyPreset(preset, overwrite) {
-    var pop = state.spec.populate;
     var report = { applied: 0, skippedRows: [], hiddenSections: [], droppedFields: [] };
     var sections = (preset && preset.sections) || {};
     var active = presetActiveSections();
@@ -5793,8 +6428,8 @@
           if (report.droppedFields.indexOf(f) < 0) report.droppedFields.push(f);
           return;
         }
-        pop[sec] = pop[sec] || {};
-        var b = pop[sec][rid] = pop[sec][rid] || {};
+        var b = popBucketWrite(sec, rid);
+        if (!b) return;    // "qdac" on a qubit that is not QDAC-biased
         if (!overwrite && b[f] != null && b[f] !== "") return;
         b[f] = v;
         // Preset Apply is a user action — its fills are populate-protect
@@ -6170,11 +6805,23 @@
       var qdAddr = sp.qdac.communication_type === "USB"
         ? "USB device " + (sp.qdac.usb_device == null ? "?" : sp.qdac.usb_device)
         : (sp.qdac.ip_address || "?") + ":" + (sp.qdac.port == null ? "?" : sp.qdac.port);
+      var tees = qdacQubits.filter(function (q) { return sp.qdac.qubits[q].bias_tee; });
+      // docs/136: how many CABLES, not how many qubits — that is the number
+      // someone at the bench has to plug in, and grouping by ext input is the
+      // whole point of the step-5 cabling table.
+      var cables = {};
+      qdacQubits.forEach(function (q) {
+        var t = sp.qdac.qubits[q].trigger_pin;
+        cables[t ? ("con" + t.con + "/" + t.slot + "/" + t.port) : ("auto:" + q)] = 1;
+      });
       rows.push(["QDAC-II", qdacQubits.length + " qubit(s) biased (" + qdAddr +
         ") — channels " + qdacQubits.map(function (q) {
           var ch = sp.qdac.qubits[q].channel;
           return ch == null ? "?" : ch;
-        }).join(", ")]);
+        }).join(", ") +
+        " · " + Object.keys(cables).length + " trigger cable(s)" +
+        (tees.length ? " · " + tees.length + " through a bias tee ("
+          + tees.join(", ") + ")" : "")]);
     }
     rows.push(
       ["Output folder", getOutputPath() || "(not set — step 7)"],
@@ -7439,8 +8086,15 @@
     // beat the tier-1 value merge. Regen mode never persists drafts, so a
     // refresh re-hydrates a fresh, consistent baseline.
     try {
-      state.regenBaselinePopulate =
-          JSON.parse(JSON.stringify((spec && spec.populate) || {}));
+      var _base = JSON.parse(JSON.stringify((spec && spec.populate) || {}));
+      // docs/136 — the QDAC bias cells live on spec.qdac.qubits, OUTSIDE
+      // spec.populate (one home, shared with the step-4 band). The baseline
+      // is what the server diffs against, so it has to carry the same
+      // pseudo-group the build payload sends, or every QDAC edit reads as
+      // unchanged and tier-1 reverts it to the source chip's value.
+      var _qd = (spec && spec.qdac && spec.qdac.qubits) || null;
+      if (_qd) _base.qdac = JSON.parse(JSON.stringify(_qd));
+      state.regenBaselinePopulate = _base;
     } catch (e) { state.regenBaselinePopulate = {}; }
     state.regenTouched = {};
     repaintFromState();
@@ -7463,6 +8117,18 @@
     init: init,
     reloadEnvs: loadEnvs,
     useCustomEnv: useCustomEnv,
+    // docs/135: force the full conda scan past the mtime-keyed memo.
+    rescanEnvs: function (btn) {
+      var list = document.getElementById("gen-env-list");
+      if (list) {
+        list.innerHTML = '<p class="muted">' +
+          busyHtml("Rescanning conda environments") + '</p>';
+      }
+      if (btn) btn.disabled = true;
+      _envAutoPicked = false;          // a fresh inventory re-opens the pick
+      loadEnvs(true);
+      setTimeout(function () { if (btn) btn.disabled = false; }, 1500);
+    },
     hydrateFromSpec: hydrateFromSpec,
     // Pure allocation internals, exposed for the node selfcheck harness only
     // (tests/generate_power_selfcheck.cjs) — not a public API.
@@ -7493,19 +8159,32 @@
       pinToChannel: pinToChannel,
       deriveLines: deriveLines,
       isQdacBiased: isQdacBiased,
+      isBiasTee: isBiasTee,
+      fluxSourceOf: fluxSourceOf,
+      chipFluxSource: chipFluxSource,
+      setQubitFluxSource: setQubitFluxSource,
+      applyFluxSource: applyFluxSource,
+      renderFluxSource: renderFluxSource,
       qdacDefaults: qdacDefaults,
       renderQdacBand: renderQdacBand,
+      renderQdacCabling: renderQdacCabling,
+      applyQdacSharing: applyQdacSharing,
+      prunePopulate: prunePopulate,
       renderQdacInstrument: renderQdacInstrument,
       pairPopCols: pairPopCols,
       ALLOC_KEY: ALLOC_KEY,
       buildInstrumentData: buildInstrumentData,
       isValidDrop: isValidDrop,
+      qtElementsAtPort: qtElementsAtPort,
+      applyQdacTriggerEdit: applyQdacTriggerEdit,
       syncSpecChannels: syncSpecChannels,
       // r15 CG2/CG3 selfcheck seams (docs/70) — not public API
       openSlotMenu: openSlotMenu,
       hideSlotMenu: hideSlotMenu,
       uiZoom: uiZoom,
       attachWiringDrag: attachWiringDrag,
+      // docs/135 ⑤ seam — the allocation→diagram regroup, incl. digital
+      buildInstrumentData: buildInstrumentData,
       // r16 populate-protect + scripts seams (docs/72) — not public API
       prunePopulate: prunePopulate,
       applyLoAssignments: applyLoAssignments,
@@ -7514,6 +8193,10 @@
       autoScriptsPath: autoScriptsPath,
       maybeFollowScriptsPath: maybeFollowScriptsPath,
       POP_QUBIT_COLS: POP_QUBIT_COLS,
+      POP_QDAC_COLS: POP_QDAC_COLS,
+      popBucketRead: popBucketRead,
+      popBucketWrite: popBucketWrite,
+      presetRowIds: presetRowIds,
       POP_RESONATOR_COLS: POP_RESONATOR_COLS,
       setPopValue: setPopValue,
       state: state

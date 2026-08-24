@@ -27,6 +27,7 @@ Usage::
 """
 
 import argparse
+import importlib
 import json
 import os
 import sys
@@ -41,6 +42,7 @@ from pathlib import Path
 _SCRIPT_DIR = str(Path(__file__).resolve().parent)
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
+from _script_common import QDAC_COMPONENTS_MODULE  # noqa: E402
 from _script_common import library_versions as _library_versions  # noqa: E402
 # The capability catalog is the single source of truth for what the QM stack
 # exposes; it lives beside this script (same env). Importing it here couples the
@@ -938,8 +940,6 @@ def _import_qdac_components():
     """
     import importlib
 
-    from _script_common import QDAC_COMPONENTS_MODULE
-
     try:
         mod = importlib.import_module(QDAC_COMPONENTS_MODULE)
     except ImportError:
@@ -952,7 +952,95 @@ def _import_qdac_components():
     return trio
 
 
-def _allocate_qdac_triggers(spec: dict, instruments) -> tuple[dict, list]:
+def _find_bias_tee_class():
+    """A transmon class that keeps ``z`` a flux line AND carries a QDAC bias.
+
+    Returns ``{"cls": <class>, "field": <name>}`` or ``None``. That shape is a
+    bias tee: the QDAC holds the DC operating point while an LF-FEM port plays
+    pulses on top of it. No such class exists upstream — the customer's own
+    ``QdacBiasedFixedFrequencyTransmon`` types ``z`` AS the bias line, so on it
+    a qubit is either/or — which means whoever writes one names the field, and
+    the field name is what is returned rather than assumed.
+
+    Search is by SHAPE over a curated set of homes, never by name and never by
+    walking packages: importing a customer tree wholesale runs module-level
+    code. Absent is a normal answer; the caller degrades with a warning.
+    """
+    import importlib
+
+    homes = (QDAC_COMPONENTS_MODULE, "quam_config", "quam_config.my_quam")
+    seen = set()
+    for mod_name in homes:
+        try:
+            mod = importlib.import_module(mod_name)
+        except Exception:  # noqa: BLE001 — absent is an answer, not an error
+            continue
+        for member in list(getattr(mod, "__dict__", {}).values()):
+            if not isinstance(member, type) or member in seen:
+                continue
+            seen.add(member)
+            fields = getattr(member, "__dataclass_fields__", None)
+            if not fields or "z" not in fields:
+                continue
+
+            def _text(name):
+                spec = fields.get(name)
+                ann = getattr(spec, "type", None) if spec is not None else None
+                return (ann if isinstance(ann, str) else str(ann)).replace("_", "").lower()
+
+            # `z` must NOT be the bias line — that is the either/or class.
+            if "qdacbias" in _text("z"):
+                continue
+            for name in fields:
+                if name != "z" and "qdacbias" in _text(name):
+                    return {"cls": member, "field": name}
+    return None
+
+
+def _qdac_module_present() -> bool:
+    """Is ``quam_config.qdac_components`` present in this env, WITHOUT importing it?
+
+    The dry run needs this only to decide whether to caveat the trigger ports
+    it draws, and a real import costs ~2.8 s on the customer's env (their
+    ``quam_config/__init__`` pulls in the whole QM stack) — three times the
+    entire allocation. ``find_spec`` on the TOP-LEVEL package does not execute
+    it, so the package directory can be searched for the submodule directly.
+
+    A "present" here is deliberately NOT a claim of importability — the build
+    does the real import and the capability probe reports on it. Only the
+    definite negative (not found at all) is used, and only to add a caveat.
+    """
+    try:
+        import importlib.util
+
+        spec = importlib.util.find_spec("quam_config")
+        for loc in (getattr(spec, "submodule_search_locations", None) or ()):
+            base = Path(loc) / "qdac_components"
+            if base.with_suffix(".py").exists() or (base / "__init__.py").exists():
+                return True
+        return False
+    except Exception:  # noqa: BLE001 — unknown is not a negative; stay quiet
+        return True
+
+
+def _fem_kind_at(spec: dict, con, slot) -> str | None:
+    """``"lf-fem"`` / ``"mw-fem"`` for a declared slot, else None.
+
+    Both FEM flavors physically carry digital outputs, so a digital port's
+    FEM type can only come from the spec's own inventory — never guessed from
+    the port itself. None (unknown) is a legitimate answer and the diagram
+    treats a slot it already knows about as already-typed.
+    """
+    for ctrl in ((spec.get("instruments") or {}).get("controllers") or []):
+        if ctrl.get("con") != con:
+            continue
+        for fem in (ctrl.get("fems") or []):
+            if fem.get("slot") == slot:
+                return "mw-fem" if fem.get("fem") == "mw" else "lf-fem"
+    return None
+
+
+def _allocate_qdac_triggers(spec: dict, instruments) -> tuple[dict, list, dict]:
     """Second, ISOLATED allocation pass for QDAC-II digital trigger lines.
 
     Deliberately never merged into build_connectivity()'s Connectivity object:
@@ -970,15 +1058,89 @@ def _allocate_qdac_triggers(spec: dict, instruments) -> tuple[dict, list]:
     QDAC-biased qubit its OWN dedicated auto-allocated digital-output port —
     simpler, and correct per the "no port sharing" UI decision.
 
-    Returns ``({qubit_id: (con, slot, port)}, [warning, ...])``. Never raises
-    — any failure (old qualang_tools, private-API drift) degrades to "no
-    trigger wiring" with a warning; the static dc_offset bias still works.
+    Returns ``({qubit_id: (con, slot, port)}, [warning, ...], raw_allocation)``.
+    The third element is :func:`read_allocation`'s own output for the isolated
+    Connectivity, so the ALLOCATE dry run can show the same digital ports this
+    build will create without a second, drifting description of their shape
+    (docs/135 ⑤). Never raises — any failure (old qualang_tools, private-API
+    drift) degrades to "no trigger wiring" with a warning; the static
+    dc_offset bias still works.
     """
-    qids = list(((spec.get("qdac") or {}).get("qubits") or {}).keys())
+    qdac_qubits = ((spec.get("qdac") or {}).get("qubits") or {})
+    qids = list(qdac_qubits.keys())
     if not qids:
-        return {}, []
+        return {}, [], {}
 
     warnings: list = []
+
+    # docs/135 ⑤ — a PINNED trigger port wins over allocation. The auto pass
+    # below gives every biased qubit its own dedicated port; a real bench
+    # drives one OPX digital output into one QDAC ext trigger INPUT and shares
+    # it across every qubit armed on that input (the CQT 20Q chip: 11 qubits
+    # on 4 ports, port N ↔ extN). Re-allocating that from scratch on a
+    # re-generate would hand the lab a chip expecting 11 cables where 4 are
+    # plugged in — so regen_spec carries the existing pins and they are used
+    # verbatim here. Sharing therefore round-trips for free: two qubits with
+    # the same pin keep the same port. Unpinned qubits still auto-allocate.
+    pinned: dict = {}
+    for qid, fields in qdac_qubits.items():
+        pin = (fields or {}).get("trigger_pin")
+        if not isinstance(pin, dict):
+            continue
+        con, slot, port = pin.get("con"), pin.get("slot"), pin.get("port")
+        if not all(isinstance(v, int) and v > 0 for v in (con, slot, port)):
+            warnings.append(
+                f"QDAC trigger pin for {qid} is not a con/slot/port triple "
+                f"({pin!r}) — that trigger will be auto-allocated instead.")
+            continue
+        # The reconstruct-time guard (regen_spec's known_slots) runs ONCE, at
+        # hydration — and step 3 lets the user delete a FEM or drop a chassis
+        # afterwards. Re-test membership HERE, at the point of use: an
+        # undeclared slot would otherwise reach `create=True` in _apply_qdac
+        # and land a digital port on a FEM the rebuilt chip does not declare,
+        # which is the dangling reference that guard exists to prevent.
+        if _fem_kind_at(spec, con, slot) is None:
+            warnings.append(
+                f"QDAC trigger pin for {qid} names con{con} slot {slot}, which "
+                "this chassis no longer declares — that trigger will be "
+                "auto-allocated instead.")
+            continue
+        pinned[qid] = (con, slot, port)
+
+    def _pinned_allocation() -> dict:
+        """The pinned trigger ports in read_allocation()'s own shape, so the
+        wizard's dry run can draw them exactly like allocated ones."""
+        return {qid: {"qt": [{
+            "instrument_id": _fem_kind_at(spec, con, slot),
+            "con": con, "slot": slot, "port": port,
+            "io_type": "digital", "signal_type": "digital",
+        }]} for qid, (con, slot, port) in pinned.items()}
+
+    # One OPX digital output drives one QDAC ext trigger INPUT, and every qubit
+    # armed on that input shares the cable — so the port a qubit belongs on is
+    # decided by its `trigger_port`, not by whatever the allocator has free.
+    # Learn the ext→port map from the pins and place same-ext qubits on the
+    # same port instead of inventing a new one (review: relocating a collision
+    # to an arbitrary free port produces exactly the extN↔portN mismatch this
+    # is here to avoid).
+    ext_port: dict = {}
+    for qid, triple in pinned.items():
+        ext = (qdac_qubits.get(qid) or {}).get("trigger_port")
+        if ext:
+            ext_port.setdefault(ext, triple)
+    for qid in [q for q in qids if q not in pinned]:
+        ext = (qdac_qubits.get(qid) or {}).get("trigger_port")
+        if ext and ext in ext_port:
+            pinned[qid] = ext_port[ext]
+            warnings.append(
+                f"QDAC trigger for {qid} joins the port already cabled to "
+                f"{ext} (con{ext_port[ext][0]} slot {ext_port[ext][1]} port "
+                f"{ext_port[ext][2]}) — one OPX digital output arms every "
+                f"qubit on that ext input.")
+
+    unpinned = [q for q in qids if q not in pinned]
+    if not unpinned:
+        return dict(pinned), warnings, _pinned_allocation()
     try:
         from qualang_tools.wirer import Connectivity, allocate_wiring
         from qualang_tools.wirer.connectivity.wiring_spec import (
@@ -991,7 +1153,7 @@ def _allocate_qdac_triggers(spec: dict, instruments) -> tuple[dict, list]:
             "spec API (WiringFrequency/WiringIOType) — biased qubit(s) will "
             "have no opx_trigger_out (the static dc_offset bias still works)."
         )
-        return {}, warnings
+        return dict(pinned), warnings, _pinned_allocation()
 
     qdac_conn = Connectivity()
     if not (hasattr(qdac_conn, "add_wiring_spec")
@@ -1001,10 +1163,10 @@ def _allocate_qdac_triggers(spec: dict, instruments) -> tuple[dict, list]:
             "no add_wiring_spec/_make_qubit_elements — biased qubit(s) will "
             "have no opx_trigger_out (the static dc_offset bias still works)."
         )
-        return {}, warnings
+        return dict(pinned), warnings, _pinned_allocation()
 
     try:
-        indices = [_norm_index(q) for q in qids]
+        indices = [_norm_index(q) for q in unpinned]
         elements = qdac_conn._make_qubit_elements(indices)
         qdac_conn.add_wiring_spec(
             WiringFrequency.DO, WiringIOType.OUTPUT, "qt", True, None, elements
@@ -1015,14 +1177,43 @@ def _allocate_qdac_triggers(spec: dict, instruments) -> tuple[dict, list]:
             f"QDAC trigger wiring failed ({type(exc).__name__}: {exc}) — "
             "biased qubit(s) built without opx_trigger_out."
         )
-        return {}, warnings
+        return dict(pinned), warnings, _pinned_allocation()
 
     # A qubit element's str() renders as f"q{index}" (see _norm_index), which
     # round-trips exactly back to the original spec qubit id — so the
     # allocation dict is already keyed the way we need it.
     allocation = read_allocation(qdac_conn)
-    pins: dict = {}
-    for qid in qids:
+
+    # A pinned port is a CABLE, and the auto pass cannot see it: the main
+    # allocation only consumes analog lines, so the digital pool the allocator
+    # walks is completely fresh and it hands the first unpinned qubit the
+    # first free digital output — which on a partly-pinned chip is exactly the
+    # port the pinned qubits are on. That is not a cosmetic clash: the OPX
+    # digital output is what drives one QDAC ext trigger INPUT, and a qubit
+    # declaring trigger_port "ext3" that lands on the cable wired to ext1
+    # pulses ext1 while its own channel waits on ext3 — the bias never arms.
+    # So an auto result that collides with a pin is MOVED to the next free
+    # digital output on the same FEM, and said out loud. (Both FEM flavors
+    # carry 8 digital outputs — QM FEM guide.)
+    _FEM_DIGITAL_PORTS = 8
+    taken = set(pinned.values())
+
+    def _relocate(qid, con, slot, port):
+        for cand in range(1, _FEM_DIGITAL_PORTS + 1):
+            if (con, slot, cand) not in taken:
+                warnings.append(
+                    f"QDAC trigger for {qid} was auto-allocated onto con{con} "
+                    f"slot {slot} port {port}, which is already cabled to a "
+                    f"pinned trigger — moved to port {cand}.")
+                return (con, slot, cand)
+        warnings.append(
+            f"QDAC trigger for {qid} could not be placed: every digital output "
+            f"on con{con} slot {slot} is already taken by a pinned trigger — "
+            "that qubit builds without opx_trigger_out.")
+        return None
+
+    pins: dict = dict(pinned)
+    for qid in unpinned:
         chans = (allocation.get(qid) or {}).get("qt") or []
         if not chans:
             continue
@@ -1030,12 +1221,24 @@ def _allocate_qdac_triggers(spec: dict, instruments) -> tuple[dict, list]:
         con, slot, port = ch.get("con"), ch.get("slot"), ch.get("port")
         if None in (con, slot, port):
             continue
-        pins[qid] = (con, slot, port)
+        triple = (con, slot, port)
+        if triple in taken:
+            triple = _relocate(qid, con, slot, port)
+            if triple is None:
+                allocation.pop(qid, None)     # never draw a port it will not get
+                continue
+            ch["con"], ch["slot"], ch["port"] = triple
+        taken.add(triple)
+        pins[qid] = triple
 
     missing = sorted(set(qids) - set(pins))
     if missing:
         warnings.append(f"QDAC trigger wiring: no digital port allocated for {missing}.")
-    return pins, warnings
+    # Pinned entries are not in the allocator's output at all (it never saw
+    # those qubits) — hand them back in the same shape so the dry run draws
+    # every trigger, kept and allocated alike.
+    allocation.update(_pinned_allocation())
+    return pins, warnings, allocation
 
 
 def _apply_qdac(machine, spec: dict, instruments, warnings: list) -> tuple[dict, dict | None]:
@@ -1064,16 +1267,29 @@ def _apply_qdac(machine, spec: dict, instruments, warnings: list) -> tuple[dict,
 
     trio = _import_qdac_components()
     if trio is None:
+        # This returns BEFORE _attach_qdac_bias runs, so this string is the
+        # only thing the user is told — it has to be true for both shapes. A
+        # bias-tee qubit keeps its LF-FEM flux line and loses only the DC bias;
+        # telling that user their qubits have "no z component at all" sends
+        # them looking for a wiring fault that is not there.
+        tee = {q for q, f in qdac_qubits.items() if (f or {}).get("bias_tee")}
+        only = [q for q in qdac_qubits if q not in tee]
+        lost = []
+        if only:
+            lost.append(f"{len(only)} qubit(s) have no z/bias component at all")
+        if tee:
+            lost.append(f"{len(tee)} bias-tee qubit(s) keep their OPX flux line "
+                        "but get no DC bias")
         warnings.append(
             "QDAC-biased qubits requested but quam_config.qdac_components is "
-            "not importable in this env — built without QDAC bias (the "
-            "biased qubit(s) have no z/flux component at all). Install the "
-            "customer's quam_config package in the selected env to attach it."
+            "not importable in this env — built without QDAC bias ("
+            + "; ".join(lost) + "). Install the customer's quam_config package "
+            "in the selected env to attach it."
         )
         return {}, None
     QdacInstrument, QdacBiasLine, QdacBiasedFixedFrequencyTransmon = trio
 
-    pins, trig_warnings = _allocate_qdac_triggers(spec, instruments)
+    pins, trig_warnings, _ = _allocate_qdac_triggers(spec, instruments)
     warnings.extend(trig_warnings)
 
     instrument_fields = {
@@ -1095,19 +1311,92 @@ def _apply_qdac(machine, spec: dict, instruments, warnings: list) -> tuple[dict,
             "no top-level 'qdac' entry was written."
         )
 
+    return _attach_qdac_bias(machine, qdac_qubits, pins, warnings), instrument_dict
+
+
+def _attach_qdac_bias(machine, qdac_qubits: dict, pins: dict, warnings: list) -> dict:
+    """Attach each qubit's QdacBiasLine, and the trigger channel that arms it.
+
+    Split out of :func:`_apply_qdac` (docs/136) so the emitted build recipe
+    runs the SAME code the wizard ran rather than a paraphrase of it. *pins* is
+    the only thing the two callers resolve differently — the build allocates
+    them against a live Instruments pool, the recipe carries them as data,
+    because by then the ports are a fact about a bench rather than a choice.
+
+    Returns ``{qubit_id: (con, slot, port)}`` for the triggers actually wired.
+    Degrades on every failure; never raises.
+    """
+    trio = _import_qdac_components()
+    if trio is None:
+        # Same honesty rule as _apply_qdac's copy: a bias-tee qubit does not
+        # lose its z, only its DC bias.
+        tee = {q for q, f in qdac_qubits.items() if (f or {}).get("bias_tee")}
+        warnings.append(
+            "QDAC-biased qubits requested but quam_config.qdac_components is "
+            "not importable in this environment — no DC bias was attached"
+            + (f" ({len(qdac_qubits) - len(tee)} qubit(s) also have no z "
+               f"component; {len(tee)} bias-tee qubit(s) keep theirs)"
+               if tee else " and those qubits have no z component")
+            + ". Install the customer's quam_config package in the selected "
+            "env to attach it."
+        )
+        return {}
+    _QdacInstrument, QdacBiasLine, QdacBiasedFixedFrequencyTransmon = trio
+
     qubits = getattr(machine, "qubits", None) or {}
+    tee_shape = _find_bias_tee_class()
+    tee_warned = False
     wired_pins: dict = {}
     for qid, fields in qdac_qubits.items():
         qubit = qubits.get(qid)
         if qubit is None:
             continue  # spec/UI drift; ignore defensively like other seeders
-        if getattr(qubit, "z", None) is not None:
+
+        has_z = getattr(qubit, "z", None) is not None
+        want_tee = bool(fields.get("bias_tee"))
+        if has_z and not want_tee:
             warnings.append(
                 f"qubit {qid}: already has a z component from wiring — left "
                 "untouched (QDAC bias not applied; check spec.qdac.qubits "
                 "against any 'flux' line for this qubit)."
             )
             continue
+        if want_tee and not has_z:
+            # validate_spec blocks this on the wizard path; a direct API caller
+            # can still get here. Say what happened, then build the QDAC-only
+            # chip that the spec actually describes.
+            warnings.append(
+                f"qubit {qid}: declared bias_tee but has no OPX flux line — "
+                "built as a plain QDAC-biased qubit (a bias tee needs both)."
+            )
+            want_tee = False
+        if want_tee and tee_shape is None:
+            # docs/136 §13 — no class in this env can hold both. The honest
+            # degrade keeps the LF-FEM flux line (which IS buildable and is the
+            # half that plays pulses) and says the DC bias was not attached.
+            # Silently dropping either half would look like a working chip.
+            if not tee_warned:
+                warnings.append(
+                    "bias tee requested, but no class in this environment keeps "
+                    "`z` a flux line while carrying a QdacBiasLine beside it. "
+                    "The OPX flux line is built; the QDAC DC bias is NOT "
+                    "attached for these qubits. Add such a subclass to your "
+                    "quam_config (docs/136 §13) and re-generate."
+                )
+                tee_warned = True
+            warnings.append(f"qubit {qid}: bias tee unavailable — DC bias not attached.")
+            continue
+
+        bias_kwargs = dict(
+            channel=fields["channel"],
+            dc_offset=fields.get("dc_offset", 0.0),
+            trigger_port=fields.get("trigger_port"),
+            dwell=fields.get("dwell", 2e-6),
+            slew_rate=fields.get("slew_rate", 2e7),
+            output_range=fields.get("output_range", "low"),
+            output_filter=fields.get("output_filter", "med"),
+            settle_time=fields.get("settle_time"),
+        )
 
         # Reassign the runtime class in place — QdacBiasedFixedFrequencyTransmon
         # differs from the qubit's already-built class only in the type of
@@ -1115,23 +1404,22 @@ def _apply_qdac(machine, spec: dict, instruments, warnings: list) -> tuple[dict,
         # adds no other fields), so this keeps the SAME object (same identity,
         # same already-built resonator/xy children, same parent/root wiring)
         # rather than reconstructing a fresh instance and moving children
-        # between parents.
+        # between parents. The bias-tee class is the same trick with the
+        # opposite intent: `z` is left ALONE (it is the pulse line) and the
+        # bias lands on the sibling field the class declares for it.
+        bias_field = "z"
         try:
-            qubit.__class__ = QdacBiasedFixedFrequencyTransmon
-            qubit.z = QdacBiasLine(
-                channel=fields["channel"],
-                dc_offset=fields.get("dc_offset", 0.0),
-                trigger_port=fields.get("trigger_port"),
-                dwell=fields.get("dwell", 2e-6),
-                slew_rate=fields.get("slew_rate", 2e7),
-                output_range=fields.get("output_range", "low"),
-                output_filter=fields.get("output_filter", "med"),
-                settle_time=fields.get("settle_time"),
-            )
+            if want_tee:
+                bias_field = tee_shape["field"]
+                qubit.__class__ = tee_shape["cls"]
+                setattr(qubit, bias_field, QdacBiasLine(**bias_kwargs))
+            else:
+                qubit.__class__ = QdacBiasedFixedFrequencyTransmon
+                qubit.z = QdacBiasLine(**bias_kwargs)
         except Exception as exc:  # noqa: BLE001 — degrade, don't crash the build
             warnings.append(
                 f"qubit {qid}: QDAC bias attach failed ({type(exc).__name__}: "
-                f"{exc}) — z left as None."
+                f"{exc}) — {bias_field} left as None."
             )
             continue
 
@@ -1140,7 +1428,24 @@ def _apply_qdac(machine, spec: dict, instruments, warnings: list) -> tuple[dict,
             continue  # trigger wiring degraded above; static bias still works
         con, slot, port = pin
         try:
-            machine.ports.get_digital_output(f"con{con}", slot, port, create=True)
+            _dport = machine.ports.get_digital_output(
+                f"con{con}", slot, port, create=True)
+            # docs/136 — mark the PORT shareable, not just the channel. One OPX
+            # digital output feeds one QDAC ext input and arms every channel on
+            # it, so several qubits legitimately land here; the port object
+            # defaults to shareable=False and generate_config() would then
+            # refuse the second element claiming it. The customer's own builder
+            # does this in a dedicated pass (`_mark_trigger_ports_shareable`)
+            # for exactly this reason, and the real chip's saved port carries
+            # `shareable: true`. Idempotent — several qubits set the same flag.
+            try:
+                _dport.shareable = True
+            except Exception:  # noqa: BLE001 — an older port class may not have it
+                warnings.append(
+                    f"qubit {qid}: digital output con{con}/{slot}/{port} does "
+                    "not accept `shareable` in this environment — a second "
+                    "qubit on this trigger cable may be rejected at "
+                    "generate_config() time.")
         except Exception as exc:  # noqa: BLE001 — degrade, don't crash the build
             warnings.append(
                 f"qubit {qid}: could not create digital output port "
@@ -1153,11 +1458,21 @@ def _apply_qdac(machine, spec: dict, instruments, warnings: list) -> tuple[dict,
             from quam.components import Channel, pulses
             from quam.components.channels import DigitalOutputChannel
 
-            qubit.z.opx_trigger_out = Channel(
+            # The trigger belongs to the BIAS line, which is `z` on a QDAC-only
+            # qubit and a sibling field on a bias-tee one — `z` there is the
+            # pulse line and has no trigger to arm.
+            getattr(qubit, bias_field).opx_trigger_out = Channel(
                 id=f"{qid}_qdac_trigger",
                 digital_outputs={
                     "trigger": DigitalOutputChannel(
                         opx_output=f"#/wiring/qubits/{qid}/qt/digital_output",
+                        # docs/136: explicit 0s, matching the customer's own
+                        # builder and their real chip. Left unset these
+                        # serialize as null, and a null delay/buffer is not
+                        # the same statement as "no delay" — it is "nobody
+                        # said", which a later reader has to guess about.
+                        delay=0,
+                        buffer=0,
                         shareable=True,
                     )
                 },
@@ -1173,7 +1488,7 @@ def _apply_qdac(machine, spec: dict, instruments, warnings: list) -> tuple[dict,
 
         wired_pins[qid] = pin
 
-    return wired_pins, instrument_dict
+    return wired_pins
 
 
 def _inject_qdac_state(state_path, qdac_instrument: dict | None) -> None:
@@ -2256,10 +2571,38 @@ def _finalize_pair_gates(machine, spec, pair_gate):
 # ---------------------------------------------------------------------------
 
 def run_allocate(spec: dict) -> dict:
-    """Dry run: allocate channels and return the assignment. Writes no files."""
+    """Dry run: allocate channels and return the assignment. Writes no files.
+
+    docs/135 ⑤: the QDAC-II trigger lines are allocated by a SECOND, isolated
+    pass (see :func:`_allocate_qdac_triggers` for why they can never join the
+    main Connectivity), and the dry run used to skip it entirely — so a chip
+    whose 11 biased qubits each get an OPX digital output showed the wizard a
+    wiring diagram with no digital column at all, while /instrument (reading
+    the built chip) showed them. The build was always going to create them;
+    only the preview was blind. Same function the build calls, sharing the
+    same *instruments* pool, so what the wizard draws is what gets built.
+    """
     instruments = build_instruments(spec)
     connectivity, warnings = allocate_full(spec, instruments)
-    return {"allocation": read_allocation(connectivity), "warnings": warnings}
+    allocation = read_allocation(connectivity)
+    _, qdac_warnings, qdac_allocation = _allocate_qdac_triggers(spec, instruments)
+    warnings.extend(qdac_warnings)
+    # The build refuses to attach ANY QDAC component without the customer's
+    # quam_config.qdac_components (_apply_qdac). Drawing the trigger ports
+    # while that is missing would promise wiring this env cannot build, so
+    # the preview says so — same probe, same env, same message shape.
+    if qdac_allocation and not _qdac_module_present():
+        warnings.append(
+            "QDAC-biased qubits are declared but quam_config.qdac_components "
+            "was not found in this environment — the trigger ports shown here "
+            "will NOT be built until it is installed (step 1's environment "
+            "check runs the real import and reports on it)."
+        )
+    # Merge per element: a QDAC-biased qubit already has rr/xy lines here, and
+    # its "qt" line is an ADDITION, never a replacement.
+    for element, lines in (qdac_allocation or {}).items():
+        allocation.setdefault(element, {}).update(lines or {})
+    return {"allocation": allocation, "warnings": warnings}
 
 
 def run_build(spec: dict, out_dir: Path) -> dict:
@@ -2319,6 +2662,28 @@ def run_build(spec: dict, out_dir: Path) -> dict:
                 "zz_drive lines present but this quam_builder has no "
                 "FixedFrequencyZZDriveQuam — qubits will lack xy_detuned; "
                 "the Stark-CZ target-lobe tones are skipped.")
+
+    # docs/135 ⑤ review (CRITICAL): the QPU ROOT class was picked purely from
+    # line types, so a re-generate of a chip whose root is a customer subclass
+    # rebuilt onto the stock one — and the result could not be loaded at all.
+    # A QDAC chip is exactly that case: stock FluxTunableQuam types `qubits` as
+    # Dict[str, FluxTunableTransmon], so the first QdacBiasedFixedFrequencyTransmon
+    # fails validation, and it declares no `qdac` field, so the top-level entry
+    # _inject_qdac_state writes makes load() raise a second time. Both the
+    # build and the merge reported success. When the spec carries the source
+    # chip's own root (regen_spec records it), use it.
+    declared_root = (spec.get("quam_class") or "").strip()
+    if declared_root:
+        try:
+            _mod, _cls = declared_root.rsplit(".", 1)
+            quam_cls = getattr(importlib.import_module(_mod), _cls)
+        except Exception as exc:  # noqa: BLE001 — degrade to the derived class
+            warnings.append(
+                f"This chip's own QPU root class ({declared_root}) is not "
+                f"importable here ({type(exc).__name__}) — rebuilding onto "
+                f"{quam_cls.__name__} instead. If the chip uses components "
+                "that class does not declare (e.g. QDAC-II bias), the result "
+                "will not load; install the package that provides it.")
 
     out_dir.mkdir(parents=True, exist_ok=True)
     state_path = out_dir / "state.json"
@@ -2414,8 +2779,12 @@ def run_build(spec: dict, out_dir: Path) -> dict:
         "quam_class": quam_cls.__name__,
         "qubits": sorted(str(q) for q in getattr(machine, "qubits", {}) or {}),
         "qubit_pairs": sorted(str(p) for p in getattr(machine, "qubit_pairs", {}) or {}),
-        "qdac_qubits": sorted(qdac_pins.keys()) if qdac_pins else
-                       sorted((spec.get("qdac") or {}).get("qubits") or {}),
+        # What was WIRED, never what was asked for. The old fallback reported
+        # the spec's intent whenever nothing got wired — i.e. it read as a full
+        # success exactly when the QDAC path had failed completely. `requested`
+        # sits beside it so the difference is visible rather than inferred.
+        "qdac_qubits": sorted(qdac_pins.keys()),
+        "qdac_requested": sorted((spec.get("qdac") or {}).get("qubits") or {}),
         "allocation": read_allocation(connectivity),
         "warnings": warnings,
         "class_schemas": _collect_class_schemas(state_path, wiring_path),

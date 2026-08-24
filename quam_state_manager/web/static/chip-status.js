@@ -539,9 +539,20 @@ window.ChipStatus.mount = function (opts) {
             {title: 'Chip Size', value: topo.nodes.length + ' qubits, ' + topo.edges.length + ' pairs', color: '#4e79a7'},
             metricTile('1Q Gate Fidelity', nodeAgg('gate_fidelity_avg'), pct, fidRange, 'gate_fidelity_avg'),
             metricTile('Readout Fidelity', nodeAgg('assignment_fidelity'), pct, roRange, 'assignment_fidelity'),
-            metricTile('2Q RB (Standard)', computeAggregates(collect2Q(function(m) { return m === 'StandardRB'; })), pct, fidRange),
-            metricTile('2Q RB (Interleaved)', computeAggregates(collect2Q(function(m) { return m === 'InterleavedRB' || m === 'IRB'; })), pct, fidRange),
-            metricTile('2Q Bell', computeAggregates(topo.edges.map(function(e) { return e.cz_fidelity; })), pct, [0.95, 0], 'cz_fidelity'),
+            // Standard RB fits the CLIFFORD fidelity (1-EPC); interleaved RB
+            // fits the GATE fidelity (1-EPG). A Clifford is ~1.5 two-qubit
+            // gates, so these two are not comparable and the titles say which
+            // is which. SM does not convert between them: the divisor
+            // (average_gates_per_clifford) is a node value and is in neither
+            // state.json nor the saved run (docs/138).
+            metricTile('2Q Clifford fid. (SRB)', computeAggregates(collect2Q(function(m) { return m === 'StandardRB'; })), pct, fidRange),
+            metricTile('2Q gate fid. (IRB)', computeAggregates(collect2Q(function(m) { return m === 'InterleavedRB' || m === 'IRB'; })), pct, fidRange),
+            // The edge number. Its SOURCE varies by chip — Bell_State, an
+            // interleaved-RB gate fidelity, or the CR channel — so the tile is
+            // named for what it measures, not for one of the three ways it can
+            // be measured. Calling it "2Q Bell" was already wrong on a CR chip
+            // and became wrong on an RB chip too (docs/138).
+            metricTile('2Q gate fidelity', computeAggregates(topo.edges.map(function(e) { return e.cz_fidelity; })), pct, [0.95, 0], 'cz_fidelity'),
             metricTile('T1', nodeAgg('T1'), us, tRange, 'T1'),
             metricTile('T2 echo', nodeAgg('T2echo'), us, tRange, 'T2echo'),
             metricTile('T2 Ramsey', nodeAgg('T2ramsey'), us, tRange, 'T2ramsey'),
@@ -743,12 +754,39 @@ window.ChipStatus.mount = function (opts) {
                 + (e.active === false ? ' <span class="topo-popup-kind topo-popup-off">off</span>' : '')
                 + '</span><button class="topo-popup-close">✕</button></div>';
 
+            // docs/138 — these rows do NOT all measure the same thing, and
+            // stacking them under one "Gate fidelity" heading said they did.
+            // StandardRB is 1-EPC (per CLIFFORD, ~1.5 gates); InterleavedRB is
+            // 1-EPG (per GATE); *_alpha is the RB decay base, not a fidelity at
+            // all — it was rendering as "93.8%" beside two real fidelities.
             var fidRows = '';
+            var fitRows = '';
             (e.gate_fidelities || []).forEach(function(gf) {
                 var v = typeof gf.value === 'number' ? gf.value
                       : typeof gf.average_gate_fidelity === 'number' ? gf.average_gate_fidelity : null;
                 if (v == null) return;
-                fidRows += row(_esc(gf.gate) + ' · ' + _esc(gf.metric), pct(v),
+                var name = _esc(gf.gate) + ' · ' + _esc(gf.metric);
+                if (gf.level === 'decay') {
+                    // A decay base is a bare number, never a percentage.
+                    fitRows += row(name, v.toFixed(5));
+                    return;
+                }
+                if (gf.level === 'clifford') name += ' <span class="topo-popup-kind">per Clifford</span>';
+                else if (gf.level === 'gate') name += ' <span class="topo-popup-kind">per gate</span>';
+                var shown = pct(v);
+                // docs/138 — the per-GATE number this Clifford fit implies. The
+                // run computed it (epc / average_gates_per_clifford) and stored
+                // only the Clifford one; SM read it back out of that run. Shown
+                // BESIDE the Clifford value, never instead of it: they are two
+                // different quantities and the divisor belongs on screen.
+                if (typeof gf.derived_gate_fidelity === 'number') {
+                    shown += ' <span class="topo-popup-kind">→ ' + pct(gf.derived_gate_fidelity)
+                          + ' per gate'
+                          + (typeof gf.average_gates_per_clifford === 'number'
+                              ? ' ÷' + gf.average_gates_per_clifford.toFixed(2) : '')
+                          + '</span>';
+                }
+                fidRows += row(name, shown,
                                e.best_gate && gf.gate === e.best_gate);
             });
             if (!fidRows && e.cz_fidelity != null) fidRows = row('2Q fidelity', pct(e.cz_fidelity));
@@ -761,6 +799,14 @@ window.ChipStatus.mount = function (opts) {
                          + _ageLabel(e.cz_fidelity_updated_at) + '</span></div>';
                 }
                 html += '</div>';
+            }
+            // A separate section, because these are fit parameters rather than
+            // measurements of the gate. Shown even when no fidelity row
+            // survived: an alpha with no fidelity beside it is worth seeing.
+            if (fitRows) {
+                html += '<div class="topo-popup-section">'
+                     + '<div class="topo-popup-section-title">RB fit (decay α)</div>'
+                     + fitRows + '</div>';
             }
 
             var parRows = '';
@@ -829,7 +875,15 @@ window.ChipStatus.mount = function (opts) {
             return;
         }
 
-        var HERO_KEY = 'quam_topo_hero_metric';
+        // docs/138 — versioned, deliberately. The old default on a chip with
+        // no Bell_State was the CLIFFORD number, under the label "2Q RB",
+        // which did not say which of the two things it was. Nobody chose that
+        // on purpose; they got it. A stored key would otherwise pin the wrong
+        // number forever for exactly the people who never picked it. Same
+        // precedent as the `_cols_v2` visibility flip (docs/85): bump the key
+        // so a corrected default reaches everyone, and a choice made AFTER
+        // seeing the honest label survives from then on.
+        var HERO_KEY = 'quam_topo_hero_metric_v2';
         var ZOOM_KEY = 'quam_topo_hero_zoom';
         // docs/126 ② — the metric patches ARE the map's controls: clicking one
         // paints the value inside every stone (or, for a 2Q metric, ON every
@@ -865,6 +919,20 @@ window.ChipStatus.mount = function (opts) {
             });
             return best;
         }
+        // docs/138 — the derived per-gate value on a Clifford row, per pulse.
+        function edgeBestDerived(e, gate) {
+            if (!e.gate_fidelities) return null;
+            var best = null;
+            e.gate_fidelities.forEach(function (gf) {
+                if (gf.level !== 'clifford') return;
+                if (gate && gate !== 'best' && gf.gate !== gate) return;
+                var v = gf.derived_gate_fidelity;
+                if (typeof v === 'number' && v > 0 && v <= 1 && (best == null || v > best)) {
+                    best = v;
+                }
+            });
+            return best;
+        }
         function gatesFor2Q(match) {
             var names = {};
             topo.edges.forEach(function(e) {
@@ -878,17 +946,35 @@ window.ChipStatus.mount = function (opts) {
         var heroGate = 'best';
         try { heroGate = localStorage.getItem(GATE_KEY) || 'best'; } catch (e) {}
         var EDGE_METRICS = [
-            { key: 'cz_fidelity', scope: 'edge', label: '2Q Bell (CZ)',
+            // Same rename as the tile: this is the edge's gate number, and
+            // its source is Bell_State / interleaved RB / the CR channel
+            // depending on the chip (docs/138).
+            { key: 'cz_fidelity', scope: 'edge', label: '2Q gate fid.',
               fmtFn: function(v) { return fmtPct(v, 1) + '%'; },
               valFn: function(e) { return _mv(e, 'cz_fidelity'); } },
-            { key: 'rb2q_standard', scope: 'edge', label: '2Q RB', perGate: true,
-              match: function(m) { return m === 'StandardRB'; },
-              fmtFn: function(v) { return fmtPct(v, 1) + '%'; },
-              valFn: function(e) { return edgeBest2Q(e, function(m) { return m === 'StandardRB'; }, heroGate); } },
-            { key: 'rb2q_interleaved', scope: 'edge', label: '2Q IRB', perGate: true,
+            // ORDER IS THE DEFAULT. The first surviving metric is what the
+            // hero opens on, and on a chip with no Bell_State the old order
+            // made that the CLIFFORD number: the map said 97.1% while the
+            // per-pulse sections below it said 99.09% and 99.34%. Same pair,
+            // two numbers, and the smaller one on top. The gate number goes
+            // first now; the Clifford number stays available, last, and says
+            // what it is (docs/138).
+            { key: 'rb2q_interleaved', scope: 'edge', label: '2Q gate (IRB)', perGate: true,
               match: function(m) { return m === 'InterleavedRB' || m === 'IRB'; },
               fmtFn: function(v) { return fmtPct(v, 1) + '%'; },
               valFn: function(e) { return edgeBest2Q(e, function(m) { return m === 'InterleavedRB' || m === 'IRB'; }, heroGate); } },
+            // The per-gate number a Standard-RB fit implies, recovered from
+            // that run's own data.json. Present only when the run folder is
+            // loaded — otherwise the patch simply is not offered, rather than
+            // showing a Clifford number under a gate label.
+            { key: 'rb2q_standard_gate', scope: 'edge', label: '2Q gate (SRB÷)', perGate: true,
+              match: function(m) { return m === 'StandardRB'; },
+              fmtFn: function(v) { return fmtPct(v, 1) + '%'; },
+              valFn: function(e) { return edgeBestDerived(e, heroGate); } },
+            { key: 'rb2q_standard', scope: 'edge', label: '2Q Clifford (SRB)', perGate: true,
+              match: function(m) { return m === 'StandardRB'; },
+              fmtFn: function(v) { return fmtPct(v, 1) + '%'; },
+              valFn: function(e) { return edgeBest2Q(e, function(m) { return m === 'StandardRB'; }, heroGate); } },
         ].filter(function(m) {
             return topo.edges.some(function(e) { return m.valFn(e) != null; });
         });

@@ -45,9 +45,22 @@ import re
 from typing import Any
 from weakref import WeakKeyDictionary
 
+from quam_state_manager.core import qdac
 from quam_state_manager.core.param_specs import _BULK_COLUMNS_SPEC
 from quam_state_manager.core.pair_columns import _SEG_SHORT, _humanize, _unit_of
 from quam_state_manager.core.pointer_resolver import is_pointer, is_self_ref
+
+# docs/136: QDAC-II bias fields get a band of their own instead of being folded
+# into the flux channel's `Z+`. Two reasons, and the second is the load-bearing
+# one: a QdacBiasLine is not a FluxLine and reading `channel`/`dc_offset` under
+# a heading that says "Z" invites exactly the wrong edit — and the section name
+# is ALSO what mints the Live-Edit quick-filter chip (`_bulk_filter_chips`'s
+# coverage sweep takes a band's first word), so naming it here is what makes
+# "qdac" a searchable word on a chip where the string appears in no column at
+# all today (`__class__` is skipped, and the fields are named `channel`,
+# `dc_offset`, ... — none of them says QDAC).
+_QDAC_SECTION_KEY = "chan:qdac"
+_QDAC_SECTION = "QDAC bias+"
 
 # Identity / structural keys — never become columns. digital_marker is a REAL
 # value on modern chips (a marker name), so it deliberately stays.
@@ -134,13 +147,42 @@ def _kind_of(value: Any, merged: dict | None = None,
     return "edit"                  # scalar, None, or cross-ref pointer (write-through)
 
 
+def _nested_chan_label(mid: list[str]) -> str:
+    """Human name for a port that hangs off a NESTED channel.
+
+    ``["opx_trigger_out", "digital_outputs", "trigger"]`` → ``"Trigger"``. Only
+    the first segment names the channel; the rest is the container it holds its
+    outputs in and the output's own key, which the ``out ·`` label already
+    implies. The ``opx_`` prefix and the ``_out``/``_output`` suffix carry no
+    information once the word "Port" is in the section name.
+    """
+    name = re.sub(r"^opx_", "", mid[0])
+    name = re.sub(r"_(out|output|in|input)$", "", name)
+    return _humanize(name or mid[0])
+
+
 def _make_leaf(qid: str, real_segs: list[str], tmpl_segs: list[str], value: Any,
                *, port: bool, chan_order: dict[str, int],
-               merged: dict | None = None, probe_path: str | None = None) -> dict:
+               merged: dict | None = None, probe_path: str | None = None,
+               in_qdac: bool = False) -> dict:
     head = tmpl_segs[0]
     if port:
-        chan_order.setdefault(head, len(chan_order))
-        sec_key, sec_label = "port:" + head, _humanize(head) + " Port+"
+        # docs/136: everything BETWEEN the head and the IO key names a NESTED
+        # channel, and folding it away made two different physical ports share
+        # one header. On the real 20Q chip `z.opx_output.*` (an LF-FEM ANALOG
+        # port) and `z.opx_trigger_out.digital_outputs.trigger.opx_output.*`
+        # (an FEM DIGITAL port) both rendered as `Z Port+ / out · <leaf>`, so
+        # the four fields the two port classes share — controller_id, fem_id,
+        # port_id, shareable — appeared as four pairs of identical headers,
+        # side by side, with nothing saying which was the flux port and which
+        # the QDAC trigger. Editing the wrong one silently re-cables the chip.
+        mid = tmpl_segs[1:-2]
+        chan_key = ".".join([head, *mid]) if mid else head
+        chan_order.setdefault(chan_key, len(chan_order))
+        sec_key = "port:" + chan_key
+        sec_label = (_humanize(head)
+                     + (" " + _nested_chan_label(mid) if mid else "")
+                     + " Port+")
         io = tmpl_segs[-2]
         label = _IO_SHORT.get(io, io) + " · " + tmpl_segs[-1]
     elif len(tmpl_segs) == 1:
@@ -171,6 +213,12 @@ def _make_leaf(qid: str, real_segs: list[str], tmpl_segs: list[str], value: Any,
         # the complaint that started all of this.
         "alias_terms": [r for r, t in zip(real_segs, tmpl_segs) if r != t],
         "section_key": sec_key, "section": sec_label,
+        # Did this leaf come from inside a QDAC-II bias line? Recorded per LEAF
+        # (not per column) because on a mixed chip the same template can be a
+        # QdacBiasLine field on one row and a FluxLine field on another —
+        # `settle_time` is exactly that. `_derive` promotes a column to the
+        # QDAC section only when EVERY leaf under its template is QDAC-owned.
+        "qdac": in_qdac,
         "label": label, "unit": _unit_of(str(real_segs[-1])),
         # A port leaf's real_path is the ALIAS (qubits.q1.z.opx_output.<leaf>),
         # which `_walk` cannot traverse — it stops at the opx_output pointer —
@@ -182,7 +230,7 @@ def _make_leaf(qid: str, real_segs: list[str], tmpl_segs: list[str], value: Any,
 
 def _port_leaves(qid: str, real_segs: list[str], tmpl_segs: list[str],
                  merged: dict, leaves: list[dict],
-                 chan_order: dict[str, int]) -> None:
+                 chan_order: dict[str, int], in_qdac: bool = False) -> None:
     """Enumerate a wired port's scalar + list leaves through the pointer chain."""
     from quam_state_manager.core.pointer_path import _walk as _walk_abs, resolve_field_target
     try:
@@ -200,16 +248,22 @@ def _port_leaves(qid: str, real_segs: list[str], tmpl_segs: list[str],
             continue          # nested dicts (multi-DUC upconverters) never become columns
         leaves.append(_make_leaf(qid, real_segs + [k], tmpl_segs + [k], v,
                                  port=True, chan_order=chan_order,
-                                 merged=merged,
+                                 merged=merged, in_qdac=in_qdac,
                                  probe_path=(ft.get("resolved_path") or "") + "." + k))
 
 
 def _walk_qubit(qid: str, node: Any, real_segs: list[str], tmpl_segs: list[str],
                 entities: tuple[str, ...], merged: dict, leaves: list[dict],
-                chan_order: dict[str, int]) -> None:
+                chan_order: dict[str, int], in_qdac: bool = False) -> None:
     """Recurse one qubit object, appending leaf descriptors.
 
     Guards ``None`` / non-dict at every level; an empty dict yields nothing.
+
+    ``in_qdac`` is sticky down a subtree: once we descend into a QDAC-II bias
+    line every leaf below it is QDAC-owned, including the trigger channel's
+    port leaves. It is decided structurally (``core.qdac.is_bias_line``), never
+    by field name, so a lab that calls its bias-tee field something other than
+    ``z`` is read correctly on the day it appears.
     """
     if not isinstance(node, dict):
         return
@@ -221,14 +275,22 @@ def _walk_qubit(qid: str, node: Any, real_segs: list[str], tmpl_segs: list[str],
         r2 = real_segs + [k]
         t2 = tmpl_segs + [tk]
         if k in _IO_KEYS and is_pointer(v) and not is_self_ref(v):
-            _port_leaves(qid, r2, t2, merged, leaves, chan_order)
+            _port_leaves(qid, r2, t2, merged, leaves, chan_order, in_qdac)
             continue
         if isinstance(v, dict):
             if v:
-                _walk_qubit(qid, v, r2, t2, entities, merged, leaves, chan_order)
+                child_qdac = in_qdac or qdac.is_bias_line(v)
+                if child_qdac and not in_qdac:
+                    # Register the section once, where the bias line sits, so
+                    # its columns land beside that channel rather than at an
+                    # arbitrary end of the grid.
+                    chan_order.setdefault(_QDAC_SECTION_KEY[5:], len(chan_order))
+                _walk_qubit(qid, v, r2, t2, entities, merged, leaves,
+                            chan_order, child_qdac)
             continue          # empty dict → no leaf
         leaves.append(_make_leaf(qid, r2, t2, v, port=False,
-                                 chan_order=chan_order, merged=merged))
+                                 chan_order=chan_order, merged=merged,
+                                 in_qdac=in_qdac))
 
 
 def _order_key(col: dict, chan_order: dict[str, int]) -> tuple:
@@ -276,6 +338,19 @@ def _derive(store) -> tuple[list[dict], set[str]]:
             if n > 1:
                 multi[t] = max(multi.get(t, 0), n)
 
+    # docs/136: which TEMPLATES are QDAC-owned everywhere they appear. A mixed
+    # chip has both classes of `z`, so a name the two share — `settle_time` is
+    # the only one on the customer's chip — must stay in the generic band: it
+    # is one dot-path addressing a QdacBiasLine on some rows and a FluxLine on
+    # others, and a header claiming "QDAC" would be false for nine of twenty
+    # qubits. Computed BEFORE the columns are built, because a column takes its
+    # section from whichever leaf happens to create it first.
+    tmpl_qdac: dict[str, bool] = {}
+    for qid in qids:
+        for lf in per_qubit[qid]:
+            t = lf["tmpl"]
+            tmpl_qdac[t] = tmpl_qdac.get(t, True) and bool(lf["qdac"])
+
     cols: dict[str, dict] = {}
     order: list[str] = []
     # {col_key: {qid: real_dot_path}} and {col_key: {qid: mode}} — the qubit
@@ -295,14 +370,27 @@ def _derive(store) -> tuple[list[dict], set[str]]:
                 ck = _col_key(lf["tmpl_segs"]) + "_" + str(n)
             col = cols.get(ck)
             if col is None:
-                col = {"key": ck, "label": lf["label"], "section": lf["section"],
-                       "section_key": lf["section_key"], "unit": lf["unit"],
+                sec_key, sec = lf["section_key"], lf["section"]
+                # A wholly-QDAC non-port template moves into the QDAC band.
+                # Port templates keep their own port band — a trigger port IS
+                # a port, and it already reads unambiguously since the nested
+                # channel is in its name ("Z Trigger Port+").
+                if tmpl_qdac.get(lf["tmpl"]) and not lf["port"]:
+                    sec_key, sec = _QDAC_SECTION_KEY, _QDAC_SECTION
+                col = {"key": ck, "label": lf["label"], "section": sec,
+                       "section_key": sec_key, "unit": lf["unit"],
                        "tmpl": lf["tmpl"], "kinds": set(), "nonnull": 0,
                        "terms": []}
                 cols[ck] = col
                 order.append(ck)
                 paths[ck] = {}
                 modes[ck] = {}
+            # Any column with a QDAC leaf answers to the word, whether or not
+            # it earned the band (a port column, or a shared name like
+            # settle_time). The search haystack is the only place that word
+            # exists on these columns.
+            if lf["qdac"] and "qdac" not in col["terms"]:
+                col["terms"].append("qdac")
             for term in lf["alias_terms"]:
                 if term not in col["terms"] and len(col["terms"]) < 16:
                     col["terms"].append(term)

@@ -773,6 +773,22 @@ window.TopoGraph = (function () {
                '" x2="' + pt.x + '" y2="' + (pt.y + R * 1.5) + '">' +
                "<title>" + esc(n.id) + " flux — " + esc(n.z_port) + "</title></line>";
       }
+      // docs/136 — a QDAC-biased qubit has NO z_port (no OPX analog output), so
+      // the stub above drew nothing for 11 of this chip's 20 qubits and the map
+      // showed them as if they had no flux bias at all. Its own mark, because
+      // it is its own thing: a short bar across the stub position, dashed on a
+      // bias tee where BOTH sources feed one line.
+      if (n.bias_mode === "qdac" || n.bias_mode === "bias_tee") {
+        var by = pt.y + R * (n.bias_mode === "bias_tee" ? 1.5 : 1.1);
+        svg += '<line class="cm-qdac' +
+               (n.bias_mode === "bias_tee" ? " cm-qdac-tee" : "") +
+               '" x1="' + (pt.x - R * 0.42) + '" y1="' + by +
+               '" x2="' + (pt.x + R * 0.42) + '" y2="' + by + '">' +
+               "<title>" + esc(n.id) + " QDAC-II bias" +
+               (n.qdac_channel != null ? " — channel " + esc(String(n.qdac_channel)) : "") +
+               (n.bias_mode === "bias_tee" ? " (bias tee, with the LF-FEM above)" : "") +
+               "</title></line>";
+      }
       svg += "<title>" + esc(n.id) + "</title></g>";
     }
 

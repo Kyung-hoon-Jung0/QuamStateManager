@@ -29,6 +29,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -219,6 +220,7 @@ def validate_spec(spec) -> list[str]:
     # wire.qdac_trigger_line degrade gracefully when the env lacks it); this
     # is purely a structural/type check, same spirit as the twpas block above.
     qdac_qubit_ids: set = set()
+    qdac_tee_ids: set = set()
     qdac = spec.get("qdac")
     if not isinstance(qdac, dict) and qdac:
         errors.append("qdac: must be an object")
@@ -262,6 +264,8 @@ def validate_spec(spec) -> list[str]:
             if not isinstance(fields, dict):
                 errors.append(f"qdac.qubits[{qid!r}]: must be an object")
                 continue
+            if fields.get("bias_tee"):
+                qdac_tee_ids.add(qid)
             ch = fields.get("channel")
             if not _is_int(ch) or ch <= 0:
                 errors.append(f"qdac.qubits[{qid!r}].channel: required positive integer")
@@ -311,11 +315,21 @@ def validate_spec(spec) -> list[str]:
             errors.append(
                 f"lines[{i}]: {line_type} element '{element}' is not a declared qubit"
             )
-        elif line_type == "flux" and str(element) in qdac_qubit_ids:
+        elif (line_type == "flux" and str(element) in qdac_qubit_ids
+                and str(element) not in qdac_tee_ids):
+            # docs/136: a QDAC qubit CAN also carry an OPX flux line — that is
+            # the bias-tee shape, where the QDAC holds the DC operating point
+            # and the LF-FEM plays pulses on top of it. But it has to SAY so.
+            # Co-presence alone is equally the signature of the mistake this
+            # check was written for (a qubit switched to QDAC while its flux
+            # line lingered), and the two cases build differently, so the flag
+            # is what separates them rather than the reader's guess.
             errors.append(
                 f"lines[{i}]: qubit '{element}' is QDAC-biased (declared in "
                 "spec.qdac.qubits) and must not also have an OPX flux line — "
-                "its z bias comes from the QDAC, not an LF-FEM port"
+                "its z bias comes from the QDAC, not an LF-FEM port. If this "
+                "qubit really is wired through a bias tee (QDAC DC + LF-FEM "
+                "pulses), set qdac.qubits['" + str(element) + "'].bias_tee = true."
             )
         elif line_type in PAIR_LINE_TYPES:
             parts = str(element).split("-", 1)
@@ -341,6 +355,24 @@ def validate_spec(spec) -> list[str]:
         channel = line.get("channel")
         if channel is not None:
             errors.extend(_validate_channel(channel, f"lines[{i}].channel"))
+
+    # -- bias tee, the other way round --------------------------------------
+    # `bias_tee` is a claim about TWO components, so it is checked from both
+    # ends. Without this, declaring the flag and then removing the flux line
+    # (or arriving from a hand-edited spec that never had one) builds a plain
+    # QDAC qubit while the wizard, the review step and the emitted recipe all
+    # say bias tee — the disagreement would surface only as a missing pulse
+    # line on the finished chip.
+    flux_elements = {
+        str(ln.get("element")) for ln in lines
+        if isinstance(ln, dict) and ln.get("line") == "flux"
+    }
+    for qid in sorted(qdac_tee_ids - flux_elements, key=lambda q: (len(q), q)):
+        errors.append(
+            f"qdac.qubits[{qid!r}].bias_tee: declared, but this qubit has no "
+            "OPX flux line — a bias tee is a QDAC DC bias AND an LF-FEM pulse "
+            "line on the same qubit. Add a 'flux' line for it, or clear the flag."
+        )
 
     # -- feedline multiplex bound -------------------------------------------
     # One MW-FEM readout in/out pair multiplexes at most 8 resonators. The
@@ -511,10 +543,20 @@ def _run_command(args, timeout: int = 60):
 
     Isolated in one function so tests can monkeypatch it without spawning
     real processes.
+
+    On Windows the child is created with CREATE_NO_WINDOW: the packaged
+    desktop app is a ``console=False`` build, so without it every probe
+    flashes a console window in the user's face (docs/135 — the review that
+    found it was looking at the new startup warm-up, which spawns one with no
+    user action at all, but the flash was reachable from every generator
+    subprocess).
     """
+    kwargs = {}
+    if os.name == "nt":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
         proc = subprocess.run(
-            args, capture_output=True, text=True, timeout=timeout
+            args, capture_output=True, text=True, timeout=timeout, **kwargs
         )
         return proc.returncode, proc.stdout, proc.stderr
     except FileNotFoundError:
@@ -666,7 +708,86 @@ def _envs_from_environments_txt() -> list[Path]:
     return [Path(s) for s in (ln.strip() for ln in lines) if s]
 
 
-def discover_envs() -> list[dict]:
+_CONDA_ENVS_CACHE: dict = {"key": None, "paths": None}
+_CONDA_ENVS_LOCK = threading.Lock()
+
+
+def reset_env_discovery_cache() -> None:
+    """Forget the memoized conda inventory (test isolation; a process-level
+    memo must never leak one test's fake env list into the next)."""
+    with _CONDA_ENVS_LOCK:
+        _CONDA_ENVS_CACHE["key"] = None
+        _CONDA_ENVS_CACHE["paths"] = None
+
+
+def _conda_inventory_key(env_paths) -> tuple:
+    """Cheap mtime fingerprint of the conda env inventory.
+
+    Creating or removing an env writes ``~/.conda/environments.txt`` AND
+    changes the mtime of the envs directory holding it, so stat'ing the
+    registry plus every known env's PARENT directory catches both. An
+    unreadable path contributes ``None`` (unknown, not "unchanged") —
+    two different unreadable states still compare equal, which is the
+    conservative direction: the cache only survives while the inventory
+    provably looks the same.
+    """
+    paths = {Path.home() / ".conda" / "environments.txt"}
+    for p in env_paths or ():
+        parent = Path(p).parent
+        if str(parent):
+            paths.add(parent)
+    stamps = []
+    for p in sorted(paths, key=str):
+        try:
+            stamps.append((str(p), os.stat(p).st_mtime_ns))
+        except OSError:
+            stamps.append((str(p), None))
+    return tuple(stamps)
+
+
+def _conda_env_paths(refresh: bool = False) -> list[Path]:
+    """``conda env list --json``, memoized on the inventory's mtimes (docs/135).
+
+    The subprocess costs ~4 s on a real machine (measured, 8 envs) and it
+    dominated the Generate/Re-generate wizard's step-5 wait — the whole
+    auto-allocate chain sat behind it while it re-answered a question whose
+    answer had not changed. Re-running it is only ever needed when an env is
+    created or removed, which :func:`_conda_inventory_key` sees.
+
+    A miss (or ``refresh``) runs conda exactly as before. A conda that is
+    unreachable or errors is NOT cached — ``~/.conda/environments.txt``
+    still carries the envs, and a transient failure must not stick.
+    """
+    with _CONDA_ENVS_LOCK:
+        cached = _CONDA_ENVS_CACHE.get("paths")
+        if cached is not None and not refresh:
+            if _CONDA_ENVS_CACHE.get("key") == _conda_inventory_key(cached):
+                return list(cached)
+
+    conda = find_conda_executable()
+    if not conda:
+        return []
+    returncode, stdout, _ = _run_command([conda, "env", "list", "--json"], timeout=30)
+    if returncode != 0 or not stdout.strip():
+        return []
+    try:
+        data = json.loads(stdout)
+    except (ValueError, TypeError):
+        return []
+    paths = [Path(raw) for raw in (data.get("envs") or [])]
+    if not paths:
+        # An empty answer is not evidence of an empty machine, and caching it
+        # would be self-confirming: the key is derived FROM the result, so
+        # "no envs" would key on nothing but the registry file and could never
+        # invalidate itself. Re-ask next time instead.
+        return []
+    with _CONDA_ENVS_LOCK:
+        _CONDA_ENVS_CACHE["paths"] = list(paths)
+        _CONDA_ENVS_CACHE["key"] = _conda_inventory_key(paths)
+    return paths
+
+
+def discover_envs(refresh: bool = False) -> list[dict]:
     """List the Python environments on this machine.
 
     Merges ``conda env list --json`` (when conda is findable) with
@@ -676,17 +797,7 @@ def discover_envs() -> list[dict]:
     ``kind`` tag (``"conda"`` / ``"uv-venv"``). Probing each env for the QM
     stack is done separately by :func:`probe_env`.
     """
-    env_paths: list[Path] = []
-    conda = find_conda_executable()
-    if conda:
-        returncode, stdout, _ = _run_command([conda, "env", "list", "--json"], timeout=30)
-        if returncode == 0 and stdout.strip():
-            try:
-                data = json.loads(stdout)
-            except (ValueError, TypeError):
-                data = {}
-            for raw_path in data.get("envs", []):
-                env_paths.append(Path(raw_path))
+    env_paths: list[Path] = list(_conda_env_paths(refresh=refresh))
     env_paths.extend(_envs_from_environments_txt())
 
     envs: list[dict] = []
@@ -1242,14 +1353,21 @@ def probe_capabilities(python_path: str, instance_path=None, *,
     if instance_path is not None and not force:
         cache = _load_capability_cache(instance_path)
         entry = cache.get(python_path)
-        if isinstance(entry, dict) and entry.get("versions") == versions:
-            man = entry.get("manifest") or {}
+        man = entry.get("manifest") or {} if isinstance(entry, dict) else {}
+        # docs/136: an entry cached before the QPU-root probe existed carries
+        # no `qpu_roots`. Treating that as a hit would silently disable the
+        # root-class gate for everyone with a warm cache — exactly the users
+        # least likely to notice — so a missing key is a MISS and the cache
+        # self-heals on the next probe.
+        if (isinstance(entry, dict) and entry.get("versions") == versions
+                and "qpu_roots" in man):
             return {"ok": True, "cached": True, "error": None,
                     "capabilities": man.get("capabilities") or {},
-                    "versions": man.get("versions") or versions}
+                    "versions": man.get("versions") or versions,
+                    "qpu_roots": man.get("qpu_roots") or []}
 
     result = {"ok": False, "cached": False, "error": None,
-              "capabilities": {}, "versions": versions}
+              "capabilities": {}, "versions": versions, "qpu_roots": []}
 
     if not CAPABILITY_SCRIPT.exists():
         result["error"] = f"capability probe script not found: {CAPABILITY_SCRIPT}"
@@ -1273,9 +1391,11 @@ def probe_capabilities(python_path: str, instance_path=None, *,
         return result
 
     manifest = {"capabilities": parsed.get("capabilities") or {},
-                "versions": parsed.get("versions") or versions}
+                "versions": parsed.get("versions") or versions,
+                "qpu_roots": parsed.get("qpu_roots") or []}
     result.update(ok=True, capabilities=manifest["capabilities"],
-                  versions=manifest["versions"])
+                  versions=manifest["versions"],
+                  qpu_roots=manifest["qpu_roots"])
 
     if instance_path is not None:                       # cache only successes
         cache = _load_capability_cache(instance_path)

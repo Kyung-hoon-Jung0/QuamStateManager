@@ -870,6 +870,18 @@ class HistoryManager:
         # ``(state_mtime, wiring_mtime, fingerprint)``. Skips a re-read
         # when the source files haven't changed since the last call.
         self._fingerprint_cache: dict[str, tuple[float, float, ChipFingerprint | None]] = {}
+        # docs/139 fix 2 - the fingerprint cache, persisted. The alignment scan
+        # computes a fingerprint for EVERY run in the workspace by reading both
+        # of its JSON files (measured: 2,653 runs x 2 files = 15.1s of read_json,
+        # 97% of a cold /param-history), and this cache was memory-only, so
+        # every SM restart paid the whole scan again on first open. Run archives
+        # are immutable and the cache is already (mtime, mtime)-keyed per path,
+        # so persisting it is safe by construction: a touched file misses the
+        # key and recomputes. Loaded lazily on the first fingerprint ask,
+        # flushed once per alignment scan (never per entry).
+        self._fingerprint_sidecar = self._root / "_fingerprints.json"
+        self._fp_sidecar_loaded = False
+        self._fp_dirty = 0
         # ``_alignment_cache[loaded_path] = (token, result)``. Token combines
         # workspace state + loaded chip's mtimes; matches mean reuse the
         # cached scan wholesale.
@@ -1053,6 +1065,77 @@ class HistoryManager:
             # before deciding self-heal isn't needed.
             self._last_index_check.pop(key, None)
 
+    @staticmethod
+    def _fp_to_json(fp: "ChipFingerprint | None"):
+        if fp is None:
+            return None
+        return {"network": [list(kv) for kv in fp.network],
+                "qubits": sorted(fp.qubits), "pairs": sorted(fp.pairs)}
+
+    @staticmethod
+    def _fp_from_json(obj) -> "ChipFingerprint | None":
+        if obj is None:
+            return None
+        try:
+            return ChipFingerprint(
+                network=tuple((str(k), v) for k, v in obj["network"]),
+                qubits=frozenset(obj["qubits"]),
+                pairs=frozenset(obj["pairs"]))
+        except (KeyError, TypeError, ValueError):
+            return None    # one bad entry never poisons the rest
+
+    def _load_fingerprint_sidecar(self) -> None:
+        """Fold the persisted fingerprints into the in-memory cache, once.
+
+        Disk never overrides memory: an in-memory entry is at least as fresh.
+        A corrupt or unreadable sidecar is ignored - it is a cache, and the
+        worst case is exactly the pre-sidecar behaviour (recompute)."""
+        with self._lock:
+            if self._fp_sidecar_loaded:
+                return
+            self._fp_sidecar_loaded = True
+        try:
+            raw = json.loads(self._fingerprint_sidecar.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        if not isinstance(raw, dict):
+            return
+        loaded: dict[str, tuple[float, float, "ChipFingerprint | None"]] = {}
+        for key, entry in raw.items():
+            try:
+                st_mt, wir_mt, fp_obj = entry
+                loaded[str(key)] = (float(st_mt), float(wir_mt),
+                                    self._fp_from_json(fp_obj))
+            except (TypeError, ValueError):
+                continue
+        with self._lock:
+            for key, val in loaded.items():
+                self._fingerprint_cache.setdefault(key, val)
+
+    def _flush_fingerprint_sidecar(self) -> None:
+        """Persist the cache if anything was computed since the last flush.
+
+        Called once at the end of an alignment scan - the only mass producer -
+        never per entry (4,000 atomic writes would be its own perf bug). An
+        entry whose network values do not survive JSON round-tripping is
+        skipped, not fatal."""
+        with self._lock:
+            if not self._fp_dirty:
+                return
+            self._fp_dirty = 0
+            snap = dict(self._fingerprint_cache)
+        out = {}
+        for key, (st_mt, wir_mt, fp) in snap.items():
+            try:
+                out[key] = [st_mt, wir_mt, self._fp_to_json(fp)]
+                json.dumps(out[key])
+            except (TypeError, ValueError):
+                out.pop(key, None)
+        try:
+            safe_io.atomic_write_json(self._fingerprint_sidecar, out)
+        except OSError:
+            logger.debug("fingerprint sidecar write failed", exc_info=True)
+
     def _cached_fingerprint(self, path: Path) -> ChipFingerprint | None:
         """Cached ``fingerprint_of(path)`` keyed on (state_mtime, wiring_mtime).
 
@@ -1060,6 +1143,7 @@ class HistoryManager:
         Workspace alignment scans hit this thousands of times across a
         typical session, so memoization here recovers most of that cost.
         """
+        self._load_fingerprint_sidecar()
         key = str(path)
         try:
             st_mt = (path / "state.json").stat().st_mtime
@@ -1076,10 +1160,12 @@ class HistoryManager:
         fp = fingerprint_of(path)
         with self._lock:
             self._fingerprint_cache[key] = (st_mt, wir_mt, fp)
+            self._fp_dirty += 1
         return fp
 
     @staticmethod
-    def _workspace_token(workspace: Workspace) -> Any:
+    def _workspace_token(workspace: Workspace,
+                         own_root: "Path | None" = None) -> Any:
         """Cheap token that changes when workspace contents change.
 
         Used as part of the alignment-cache key. We don't need a perfect
@@ -1098,7 +1184,32 @@ class HistoryManager:
         keeping the cost O(roots + chips + dates) — a fixed shallow depth,
         not O(runs). Mirrors ``DatasetStore._current_mtime``: stat dirs
         only, never read files.
+
+        SM's OWN history store is never workspace content (docs/139 fix 2):
+        when the instance dir happens to nest inside a workspace root, a
+        snapshot capture or the fingerprint-sidecar flush would bump a dir
+        this sweep stats and read as "the workspace changed" — the scan's
+        own bookkeeping invalidating the scan's own cache. The alignment
+        scan passes its ``_root`` as ``own_root``; dirs at or under it are
+        skipped. Kept a staticmethod (``own_root`` optional) because
+        ``routes._dataset_candidate_folders`` calls it unbound.
         """
+        own = None
+        if own_root is not None:
+            try:
+                own = own_root.resolve()
+            except OSError:
+                own = own_root
+
+        def _is_own(d: Path) -> bool:
+            if own is None:
+                return False
+            try:
+                rd = d.resolve()
+            except OSError:
+                rd = d
+            return rd == own or own in rd.parents
+
         try:
             roots = list(workspace.root_folders)
         except Exception:
@@ -1117,7 +1228,8 @@ class HistoryManager:
             # (date) dirs. New runs land *inside* a date dir, bumping its
             # mtime; we go exactly this deep and no deeper.
             try:
-                chip_dirs = [c for c in root_path.iterdir() if c.is_dir()]
+                chip_dirs = [c for c in root_path.iterdir()
+                             if c.is_dir() and not _is_own(c)]
             except OSError:
                 continue
             for chip_dir in chip_dirs:
@@ -1130,6 +1242,8 @@ class HistoryManager:
                 except OSError:
                     continue
                 for date_dir in date_dirs:
+                    if _is_own(date_dir):
+                        continue
                     try:
                         mtimes.append(date_dir.stat().st_mtime)
                     except OSError:
@@ -3663,7 +3777,7 @@ class HistoryManager:
         # massive saving since this scan reads + parses state.json
         # and wiring.json for every workspace experiment.
         cache_key = str(loaded_path.resolve())
-        cache_token = (self._workspace_token(workspace), loaded_fp)
+        cache_token = (self._workspace_token(workspace, self._root), loaded_fp)
         with self._lock:
             cached = self._alignment_cache.get(cache_key)
             if cached is not None and cached[0] == cache_token:
@@ -3735,6 +3849,7 @@ class HistoryManager:
         }
         with self._lock:
             self._alignment_cache[cache_key] = (cache_token, result)
+        self._flush_fingerprint_sidecar()
         return result
 
     def list_chip_histories(self) -> list[dict[str, Any]]:

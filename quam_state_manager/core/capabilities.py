@@ -387,8 +387,28 @@ def _manifest_available(manifest: Any, cid: str) -> tuple[bool, str]:
     return bool(entry.get("available")), str(entry.get("detail") or "")
 
 
+# Capabilities that CANNOT be probed by a locator, because the thing they look
+# for has no fixed name. `REGISTRY` is pinned byte-for-byte against the probe's
+# `CATALOG` (test_registry_matches_detection_catalog) precisely so a locator is
+# never claimed without a prober behind it — so these live beside it instead of
+# in it, and are decided by a dedicated check rather than by `_manifest_available`.
+SYNTHETIC_REGISTRY: dict[str, dict] = {
+    "instr.qdac_bias_tee": {
+        "label": "QDAC + LF-FEM on one qubit (bias tee)", "category": "instruments",
+        "package": "quam_config (customer-local package)",
+        "symbol": "a transmon class with a QdacBiasLine field beside a FluxLine `z`",
+        "produces": "the DC operating point on a qubit whose z line still plays "
+                    "pulses — without it the flux line builds and the QDAC bias "
+                    "is left off that qubit",
+        "fix": "add a transmon subclass to your own quam_config that keeps `z` a "
+               "FluxLine and carries a QdacBiasLine beside it (docs/136 §13 has "
+               "the ~10 lines), then widen your QPU root's `qubits` union with it",
+        "severity": DEGRADE},
+}
+
+
 def _row(cid: str, detail: str, requested: bool, available: bool) -> dict:
-    meta = REGISTRY.get(cid, {})
+    meta = REGISTRY.get(cid) or SYNTHETIC_REGISTRY.get(cid) or {}
     return {
         "id": cid,
         "label": meta.get("label", cid),
@@ -449,6 +469,14 @@ def assess(spec: dict, manifest: Any) -> dict:
         else:                       # degrade (info-severity caps are never required)
             warnings.append(row)
 
+    # The one capability with no locator behind it (see SYNTHETIC_REGISTRY):
+    # a bias-tee class is named by whoever writes it, so it is decided by shape
+    # off the qpu_roots probe rather than by a name lookup.
+    tee_row = bias_tee_check(spec, manifest)
+    if tee_row is not None:
+        inventory.append(tee_row)
+        (ok if tee_row["available"] else warnings).append(tee_row)
+
     inventory.sort(key=lambda r: (r["category"], r["label"]))
     return {
         "buildable": manifest_ok and not blockers,
@@ -464,6 +492,113 @@ def assess(spec: dict, manifest: Any) -> dict:
 # ---------------------------------------------------------------------------
 # Chip ↔ env schema-flavor findings (the pre-Quam.load mismatch warning)
 # ---------------------------------------------------------------------------
+
+def qpu_root_check(spec: dict, manifest: Any) -> dict:
+    """Can this env root a chip that holds what *spec* declares? (docs/136)
+
+    Returns ``{"needed", "chosen", "blocker", "candidates"}``.
+
+    The chip's ROOT class decides what the chip can CONTAIN, and the build
+    derives it from line types alone — which produces stock ``FluxTunableQuam``
+    for a QDAC chip, whose ``qubits`` is typed ``Dict[str,
+    FluxTunableTransmon]`` and which declares no ``qdac`` field. The build then
+    reports success and the result cannot be loaded at all: the first QDAC
+    qubit fails type validation and the injected top-level ``qdac`` key fails
+    again. ``regen_spec`` fixed this for RE-generate by carrying the source
+    chip's own ``__class__``; a fresh build has no source to carry from.
+
+    ``blocker`` is set only when the env genuinely cannot root the chip. An
+    unprobed or unreadable manifest yields no blocker — unknown is not a
+    negative, the same rule :func:`assess` follows.
+    """
+    needed = bool((spec.get("qdac") or {}).get("qubits"))
+    roots = []
+    if isinstance(manifest, dict):
+        raw = manifest.get("qpu_roots")
+        if isinstance(raw, list):
+            roots = [r for r in raw if isinstance(r, dict)]
+    out = {"needed": needed, "chosen": None, "blocker": None,
+           "candidates": [r.get("path") for r in roots if r.get("importable")]}
+    if not needed or not roots:
+        return out
+
+    # An explicit choice is honoured verbatim — including one this probe does
+    # not know about. The user may be naming a class they are about to write,
+    # and the build degrades with a named warning if it turns out unimportable.
+    declared = (spec.get("quam_class") or "").strip()
+    if declared:
+        out["chosen"] = declared
+        match = next((r for r in roots if r.get("path") == declared), None)
+        if match is not None and match.get("importable") and not match.get("holds_qdac"):
+            out["blocker"] = (
+                f"{declared} cannot hold QDAC-biased qubits: its `qubits` field "
+                "is typed for one transmon class and it declares no `qdac` "
+                "field. A chip built onto it fails Quam.load() on the first "
+                "QDAC qubit."
+            )
+        return out
+
+    fit = next((r for r in roots if r.get("importable") and r.get("holds_qdac")), None)
+    if fit is not None:
+        out["chosen"] = fit["path"]
+        return out
+
+    out["blocker"] = (
+        "No QPU root class in this environment can hold QDAC-biased qubits. "
+        "The stock roots type `qubits` for a single transmon class and declare "
+        "no `qdac` field, so the built chip would not load. Add a subclass to "
+        "your own quam_config that widens `qubits` and declares `qdac` — see "
+        "docs/136 — and it will be offered here."
+    )
+    return out
+
+
+def bias_tee_class(manifest: Any) -> dict | None:
+    """The env's bias-tee transmon class, or None (docs/136).
+
+    A bias-tee qubit is biased by the QDAC **and** driven by an LF-FEM at the
+    same time: the QDAC holds the DC operating point while the LF-FEM plays
+    pulses on top of it. That needs a class whose ``z`` stays a flux line and
+    which carries a ``QdacBiasLine`` beside it. None exists upstream, so the
+    field name is the lab's choice and the probe reports it rather than SM
+    assuming one.
+    """
+    if not isinstance(manifest, dict):
+        return None
+    for r in manifest.get("qpu_roots") or []:
+        if isinstance(r, dict) and r.get("importable") and r.get("bias_tee"):
+            return r["bias_tee"]
+    return None
+
+
+def bias_tee_check(spec: dict, manifest: Any) -> dict | None:
+    """A capability row for the bias-tee class, or None when nothing asks for it.
+
+    Returned as a ``_row``-shaped dict so callers can drop it straight into the
+    report's ``warnings`` / ``ok`` lists. ``available`` is False only when the
+    env was actually probed and no such class turned up — an unprobed manifest
+    reports availability as unknown-but-not-missing, the same rule
+    :func:`assess` and :func:`qpu_root_check` follow.
+    """
+    from quam_state_manager.core import qdac as _qdac
+
+    tee = _qdac.spec_bias_tee_qubits(spec)
+    if not tee:
+        return None
+    probed = isinstance(manifest, dict) and manifest.get("qpu_roots") is not None
+    shape = bias_tee_class(manifest)
+    ids = ", ".join(sorted(tee, key=lambda q: (len(q), q)))
+    if shape:
+        detail = (f"{shape.get('cls', '?')} (bias line on `{shape.get('field', '?')}`, "
+                  f"z stays {shape.get('z_type', '?')}) — {ids}")
+    elif probed:
+        detail = (f"no class in this env keeps `z` a flux line while carrying a "
+                  f"QdacBiasLine beside it — {ids} will build with the OPX flux "
+                  f"line only, DC bias not attached")
+    else:
+        detail = "env not probed"
+    return _row("instr.qdac_bias_tee", detail, True, bool(shape) or not probed)
+
 
 def flavor_findings(state: dict, manifest: Any) -> list[dict]:
     """Compare a CHIP's CR schema flavor against an ENV's flavor markers.

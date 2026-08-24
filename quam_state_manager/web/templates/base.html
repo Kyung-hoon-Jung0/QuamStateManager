@@ -447,6 +447,13 @@
                             <li><a href="/couplers" hx-get="/couplers" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
                                    {% if page == 'couplers' %}class="active"{% endif %}>Couplers</a></li>
                             {% endif %}
+                            {# docs/136 — QDAC-II is a component in its own right, so it
+                               gets a nav item on the same terms as the others: shown
+                               only on a chip that actually has one. #}
+                            {% if has_qdac %}
+                            <li><a href="/qdac" hx-get="/qdac" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                                   {% if page == 'qdac' %}class="active"{% endif %}>QDAC-II</a></li>
+                            {% endif %}
                         </ul>
                     </li>
                     <li><a href="/diagnostics" hx-get="/diagnostics" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
@@ -1070,6 +1077,7 @@
                 {"label": "Resonators",        "url": "/resonators"},
                 {"label": "Flux",              "url": "/flux"},
                 {"label": "Couplers",          "url": "/couplers"},
+                {"label": "QDAC-II",           "url": "/qdac"},
                 {"label": "Diagnostics",       "url": "/diagnostics"},
                 {"label": "Chip Status",       "url": "/topology"},
                 {"label": "Compare",           "url": "/diff"},

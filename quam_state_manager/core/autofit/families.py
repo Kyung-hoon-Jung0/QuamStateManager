@@ -1237,6 +1237,33 @@ def resolve_updates(fam: Family, target: str, fit_entry: dict,
     """
     import math as _math
 
+    # docs/136 — a QDAC-biased qubit's `z` IS the bias line: it carries a
+    # `channel` and a `dc_offset`, and has no joint/independent/min offset at
+    # all. Every flux-offset target below therefore names a path that is not on
+    # the chip; `writer.batch_set` is all-or-nothing, so one impossible flux row
+    # discarded the same run's valid resonator updates along with it.
+    #
+    # Only the QDAC-ONLY shape is re-routed. On a bias-tee qubit `z` is a real
+    # FluxLine and `joint_offset` is a real field — which of the two a node
+    # would write there is a question no node has answered yet, and the
+    # fit_targets doctrine (docs/78 D-14) forbids inventing the answer.
+    def _qdac_dc_path(qid: str) -> str | None:
+        try:
+            ch = current_value_of(f"qubits.{qid}.z.channel")
+        except Exception:  # noqa: BLE001 — absent is the common answer
+            return None
+        if not isinstance(ch, int) or isinstance(ch, bool):
+            return None
+        try:
+            if current_value_of(f"qubits.{qid}.z.opx_output") is not None:
+                return None        # wired to an OPX port ⇒ not a QDAC bias line
+        except Exception:  # noqa: BLE001 — absent is what a bias line looks like
+            pass
+        return f"qubits.{qid}.z.dc_offset"
+
+    _FLUX_OFFSET_SUFFIXES = (".z.joint_offset", ".z.independent_offset",
+                             ".z.min_offset", ".z.arbitrary_offset")
+
     rows: list[dict] = []
     # Which route-branch fires is decided ONCE per (fit_key, route_on) group so
     # an else-branch ("*") only writes when no exact match did — mirroring the
@@ -1280,6 +1307,15 @@ def resolve_updates(fam: Family, target: str, fit_entry: dict,
             if not op_name:
                 continue
             path = path.replace("{operation}", str(op_name))
+        if path.endswith(_FLUX_OFFSET_SUFFIXES):
+            alt = _qdac_dc_path(target)
+            if alt:
+                if spec.fit_key != "idle_offset":
+                    # `min_offset` has no QDAC counterpart — the QDAC holds one
+                    # DC level, not a flux-arc parameterisation. Skipping is the
+                    # honest answer; dc_offset means something else.
+                    continue
+                path = alt
         # the run names an ALIAS; the node writes its target (docs/78 §15.4b)
         resolved = resolve_alias_path(path, current_value_of)
         if resolved is None:

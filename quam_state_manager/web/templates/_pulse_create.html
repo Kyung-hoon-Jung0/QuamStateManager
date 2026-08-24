@@ -131,6 +131,8 @@
 <script id="pulse-existing-data" type="application/json">{{ existing_json | script_json }}</script>
 <script id="pulse-pairs-data" type="application/json">{{ pairs_map | tojson }}</script>
 <script id="pulse-pair-channels-data" type="application/json">{{ pair_channels_map | tojson }}</script>
+{# docs/136: qubits whose z IS the QDAC bias line — that channel cannot play a pulse. #}
+<script id="pulse-qdac-only-data" type="application/json">{{ qdac_only_json | safe }}</script>
 <script id="pulse-pairs-info-data" type="application/json">{{ pairs_info_json | script_json }}</script>
 <script id="pulse-gate-defs-data" type="application/json">{{ gate_defs_json | script_json }}</script>
 <script>if (window.PulsesPage) window.PulsesPage.initCreate();</script>

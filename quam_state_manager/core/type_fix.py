@@ -183,6 +183,19 @@ def alert_summary(plan: dict | None, env_findings: list[dict] | None,
                  "proposed": r["proposed_display"], "type": r["proposed_type"]}
                 for r in rows[:3]]
     env_errors = sum(1 for f in env_findings if f.get("severity") == "error")
+    # docs/136 — two honesty repairs to this line.
+    #
+    # (a) Findings are AGGREGATED by (kind, class, field): four findings can
+    #     stand for twenty-three actual places in the state. "4 fields don't
+    #     match" then undercounts the work by a factor of six.
+    # (b) A class the env cannot import at all is not a FIELD. On the
+    #     customer's chip the whole `QdacBiasLine` class is missing when
+    #     quam_config is absent, and calling that a field mismatch sends the
+    #     reader looking for a typo instead of a missing package.
+    class_kinds = {"unimportable_class", "unknown_class"}
+    env_classes = sum(1 for f in env_findings if f.get("kind") in class_kinds)
+    env_fields = len(env_findings) - env_classes
+    env_places = sum(int(f.get("count") or 1) for f in env_findings)
     return {
         "strnum": {
             "count": strnum_count,
@@ -192,6 +205,9 @@ def alert_summary(plan: dict | None, env_findings: list[dict] | None,
         },
         "env": {
             "count": len(env_findings),
+            "classes": env_classes,
+            "fields": env_fields,
+            "places": env_places,
             "errors": env_errors,
             "warnings": len(env_findings) - env_errors,
             # NOT "items": Jinja resolves ``env.items`` to the dict method, so a
