@@ -503,6 +503,22 @@ window.ChipStatus.mount = function (opts) {
             });
             return out;
         }
+        // Per-pair best of an arbitrary numeric FIELD on matching rows (used for
+        // the docs/138 run-derived values: derived_gate_fidelity + the divisor).
+        function collect2QField(match, field) {
+            var out = [];
+            topo.edges.forEach(function(e) {
+                if (!e.gate_fidelities) return;
+                var best = null;
+                e.gate_fidelities.forEach(function(gf) {
+                    if (!match(gf.metric)) return;
+                    var v = typeof gf[field] === 'number' ? gf[field] : null;
+                    if (v != null && (best == null || v > best)) best = v;
+                });
+                if (best != null) out.push(best);
+            });
+            return out;
+        }
         function nodeAgg(key) { return computeAggregates(topo.nodes.map(function(n) { return _mv(n, key); })); }
         function pct(v) { return fmtPct(v, 2) + '%'; }
         function us(v) { return fmt(v, 'us'); }
@@ -529,24 +545,63 @@ window.ChipStatus.mount = function (opts) {
         var fidRange = [0.99, 0];
         var roRange  = [0.97, 0];
         var tRange   = [30e-6, 0];
-        var czCount = topo.edges.filter(function(e) { return e.has_cz; }).length;
-        var czCoverage = topo.edges.length > 0 ? czCount / topo.edges.length : 0;
-        // Gate-neutral vocabulary: "CZ" on flux chips, "CR" on cross-resonance
-        // chips, "2Q" on mixed (server-derived; metric KEYS stay cz_fidelity).
-        var gateVocab = (topo.summary && topo.summary.gate_vocab) || 'CZ';
+        // Both RB tiles state their error rates in BOTH units (user-directed,
+        // docs/139 follow-up): EPC = 1 - Clifford fidelity, EPG = 1 - gate
+        // fidelity. The bridge is the node's own average_gates_per_clifford,
+        // read from the SRB run's data.json (docs/138 derived enrichment) -
+        // never invented, so with no run on disk the converted line is absent.
+        var isSRB = function(m) { return m === 'StandardRB'; };
+        var isIRB = function(m) { return m === 'InterleavedRB' || m === 'IRB'; };
+        var srbAgg = computeAggregates(collect2Q(isSRB));
+        var srbDer = computeAggregates(collect2QField(isSRB, 'derived_gate_fidelity'));
+        var divAgg = computeAggregates(collect2QField(isSRB, 'average_gates_per_clifford'));
+        var irbAgg = computeAggregates(collect2Q(isIRB));
+        // Per-edge Clifford-equivalent of the IRB gate error: epc = epg x divisor
+        // (the same identity fidelity.py uses in the other direction).
+        var irbEpcF = [];
+        topo.edges.forEach(function(e) {
+            if (!e.gate_fidelities) return;
+            var bestF = null, div = null;
+            e.gate_fidelities.forEach(function(gf) {
+                if (isIRB(gf.metric)) {
+                    var v = typeof gf.value === 'number' ? gf.value
+                          : typeof gf.average_gate_fidelity === 'number' ? gf.average_gate_fidelity : null;
+                    if (v != null && (bestF == null || v > bestF)) bestF = v;
+                }
+                if (typeof gf.average_gates_per_clifford === 'number') div = gf.average_gates_per_clifford;
+            });
+            if (bestF != null && div) irbEpcF.push(1 - (1 - bestF) * div);
+        });
+        var irbEpcAgg = computeAggregates(irbEpcF);
+
+        var srbTile = metricTile('2Q Clifford fid. (SRB)', srbAgg, pct, fidRange);
+        if (srbAgg.count > 0) {
+            var sl = 'EPC ' + fmtPct(1 - srbAgg.median, 2) + '%';
+            if (srbDer.count > 0) {
+                sl += ' · EPG ' + fmtPct(1 - srbDer.median, 2) + '%'
+                    + (divAgg.count > 0 ? ' (÷' + divAgg.median.toFixed(2) + ')' : '');
+            }
+            srbTile.sub += '<br>' + sl;
+        }
+        var irbTile = metricTile('2Q gate fid. (IRB)', irbAgg, pct, fidRange);
+        if (irbAgg.count > 0) {
+            var il = 'EPG ' + fmtPct(1 - irbAgg.median, 2) + '%';
+            if (irbEpcAgg.count > 0) {
+                il += ' · EPC ' + fmtPct(1 - irbEpcAgg.median, 2) + '%'
+                    + (divAgg.count > 0 ? ' (×' + divAgg.median.toFixed(2) + ')' : '');
+            }
+            irbTile.sub += '<br>' + il;
+        }
 
         var tiles = [
             {title: 'Chip Size', value: topo.nodes.length + ' qubits, ' + topo.edges.length + ' pairs', color: '#4e79a7'},
             metricTile('1Q Gate Fidelity', nodeAgg('gate_fidelity_avg'), pct, fidRange, 'gate_fidelity_avg'),
             metricTile('Readout Fidelity', nodeAgg('assignment_fidelity'), pct, roRange, 'assignment_fidelity'),
             // Standard RB fits the CLIFFORD fidelity (1-EPC); interleaved RB
-            // fits the GATE fidelity (1-EPG). A Clifford is ~1.5 two-qubit
-            // gates, so these two are not comparable and the titles say which
-            // is which. SM does not convert between them: the divisor
-            // (average_gates_per_clifford) is a node value and is in neither
-            // state.json nor the saved run (docs/138).
-            metricTile('2Q Clifford fid. (SRB)', computeAggregates(collect2Q(function(m) { return m === 'StandardRB'; })), pct, fidRange),
-            metricTile('2Q gate fid. (IRB)', computeAggregates(collect2Q(function(m) { return m === 'InterleavedRB' || m === 'IRB'; })), pct, fidRange),
+            // fits the GATE fidelity (1-EPG). A Clifford is ~5.4 two-qubit
+            // gates here, so the titles say which is which and each tile also
+            // states both error rates, bridged only by the run's own divisor.
+            srbTile, irbTile,
             // The edge number. Its SOURCE varies by chip — Bell_State, an
             // interleaved-RB gate fidelity, or the CR channel — so the tile is
             // named for what it measures, not for one of the three ways it can
@@ -554,10 +609,7 @@ window.ChipStatus.mount = function (opts) {
             // and became wrong on an RB chip too (docs/138).
             metricTile('2Q gate fidelity', computeAggregates(topo.edges.map(function(e) { return e.cz_fidelity; })), pct, [0.95, 0], 'cz_fidelity'),
             metricTile('T1', nodeAgg('T1'), us, tRange, 'T1'),
-            metricTile('T2 echo', nodeAgg('T2echo'), us, tRange, 'T2echo'),
-            metricTile('T2 Ramsey', nodeAgg('T2ramsey'), us, tRange, 'T2ramsey'),
-            {title: gateVocab + ' Coverage', value: czCount + '/' + topo.edges.length + ' (' + (czCoverage * 100).toFixed(0) + '%)',
-             sub: czCount + ' pairs with ' + gateVocab + ' gate', color: cardColor(czCoverage, [0.9, 0])}
+            metricTile('T2 Ramsey', nodeAgg('T2ramsey'), us, tRange, 'T2ramsey')
         ];
 
         var html = '';

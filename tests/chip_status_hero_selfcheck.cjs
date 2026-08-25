@@ -326,6 +326,7 @@ function part5() {
     ok(pop && /95\.10%/.test(pop.textContent), 'pair popup lists the per-gate RB fidelity');
     ok(pop && /detuning/.test(pop.textContent), 'pair popup lists the parameters section');
     heroPrefersTheGateNumber();
+    overviewTilesStateBothErrorRates();
     finish();
   }, 400);
 }
@@ -406,6 +407,42 @@ function heroPrefersTheGateNumber() {
      'RB: the old un-versioned metric key is not written any more');
 }
 
+
+// -- docs/139 follow-up (user-directed): the Overview's two RB tiles each
+// state BOTH error rates - EPC (per Clifford) and EPG (per gate) - bridged
+// only by the run's own average_gates_per_clifford; and the T2-echo +
+// Coverage tiles are gone.
+function overviewTilesStateBothErrorRates() {
+  const win = makeWorld();
+  win.document.body.insertAdjacentHTML('beforeend',
+    '<div id="topo-overview-tiles"></div>');
+  const topo = {
+    nodes: [
+      { id: 'q19', grid_location: '0,0', f_01: 4.8e9 },
+      { id: 'q20', grid_location: '1,0', f_01: 5.1e9 },
+    ],
+    edges: [
+      { pair_id: 'q19-20', source: 'q19', target: 'q20', has_cz: true,
+        gate_kind: 'cz', directed: false, active: null,
+        cz_fidelity: 0.9933625133477547, fidelity_source: 'interleaved_rb',
+        gate_fidelities: [
+          { gate: 'cz_flattop', metric: 'StandardRB',
+            value: 0.9706080538741072, level: 'clifford',
+            derived_gate_fidelity: 0.9944, average_gates_per_clifford: 5.371 },
+          { gate: 'cz_flattop', metric: 'InterleavedRB',
+            value: 0.9933625133477547, level: 'gate' },
+        ] },
+    ],
+  };
+  mount(win, topo, []);
+  const html = win.document.getElementById('topo-overview-tiles').innerHTML;
+  ok(/EPC/.test(html), 'tiles: EPC stated');
+  ok(/EPG/.test(html), 'tiles: EPG stated');
+  ok(/÷5\.37/.test(html), 'tiles: the SRB->gate divisor is named');
+  ok(/×5\.37/.test(html), 'tiles: the IRB->Clifford multiplier is named');
+  ok(!/T2 echo/i.test(html), 'tiles: T2 echo tile removed');
+  ok(!/Coverage/.test(html), 'tiles: Coverage tile removed');
+}
 
 function finish() {
   if (fails) { console.error(fails + ' check(s) FAILED'); process.exit(1); }
