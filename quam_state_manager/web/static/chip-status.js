@@ -574,24 +574,26 @@ window.ChipStatus.mount = function (opts) {
         });
         var irbEpcAgg = computeAggregates(irbEpcF);
 
-        var srbTile = metricTile('2Q Clifford fid. (SRB)', srbAgg, pct, fidRange);
-        if (srbAgg.count > 0) {
-            var sl = 'EPC ' + fmtPct(1 - srbAgg.median, 2) + '%';
-            if (srbDer.count > 0) {
-                sl += ' · EPG ' + fmtPct(1 - srbDer.median, 2) + '%'
-                    + (divAgg.count > 0 ? ' (÷' + divAgg.median.toFixed(2) + ')' : '');
+        // Four RB tiles (user-directed, docs/139 follow-up): each protocol
+        // shows BOTH its measured number and the one converted through the
+        // run's own divisor. EPC line on the Clifford tiles, EPG line on the
+        // gate tiles, so the unit is always stated.
+        var divNote = divAgg.count > 0 ? divAgg.median.toFixed(2) : null;
+        function withErrLine(tile, agg, label, conv) {
+            if (agg.count > 0) {
+                tile.sub += '<br>' + label + ' ' + fmtPct(1 - agg.median, 2) + '%'
+                          + (conv && divNote ? ' (' + conv + divNote + ')' : '');
             }
-            srbTile.sub += '<br>' + sl;
+            return tile;
         }
-        var irbTile = metricTile('2Q gate fid. (IRB)', irbAgg, pct, fidRange);
-        if (irbAgg.count > 0) {
-            var il = 'EPG ' + fmtPct(1 - irbAgg.median, 2) + '%';
-            if (irbEpcAgg.count > 0) {
-                il += ' · EPC ' + fmtPct(1 - irbEpcAgg.median, 2) + '%'
-                    + (divAgg.count > 0 ? ' (×' + divAgg.median.toFixed(2) + ')' : '');
-            }
-            irbTile.sub += '<br>' + il;
-        }
+        var srbTile = withErrLine(
+            metricTile('2Q Clifford fid. (SRB)', srbAgg, pct, fidRange), srbAgg, 'EPC', null);
+        var srbGateTile = withErrLine(
+            metricTile('2Q gate fid. (SRB÷)', srbDer, pct, fidRange), srbDer, 'EPG', '÷');
+        var irbTile = withErrLine(
+            metricTile('2Q gate fid. (IRB)', irbAgg, pct, fidRange), irbAgg, 'EPG', null);
+        var irbCliffTile = withErrLine(
+            metricTile('2Q Clifford fid. (IRB×)', irbEpcAgg, pct, fidRange), irbEpcAgg, 'EPC', '×');
 
         var tiles = [
             {title: 'Chip Size', value: topo.nodes.length + ' qubits, ' + topo.edges.length + ' pairs', color: '#4e79a7'},
@@ -601,7 +603,7 @@ window.ChipStatus.mount = function (opts) {
             // fits the GATE fidelity (1-EPG). A Clifford is ~5.4 two-qubit
             // gates here, so the titles say which is which and each tile also
             // states both error rates, bridged only by the run's own divisor.
-            srbTile, irbTile,
+            srbTile, srbGateTile, irbTile, irbCliffTile,
             // The edge number. Its SOURCE varies by chip — Bell_State, an
             // interleaved-RB gate fidelity, or the CR channel — so the tile is
             // named for what it measures, not for one of the three ways it can
