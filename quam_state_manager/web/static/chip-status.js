@@ -586,6 +586,73 @@ window.ChipStatus.mount = function (opts) {
             }
             return tile;
         }
+        // -- docs/139 follow-up r2 (user-directed): four context tiles + 1Q EPG --
+        // RB coverage: how many pairs the four RB tiles actually speak for.
+        var rbPairs = topo.edges.filter(function(e) {
+            return (e.gate_fidelities || []).some(function(gf) {
+                return isSRB(gf.metric) || isIRB(gf.metric); });
+        }).length;
+        // 2Q gate length (ns): the edge's best gate's flux-pulse length,
+        // falling back to the first gate that states one.
+        var gateLens = [];
+        topo.edges.forEach(function(e) {
+            var gd = e.gate_details || [], pick = null;
+            gd.forEach(function(g) {
+                if (typeof g.length !== 'number') return;
+                if (e.best_gate && g.name === e.best_gate) pick = g.length;
+                else if (pick == null) pick = g.length;
+            });
+            if (pick != null) gateLens.push(pick);
+        });
+        var lenAgg = computeAggregates(gateLens);
+        function nsF(v) { return (Math.round(v * 10) / 10) + ' ns'; }
+        // Calibration freshness: node last_calibrated + edge cz timestamps.
+        var stamps = [];
+        topo.nodes.forEach(function(n) {
+            if (typeof n.last_calibrated === 'number') stamps.push(n.last_calibrated); });
+        topo.edges.forEach(function(e) {
+            if (typeof e.cz_fidelity_updated_at === 'number') stamps.push(e.cz_fidelity_updated_at); });
+        var freshTile;
+        if (stamps.length) {
+            var newest = Math.max.apply(null, stamps), oldest = Math.min.apply(null, stamps);
+            freshTile = { title: 'Calibration Age', value: _ageLabel(newest),
+                sub: 'oldest ' + _ageLabel(oldest) + '  ·  (' + stamps.length + ' stamped)',
+                color: '#76b7b2' };
+        } else {
+            freshTile = { title: 'Calibration Age', value: '—', sub: 'no timestamps', muted: true };
+        }
+        // In-spec count: the SAME verdict walk buildHealthSummary does (a
+        // qubit with no data is UNJUDGED, never "in spec"; a null-valued
+        // MetricRecord never counts as below spec).
+        var SPEC_METRICS = ['gate_fidelity_avg', 'assignment_fidelity', 'T1', 'T2ramsey', 'T2echo'];
+        var below = {}, specMeasured = 0;
+        topo.nodes.forEach(function(n) {
+            var any = false;
+            SPEC_METRICS.forEach(function(m) {
+                var rec = n.metrics && n.metrics[m];
+                var v = rec ? rec.value : n[m];
+                if (typeof v === 'number' && isFinite(v)) any = true;
+                var vr = _verdict(v, thresholds[m]);
+                if (vr === 'fail') below[n.id] = 'fail';
+                else if (vr === 'warn' && below[n.id] !== 'fail') below[n.id] = 'warn';
+            });
+            if (any) specMeasured++;
+        });
+        var belowN = Object.keys(below).length;
+        var failN = Object.keys(below).filter(function(k) { return below[k] === 'fail'; }).length;
+        var warnN = belowN - failN;
+        var unjudged = topo.nodes.length - specMeasured;
+        var specTile;
+        if (specMeasured > 0) {
+            specTile = { title: 'Qubits In Spec',
+                value: (specMeasured - belowN) + '/' + specMeasured,
+                sub: warnN + ' warn  ·  ' + failN + ' fail'
+                   + (unjudged ? '  ·  ' + unjudged + ' unjudged' : ''),
+                color: failN ? '#e15759' : (warnN ? '#f28e2b' : '#59a14f') };
+        } else {
+            specTile = { title: 'Qubits In Spec', value: '—', sub: 'no data', muted: true };
+        }
+
         var srbTile = withErrLine(
             metricTile('2Q Clifford fid. (SRB)', srbAgg, pct, fidRange), srbAgg, 'EPC', null);
         var srbGateTile = withErrLine(
@@ -597,7 +664,10 @@ window.ChipStatus.mount = function (opts) {
 
         var tiles = [
             {title: 'Chip Size', value: topo.nodes.length + ' qubits, ' + topo.edges.length + ' pairs', color: '#4e79a7'},
-            metricTile('1Q Gate Fidelity', nodeAgg('gate_fidelity_avg'), pct, fidRange, 'gate_fidelity_avg'),
+            // gate_fidelity.averaged IS per-gate: the lab's 1Q RB node stores
+            // 1 - error_per_gate (27_single_qubit_randomized_benchmarking.py).
+            withErrLine(metricTile('1Q Gate Fidelity', nodeAgg('gate_fidelity_avg'), pct, fidRange, 'gate_fidelity_avg'),
+                        nodeAgg('gate_fidelity_avg'), 'EPG', null),
             metricTile('Readout Fidelity', nodeAgg('assignment_fidelity'), pct, roRange, 'assignment_fidelity'),
             // Standard RB fits the CLIFFORD fidelity (1-EPC); interleaved RB
             // fits the GATE fidelity (1-EPG). A Clifford is ~5.4 two-qubit
@@ -610,6 +680,15 @@ window.ChipStatus.mount = function (opts) {
             // be measured. Calling it "2Q Bell" was already wrong on a CR chip
             // and became wrong on an RB chip too (docs/138).
             metricTile('2Q gate fidelity', computeAggregates(topo.edges.map(function(e) { return e.cz_fidelity; })), pct, [0.95, 0], 'cz_fidelity'),
+            // Length has no good/bad direction - neutral colour, not a verdict.
+            (function() { var t = metricTile('2Q Gate Length', lenAgg, nsF, [1, 0]);
+                          if (lenAgg.count > 0) t.color = '#b07aa1'; return t; })(),
+            {title: 'RB Coverage',
+             value: rbPairs + '/' + topo.edges.length,
+             sub: 'pairs with an RB measurement', color: '#4e79a7',
+             muted: topo.edges.length === 0},
+            specTile,
+            freshTile,
             metricTile('T1', nodeAgg('T1'), us, tRange, 'T1'),
             metricTile('T2 Ramsey', nodeAgg('T2ramsey'), us, tRange, 'T2ramsey')
         ];
