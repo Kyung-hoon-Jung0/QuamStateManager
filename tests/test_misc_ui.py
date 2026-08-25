@@ -160,3 +160,19 @@ class TestPillDismiss:
         js = _read("quam_state_manager/web/static/dataset-virtual.js")
         assert "_dismissNewPill" in js
         assert "'Escape') _dismissNewPill" in js
+
+
+class TestConflictTrayButtonRow:
+    def test_the_force_button_stays_in_the_row(self):
+        """docs/139 follow-up (customer report): margin-left:auto pushed
+        'Keep mine' to the far edge, and once the row wrapped it sat alone on
+        a second line right-aligned - a layout break, not a choice. It must
+        flow in the row with the other three."""
+        import re
+        from pathlib import Path
+        css = Path("quam_state_manager/web/static/style.css").read_text(
+            encoding="utf-8")
+        m = re.search(
+            r"\.tray-conflict-choices \.tray-force-btn \{([^}]*)\}", css)
+        assert m, "the force-button rule disappeared"
+        assert "margin-left: auto" not in m.group(1)
