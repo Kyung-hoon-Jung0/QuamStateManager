@@ -603,7 +603,7 @@ window.ChipStatus.mount = function (opts) {
             // fits the GATE fidelity (1-EPG). A Clifford is ~5.4 two-qubit
             // gates here, so the titles say which is which and each tile also
             // states both error rates, bridged only by the run's own divisor.
-            srbTile, srbGateTile, irbTile, irbCliffTile,
+            srbTile, srbGateTile, irbCliffTile, irbTile,
             // The edge number. Its SOURCE varies by chip — Bell_State, an
             // interleaved-RB gate fidelity, or the CR channel — so the tile is
             // named for what it measures, not for one of the three ways it can
