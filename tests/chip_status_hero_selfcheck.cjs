@@ -418,13 +418,19 @@ function overviewTilesStateBothErrorRates() {
     '<div id="topo-overview-tiles"></div>');
   const topo = {
     nodes: [
-      { id: 'q19', grid_location: '0,0', f_01: 4.8e9 },
+      { id: 'q19', grid_location: '0,0', f_01: 4.8e9, gate_fidelity_avg: 0.999 },
       { id: 'q20', grid_location: '1,0', f_01: 5.1e9 },
     ],
     edges: [
       { pair_id: 'q19-20', source: 'q19', target: 'q20', has_cz: true,
         gate_kind: 'cz', directed: false, active: null,
         cz_fidelity: 0.9933625133477547, fidelity_source: 'interleaved_rb',
+        best_gate: 'cz_flattop',
+        cz_fidelity_updated_at: Date.now() - 36e5,
+        gate_details: [
+          { name: 'cz_unipolar', length: 60, amplitude: 0.1 },
+          { name: 'cz_flattop', length: 84, amplitude: 0.1 },
+        ],
         gate_fidelities: [
           { gate: 'cz_flattop', metric: 'StandardRB',
             value: 0.9706080538741072, level: 'clifford',
@@ -446,7 +452,19 @@ function overviewTilesStateBothErrorRates() {
   ok(/÷5\.37/.test(html), 'tiles: the SRB->gate divisor is named');
   ok(/×5\.37/.test(html), 'tiles: the IRB->Clifford multiplier is named');
   ok(!/T2 echo/i.test(html), 'tiles: T2 echo tile removed');
-  ok(!/Coverage/.test(html), 'tiles: Coverage tile removed');
+  ok(html.indexOf('CZ Coverage') < 0 && html.indexOf('pairs with CZ gate') < 0,
+     'tiles: the old CZ Coverage tile removed');
+  // docs/139 follow-up r2: the four context tiles + the 1Q EPG line.
+  ok(html.indexOf('RB Coverage') >= 0 && /1\/1/.test(html),
+     'tiles: RB coverage counts the measured pairs');
+  ok(html.indexOf('2Q Gate Length') >= 0 && /84 ns/.test(html),
+     'tiles: the best gate length renders in ns');
+  ok(html.indexOf('Qubits In Spec') >= 0,
+     'tiles: the in-spec tile exists');
+  ok(/EPG 0\.10%/.test(html),
+     'tiles: the 1Q tile states its EPG');
+  ok(html.indexOf('Calibration Age') >= 0 && /today|yesterday|ago/.test(html),
+     'tiles: the freshness tile renders an age');
 }
 
 function finish() {
