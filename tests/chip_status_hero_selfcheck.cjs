@@ -438,6 +438,11 @@ function overviewTilesStateBothErrorRates() {
   const html = win.document.getElementById('topo-overview-tiles').innerHTML;
   ok(/EPC/.test(html), 'tiles: EPC stated');
   ok(/EPG/.test(html), 'tiles: EPG stated');
+  ok(html.indexOf('2Q gate fid. (SRB') >= 0,
+     'tiles: the SRB-derived GATE tile exists');
+  ok(html.indexOf('2Q Clifford fid. (IRB') >= 0,
+     'tiles: the IRB-derived CLIFFORD tile exists');
+  ok(/99\.44/.test(html), 'tiles: the derived gate value renders');
   ok(/÷5\.37/.test(html), 'tiles: the SRB->gate divisor is named');
   ok(/×5\.37/.test(html), 'tiles: the IRB->Clifford multiplier is named');
   ok(!/T2 echo/i.test(html), 'tiles: T2 echo tile removed');
