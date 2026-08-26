@@ -11001,24 +11001,38 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 }
 @media (prefers-reduced-motion: reduce) { .auto-apply-on { animation: none; } }
 
-/* the applied log — same vocabulary as the pending list right below it */
+/* the applied log — same vocabulary as the pending list right below it.
+   User feedback: it used to force its own full-width row under the tray
+   ("wastes space below") even collapsed, because the OUTER element carried
+   flex:0 0 100%. It is now an ordinary inline-flex item that sits in the
+   empty space beside Auto-Sync on the same row; the row list itself floats
+   as an anchored dropdown (position:absolute) when expanded, so opening it
+   never pushes the topbar's layout around. */
 .applied-log {
-    flex: 0 0 100%;                  /* its own row in the tray's flex-wrap row */
-    border-top: 1px solid var(--border-color);
-    margin-top: .25rem; padding: .3rem .1rem .1rem;
+    position: relative;
+    display: inline-flex; align-items: center;
+    margin-left: .5rem; padding: 0; border: none;
 }
-.applied-log-head { display: flex; align-items: center; gap: .4rem; }
-.applied-log-title { font-size: .82em; color: var(--text-secondary); font-weight: 600; }
+.applied-log-head { display: flex; align-items: center; gap: .35rem; }
+.applied-log-title { font-size: .82em; color: var(--text-secondary); font-weight: 600; white-space: nowrap; }
 .applied-log-count {
     font-size: .78em; color: var(--text-muted);
     border: 1px solid var(--border-color); border-radius: 999px; padding: 0 .32rem;
 }
 .applied-log-toggle {
-    margin-left: auto; border: 0; background: none; cursor: pointer;
+    border: 0; background: none; cursor: pointer;
     color: var(--text-muted); padding: 0 .2rem;
 }
-/* bounded so a long session cannot push the page down: ~4 rows, then scroll */
-.applied-log-list { margin-top: .25rem; max-height: 4.7rem; overflow-y: auto; }
+/* Floating dropdown panel, anchored under the compact head — bounded so a
+   long session cannot grow unbounded (~4 rows, then scroll). */
+.applied-log-list {
+    position: absolute; top: 100%; right: 0; z-index: 60;
+    margin-top: .3rem; min-width: 17rem; max-width: 24rem;
+    max-height: 4.7rem; overflow-y: auto;
+    background: var(--pico-card-background-color, var(--bg-elevated));
+    border: 1px solid var(--border-color); border-radius: 8px;
+    padding: .35rem .5rem; box-shadow: 0 4px 14px rgba(0, 0, 0, .28);
+}
 .applied-log-collapsed .applied-log-list { display: none; }
 .applied-log-row {
     display: flex; align-items: center; gap: .4rem;
