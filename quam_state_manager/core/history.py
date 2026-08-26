@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 from quam_state_manager.core import leaf_index, safe_io
 from quam_state_manager.core.differ import DiffEntry, Differ
 from quam_state_manager.core.loader import QuamStore
-from quam_state_manager.core.query import QueryEngine
+from quam_state_manager.core.query import QueryEngine, _assignment_fidelity
 
 if TYPE_CHECKING:
     from quam_state_manager.core.scanner import Workspace
@@ -131,10 +131,12 @@ PAIR_TRACKED_PROPERTIES: tuple[str, ...] = (
     "pair_cancel_phase",
 )
 
-# Index content generation. v2 = pair rows added; a v1 index self-heals only
-# NEW snapshots, so the one-time upgrade must force-rebuild (stamped via
-# PRAGMA user_version, verified once per process per chip).
-_INDEX_SCHEMA_VERSION = 2
+# Index content generation. v2 = pair rows added; v3 = assignment_fidelity
+# recomputed from the confusion matrix (was unconditionally NULL through v2 —
+# see _VALUE_PATHS). A v1/v2 index self-heals only NEW snapshots, so each
+# one-time upgrade must force-rebuild its own content (stamped via PRAGMA
+# user_version, verified once per process per chip).
+_INDEX_SCHEMA_VERSION = 3
 
 # Pointer-aware fields — the source-of-truth path inside a qubit dict.
 # When a value resolves via QueryEngine but the underlying state had a
@@ -162,10 +164,10 @@ _VALUE_PATHS: dict[str, tuple[str, ...]] = {
     "readout_amplitude": ("resonator", "operations", "readout", "amplitude"),
     "x180_amplitude": ("xy", "operations", "x180_DragCosine", "amplitude"),
     "x90_amplitude": ("xy", "operations", "x90_DragCosine", "amplitude"),
-    # NOTE: ``assignment_fidelity`` is in DEFAULT_TRACKED_PROPERTIES but
-    # is NOT produced by QueryEngine.get_qubit — pre-existing behaviour
-    # is that every (qubit, "assignment_fidelity") row is NULL. The
-    # raw-dict path matches that by omitting the key here.
+    # ``assignment_fidelity`` (Trends' "IQ Blob (%)" — same metric, same key,
+    # just a friendlier label there) is DERIVED from the confusion matrix, not
+    # a scalar leaf, so it can't be a plain dot-walk path. Handled as a special
+    # case in _extract_index_rows_from_state instead of here.
 }
 
 
@@ -250,12 +252,24 @@ def _extract_index_rows_from_state(
         if not isinstance(qdict, dict):
             continue
         for prop in properties:
+            if prop == "assignment_fidelity":
+                # Derived from the resonator's confusion matrix (avg of the
+                # diagonal) via the SAME validator/formula QueryEngine uses,
+                # so a snapshot's indexed value can never drift from what the
+                # live inspector would show for it.
+                cm = _walk_dict(qdict, ("resonator", "confusion_matrix"))
+                num = _to_num(_assignment_fidelity(cm))
+                rows.append((
+                    meta.timestamp, qname, prop, num, None,
+                    meta.trigger, meta.run_id, meta.experiment_name,
+                ))
+                continue
             path = _VALUE_PATHS.get(prop)
             if path is None:
-                # Legacy parity: assignment_fidelity and any future prop
-                # we haven't mapped yet land here. Insert a NULL row so
-                # SQLite still has the (timestamp, qubit, property) PK
-                # — matches what QueryEngine-based extraction emitted.
+                # Legacy parity: any future prop we haven't mapped yet lands
+                # here. Insert a NULL row so SQLite still has the
+                # (timestamp, qubit, property) PK — matches what
+                # QueryEngine-based extraction emitted.
                 rows.append((
                     meta.timestamp, qname, prop, None, None,
                     meta.trigger, meta.run_id, meta.experiment_name,
@@ -2877,6 +2891,71 @@ class HistoryManager:
                     appended, hist_dir)
         return appended
 
+    def _upgrade_index_assignment_fidelity(self, quam_state_path: Path, conn) -> int:
+        """v2->v3 content upgrade: recompute the ``assignment_fidelity`` row
+        for every existing snapshot from its confusion matrix.
+
+        Every snapshot ever indexed carries a NULL here (the raw-dict
+        extractor never computed it -- see ``_VALUE_PATHS``'s note, fixed in
+        the same change that added this upgrade). This is a pure UPDATE of
+        one property's values, not a new row kind, so unlike the v1->v2 pair
+        upgrade there is nothing to APPEND -- INSERT OR REPLACE on the
+        existing (timestamp, qubit, property) keys overwrites the NULLs in
+        place. Same incremental/one-transaction/caller-owns-conn contract.
+        """
+        snapshots = self._list_snapshots_uncached(quam_state_path)
+        if not snapshots:
+            return 0
+        hist_dir = self._history_dir(quam_state_path)
+
+        def _rows(meta) -> list[tuple]:
+            snap_dir = hist_dir / meta.timestamp
+            try:
+                state = safe_io.read_json(snap_dir / "state.json")
+            except (OSError, ValueError):
+                return []
+            if not isinstance(state, dict):
+                return []
+            qubits = state.get("qubits") or {}
+            if not isinstance(qubits, dict):
+                return []
+            out: list[tuple] = []
+            for qname, qdict in qubits.items():
+                if not isinstance(qdict, dict):
+                    continue
+                cm = _walk_dict(qdict, ("resonator", "confusion_matrix"))
+                num = _to_num(_assignment_fidelity(cm))
+                if num is None:
+                    continue   # leave the existing NULL row as-is
+                out.append((meta.timestamp, qname, "assignment_fidelity",
+                            num, None, meta.trigger, meta.run_id,
+                            meta.experiment_name))
+            return out
+
+        updated = 0
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            for meta in snapshots:
+                rows = _rows(meta)
+                if rows:
+                    conn.executemany(
+                        "INSERT OR REPLACE INTO param_history "
+                        "(timestamp, qubit, property, value, raw_pointer, "
+                        "trigger, run_id, experiment) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        rows,
+                    )
+                    updated += len(rows)
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        if updated:
+            self._bump_chip_version(hist_dir)
+        logger.info("Param-history v3 upgrade: recomputed %d assignment_fidelity "
+                    "rows for %s", updated, hist_dir)
+        return updated
+
     def rebuild_index(
         self,
         quam_state_path: str | Path,
@@ -3275,9 +3354,12 @@ class HistoryManager:
                     if ver < _INDEX_SCHEMA_VERSION:
                         logger.info(
                             "Param-history index at %s is schema v%d — "
-                            "upgrading to v%d (pair trends)",
+                            "upgrading to v%d",
                             chip_key, ver, _INDEX_SCHEMA_VERSION)
-                        self._upgrade_index_pair_rows(quam_state_path, conn)
+                        if ver < 2:
+                            self._upgrade_index_pair_rows(quam_state_path, conn)
+                        if ver < 3:
+                            self._upgrade_index_assignment_fidelity(quam_state_path, conn)
                         conn.execute(
                             f"PRAGMA user_version={_INDEX_SCHEMA_VERSION}")
                 finally:

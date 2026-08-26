@@ -8998,6 +8998,12 @@ def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str]) -> list
     return out
 
 
+# Trends-only display-name overrides (chip_health.METRIC_META's "Readout
+# assignment fidelity" stays the formal glossary text for Diagnostics/the
+# threshold editor — this is purely what the Trends pill/chart title says).
+_TREND_LABEL_OVERRIDES: dict[str, str] = {"assignment_fidelity": "IQ Blobs"}
+
+
 @bp.route("/topology/trends")
 def topology_trends():
     """The Trends section: one chart per metric, one line per qubit.
@@ -9087,8 +9093,18 @@ def topology_trends():
         charts.append({"metric": extra, "series": [], "n_entities": 0,
                        "unit": _trend_unit(extra)})
 
+    # Display labels for the metric pills + chart titles — the raw property
+    # key stays the data.trend-metric/JS-toggle value (SQLite column name,
+    # continuity with every existing selection/localStorage entry); only the
+    # TEXT changes. "IQ Blobs" matches the label the Chip Status hero map
+    # already uses for this exact metric — a customer-reported mismatch
+    # ("assignment_fidelity" read as a broken/empty metric on Trends while
+    # the same number shows real values as "IQ Blob (%)" elsewhere).
+    metric_labels = {m: chip_health.metric_meta(m)["label"] for m in curated}
+    metric_labels.update(_TREND_LABEL_OVERRIDES)
     return render_template("_topo_trends.html", charts=charts, curated=curated,
                            selected=sel, extra=extra, no_chip=False,
+                           metric_labels=metric_labels,
                            snapshots=len(hm.list_snapshots(path)))
 
 
