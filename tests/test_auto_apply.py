@@ -300,6 +300,30 @@ class TestAppliedLog:
         with env["app"].app_context():
             assert routes_mod._applied_log_rows() == []
 
+    def test_a_prior_process_run_does_not_resurrect_after_restart(self, env):
+        """The sidecar journal is deliberately persistent on disk (docs/107) so
+        undo can cross the save boundary, but this widget's own empty-state
+        text says "Applied to live... this session" — a restarted process
+        must not open on a chip and immediately show old auto-apply rows from
+        a run that is long gone."""
+        c = env["client"]
+        c.post("/auto-apply/arm")
+        _edit(env)
+        c.post("/state/apply-to-live")
+        with env["app"].app_context():
+            assert len(routes_mod._applied_log_rows()) == 1
+
+        # Simulate a full app/terminal restart: a fresh process, same instance
+        # dir and live chip folder, so the sidecar file on disk is unchanged.
+        app2 = create_app(testing=True, instance_path=env["app"].instance_path)
+        c2 = app2.test_client()
+        assert c2.post("/load", data={"folder": str(env["live"])}).status_code in (200, 302)
+        with app2.app_context():
+            assert routes_mod._applied_log_rows() == [], (
+                "a prior process's auto-apply rows must not show as if this "
+                "fresh session is doing something"
+            )
+
 
 class TestRevertOneRow:
     def _one_applied(self, env):

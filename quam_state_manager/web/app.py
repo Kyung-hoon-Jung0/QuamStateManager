@@ -21,6 +21,7 @@ import re
 import shutil
 import sys
 import threading
+import time
 from datetime import timedelta
 from pathlib import Path
 
@@ -576,6 +577,12 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     app.config["history_manager"] = HistoryManager(app.instance_path)
     app.config["contexts"] = {}
     app.config["active_context"] = None
+    # docs/117's applied log reads the undo journal sidecar, which is
+    # deliberately persistent on disk (docs/107, survives F5/reload) — but its
+    # own empty-state text says "this session", so entries from a PRIOR
+    # process must not resurrect as if auto-apply is still doing something.
+    # `_applied_log_rows` filters against this stamp.
+    app.config["process_start_ts"] = time.time()
 
     # Announce this process to any sibling window sharing this instance dir
     # (docs/80). Best-effort by construction — see core/instances.
