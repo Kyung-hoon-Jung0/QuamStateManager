@@ -4198,6 +4198,17 @@ window.PaneState = (function () {
         var e = stash[route];
         if (!e || e.seq !== seqNow() || e.chip !== chipNow()) return;
         evt.preventDefault();
+        // A cancelled request is not an in-flight request. htmx itself is
+        // clean (it adds its indicator classes AFTER the beforeRequest
+        // check), but THREE app listeners downstream of this one count the
+        // event as a live xhr and only ever clear on a terminal xhr event
+        // that now never comes: NavProgress (count++ -> the brand progress
+        // bar ticked forever AND polled /api/progress every 350 ms, which is
+        // its own slowdown - customer-reported at 154 s), the slow-request
+        // overlay, and the inline-edit commit marker. This handler is
+        // registered first, so stopping propagation is what makes the cancel
+        // truthful to the rest of the app.
+        evt.stopImmediatePropagation();
         _park(_cur);
         // {htmx:true} - the exact state htmx stamps on ITS entries, so Back
         // into/out of a skip entry runs htmx's own popstate restore (cache
