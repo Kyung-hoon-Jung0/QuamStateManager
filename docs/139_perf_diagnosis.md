@@ -34,11 +34,37 @@ and re-done keyed on the xhr object):
   from ~1s into 4–5s as the grid grew: docs/94 (column cap 400→1200), docs/126
   (pair port-chain columns), docs/136 (QDAC columns).
 
-**Fix direction (deferred, judgement reserved):** when a parked copy exists and
-seq+chip match, skip the fetch and restore immediately — the existing
-`_verifyRestore` (background server-truth probe) stays as the safety net; add
-`/bulk` to KEEP (docs/124's PlotHost sweep comment says KEEP growth was already
-prepared for). This amends the docs/110 doctrine, so it needs its own review.
+**Fix 1 — IMPLEMENTED (2026-08-26).** Two changes in `app.js`'s PaneState:
+`/bulk` joined KEEP, and an `htmx:beforeRequest` interceptor cancels the GET
+when the arriving KEEP route has a FRESH parked copy (tray seq + chip token
+unmoved — the exact `_tryRestore` gate) and restores the parked DOM
+synchronously, pushing the URL itself (`{htmx:true}` state, the shape htmx
+stamps on its own entries). Everything else about the docs/110 v2 doctrine
+stands: a stale/absent copy fetches normally, a same-route click is a
+deliberate refresh, and `_verifyRestore` still re-checks the seq against
+server truth in the background. **Measured in real Chrome on the 452-column
+20Q grid: sidebar return to /bulk 4–5 s → 0.67–0.98 s (click→paneRestored),
+requests sent: 0, cancelled at beforeRequest: verified per-event.**
+
+**The Back button needed two follow-on fixes, both found live, not in jsdom:**
+① htmx has no snapshot for a skip-pushed entry AND its private
+`currentPathForHistory` does not move on a foreign pushState, so on the next
+popstate htmx **saved the on-screen content under the WRONG url** (measured:
+the bulk grid cached under /explorer, then served back from that poisoned
+cache) — the pane now carries a `data-pane-route` stamp (set at afterSwap and
+at skip-restore; htmx's snapshots preserve it), and `_historyReset`'s
+fallback refetches on **route mismatch**, not only on a blank pane, purging
+`htmx-history-cache` when it fires (the poison must not outlive the repair).
+An unstamped pane (full page load) is never refetched. ② popstate and
+htmx:historyRestore both funnel into the fallback — a 1 s in-flight token
+dedupes the double refetch. **Residual, stated honestly:** Back away from the
+bulk grid freezes ~2.7 s while htmx serializes the ~MB body into its history
+cache (a pre-existing cost, not introduced here), and Back after a skip shows
+the outgoing content for the ~1–2 s the repair fetch is in flight before
+converging on the right pane. Pinned by `tests/pane_state_selfcheck.cjs`
+(28 asserts, **7/7 mutations caught** — interceptor, KEEP membership,
+staleness gate, URL push, outgoing park, mismatch refetch, unstamped guard);
+the harness needed `global.history` bridged (the standing bare-globals rule).
 
 ## Symptom 2 — Param History: 18–22s cold, 0.13s warm
 

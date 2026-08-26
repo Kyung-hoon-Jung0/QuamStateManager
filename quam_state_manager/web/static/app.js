@@ -3932,7 +3932,7 @@ window.smModalOpen = function () {
    Parked DOM is detached -- getElementById can't see it, pollers no-op
    until restore. Stash: LRU 4 (evicted holders are Plotly-purged). */
 window.PaneState = (function () {
-    var KEEP = ['/explorer'];
+    var KEEP = ['/explorer', '/bulk'];
     var SOFT = ['/explorer', '/bulk', '/datasets', '/param-history',
                 '/pulses', '/state-history', '/qubits', '/pairs',
                 '/resonators', '/flux', '/couplers'];
@@ -4173,6 +4173,49 @@ window.PaneState = (function () {
         return path ? String(path).split('?')[0] : null;
     }
 
+    /* docs/139 fix 1 - skip the fetch when the parked copy will win anyway.
+       docs/110's v2 doctrine ("never cancels anything") let htmx own history
+       by paying a redundant fetch + a fresh ~MB render that _tryRestore then
+       threw away - measured at 2.4 s of htmx SWAP alone on the 452-column
+       bulk grid. This amends that doctrine ONE step: when the arriving KEEP
+       route has a FRESH parked copy (tray seq + chip token unmoved - the
+       exact _tryRestore gate), the request is cancelled BEFORE it is sent
+       and the parked DOM restored synchronously. Everything else about v2
+       stands: a stale/absent copy fetches normally, a same-route click is a
+       deliberate refresh and always fetches, and _verifyRestore still
+       re-checks the seq against server truth in the background (mismatch =>
+       fresh refetch), so the safety net is unchanged. htmx takes no history
+       snapshot for a cancelled nav - Back is covered by _historyReset's
+       existing clear-and-refetch fallback, the same path an htmx
+       parked-empty snapshot already rides. */
+    document.addEventListener('htmx:beforeRequest', function (evt) {
+        var tgt = evt.detail && evt.detail.target;
+        if (!tgt || tgt.id !== 'table-pane') return;
+        var cfg = evt.detail.requestConfig || {};
+        if (String(cfg.verb || 'get').toLowerCase() !== 'get') return;
+        var route = _routeOf(evt.detail);
+        if (!route || KEEP.indexOf(route) < 0 || route === _cur) return;
+        var e = stash[route];
+        if (!e || e.seq !== seqNow() || e.chip !== chipNow()) return;
+        evt.preventDefault();
+        _park(_cur);
+        // {htmx:true} - the exact state htmx stamps on ITS entries, so Back
+        // into/out of a skip entry runs htmx's own popstate restore (cache
+        // miss => server history-restore of the full page). A plain entry
+        // left htmx blind: measured live, Back restored NOTHING and later
+        // POISONED htmx's cache (bulk content saved under /explorer).
+        try { history.pushState({ htmx: true }, '', route); } catch (err) {}
+        _cur = route;
+        var sp = pane();
+        if (sp) sp.setAttribute('data-pane-route', route);
+        if (!_tryRestore(route) && window.htmx) {
+            // belt-and-braces: the copy refused at the last instant (pane
+            // gone mid-flight) - never leave a blank pane, fetch fresh.
+            window.htmx.ajax('GET', route, { source: '#table-pane',
+                target: '#table-pane', swap: 'innerHTML' });
+        }
+        if (window.syncSidebarNavActive) window.syncSidebarNavActive();
+    });
     document.addEventListener('htmx:beforeSwap', function (evt) {
         if (!evt.target || evt.target.id !== 'table-pane') return;
         if (evt.detail && evt.detail.shouldSwap === false) return;
@@ -4186,6 +4229,12 @@ window.PaneState = (function () {
         if (!evt.target || evt.target.id !== 'table-pane') return;
         var route = _routeOf(evt.detail);
         if (route) _cur = route;
+        // The content's own route, stamped ON the pane (docs/139 fix 1): a
+        // skip-nav pushes URLs htmx has no snapshot for, so after Back the
+        // pane can hold route A under URL B with nothing blank to notice.
+        // htmx's history snapshot preserves the attribute, so it stays
+        // truthful through both machineries.
+        evt.target.setAttribute('data-pane-route', _cur);
         if (!_tryRestore(_cur)) _reapplySoft(_cur);
     });
     // A wholesale working-copy replacement invalidates every parked pane;
@@ -4199,7 +4248,29 @@ window.PaneState = (function () {
         // PARKED (i.e. empty). Never leave the user on a blank pane: refetch.
         setTimeout(function () {
             var p = pane();
-            if (p && !p.firstElementChild && window.htmx) {
+            if (!p || !window.htmx) return;
+            // Blank pane (parked-empty snapshot) OR a pane whose stamped
+            // route disagrees with the URL (a skip-nav pushState entry htmx
+            // could not restore -- measured live: /bulk's grid standing
+            // under /explorer after Back). An unstamped pane is a full page
+            // load: the server rendered it for THIS url, leave it alone.
+            var stamped = p.getAttribute('data-pane-route');
+            var mismatch = stamped && stamped !== location.pathname;
+            if (!p.firstElementChild || mismatch) {
+                // A mismatch also means htmx's history cache is POISONED:
+                // its private currentPathForHistory does not move on a skip
+                // pushState, so its next popstate save files the on-screen
+                // content under the WRONG url (measured live: bulk grid
+                // cached under /explorer, then served back from that cache).
+                // Drop the cache - the next Back server-restores instead.
+                if (mismatch) {
+                    try { localStorage.removeItem('htmx-history-cache'); } catch (e2) {}
+                }
+                // popstate AND htmx:historyRestore both funnel here - one
+                // refetch is enough.
+                if (window.PaneState.__refetchFor === location.pathname) return;
+                window.PaneState.__refetchFor = location.pathname;
+                setTimeout(function () { window.PaneState.__refetchFor = null; }, 1000);
                 window.htmx.ajax('GET', location.pathname + location.search,
                                  { source: '#table-pane', target: '#table-pane',
                                    swap: 'innerHTML' });
