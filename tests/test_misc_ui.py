@@ -197,3 +197,25 @@ class TestAppliedLogInline:
         assert m2, "the .applied-log-list rule disappeared"
         assert "position: absolute" in m2.group(1), (
             "the expandable list must float, not push the row")
+
+
+class TestDatasetCompareGoesToDiffAtTwo:
+    def test_two_selected_runs_delegate_to_the_diff_workbench(self):
+        """docs/84: the diff workbench is the front door for exactly two
+        sources. The Datasets page used to show "Compare" and "Diff" as two
+        separate buttons both enabled at count===2 -- a user reaching for
+        "Compare" (customer report) landed on the old Figures/Fit-Results/
+        Parameters run comparison instead. Two selected must always mean
+        diff, whichever button is pressed."""
+        import re
+        js = _read("quam_state_manager/web/static/app.js")
+        m = re.search(
+            r"window\.compareSelectedDatasets = function\(\) \{(.*?)\n\};",
+            js, re.S)
+        assert m, "compareSelectedDatasets definition not found"
+        body = m.group(1)
+        assert re.search(
+            r"ids\.length === 2\) \{ window\.diffSelectedDatasets\(\); return; \}",
+            body), "must delegate to the diff workbench at exactly 2"
+        # the delegation must run BEFORE the old-page htmx.ajax call
+        assert body.index("diffSelectedDatasets") < body.index("/datasets/compare")

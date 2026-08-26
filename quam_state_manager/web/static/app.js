@@ -11886,6 +11886,13 @@ window.compareSelectedDatasets = function() {
         alert('Select 2-5 runs to compare.');
         return;
     }
+    // docs/84: the diff workbench is the front door for exactly two sources —
+    // the "Compare" and "Diff" buttons sat side by side at count===2, and a
+    // user reaching for "Compare" (the more prominent/first button) landed on
+    // the old Figures/Fit-Results/Parameters run comparison instead of the
+    // diff view they actually wanted. Two selected now always means diff,
+    // whichever button is pressed; the N-run comparison is for 3+ only.
+    if (ids.length === 2) { window.diffSelectedDatasets(); return; }
     htmx.ajax('GET', '/datasets/compare?ids=' + ids.join(','),
               {source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML'});
 };
