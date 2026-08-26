@@ -205,6 +205,29 @@ req = requestTo('/explorer');
 ok(!req.defaultPrevented,
    'skip-fetch: a same-route click is a deliberate refresh and always fetches');
 
+// A cancelled request must reach NO downstream listener: NavProgress counts
+// beforeRequest and only clears on a terminal xhr event that never comes, so
+// its brand progress bar ticked forever and polled /api/progress every 350ms
+// (customer-reported at 154 s). Registered-first + stopImmediatePropagation
+// is what keeps the cancel truthful to the rest of the app.
+{
+    let downstream = 0;
+    document.addEventListener('htmx:beforeRequest', () => downstream++);
+    window.PaneState.clear();
+    swapTo('/bulk', '<div id="bulk-live2">grid</div>');
+    swapTo('/explorer', '<div>x</div>');
+    downstream = 0;
+    const r = requestTo('/bulk');
+    ok(r.defaultPrevented, 'cancel-propagation: the skip still cancels');
+    ok(downstream === 0,
+       'a cancelled nav reaches NO downstream beforeRequest listener (got '
+       + downstream + ')');
+    // a NORMAL (non-skip) nav must still reach them
+    downstream = 0;
+    requestTo('/param-history');
+    ok(downstream === 1, 'a real nav still reaches downstream listeners');
+}
+
 // -- 9. Back after a skip-nav: content-route mismatch refetches (docs/139) --
 // Measured live before the fix: the skip pushes URLs htmx has no snapshot
 // for, so Back left /bulk's grid standing under /explorer -- not blank, so

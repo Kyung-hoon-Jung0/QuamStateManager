@@ -46,6 +46,23 @@ server truth in the background. **Measured in real Chrome on the 452-column
 20Q grid: sidebar return to /bulk 4–5 s → 0.67–0.98 s (click→paneRestored),
 requests sent: 0, cancelled at beforeRequest: verified per-event.**
 
+**A cancelled request is not an in-flight request (customer-reported, same
+day).** htmx itself is clean — it adds its indicator classes AFTER the
+beforeRequest check — but THREE app listeners downstream of the interceptor
+counted the event as a live xhr and only ever clear on a terminal xhr event
+that now never came: NavProgress (`count++` — the brand progress bar ticked
+forever, reported stuck at **154 s**, AND polled `/api/progress` every 350 ms,
+which is its own app-wide slowdown), the slow-request overlay, and the
+inline-edit commit marker. The interceptor is registered first, so
+`stopImmediatePropagation()` is what makes the cancel truthful to the rest of
+the app; pinned three ways (the skip still cancels, no downstream listener
+sees it, a REAL nav still reaches them).
+
+**Honest numbers after the fix** (real Chrome, 452-column 20Q grid, click ->
+grid on screen): **cold first visit 6.9 s** — unchanged by design, there is
+nothing parked to restore — **return via skip 1.0 s**. The fix buys back
+returns, not first opens.
+
 **The Back button needed two follow-on fixes, both found live, not in jsdom:**
 ① htmx has no snapshot for a skip-pushed entry AND its private
 `currentPathForHistory` does not move on a foreign pushState, so on the next
