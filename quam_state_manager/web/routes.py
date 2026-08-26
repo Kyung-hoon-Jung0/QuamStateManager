@@ -5219,10 +5219,17 @@ def _applied_log_rows(ctx: dict | None = None, limit: int = 50) -> list[dict]:
     ctx = ctx if ctx is not None else _active_ctx()
     if not ctx or ctx.get("type") != "quam":
         return []
+    # The sidecar is a persistent-across-restart store by design (docs/107),
+    # but this widget's own copy says "Applied to live... this session" — an
+    # entry from a process that no longer exists must not resurrect and look
+    # like live auto-apply feedback for a session that never armed anything.
+    since = current_app.config.get("process_start_ts", 0)
     rows: list[dict] = []
     for u in reversed(ctx.get("undo_units") or []):
         meta = u.get("meta") or {}
         if meta.get("src") != "auto":
+            continue
+        if (u.get("ts") or 0) < since:
             continue
         ents = u.get("entries") or []
         if not ents:
