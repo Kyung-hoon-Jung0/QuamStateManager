@@ -135,6 +135,17 @@ ok(!state.spec.qdac.qubits.q3, 'T6: old key q3 removed after rename');
 ok(state.spec.qdac.qubits.qNew && state.spec.qdac.qubits.qNew.channel === 9,
   'T6: renamed key qNew carries the same channel value');
 
+// T7: the QDAC-II band is reachable BEFORE any qubit is biased -- the only
+// way to reach a mixed chip (some LF-only, some QDAC-only, some bias-tee)
+// is the per-qubit picker inside this band, so it must not require a
+// bulk-apply from the top selector first just to become visible.
+G.hydrateFromSpec(JSON.parse(JSON.stringify(SPEC)), { mode: 'regenerate' });
+ok(Object.keys(state.spec.qdac.qubits).length === 0, 'T7 setup: no qubit biased yet');
+T.renderFluxSource();
+var bandEl = win.document.getElementById('gen-qdac-band');
+ok(bandEl && bandEl.hidden === false,
+  'T7: QDAC-II band visible with zero qubits biased');
+
 if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
 console.log('generate_qdac_selfcheck: all checks passed');
 process.exit(0);
