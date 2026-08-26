@@ -1741,7 +1741,13 @@
         : mode === "tee" ? "(QDAC DC + LF-FEM pulses on every qubit)"
         : "(" + n + " on the QDAC, " + tees + " through a bias tee)";
     }
-    if (band) band.hidden = n === 0;
+    // Always reachable once there are qubits to bias — NOT gated on n>0.
+    // That gate made the per-qubit picker (the only way to reach a mixed
+    // chip — some LF-only, some QDAC-only, some bias-tee) unreachable until
+    // the top selector had already bulk-applied QDAC to every qubit once.
+    // A fresh fixed-frequency chip (docs/119's flagship case) needs this
+    // band with zero qubits biased yet, too.
+    if (band) band.hidden = !(state.spec.qubits || []).length;
     if (sub) {
       sub.textContent = tees
         ? "— DC bias; " + tees + " qubit" + (tees === 1 ? "" : "s") +
