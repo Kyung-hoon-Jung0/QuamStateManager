@@ -2642,6 +2642,89 @@ class TestPairTrendRows:
         assert n_pair > 0
 
 
+class TestAssignmentFidelityRows:
+    """Trends' "IQ Blob (%)" — same metric as chip_health's assignment_fidelity,
+    derived from the resonator's confusion matrix. Was unconditionally NULL
+    (see _VALUE_PATHS's note) because the raw-dict extractor never computed
+    it; fixed to match QueryEngine's own formula, plus a v2->v3 index upgrade
+    so EXISTING snapshots gain real values too, not just new ones."""
+
+    def _state_with_cm(self, cm) -> dict:
+        return {
+            "qubits": {
+                "q1": {"id": "q1", "resonator": {"confusion_matrix": cm}},
+            },
+            "qubit_pairs": {},
+        }
+
+    def test_extraction_computes_it_from_the_confusion_matrix(self):
+        from quam_state_manager.core.history import (
+            SnapshotMeta, _extract_index_rows_from_state,
+        )
+        state = self._state_with_cm([[0.98, 0.02], [0.03, 0.97]])
+        meta = SnapshotMeta(
+            timestamp="20260826_000000_000", trigger="manual",
+            diff_summary={"added": 0, "removed": 0, "modified": 0, "total": 0},
+            new_experiments=[], source_path="x", state_size=0, wiring_size=0)
+        rows = _extract_index_rows_from_state(state, meta)
+        af = [r for r in rows if r[2] == "assignment_fidelity"]
+        assert len(af) == 1
+        assert af[0][1] == "q1"
+        assert af[0][3] == pytest.approx((0.98 + 0.97) / 2)
+
+    def test_an_invalid_confusion_matrix_stays_null(self):
+        from quam_state_manager.core.history import (
+            SnapshotMeta, _extract_index_rows_from_state,
+        )
+        state = self._state_with_cm([[10, 2], [3, 9]])   # not row-stochastic
+        meta = SnapshotMeta(
+            timestamp="20260826_000000_000", trigger="manual",
+            diff_summary={"added": 0, "removed": 0, "modified": 0, "total": 0},
+            new_experiments=[], source_path="x", state_size=0, wiring_size=0)
+        rows = _extract_index_rows_from_state(state, meta)
+        af = [r for r in rows if r[2] == "assignment_fidelity"]
+        assert len(af) == 1 and af[0][3] is None
+
+    def test_v2_index_upgraded_to_v3(self, tmp_path):
+        """A v2 index (assignment_fidelity NULL for existing snapshots)
+        force-upgrades once, recomputing real values; the pair-row v1->v2
+        content stays untouched (only the touched version bump moves)."""
+        import sqlite3
+        from quam_state_manager.core.history import (
+            HistoryManager, _INDEX_SCHEMA_VERSION,
+        )
+        hm = HistoryManager(tmp_path / "instance")
+        path = tmp_path / "chip" / "quam_state"
+        state = self._state_with_cm([[0.96, 0.04], [0.05, 0.95]])
+        state["active_qubit_names"] = ["q1"]
+        wiring = {"wiring": {}, "network": {"host": "1.1.1.1", "cluster_name": "C"}}
+        _write_quam_state(path, state, wiring)
+        hm.check_and_snapshot(path, "manual", force=True)
+
+        idx = hm._index_path(path)
+        conn = sqlite3.connect(str(idx), isolation_level=None)
+        try:
+            # simulate a v2 index: the pre-fix NULL row for assignment_fidelity
+            conn.execute("PRAGMA user_version=2")
+            conn.execute(
+                "UPDATE param_history SET value=NULL WHERE property='assignment_fidelity'")
+        finally:
+            conn.close()
+        hm._schema_verified.discard(str(hm._history_dir(path)))
+
+        hm._ensure_index_fresh(path)
+        conn = sqlite3.connect(str(idx), isolation_level=None)
+        try:
+            ver = conn.execute("PRAGMA user_version").fetchone()[0]
+            value = conn.execute(
+                "SELECT value FROM param_history WHERE property='assignment_fidelity'"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        assert ver == _INDEX_SCHEMA_VERSION
+        assert value == pytest.approx((0.96 + 0.95) / 2)
+
+
 class TestIndexFollowsRoutedDir:
     """Fingerprint-routed snapshots must index into the SAME routed dir.
 

@@ -164,6 +164,18 @@ class TestSelectionSemantics:
         for m in DEFAULT_TRACKED_PROPERTIES:
             assert f'data-trend-metric="{m}"' in body
 
+    def test_assignment_fidelity_reads_iq_blobs(self, client):
+        """Customer report: the same metric shows real values as "IQ Blob (%)"
+        on the Chip Status hero map, but Trends' own pill/chart said the raw
+        key "assignment_fidelity" and (before the history.py fix) always
+        claimed nothing was recorded. The DATA key (JS toggle value, SQLite
+        column) must stay assignment_fidelity; only the visible TEXT changes."""
+        body = client.get(
+            "/topology/trends?metrics=assignment_fidelity").get_data(as_text=True)
+        assert 'data-trend-metric="assignment_fidelity"' in body
+        assert ">IQ Blobs<" in body
+        assert ">assignment_fidelity<" not in body
+
 
 class TestItIsRegisteredEverywhere:
     """A Chip Status section has to be declared in several places at once; miss

@@ -24,7 +24,7 @@
         {% for m in curated %}
             <button type="button" class="topo-trend-chip{% if m in selected %} active{% endif %}"
                     data-trend-metric="{{ m }}" aria-pressed="{{ 'true' if m in selected else 'false' }}"
-                    onclick="ChipTrends.toggle('{{ m }}')">{{ m }}</button>
+                    onclick="ChipTrends.toggle('{{ m }}')">{{ (metric_labels or {}).get(m, m) }}</button>
         {% endfor %}
         </span>
         {# The docs/83 tier: ANY numeric leaf, not just the curated eleven.
@@ -51,7 +51,7 @@
     <div class="topo-trends-grid">
     {% for c in charts %}
         <div class="topo-trend-box" data-trend-metric="{{ c.metric }}">
-            <div class="topo-trend-title">{{ c.metric }}
+            <div class="topo-trend-title">{{ (metric_labels or {}).get(c.metric, c.metric) }}
                 {% if c.n_entities %}<span class="muted">· {{ c.n_entities }} qubit{{ '' if c.n_entities == 1 else 's' }}</span>{% endif %}
             </div>
             {% if c.series %}
