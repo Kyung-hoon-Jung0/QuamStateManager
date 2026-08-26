@@ -4,6 +4,30 @@
    page. Context: landing_config_exists, last_project, resume_path,
    resume_name, recent_paths (from home()). #}
 <div class="landing-projects">
+    {# docs/63 §B, made discoverable: the config-location picker used to live
+       only inside /qualibrate's "Config location…" details — a real user
+       called it "a hidden menu". Same picker (_qualibrate_locate.html),
+       compact, right at the top where a user opening this page actually
+       looks. #}
+    <details class="landing-cfg-strip">
+        <summary class="landing-cfg-summary">
+            <span class="landing-cfg-icon" aria-hidden="true">&#128193;</span>
+            <span class="landing-cfg-label">Config:</span>
+            <code class="landing-cfg-path" title="{{ qualibrate_source.dir if qualibrate_source else '' }}">{{ qualibrate_source.dir if qualibrate_source else '~/.qualibrate' }}</code>
+            {% if qualibrate_source and qualibrate_source.source != 'default' %}<span class="locate-src-chip">{{ qualibrate_source.source }}</span>{% endif %}
+            <span class="landing-cfg-change">change&hellip;</span>
+        </summary>
+        <div class="landing-cfg-body">
+            {% include '_qualibrate_locate.html' %}
+            {% if qualibrate_source and qualibrate_source.source == 'override' %}
+            <form hx-post="/qualibrate/use-default-location" class="locate-use-form"
+                  hx-confirm="Forget the chosen folder and go back to the default/env resolution?">
+                <button type="submit" class="btn-sm">Reset to default location</button>
+            </form>
+            {% endif %}
+        </div>
+    </details>
+
     <div class="landing-head">
         {# User feedback (docs/63 refinement): greet + ask for the project in
            one line — the picker is the hero, the manual waits collapsed below. #}
