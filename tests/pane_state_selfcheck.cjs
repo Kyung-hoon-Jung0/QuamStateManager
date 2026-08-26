@@ -33,6 +33,7 @@ global.Event = window.Event;
 global.KeyboardEvent = window.KeyboardEvent;
 global.navigator = window.navigator;
 global.location = window.location;
+global.history = window.history;   // the skip path pushes the URL itself
 global.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
 global.sessionStorage = global.localStorage;
 window.localStorage = global.localStorage;
@@ -125,7 +126,7 @@ const fresh = doc.getElementById('explorer-search');
 fresh.addEventListener('input', () => inputFired++);
 // _reapplySoft ran synchronously inside afterSwap — value already applied:
 ok(fresh.value === 'f_01', 'stale copy dropped; SOFT re-applied the query on the fresh DOM');
-ok(Object.keys(window.PaneState._stash()).length === 0, 'the stale parked copy was dropped');
+ok(!window.PaneState._stash()['/explorer'], 'the stale parked copy was dropped');
 
 // ── 4. chip switch ⇒ fresh swap wins ───────────────────────────────────────
 swapTo('/bulk', '<div>bulk</div>');                       // park explorer (seq 9)
@@ -141,8 +142,9 @@ pane().innerHTML = '<input type="search" id="explorer-search" class="tree-search
         detail: { shouldSwap: true, pathInfo: { finalRequestPath: '/explorer?depth=3' } },
     });
     Object.defineProperty(before, 'target', { value: pane() });
+    const sizeBefore = Object.keys(window.PaneState._stash()).length;
     doc.dispatchEvent(before);
-    ok(Object.keys(window.PaneState._stash()).length === 0,
+    ok(Object.keys(window.PaneState._stash()).length === sizeBefore,
        'a same-route request never parks');
     const cap = window.PaneState._soft()['/explorer'];
     ok(cap && cap.inputs.some(i => i.value === 'qA5'),
@@ -166,4 +168,67 @@ doc.dispatchEvent(new window.CustomEvent('stateRestored'));
 ok(Object.keys(window.PaneState._stash()).length === 0,
    'stateRestored clears every parked pane');
 
-process.exit(fails ? 1 : 0);
+// -- 8. docs/139 fix 1: a fresh parked KEEP copy skips the fetch entirely --
+// The v2 doctrine amendment: the request is cancelled at htmx:beforeRequest
+// and the parked DOM restored synchronously; a stale copy or a same-route
+// click still fetches normally, so the amendment never widens.
+function requestTo(route) {
+    const evt = new window.CustomEvent('htmx:beforeRequest', {
+        cancelable: true,
+        detail: { target: pane(), requestConfig: { verb: 'get', path: route },
+                  pathInfo: { finalRequestPath: route } },
+    });
+    doc.dispatchEvent(evt);
+    return evt;
+}
+window.PaneState.clear();
+swapTo('/bulk', '<div id="bulk-live">bulk grid</div>');
+swapTo('/explorer',
+       '<input type="search" id="explorer-search" class="tree-search" value="zz">');
+// parked: the bulk grid. Returning to it must not cost a request.
+let req = requestTo('/bulk');
+ok(req.defaultPrevented, 'skip-fetch: the request to a fresh KEEP copy is cancelled');
+ok(!!doc.getElementById('bulk-live'),
+   'skip-fetch: the bulk grid is restored synchronously, no fetch (docs/139)');
+ok(window.PaneState._cur() === '/bulk', 'skip-fetch: the route tracked the skip');
+ok(window.location.pathname === '/bulk', 'skip-fetch: the URL was pushed');
+ok(!!window.PaneState._stash()['/explorer'],
+   'skip-fetch: the outgoing pane was parked on the way');
+req = requestTo('/explorer');
+ok(req.defaultPrevented, 'skip-fetch: /explorer rides the same amendment');
+ok(!!doc.getElementById('explorer-search'),
+   'skip-fetch: the explorer came back with its search text');
+doc.getElementById('pending-tray').setAttribute('data-seq', '11');   // an edit
+req = requestTo('/bulk');
+ok(!req.defaultPrevented, 'skip-fetch: a STALE copy fetches normally');
+req = requestTo('/explorer');
+ok(!req.defaultPrevented,
+   'skip-fetch: a same-route click is a deliberate refresh and always fetches');
+
+// -- 9. Back after a skip-nav: content-route mismatch refetches (docs/139) --
+// Measured live before the fix: the skip pushes URLs htmx has no snapshot
+// for, so Back left /bulk's grid standing under /explorer -- not blank, so
+// the old empty-pane-only fallback never fired.
+setTimeout(() => {   // let earlier scenarios' 60ms fallback timers drain first
+    const calls = [];
+    window.htmx.ajax = (verb, path) => { calls.push(path); return Promise.resolve(); };
+    // pane holds /bulk content (stamped); the URL is somewhere else
+    pane().setAttribute('data-pane-route', '/bulk');
+    window.history.pushState({}, '', '/explorer');
+    window.dispatchEvent(new window.CustomEvent('popstate'));
+    setTimeout(() => {
+        ok(calls.length === 1 && calls[0].indexOf('/explorer') === 0,
+           'Back with a route-mismatched pane refetches the URL route (got '
+           + JSON.stringify(calls) + ')');
+        // an unstamped pane (full page load) with content is left alone
+        const calls2 = [];
+        window.htmx.ajax = (verb, path) => { calls2.push(path); return Promise.resolve(); };
+        pane().removeAttribute('data-pane-route');
+        pane().innerHTML = '<div>server-rendered</div>';
+        window.dispatchEvent(new window.CustomEvent('popstate'));
+        setTimeout(() => {
+            ok(calls2.length === 0, 'an unstamped full-load pane is never refetched');
+            process.exit(fails ? 1 : 0);
+        }, 90);
+    }, 90);
+}, 80);
