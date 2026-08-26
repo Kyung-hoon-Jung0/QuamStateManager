@@ -2077,6 +2077,29 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
 .qualibrate-locate-details { margin: 0.4rem 0 0; }
 .qualibrate-locate-details > summary { cursor: pointer; font-size: 0.9rem; }
 .qualibrate-locate-body { margin: 0.5rem 0 0.2rem; }
+/* Compact config-location strip atop the project landing (user feedback:
+   the /qualibrate-only picker "felt like a hidden menu"). One line closed,
+   the same _qualibrate_locate.html form open — no separate picker to keep
+   in sync. */
+.landing-cfg-strip {
+    max-width: 46rem; margin: 0 auto 0.9rem; text-align: left;
+    border: 1px solid var(--pico-muted-border-color); border-radius: 8px;
+    padding: 0.3rem 0.7rem; background: var(--pico-card-background-color);
+}
+.landing-cfg-summary {
+    cursor: pointer; list-style: none; display: flex; align-items: center;
+    gap: 0.35rem; font-size: 0.85rem; color: var(--pico-muted-color);
+}
+.landing-cfg-summary::-webkit-details-marker { display: none; }
+.landing-cfg-icon { font-size: 0.95rem; }
+.landing-cfg-label { font-weight: 600; }
+.landing-cfg-path {
+    font-family: var(--sm-mono, monospace); font-size: 0.82rem;
+    max-width: 24rem; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; color: var(--pico-color);
+}
+.landing-cfg-change { margin-left: auto; text-decoration: underline; }
+.landing-cfg-body { margin: 0.5rem 0 0.2rem; }
 .welcome h2 { margin-bottom: 0.5rem; }
 .welcome-lead { font-size: 1.02rem; color: var(--pico-color); margin: 0.2rem auto 0.4rem; max-width: 40rem; }
 .welcome-sub { color: var(--pico-muted-color); margin-bottom: 0.5rem; }

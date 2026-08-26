@@ -282,12 +282,30 @@ class TestLandingLocateBlock:
         assert "qualibrate-locate-result" in body
         assert "Welcome to QUAM State Manager" in body   # manual still there
 
-    def test_with_config_landing_has_no_block(self, unpinned):
+    def test_with_config_landing_has_no_welcome_block(self, unpinned):
+        """The no-config WELCOME page's lead block must not also render once
+        a config resolved — that block's copy ("No config found") would be a
+        lie. The project-landing gets its OWN compact strip instead (below)."""
         cfg = _mini_tree(unpinned["tmp"])
         unpinned["client"].post("/qualibrate/use-location",
                                 data={"path": str(cfg)})
         body = unpinned["client"].get("/").get_data(as_text=True)
         assert "landing-locate" not in body
+
+    def test_with_config_landing_shows_the_compact_strip(self, unpinned):
+        """User feedback: the picker used to live ONLY inside /qualibrate's
+        details, and felt like "a hidden menu" once a config was already
+        found. A compact strip at the top of the project landing must let a
+        user change the config location without navigating away."""
+        cfg = _mini_tree(unpinned["tmp"])
+        unpinned["client"].post("/qualibrate/use-location",
+                                data={"path": str(cfg)})
+        body = unpinned["client"].get("/").get_data(as_text=True)
+        assert "landing-cfg-strip" in body
+        assert str(cfg) in body                    # shows the resolved path
+        assert "qualibrate-locate-result" in body   # the real locate form, not a stub
+        assert "chosen in SM" not in body           # the source chip: "override" not "sm-override"
+        assert "override" in body
 
     def test_qualibrate_page_shows_location_controls(self, unpinned):
         cfg = _mini_tree(unpinned["tmp"])
