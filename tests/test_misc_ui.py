@@ -176,3 +176,24 @@ class TestConflictTrayButtonRow:
             r"\.tray-conflict-choices \.tray-force-btn \{([^}]*)\}", css)
         assert m, "the force-button rule disappeared"
         assert "margin-left: auto" not in m.group(1)
+
+
+class TestAppliedLogInline:
+    def test_applied_log_no_longer_forces_its_own_row(self):
+        """User feedback: even collapsed (nothing to show), the applied-log
+        widget forced a full extra row under the topbar tray because the
+        OUTER element carried flex: 0 0 100% — the empty space beside
+        Auto-Sync on the SAME row went unused. It must be an ordinary inline
+        flex item now, with the expandable list floating as an anchored
+        dropdown instead of pushing the row."""
+        import re
+        from pathlib import Path
+        css = Path("quam_state_manager/web/static/style.css").read_text(
+            encoding="utf-8")
+        m = re.search(r"\n\.applied-log \{([^}]*)\}", css)
+        assert m, "the .applied-log rule disappeared"
+        assert "flex: 0 0 100%" not in m.group(1)
+        m2 = re.search(r"\.applied-log-list \{([^}]*)\}", css)
+        assert m2, "the .applied-log-list rule disappeared"
+        assert "position: absolute" in m2.group(1), (
+            "the expandable list must float, not push the row")
