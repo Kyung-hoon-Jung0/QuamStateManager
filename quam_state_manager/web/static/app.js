@@ -15641,17 +15641,46 @@ window.FieldHistory = (function () {
        (the "clock escaped the cell again" report). A per-cell button would
        widen every column of a dense grid, so the single shared button stays.
        mousedown + preventDefault keeps the cell focused. */
+    var CELLBTN_LABEL = "Value history — past values of this field from Param History snapshots";
+    // A plain `title` attribute waits on the BROWSER's own hover delay
+    // (500ms+, not something CSS/JS can shorten) — user feedback: hovering
+    // the clock should show its label right away. A tiny custom tooltip,
+    // shown on mouseenter with no artificial delay, replaces the native one;
+    // aria-label keeps the same text available to assistive tech.
+    var cellBtnTip = null;
+    function _showCellBtnTip() {
+        if (!cellBtn) return;
+        if (!cellBtnTip) {
+            cellBtnTip = document.createElement("div");
+            cellBtnTip.className = "fh-cellbtn-tip";
+            cellBtnTip.textContent = CELLBTN_LABEL;
+            document.body.appendChild(cellBtnTip);
+        }
+        var r = cellBtn.getBoundingClientRect();
+        cellBtnTip.style.display = "block";
+        var w = cellBtnTip.offsetWidth;
+        var left = Math.max(4, Math.min(r.left + r.width / 2 - w / 2,
+                                          window.innerWidth - w - 4));
+        cellBtnTip.style.left = left + "px";
+        cellBtnTip.style.top = (r.bottom + 5) + "px";
+    }
+    function _hideCellBtnTip() {
+        if (cellBtnTip) cellBtnTip.style.display = "none";
+    }
     var cellBtn = null;
     function ensureCellBtn() {
         if (cellBtn) return cellBtn;
         cellBtn = document.createElement("button");
         cellBtn.id = "fh-cellbtn";
         cellBtn.type = "button";
-        cellBtn.title = "Value history — past values of this field from Param History snapshots";
+        cellBtn.setAttribute("aria-label", CELLBTN_LABEL);
         cellBtn.textContent = "🕘";
         cellBtn.style.display = "none";
+        cellBtn.addEventListener("mouseenter", _showCellBtnTip);
+        cellBtn.addEventListener("mouseleave", _hideCellBtnTip);
         cellBtn.addEventListener("mousedown", function (e) {
             e.preventDefault();
+            _hideCellBtnTip();
             var input = cellBtn._input;
             if (input) {
                 open(cellBtn, input.dataset.resolved || input.dataset.dotPath || "", input);
@@ -15759,6 +15788,7 @@ window.FieldHistory = (function () {
         if (!td) return;
         if (b._input && b._input !== input) {
             b._input.classList.remove("fh-docked");   // cell-to-cell move
+            _hideCellBtnTip();
         }
         b._input = input;
         td.appendChild(b);               // appendChild MOVES the shared button
@@ -15770,6 +15800,7 @@ window.FieldHistory = (function () {
     }
     function hideCellBtn() {
         if (!cellBtn) return;
+        _hideCellBtnTip();
         cellBtn.style.display = "none";
         cellBtn.style.left = "";
         if (cellBtn._input) {

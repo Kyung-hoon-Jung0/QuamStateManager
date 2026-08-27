@@ -10535,7 +10535,12 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
    opaque background ("clock invisible") or sat far from a left-aligned value
    in a wide column. Styled as an in-input icon. */
 #fh-cellbtn {
-    position: absolute; top: 50%; transform: translateY(-50%);
+    position: absolute; top: 50%;
+    /* User feedback: the 🕘 glyph's own em-box sits visually low (typical
+       emoji-font metrics, not this element's box) — nudged up a couple px
+       so the icon reads centered against the row instead of translateY's
+       geometrically-correct-but-visually-low -50%. */
+    transform: translateY(calc(-50% - 2px));
     z-index: 5; display: none;
     background: var(--pico-form-element-background-color, transparent);
     border: none; border-radius: .35rem;
@@ -10545,6 +10550,19 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 #fh-cellbtn:hover { opacity: 1; }
 /* only while CLAMPED (text fills the cell) — pads the tail from the icon */
 .bulk-cell.fh-docked { padding-right: 1.5rem; }
+/* Instant custom tooltip for #fh-cellbtn (docs — replaces the native `title`
+   attribute, whose hover delay is browser-controlled and not something CSS
+   can shorten). Shown/positioned by app.js on mouseenter, no CSS transition
+   or delay of its own. */
+.fh-cellbtn-tip {
+    position: fixed; z-index: 200; display: none;
+    max-width: 22rem; padding: .3rem .55rem;
+    background: var(--pico-card-background-color, var(--bg-elevated));
+    border: 1px solid var(--border-color); border-radius: 6px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, .28);
+    font-size: .78rem; line-height: 1.3; color: var(--text-primary);
+    pointer-events: none;
+}
 
 /* ── First-open chip-name banner (docs/20 v2) ─────────────────────────── */
 .chip-name-banner {
