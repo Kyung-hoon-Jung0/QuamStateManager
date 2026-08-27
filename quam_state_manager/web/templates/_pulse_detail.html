@@ -170,6 +170,7 @@
                     <input type="hidden" name="mode" value="value">
                     <input type="text" name="value" class="edit-input"
                            data-param="{{ p.key }}" data-kind="{{ p.kind }}"
+                           {% if p.is_pointer and p.target_path %}data-target-path="{{ p.target_path }}"{% endif %}
                            data-unit="{{ p.unit }}"
                            data-synth="{{ 1 if p.synth else 0 }}"
                            data-committed="{{ p.value if p.value is not none else '' }}"

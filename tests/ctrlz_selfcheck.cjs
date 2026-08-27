@@ -172,6 +172,35 @@ await settle();
     window.document.dispatchEvent(ev);
     await settle();
     ok(calls.length === n && ev.defaultPrevented, 'an auto-repeated Ctrl+Z issues nothing (one press = one step)');
+    // ... but an ordinary text field keeps the browser's own held-key undo
+    const ta = window.document.createElement('textarea');
+    window.document.body.appendChild(ta); ta.focus();
+    const ev2 = new window.KeyboardEvent('keydown', { key: 'z', ctrlKey: true, repeat: true, bubbles: true, cancelable: true });
+    ta.dispatchEvent(ev2);
+    await settle();
+    ok(calls.length === n && !ev2.defaultPrevented, 'a held Ctrl+Z inside a textarea is left to the browser (not hijacked)');
+    ta.remove(); window.document.body.focus();
+}
+
+// ── 1b'''. a burst that the server stopped at the journal boundary ─────────
+// /undo?n=k answers requested/consumed/stopped; the presses it could not
+// consume are re-queued one by one (each walks the journal as a single
+// press does) -- never dropped silently (review of eaa0f05).
+{
+    const n = calls.length;
+    window.document.dispatchEvent(new window.CustomEvent('cellsReverted', { detail: {
+        message: 'Undone: qubits.q1.T1 → 1', entries: [{ dot_path: 'qubits.q1.T1', old_value_str: '1', old_value_disp: '1', old_kind: 'num' }],
+        requested: 5, consumed: 1, stopped: 'journal', level: 'success' } }));
+    for (let i = 0; i < 12; i++) await settle();
+    const issued = calls.slice(n).filter((c) => c.url.indexOf('/undo') === 0);
+    const presses = issued.reduce((s, c) => s + (Number((/[?&]n=(\d+)/.exec(c.url) || [])[1]) || 1), 0);
+    ok(presses === 4, 'the 4 presses the burst could not consume are re-queued (' + issued.map((c) => c.url).join(' ') + ')');
+    const n2 = calls.length;
+    window.document.dispatchEvent(new window.CustomEvent('cellsReverted', { detail: {
+        message: 'Undone: qubits.q1.T1 → 1', entries: [{ dot_path: 'qubits.q1.T1', old_value_str: '1', old_value_disp: '1', old_kind: 'num' }],
+        requested: 5, consumed: 1, stopped: 'exhausted', level: 'success' } }));
+    for (let i = 0; i < 6; i++) await settle();
+    ok(calls.length === n2, 'an exhausted log re-queues nothing');
 }
 
 // ── 1c. the bound is a held key, not a rate limit ──────────────────────────

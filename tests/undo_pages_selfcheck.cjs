@@ -38,7 +38,7 @@ const fetches = [];
 global.fetch = (url, opts) => {
     fetches.push(String(url));
     if (String(url).indexOf('/field/edit') === 0) return Promise.resolve({ json: () => Promise.resolve({ ok: true, stored: 0.77, stored_kind: 'num' }) });
-    if (String(url).indexOf('/field/peek') === 0) return Promise.resolve({ json: () => Promise.resolve({ ok: true, values: { 'qubits.q1.amp_0': 0.1 } }) });
+    if (String(url).indexOf('/field/peek') === 0) { const dp = decodeURIComponent(String(url).split('dot_path=')[1] || ''); const vals = {}; vals[dp] = 0.1; return Promise.resolve({ json: () => Promise.resolve({ ok: true, values: vals }) }); }
     return new Promise(() => {});
 };
 window.fetch = global.fetch;
@@ -54,7 +54,7 @@ global.SearchQuery = window.SearchQuery;
 
 const d = window.document;
 const c = d.getElementById('explorer-tree-state');
-const DATA = { qubits: { q1: { amp_0: 0.5, T1: 2e-5 }, q2: { amp_0: 0.6 } } };
+const DATA = { qubits: { q1: { amp_0: 0.5, T1: 2e-5 }, q2: { amp_0: 0.6 }, q3: { zeta: 0.9 } } };   // q3: never expanded, never searched
 window.renderJsonTree('explorer-tree-state', DATA, { defaultDepth: 3, crud: true });
 c.querySelector('.tree-node[data-path="qubits.q1"] .tree-toggle').click();   // materialise q1's leaves
 
@@ -81,6 +81,15 @@ setTimeout(function () {
         setTimeout(function () {
             ok(c.querySelector('.tree-node[data-path="qubits.q1.amp_0"] .tree-val').textContent === '0.1', 'undo repainted the node in place');
             ok(c._treeData.qubits.q1.amp_0 === 0.1, 'and the data model follows the undo');
+            // a leaf inside a NEVER-expanded branch (q2 is collapsed): no node, the model must still follow
+            ok(!c.querySelector('.tree-node[data-path="qubits.q3.zeta"]'), 'fixture: q3.zeta was never materialised');
+            window._revertTreeNode('qubits.q3.zeta', '0.1');
+            setTimeout(function () {
+                ok(c._treeData.qubits.q3.zeta === 0.1, 'an undo over a never-expanded leaf still updates the model (was 0.9)');
+                c.querySelector('.tree-node[data-path="qubits.q3"] .tree-toggle').click();
+                const v2 = c.querySelector('.tree-node[data-path="qubits.q3.zeta"] .tree-val');
+                ok(v2 && v2.textContent === '0.1', 'and expanding it shows the reverted value');
+            }, 30);
 
             // ── 2. inline (Pulses) field: reverted as a COMMITTED value ────
             const f = d.querySelector('#inspector-pane input[name="value"]');
@@ -111,7 +120,7 @@ setTimeout(function () {
             window.UndoNav.handle = function (entries) { navved.push(entries[0].dot_path); };
             window.UndoTrail.goTo('qubits.q9.not_on_this_page');
             ok(navved[0] === 'qubits.q9.not_on_this_page', 'go to field hands an off-screen path to UndoNav.handle -- on the press');
-            process.exit(fails ? 1 : 0);
+            setTimeout(function () { process.exit(fails ? 1 : 0); }, 120);   // after the never-expanded-leaf pins above
         }, 50);
     }, 300);
 }, 50);

@@ -91,11 +91,41 @@ window.PulsesPage = (function () {
         if (!root) return;
         var p = root.getAttribute('data-pulse-path') || '';
         var entries = ((evt && evt.detail) || {}).entries || [];
-        var mine = entries.some(function (e) {
+        // Which of this pulse's fields are inline inputs (in-place repaint,
+        // cache key complete), and which stored paths this pulse's pointer
+        // fields resolve THROUGH (an undo at the target changes the waveform
+        // without touching any path under the pulse).
+        var fieldPaths = {}, targets = [];
+        root.querySelectorAll('form.pulse-edit-form input[name="dot_path"]').forEach(function (h) { fieldPaths[h.value] = 1; });
+        root.querySelectorAll('input[data-param][data-target-path]').forEach(function (i) {
+            var t = i.getAttribute('data-target-path'); if (t) targets.push(t);
+        });
+        var mine = false, inPlace = true;
+        entries.forEach(function (e) {
             var dp = (e && e.dot_path) || '';
-            return dp === p || dp.indexOf(p + '.') === 0;
+            if (!dp) return;
+            if (dp === p || dp.indexOf(p + '.') === 0) {
+                mine = true;
+                // a list / runtime row, a structural change, or a re-link is
+                // not an input the cache key can see (review of eaa0f05)
+                if (!fieldPaths[dp] || e.created || e.deleted || e.old_kind === 'pointer') inPlace = false;
+            } else if (targets.some(function (t) { return dp === t || dp.indexOf(t + '.') === 0; })) {
+                mine = true; inPlace = false;
+            }
         });
         if (!mine) return;
+        if (!inPlace) {
+            // The honest path: re-render the inspector from the server (the
+            // same thing a commit does; InlineCommit restores focus), which
+            // re-caches the committed waveform under its true key.
+            root._cpPending = true;
+            _debounce('pulse-committed-refresh', function () {
+                if (!document.body.contains(root) || !window.htmx) return;
+                window.htmx.ajax('GET', '/pulse/detail?path=' + encodeURIComponent(p),
+                                 { target: '#inspector-pane', swap: 'innerHTML' });
+            }, COMMITTED_REFRESH_MS);
+            return;
+        }
         root._cpPending = true;              // the stale committed plot must not be drawn meanwhile
         _debounce('pulse-committed-refresh', function () { refreshCommittedPlot(root); },
                   COMMITTED_REFRESH_MS);

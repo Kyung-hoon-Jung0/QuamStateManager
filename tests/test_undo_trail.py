@@ -65,7 +65,13 @@ def test_burst_contract_ships():
     assert "if (evt.repeat) { evt.preventDefault(); return; }" in app, "a held key is not a burst"
     assert 'var path = item.n > 1 ? item.path + "?n=" + item.n : item.path;' in app, "coalesced presses ride ?n=k"
     routes = (_ROOT / "quam_state_manager" / "web" / "routes.py").read_text(encoding="utf-8")
-    assert "def _undo_count()" in routes and routes.count("for _ in range(_undo_count()):") == 2, "/undo and /redo pop k actions"
+    assert "def _undo_count()" in routes and routes.count("for _ in range(n_req):") == 2, "/undo and /redo pop k actions"
+    # review of eaa0f05: one lock around the burst, and a stopped burst says so
+    assert routes.count('"consumed":') >= 2 and routes.count('"stopped":') >= 2
+    assert "with _burst_lock:" in routes and 'extra={"requested": n_req, "consumed": len(all_fents)' in routes
+    # the auto-repeat guard sits AFTER the "not ours" bail-out (ordinary text fields keep the browser's held-key undo)
+    assert app.index('&& !inGridCell && !inChPanel && !inInline) return;') < app.index("if (evt.repeat) { evt.preventDefault(); return; }")
+    assert 'if (d.stopped === "journal" && _remaining > 0 && window.UndoQueue) {' in app, "a journal-stopped burst re-queues the rest"
     pulses = (_STATIC / "pulses.js").read_text(encoding="utf-8")
     assert "var PLOT_CACHE_MAX = 200;" in pulses and "function refreshCommittedPlot(root)" in pulses
     assert "var _previewCache = new Map();" in pulses, "the live preview is memoised too"

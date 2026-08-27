@@ -1095,8 +1095,10 @@
         // column, which is then at the left edge and hydrated; anything
         // further right hydrates on scroll, as always.
         // Any change -- including CLEARING the search, which brings cold
-        // (hidden-at-mount) columns back on screen -- runs the pass.
-        if (_virt) _virtOnScroll();
+        // (hidden-at-mount) columns back on screen -- runs the pass, NOW:
+        // a hidden-at-mount column has no frozen width, so a rAF-deferred
+        // pass would paint one frame of empty tds first (review of 6d57eea).
+        if (_virt) _virtOnScroll(true);
         // A new query retires the previous "show them anyway" choice — it was
         // made about those tokens, and silently carrying it forward would make
         // the next search quietly stop filtering rows.
@@ -1814,11 +1816,17 @@
         _virtHydrateCols(Array.from(_virt.cold));
     }
     var _virtScrollPending = false;
-    function _virtOnScroll() {
-        if (!_virt || _virtScrollPending) return;
+    function _virtOnScroll(immediate) {
+        if (!_virt) return;
+        if (immediate) { _virtScrollPending = false; _virtPass(); return; }
+        if (_virtScrollPending) return;
         _virtScrollPending = true;
         window.requestAnimationFrame(function () {
             _virtScrollPending = false;
+            _virtPass();
+        });
+    }
+    function _virtPass() {
             if (!_virt) return;
             var t = table(); if (!t) return;
             var wrap = _virt.wrap;
@@ -1832,7 +1840,6 @@
                 if (_virt && _virt.cold.has(k) && !_thHidden(h) && h.offsetLeft < edge) due.push(k);
             });
             _virtHydrateCols(due);
-        });
     }
 
     // ── column drag-resize (override the value-fit width per column) ─────────

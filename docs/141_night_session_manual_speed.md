@@ -257,6 +257,33 @@ Pinned by `pulses_undo_selfcheck.cjs` (13 cases, mutation 8/8),
 `test_undo_burst_stops_at_the_journal_boundary`. Real-Chrome scripts:
 `cdp_burst.js`, `cdp_focus_undo.js`.
 
+### 4e-review. The adversarial review of eaa0f05 / 3885487 / 6d57eea (2 major, 6 minor — all fixed, all pinned)
+
+* **The waveform cache key could not see every parameter (major).** It hashed
+  the `input[data-param]` rows only; a list row (`waveform_I`), a runtime row,
+  a re-link, or an undo at a POINTER TARGET (a shared `#../x180/length`) changed
+  the waveform under an unchanged key, and the cache served the wrong plot
+  (jsdom-reproduced: synth calls 0, plot 0.9 while the store held 0.1). Rule
+  now: an undo the key can see (an inline input's own path, a value kind) is
+  repainted in place; anything else re-renders the inspector from the server —
+  the same thing a commit does — which re-caches under the true key. Pointer
+  inputs carry `data-target-path` so an undo at the target counts as "mine".
+* **A stopped burst dropped presses silently (major).** `/undo?n=k` now runs
+  under one `store._lock` (the "one lock" claim was false before) and answers
+  `requested / consumed / stopped / level`; the client re-queues the presses
+  a journal boundary could not consume (each walks the journal on its own),
+  shows a mid-burst error as an error and resyncs the grids, and drops the rest
+  only when the log is genuinely exhausted. `/redo` the same.
+* Minor: the auto-repeat guard sat before the "not ours" bail-out and hijacked
+  a held Ctrl+Z in every ordinary textarea (moved after it); a dirty inline
+  field + Ctrl+Shift+Z is left to the browser (a server redo would overwrite
+  the typing); `_revertTreeNode` writes the model even when the leaf was never
+  materialised (both explorer trees tried; the node is painted only if it
+  exists); the reverted baseline is the LOSSLESS `old_value_disp`, not `%.6e`
+  (a 7-sig-fig key was a guaranteed cache miss and a truncated baseline); a
+  search clear / column re-tick runs the hydration pass synchronously so a
+  hidden-at-mount cold column never paints one frame of empty tds.
+
 ## 5. Tooling that came out of the night
 
 `scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js` (+ daytime: `cdp_profile.js` function-level CPU profile, `cdp_trace.js` per-phase trace of one keystroke, `cdp_type.js` char-by-char typing with a gap + debounce override, `cdp_undo.js` trusted Ctrl+Z/Ctrl+Shift+Z through the page's own UI, `cdp_virt.js` virtualization sampler): Chrome headless with the

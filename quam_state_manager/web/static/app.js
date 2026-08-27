@@ -3308,8 +3308,23 @@ document.addEventListener("cellsReverted", function(evt) {
     var d = evt.detail || {};
     var entries = d.entries || [];
     entries.forEach(function(e) {
-        _revertCell(e.dot_path, e.old_value_str != null ? e.old_value_str : "");
+        // old_value_disp is the LOSSLESS string (docs/124 M-9); old_value_str
+        // is %.6e. The Pulses inputs render the lossless value, so the
+        // reverted baseline must be lossless too (review of eaa0f05).
+        var v = e.old_value_disp != null ? e.old_value_disp
+              : (e.old_value_str != null ? e.old_value_str : "");
+        _revertCell(e.dot_path, String(v));
     });
+    // A burst that stopped early (docs/141 4e, review of eaa0f05): at a
+    // journal boundary the remaining presses are re-queued one by one (each
+    // walks the journal as a single press does); an error is shown as one
+    // and the grids resync to the store's truth; an exhausted log drops
+    // the rest -- there is nothing left to undo.
+    var _remaining = (d.requested || 0) - (d.consumed || 0);
+    if (d.stopped === "journal" && _remaining > 0 && window.UndoQueue) {
+        var _dir = /^Redone|^Redid/i.test(String(d.message || "")) ? "/redo" : "/undo";
+        for (var _k = 0; _k < _remaining; _k++) window.UndoQueue.push(_dir);
+    }
     // The Live-State-Edit grids render their own cells (not inspector inputs),
     // so _revertCell can't reach them — repaint by path, then decide.
     var structural = entries.some(function (e) { return e && (e.created || e.deleted); });
@@ -3329,8 +3344,8 @@ document.addEventListener("cellsReverted", function(evt) {
             uncovered += (res.uncovered || []).length;
         });
     } catch (err) { uncovered = entries.length; }   // never trust a half repaint
-    if (gridOnScreen && (structural || uncovered > 0)) _scheduleGridResync();
-    if (d.message && window.showToast) window.showToast(d.message, "success");
+    if (gridOnScreen && (structural || uncovered > 0 || d.stopped === "error")) _scheduleGridResync();
+    if (d.message && window.showToast) window.showToast(d.message, d.level === "error" ? "error" : "success");
     // Flash the reverted items that are on screen. NO automatic navigation
     // (docs/73's "open the owning surface" is retired): on the Pulses page a
     // redo of a field that was not visible replaced the pulse inspector
@@ -5006,11 +5021,6 @@ window.UndoQueue = (function () {
 document.addEventListener("keydown", function(evt) {
     if (!((evt.ctrlKey || evt.metaKey) && (evt.key === "z" || evt.key === "Z")
           && !evt.altKey)) return;
-    // docs/141 4e: one press = one step. A HELD key auto-repeats at ~30/s
-    // and used to fill the queue in under a second, then keep undoing for
-    // seconds after the key was released. The repeats are ignored; the user
-    // presses as many times as they mean.
-    if (evt.repeat) { evt.preventDefault(); return; }
     var a = document.activeElement;
     var inGridCell = !!(a && a.classList && a.classList.contains("bulk-cell"));
     var inChPanel = !!(a && a.closest && a.closest(".colhist-overlay"));
@@ -5023,9 +5033,19 @@ document.addEventListener("keydown", function(evt) {
     var inInline = !!(a && a.matches && a.matches('form.inline-edit input[name="value"]'));
     if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)
         && !inGridCell && !inChPanel && !inInline) return;
-    if (inInline && !evt.shiftKey) {
+    // docs/141 4e: one press = one step. A HELD key auto-repeats at ~30/s
+    // and used to fill the queue in under a second, then keep undoing for
+    // seconds after the key was released. The repeats are ignored; the user
+    // presses as many times as they mean. AFTER the "not ours" bail-out
+    // above: an ordinary text field keeps the browser's own held-key undo
+    // (review of eaa0f05).
+    if (evt.repeat) { evt.preventDefault(); return; }
+    if (inInline) {
         var _base = a.hasAttribute("data-committed") ? a.getAttribute("data-committed") : a.defaultValue;
         if (a.value !== _base) {
+            // typed, not committed: Ctrl+Z undoes the typing; Ctrl+Shift+Z is
+            // the browser's (a server redo would overwrite the typing)
+            if (evt.shiftKey) return;
             evt.preventDefault();
             a.value = _base;
             a.dispatchEvent(new Event("input", { bubbles: true }));
@@ -7186,15 +7206,21 @@ window.clearDetailPanelSearch = function(btnEl) {
 
     window._revertTreeNode = function(dotPath, oldValueStr) {
         var treeNode = document.querySelector('.tree-node[data-path="' + dotPath + '"]');
-        if (!treeNode) return;
-        var row = treeNode.querySelector(":scope > .tree-row");
-        if (!row) return;
-        row.classList.remove("tree-row-pending");
-        var valEl = row.querySelector(".tree-val");
-        if (!valEl) return;
+        var row = treeNode ? treeNode.querySelector(":scope > .tree-row") : null;
+        var valEl = row ? row.querySelector(".tree-val") : null;
+        if (row) row.classList.remove("tree-row-pending");
 
         function paint(v) {
-            _treeModelSet(treeNode.closest ? treeNode.closest(".json-tree") : null, dotPath, v);
+            // The MODEL first, whether or not the leaf is on screen: a leaf
+            // inside a never-expanded branch has no node, but the next expand
+            // or search reads container._treeData (review of 3885487). Both
+            // explorer trees are tried; _treeModelSet fails closed on a path
+            // the model does not hold.
+            var _c1 = document.getElementById("explorer-tree-state");
+            var _c2 = document.getElementById("explorer-tree-wiring");
+            if (!(_c1 && _treeModelSet(_c1, dotPath, v)) && _c2) _treeModelSet(_c2, dotPath, v);
+            if (treeNode && !_c1 && !_c2) _treeModelSet(treeNode.closest(".json-tree"), dotPath, v);
+            if (!valEl) return;
             valEl.textContent = _formatValue(v);
             valEl.dataset.editVal = (typeof v === "string") ? v : _formatValue(v);
             valEl.className = valEl.className
@@ -7203,6 +7229,9 @@ window.clearDetailPanelSearch = function(btnEl) {
             valEl.classList.add("tree-val-" + _typeOf(v));
             if (_isPointer(v)) valEl.classList.add("tree-val-pointer");
         }
+        // Nothing on this page holds the model or the node: nothing to do.
+        if (!valEl && !document.getElementById("explorer-tree-state")
+                   && !document.getElementById("explorer-tree-wiring")) return;
 
         // r14 honesty: the old numeric-first guess repainted a reverted STRING
         // "0.13" as bare 0.13 (wrong text AND wrong colour). Ask the server for
@@ -7222,8 +7251,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                 if (oldValueStr !== "" && oldValueStr !== "null" && !isNaN(num)) {
                     paint(num);
                 } else if (oldValueStr === "") {
-                    valEl.textContent = "null";
-                    valEl.dataset.editVal = "";
+                    paint(null);
                 } else {
                     paint(oldValueStr);
                 }

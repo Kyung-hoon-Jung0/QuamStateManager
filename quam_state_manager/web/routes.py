@@ -21,6 +21,7 @@ import csv
 import gzip
 import hashlib
 import io
+import contextlib
 import json
 import logging
 import math
@@ -11460,7 +11461,15 @@ def undo():
 
     all_entries: list = []
     groups = 0
-    for _ in range(_undo_count()):
+    n_req = _undo_count()
+    stopped = None          # None | "journal" | "error" | "exhausted"
+    err_text = ""
+    # ONE lock around the whole burst (review of eaa0f05): k pops as one
+    # critical section, so a foreign write cannot land between two of them
+    # and be undone as if it were the user's own.
+    _burst_lock = store._lock if store is not None else contextlib.nullcontext()
+    with _burst_lock:
+      for _ in range(n_req):
         # docs/107 routing: an ordinary group on top undoes exactly as before;
         # an EMPTY log — or a ``jrn:`` staged step already on top — walks
         # DEEPER into the cross-save journal (staging the next unit's inverse
@@ -11475,6 +11484,7 @@ def undo():
                         and top_gid.startswith(undo_journal.GID_PREFIX))):
                 if groups == 0:
                     return _undo_journal_step(ctx)
+                stopped = "journal"
                 break
 
         _redo_begin(ctx, store)   # docs/107: a foreign edit since forks history
@@ -11487,9 +11497,12 @@ def undo():
             _invalidate_engine_cache()
             if groups == 0:
                 return render_template("_status.html", message=str(exc), level="error"), 409
+            stopped = "error"
+            err_text = str(exc)
             break
         _invalidate_engine_cache()
         if not entries:
+            stopped = "exhausted"
             break
         _redo_push_group(ctx, store, entries)   # docs/107: Ctrl+Shift+Z target
         all_entries.extend(entries)
@@ -11528,7 +11541,7 @@ def undo():
         # Revert each affected inspector cell + Explorer tree node in place, and
         # toast the summary (handled client-side in the cellsReverted listener).
         "cellsReverted": {
-            "message": message,
+            "message": (message + f" — stopped: {err_text}") if stopped == "error" else message,
             # source_file + deleted feed UndoNav (r16 0-2, docs/73): the
             # RESPONSE is the authoritative what-was-undone signal (a peek-
             # then-undo design would race a concurrent commit), so the
@@ -11538,6 +11551,15 @@ def undo():
                                       deleted=e.deleted, source_file=e.source_file)
                 for e in entries
             ],
+            # A burst that stopped early says so (review of eaa0f05): the
+            # client re-queues `requested - consumed` presses at a journal
+            # boundary (each walks the journal on its own, as a single press
+            # does), shows an error toast + resyncs the grids on an error,
+            # and drops the rest when the log is simply exhausted.
+            "requested": n_req,
+            "consumed": groups,
+            "stopped": stopped,
+            "level": "error" if stopped == "error" else "success",
         },
         # open Pulses/grids re-fetch their rows (no-op elsewhere)
         "pulses-changed": True,
@@ -11706,15 +11728,22 @@ def redo():
     # docs/141 4e: ``?n=k`` re-applies up to k frames in one request (a
     # coalesced burst); a jrn: step on top ends the burst (its own press).
     all_fents: list = []
-    for _ in range(_undo_count()):
+    n_req = _undo_count()
+    stopped = None
+    err_text = ""
+    with store._lock:
+      for _ in range(n_req):
         top_gid = store.change_log[-1].group_id if store.change_log else None
         if isinstance(top_gid, str) and top_gid.startswith(undo_journal.GID_PREFIX):
+            stopped = "journal"
             break
         frames = _redo_stack(ctx)
         if not frames:
+            stopped = "exhausted"
             break
         if ctx.get("redo_seq") != store.mutation_seq:
             frames.clear()   # foreign mutation since — dead timeline, silent no-op
+            stopped = "exhausted"
             break
         frame = frames.pop()
 
@@ -11750,6 +11779,8 @@ def redo():
                     "_status.html",
                     message=f"Redo failed, nothing changed: {failed}",
                     level="error"), 409
+            stopped = "error"
+            err_text = str(failed)
             break   # the frames before it stand; this one is dropped, the burst ends
         if is_jrn:
             # Re-staging a discarded journal step re-consumes its unit.
@@ -11777,28 +11808,29 @@ def redo():
     # Client flags describe what happened to the CELL now: a re-applied
     # create restored it (deleted=True in undo-speak), a re-applied delete
     # removed it (created=True) — the exact inversion of the frame's flags.
-    return _redo_response(message, [
-        _revert_entry_payload(fe["path"], fe["new"],
-                              created=bool(fe["deleted"]),
-                              deleted=bool(fe["created"]),
-                              source_file=fe.get("source_file", "state"))
-        # CHRONOLOGICAL, oldest first: the client writes entries in order and
-        # the last write wins, so a burst that re-applies k values to one
-        # path must end on the NEWEST (real-Chrome 2026-08-28: newest-first
-        # left the oldest redone value in the cell while the store held the
-        # newest). /undo's newest-first order is right for the same reason --
-        # its last entry is the oldest undone group's old value.
-        for group in all_fents
-        for fe in group
-    ])
+    return _redo_response(
+        (message + f" — stopped: {err_text}") if stopped == "error" else message,
+        [
+            _revert_entry_payload(fe["path"], fe["new"],
+                                  created=bool(fe["deleted"]),
+                                  deleted=bool(fe["created"]),
+                                  source_file=fe.get("source_file", "state"))
+            for group in all_fents
+            for fe in group
+        ],
+        extra={"requested": n_req, "consumed": len(all_fents), "stopped": stopped,
+               "level": "error" if stopped == "error" else "success"})
 
 
-def _redo_response(message: str, entries_payload: list[dict]):
+def _redo_response(message: str, entries_payload: list[dict], extra: dict | None = None):
     """The /undo response shape (tray + cellsReverted HX-Trigger), reused by
     both /redo branches so the client repaint/UndoNav path stays ONE."""
     resp = make_response(_tray_html())
+    payload = {"message": message, "entries": entries_payload}
+    if extra:
+        payload.update(extra)
     resp.headers["HX-Trigger"] = json.dumps({
-        "cellsReverted": {"message": message, "entries": entries_payload},
+        "cellsReverted": payload,
         "pulses-changed": True,
         "diagnostics-changed": True,
     })

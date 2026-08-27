@@ -44,7 +44,8 @@ global._debounce = window._debounce;
 const renders = [];
 window._plotlyRender = function (divId, data) { renders.push({ divId: divId, y: data.length ? data[0].y.slice() : null }); return Promise.resolve(null); };
 window.requirePlotly = () => Promise.resolve(); window.Plotly = { purge: () => {} };
-window.htmx = { ajax: () => Promise.resolve(), trigger: () => {}, process: () => {} }; global.htmx = window.htmx;
+const ajaxCalls = [];
+window.htmx = { ajax: (m, u, o) => { ajaxCalls.push(m + ' ' + u); return Promise.resolve(); }, trigger: () => {}, process: () => {} }; global.htmx = window.htmx;
 // synth stub: records bodies; each response carries a y scaled from a counter; delay per call
 const synthCalls = []; let delays = [];
 let plotN = 0;
@@ -133,5 +134,25 @@ function revert(dotPath, committed) {
     amp.value = '0.5'; amp.dispatchEvent(new Event('input', { bubbles: true }));   // the same preview again
     await sleep(300);
     ok(synthCalls.length === c7 + 1 && renders.length > r7, 'the same preview value again: drawn from RAM, no request');
+
+    // 8. an undo the cache key cannot see (a list / runtime row, a re-link,
+    //    or an undo at a POINTER TARGET) re-renders the inspector instead
+    //    of trusting the cache (review of eaa0f05)
+    amp.value = amp.getAttribute('data-committed'); amp.dispatchEvent(new Event('input', { bubbles: true })); await sleep(200);
+    const c8 = synthCalls.length, a8 = ajaxCalls.length;
+    d.dispatchEvent(new CustomEvent('cellsReverted', { detail: { message: 'Undone', entries: [{ dot_path: PULSE + '.waveform_I.1', old_value_str: '0.2', old_kind: 'num' }] } }));
+    await sleep(300);
+    ok(synthCalls.length === c8 && ajaxCalls.length === a8 + 1 && /^GET \/pulse\/detail\?path=/.test(ajaxCalls[a8]),
+       'a list-row undo re-renders the inspector (no cached waveform can be right)');
+    const a9 = ajaxCalls.length;
+    amp.setAttribute('data-target-path', 'qubits.q1.xy.operations.x90');     // amplitude resolves through a pointer
+    d.dispatchEvent(new CustomEvent('cellsReverted', { detail: { message: 'Undone', entries: [{ dot_path: 'qubits.q1.xy.operations.x90.amplitude', old_value_str: '0.3', old_kind: 'num' }] } }));
+    await sleep(300);
+    ok(ajaxCalls.length === a9 + 1, 'an undo at the pointer TARGET re-renders too (the waveform changed without touching this pulse)');
+    amp.removeAttribute('data-target-path');
+    const a10 = ajaxCalls.length;
+    d.dispatchEvent(new CustomEvent('cellsReverted', { detail: { message: 'Undone', entries: [{ dot_path: PULSE + '.amplitude', old_value_str: '#./x90/amplitude', old_kind: 'pointer' }] } }));
+    await sleep(300);
+    ok(ajaxCalls.length === a10 + 1, 'a re-link (pointer kind) re-renders');
     process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e && e.stack || e); process.exit(1); });

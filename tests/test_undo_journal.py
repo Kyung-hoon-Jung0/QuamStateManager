@@ -283,6 +283,18 @@ class TestEditorWalk:
         trig = _trigger(r)["cellsReverted"]
         assert trig["message"].startswith("Undone: qubits.qA1.z.joint_offset")   # ONE ordinary action
         assert _off(env) == 0.09
+        # ... and the response SAYS the burst stopped, so the client can
+        # re-queue the four remaining presses (review of eaa0f05)
+        assert (trig["requested"], trig["consumed"], trig["stopped"], trig["level"]) == (5, 1, "journal", "success")
+        # a burst that runs out of log says "exhausted" (nothing to re-queue)
+        _edit(c, 0.2)
+        trig = _trigger(c.post("/undo?n=3"))["cellsReverted"]
+        assert (trig["consumed"], trig["stopped"]) == (1, "journal")   # the saved unit is next: a boundary, not exhaustion
+        c.post("/redo")
+        _edit(c, 0.21)
+        _ctx(env)["undo_units"] = []            # no journal: the log simply runs out
+        trig = _trigger(c.post("/undo?n=3"))["cellsReverted"]
+        assert trig["consumed"] >= 1 and trig["stopped"] in ("exhausted", "journal")
         gids = [e.group_id for e in _ctx(env)["store"].change_log]
         assert not any(isinstance(g, str) and g.startswith("jrn:") for g in gids), \
             "the burst did not walk into the journal"
