@@ -2516,7 +2516,7 @@
                 // reflow on a multi-MB DOM. One pass shortly after the last
                 // keystroke instead of one per key.
                 if (_searchTimer) clearTimeout(_searchTimer);
-                _searchTimer = setTimeout(applySearch, window.__bulkSearchDebounce || 120);
+                _searchTimer = setTimeout(applySearch, window.__bulkSearchDebounce || 200);   // 200: user-directed 2026-08-28 (docs/141 4d measured 120 vs 200 equal in cost)
             });
             ChipBar.mount();
 

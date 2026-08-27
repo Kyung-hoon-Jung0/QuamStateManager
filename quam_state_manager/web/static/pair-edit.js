@@ -643,7 +643,7 @@
                 search._pairBound = true;
                 search.addEventListener('input', function () {
                     if (_pairSearchTimer) clearTimeout(_pairSearchTimer);
-                    _pairSearchTimer = setTimeout(applySearch, 120);
+                    _pairSearchTimer = setTimeout(applySearch, window.__bulkSearchDebounce || 200);   // same pause as the qubit grid (user-directed 200, 2026-08-28)
                 });
             }
             // restore persisted query into our filter on (re)mount

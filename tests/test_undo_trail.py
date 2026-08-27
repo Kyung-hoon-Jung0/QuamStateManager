@@ -67,7 +67,13 @@ def test_burst_contract_ships():
     routes = (_ROOT / "quam_state_manager" / "web" / "routes.py").read_text(encoding="utf-8")
     assert "def _undo_count()" in routes and routes.count("for _ in range(_undo_count()):") == 2, "/undo and /redo pop k actions"
     pulses = (_STATIC / "pulses.js").read_text(encoding="utf-8")
-    assert "var PLOT_CACHE_MAX = 20;" in pulses and "function refreshCommittedPlot(root)" in pulses
+    assert "var PLOT_CACHE_MAX = 200;" in pulses and "function refreshCommittedPlot(root)" in pulses
+    assert "var _previewCache = new Map();" in pulses, "the live preview is memoised too"
+    # user-directed 2026-08-28: the grids wait 200 ms of typing pause
+    bulk = (_STATIC / "bulk-edit.js").read_text(encoding="utf-8")
+    pair = (_STATIC / "pair-edit.js").read_text(encoding="utf-8")
+    assert "setTimeout(applySearch, window.__bulkSearchDebounce || 200)" in bulk
+    assert "setTimeout(applySearch, window.__bulkSearchDebounce || 200)" in pair
 
 
 def test_undo_never_navigates_by_itself():

@@ -120,5 +120,18 @@ function revert(dotPath, committed) {
     ok(root._committedPlot.traces[0].y[1] === last && renders[renders.length - 1].y[1] === last,
        'the newer state wins even though the older request answered later');
     ok(!root._cpPending, 'nothing left pending');
+
+    // 7. the live PREVIEW is memoised: typing back to a value already
+    //    previewed redraws from RAM, no synth request
+    const c7 = synthCalls.length;
+    amp.value = '0.5'; amp.dispatchEvent(new Event('input', { bubbles: true }));   // dirty -> preview
+    await sleep(300);
+    ok(synthCalls.length === c7 + 1 && JSON.stringify(synthCalls[c7].params) === '{"amplitude":"0.5"}', 'a new preview value asks synth once');
+    amp.value = amp.getAttribute('data-committed'); amp.dispatchEvent(new Event('input', { bubbles: true }));   // back to clean
+    await sleep(300);
+    const r7 = renders.length;
+    amp.value = '0.5'; amp.dispatchEvent(new Event('input', { bubbles: true }));   // the same preview again
+    await sleep(300);
+    ok(synthCalls.length === c7 + 1 && renders.length > r7, 'the same preview value again: drawn from RAM, no request');
     process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e && e.stack || e); process.exit(1); });

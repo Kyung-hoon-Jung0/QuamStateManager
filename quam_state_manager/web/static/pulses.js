@@ -28,7 +28,16 @@ window.PulsesPage = (function () {
        one debounced refresh, and a miss is ONE synth call for the final
        state (its own generation token: a preview fetch racing it can never
        drop it, and it can never draw over a newer one). */
-    var PLOT_CACHE_MAX = 20;
+    // 200 = the undo journal's own depth (undo_journal.MAX_UNITS): every
+    // state a Ctrl+Z / Ctrl+Shift+Z can reach is a state this page may have
+    // drawn. A decimated waveform is ~2 traces x <=2,000 points, ~30-60 KB
+    // as JS numbers; 200 of them is ~10 MB at most, nothing to a desktop
+    // browser. The bound is depth, not memory (user-directed 2026-08-28).
+    var PLOT_CACHE_MAX = 200;
+    // The live PREVIEW is memoised the same way -- typing back to a value
+    // already previewed (or Escape, or a slider retracing its path) redraws
+    // from RAM with no synth request. Success-only, same bound.
+    var _previewCache = new Map();       // JSON body -> plot
     var COMMITTED_REFRESH_MS = 120;
     var _plotCache = new Map();          // key -> plot payload (insertion-ordered)
 
@@ -300,13 +309,27 @@ window.PulsesPage = (function () {
         el.hidden = !msg;
     }
 
-    function fetchSynth(body, cb) {
+    function fetchSynth(body, cb, baseKey) {
         var gen = ++_gen;
+        // baseKey: the COMMITTED state the overrides sit on (committedKey) --
+        // the same overrides over a different committed length are a
+        // different waveform. A stateless (qclass) synth has no base.
+        var key = (baseKey || '') + '||' + JSON.stringify(body);
+        var hit = _previewCache.get(key);
+        if (hit) {
+            _previewCache.delete(key); _previewCache.set(key, hit);   // recency
+            cb({ ok: true, plot: hit, param_errors: {} });
+            return;
+        }
         fetch('/api/pulse/synth', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
         }).then(function (r) { return r.json(); }).then(function (data) {
+            if (data && data.ok && data.plot && data.plot.ok) {
+                _previewCache.set(key, data.plot);
+                while (_previewCache.size > PLOT_CACHE_MAX) _previewCache.delete(_previewCache.keys().next().value);
+            }
             if (gen !== _gen) return;  // a newer request superseded this one
             cb(data);
         }).catch(function () { /* keep the last plot on network errors */ });
@@ -375,7 +398,7 @@ window.PulsesPage = (function () {
                     showSynthErr(root, data.error
                         || firstParamError(data.param_errors));
                 }
-            });
+            }, committedKey(root));
         }, PREVIEW_DEBOUNCE_MS);
     }
 

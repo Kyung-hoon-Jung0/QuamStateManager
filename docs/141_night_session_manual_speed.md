@@ -191,7 +191,8 @@ Measured, typing `amplitude` one letter every 250 ms (every letter runs), PJ 20Q
 
 The debounce question (the user's): 120 vs 200 ms at a 150 ms typing gap gave
 392 vs 386 ms blocked — 8 runs vs 3, same total, because each run now costs its
-delta. 120 stays. Two honest notes: the mount itself still takes 1.3–2.0 s
+delta. The user chose **200** for both grids (fewer runs while typing; the
+pause-to-paint latency grows by 80 ms). Two honest notes: the mount itself still takes 1.3–2.0 s
 after the table appears before virtualization engages (a keystroke inside that
 window hits the un-virtualized grid — a load-time item, not touched here); and
 the pair grid still toggles per-td classes (17 ms, left alone).
@@ -238,8 +239,13 @@ server round trip, and the truth must stay on the server: two windows and
 auto-apply share the change log, so an optimistic local undo would risk
 divergence for a 50 ms gain). The waveform is where a RAM cache is exactly
 right: every committed waveform the page has drawn is cached by (pulse path +
-the committed value of every parameter), bounded to the last 20 states, so a
-press back to a state already seen redraws with no synth request; a miss is
+the committed value of every parameter), bounded to the last **200** states —
+the undo journal's own depth (`undo_journal.MAX_UNITS`), so every state a press
+can reach is one the page may have drawn; a decimated waveform is ~30–60 KB, so
+200 is ≤10 MB, nothing to a desktop browser (the bound is depth, not memory) —
+so a press back to a state already seen redraws with no synth request; the live
+PREVIEW is memoised the same way, keyed on the committed base + the overrides
+(typing back to a value, Escape, a slider retracing its path: no request); a miss is
 ONE synth call for the final state of the burst (its own generation token —
 a preview fetch racing it can neither drop it nor be drawn over by it), and
 the stale committed plot is never drawn while that refresh is pending. A
