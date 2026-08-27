@@ -1612,6 +1612,44 @@ class TestSidebarFeatures:
             "Per-user split preset localStorage keys are missing."
         )
 
+    def test_dataset_panel_opens_nearly_fullscreen(self):
+        """Customer ask (2026-08-27): clicking a run must open the detail panel
+        nearly full-screen (was [35, 65] — read as 'about half'). The default
+        expanded split gives the inspector 85%; a user's own gutter-⤒ preset
+        still wins over the default (that path is untouched)."""
+        app_js = (Path(__file__).resolve().parent.parent
+                  / "quam_state_manager" / "web" / "static" / "app.js")
+        text = app_js.read_text(encoding="utf-8")
+        assert "expandedSizes:  [15, 85]" in text, (
+            "The default expanded split must give the dataset panel 85% of the height."
+        )
+
+    def test_dataset_header_covers_the_pane_padding(self):
+        """Customer ask (2026-08-27): while the panel scrolls, figures peeked
+        out ABOVE the sticky run header — the pane's padding strips sit outside
+        the header's box. The header must pull itself over them (negative
+        top/margins + re-added padding) in BOTH panes it renders in (inspector
+        pane, and #table-pane for the full-page run view)."""
+        css = (Path(__file__).resolve().parent.parent
+               / "quam_state_manager" / "web" / "static" / "style.css")
+        text = css.read_text(encoding="utf-8")
+        block = text.split(".inspector-header-dataset {", 1)[1].split("}", 1)[0]
+        assert "top: calc(-1 * var(--inspector-pane-pad-v))" in block, (
+            "The dataset header must pin with a negative top matching the pane padding."
+        )
+        assert ("margin: calc(-1 * var(--inspector-pane-pad-v)) "
+                "calc(-1 * var(--inspector-pane-pad-h))") in block, (
+            "The dataset header must pull over the pane's padding strips (top + sides)."
+        )
+        assert "padding: calc(var(--inspector-pane-pad-v) + 0.25rem)" in block, (
+            "The covered strip must be re-added as header padding (opaque cover, "
+            "title position at rest unchanged)."
+        )
+        assert "#table-pane .inspector-header-dataset" in text, (
+            "The full-page run view's pane has different padding (0.6rem) — "
+            "it needs its own matched cover."
+        )
+
     def test_chip_status_left_nav_subviews(self):
         """Chip Status exposes its sections as sub-items in the LEFT sidebar
         (mirrored from the in-page scroll-spy jump bar), Topology leading.

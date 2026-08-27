@@ -1023,8 +1023,13 @@ window.ChipStatus.mount = function (opts) {
         // edge) immediately, no scrolling. Frequencies join the row, and 2Q
         // metrics become first-class EDGE metrics (scope:'edge').
         var METRICS = [
+            // Customer ask (2026-08-27): the freq patch alone said too little —
+            // anharmonicity matters as much when scanning a chip, so it rides
+            // under f01 as a smaller MHz sub-line (α = f12 − f01).
             { key: 'f_01',                label: 'Qubit freq',
-              fmtFn: function(v) { return fmt(v, 'GHz'); } },
+              fmtFn: function(v) { return fmt(v, 'GHz'); },
+              subKey: 'anharmonicity',
+              subFmt: function(v) { return 'α ' + fmt(v, 'MHz'); } },
             { key: 'readout_frequency',   label: 'Readout freq',
               fmtFn: function(v) { return fmt(v, 'GHz'); } },
             { key: 'gate_fidelity_avg',   fmtFn: function(v) { return fmtPct(v, 2) + '%'; } },
@@ -1187,7 +1192,18 @@ window.ChipStatus.mount = function (opts) {
             }
             var v = _mv(n, m.key);
             var c2 = propBgColor({ key: m.key }, v);
+            // The metric's sub-value (e.g. anharmonicity under f01), read
+            // through the SAME physical gate as every displayed number — a
+            // missing or unphysical value renders nothing, never a dash.
+            // (_mv alone is the gate: it returns the record's QUARANTINED
+            // value, which is already null for a bad fit.)
+            var sub = null;
+            if (m.subKey) {
+                var sv = _mv(n, m.subKey);
+                if (sv != null) sub = m.subFmt(sv);
+            }
             return { fill: c2.bg, fg: c2.fg, text: v == null ? '—' : m.fmtFn(v),
+                     sub: sub,
                      title: v == null ? 'no data' : '' };
         }
 
@@ -1407,15 +1423,23 @@ window.ChipStatus.mount = function (opts) {
                     return;
                 }
                 var pt = nodePaint(n, current);
+                // A metric with a sub-value shifts the whole stone to a
+                // three-line layout (uniform per METRIC, so ids line up
+                // across the map even where one qubit's sub is missing).
+                var subMode = !!mCur.subKey;
                 svg += '<g class="topo-hero-node' + (pt.cls ? ' ' + pt.cls : '') + '" data-hero-qubit="' + _esc(n.id)
                      + '" transform="translate(' + (cx(p) + o.dx) + ',' + (cy(p) + o.dy) + ')" tabindex="0">'
                      + '<circle class="topo-hero-stone" r="' + R + '"'
                      + (pt.fill ? ' style="fill:' + pt.fill + '"' : '')
                      + (o.shared ? ' stroke-dasharray="3 2"' : '') + '></circle>'
-                     + '<text class="topo-hero-id" y="-5"' + (pt.fg ? ' style="fill:' + pt.fg + '"' : '') + '>'
+                     + '<text class="topo-hero-id" y="' + (subMode ? -14 : -5) + '"' + (pt.fg ? ' style="fill:' + pt.fg + '"' : '') + '>'
                      + _esc(n.id) + '</text>'
-                     + '<text class="topo-hero-val" y="11"' + (pt.fg ? ' style="fill:' + pt.fg + '"' : '') + '>'
+                     + '<text class="topo-hero-val" y="' + (subMode ? 1 : 11) + '"' + (pt.fg ? ' style="fill:' + pt.fg + '"' : '') + '>'
                      + _esc(pt.text) + '</text>'
+                     + (pt.sub != null
+                        ? '<text class="topo-hero-sub" y="14"' + (pt.fg ? ' style="fill:' + pt.fg + '"' : '') + '>'
+                          + _esc(pt.sub) + '</text>'
+                        : '')
                      + (pt.title ? '<title>' + _esc(pt.title) + '</title>' : '')
                      + '</g>';
             });

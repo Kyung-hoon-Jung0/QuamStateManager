@@ -327,6 +327,7 @@ function part5() {
     ok(pop && /detuning/.test(pop.textContent), 'pair popup lists the parameters section');
     heroPrefersTheGateNumber();
     overviewTilesStateBothErrorRates();
+    anharmSubLine();
     finish();
   }, 400);
 }
@@ -465,6 +466,62 @@ function overviewTilesStateBothErrorRates() {
      'tiles: the 1Q tile states its EPG');
   ok(html.indexOf('Calibration Age') >= 0 && /today|yesterday|ago/.test(html),
      'tiles: the freshness tile renders an age');
+}
+
+/* ── customer ask (2026-08-27): anharmonicity rides under f01 ──────────────
+ * The Qubit-freq patch used to print f01 alone; the anharmonicity matters as
+ * much when scanning a chip, so it joins each stone as a SMALLER MHz sub-line.
+ * Honesty pins: read through the same physical gate as every displayed number
+ * (missing → absent, bad fit → absent, never a dash), no other metric grows a
+ * sub-line, and the geometry stays uniform per metric so ids line up. */
+function anharmSubLine() {
+  const win = makeWorld();
+  const topo = {
+    nodes: [
+      { id: 'q1', grid_location: '0,0', T1: 1e-5, f_01: 4.8e9, anharmonicity: -2.01e8 },
+      { id: 'q2', grid_location: '1,0', T1: 2e-5, f_01: 5.1e9 },   // no anharm at all
+      // bad fit: raw present, gated value null, not unresolved
+      { id: 'q3', grid_location: '0,1', T1: 3e-5, f_01: 4.9e9,
+        metrics: { anharmonicity: { value: null, raw: -4.7e8, unresolved: false } } },
+    ],
+    edges: [],
+  };
+  mount(win, topo, []);
+  const hero = win.document.getElementById('topo-hero');
+  ok(hero.querySelector('[data-hero-metric="f_01"]').className.indexOf('active') !== -1,
+     'anharm: fresh world opens on the Qubit-freq patch');
+  const sub1 = hero.querySelector('[data-hero-qubit="q1"] .topo-hero-sub');
+  ok(!!sub1, 'anharm: a sub-line joins f01 inside the stone');
+  ok(sub1 && /α -201\.0 MHz/.test(sub1.textContent),
+     'anharm: rendered in MHz with the α label (' + (sub1 && sub1.textContent) + ')');
+  ok(!hero.querySelector('[data-hero-qubit="q2"] .topo-hero-sub'),
+     'anharm: a qubit without the value gets NO sub-line (never a dash)');
+  ok(!hero.querySelector('[data-hero-qubit="q3"] .topo-hero-sub'),
+     'anharm: an unphysical (bad-fit) value renders nothing');
+  // uniform per-metric geometry: the sub-less q2's id sits at the SAME shifted
+  // y as q1's, so the map's ids stay on one line.
+  const idY = (q) => hero.querySelector('[data-hero-qubit="' + q + '"] .topo-hero-id')
+      .getAttribute('y');
+  ok(idY('q1') === idY('q2') && idY('q1') !== '-5',
+     'anharm: three-line geometry is uniform across the map (id y=' + idY('q1') + ')');
+  // another metric must NOT inherit the sub-line, and returns to the classic layout
+  hero.querySelector('[data-hero-metric="T1"]').click();
+  ok(hero.querySelectorAll('.topo-hero-sub').length === 0,
+     'anharm: switching to T1 drops every sub-line');
+  ok(idY('q1') === '-5', 'anharm: T1 keeps the classic two-line layout');
+  // CSS source pins: the sub-line is genuinely SMALLER than the value line, in
+  // both the normal and the compact font scales.
+  const css = fs.readFileSync(
+      path.join(ROOT, 'quam_state_manager', 'web', 'static', 'style.css'), 'utf8');
+  const px = (re) => parseFloat((css.match(re) || [])[1]);
+  const subPx = px(/^\.topo-hero-sub \{ font-size: ([\d.]+)px/m);
+  const valPx = px(/^\.topo-hero-val \{ font-size: ([\d.]+)px/m);
+  ok(subPx > 0 && valPx > 0 && subPx < valPx,
+     'anharm: CSS keeps the sub-line smaller than the value (' + subPx + ' < ' + valPx + ')');
+  const cSub = px(/^\.topo-hero-svg\.hero-compact \.topo-hero-sub \{ font-size: ([\d.]+)px/m);
+  const cVal = px(/^\.topo-hero-svg\.hero-compact \.topo-hero-val \{ font-size: ([\d.]+)px/m);
+  ok(cSub > 0 && cVal > 0 && cSub < cVal,
+     'anharm: compact mode keeps the sub-line smaller too (' + cSub + ' < ' + cVal + ')');
 }
 
 function finish() {

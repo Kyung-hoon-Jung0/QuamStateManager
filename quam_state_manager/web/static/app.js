@@ -18,7 +18,7 @@ var UI_CONFIG = {
        pane and the lower inspector/detail pane.                       */
     split: {
         defaultSizes:   [55, 45],  /* initial split as percentages [upper pane %, lower pane %] — must add up to 100 */
-        expandedSizes:  [35, 65],  /* DEFAULT "expanded" target — inspector gets 65% (spacious) while the upper table stays visible (35%), so clicking a detail no longer makes the table vanish. Users who want a full cover can still set it via the gutter ⤒ set-icon → localStorage "quam_split_expanded" (incl. [0,100]). */
+        expandedSizes:  [15, 85],  /* DEFAULT "expanded" target — customer ask (2026-08-27): clicking a run should open the detail panel nearly full-screen, not half. The inspector gets 85%; the upper table keeps a 15% sliver for context + grabbing. A user's own ⤒ set-icon preset (localStorage "quam_split_expanded", incl. [0,100]) still wins over this default. */
         collapsedSizes: [85, 15],  /* DEFAULT "collapsed" target — inspector gets 15%. Overridable via the gutter ⤓ set-icon → localStorage "quam_split_collapsed". */
         minSizes:       [0, 60],   /* min height (px) for [upper, lower] pane. Upper=0 lets the inspector be dragged to FULLY cover the page (Qubits / Chip Status / …); lower=60 keeps the inspector grabbable (use its × button to fully reveal the page instead). */
         gutterSize:     6          /* ⚠ height of the drag handle bar in pixels — keep in sync with --split-gutter-size in style.css */
