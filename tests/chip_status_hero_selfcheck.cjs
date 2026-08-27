@@ -557,10 +557,16 @@ function edgeDeltaLabels() {
   const hero = win.document.getElementById('topo-hero');
   const texts = () => Array.prototype.map.call(
       hero.querySelectorAll('.topo-hero-edelta'), (t) => t.textContent);
-  ok(texts().indexOf('Δf 300.0 MHz') !== -1,
-     'edelta: the q1-q2 edge carries its Δf in MHz (' + texts().join(' / ') + ')');
-  ok(texts().filter((t) => t === 'Δf 100.0 MHz').length === 1,
-     'edelta: a CR pair\'s two directed edges dedupe to ONE label');
+  // Round 3: compact — whole MHz, and a HORIZONTAL edge (q1-q2 share a row)
+  // stacks Δf / number / unit on three tspans, since only the stone gap is
+  // there to write in; a VERTICAL edge (q1-q3) keeps one line.
+  const stacked = hero.querySelector('.topo-hero-edelta-stack');
+  ok(!!stacked && Array.prototype.map.call(stacked.querySelectorAll('tspan'), (t) => t.textContent)
+        .join('|') === 'Δf|300|MHz',
+     'edelta: a horizontal edge stacks Δf / 300 / MHz on three lines ('
+     + (stacked && stacked.textContent) + ')');
+  ok(texts().filter((t) => t === 'Δf 100 MHz').length === 1,
+     'edelta: a CR pair\'s two directed edges dedupe to ONE label, one line on a vertical edge');
   ok(texts().length === 2,
      'edelta: an edge whose endpoint has no f01 gets NO label — never a '
      + 'fabricated 0 (got ' + texts().length + ')');
@@ -578,10 +584,15 @@ function edgeDeltaLabels() {
   const ePx = px(/^\.topo-hero-eval \{\n?\s*font-size: ([\d.]+)px/m);
   ok(dPx > 0 && ePx > 0 && dPx < ePx,
      'edelta: CSS keeps Δf smaller than the edge-metric value (' + dPx + ' < ' + ePx + ')');
+  // Round 3 (customer: "too big — anharmonicity size is enough"): the Δf label
+  // is exactly the stone sub-line's size, in both font scales.
+  const sPx = px(/^\.topo-hero-sub \{ font-size: ([\d.]+)px/m);
+  ok(dPx === sPx, 'edelta: Δf is anharmonicity-sized (' + dPx + ' == ' + sPx + ')');
   const cD = px(/^\.topo-hero-svg\.hero-compact \.topo-hero-edelta \{ font-size: ([\d.]+)px/m);
   const cE = px(/^\.topo-hero-svg\.hero-compact \.topo-hero-eval \{ font-size: ([\d.]+)px/m);
-  ok(cD > 0 && cE > 0 && cD < cE,
-     'edelta: compact mode keeps it smaller too (' + cD + ' < ' + cE + ')');
+  const cS = px(/^\.topo-hero-svg\.hero-compact \.topo-hero-sub \{ font-size: ([\d.]+)px/m);
+  ok(cD > 0 && cE > 0 && cD < cE && cD === cS,
+     'edelta: compact mode keeps it anharmonicity-sized too (' + cD + ' == ' + cS + ' < ' + cE + ')');
   ok(/\.topo-hero-edelta \{[^}]*paint-order: stroke/.test(css),
      'edelta: halo (paint-order stroke) so it reads over the edge line');
 }

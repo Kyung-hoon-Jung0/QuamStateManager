@@ -161,6 +161,65 @@ for (const t of ['_dataset_detail.html', '_dataset_compare.html',
     ok(html.indexOf('toggleFigureZoom(this)') !== -1, t + ' keeps the entry point');
 }
 
+// 9. customer ask (2026-08-27): walk the grid's figures from INSIDE the
+// viewer — ← / → keys and on-screen arrows — instead of close → click next.
+// The group is the grid the clicked figure sits in (not the whole page), a
+// lone figure gets no arrows, the ends are ends (no wrap), navigating resets
+// the zoom, and closing releases the key listener.
+window.toggleFigureZoom(fig);
+ok(!d.querySelector('.fig-lightbox-nav'), 'nav: a lone figure shows no arrows');
+ok(!d.querySelector('.fig-lightbox-count'), 'nav: a lone figure shows no count');
+window.toggleFigureZoom(fig);
+
+const grid = d.createElement('div'); grid.className = 'figure-grid';
+grid.innerHTML = ['a', 'b', 'c'].map((n) =>
+    '<div class="figure-card"><img id="g' + n + '" src="/dataset/x/fig/' + n
+    + '.png" alt="' + n + '" onclick="toggleFigureZoom(this)"></div>').join('');
+d.body.appendChild(grid);
+// a second grid elsewhere on the page must NOT join the group
+const other = d.createElement('div'); other.className = 'figure-grid';
+other.innerHTML = '<div class="figure-card"><img src="/dataset/y/fig/z.png" alt="z" onclick="toggleFigureZoom(this)"></div>';
+d.body.appendChild(other);
+
+const seen = { added: null, removed: false };
+const origAdd = d.addEventListener.bind(d), origRem = d.removeEventListener.bind(d);
+d.addEventListener = function(t, f, c) {
+    if (t === 'keydown' && f && f.name === 'onNavKey') seen.added = f;
+    return origAdd(t, f, c);
+};
+d.removeEventListener = function(t, f, c) {
+    if (f && f === seen.added) seen.removed = true;
+    return origRem(t, f, c);
+};
+
+window.toggleFigureZoom(d.getElementById('gb'));
+const box2 = d.getElementById('figure-lightbox');
+const img2 = box2.querySelector('.fig-lightbox-img');
+const count = box2.querySelector('.fig-lightbox-count');
+ok(count && count.textContent === '2 / 3',
+   'nav: count reads the GRID, not the page (' + (count && count.textContent) + ')');
+ok(box2.querySelector('.fig-lightbox-caption').textContent === 'b', 'nav: caption names the figure');
+const prev = box2.querySelector('.fig-lightbox-nav-prev'), next = box2.querySelector('.fig-lightbox-nav-next');
+ok(!!prev && !!next, 'nav: both arrows present on a multi-figure grid');
+ok(prev && next && !prev.disabled && !next.disabled, 'nav: mid-strip, both arrows live');
+d.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+ok(/c\.png$/.test(img2.getAttribute('src')), 'nav: → shows the next figure');
+ok(count.textContent === '3 / 3', 'nav: the count follows');
+ok(next.disabled && !prev.disabled, 'nav: at the end the next arrow greys out');
+d.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+ok(/c\.png$/.test(img2.getAttribute('src')), 'nav: → at the end stays put (no wrap-around)');
+box2.querySelector('[data-act="in"]').click();
+ok(scaleOf(img2) > 1, 'nav: zoomed in before moving');
+prev.click();
+ok(/b\.png$/.test(img2.getAttribute('src')), 'nav: ‹ button shows the previous figure');
+ok(scaleOf(img2) === 1, 'nav: moving to another figure resets the zoom');
+prev.click();
+ok(/a\.png$/.test(img2.getAttribute('src')) && prev.disabled, 'nav: at the start the prev arrow greys out');
+ok(!!d.getElementById('figure-lightbox'), 'nav: arrow clicks are not backdrop closes');
+box2.querySelector('[data-act="close"]').click();
+ok(!d.getElementById('figure-lightbox'), 'nav: closed');
+ok(!!seen.added && seen.removed, 'nav: closing releases the ← → key listener');
+
 if (fails) { console.error(fails + ' FAILURES'); process.exit(1); }
 console.log('ALL OK');
 // Explicit exit (matches ndview_selfcheck): jsdom's pretendToBeVisual RAF

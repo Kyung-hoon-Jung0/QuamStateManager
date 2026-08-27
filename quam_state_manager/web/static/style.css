@@ -3605,7 +3605,7 @@ td.col-delta .val-delta { margin-left: 0; }
 .topo-hero-svg.hero-compact .topo-hero-val { font-size: 13px; }
 .topo-hero-svg.hero-compact .topo-hero-sub { font-size: 11px; }
 .topo-hero-svg.hero-compact .topo-hero-eval { font-size: 19px; }
-.topo-hero-svg.hero-compact .topo-hero-edelta { font-size: 14px; }
+.topo-hero-svg.hero-compact .topo-hero-edelta { font-size: 11px; }
 .topo-hero-svg.hero-compact .cm-role-txt { font-weight: 800; }
 /* docs/126 ②: the value printed ON an edge when a 2Q metric is selected —
    halo (paint-order stroke) instead of a pill, so no width estimation and it
@@ -3620,9 +3620,9 @@ td.col-delta .val-delta { margin-left: 0; }
    same halo treatment as the edge-metric value, but smaller and muted so
    the stones' own numbers stay primary. */
 .topo-hero-edelta {
-    font-size: 11.5px; font-weight: 600; text-anchor: middle; pointer-events: none;
+    font-size: 8px; font-weight: 600; text-anchor: middle; pointer-events: none;
     fill: var(--pico-muted-color); paint-order: stroke;
-    stroke: var(--pico-card-background-color, #fff); stroke-width: 4px;
+    stroke: var(--pico-card-background-color, #fff); stroke-width: 3px;
     stroke-linejoin: round;
 }
 .topo-hero-node-neutral .topo-hero-id { fill: var(--pico-muted-color); font-size: 13px; }
@@ -5275,6 +5275,31 @@ input.tree-edit-input {
 .fig-lightbox-hint {
     position: fixed; bottom: .6rem; left: 0; right: 0; text-align: center;
     color: rgba(255, 255, 255, .65); font-size: .75rem; pointer-events: none;
+}
+/* Customer ask (2026-08-27): walk the grid's figures from inside the viewer —
+   big edge arrows (mouse) mirroring ← / → (keyboard), a "k / n" count in the
+   bar, and the figure's name top-left. Arrows only exist when the grid has
+   more than one figure; at either end the arrow greys out (no wrap-around). */
+.fig-lightbox-nav {
+    position: fixed; top: 50%; transform: translateY(-50%); z-index: 2;
+    width: 2.8rem; height: 4rem; margin: 0; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: rgba(255, 255, 255, .12); color: #fff;
+    border: 1px solid rgba(255, 255, 255, .25); border-radius: 6px;
+    font-size: 2.2rem; line-height: 1; cursor: pointer;
+}
+.fig-lightbox-nav:hover { background: rgba(255, 255, 255, .25); }
+.fig-lightbox-nav[disabled] { opacity: .25; cursor: default; }
+.fig-lightbox-nav-prev { left: .8rem; }
+.fig-lightbox-nav-next { right: .8rem; }
+.fig-lightbox-count {
+    color: #eee; font-size: .8rem; font-family: var(--font-mono);
+    margin-right: .4rem; white-space: nowrap;
+}
+.fig-lightbox-caption {
+    position: fixed; top: .9rem; left: .9rem; z-index: 2; max-width: 50vw;
+    color: rgba(255, 255, 255, .85); font-size: .85rem; font-family: var(--font-mono);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none;
 }
 
 /* HDF5 summary */

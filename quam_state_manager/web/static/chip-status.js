@@ -1366,12 +1366,31 @@ window.ChipStatus.mount = function (opts) {
                         var fB = nB != null ? _mv(nB, mCur.edgeDelta.key) : null;
                         if (typeof fA === 'number' && typeof fB === 'number') {
                             var ad = Math.abs(fA - fB);
-                            evalSvg += '<text class="topo-hero-edelta" x="' + ((x1 + x2) / 2)
-                                + '" y="' + ((y1 + y2) / 2 + 4) + '">'
-                                + _esc(mCur.edgeDelta.label + ' '
-                                       + (ad >= 1e9 ? (ad / 1e9).toFixed(2) + ' GHz'
-                                                    : (ad / 1e6).toFixed(1) + ' MHz'))
-                                + '</text>';
+                            // Round 3: anharmonicity-sized, and compact —
+                            // whole MHz once the difference is ≥ 10 MHz
+                            // (0.1 MHz still shows below that, where it
+                            // matters), GHz from 1 GHz up.
+                            var dNum = ad >= 1e9 ? (ad / 1e9).toFixed(2)
+                                     : ad >= 1e7 ? (ad / 1e6).toFixed(0)
+                                     : (ad / 1e6).toFixed(1);
+                            var dUnit = ad >= 1e9 ? 'GHz' : 'MHz';
+                            var dmx = (x1 + x2) / 2, dmy = (y1 + y2) / 2;
+                            if (Math.abs(x2 - x1) >= Math.abs(y2 - y1)) {
+                                // A HORIZONTAL edge has only the stone gap
+                                // to write in, so the label stacks: Δf /
+                                // number / unit on three short lines.
+                                evalSvg += '<text class="topo-hero-edelta topo-hero-edelta-stack" x="' + dmx
+                                    + '" y="' + (dmy - 6) + '">'
+                                    + '<tspan x="' + dmx + '">' + _esc(mCur.edgeDelta.label) + '</tspan>'
+                                    + '<tspan x="' + dmx + '" dy="9">' + _esc(dNum) + '</tspan>'
+                                    + '<tspan x="' + dmx + '" dy="9">' + _esc(dUnit) + '</tspan>'
+                                    + '</text>';
+                            } else {
+                                evalSvg += '<text class="topo-hero-edelta" x="' + dmx
+                                    + '" y="' + (dmy + 3) + '">'
+                                    + _esc(mCur.edgeDelta.label + ' ' + dNum + ' ' + dUnit)
+                                    + '</text>';
+                            }
                         }
                     }
                 }
