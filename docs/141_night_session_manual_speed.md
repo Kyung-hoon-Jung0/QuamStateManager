@@ -284,6 +284,26 @@ Pinned by `pulses_undo_selfcheck.cjs` (13 cases, mutation 8/8),
   search clear / column re-tick runs the hydration pass synchronously so a
   hidden-at-mount cold column never paints one frame of empty tds.
 
+## 4f. The Diagnostics list that needed F5 (user report, 2026-08-28)
+
+After a sync brought good values back, the red rows on /diagnostics stayed
+until F5. The topbar pill and the banner already re-fetch on
+`diagnostics-changed` (which the sync path fires through `_diagChanged`); the
+page's own findings list was a one-shot render with no trigger at all — so
+after any sync / undo / apply that changed the verdicts, the page lied until
+reloaded. The list now lives in `#diag-findings`, a slot that lifts itself out
+of a fresh `/diagnostics` render (`hx-select`) on `diagnostics-changed` /
+`stateRestored` — one render path, no second route — and the persisted
+bucket filter is re-applied after the inner swap. Pinned by
+`tests/test_diagnostics_refresh.py` (mutation 2/3).
+
+Also found while looking: the CQT_20Q chip's four "ext fed from 3 outputs"
+errors were TRUE — that state was built by the docs/119 wizard, which gave
+every biased qubit a dedicated trigger port (eleven cables for four ext
+inputs); the docs/136 check is what finally said so. The shared cabling
+(ext N ↔ con1/fem4/pN, the PJ bench's layout) was staged into the working
+copy for the user to apply or discard; the PJ original was consistent.
+
 ## 5. Tooling that came out of the night
 
 `scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js` (+ daytime: `cdp_profile.js` function-level CPU profile, `cdp_trace.js` per-phase trace of one keystroke, `cdp_type.js` char-by-char typing with a gap + debounce override, `cdp_undo.js` trusted Ctrl+Z/Ctrl+Shift+Z through the page's own UI, `cdp_virt.js` virtualization sampler): Chrome headless with the

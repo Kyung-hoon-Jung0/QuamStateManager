@@ -16,6 +16,15 @@
 {% if env_card is defined and env_card %}{% include '_diagnostics_env.html' %}{% endif %}
 {% if types_card is defined %}{% include '_diagnostics_types.html' %}{% endif %}
 
+{# The findings LIST follows the state like the topbar pill and the banner do
+   (docs/141 4f): it used to be a one-shot render, so after a sync / undo /
+   apply fixed the values the red rows stayed until F5. `hx-select` lifts this
+   very slot out of the re-rendered page, so no second route and no second
+   template -- one render path. The 600 ms delay is the same trailing pause
+   the pill uses (the lint is ~130 ms on a 21-qubit chip). #}
+<div id="diag-findings"
+     hx-get="/diagnostics" hx-select="#diag-findings" hx-swap="outerHTML"
+     hx-trigger="diagnostics-changed from:body delay:600ms, stateRestored from:body delay:600ms">
 {% if not has_config %}
 <p class="muted diag-hint">
   Config reference checks run once you generate a config in the
@@ -30,3 +39,4 @@
 {% endif %}
 
 {% include '_diagnostics_list.html' %}
+</div>

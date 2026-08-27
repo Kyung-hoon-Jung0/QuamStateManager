@@ -15524,7 +15524,12 @@ document.addEventListener('click', function(evt) {
     // the sidebar dots; mark Explorer rows when the Explorer is the swapped view;
     // re-apply the persisted diagnostics filter when the list is on screen.
     document.addEventListener('htmx:afterSwap', function(evt) {
-        if (!evt.detail || !evt.detail.target || evt.detail.target.id !== 'table-pane') return;
+        if (!evt.detail || !evt.detail.target) return;
+        // docs/141 4f: the findings list re-fetches itself on diagnostics-changed
+        // (an inner swap of #diag-findings); the persisted bucket filter must be
+        // re-applied to the fresh rows exactly as after a table-pane swap.
+        if (evt.detail.target.id === 'diag-findings') { _applyDiagFilter(); return; }
+        if (evt.detail.target.id !== 'table-pane') return;
         if (window._refreshSidebarDiagDots) window._refreshSidebarDiagDots();
         if (document.getElementById('explorer-tree-state') && window._applyExplorerSpecMarks) {
             window._applyExplorerSpecMarks();
