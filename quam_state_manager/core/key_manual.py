@@ -29,7 +29,9 @@ def _class_occurrences(state: Any, wiring: Any = None, *, cap: int = 200_000) ->
     """``{class path: [dot paths of nodes declaring it]}`` — every node in
     the state that carries ``__class__`` (bounded walk)."""
     out: dict[str, list[str]] = {}
-    docs = [("", state)] + ([("wiring", wiring)] if isinstance(wiring, dict) else [])
+    # wiring.json's own top-level keys (`wiring`, `network`) ARE the paths the
+    # explorer shows -- walk it from its root, never under a synthetic prefix
+    docs = [("", state)] + ([("", wiring)] if isinstance(wiring, dict) else [])
     stack = list(reversed(docs))
     seen = 0
     while stack:
@@ -172,9 +174,11 @@ def _node_at(state: Any, wiring: Any, dot_path: str) -> Any:
     if not dot_path:
         return state
     segs = dot_path.split(".")
-    cur: Any = wiring if segs[0] == "wiring" and isinstance(wiring, dict) else state
-    if segs[0] == "wiring" and isinstance(wiring, dict):
-        segs = segs[1:]
+    # state first; a path whose first segment is a wiring.json top-level key
+    # (`wiring.qubits.q1.xy`, `network.host`) walks the wiring document verbatim
+    cur: Any = state
+    if isinstance(state, dict) and segs[0] not in state and isinstance(wiring, dict) and segs[0] in wiring:
+        cur = wiring
     for s in segs:
         if isinstance(cur, dict):
             if s not in cur:

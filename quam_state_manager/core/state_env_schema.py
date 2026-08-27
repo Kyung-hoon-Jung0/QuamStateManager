@@ -303,6 +303,8 @@ def manifest_for_store(store, python_path: str | None, instance_path=None, *,
             entry = _load_cache(instance_path).get(python_path)
         if not isinstance(entry, dict):
             return None
+        if entry.get("format") != SCHEMA_FORMAT:
+            return None                                  # older manifest shape: a MISS (re-probe)
         sig = _env_signature(python_path)
         if sig is None or entry.get("signature") != sig:
             return None                                  # pip install / env gone

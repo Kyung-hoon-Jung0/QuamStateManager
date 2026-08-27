@@ -10273,6 +10273,15 @@ def api_manual():
     manifest = _manual_manifest(ctx)
     data = key_manual.manual_entries(store.state, store.wiring, manifest)
     data["chip"] = ctx.get("name") or ctx.get("path")
+    if manifest is None:
+        try:
+            selected = config_generator.get_selected_env(current_app.instance_path)
+        except Exception:  # noqa: BLE001
+            selected = None
+        if selected:
+            data["note"] = ("Class documentation for the selected environment is not loaded yet "
+                            "-- reopen the chip (or Generate Config -> Probe) to load it; "
+                            "the QM docs entries are shown now.")
     return jsonify({"ok": True, **data})
 
 

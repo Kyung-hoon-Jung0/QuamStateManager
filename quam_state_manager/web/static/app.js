@@ -3317,18 +3317,16 @@ document.addEventListener("cellsReverted", function(evt) {
                           || document.getElementById('bulk-pair-table'));
     var uncovered = 0;
     try {
-        var covered = {};
+        // Night session 2026-08-28: only a cell a grid FOUND but could not
+        // repaint honestly (kind/decoration mismatch) needs the whole-grid
+        // re-GET. A path with no cell on either grid is not stale here -- it is
+        // simply not a column (a pulse leaf undone from the inspector, a tree
+        // edit) -- and it used to count as uncovered, i.e. the 2.4 s rebuild on
+        // exactly the Ctrl+Z presses that touched nothing on the grid.
         [window.BulkEdit, window.BulkPairEdit].forEach(function (api) {
             if (!api || !api.revertPaths) return;
-            ((api.revertPaths(entries) || {}).covered || []).forEach(function (p) {
-                covered[p] = 1;
-            });
-        });
-        // Per ENTRY, not per surface: a qubit leaf is legitimately absent from
-        // the pair grid, and counting that as a miss would rebuild the pane for
-        // every ordinary edit — i.e. keep the 2.4 s we just removed.
-        entries.forEach(function (e) {
-            if (e && e.dot_path && !covered[e.dot_path]) uncovered++;
+            var res = api.revertPaths(entries) || {};
+            uncovered += (res.uncovered || []).length;
         });
     } catch (err) { uncovered = entries.length; }   // never trust a half repaint
     if (gridOnScreen && (structural || uncovered > 0)) _scheduleGridResync();
@@ -6075,7 +6073,7 @@ window.clearDetailPanelSearch = function(btnEl) {
             // Config Manual (2026-08-27): a ? on every editable state row —
             // "what is this key, what can it be, what else can this node carry"
             var helpEl = null;
-            if (valueClick === "edit" && window.openConfigManual) {
+            if (_keyHelpOn && valueClick === "edit" && window.openConfigManual) {
                 helpEl = document.createElement("button");
                 helpEl.type = "button"; helpEl.className = "key-help-btn tree-help"; helpEl.tabIndex = -1;
                 helpEl.textContent = "?"; helpEl.title = "Config Manual — this key (F1)";
@@ -6285,6 +6283,8 @@ window.clearDetailPanelSearch = function(btnEl) {
         if (!d) return; // already materialised
         var children = nodeEl.querySelector(":scope > .tree-children");
         if (!children) return;
+        var _kc = nodeEl.closest ? nodeEl.closest(".json-tree") : null;
+        _keyHelpOn = !!(_kc && _kc._keyHelp);
 
         // An absent container renders from the OTHER side, so a whole removed
         // subtree can still be expanded and read.
@@ -6407,7 +6407,7 @@ window.clearDetailPanelSearch = function(btnEl) {
 
         function add(path, keyStr, valStr) {
             var hay = ((keyStr == null ? "" : String(keyStr)) + " " + (valStr || "")).toLowerCase();
-            flat.push({ path: path, pathLower: path.toLowerCase(), hayLower: hay });
+            flat.push({ path: path, pathLower: path.toLowerCase(), hayLower: hay, val: valStr || "" });
         }
 
         function walk(key, value, path) {
@@ -6466,6 +6466,47 @@ window.clearDetailPanelSearch = function(btnEl) {
      * flat index (no DOM walk), then materialises + expands ONLY the branches
      * that contain matches \u2014 never the whole tree, and with zero contains() calls.
      */
+    var _TREE_SEARCH_MATERIALIZE_MAX = (window.__treeSearchMaterializeMax || 150);   // matches: above this, list instead of expand
+    // Key-help (?) rows are for the LIVE state trees only (crud renders) --
+    // never a compare view's other chip or an inspector's relative subtree.
+    var _keyHelpOn = false;
+    var _TREE_SEARCH_LIST_MAX = 400;          // rows in that list
+    // The flat result list for a broad tree search (see _searchTreeData).
+    // `res` null removes it. Rows carry the dot path; clicking one expands the
+    // tree to that single row and highlights it (the classic per-row cost, once).
+    function _treeSearchResults(container, res) {
+        var el = container.parentNode ? container.parentNode.querySelector(":scope > .tree-search-results") : null;
+        if (!res) { if (el) el.parentNode.removeChild(el); return; }
+        if (!el) {
+            el = document.createElement("div");
+            el.className = "tree-search-results";
+            container.parentNode.insertBefore(el, container);
+            el.addEventListener("click", function (ev) {
+                var row = ev.target.closest && ev.target.closest(".tsr-row");
+                if (!row) return;
+                ev.preventDefault();
+                var p = row.getAttribute("data-path");
+                _treeSearchResults(container, null);
+                var nodesAll = container.querySelectorAll(".tree-node");
+                for (var i = 0; i < nodesAll.length; i++) nodesAll[i].classList.remove("tree-search-hidden");
+                if (window._navigateToExplorerPath) window._navigateToExplorerPath(p);
+            });
+        }
+        var h = '<div class="tsr-head muted">' + res.total + ' matches for <code>' + _escapeHtml(res.q) + '</code>'
+              + ' — listed, not expanded (more than ' + _TREE_SEARCH_MATERIALIZE_MAX + '); click a row to open it'
+              + (res.hits.length < res.total ? ' · first ' + res.hits.length + ' shown' : '') + '</div>';
+        for (var r = 0; r < res.hits.length; r++) {
+            var e = res.hits[r];
+            h += '<a href="#" class="tsr-row" data-path="' + _escapeHtml(e.path) + '"><code class="tsr-path">'
+               + _escapeHtml(e.path) + '</code><span class="tsr-val">' + _escapeHtml(e.val || '') + '</span></a>';
+        }
+        el.innerHTML = h;
+    }
+    function _escapeHtml(s) {
+        return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+        });
+    }
     function _searchTreeData(container, q) {
         // Clear stale search classes on whatever is currently materialised.
         var rendered = container.querySelectorAll(".tree-node");
@@ -6473,6 +6514,7 @@ window.clearDetailPanelSearch = function(btnEl) {
             rendered[i].classList.remove("tree-highlight", "tree-search-hidden");
         }
         if (!q) {
+            _treeSearchResults(container, null);
             _expandToDepth(container, 1);
             return;
         }
@@ -6513,8 +6555,25 @@ window.clearDetailPanelSearch = function(btnEl) {
             for (var h = 0; h < rendered.length; h++) {
                 rendered[h].classList.add("tree-search-hidden");
             }
+            _treeSearchResults(container, null);
             return;
         }
+        // Night session 2026-08-28: a broad query ("amplitude" on a 20Q chip =
+        // 1,384 matches) used to MATERIALISE every matching subtree -- 430 ms of
+        // DOM creation + 330 ms of style/layout on a real chip. Past the cap,
+        // the matches are listed as a flat result list instead (path + value,
+        // click = expand + jump to that one row); the tree itself is left as
+        // it was. Below the cap the classic in-tree highlight is unchanged.
+        if (matchPaths.size > _TREE_SEARCH_MATERIALIZE_MAX) {
+            var hits = [];
+            for (var jj = 0; jj < flat.length && hits.length < _TREE_SEARCH_LIST_MAX; jj++) {
+                if (matchPaths.has(flat[jj].path)) hits.push(flat[jj]);
+            }
+            _treeSearchResults(container, { total: matchPaths.size, hits: hits, q: q });
+            for (var hh = 0; hh < rendered.length; hh++) rendered[hh].classList.add("tree-search-hidden");
+            return;
+        }
+        _treeSearchResults(container, null);
 
         // Materialise only the kept branches by descending top-down from the
         // container and pruning any subtree not in keepPaths. Compares data-path
@@ -7439,6 +7498,8 @@ window.clearDetailPanelSearch = function(btnEl) {
         container.className = "json-tree";
 
         options = options || {};
+        container._keyHelp = !!options.crud;   // the ? rows follow the live-state (crud) trees
+        _keyHelpOn = container._keyHelp;
         var refData = options.refData || null;
         var defaultDepth = options.defaultDepth !== undefined ? options.defaultDepth : 1;
         var hasDiff = !!refData;
@@ -16127,6 +16188,11 @@ window.LiveEditUndo = (function () {
             _updateTrayBtn();
             if (restored) {
                 redo.push(a);   // docs/107: Ctrl+Shift+Z re-applies this action
+                try {
+                    document.dispatchEvent(new CustomEvent("quam:undo-step", { detail: {
+                        kind: "undo", tier: "memory", label: a.label,
+                        entries: a.cells.map(function (c) { return { dot_path: c.dp, value: c.prev, from: c.next }; }) } }));
+                } catch (e) {}
                 if (redo.length > CAP) redo.shift();
                 if (window.showToast) {
                     var extra = [];
@@ -16167,6 +16233,11 @@ window.LiveEditUndo = (function () {
             });
             if (applied) {
                 stack.push(a);   // the redone action is undoable again
+                try {
+                    document.dispatchEvent(new CustomEvent("quam:undo-step", { detail: {
+                        kind: "redo", tier: "memory", label: a.label,
+                        entries: a.cells.map(function (c) { return { dot_path: c.dp, value: c.next, from: c.prev }; }) } }));
+                } catch (e) {}
                 if (stack.length > CAP) stack.shift();
                 _updateTrayBtn();
                 if (window.showToast) window.showToast("Redid " + a.label);

@@ -40,7 +40,8 @@ def test_per_key_help_affordances_exist():
     bulk = (_TPL / "_bulkedit.html").read_text(encoding="utf-8")
     assert bulk.count('class="key-help-btn"') >= 2, "qubit + pair column headers"
     q = (_TPL / "_qubit_detail.html").read_text(encoding="utf-8")
-    assert 'class="key-help-btn"' in q and "openConfigManual({path:" in q
+    assert 'class="key-help-btn"' in q and 'data-help-path="{{ p.dot_path }}"' in q,         "a data attribute, never an inline onclick string (a key with a quote would end the script)"
+    assert "openConfigManual({path: '" not in q and "openConfigManual({q: '" not in bulk
     js = (_ROOT / "quam_state_manager" / "web" / "static" / "app.js").read_text(encoding="utf-8")
     assert "tree-help" in js, "the Json tree rows carry the ? too"
 

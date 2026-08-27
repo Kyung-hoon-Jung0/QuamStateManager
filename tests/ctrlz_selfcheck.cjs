@@ -250,13 +250,24 @@ await settleDebounce();
 ok(stateChanged === 1, 'an undone DELETE still rebuilds the grid');
 
 // A path no surface could reach: we cannot claim the grid is current for it.
+// Night session 2026-08-28: the fallback contract changed. A path with NO
+// cell on the grid is not stale here (it is simply not a column -- a pulse
+// leaf undone from the inspector, a tree edit) and must NOT cost the 2.4 s
+// rebuild; only a cell the grid FOUND but could not repaint honestly does.
 window.BulkEdit.revertPaths = function () {
-    return { patched: 0, missing: 1, covered: [] };
+    return { patched: 0, missing: 1, covered: [], uncovered: [] };
 };
 stateChanged = 0;
 revert([ENTRY]);
 await settleDebounce();
-ok(stateChanged === 1, 'an UNCOVERED path falls back to the rebuild');
+ok(stateChanged === 0, 'a path with NO cell on the grid does not rebuild it');
+window.BulkEdit.revertPaths = function () {
+    return { patched: 1, missing: 0, covered: [], uncovered: [ENTRY.dot_path] };
+};
+stateChanged = 0;
+revert([ENTRY]);
+await settleDebounce();
+ok(stateChanged === 1, 'a cell the grid found but could not repaint honestly falls back to the rebuild');
 
 // A burst of covered reverts must not queue N rebuilds behind it.
 window.BulkEdit.revertPaths = function (entries) {

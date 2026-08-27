@@ -1079,6 +1079,49 @@ html.topbar-hidden .topbar-reveal { display: block; }
     margin-top: 0.2rem; font-size: 13px;
 }
 .manual-hidden { display: none; }
+/* Undo trail panel (2026-08-28): bottom-right, compact, out of the way of
+   the tray; the latest step is emphasised, older ones fade. */
+.undo-trail {
+    position: fixed; right: 0.8rem; bottom: 0.8rem; z-index: 130;
+    width: 380px; max-width: 92vw; max-height: 40vh; overflow-y: auto;
+    background: var(--pico-card-background-color); color: var(--pico-color);
+    border: 1px solid var(--pico-muted-border-color); border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.22); font-size: 12.5px;
+}
+.undo-trail[hidden] { display: none; }
+.undo-trail-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0.25rem 0.5rem; border-bottom: 1px solid var(--pico-muted-border-color);
+    position: sticky; top: 0; background: var(--pico-card-background-color); z-index: 1;
+}
+.undo-trail-head strong { font-size: 0.8rem; }
+.undo-trail-tools { display: flex; gap: 0.25rem; align-items: center; }
+.undo-trail-clear, .undo-trail-close {
+    margin: 0; padding: 0 0.35rem; background: none; border: none; line-height: 1.4;
+    color: var(--pico-muted-color); cursor: pointer; font-size: 0.8rem;
+}
+.undo-trail-close { font-size: 1.05rem; }
+.undo-trail-clear:hover, .undo-trail-close:hover { color: var(--pico-contrast); }
+.undo-trail-body { padding: 0.3rem 0.5rem 0.4rem; }
+.undo-trail-empty { margin: 0; font-size: 0.8em; }
+.undo-trail-step { padding: 0.3rem 0 0.2rem; border-top: 1px solid var(--pico-muted-border-color); opacity: 0.7; }
+.undo-trail-step:first-child { border-top: none; }
+.undo-trail-step.undo-trail-latest { opacity: 1; }
+.undo-trail-kind { font-weight: 700; font-size: 0.78rem; margin-bottom: 0.15rem; }
+.undo-trail-row { display: flex; align-items: center; gap: 0.4rem; margin: 0.1rem 0; }
+.undo-trail-path { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.82em; }
+.undo-trail-vals { flex: 0 1 auto; white-space: nowrap; font-family: var(--font-mono); font-size: 0.82em; }
+.undo-trail-from { color: var(--pico-muted-color); text-decoration: line-through; }
+.undo-trail-to { font-weight: 700; }
+.undo-trail-goto { flex: 0 0 auto; margin: 0; padding: 0 0.4rem; font-size: 0.72rem; line-height: 1.5; white-space: nowrap; }
+.undo-trail-more { font-size: 0.78em; padding-left: 0.2rem; }
+/* broad Json-tree search: the flat result list (see _searchTreeData) */
+.tree-search-results { margin: 0.2rem 0 0.4rem; border: 1px solid var(--pico-muted-border-color); border-radius: 6px; max-height: 60vh; overflow-y: auto; }
+.tsr-head { padding: 0.3rem 0.5rem; font-size: 0.8em; border-bottom: 1px solid var(--pico-muted-border-color); position: sticky; top: 0; background: var(--pico-background-color); }
+.tsr-row { display: flex; gap: 0.6rem; align-items: baseline; padding: 0.15rem 0.5rem; text-decoration: none; color: inherit; font-size: 0.85em; }
+.tsr-row:hover { background: var(--pico-card-background-color); }
+.tsr-path { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tsr-val { flex: 0 1 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); color: var(--pico-muted-color); }
 .manual-popover.manual-floating { position: fixed; right: auto; top: auto; margin-top: 0; }
 .manual-header {
     display: flex; align-items: center; justify-content: space-between; flex: 0 0 auto;

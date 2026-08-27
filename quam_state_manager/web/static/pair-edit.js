@@ -883,7 +883,7 @@
             return (window.CSS && CSS.escape) ? CSS.escape(k)
                                               : String(k).replace(/"/g, '\\"');
         };
-        var patched = 0, missing = 0, rows = [], covered = [];
+        var patched = 0, missing = 0, rows = [], covered = [], uncovered = [];
         entries.forEach(function (e) {
             if (!e || !e.dot_path) return;
             // BOTH attributes (docs/124 C-2/M-8, same as BulkEdit): the server
@@ -918,10 +918,11 @@
                 wrote++;
             });
             if (wrote && honest) covered.push(e.dot_path);
+            else if (wrote) uncovered.push(e.dot_path);
         });
         rows.forEach(_refreshRow);
         if (patched) _refreshGlobal();
-        return { patched: patched, missing: missing, covered: covered };
+        return { patched: patched, missing: missing, covered: covered, uncovered: uncovered };
     }
     BulkPairEdit.revertPaths = _revertPaths;
 

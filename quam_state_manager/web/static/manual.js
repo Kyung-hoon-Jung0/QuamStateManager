@@ -266,6 +266,17 @@ window.ConfigManual = (function () {
         });
     }
 
+    /* The ? buttons on the state surfaces carry their target as data
+       attributes (never an inline onclick string -- a key with a quote in it
+       would end the script), one delegated handler serves them all. */
+    document.addEventListener('click', function (e) {
+        var b = e.target && e.target.closest ? e.target.closest('.key-help-btn[data-help-path], .key-help-btn[data-help-q]') : null;
+        if (!b) return;
+        e.preventDefault(); e.stopPropagation();
+        if (b.hasAttribute('data-help-path')) window.openConfigManual({ path: b.getAttribute('data-help-path') });
+        else window.openConfigManual({ q: b.getAttribute('data-help-q') });
+    }, true);
+
     /* F1 on a focused state cell / tree row / inspector input opens "this place". */
     document.addEventListener('keydown', function (e) {
         if (e.key !== 'F1' || e.ctrlKey || e.altKey || e.metaKey) return;

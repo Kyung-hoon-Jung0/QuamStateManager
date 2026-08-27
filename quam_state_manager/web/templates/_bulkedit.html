@@ -147,7 +147,7 @@
                 </tr>
                 <tr class="bulk-head-row">
                     {% for c in columns %}
-                    <th scope="col" class="bulk-col-head{% if not c.default_on %} bulk-col-hidden{% endif %}{% if c.group_start %} bulk-col-group-start{% endif %}"
+                    <th scope="col" class="bulk-col-head ck-{{ loop.index0 }}{% if not c.default_on %} bulk-col-hidden{% endif %}{% if c.group_start %} bulk-col-group-start{% endif %}"
                         data-col-key="{{ c.key }}" data-section="{{ c.section }}"
                         title="{{ c.section }} · click to sort · drag the right edge to resize">
                         <span class="bulk-col-label">{{ c.label }}</span>{% if c.unit %} <span class="bulk-col-unit unit">({{ c.unit }})</span>{% endif %}{% if c.multi %}<span class="bulk-col-multi" title="Some qubits carry up to {{ c.multi }} operations under this name — one per neighbour. Each cell shows and edits that qubit's first; hover a cell to see which one.">&#8314;</span>{% endif %}<span class="bulk-sort-caret" aria-hidden="true"></span>
@@ -157,7 +157,7 @@
                                 onclick="ColumnHistory.open(this)"
                                 title="Column history — this parameter across every qubit over the recent runs">&#128344;</button>
                         <button type="button" class="key-help-btn" tabindex="-1"
-                                onclick="openConfigManual({q: '{{ c.key.rsplit('.', 1)[-1] }}'})"
+                                data-help-q="{{ c.key.rsplit('.', 1)[-1] }}"
                                 title="Config Manual — what this key means, what values it takes">?</button>
                         <span class="bulk-resize-handle" data-col-key="{{ c.key }}" title="Drag to resize · double-click to auto-fit" aria-hidden="true"></span>
                     </th>
@@ -170,7 +170,7 @@
                     <th class="bulk-rowhead" scope="row" data-col-key="__id__">{{ row.id }}</th>
                     {% for cell in row.cells %}
                     {% set col = columns[loop.index0] %}
-                    <td class="bulk-td{% if not col.default_on %} bulk-col-hidden{% endif %}{% if col.group_start %} bulk-col-group-start{% endif %}{% if cell.is_pointer %} bulk-td-pointer{% endif %}{% if cell.lo and cell.lo.peer_qubit %} bulk-td-lo{% endif %}{% if cell.kind in ('listedit', 'runtime', 'missing') %} bulk-td-ro{% endif %}"
+                    <td class="bulk-td ck-{{ loop.index0 }}{% if not col.default_on %} bulk-col-hidden{% endif %}{% if col.group_start %} bulk-col-group-start{% endif %}{% if cell.is_pointer %} bulk-td-pointer{% endif %}{% if cell.lo and cell.lo.peer_qubit %} bulk-td-lo{% endif %}{% if cell.kind in ('listedit', 'runtime', 'missing') %} bulk-td-ro{% endif %}"
                         data-col-key="{{ col.key }}">
                         {% if cell.kind == 'listedit' %}
                         {# r6 item 4: a real LIST value — compact JSON preview + the ✎
@@ -275,7 +275,7 @@
                 </tr>
                 <tr class="bulk-head-row">
                     {% for c in pair_columns %}
-                    <th scope="col" class="bulk-col-head{% if not c.default_on %} bulk-col-hidden{% endif %}{% if c.group_start %} bulk-col-group-start{% endif %}"
+                    <th scope="col" class="bulk-col-head ck-{{ loop.index0 }}{% if not c.default_on %} bulk-col-hidden{% endif %}{% if c.group_start %} bulk-col-group-start{% endif %}"
                         data-col-key="{{ c.key }}" data-section="{{ c.section }}"
                         title="{{ c.section }} · click to sort · drag the right edge to resize">
                         <span class="bulk-col-label">{{ c.label }}</span>{% if c.unit %} <span class="bulk-col-unit unit">({{ c.unit }})</span>{% endif %}<span class="bulk-sort-caret" aria-hidden="true"></span>
@@ -285,7 +285,7 @@
                                 onclick="ColumnHistory.open(this)"
                                 title="Column history — this parameter across every pair over the recent runs">&#128344;</button>
                         <button type="button" class="key-help-btn" tabindex="-1"
-                                onclick="openConfigManual({q: '{{ c.key.rsplit('.', 1)[-1] }}'})"
+                                data-help-q="{{ c.key.rsplit('.', 1)[-1] }}"
                                 title="Config Manual — what this key means, what values it takes">?</button>
                         <span class="bulk-resize-handle" data-col-key="{{ c.key }}" title="Drag to resize · double-click to auto-fit" aria-hidden="true"></span>
                     </th>
@@ -298,7 +298,7 @@
                     <th class="bulk-rowhead" scope="row" data-col-key="__id__">{{ row.id }}</th>
                     {% for cell in row.cells %}
                     {% set col = pair_columns[loop.index0] %}
-                    <td class="bulk-td{% if not col.default_on %} bulk-col-hidden{% endif %}{% if col.group_start %} bulk-col-group-start{% endif %}{% if cell.kind in ('runtime','list','missing') %} bulk-td-ro{% endif %}{% if cell.is_pointer and cell.kind == 'scalar' %} bulk-td-pointer{% endif %}{% if cell.lo and cell.lo.peer_qubit %} bulk-td-lo{% endif %}"
+                    <td class="bulk-td ck-{{ loop.index0 }}{% if not col.default_on %} bulk-col-hidden{% endif %}{% if col.group_start %} bulk-col-group-start{% endif %}{% if cell.kind in ('runtime','list','missing') %} bulk-td-ro{% endif %}{% if cell.is_pointer and cell.kind == 'scalar' %} bulk-td-pointer{% endif %}{% if cell.lo and cell.lo.peer_qubit %} bulk-td-lo{% endif %}"
                         data-col-key="{{ col.key }}">
                         {% if cell.kind == 'list' %}
                         <input type="text" class="bulk-cell bulk-cell-ro" value="{{ cell.display }}"

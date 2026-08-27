@@ -50,6 +50,9 @@ const ENTRIES = [
       docs: 'Guides/opx1000_fems.md#bands', quote: 'q', unit: null, default: null }, source: 'QM docs', examples: [], present_in: 0, choices: null },
     { id: 'FluxLine.mystery', key: 'mystery', cls: 'FluxLine', type: 'str', required: false, default: null,
       doc: null, docs: null, source: null, examples: [], present_in: 0, choices: null },
+    // a lab docstring is third-party text: it must render as text, never as markup
+    { id: 'Lab.evil', key: 'evil', cls: 'Lab', type: 'str', required: false, default: null,
+      doc: '<img src=x onerror="window.__pwned=1"> <b>bold</b>', docs: null, source: 'class docstring', examples: [], present_in: 0, choices: null },
 ];
 const NODE = { ok: true, path: 'qubits.q1.z.joint_offset', owner: 'qubits.q1.z', focus: 'joint_offset', cls: 'FluxLine',
     cls_doc: 'QUAM component for a flux line.', known: true,
@@ -92,7 +95,9 @@ setTimeout(function () {
     window.ConfigManual._renderSearch('band | mystery');
     ok(body().querySelectorAll('.manual-entry').length === 2, '| = OR widens (' + body().querySelectorAll('.manual-entry').length + ')');
     window.ConfigManual._renderSearch('');
-    ok(body().querySelectorAll('.manual-entry').length === 3, 'empty query lists everything');
+    ok(body().querySelectorAll('.manual-entry').length === 4, 'empty query lists everything');
+    ok(!body().querySelector('img') && !body().querySelector('b') && /<img src=x/.test(body().textContent) && !window.__pwned,
+       'a docstring renders as TEXT — markup in third-party text is escaped, never executed');
     // 4 node view via deep link
     window.openConfigManual({ path: 'qubits.q1.z.joint_offset' });
     setTimeout(function () {
@@ -106,7 +111,7 @@ setTimeout(function () {
         body().querySelector('.manual-goto').click();
         ok(nav[0] === 'qubits.q1.z.joint_offset', '"used at" navigates to the explorer path');
         body().querySelector('.manual-back').click();
-        ok(/of 3 keys/.test(body().textContent), 'back returns to the search over all keys');
+        ok(/of 4 keys/.test(body().textContent), 'back returns to the search over all keys');
         // 5 drag commits to fixed coords
         const head = pop.querySelector('.manual-header');
         pop.getBoundingClientRect = () => ({ left: 10, top: 40, width: 500, height: 300 });

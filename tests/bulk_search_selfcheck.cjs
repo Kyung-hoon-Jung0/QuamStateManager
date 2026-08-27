@@ -195,4 +195,16 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
   if (failures) { console.error(failures + ' check(s) failed'); process.exit(1); }
   console.log('all checks passed');
+  // Night session 2026-08-28: hidden columns are addressed by CLASS (`td.ck-N`,
+  // stamped on th+td by the template) -- Chrome indexes rules by class name,
+  // so a td tests only its own rules; the old attribute-equals rule was a
+  // candidate for every td (250-370 ms of style recalc per keystroke).
+  w.document.querySelectorAll('th.bulk-col-head[data-col-key]').forEach(function (h, i) {
+    h.classList.add('ck-' + i);
+    w.document.querySelectorAll('td[data-col-key="' + h.getAttribute('data-col-key') + '"]').forEach(function (td) { td.classList.add('ck-' + i); });
+  });
+  type('t1'); await sleep(250);
+  const ckSheet = (w.document.getElementById('bulk-search-hide-style') || {}).textContent || '';
+  check('ck: hidden columns are addressed by class selector, not attribute',
+        ckSheet.indexOf('td.ck-') >= 0 && ckSheet.indexOf('td[data-col-key=') < 0, ckSheet.slice(0, 120));
 })().catch(function (e) { console.error(e && e.stack || e); process.exit(1); });

@@ -1041,10 +1041,19 @@
             el.classList.toggle('bulk-search-hidden', !!colSearchHide[k]);
         });
         var _hideSels = [];
+        // Night session 2026-08-28: hide by CLASS (`.ck-<index>`, stamped on every
+        // th/td by the template), not by `td[data-col-key="k"]`. Chrome indexes
+        // rules by class NAME, so a td tests only the rules for its own classes;
+        // an attribute-equals rule is a candidate for EVERY td, and 300 hidden
+        // columns x 8,000 tds was the 250-370 ms style recalc measured behind
+        // each keystroke (real Chrome trace).
+        var _idxOf = _colIndexMap(t);
         Object.keys(colSearchHide).forEach(function (k) {
             if (!colSearchHide[k] || k === '__id__' || hide.has(k)) return;
             _searchHiddenKeys[k] = 1;
-            _hideSels.push('#bulk-table td[data-col-key="' + _cssEsc(k) + '"]');
+            _hideSels.push(_idxOf[k] != null
+                ? '#bulk-table td.ck-' + _idxOf[k]
+                : '#bulk-table td[data-col-key="' + _cssEsc(k) + '"]');
         });
         _searchHideStyleEl().textContent = _hideSels.length
             ? _hideSels.join(',\n') + ' { display: none !important; }' : '';
@@ -1670,6 +1679,15 @@
         return el;
     }
     function _cssEsc(k) { return (window.CSS && CSS.escape) ? CSS.escape(k) : String(k).replace(/"/g, '\\"'); }
+    // column key -> the `ck-N` index stamped on its cells (from the header row)
+    function _colIndexMap(t) {
+        var m = {};
+        t.querySelectorAll('th.bulk-col-head[data-col-key]').forEach(function (h) {
+            var hit = /(?:^|\s)ck-(\d+)(?:\s|$)/.exec(h.className || '');
+            if (hit) m[h.getAttribute('data-col-key')] = hit[1];
+        });
+        return m;
+    }
     function _virtInit() {
         _virt = null;
         _virtStyleEl().textContent = '';
@@ -2931,7 +2949,7 @@
             return e && e.dot_path && !sel(e.dot_path).length;
         });
         if (absent) _virtHydrateAll();
-        var patched = 0, missing = 0, rows = [], covered = [];
+        var patched = 0, missing = 0, rows = [], covered = [], uncovered = [];
         entries.forEach(function (e) {
             if (!e || !e.dot_path) return;
             var cs = sel(e.dot_path);
@@ -2975,6 +2993,7 @@
                 wrote++;
             });
             if (wrote && honest) covered.push(e.dot_path);
+            else if (wrote) uncovered.push(e.dot_path);
         });
         rows.forEach(_refreshRow);
         if (patched) _refreshGlobal();
@@ -2982,7 +3001,7 @@
         // grids on screen a qubit leaf is legitimately absent from the pair
         // grid, so summing each surface's misses would demand a full rebuild
         // for every ordinary edit.
-        return { patched: patched, missing: missing, covered: covered };
+        return { patched: patched, missing: missing, covered: covered, uncovered: uncovered };
     }
     BulkEdit.revertPaths = _revertPaths;
 
