@@ -196,6 +196,41 @@ def read_json(path: Path | str, *, attempts: int | None = None) -> dict:
     ) from last_exc
 
 
+def read_json_raw(path: Path | str, *, attempts: int | None = None) -> tuple[dict, bytes]:
+    """:func:`read_json`, also returning the exact bytes that were parsed.
+
+    Same share-delete handle, same retry ladder, same errors. Callers that
+    will WRITE this content somewhere else (a history snapshot, the live
+    files on apply) reuse the bytes instead of re-serialising the dict, so
+    the copy is byte-identical to what was hashed and one serialisation
+    fewer per file (2026-08-27: an apply re-dumped the same content up to
+    six times).
+    """
+    path = Path(path)
+    tries = _READ_ATTEMPTS if attempts is None else max(1, int(attempts))
+    last_exc: Exception | None = None
+    for attempt in range(tries):
+        try:
+            with open_shared(path) as f:
+                raw = f.read()
+            data = json.loads(raw.decode("utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("expected a JSON object")
+            return data, raw
+        except (OSError, ValueError) as exc:
+            last_exc = exc
+            logger.debug("read %s attempt %d failed: %s", path.name, attempt + 1, exc)
+            if attempt + 1 < tries:
+                time.sleep(_READ_BACKOFF_S * (attempt + 1))
+    if isinstance(last_exc, FileNotFoundError):
+        raise last_exc
+    if isinstance(last_exc, ValueError):
+        raise LiveFileError(f"{path.name} is not valid JSON: {last_exc}") from last_exc
+    raise LiveFileError(
+        f"Could not read {path} after {tries} attempts: {last_exc}"
+    ) from last_exc
+
+
 def scan_json(path: Path | str) -> dict | None:
     """Read a JSON file for a BULK SCAN: one attempt, no sleep, no exception.
 
@@ -478,6 +513,81 @@ def write_state_wiring(folder: Path | str, state: dict, wiring: dict) -> None:
 # ----------------------------------------------------------------------
 # Metadata -- never opens file content, so never conflicts with a writer
 # ----------------------------------------------------------------------
+
+def read_state_wiring_raw(folder: Path | str, *, attempts: int | None = None
+                          ) -> tuple[dict, dict, bytes, bytes]:
+    """:func:`read_state_wiring` (same double-checked-mtime pair read, same
+    torn-pair refusal), also returning both files' exact bytes -- see
+    :func:`read_json_raw`. Returns ``(state, wiring, state_bytes, wiring_bytes)``."""
+    folder = Path(folder)
+    n = attempts if attempts is not None else _PAIR_READ_ATTEMPTS
+    state_path = folder / "state.json"
+    wiring_path = folder / "wiring.json"
+    for attempt in range(n):
+        before = _pair_fingerprint(folder)
+        state, state_bytes = read_json_raw(state_path)
+        wiring, wiring_bytes = read_json_raw(wiring_path)
+        after = _pair_fingerprint(folder)
+        if before == after:
+            return state, wiring, state_bytes, wiring_bytes
+        logger.debug(
+            "state+wiring raw read attempt %d saw mtime drift (before=%s after=%s); retrying",
+            attempt + 1, before, after,
+        )
+        time.sleep(_READ_BACKOFF_S * (attempt + 1))
+    logger.warning(
+        "state+wiring mtimes never settled after %d attempts in %s; refusing to "
+        "return a possibly-torn snapshot of an ongoing external write",
+        n, folder,
+    )
+    raise LiveFileError(
+        f"state.json + wiring.json in {folder} kept changing across "
+        f"{n} read attempts (an external writer is actively "
+        "saving) — not returning a possibly-torn pair; try again"
+    )
+
+
+def write_state_wiring_bytes(folder: Path | str, state_bytes: bytes,
+                             wiring_bytes: bytes) -> None:
+    """:func:`write_state_wiring` for content that is ALREADY serialised --
+    the bytes a :func:`read_state_wiring_raw` returned. Identical
+    tmp-write + fsync + replace sequence, identical state rollback when the
+    wiring replace fails; the only difference is that nothing is re-dumped,
+    so the written files are byte-for-byte the source's."""
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    state_path = folder / "state.json"
+    wiring_path = folder / "wiring.json"
+    old_state_bytes: bytes | None = None
+    if state_path.exists():
+        try:
+            with open_shared(state_path) as f:
+                old_state_bytes = f.read()
+        except OSError:
+            old_state_bytes = None
+    state_tmp = _write_tmp_bytes(state_path, state_bytes)
+    try:
+        wiring_tmp = _write_tmp_bytes(wiring_path, wiring_bytes)
+    except OSError:
+        try:
+            state_tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+    _replace_into_place(state_tmp, state_path)
+    try:
+        _replace_into_place(wiring_tmp, wiring_path)
+    except OSError:
+        if old_state_bytes is not None:
+            try:
+                _replace_into_place(_write_tmp_bytes(state_path, old_state_bytes),
+                                    state_path)
+            except OSError:
+                logger.error(
+                    "write_state_wiring_bytes: wiring replace failed AND state rollback "
+                    "failed for %s — live may hold NEW state + OLD wiring", folder)
+        raise
+
 
 def state_wiring_mtimes(folder: Path | str) -> tuple[float, float]:
     """Return ``(state.json mtime, wiring.json mtime)`` for *folder*.

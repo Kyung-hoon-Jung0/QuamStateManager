@@ -850,6 +850,12 @@ class HistoryManager:
         # In-memory state (protected by _lock)
         self._last_mtime: dict[str, tuple[float, float]] = {}  # key -> (state_mt, wiring_mt)
         self._snapshot_list_cache: dict[str, list[SnapshotMeta]] = {}
+        # In-flight deferred-index threads (check_and_snapshot(defer_index=True)).
+        # The self-heal readers join these first (2026-08-27): a Param History
+        # read landing ~100 ms after an apply used to see the index "behind"
+        # and start a full rebuild while the deferred insert was still running.
+        self._deferred_index_threads: list[threading.Thread] = []
+        self._deferred_index_lock = threading.Lock()
         self._store_cache: OrderedDict[tuple[str, str], QuamStore] = OrderedDict()
         # Hashes of (state+wiring) per chip dir, lazily populated on first access.
         # Used to dedup snapshots whose content matches one already on disk.
@@ -1789,7 +1795,12 @@ class HistoryManager:
             state_src = path / "state.json"
             wiring_src = path / "wiring.json"
             try:
-                snap_state, snap_wiring = safe_io.read_state_wiring(path)
+                # Raw bytes travel with the parse: the snapshot files are then
+                # byte-identical copies of what was hashed, and nothing is
+                # re-serialised (2026-08-27: two dumps per snapshot, two
+                # snapshots per apply).
+                snap_state, snap_wiring, snap_state_b, snap_wiring_b = (
+                    safe_io.read_state_wiring_raw(path))
             except (OSError, ValueError) as exc:
                 logger.warning("Snapshot capture failed for %s: %s", ts, exc)
                 return None
@@ -1803,7 +1814,7 @@ class HistoryManager:
             snap_dir = hist_dir / ts
             snap_dir.mkdir(parents=True, exist_ok=True)
             try:
-                safe_io.write_state_wiring(snap_dir, snap_state, snap_wiring)
+                safe_io.write_state_wiring_bytes(snap_dir, snap_state_b, snap_wiring_b)
             except (OSError, ValueError) as exc:
                 logger.warning("Snapshot capture failed for %s: %s", ts, exc)
                 shutil.rmtree(snap_dir, ignore_errors=True)
@@ -1914,10 +1925,21 @@ class HistoryManager:
                             "_ensure_index_fresh will heal on the next read",
                             ts, exc_info=True,
                         )
+                def _run_index_tracked() -> None:
+                    try:
+                        _run_index()
+                    finally:
+                        with self._deferred_index_lock:
+                            cur = threading.current_thread()
+                            self._deferred_index_threads = [
+                                t for t in self._deferred_index_threads if t is not cur]
                 try:
-                    threading.Thread(
-                        target=_run_index, name="param-history-index",
-                        daemon=True).start()
+                    _t = threading.Thread(
+                        target=_run_index_tracked, name="param-history-index",
+                        daemon=True)
+                    with self._deferred_index_lock:
+                        self._deferred_index_threads.append(_t)
+                    _t.start()
                 except Exception:   # can't spawn → never skip the index silently
                     _run_index()
             else:
@@ -3142,6 +3164,7 @@ class HistoryManager:
         decides WHETHER to call the rebuild.
         """
         try:
+            self._join_deferred_index()
             snapshots = self.list_snapshots(quam_state_path)
             if not snapshots:
                 return
@@ -3312,6 +3335,26 @@ class HistoryManager:
         finally:
             conn.close()
 
+    def _join_deferred_index(self, timeout: float = 8.0) -> None:
+        """Wait (bounded) for in-flight deferred index threads before a
+        self-heal reads the index — otherwise the read sees the last
+        snapshot as missing and starts a full rebuild that the thread is
+        about to make unnecessary. Never raises; a thread that outlives the
+        budget is simply left to finish (the heal is idempotent)."""
+        with self._deferred_index_lock:
+            pending = list(self._deferred_index_threads)
+        deadline = time.monotonic() + timeout
+        for t in pending:
+            if t is threading.current_thread():
+                continue
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                t.join(remaining)
+            except RuntimeError:
+                pass
+
     def _ensure_index_fresh(self, quam_state_path: Path) -> None:
         """Self-heal: rebuild missing rows if the index is behind disk.
 
@@ -3321,6 +3364,7 @@ class HistoryManager:
         Capture paths bump ``_last_index_check`` via ``_bump_chip_version``
         so a new snapshot forces a re-verification on next read.
         """
+        self._join_deferred_index()
         snapshots = self.list_snapshots(quam_state_path)
         if not snapshots:
             return

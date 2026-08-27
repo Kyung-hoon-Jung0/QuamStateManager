@@ -682,7 +682,10 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False) -> None:
             raise StaleLiveError(
                 "The live state files changed since they were loaded or synced."
             )
-    state, wiring = safe_io.read_state_wiring(wc.working_folder)
+    # Raw bytes travel with the parse (2026-08-27): the live files become
+    # byte-identical copies of the working files the saver just wrote, and
+    # the apply no longer re-serialises the content it just parsed.
+    state, wiring, state_b, wiring_b = safe_io.read_state_wiring_raw(wc.working_folder)
 
     # Tightest possible TOCTOU recheck: re-stat *right* before the write so
     # the window between "is the live still in-sync" and "we are about to
@@ -701,7 +704,7 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False) -> None:
                 "to overwrite an out-of-band write."
             )
 
-    safe_io.write_state_wiring(wc.live_folder, state, wiring)
+    safe_io.write_state_wiring_bytes(wc.live_folder, state_b, wiring_b)
 
     # Post-write: read back the mtimes our write produced. If this fails
     # (live folder vanished, permission flipped under us), do NOT update the
