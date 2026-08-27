@@ -18,7 +18,7 @@ var UI_CONFIG = {
        pane and the lower inspector/detail pane.                       */
     split: {
         defaultSizes:   [55, 45],  /* initial split as percentages [upper pane %, lower pane %] — must add up to 100 */
-        expandedSizes:  [35, 65],  /* DEFAULT "expanded" target — inspector gets 65% (spacious) while the upper table stays visible (35%), so clicking a detail no longer makes the table vanish. Users who want a full cover can still set it via the gutter ⤒ set-icon → localStorage "quam_split_expanded" (incl. [0,100]). */
+        expandedSizes:  [15, 85],  /* DEFAULT "expanded" target — customer ask (2026-08-27): clicking a run should open the detail panel nearly full-screen, not half. The inspector gets 85%; the upper table keeps a 15% sliver for context + grabbing. A user's own ⤒ set-icon preset (localStorage "quam_split_expanded", incl. [0,100]) still wins over this default. */
         collapsedSizes: [85, 15],  /* DEFAULT "collapsed" target — inspector gets 15%. Overridable via the gutter ⤓ set-icon → localStorage "quam_split_collapsed". */
         minSizes:       [0, 60],   /* min height (px) for [upper, lower] pane. Upper=0 lets the inspector be dragged to FULLY cover the page (Qubits / Chip Status / …); lower=60 keeps the inspector grabbable (use its × button to fully reveal the page instead). */
         gutterSize:     6          /* ⚠ height of the drag handle bar in pixels — keep in sync with --split-gutter-size in style.css */
@@ -9093,8 +9093,25 @@ window.toggleFigureZoom = function(imgEl) {
     img.draggable = false;
     box.appendChild(img);
 
+    // Customer ask (2026-08-27): "to see the next figure I had to close and
+    // click the next one". The viewer now walks the figures of the SAME grid
+    // the clicked one sits in (a run's figure grid, a compare grid, a trend
+    // strip, the Interactive tab) — ← / → keys and on-screen arrows. The
+    // group is read at open time from the live DOM, so it is exactly what
+    // the user sees; a lone figure gets no arrows at all.
+    var groupHost = imgEl.closest
+        ? imgEl.closest('.figure-grid, .compare-figure-grid, .figure-strip, .dataset-tab-content')
+        : null;
+    var group = Array.prototype.slice.call(
+        (groupHost || document).querySelectorAll('img[onclick*="toggleFigureZoom"]'));
+    var idx = group.indexOf(imgEl);
+    if (idx < 0) { group = [imgEl]; idx = 0; }
+
     var bar = document.createElement('div');
     bar.className = 'fig-lightbox-bar';
+    var countLabel = document.createElement('span');
+    countLabel.className = 'fig-lightbox-count';
+    if (group.length > 1) bar.appendChild(countLabel);
     var zoomLabel = document.createElement('span');
     zoomLabel.className = 'fig-lightbox-zoom';
     bar.appendChild(zoomLabel);
@@ -9111,9 +9128,30 @@ window.toggleFigureZoom = function(imgEl) {
         });
     box.appendChild(bar);
 
+    var caption = document.createElement('div');
+    caption.className = 'fig-lightbox-caption';
+    box.appendChild(caption);
+
+    var navPrev = null, navNext = null;
+    if (group.length > 1) {
+        [['-1', '‹', 'Previous figure  (←)', 'fig-lightbox-nav-prev'],
+         ['1', '›', 'Next figure  (→)', 'fig-lightbox-nav-next']].forEach(function(n) {
+            var nb = document.createElement('button');
+            nb.type = 'button';
+            nb.className = 'fig-lightbox-nav ' + n[3];
+            nb.setAttribute('data-nav', n[0]);
+            nb.textContent = n[1];
+            nb.title = n[2];
+            nb.setAttribute('aria-label', n[2]);
+            box.appendChild(nb);
+            if (n[0] === '-1') navPrev = nb; else navNext = nb;
+        });
+    }
+
     var hint = document.createElement('div');
     hint.className = 'fig-lightbox-hint';
-    hint.textContent = 'scroll to zoom · drag to pan · double-click to zoom · Esc to close';
+    hint.textContent = 'scroll to zoom · drag to pan · double-click to zoom'
+        + (group.length > 1 ? ' · ← → other figures' : '') + ' · Esc to close';
     box.appendChild(hint);
 
     // transform = translate(tx,ty) scale(s), origin center. zoomAt keeps the
@@ -9138,8 +9176,32 @@ window.toggleFigureZoom = function(imgEl) {
     }
     apply();
 
+    // Show group member i: swap the clone's source, reset the zoom (a pan
+    // into one figure means nothing on the next), and keep the count + the
+    // end-of-strip arrow states honest. No wrap-around — the ends are ends.
+    function show(i) {
+        if (i < 0 || i >= group.length) return;
+        idx = i;
+        var src = group[idx];
+        img.src = src.getAttribute('src') || src.src;
+        img.alt = src.alt || '';
+        s = 1; tx = 0; ty = 0; apply();
+        caption.textContent = img.alt;
+        countLabel.textContent = (idx + 1) + ' / ' + group.length;
+        if (navPrev) { navPrev.disabled = idx === 0; }
+        if (navNext) { navNext.disabled = idx === group.length - 1; }
+    }
+    show(idx);
+
+    function onNavKey(e) {
+        if (e.key === 'ArrowLeft') { e.preventDefault(); show(idx - 1); }
+        else if (e.key === 'ArrowRight') { e.preventDefault(); show(idx + 1); }
+    }
+    if (group.length > 1) document.addEventListener('keydown', onNavKey, true);
+
     var release = null;
     function close() {
+        document.removeEventListener('keydown', onNavKey, true);
         if (release) { try { release(); } catch (e) {} release = null; }
         if (box.parentNode) box.parentNode.removeChild(box);
     }
@@ -9177,6 +9239,8 @@ window.toggleFigureZoom = function(imgEl) {
     });
 
     box.addEventListener('click', function(e) {
+        var nav = e.target.closest ? e.target.closest('.fig-lightbox-nav') : null;
+        if (nav) { show(idx + parseInt(nav.getAttribute('data-nav'), 10)); return; }
         var b = e.target.closest ? e.target.closest('.fig-lightbox-btn') : null;
         if (b) {
             var act = b.getAttribute('data-act');

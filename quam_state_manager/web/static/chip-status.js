@@ -1023,8 +1023,17 @@ window.ChipStatus.mount = function (opts) {
         // edge) immediately, no scrolling. Frequencies join the row, and 2Q
         // metrics become first-class EDGE metrics (scope:'edge').
         var METRICS = [
+            // Customer ask (2026-08-27): the freq patch alone said too little —
+            // anharmonicity matters as much when scanning a chip, so it rides
+            // under f01 as a smaller MHz sub-line (α = f12 − f01).
             { key: 'f_01',                label: 'Qubit freq',
-              fmtFn: function(v) { return fmt(v, 'GHz'); } },
+              fmtFn: function(v) { return fmt(v, 'GHz'); },
+              subKey: 'anharmonicity',
+              subFmt: function(v) { return 'α ' + fmt(v, 'MHz'); },
+              // Customer ask (2026-08-27, round 2): every pair edge carries
+              // the two stones' frequency difference — Δf, the number the
+              // docs/93 chevron only encodes as an inequality.
+              edgeDelta: { key: 'f_01', label: 'Δf' } },
             { key: 'readout_frequency',   label: 'Readout freq',
               fmtFn: function(v) { return fmt(v, 'GHz'); } },
             { key: 'gate_fidelity_avg',   fmtFn: function(v) { return fmtPct(v, 2) + '%'; } },
@@ -1187,7 +1196,18 @@ window.ChipStatus.mount = function (opts) {
             }
             var v = _mv(n, m.key);
             var c2 = propBgColor({ key: m.key }, v);
+            // The metric's sub-value (e.g. anharmonicity under f01), read
+            // through the SAME physical gate as every displayed number — a
+            // missing or unphysical value renders nothing, never a dash.
+            // (_mv alone is the gate: it returns the record's QUARANTINED
+            // value, which is already null for a bad fit.)
+            var sub = null;
+            if (m.subKey) {
+                var sv = _mv(n, m.subKey);
+                if (sv != null) sub = m.subFmt(sv);
+            }
             return { fill: c2.bg, fg: c2.fg, text: v == null ? '—' : m.fmtFn(v),
+                     sub: sub,
                      title: v == null ? 'no data' : '' };
         }
 
@@ -1318,11 +1338,62 @@ window.ChipStatus.mount = function (opts) {
             var svg = '';
             var evalSvg = '';
             var R = compactMode ? 33 : 37;   // docs/126 compact: smaller stones
+            // Customer ask (2026-08-27, round 2): while a metric with
+            // `edgeDelta` is selected (Qubit freq), each pair edge prints the
+            // difference between its two stones' values — Δf on the line's
+            // midpoint (the chevron sits off-line at +0.16·CELL, M on the
+            // other side, so the midpoint is free; the halo keeps it
+            // readable). Same gated read as the stones (_mv), so an edge
+            // never shows a Δf its stones cannot back — either end missing
+            // or unphysical means no label, never a fabricated 0. Deduped
+            // per physical pair (a CR chip carries both directions as
+            // separate edges).
+            var _nById = {};
+            topo.nodes.forEach(function(n) { _nById[n.id] = n; });
+            var _deltaDone = {};
             topo.edges.forEach(function(e) {
                 var a = lay.positions[e.source], b = lay.positions[e.target];
                 if (!a || !b) return;
                 var oA = offsets[e.source] || { dx: 0, dy: 0 }, oB = offsets[e.target] || { dx: 0, dy: 0 };
                 var x1 = cx(a) + oA.dx, y1 = cy(a) + oA.dy, x2 = cx(b) + oB.dx, y2 = cy(b) + oB.dy;
+                if (!edgeMode && mCur.edgeDelta) {
+                    var dKey = String(e.source) < String(e.target)
+                        ? e.source + '|' + e.target : e.target + '|' + e.source;
+                    if (!_deltaDone[dKey]) {
+                        _deltaDone[dKey] = true;
+                        var nA = _nById[e.source], nB = _nById[e.target];
+                        var fA = nA != null ? _mv(nA, mCur.edgeDelta.key) : null;
+                        var fB = nB != null ? _mv(nB, mCur.edgeDelta.key) : null;
+                        if (typeof fA === 'number' && typeof fB === 'number') {
+                            var ad = Math.abs(fA - fB);
+                            // Round 3: anharmonicity-sized, and compact —
+                            // whole MHz once the difference is ≥ 10 MHz
+                            // (0.1 MHz still shows below that, where it
+                            // matters), GHz from 1 GHz up.
+                            var dNum = ad >= 1e9 ? (ad / 1e9).toFixed(2)
+                                     : ad >= 1e7 ? (ad / 1e6).toFixed(0)
+                                     : (ad / 1e6).toFixed(1);
+                            var dUnit = ad >= 1e9 ? 'GHz' : 'MHz';
+                            var dmx = (x1 + x2) / 2, dmy = (y1 + y2) / 2;
+                            if (Math.abs(x2 - x1) >= Math.abs(y2 - y1)) {
+                                // A HORIZONTAL edge has only the stone gap
+                                // to write in, so the label stacks: Δf /
+                                // number / unit on three short lines.
+                                evalSvg += '<text class="topo-hero-edelta topo-hero-edelta-stack" x="' + dmx
+                                    + '" y="' + (dmy - 6) + '">'
+                                    + '<tspan x="' + dmx + '">' + _esc(mCur.edgeDelta.label) + '</tspan>'
+                                    + '<tspan x="' + dmx + '" dy="9">' + _esc(dNum) + '</tspan>'
+                                    + '<tspan x="' + dmx + '" dy="9">' + _esc(dUnit) + '</tspan>'
+                                    + '</text>';
+                            } else {
+                                evalSvg += '<text class="topo-hero-edelta" x="' + dmx
+                                    + '" y="' + (dmy + 3) + '">'
+                                    + _esc(mCur.edgeDelta.label + ' ' + dNum + ' ' + dUnit)
+                                    + '</text>';
+                            }
+                        }
+                    }
+                }
                 var pdx = 0, pdy = 0;   // unit perpendicular (label offset)
                 {
                     var ddx = x2 - x1, ddy = y2 - y1, LL = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
@@ -1407,15 +1478,23 @@ window.ChipStatus.mount = function (opts) {
                     return;
                 }
                 var pt = nodePaint(n, current);
+                // A metric with a sub-value shifts the whole stone to a
+                // three-line layout (uniform per METRIC, so ids line up
+                // across the map even where one qubit's sub is missing).
+                var subMode = !!mCur.subKey;
                 svg += '<g class="topo-hero-node' + (pt.cls ? ' ' + pt.cls : '') + '" data-hero-qubit="' + _esc(n.id)
                      + '" transform="translate(' + (cx(p) + o.dx) + ',' + (cy(p) + o.dy) + ')" tabindex="0">'
                      + '<circle class="topo-hero-stone" r="' + R + '"'
                      + (pt.fill ? ' style="fill:' + pt.fill + '"' : '')
                      + (o.shared ? ' stroke-dasharray="3 2"' : '') + '></circle>'
-                     + '<text class="topo-hero-id" y="-5"' + (pt.fg ? ' style="fill:' + pt.fg + '"' : '') + '>'
+                     + '<text class="topo-hero-id" y="' + (subMode ? -14 : -5) + '"' + (pt.fg ? ' style="fill:' + pt.fg + '"' : '') + '>'
                      + _esc(n.id) + '</text>'
-                     + '<text class="topo-hero-val" y="11"' + (pt.fg ? ' style="fill:' + pt.fg + '"' : '') + '>'
+                     + '<text class="topo-hero-val" y="' + (subMode ? 1 : 11) + '"' + (pt.fg ? ' style="fill:' + pt.fg + '"' : '') + '>'
                      + _esc(pt.text) + '</text>'
+                     + (pt.sub != null
+                        ? '<text class="topo-hero-sub" y="14"' + (pt.fg ? ' style="fill:' + pt.fg + '"' : '') + '>'
+                          + _esc(pt.sub) + '</text>'
+                        : '')
                      + (pt.title ? '<title>' + _esc(pt.title) + '</title>' : '')
                      + '</g>';
             });

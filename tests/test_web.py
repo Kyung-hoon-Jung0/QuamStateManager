@@ -187,9 +187,48 @@ class TestRound15ChromeHiding:
         assert "quam_topbar_hidden" in base                  # restored in restorePrefs
         assert "window.toggleTopbar" in js
         assert "topbar-hidden" in js and "quam_topbar_hidden" in js
-        assert "html.topbar-hidden .topbar { display: none; }" in css
+        # The bar collapses to ZERO HEIGHT (not display:none — one item still
+        # floats out of it, see test_topbar_hidden_keeps_the_sync_badge).
+        assert "html.topbar-hidden .topbar {\n    height: 0;" in css.replace("\r\n", "\n")
+        assert "html.topbar-hidden .topbar > nav > ul > li { display: none; }" in css
         # CRITICAL: zero the var (no 48px dead strip) — never edit the literal.
         assert "html.topbar-hidden { --topbar-height: 0px; }" in css
+
+    def test_topbar_hidden_keeps_the_sync_badge(self):
+        """Customer ask (2026-08-27): the ☰ cycle's second press hid EVERY
+        top-bar control. The sync status badge (● Synced / N unsaved / Live chip
+        moved — the review + apply door) must survive it, floating beside the
+        ☰, WITHOUT being moved in the DOM (its OOB swaps target #pending-tray
+        in place)."""
+        css = self._read("web", "static", "style.css")
+        tray = self._read("web", "templates", "_pending_tray.html")
+        base = self._read("web", "templates", "base.html")
+        assert 'id="topbar-tray-slot"' in base
+        assert 'class="state-status-badge' in tray and 'id="pending-tray"' in tray
+        # the slot floats (fixed) while every sibling <li> stays hidden
+        slot = css.split("html.topbar-hidden #topbar-tray-slot {", 1)[1].split("}", 1)[0]
+        assert "position: fixed" in slot and "pointer-events: auto" in slot, (
+            "The tray slot must float out of the collapsed bar and stay clickable."
+        )
+        # inside the tray, ONLY the badge and the Auto-Sync pill show (the
+        # user confirmed the pill should float too) — and the pill's popup
+        # host must not be hidden with the other slot children, or every click
+        # on the floating pill would be swallowed.
+        assert ("html.topbar-hidden #pending-tray > :not(.state-status-badge)"
+                ":not(.auto-sync-wrap) { display: none; }") in css
+        assert ("html.topbar-hidden #topbar-tray-slot > :not(#pending-tray)"
+                ":not(#auto-sync-pop-host) { display: none; }") in css
+        assert 'class="auto-sync-wrap"' in tray and 'id="auto-sync-pop-host"' in base
+        badge = css.split("html.topbar-hidden #pending-tray > .auto-sync-wrap {", 1)[1].split("}", 1)[0]
+        assert "display: inline-flex" in badge
+        # no JS relocation — the badge is never appended anywhere else
+        js = self._read("web", "static", "app.js")
+        assert "state-status-badge" not in js.split("window.toggleTopbar = function()", 1)[1][:600], (
+            "toggleTopbar must not move the badge — CSS floats it in place."
+        )
+        # TopbarHeight publishes 0 by CLASS, so a zero-height (not display:none)
+        # bar cannot leak a stale height into the panels' calc(100vh - topbar)
+        assert "classList.contains('topbar-hidden')) return 0" in js
 
     def test_topbar_reveal_button_theme_safe(self):
         # <button> → must set explicit bg + non-rescoped text (not var(--pico-color)).
@@ -1610,6 +1649,44 @@ class TestSidebarFeatures:
         )
         assert "quam_split_expanded" in text and "quam_split_collapsed" in text, (
             "Per-user split preset localStorage keys are missing."
+        )
+
+    def test_dataset_panel_opens_nearly_fullscreen(self):
+        """Customer ask (2026-08-27): clicking a run must open the detail panel
+        nearly full-screen (was [35, 65] — read as 'about half'). The default
+        expanded split gives the inspector 85%; a user's own gutter-⤒ preset
+        still wins over the default (that path is untouched)."""
+        app_js = (Path(__file__).resolve().parent.parent
+                  / "quam_state_manager" / "web" / "static" / "app.js")
+        text = app_js.read_text(encoding="utf-8")
+        assert "expandedSizes:  [15, 85]" in text, (
+            "The default expanded split must give the dataset panel 85% of the height."
+        )
+
+    def test_dataset_header_covers_the_pane_padding(self):
+        """Customer ask (2026-08-27): while the panel scrolls, figures peeked
+        out ABOVE the sticky run header — the pane's padding strips sit outside
+        the header's box. The header must pull itself over them (negative
+        top/margins + re-added padding) in BOTH panes it renders in (inspector
+        pane, and #table-pane for the full-page run view)."""
+        css = (Path(__file__).resolve().parent.parent
+               / "quam_state_manager" / "web" / "static" / "style.css")
+        text = css.read_text(encoding="utf-8")
+        block = text.split(".inspector-header-dataset {", 1)[1].split("}", 1)[0]
+        assert "top: calc(-1 * var(--inspector-pane-pad-v))" in block, (
+            "The dataset header must pin with a negative top matching the pane padding."
+        )
+        assert ("margin: calc(-1 * var(--inspector-pane-pad-v)) "
+                "calc(-1 * var(--inspector-pane-pad-h))") in block, (
+            "The dataset header must pull over the pane's padding strips (top + sides)."
+        )
+        assert "padding: calc(var(--inspector-pane-pad-v) + 0.25rem)" in block, (
+            "The covered strip must be re-added as header padding (opaque cover, "
+            "title position at rest unchanged)."
+        )
+        assert "#table-pane .inspector-header-dataset" in text, (
+            "The full-page run view's pane has different padding (0.6rem) — "
+            "it needs its own matched cover."
         )
 
     def test_chip_status_left_nav_subviews(self):
