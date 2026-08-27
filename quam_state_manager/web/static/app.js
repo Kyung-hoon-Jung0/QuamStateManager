@@ -4029,7 +4029,7 @@ window.PhysAmp = (function () {
 window.smModalOpen = function () {
     if (document.querySelector('dialog[open]')) return true;
     var sel = '.ch-overlay, #state-review-overlay, #live-drift-overlay,'
-            + ' #version-diff-overlay,'
+            + ' #version-diff-overlay, #pulse-compare-overlay,'
             + ' #plot-apply-popup, #new-run-popup, #cmd-palette, #kb-cheatsheet,'
             + ' .modal';
     var els = document.querySelectorAll(sel);
@@ -15654,7 +15654,13 @@ window.openPulseCompare = function () {
         overlay.style.display = "none";
         overlay.innerHTML =
             '<div class="state-review-backdrop" onclick="closePulseCompare()"></div>' +
-            '<div class="state-review-card pulse-compare-card">' +
+            // `state-review-host`: the overlay's own stylesheet HIDES any
+            // .state-review-overlay whose host has no children (the empty-host
+            // click-trap guard, style.css). This card was not a host, so the
+            // rule kept the overlay display:none forever -- the fetch ran, the
+            // plot rendered into an invisible 0x0 div, and the button looked
+            // dead (user report, 2026-08-28, real-Chrome confirmed).
+            '<div class="state-review-host state-review-card pulse-compare-card">' +
               '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem">' +
                 '<h3 style="margin:0">Pulse Waveform Comparison</h3>' +
                 '<button type="button" onclick="closePulseCompare()" style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--pico-muted-color)">&times;</button>' +
@@ -15735,6 +15741,11 @@ window.closePulseCompare = function () {
     var overlay = document.getElementById("pulse-compare-overlay");
     if (overlay) overlay.style.display = "none";
 };
+document.addEventListener("keydown", function (evt) {
+    if (evt.key !== "Escape") return;
+    var overlay = document.getElementById("pulse-compare-overlay");
+    if (overlay && overlay.style.display !== "none") { evt.preventDefault(); window.closePulseCompare(); }
+});
 
 /* Strip any existing `key=` from a URL's query string and, when value is
    non-empty, append the fresh one — so overriding a baked query param can't
