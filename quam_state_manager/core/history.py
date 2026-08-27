@@ -1829,9 +1829,10 @@ class HistoryManager:
             # ``force=True`` bypasses dedup — it's an explicit user
             # override (e.g. "manual" trigger) and should always create
             # a fresh snapshot.
-            content_hash = _canonical_content_hash(
-                snap_dir / "state.json", snap_dir / "wiring.json",
-            )
+            # The dicts just written ARE the snapshot (byte copy), so hash them
+            # in memory instead of re-reading + re-parsing the two files
+            # (review of 264a4e3; _canonical_hash_of is the same canonical form).
+            content_hash = _canonical_hash_of(snap_state, snap_wiring)
             if content_hash is not None and not force:
                 known = self._known_hashes_for_chip(hist_dir)
                 if content_hash in known:
@@ -1939,7 +1940,13 @@ class HistoryManager:
                         daemon=True)
                     with self._deferred_index_lock:
                         self._deferred_index_threads.append(_t)
-                    _t.start()
+                    try:
+                        _t.start()
+                    except Exception:
+                        with self._deferred_index_lock:   # never-started: drop it
+                            self._deferred_index_threads = [
+                                t for t in self._deferred_index_threads if t is not _t]
+                        raise
                 except Exception:   # can't spawn → never skip the index silently
                     _run_index()
             else:

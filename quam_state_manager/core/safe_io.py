@@ -168,32 +168,7 @@ def read_json(path: Path | str, *, attempts: int | None = None) -> dict:
     a live ``state.json`` and badly wrong for a bulk scan over folders another
     writer is still filling in -- see :func:`scan_json`.
     """
-    path = Path(path)
-    tries = _READ_ATTEMPTS if attempts is None else max(1, int(attempts))
-    last_exc: Exception | None = None
-    for attempt in range(tries):
-        try:
-            with open_shared(path) as f:
-                raw = f.read()
-            data = json.loads(raw.decode("utf-8"))
-            if not isinstance(data, dict):
-                raise ValueError("expected a JSON object")
-            return data
-        except (OSError, ValueError) as exc:
-            # FileNotFoundError can be a transient atomic-replace window;
-            # JSONDecodeError a mid-write read; locks are OSError.  Retry all.
-            last_exc = exc
-            logger.debug("read %s attempt %d failed: %s", path.name, attempt + 1, exc)
-            if attempt + 1 < tries:
-                time.sleep(_READ_BACKOFF_S * (attempt + 1))
-    if isinstance(last_exc, FileNotFoundError):
-        raise last_exc
-    if isinstance(last_exc, ValueError):
-        # A content problem (bad JSON / not an object) -- retries won't help.
-        raise LiveFileError(f"{path.name} is not valid JSON: {last_exc}") from last_exc
-    raise LiveFileError(
-        f"Could not read {path} after {tries} attempts: {last_exc}"
-    ) from last_exc
+    return read_json_raw(path, attempts=attempts)[0]
 
 
 def read_json_raw(path: Path | str, *, attempts: int | None = None) -> tuple[dict, bytes]:
@@ -288,37 +263,9 @@ def read_state_wiring(folder: Path | str, *, attempts: int | None = None) -> tup
     if a file is genuinely absent, or :class:`LiveFileError` on unreadable
     JSON or when the pair never settled (external writer mid-save).
     """
-    folder = Path(folder)
-    n = attempts if attempts is not None else _PAIR_READ_ATTEMPTS
-    state_path = folder / "state.json"
-    wiring_path = folder / "wiring.json"
-    for attempt in range(n):
-        before = _pair_fingerprint(folder)   # (mtime_ns, size) per file — catches
-        last_state = read_json(state_path)    # coarse/non-advancing-mtime rewrites a
-        last_wiring = read_json(wiring_path)  # float-mtime bracket would miss
-        after = _pair_fingerprint(folder)
-        if before == after:
-            return last_state, last_wiring
-        logger.debug(
-            "state+wiring read attempt %d saw mtime drift (before=%s after=%s); retrying",
-            attempt + 1, before, after,
-        )
-        time.sleep(_READ_BACKOFF_S * (attempt + 1))
-    logger.warning(
-        "state+wiring mtimes never settled after %d attempts in %s; refusing to "
-        "return a possibly-torn snapshot of an ongoing external write",
-        n, folder,
-    )
-    raise LiveFileError(
-        f"state.json + wiring.json in {folder} kept changing across "
-        f"{n} read attempts (an external writer is actively "
-        "saving) — not returning a possibly-torn pair; try again"
-    )
+    state, wiring, _sb, _wb = read_state_wiring_raw(folder, attempts=attempts)
+    return state, wiring
 
-
-# ----------------------------------------------------------------------
-# Writing
-# ----------------------------------------------------------------------
 
 def _replace_file_windows(replacement: Path, replaced: Path) -> None:
     """``ReplaceFileW(replaced, replacement)`` -- atomically swap content.
