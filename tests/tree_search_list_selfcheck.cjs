@@ -1,13 +1,16 @@
-/* jsdom selfcheck for the Json-tree search result LIST (2026-08-28).
+/* jsdom selfcheck for the Json-tree search past the materialisation cap
+ * (2026-08-28, revised the same day on user feedback: the tree STAYS a tree).
  * A broad query used to materialise every matching subtree (1,384 rows for
- * "amplitude" on a real 20Q chip: ~430 ms of DOM creation + 330 ms of
- * style/layout). Past the cap the matches are LISTED instead. Pins:
- *   1. below the cap: the classic in-tree highlight, no list
- *   2. above the cap: a result list with the true match count, the tree
- *      left un-materialised; a row click removes the list and jumps to that
- *      one path through the explorer's own navigation
- *   3. clearing the query removes the list
- * Run: node tests/tree_search_list_selfcheck.cjs   (driven by tests/test_tree_search_list.py)
+ * "amplitude" on a real 20Q chip: ~430 ms of DOM + 330 ms of style/layout);
+ * the interim flat result list read as "the tree vanished". Pins:
+ *   1. below the cap: the classic in-tree highlight, no notice
+ *   2. above the cap: the tree is still a tree -- the first CAP matches (tree
+ *      order) materialised + highlighted, the rest not built; a notice names
+ *      the true count; "show all" materialises everything on the press
+ *   3. clearing the query removes the notice
+ *   4. two trees under ONE parent (state + wiring tabs share the search box):
+ *      the notice lives INSIDE its tree and survives a tab round trip
+ * Run: node tests/tree_search_list_selfcheck.cjs   (driven by tests/test_undo_trail.py)
  */
 const fs = require('fs');
 const path = require('path');
@@ -39,17 +42,17 @@ global.SearchQuery = window.SearchQuery;
 // 6 qubits x 10 "amp_*" leaves = 60 matches for "amp"; 1 match for "zeta"
 const DATA = { qubits: {} };
 for (let q = 1; q <= 6; q++) {
-    const leaves = { zeta_only: q === 3 ? 7 : undefined };
+    const leaves = {};
     for (let i = 0; i < 10; i++) leaves['amp_' + i] = 0.1 * i;
-    if (q !== 3) delete leaves.zeta_only;
+    if (q === 3) leaves.zeta_only = 7;
     DATA.qubits['q' + q] = leaves;
 }
 const d = window.document;
 const c = d.getElementById('explorer-tree-state');
-const nav = [];
-window._navigateToExplorerPath = function (p) { nav.push(p); };
 window.renderJsonTree('explorer-tree-state', DATA, { defaultDepth: 1, crud: true });
 const rendered = () => c.querySelectorAll('.tree-node').length;
+const highlighted = () => c.querySelectorAll('.tree-highlight').length;
+const visibleNodes = () => Array.prototype.filter.call(c.querySelectorAll('.tree-node'), (n) => !n.classList.contains('tree-search-hidden')).length;
 // the ? (key-help) rows belong to LIVE state trees (crud renders) only
 ok(c.querySelectorAll('.tree-help').length > 0, 'a crud (live state) tree carries the ? rows');
 const ro = d.createElement('div'); ro.id = 'ro-tree'; ro.className = 'json-tree'; d.body.appendChild(ro);
@@ -60,59 +63,47 @@ const before = rendered();
 // 1. below the cap: classic highlight
 window.jsonTreeSearch('explorer-tree-state', 'zeta');
 setTimeout(function () {
-    ok(!d.querySelector('.tree-search-results'), 'a narrow query renders no result list');
-    ok(c.querySelectorAll('.tree-highlight').length === 1, 'and highlights its one match in the tree');
-    // 2. above the cap: the list
+    ok(!d.querySelector('.tree-search-results'), 'a narrow query renders no notice');
+    ok(highlighted() === 1, 'and highlights its one match in the tree');
+    // 2. above the cap: the tree stays a tree, capped
     window.jsonTreeSearch('explorer-tree-state', 'amp');
     setTimeout(function () {
-        const list = d.querySelector('.tree-search-results');
-        ok(!!list, 'a broad query renders the result list instead of expanding');
-        ok(/60 matches/.test(list.textContent), 'with the true match count (' + (list.textContent.match(/\d+ matches/) || [''])[0] + ')');
-        ok(list.querySelectorAll('.tsr-row').length === 60, 'one row per match');
-        ok(c.querySelectorAll('.tree-highlight').length === 0, 'nothing was materialised/highlighted in the tree');
-        const visibleNodes = Array.prototype.filter.call(c.querySelectorAll('.tree-node'), (n) => !n.classList.contains('tree-search-hidden')).length;
-        ok(visibleNodes === 0, 'the tree itself is hidden behind the list');
-        ok(/qubits\.q1\.amp_0/.test(list.textContent) && /0\.1/.test(list.textContent), 'rows carry the path and the value');
-        list.querySelector('.tsr-row[data-path="qubits.q2.amp_3"]').click();
-        ok(nav[0] === 'qubits.q2.amp_3', 'a row click jumps to that ONE path via the explorer navigation');
-        ok(!d.querySelector('.tree-search-results'), 'and removes the list');
-        // 3. clearing
-        window.jsonTreeSearch('explorer-tree-state', 'amp_');   // a NEW query (the same one is deduped)
+        const notice = c.querySelector(':scope > .tree-search-results');
+        ok(!!notice, 'a broad query renders a notice INSIDE the tree');
+        ok(/60 matches/.test(notice.textContent) && /first 20/.test(notice.textContent), 'naming the true count and the shown count (' + notice.textContent.trim().slice(0, 60) + ')');
+        ok(highlighted() === 20, 'exactly the first CAP matches are highlighted (' + highlighted() + ')');
+        ok(visibleNodes() > 0 && !!c.querySelector('.tree-node[data-path="qubits.q1.amp_0"]'), 'the tree is still on screen (q1 branch materialised)');
+        const q6 = c.querySelector('.tree-node[data-path="qubits.q6.amp_0"]');
+        ok(!q6 || q6.classList.contains('tree-search-hidden'), 'matches past the cap are not built / not shown');
+        // "show all" builds the rest, on the press
+        notice.querySelector('.tsr-all').click();
         setTimeout(function () {
-            ok(!!d.querySelector('.tree-search-results'), 'list back for the next broad query');
-            window.jsonTreeSearch('explorer-tree-state', '');
+            ok(highlighted() === 60, 'show all: every match highlighted (' + highlighted() + ')');
+            ok(!c.querySelector('.tree-search-results'), 'and the notice is gone');
+            // 3. clearing
+            window.jsonTreeSearch('explorer-tree-state', 'amp_');   // a new broad query is capped again
             setTimeout(function () {
-                ok(!d.querySelector('.tree-search-results'), 'clearing the query removes the list');
-                ok(rendered() >= before, 'the tree is intact');
-                // 4. two trees under ONE parent (the explorer's state + wiring
-                //    tabs share the search box; switchExplorerTab re-runs the
-                //    query on the tree it shows). Review of 4ffee11: a sibling
-                //    list found via the parent was the OTHER tab's, and the
-                //    round trip left the state tree empty.
-                const w = d.getElementById('explorer-tree-wiring');
-                window.renderJsonTree('explorer-tree-wiring', { ports: { amp_a: 1, amp_b: 2 } }, { defaultDepth: 2 });
-                window.jsonTreeSearch('explorer-tree-state', 'amp');
+                ok(!!c.querySelector(':scope > .tree-search-results') && highlighted() === 20, 'the next broad query is capped again');
+                window.jsonTreeSearch('explorer-tree-state', '');
                 setTimeout(function () {
-                    const stateList = c.querySelector(':scope > .tree-search-results');
-                    ok(!!stateList && stateList.getAttribute('data-for') === 'explorer-tree-state', 'the state list lives INSIDE the state tree');
-                    // tab -> wiring: the explorer hides state, shows wiring, re-runs the query there
-                    c.style.display = 'none'; w.style.display = '';
-                    window.jsonTreeSearch('explorer-tree-wiring', 'amp');
+                    ok(!d.querySelector('.tree-search-results'), 'clearing the query removes the notice');
+                    ok(rendered() >= before && highlighted() === 0, 'the tree is intact');
+                    // 4. two trees under one parent: the notice survives a tab round trip
+                    const w = d.getElementById('explorer-tree-wiring');
+                    window.renderJsonTree('explorer-tree-wiring', { ports: { amp_a: 1, amp_b: 2 } }, { defaultDepth: 2 });
+                    window.jsonTreeSearch('explorer-tree-state', 'amp');
                     setTimeout(function () {
-                        ok(c.contains(stateList), 'the wiring search did not remove the state list');
-                        ok(!w.querySelector('.tree-search-results'), 'wiring (2 matches, below the cap) shows the classic highlight, no list');
-                        ok(w.querySelectorAll('.tree-highlight').length === 2, 'and highlighted its own two matches');
-                        // tab -> state again: the same query re-fires and is deduped -- the list must still be there
-                        w.style.display = 'none'; c.style.display = '';
-                        window.jsonTreeSearch('explorer-tree-state', 'amp');
+                        const stateNotice = c.querySelector(':scope > .tree-search-results');
+                        ok(!!stateNotice && stateNotice.getAttribute('data-for') === 'explorer-tree-state', 'the state notice lives INSIDE the state tree');
+                        c.style.display = 'none'; w.style.display = '';
+                        window.jsonTreeSearch('explorer-tree-wiring', 'amp');
                         setTimeout(function () {
-                            ok(c.querySelector(':scope > .tree-search-results') === stateList, 'back on state: the list is still shown');
-                            // a row click removes the list; the SAME query re-fired by a tab switch must list again
-                            stateList.querySelector('.tsr-row').click();
-                            ok(!c.querySelector('.tree-search-results'), 'row click removed the list');
+                            ok(c.contains(stateNotice), 'the wiring search did not remove the state notice');
+                            ok(!w.querySelector('.tree-search-results') && w.querySelectorAll('.tree-highlight').length === 2, 'wiring (2 matches) shows the classic highlight, no notice');
+                            w.style.display = 'none'; c.style.display = '';
                             window.jsonTreeSearch('explorer-tree-state', 'amp');
                             setTimeout(function () {
-                                ok(!!c.querySelector(':scope > .tree-search-results'), 'the same query after a row click lists again (not deduped into an empty tree)');
+                                ok(c.querySelector(':scope > .tree-search-results') === stateNotice && highlighted() === 20, 'back on state: the capped tree is as it was');
                                 process.exit(fails ? 1 : 0);
                             }, 300);
                         }, 300);

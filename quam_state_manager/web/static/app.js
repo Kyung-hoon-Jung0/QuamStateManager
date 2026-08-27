@@ -6566,13 +6566,11 @@ window.clearDetailPanelSearch = function(btnEl) {
     // `res` null removes it. Rows carry the dot path; clicking one expands the
     // tree to that single row and highlights it (the classic per-row cost, once).
     function _treeSearchResults(container, res) {
-        // The list is the container's FIRST CHILD, never a sibling: the state
-        // and wiring trees share one parent (and one search box), so a
-        // sibling list found through the parent was the other tab's list --
-        // the wiring search removed the state list, and the dedup guard then
-        // left the state tree with every node hidden and nothing listed
-        // (review of 4ffee11). Inside the container it also follows the
-        // tab's display, and a re-render (innerHTML) drops it with the rows.
+        // The notice is the container's FIRST CHILD, never a sibling: the state
+        // and wiring trees share one parent and one search box (review of
+        // 4ffee11 -- a sibling list found through the parent was the other
+        // tab's). Inside the container it follows the tab's display, and a
+        // re-render (innerHTML) drops it with the rows.
         var el = container.firstElementChild && container.firstElementChild.classList.contains("tree-search-results")
             ? container.firstElementChild : null;
         if (!res) { if (el) el.parentNode.removeChild(el); return; }
@@ -6582,35 +6580,25 @@ window.clearDetailPanelSearch = function(btnEl) {
             el.setAttribute("data-for", container.id || "");
             container.insertBefore(el, container.firstChild);
             el.addEventListener("click", function (ev) {
-                var row = ev.target.closest && ev.target.closest(".tsr-row");
-                if (!row) return;
+                var b = ev.target.closest && ev.target.closest(".tsr-all");
+                if (!b) return;
                 ev.preventDefault();
-                var p = row.getAttribute("data-path");
-                _treeSearchResults(container, null);
-                // The list is gone by the user's choice; the next run of the
-                // SAME query (a tab switch re-fires it) must list again, not
-                // be deduped into a tree with every node hidden.
-                container._lastSearchQuery = undefined;
-                var nodesAll = container.querySelectorAll(".tree-node");
-                for (var i = 0; i < nodesAll.length; i++) nodesAll[i].classList.remove("tree-search-hidden");
-                if (window._navigateToExplorerPath) window._navigateToExplorerPath(p);
+                container._searchShowAllQ = b.getAttribute("data-q");   // this query, in full, once asked
+                container._lastSearchQuery = undefined;                  // past the dedup guard
+                _searchTree(container, b.getAttribute("data-q"));
             });
         }
-        var h = '<div class="tsr-head muted">' + res.total + ' matches for <code>' + _escapeHtml(res.q) + '</code>'
-              + ' — listed, not expanded (more than ' + _TREE_SEARCH_MATERIALIZE_MAX + '); click a row to open it'
-              + (res.hits.length < res.total ? ' · first ' + res.hits.length + ' shown' : '') + '</div>';
-        for (var r = 0; r < res.hits.length; r++) {
-            var e = res.hits[r];
-            h += '<a href="#" class="tsr-row" data-path="' + _escapeHtml(e.path) + '"><code class="tsr-path">'
-               + _escapeHtml(e.path) + '</code><span class="tsr-val">' + _escapeHtml(e.val || '') + '</span></a>';
-        }
-        el.innerHTML = h;
+        el.innerHTML = '<div class="tsr-head muted">' + res.total + ' matches for <code>' + _escapeHtml(res.q) + '</code>'
+            + ' — the first ' + res.shown + ' are shown in the tree; type more to narrow, or '
+            + '<button type="button" class="btn-xs tsr-all" data-q="' + _escapeHtml(res.q) + '">show all ' + res.total + '</button>'
+            + ' <span class="muted">(slower)</span></div>';
     }
     function _escapeHtml(s) {
-        return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
-            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+        return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+            return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
         });
     }
+
     function _searchTreeData(container, q) {
         // Clear stale search classes on whatever is currently materialised.
         var rendered = container.querySelectorAll(".tree-node");   // the result list is not a .tree-node
@@ -6619,6 +6607,7 @@ window.clearDetailPanelSearch = function(btnEl) {
         }
         if (!q) {
             _treeSearchResults(container, null);
+            container._searchShowAllQ = undefined;   // clearing the box forgets "show all"
             _expandToDepth(container, 1);
             return;
         }
@@ -6662,22 +6651,33 @@ window.clearDetailPanelSearch = function(btnEl) {
             _treeSearchResults(container, null);
             return;
         }
-        // Night session 2026-08-28: a broad query ("amplitude" on a 20Q chip =
-        // 1,384 matches) used to MATERIALISE every matching subtree -- 430 ms of
-        // DOM creation + 330 ms of style/layout on a real chip. Past the cap,
-        // the matches are listed as a flat result list instead (path + value,
-        // click = expand + jump to that one row); the tree itself is left as
-        // it was. Below the cap the classic in-tree highlight is unchanged.
-        if (matchPaths.size > _TREE_SEARCH_MATERIALIZE_MAX) {
-            var hits = [];
-            for (var jj = 0; jj < flat.length && hits.length < _TREE_SEARCH_LIST_MAX; jj++) {
-                if (matchPaths.has(flat[jj].path)) hits.push(flat[jj]);
+        // Night session 2026-08-28, revised the same day (user): a broad query
+        // ("amplitude" on a 20Q chip = 1,384 matches) used to MATERIALISE every
+        // matching subtree -- 430 ms of DOM creation + 330 ms of style/layout.
+        // The interim flat result list read as "the tree vanished", so the
+        // tree STAYS a tree: past the cap only the first
+        // _TREE_SEARCH_MATERIALIZE_MAX matches, in tree order, are
+        // materialised and highlighted, under a notice that names the true
+        // count and offers "show all" (the full, slower materialisation, on
+        // the user's press). Below the cap nothing changed.
+        var capped = matchPaths.size > _TREE_SEARCH_MATERIALIZE_MAX && container._searchShowAllQ !== q;
+        if (capped) {
+            var shown = new Set(), cnt = 0;
+            for (var jj = 0; jj < flat.length; jj++) {
+                if (!matchPaths.has(flat[jj].path)) continue;
+                shown.add(flat[jj].path);
+                if (++cnt >= _TREE_SEARCH_MATERIALIZE_MAX) break;
             }
-            _treeSearchResults(container, { total: matchPaths.size, hits: hits, q: q });
-            for (var hh = 0; hh < rendered.length; hh++) rendered[hh].classList.add("tree-search-hidden");
-            return;
+            keepPaths = new Set();
+            shown.forEach(function (sp) {
+                var pp = sp;
+                while (!keepPaths.has(pp)) { keepPaths.add(pp); if (pp === "") break; pp = _parentPath(pp); }
+            });
+            _treeSearchResults(container, { total: matchPaths.size, shown: cnt, q: q });
+            matchPaths = shown;
+        } else {
+            _treeSearchResults(container, null);
         }
-        _treeSearchResults(container, null);
 
         // Materialise only the kept branches by descending top-down from the
         // container and pruning any subtree not in keepPaths. Compares data-path
@@ -16569,6 +16569,15 @@ window.UndoNav = (function () {
 
     // Owning surface for a reverted group. Anchor = the OLDEST entry (the
     // action's anchor — same one the server toast names).
+    /* The pulse a parameter path belongs to (the three shapes the Pulses
+       page itself enumerates), or null. */
+    function pulseRootOf(dp) {
+        var m = /^(qubits\.[^.]+\.[^.]+\.operations\.[^.]+)(\.|$)/.exec(dp)
+             || /^(qubit_pairs\.[^.]+\.macros\.[^.]+)(\.|$)/.exec(dp)
+             || /^(qubit_pairs\.[^.]+\.[^.]+\.operations\.[^.]+)(\.|$)/.exec(dp);
+        return m ? m[1] : null;
+    }
+
     function ownerSurface(entries) {
         var anchor = entries[entries.length - 1] || entries[0];
         var dp = (anchor && anchor.dot_path) || "";
@@ -16579,6 +16588,15 @@ window.UndoNav = (function () {
             owners[s[0] + (s[1] ? "." + s[1] : "")] = 1;
         });
         var multi = Object.keys(owners).length > 1;
+        // On the Pulses page a pulse parameter's home is the pulse DETAIL
+        // (waveform + parameters), not the qubit inspector: "go to field" on
+        // an undone pulse length used to open /qubit/q1 there, with no graph
+        // (user report, 2026-08-28).
+        var pulseRoot = pulseRootOf(dp);
+        if (!multi && pulseRoot && document.getElementById("pulses-rows-wrap")) {
+            return { kind: "pulse",
+                     url: "/pulse/detail?path=" + encodeURIComponent(pulseRoot) };
+        }
         if (seg[0] === "qubits" && seg[1]) {
             return multi
                 ? { kind: "pane", url: "/bulk" }
@@ -16703,7 +16721,7 @@ window.UndoNav = (function () {
         }
         var os = ownerSurface(entries);
         _pend(entries.map(function (e) { return e.dot_path; }));
-        if (os.kind === "inspector") {
+        if (os.kind === "inspector" || os.kind === "pulse") {
             // Opens in #inspector-pane — #table-pane (and the user's typing
             // in it) is untouched; ?focus= scrolls + focuses the field.
             if (window.htmx && document.getElementById("inspector-pane")) {

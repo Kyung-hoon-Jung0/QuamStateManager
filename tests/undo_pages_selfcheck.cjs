@@ -120,6 +120,25 @@ setTimeout(function () {
             window.UndoNav.handle = function (entries) { navved.push(entries[0].dot_path); };
             window.UndoTrail.goTo('qubits.q9.not_on_this_page');
             ok(navved[0] === 'qubits.q9.not_on_this_page', 'go to field hands an off-screen path to UndoNav.handle -- on the press');
+            window.UndoNav.handle = realHandle;
+            // ── 4. on the Pulses page a pulse parameter goes to the PULSE detail ──
+            //    (user report: "go to field" on an undone pulse length opened the
+            //    qubit inspector, with no graph)
+            const os0 = window.UndoNav.ownerSurface([{ dot_path: 'qubits.q1.xy.operations.saturation.length' }]);
+            ok(os0.kind === 'inspector' && /\/qubit\/q1/.test(os0.url), 'off the Pulses page a qubit-owned path still opens the qubit inspector');
+            const rows = d.createElement('div'); rows.id = 'pulses-rows-wrap'; d.body.appendChild(rows);
+            const os1 = window.UndoNav.ownerSurface([{ dot_path: 'qubits.q1.xy.operations.saturation.length' }]);
+            ok(os1.kind === 'pulse' && os1.url === '/pulse/detail?path=' + encodeURIComponent('qubits.q1.xy.operations.saturation'),
+               'on the Pulses page the same path opens the pulse detail (' + os1.url + ')');
+            const os2 = window.UndoNav.ownerSurface([{ dot_path: 'qubit_pairs.q1-q2.macros.cz.flux_pulse_length' }]);
+            ok(os2.kind === 'pulse' && /qubit_pairs\.q1-q2\.macros\.cz$/.test(decodeURIComponent(os2.url.split('path=')[1])), 'a pair macro parameter too');
+            const os3 = window.UndoNav.ownerSurface([{ dot_path: 'qubits.q1.T1' }]);
+            ok(os3.kind === 'inspector', 'a non-pulse path keeps the inspector');
+            const ajaxed = [];
+            window.htmx.ajax = (m, u, o) => { ajaxed.push(m + ' ' + u + ' -> ' + (o && o.target)); return Promise.resolve(); };
+            window.UndoNav.handle([{ dot_path: 'qubits.q1.xy.operations.saturation.length' }]);
+            ok(ajaxed.length === 1 && /^GET \/pulse\/detail\?path=.* -> #inspector-pane$/.test(ajaxed[0]), 'handle() opens it in the inspector pane (' + ajaxed[0] + ')');
+            rows.remove();
             setTimeout(function () { process.exit(fails ? 1 : 0); }, 120);   // after the never-expanded-leaf pins above
         }, 50);
     }, 300);

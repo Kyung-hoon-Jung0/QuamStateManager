@@ -81,8 +81,11 @@ Headless Chrome 151 + DevTools trace (`cdp_measure.js`), 20Q chip, one keystroke
   all ~300 rules. The template stamps `ck-<index>` on every th/td and the search
   hides by class selector (hashed by class name).
 * **Tree**: a broad query materialised every matching subtree. Past 150 matches
-  the flat index is LISTED (path + value, first 400, true count shown); a row click
-  expands and jumps to that one path; below the cap the classic highlight stays.
+  only the first 150, in tree order, are materialised and highlighted, under a
+  notice with the true count and a "show all" (the full, slower build on the
+  user's press); below the cap the classic highlight stays. (The night's first
+  version LISTED the matches instead of drawing the tree; the user read that as
+  "the tree vanished" and it was revised the same day — the tree stays a tree.)
 
 Residual as of the night: the grid keystroke was 190–270 ms. §4d (daytime)
 measured where that went and removed most of it WITHOUT touching the DOM.

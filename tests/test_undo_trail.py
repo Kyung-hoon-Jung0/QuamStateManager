@@ -29,7 +29,7 @@ def test_undo_trail_selfcheck():
 
 
 def test_tree_search_list_selfcheck():
-    _run("tree_search_list_selfcheck.cjs", "ok - a broad query renders the result list instead of expanding")
+    _run("tree_search_list_selfcheck.cjs", "ok - exactly the first CAP matches are highlighted")
 
 
 def test_the_trail_ships_and_the_grid_hides_columns_by_class():
