@@ -1,25 +1,31 @@
-/* Config Manual (2026-08-27) — the state.json key manual, in a movable window.
+/* Config Manual (2026-08-27; catalogue + redesign 2026-08-28, user-directed).
  *
  * Sidebar "Config Manual" (under Settings / Calculator) opens #manual-popover,
  * a body-level window like the Calculator: anchored under its button until
- * dragged, then fixed where the user left it. Inside: the house search box
- * (search-query.js grammar — space = AND, `|` = OR) over every key the chip's
- * classes can carry (+ the QM-docs config keys), and a "this place" view for
- * one node (openConfigManual({path})) listing its class's keys, set and unset.
+ * dragged, then fixed where the user left it; resizable (size remembered).
  *
- * Data comes from /api/manual (once per chip) and /api/manual/node. Every
- * description shows its SOURCE — the class's own docstring or the QM docs page
- * — and a key nobody described says "no description". Nothing is invented.
+ * What it lists: EVERY key of EVERY component class the selected environment
+ * offers (the catalogue: quam, quam_builder, the lab's quam_config), grouped
+ * category > class > key -- not only the classes the open chip happens to
+ * use. A key the chip does set carries "used at" places that open the tree.
+ * The catalogue is probed once per env in the background (a chip load starts
+ * it; a cold manual shows the chip's own classes + the QM docs keys and fills
+ * in when the probe lands). Every description names its SOURCE -- the class's
+ * own docstring or the QM docs page -- and a key nobody described says so.
  */
 window.ConfigManual = (function () {
     'use strict';
 
-    var _data = null;          // {entries, classes, env, note, chip}
+    var _data = null;          // {entries, classes, categories, env, catalog, catalog_state, note, chip}
     var _loadedChip = null;
     var _loading = null;
     var _mode = 'search';      // 'search' | 'node'
     var _nodePath = null;
-    var MAX_ROWS = 200;
+    var _pollTimer = null;
+    var _polls = 0;
+    var MAX_ROWS = 400;
+    var SIZE_KEY = 'quam_manual_size';
+    var POLL_MS = window.__manualPollMs || 3000;   // the catalogue warm-up re-ask (overridable for the harness)
 
     function pop() { return document.getElementById('manual-popover'); }
     function esc(s) {
@@ -40,21 +46,32 @@ window.ConfigManual = (function () {
         _loading = fetch('/api/manual', { credentials: 'same-origin' })
             .then(function (r) { return r.json(); })
             .then(function (d) {
-                _data = d && d.ok ? d : { entries: [], classes: [], env: false, note: (d && d.error) || 'manual unavailable' };
+                _data = d && d.ok ? d : { entries: [], classes: [], categories: [], env: false, note: (d && d.error) || 'manual unavailable' };
                 _loadedChip = chip;
                 _loading = null;
+                schedulePoll();
                 return _data;
             })
             .catch(function () {
                 _loading = null;
-                _data = { entries: [], classes: [], env: false, note: 'manual unavailable (network)' };
+                _data = { entries: [], classes: [], categories: [], env: false, note: 'manual unavailable (network)' };
                 return _data;
             });
         return _loading;
     }
+    /* The catalogue warms in the background; while it says "loading" the
+       open window re-asks every few seconds and re-renders when it lands. */
+    function schedulePoll() {
+        clearTimeout(_pollTimer); _pollTimer = null;
+        if (!_data || _data.catalog_state !== 'loading' || !isOpen() || _polls > 40) return;
+        _pollTimer = setTimeout(function () {
+            _polls++;
+            load(true).then(function () { if (isOpen() && _mode === 'search') renderSearch(pop().querySelector('.manual-search').value); });
+        }, POLL_MS);
+    }
 
     function hay(e) {
-        return [e.key, e.cls, e.type, e.doc, e.docs && e.docs.summary,
+        return [e.key, e.cls, e.category, e.type, e.doc, e.docs && e.docs.summary,
                 (e.examples || []).join(' '), (e.choices || []).join(' ')].join(' ').toLowerCase();
     }
 
@@ -74,13 +91,14 @@ window.ConfigManual = (function () {
         h += '<div class="manual-head">';
         if (opts.mark) h += '<span class="manual-mark" title="' + esc(opts.markTitle || '') + '">' + opts.mark + '</span> ';
         h += '<code class="manual-key">' + esc(e.key) + '</code>';
-        if (e.cls) h += ' <span class="manual-cls muted">' + esc(e.cls) + '</span>';
+        if (opts.showCls && e.cls) h += ' <span class="manual-cls">' + esc(e.cls) + '</span>';
         if (e.type) h += ' <span class="manual-type">' + esc(e.type) + '</span>';
-        if (e.required) h += ' <span class="manual-req" title="No default in the class — must be set">required</span>';
-        if (e.undeclared) h += ' <span class="manual-req" title="This key is not a field of the class in the selected environment">undeclared</span>';
+        if (e.required) h += ' <span class="manual-badge manual-req" title="No default in the class — must be set">required</span>';
+        if (e.present_in > 0 && !opts.mark) h += ' <span class="manual-badge manual-used" title="set in the open state">in this state</span>';
+        if (e.undeclared) h += ' <span class="manual-badge manual-req" title="This key is not a field of the class in the selected environment">undeclared</span>';
         h += '</div>';
         if (desc) h += '<div class="manual-desc">' + esc(desc) + '</div>';
-        else h += '<div class="manual-desc muted">no description — neither the class docstring nor the QM docs describe this key</div>';
+        else h += '<div class="manual-desc manual-nodesc">no description — neither the class docstring nor the QM docs describe this key</div>';
         if (e.choices && e.choices.length) {
             h += '<div class="manual-allowed">' + e.choices.map(function (c) { return '<span class="manual-chip"><code>' + esc(c) + '</code></span>'; }).join('') + '</div>';
         }
@@ -91,49 +109,93 @@ window.ConfigManual = (function () {
         else if (e.docs && e.docs.default !== null && e.docs.default !== undefined) meta.push('default <code>' + esc(JSON.stringify(e.docs.default)) + '</code> (docs)');
         if (e.docs && e.docs.unit) meta.push('unit ' + esc(e.docs.unit));
         if (e.docs && e.docs.since) meta.push(esc(e.docs.since));
-        if (meta.length) h += '<div class="manual-meta muted">' + meta.join(' · ') + '</div>';
+        if (e.source) {
+            var src = 'source: ' + esc(e.source);
+            if (e.docs && e.docs.docs) src += ' — <code title="' + esc(e.docs.quote || '') + '">' + esc(e.docs.docs) + '</code>';
+            if (e.docs && e.doc) src += ' · also in QM docs <code>' + esc(e.docs.docs) + '</code>';
+            meta.push(src);
+        }
+        if (meta.length) h += '<div class="manual-meta">' + meta.join(' · ') + '</div>';
         if (e.examples && e.examples.length) {
-            h += '<div class="manual-examples muted">used at ' + e.examples.map(function (p) {
+            h += '<div class="manual-examples">used at ' + e.examples.map(function (p) {
                 return '<a href="#" class="manual-goto" data-path="' + esc(p) + '"><code>' + esc(p) + '</code></a>';
             }).join(', ') + (e.present_in > e.examples.length ? ' … (' + e.present_in + ' places)' : '') + '</div>';
-        }
-        if (e.source) {
-            h += '<div class="manual-source muted">source: ' + esc(e.source);
-            if (e.docs && e.docs.docs) h += ' — <code title="' + esc(e.docs.quote || '') + '">' + esc(e.docs.docs) + '</code>';
-            if (e.docs && e.doc) h += ' · also in QM docs <code>' + esc(e.docs.docs) + '</code>';
-            h += '</div>';
         }
         return h + '</div>';
     }
 
+    function statusHtml(d, shown, total) {
+        var parts = ['<span class="manual-live">' + shown + (shown !== total ? ' of ' + total : '') + ' keys</span>'];
+        if (d.classes && d.classes.length) parts.push(d.classes.length + ' classes');
+        if (d.catalog_state === 'loading') parts.push('full catalogue loading in the background…');
+        else if (d.catalog_state === 'ready') parts.push('full catalogue of the selected environment');
+        else if (d.catalog_state === 'none') parts.push('no environment selected — QM docs keys' + (d.env ? ' + this chip’s classes' : ''));
+        if (d.chip) parts.push(esc(d.chip));
+        return '<div class="manual-status">' + parts.join('<span aria-hidden="true">·</span>') + '</div>';
+    }
+
     function renderSearch(q) {
         var body = pop().querySelector('.manual-body');
-        var d = _data || { entries: [], note: 'loading…' };
+        var d = _data || { entries: [], classes: [], categories: [], note: 'loading…' };
         var groups = (window.SearchQuery && q) ? window.SearchQuery.groups(q) : null;
         var rows = d.entries.filter(function (e) {
             if (!groups) return true;
             return window.SearchQuery.matchesHay(hay(e), groups);
         });
-        var h = '';
-        if (d.note) h += '<p class="manual-note muted">' + esc(d.note) + '</p>';
-        h += '<div class="manual-count muted">' + rows.length + ' of ' + d.entries.length + ' keys'
-           + (d.chip ? ' · ' + esc(d.chip) : '') + '</div>';
-        rows.slice(0, MAX_ROWS).forEach(function (e) { h += entryHtml(e); });
-        if (rows.length > MAX_ROWS) h += '<p class="muted">… ' + (rows.length - MAX_ROWS) + ' more — narrow the search</p>';
+        var h = statusHtml(d, rows.length, d.entries.length);
+        if (d.note) h += '<p class="manual-note">' + esc(d.note) + '</p>';
+        // category > class > key. A class opens when the chip uses it or a
+        // search reached into it; a category opens when it has anything.
+        var byCat = {};
+        var order = d.categories && d.categories.length ? d.categories.slice() : [];
+        rows.forEach(function (e) {
+            var cat = e.category || 'Other components';
+            if (order.indexOf(cat) < 0) order.push(cat);
+            var cls = e.cls || '—';
+            byCat[cat] = byCat[cat] || { order: [], classes: {} };
+            if (!byCat[cat].classes[cls]) { byCat[cat].classes[cls] = []; byCat[cat].order.push(cls); }
+            byCat[cat].classes[cls].push(e);
+        });
+        var clsInfo = {};
+        (d.classes || []).forEach(function (c) { clsInfo[c.cls] = c; });
+        var budget = MAX_ROWS;
+        order.forEach(function (cat) {
+            var g = byCat[cat];
+            if (!g) return;
+            var n = g.order.reduce(function (s, c) { return s + g.classes[c].length; }, 0);
+            h += '<details class="manual-cat" open><summary>' + esc(cat) + ' <span class="manual-n">' + g.order.length + ' class' + (g.order.length === 1 ? '' : 'es') + ' · ' + n + ' keys</span></summary>';
+            g.order.forEach(function (cls) {
+                var list = g.classes[cls];
+                var info = clsInfo[cls] || {};
+                var used = list.some(function (e) { return e.used; }) || !!info.used;
+                var open = !!groups || used;
+                h += '<details class="manual-class"' + (open ? ' open' : '') + '><summary>'
+                   + '<span class="manual-class-name">' + esc(cls) + '</span>'
+                   + '<span class="manual-badge">' + list.length + ' key' + (list.length === 1 ? '' : 's') + '</span>'
+                   + (used ? '<span class="manual-badge manual-used" title="the open state uses this class">in this state' + (info.count ? ' × ' + info.count : '') + '</span>' : '')
+                   + (info.doc ? '<span class="manual-class-doc">' + esc(info.doc) + '</span>' : '')
+                   + '</summary>';
+                list.forEach(function (e) { if (budget-- > 0) h += entryHtml(e); });
+                h += '</details>';
+            });
+            h += '</details>';
+        });
+        if (rows.length > MAX_ROWS) h += '<p class="manual-note">… ' + (rows.length - MAX_ROWS) + ' more keys — narrow the search</p>';
+        if (!rows.length) h += '<p class="manual-note">nothing matches <code>' + esc(q) + '</code></p>';
         body.innerHTML = h;
     }
 
     function renderNode(nd) {
         var body = pop().querySelector('.manual-body');
         if (!nd || !nd.ok) {
-            body.innerHTML = '<p class="manual-note muted">' + esc((nd && nd.reason) || 'nothing here') + '</p>';
+            body.innerHTML = '<p class="manual-note">' + esc((nd && nd.reason) || 'nothing here') + '</p>';
             return;
         }
         var h = '<div class="manual-nodehead"><a href="#" class="manual-back">&larr; all keys</a> '
               + '<code>' + esc(nd.owner) + '</code>'
               + (nd.cls ? ' <span class="manual-cls">' + esc(nd.cls) + '</span>' : '') + '</div>';
         if (nd.cls_doc) h += '<div class="manual-desc">' + esc(nd.cls_doc) + '</div>';
-        if (nd.note) h += '<p class="manual-note muted">' + esc(nd.note) + '</p>';
+        if (nd.note) h += '<p class="manual-note">' + esc(nd.note) + '</p>';
         var set = nd.fields.filter(function (f) { return f.present; });
         var unset = nd.fields.filter(function (f) { return !f.present; });
         h += '<div class="manual-section">Set here (' + set.length + ')</div>';
@@ -157,11 +219,36 @@ window.ConfigManual = (function () {
             return;
         }
         var q = pop().querySelector('.manual-search').value;
-        load().then(function () { renderSearch(q); });
+        load().then(function () { renderSearch(q); schedulePoll(); });
     }
 
     /* ── window plumbing (mirrors calc.js) ───────────────────────── */
     function isOpen() { var p = pop(); return !!(p && !p.classList.contains('manual-hidden')); }
+
+    function restoreSize(p) {
+        try {
+            var s = JSON.parse(window.localStorage.getItem(SIZE_KEY) || 'null');
+            if (s && s.w > 300 && s.h > 200) {
+                // never larger than the viewport (a viewport the harness does
+                // not size reports 0: fall back to the remembered size)
+                var vw = window.innerWidth || 0, vh = window.innerHeight || 0;
+                p.style.width = (vw > 340 ? Math.min(s.w, vw - 16) : s.w) + 'px';
+                p.style.height = (vh > 240 ? Math.min(s.h, vh - 16) : s.h) + 'px';
+            }
+        } catch (e) {}
+    }
+    function watchSize(p) {
+        if (p._manualSized || !window.ResizeObserver) return;
+        p._manualSized = true;
+        var t = null;
+        new ResizeObserver(function () {
+            if (!isOpen()) return;
+            clearTimeout(t);
+            t = setTimeout(function () {
+                try { window.localStorage.setItem(SIZE_KEY, JSON.stringify({ w: p.offsetWidth, h: p.offsetHeight })); } catch (e) {}
+            }, 250);
+        }).observe(p);
+    }
 
     function setOpen(open, trigger) {
         var p = pop();
@@ -174,12 +261,15 @@ window.ConfigManual = (function () {
             b.setAttribute('aria-expanded', open ? 'true' : 'false');
         });
         if (open) {
+            restoreSize(p);
+            watchSize(p);
             if (!p.classList.contains('manual-floating') && window._anchorPopover && btn) window._anchorPopover(p, btn);
             refresh();
             var s = p.querySelector('.manual-search');
             if (s && _mode === 'search') setTimeout(function () { s.focus(); }, 0);
-        } else if (btn) {
-            btn.focus();
+        } else {
+            clearTimeout(_pollTimer); _pollTimer = null;
+            if (btn) btn.focus();
         }
     }
 
@@ -302,5 +392,5 @@ window.ConfigManual = (function () {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire);
     else wire();
 
-    return { load: load, refresh: refresh, _hay: hay, _entryHtml: entryHtml, _renderSearch: renderSearch, _renderNode: renderNode };
+    return { load: load, refresh: refresh, _hay: hay, _entryHtml: entryHtml, _renderSearch: renderSearch, _renderNode: renderNode, _statusHtml: statusHtml, _restoreSize: restoreSize };
 })();

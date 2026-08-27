@@ -1462,6 +1462,15 @@ def _warm_state_schema_async(store, inst, live_folder=None) -> None:
     def _run():
         try:
             res = state_env_schema.probe_state_schema(python_path, classes, inst)
+            # docs/141 4h: the Config Manual's full class catalogue rides the
+            # same background warm-up -- quietly, after the chip's own
+            # manifest, so it is ready by the time someone opens the manual
+            # (a cold catalogue never blocks a request).
+            try:
+                if state_env_schema.catalog_for_env(python_path, inst) is None:
+                    state_env_schema.probe_catalog(python_path, classes, inst)
+            except Exception:  # noqa: BLE001
+                logger.debug("catalogue warm-up failed", exc_info=True)
             if res.get("ok") and live_folder:
                 from quam_state_manager.core import pulse_catalog, type_policy
                 manifest = {k: res[k] for k in
@@ -10258,31 +10267,78 @@ def _manual_manifest(ctx) -> dict | None:
         return None
 
 
+def _manual_catalog(ctx) -> tuple[dict | None, str]:
+    """The cached class catalogue for the selected env and its state:
+    ``ready`` / ``loading`` (a warm-up was started) / ``none`` (no env)."""
+    from quam_state_manager.core import state_env_schema
+    try:
+        inst = current_app.instance_path
+        python_path = config_generator.get_selected_env(inst)
+    except Exception:  # noqa: BLE001
+        return None, "none"
+    if not python_path:
+        return None, "none"
+    try:
+        cat = state_env_schema.catalog_for_env(python_path, inst)
+    except Exception:  # noqa: BLE001
+        logger.debug("catalogue read failed", exc_info=True)
+        cat = None
+    if cat:
+        return cat, "ready"
+    # cold: warm it quietly (the user is assumed not to open the manual the
+    # instant a chip loads -- docs/141 4h); the request never waits
+    try:
+        with ctx["store"]._lock:
+            classes = state_env_schema.harvest_classes(ctx["store"].state)
+    except Exception:  # noqa: BLE001
+        classes = []
+    key = "catalog|" + python_path
+    with _schema_warm_lock:
+        if key in _schema_warm_inflight:
+            return None, "loading"
+        _schema_warm_inflight.add(key)
+
+    def _run():
+        try:
+            state_env_schema.probe_catalog(python_path, classes, inst)
+        except Exception:  # noqa: BLE001
+            logger.warning("class-catalogue probe failed", exc_info=True)
+        finally:
+            with _schema_warm_lock:
+                _schema_warm_inflight.discard(key)
+
+    threading.Thread(target=_run, daemon=True).start()
+    return None, "loading"
+
+
 @bp.route("/api/manual")
 def api_manual():
-    """The Config Manual (2026-08-27): every key the active chip's classes
-    can carry + the QM-docs config keys, with type / default / allowed values
-    / meaning and the SOURCE of each description. With no chip loaded only
-    the docs entries are returned."""
+    """The Config Manual (2026-08-27, catalogue 2026-08-28): every key every
+    class the selected env OFFERS can carry (the chip's own classes carry
+    their used-at places), plus the QM-docs config keys, with type / default
+    / allowed values / meaning and the SOURCE of each description. With no
+    chip loaded only the docs entries are returned."""
     from quam_state_manager.core import key_manual
     ctx = _active_ctx()
     if not ctx or ctx.get("type") != "quam":
         data = key_manual.manual_entries({}, {}, None)
         data["chip"] = None
+        data["catalog_state"] = "none"
         return jsonify({"ok": True, **data})
     store = ctx["store"]
     manifest = _manual_manifest(ctx)
-    data = key_manual.manual_entries(store.state, store.wiring, manifest)
+    catalog, cat_state = _manual_catalog(ctx)
+    data = key_manual.manual_entries(store.state, store.wiring, manifest, catalog)
     data["chip"] = ctx.get("name") or ctx.get("path")
-    if manifest is None:
+    data["catalog_state"] = cat_state
+    if manifest is None and catalog is None:
         try:
             selected = config_generator.get_selected_env(current_app.instance_path)
         except Exception:  # noqa: BLE001
             selected = None
         if selected:
-            data["note"] = ("Class documentation for the selected environment is not loaded yet "
-                            "-- reopen the chip (or Generate Config -> Probe) to load it; "
-                            "the QM docs entries are shown now.")
+            data["note"] = ("Class documentation for the selected environment is loading in the "
+                            "background -- the QM docs entries are shown now.")
     return jsonify({"ok": True, **data})
 
 
@@ -10298,7 +10354,9 @@ def api_manual_node():
     if not path:
         return jsonify({"ok": False, "reason": "path required"})
     store = ctx["store"]
-    return jsonify(key_manual.node_keys(store.state, store.wiring, _manual_manifest(ctx), path))
+    catalog, _cat_state = _manual_catalog(ctx)
+    return jsonify(key_manual.node_keys(store.state, store.wiring, _manual_manifest(ctx), path,
+                                        catalog=catalog))
 
 
 def _coerce_catalog_fields(spec, form) -> tuple[dict, dict]:

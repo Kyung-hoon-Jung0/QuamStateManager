@@ -492,6 +492,122 @@ def _dump_pulse_roster() -> dict:
 # entry point
 # --------------------------------------------------------------------------
 
+# The catalogue (docs/141 4h, user-directed): EVERY component class the env
+# offers, not only the ones the chip already uses -- what the Config Manual
+# lists so a user populating a state can see what is available. Sourced
+# without walking arbitrary packages (a lab package may talk to instruments
+# at import): quam's own component modules and quam_builder's superconducting
+# architecture are imported by name, the chip's classes are imported as
+# requested, and everything else comes from the subclass closure of
+# QuamComponent -- classes already loaded by those imports, never a blind
+# import of a module we do not know.
+_CATALOG_ROOTS = (
+    "quam.components",
+    "quam_builder.architecture.superconducting",
+    "quam_builder.architecture.superconducting.components",
+)
+
+
+def _import_root_modules(root: str) -> list[str]:
+    """Import *root* and each of its immediate submodules; return the names
+    that imported (errors are per-module, never fatal)."""
+    import importlib
+    import pkgutil
+    done: list[str] = []
+    try:
+        pkg = importlib.import_module(root)
+    except Exception:  # noqa: BLE001 -- the package is simply absent in this env
+        return done
+    done.append(root)
+    path = getattr(pkg, "__path__", None)
+    if not path:
+        return done
+    for m in pkgutil.iter_modules(path):
+        name = f"{root}.{m.name}"
+        if m.name.startswith("_") or m.name in ("tests", "test", "examples", "scripts"):
+            continue
+        try:
+            importlib.import_module(name)
+            done.append(name)
+        except Exception:  # noqa: BLE001 -- one broken module must not empty the catalogue
+            continue
+    return done
+
+
+def enumerate_catalog(class_paths: list[str]) -> dict:
+    """``{canonical class path: category}`` for every QuamComponent subclass
+    reachable after importing the known roots and *class_paths*."""
+    import importlib
+    for root in _CATALOG_ROOTS:
+        _import_root_modules(root)
+    for cp in class_paths:
+        try:
+            _import_class(cp)
+        except Exception:  # noqa: BLE001
+            continue
+    try:
+        core = importlib.import_module("quam.core")
+        bases = [getattr(core, "QuamComponent", None), getattr(core, "QuamRoot", None)]
+        bases = [b for b in bases if isinstance(b, type)]
+    except Exception:  # noqa: BLE001
+        return {}
+    seen: dict[str, str] = {}
+    visited: set = set()
+    stack = list(bases)
+    while stack:
+        cls = stack.pop()
+        for sub in getattr(cls, "__subclasses__", lambda: [])():
+            mod = getattr(sub, "__module__", "") or ""
+            name = getattr(sub, "__qualname__", "") or ""
+            if not mod or not name or "<" in name:
+                continue
+            # a private class (quam's _OutComplexChannel, the parent of every
+            # IQ / MW channel) is not listed, but its subclasses ARE -- the
+            # first cut skipped the whole branch and lost 8 channel classes
+            if name.startswith("_") or mod.startswith("quam.core") or mod.startswith("quam.utils")                     or mod.startswith("quam.serialisation"):
+                if sub not in visited:
+                    visited.add(sub)
+                    stack.append(sub)
+                continue
+            path = f"{mod}.{name}"
+            if path not in seen:
+                seen[path] = _catalog_category(mod, name)
+                stack.append(sub)
+    return dict(sorted(seen.items()))
+
+
+def _catalog_category(mod: str, name: str) -> str:
+    m = mod.lower()
+    n = name.lower()
+    if m.startswith("quam_config") or (not m.startswith("quam.") and not m.startswith("quam_builder")):
+        return "Lab (quam_config)"
+    if "qubit_pair" in m or "qubitpair" in n or n.endswith("pair"):
+        return "Qubit pairs"
+    if ".qubit" in m or n.endswith("qubit") or "transmon" in n:
+        return "Qubits"
+    if ".ports" in m or n.endswith("port"):
+        return "Ports"
+    if ".pulses" in m or n.endswith("pulse"):
+        return "Pulses"
+    if ".channels" in m or n.endswith("channel"):
+        return "Channels"
+    if "octave" in m or "octave" in n:
+        return "Octave"
+    if "hardware" in m or "mixer" in n or "frequency_converter" in m or "converter" in n or "twpa" in n:
+        return "Hardware"
+    if "drive" in m or n.startswith("xy"):
+        return "Channels"
+    if "readout" in m or "resonator" in n:
+        return "Resonators"
+    if "flux" in m or "flux" in n or "tunable" in n:
+        return "Flux & couplers"
+    if "gate" in m or "macro" in m or "gate" in n:
+        return "Gates & macros"
+    if "quam" in n and ("root" in m or n.endswith("quam")):
+        return "Roots"
+    return "Other components"
+
+
 def dump_schemas(class_paths: list[str], pulse_roster: bool = True) -> dict:
     """Never raises — a broken env still returns a per-class-annotated manifest."""
     classes = {}
@@ -515,16 +631,28 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--classes", required=True, help="input JSON: {classes:[...], pulse_roster:bool}")
     ap.add_argument("--out", required=True, help="write the schema manifest JSON here")
+    ap.add_argument("--catalog", action="store_true",
+                    help="also dump EVERY component class the env offers (the Config Manual's catalogue)")
     args = ap.parse_args()
     result = {"status": "error", "mode": "state_schema", "python": "",
               "versions": {}, "classes": {}, "pulse_roster": {},
               "error": None, "traceback": None}
     try:
         spec = json.loads(Path(args.classes).read_text(encoding="utf-8"))
-        result.update(dump_schemas(
-            [str(c) for c in spec.get("classes", [])],
-            pulse_roster=bool(spec.get("pulse_roster", True)),
-        ))
+        requested = [str(c) for c in spec.get("classes", [])]
+        result.update(dump_schemas(requested, pulse_roster=bool(spec.get("pulse_roster", True))))
+        if args.catalog:
+            cat = enumerate_catalog(requested)
+            entries = {}
+            for path, category in cat.items():
+                try:
+                    e = _dump_class(path)
+                except Exception as exc:  # noqa: BLE001
+                    e = {"importable": False, "canonical": None, "bases": [], "is_dataclass": False,
+                         "fields": None, "error": f"{type(exc).__name__}: {exc}"}
+                e["category"] = category
+                entries[path] = e
+            result["catalog"] = entries
         result["status"] = "ok"
     except Exception as exc:  # noqa: BLE001 — surface as a structured error
         result["error"] = f"{type(exc).__name__}: {exc}"

@@ -61,11 +61,25 @@ const NODE = { ok: true, path: 'qubits.q1.z.joint_offset', owner: 'qubits.q1.z',
         { id: 'FluxLine.independent_offset', key: 'independent_offset', cls: 'FluxLine', type: 'float', required: false, default: 0.0,
           doc: 'the independent point.', docs: null, source: 'class docstring', examples: [], present_in: 0, present: false, focus: false, choices: null },
     ], unset: ['independent_offset'], note: null };
+// docs/141 4h: category > class > key; a class the chip uses is open, one it
+// does not is collapsed until a search reaches into it; the catalogue may
+// still be warming ("loading") and the open window re-asks
+ENTRIES[0].category = 'Flux & couplers'; ENTRIES[0].used = true;
+ENTRIES[1].category = 'Ports'; ENTRIES[1].used = false;
+ENTRIES[2].category = 'Flux & couplers'; ENTRIES[2].used = true;
+ENTRIES[3].category = 'Lab (quam_config)'; ENTRIES[3].used = false;
+const CATEGORIES = ['Ports', 'Flux & couplers', 'Lab (quam_config)'];
+const CLASSES = [{ cls: 'FluxLine', cls_path: 'quam.components.channels.FluxLine', doc: 'QUAM component for a flux line.', category: 'Flux & couplers', fields: 2, count: 1, known: true, used: true },
+                 { cls: 'MWFEMAnalogOutputPort', cls_path: 'quam.components.ports.MWFEMAnalogOutputPort', doc: 'An MW-FEM output port.', category: 'Ports', fields: 1, count: 0, known: true, used: false },
+                 { cls: 'Lab', cls_path: 'quam_config.lab.Lab', doc: null, category: 'Lab (quam_config)', fields: 1, count: 0, known: true, used: false }];
+window.__catalogState = 'ready';
+window.__manualPollMs = 120;
 const calls = [];
 window.fetch = function (url) {
     calls.push(String(url));
     const body = String(url).indexOf('/api/manual/node') === 0
-        ? NODE : { ok: true, entries: ENTRIES, classes: [], env: true, note: null, chip: 'chipA' };
+        ? NODE : { ok: true, entries: ENTRIES, classes: CLASSES, categories: CATEGORIES, env: true, catalog: true,
+                   catalog_state: window.__catalogState, note: null, chip: 'chipA' };
     return Promise.resolve({ json: () => Promise.resolve(body) });
 };
 global.fetch = window.fetch;
@@ -88,6 +102,22 @@ setTimeout(function () {
     ok(/band/.test(txt) && /50 MHz/.test(txt) && /opx1000_fems\.md#bands/.test(txt), 'a QM-docs entry shows allowed values + the docs page');
     ok(/mystery/.test(txt) && /no description/.test(txt), 'an undescribed key says so — nothing invented');
     ok(body().querySelectorAll('.manual-req').length >= 1, 'a required field is marked');
+    // ── docs/141 4h: category > class > key ─────────────────────────────
+    const cats = Array.from(body().querySelectorAll('.manual-cat > summary')).map((s) => s.textContent.replace(/\s+/g, ' ').trim());
+    ok(cats.length === 3 && /^Ports/.test(cats[0]) && /^Flux & couplers/.test(cats[1]) && /^Lab \(quam_config\)/.test(cats[2]),
+       'categories render in the server order (' + cats.join(' | ') + ')');
+    const flux = Array.from(body().querySelectorAll('.manual-class')).find((c) => /FluxLine/.test(c.querySelector('.manual-class-name').textContent));
+    const port = Array.from(body().querySelectorAll('.manual-class')).find((c) => /MWFEMAnalogOutputPort/.test(c.querySelector('.manual-class-name').textContent));
+    ok(flux && flux.open && /in this state/.test(flux.querySelector('summary').textContent), 'a class the chip uses is open and says so');
+    ok(port && !port.open, 'a class the chip does not use is collapsed');
+    ok(/QUAM component for a flux line/.test(flux.querySelector('.manual-class-doc').textContent), 'the class doc reads in the class row');
+    ok(!body().querySelector('.manual-desc:not(.manual-nodesc).muted'), 'a description is never rendered muted (annotations only)');
+    ok(/745 keys|4 keys/.test(body().querySelector('.manual-status').textContent) && /full catalogue of the selected environment/.test(body().querySelector('.manual-status').textContent),
+       'the status line names the catalogue');
+    window.ConfigManual._renderSearch('band');
+    const port2 = Array.from(body().querySelectorAll('.manual-class')).find((c) => /MWFEMAnalogOutputPort/.test(c.querySelector('.manual-class-name').textContent));
+    ok(port2 && port2.open, 'a search opens the class it reached into');
+    window.ConfigManual._renderSearch('');
     // 3 search grammar
     const s = pop.querySelector('.manual-search');
     window.ConfigManual._renderSearch('flux joint');
@@ -111,7 +141,7 @@ setTimeout(function () {
         body().querySelector('.manual-goto').click();
         ok(nav[0] === 'qubits.q1.z.joint_offset', '"used at" navigates to the explorer path');
         body().querySelector('.manual-back').click();
-        ok(/of 4 keys/.test(body().textContent), 'back returns to the search over all keys');
+        ok(/4 keys/.test(body().textContent) && body().querySelectorAll('.manual-entry').length === 4, 'back returns to the search over all keys');
         // 5 drag commits to fixed coords
         const head = pop.querySelector('.manual-header');
         pop.getBoundingClientRect = () => ({ left: 10, top: 40, width: 500, height: 300 });
@@ -130,6 +160,26 @@ setTimeout(function () {
         setTimeout(function () {
             ok(!pop.classList.contains('manual-hidden'), 'F1 on a value opens the manual');
             ok(calls.some((c) => c.indexOf('/api/manual/node?path=qubits.q1.z.joint_offset') === 0), 'on the cell\'s own path');
+            // ── the catalogue warms in the background: an open window re-asks ──
+            window.__catalogState = 'loading';
+            window.openConfigManual({ q: '' });
+            window.ConfigManual.load(true).then(function () {
+                window.ConfigManual._renderSearch('');
+                const n0 = calls.filter((c) => c === '/api/manual').length;
+                ok(/loading in the background/.test(body().querySelector('.manual-status').textContent), 'a cold catalogue says it is loading');
+                window.__catalogState = 'ready';
+                setTimeout(function () {
+                    const n1 = calls.filter((c) => c === '/api/manual').length;
+                    ok(n1 > n0, 'the open window re-asked (' + (n1 - n0) + ' more request(s))');
+                    ok(/full catalogue of the selected environment/.test(body().querySelector('.manual-status').textContent), 'and re-rendered when it landed');
+                    // ── the window remembers its size ──
+                    window.localStorage.setItem('quam_manual_size', JSON.stringify({ w: 700, h: 520 }));   // jsdom's real Storage
+                    window.toggleConfigManual(); window.toggleConfigManual(d.getElementById('manual-btn'));
+                    ok(pop.style.width === '700px' && pop.style.height === '520px', 'a remembered size is restored on open (' + pop.style.width + ' x ' + pop.style.height + '; stored=' + window.localStorage.getItem('quam_manual_size') + ' vw=' + window.innerWidth + ' open=' + !pop.classList.contains('manual-hidden') + ')');
+                    process.exit(fails ? 1 : 0);
+                }, 400);
+            });
+            return;
             process.exit(fails ? 1 : 0);
         }, 20);
     }, 20);

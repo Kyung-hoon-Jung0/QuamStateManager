@@ -307,6 +307,59 @@ inputs); the docs/136 check is what finally said so. The shared cabling
 (ext N ↔ con1/fem4/pN, the PJ bench's layout) was staged into the working
 copy for the user to apply or discard; the PJ original was consistent.
 
+## 4g. Feedback round of 2026-08-28 (afternoon)
+
+* **Compare waveforms was dead.** `style.css` hides any `.state-review-overlay`
+  whose `.state-review-host` has no children (the empty-host click-trap guard);
+  the compare card was not a host, so the overlay stayed `display:none` while
+  the fetch ran and the plot rendered into an invisible 0×0 div. Real Chrome
+  confirmed (computed display none, rect 0×0, svg present). The card is a host
+  now; `smModalOpen` sees the overlay; Escape closes it. `test_pulse_compare_overlay.py`
+  audits every overlay that borrows the class.
+* **The Diagnostics list needed F5** (§4f).
+* **The tree stays a tree** on a broad search (§3, revised).
+* **"go to field" on a pulse parameter opened the qubit inspector** on the
+  Pulses page — `UndoNav.ownerSurface` now routes a pulse-owned path to
+  `/pulse/detail` there.
+
+## 4h. The Config Manual, rebuilt: every class the environment offers
+
+The user's three points: the body text read like a comment (grey), the list
+was flat, and — the important one — it listed only the keys of the classes the
+open chip already used, when the point of a manual is to show what is
+*available*.
+
+* **The catalogue.** `probe_state_schema.py --catalog` enumerates every
+  `QuamComponent` subclass the env offers WITHOUT walking unknown packages (a
+  lab package may talk to instruments at import): quam's own component modules
+  and quam_builder's superconducting architecture are imported by name, the
+  chip's classes as requested, and the rest comes from the subclass closure —
+  descending through private ancestors (`_OutComplexChannel` is the parent of
+  every IQ/MW channel; the first cut lost eight classes there). On the cqt env:
+  **103 classes, ~750 keys, ~490 with the class's own words, 2.4 s, 375 KB**,
+  cached per env (`state_schema_catalog.json`, same version + signature
+  freshness as the manifest).
+* **Quiet loading.** The catalogue rides the chip-load warm-up thread after the
+  chip's own manifest; a cold `/api/manual` starts it in the background and
+  answers with what it has (`catalog_state: loading`); the open window re-asks
+  every 3 s and fills in when it lands. No request ever waits on it.
+* **The model.** `manual_entries(..., catalog)` merges catalogue + manifest
+  (the manifest wins for a class both know — it was probed for this chip), so
+  every class is listed; a class the chip uses carries `used` and its keys
+  carry clickable places. `node_keys` falls back to the catalogue for a class
+  the chip probe did not cover. Categories come from the probe (module + name
+  heuristics: Roots, Qubits, Qubit pairs, Channels, Ports, Pulses, Resonators,
+  Flux & couplers, Gates & macros, Octave, Hardware, Lab (quam_config), Other).
+* **The window.** Category › class › key, two collapsible levels; a class the
+  chip uses opens, others collapse until a search reaches in; descriptions in
+  the normal foreground (muted is for annotations only: type, default, source,
+  places); an SM-blue edge, rounded, resizable with the size remembered.
+
+Pinned by `test_key_manual.py::TestCatalog`, the cqt probe pin in
+`test_key_manual_probe.py`, `test_config_manual.py` (route state, window CSS)
+and `config_manual_selfcheck.cjs` (categories, open/collapsed rules, loading
+re-ask, XSS, size restore).
+
 ## 5. Tooling that came out of the night
 
 `scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js` (+ daytime: `cdp_profile.js` function-level CPU profile, `cdp_trace.js` per-phase trace of one keystroke, `cdp_type.js` char-by-char typing with a gap + debounce override, `cdp_undo.js` trusted Ctrl+Z/Ctrl+Shift+Z through the page's own UI, `cdp_virt.js` virtualization sampler): Chrome headless with the

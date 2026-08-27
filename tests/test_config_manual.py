@@ -47,6 +47,22 @@ def test_per_key_help_affordances_exist():
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_the_manual_reports_the_catalogue_state_and_the_window_is_resizable():
+    from quam_state_manager.web.app import create_app
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        app = create_app(testing=True, instance_path=tmp)
+        d = app.test_client().get("/api/manual").get_json()
+        assert d["ok"] is True and d["catalog_state"] == "none"       # no chip, no env
+    css = (Path(__file__).resolve().parent.parent / "quam_state_manager" / "web" / "static" / "style.css").read_text(encoding="utf-8")
+    block = css[css.index(".manual-popover {"): css.index(".manual-hidden { display: none; }")]
+    assert "resize: both" in block and "border-radius: 10px" in block and "--pico-primary" in block, \
+        "the window is resizable, rounded and carries the SM-blue edge"
+    assert "min-width: 380px" in block and "min-height: 260px" in block
+    js = (Path(__file__).resolve().parent.parent / "quam_state_manager" / "web" / "static" / "manual.js").read_text(encoding="utf-8")
+    assert "var SIZE_KEY = 'quam_manual_size';" in js and "new ResizeObserver(" in js
+
+
 def test_config_manual_selfcheck():
     node = shutil.which("node")
     if subprocess.run([node, "-e", "require('jsdom')"], capture_output=True, cwd=str(_ROOT)).returncode != 0:

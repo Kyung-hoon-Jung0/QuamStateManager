@@ -98,6 +98,65 @@ class TestEntries:
         assert rows["Transmon"]["known"] is False and rows["Transmon"]["count"] == 2
 
 
+class TestCatalog:
+    """docs/141 4h: the manual lists EVERY class the env offers, not only the
+    chip's; the chip's classes carry their places; a class the chip probe
+    did not cover is served from the catalogue."""
+
+    def _catalog(self):
+        return {
+            FL: {"importable": True, "canonical": FL, "doc": "QUAM component for a flux line.",
+                 "category": "Flux & couplers",
+                 "fields": {"joint_offset": {"type": {"base": "float"}, "raw": "float", "has_default": True,
+                                             "default": 0.0, "doc": "the flux bias at the joint point in V."}}},
+            "quam.components.pulses.SquarePulse": {
+                "importable": True, "canonical": "quam.components.pulses.SquarePulse",
+                "doc": "Square pulse.", "category": "Pulses",
+                "fields": {"amplitude": {"type": {"base": "float"}, "raw": "float", "has_default": False,
+                                         "default": None, "doc": "The amplitude of the pulse in V."}}},
+            "quam_config.lab.ExoticPort": {
+                "importable": True, "canonical": "quam_config.lab.ExoticPort", "doc": None,
+                "category": "Lab (quam_config)",
+                "fields": {"knob": {"type": {"base": "int"}, "raw": "int", "has_default": True, "default": 1}}},
+        }
+
+    def test_the_catalogue_widens_the_manual_and_marks_what_the_chip_uses(self):
+        d = key_manual.manual_entries(_state(), {}, _manifest(), self._catalog())
+        keys = {(e["cls"], e["key"]): e for e in d["entries"]}
+        assert ("SquarePulse", "amplitude") in keys, "a class the chip does not use is still listed"
+        sq = keys[("SquarePulse", "amplitude")]
+        assert sq["category"] == "Pulses" and sq["used"] is False and sq["examples"] == []
+        fl = keys[("FluxLine", "joint_offset")]
+        assert fl["used"] is True and fl["present_in"] == 2 and fl["examples"][0].endswith(".z.joint_offset")
+        # the manifest (probed for THIS chip) wins for a class both know: its
+        # richer field list, not the catalogue's
+        assert ("FluxLine", "output_mode") in keys
+        assert d["catalog"] is True and d["env"] is True
+        assert d["categories"][:2] == ["Flux & couplers", "Pulses"] or "Pulses" in d["categories"]
+        assert "Lab (quam_config)" in d["categories"] and "Config keys (QM docs)" in d["categories"]
+        rows = {c["cls"]: c for c in d["classes"]}
+        assert rows["SquarePulse"]["used"] is False and rows["FluxLine"]["used"] is True
+        assert rows["ExoticPort"]["category"] == "Lab (quam_config)"
+
+    def test_without_a_catalogue_nothing_changes(self):
+        a = key_manual.manual_entries(_state(), {}, _manifest())
+        b = key_manual.manual_entries(_state(), {}, _manifest(), None)
+        assert [e["id"] for e in a["entries"]] == [e["id"] for e in b["entries"]]
+        assert a["catalog"] is False
+
+    def test_node_keys_fall_back_to_the_catalogue(self):
+        manifest = {"classes": {}}                      # the chip probe never ran
+        d = key_manual.node_keys(_state(), {}, manifest, "qubits.qA1.z", catalog=self._catalog())
+        assert d["known"] is True and d["cls"] == "FluxLine"
+        assert [f["key"] for f in d["fields"] if f.get("present")][:1] == ["joint_offset"]
+
+    def test_category_of_falls_back_by_module_and_name(self):
+        assert key_manual._category_of("quam_config.x.Thing", None) == "Lab (quam_config)"
+        assert key_manual._category_of("quam.components.ports.LFFEMAnalogOutputPort", None) == "Ports"
+        assert key_manual._category_of("quam_builder.arch.qubit.Transmon", None) == "Qubits"
+        assert key_manual._category_of("quam.components.pulses.GaussianPulse", {"category": "Pulses"}) == "Pulses"
+
+
 class TestNodeKeys:
     def test_a_node_lists_set_and_unset_keys(self):
         d = key_manual.node_keys(_state(), {}, _manifest(), "qubits.qA1.z")

@@ -51,6 +51,7 @@ STATE_SCHEMA_SCRIPT = _script_path("probe_state_schema.py")
 # else the docs would stay silently absent for everyone with a warm cache.
 SCHEMA_FORMAT = 2
 _SCHEMA_CACHE_FILENAME = "state_schema_cache.json"
+_CATALOG_CACHE_FILENAME = "state_schema_catalog.json"   # the Config Manual's full class catalogue (docs/141 4h)
 _MAX_CACHED_ENVS = 5          # LRU prune bound for per-env cache entries
 _CLASS_CAP = 200              # harvest armor (corpus max distinct = 36)
 
@@ -253,6 +254,103 @@ def probe_state_schema(python_path: str, class_paths: list[str], instance_path=N
                 python_path=str(python_path or ""))
         except Exception:  # noqa: BLE001
             logger.warning("recording the schema baseline failed", exc_info=True)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# The catalogue: every component class the env offers (docs/141 4h)
+# ---------------------------------------------------------------------------
+
+def _catalog_cache_path(instance_path) -> Path:
+    return Path(instance_path) / _CATALOG_CACHE_FILENAME
+
+
+def _load_catalog_cache(instance_path) -> dict[str, dict]:
+    p = _catalog_cache_path(instance_path)
+    if not p.exists():
+        return {}
+    try:
+        import json
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def catalog_for_env(python_path: str | None, instance_path=None) -> dict | None:
+    """REQUEST-PATH read of the cached catalogue: ``{class path: entry}`` or
+    None when cold / stale (never spawns)."""
+    if not python_path or instance_path is None:
+        return None
+    with _cache_lock:
+        entry = _load_catalog_cache(instance_path).get(python_path)
+    if not isinstance(entry, dict) or entry.get("format") != SCHEMA_FORMAT:
+        return None
+    sig = _env_signature(python_path)
+    if sig is None or entry.get("signature") != sig:
+        return None
+    cat = entry.get("catalog")
+    return cat if isinstance(cat, dict) and cat else None
+
+
+def probe_catalog(python_path: str, class_paths: list[str], instance_path=None, *,
+                  force: bool = False, timeout: int = 240) -> dict:
+    """Run (or cache-serve) the full catalogue probe. Never raises; MAY spawn --
+    background threads only. Returns ``{"ok", "cached", "error", "catalog"}``."""
+    result: dict[str, Any] = {"ok": False, "cached": False, "error": None, "catalog": {}}
+    if not python_path or not Path(python_path).is_file():
+        result["error"] = "selected interpreter no longer exists"
+        return result
+    if instance_path is not None and not force:
+        cached = catalog_for_env(python_path, instance_path)
+        if cached:
+            result.update(ok=True, cached=True, catalog=cached)
+            return result
+    if not STATE_SCHEMA_SCRIPT.exists():
+        result["error"] = f"schema probe script not found: {STATE_SCHEMA_SCRIPT}"
+        return result
+    import json
+    requested = [c for c in dict.fromkeys(class_paths) if isinstance(c, str) and c][:_CLASS_CAP]
+    outcome = _blank_outcome()
+    work_dir = Path(tempfile.mkdtemp(prefix="quamcatalog_work_"))
+    try:
+        (work_dir / "_classes.json").write_text(
+            json.dumps({"classes": requested, "pulse_roster": False}), encoding="utf-8")
+        _run_script_outcome(
+            [python_path, str(STATE_SCHEMA_SCRIPT),
+             "--classes", str(work_dir / "_classes.json"),
+             "--out", str(work_dir / "_result.json"), "--catalog"],
+            work_dir, timeout, outcome,
+            no_result_label="class-catalogue probe",
+            error_fallback="class-catalogue probe reported an error",
+        )
+    finally:
+        _cleanup_work_dir(work_dir)
+    parsed = outcome.get("result") or {}
+    if not outcome.get("ok"):
+        result["error"] = outcome.get("error") or "class-catalogue probe failed"
+        return result
+    cat = parsed.get("catalog") or {}
+    if not isinstance(cat, dict) or not cat:
+        result["error"] = "the probe returned no classes"
+        return result
+    result.update(ok=True, catalog=cat)
+    if instance_path is not None:
+        with _cache_lock:
+            cache = _load_catalog_cache(instance_path)
+            cache.pop(python_path, None)
+            cache[python_path] = {
+                "format": SCHEMA_FORMAT,
+                "versions": parsed.get("versions") or _env_versions(python_path),
+                "signature": _env_signature(python_path),
+                "catalog": cat,
+            }
+            while len(cache) > _MAX_CACHED_ENVS:
+                cache.pop(next(iter(cache)))
+            try:
+                safe_io.atomic_write_json(_catalog_cache_path(instance_path), cache)
+            except OSError:
+                logger.warning("Could not persist the class catalogue", exc_info=True)
     return result
 
 

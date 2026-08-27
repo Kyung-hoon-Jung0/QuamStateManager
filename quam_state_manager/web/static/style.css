@@ -1070,13 +1070,17 @@ html.topbar-hidden .topbar-reveal { display: block; }
    taller, because it is read while editing: search bar pinned under the
    header, entries below. Floats at fixed coords once dragged. */
 .manual-popover {
+    /* docs/141 4h (user): an SM-blue edge that reads as a window, slight
+       rounding, and the user can resize it (size persisted by manual.js) */
     position: absolute; right: 0; top: 100%; z-index: 120;
-    width: 520px; max-width: 94vw; max-height: min(720px, 85vh);
+    width: 560px; max-width: 94vw; height: min(720px, 85vh); max-height: 92vh;
+    min-width: 380px; min-height: 260px;
     display: flex; flex-direction: column;
     background: var(--pico-background-color);
-    border: 1px solid var(--pico-muted-border-color);
-    border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+    border: 1.5px solid color-mix(in srgb, var(--pico-primary) 60%, transparent);
+    border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,0.26), 0 0 0 1px color-mix(in srgb, var(--pico-primary) 12%, transparent);
     margin-top: 0.2rem; font-size: 13px;
+    resize: both; overflow: hidden;
 }
 .manual-hidden { display: none; }
 /* Undo trail panel (2026-08-28): bottom-right, compact, out of the way of
@@ -1140,30 +1144,58 @@ html.topbar-hidden .topbar-reveal { display: block; }
     background: none; border: none; color: var(--pico-muted-color); cursor: pointer; font-size: 1.1rem;
 }
 .manual-close:hover { color: var(--pico-contrast); }
-.manual-searchbar { flex: 0 0 auto; padding: 0.35rem 0.55rem; border-bottom: 1px solid var(--pico-muted-border-color); }
-.manual-search { margin: 0; height: auto; padding: 0.3rem 0.5rem; font-size: 0.9em; }
-.manual-body { flex: 1 1 auto; overflow-y: auto; padding: 0.35rem 0.55rem 0.6rem; }
-.manual-count, .manual-note { font-size: 0.82em; margin: 0 0 0.35rem; }
-.manual-entry { padding: 0.4rem 0.3rem; border-top: 1px solid var(--pico-muted-border-color); }
+.manual-searchbar { flex: 0 0 auto; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--pico-muted-border-color); }
+.manual-search { margin: 0; height: auto; padding: 0.35rem 0.55rem; font-size: 0.92em; }
+.manual-body { flex: 1 1 auto; overflow-y: auto; padding: 0.3rem 0.6rem 0.8rem; }
+.manual-status { display: flex; flex-wrap: wrap; gap: 0.4rem 0.9rem; align-items: center; font-size: 0.8em; margin: 0.15rem 0 0.45rem; color: var(--pico-muted-color); }
+.manual-status .manual-live { color: var(--pico-primary); }
+.manual-note { font-size: 0.85em; margin: 0.3rem 0; padding: 0.35rem 0.55rem; border-radius: 6px; background: var(--pico-card-background-color); }
+/* category > class > key: two collapsible levels, the key row is the unit */
+.manual-cat { margin: 0.35rem 0 0.2rem; }
+.manual-cat > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 0.5rem; padding: 0.3rem 0.2rem; font-weight: 700; font-size: 0.86em; text-transform: uppercase; letter-spacing: .05em; color: var(--pico-color); border-bottom: 1px solid var(--pico-muted-border-color); }
+.manual-cat > summary::-webkit-details-marker { display: none; }
+.manual-cat > summary::before { content: "▸"; font-size: 0.8em; color: var(--pico-primary); transition: transform .12s; }
+.manual-cat[open] > summary::before { transform: rotate(90deg); }
+.manual-cat .manual-n { font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--pico-muted-color); }
+.manual-class { margin: 0.25rem 0 0.25rem 0.35rem; border-left: 2px solid color-mix(in srgb, var(--pico-primary) 35%, transparent); padding-left: 0.5rem; }
+/* a BLOCK summary (not flex): Chromium draws a second disclosure glyph as a
+   flex item after the wrapped doc line when a summary is a flex container */
+.manual-class > summary { list-style: none; cursor: pointer; display: block; padding: 0.2rem 0; line-height: 1.5; }
+.manual-class > summary > .manual-class-name, .manual-class > summary > .manual-badge { display: inline-block; vertical-align: baseline; margin-right: 0.45rem; }
+.manual-class > summary::-webkit-details-marker { display: none; }
+/* Chromium >= 89 draws the disclosure triangle through ::marker, not the
+   -webkit pseudo -- both must go or a stray chevron lands after the doc line */
+.manual-cat > summary::marker, .manual-class > summary::marker { content: ""; display: none; }
+/* Pico draws its own right-floated chevron through summary::after -- ours is the ::before */
+.manual-cat > summary::after, .manual-class > summary::after { display: none !important; content: none !important; background: none !important; }
+.manual-class > summary::before { content: "▸"; display: inline-block; width: 0.9em; font-size: 0.75em; color: var(--pico-muted-color); transition: transform .12s; }
+.manual-class[open] > summary::before { transform: rotate(90deg); }
+.manual-class-name { font-weight: 700; font-family: var(--font-mono); font-size: 0.95em; color: var(--pico-color); }
+.manual-class-doc { display: block; margin: 0.05rem 0 0.2rem; font-size: 0.9em; color: var(--pico-color); line-height: 1.35; }
+.manual-badge { font-size: 0.72em; padding: 0.02rem 0.42rem; border-radius: 999px; border: 1px solid var(--pico-muted-border-color); color: var(--pico-muted-color); white-space: nowrap; }
+.manual-badge.manual-used { border-color: var(--pico-primary); color: var(--pico-primary); }
+.manual-badge.manual-req { border-color: var(--color-warning-text); color: var(--color-warning-text); }
+.manual-entry { padding: 0.38rem 0.2rem 0.38rem 0.35rem; border-top: 1px solid var(--pico-muted-border-color); }
 .manual-entry:first-of-type { border-top: none; }
 .manual-entry.manual-focus { background: var(--pico-card-background-color); border-left: 3px solid var(--pico-primary); }
-.manual-entry.manual-unset { opacity: 0.8; }
-.manual-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.35rem; }
-.manual-key { font-weight: 700; font-size: 1em; }
-.manual-cls { font-size: 0.85em; }
+.manual-entry.manual-unset .manual-key { opacity: 0.85; }
+.manual-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4rem; }
+.manual-key { font-weight: 700; font-size: 1em; color: var(--pico-color); }
+.manual-cls { font-size: 0.82em; color: var(--pico-muted-color); }
 .manual-type { font-family: var(--font-mono); font-size: 0.8em; color: var(--pico-muted-color); }
-.manual-req { font-size: 0.72em; padding: 0 0.35rem; border-radius: 999px; border: 1px solid var(--color-warning-text); color: var(--color-warning-text); }
 .manual-mark { font-weight: 700; color: var(--pico-primary); }
-.manual-desc { margin: 0.15rem 0 0; line-height: 1.35; }
+.manual-desc { margin: 0.18rem 0 0; line-height: 1.4; color: var(--pico-color); }
+.manual-desc.manual-nodesc { color: var(--pico-muted-color); font-style: italic; }
 .manual-allowed { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.25rem; }
-.manual-chip { font-size: 0.82em; padding: 0.05rem 0.4rem; border-radius: 999px; border: 1px solid var(--pico-muted-border-color); }
-.manual-meta, .manual-examples, .manual-source { font-size: 0.8em; margin-top: 0.2rem; }
+.manual-chip { font-size: 0.82em; padding: 0.05rem 0.45rem; border-radius: 999px; border: 1px solid var(--pico-muted-border-color); color: var(--pico-color); }
+.manual-meta, .manual-examples, .manual-source { font-size: 0.8em; margin-top: 0.22rem; color: var(--pico-muted-color); }
 .manual-examples code, .manual-source code { font-size: 0.95em; }
 .manual-goto { text-decoration: none; }
+.manual-goto code { color: var(--pico-primary); }
 .manual-goto:hover code { text-decoration: underline; }
 .manual-section { font-weight: 700; font-size: 0.8em; text-transform: uppercase; letter-spacing: .04em; color: var(--pico-muted-color); margin: 0.6rem 0 0.2rem; }
 .manual-nodehead { display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap; margin-bottom: 0.25rem; }
-.manual-nodehead .manual-cls { font-weight: 700; color: var(--pico-primary); }
+.manual-nodehead .manual-cls { font-weight: 700; color: var(--pico-primary); font-size: 1em; }
 .manual-btn.manual-open { color: var(--pico-primary); }
 /* the per-key ? affordance on the state surfaces */
 .key-help-btn {

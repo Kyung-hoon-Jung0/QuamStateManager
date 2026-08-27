@@ -68,6 +68,15 @@ class TestParser:
 def test_the_real_flux_line_docstring_comes_through():
     """Runs where the customer env is importable (the cqt pytest env)."""
     pytest.importorskip("quam_builder")
+    # docs/141 4h: the catalogue enumerates the env's component classes
+    # without walking unknown packages -- quam's own components and
+    # quam_builder's superconducting architecture, plus the subclass closure
+    cat = probe.enumerate_catalog([])
+    assert len(cat) >= 50, len(cat)
+    assert cat.get("quam.components.pulses.SquarePulse") == "Pulses"
+    assert cat.get("quam.components.channels.InOutIQChannel") == "Channels"
+    assert not any(p.startswith("quam.core") for p in cat), "core base classes are not components"
+    assert all(("." in p and not p.rsplit(".", 1)[-1].startswith("_")) for p in cat)
     from quam_builder.architecture.superconducting.components.flux_line import FluxLine
     entry = probe._dump_class(f"{FluxLine.__module__}.FluxLine")
     assert entry["importable"] and entry["fields"]

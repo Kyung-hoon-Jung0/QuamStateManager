@@ -114,29 +114,87 @@ def _field_entry(cls_path: str, leaf: str, name: str, rec: dict,
     }
 
 
-def manual_entries(state: Any, wiring: Any, manifest: dict | None) -> dict:
-    """Everything the manual can say about this chip.
+_CATEGORY_ORDER = ["Roots", "Qubits", "Qubit pairs", "Channels", "Ports", "Pulses",
+                   "Resonators", "Flux & couplers", "Gates & macros", "Octave", "Hardware",
+                   "Lab (quam_config)", "Other components", "Config keys (QM docs)"]
 
-    Returns ``{"entries": [...], "classes": [...], "env": bool, "note": str|None}``.
-    ``entries`` is one row per (class, field) for every class the manifest
-    knows AND the chip uses, plus the QM-docs keys with no class behind them
-    (so `band` is findable even before an env is selected)."""
+
+def _category_of(cls_path: str, entry: dict | None) -> str:
+    cat = (entry or {}).get("category")
+    if isinstance(cat, str) and cat:
+        return cat
+    # a chip class the catalogue did not cover: place it by its module
+    mod = cls_path.rsplit(".", 1)[0].lower() if "." in cls_path else ""
+    name = _leaf(cls_path).lower()
+    if mod.startswith("quam_config") or not (mod.startswith("quam.") or mod.startswith("quam_builder")):
+        return "Lab (quam_config)"
+    if "pair" in name:
+        return "Qubit pairs"
+    if "qubit" in name or "transmon" in name:
+        return "Qubits"
+    if name.endswith("port"):
+        return "Ports"
+    if name.endswith("pulse"):
+        return "Pulses"
+    if name.endswith("channel") or "drive" in mod or name.startswith("xy"):
+        return "Channels"
+    if "resonator" in name or "readout" in mod:
+        return "Resonators"
+    if "flux" in name or "flux" in mod or "coupler" in name:
+        return "Flux & couplers"
+    if "octave" in name or "octave" in mod:
+        return "Octave"
+    if "twpa" in name or "mixer" in name or "converter" in name or "hardware" in mod:
+        return "Hardware"
+    if "gate" in name or "macro" in name:
+        return "Gates & macros"
+    return "Other components"
+
+
+def manual_entries(state: Any, wiring: Any, manifest: dict | None,
+                   catalog: dict | None = None) -> dict:
+    """Everything the manual can say.
+
+    Returns ``{"entries", "classes", "categories", "env", "catalog", "note"}``.
+    ``entries`` is one row per (class, field) for every class the CATALOGUE
+    offers (docs/141 4h -- everything the env has, not only what the chip
+    uses) merged with the chip's own classes from the manifest, plus the
+    QM-docs keys with no class behind them (so `band` is findable even before
+    an env is selected). A row that the chip actually sets carries
+    ``examples`` (clickable places) and ``present_in``."""
     occ = _class_occurrences(state, wiring)
-    classes = (manifest or {}).get("classes") or {}
+    classes = dict((manifest or {}).get("classes") or {})
+    catalog = catalog if isinstance(catalog, dict) else {}
+    # the catalogue is the wider set; the manifest wins for a class both know
+    # (it was probed for THIS chip's inventory, same env)
+    merged: dict[str, dict] = {}
+    for cp, e in catalog.items():
+        if isinstance(e, dict):
+            merged[cp] = e
+    for cp, e in classes.items():
+        if isinstance(e, dict):
+            m = dict(e)
+            if "category" not in m and cp in merged:
+                m["category"] = merged[cp].get("category")
+            merged[cp] = m
+    # every class the chip uses is listed even when nobody described it
+    for cp in occ:
+        merged.setdefault(cp, {"importable": False, "fields": None})
     entries: list[dict] = []
     class_rows: list[dict] = []
     covered: set[tuple[str, str]] = set()
-    for cls_path, paths in sorted(occ.items()):
-        paths = sorted(paths)                      # deterministic examples
-        entry = classes.get(cls_path)
+    for cls_path in sorted(merged, key=lambda c: (_category_of(c, merged[c]), _leaf(c).lower())):
+        entry = merged[cls_path]
+        paths = sorted(occ.get(cls_path, []))      # deterministic examples
         leaf = _leaf(cls_path)
+        category = _category_of(cls_path, entry)
         if not isinstance(entry, dict) or not entry.get("importable") or not isinstance(entry.get("fields"), dict):
-            class_rows.append({"cls": leaf, "cls_path": cls_path, "doc": None,
-                               "fields": 0, "count": len(paths), "known": False})
+            class_rows.append({"cls": leaf, "cls_path": cls_path, "doc": None, "category": category,
+                               "fields": 0, "count": len(paths), "known": False, "used": bool(paths)})
             continue
         fields = entry["fields"]
-        class_rows.append({"cls": leaf, "cls_path": cls_path, "doc": entry.get("doc"),
-                           "fields": len(fields), "count": len(paths), "known": True})
+        class_rows.append({"cls": leaf, "cls_path": cls_path, "doc": entry.get("doc"), "category": category,
+                           "fields": len(fields), "count": len(paths), "known": True, "used": bool(paths)})
         for name, rec in fields.items():
             if name in _SKIP_KEYS or not isinstance(rec, dict):
                 continue
@@ -148,7 +206,10 @@ def manual_entries(state: Any, wiring: Any, manifest: dict | None) -> dict:
                     present += 1
                     if len(examples) < _MAX_EXAMPLES:
                         examples.append(f"{p}.{name}")
-            entries.append(_field_entry(cls_path, leaf, name, rec, examples, present))
+            fe = _field_entry(cls_path, leaf, name, rec, examples, present)
+            fe["category"] = category
+            fe["used"] = bool(paths)
+            entries.append(fe)
             covered.add((leaf, name))
     # docs-only keys (no class field behind them on this chip)
     for e in key_manual_docs.DOC_ENTRIES:
@@ -162,12 +223,17 @@ def manual_entries(state: Any, wiring: Any, manifest: dict | None) -> dict:
                      "unit": e.get("unit"), "docs": e["docs"], "quote": e.get("quote"),
                      "since": e.get("since"), "applies": e["applies"], "ambiguous": False},
             "source": "QM docs", "examples": [], "present_in": 0,
+            "category": "Config keys (QM docs)", "used": False,
         })
     note = None
-    if not classes:
+    if not classes and not catalog:
         note = ("Class documentation loads once a Python environment is selected "
                 "(Generate Config → environment); the QM docs entries are shown now.")
-    return {"entries": entries, "classes": class_rows, "env": bool(classes), "note": note}
+    cats_present = {e["category"] for e in entries}
+    categories = [c for c in _CATEGORY_ORDER if c in cats_present] + sorted(
+        c for c in cats_present if c not in _CATEGORY_ORDER)
+    return {"entries": entries, "classes": class_rows, "categories": categories,
+            "env": bool(classes) or bool(catalog), "catalog": bool(catalog), "note": note}
 
 
 def _node_at(state: Any, wiring: Any, dot_path: str) -> Any:
@@ -191,7 +257,8 @@ def _node_at(state: Any, wiring: Any, dot_path: str) -> Any:
     return cur
 
 
-def node_keys(state: Any, wiring: Any, manifest: dict | None, dot_path: str) -> dict:
+def node_keys(state: Any, wiring: Any, manifest: dict | None, dot_path: str,
+              catalog: dict | None = None) -> dict:
     """What THIS place can carry: for a node with a class, every field of
     that class with a `present` flag (the unset ones are the "keys you could
     add"); for a leaf, the same view of its parent with the leaf focused."""
@@ -210,6 +277,8 @@ def node_keys(state: Any, wiring: Any, manifest: dict | None, dot_path: str) -> 
     leaf = _leaf(cls_path) if cls_path else None
     classes = (manifest or {}).get("classes") or {}
     entry = classes.get(cls_path) if cls_path else None
+    if cls_path and not isinstance(entry, dict) and isinstance(catalog, dict):
+        entry = catalog.get(cls_path)                 # the catalogue covers what the chip probe did not
     fields: list[dict] = []
     known = isinstance(entry, dict) and entry.get("importable") and isinstance(entry.get("fields"), dict)
     if known:
