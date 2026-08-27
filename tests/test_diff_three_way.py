@@ -94,6 +94,27 @@ class TestThirdSource:
         assert 'diff-wb-list-3' in three and "sv-take" not in three
 
 
+class TestRowsN:
+    def test_a_leaf_past_the_row_cap_is_still_compared(self):
+        """Caught on the real chip (8,822 leaves): the walk was capped at the
+        ROW cap, so a change in the last leaf read as 'identical · capped'."""
+        from quam_state_manager.core import json_diff
+        n = json_diff.ROW_CAP + 50
+        a = {"k": {f"p{i:05d}": i for i in range(n)}}
+        b = {"k": {f"p{i:05d}": i for i in range(n)}}
+        c = {"k": {f"p{i:05d}": i for i in range(n)}}
+        b["k"][f"p{n - 1:05d}"] = -1          # the LAST leaf, past ROW_CAP
+        res = json_diff.diff_rows_n([a, b, c])
+        assert [r["path"] for r in res["rows"]] == [f"k.p{n - 1:05d}"]
+        assert res["rows"][0]["vals"] == [n - 1, -1, n - 1]
+        assert res["truncated"] is False
+
+    def test_absence_on_one_side_is_a_row(self):
+        from quam_state_manager.core import json_diff
+        res = json_diff.diff_rows_n([{"x": 1, "y": 2}, {"x": 1}, {"x": 1, "y": 2}])
+        assert [(r["path"], r["present"]) for r in res["rows"]] == [("y", [True, False, True])]
+
+
 class TestFiguresTab:
     def test_one_column_per_run_one_row_per_figure(self, env):
         html = _get(env, _url(env, tab="figures"))

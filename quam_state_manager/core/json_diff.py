@@ -150,9 +150,13 @@ def diff_rows_n(docs: list[Any], *, cap: int = ROW_CAP) -> dict:
     counts as a difference), every side's value beside each other. Same
     flatten, same path grammar, same cap as :func:`diff_rows`; ranking is by
     path so a three-way read stays stable while sources are swapped."""
+    # flatten keeps its OWN (walk) cap: `cap` bounds the ROWS returned, never
+    # the leaves compared -- a real chip has ~8,800 leaves, and capping the
+    # walk at the row cap silently dropped every leaf past it (caught by a
+    # real-chip screenshot: "identical (5,000 values compared) · capped").
     flats, truncated = [], False
     for d in docs:
-        f, t = flatten(d, cap=cap)
+        f, t = flatten(d)
         flats.append(f)
         truncated = truncated or t
     paths: set[str] = set()

@@ -52,7 +52,6 @@
     {# Customer (2026-08-27): an optional THIRD source. Empty = the 2-way page
        exactly as before; set = the list view and the figures tab grow a C
        column (the tree keeps reading A -> B). #}
-    <span class="diff-vs diff-vs-c">+</span>
     <label class="diff-side diff-side-c">
       <span class="diff-side-tag">C</span>
       <select name="c">
@@ -128,7 +127,7 @@
       <span class="muted">{{ '{:,}'.format(c.same) }} identical</span>
       {% if payload.truncated %}<span class="warn">· capped</span>{% endif %}
       <span class="diff-wb-labels muted">
-        <b>A</b> {{ src_a.label }} &nbsp; <b>B</b> {{ src_b.label }}
+        <b>A</b> {{ src_a.label }} &nbsp; <b>B</b> {{ src_b.label }}{% if src_c %} &nbsp; <b>C</b> {{ src_c.label }}{% endif %}
       </span>
     </div>
 
