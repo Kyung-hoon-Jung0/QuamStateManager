@@ -730,14 +730,27 @@ def _refresh_live_diverged(ctx) -> None:
     (editor save, atomic re-save, coarse / same-second / 9p-Windows mtime). That
     leaves ``live_diverged`` stuck False forever — the "view in SM?" banner never
     reappears. On each chip-surface render + poll we re-derive divergence from a
-    content hash (throttled to once / ``_LIVE_HASH_RECHECK_S``) and ONLY escalate
-    False→True — never clear it, never touch change_log / working_dirty /
-    pending_reapply. Skips dirty contexts (the explicit sync/apply paths own those)
-    and never raises into the caller.
+    content hash (throttled to once / ``_LIVE_HASH_RECHECK_S``). It escalates
+    False→True, and — since 2026-08-27 — lowers True→False only for a CLEAN
+    context whose live hash provably equals the sync point (a stale banner
+    over identical content was the reported lie); it never touches change_log
+    / working_dirty / pending_reapply. Dirty contexts keep escalate-only (the
+    explicit sync/apply paths own those). Never raises into the caller.
     """
-    if not ctx or ctx.get("type") != "quam" or ctx.get("live_diverged"):
+    if not ctx or ctx.get("type") != "quam":
         return
+    # Customer (2026-08-27): the flag used to be escalate-only, so ANY
+    # transient True (a poll landing between a write and its sync-point
+    # stamp, an auto-sync pass) outlived the content it described -- the
+    # banner said "changed on disk" while Review & sync said "no differences".
+    # A flagged, CLEAN context is now re-checked too, and cleared when the
+    # live hash provably equals the sync point. A dirty context keeps the
+    # old rule (the explicit sync/apply paths own it), and a None verdict
+    # (unreadable live, no baseline) never clears anything.
+    flagged = bool(ctx.get("live_diverged"))
     if _quam_ctx_dirty(ctx):
+        if flagged:
+            return
         # docs/120 item 8: an ARMED Auto-Sync pull is the user asking SM to
         # watch, so the skip is lifted for exactly that case.
         #
@@ -777,11 +790,15 @@ def _refresh_live_diverged(ctx) -> None:
     if not lock.acquire(blocking=False):
         return
     try:
-        if working_copy.live_diverged_now(wc):
+        verdict = working_copy.live_diverged_now(wc)
+        if verdict:
             ctx["live_diverged"] = True
             # docs/116: this escalation carries no count of its own, and a
             # count left from an EARLIER divergence would be printed as if it
             # described this one. None => the banner says nothing (docs/87).
+            ctx.pop("live_drift_count", None)
+        elif verdict is False and flagged and not _quam_ctx_dirty(ctx):
+            ctx["live_diverged"] = False     # proven equal: the banner was stale
             ctx.pop("live_drift_count", None)
     except Exception:   # noqa: BLE001 — a probe failure must never break a render
         logger.debug("live-diverged re-check failed", exc_info=True)
