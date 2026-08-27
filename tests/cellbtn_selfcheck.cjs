@@ -135,4 +135,33 @@ ok(css.indexOf('.bulk-cell.fh-docked { padding-right: 1.5rem; }') >= 0,
 const inspRule = css.split('.field-hist-btn {')[1] || '';
 ok(inspRule.indexOf('font-size: .9rem') >= 0, 'inspector clock enlarged');
 
+// 7. instant custom tooltip (user feedback: the native `title` hover delay
+// felt slow) — mouseenter shows it right away, no title attribute to wait on
+c1.focus();
+btn = d.getElementById('fh-cellbtn');
+ok(!btn.hasAttribute('title'), 'native title attribute removed (its delay is not JS-controllable)');
+ok(btn.getAttribute('aria-label').indexOf('Value history') === 0,
+   'aria-label carries the same label for assistive tech');
+btn.dispatchEvent(new window.Event('mouseenter', { bubbles: true }));
+let tip = d.querySelector('.fh-cellbtn-tip');
+ok(!!tip, 'tooltip element created on first hover');
+ok(tip && tip.style.display === 'block', 'tooltip shown immediately on mouseenter');
+ok(tip && tip.textContent.indexOf('Value history') === 0, 'tooltip carries the value-history label');
+btn.dispatchEvent(new window.Event('mouseleave', { bubbles: true }));
+ok(tip.style.display === 'none', 'tooltip hidden on mouseleave');
+
+// re-showing then moving focus to another cell must not leave it stranded
+btn.dispatchEvent(new window.Event('mouseenter', { bubbles: true }));
+ok(tip.style.display === 'block', 'tooltip shown again');
+c2.focus();
+ok(tip.style.display === 'none', 'moving focus to another cell hides a stale tooltip');
+
+const tipRule = (css.split('.fh-cellbtn-tip {')[1] || '').split('}')[0];
+ok(tipRule.indexOf('position: fixed') >= 0, 'tooltip is viewport-positioned');
+ok(tipRule.indexOf('pointer-events: none') >= 0,
+   'tooltip never intercepts the mouseleave that would hide it');
+const btnRule = (css.split('#fh-cellbtn {')[1] || '').split('}')[0];
+ok(/translateY\(calc\(-50% - \d+px\)\)/.test(btnRule),
+   'icon nudged up from a plain geometric -50% center');
+
 process.exit(fails ? 1 : 0);
