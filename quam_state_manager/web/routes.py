@@ -5379,6 +5379,52 @@ def _revert_entry_payload(dot_path, value, *, created=False, deleted=False,
     }
 
 
+_SYNC_PATCH_CAP = 4000
+
+
+def _leaf_snapshot(ctx) -> dict | None:
+    """Every leaf of the working state BEFORE a pull, so the pull can report
+    exactly which values it changed (customer 2026-08-27: the page must stay
+    put and only the values move). None when it cannot be taken — the
+    client then refreshes wholesale, as before."""
+    try:
+        store = ctx.get("store")
+        leaves, truncated = json_diff.flatten(store.merged)
+        return None if truncated else leaves
+    except Exception:  # noqa: BLE001 — a missing snapshot only costs a refresh
+        return None
+
+
+def _sync_patch(ctx, before: dict | None) -> dict:
+    """``{"changes": [...], "structural": bool}`` for a pull's response.
+
+    ``changes`` lists every leaf whose VALUE differs (same payload shape the
+    undo repaint consumes — ``BulkEdit.revertPaths`` takes it verbatim — plus
+    the raw ``value`` for the Json tree). ``structural`` is True when a key was
+    added or removed, the snapshot was unavailable, or the diff exceeds the
+    cap: the client then re-renders the page instead of patching, because a
+    patch can only rewrite leaves the page already shows."""
+    if before is None:
+        return {"changes": [], "structural": True}
+    try:
+        store = ctx.get("store")
+        after, truncated = json_diff.flatten(store.merged)
+    except Exception:  # noqa: BLE001
+        return {"changes": [], "structural": True}
+    if truncated:
+        return {"changes": [], "structural": True}
+    structural = any(p not in after for p in before) or any(p not in before for p in after)
+    changes = []
+    for p, v in after.items():
+        if p in before and before[p] != v:
+            entry = _revert_entry_payload(p, v)
+            entry["value"] = v
+            changes.append(entry)
+            if len(changes) > _SYNC_PATCH_CAP:
+                return {"changes": [], "structural": True}
+    return {"changes": changes, "structural": structural}
+
+
 def _modified_map() -> dict[str, Any]:
     """Build dot_path -> original old_value map from the change log.
 
@@ -12805,6 +12851,7 @@ def state_sync():
         # (safe_io's torn-pair refusal → ValueError → 500). Matches the
         # State-History callers, which already hold the lock across the rebuild.
         with build_lock:
+            _pre_leaves = _leaf_snapshot(ctx)
             working_copy.sync_from_live(wc)
             pulled_other_changes = (_pre_sync_hash is not None
                                     and wc.synced_live_hash != _pre_sync_hash)
@@ -12823,7 +12870,7 @@ def state_sync():
     # "apply" goes one step further: save the re-applied edits and push them to
     # the live chip now, instead of leaving them pending for a second click.
     if mode == "apply":
-        return _sync_pull_apply_to_live(ctx, replay,
+        return _sync_pull_apply_to_live(ctx, replay, patch=_sync_patch(ctx, _pre_leaves),
                                         pulled_other_changes=pulled_other_changes)
 
     # reapply / discard: the pull consumed the stash; edits (if any) are now
@@ -12841,11 +12888,12 @@ def state_sync():
         "mode": mode,
         "tray_html": _tray_html(),
         "replay": replay,
+        **_sync_patch(ctx, _pre_leaves),
     })
 
 
 def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
-                             force=False):
+                             force=False, patch=None):
     """Finish a ``mode=apply`` sync: save the re-applied edits to the working
     copy and push them to the live chip. Mirrors ``/state/apply-to-live`` but
     returns JSON so ``doStateSync`` can drive it. On a fresh staleness conflict
@@ -12972,6 +13020,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
         "tray_html": _tray_html(),
         "replay": replay,
         "pulled_other_changes": pulled_other_changes,
+        **(patch or {}),
     })
 
 
