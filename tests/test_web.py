@@ -187,9 +187,41 @@ class TestRound15ChromeHiding:
         assert "quam_topbar_hidden" in base                  # restored in restorePrefs
         assert "window.toggleTopbar" in js
         assert "topbar-hidden" in js and "quam_topbar_hidden" in js
-        assert "html.topbar-hidden .topbar { display: none; }" in css
+        # The bar collapses to ZERO HEIGHT (not display:none — one item still
+        # floats out of it, see test_topbar_hidden_keeps_the_sync_badge).
+        assert "html.topbar-hidden .topbar {\n    height: 0;" in css.replace("\r\n", "\n")
+        assert "html.topbar-hidden .topbar > nav > ul > li { display: none; }" in css
         # CRITICAL: zero the var (no 48px dead strip) — never edit the literal.
         assert "html.topbar-hidden { --topbar-height: 0px; }" in css
+
+    def test_topbar_hidden_keeps_the_sync_badge(self):
+        """Customer ask (2026-08-27): the ☰ cycle's second press hid EVERY
+        top-bar control. The sync status badge (● Synced / N unsaved / Live chip
+        moved — the review + apply door) must survive it, floating beside the
+        ☰, WITHOUT being moved in the DOM (its OOB swaps target #pending-tray
+        in place)."""
+        css = self._read("web", "static", "style.css")
+        tray = self._read("web", "templates", "_pending_tray.html")
+        base = self._read("web", "templates", "base.html")
+        assert 'id="topbar-tray-slot"' in base
+        assert 'class="state-status-badge' in tray and 'id="pending-tray"' in tray
+        # the slot floats (fixed) while every sibling <li> stays hidden
+        slot = css.split("html.topbar-hidden #topbar-tray-slot {", 1)[1].split("}", 1)[0]
+        assert "position: fixed" in slot and "pointer-events: auto" in slot, (
+            "The tray slot must float out of the collapsed bar and stay clickable."
+        )
+        # inside the tray, ONLY the badge shows
+        assert "html.topbar-hidden #pending-tray > :not(.state-status-badge) { display: none; }" in css
+        badge = css.split("html.topbar-hidden #pending-tray > .state-status-badge {", 1)[1].split("}", 1)[0]
+        assert "display: inline-flex" in badge
+        # no JS relocation — the badge is never appended anywhere else
+        js = self._read("web", "static", "app.js")
+        assert "state-status-badge" not in js.split("window.toggleTopbar = function()", 1)[1][:600], (
+            "toggleTopbar must not move the badge — CSS floats it in place."
+        )
+        # TopbarHeight publishes 0 by CLASS, so a zero-height (not display:none)
+        # bar cannot leak a stale height into the panels' calc(100vh - topbar)
+        assert "classList.contains('topbar-hidden')) return 0" in js
 
     def test_topbar_reveal_button_theme_safe(self):
         # <button> → must set explicit bg + non-rescoped text (not var(--pico-color)).

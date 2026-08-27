@@ -879,7 +879,35 @@ body {
 /* Item 3 — global top-bar hide. Class lives on <html> (the .topbar is outside
    .app-layout). Zeroing --topbar-height keeps every calc(100vh - topbar) panel
    flush (no 48px dead strip) without editing the protected literal. */
-html.topbar-hidden .topbar { display: none; }
+/* Customer ask (2026-08-27): hiding the bar used to take EVERY control with
+   it. The bar now collapses to zero height and hides all of its items EXCEPT
+   the sync status badge (● Synced / Working state · N unsaved / Live chip
+   moved — the one door to review + apply), which floats beside the ☰ so the
+   live-write status is never out of reach. Nothing moves in the DOM: the
+   badge stays inside #pending-tray, so its OOB swaps keep landing on it, and
+   TopbarHeight still publishes 0 (it keys on the class, not the box). */
+html.topbar-hidden .topbar {
+    height: 0; min-height: 0; padding: 0; margin: 0; border: 0;
+    overflow: visible; background: transparent; pointer-events: none;
+}
+html.topbar-hidden .topbar > nav,
+html.topbar-hidden .topbar > nav > ul {
+    height: 0; min-height: 0; margin: 0; padding: 0; overflow: visible; row-gap: 0;
+}
+html.topbar-hidden .topbar > nav > ul > li { display: none; }
+html.topbar-hidden #topbar-tray-slot {
+    display: inline-flex; position: fixed; top: 6px; left: 42px; z-index: 120;
+    pointer-events: auto;
+}
+html.topbar-hidden #topbar-tray-slot > :not(#pending-tray) { display: none; }
+html.topbar-hidden #pending-tray {
+    display: inline-flex; margin: 0; padding: 0;
+    background: transparent; border: 0; box-shadow: none;
+}
+html.topbar-hidden #pending-tray > :not(.state-status-badge) { display: none; }
+html.topbar-hidden #pending-tray > .state-status-badge {
+    display: inline-flex; margin: 0; box-shadow: 0 2px 8px rgba(0,0,0,.25);
+}
 html.topbar-hidden { --topbar-height: 0px; }
 /* Always-reachable handle to bring the bar back (the Hide toggle is in the bar).
    It's a <button>, so set explicit colors — Pico would otherwise white-on-blue it. */
