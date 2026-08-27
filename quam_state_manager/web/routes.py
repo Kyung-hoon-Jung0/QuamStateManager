@@ -9632,6 +9632,45 @@ def _is_pulse_path(path: str) -> bool:
     return isinstance(path, str) and any(rx.match(path) for rx in _PULSE_PATH_RES)
 
 
+_PAIR_MACRO_PULSE_RE = re.compile(
+    r"^(qubit_pairs\.[^.]+\.macros\.[^.]+)\.(flux_pulse_qubit|coupler_flux_pulse)$")
+
+
+def _pulse_component_overlays(store, path: str) -> list[dict]:
+    """The OTHER pulses the same component plays alongside `path`, synthesized
+    for overlay. Customer ask (2026-08-27): on a tunable-qubit + tunable-coupler
+    chip a CZ macro carries `flux_pulse_qubit` AND `coupler_flux_pulse`, and
+    they are one physical event on two lines — the preview should show both by
+    default. Scoped to the pair-macro family: a channel's `operations` are
+    alternatives, not companions, so they are offered through the picker, never
+    auto-drawn. Every entry is a real synth (or its honest error) — nothing is
+    invented for a missing sibling."""
+    m = _PAIR_MACRO_PULSE_RE.match(path or "")
+    if not m:
+        return []
+    from quam_state_manager.core.waveform_synth import synth_for_operation
+    component = m.group(1)
+    try:
+        node = store.get_value(component)
+    except Exception:
+        return []
+    if not isinstance(node, dict):
+        return []
+    out = []
+    for key, val in node.items():
+        sib = f"{component}.{key}"
+        if sib == path or not isinstance(val, dict) or not _is_pulse_path(sib):
+            continue
+        payload = synth_for_operation(store, sib)
+        out.append({
+            "path": sib,
+            "label": key,
+            "default_on": True,
+            "plot": _pulse_plot_traces(payload),
+        })
+    return out
+
+
 def _pulse_plot_traces(payload: dict) -> dict:
     """Plot-ready trace dict from a synth payload (decimated for display)."""
     if not payload.get("ok"):
@@ -9896,6 +9935,9 @@ def _render_pulse_detail(path: str, *, status_msg: str | None = None,
         "qclass": payload.get("qclass") or row.get("qclass"),
         "spec_key": payload.get("spec_key"),
         "plot": _pulse_plot_traces(payload),
+        # Customer ask (2026-08-27): a CZ macro plays its qubit flux AND its
+        # coupler flux together, so the preview draws both by default.
+        "overlays": _pulse_component_overlays(store, path),
     })
 
     is_qubit_op = bool(_PULSE_PATH_RES[0].match(path))

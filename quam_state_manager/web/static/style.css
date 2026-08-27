@@ -9457,6 +9457,27 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
 .pulse-detail-plot { height: 260px; min-height: 260px; max-height: 260px; overflow: hidden; }
 .pulse-plot-empty { display: none; }
 
+/* Overlay bar (customer 2026-08-27): companion / picked pulses drawn on the
+   same axes. Each chip carries its trace hue as a left mark. */
+.pulse-overlay-bar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: .35rem;
+    margin: 0 0 .25rem; font-size: .82em;
+}
+.pulse-overlay-bar[hidden] { display: none; }
+.pulse-overlay-chip {
+    display: inline-flex; align-items: center; gap: .25rem; margin: 0;
+    padding: .05rem .45rem .05rem .35rem; border-radius: 999px;
+    border: 1px solid var(--pico-muted-border-color);
+    border-left: 4px solid var(--ov-hue, var(--pico-primary));
+    cursor: pointer; opacity: .6; font-family: var(--font-mono);
+}
+.pulse-overlay-chip.on { opacity: 1; }
+.pulse-overlay-chip input { margin: 0; }
+.pulse-overlay-x {
+    margin: 0 0 0 .15rem; padding: 0 .25rem; background: none; border: none;
+    color: var(--pico-muted-color); cursor: pointer; line-height: 1; font-size: 1em;
+}
+.pulse-overlay-pick { width: auto; margin: 0; padding: .05rem .4rem; font-size: .9em; }
 .pulse-plot-bar {
     display: flex; align-items: center; gap: 0.6rem;
     padding: 0.25rem 0.5rem; font-size: 0.82em; flex-wrap: wrap;

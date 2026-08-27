@@ -122,6 +122,17 @@
     <span class="pulse-verify-note" hidden></span>
     <span class="pulse-synth-err" {% if not synth_error %}hidden{% endif %}>{{ synth_error or '' }}</span>
 </div>
+{# Customer ask (2026-08-27): overlays — every pulse is time × voltage, so any
+   set can share one plot. The same component's companions (a CZ macro's qubit
+   flux + coupler flux) arrive from the server and are ON by default; the
+   picker adds any other pulse of the chip. Filled by PulsesPage.initDetail. #}
+<div class="pulse-overlay-bar">
+    <span class="muted pulse-overlay-label">overlay:</span>
+    <span class="pulse-overlay-chips"></span>
+    <select class="pulse-overlay-pick" aria-label="Add a pulse to overlay" hidden>
+        <option value="">+ add pulse…</option>
+    </select>
+</div>
 <div id="pulse-detail-plot" class="pulse-detail-plot"></div>
 
 <details open class="detail-section">
