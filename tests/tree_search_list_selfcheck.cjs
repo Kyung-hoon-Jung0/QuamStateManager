@@ -16,7 +16,7 @@ const STATIC = path.join(__dirname, '..', 'quam_state_manager', 'web', 'static')
 let fails = 0;
 function ok(c, m) { if (!c) { console.error('FAIL: ' + m); fails++; } else { console.log('ok - ' + m); } }
 
-const dom = new JSDOM('<!doctype html><html><body><div class="explorer-pane"><div id="explorer-tree-state" class="json-tree"></div></div></body></html>',
+const dom = new JSDOM('<!doctype html><html><body><div class="explorer-pane"><div id="explorer-tree-state" class="json-tree"></div><div id="explorer-tree-wiring" class="json-tree" style="display:none"></div></div></body></html>',
     { url: 'http://localhost/explorer', pretendToBeVisual: true });
 const { window } = dom;
 global.window = window; global.document = window.document; global.CSS = window.CSS;
@@ -84,7 +84,40 @@ setTimeout(function () {
             setTimeout(function () {
                 ok(!d.querySelector('.tree-search-results'), 'clearing the query removes the list');
                 ok(rendered() >= before, 'the tree is intact');
-                process.exit(fails ? 1 : 0);
+                // 4. two trees under ONE parent (the explorer's state + wiring
+                //    tabs share the search box; switchExplorerTab re-runs the
+                //    query on the tree it shows). Review of 4ffee11: a sibling
+                //    list found via the parent was the OTHER tab's, and the
+                //    round trip left the state tree empty.
+                const w = d.getElementById('explorer-tree-wiring');
+                window.renderJsonTree('explorer-tree-wiring', { ports: { amp_a: 1, amp_b: 2 } }, { defaultDepth: 2 });
+                window.jsonTreeSearch('explorer-tree-state', 'amp');
+                setTimeout(function () {
+                    const stateList = c.querySelector(':scope > .tree-search-results');
+                    ok(!!stateList && stateList.getAttribute('data-for') === 'explorer-tree-state', 'the state list lives INSIDE the state tree');
+                    // tab -> wiring: the explorer hides state, shows wiring, re-runs the query there
+                    c.style.display = 'none'; w.style.display = '';
+                    window.jsonTreeSearch('explorer-tree-wiring', 'amp');
+                    setTimeout(function () {
+                        ok(c.contains(stateList), 'the wiring search did not remove the state list');
+                        ok(!w.querySelector('.tree-search-results'), 'wiring (2 matches, below the cap) shows the classic highlight, no list');
+                        ok(w.querySelectorAll('.tree-highlight').length === 2, 'and highlighted its own two matches');
+                        // tab -> state again: the same query re-fires and is deduped -- the list must still be there
+                        w.style.display = 'none'; c.style.display = '';
+                        window.jsonTreeSearch('explorer-tree-state', 'amp');
+                        setTimeout(function () {
+                            ok(c.querySelector(':scope > .tree-search-results') === stateList, 'back on state: the list is still shown');
+                            // a row click removes the list; the SAME query re-fired by a tab switch must list again
+                            stateList.querySelector('.tsr-row').click();
+                            ok(!c.querySelector('.tree-search-results'), 'row click removed the list');
+                            window.jsonTreeSearch('explorer-tree-state', 'amp');
+                            setTimeout(function () {
+                                ok(!!c.querySelector(':scope > .tree-search-results'), 'the same query after a row click lists again (not deduped into an empty tree)');
+                                process.exit(fails ? 1 : 0);
+                            }, 300);
+                        }, 300);
+                    }, 300);
+                }, 300);
             }, 300);
         }, 300);
     }, 300);

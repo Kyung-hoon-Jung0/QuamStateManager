@@ -1082,7 +1082,10 @@ html.topbar-hidden .topbar-reveal { display: block; }
 /* Undo trail panel (2026-08-28): bottom-right, compact, out of the way of
    the tray; the latest step is emphasised, older ones fade. */
 .undo-trail {
-    position: fixed; right: 0.8rem; bottom: 0.8rem; z-index: 130;
+    /* above the toast sink (right:1rem; bottom:1rem): every undo fires a
+       success toast in the same instant the panel appears, and a one-step
+       panel was entirely under it (review of 4ffee11) */
+    position: fixed; right: 0.8rem; bottom: 5rem; z-index: 130;
     width: 380px; max-width: 92vw; max-height: 40vh; overflow-y: auto;
     background: var(--pico-card-background-color); color: var(--pico-color);
     border: 1px solid var(--pico-muted-border-color); border-radius: 6px;

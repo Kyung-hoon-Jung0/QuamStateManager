@@ -272,10 +272,10 @@ window.ConfigManual = (function () {
     document.addEventListener('click', function (e) {
         var b = e.target && e.target.closest ? e.target.closest('.key-help-btn[data-help-path], .key-help-btn[data-help-q]') : null;
         if (!b) return;
-        e.preventDefault(); e.stopPropagation();
+        e.preventDefault();   // no stopPropagation: a click-away listener elsewhere must still see this click
         if (b.hasAttribute('data-help-path')) window.openConfigManual({ path: b.getAttribute('data-help-path') });
         else window.openConfigManual({ q: b.getAttribute('data-help-q') });
-    }, true);
+    });
 
     /* F1 on a focused state cell / tree row / inspector input opens "this place". */
     document.addEventListener('keydown', function (e) {

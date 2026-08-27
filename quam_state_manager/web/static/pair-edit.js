@@ -567,7 +567,7 @@
 
             t.addEventListener('click', function (e) {
                 if (e.target.closest && e.target.closest('.bulk-resize-handle')) return;
-                if (e.target.closest && e.target.closest('.bulk-col-hist')) return;
+                if (e.target.closest && e.target.closest('.bulk-col-hist, .key-help-btn')) return;
                 if (_resizeJustEnded) return;
                 if (e.target.closest && e.target.closest('.bulk-ro-link')) return;
                 var th = e.target.closest && e.target.closest('thead th[data-col-key]');
@@ -903,7 +903,13 @@
             var wrote = 0;
             var honest = e.old_kind !== 'pointer';
             Array.prototype.forEach.call(cs, function (c) {
-                if (c.readOnly) return;
+                // A readonly cell (a list / runtime column) and the qubit
+                // grid's list-preview span are FOUND but cannot be repainted
+                // by a value write: they stay uncovered (docs/124 M-10) so
+                // the caller's rebuild clears the edited preview + the red
+                // modified marker. Only a path with NO cell at all is
+                // "missing" -- that one is not the grid's to repaint.
+                if (c.readOnly || c.tagName !== 'INPUT') return;
                 var isStr = c.hasAttribute('data-str-numeric')
                     || c.classList.contains('bulk-cell-str');
                 if ((e.old_kind === 'str_numeric') !== isStr) honest = false;
@@ -918,7 +924,7 @@
                 wrote++;
             });
             if (wrote && honest) covered.push(e.dot_path);
-            else if (wrote) uncovered.push(e.dot_path);
+            else uncovered.push(e.dot_path);   // found (cs.length > 0) but not honestly repainted
         });
         rows.forEach(_refreshRow);
         if (patched) _refreshGlobal();

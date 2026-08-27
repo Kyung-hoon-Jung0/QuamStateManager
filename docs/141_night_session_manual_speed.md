@@ -102,6 +102,28 @@ store.
   thing that navigates: flash + focus when visible, else the owning surface via
   UndoNav — on the press, not automatically.
 
+## 4b. The review of 4ffee11 (2 major, 2 minor — all fixed, all pinned)
+
+* **Tree list vs the tab switch (major).** The state and wiring trees share one
+  parent and one search box, and `switchExplorerTab` re-runs the query on the
+  tree it shows. The result list was a SIBLING found through the parent, so the
+  wiring search removed the state list, and the dedup guard then left the state
+  tree with every node hidden and nothing listed. The list is now the
+  container's first child (scoped by construction, follows the tab's display,
+  dropped by any re-render), and a row click resets the dedup so the same query
+  lists again. Pinned by the two-tree round trip in `tree_search_list_selfcheck.cjs`.
+* **Stale list / readonly cells after undo (major).** The new `uncovered` rule
+  had been gated on `wrote > 0`, so a found-but-unwritable cell (pair `list` /
+  `runtime` inputs, the qubit grid's ✎ list-preview span) kept its edited
+  preview and red marker after Ctrl+Z — a regression of docs/124 M-10. Rule now:
+  found-but-not-honestly-repainted ⇒ uncovered ⇒ rebuild; NO cell ⇒ missing ⇒
+  no rebuild (the 2.4 s saving stays for off-grid undos). Pinned by four cases
+  in `undo_repaint_selfcheck.cjs` (now driven by `test_undo_trail.py`).
+* Minor: the trail panel sat exactly under the toast sink (moved to
+  `bottom: 5rem`); `_rebuildNode` now derives the `?` flag from its own tree;
+  the `?` click handler no longer stops propagation (a click-away listener
+  elsewhere must see the click) — the grid header sort ignores the button itself.
+
 ## 5. Tooling that came out of the night
 
 `scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js`: Chrome headless with the

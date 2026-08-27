@@ -6475,18 +6475,31 @@ window.clearDetailPanelSearch = function(btnEl) {
     // `res` null removes it. Rows carry the dot path; clicking one expands the
     // tree to that single row and highlights it (the classic per-row cost, once).
     function _treeSearchResults(container, res) {
-        var el = container.parentNode ? container.parentNode.querySelector(":scope > .tree-search-results") : null;
+        // The list is the container's FIRST CHILD, never a sibling: the state
+        // and wiring trees share one parent (and one search box), so a
+        // sibling list found through the parent was the other tab's list --
+        // the wiring search removed the state list, and the dedup guard then
+        // left the state tree with every node hidden and nothing listed
+        // (review of 4ffee11). Inside the container it also follows the
+        // tab's display, and a re-render (innerHTML) drops it with the rows.
+        var el = container.firstElementChild && container.firstElementChild.classList.contains("tree-search-results")
+            ? container.firstElementChild : null;
         if (!res) { if (el) el.parentNode.removeChild(el); return; }
         if (!el) {
             el = document.createElement("div");
             el.className = "tree-search-results";
-            container.parentNode.insertBefore(el, container);
+            el.setAttribute("data-for", container.id || "");
+            container.insertBefore(el, container.firstChild);
             el.addEventListener("click", function (ev) {
                 var row = ev.target.closest && ev.target.closest(".tsr-row");
                 if (!row) return;
                 ev.preventDefault();
                 var p = row.getAttribute("data-path");
                 _treeSearchResults(container, null);
+                // The list is gone by the user's choice; the next run of the
+                // SAME query (a tab switch re-fires it) must list again, not
+                // be deduped into a tree with every node hidden.
+                container._lastSearchQuery = undefined;
                 var nodesAll = container.querySelectorAll(".tree-node");
                 for (var i = 0; i < nodesAll.length; i++) nodesAll[i].classList.remove("tree-search-hidden");
                 if (window._navigateToExplorerPath) window._navigateToExplorerPath(p);
@@ -6509,7 +6522,7 @@ window.clearDetailPanelSearch = function(btnEl) {
     }
     function _searchTreeData(container, q) {
         // Clear stale search classes on whatever is currently materialised.
-        var rendered = container.querySelectorAll(".tree-node");
+        var rendered = container.querySelectorAll(".tree-node");   // the result list is not a .tree-node
         for (var i = 0; i < rendered.length; i++) {
             rendered[i].classList.remove("tree-highlight", "tree-search-hidden");
         }
@@ -7006,6 +7019,11 @@ window.clearDetailPanelSearch = function(btnEl) {
     function _rebuildNode(oldNode, newValue) {
         var m = oldNode._meta;
         if (!m || !oldNode.parentNode) return null;
+        // The ? (key-help) flag is module state set by the LAST render; an
+        // in-place rebuild must read its OWN tree's flag (a non-crud tree
+        // rendered in between would otherwise strip or add the ? rows).
+        var _tree = oldNode.closest ? oldNode.closest(".json-tree") : null;
+        if (_tree) _keyHelpOn = !!_tree._keyHelp;
         var fresh = _buildNode(m.key, newValue, m.path, m.depth, m.refValue, m.hasDiff, m.valueClick);
         oldNode.parentNode.replaceChild(fresh, oldNode);
         return fresh;

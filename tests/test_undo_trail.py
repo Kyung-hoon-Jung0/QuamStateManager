@@ -42,3 +42,26 @@ def test_the_trail_ships_and_the_grid_hides_columns_by_class():
     app = (_STATIC / "app.js").read_text(encoding="utf-8")
     assert "uncovered += (res.uncovered || []).length;" in app, \
         "only a dishonest repaint (a cell found but not repaintable) triggers the grid re-GET"
+
+
+def test_undo_repaint_selfcheck_carries_the_uncovered_contract():
+    _run("undo_repaint_selfcheck.cjs", "ok - readOnly: a found-but-unwritable cell IS uncovered")
+
+
+def test_review_fixes_of_4ffee11():
+    # found-but-unwritable stays uncovered (docs/124 M-10): the grids never
+    # gate the push on `wrote` again
+    for name in ("bulk-edit.js", "pair-edit.js"):
+        js = (_STATIC / name).read_text(encoding="utf-8")
+        assert "else if (wrote) uncovered.push" not in js, name
+        assert "c.readOnly || c.tagName !== 'INPUT'" in js, name
+        assert ".bulk-col-hist, .key-help-btn')) return;" in js, name + ": the header sort ignores the ? button itself"
+    bulk = (_STATIC / "bulk-edit.js").read_text(encoding="utf-8")
+    assert ".bulk-cell-list[data-path=" in bulk, "the listedit preview span counts as FOUND"
+    app = (_STATIC / "app.js").read_text(encoding="utf-8")
+    assert "container.insertBefore(el, container.firstChild);" in app, "the tree result list lives INSIDE its tree"
+    assert "if (_tree) _keyHelpOn = !!_tree._keyHelp;" in app, "_rebuildNode derives the ? flag from its own tree"
+    manual = (_STATIC / "manual.js").read_text(encoding="utf-8")
+    assert "e.preventDefault(); e.stopPropagation();" not in manual, "the ? handler must not silence click-away listeners"
+    css = (_STATIC / "style.css").read_text(encoding="utf-8")
+    assert "position: fixed; right: 0.8rem; bottom: 5rem; z-index: 130;" in css, "the trail sits above the toast sink"
