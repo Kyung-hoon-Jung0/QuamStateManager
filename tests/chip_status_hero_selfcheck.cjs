@@ -328,6 +328,7 @@ function part5() {
     heroPrefersTheGateNumber();
     overviewTilesStateBothErrorRates();
     anharmSubLine();
+    edgeDeltaLabels();
     finish();
   }, 400);
 }
@@ -522,6 +523,67 @@ function anharmSubLine() {
   const cVal = px(/^\.topo-hero-svg\.hero-compact \.topo-hero-val \{ font-size: ([\d.]+)px/m);
   ok(cSub > 0 && cVal > 0 && cSub < cVal,
      'anharm: compact mode keeps the sub-line smaller too (' + cSub + ' < ' + cVal + ')');
+}
+
+/* ── customer ask (2026-08-27, round 2): Δf on every pair edge ─────────────
+ * In the Qubit-freq view each edge prints the difference between its two
+ * stones' f01 values ("Δf 300.0 MHz") on the line's midpoint. Honesty pins:
+ * same gated read as the stones (either end missing ⇒ no label, never a
+ * fabricated 0), deduped per physical pair on a CR chip's two directed
+ * edges, absent on every other metric, and smaller than the edge-metric
+ * value text. */
+function edgeDeltaLabels() {
+  const win = makeWorld();
+  const topo = {
+    nodes: [
+      { id: 'q1', grid_location: '0,0', T1: 1e-5, f_01: 4.8e9 },
+      { id: 'q2', grid_location: '1,0', T1: 2e-5, f_01: 5.1e9 },
+      { id: 'q3', grid_location: '0,1', T1: 3e-5, f_01: 4.9e9 },
+      { id: 'q4', grid_location: '1,1', T1: 4e-5 },              // no f_01
+    ],
+    edges: [
+      { pair_id: 'q1-2', source: 'q1', target: 'q2', has_cz: true, cz_fidelity: 0.97,
+        gate_kind: 'cz', directed: false, active: null, best_gate: 'cz' },
+      // a CR pair: BOTH directions ship as separate edges — ONE label only
+      { pair_id: 'q1-3', source: 'q1', target: 'q3', has_cz: true, cz_fidelity: null,
+        gate_kind: 'cr', directed: true, active: null, best_gate: null },
+      { pair_id: 'q3-1', source: 'q3', target: 'q1', has_cz: true, cz_fidelity: null,
+        gate_kind: 'cr', directed: true, active: null, best_gate: null },
+      { pair_id: 'q2-4', source: 'q2', target: 'q4', has_cz: false, cz_fidelity: null,
+        gate_kind: 'none', directed: false, active: null, best_gate: null },
+    ],
+  };
+  mount(win, topo, []);
+  const hero = win.document.getElementById('topo-hero');
+  const texts = () => Array.prototype.map.call(
+      hero.querySelectorAll('.topo-hero-edelta'), (t) => t.textContent);
+  ok(texts().indexOf('Δf 300.0 MHz') !== -1,
+     'edelta: the q1-q2 edge carries its Δf in MHz (' + texts().join(' / ') + ')');
+  ok(texts().filter((t) => t === 'Δf 100.0 MHz').length === 1,
+     'edelta: a CR pair\'s two directed edges dedupe to ONE label');
+  ok(texts().length === 2,
+     'edelta: an edge whose endpoint has no f01 gets NO label — never a '
+     + 'fabricated 0 (got ' + texts().length + ')');
+  hero.querySelector('[data-hero-metric="T1"]').click();
+  ok(hero.querySelectorAll('.topo-hero-edelta').length === 0,
+     'edelta: only the Qubit-freq view carries Δf labels');
+  hero.querySelector('[data-hero-metric="cz_fidelity"]').click();
+  ok(hero.querySelectorAll('.topo-hero-edelta').length === 0,
+     'edelta: edge-metric mode keeps the edges for its OWN numbers');
+  // CSS: smaller + haloed like the edge-metric value, in both font scales
+  const css = fs.readFileSync(
+      path.join(ROOT, 'quam_state_manager', 'web', 'static', 'style.css'), 'utf8');
+  const px = (re) => parseFloat((css.match(re) || [])[1]);
+  const dPx = px(/^\.topo-hero-edelta \{\n?\s*font-size: ([\d.]+)px/m);
+  const ePx = px(/^\.topo-hero-eval \{\n?\s*font-size: ([\d.]+)px/m);
+  ok(dPx > 0 && ePx > 0 && dPx < ePx,
+     'edelta: CSS keeps Δf smaller than the edge-metric value (' + dPx + ' < ' + ePx + ')');
+  const cD = px(/^\.topo-hero-svg\.hero-compact \.topo-hero-edelta \{ font-size: ([\d.]+)px/m);
+  const cE = px(/^\.topo-hero-svg\.hero-compact \.topo-hero-eval \{ font-size: ([\d.]+)px/m);
+  ok(cD > 0 && cE > 0 && cD < cE,
+     'edelta: compact mode keeps it smaller too (' + cD + ' < ' + cE + ')');
+  ok(/\.topo-hero-edelta \{[^}]*paint-order: stroke/.test(css),
+     'edelta: halo (paint-order stroke) so it reads over the edge line');
 }
 
 function finish() {

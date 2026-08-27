@@ -1029,7 +1029,11 @@ window.ChipStatus.mount = function (opts) {
             { key: 'f_01',                label: 'Qubit freq',
               fmtFn: function(v) { return fmt(v, 'GHz'); },
               subKey: 'anharmonicity',
-              subFmt: function(v) { return 'α ' + fmt(v, 'MHz'); } },
+              subFmt: function(v) { return 'α ' + fmt(v, 'MHz'); },
+              // Customer ask (2026-08-27, round 2): every pair edge carries
+              // the two stones' frequency difference — Δf, the number the
+              // docs/93 chevron only encodes as an inequality.
+              edgeDelta: { key: 'f_01', label: 'Δf' } },
             { key: 'readout_frequency',   label: 'Readout freq',
               fmtFn: function(v) { return fmt(v, 'GHz'); } },
             { key: 'gate_fidelity_avg',   fmtFn: function(v) { return fmtPct(v, 2) + '%'; } },
@@ -1334,11 +1338,43 @@ window.ChipStatus.mount = function (opts) {
             var svg = '';
             var evalSvg = '';
             var R = compactMode ? 33 : 37;   // docs/126 compact: smaller stones
+            // Customer ask (2026-08-27, round 2): while a metric with
+            // `edgeDelta` is selected (Qubit freq), each pair edge prints the
+            // difference between its two stones' values — Δf on the line's
+            // midpoint (the chevron sits off-line at +0.16·CELL, M on the
+            // other side, so the midpoint is free; the halo keeps it
+            // readable). Same gated read as the stones (_mv), so an edge
+            // never shows a Δf its stones cannot back — either end missing
+            // or unphysical means no label, never a fabricated 0. Deduped
+            // per physical pair (a CR chip carries both directions as
+            // separate edges).
+            var _nById = {};
+            topo.nodes.forEach(function(n) { _nById[n.id] = n; });
+            var _deltaDone = {};
             topo.edges.forEach(function(e) {
                 var a = lay.positions[e.source], b = lay.positions[e.target];
                 if (!a || !b) return;
                 var oA = offsets[e.source] || { dx: 0, dy: 0 }, oB = offsets[e.target] || { dx: 0, dy: 0 };
                 var x1 = cx(a) + oA.dx, y1 = cy(a) + oA.dy, x2 = cx(b) + oB.dx, y2 = cy(b) + oB.dy;
+                if (!edgeMode && mCur.edgeDelta) {
+                    var dKey = String(e.source) < String(e.target)
+                        ? e.source + '|' + e.target : e.target + '|' + e.source;
+                    if (!_deltaDone[dKey]) {
+                        _deltaDone[dKey] = true;
+                        var nA = _nById[e.source], nB = _nById[e.target];
+                        var fA = nA != null ? _mv(nA, mCur.edgeDelta.key) : null;
+                        var fB = nB != null ? _mv(nB, mCur.edgeDelta.key) : null;
+                        if (typeof fA === 'number' && typeof fB === 'number') {
+                            var ad = Math.abs(fA - fB);
+                            evalSvg += '<text class="topo-hero-edelta" x="' + ((x1 + x2) / 2)
+                                + '" y="' + ((y1 + y2) / 2 + 4) + '">'
+                                + _esc(mCur.edgeDelta.label + ' '
+                                       + (ad >= 1e9 ? (ad / 1e9).toFixed(2) + ' GHz'
+                                                    : (ad / 1e6).toFixed(1) + ' MHz'))
+                                + '</text>';
+                        }
+                    }
+                }
                 var pdx = 0, pdy = 0;   // unit perpendicular (label offset)
                 {
                     var ddx = x2 - x1, ddy = y2 - y1, LL = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
