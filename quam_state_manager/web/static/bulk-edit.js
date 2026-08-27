@@ -1047,16 +1047,32 @@
         // an attribute-equals rule is a candidate for EVERY td, and 300 hidden
         // columns x 8,000 tds was the 250-370 ms style recalc measured behind
         // each keystroke (real Chrome trace).
+        //
+        // 2026-08-28 (daytime, docs/141 4d): the rules are STATIC and the
+        // keystroke only toggles `sh-<index>` classes on the TABLE for the
+        // columns whose state CHANGED. Replacing the stylesheet's text each
+        // keystroke made Chrome invalidate every element matched by any rule
+        // of the old and the new sheet -- `elementsStyled: 10,673`, the whole
+        // grid, 149 ms -- even when one more letter changed three columns.
+        // A class diff on one element invalidates only the descendants its
+        // changed classes' rules reach (`#bulk-table.sh-N td.ck-N`): the
+        // cost is now proportional to the change, not to the grid.
         var _idxOf = _colIndexMap(t);
+        _ensureCkSheet(_idxOf);
+        var _want = {};
         Object.keys(colSearchHide).forEach(function (k) {
             if (!colSearchHide[k] || k === '__id__' || hide.has(k)) return;
             _searchHiddenKeys[k] = 1;
-            _hideSels.push(_idxOf[k] != null
-                ? '#bulk-table td.ck-' + _idxOf[k]
-                : '#bulk-table td[data-col-key="' + _cssEsc(k) + '"]');
+            if (_idxOf[k] != null) _want['sh-' + _idxOf[k]] = 1;
+            else _hideSels.push('#bulk-table td[data-col-key="' + _cssEsc(k) + '"]');   // no ck class: the old dynamic rule
         });
-        _searchHideStyleEl().textContent = _hideSels.length
-            ? _hideSels.join(',\n') + ' { display: none !important; }' : '';
+        var _cur = (t.getAttribute('class') || '').split(/\s+/);
+        for (var ci = 0; ci < _cur.length; ci++) {
+            if (_cur[ci].indexOf('sh-') === 0 && !_want[_cur[ci]]) t.classList.remove(_cur[ci]);
+        }
+        Object.keys(_want).forEach(function (c) { if (!t.classList.contains(c)) t.classList.add(c); });
+        var _dyn = _hideSels.length ? _hideSels.join(',\n') + ' { display: none !important; }' : '';
+        if (_searchHideStyleEl().textContent !== _dyn) _searchHideStyleEl().textContent = _dyn;
         // docs/120 item 28 — SEARCHING FOR A COLUMN MUST MAKE IT USABLE, not
         // just visible. Cold columns (docs/105 virtualization) have their cell
         // contents detached, and hydration only ever fired on scroll, nav or a
@@ -1070,13 +1086,17 @@
         // A surviving column is one the user has just asked to look at, so
         // hydrate it. Gated on a non-empty query: with no search every column
         // survives, and hydrating them all would simply undo virtualization.
-        if (_virt && q) {
-            var _due = [];
-            visCols.forEach(function (c) {
-                if (!colSearchHide[c.key] && _virt.cold.has(c.key)) _due.push(c.key);
-            });
-            _virtHydrateCols(_due);   // one batch — never a scan per column
-        }
+        // 2026-08-28 (docs/141 4d): hydrate the surviving cold columns that the
+        // narrowed grid puts ON SCREEN (the scroll pass, run now), not every
+        // survivor. The first letter of any query survives most columns, so
+        // "hydrate every survivor" undid the whole virtualization on the
+        // first keystroke: 632 ms for `a` on the 20Q chip, measured. The
+        // docs/120 #28 case still holds -- `T1` narrows the grid to that
+        // column, which is then at the left edge and hydrated; anything
+        // further right hydrates on scroll, as always.
+        // Any change -- including CLEARING the search, which brings cold
+        // (hidden-at-mount) columns back on screen -- runs the pass.
+        if (_virt) _virtOnScroll();
         // A new query retires the previous "show them anyway" choice — it was
         // made about those tokens, and silently carrying it forward would make
         // the next search quietly stop filtering rows.
@@ -1679,6 +1699,19 @@
         return el;
     }
     function _cssEsc(k) { return (window.CSS && CSS.escape) ? CSS.escape(k) : String(k).replace(/"/g, '\\"'); }
+    // The static hide rules: one per column index, written ONCE per column
+    // set and never touched by a keystroke (see applySearch).
+    function _ensureCkSheet(idxOf) {
+        var el = document.getElementById('bulk-search-ck-style');
+        if (!el) { el = document.createElement('style'); el.id = 'bulk-search-ck-style'; document.head.appendChild(el); }
+        var idx = Object.keys(idxOf).map(function (k) { return idxOf[k]; }).sort(function (a, b) { return a - b; });
+        var sig = idx.length ? idx[0] + '-' + idx[idx.length - 1] + '/' + idx.length : '';
+        if (el.getAttribute('data-sig') === sig) return el;
+        var rules = idx.map(function (n) { return '#bulk-table.sh-' + n + ' td.ck-' + n + ' { display: none !important; }'; });
+        el.textContent = rules.join('\n');
+        el.setAttribute('data-sig', sig);
+        return el;
+    }
     // column key -> the `ck-N` index stamped on its cells (from the header row)
     function _colIndexMap(t) {
         var m = {};
@@ -1698,8 +1731,17 @@
         var edge = ((wrap && wrap.clientWidth) || window.innerWidth || 1200) * (1 + _VIRT_BUFFER);
         var cold = new Set(), widths = [];
         t.querySelectorAll('th.bulk-col-head[data-col-key]').forEach(function (h) {
+            var k = h.getAttribute('data-col-key');
+            // 2026-08-28 (docs/141 4d): a HIDDEN column (checkbox or the
+            // remembered search -- both are applied before this runs) has no
+            // geometry, so `offsetLeft > edge` never made it cold: a /bulk
+            // opened with a remembered search built the whole 7,761-input
+            // grid with virtualization silently OFF, and every keystroke
+            // after clearing the search paid the full price (measured:
+            // 8/8 loads with a remembered query never engaged). A hidden
+            // column is cold by definition -- it is not on screen.
+            if (_thHidden(h)) { cold.add(k); return; }
             if (h.offsetLeft > edge) {
-                var k = h.getAttribute('data-col-key');
                 cold.add(k);
                 // freeze the value-fit width so pruning can't shift the layout
                 widths.push('#bulk-table th[data-col-key="' + _cssEsc(k) + '"]{min-width:' + h.offsetWidth + 'px}');
@@ -1725,6 +1767,12 @@
             wrap._virtScrollBound = true;
             wrap.addEventListener('scroll', _virtOnScroll, { passive: true });
         }
+    }
+    // hidden by the column checkboxes or by the search: not on screen (class
+    // based, not offsetParent -- jsdom has no layout and the harness must see
+    // the same answer as Chrome)
+    function _thHidden(h) {
+        return h.classList.contains('bulk-col-hidden') || h.classList.contains('bulk-search-hidden');
     }
     function _virtHydrateCols(keys) {
         if (!_virt || !keys || !keys.length) return;
@@ -1779,7 +1827,9 @@
             var due = [];
             t.querySelectorAll('th.bulk-col-head[data-col-key]').forEach(function (h) {
                 var k = h.getAttribute('data-col-key');
-                if (_virt && _virt.cold.has(k) && h.offsetLeft < edge) due.push(k);
+                // a hidden column (search or checkbox) reports offsetLeft 0 --
+                // it is not on screen, do not hydrate it
+                if (_virt && _virt.cold.has(k) && !_thHidden(h) && h.offsetLeft < edge) due.push(k);
             });
             _virtHydrateCols(due);
         });
@@ -2466,7 +2516,7 @@
                 // reflow on a multi-MB DOM. One pass shortly after the last
                 // keystroke instead of one per key.
                 if (_searchTimer) clearTimeout(_searchTimer);
-                _searchTimer = setTimeout(applySearch, 120);
+                _searchTimer = setTimeout(applySearch, window.__bulkSearchDebounce || 120);
             });
             ChipBar.mount();
 

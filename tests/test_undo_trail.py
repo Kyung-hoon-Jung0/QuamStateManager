@@ -38,7 +38,11 @@ def test_the_trail_ships_and_the_grid_hides_columns_by_class():
     bulk = (_ROOT / "quam_state_manager" / "web" / "templates" / "_bulkedit.html").read_text(encoding="utf-8")
     assert bulk.count("ck-{{ loop.index0 }}") == 4, "th + td of both grids carry the column index class"
     js = (_STATIC / "bulk-edit.js").read_text(encoding="utf-8")
-    assert "'#bulk-table td.ck-' + _idxOf[k]" in js, "search hides columns by class selector"
+    # docs/141 4d: the class rules are static (one per column index, written
+    # once) and a keystroke toggles only `sh-N` on the table for the delta
+    assert "'#bulk-table.sh-' + n + ' td.ck-' + n + ' { display: none !important; }'" in js, \
+        "search hides columns by a STATIC class-selector sheet"
+    assert "_want['sh-' + _idxOf[k]] = 1;" in js, "and toggles per-column sh- classes on the table"
     app = (_STATIC / "app.js").read_text(encoding="utf-8")
     assert "uncovered += (res.uncovered || []).length;" in app, \
         "only a dishonest repaint (a cell found but not repaintable) triggers the grid re-GET"

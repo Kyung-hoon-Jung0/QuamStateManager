@@ -84,10 +84,8 @@ Headless Chrome 151 + DevTools trace (`cdp_measure.js`), 20Q chip, one keystroke
   the flat index is LISTED (path + value, first 400, true count shown); a row click
   expands and jumps to that one path; below the cap the classic highlight stays.
 
-Honest residual: the grid keystroke is 190–270 ms, not the sidebar's ~0. The next
-step, if wanted, is DOM-shrinking (detach hidden columns' tds) — deliberately not
-done tonight: every path-addressed grid feature would have to learn the detached
-store.
+Residual as of the night: the grid keystroke was 190–270 ms. §4d (daytime)
+measured where that went and removed most of it WITHOUT touching the DOM.
 
 ## 4. Undo — the field you just changed, fast (user: "very important")
 
@@ -150,9 +148,61 @@ and pinned in `undo_pages_selfcheck.cjs` (mutation-checked 8/8):
 Measured after the fix (PJ 20Q chip): tree edit 66 ms, undo 51, redo 71, model
 in step; Pulses commit 139 ms, undo 47, redo 79.
 
+## 4d. The grid keystroke, profiled to the phase and fixed without DOM surgery (2026-08-28)
+
+The user asked whether DOM-shrinking (detaching hidden columns' tds) was worth
+its stability cost. Measured first (CPU profile + phase trace, real Chrome, one
+`amplitude` keystroke, 7,875 tds): JS was **34 ms**; the block was the browser —
+style recalc **149 ms** over `elementsStyled: 10,673` (the WHOLE grid), layout
+30–50 ms, plus 311 ms of accessibility-tree work that only headless/CDP turns
+on (chrome://accessibility tells a user whether theirs is on) and an 80 ms
+Chrome "AI page content" agent that is not ours. So the night's "~130 ms of JS"
+was wrong, and the whole-grid restyle had ONE cause: each keystroke replaced the
+hide-stylesheet's text, and Chrome invalidates every element matched by any rule
+of the old and the new sheet.
+
+Three changes, none of which detaches anything (the inventory that argued
+against DOM-shrinking: 13 path-addressed selector sites across bulk-edit /
+pair-edit / app.js, 58 table queries, 0 index-walkers — every one would have to
+learn a detached store):
+
+1. **Static rules, delta classes.** One sheet, written once per column set:
+   `#bulk-table.sh-N td.ck-N { display:none }`. A keystroke toggles only the
+   `sh-N` classes on the table whose state CHANGED; Chrome's class-diff
+   invalidation reaches only those columns' cells. Cost ∝ change, not grid.
+2. **Hydrate what the narrowed grid puts on screen**, not every surviving cold
+   column: the first letter of any query survives most columns, so docs/120
+   #28's "hydrate every survivor" undid the whole virtualization on the first
+   keystroke (632 ms for `a`). The scroll pass runs instead; `T1` still narrows
+   the grid to that column, which is then at the left edge and hydrated.
+3. **A hidden column is cold.** `_virtInit` decided coldness by `offsetLeft`, and
+   a column hidden by the column checkboxes or by the REMEMBERED search (both
+   applied before it runs) has none — so a /bulk opened with a remembered query
+   built all 7,761 inputs with virtualization silently off (8/8 loads measured)
+   and paid the full price on every keystroke after the search was cleared.
+
+Measured, typing `amplitude` one letter every 250 ms (every letter runs), PJ 20Q:
+
+| load | before: blocked total / worst key | after |
+|---|---|---|
+| clean | 1052 / 604 ms | **279 / 109 ms** |
+| clean, `T1` | 1015 / 772 | **309 / 247** |
+| remembered search | 1051 / 892 (virtualization never engaged) | **468 / 256** |
+
+The debounce question (the user's): 120 vs 200 ms at a 150 ms typing gap gave
+392 vs 386 ms blocked — 8 runs vs 3, same total, because each run now costs its
+delta. 120 stays. Two honest notes: the mount itself still takes 1.3–2.0 s
+after the table appears before virtualization engages (a keystroke inside that
+window hits the un-virtualized grid — a load-time item, not touched here); and
+the pair grid still toggles per-td classes (17 ms, left alone).
+
+Pinned by `bulk_search_selfcheck.cjs` (static sheet + sh-class delta, four
+cases) and `bulk_virt_selfcheck.cjs` (remembered search ⇒ cold; clearing it
+hydrates the viewport).
+
 ## 5. Tooling that came out of the night
 
-`scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js`: Chrome headless with the
+`scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js` (+ daytime: `cdp_profile.js` function-level CPU profile, `cdp_trace.js` per-phase trace of one keystroke, `cdp_type.js` char-by-char typing with a gap + debounce override, `cdp_undo.js` trusted Ctrl+Z/Ctrl+Shift+Z through the page's own UI, `cdp_virt.js` virtualization sampler): Chrome headless with the
 DevTools protocol over Node's built-in WebSocket — real long-task + trace splits and
 screenshots without the browser extension (which cannot reach this machine's
 localhost). Used for every number above and for four visual checks.

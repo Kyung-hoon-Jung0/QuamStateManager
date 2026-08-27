@@ -39,7 +39,7 @@ function tick(ms) { return new Promise(function (r) { setTimeout(r, ms || 5); })
 const N_COLS = 45, N_ROWS = 90;      // 4050 cells — over the 4000 gate
 const COL_W = 100, WRAP_W = 800;     // cold boundary: offsetLeft > 800*2.5
 
-function bigWorld(nCols, nRows) {
+function bigWorld(nCols, nRows, presearch) {
   let head = '';
   const colsModel = [];
   for (let i = 0; i < nCols; i++) {
@@ -82,6 +82,7 @@ function bigWorld(nCols, nRows) {
   Object.defineProperty(wrap, 'clientWidth', { value: WRAP_W });
   wrap.scrollLeft = 0;
   win.htmx = { ajax: function () {} };
+  if (presearch) win.localStorage.setItem('quam_bulk_search', presearch);   // a remembered search, applied at mount
   new win.Function(BULK_JS).call(win);
   win.BulkEdit.mount(colsModel, { bands: {} }, []);
   return { win: win, doc: win.document, wrap: wrap, cols: colsModel };
@@ -145,6 +146,28 @@ async function main() {
   ok(!!c44.querySelector('.bulk-cell')
      && c44.querySelector('.bulk-cell').value === 'v1c44',
      'hydrated far cell restored with its exact value');
+
+  // ── a REMEMBERED search at mount (docs/141 4d) ────────────────────────
+  // The search is applied before _virtInit, so hidden columns have no
+  // geometry; deciding coldness by offsetLeft alone left virtualization OFF
+  // for every /bulk opened with a remembered query (8/8 loads measured on
+  // the 20Q chip). A hidden column is cold by definition.
+  const P = bigWorld(40, 30, 'c3');
+  const psb = P.doc.getElementById('bulk-search');
+  ok(psb.value === 'c3', 'remembered search restored at mount');
+  ok(P.doc.querySelector('th[data-col-key="c5"]').classList.contains('bulk-search-hidden'), 'fixture: c5 is search-hidden');
+  const pc5 = P.doc.querySelector('td[data-col-key="c5"]');
+  ok(pc5 && pc5.classList.contains('bulk-td-cold') && pc5.querySelector('.bulk-cell') === null,
+     'a search-hidden column is COLD at mount (virtualization engaged)');
+  const pc3 = P.doc.querySelector('td[data-col-key="c3"]');
+  ok(pc3 && !pc3.classList.contains('bulk-td-cold') && pc3.querySelector('.bulk-cell') !== null,
+     'the surviving, on-screen column is hot');
+  psb.value = ''; psb.dispatchEvent(new P.win.Event('input', { bubbles: true }));
+  await new Promise(function (r) { setTimeout(r, 400); });
+  ok(!pc5.classList.contains('bulk-td-cold') && pc5.querySelector('.bulk-cell') !== null,
+     'clearing the search hydrates the columns now on screen (c5)');
+  const pc30 = P.doc.querySelector('td[data-col-key="c30"]');
+  ok(pc30.classList.contains('bulk-td-cold'), 'and leaves the off-screen ones cold (c30 at 3060px > 2000)');
 
   // ── below-threshold world is byte-identical ───────────────────────────
   const S = bigWorld(10, 20);               // 200 cells — under the gate
