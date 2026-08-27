@@ -74,9 +74,16 @@ function bigWorld(nCols, nRows, presearch) {
       url: 'http://localhost/' });
   const win = dom.window;
   // geometry (jsdom computes none): header positions + wrap width
+  // docs/141 4i: _virtInit must not read geometry (the first paint would be
+  // the full table's layout); the getters COUNT reads, and the estimate from
+  // the inputs' size attr (none here => 8 chars => 92 px) against a 720 px
+  // window puts the cold boundary at c20 (x = 20 * 92 = 1840 > 720 * 2.5)
+  win.__geomReads = 0;
+  Object.defineProperty(win.screen, 'availWidth', { value: 720, configurable: true });   // what _virtInit reads (no layout)
+  Object.defineProperty(win, 'innerWidth', { get: function () { win.__geomReads++; return 720; }, configurable: true });   // reading it forces layout in Blink
   win.document.querySelectorAll('th.bulk-col-head').forEach(function (h, i) {
-    Object.defineProperty(h, 'offsetLeft', { value: 60 + i * COL_W });
-    Object.defineProperty(h, 'offsetWidth', { value: COL_W });
+    Object.defineProperty(h, 'offsetLeft', { get: function () { win.__geomReads++; return 60 + i * COL_W; } });
+    Object.defineProperty(h, 'offsetWidth', { get: function () { win.__geomReads++; return COL_W; } });
   });
   const wrap = win.document.querySelector('.bulk-table-wrap');
   Object.defineProperty(wrap, 'clientWidth', { value: WRAP_W });
@@ -101,10 +108,9 @@ async function main() {
   const c3td = doc.querySelector('tr[data-qubit="q0"] td[data-col-key="c3"]');
   ok(c3td && !c3td.classList.contains('bulk-td-cold')
      && !!c3td.querySelector('.bulk-cell'), 'a near column keeps its input');
+  ok(W.win.__geomReads === 0, 'the mount read NO geometry (offsetLeft/offsetWidth) -- coldness is estimated, the first layout is of the pruned table (reads: ' + W.win.__geomReads + ')');
   const st = doc.getElementById('bulk-virt-width-style');
-  ok(!!st && st.textContent.indexOf('data-col-key="c30"') >= 0
-     && st.textContent.indexOf('min-width:' + COL_W + 'px') >= 0,
-     'cold column widths are frozen');
+  ok(!st || st.textContent === '', 'no width freeze at mount (a hidden-at-mount column has no width to freeze anyway)');
 
   // ── whole-chip search over a cold value (docs/85) ─────────────────────
   const sb = doc.getElementById('bulk-search');
@@ -166,8 +172,12 @@ async function main() {
   await new Promise(function (r) { setTimeout(r, 400); });
   ok(!pc5.classList.contains('bulk-td-cold') && pc5.querySelector('.bulk-cell') !== null,
      'clearing the search hydrates the columns now on screen (c5)');
-  const pc30 = P.doc.querySelector('td[data-col-key="c30"]');
-  ok(pc30.classList.contains('bulk-td-cold'), 'and leaves the off-screen ones cold (c30 at 3060px > 2000)');
+  // c25 was search-hidden at mount (cold by definition) and sits at 2560px
+  // after the clear -- past the 2000px scroll edge, so it stays cold; c30
+  // was VISIBLE at mount ('c3' matches it) and near the left edge then, so
+  // it was hydrated and stays so -- the estimate is conservative by design
+  const pc25 = P.doc.querySelector('td[data-col-key="c25"]');
+  ok(pc25.classList.contains('bulk-td-cold'), 'and leaves the off-screen ones cold (c25 at 2560px > 2000)');
 
   // ── below-threshold world is byte-identical ───────────────────────────
   const S = bigWorld(10, 20);               // 200 cells — under the gate

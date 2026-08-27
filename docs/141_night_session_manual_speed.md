@@ -360,6 +360,55 @@ Pinned by `test_key_manual.py::TestCatalog`, the cqt probe pin in
 and `config_manual_selfcheck.cjs` (categories, open/collapsed rules, loading
 re-ask, XSS, size restore).
 
+## 4i. The Live-Edit mount: where 1.3–2.2 s went, and the layout the grid never needed
+
+A phase clock in `BulkEdit.mount` (`window.__bulkMountTimings`, always on)
+read by `cdp_mount.js` on three fresh loads of the 20Q chip:
+
+| phase | before | after |
+|---|---|---|
+| virtualization (`_virtInit`) | 1,094–1,822 ms | plan 5–7 + detach 95–190 ms |
+| stats | 140–220 | 140–210 (untouched) |
+| everything else | < 100 | < 100 |
+| **mount total** | **1,334–2,193 ms** | **323–474 ms** |
+
+Three causes, in the order they were found:
+
+1. **`innerHTML` round trip.** `_virtInit` serialised every cold cell's HTML
+   into a map and re-parsed it on hydrate — 4,260 serialisations per mount.
+   The cell's NODES now move into a `DocumentFragment` and come back verbatim.
+2. **The width freeze by attribute selector** — the docs/141 §4d finding met
+   again: 300 `th[data-col-key=…]{min-width}` rules were candidates for every
+   element at the next style recalc. By class (`th.ck-N`) now.
+3. **A forced layout of the whole table.** `_virtInit` decided coldness from
+   `th.offsetLeft`, which forces the layout of the FULL 8,000-cell table (~450 ms)
+   before a single cell had been pruned — and every later geometry read during
+   the load (the topbar measure, a textarea auto-grow, the pair grid's sticky
+   offset) paid it again on the still-whole table. Coldness is now ESTIMATED
+   from each column's value-fit input `size` against the screen width
+   (`screen.availWidth` — NOT `window.innerWidth`, which Blink answers by
+   running style + layout for the scrollbar question: 1.4 s inside "plan",
+   measured); the estimate only has to be conservative, since the scroll pass
+   reads real geometry later on a table a fraction of the size and hydrates
+   anything it got wrong the moment it is on screen. The cold columns are
+   frozen at their estimated width by class (without the freeze a pruned
+   column shrank to its header and every hydration widened it back — ~0.9 s
+   of layout churn per search keystroke, measured).
+
+Honest notes. (a) The grid appears at ~40 ms but the mount starts at ~2.1 s
+after navigation on every load: that is the evaluation of the page's script
+bundles (app.js and the per-page scripts are all loaded on every page) — a
+load-time item of its own, not touched here. (b) Typing measurements taken
+late in the day were 3–6× noisier than the morning's (the machine was in use
+and Chrome auto-updated 151→152 mid-session); an A/B in the same session put
+the new virtualization at parity with the morning's on the search keystroke,
+not slower. (c) The hydration pass on a search runs in rAF again — a
+synchronous pass forced a style+layout inside the keystroke.
+
+Pinned by `bulk_virt_selfcheck.cjs` (geometry-read counters on the header
+getters and on `innerWidth`: the mount reads none; coldness by estimate; the
+scroll pass and the search clear hydrate what is on screen).
+
 ## 5. Tooling that came out of the night
 
 `scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js` (+ daytime: `cdp_profile.js` function-level CPU profile, `cdp_trace.js` per-phase trace of one keystroke, `cdp_type.js` char-by-char typing with a gap + debounce override, `cdp_undo.js` trusted Ctrl+Z/Ctrl+Shift+Z through the page's own UI, `cdp_virt.js` virtualization sampler): Chrome headless with the

@@ -1098,7 +1098,7 @@
         // (hidden-at-mount) columns back on screen -- runs the pass, NOW:
         // a hidden-at-mount column has no frozen width, so a rAF-deferred
         // pass would paint one frame of empty tds first (review of 6d57eea).
-        if (_virt) _virtOnScroll(true);
+        if (_virt) _virtOnScroll();   // rAF: a synchronous pass forced a style+layout INSIDE the keystroke (measured)
         // A new query retires the previous "show them anyway" choice — it was
         // made about those tokens, and silently carrying it forward would make
         // the next search quietly stop filtering rows.
@@ -1723,6 +1723,11 @@
         });
         return m;
     }
+    // Estimated rendered width of a column from its first cell's input
+    // `size` (the server's value-fit width): ~8 px per character + the cell
+    // padding. Only has to be CONSERVATIVE -- see _virtInit.
+    var _VIRT_EST_PX_PER_CHAR = 8;
+    var _VIRT_EST_PAD = 28;
     function _virtInit() {
         _virt = null;
         _virtStyleEl().textContent = '';
@@ -1730,41 +1735,72 @@
         var tds = t.querySelectorAll('tbody td[data-col-key]');
         if (tds.length < _VIRT_MIN_CELLS) return;
         var wrap = t.closest('.bulk-table-wrap') || t.parentElement;
-        var edge = ((wrap && wrap.clientWidth) || window.innerWidth || 1200) * (1 + _VIRT_BUFFER);
-        var cold = new Set(), widths = [];
+        // LAYOUT-FREE (docs/141 4i): nothing here reads offsetLeft, clientWidth
+        // or any other geometry. Reading one before the first paint forces the
+        // layout of the FULL 8,000-cell table (~450 ms on the 20Q chip), and
+        // every later forced layout during the load -- the topbar measure, a
+        // textarea auto-grow, the pair grid's sticky offset -- paid it again
+        // because the table was still whole. Coldness is ESTIMATED from each
+        // column's value-fit input width against the window width (a column
+        // whose estimated left edge is past 2.5 viewports is cold). The
+        // estimate only has to be conservative: the scroll pass reads real
+        // geometry later, on a table that is by then a fraction of the size,
+        // and hydrates anything the estimate got wrong the moment it is on
+        // screen (offsetLeft < edge).
+        // NOT window.innerWidth: Blink updates style + layout to answer it
+        // (the scrollbar question), i.e. the full-table layout this function
+        // exists to avoid -- measured 1.4 s inside "plan" on re-navigation.
+        // screen.availWidth needs no layout and bounds the viewport from
+        // above (more hot columns than needed, never fewer).
+        var edge = ((window.screen && window.screen.availWidth) || 1600) * (1 + _VIRT_BUFFER);
+        var cold = new Set();
+        var x = 0;
+        var row0 = t.querySelector('tbody tr');
+        var est = {};
+        if (row0) {
+            Array.prototype.forEach.call(row0.querySelectorAll('td[data-col-key]'), function (td) {
+                var inp = td.querySelector('.bulk-cell');
+                var size = inp ? (parseInt(inp.getAttribute('size'), 10) || 8) : 8;
+                est[td.getAttribute('data-col-key')] = size * _VIRT_EST_PX_PER_CHAR + _VIRT_EST_PAD;
+            });
+        }
+        var widths = [];
         t.querySelectorAll('th.bulk-col-head[data-col-key]').forEach(function (h) {
             var k = h.getAttribute('data-col-key');
-            // 2026-08-28 (docs/141 4d): a HIDDEN column (checkbox or the
-            // remembered search -- both are applied before this runs) has no
-            // geometry, so `offsetLeft > edge` never made it cold: a /bulk
-            // opened with a remembered search built the whole 7,761-input
-            // grid with virtualization silently OFF, and every keystroke
-            // after clearing the search paid the full price (measured:
-            // 8/8 loads with a remembered query never engaged). A hidden
-            // column is cold by definition -- it is not on screen.
             if (_thHidden(h)) { cold.add(k); return; }
-            if (h.offsetLeft > edge) {
+            var w = est[k] || (8 * _VIRT_EST_PX_PER_CHAR + _VIRT_EST_PAD);
+            var label = h.querySelector('.bulk-col-label');
+            var lw = label ? label.textContent.length * 7.5 + 30 : 0;
+            if (x > edge) {
                 cold.add(k);
-                // freeze the value-fit width so pruning can't shift the layout
-                widths.push('#bulk-table th[data-col-key="' + _cssEsc(k) + '"]{min-width:' + h.offsetWidth + 'px}');
+                // freeze the cold column at its ESTIMATED value-fit width (by
+                // class, no layout read): without it a pruned column shrinks
+                // to its header and every hydration widens it again -- a
+                // layout churn of ~0.9 s per search keystroke, measured
+                var ck = /(?:^|\s)(ck-\d+)(?:\s|$)/.exec(h.className || '');
+                if (ck) widths.push('#bulk-table th.' + ck[1] + '{min-width:' + Math.round(Math.max(w, lw)) + 'px}');
             }
+            x += Math.max(w, lw);
         });
         if (!cold.size) return;
         // The real gate: enough cells actually go cold to repay detaching them.
-        // (`_rows().length` rather than tds/th, because hidden columns are in
-        // `tds` but contribute no layout worth reclaiming.)
         if (cold.size * _rows().length < _VIRT_MIN_COLD) return;
         _virt = { html: new Map(), vals: new Map(), cold: cold, wrap: wrap };
         _virtStyleEl().textContent = widths.join('\n');
+        _ph('virt: plan');
         Array.prototype.forEach.call(tds, function (td) {
             if (!_virt.cold.has(td.getAttribute('data-col-key'))) return;
             var inp = td.querySelector('.bulk-cell');
             var v = inp ? String(inp.value) : (td.textContent || '');
             _virt.vals.set(td, v.toLowerCase());
-            _virt.html.set(td, td.innerHTML);
-            td.innerHTML = '';
+            // the cell's NODES move into a fragment (docs/141 4i): no
+            // innerHTML serialisation here, no re-parse on hydrate
+            var frag = document.createDocumentFragment();
+            while (td.firstChild) frag.appendChild(td.firstChild);
+            _virt.html.set(td, frag);
             td.classList.add('bulk-td-cold');
         });
+        _ph('virt: detach ' + _virt.html.size + ' cells');
         if (wrap && !wrap._virtScrollBound) {
             wrap._virtScrollBound = true;
             wrap.addEventListener('scroll', _virtOnScroll, { passive: true });
@@ -1794,7 +1830,11 @@
             var k = td.getAttribute('data-col-key');
             if (!k || !set[k]) return;
             var h = _virt.html.get(td);
-            if (h != null) { td.innerHTML = h; _virt.html.delete(td); _virt.vals.delete(td); }
+            if (h != null) {
+                if (typeof h === 'string') td.innerHTML = h;       // an older stash (never, after 4i)
+                else td.appendChild(h);                           // the fragment: nodes back, verbatim
+                _virt.html.delete(td); _virt.vals.delete(td);
+            }
             td.classList.remove('bulk-td-cold');
         });
         if (!_virt.cold.size) { _virt = null; _virtStyleEl().textContent = ''; }
@@ -2327,6 +2367,17 @@
     }
 
     window.__bulkRepin = function () { try { _repinAfterLayout(); } catch (e) {} };
+    /* The mount's phase clock (docs/141 4i): window.__bulkMountTimings =
+       [[phase, ms], ...] -- each entry is the time the NAMED phase took.
+       Cheap (performance.now per phase), always on, read by the real-Chrome
+       probe that measures where the seconds between "table on screen" and
+       "grid ready" go. */
+    var _mountT0 = 0;
+    function _ph(label) {
+        var now = performance.now();
+        if (label !== 'start') (window.__bulkMountTimings = window.__bulkMountTimings || []).push([label, Math.round(now - _mountT0)]);
+        _mountT0 = now;
+    }
     var BulkEdit = {
         mount: function (columns, bandMeta, dynModel, qubitMeta) {
             if (Array.isArray(columns)) COLS = columns;
@@ -2345,9 +2396,13 @@
             // Restore the persisted search/filter before applySearch runs below.
             var sb0 = document.getElementById('bulk-search');
             if (sb0) { try { sb0.value = localStorage.getItem(SEARCH_KEY) || ''; } catch (e) {} }
+            window.__bulkMountTimings = [];
+            _ph('start');
             _loadColWidths();
             _applyColWidthStyle();   // re-apply persisted column widths after each (re)render
+            _ph('col widths');
             _buildColMenu();
+            _ph('col menu');
             // r7: a dyn-column toggle reloads #table-pane wholesale, which would
             // otherwise reset the fresh server-rendered <details> to closed —
             // reopen it right after the rebuilt menu is in the DOM.
@@ -2358,13 +2413,19 @@
                 if (colvisDet) colvisDet.open = true;
             }
             _buildQubitMenu();
+            _ph('qubit menu');
             _applyColumnVisibility();
+            _ph('column visibility + search');
             _applyQubitVisCore();   // restore the persisted ⚏ Qubits selection
+            _ph('qubit visibility');
             _recomputeStats();
+            _ph('stats');
             // docs/109 audit: reformat annotations to the viewer's unit
             // BEFORE virtualization freezes widths + stashes cold HTML.
             if (window.PhysAmp) PhysAmp.applyAll(table());
+            _ph('PhysAmp');
             _virtInit();            // docs/105 #1 - after layout is final
+            _ph('virtualization');
             // docs/111 (#11): selection/fill/paste/pins + the dyn-reload
             // edit carry. Pins re-apply AFTER virtualization (a pinned cold
             // column is hydrated by _applyColPins itself).
@@ -2373,14 +2434,18 @@
             _injectPinGlyphs();
             _applyRowPins();
             _applyColPins();
+            _ph('editing + pins');
             _consumeEditCarry();
             _setupTopScroll();
             _applyFont();
             _updateTopScroll();
+            _ph('carry + scroll + font');
             // flag any already-out-of-band ports on load
             Array.prototype.slice.call(t.querySelectorAll('.bulk-cell[data-lo-field]')).forEach(_validateBand);
             _updateBandWarnCount();
+            _ph('band validation');
             _markLinkedCells();   // tag shared physical-port cells so edits mirror across the port
+            _ph('linked cells');
             var fsCb = document.getElementById('bulk-freq-sync');
             if (fsCb) fsCb.checked = _freqSyncOn();   // restore the 🔗 toggle across swaps
             if (t._bulkBound) { _refreshGlobal(); return; }
