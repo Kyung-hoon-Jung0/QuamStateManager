@@ -6072,6 +6072,17 @@ window.clearDetailPanelSearch = function(btnEl) {
                 };
             })(keyEl, path, node);
             row.appendChild(keyEl);
+            // Config Manual (2026-08-27): a ? on every editable state row —
+            // "what is this key, what can it be, what else can this node carry"
+            var helpEl = null;
+            if (valueClick === "edit" && window.openConfigManual) {
+                helpEl = document.createElement("button");
+                helpEl.type = "button"; helpEl.className = "key-help-btn tree-help"; helpEl.tabIndex = -1;
+                helpEl.textContent = "?"; helpEl.title = "Config Manual — this key (F1)";
+                (function (p2) {
+                    helpEl.onclick = function (ev) { ev.stopPropagation(); window.openConfigManual({ path: p2 }); };
+                })(path);
+            }
 
             var colon = document.createElement("span");
             colon.className = "tree-colon";
@@ -6126,6 +6137,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                                depth: depth, refValue: refValue, hasDiff: hasDiff,
                                valueClick: valueClick, union: union };
 
+            if (helpEl) row.appendChild(helpEl);   // last, after the value
             node.appendChild(row);
             node.appendChild(children);
         } else {
@@ -6256,6 +6268,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                 }
             }
 
+            if (helpEl) row.appendChild(helpEl);   // last, after the value
             node.appendChild(row);
         }
 

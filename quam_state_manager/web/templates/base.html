@@ -93,6 +93,7 @@
     <script src="{{ asset_url('scheduler.js') }}"></script>
     <script src="{{ asset_url('autofit.js') }}"></script>
     <script src="{{ asset_url('calc.js') }}"></script>
+    <script src="{{ asset_url('manual.js') }}"></script>
     <script src="{{ asset_url('compare-hub.js') }}"></script>
     {# C2: ts-local spans are hidden until JS localizes them (no UTC→local flash); with JS
        off, reveal them so the UTC fallback text still shows. #}
@@ -293,6 +294,15 @@
                         aria-expanded="false" aria-controls="calc-popover"
                         title="Calculator — dBm · volt · amplitude · expression (Alt+C)">
                     {{ icon_calculator() }}<span class="sidebar-tool-label">Calculator</span></button>
+                {# Config Manual (2026-08-27, user-directed placement): directly
+                   below Settings / Calculator. Opens a movable window (manual.js)
+                   with the house search box over every state.json key the
+                   chip's classes can carry + the QM-docs config keys. #}
+                <button type="button" class="sidebar-tool manual-btn" id="manual-btn"
+                        onclick="toggleConfigManual(this)" aria-haspopup="dialog"
+                        aria-expanded="false" aria-controls="manual-popover"
+                        title="Config Manual — what each state.json key means, what values it takes, which keys a node can carry (F1 on a value)">
+                    <svg class="sidebar-tool-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M10 8h6M10 12h4"/></svg><span class="sidebar-tool-label">Config Manual</span></button>
                 {# docs/120 item 10 — the bookmark moved here from the top bar,
                    below Calculator per the user, so its slot could carry the
                    working-state version. It is a tool (tag + note this state),
@@ -907,6 +917,22 @@
         </label>
         </div>
         </div>
+        </div>
+        {# Config Manual window (2026-08-27) — body-level like the calculator:
+           anchored under its sidebar button until dragged by the header, then
+           fixed where the user left it. Content is rendered by manual.js. #}
+        <div id="manual-popover" class="manual-popover manual-hidden" role="dialog" aria-modal="false" aria-label="Config Manual">
+        <div class="manual-header" id="manual-header">
+        <strong class="manual-title">Config Manual</strong>
+        <span class="manual-header-tools">
+        <button type="button" class="manual-close" onclick="toggleConfigManual()" title="Close  (Esc)" aria-label="Close">&times;</button>
+        </span>
+        </div>
+        <div class="manual-searchbar">
+        <input type="search" class="manual-search" placeholder="Search keys: joint_offset, band, lo_mode … (space = AND, | = OR)"
+               aria-label="Search the config manual" autocomplete="off">
+        </div>
+        <div class="manual-body"><p class="muted manual-note">Loading…</p></div>
         </div>
         <div id="calc-popover" class="calc-popover calc-hidden" role="dialog" aria-modal="false" aria-label="Calculator">
         <div class="calc-header" id="calc-header">

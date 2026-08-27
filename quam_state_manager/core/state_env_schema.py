@@ -46,6 +46,10 @@ from quam_state_manager.core.config_generator import (
 logger = logging.getLogger(__name__)
 
 STATE_SCHEMA_SCRIPT = _script_path("probe_state_schema.py")
+# Bumped when the manifest gains fields the cache could not have (2 = per-field
+# "doc" + class "doc" for the key manual, 2026-08-27): an older entry is a MISS,
+# else the docs would stay silently absent for everyone with a warm cache.
+SCHEMA_FORMAT = 2
 _SCHEMA_CACHE_FILENAME = "state_schema_cache.json"
 _MAX_CACHED_ENVS = 5          # LRU prune bound for per-env cache entries
 _CLASS_CAP = 200              # harvest armor (corpus max distinct = 36)
@@ -169,7 +173,8 @@ def probe_state_schema(python_path: str, class_paths: list[str], instance_path=N
     if instance_path is not None and not force:
         with _cache_lock:
             entry = _load_cache(instance_path).get(python_path)
-        if isinstance(entry, dict) and entry.get("versions") == versions:
+        if (isinstance(entry, dict) and entry.get("versions") == versions
+                and entry.get("format") == SCHEMA_FORMAT):
             cached_classes = entry.get("classes") or {}
             if set(requested) <= set(cached_classes):
                 manifest = _decorate({"classes": cached_classes,
@@ -225,6 +230,7 @@ def probe_state_schema(python_path: str, class_paths: list[str], instance_path=N
             cache = _load_cache(instance_path)
             cache.pop(python_path, None)                # re-insert last = most recent
             cache[python_path] = {
+                "format": SCHEMA_FORMAT,
                 "versions": versions,
                 "signature": _env_signature(python_path),
                 "classes": classes,

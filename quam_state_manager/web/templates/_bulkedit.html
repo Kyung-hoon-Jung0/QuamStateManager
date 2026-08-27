@@ -156,6 +156,9 @@
                                 data-label="{{ c.label }}" data-unit="{{ c.unit or '' }}"
                                 onclick="ColumnHistory.open(this)"
                                 title="Column history — this parameter across every qubit over the recent runs">&#128344;</button>
+                        <button type="button" class="key-help-btn" tabindex="-1"
+                                onclick="openConfigManual({q: '{{ c.key.rsplit('.', 1)[-1] }}'})"
+                                title="Config Manual — what this key means, what values it takes">?</button>
                         <span class="bulk-resize-handle" data-col-key="{{ c.key }}" title="Drag to resize · double-click to auto-fit" aria-hidden="true"></span>
                     </th>
                     {% endfor %}
@@ -281,6 +284,9 @@
                                 data-label="{{ c.label }}" data-unit="{{ c.unit or '' }}"
                                 onclick="ColumnHistory.open(this)"
                                 title="Column history — this parameter across every pair over the recent runs">&#128344;</button>
+                        <button type="button" class="key-help-btn" tabindex="-1"
+                                onclick="openConfigManual({q: '{{ c.key.rsplit('.', 1)[-1] }}'})"
+                                title="Config Manual — what this key means, what values it takes">?</button>
                         <span class="bulk-resize-handle" data-col-key="{{ c.key }}" title="Drag to resize · double-click to auto-fit" aria-hidden="true"></span>
                     </th>
                     {% endfor %}

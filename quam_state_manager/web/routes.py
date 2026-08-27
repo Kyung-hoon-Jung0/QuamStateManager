@@ -10241,6 +10241,56 @@ def api_pulse_compare():
     return jsonify({"ok": True, "pulses": pulses})
 
 
+def _manual_manifest(ctx) -> dict | None:
+    """The env schema manifest for the active chip, request-path mode (never
+    spawns): None when no environment is selected or nothing is cached yet."""
+    from quam_state_manager.core import state_env_schema
+    try:
+        inst = current_app.instance_path
+        python_path = config_generator.get_selected_env(inst)
+        if not python_path:
+            return None
+        return state_env_schema.manifest_for_store(ctx["store"], python_path, inst,
+                                                   cached_only=True)
+    except Exception:  # noqa: BLE001 — the manual degrades to the docs entries
+        logger.debug("manual manifest unavailable", exc_info=True)
+        return None
+
+
+@bp.route("/api/manual")
+def api_manual():
+    """The Config Manual (2026-08-27): every key the active chip's classes
+    can carry + the QM-docs config keys, with type / default / allowed values
+    / meaning and the SOURCE of each description. With no chip loaded only
+    the docs entries are returned."""
+    from quam_state_manager.core import key_manual
+    ctx = _active_ctx()
+    if not ctx or ctx.get("type") != "quam":
+        data = key_manual.manual_entries({}, {}, None)
+        data["chip"] = None
+        return jsonify({"ok": True, **data})
+    store = ctx["store"]
+    manifest = _manual_manifest(ctx)
+    data = key_manual.manual_entries(store.state, store.wiring, manifest)
+    data["chip"] = ctx.get("name") or ctx.get("path")
+    return jsonify({"ok": True, **data})
+
+
+@bp.route("/api/manual/node")
+def api_manual_node():
+    """What ONE place in the state can carry: the node's class fields with a
+    present/unset flag (a leaf path focuses its parent's view)."""
+    from quam_state_manager.core import key_manual
+    ctx = _active_ctx()
+    path = (request.args.get("path") or "").strip()
+    if not ctx or ctx.get("type") != "quam":
+        return jsonify({"ok": False, "reason": "No state loaded"})
+    if not path:
+        return jsonify({"ok": False, "reason": "path required"})
+    store = ctx["store"]
+    return jsonify(key_manual.node_keys(store.state, store.wiring, _manual_manifest(ctx), path))
+
+
 def _coerce_catalog_fields(spec, form) -> tuple[dict, dict]:
     """Parse create-form fields per catalog kinds. Pointer strings pass
     verbatim (syntax-checked). Returns (fields, errors)."""

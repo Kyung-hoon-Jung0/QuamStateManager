@@ -45,6 +45,9 @@
                             <button type="button" class="field-hist-btn" tabindex="-1"
                                     title="Value history — past values of this field from Param History snapshots"
                                     onclick="FieldHistory.openInspector(this)">&#128344;</button>
+                            <button type="button" class="key-help-btn" tabindex="-1"
+                                    title="Config Manual — this key (F1)"
+                                    onclick="openConfigManual({path: '{{ p.dot_path }}'})">?</button>
                         </form>
                         {% set _human = p.value | qty(p.key, 'full') %}
                         {% if _human %}<span class="unit-preview muted"{% if _stored %} title="stored raw in {{ _stored }}"{% endif %}>{{ _human }}</span>{% endif %}

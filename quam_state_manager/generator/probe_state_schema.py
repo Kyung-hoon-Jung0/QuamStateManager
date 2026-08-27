@@ -341,7 +341,102 @@ def _dump_class(path: str) -> dict:
     except Exception as exc:  # noqa: BLE001
         entry["error"] = f"field dump: {type(exc).__name__}: {exc}"
         entry["fields"] = None
+    # Key manual (2026-08-27): the per-field descriptions the class's own
+    # docstring carries (quam / quam_builder write Google-style Args: /
+    # Attributes: sections), walked up the MRO so an inherited field keeps
+    # the description its defining class wrote. Absent text stays absent —
+    # a field with no docstring line gets no "doc", never a paraphrase.
+    try:
+        summary, field_docs = _class_docs(cls)
+        entry["doc"] = summary
+        if isinstance(entry["fields"], dict):
+            for name, rec in entry["fields"].items():
+                if name in field_docs:
+                    rec["doc"] = field_docs[name]
+    except Exception:  # noqa: BLE001 — docs are an extra, never a failure
+        entry.setdefault("doc", None)
     return entry
+
+
+_DOC_SECTION_RE = re.compile(
+    r"^\s*(Args|Arguments|Attributes|Parameters|Params|Fields)\s*:\s*$")
+_DOC_END_SECTION_RE = re.compile(
+    r"^\s*(Returns|Raises|Yields|Examples?|Notes?|See Also|References|Warnings?)\s*:\s*$")
+_DOC_ENTRY_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(\([^)]*\))?\s*:\s*(.*)$")
+
+
+def _parse_field_docs(doc: str) -> dict[str, str]:
+    """``{field: description}`` from a Google-style docstring's Args /
+    Attributes sections. An entry is ``name (type): text`` or ``name: text``;
+    lines indented deeper than the entry continue it. Other sections and
+    free text are ignored."""
+    out: dict[str, str] = {}
+    lines = (doc or "").splitlines()
+    in_section = False
+    cur: str | None = None
+    cur_indent = 0
+    buf: list[str] = []
+
+    def flush() -> None:
+        nonlocal cur, buf
+        if cur and buf:
+            text = " ".join(s.strip() for s in buf if s.strip())
+            if text and cur not in out:
+                out[cur] = text
+        cur, buf = None, []
+
+    for line in lines:
+        if _DOC_SECTION_RE.match(line):
+            flush()
+            in_section = True
+            continue
+        if not in_section:
+            continue
+        if _DOC_END_SECTION_RE.match(line):
+            flush()
+            in_section = False
+            continue
+        if not line.strip():
+            flush()
+            continue
+        indent = len(line) - len(line.lstrip())
+        m = _DOC_ENTRY_RE.match(line)
+        if m and (cur is None or indent <= cur_indent):
+            flush()
+            cur, cur_indent = m.group(1), indent
+            buf = [m.group(3)]
+        elif cur is not None and indent > cur_indent:
+            buf.append(line)
+        else:
+            flush()
+    flush()
+    return out
+
+
+def _class_docs(cls: type) -> tuple[str | None, dict[str, str]]:
+    """(one-paragraph class summary, per-field docs) — the class's own text
+    first, then each base's, so a subclass can override a description and
+    an inherited field still finds the line its defining class wrote."""
+    import inspect
+    field_docs: dict[str, str] = {}
+    summary: str | None = None
+    for klass in cls.__mro__:
+        if klass is object:
+            continue
+        doc = inspect.getdoc(klass) or ""
+        if not doc:
+            continue
+        # a dataclass with no docstring inherits an auto-generated signature
+        # ("Foo(a: int, ...)") — that is not documentation
+        if doc.startswith(klass.__name__ + "(") and "\n" not in doc.strip():
+            continue
+        if summary is None and klass is cls:
+            head = doc.strip().split("\n\n", 1)[0]
+            if not _DOC_SECTION_RE.match(head.splitlines()[0]):
+                summary = " ".join(s.strip() for s in head.splitlines()).strip() or None
+        for name, text in _parse_field_docs(doc).items():
+            field_docs.setdefault(name, text)
+    return summary, field_docs
 
 
 # --------------------------------------------------------------------------
