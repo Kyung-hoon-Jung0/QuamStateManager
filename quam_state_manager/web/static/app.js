@@ -3331,9 +3331,13 @@ document.addEventListener("cellsReverted", function(evt) {
     } catch (err) { uncovered = entries.length; }   // never trust a half repaint
     if (gridOnScreen && (structural || uncovered > 0)) _scheduleGridResync();
     if (d.message && window.showToast) window.showToast(d.message, "success");
-    // r16 ⓪-2 (docs/73): flash the reverted item in place, or navigate to
-    // its owning surface with the current page's typing stashed + restored.
-    if (window.UndoNav) window.UndoNav.handle(d.entries || []);
+    // Flash the reverted items that are on screen. NO automatic navigation
+    // (docs/73's "open the owning surface" is retired): on the Pulses page a
+    // redo of a field that was not visible replaced the pulse inspector
+    // with a qubit inspector behind the user's back (real-Chrome check,
+    // 2026-08-28). The Undo trail's "go to field" is the one thing that
+    // navigates, on the user's press (UndoNav.handle).
+    if (window.UndoNav) window.UndoNav.flashVisible(d.entries || []);
 });
 
 /* ------------------------------------------------------------------ */
@@ -5052,8 +5056,18 @@ function _revertCell(dotPath, oldValueStr) {
         var input = form.querySelector('input[name="value"]');
         if (input) {
             input.value = oldValueStr;
+            // The reverted value IS the committed value now. Leaving the
+            // baseline (data-committed / defaultValue) at the edited value
+            // made the next click-away see "value != baseline" and RE-COMMIT
+            // the reverted value as a new edit -- which cleared the redo
+            // stack, so Ctrl+Shift+Z on Pulses did nothing (real-Chrome
+            // check, 2026-08-28). 'input' lets the field's own listeners
+            // (the Pulses waveform preview) follow the value.
+            if (input.hasAttribute("data-committed")) input.setAttribute("data-committed", oldValueStr);
+            input.defaultValue = oldValueStr;
             input.classList.remove("edit-input-modified");
             input.removeAttribute("title");
+            try { input.dispatchEvent(new Event("input", { bubbles: true })); } catch (e) {}
         }
         var td = form.closest("td");
         if (td) {
@@ -6402,6 +6416,31 @@ window.clearDetailPanelSearch = function(btnEl) {
      * node's data-path attribute.
      * Returns { flat: [{path, pathLower, hayLower}] }.
      */
+    /* Write ONE leaf into the tree's data model (container._treeData) and drop
+     * the flat search index. The model is what a collapsed branch is rebuilt
+     * from and what search matches against; an inline edit / undo / redo used
+     * to repaint the DOM only, so the next expand or search showed the value
+     * from BEFORE the edit (real-Chrome check, 2026-08-28). Dot-form numeric
+     * segments index lists, exactly as _buildFlatIndex walks them. */
+    function _treeModelSet(container, dotPath, value) {
+        if (!container || container._treeData == null || !dotPath) return false;
+        var segs = String(dotPath).split(".");
+        var cur = container._treeData;
+        for (var i = 0; i < segs.length - 1; i++) {
+            var seg = segs[i];
+            var nxt = Array.isArray(cur) && /^[0-9]+$/.test(seg) ? cur[Number(seg)] : cur[seg];
+            if (nxt === undefined || nxt === null || typeof nxt !== "object") return false;
+            cur = nxt;
+        }
+        var last = segs[segs.length - 1];
+        if (Array.isArray(cur) && /^[0-9]+$/.test(last)) cur[Number(last)] = value;
+        else if (cur && typeof cur === "object") cur[last] = value;
+        else return false;
+        container._flatIndex = null;
+        return true;
+    }
+    window._treeModelSet = _treeModelSet;
+
     function _buildFlatIndex(data) {
         var flat = [];
 
@@ -6858,6 +6897,8 @@ window.clearDetailPanelSearch = function(btnEl) {
                     valEl.textContent = newVal;
                     valEl.dataset.editVal = newVal;
                 }
+                _treeModelSet(valEl.closest ? valEl.closest(".json-tree") : null, dotPath,
+                              data.stored_kind !== undefined ? data.stored : newVal);
                 var row = valEl.closest(".tree-row");
                 if (row) row.classList.add("tree-row-pending");
                 // If this field was part of an incoming live diff, inline-editing it
@@ -7024,6 +7065,7 @@ window.clearDetailPanelSearch = function(btnEl) {
         // rendered in between would otherwise strip or add the ? rows).
         var _tree = oldNode.closest ? oldNode.closest(".json-tree") : null;
         if (_tree) _keyHelpOn = !!_tree._keyHelp;
+        if (_tree && newValue !== _ABSENT) _treeModelSet(_tree, m.path, newValue);
         var fresh = _buildNode(m.key, newValue, m.path, m.depth, m.refValue, m.hasDiff, m.valueClick);
         oldNode.parentNode.replaceChild(fresh, oldNode);
         return fresh;
@@ -7120,6 +7162,7 @@ window.clearDetailPanelSearch = function(btnEl) {
         if (!valEl) return;
 
         function paint(v) {
+            _treeModelSet(treeNode.closest ? treeNode.closest(".json-tree") : null, dotPath, v);
             valEl.textContent = _formatValue(v);
             valEl.dataset.editVal = (typeof v === "string") ? v : _formatValue(v);
             valEl.className = valEl.className
@@ -16559,6 +16602,15 @@ window.UndoNav = (function () {
         _pendingHighlight = paths.map(function (dp) { return { dp: dp, ts: ts }; });
     }
 
+    /* Flash + remember the entries that are on screen; never navigates. */
+    function flashVisible(entries) {
+        entries = entries || [];
+        var covered = entries.filter(function (e) { return e && visibleEl(e.dot_path); });
+        covered.forEach(function (e) { flash(visibleEl(e.dot_path)); });
+        if (covered.length) _pend(covered.map(function (e) { return e.dot_path; }));
+        return covered.length;
+    }
+
     function handle(entries) {
         entries = entries || [];
         if (!entries.length) return;
@@ -16610,7 +16662,7 @@ window.UndoNav = (function () {
         _pendingHighlight = [];
     });
 
-    return { handle: handle, visibleEl: visibleEl, ownerSurface: ownerSurface,
+    return { handle: handle, flashVisible: flashVisible, visibleEl: visibleEl, ownerSurface: ownerSurface,
              stashDirtyInputs: stashDirtyInputs, restorePass: restorePass,
              clearStash: clearStash };
 })();

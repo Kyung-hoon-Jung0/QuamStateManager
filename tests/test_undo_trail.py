@@ -48,6 +48,19 @@ def test_undo_repaint_selfcheck_carries_the_uncovered_contract():
     _run("undo_repaint_selfcheck.cjs", "ok - readOnly: a found-but-unwritable cell IS uncovered")
 
 
+def test_undo_pages_selfcheck():
+    _run("undo_pages_selfcheck.cjs", "ok - a click-away after the undo does NOT re-commit")
+
+
+def test_undo_never_navigates_by_itself():
+    app = (_STATIC / "app.js").read_text(encoding="utf-8")
+    assert "if (window.UndoNav) window.UndoNav.flashVisible(d.entries || []);" in app, \
+        "cellsReverted flashes what is visible; only the trail's button navigates"
+    assert "if (window.UndoNav) window.UndoNav.handle(d.entries || []);" not in app
+    assert "window._treeModelSet = _treeModelSet;" in app, "the tree model follows edit / undo / redo"
+    assert 'if (input.hasAttribute("data-committed")) input.setAttribute("data-committed", oldValueStr);' in app
+
+
 def test_review_fixes_of_4ffee11():
     # found-but-unwritable stays uncovered (docs/124 M-10): the grids never
     # gate the push on `wrote` again

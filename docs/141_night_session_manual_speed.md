@@ -124,6 +124,32 @@ store.
   the `?` click handler no longer stops propagation (a click-away listener
   elsewhere must see the click) — the grid header sort ignores the button itself.
 
+## 4c. Ctrl+Z on the Json tree and on Pulses, checked in real Chrome (2026-08-28, daytime)
+
+The user asked whether undo is now fast AND stable on every surface. It was
+not; a real-Chrome check (`cdp_undo.js`: one real edit through the page's own
+UI, trusted Ctrl+Z / Ctrl+Shift+Z key events) found three defects, all fixed
+and pinned in `undo_pages_selfcheck.cjs` (mutation-checked 8/8):
+
+* **The tree's data model did not follow a value change.** An inline edit, an
+  undo and a redo repainted the DOM only; `container._treeData` — what a
+  collapsed branch is rebuilt from and what search matches against — kept the
+  value from BEFORE the edit. `_treeModelSet` now writes the leaf (and drops the
+  flat index) from the edit commit, `_rebuildNode` and `_revertTreeNode`.
+* **An inline (Pulses) field reverted by undo kept its edited `data-committed`.**
+  The next click-away saw value ≠ baseline and RE-COMMITTED the reverted value
+  as a new edit — which cleared the redo stack, so Ctrl+Shift+Z on Pulses did
+  nothing. `_revertCell` now moves the baseline with the value and fires
+  `input` (the waveform preview follows).
+* **Undo auto-navigated.** `cellsReverted` still called `UndoNav.handle`, so a
+  redo of a field not on screen replaced the Pulses inspector with a qubit
+  inspector. Now `UndoNav.flashVisible` flashes what is visible and nothing
+  else moves; the trail's **go to field** is the one navigator — which is what
+  §4 claimed and was not true until this fix.
+
+Measured after the fix (PJ 20Q chip): tree edit 66 ms, undo 51, redo 71, model
+in step; Pulses commit 139 ms, undo 47, redo 79.
+
 ## 5. Tooling that came out of the night
 
 `scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js`: Chrome headless with the
