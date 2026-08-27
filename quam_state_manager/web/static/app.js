@@ -1668,23 +1668,21 @@ window.toggleSidebar = function() {
     } catch(e) {}
 };
 
-/* docs/126: the ☰ cycles THREE states (customer request) —
-   0 everything shown → 1 sidebar collapsed → 2 top bar hidden too (only a
-   small floating ☰ remains, fixed top-left) → back to 0. Any state the user
-   reached by the individual toggles still cycles sensibly from wherever it
-   is, and both legs persist through the toggles' own localStorage keys. */
+/* docs/126 cycled THREE states (sidebar → +top bar → restore). Customer
+   feedback (2026-08-27): "don't make us press it twice" — ONE press now
+   collapses the sidebar AND the top bar together (the floating ☰ + the sync
+   badge/Auto-Sync pill remain), and one press on the floating ☰ restores
+   both. Any mixed state the user reached through the individual toggles
+   resolves the same way: anything still visible ⇒ collapse everything;
+   nothing visible ⇒ restore everything. Both legs persist through the
+   toggles' own localStorage keys. */
 window.cycleChrome = function() {
     var layout = document.querySelector(".app-layout");
     var sbCollapsed = !!(layout && layout.classList.contains("sidebar-collapsed"));
     var tbHidden = document.documentElement.classList.contains("topbar-hidden");
-    if (!sbCollapsed) {
-        window.toggleSidebar();                       // 0 → 1
-    } else if (!tbHidden) {
-        window.toggleTopbar();                        // 1 → 2
-    } else {
-        window.toggleTopbar();                        // 2 → 0
-        window.toggleSidebar();
-    }
+    var collapseAll = !(sbCollapsed && tbHidden);
+    if (sbCollapsed !== collapseAll) window.toggleSidebar();
+    if (tbHidden !== collapseAll) window.toggleTopbar();
 };
 
 /**

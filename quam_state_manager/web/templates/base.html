@@ -102,9 +102,11 @@
     <header class="topbar">
         <nav>
             <ul>
-                {# docs/126: ☰ cycles sidebar → +topbar → restore all. #}
+                {# ☰ collapses the sidebar AND the top bar in one press (customer
+                   feedback 2026-08-27 — it used to take two); the floating ☰
+                   restores both. #}
                 <li><button class="sidebar-toggle" onclick="cycleChrome()"
-                        title="Collapse the sidebar, then the top bar — click the floating ☰ to bring everything back">☰</button></li>
+                        title="Collapse the sidebar and the top bar — click the floating ☰ to bring everything back">☰</button></li>
                 {# docs/126 r3 — while a main-pane load runs past 400 ms, the
                    brand becomes a blue progress bar + elapsed counter (an
                    HONEST indeterminate sweep — no invented percentage), so a

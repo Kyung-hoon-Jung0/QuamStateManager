@@ -210,6 +210,11 @@ class TestRound15ChromeHiding:
         assert "position: fixed" in slot and "pointer-events: auto" in slot, (
             "The tray slot must float out of the collapsed bar and stay clickable."
         )
+        # customer (2026-08-27): the floating pills sat over the page heading
+        # — an opaque card separates them from whatever scrolls underneath
+        assert "background: var(--pico-card-background-color" in slot and "border: 1px solid" in slot, (
+            "The floating cluster needs an opaque card background + border."
+        )
         # inside the tray, ONLY the badge and the Auto-Sync pill show (the
         # user confirmed the pill should float too) — and the pill's popup
         # host must not be hidden with the other slot children, or every click
