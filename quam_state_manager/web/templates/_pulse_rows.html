@@ -23,44 +23,7 @@
     <tbody>
     {% if rows %}
     {% for r in rows %}
-        <tr class="clickable-row" data-pulse-path="{{ r.path }}"
-            hx-get="/pulse/detail?path={{ r.path | urlencode }}"
-            hx-target="#inspector-pane" hx-swap="innerHTML"
-            hx-indicator="#inspector-pane"
-            title="{{ r.summary }}">
-            <td class="pulse-sel-col" onclick="event.stopPropagation()">
-                {%- if not r.is_alias and r.known -%}
-                <input type="checkbox" class="pulse-sel-chk" data-path="{{ r.path }}"
-                       onchange="window.pulseSelChanged()">
-                {%- endif -%}
-            </td>
-            <td><strong>{{ r.owner }}</strong></td>
-            <td><span class="pulse-chan-chip pulse-chan-{{ r.channel }}">{{
-                {'xy':'xy','z':'z','resonator':'res','flux_pulse_qubit':'flux','coupler_flux_pulse':'coupler'}.get(r.channel, r.channel)
-            }}</span></td>
-            <td>{{ r.op_name }}
-                {%- if r.is_alias %} <span class="pointer-badge" title="Alias — resolves to {{ r.alias_target }}">alias</span>{% endif %}
-                {%- if r.iq %} <span class="pulse-flag-iq" title="I and Q components">IQ</span>{% endif %}
-                {%- if r.readout %} <span class="pulse-flag-readout" title="Readout pulse">RO</span>{% endif %}</td>
-            <td><span class="pulse-class-chip
-                {%- if not r.known and not r.is_alias %} pulse-class-unknown
-                {%- elif not r.is_alias and (r.class_match == 'leaf' or r.unmodeled) %} pulse-class-soft{% endif %}"
-                {%- if not r.is_alias and r.class_match == 'leaf' %} title="Matched by class name only — this chip stores {{ r.qclass }}"
-                {%- elif not r.is_alias and r.unmodeled %} title="Field(s) the catalog spec does not model: {{ r.unmodeled | join(', ') }}"{% endif %}>{{
-                '→' if r.is_alias else r.class_short }}</span></td>
-            <td class="pulse-spark-cell">
-                {%- if r.is_alias -%}
-                <span class="muted pulse-alias-target">&rarr; {{ r.alias_target.rsplit('.', 1)[-1] if r.alias_target else '?' }}</span>
-                {%- elif r.spark_svg -%}
-                {{ r.spark_svg | safe }}
-                {%- else -%}
-                <span class="muted">&mdash;</span>
-                {%- endif -%}
-            </td>
-            <td>{{ r.length if r.length is not none else '-' }}</td>
-            <td>{{ "%.4g" | format(r.amplitude) if r.amplitude is not none else '-' }}</td>
-            <td>{% if r.used_by %}<span class="pulse-usedby" title="{{ r.used_by | join(', ') }}">{{ r.used_by | length }}</span>{% endif %}</td>
-        </tr>
+        {% include '_pulse_row.html' %}
     {% endfor %}
     {% else %}
         <tr><td colspan="9" class="muted" style="text-align:center;padding:2rem">

@@ -9770,6 +9770,77 @@ def _pulse_plot_traces(payload: dict) -> dict:
     }
 
 
+def _pulse_rows_touched(store, pulse_index, paths) -> list[str] | None:
+    """The pulse rows a set of changed dot paths can have altered: each
+    path's own operation plus every operation whose pointer resolves into
+    it (an ``#../x90/amplitude`` field follows the target). None when the
+    change is too broad to patch row by row (the caller says structural)."""
+    from quam_state_manager.core.pulse_index import used_by
+    roots: list[str] = []
+    try:
+        known = {r["path"] for r in pulse_index.rows()}
+    except Exception:  # noqa: BLE001
+        return None
+    with store._lock:
+        rev = pulse_index.reverse_index()
+    for dp in paths or []:
+        if not isinstance(dp, str):
+            continue
+        root = _pulse_root_of(dp, known)
+        if root and root not in roots:
+            roots.append(root)
+        if root:
+            for ref in used_by(store.merged, root, rev):
+                r2 = _pulse_root_of(ref, known)
+                if r2 and r2 not in roots:
+                    roots.append(r2)
+        if len(roots) > 24:
+            return None
+    return roots
+
+
+def _pulse_root_of(dot_path: str, known: set[str]) -> str | None:
+    """The longest known operation path that is *dot_path* or an ancestor of it."""
+    parts = dot_path.split(".")
+    for n in range(len(parts), 0, -1):
+        cand = ".".join(parts[:n])
+        if cand in known:
+            return cand
+    return None
+
+
+def _pulses_changed_payload(store, pulse_index, paths):
+    """``{"paths": [...]}`` when the rows can be patched one by one, else
+    ``True`` (the table re-fetches wholesale)."""
+    try:
+        roots = _pulse_rows_touched(store, pulse_index, paths) if pulse_index else None
+    except Exception:  # noqa: BLE001
+        roots = None
+    return {"paths": roots} if roots is not None else True
+
+
+@bp.route("/pulse/row")
+def pulse_row():
+    """ONE pulse row, freshly rendered (docs/141 4j) -- what a value change
+    swaps in place instead of re-fetching the 500-row table."""
+    store = _store()
+    pulse_index = _pulse_index()
+    path = (request.args.get("path") or "").strip()
+    if not store or not pulse_index or not path:
+        return "", 404
+    row = next((r for r in pulse_index.rows() if r["path"] == path), None)
+    if row is None:
+        return "", 404
+    row = dict(row)
+    from quam_state_manager.core.waveform_synth import sparkline_svg, synth_for_operation
+    if row.get("is_alias") or not row.get("known"):
+        row["spark_svg"] = None
+    else:
+        row["spark_svg"] = pulse_index.sparkline(
+            path, lambda p=path: sparkline_svg(synth_for_operation(store, p)))
+    return render_template("_pulse_row.html", r=row)
+
+
 @bp.route("/pulses")
 def pulses_page():
     """The Pulses library: every pulse on the chip in one flat table."""
@@ -10051,13 +10122,21 @@ def _render_pulse_detail(path: str, *, status_msg: str | None = None,
     )
 
 
-def _pulse_mutation_response(detail, *, trigger: bool = True):
+def _pulse_mutation_response(detail, *, trigger: bool = True, paths=None):
     """detail HTML + tray OOB + the pulses-changed table-refresh trigger."""
     if isinstance(detail, tuple):  # error (html, code) passthrough
         return detail
     resp = make_response(detail + "\n" + _tray_oob())
     if trigger:
-        resp.headers["HX-Trigger"] = "pulses-changed, diagnostics-changed"
+        if paths is not None:
+            # docs/141 4j: a VALUE change names the rows it touched so the
+            # open table patches them in place; a structural change (create /
+            # delete / rename / duplicate) keeps the plain trigger = re-fetch
+            resp.headers["HX-Trigger"] = json.dumps({
+                "pulses-changed": _pulses_changed_payload(_store(), _pulse_index(), paths),
+                "diagnostics-changed": True})
+        else:
+            resp.headers["HX-Trigger"] = "pulses-changed, diagnostics-changed"
     return resp
 
 
@@ -10176,7 +10255,12 @@ def pulse_edit():
                                level="error"), 400
 
     _invalidate_engine_cache()
-    return _pulse_mutation_response(_render_pulse_detail(path))
+    _touched = [dot_path]
+    try:
+        _touched.append(_resolve_edit_path(store, dot_path))
+    except Exception:  # noqa: BLE001 -- a pointer-mode write has no resolved target
+        pass
+    return _pulse_mutation_response(_render_pulse_detail(path), paths=_touched)
 
 
 @bp.route("/api/pulse/synth", methods=["POST"])
@@ -11619,8 +11703,9 @@ def undo():
             "stopped": stopped,
             "level": "error" if stopped == "error" else "success",
         },
-        # open Pulses/grids re-fetch their rows (no-op elsewhere)
-        "pulses-changed": True,
+        # open Pulses rows re-render in place for these paths (docs/141 4j);
+        # no-op elsewhere
+        "pulses-changed": _pulses_changed_payload(store, _pulse_index(), [e.dot_path for e in entries]),
         "diagnostics-changed": True,
     })
     return resp
@@ -11887,9 +11972,12 @@ def _redo_response(message: str, entries_payload: list[dict], extra: dict | None
     payload = {"message": message, "entries": entries_payload}
     if extra:
         payload.update(extra)
+    _ctx_ = _active_ctx()
+    _store_ = _ctx_.get("store") if _ctx_ else None
     resp.headers["HX-Trigger"] = json.dumps({
         "cellsReverted": payload,
-        "pulses-changed": True,
+        "pulses-changed": _pulses_changed_payload(_store_, _pulse_index(),
+                                                 [e.get("dot_path") for e in entries_payload]) if _store_ else True,
         "diagnostics-changed": True,
     })
     return resp

@@ -139,6 +139,23 @@ setTimeout(function () {
             window.UndoNav.handle([{ dot_path: 'qubits.q1.xy.operations.saturation.length' }]);
             ok(ajaxed.length === 1 && /^GET \/pulse\/detail\?path=.* -> #inspector-pane$/.test(ajaxed[0]), 'handle() opens it in the inspector pane (' + ajaxed[0] + ')');
             rows.remove();
+            // ── 5. docs/141 4j: a pulses-changed event that carries paths patches
+            //    only those rows (GET /pulse/row -> outerHTML), keeps the checkbox,
+            //    and ignores paths with no row; an event without paths does nothing
+            //    here (the table's own whole-refetch trigger handles it)
+            const wrap2 = d.createElement('div'); wrap2.id = 'pulses-rows-wrap';
+            wrap2.innerHTML = '<table><tbody><tr data-pulse-path="qubits.q1.xy.operations.x180"><td><input type="checkbox" class="pulse-sel-chk" checked></td></tr>'
+                + '<tr data-pulse-path="qubits.q1.xy.operations.x90"><td><input type="checkbox" class="pulse-sel-chk"></td></tr></tbody></table>';
+            d.body.appendChild(wrap2);
+            const ajaxed2 = [];
+            window.htmx.ajax = (m, u, o) => { ajaxed2.push(m + ' ' + u + ' -> ' + (o && o.target && o.target.getAttribute ? o.target.getAttribute('data-pulse-path') : o.target) + ' ' + (o && o.swap)); return Promise.resolve(); };
+            d.dispatchEvent(new CustomEvent('pulses-changed', { detail: { paths: ['qubits.q1.xy.operations.x180', 'qubits.q1.xy.operations.x180', 'qubits.q9.xy.operations.nope'] }, bubbles: true }));
+            ok(ajaxed2.length === 1 && ajaxed2[0] === 'GET /pulse/row?path=qubits.q1.xy.operations.x180 -> qubits.q1.xy.operations.x180 outerHTML',
+               'a paths-carrying pulses-changed re-renders exactly the touched row that exists (' + ajaxed2.join(' | ') + ')');
+            d.dispatchEvent(new CustomEvent('pulses-changed', { detail: true, bubbles: true }));
+            d.dispatchEvent(new CustomEvent('pulses-changed', { bubbles: true }));
+            ok(ajaxed2.length === 1, 'an event without paths patches nothing (the whole-table trigger owns it)');
+            wrap2.remove();
             setTimeout(function () { process.exit(fails ? 1 : 0); }, 120);   // after the never-expanded-leaf pins above
         }, 50);
     }, 300);

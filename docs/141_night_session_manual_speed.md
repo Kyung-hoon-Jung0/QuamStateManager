@@ -409,6 +409,25 @@ Pinned by `bulk_virt_selfcheck.cjs` (geometry-read counters on the header
 getters and on `innerWidth`: the mount reads none; coldness by estimate; the
 scroll pass and the search clear hydrate what is on screen).
 
+## 4j. Pulses rows: patch the row, not the table
+
+Every undo / redo / discard / value commit re-fetched the whole Pulses table
+(`pulses-changed` → `GET /pulses?rows=1`, ~500 rows with a server-side
+sparkline each, 400 ms debounce) and re-rendered it wholesale — selection and
+scroll position with it. Now a `pulses-changed` event that CARRIES paths
+(`{"paths": [...]}` — /undo, /redo, /discard and a `/pulse/edit` value commit
+emit it; the server expands each path to its operation plus every operation
+whose pointer resolves into it, `_pulse_rows_touched`) is handled by app.js,
+which re-renders only those rows through the new `GET /pulse/row?path=` —
+`_pulse_row.html`, the same partial the table loop uses — keeping a patched
+row's checkbox. The table's own trigger is filtered
+(`pulses-changed[!(event.detail && event.detail.paths)]`) so it re-fetches
+only for a structural change (create / delete / rename / duplicate / a state
+restore) or a legacy plain trigger. More than 24 touched rows ⇒ the server
+says structural instead. Pinned by `TestPulseRow` (route, one-template
+identity, the trigger payload after an edit and its undo including the
+pointer-linked sibling) and `undo_pages_selfcheck.cjs` (the client patcher).
+
 ## 5. Tooling that came out of the night
 
 `scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js` (+ daytime: `cdp_profile.js` function-level CPU profile, `cdp_trace.js` per-phase trace of one keystroke, `cdp_type.js` char-by-char typing with a gap + debounce override, `cdp_undo.js` trusted Ctrl+Z/Ctrl+Shift+Z through the page's own UI, `cdp_virt.js` virtualization sampler): Chrome headless with the

@@ -302,7 +302,10 @@ class TestPulseEdit:
             "mode": "value", "value": "0.009",
         })
         assert resp.status_code == 200
-        assert resp.headers.get("HX-Trigger") == "pulses-changed, diagnostics-changed"
+        # docs/141 4j: a VALUE commit names the row it touched (JSON form)
+        import json as _json
+        trig = _json.loads(resp.headers.get("HX-Trigger"))
+        assert trig["pulses-changed"]["paths"] == [f"{XY}.saturation"] and trig["diagnostics-changed"] is True
         assert "pending-tray" in resp.data.decode()
         html = loaded_client.get(f"/pulse/detail?path={XY}.saturation").data.decode()
         assert "0.009" in html
@@ -1448,3 +1451,41 @@ class TestCzGateFirst:
         for gid, variant in mapped.items():
             assert variant in _CZ_VARIANT_CAPS, gid
             assert gid in _SLOT_LEAVES, gid
+
+
+class TestPulseRow:
+    """docs/141 4j: a value change re-renders ONE row through /pulse/row
+    instead of re-fetching the whole table; the trigger carries the paths."""
+
+    def test_one_row_renders_alone_with_its_sparkline(self, loaded_client):
+        html = loaded_client.get(f"/pulse/row?path={XY}.saturation").data.decode()
+        assert html.count("<tr") == 1 and f'data-pulse-path="{XY}.saturation"' in html
+        assert "<svg" in html, "the sparkline is part of the row"
+        assert loaded_client.get("/pulse/row?path=qubits.qA1.xy.operations.nope").status_code == 404
+        assert loaded_client.get("/pulse/row").status_code == 404
+
+    def test_the_row_partial_is_the_table_row(self, loaded_client):
+        table = loaded_client.get("/pulses?rows=1").data.decode()
+        row = loaded_client.get(f"/pulse/row?path={XY}.saturation").data.decode()
+        tr = row[row.index("<tr"):]
+        assert tr.split("\n")[0].strip() in table, "one template renders both"
+
+    def test_a_pulse_edit_and_its_undo_name_the_rows_they_touched(self, loaded_client):
+        import json as _json
+        resp = loaded_client.post("/pulse/edit", data={
+            "path": f"{XY}.x180_DragCosine", "dot_path": f"{XY}.x180_DragCosine.length",
+            "mode": "value", "value": "52",
+        })
+        trig = _json.loads(resp.headers["HX-Trigger"])
+        # x90's length POINTS at x180's: both rows changed
+        assert set(trig["pulses-changed"]["paths"]) >= {f"{XY}.x180_DragCosine", f"{XY}.x90_DragCosine"}
+        assert trig["diagnostics-changed"] is True
+        und = _json.loads(loaded_client.post("/undo").headers["HX-Trigger"])
+        assert set(und["pulses-changed"]["paths"]) >= {f"{XY}.x180_DragCosine", f"{XY}.x90_DragCosine"}
+
+    def test_the_table_only_refetches_for_a_structural_change(self):
+        from pathlib import Path as _P
+        tpl = (_P(__file__).resolve().parent.parent / "quam_state_manager" / "web" / "templates" / "_pulses.html").read_text(encoding="utf-8")
+        assert 'hx-trigger="pulses-changed[!(event.detail && event.detail.paths)] from:body delay:400ms"' in tpl
+        app = (_P(__file__).resolve().parent.parent / "quam_state_manager" / "web" / "static" / "app.js").read_text(encoding="utf-8")
+        assert 'document.addEventListener("pulses-changed", function (evt) {' in app and '"/pulse/row?path="' in app

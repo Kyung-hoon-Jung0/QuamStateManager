@@ -15574,6 +15574,33 @@ window.pulseTabActive = function (a) {
  * searched keyword + the pressed All/XY/Z/Resonator/Pair-flux badge. With the state
  * in the URL, the server re-renders the input value={{q}} + the active badge, so it
  * survives every path (the route already reads ?channel= / ?q=). */
+/* docs/141 4j: a pulses-changed event that carries paths re-renders only the
+   touched rows (GET /pulse/row) -- the whole-table re-fetch stays for
+   structural changes. The checked state of a patched row survives the swap. */
+document.addEventListener("pulses-changed", function (evt) {
+    var d = evt && evt.detail;
+    if (!d || !Array.isArray(d.paths) || !window.htmx) return;
+    var wrap = document.getElementById("pulses-rows-wrap");
+    if (!wrap) return;
+    var seen = {};
+    d.paths.forEach(function (p) {
+        if (!p || seen[p]) return;
+        seen[p] = 1;
+        var tr = wrap.querySelector('tr[data-pulse-path="' + (window.CSS && CSS.escape ? CSS.escape(p) : p) + '"]');
+        if (!tr) return;
+        var chk = tr.querySelector(".pulse-sel-chk");
+        var wasChecked = !!(chk && chk.checked);
+        var r = window.htmx.ajax("GET", "/pulse/row?path=" + encodeURIComponent(p), { target: tr, swap: "outerHTML" });
+        if (r && typeof r.then === "function" && wasChecked) {
+            r.then(function () {
+                var tr2 = wrap.querySelector('tr[data-pulse-path="' + (window.CSS && CSS.escape ? CSS.escape(p) : p) + '"]');
+                var c2 = tr2 && tr2.querySelector(".pulse-sel-chk");
+                if (c2) c2.checked = true;
+            }, function () {});
+        }
+    });
+});
+
 function _pulsesSyncUrl() {
     if (location.pathname.indexOf("/pulses") !== 0) return;
     var inp = document.querySelector('.table-filter input[name="q"]');
