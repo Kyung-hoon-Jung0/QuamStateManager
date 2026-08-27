@@ -35,6 +35,118 @@ window.PulsesPage = (function () {
         };
     }
 
+    var OVERLAY_HUES = ['#e67e22', '#9b59b6', '#e74c3c', '#f1c40f', '#1abc9c'];
+
+    // The detail plot's overlays live on the detail root (so every existing
+    // renderPulsePlot call site — commit, preview, Esc, verify, settle —
+    // draws them without threading a new argument through each).
+    function activeOverlays(divId) {
+        if (divId !== 'pulse-detail-plot') return [];
+        var root = detailRoot();
+        return (root && root._overlays) ? root._overlays.filter(function (o) { return o.on; }) : [];
+    }
+
+    // Short label for a pulse path: "q1-2 · cz_bipolar.coupler_flux_pulse",
+    // "q1 · xy.x180_DragCosine".
+    function overlayLabel(path) {
+        var m = /^qubit_pairs\.([^.]+)\.macros\.([^.]+)\.([^.]+)$/.exec(path)
+             || /^qubits\.([^.]+)\.([^.]+)\.operations\.([^.]+)$/.exec(path)
+             || /^qubit_pairs\.([^.]+)\.([^.]+)\.operations\.([^.]+)$/.exec(path);
+        return m ? m[1] + ' · ' + m[2] + '.' + m[3] : path;
+    }
+
+    function buildOverlayBar(root) {
+        var bar = root.querySelector('.pulse-overlay-bar');
+        if (!bar) return;
+        var chips = bar.querySelector('.pulse-overlay-chips');
+        var pick = bar.querySelector('.pulse-overlay-pick');
+        var own = root.getAttribute('data-pulse-path');
+        var overlays = root._overlays || [];
+        chips.innerHTML = '';
+        overlays.forEach(function (o, i) {
+            var lab = document.createElement('label');
+            lab.className = 'pulse-overlay-chip' + (o.on ? ' on' : '');
+            lab.style.setProperty('--ov-hue', OVERLAY_HUES[i % OVERLAY_HUES.length]);
+            var cb = document.createElement('input');
+            cb.type = 'checkbox'; cb.checked = !!o.on;
+            cb.setAttribute('data-overlay', o.path);
+            cb.addEventListener('change', function () {
+                o.on = cb.checked;
+                lab.classList.toggle('on', o.on);
+                schedulePreview(root);
+            });
+            lab.appendChild(cb);
+            lab.appendChild(document.createTextNode(' ' + o.label));
+            if (o.plot && !o.plot.ok) {
+                var err = document.createElement('span');
+                err.className = 'muted'; err.textContent = ' (no waveform)';
+                err.title = o.plot.error || '';
+                lab.appendChild(err);
+            }
+            if (o.source === 'picked') {
+                var x = document.createElement('button');
+                x.type = 'button'; x.className = 'pulse-overlay-x';
+                x.title = 'Remove overlay'; x.textContent = '×';
+                x.addEventListener('click', function () {
+                    root._overlays = root._overlays.filter(function (q) { return q !== o; });
+                    buildOverlayBar(root);
+                    schedulePreview(root);
+                });
+                lab.appendChild(x);
+            }
+            chips.appendChild(lab);
+        });
+        // The picker offers every OTHER pulse the library table lists (same
+        // page, live DOM) that is not already an overlay.
+        var have = {};
+        overlays.forEach(function (o) { have[o.path] = 1; });
+        var opts = [];
+        document.querySelectorAll('.pulse-sel-chk[data-path]').forEach(function (cb) {
+            var p = cb.getAttribute('data-path');
+            if (!p || p === own || have[p]) return;
+            opts.push(p);
+        });
+        pick.innerHTML = '<option value="">+ add pulse…</option>';
+        opts.forEach(function (p) {
+            var op = document.createElement('option');
+            op.value = p; op.textContent = overlayLabel(p);
+            pick.appendChild(op);
+        });
+        pick.hidden = opts.length === 0;
+        pick.value = '';
+        if (!pick._bound) {
+            pick._bound = true;
+            pick.addEventListener('change', function () {
+                var p = pick.value;
+                if (!p) return;
+                pick.value = '';
+                addOverlay(root, p);
+            });
+        }
+        bar.hidden = overlays.length === 0 && opts.length === 0;
+    }
+
+    function addOverlay(root, path) {
+        var entry = { path: path, label: overlayLabel(path), plot: null, on: true, source: 'picked' };
+        root._overlays = (root._overlays || []).concat([entry]);
+        buildOverlayBar(root);
+        // A plain fetch, not fetchSynth: the preview's generation counter must
+        // not cancel this, nor this the preview.
+        fetch('/api/pulse/synth', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: path, params: {} })
+        }).then(function (r) { return r.json(); }).then(function (data) {
+            if (!document.body.contains(root)) return;
+            entry.plot = (data && data.plot) ? data.plot : { ok: false, error: (data && data.error) || 'synth failed' };
+            buildOverlayBar(root);
+            schedulePreview(root);
+        }).catch(function () {
+            entry.plot = { ok: false, error: 'network error' };
+            buildOverlayBar(root);
+        });
+    }
+
     /**
      * Render the detail/create plot. committed = {traces:[{name,x,y}],...};
      * preview / verify are optional same-shape overlays.
@@ -61,6 +173,25 @@ window.PulsesPage = (function () {
             });
         }
 
+        // Customer ask (2026-08-27): overlays — other pulses drawn on the same
+        // time × voltage axes, beneath the committed trace. A CZ macro's
+        // companion (qubit flux ↔ coupler flux) is on by default; picked
+        // pulses join through the overlay bar. Each overlay keeps one hue.
+        activeOverlays(divId).forEach(function (o, idx) {
+            if (!o.plot || !o.plot.ok || !o.plot.traces) return;
+            var hue = OVERLAY_HUES[idx % OVERLAY_HUES.length];
+            var multi = o.plot.traces.length > 1;
+            o.plot.traces.forEach(function (t) {
+                var nm = o.label + (multi ? ' ' + t.name : '');
+                data.push({
+                    x: t.x, y: t.y, name: nm, mode: 'lines',
+                    line: { color: hue, width: 1.8,
+                            dash: (multi && t.name === 'Q') ? 'dot' : 'solid' },
+                    opacity: 0.9,
+                    hovertemplate: nm + ': %{y:.6g} V<br>%{x} ns<extra></extra>'
+                });
+            });
+        });
         pushTraces(committed, '', null, 1);
         pushTraces(preview, ' (preview)', 'dash', 0.85);
         pushTraces(verify, ' (config)', 'dot', 0.9);
@@ -186,6 +317,13 @@ window.PulsesPage = (function () {
         var data = detailData();
         if (!data) return;
         root._committedPlot = data.plot;
+        // Same-component companions from the server (a CZ macro's qubit flux
+        // + coupler flux), on by default; the picker adds any other pulse.
+        root._overlays = (data.overlays || []).map(function (o) {
+            return { path: o.path, label: o.label, plot: o.plot,
+                     on: o.default_on !== false, source: 'component' };
+        });
+        try { buildOverlayBar(root); } catch (e) { console.error('overlay bar failed', e); }
 
         // Attach interaction listeners FIRST, independent of the plot render.
         // A render throw must NEVER leave the param inputs dead: the previous

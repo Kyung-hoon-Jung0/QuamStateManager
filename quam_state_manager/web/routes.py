@@ -730,14 +730,27 @@ def _refresh_live_diverged(ctx) -> None:
     (editor save, atomic re-save, coarse / same-second / 9p-Windows mtime). That
     leaves ``live_diverged`` stuck False forever — the "view in SM?" banner never
     reappears. On each chip-surface render + poll we re-derive divergence from a
-    content hash (throttled to once / ``_LIVE_HASH_RECHECK_S``) and ONLY escalate
-    False→True — never clear it, never touch change_log / working_dirty /
-    pending_reapply. Skips dirty contexts (the explicit sync/apply paths own those)
-    and never raises into the caller.
+    content hash (throttled to once / ``_LIVE_HASH_RECHECK_S``). It escalates
+    False→True, and — since 2026-08-27 — lowers True→False only for a CLEAN
+    context whose live hash provably equals the sync point (a stale banner
+    over identical content was the reported lie); it never touches change_log
+    / working_dirty / pending_reapply. Dirty contexts keep escalate-only (the
+    explicit sync/apply paths own those). Never raises into the caller.
     """
-    if not ctx or ctx.get("type") != "quam" or ctx.get("live_diverged"):
+    if not ctx or ctx.get("type") != "quam":
         return
+    # Customer (2026-08-27): the flag used to be escalate-only, so ANY
+    # transient True (a poll landing between a write and its sync-point
+    # stamp, an auto-sync pass) outlived the content it described -- the
+    # banner said "changed on disk" while Review & sync said "no differences".
+    # A flagged, CLEAN context is now re-checked too, and cleared when the
+    # live hash provably equals the sync point. A dirty context keeps the
+    # old rule (the explicit sync/apply paths own it), and a None verdict
+    # (unreadable live, no baseline) never clears anything.
+    flagged = bool(ctx.get("live_diverged"))
     if _quam_ctx_dirty(ctx):
+        if flagged:
+            return
         # docs/120 item 8: an ARMED Auto-Sync pull is the user asking SM to
         # watch, so the skip is lifted for exactly that case.
         #
@@ -777,11 +790,15 @@ def _refresh_live_diverged(ctx) -> None:
     if not lock.acquire(blocking=False):
         return
     try:
-        if working_copy.live_diverged_now(wc):
+        verdict = working_copy.live_diverged_now(wc)
+        if verdict:
             ctx["live_diverged"] = True
             # docs/116: this escalation carries no count of its own, and a
             # count left from an EARLIER divergence would be printed as if it
             # described this one. None => the banner says nothing (docs/87).
+            ctx.pop("live_drift_count", None)
+        elif verdict is False and flagged and not _quam_ctx_dirty(ctx):
+            ctx["live_diverged"] = False     # proven equal: the banner was stale
             ctx.pop("live_drift_count", None)
     except Exception:   # noqa: BLE001 — a probe failure must never break a render
         logger.debug("live-diverged re-check failed", exc_info=True)
@@ -5379,6 +5396,52 @@ def _revert_entry_payload(dot_path, value, *, created=False, deleted=False,
     }
 
 
+_SYNC_PATCH_CAP = 4000
+
+
+def _leaf_snapshot(ctx) -> dict | None:
+    """Every leaf of the working state BEFORE a pull, so the pull can report
+    exactly which values it changed (customer 2026-08-27: the page must stay
+    put and only the values move). None when it cannot be taken — the
+    client then refreshes wholesale, as before."""
+    try:
+        store = ctx.get("store")
+        leaves, truncated = json_diff.flatten(store.merged)
+        return None if truncated else leaves
+    except Exception:  # noqa: BLE001 — a missing snapshot only costs a refresh
+        return None
+
+
+def _sync_patch(ctx, before: dict | None) -> dict:
+    """``{"changes": [...], "structural": bool}`` for a pull's response.
+
+    ``changes`` lists every leaf whose VALUE differs (same payload shape the
+    undo repaint consumes — ``BulkEdit.revertPaths`` takes it verbatim — plus
+    the raw ``value`` for the Json tree). ``structural`` is True when a key was
+    added or removed, the snapshot was unavailable, or the diff exceeds the
+    cap: the client then re-renders the page instead of patching, because a
+    patch can only rewrite leaves the page already shows."""
+    if before is None:
+        return {"changes": [], "structural": True}
+    try:
+        store = ctx.get("store")
+        after, truncated = json_diff.flatten(store.merged)
+    except Exception:  # noqa: BLE001
+        return {"changes": [], "structural": True}
+    if truncated:
+        return {"changes": [], "structural": True}
+    structural = any(p not in after for p in before) or any(p not in before for p in after)
+    changes = []
+    for p, v in after.items():
+        if p in before and before[p] != v:
+            entry = _revert_entry_payload(p, v)
+            entry["value"] = v
+            changes.append(entry)
+            if len(changes) > _SYNC_PATCH_CAP:
+                return {"changes": [], "structural": True}
+    return {"changes": changes, "structural": structural}
+
+
 def _modified_map() -> dict[str, Any]:
     """Build dot_path -> original old_value map from the change log.
 
@@ -9632,6 +9695,45 @@ def _is_pulse_path(path: str) -> bool:
     return isinstance(path, str) and any(rx.match(path) for rx in _PULSE_PATH_RES)
 
 
+_PAIR_MACRO_PULSE_RE = re.compile(
+    r"^(qubit_pairs\.[^.]+\.macros\.[^.]+)\.(flux_pulse_qubit|coupler_flux_pulse)$")
+
+
+def _pulse_component_overlays(store, path: str) -> list[dict]:
+    """The OTHER pulses the same component plays alongside `path`, synthesized
+    for overlay. Customer ask (2026-08-27): on a tunable-qubit + tunable-coupler
+    chip a CZ macro carries `flux_pulse_qubit` AND `coupler_flux_pulse`, and
+    they are one physical event on two lines — the preview should show both by
+    default. Scoped to the pair-macro family: a channel's `operations` are
+    alternatives, not companions, so they are offered through the picker, never
+    auto-drawn. Every entry is a real synth (or its honest error) — nothing is
+    invented for a missing sibling."""
+    m = _PAIR_MACRO_PULSE_RE.match(path or "")
+    if not m:
+        return []
+    from quam_state_manager.core.waveform_synth import synth_for_operation
+    component = m.group(1)
+    try:
+        node = store.get_value(component)
+    except Exception:
+        return []
+    if not isinstance(node, dict):
+        return []
+    out = []
+    for key, val in node.items():
+        sib = f"{component}.{key}"
+        if sib == path or not isinstance(val, dict) or not _is_pulse_path(sib):
+            continue
+        payload = synth_for_operation(store, sib)
+        out.append({
+            "path": sib,
+            "label": key,
+            "default_on": True,
+            "plot": _pulse_plot_traces(payload),
+        })
+    return out
+
+
 def _pulse_plot_traces(payload: dict) -> dict:
     """Plot-ready trace dict from a synth payload (decimated for display)."""
     if not payload.get("ok"):
@@ -9896,6 +9998,9 @@ def _render_pulse_detail(path: str, *, status_msg: str | None = None,
         "qclass": payload.get("qclass") or row.get("qclass"),
         "spec_key": payload.get("spec_key"),
         "plot": _pulse_plot_traces(payload),
+        # Customer ask (2026-08-27): a CZ macro plays its qubit flux AND its
+        # coupler flux together, so the preview draws both by default.
+        "overlays": _pulse_component_overlays(store, path),
     })
 
     is_qubit_op = bool(_PULSE_PATH_RES[0].match(path))
@@ -12763,6 +12868,7 @@ def state_sync():
         # (safe_io's torn-pair refusal → ValueError → 500). Matches the
         # State-History callers, which already hold the lock across the rebuild.
         with build_lock:
+            _pre_leaves = _leaf_snapshot(ctx)
             working_copy.sync_from_live(wc)
             pulled_other_changes = (_pre_sync_hash is not None
                                     and wc.synced_live_hash != _pre_sync_hash)
@@ -12781,7 +12887,7 @@ def state_sync():
     # "apply" goes one step further: save the re-applied edits and push them to
     # the live chip now, instead of leaving them pending for a second click.
     if mode == "apply":
-        return _sync_pull_apply_to_live(ctx, replay,
+        return _sync_pull_apply_to_live(ctx, replay, patch=_sync_patch(ctx, _pre_leaves),
                                         pulled_other_changes=pulled_other_changes)
 
     # reapply / discard: the pull consumed the stash; edits (if any) are now
@@ -12799,11 +12905,12 @@ def state_sync():
         "mode": mode,
         "tray_html": _tray_html(),
         "replay": replay,
+        **_sync_patch(ctx, _pre_leaves),
     })
 
 
 def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
-                             force=False):
+                             force=False, patch=None):
     """Finish a ``mode=apply`` sync: save the re-applied edits to the working
     copy and push them to the live chip. Mirrors ``/state/apply-to-live`` but
     returns JSON so ``doStateSync`` can drive it. On a fresh staleness conflict
@@ -12930,6 +13037,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
         "tray_html": _tray_html(),
         "replay": replay,
         "pulled_other_changes": pulled_other_changes,
+        **(patch or {}),
     })
 
 
@@ -13338,7 +13446,7 @@ def _legacy_src_token(path: str) -> str:
     return f"ws:{path}"
 
 
-_DIFF_TABS = ("state", "wiring", "node", "data")
+_DIFF_TABS = ("state", "wiring", "node", "data", "figures")
 _DIFF_LIST_PAGE = 300      # ranked rows per list page
 # One diff is one flatten of two documents (20-45 ms measured on real chips).
 # The tab strip and the tree/list toggle re-ask for the same pair, so a small
@@ -13418,6 +13526,91 @@ def _diff_payload(src_a, src_b, tab: str, *, with_rows: bool) -> dict:
     return res if with_rows else {**res, "rows": []}
 
 
+def _diff_payload3(src_a, src_b, src_c, tab: str) -> dict:
+    """The list view with a third source: one row per leaf where any two of
+    the three differ (json_diff.diff_rows_n). Not memoized -- a 3-way ask is
+    rare next to the tab-strip re-asks the 2-way memo exists for."""
+    docs, whys = [], []
+    for src in (src_a, src_b, src_c):
+        doc, why = _diff_side_doc(src, tab)
+        docs.append(doc)
+        whys.append(why)
+    if any(d is None for d in docs):
+        return {"ok": False, "unavailable": next(w for w in whys if w),
+                "counts": {"changed": 0, "added": 0, "removed": 0, "same": 0, "total": 0}}
+    return json_diff.diff_rows_n(docs)
+
+
+_DIFF_FIG_EXT = (".png", ".jpg", ".jpeg", ".svg", ".webp")
+
+
+def _diff_run_figures(src) -> tuple[list[str], str]:
+    """(figure file names, why-empty) for one side. Only an experiment run
+    has figures; they are the data.json-declared ones (the archive's own
+    naming, via dataset._extract_figure_names) plus any other image file in
+    the run folder, and only files that actually exist."""
+    if getattr(src, "origin", "") in ("history", "working"):
+        return [], "not an experiment run"
+    folder = Path(str(src.path)).parent
+    names: list[str] = []
+    try:
+        data_json = folder / "data.json"
+        if data_json.exists():
+            from quam_state_manager.core.dataset import _extract_figure_names
+            names = list(_extract_figure_names(safe_io.read_json(data_json)) or [])
+    except Exception:  # noqa: BLE001 -- fall through to the folder listing
+        names = []
+    try:
+        for f in sorted(folder.iterdir()):
+            if f.is_file() and f.suffix.lower() in _DIFF_FIG_EXT and f.name not in names:
+                names.append(f.name)
+    except OSError:
+        pass
+    names = [n for n in names if (folder / n).is_file()]
+    return names, ("" if names else "no figures in this run")
+
+
+def _diff_figures_payload(srcs: list) -> dict:
+    """The figures tab (customer 2026-08-27): one column per source, one row
+    per figure NAME (union, first-seen order), a cell per (figure, source) --
+    the image when that run has it, an honest blank when it does not."""
+    cols, order = [], []
+    for slot, src in zip("abc", srcs):
+        names, why = _diff_run_figures(src)
+        for n in names:
+            if n not in order:
+                order.append(n)
+        cols.append({"slot": slot, "ref": src.ref, "label": src.label,
+                     "has": {n: True for n in names}, "why": why})
+    if not order:
+        return {"ok": False, "unavailable": "No figures on any side -- "
+                + "; ".join(f"{c['slot'].upper()}: {c['why']}" for c in cols),
+                "counts": {"changed": 0, "added": 0, "removed": 0, "same": 0, "total": 0}}
+    return {"ok": True, "figures": True, "names": order, "cols": cols,
+            "counts": {"changed": 0, "added": 0, "removed": 0, "same": 0, "total": 0}}
+
+
+@bp.route("/diff/fig")
+def diff_fig():
+    """Serve one figure of a compare source by (ref, file name). The ref is
+    resolved through the same resolver as the workbench; the name must be a
+    bare image file name that exists in that run's folder -- no traversal."""
+    from flask import abort, send_from_directory
+    ref = (request.args.get("ref") or "").strip()
+    name = (request.args.get("name") or "").strip()
+    if not ref or not name or name != Path(name).name \
+            or Path(name).suffix.lower() not in _DIFF_FIG_EXT:
+        abort(404)
+    try:
+        src = _hub_resolve_one(ref)
+    except compare_sources.SourceError:
+        abort(404)
+    folder = Path(str(src.path)).parent
+    if not (folder / name).is_file():
+        abort(404)
+    return send_from_directory(str(folder), name)
+
+
 def _diff_default_refs() -> tuple[str, str]:
     """The pair a bare /diff opens on: the newest snapshot vs what is loaded.
 
@@ -13492,6 +13685,10 @@ def diff_view():
 
     a_ref = (request.args.get("a") or "").strip()
     b_ref = (request.args.get("b") or "").strip()
+    # Customer (2026-08-27): an OPTIONAL third source. The 2-way page is
+    # unchanged when it is absent; when present the list view grows a C
+    # column and the figures tab a third column (the tree stays A -> B).
+    c_ref = (request.args.get("c") or "").strip()
     tab = (request.args.get("tab") or "state").strip()
     if tab not in _DIFF_TABS:
         tab = "state"
@@ -13505,8 +13702,8 @@ def diff_view():
         a_ref, b_ref = _diff_default_refs()
 
     error = ""
-    src_a = src_b = None
-    for ref, slot in ((a_ref, "a"), (b_ref, "b")):
+    src_a = src_b = src_c = None
+    for ref, slot in ((a_ref, "a"), (b_ref, "b"), (c_ref, "c")):
         if not ref:
             continue
         try:
@@ -13516,16 +13713,24 @@ def diff_view():
             continue
         if slot == "a":
             src_a = resolved
-        else:
+        elif slot == "b":
             src_b = resolved
+        else:
+            src_c = resolved
 
     payload = None
     rows = []
     more = 0
     if src_a is not None and src_b is not None and not error:
         try:
-            payload = _diff_payload(src_a, src_b, tab, with_rows=(view == "list"))
-            if view == "list":
+            if tab == "figures":
+                payload = _diff_figures_payload(
+                    [s for s in (src_a, src_b, src_c) if s is not None])
+            elif src_c is not None and view == "list":
+                payload = _diff_payload3(src_a, src_b, src_c, tab)
+            else:
+                payload = _diff_payload(src_a, src_b, tab, with_rows=(view == "list"))
+            if view == "list" and tab != "figures":
                 all_rows = payload.get("rows") or []
                 rows = all_rows[:limit]
                 more = max(0, len(all_rows) - len(rows))
@@ -13547,8 +13752,8 @@ def diff_view():
     template = "_diff_workbench.html" if _is_htmx() else "diff_workbench.html"
     return render_template(
         template,
-        **_ctx(page="diff", a_ref=a_ref, b_ref=b_ref, tab=tab, view=view,
-               src_a=src_a, src_b=src_b, payload=payload, error=error,
+        **_ctx(page="diff", a_ref=a_ref, b_ref=b_ref, c_ref=c_ref, tab=tab, view=view,
+               src_a=src_a, src_b=src_b, src_c=src_c, payload=payload, error=error,
                rows=rows, more=more, next_rows=limit + _DIFF_LIST_PAGE,
                take_active_ok=take_active_ok,
                tabs=_DIFF_TABS, options=_diff_source_options()))

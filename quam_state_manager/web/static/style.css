@@ -898,6 +898,14 @@ html.topbar-hidden .topbar > nav > ul > li { display: none; }
 html.topbar-hidden #topbar-tray-slot {
     display: inline-flex; position: fixed; top: 6px; left: 42px; z-index: 120;
     pointer-events: auto;
+    /* Customer (2026-08-27): the floating pills sat straight over the page
+       heading ("Qubits (20)") and the two read as one smear. An opaque card
+       (same look as the floating ☰) separates them from whatever scrolls
+       underneath. */
+    padding: 2px 6px; border-radius: 8px;
+    background: var(--pico-card-background-color, #fff);
+    border: 1px solid var(--pico-muted-border-color);
+    box-shadow: 0 2px 8px rgba(0,0,0,.25);
 }
 /* The Auto-Sync pill floats too (user-confirmed), and its popup host stays —
    the popup is position:fixed inside that host, so hiding the host would
@@ -5542,6 +5550,14 @@ table.h5-vars-table tr.h5-var-selected .btn-sm { background: var(--pico-primary)
 .compare-figure-row { margin-bottom: 1rem; }
 .compare-figure-label { font-size: 0.85em; padding: 0.3rem 0.5rem; font-weight: 600; }
 .compare-figure-grid { display: grid; gap: 0.5rem; padding: 0 0.5rem; }
+/* Diff workbench figures tab (customer 2026-08-27): figure-name row labels
+   down the left, one column per source; the optional C picker reads as an
+   add-on so the 2-way row keeps its look. */
+.diff-wb-figs { align-items: start; margin-top: .4rem; }
+.diff-fig-name { font-size: .78em; padding-top: .3rem; white-space: nowrap; }
+.diff-wb-figs .compare-figure-na { color: var(--pico-muted-color); text-align: center; padding: 1rem 0; }
+.diff-side-c select { opacity: .85; }
+.diff-tree-c-note { margin: .2rem 0 .4rem; }
 .compare-figure-cell { text-align: center; }
 .compare-figure-cell img { width: 100%; cursor: pointer; border: 1px solid var(--pico-muted-border-color); border-radius: 4px; }
 .compare-figure-run-label { font-size: 0.78em; font-weight: 600; color: var(--pico-muted-color); margin-bottom: 0.2rem; }
@@ -9449,6 +9465,27 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
 .pulse-detail-plot { height: 260px; min-height: 260px; max-height: 260px; overflow: hidden; }
 .pulse-plot-empty { display: none; }
 
+/* Overlay bar (customer 2026-08-27): companion / picked pulses drawn on the
+   same axes. Each chip carries its trace hue as a left mark. */
+.pulse-overlay-bar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: .35rem;
+    margin: 0 0 .25rem; font-size: .82em;
+}
+.pulse-overlay-bar[hidden] { display: none; }
+.pulse-overlay-chip {
+    display: inline-flex; align-items: center; gap: .25rem; margin: 0;
+    padding: .05rem .45rem .05rem .35rem; border-radius: 999px;
+    border: 1px solid var(--pico-muted-border-color);
+    border-left: 4px solid var(--ov-hue, var(--pico-primary));
+    cursor: pointer; opacity: .6; font-family: var(--font-mono);
+}
+.pulse-overlay-chip.on { opacity: 1; }
+.pulse-overlay-chip input { margin: 0; }
+.pulse-overlay-x {
+    margin: 0 0 0 .15rem; padding: 0 .25rem; background: none; border: none;
+    color: var(--pico-muted-color); cursor: pointer; line-height: 1; font-size: 1em;
+}
+.pulse-overlay-pick { width: auto; margin: 0; padding: .05rem .4rem; font-size: .9em; }
 .pulse-plot-bar {
     display: flex; align-items: center; gap: 0.6rem;
     padding: 0.25rem 0.5rem; font-size: 0.82em; flex-wrap: wrap;

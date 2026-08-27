@@ -1668,23 +1668,21 @@ window.toggleSidebar = function() {
     } catch(e) {}
 };
 
-/* docs/126: the ☰ cycles THREE states (customer request) —
-   0 everything shown → 1 sidebar collapsed → 2 top bar hidden too (only a
-   small floating ☰ remains, fixed top-left) → back to 0. Any state the user
-   reached by the individual toggles still cycles sensibly from wherever it
-   is, and both legs persist through the toggles' own localStorage keys. */
+/* docs/126 cycled THREE states (sidebar → +top bar → restore). Customer
+   feedback (2026-08-27): "don't make us press it twice" — ONE press now
+   collapses the sidebar AND the top bar together (the floating ☰ + the sync
+   badge/Auto-Sync pill remain), and one press on the floating ☰ restores
+   both. Any mixed state the user reached through the individual toggles
+   resolves the same way: anything still visible ⇒ collapse everything;
+   nothing visible ⇒ restore everything. Both legs persist through the
+   toggles' own localStorage keys. */
 window.cycleChrome = function() {
     var layout = document.querySelector(".app-layout");
     var sbCollapsed = !!(layout && layout.classList.contains("sidebar-collapsed"));
     var tbHidden = document.documentElement.classList.contains("topbar-hidden");
-    if (!sbCollapsed) {
-        window.toggleSidebar();                       // 0 → 1
-    } else if (!tbHidden) {
-        window.toggleTopbar();                        // 1 → 2
-    } else {
-        window.toggleTopbar();                        // 2 → 0
-        window.toggleSidebar();
-    }
+    var collapseAll = !(sbCollapsed && tbHidden);
+    if (sbCollapsed !== collapseAll) window.toggleSidebar();
+    if (tbHidden !== collapseAll) window.toggleTopbar();
 };
 
 /**
@@ -2098,6 +2096,7 @@ document.addEventListener("stateRestored", function() {
     // dirty-cell confirm must not veto (or double-prompt) this refresh —
     // time-boxed flag consumed by the beforeSwap guards.
     window._stateRestoredRefresh = Date.now();
+    _keepPaneScroll();
     _softRefreshLiveSurface();
 });
 
@@ -2536,7 +2535,10 @@ window.doStateSync = function(mode, forced, ackUnseen) {
             // what was applied, and the blanket refresh was the blink/freeze.
             var replayFailed = !!(data.replay && data.replay.failed && data.replay.failed.length);
             if (!cleanApply || replayFailed || data.pulled_other_changes) {
-                _softRefreshLiveSurface();
+                // Customer (2026-08-27): patch the changed leaves in place —
+                // the page stays where it is; only a shape change still
+                // refreshes wholesale (scroll kept).
+                _patchOrRefreshLiveSurface(data);
             }
             // The user's own pull/apply just moved the baseline — re-poll drift NOW so
             // the "N parameters changed on the live chip" banner reconciles immediately
@@ -3025,6 +3027,129 @@ window.wcGcDismiss = function() {
  * the whole page. The explorer tree (#table-pane) is the one always-safe,
  * self-contained surface; on pages that show no live state (e.g. a dataset
  * detail view) this is a no-op and the tray swap + toast is enough. */
+/* Customer (2026-08-27, critical): a sync pull used to re-fetch the WHOLE
+   page into #table-pane — on the 20Q chip that is an 8.8 MB /bulk render, a
+   multi-second freeze, and the grid coming back at its first-click view
+   (scroll, focus, column state gone). The user wants the opposite: the
+   screen stays exactly where it is and only the VALUES change. So the sync
+   response now names every leaf the pull changed (and whether the SHAPE
+   changed), and this patches those leaves in place on whatever state
+   surface is open; only a structural change (keys added/removed, or an
+   uncapped diff) still falls back to the wholesale refresh — with the
+   scroll position carried across it. */
+window.LiveSurfacePatch = (function () {
+    function _esc(s) { return (window.CSS && CSS.escape) ? CSS.escape(s) : s; }
+    function _kindClass(v) {
+        if (v === null || v === undefined) return "null";
+        if (typeof v === "string") return v.charAt(0) === "#" ? "pointer" : "string";
+        if (typeof v === "boolean") return "boolean";
+        if (typeof v === "number") return "number";
+        return "object";
+    }
+    // A collapsed tree subtree renders LATER from node._lazyData.value — the
+    // snapshot taken at render time. Patch that snapshot too, or expanding
+    // it after a pull would show the pre-pull value.
+    function _patchLazy(dp, value) {
+        var segs = dp.split(".");
+        for (var i = segs.length - 1; i >= 1; i--) {
+            var anc = document.querySelector('.tree-node[data-path="' + _esc(segs.slice(0, i).join(".")) + '"]');
+            if (!anc) continue;
+            if (!anc._lazyData || anc._lazyData.value == null || typeof anc._lazyData.value !== "object") return false;
+            var cur = anc._lazyData.value;
+            for (var j = i; j < segs.length - 1; j++) {
+                var k = Array.isArray(cur) ? parseInt(segs[j], 10) : segs[j];
+                if (cur == null || typeof cur !== "object" || !(k in cur)) return false;
+                cur = cur[k];
+            }
+            if (cur == null || typeof cur !== "object") return false;
+            var last = Array.isArray(cur) ? parseInt(segs[segs.length - 1], 10) : segs[segs.length - 1];
+            if (!(last in cur)) return false;
+            cur[last] = value;
+            return true;
+        }
+        return false;
+    }
+    function _patchTree(e) {
+        var node = document.querySelector('.tree-node[data-path="' + _esc(e.dot_path) + '"]');
+        var n = 0;
+        if (node) {
+            var valEl = node.querySelector(".tree-val");
+            if (valEl) {
+                var fmt = window._treeFormatValue;
+                var shown = fmt ? fmt(e.value) : String(e.value);
+                valEl.textContent = shown;
+                valEl.dataset.editVal = (typeof e.value === "string") ? e.value : shown;
+                valEl.className = valEl.className.replace(/tree-val-(string|number|boolean|null|pointer|object)/g, "").trim();
+                valEl.classList.add("tree-val-" + _kindClass(e.value));
+                n++;
+            }
+        } else if (_patchLazy(e.dot_path, e.value)) n++;
+        return n;
+    }
+    function _patchInputs(e) {
+        var n = 0;
+        document.querySelectorAll('.av-input[data-dot-path="' + _esc(e.dot_path) + '"]').forEach(function (inp) {
+            inp.value = e.old_value_disp != null ? String(e.old_value_disp) : String(e.old_value_str || "");
+            if (inp.hasAttribute("data-orig")) inp.setAttribute("data-orig", inp.value);
+            inp.classList.remove("dirty");
+            n++;
+        });
+        document.querySelectorAll('input[type="hidden"][name="dot_path"][value="' + _esc(e.dot_path) + '"]').forEach(function (h) {
+            var form = h.closest("form"), input = form && form.querySelector('input[name="value"]');
+            if (input) { input.value = e.old_value_str != null ? String(e.old_value_str) : ""; n++; }
+        });
+        return n;
+    }
+    function apply(changes) {
+        var res = { patched: 0, tree: 0, inputs: 0 };
+        if (!changes || !changes.length) return res;
+        var grids = [window.BulkEdit, window.BulkPairEdit];
+        grids.forEach(function (g) {
+            if (g && typeof g.revertPaths === "function") {
+                try { var r = g.revertPaths(changes); res.patched += (r && r.patched) || 0; } catch (err) { console.error("grid patch failed", err); }
+            }
+        });
+        var hasTree = !!document.getElementById("explorer-tree-state") || !!document.querySelector(".tree-node[data-path]");
+        changes.forEach(function (e) {
+            if (!e || !e.dot_path) return;
+            if (hasTree) res.tree += _patchTree(e);
+            res.inputs += _patchInputs(e);
+        });
+        return res;
+    }
+    return { apply: apply, _patchLazy: _patchLazy };
+})();
+
+/* Carry #table-pane's scroll across a wholesale refresh (the structural
+   fallback and stage/restore) so even that does not throw the user back to
+   the top. One-shot: the first #table-pane swap after the call. */
+function _keepPaneScroll() {
+    var pane = document.getElementById("table-pane");
+    if (!pane) return;
+    var top = pane.scrollTop, left = pane.scrollLeft;
+    if (!top && !left) return;
+    var once = function (evt) {
+        if (!evt.detail || !evt.detail.target || evt.detail.target.id !== "table-pane") return;
+        document.removeEventListener("htmx:afterSwap", once);
+        requestAnimationFrame(function () { pane.scrollTop = top; pane.scrollLeft = left; });
+    };
+    document.addEventListener("htmx:afterSwap", once);
+    setTimeout(function () { document.removeEventListener("htmx:afterSwap", once); }, 15000);
+}
+
+/* Sync response → in-place patch when the shape is unchanged, wholesale
+   refresh (scroll kept) when it is not. */
+function _patchOrRefreshLiveSurface(data) {
+    if (data && data.changes && !data.structural) {
+        window.LiveSurfacePatch.apply(data.changes);
+        return "patched";
+    }
+    _keepPaneScroll();
+    _softRefreshLiveSurface();
+    return "refreshed";
+}
+window._patchOrRefreshLiveSurface = _patchOrRefreshLiveSurface;
+
 function _softRefreshLiveSurface() {
     if (!window.htmx) return;
     if (document.getElementById("explorer-tree-state")) {
@@ -7288,6 +7413,9 @@ window.clearDetailPanelSearch = function(btnEl) {
     // layer's fix added).
     window._formatValue = _formatValue;
 
+    // The tree's own value formatter, for in-place leaf patches after a sync
+    // pull (LiveSurfacePatch) — one formatting rule, not a second copy.
+    window._treeFormatValue = _formatValue;
     window.renderJsonTree = function(containerId, data, options) {
         var container = document.getElementById(containerId);
         if (!container) return;
