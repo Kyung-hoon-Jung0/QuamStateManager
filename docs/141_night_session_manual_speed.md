@@ -200,6 +200,57 @@ Pinned by `bulk_search_selfcheck.cjs` (static sheet + sh-class delta, four
 cases) and `bulk_virt_selfcheck.cjs` (remembered search ⇒ cold; clearing it
 hydrates the viewport).
 
+## 4e. Undo under a burst, and the waveform that follows it (2026-08-28, afternoon)
+
+The user's question: what happens on Pulses when someone hammers Ctrl+Z /
+Ctrl+Shift+Z, and could the last 10–20 edits live in RAM "like a clipboard"
+so a press applies at once? Findings first (real Chrome, PJ 20Q, trusted key
+events through the page's own UI), then what shipped.
+
+**What was actually broken.**
+* **Edit → Enter → Ctrl+Z did nothing on Pulses / the inspector.** Enter
+  commits and InlineCommit puts the focus back in the field, and the global
+  handler ignored any press whose focus was in an INPUT: no request, no trail,
+  no native undo either (the re-render had reset the field's own undo stack).
+  The same rule as a grid cell now applies: a DIRTY field undoes the typing
+  (back to the committed value), a CLEAN one falls through to the server tier.
+  This is also why two of the burst runs "lost" presses — a late focus-restore
+  pass had put the focus back in the field mid-burst.
+* **A held key auto-repeats (~30/s)**: the queue filled in under a second and
+  kept undoing after the key was released. Auto-repeat is ignored now — one
+  press, one step.
+* **A burst of k presses was k round trips.** Presses arriving while one
+  request is in flight are coalesced into `?n=k`; `/undo` and `/redo` pop k
+  actions inside one lock and answer with every reverted path (a `jrn:`
+  cross-save step ends a burst — it is its own press, never a side effect).
+  Measured: 8 presses → 3–6 requests, every press counted, the last one
+  landed ≤41 ms after the key.
+* **A redo burst left the OLDEST value in the field** while the store held the
+  newest: the payload was newest-first and the client writes entries in
+  order. `/redo` now answers chronologically (last write = newest); `/undo`'s
+  newest-first order was already right for the same reason.
+* **The committed waveform did not follow an undo.** The detail render
+  stashes `root._committedPlot`; an undo reverted the numbers in place and
+  then drew that plot — the pre-undo waveform under the reverted values.
+
+**The RAM idea, applied where it pays.** Values were already fast (~50 ms
+server round trip, and the truth must stay on the server: two windows and
+auto-apply share the change log, so an optimistic local undo would risk
+divergence for a 50 ms gain). The waveform is where a RAM cache is exactly
+right: every committed waveform the page has drawn is cached by (pulse path +
+the committed value of every parameter), bounded to the last 20 states, so a
+press back to a state already seen redraws with no synth request; a miss is
+ONE synth call for the final state of the burst (its own generation token —
+a preview fetch racing it can neither drop it nor be drawn over by it), and
+the stale committed plot is never drawn while that refresh is pending. A
+burst is one debounced refresh; the inspector is never re-rendered by a press.
+
+Pinned by `pulses_undo_selfcheck.cjs` (13 cases, mutation 8/8),
+`ctrlz_selfcheck.cjs` (coalescing, auto-repeat, the inline-field rule) and
+`test_undo_journal.py::test_undo_n_pops_k_actions_in_one_request` /
+`test_undo_burst_stops_at_the_journal_boundary`. Real-Chrome scripts:
+`cdp_burst.js`, `cdp_focus_undo.js`.
+
 ## 5. Tooling that came out of the night
 
 `scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js` (+ daytime: `cdp_profile.js` function-level CPU profile, `cdp_trace.js` per-phase trace of one keystroke, `cdp_type.js` char-by-char typing with a gap + debounce override, `cdp_undo.js` trusted Ctrl+Z/Ctrl+Shift+Z through the page's own UI, `cdp_virt.js` virtualization sampler): Chrome headless with the

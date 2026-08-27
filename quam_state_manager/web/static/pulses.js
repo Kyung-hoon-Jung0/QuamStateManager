@@ -17,6 +17,81 @@ window.PulsesPage = (function () {
     var PREVIEW_DEBOUNCE_MS = 150;
     var _gen = 0;  // fetch-generation counter — stale responses are dropped
 
+    /* docs/141 4e -- the committed plot follows undo / redo, from RAM when
+       it can. The detail render stashes the committed waveform as
+       root._committedPlot; an undo used to revert the VALUES in place and
+       then draw that stale plot (the pre-undo waveform under the reverted
+       numbers). Now every committed waveform this page has seen is cached
+       by (pulse path + the committed value of every parameter), bounded to
+       the last PLOT_CACHE_MAX states, so Ctrl+Z / Ctrl+Shift+Z back to a
+       state already drawn costs no synth request -- a burst of presses is
+       one debounced refresh, and a miss is ONE synth call for the final
+       state (its own generation token: a preview fetch racing it can never
+       drop it, and it can never draw over a newer one). */
+    var PLOT_CACHE_MAX = 20;
+    var COMMITTED_REFRESH_MS = 120;
+    var _plotCache = new Map();          // key -> plot payload (insertion-ordered)
+
+    function committedKey(root) {
+        var vals = {};
+        root.querySelectorAll('input[data-param]').forEach(function (input) {
+            vals[input.getAttribute('data-param')] = input.getAttribute('data-committed') || '';
+        });
+        return (root.getAttribute('data-pulse-path') || '') + '|' + JSON.stringify(vals);
+    }
+    function cacheCommitted(root, plot) {
+        if (!root || !plot || !plot.ok) return;
+        var key = committedKey(root);
+        if (_plotCache.has(key)) _plotCache.delete(key);   // refresh recency
+        _plotCache.set(key, plot);
+        while (_plotCache.size > PLOT_CACHE_MAX) {
+            _plotCache.delete(_plotCache.keys().next().value);
+        }
+    }
+    function refreshCommittedPlot(root) {
+        if (!root || !document.body.contains(root)) return;
+        var key = committedKey(root);
+        var hit = _plotCache.get(key);
+        if (hit) {
+            root._committedPlot = hit;
+            root._cpPending = false;
+            schedulePreview(root);
+            return;
+        }
+        var gen = (root._cpGen = (root._cpGen || 0) + 1);
+        fetch('/api/pulse/synth', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: root.getAttribute('data-pulse-path'), params: {} })
+        }).then(function (r) { return r.json(); }).then(function (data) {
+            if (gen !== root._cpGen || !document.body.contains(root)) return;
+            if (data && data.ok && data.plot && data.plot.ok) {
+                root._committedPlot = data.plot;
+                cacheCommitted(root, data.plot);
+            }
+            root._cpPending = false;
+            schedulePreview(root);
+        }).catch(function () {
+            if (gen !== root._cpGen) return;
+            root._cpPending = false;         // keep the last plot; never wedge the preview
+            schedulePreview(root);
+        });
+    }
+    document.addEventListener('cellsReverted', function (evt) {
+        var root = detailRoot();
+        if (!root) return;
+        var p = root.getAttribute('data-pulse-path') || '';
+        var entries = ((evt && evt.detail) || {}).entries || [];
+        var mine = entries.some(function (e) {
+            var dp = (e && e.dot_path) || '';
+            return dp === p || dp.indexOf(p + '.') === 0;
+        });
+        if (!mine) return;
+        root._cpPending = true;              // the stale committed plot must not be drawn meanwhile
+        _debounce('pulse-committed-refresh', function () { refreshCommittedPlot(root); },
+                  COMMITTED_REFRESH_MS);
+    });
+
     /* ------------------------------------------------------------------ */
     /* Plot rendering                                                      */
     /* ------------------------------------------------------------------ */
@@ -282,6 +357,7 @@ window.PulsesPage = (function () {
                 // reset elapsed the debounce) is dropped as stale when it
                 // resolves, instead of re-drawing the discarded value's preview.
                 _gen++;
+                if (root._cpPending) return;   // a committed refresh is due (docs/141 4e); it renders
                 renderPulsePlot('pulse-detail-plot', root._committedPlot);
                 showSynthErr(root, '');
                 return;
@@ -317,6 +393,7 @@ window.PulsesPage = (function () {
         var data = detailData();
         if (!data) return;
         root._committedPlot = data.plot;
+        cacheCommitted(root, data.plot);   // docs/141 4e: this state is drawn -- remember it
         // Same-component companions from the server (a CZ macro's qubit flux
         // + coupler flux), on by default; the picker adds any other pulse.
         root._overlays = (data.overlays || []).map(function (o) {

@@ -56,6 +56,20 @@ def test_undo_pages_selfcheck():
     _run("undo_pages_selfcheck.cjs", "ok - a click-away after the undo does NOT re-commit")
 
 
+def test_pulses_undo_selfcheck():
+    _run("pulses_undo_selfcheck.cjs", "ok - undo back to an already-drawn state costs NO synth request (cache)")
+
+
+def test_burst_contract_ships():
+    app = (_STATIC / "app.js").read_text(encoding="utf-8")
+    assert "if (evt.repeat) { evt.preventDefault(); return; }" in app, "a held key is not a burst"
+    assert 'var path = item.n > 1 ? item.path + "?n=" + item.n : item.path;' in app, "coalesced presses ride ?n=k"
+    routes = (_ROOT / "quam_state_manager" / "web" / "routes.py").read_text(encoding="utf-8")
+    assert "def _undo_count()" in routes and routes.count("for _ in range(_undo_count()):") == 2, "/undo and /redo pop k actions"
+    pulses = (_STATIC / "pulses.js").read_text(encoding="utf-8")
+    assert "var PLOT_CACHE_MAX = 20;" in pulses and "function refreshCommittedPlot(root)" in pulses
+
+
 def test_undo_never_navigates_by_itself():
     app = (_STATIC / "app.js").read_text(encoding="utf-8")
     assert "if (window.UndoNav) window.UndoNav.flashVisible(d.entries || []);" in app, \

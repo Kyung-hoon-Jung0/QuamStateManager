@@ -4935,7 +4935,11 @@ window.UndoQueue = (function () {
             }
             return;
         }
-        var path = q.shift();
+        var item = q.shift();
+        // docs/141 4e: presses that arrived while a request was in flight were
+        // COALESCED into this item -- one request, ?n=k, the server pops k
+        // actions in one lock and names every reverted path in one response.
+        var path = item.n > 1 ? item.path + "?n=" + item.n : item.path;
         if (!document.getElementById("pending-tray")) { q.length = 0; return; }
         busy = true;
         var done = function () { busy = false; pump(); };
@@ -4967,10 +4971,15 @@ window.UndoQueue = (function () {
         if (r && typeof r.then === "function") r.then(settle, settle);
         else settle();   // no completion signal ⇒ never hold the lock on a guess
     }
+    function pending() {
+        var n = 0;
+        for (var i = 0; i < q.length; i++) n += q[i].n;
+        return n;
+    }
     return {
         push: function (path) {
             if (!window.htmx || !document.getElementById("pending-tray")) return false;
-            if (q.length >= MAX) {
+            if (pending() >= MAX) {
                 // The refusal used to be COMPLETELY invisible — preventDefault
                 // had already fired and the return value was discarded, the
                 // same silence the queue was built to end (docs/124 minor).
@@ -4983,11 +4992,13 @@ window.UndoQueue = (function () {
                 }
                 return false;
             }
-            q.push(path);
+            var last = q[q.length - 1];
+            if (last && last.path === path) last.n += 1;   // same direction: coalesce
+            else q.push({ path: path, n: 1 });
             pump();
             return true;
         },
-        depth: function () { return q.length; },
+        depth: function () { return pending(); },
         busy: function () { return busy; },
     };
 })();
@@ -4995,11 +5006,32 @@ window.UndoQueue = (function () {
 document.addEventListener("keydown", function(evt) {
     if (!((evt.ctrlKey || evt.metaKey) && (evt.key === "z" || evt.key === "Z")
           && !evt.altKey)) return;
+    // docs/141 4e: one press = one step. A HELD key auto-repeats at ~30/s
+    // and used to fill the queue in under a second, then keep undoing for
+    // seconds after the key was released. The repeats are ignored; the user
+    // presses as many times as they mean.
+    if (evt.repeat) { evt.preventDefault(); return; }
     var a = document.activeElement;
     var inGridCell = !!(a && a.classList && a.classList.contains("bulk-cell"));
     var inChPanel = !!(a && a.closest && a.closest(".colhist-overlay"));
+    // An inspector / Pulses inline field (docs/141 4e). Enter commits and
+    // InlineCommit puts the focus BACK in the field, so the press a person
+    // actually makes -- edit, Enter, Ctrl+Z -- landed in an INPUT and was
+    // ignored here (real Chrome: no request, no trail, nothing). Same rule
+    // as a grid cell: a DIRTY field undoes the typing (back to the committed
+    // value); a CLEAN one falls through to the server tier.
+    var inInline = !!(a && a.matches && a.matches('form.inline-edit input[name="value"]'));
     if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)
-        && !inGridCell && !inChPanel) return;
+        && !inGridCell && !inChPanel && !inInline) return;
+    if (inInline && !evt.shiftKey) {
+        var _base = a.hasAttribute("data-committed") ? a.getAttribute("data-committed") : a.defaultValue;
+        if (a.value !== _base) {
+            evt.preventDefault();
+            a.value = _base;
+            a.dispatchEvent(new Event("input", { bubbles: true }));
+            return;
+        }
+    }
     if (evt.shiftKey) {
         // ---- redo chain (docs/107) ----
         // Wizard MOUNTED → swallow (the wizard has no redo; letting the press

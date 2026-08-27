@@ -11433,6 +11433,22 @@ def state_tray():
     return _tray_html()
 
 
+_UNDO_BURST_MAX = 50
+
+
+def _undo_count() -> int:
+    """``?n=k`` on /undo and /redo (docs/141 4e): a burst of k presses that
+    the client coalesced while one request was in flight. One request, k
+    user actions, one response naming every reverted path. Clamped so a
+    stuck key cannot ask for a thousand."""
+    raw = request.args.get("n") or request.form.get("n") or "1"
+    try:
+        k = int(raw)
+    except (TypeError, ValueError):
+        k = 1
+    return max(1, min(k, _UNDO_BURST_MAX))
+
+
 @bp.route("/undo", methods=["POST"])
 def undo():
     modifier = _modifier()
@@ -11442,40 +11458,56 @@ def undo():
     ctx = _active_ctx()
     store = ctx.get("store") if ctx else None
 
-    # docs/107 routing: an ordinary group on top undoes exactly as before; an
-    # EMPTY log — or a ``jrn:`` staged step already on top — walks DEEPER into
-    # the cross-save journal (staging the next unit's inverse into the tray)
-    # instead of stopping at the save boundary. No peek route (docs/73): the
-    # decision is made here, on the server, from the log itself.
-    if store is not None:
-        top_gid = store.change_log[-1].group_id if store.change_log else None
-        if (not store.change_log
-                or (isinstance(top_gid, str)
-                    and top_gid.startswith(undo_journal.GID_PREFIX))):
-            return _undo_journal_step(ctx)
+    all_entries: list = []
+    groups = 0
+    for _ in range(_undo_count()):
+        # docs/107 routing: an ordinary group on top undoes exactly as before;
+        # an EMPTY log — or a ``jrn:`` staged step already on top — walks
+        # DEEPER into the cross-save journal (staging the next unit's inverse
+        # into the tray) instead of stopping at the save boundary. No peek
+        # route (docs/73): the decision is made here, on the server, from the
+        # log itself. Inside a burst the journal boundary ends the burst: a
+        # cross-save step is its own press, never a side effect of a held key.
+        if store is not None:
+            top_gid = store.change_log[-1].group_id if store.change_log else None
+            if (not store.change_log
+                    or (isinstance(top_gid, str)
+                        and top_gid.startswith(undo_journal.GID_PREFIX))):
+                if groups == 0:
+                    return _undo_journal_step(ctx)
+                break
 
-    _redo_begin(ctx, store)   # docs/107: a foreign edit since forks history
-    try:
-        # Undo the last USER ACTION atomically (a batch edit / rename undoes as
-        # one unit, not one Ctrl+Z per underlying entry).
-        entries = modifier.undo_group()
-    except KeyError as exc:
-        # e.g. restoring a deleted subtree whose key was re-created since
+        _redo_begin(ctx, store)   # docs/107: a foreign edit since forks history
+        try:
+            # Undo the last USER ACTION atomically (a batch edit / rename undoes
+            # as one unit, not one Ctrl+Z per underlying entry).
+            entries = modifier.undo_group()
+        except KeyError as exc:
+            # e.g. restoring a deleted subtree whose key was re-created since
+            _invalidate_engine_cache()
+            if groups == 0:
+                return render_template("_status.html", message=str(exc), level="error"), 409
+            break
         _invalidate_engine_cache()
-        return render_template("_status.html", message=str(exc), level="error"), 409
-    _invalidate_engine_cache()
-    if not entries:
+        if not entries:
+            break
+        _redo_push_group(ctx, store, entries)   # docs/107: Ctrl+Shift+Z target
+        all_entries.extend(entries)
+        groups += 1
+    if not all_entries:
         # Nothing to undo — return the (unchanged) tray so the keyboard-triggered
         # outerHTML swap is a harmless no-op instead of replacing the tray with a
         # status line.
         return _tray_html()
-    _redo_push_group(ctx, store, entries)   # docs/107: Ctrl+Shift+Z target
+    entries = all_entries
 
     # Reverts are most-recent-first; report the oldest (the action's anchor) and
     # revert every affected cell/tree-node visually (reuses the /discard path).
     anchor = entries[-1]
     n = len(entries)
-    if n > 1:
+    if groups > 1:
+        message = f"Undone: {groups} actions, {n} changes ({anchor.dot_path} …)"
+    elif n > 1:
         message = f"Undone: {n} changes ({anchor.dot_path} …)"
     elif anchor.deleted:
         message = f"Undone: {anchor.dot_path} restored"
@@ -11671,51 +11703,70 @@ def redo():
             for e in entries
         ])
 
-    frames = _redo_stack(ctx)
-    if not frames:
-        return _tray_html()
-    if ctx.get("redo_seq") != store.mutation_seq:
-        frames.clear()   # foreign mutation since — dead timeline, silent no-op
-        return _tray_html()
-    frame = frames.pop()
+    # docs/141 4e: ``?n=k`` re-applies up to k frames in one request (a
+    # coalesced burst); a jrn: step on top ends the burst (its own press).
+    all_fents: list = []
+    for _ in range(_undo_count()):
+        top_gid = store.change_log[-1].group_id if store.change_log else None
+        if isinstance(top_gid, str) and top_gid.startswith(undo_journal.GID_PREFIX):
+            break
+        frames = _redo_stack(ctx)
+        if not frames:
+            break
+        if ctx.get("redo_seq") != store.mutation_seq:
+            frames.clear()   # foreign mutation since — dead timeline, silent no-op
+            break
+        frame = frames.pop()
 
-    fents = list(reversed(frame["entries"]))   # chronological re-apply order
-    is_jrn = bool(frame.get("gid"))
-    gid = frame.get("gid") if is_jrn else (
-        modifier.new_group_id() if len(fents) > 1 else None)
-    staged: list = []
-    with store._lock:
-        try:
-            for fe in fents:
-                if fe["created"]:
-                    e = modifier.create_subtree(fe["path"], fe["new"], group_id=gid)
-                elif fe["deleted"]:
-                    e = modifier.delete_subtree(fe["path"], group_id=gid)
-                else:
-                    e = modifier.set_value(fe["path"], fe["new"], coerce=False,
-                                           group_id=gid)
-                staged.append(e)
-        except Exception as exc:   # noqa: BLE001 — all-or-nothing, frame dropped
-            for _ in staged:
-                try:
-                    modifier.undo()
-                except Exception:
-                    logger.warning("redo rollback lagged", exc_info=True)
-                    break
+        fents = list(reversed(frame["entries"]))   # chronological re-apply order
+        is_jrn = bool(frame.get("gid"))
+        gid = frame.get("gid") if is_jrn else (
+            modifier.new_group_id() if len(fents) > 1 else None)
+        staged: list = []
+        failed = None
+        with store._lock:
+            try:
+                for fe in fents:
+                    if fe["created"]:
+                        e = modifier.create_subtree(fe["path"], fe["new"], group_id=gid)
+                    elif fe["deleted"]:
+                        e = modifier.delete_subtree(fe["path"], group_id=gid)
+                    else:
+                        e = modifier.set_value(fe["path"], fe["new"], coerce=False,
+                                               group_id=gid)
+                    staged.append(e)
+            except Exception as exc:   # noqa: BLE001 — all-or-nothing, frame dropped
+                for _ in staged:
+                    try:
+                        modifier.undo()
+                    except Exception:
+                        logger.warning("redo rollback lagged", exc_info=True)
+                        break
+                failed = exc
+        if failed is not None:
             _invalidate_engine_cache()
-            return render_template(
-                "_status.html",
-                message=f"Redo failed, nothing changed: {exc}",
-                level="error"), 409
-    if is_jrn:
-        # Re-staging a discarded journal step re-consumes its unit.
-        ctx["undo_cursor"] = max(int(ctx.get("undo_cursor") or 0) - 1, 0)
-    _redo_mark(ctx, store)
-    _invalidate_engine_cache()
+            if not all_fents:
+                return render_template(
+                    "_status.html",
+                    message=f"Redo failed, nothing changed: {failed}",
+                    level="error"), 409
+            break   # the frames before it stand; this one is dropped, the burst ends
+        if is_jrn:
+            # Re-staging a discarded journal step re-consumes its unit.
+            ctx["undo_cursor"] = max(int(ctx.get("undo_cursor") or 0) - 1, 0)
+        _redo_mark(ctx, store)
+        _invalidate_engine_cache()
+        all_fents.append(fents)
+    if not all_fents:
+        return _tray_html()
 
+    fents = all_fents[0]
     n = len(fents)
+    total = sum(len(f) for f in all_fents)
     anchor = fents[0]
-    if n > 1:
+    if len(all_fents) > 1:
+        message = f"Redone: {len(all_fents)} actions, {total} changes ({anchor['path']} …)"
+    elif n > 1:
         message = f"Redone: {n} changes ({anchor['path']} …)"
     elif anchor["deleted"]:
         message = f"Redone: {anchor['path']} removed"
@@ -11731,7 +11782,14 @@ def redo():
                               created=bool(fe["deleted"]),
                               deleted=bool(fe["created"]),
                               source_file=fe.get("source_file", "state"))
-        for fe in reversed(fents)   # newest-first, like /undo's payload
+        # CHRONOLOGICAL, oldest first: the client writes entries in order and
+        # the last write wins, so a burst that re-applies k values to one
+        # path must end on the NEWEST (real-Chrome 2026-08-28: newest-first
+        # left the oldest redone value in the cell while the store held the
+        # newest). /undo's newest-first order is right for the same reason --
+        # its last entry is the oldest undone group's old value.
+        for group in all_fents
+        for fe in group
     ])
 
 

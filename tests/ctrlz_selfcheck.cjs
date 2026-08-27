@@ -123,10 +123,55 @@ await settle();
     for (let i = 0; i < 10; i++) pressCtrlZ();
     ok(calls.length === n + 1, 'a burst issues one request immediately, holds the rest');
     for (let i = 0; i < 12; i++) await settle();
-    const issued = calls.slice(n).filter((c) => c.url === '/undo');
-    ok(issued.length === 10, 'all ten presses reach /undo (got ' + issued.length + ')');
+    // docs/141 4e: presses that arrive while a request is in flight are
+    // COALESCED -- fewer requests, but every press counted (?n=k).
+    const issued = calls.slice(n).filter((c) => c.url.indexOf('/undo') === 0);
+    const presses = issued.reduce((s, c) => s + (Number((/[?&]n=(\d+)/.exec(c.url) || [])[1]) || 1), 0);
+    ok(presses === 10 && issued.length < 10,
+       'all ten presses reach the server, coalesced into fewer requests (' + issued.length + ' requests, n-sum ' + presses + ')');
+    ok(issued[0].url === '/undo' && issued.slice(1).every((c) => /\?n=\d+$/.test(c.url)),
+       'the first press goes alone; the burst behind it rides one ?n=k');
     ok(window.UndoQueue.depth() === 0 && !window.UndoQueue.busy(),
        'the queue drains empty');
+}
+
+// ── 1b''. the focus is in an inspector / Pulses inline field ──────────────
+// Enter commits and InlineCommit puts the focus back in the field, so the
+// press a person actually makes (edit, Enter, Ctrl+Z) landed in an INPUT and
+// was ignored. Same rule as a grid cell now: dirty → undo the typing, clean
+// → the server tier.
+{
+    const form = window.document.createElement('form');
+    form.className = 'inline-edit';
+    form.innerHTML = '<input type="hidden" name="dot_path" value="qubits.q1.T1">'
+        + '<input type="text" name="value" data-committed="1" value="1">';
+    window.document.body.appendChild(form);
+    const inp = form.querySelector('input[name="value"]');
+    inp.focus();
+    let inputs = 0; inp.addEventListener('input', () => inputs++);
+    const n = calls.length;
+    pressCtrlZ(inp);
+    await settle();
+    ok(calls.length === n + 1 && calls[n].url === '/undo', 'a CLEAN inline field: Ctrl+Z reaches the server tier');
+    for (let i = 0; i < 4; i++) await settle();
+    inp.value = '2';                                  // typed, not committed
+    const n2 = calls.length;
+    const ev = pressCtrlZ(inp);
+    await settle();
+    ok(calls.length === n2 && inp.value === '1' && inputs === 1 && ev.defaultPrevented,
+       'a DIRTY inline field: Ctrl+Z restores the committed value, no request');
+    form.remove();
+    window.document.body.focus();
+    for (let i = 0; i < 4; i++) await settle();
+}
+
+// ── 1b'. a HELD key (auto-repeat) is not a burst ──────────────────────────
+{
+    const n = calls.length;
+    const ev = new window.KeyboardEvent('keydown', { key: 'z', ctrlKey: true, repeat: true, bubbles: true, cancelable: true });
+    window.document.dispatchEvent(ev);
+    await settle();
+    ok(calls.length === n && ev.defaultPrevented, 'an auto-repeated Ctrl+Z issues nothing (one press = one step)');
 }
 
 // ── 1c. the bound is a held key, not a rate limit ──────────────────────────
