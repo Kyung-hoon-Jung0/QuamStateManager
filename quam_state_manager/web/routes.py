@@ -13429,7 +13429,7 @@ def _legacy_src_token(path: str) -> str:
     return f"ws:{path}"
 
 
-_DIFF_TABS = ("state", "wiring", "node", "data")
+_DIFF_TABS = ("state", "wiring", "node", "data", "figures")
 _DIFF_LIST_PAGE = 300      # ranked rows per list page
 # One diff is one flatten of two documents (20-45 ms measured on real chips).
 # The tab strip and the tree/list toggle re-ask for the same pair, so a small
@@ -13509,6 +13509,91 @@ def _diff_payload(src_a, src_b, tab: str, *, with_rows: bool) -> dict:
     return res if with_rows else {**res, "rows": []}
 
 
+def _diff_payload3(src_a, src_b, src_c, tab: str) -> dict:
+    """The list view with a third source: one row per leaf where any two of
+    the three differ (json_diff.diff_rows_n). Not memoized -- a 3-way ask is
+    rare next to the tab-strip re-asks the 2-way memo exists for."""
+    docs, whys = [], []
+    for src in (src_a, src_b, src_c):
+        doc, why = _diff_side_doc(src, tab)
+        docs.append(doc)
+        whys.append(why)
+    if any(d is None for d in docs):
+        return {"ok": False, "unavailable": next(w for w in whys if w),
+                "counts": {"changed": 0, "added": 0, "removed": 0, "same": 0, "total": 0}}
+    return json_diff.diff_rows_n(docs)
+
+
+_DIFF_FIG_EXT = (".png", ".jpg", ".jpeg", ".svg", ".webp")
+
+
+def _diff_run_figures(src) -> tuple[list[str], str]:
+    """(figure file names, why-empty) for one side. Only an experiment run
+    has figures; they are the data.json-declared ones (the archive's own
+    naming, via dataset._extract_figure_names) plus any other image file in
+    the run folder, and only files that actually exist."""
+    if getattr(src, "origin", "") in ("history", "working"):
+        return [], "not an experiment run"
+    folder = Path(str(src.path)).parent
+    names: list[str] = []
+    try:
+        data_json = folder / "data.json"
+        if data_json.exists():
+            from quam_state_manager.core.dataset import _extract_figure_names
+            names = list(_extract_figure_names(safe_io.read_json(data_json)) or [])
+    except Exception:  # noqa: BLE001 -- fall through to the folder listing
+        names = []
+    try:
+        for f in sorted(folder.iterdir()):
+            if f.is_file() and f.suffix.lower() in _DIFF_FIG_EXT and f.name not in names:
+                names.append(f.name)
+    except OSError:
+        pass
+    names = [n for n in names if (folder / n).is_file()]
+    return names, ("" if names else "no figures in this run")
+
+
+def _diff_figures_payload(srcs: list) -> dict:
+    """The figures tab (customer 2026-08-27): one column per source, one row
+    per figure NAME (union, first-seen order), a cell per (figure, source) --
+    the image when that run has it, an honest blank when it does not."""
+    cols, order = [], []
+    for slot, src in zip("abc", srcs):
+        names, why = _diff_run_figures(src)
+        for n in names:
+            if n not in order:
+                order.append(n)
+        cols.append({"slot": slot, "ref": src.ref, "label": src.label,
+                     "has": {n: True for n in names}, "why": why})
+    if not order:
+        return {"ok": False, "unavailable": "No figures on any side -- "
+                + "; ".join(f"{c['slot'].upper()}: {c['why']}" for c in cols),
+                "counts": {"changed": 0, "added": 0, "removed": 0, "same": 0, "total": 0}}
+    return {"ok": True, "figures": True, "names": order, "cols": cols,
+            "counts": {"changed": 0, "added": 0, "removed": 0, "same": 0, "total": 0}}
+
+
+@bp.route("/diff/fig")
+def diff_fig():
+    """Serve one figure of a compare source by (ref, file name). The ref is
+    resolved through the same resolver as the workbench; the name must be a
+    bare image file name that exists in that run's folder -- no traversal."""
+    from flask import abort, send_from_directory
+    ref = (request.args.get("ref") or "").strip()
+    name = (request.args.get("name") or "").strip()
+    if not ref or not name or name != Path(name).name \
+            or Path(name).suffix.lower() not in _DIFF_FIG_EXT:
+        abort(404)
+    try:
+        src = _hub_resolve_one(ref)
+    except compare_sources.SourceError:
+        abort(404)
+    folder = Path(str(src.path)).parent
+    if not (folder / name).is_file():
+        abort(404)
+    return send_from_directory(str(folder), name)
+
+
 def _diff_default_refs() -> tuple[str, str]:
     """The pair a bare /diff opens on: the newest snapshot vs what is loaded.
 
@@ -13583,6 +13668,10 @@ def diff_view():
 
     a_ref = (request.args.get("a") or "").strip()
     b_ref = (request.args.get("b") or "").strip()
+    # Customer (2026-08-27): an OPTIONAL third source. The 2-way page is
+    # unchanged when it is absent; when present the list view grows a C
+    # column and the figures tab a third column (the tree stays A -> B).
+    c_ref = (request.args.get("c") or "").strip()
     tab = (request.args.get("tab") or "state").strip()
     if tab not in _DIFF_TABS:
         tab = "state"
@@ -13596,8 +13685,8 @@ def diff_view():
         a_ref, b_ref = _diff_default_refs()
 
     error = ""
-    src_a = src_b = None
-    for ref, slot in ((a_ref, "a"), (b_ref, "b")):
+    src_a = src_b = src_c = None
+    for ref, slot in ((a_ref, "a"), (b_ref, "b"), (c_ref, "c")):
         if not ref:
             continue
         try:
@@ -13607,16 +13696,24 @@ def diff_view():
             continue
         if slot == "a":
             src_a = resolved
-        else:
+        elif slot == "b":
             src_b = resolved
+        else:
+            src_c = resolved
 
     payload = None
     rows = []
     more = 0
     if src_a is not None and src_b is not None and not error:
         try:
-            payload = _diff_payload(src_a, src_b, tab, with_rows=(view == "list"))
-            if view == "list":
+            if tab == "figures":
+                payload = _diff_figures_payload(
+                    [s for s in (src_a, src_b, src_c) if s is not None])
+            elif src_c is not None and view == "list":
+                payload = _diff_payload3(src_a, src_b, src_c, tab)
+            else:
+                payload = _diff_payload(src_a, src_b, tab, with_rows=(view == "list"))
+            if view == "list" and tab != "figures":
                 all_rows = payload.get("rows") or []
                 rows = all_rows[:limit]
                 more = max(0, len(all_rows) - len(rows))
@@ -13638,8 +13735,8 @@ def diff_view():
     template = "_diff_workbench.html" if _is_htmx() else "diff_workbench.html"
     return render_template(
         template,
-        **_ctx(page="diff", a_ref=a_ref, b_ref=b_ref, tab=tab, view=view,
-               src_a=src_a, src_b=src_b, payload=payload, error=error,
+        **_ctx(page="diff", a_ref=a_ref, b_ref=b_ref, c_ref=c_ref, tab=tab, view=view,
+               src_a=src_a, src_b=src_b, src_c=src_c, payload=payload, error=error,
                rows=rows, more=more, next_rows=limit + _DIFF_LIST_PAGE,
                take_active_ok=take_active_ok,
                tabs=_DIFF_TABS, options=_diff_source_options()))

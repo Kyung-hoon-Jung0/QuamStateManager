@@ -5550,6 +5550,14 @@ table.h5-vars-table tr.h5-var-selected .btn-sm { background: var(--pico-primary)
 .compare-figure-row { margin-bottom: 1rem; }
 .compare-figure-label { font-size: 0.85em; padding: 0.3rem 0.5rem; font-weight: 600; }
 .compare-figure-grid { display: grid; gap: 0.5rem; padding: 0 0.5rem; }
+/* Diff workbench figures tab (customer 2026-08-27): figure-name row labels
+   down the left, one column per source; the optional C picker reads as an
+   add-on so the 2-way row keeps its look. */
+.diff-wb-figs { align-items: start; margin-top: .4rem; }
+.diff-fig-name { font-size: .78em; padding-top: .3rem; white-space: nowrap; }
+.diff-wb-figs .compare-figure-na { color: var(--pico-muted-color); text-align: center; padding: 1rem 0; }
+.diff-side-c select { opacity: .85; }
+.diff-tree-c-note { margin: .2rem 0 .4rem; }
 .compare-figure-cell { text-align: center; }
 .compare-figure-cell img { width: 100%; cursor: pointer; border: 1px solid var(--pico-muted-border-color); border-radius: 4px; }
 .compare-figure-run-label { font-size: 0.78em; font-weight: 600; color: var(--pico-muted-color); margin-bottom: 0.2rem; }

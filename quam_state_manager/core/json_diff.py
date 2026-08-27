@@ -144,6 +144,56 @@ def diff_rows(a_doc: Any, b_doc: Any, *, cap: int = ROW_CAP) -> dict:
     return {"rows": rows[:cap], "counts": counts, "truncated": truncated}
 
 
+def diff_rows_n(docs: list[Any], *, cap: int = ROW_CAP) -> dict:
+    """Rows for an N-column list diff (the workbench's third source, customer
+    2026-08-27): one row per leaf path where ANY two sides differ (absence
+    counts as a difference), every side's value beside each other. Same
+    flatten, same path grammar, same cap as :func:`diff_rows`; ranking is by
+    path so a three-way read stays stable while sources are swapped."""
+    flats, truncated = [], False
+    for d in docs:
+        f, t = flatten(d, cap=cap)
+        flats.append(f)
+        truncated = truncated or t
+    paths: set[str] = set()
+    for f in flats:
+        paths.update(f)
+    rows: list[dict] = []
+    for p in sorted(paths):
+        present = [p in f for f in flats]
+        vals = [f.get(p) for f in flats]
+        first = None
+        differs = False
+        for pr, v in zip(present, vals):
+            if not pr:
+                differs = differs or any(present)
+                continue
+            if first is None:
+                first = (v,)
+            elif not _eq(first[0], v):
+                differs = True
+        if any(present) and not all(present):
+            differs = True
+        if not differs:
+            continue
+        rows.append({"path": p, "vals": vals, "present": present, "kind": "changed"})
+        if len(rows) >= cap:
+            truncated = True
+            break
+    same = max(0, len(paths) - len(rows))
+    return {"ok": True, "rows": rows, "truncated": truncated,
+            "counts": {"changed": len(rows), "added": 0, "removed": 0,
+                       "same": same, "total": len(rows)}}
+
+
+def _eq(a: Any, b: Any) -> bool:
+    try:
+        from .differ import compare_equal
+        return compare_equal(a, b)
+    except Exception:  # noqa: BLE001 — fall back to plain equality
+        return a == b
+
+
 def prune(doc: Any, paths: Iterable[str]) -> Any:
     """``doc`` reduced to ``paths`` and the containers on the way to them.
 

@@ -49,22 +49,38 @@
         {% endif %}
       </select>
     </label>
-    <a class="btn-sm outline" href="/compare-hub?src={{ a_ref | urlencode }}&amp;src={{ b_ref | urlencode }}"
+    {# Customer (2026-08-27): an optional THIRD source. Empty = the 2-way page
+       exactly as before; set = the list view and the figures tab grow a C
+       column (the tree keeps reading A -> B). #}
+    <span class="diff-vs diff-vs-c">+</span>
+    <label class="diff-side diff-side-c">
+      <span class="diff-side-tag">C</span>
+      <select name="c">
+        <option value="">— optional third —</option>
+        {% for o in options %}
+        <option value="{{ o.ref }}" {% if o.ref == c_ref %}selected{% endif %}>{{ o.label }}</option>
+        {% endfor %}
+        {% if c_ref and c_ref not in options | map(attribute='ref') | list %}
+        <option value="{{ c_ref }}" selected>{{ src_c.label if src_c else c_ref }}</option>
+        {% endif %}
+      </select>
+    </label>
+    <a class="btn-sm outline" href="/compare-hub?src={{ a_ref | urlencode }}&amp;src={{ b_ref | urlencode }}{% if c_ref %}&amp;src={{ c_ref | urlencode }}{% endif %}"
        title="The full comparison hub — entity mapping across different devices, tolerance presets, N-way baskets">Advanced…</a>
   </form>
 
   <div class="ph-tabs diff-wb-tabs">
     {% for t in tabs %}
     <button type="button" class="ph-tab{% if t == tab %} active{% endif %}"
-            hx-get="/diff?a={{ a_ref | urlencode }}&amp;b={{ b_ref | urlencode }}&amp;tab={{ t }}&amp;view={{ view }}"
+            hx-get="/diff?a={{ a_ref | urlencode }}&amp;b={{ b_ref | urlencode }}&amp;c={{ c_ref | urlencode }}&amp;tab={{ t }}&amp;view={{ view }}"
             hx-target="#diff-root" hx-swap="outerHTML" hx-push-url="true">
       {{ {'state': 'state.json', 'wiring': 'wiring.json',
-          'node': 'node.json', 'data': 'data'}[t] }}</button>
+          'node': 'node.json', 'data': 'data', 'figures': 'figures'}[t] }}</button>
     {% endfor %}
     <span class="diff-view-toggle">
       {% for v, label in (('tree', 'Tree'), ('list', 'List')) %}
       <button type="button" class="btn-xs{% if v != view %} outline{% endif %}"
-              hx-get="/diff?a={{ a_ref | urlencode }}&amp;b={{ b_ref | urlencode }}&amp;tab={{ tab }}&amp;view={{ v }}"
+              hx-get="/diff?a={{ a_ref | urlencode }}&amp;b={{ b_ref | urlencode }}&amp;c={{ c_ref | urlencode }}&amp;tab={{ tab }}&amp;view={{ v }}"
               hx-target="#diff-root" hx-swap="outerHTML" hx-push-url="true"
               title="{{ 'Nested, with context' if v == 'tree' else 'Flat, biggest change first' }}">{{ label }}</button>
       {% endfor %}
@@ -77,6 +93,32 @@
     <p class="diff-wb-msg muted">Pick two sources to compare.</p>
   {% elif payload and not payload.ok %}
     <p class="diff-wb-msg muted">{{ payload.unavailable }}</p>
+  {% elif payload and payload.figures %}
+    {# Customer (2026-08-27): the figures tab -- one column per source, one
+       row per figure name, figures listed down the page. Cells are the run's
+       own images through /diff/fig; a run that lacks a figure shows a blank,
+       never a substitute. Wrapped as a figure grid so the viewer's arrows
+       walk A -> B -> C of the same figure, then the next one. #}
+    <div class="diff-wb-figs compare-figure-grid"
+         style="grid-template-columns: max-content repeat({{ payload.cols | length }}, 1fr)">
+      <div class="compare-figure-run-label diff-fig-corner"></div>
+      {% for col in payload.cols %}
+      <div class="compare-figure-run-label" title="{{ col.ref }}">{{ col.slot | upper }} · {{ col.label }}{% if col.why %} <span class="muted">({{ col.why }})</span>{% endif %}</div>
+      {% endfor %}
+      {% for name in payload.names %}
+      <div class="diff-fig-name"><code>{{ name }}</code></div>
+      {% for col in payload.cols %}
+      <div class="compare-figure-cell">
+        {% if col.has[name] %}
+        <img src="/diff/fig?ref={{ col.ref | urlencode }}&amp;name={{ name | urlencode }}"
+             alt="{{ col.slot | upper }} · {{ name }}" loading="lazy" onclick="toggleFigureZoom(this)">
+        {% else %}
+        <div class="compare-figure-na">—</div>
+        {% endif %}
+      </div>
+      {% endfor %}
+      {% endfor %}
+    </div>
   {% elif payload %}
     {% set c = payload.counts %}
     <div class="diff-wb-counts">
@@ -104,7 +146,7 @@
        through that gap, and expect_chip structurally cannot catch it (the
        token names the ACTIVE chip, which is the one being written). #}
     {% set _take_from = None %}
-    {% if take_active_ok and tab in ('state', 'wiring') and src_a and src_b %}
+    {% if take_active_ok and tab in ('state', 'wiring') and src_a and src_b and not src_c %}
       {% if src_b.origin == 'working' and src_a.origin != 'working' %}
         {% set _take_from = 'a' %}
       {% elif src_a.origin == 'working' and src_b.origin != 'working' %}
@@ -114,6 +156,32 @@
     {% if c.total == 0 %}
       <p class="diff-wb-msg muted">These two are identical
         ({{ '{:,}'.format(c.same) }} values compared).</p>
+    {% elif view == 'list' and src_c %}
+      {# 3-way list (customer 2026-08-27): the 2-way table below is untouched;
+         this one adds the C column with its own arrow + delta. #}
+      <table class="diff-wb-list diff-wb-list-3">
+        <thead><tr><th>Parameter</th><th>A</th><th></th><th>B</th><th>Δ</th><th></th><th>C</th><th>Δ</th></tr></thead>
+        <tbody>
+        {% for r in rows %}
+          <tr class="diff-row-changed" data-diff3="1">
+            <td class="diff-list-path"><code>{{ r.path }}</code></td>
+            <td class="diff-list-a">{% if r.present[0] %}<code>{{ r.vals[0] | groupdigits }}</code>{% else %}<span class="muted">—</span>{% endif %}</td>
+            <td class="diff-list-arrow">&rarr;</td>
+            <td class="diff-list-b">{% if r.present[1] %}<code>{{ r.vals[1] | groupdigits }}</code>{% else %}<span class="muted">—</span>{% endif %}</td>
+            <td class="diff-list-delta">{% if r.present[0] and r.present[1] %}{{ delta_chip(r.vals[0], r.vals[1]) }}{% endif %}</td>
+            <td class="diff-list-arrow">&rarr;</td>
+            <td class="diff-list-c">{% if r.present[2] %}<code>{{ r.vals[2] | groupdigits }}</code>{% else %}<span class="muted">—</span>{% endif %}</td>
+            <td class="diff-list-delta">{% if r.present[1] and r.present[2] %}{{ delta_chip(r.vals[1], r.vals[2]) }}{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% if more %}
+      <p class="diff-wb-msg muted">{{ '{:,}'.format(more) }} more rows —
+        <a href="/diff?a={{ a_ref | urlencode }}&amp;b={{ b_ref | urlencode }}&amp;c={{ c_ref | urlencode }}&amp;tab={{ tab }}&amp;view=list&amp;rows={{ next_rows }}"
+           hx-get="/diff?a={{ a_ref | urlencode }}&amp;b={{ b_ref | urlencode }}&amp;c={{ c_ref | urlencode }}&amp;tab={{ tab }}&amp;view=list&amp;rows={{ next_rows }}"
+           hx-target="#diff-root" hx-swap="outerHTML">show more</a></p>
+      {% endif %}
     {% elif view == 'list' %}
       <table class="diff-wb-list">
         <thead><tr><th>Parameter</th><th>A</th><th></th><th>B</th><th>Δ</th>{% if _take_from %}<th></th>{% endif %}</tr></thead>
@@ -165,6 +233,7 @@
       </div>
       {% endif %}
     {% else %}
+      {% if src_c %}<p class="diff-wb-msg muted diff-tree-c-note">Tree view reads A &rarr; B; switch to List to see C beside them.</p>{% endif %}
       <div class="tree-toolbar diff-tree-toolbar">
         <span class="tree-search-icon">&#128269;</span>
         <input type="text" class="tree-search" id="diff-tree-search"
