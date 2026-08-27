@@ -420,10 +420,11 @@ emit it; the server expands each path to its operation plus every operation
 whose pointer resolves into it, `_pulse_rows_touched`) is handled by app.js,
 which re-renders only those rows through the new `GET /pulse/row?path=` —
 `_pulse_row.html`, the same partial the table loop uses — keeping a patched
-row's checkbox. The table's own trigger is filtered
-(`pulses-changed[!(event.detail && event.detail.paths)]`) so it re-fetches
-only for a structural change (create / delete / rename / duplicate / a state
-restore) or a legacy plain trigger. More than 24 touched rows ⇒ the server
+row's checkbox. Two event NAMES, not an htmx `[filter]`: a trigger filter
+needs eval and the app's CSP forbids it, so a filter is silently ignored
+(measured — the whole-table re-fetch fired anyway). `pulses-rows-changed`
+carries the paths; `pulses-changed` stays the structural / legacy whole-table
+re-fetch (create / delete / rename / duplicate / a state restore). More than 24 touched rows ⇒ the server
 says structural instead. Pinned by `TestPulseRow` (route, one-template
 identity, the trigger payload after an edit and its undo including the
 pointer-linked sibling) and `undo_pages_selfcheck.cjs` (the client patcher).

@@ -9809,14 +9809,18 @@ def _pulse_root_of(dot_path: str, known: set[str]) -> str | None:
     return None
 
 
-def _pulses_changed_payload(store, pulse_index, paths):
-    """``{"paths": [...]}`` when the rows can be patched one by one, else
-    ``True`` (the table re-fetches wholesale)."""
+def _pulses_changed_payload(store, pulse_index, paths) -> dict:
+    """The HX-Trigger entries for a value change: ``pulses-rows-changed``
+    with the rows that can be patched one by one, else the structural
+    ``pulses-changed`` (the table re-fetches wholesale). Two event NAMES
+    because an htmx trigger filter needs eval, which the CSP forbids."""
     try:
         roots = _pulse_rows_touched(store, pulse_index, paths) if pulse_index else None
     except Exception:  # noqa: BLE001
         roots = None
-    return {"paths": roots} if roots is not None else True
+    if roots is None:
+        return {"pulses-changed": True}
+    return {"pulses-rows-changed": {"paths": roots}}
 
 
 @bp.route("/pulse/row")
@@ -10133,7 +10137,7 @@ def _pulse_mutation_response(detail, *, trigger: bool = True, paths=None):
             # open table patches them in place; a structural change (create /
             # delete / rename / duplicate) keeps the plain trigger = re-fetch
             resp.headers["HX-Trigger"] = json.dumps({
-                "pulses-changed": _pulses_changed_payload(_store(), _pulse_index(), paths),
+                **_pulses_changed_payload(_store(), _pulse_index(), paths),
                 "diagnostics-changed": True})
         else:
             resp.headers["HX-Trigger"] = "pulses-changed, diagnostics-changed"
@@ -11705,7 +11709,7 @@ def undo():
         },
         # open Pulses rows re-render in place for these paths (docs/141 4j);
         # no-op elsewhere
-        "pulses-changed": _pulses_changed_payload(store, _pulse_index(), [e.dot_path for e in entries]),
+        **_pulses_changed_payload(store, _pulse_index(), [e.dot_path for e in entries]),
         "diagnostics-changed": True,
     })
     return resp
@@ -11976,8 +11980,8 @@ def _redo_response(message: str, entries_payload: list[dict], extra: dict | None
     _store_ = _ctx_.get("store") if _ctx_ else None
     resp.headers["HX-Trigger"] = json.dumps({
         "cellsReverted": payload,
-        "pulses-changed": _pulses_changed_payload(_store_, _pulse_index(),
-                                                 [e.get("dot_path") for e in entries_payload]) if _store_ else True,
+        **(_pulses_changed_payload(_store_, _pulse_index(), [e.get("dot_path") for e in entries_payload])
+           if _store_ else {"pulses-changed": True}),
         "diagnostics-changed": True,
     })
     return resp

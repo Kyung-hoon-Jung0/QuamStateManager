@@ -305,7 +305,7 @@ class TestPulseEdit:
         # docs/141 4j: a VALUE commit names the row it touched (JSON form)
         import json as _json
         trig = _json.loads(resp.headers.get("HX-Trigger"))
-        assert trig["pulses-changed"]["paths"] == [f"{XY}.saturation"] and trig["diagnostics-changed"] is True
+        assert trig["pulses-rows-changed"]["paths"] == [f"{XY}.saturation"] and trig["diagnostics-changed"] is True and "pulses-changed" not in trig
         assert "pending-tray" in resp.data.decode()
         html = loaded_client.get(f"/pulse/detail?path={XY}.saturation").data.decode()
         assert "0.009" in html
@@ -824,7 +824,8 @@ class TestReviewFixes:
             "dot_path": f"{XY}.saturation.amplitude",
             "mode": "value", "value": "0.009"})
         resp = loaded_client.post("/undo")
-        assert "pulses-changed" in (resp.headers.get("HX-Trigger") or "")
+        _h = resp.headers.get("HX-Trigger") or ""
+        assert ("pulses-rows-changed" in _h) or ("pulses-changed" in _h)   # docs/141 4j: a value change names its rows
 
     def test_discard_fires_pulses_changed(self, loaded_client):
         loaded_client.post("/pulse/edit", data={
@@ -832,7 +833,8 @@ class TestReviewFixes:
             "dot_path": f"{XY}.saturation.amplitude",
             "mode": "value", "value": "0.009"})
         resp = loaded_client.post("/discard", data={"index": "0"})
-        assert "pulses-changed" in (resp.headers.get("HX-Trigger") or "")
+        _h = resp.headers.get("HX-Trigger") or ""
+        assert ("pulses-rows-changed" in _h) or ("pulses-changed" in _h)   # docs/141 4j: a value change names its rows
 
     def test_rows_fresh_after_raw_reload(self, loaded_client, app):
         """PulseIndex self-validates via mutation_seq — even a bare
@@ -1478,14 +1480,17 @@ class TestPulseRow:
         })
         trig = _json.loads(resp.headers["HX-Trigger"])
         # x90's length POINTS at x180's: both rows changed
-        assert set(trig["pulses-changed"]["paths"]) >= {f"{XY}.x180_DragCosine", f"{XY}.x90_DragCosine"}
+        assert set(trig["pulses-rows-changed"]["paths"]) >= {f"{XY}.x180_DragCosine", f"{XY}.x90_DragCosine"}
         assert trig["diagnostics-changed"] is True
         und = _json.loads(loaded_client.post("/undo").headers["HX-Trigger"])
-        assert set(und["pulses-changed"]["paths"]) >= {f"{XY}.x180_DragCosine", f"{XY}.x90_DragCosine"}
+        assert set(und["pulses-rows-changed"]["paths"]) >= {f"{XY}.x180_DragCosine", f"{XY}.x90_DragCosine"}
 
     def test_the_table_only_refetches_for_a_structural_change(self):
         from pathlib import Path as _P
         tpl = (_P(__file__).resolve().parent.parent / "quam_state_manager" / "web" / "templates" / "_pulses.html").read_text(encoding="utf-8")
-        assert 'hx-trigger="pulses-changed[!(event.detail && event.detail.paths)] from:body delay:400ms"' in tpl
+        # two event NAMES (an htmx [filter] needs eval, which the CSP forbids -- measured: ignored)
+        assert 'hx-trigger="pulses-changed from:body delay:400ms"' in tpl and "[" not in tpl.split('hx-trigger="pulses-changed')[1].split('"')[0]
         app = (_P(__file__).resolve().parent.parent / "quam_state_manager" / "web" / "static" / "app.js").read_text(encoding="utf-8")
-        assert 'document.addEventListener("pulses-changed", function (evt) {' in app and '"/pulse/row?path="' in app
+        assert 'document.addEventListener("pulses-rows-changed", function (evt) {' in app and '"/pulse/row?path="' in app
+        cs = (_P(__file__).resolve().parent.parent / "quam_state_manager" / "web" / "static" / "chip-status.js").read_text(encoding="utf-8")
+        assert "addEventListener('pulses-rows-changed', onStateMutated)" in cs

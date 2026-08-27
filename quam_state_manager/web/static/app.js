@@ -15574,10 +15574,11 @@ window.pulseTabActive = function (a) {
  * searched keyword + the pressed All/XY/Z/Resonator/Pair-flux badge. With the state
  * in the URL, the server re-renders the input value={{q}} + the active badge, so it
  * survives every path (the route already reads ?channel= / ?q=). */
-/* docs/141 4j: a pulses-changed event that carries paths re-renders only the
-   touched rows (GET /pulse/row) -- the whole-table re-fetch stays for
-   structural changes. The checked state of a patched row survives the swap. */
-document.addEventListener("pulses-changed", function (evt) {
+/* docs/141 4j: `pulses-rows-changed` carries the paths a value change
+   touched and re-renders only those rows (GET /pulse/row); `pulses-changed`
+   stays the structural whole-table re-fetch (its own htmx trigger). The
+   checked state of a patched row survives the swap. */
+document.addEventListener("pulses-rows-changed", function (evt) {
     var d = evt && evt.detail;
     if (!d || !Array.isArray(d.paths) || !window.htmx) return;
     var wrap = document.getElementById("pulses-rows-wrap");

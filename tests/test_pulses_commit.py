@@ -81,7 +81,7 @@ class TestRefreshDebouncePins:
 
     def test_pulses_table_refresh_is_debounced(self):
         html = _PULSES_HTML.read_text(encoding="utf-8")
-        assert 'hx-trigger="pulses-changed[!(event.detail && event.detail.paths)] from:body delay:400ms"' in html
+        assert 'hx-trigger="pulses-changed from:body delay:400ms"' in html
 
     def test_diagnostics_refresh_is_debounced(self):
         html = _BASE_HTML.read_text(encoding="utf-8")

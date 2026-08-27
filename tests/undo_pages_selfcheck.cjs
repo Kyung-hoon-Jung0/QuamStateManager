@@ -149,12 +149,12 @@ setTimeout(function () {
             d.body.appendChild(wrap2);
             const ajaxed2 = [];
             window.htmx.ajax = (m, u, o) => { ajaxed2.push(m + ' ' + u + ' -> ' + (o && o.target && o.target.getAttribute ? o.target.getAttribute('data-pulse-path') : o.target) + ' ' + (o && o.swap)); return Promise.resolve(); };
-            d.dispatchEvent(new CustomEvent('pulses-changed', { detail: { paths: ['qubits.q1.xy.operations.x180', 'qubits.q1.xy.operations.x180', 'qubits.q9.xy.operations.nope'] }, bubbles: true }));
+            d.dispatchEvent(new CustomEvent('pulses-rows-changed', { detail: { paths: ['qubits.q1.xy.operations.x180', 'qubits.q1.xy.operations.x180', 'qubits.q9.xy.operations.nope'] }, bubbles: true }));
             ok(ajaxed2.length === 1 && ajaxed2[0] === 'GET /pulse/row?path=qubits.q1.xy.operations.x180 -> qubits.q1.xy.operations.x180 outerHTML',
                'a paths-carrying pulses-changed re-renders exactly the touched row that exists (' + ajaxed2.join(' | ') + ')');
             d.dispatchEvent(new CustomEvent('pulses-changed', { detail: true, bubbles: true }));
             d.dispatchEvent(new CustomEvent('pulses-changed', { bubbles: true }));
-            ok(ajaxed2.length === 1, 'an event without paths patches nothing (the whole-table trigger owns it)');
+            ok(ajaxed2.length === 1, 'the structural pulses-changed patches nothing here (the whole-table htmx trigger owns it)');
             wrap2.remove();
             setTimeout(function () { process.exit(fails ? 1 : 0); }, 120);   // after the never-expanded-leaf pins above
         }, 50);

@@ -3097,6 +3097,7 @@ window.ChipStatus.liveDetection = function () {
         metricsRefreshTimer = setTimeout(refreshMetrics, 250);
     }
     document.body.addEventListener('pulses-changed', onStateMutated);
+    document.body.addEventListener('pulses-rows-changed', onStateMutated);   // a value change (docs/141 4j)
     document.body.addEventListener('diagnostics-changed', onStateMutated);
 
     // Cleanup on navigation away from the topology view.
@@ -3106,6 +3107,7 @@ window.ChipStatus.liveDetection = function () {
             clearTimeout(debounceTimer);
             clearTimeout(metricsRefreshTimer);
             document.body.removeEventListener('pulses-changed', onStateMutated);
+            document.body.removeEventListener('pulses-rows-changed', onStateMutated);
             document.body.removeEventListener('diagnostics-changed', onStateMutated);
             document.body.removeEventListener('htmx:beforeSwap', cleanup);
         }
