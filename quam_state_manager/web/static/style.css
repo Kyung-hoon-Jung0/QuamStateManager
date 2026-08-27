@@ -899,13 +899,17 @@ html.topbar-hidden #topbar-tray-slot {
     display: inline-flex; position: fixed; top: 6px; left: 42px; z-index: 120;
     pointer-events: auto;
 }
-html.topbar-hidden #topbar-tray-slot > :not(#pending-tray) { display: none; }
+/* The Auto-Sync pill floats too (user-confirmed), and its popup host stays —
+   the popup is position:fixed inside that host, so hiding the host would
+   swallow every click on the floating pill. */
+html.topbar-hidden #topbar-tray-slot > :not(#pending-tray):not(#auto-sync-pop-host) { display: none; }
 html.topbar-hidden #pending-tray {
-    display: inline-flex; margin: 0; padding: 0;
+    display: inline-flex; align-items: center; gap: .3rem; margin: 0; padding: 0;
     background: transparent; border: 0; box-shadow: none;
 }
-html.topbar-hidden #pending-tray > :not(.state-status-badge) { display: none; }
-html.topbar-hidden #pending-tray > .state-status-badge {
+html.topbar-hidden #pending-tray > :not(.state-status-badge):not(.auto-sync-wrap) { display: none; }
+html.topbar-hidden #pending-tray > .state-status-badge,
+html.topbar-hidden #pending-tray > .auto-sync-wrap {
     display: inline-flex; margin: 0; box-shadow: 0 2px 8px rgba(0,0,0,.25);
 }
 html.topbar-hidden { --topbar-height: 0px; }

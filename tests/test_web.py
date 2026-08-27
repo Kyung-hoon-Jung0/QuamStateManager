@@ -210,9 +210,16 @@ class TestRound15ChromeHiding:
         assert "position: fixed" in slot and "pointer-events: auto" in slot, (
             "The tray slot must float out of the collapsed bar and stay clickable."
         )
-        # inside the tray, ONLY the badge shows
-        assert "html.topbar-hidden #pending-tray > :not(.state-status-badge) { display: none; }" in css
-        badge = css.split("html.topbar-hidden #pending-tray > .state-status-badge {", 1)[1].split("}", 1)[0]
+        # inside the tray, ONLY the badge and the Auto-Sync pill show (the
+        # user confirmed the pill should float too) — and the pill's popup
+        # host must not be hidden with the other slot children, or every click
+        # on the floating pill would be swallowed.
+        assert ("html.topbar-hidden #pending-tray > :not(.state-status-badge)"
+                ":not(.auto-sync-wrap) { display: none; }") in css
+        assert ("html.topbar-hidden #topbar-tray-slot > :not(#pending-tray)"
+                ":not(#auto-sync-pop-host) { display: none; }") in css
+        assert 'class="auto-sync-wrap"' in tray and 'id="auto-sync-pop-host"' in base
+        badge = css.split("html.topbar-hidden #pending-tray > .auto-sync-wrap {", 1)[1].split("}", 1)[0]
         assert "display: inline-flex" in badge
         # no JS relocation — the badge is never appended anywhere else
         js = self._read("web", "static", "app.js")
