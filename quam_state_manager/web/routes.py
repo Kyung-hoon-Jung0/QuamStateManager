@@ -1446,11 +1446,16 @@ def _warm_state_schema_async(store, inst, live_folder=None) -> None:
     if not python_path:
         return
     try:
-        if state_env_schema.manifest_for_store(store, python_path, inst,
-                                               cached_only=True) is not None:
-            return                                # already warm — zero cost
         with store._lock:
             classes = state_env_schema.harvest_classes(store.state)
+        if state_env_schema.manifest_for_store(store, python_path, inst,
+                                               cached_only=True) is not None:
+            # the manifest is warm -- the Config Manual's catalogue may not be
+            # (a manifest cache predating it, or a cooled signature): start
+            # that alone, quietly (docs/141 4l-review)
+            if state_env_schema.catalog_for_env(python_path, inst, classes) is None:
+                _start_catalog_warm(python_path, classes, inst)
+            return                                # already warm — zero cost
     except Exception:  # noqa: BLE001 — warm-up must never break activation
         return
     key = python_path + "|" + ",".join(sorted(classes))
@@ -1467,8 +1472,8 @@ def _warm_state_schema_async(store, inst, live_folder=None) -> None:
             # manifest, so it is ready by the time someone opens the manual
             # (a cold catalogue never blocks a request).
             try:
-                if state_env_schema.catalog_for_env(python_path, inst) is None:
-                    state_env_schema.probe_catalog(python_path, classes, inst)
+                if state_env_schema.catalog_for_env(python_path, inst, classes) is None:
+                    _start_catalog_warm(python_path, classes, inst)   # the one single-flight key
             except Exception:  # noqa: BLE001
                 logger.debug("catalogue warm-up failed", exc_info=True)
             if res.get("ok") and live_folder:
@@ -9787,16 +9792,59 @@ def _pulse_rows_touched(store, pulse_index, paths) -> list[str] | None:
         if not isinstance(dp, str):
             continue
         root = _pulse_root_of(dp, known)
-        if root and root not in roots:
+        # docs/141 4l-review: a path that IS a pulse (a create / delete /
+        # rename / duplicate, or their undo) or that no pulse row owns (the
+        # anharmonicity a DRAG pulse points at, a qubit field) is a
+        # STRUCTURAL change -- the table re-fetches wholesale (pre-4j)
+        if root is None or root == dp:
+            return None
+        if root not in roots:
             roots.append(root)
-        if root:
-            for ref in used_by(store.merged, root, rev):
-                r2 = _pulse_root_of(ref, known)
-                if r2 and r2 not in roots:
-                    roots.append(r2)
+        for ref in used_by(store.merged, root, rev):
+            r2 = _pulse_root_of(ref, known)
+            if r2 and r2 not in roots:
+                roots.append(r2)
         if len(roots) > 24:
             return None
     return roots
+
+
+def _raw_at(store, dot_path: str):
+    node = store.merged
+    for seg in str(dot_path).split("."):
+        if isinstance(node, dict):
+            node = node.get(seg)
+        elif isinstance(node, list) and seg.isdigit() and int(seg) < len(node):
+            node = node[int(seg)]
+        else:
+            return None
+    return node
+
+
+def _pulses_changed_for_entries(store, pulse_index, entries) -> dict:
+    """Undo / redo: an entry that creates or deletes a subtree, or that moves
+    a POINTER (its old target's used_by changed too), is structural -- the
+    row patch cannot see the other end (docs/141 4l-review)."""
+    def _g(e, k):
+        return e.get(k) if isinstance(e, dict) else getattr(e, k, None)
+
+    def _ptr(v):
+        return isinstance(v, str) and v.startswith("#")
+
+    paths = []
+    for e in entries or []:
+        dp = _g(e, "dot_path")
+        if _g(e, "created") or _g(e, "deleted"):
+            return {"pulses-changed": True}
+        if _ptr(_g(e, "old_value")) or _ptr(_g(e, "old_value_str")) or _ptr(_g(e, "new_value")):
+            return {"pulses-changed": True}
+        try:
+            if _ptr(_raw_at(store, dp)):
+                return {"pulses-changed": True}
+        except Exception:  # noqa: BLE001
+            return {"pulses-changed": True}
+        paths.append(dp)
+    return _pulses_changed_payload(store, pulse_index, paths)
 
 
 def _pulse_root_of(dot_path: str, known: set[str]) -> str | None:
@@ -9823,6 +9871,39 @@ def _pulses_changed_payload(store, pulse_index, paths) -> dict:
     return {"pulses-rows-changed": {"paths": roots}}
 
 
+def _pulse_rows_filter(rows: list, channel: str, query: str) -> list:
+    """The Pulses table's channel tab + search filter: ONE truth for the page
+    and for ``/pulse/row`` (docs/141 4l-review), so a patched row that no
+    longer matches the active filter leaves the table."""
+    from quam_state_manager.core.pulse_index import GATE_SLOTS, PAIR_PULSE_CHANNELS
+    if channel == "flux":
+        # pair-gate flux slots only -- pair drive channels have their own tab
+        # (this filter used to be `owner_kind == "pair"`, which would silently
+        # swallow the CR rows into "Pair flux")
+        rows = [r for r in rows if r["owner_kind"] == "pair" and r["channel"] in GATE_SLOTS]
+    elif channel == "pair_drive":
+        rows = [r for r in rows if r["owner_kind"] == "pair" and r["channel"] in PAIR_PULSE_CHANNELS]
+    elif channel in ("xy", "z", "resonator", "xy_detuned"):
+        rows = [r for r in rows if r["owner_kind"] == "qubit" and r["channel"] == channel]
+    # SERVER-side search across the WHOLE library (not just the current page --
+    # the old client filter only saw the 50 rendered rows, so qubits on later
+    # pages were unfindable). Shared grammar (docs/96): space = AND, standalone
+    # | = OR; the haystack is owner / op name / class / channel / alias target /
+    # summary -- purely metadata, no waveform synthesis.
+    if query:
+        from quam_state_manager.core.search_query import groups as _sq_groups
+        from quam_state_manager.core.search_query import matches_hay as _sq_match
+        grps = _sq_groups(query)
+
+        def _hay(r):
+            return " ".join(str(x) for x in (
+                r.get("owner"), r.get("op_name"), r.get("class_short"),
+                r.get("channel"), r.get("alias_target"), r.get("summary"),
+            ) if x).lower()
+        rows = [r for r in rows if _sq_match(_hay(r), grps)]
+    return rows
+
+
 @bp.route("/pulse/row")
 def pulse_row():
     """ONE pulse row, freshly rendered (docs/141 4j) -- what a value change
@@ -9835,6 +9916,11 @@ def pulse_row():
     row = next((r for r in pulse_index.rows() if r["path"] == path), None)
     if row is None:
         return "", 404
+    # the page's active filter rides along: a row that no longer matches it
+    # answers 204 and the client removes it (docs/141 4l-review)
+    if not _pulse_rows_filter([row], request.args.get("channel", ""),
+                              (request.args.get("q") or "").strip()):
+        return "", 204
     row = dict(row)
     from quam_state_manager.core.waveform_synth import sparkline_svg, synth_for_operation
     if row.get("is_alias") or not row.get("known"):
@@ -9883,37 +9969,7 @@ def pulses_page():
     has_pair_drive = any(r["owner_kind"] == "pair"
                          and r["channel"] in PAIR_PULSE_CHANNELS
                          for r in all_rows)
-    if channel == "flux":
-        # pair-gate flux slots only — pair drive channels have their own tab
-        # (this filter used to be `owner_kind == "pair"`, which would silently
-        # swallow the CR rows into "Pair flux")
-        all_rows = [r for r in all_rows if r["owner_kind"] == "pair"
-                    and r["channel"] in GATE_SLOTS]
-    elif channel == "pair_drive":
-        all_rows = [r for r in all_rows if r["owner_kind"] == "pair"
-                    and r["channel"] in PAIR_PULSE_CHANNELS]
-    elif channel in ("xy", "z", "resonator", "xy_detuned"):
-        all_rows = [r for r in all_rows
-                    if r["owner_kind"] == "qubit" and r["channel"] == channel]
-
-    # SERVER-side search across the WHOLE library (not just the current page —
-    # the old client filter only saw the 50 rendered rows, so qubits on later
-    # pages were unfindable). AND-tokens over owner / op name / class / channel
-    # / alias target / summary — purely metadata, no waveform synthesis.
-    if query:
-        # Shared grammar (docs/96): space = AND, standalone | = OR. A plain
-        # query parses to singleton groups == the old every-term all(). The
-        # haystack is built once per row now — it used to be re-joined once
-        # per TERM (harmless at 0.4-1 ms over real chips, just wasteful).
-        from quam_state_manager.core.search_query import groups as _sq_groups
-        from quam_state_manager.core.search_query import matches_hay as _sq_match
-        grps = _sq_groups(query)
-        def _hay(r):
-            return " ".join(str(x) for x in (
-                r.get("owner"), r.get("op_name"), r.get("class_short"),
-                r.get("channel"), r.get("alias_target"), r.get("summary"),
-            ) if x).lower()
-        all_rows = [r for r in all_rows if _sq_match(_hay(r), grps)]
+    all_rows = _pulse_rows_filter(all_rows, channel, query)
 
     page_rows, total, page, total_pages = _paginate(all_rows, page, per_page)
 
@@ -9962,10 +10018,11 @@ def pulse_detail():
     to four, comma-separated), several pulses on one plot, each with its own
     editable parameter section (docs/141 4k)."""
     path = request.args.get("path", "").strip()
-    paths = _view_paths_arg(request.args.get("paths"))
+    requested = _view_paths_split(request.args.getlist("paths"))
+    paths = _view_paths_arg(requested)
     if paths and not path:
         path = paths[0]
-    return _render_pulse_detail(path, paths=paths or None)
+    return _render_pulse_detail(path, paths=paths or None, requested=requested)
 
 
 _PULSE_VIEW_MAX = 4
@@ -9974,13 +10031,27 @@ _PULSE_VIEW_MAX = 4
 _PULSE_SECTION_HUES = ("var(--pico-primary)", "#e67e22", "#9b59b6", "#2bb673", "#e74c3c")
 
 
-def _view_paths_arg(raw) -> list[str]:
+def _view_paths_split(raw) -> list[str]:
+    """Every pulse path a view request names, in order, deduplicated -- from
+    repeated ``paths=`` params (a comma is legal inside a foreign op name,
+    docs/141 4l-review); a single comma-joined value is still accepted when
+    its parts are pulse paths."""
+    items = list(raw) if isinstance(raw, (list, tuple)) else [raw]
     out: list[str] = []
-    for part in (raw or "").split(","):
-        part = part.strip()
-        if part and part not in out and _is_pulse_path(part):
-            out.append(part)
-    return out[:_PULSE_VIEW_MAX]
+    for it in items:
+        it = (it or "").strip() if isinstance(it, str) else ""
+        if not it:
+            continue
+        parts = [it] if _is_pulse_path(it) else [p.strip() for p in it.split(",")]
+        for part in parts:
+            if part and part not in out:
+                out.append(part)
+    return out
+
+
+def _view_paths_arg(raw) -> list[str]:
+    """The pulse paths of a view: the valid ones, at most the view's four."""
+    return [p for p in _view_paths_split(raw) if _is_pulse_path(p)][:_PULSE_VIEW_MAX]
 
 
 def _pulse_section_role(path: str) -> str:
@@ -9997,7 +10068,8 @@ def _pulse_section_role(path: str) -> str:
 
 
 def _render_pulse_detail(path: str, *, status_msg: str | None = None,
-                         status_level: str = "success", paths: list[str] | None = None):
+                         status_level: str = "success", paths: list[str] | None = None,
+                         requested: list[str] | None = None):
     """Shared renderer for the pulse detail partial (GET + mutation responses).
 
     docs/141 4k: the inspector is a VIEW of one to four pulses -- the main
@@ -10028,6 +10100,11 @@ def _render_pulse_detail(path: str, *, status_msg: str | None = None,
         if not isinstance(ctx, tuple):
             sections.append(ctx)
     view_paths = [sec["path"] for sec in sections]
+    # docs/141 4l-review: never a silent drop -- a requested pulse that is
+    # unknown, not a pulse, failed to render or fell beyond the four-pulse
+    # view is NAMED in the view bar
+    dropped = [p_ for p_ in (requested if requested is not None else (paths or []))
+               if p_ not in view_paths and p_ != path]
     for i, sec in enumerate(sections):
         sec["index"] = i
         sec["color"] = _PULSE_SECTION_HUES[i % len(_PULSE_SECTION_HUES)]
@@ -10058,7 +10135,8 @@ def _render_pulse_detail(path: str, *, status_msg: str | None = None,
     return render_template(
         "_pulse_detail.html",
         sections=sections,
-        view_paths=",".join(view_paths),
+        view_paths=view_paths,
+        dropped=dropped,
         view_mode=mode,
         main_path=path,
         detail_json=detail_json,
@@ -10271,6 +10349,14 @@ def pulse_edit():
                                message="identity / type key — read-only",
                                level="error"), 400
 
+    # docs/141 4l-review: a re-link / break-link changes the OLD target's
+    # used_by too -- resolve it BEFORE the write so its row is patched
+    _old_target = None
+    if mode in ("pointer", "literal"):
+        try:
+            _old_target = _resolve_edit_path(store, dot_path)
+        except Exception:  # noqa: BLE001 -- a dangling pointer has no target
+            _old_target = None
     try:
         if mode == "pointer":
             value = raw_value.strip()
@@ -10344,14 +10430,22 @@ def pulse_edit():
         _touched.append(_resolve_edit_path(store, dot_path))
     except Exception:  # noqa: BLE001 -- a pointer-mode write has no resolved target
         pass
+    if _old_target and _old_target not in _touched:
+        _touched.append(_old_target)
     # docs/141 4k: the form says which VIEW it lives in (main pulse + every
     # section), so the re-render keeps the same sections in the same order
     view_main = (request.form.get("view_main") or "").strip() or path
-    view_paths = _view_paths_arg(request.form.get("view_paths"))
+    view_paths = _view_paths_arg(request.form.getlist("view_paths"))
     if not _is_pulse_path(view_main):
         view_main = path
-    return _pulse_mutation_response(
-        _render_pulse_detail(view_main, paths=view_paths or None), paths=_touched)
+    resp = _render_pulse_detail(view_main, paths=view_paths or None)
+    if isinstance(resp, tuple) and view_main != path:
+        # docs/141 4l-review: the write already succeeded; a main pulse that
+        # vanished meanwhile (another window renamed it) must not turn into
+        # a 404 the UI drops -- re-render around the pulse just edited
+        view_paths = [p_ for p_ in view_paths if p_ != view_main]
+        resp = _render_pulse_detail(path, paths=view_paths or None)
+    return _pulse_mutation_response(resp, paths=_touched)
 
 
 @bp.route("/api/pulse/synth", methods=["POST"])
@@ -10442,48 +10536,88 @@ def _manual_manifest(ctx) -> dict | None:
         return None
 
 
-def _manual_catalog(ctx) -> tuple[dict | None, str]:
-    """The cached class catalogue for the selected env and its state:
-    ``ready`` / ``loading`` (a warm-up was started) / ``none`` (no env)."""
+# docs/141 4l-review: the outcome of the last catalogue probe per interpreter.
+# A probe that failed (no quam in the env, a deleted interpreter, a read-only
+# instance dir) used to be forgotten instantly -- every /api/manual spawned a
+# fresh subprocess and answered "loading" forever (41 launches per open
+# window measured). Now: the failure is remembered with its message, a
+# partial catalogue (a root that is installed but broken) is served but
+# named, and a retry waits _CATALOG_RETRY_S.
+_catalog_outcome: dict[str, dict] = {}
+_CATALOG_RETRY_S = 60.0
+
+
+def _start_catalog_warm(python_path: str, classes: list[str], inst) -> bool:
+    """Start ONE background catalogue probe for *python_path* (shared
+    single-flight key with the chip-load warm-up). False when one is running
+    or the last failure is too recent to retry."""
     from quam_state_manager.core import state_env_schema
-    try:
-        inst = current_app.instance_path
-        python_path = config_generator.get_selected_env(inst)
-    except Exception:  # noqa: BLE001
-        return None, "none"
-    if not python_path:
-        return None, "none"
-    try:
-        cat = state_env_schema.catalog_for_env(python_path, inst)
-    except Exception:  # noqa: BLE001
-        logger.debug("catalogue read failed", exc_info=True)
-        cat = None
-    if cat:
-        return cat, "ready"
-    # cold: warm it quietly (the user is assumed not to open the manual the
-    # instant a chip loads -- docs/141 4h); the request never waits
-    try:
-        with ctx["store"]._lock:
-            classes = state_env_schema.harvest_classes(ctx["store"].state)
-    except Exception:  # noqa: BLE001
-        classes = []
     key = "catalog|" + python_path
+    last = _catalog_outcome.get(python_path)
+    if last and last.get("state") in ("error", "partial") and (time.time() - float(last.get("at") or 0)) < _CATALOG_RETRY_S:
+        return False
     with _schema_warm_lock:
         if key in _schema_warm_inflight:
-            return None, "loading"
+            return False
         _schema_warm_inflight.add(key)
 
     def _run():
         try:
-            state_env_schema.probe_catalog(python_path, classes, inst)
-        except Exception:  # noqa: BLE001
+            res = state_env_schema.probe_catalog(python_path, classes, inst)
+            if res.get("ok") and not res.get("partial"):
+                _catalog_outcome[python_path] = {"state": "ok", "error": None, "at": time.time()}
+            else:
+                _catalog_outcome[python_path] = {
+                    "state": "partial" if res.get("partial") else "error",
+                    "error": res.get("error") or "class-catalogue probe failed",
+                    "catalog": res.get("catalog") if res.get("partial") else None,
+                    "at": time.time()}
+        except Exception as exc:  # noqa: BLE001
             logger.warning("class-catalogue probe failed", exc_info=True)
+            _catalog_outcome[python_path] = {"state": "error", "error": f"{type(exc).__name__}: {exc}", "at": time.time()}
         finally:
             with _schema_warm_lock:
                 _schema_warm_inflight.discard(key)
 
     threading.Thread(target=_run, daemon=True).start()
-    return None, "loading"
+    return True
+
+
+def _manual_catalog(ctx) -> tuple[dict | None, str, str | None]:
+    """The class catalogue for the selected env and its state: ``ready`` /
+    ``loading`` (a warm-up is running) / ``partial`` (served, a root failed
+    to import -- the note says which) / ``error`` (the last probe failed --
+    the note says why; retried after a backoff) / ``none`` (no env)."""
+    from quam_state_manager.core import state_env_schema
+    try:
+        inst = current_app.instance_path
+        python_path = config_generator.get_selected_env(inst)
+    except Exception:  # noqa: BLE001
+        return None, "none", None
+    if not python_path:
+        return None, "none", None
+    try:
+        with ctx["store"]._lock:
+            classes = state_env_schema.harvest_classes(ctx["store"].state)
+    except Exception:  # noqa: BLE001
+        classes = []
+    try:
+        cat = state_env_schema.catalog_for_env(python_path, inst, classes)
+    except Exception:  # noqa: BLE001
+        logger.debug("catalogue read failed", exc_info=True)
+        cat = None
+    if cat:
+        return cat, "ready", None
+    last = _catalog_outcome.get(python_path)
+    if last and last.get("state") == "partial" and isinstance(last.get("catalog"), dict):
+        _start_catalog_warm(python_path, classes, inst)          # a retry after the backoff, quietly
+        return last["catalog"], "partial", last.get("error")
+    # cold: warm it quietly (the user is assumed not to open the manual the
+    # instant a chip loads -- docs/141 4h); the request never waits
+    started = _start_catalog_warm(python_path, classes, inst)
+    if not started and last and last.get("state") == "error":
+        return None, "error", last.get("error")
+    return None, "loading", None
 
 
 @bp.route("/api/manual")
@@ -10502,11 +10636,14 @@ def api_manual():
         return jsonify({"ok": True, **data})
     store = ctx["store"]
     manifest = _manual_manifest(ctx)
-    catalog, cat_state = _manual_catalog(ctx)
+    catalog, cat_state, cat_note = _manual_catalog(ctx)
     data = key_manual.manual_entries(store.state, store.wiring, manifest, catalog)
     data["chip"] = ctx.get("name") or ctx.get("path")
     data["catalog_state"] = cat_state
-    if manifest is None and catalog is None:
+    if cat_note:
+        data["note"] = (("The class catalogue could not be built: " if cat_state == "error"
+                         else "The class catalogue is PARTIAL: ") + str(cat_note))
+    if manifest is None and catalog is None and cat_state == "loading":
         try:
             selected = config_generator.get_selected_env(current_app.instance_path)
         except Exception:  # noqa: BLE001
@@ -10529,7 +10666,7 @@ def api_manual_node():
     if not path:
         return jsonify({"ok": False, "reason": "path required"})
     store = ctx["store"]
-    catalog, _cat_state = _manual_catalog(ctx)
+    catalog, _cat_state, _cat_note = _manual_catalog(ctx)
     return jsonify(key_manual.node_keys(store.state, store.wiring, _manual_manifest(ctx), path,
                                         catalog=catalog))
 
@@ -11796,7 +11933,7 @@ def undo():
         },
         # open Pulses rows re-render in place for these paths (docs/141 4j);
         # no-op elsewhere
-        **_pulses_changed_payload(store, _pulse_index(), [e.dot_path for e in entries]),
+        **_pulses_changed_for_entries(store, _pulse_index(), entries),
         "diagnostics-changed": True,
     })
     return resp
@@ -12067,7 +12204,7 @@ def _redo_response(message: str, entries_payload: list[dict], extra: dict | None
     _store_ = _ctx_.get("store") if _ctx_ else None
     resp.headers["HX-Trigger"] = json.dumps({
         "cellsReverted": payload,
-        **(_pulses_changed_payload(_store_, _pulse_index(), [e.get("dot_path") for e in entries_payload])
+        **(_pulses_changed_for_entries(_store_, _pulse_index(), entries_payload)
            if _store_ else {"pulses-changed": True}),
         "diagnostics-changed": True,
     })

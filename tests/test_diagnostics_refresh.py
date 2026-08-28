@@ -62,4 +62,7 @@ def test_the_full_page_carries_the_same_slot(client):
 
 def test_the_filter_is_reapplied_after_the_inner_swap():
     app = (_STATIC / "app.js").read_text(encoding="utf-8")
-    assert "if (evt.detail.target.id === 'diag-findings') { _applyDiagFilter(); return; }" in app
+    # docs/141 4l-review: the inner swap also restores the user's folded domains
+    seg = app.split("if (evt.detail.target.id === 'diag-findings') {")[1].split("return;")[0]
+    assert "_diagOpenSnap" in seg and "_applyDiagFilter();" in seg
+    assert "details.diag-domain[data-domain]" in app.split("var _diagOpenSnap = null;")[1][:700]

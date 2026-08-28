@@ -193,8 +193,6 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
         'value=' + JSON.stringify(search.value)
         + ' style=' + JSON.stringify((w.document.getElementById('bulk-search-hide-style') || {}).textContent));
 
-  if (failures) { console.error(failures + ' check(s) failed'); process.exit(1); }
-  console.log('all checks passed');
   // Night session 2026-08-28: hidden columns are addressed by CLASS (`td.ck-N`,
   // stamped on th+td by the template) -- Chrome indexes rules by class name,
   // so a td tests only its own rules; the old attribute-equals rule was a
@@ -226,4 +224,7 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
         && (w.document.getElementById('bulk-search-ck-style') || {}).textContent === ckSheet);
   type(''); await sleep(250);
   check('ck: clearing the query removes every sh- class', shSet() === '' && hiddenSet() === '');
+  // the gate sits LAST: the ck pins above used to run after it and could not fail the run (docs/141 4l-review)
+  if (failures) { console.error(failures + ' check(s) failed'); process.exit(1); }
+  console.log('all checks passed');
 })().catch(function (e) { console.error(e && e.stack || e); process.exit(1); });

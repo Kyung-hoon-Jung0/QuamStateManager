@@ -53,7 +53,12 @@ ok(fp("/bulk") === "grid" && fp("/bulk?q=x") === "grid" && fp("/bulk/rows") === 
 ok(fp("/bulkx") === "", "a prefix that is not the route matches nothing");
 ok(fp("/pulses") === "pulses" && fp("/pulse/detail?path=q1") === "pulses" && fp("/pulse/new/env-strip") === "pulses", "/pulse/* -> pulses");
 ok(fp("/topology") === "chipstatus,components" && fp("/wiring") === "chipstatus,components", "/topology (+ its /wiring alias) -> chip status + components");
-ok(fp("/qubits") === "components" && fp("/qubit/q1") === "components" && fp("/pair/q1-2") === "components" && fp("/qdac") === "components", "component pages");
+ok(fp("/qubits") === "components" && fp("/pairs") === "components" && fp("/resonators") === "components" && fp("/flux") === "components"
+   && fp("/couplers") === "components" && fp("/qdac") === "components", "component pages");
+ok(fp("/qubit/q1") === "" && fp("/pair/q1-2") === "", "the inspector partials need no bundle (4l-review audit)");
+ok(fp("/table") === "grid" && fp("/chip-status") === "chipstatus,components" && fp("/trends") === "chipstatus,datasets" && fp("/trend?x=1") === "chipstatus,datasets",
+   "the other route spellings of the same pages");
+ok(fp("/collections") === "datasets" && fp("/fit-audit") === "datasets" && fp("/compare") === "compare", "collections / fit-audit / compare");
 ok(fp("/datasets") === "datasets" && fp("/dataset/abc123") === "datasets" && fp("/dataset/abc/ndview?x=1") === "datasets", "dataset routes");
 ok(fp("/generate") === "generate" && fp("/regenerate") === "generate", "wizard routes");
 ok(fp("/instrument") === "wiring" && fp("/instrument/preview") === "wiring" && fp("/scheduler") === "scheduler" && fp("/autofit") === "autofit", "single-bundle pages");
@@ -75,10 +80,10 @@ B.need("grid");
 ok(tagsFor().filter((f) => f === "a.js").length === 1, "an in-flight file is not appended twice");
 scripts.forEach((s) => s.onload());
 
-function fire(p) {
+function fire(p, target) {
     const calls = [];
     const evt = new window.CustomEvent("htmx:confirm", { cancelable: true, bubbles: true,
-        detail: { path: p, issueRequest: function (skip) { calls.push(skip); } } });
+        detail: { path: p, target: target || null, issueRequest: function (skip) { calls.push(skip); } } });
     window.document.dispatchEvent(evt);
     return { prevented: evt.defaultPrevented, calls: calls };
 }
@@ -118,28 +123,53 @@ setTimeout(() => {
         ok(!!z, "the hold appended the missing file");
         z.onload();
         setTimeout(() => {
-            ok(r.calls.length === 1 && r.calls[0] === true, "the held request is issued once, skipping a second confirm");
-            m.bundles.autofit = ["lost.js"]; m.files["lost.js"] = "/static/lost.js?v=1";
-            const r2 = fire("/autofit");
-            ok(r2.prevented === true, "held for the lost script");
-            window.document.querySelector('script[data-bundle-file="lost.js"]').onerror();
+            ok(r.calls.length === 1 && r.calls[0] === undefined, "the held request is issued once, WITHOUT the skip flag (it would skip the element's hx-confirm)");
+            // hx-sync="replace" for a held request: a newer request for the SAME target supersedes it
+            m.bundles.autofit = ["y.js"]; m.files["y.js"] = "/static/y.js?v=1";
+            const pane = window.document.createElement("div");
+            const held = fire("/autofit", pane);
+            ok(held.prevented === true, "held (bundle missing)");
+            const later = fire("/explorer", pane);
+            ok(later.prevented === false, "a later request for the same target passes straight through");
+            let pendResolved = false;
+            B.pending().then(function () { pendResolved = true; });
+            window.document.querySelector('script[data-bundle-file="y.js"]').onload();
             setTimeout(() => {
-                ok(r2.calls.length === 1, "onerror still issues the request (the page renders, its widgets degrade)");
-                ok(B.loaded("autofit") === false, "a failed file is not marked loaded (a retry may succeed)");
-                const r3 = fire("/autofit");
-                ok(r3.prevented === true && window.document.querySelectorAll('script[data-bundle-file="lost.js"]').length === 2, "the next navigation retries the lost file");
+                ok(held.calls.length === 0, "the held request was superseded by the later one (hx-sync replace)");
+                ok(pendResolved === true, "pending() resolves once the hold is over");
+                const other = window.document.createElement("div");
+                ok(fire("/autofit", other).prevented === false, "a bundle already loaded is not held for a new target");
+                m.bundles.scheduler = ["s2.js"]; m.files["s2.js"] = "/static/s2.js?v=1";
+                const heldA = fire("/scheduler", other);
+                fire("/explorer", pane);                   // a request for a DIFFERENT target does not supersede it
+                window.document.querySelector('script[data-bundle-file="s2.js"]').onload();
+                setTimeout(() => {
+                    ok(heldA.prevented === true && heldA.calls.length === 1, "a held request survives requests for other targets");
+                    // a lost script never strands the navigation, and the next navigation retries it
+                    m.bundles.autofit = ["lost.js"]; m.files["lost.js"] = "/static/lost.js?v=1";
+                    const r2 = fire("/autofit");
+                    ok(r2.prevented === true, "held for the lost script");
+                    window.document.querySelector('script[data-bundle-file="lost.js"]').onerror();
+                    setTimeout(() => {
+                        ok(r2.calls.length === 1, "onerror still issues the request (the page renders, its widgets degrade)");
+                        ok(B.loaded("autofit") === false, "a failed file is not marked loaded (a retry may succeed)");
+                        ok(!window.document.querySelector('script[data-bundle-file="lost.js"]'), "the failed tag left the page");
+                        const r3 = fire("/autofit");
+                        ok(r3.prevented === true && !!window.document.querySelector('script[data-bundle-file="lost.js"]'), "the next navigation retries the lost file with a fresh tag");
 
-                // B6 call(): load then invoke; a missing function toasts
-                const got = [];
-                window.BulkEdit = { setFont: function (v) { got.push(v); return "done"; } };
-                B.call("grid", "BulkEdit.setFont", 0.85).then((v) => {
-                    ok(got.length === 1 && got[0] === 0.85 && v === "done", "call() reaches the loaded bundle's function with its argument");
-                    B.call("grid", "BulkEdit.nope", 1).then(() => {
-                        ok(toasts.length === 1 && /not available/.test(toasts[0][0]) && toasts[0][1] === "error", "a missing target toasts instead of throwing");
-                        console.log((fails ? "FAIL " : "ok ") + "bundles_selfcheck (" + asserts + " assertions, " + fails + " failed)");
-                        process.exit(fails ? 1 : 0);
-                    });
-                });
+                        // B6 call(): load then invoke; a missing function toasts
+                        const got = [];
+                        window.BulkEdit = { setFont: function (v) { got.push(v); return "done"; } };
+                        B.call("grid", "BulkEdit.setFont", 0.85).then((v) => {
+                            ok(got.length === 1 && got[0] === 0.85 && v === "done", "call() reaches the loaded bundle's function with its argument");
+                            B.call("grid", "BulkEdit.nope", 1).then(() => {
+                                ok(toasts.length === 1 && /not available/.test(toasts[0][0]) && toasts[0][1] === "error", "a missing target toasts instead of throwing");
+                                console.log((fails ? "FAIL " : "ok ") + "bundles_selfcheck (" + asserts + " assertions, " + fails + " failed)");
+                                process.exit(fails ? 1 : 0);
+                            });
+                        });
+                    }, 0);
+                }, 0);
             }, 0);
         }, 0);
     }, 0);

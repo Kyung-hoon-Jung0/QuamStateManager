@@ -50,7 +50,7 @@
                     {# the view this form lives in: the re-render after a commit
                        keeps every section, with the same main pulse #}
                     <input type="hidden" name="view_main" value="{{ main_path }}">
-                    <input type="hidden" name="view_paths" value="{{ view_paths }}">
+                    {% for vp in view_paths %}<input type="hidden" name="view_paths" value="{{ vp }}">{% endfor %}
                     <input type="text" name="value" class="edit-input"
                            data-param="{{ p.key }}" data-kind="{{ p.kind }}"
                            {% if p.is_pointer and p.target_path %}data-target-path="{{ p.target_path }}"{% endif %}

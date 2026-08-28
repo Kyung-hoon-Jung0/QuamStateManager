@@ -110,7 +110,9 @@ def test_view_bar_markup_present(client):
     assert 'class="pulse-overlay-bar pulse-view-bar"' in html and 'class="pulse-overlay-pick"' in html
     assert html.count('class="pulse-overlay-chip on"') == 2, "one chip per pulse in view"
     assert html.count("data-drop-path=") == 2, "with more than one pulse in view, every chip can be dropped"
-    assert f'data-view-paths="{PAIR}.flux_pulse_qubit,{PAIR}.coupler_flux_pulse"' in html
+    # docs/141 4l-review: a JSON list, never a comma-joined string
+    assert f"""data-view-paths='["{PAIR}.flux_pulse_qubit", "{PAIR}.coupler_flux_pulse"]'""" in html
+    assert f'<input type="hidden" name="view_paths" value="{PAIR}.flux_pulse_qubit"><input type="hidden" name="view_paths" value="{PAIR}.coupler_flux_pulse">' in html
     assert f'data-view-main="{PAIR}.flux_pulse_qubit"' in html
     # a single-pulse view offers no drop
     solo, _ = _detail(client, "path=qubits.qA1.xy.operations.x180")

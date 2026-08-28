@@ -43,7 +43,9 @@ function bigWorld(nCols, nRows, presearch) {
   let head = '';
   const colsModel = [];
   for (let i = 0; i < nCols; i++) {
-    head += '<th class="bulk-col-head" data-col-key="c' + i +
+    // ck-N on th AND td, as the template stamps them (docs/141 4d) -- without
+    // it the width freeze can never fire and its pin was vacuous (4l-review)
+    head += '<th class="bulk-col-head ck-' + i + '" data-col-key="c' + i +
             '" data-section="s">c' + i + '</th>';
     colsModel.push({ key: 'c' + i, label: 'c' + i, section: 's',
                      default_on: true });
@@ -52,7 +54,7 @@ function bigWorld(nCols, nRows, presearch) {
   for (let r = 0; r < nRows; r++) {
     let tds = '';
     for (let i = 0; i < nCols; i++) {
-      tds += '<td class="bulk-td" data-col-key="c' + i + '">' +
+      tds += '<td class="bulk-td ck-' + i + '" data-col-key="c' + i + '">' +
         '<input type="text" class="bulk-cell" value="v' + r + 'c' + i +
         '" data-orig="v' + r + 'c' + i + '" data-dot-path="qubits.q' + r +
         '.f' + i + '"></td>';
@@ -109,8 +111,27 @@ async function main() {
   ok(c3td && !c3td.classList.contains('bulk-td-cold')
      && !!c3td.querySelector('.bulk-cell'), 'a near column keeps its input');
   ok(W.win.__geomReads === 0, 'the mount read NO geometry (offsetLeft/offsetWidth) -- coldness is estimated, the first layout is of the pruned table (reads: ' + W.win.__geomReads + ')');
+  // the width freeze: exactly the COLD columns carry a min-width rule by class (4l-review)
   const st = doc.getElementById('bulk-virt-width-style');
-  ok(!st || st.textContent === '', 'no width freeze at mount (a hidden-at-mount column has no width to freeze anyway)');
+  const sheet = (st && st.textContent) || '';
+  const coldKeys = new Set(Array.from(doc.querySelectorAll('td.bulk-td-cold')).map((td) => td.getAttribute('data-col-key')));
+  let freezeOk = coldKeys.size > 0, freezeBad = '';
+  for (let i = 0; i < N_COLS; i++) {
+    const has = sheet.indexOf('#bulk-table th.ck-' + i + '{min-width:') >= 0;
+    if (has !== coldKeys.has('c' + i)) { freezeOk = false; freezeBad += ' c' + i + (has ? ':frozen-but-hot' : ':cold-but-unfrozen'); }
+  }
+  ok(freezeOk, 'every cold column is frozen at its estimated width by class, no hot column is (' + coldKeys.size + ' cold' + freezeBad + ')');
+  // an undo naming a path in a COLD column hydrates that column only (4l-review)
+  const coldBefore = doc.querySelectorAll('td.bulk-td-cold').length;
+  const rp = W.win.BulkEdit.revertPaths([{ dot_path: 'qubits.q2.f40', old_value_str: '999' }]);
+  const c40q2 = doc.querySelector('tr[data-qubit="q2"] td[data-col-key="c40"] .bulk-cell');
+  ok(!!c40q2 && c40q2.value === '999', 'the undone cell in a cold column is hydrated and patched (' + (c40q2 && c40q2.value) + ')');
+  ok(doc.querySelectorAll('td.bulk-td-cold').length === coldBefore - N_ROWS,
+     'and ONLY that column was hydrated, not the whole grid (cold ' + coldBefore + ' -> ' + doc.querySelectorAll('td.bulk-td-cold').length + ')');
+  ok(rp && rp.missing === 0, 'the path was covered');
+  const coldBefore2 = doc.querySelectorAll('td.bulk-td-cold').length;
+  W.win.BulkEdit.revertPaths([{ dot_path: 'qubit_pairs.p1.macros.cz.amp', old_value_str: '1' }]);
+  ok(doc.querySelectorAll('td.bulk-td-cold').length === coldBefore2, 'a path in no column hydrates nothing (it is missing by definition)');
 
   // ── whole-chip search over a cold value (docs/85) ─────────────────────
   const sb = doc.getElementById('bulk-search');
@@ -168,6 +189,15 @@ async function main() {
   const pc3 = P.doc.querySelector('td[data-col-key="c3"]');
   ok(pc3 && !pc3.classList.contains('bulk-td-cold') && pc3.querySelector('.bulk-cell') !== null,
      'the surviving, on-screen column is hot');
+  // a scroll with the search active must NOT hydrate the search-hidden columns (4l-review)
+  P.wrap.scrollLeft = 2600;
+  P.wrap.dispatchEvent(new P.win.Event('scroll'));
+  await new Promise(function (r) { setTimeout(r, 80); });
+  ok(pc5.classList.contains('bulk-td-cold') && pc5.querySelector('.bulk-cell') === null,
+     'a search-hidden column stays cold through a scroll (it is not on screen)');
+  const pst = P.doc.getElementById('bulk-virt-width-style');
+  ok(pst && pst.textContent.indexOf('#bulk-table th.ck-5{min-width:') >= 0, 'a hidden-at-mount column is frozen too (inert until shown)');
+  P.wrap.scrollLeft = 0;
   psb.value = ''; psb.dispatchEvent(new P.win.Event('input', { bubbles: true }));
   await new Promise(function (r) { setTimeout(r, 400); });
   ok(!pc5.classList.contains('bulk-td-cold') && pc5.querySelector('.bulk-cell') !== null,

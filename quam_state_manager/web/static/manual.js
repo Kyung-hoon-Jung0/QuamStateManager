@@ -63,11 +63,21 @@ window.ConfigManual = (function () {
        open window re-asks every few seconds and re-renders when it lands. */
     function schedulePoll() {
         clearTimeout(_pollTimer); _pollTimer = null;
-        if (!_data || _data.catalog_state !== 'loading' || !isOpen() || _polls > 40) return;
+        // only while the server says loading -- an error / partial state is
+        // final until its backoff (docs/141 4l-review); the cap is per open
+        if (!_data || _data.catalog_state !== 'loading' || !isOpen() || _polls > 80) return;
         _pollTimer = setTimeout(function () {
             _polls++;
-            load(true).then(function () { if (isOpen() && _mode === 'search') renderSearch(pop().querySelector('.manual-search').value); });
+            var before = renderSig();
+            load(true).then(function () {
+                // re-render only when something CHANGED: a poll used to rebuild
+                // the body every 3 s and fold whatever the user had opened
+                if (isOpen() && _mode === 'search' && renderSig() !== before) renderSearch(pop().querySelector('.manual-search').value);
+            });
         }, POLL_MS);
+    }
+    function renderSig() {
+        return _data ? (_data.catalog_state + '|' + (_data.entries || []).length + '|' + (_data.classes || []).length + '|' + (_data.note || '')) : '';
     }
 
     function hay(e) {
@@ -146,43 +156,105 @@ window.ConfigManual = (function () {
         if (d.note) h += '<p class="manual-note">' + esc(d.note) + '</p>';
         // category > class > key. A class opens when the chip uses it or a
         // search reached into it; a category opens when it has anything.
+        // category > class > key, grouped by the class PATH (two classes may
+        // share a leaf name: quam's and quam_builder's DragPulse -- 4l-review)
         var byCat = {};
         var order = d.categories && d.categories.length ? d.categories.slice() : [];
-        rows.forEach(function (e) {
-            var cat = e.category || 'Other components';
+        var clsInfo = {}, clsByLeaf = {};
+        (d.classes || []).forEach(function (c) { clsInfo[c.cls_path || c.cls] = c; if (c.cls && !clsByLeaf[c.cls]) clsByLeaf[c.cls] = c; });
+        var addClass = function (cat, key) {
             if (order.indexOf(cat) < 0) order.push(cat);
-            var cls = e.cls || '—';
             byCat[cat] = byCat[cat] || { order: [], classes: {} };
-            if (!byCat[cat].classes[cls]) { byCat[cat].classes[cls] = []; byCat[cat].order.push(cls); }
-            byCat[cat].classes[cls].push(e);
+            if (!byCat[cat].classes[key]) { byCat[cat].classes[key] = []; byCat[cat].order.push(key); }
+            return byCat[cat].classes[key];
+        };
+        rows.forEach(function (e) {
+            addClass(e.category || 'Other components', e.cls_path || e.cls || '—');
+            byCat[e.category || 'Other components'].classes[e.cls_path || e.cls || '—'].push(e);
         });
-        var clsInfo = {};
-        (d.classes || []).forEach(function (c) { clsInfo[c.cls] = c; });
-        var budget = MAX_ROWS;
+        // a known class whose every key is skipped still exists: list it, with no keys
+        if (!groups) (d.classes || []).forEach(function (c) {
+            var cat = c.category || 'Other components';
+            if (c.cls_path && c.known && !(byCat[cat] && byCat[cat].classes[c.cls_path])) addClass(cat, c.cls_path);
+        });
+        var prevOpen = _openClasses();
+        _lazy = {};
+        // the row budget is charged to OPEN classes only: a collapsed class
+        // renders its keys when toggled (the old budget emptied every class
+        // past ~400 keys -- exactly where a chip's own classes sit)
+        var skipped = 0;
+        // a small result renders every class eagerly; only past the budget
+        // does a collapsed class defer its keys to its first toggle
+        var lazyMode = rows.length > MAX_ROWS;
+        // the budget goes to the chip's OWN classes first (they are the ones
+        // a user populating a state came for), the rest to what else is open
+        var isOpen = function (key, list) {
+            var info = clsInfo[key] || clsByLeaf[key] || {};
+            var used = list.some(function (e) { return e.used; }) || !!info.used;
+            return { used: used, open: !!groups || used || prevOpen[key] === true };
+        };
+        var reserve = 0;
+        order.forEach(function (cat) {
+            var g = byCat[cat]; if (!g) return;
+            g.order.forEach(function (key) { var st = isOpen(key, g.classes[key]); if (st.open && st.used) reserve += g.classes[key].length; });
+        });
+        var pools = { used: MAX_ROWS, other: Math.max(0, MAX_ROWS - Math.min(reserve, MAX_ROWS)) };
         order.forEach(function (cat) {
             var g = byCat[cat];
             if (!g) return;
             var n = g.order.reduce(function (s, c) { return s + g.classes[c].length; }, 0);
             h += '<details class="manual-cat" open><summary>' + esc(cat) + ' <span class="manual-n">' + g.order.length + ' class' + (g.order.length === 1 ? '' : 'es') + ' · ' + n + ' keys</span></summary>';
-            g.order.forEach(function (cls) {
-                var list = g.classes[cls];
-                var info = clsInfo[cls] || {};
-                var used = list.some(function (e) { return e.used; }) || !!info.used;
-                var open = !!groups || used;
-                h += '<details class="manual-class"' + (open ? ' open' : '') + '><summary>'
+            g.order.forEach(function (key) {
+                var list = g.classes[key];
+                var info = clsInfo[key] || clsByLeaf[key] || {};   // a row without a class path (docs keys) groups by its leaf
+                var cls = info.cls || (list[0] && list[0].cls) || key.split('.').pop();
+                var st = isOpen(key, list);
+                var used = st.used, open = st.open;
+                var mod = key.indexOf('.') > 0 ? key.slice(0, key.lastIndexOf('.')) : '';
+                h += '<details class="manual-class" data-cls-path="' + esc(key) + '"' + (open ? ' open' : '') + '><summary>'
                    + '<span class="manual-class-name">' + esc(cls) + '</span>'
+                   + (mod ? '<span class="manual-class-mod muted">' + esc(mod) + '</span>' : '')
                    + '<span class="manual-badge">' + list.length + ' key' + (list.length === 1 ? '' : 's') + '</span>'
+                   + (info.abstract ? '<span class="manual-badge manual-abstract" title="a base class: not written into a state on its own">abstract</span>' : '')
                    + (used ? '<span class="manual-badge manual-used" title="the open state uses this class">in this state' + (info.count ? ' × ' + info.count : '') + '</span>' : '')
                    + (info.doc ? '<span class="manual-class-doc">' + esc(info.doc) + '</span>' : '')
                    + '</summary>';
-                list.forEach(function (e) { if (budget-- > 0) h += entryHtml(e); });
+                if (open || !lazyMode) {
+                    var shown = 0, pool = used ? 'used' : 'other';
+                    list.forEach(function (e) { if (!lazyMode || pools[pool]-- > 0) { h += entryHtml(e); shown++; } });
+                    if (shown < list.length) { skipped += list.length - shown; h += '<p class="manual-note">… ' + (list.length - shown) + ' more keys in this class — narrow the search</p>'; }
+                } else {
+                    _lazy[key] = list;                 // rendered on toggle
+                    h += '<div class="manual-lazy"></div>';
+                }
                 h += '</details>';
             });
             h += '</details>';
         });
-        if (rows.length > MAX_ROWS) h += '<p class="manual-note">… ' + (rows.length - MAX_ROWS) + ' more keys — narrow the search</p>';
+        if (skipped) h += '<p class="manual-note">… ' + skipped + ' more keys not shown — narrow the search or open fewer classes</p>';
         if (!rows.length) h += '<p class="manual-note">nothing matches <code>' + esc(q) + '</code></p>';
         body.innerHTML = h;
+    }
+    var _lazy = {};
+    function _openClasses() {
+        var out = {};
+        var p = pop();
+        if (!p) return out;
+        p.querySelectorAll('details.manual-class[data-cls-path]').forEach(function (dt) { out[dt.getAttribute('data-cls-path')] = dt.open; });
+        return out;
+    }
+    /* a collapsed class renders its keys the first time it is opened */
+    function _lazyToggle(evt) {
+        var dt = evt.target;
+        if (!dt || !dt.classList || !dt.classList.contains('manual-class') || !dt.open) return;
+        var key = dt.getAttribute('data-cls-path');
+        var host = dt.querySelector('.manual-lazy');
+        var list = key && _lazy[key];
+        if (!host || !list) return;
+        var h = '';
+        list.forEach(function (e) { h += entryHtml(e); });
+        host.outerHTML = h;
+        delete _lazy[key];
     }
 
     function renderNode(nd) {
@@ -211,6 +283,7 @@ window.ConfigManual = (function () {
 
     function refresh() {
         if (!pop()) return;
+        _polls = 0;                          // the poll cap is per open (4l-review)
         if (_mode === 'node' && _nodePath) {
             fetch('/api/manual/node?path=' + encodeURIComponent(_nodePath), { credentials: 'same-origin' })
                 .then(function (r) { return r.json(); })
@@ -226,14 +299,17 @@ window.ConfigManual = (function () {
     function isOpen() { var p = pop(); return !!(p && !p.classList.contains('manual-hidden')); }
 
     function restoreSize(p) {
+        p._manualApplied = null;
         try {
             var s = JSON.parse(window.localStorage.getItem(SIZE_KEY) || 'null');
             if (s && s.w > 300 && s.h > 200) {
                 // never larger than the viewport (a viewport the harness does
                 // not size reports 0: fall back to the remembered size)
                 var vw = window.innerWidth || 0, vh = window.innerHeight || 0;
-                p.style.width = (vw > 340 ? Math.min(s.w, vw - 16) : s.w) + 'px';
-                p.style.height = (vh > 240 ? Math.min(s.h, vh - 16) : s.h) + 'px';
+                var w = (vw > 340 ? Math.min(s.w, vw - 16) : s.w), hh = (vh > 240 ? Math.min(s.h, vh - 16) : s.h);
+                p.style.width = w + 'px';
+                p.style.height = hh + 'px';
+                p._manualApplied = { w: Math.round(w), h: Math.round(hh) };
             }
         } catch (e) {}
     }
@@ -245,7 +321,13 @@ window.ConfigManual = (function () {
             if (!isOpen()) return;
             clearTimeout(t);
             t = setTimeout(function () {
-                try { window.localStorage.setItem(SIZE_KEY, JSON.stringify({ w: p.offsetWidth, h: p.offsetHeight })); } catch (e) {}
+                // only a size the USER set is remembered: the viewport clamp
+                // restoreSize applied must not overwrite a larger remembered
+                // size just because the window opened on a smaller screen
+                var w = p.offsetWidth, hh = p.offsetHeight;
+                var a = p._manualApplied;
+                if (a && Math.abs(a.w - w) < 2 && Math.abs(a.h - hh) < 2) return;
+                try { window.localStorage.setItem(SIZE_KEY, JSON.stringify({ w: w, h: hh })); } catch (e) {}
             }, 250);
         }).observe(p);
     }
@@ -264,6 +346,7 @@ window.ConfigManual = (function () {
             restoreSize(p);
             watchSize(p);
             if (!p.classList.contains('manual-floating') && window._anchorPopover && btn) window._anchorPopover(p, btn);
+            _data = null;                    // an open re-asks: the selected env may have changed under the same chip (4l-review)
             refresh();
             var s = p.querySelector('.manual-search');
             if (s && _mode === 'search') setTimeout(function () { s.focus(); }, 0);
@@ -332,6 +415,7 @@ window.ConfigManual = (function () {
         if (!p || p._manualWired) return;
         p._manualWired = true;
         enableDrag(p);
+        p.addEventListener('toggle', _lazyToggle, true);
         var s = p.querySelector('.manual-search');
         var timer = null;
         s.addEventListener('input', function () {

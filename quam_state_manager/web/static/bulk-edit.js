@@ -1095,10 +1095,13 @@
         // column, which is then at the left edge and hydrated; anything
         // further right hydrates on scroll, as always.
         // Any change -- including CLEARING the search, which brings cold
-        // (hidden-at-mount) columns back on screen -- runs the pass, NOW:
-        // a hidden-at-mount column has no frozen width, so a rAF-deferred
-        // pass would paint one frame of empty tds first (review of 6d57eea).
-        if (_virt) _virtOnScroll();   // rAF: a synchronous pass forced a style+layout INSIDE the keystroke (measured)
+        // (hidden-at-mount) columns back on screen -- schedules the pass in
+        // a rAF, which runs BEFORE the next style/layout/paint: no frame of
+        // empty tds is painted (the 4e-review note claiming otherwise was
+        // wrong -- docs/141 4l-review), and a synchronous pass forced a
+        // style+layout INSIDE the keystroke (measured). Hidden-at-mount
+        // columns are frozen at their estimate like every other cold one.
+        if (_virt) _virtOnScroll();
         // A new query retires the previous "show them anyway" choice — it was
         // made about those tokens, and silently carrying it forward would make
         // the next search quietly stop filtering rows.
@@ -1224,10 +1227,14 @@
         if (th) th.textContent = sortDir > 0 ? ' ▲' : ' ▼';
     }
 
-    function _recomputeStats() {
+    function _recomputeStats(onlyKeys) {
         var t = table(); if (!t) return;
         var hide = _hiddenSet();
         COLS.forEach(function (c) {
+            if (onlyKeys && !onlyKeys[c.key]) return;
+            // a COLD column has no cells to count: keep the server's numbers
+            // (they were wiped and never came back -- docs/141 4l-review)
+            if (_virt && _virt.cold && _virt.cold.has(c.key)) return;
             var stat = t.querySelector('[data-col-stats="' + (window.CSS && CSS.escape ? CSS.escape(c.key) : c.key) + '"]');
             if (!stat) return;
             if (hide.has(c.key)) { stat.textContent = ''; return; }
@@ -1726,8 +1733,33 @@
     // Estimated rendered width of a column from its first cell's input
     // `size` (the server's value-fit width): ~8 px per character + the cell
     // padding. Only has to be CONSERVATIVE -- see _virtInit.
-    var _VIRT_EST_PX_PER_CHAR = 8;
+    var _VIRT_EST_PX_PER_CHAR = 8;      // the 16px-root fallback (see _virtPxPerChar)
     var _VIRT_EST_PAD = 28;
+    /* The cell font is calc(0.92rem * --bulk-fs) mono with --bulk-ls
+       letter-spacing, and the root font is 21px under UI scaling (docs/136
+       §18c): a literal 8 px/char froze widths BELOW the hydrated ones there,
+       so every hydration widened the column -- the layout churn the freeze
+       exists to remove (docs/141 4l-review). A computed style of the root is
+       a STYLE read, never a layout; a mono glyph is ~0.62em wide. */
+    function _virtPxPerChar() {
+        // INLINE root styles only: the UI scale writes documentElement.style
+        // .fontSize and _applyGlobalScale writes --bulk-fs / --bulk-ls there,
+        // so no computed style is needed (getComputedStyle would evaluate the
+        // media queries -- a viewport read; measured in the harness)
+        // the UI font size is a data attribute on <html> mapped by the
+        // stylesheet (--font-size-base: 17px, small 15, large 19)
+        var rootPx = 17, fs = 1, ls = 0;
+        try {
+            var st = document.documentElement.style;
+            var uiSize = document.documentElement.getAttribute('data-font-size') || '';
+            rootPx = parseFloat(st.fontSize) || ({ small: 15, large: 19 })[uiSize] || 17;
+            fs = parseFloat(st.getPropertyValue('--bulk-fs')) || 1;
+            var lsRaw = (st.getPropertyValue('--bulk-ls') || '').trim();
+            ls = lsRaw.slice(-2) === 'em' ? (parseFloat(lsRaw) || 0) * rootPx * 0.92 * fs : (parseFloat(lsRaw) || 0);
+        } catch (e) {}
+        var px = rootPx * 0.92 * fs * 0.62 + (isNaN(ls) ? 0 : ls);
+        return (isFinite(px) && px > 0) ? px : _VIRT_EST_PX_PER_CHAR;
+    }
     function _virtInit() {
         _virt = null;
         _virtStyleEl().textContent = '';
@@ -1757,41 +1789,61 @@
         var x = 0;
         var row0 = t.querySelector('tbody tr');
         var est = {};
+        var pxChar = _virtPxPerChar();
         if (row0) {
             Array.prototype.forEach.call(row0.querySelectorAll('td[data-col-key]'), function (td) {
+                var k0 = td.getAttribute('data-col-key');
+                // a drag-resized column has a REAL width in JS (docs/111,
+                // quam_bulk_col_widths) -- the value-fit estimate would call a
+                // narrowed column cold while it sits on screen (docs/141 4l-review)
+                var forced = _colWidths && _colWidths[k0] ? parseFloat(_colWidths[k0]) : 0;
+                if (forced > 0) { est[k0] = forced + _VIRT_EST_PAD; return; }
                 var inp = td.querySelector('.bulk-cell');
                 var size = inp ? (parseInt(inp.getAttribute('size'), 10) || 8) : 8;
-                est[td.getAttribute('data-col-key')] = size * _VIRT_EST_PX_PER_CHAR + _VIRT_EST_PAD;
+                est[k0] = size * pxChar + _VIRT_EST_PAD;
             });
         }
         var widths = [];
         t.querySelectorAll('th.bulk-col-head[data-col-key]').forEach(function (h) {
             var k = h.getAttribute('data-col-key');
-            if (_thHidden(h)) { cold.add(k); return; }
-            var w = est[k] || (8 * _VIRT_EST_PX_PER_CHAR + _VIRT_EST_PAD);
+            var w = est[k] || (8 * pxChar + _VIRT_EST_PAD);
             var label = h.querySelector('.bulk-col-label');
             var lw = label ? label.textContent.length * 7.5 + 30 : 0;
-            if (x > edge) {
-                cold.add(k);
-                // freeze the cold column at its ESTIMATED value-fit width (by
-                // class, no layout read): without it a pruned column shrinks
-                // to its header and every hydration widens it again -- a
-                // layout churn of ~0.9 s per search keystroke, measured
-                var ck = /(?:^|\s)(ck-\d+)(?:\s|$)/.exec(h.className || '');
+            // freeze a cold column at its ESTIMATED value-fit width (by
+            // class, no layout read): without it a pruned column shrinks
+            // to its header and every hydration widens it again -- a
+            // layout churn of ~0.9 s per search keystroke, measured. A
+            // hidden-at-mount column is frozen too: its rule is inert while
+            // it is display:none and stops the widen-on-scroll once shown.
+            var ck = /(?:^|\s)(ck-\d+)(?:\s|$)/.exec(h.className || '');
+            var freeze = function () {
                 if (ck) widths.push('#bulk-table th.' + ck[1] + '{min-width:' + Math.round(Math.max(w, lw)) + 'px}');
-            }
+            };
+            if (_thHidden(h)) { cold.add(k); freeze(); return; }
+            if (x > edge) { cold.add(k); freeze(); }
             x += Math.max(w, lw);
         });
         if (!cold.size) return;
         // The real gate: enough cells actually go cold to repay detaching them.
         if (cold.size * _rows().length < _VIRT_MIN_COLD) return;
-        _virt = { html: new Map(), vals: new Map(), cold: cold, wrap: wrap };
+        // byPath: dot path -> column key for every detached cell, so a
+        // path-addressed repaint (undo) hydrates ONE column, not the grid
+        _virt = { html: new Map(), vals: new Map(), cold: cold, wrap: wrap, byPath: {} };
         _virtStyleEl().textContent = widths.join('\n');
         _ph('virt: plan');
         Array.prototype.forEach.call(tds, function (td) {
-            if (!_virt.cold.has(td.getAttribute('data-col-key'))) return;
+            var colKey = td.getAttribute('data-col-key');
+            if (!_virt.cold.has(colKey)) return;
             var inp = td.querySelector('.bulk-cell');
             var v = inp ? String(inp.value) : (td.textContent || '');
+            if (inp) {
+                var a1 = inp.getAttribute('data-dot-path'), a2 = inp.getAttribute('data-resolved');
+                if (a1) _virt.byPath[a1] = colKey;
+                if (a2) _virt.byPath[a2] = colKey;
+            } else {
+                var ls = td.querySelector('.bulk-cell-list[data-path]');
+                if (ls) _virt.byPath[ls.getAttribute('data-path')] = colKey;
+            }
             _virt.vals.set(td, v.toLowerCase());
             // the cell's NODES move into a fragment (docs/141 4i): no
             // innerHTML serialisation here, no re-parse on hydrate
@@ -1839,6 +1891,9 @@
         });
         if (!_virt.cold.size) { _virt = null; _virtStyleEl().textContent = ''; }
         _hayCache = null;            // hydrated inputs join the DOM haystacks
+        // a cold column's header stats were left alone (below); now that its
+        // cells are here, compute them -- for these columns only
+        try { _recomputeStats(set); } catch (e) {}
         // docs/109: cold cells were detached with their SERVER-rendered dBm
         // annotations — if the viewer switched the MW-power unit meanwhile,
         // the re-inserted text would be stale; reformat on arrival.
@@ -2374,7 +2429,7 @@
        "grid ready" go. */
     var _mountT0 = 0;
     function _ph(label) {
-        var now = performance.now();
+        var now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
         if (label !== 'start') (window.__bulkMountTimings = window.__bulkMountTimings || []).push([label, Math.round(now - _mountT0)]);
         _mountT0 = now;
     }
@@ -2426,6 +2481,10 @@
             _ph('PhysAmp');
             _virtInit();            // docs/105 #1 - after layout is final
             _ph('virtualization');
+            // the estimate is conservative, not exact: one rAF pass (real
+            // geometry of the PRUNED table) hydrates anything on screen it
+            // called cold -- a drag-resized or zoomed grid (docs/141 4l-review)
+            if (_virt) _virtOnScroll();
             // docs/111 (#11): selection/fill/paste/pins + the dyn-reload
             // edit carry. Pins re-apply AFTER virtualization (a pinned cold
             // column is hydrated by _applyColPins itself).
@@ -3071,7 +3130,19 @@
         var absent = entries.some(function (e) {
             return e && e.dot_path && !sel(e.dot_path).length;
         });
-        if (absent) _virtHydrateAll();
+        // docs/141 4l-review: hydrate only the cold columns the named paths
+        // live in (the byPath map _virtInit built) -- an undo of a pair-grid
+        // or hidden-column path used to un-virtualize the whole grid; a path
+        // in no column is `missing` by definition and costs no hydration
+        if (absent && _virt) {
+            var dueKeys = [];
+            entries.forEach(function (e) {
+                if (!e || !e.dot_path || sel(e.dot_path).length) return;
+                var ck = _virt.byPath && _virt.byPath[e.dot_path];
+                if (ck && dueKeys.indexOf(ck) < 0) dueKeys.push(ck);
+            });
+            if (dueKeys.length) _virtHydrateCols(dueKeys);
+        }
         var patched = 0, missing = 0, rows = [], covered = [], uncovered = [];
         entries.forEach(function (e) {
             if (!e || !e.dot_path) return;

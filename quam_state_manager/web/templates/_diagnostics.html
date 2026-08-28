@@ -24,7 +24,7 @@
    the pill uses (the lint is ~130 ms on a 21-qubit chip). #}
 <div id="diag-findings"
      hx-get="/diagnostics" hx-select="#diag-findings" hx-swap="outerHTML"
-     hx-trigger="diagnostics-changed from:body delay:600ms, stateRestored from:body delay:600ms">
+     hx-trigger="diagnostics-changed from:body delay:600ms, stateRestored from:body delay:600ms, liveDriftChanged from:body delay:600ms">
 {% if not has_config %}
 <p class="muted diag-hint">
   Config reference checks run once you generate a config in the

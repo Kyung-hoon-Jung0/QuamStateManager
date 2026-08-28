@@ -284,8 +284,10 @@ Pinned by `pulses_undo_selfcheck.cjs` (13 cases, mutation 8/8),
   materialised (both explorer trees tried; the node is painted only if it
   exists); the reverted baseline is the LOSSLESS `old_value_disp`, not `%.6e`
   (a 7-sig-fig key was a guaranteed cache miss and a truncated baseline); a
-  search clear / column re-tick runs the hydration pass synchronously so a
-  hidden-at-mount cold column never paints one frame of empty tds.
+  search clear / column re-tick schedules the hydration pass in a rAF — which
+  runs before the next paint, so no frame of empty tds either way; the
+  "synchronous" version this note first claimed forced a layout inside the
+  keystroke and was reverted in §4i (corrected in the 4l review).
 
 ## 4f. The Diagnostics list that needed F5 (user report, 2026-08-28)
 
@@ -548,6 +550,155 @@ executed under jsdom: manifest, present tags, URL map, ordered loading with
 Back/Forward hold with the ORIGINAL event, `Bundles.call`). `test_web`'s
 eager-script pin now checks `dataset-virtual.js` on the rendered `/datasets`
 page rather than in the template.
+
+### 4l-review. The adversarial review of 6d57eea..a7e8959 (five reviewers, 2026-08-28 night)
+
+Five independent reviewers (rows patch / multi-pulse inspector / Config
+Manual catalogue / grid mount + search / bundle loader) against the day's
+commits, each with executed reproductions. **1 critical, 12 major, ~30
+minor** confirmed; every one fixed below except the four deferred at the end.
+Every claim I re-checked before touching code; the two review claims that
+turned out to be pre-existing (undo_nav U7, pulse_overlay) had already been
+fixed in a7e8959.
+
+**Rows patch (docs/141 §4j) — the CRITICAL.** `htmx.ajax` with no `source`
+attributes every call to `document.body`, and htmx's default `hx-sync`
+strategy on an element with a request in flight is `last` — it DUMPS the
+queue. Three rows changed by one edit (`x180_DragCosine` + the `x180` alias
++ `x90_DragCosine`): the middle one was never patched (reproduced with the
+real htmx under jsdom). The listener now issues a plain `fetch()` per row,
+re-targets the `<tr>` at LANDING time (an earlier swap may have replaced it)
+and keeps a per-path generation so an older response never overwrites a
+newer one. It also carries the page's active `q` / `channel`: `/pulse/row`
+answers **204** for a row that no longer matches the filter and the client
+removes it (`_pulse_rows_filter` is the one filter for the page and the
+row). Server side, `_pulse_rows_touched` returns **structural** for a path
+that IS a pulse (create / delete / rename / duplicate, or their undo — a
+ghost `sat_copy` row with a 404 behind it, a restored pulse that never
+appeared) or that no pulse row owns (the `anharmonicity` a DRAG pulse points
+at — the sparkline changed, the trigger said `paths: []`); undo/redo go
+through `_pulses_changed_for_entries`, which is structural for a
+created/deleted entry or a pointer on either side (the old target's
+`used_by` changed too); `/pulse/edit` resolves the OLD target of a re-link /
+break-link BEFORE the write and names its row. The doc line in §4j saying
+`/discard` emits the paths event was wrong — it emits the plain structural
+event, which is correct. `UndoNav.pulseRootOf` now mirrors the server's
+`_PULSE_PATH_RES`: a pair macro's pulse is its `flux_pulse_qubit` /
+`coupler_flux_pulse` SLOT (the old regex sent the macro root to
+`/pulse/detail`, a 404 toast — and `undo_pages_selfcheck` pinned that wrong
+URL). Diagnostics: the self-refresh keeps the user's folded domains
+(`htmx:beforeSwap` snapshot, re-applied after) and also fires on
+`liveDriftChanged` (a scheduler adopt or another window's write reached the
+banner but not the list).
+
+**Multi-pulse inspector (§4k).** A stale `view_main` (the main pulse renamed
+by another window while a companion was being edited) committed the write
+and then answered a 404 the UI drops — the response re-renders around the
+pulse just edited instead. An undo burst mixing a reload-needing entry with
+an in-place one inside the 120 ms window LOST the reload (same debounce
+key): a reload once due stays due. An alias section's inputs live at the
+target's paths — the listener matches `actualPath` too and `_revertCell`
+repaints EVERY form carrying the path (an alias and its target can share
+one view). One error line per section (a section's preview success no
+longer hides another's failure); per-section pending flags (two overlapping
+refreshes no longer zero each other's counter); a reload that does not land
+clears the pending flag instead of wedging the preview; the config
+ground-truth trace has its own colour + `longdash` (committed Q and verify I
+were visually identical). Never a silent drop: a pulse beyond the four, or
+unknown, is NAMED under the view bar. `paths=` is a REPEATED param (a comma
+is legal inside a foreign op name; a comma-joined value is still accepted
+when its parts are pulse paths), the view bar carries a JSON list, forms
+carry one hidden input per pulse. The 4-cap unchecks the box just clicked;
+the dead compare-overlay code is gone. Deferred: rename/duplicate/delete
+from a compare view return to a single-pulse view (a rename changes the
+path the view names).
+
+**Config Manual catalogue (§4h).** The 400-row budget emitted class HEADERS
+with no keys for every class past the first ~400 keys — which on the real
+cqt catalogue (Roots 32 → Ports cumulative 433) is exactly where a chip's own
+classes sit. Past the budget, a collapsed class now defers its keys to its
+first toggle and only OPEN classes are charged (a small result renders
+eagerly, as before). A failed probe was forgotten instantly — every
+`/api/manual` spawned another subprocess and answered "loading" forever (41
+launches per open window with the 3 s poll): the outcome is remembered per
+interpreter (`catalog_state: error` + the reason, a 60 s backoff), a
+`partial` catalogue (a root that is installed but broken — measured 68
+classes with quam_builder made unimportable) is served, named, and NEVER
+cached as the truth (an ABSENT root, quam_builder 0.2.0, stays fine), the
+chip-load warm and the manual share one single-flight key, and a warm
+manifest no longer skips the catalogue. The catalogue depended on which chip
+warmed it (`quam_builder.common.pulses`' four classes were absent until a
+chip using one opened first): `quam_builder.common` joined the roots and the
+cache remembers the requested class set, unioning across probes — a chip
+whose class the cache never saw re-probes. Two classes sharing a leaf name
+(quam's and quam_builder's `DragPulse`, nine such pairs) merged into one row
+with duplicated keys: grouping is by class PATH now, with the module shown.
+`FluxTunableQuam` was filed under "Flux & couplers" (Roots rule first in both
+classifiers); abstract classes are badged; the 1 MB cache file is memoised
+on (mtime, size); a poll re-renders only when something changed and keeps
+what the user opened; the poll cap is per open; opening re-asks (the env can
+change under the same chip); only a size the USER set is remembered.
+
+**The grid (§4d, §4i).** Two harness defects: `bulk_search_selfcheck`'s
+four `ck:` pins sat AFTER the exit gate (a mutant with no `sh-N` toggling
+passed green), and `bulk_virt_selfcheck`'s fixture had no `ck-N` classes —
+the width freeze could never fire, and the harness pinned that as "no width
+freeze" (deleting the freeze, or the hidden-column hydration guard, passed).
+Both fixed and the pins made real (every cold column frozen by class, no hot
+one; a search-hidden column stays cold through a scroll; a hidden-at-mount
+column is frozen too). Code: an undo naming a path with no cell used to
+`_virtHydrateAll()` — a pair-grid or hidden-column path un-virtualized the
+whole grid (1,170 → 0 cold, then every keystroke paid the 4d cost); a
+`byPath` map built while detaching hydrates ONE column. The estimate reads a
+drag-resized column's real width (`quam_bulk_col_widths`; a narrowed grid
+showed blank on-screen cells until the first scroll) and derives px/char
+from the real cell font — the UI font size is a `data-font-size` attribute
+mapped by the stylesheet (17 px default, 15 / 19), `--bulk-fs` / `--bulk-ls`
+are inline on the root, so no computed style is read (jsdom evaluates media
+queries for it — a viewport read); one rAF pass after the mount hydrates
+anything the estimate got wrong; a cold column keeps its header stats and
+gets them computed when hydrated; `_ph` survives a missing `performance`.
+The 4e-review note claiming a rAF pass "paints one frame of empty tds" was
+wrong (a rAF runs before the next paint) — corrected in the code comment
+and in §4e-review above.
+
+**Bundle loader (§4l).** No critical/major. `issueRequest(true)` also skips
+the element's own `hx-confirm` (measured with the real htmx 2.0.4) — the
+plain call does not re-fire `htmx:confirm`, so it is used now. A held
+request was invisible to `hx-sync="replace"`: click `/bulk` (held), click
+`/explorer` — the later click lost. A sequence per target reproduces
+`replace` (a newer request for the same target supersedes the held one).
+PaneState's 60 ms mismatch check on a Back could fire while the Back's
+bundles were still loading (purging htmx's history cache and re-fetching an
+8.7 MB grid twice): it waits on `Bundles.pending()` first. Tags are rescanned
+before a load (a failed tag leaves the page so the retry appends a fresh
+one); the `/qubit/<id>` and `/pair/<id>` inspector partials reference no lazy
+global and no longer pull the components bundle; the pins now cover every
+PATHS regex, every page token and every route spelling (a removed regex or
+token passed all of them before).
+
+**Pins added / rewritten.** `undo_pages_selfcheck.cjs` (fetch-based rows,
+newest response wins, 204 removes, missing row → structural, the SLOT
+regex), `pulses_undo_selfcheck.cjs` (mixed burst keeps its reload),
+`pulse_overlay_selfcheck.cjs` (repeated params, typing in a companion section
+previews THAT section), `bundles_selfcheck.cjs` (50 asserts: plain
+`issueRequest`, hx-sync sequence, `pending()`, lost-tag retry, every route
+family), `bulk_virt_selfcheck.cjs` (ck-N fixture, freeze by class, one-column
+undo hydration, hidden stays cold), `config_manual_selfcheck.cjs` (lazy past
+the budget, leaf collision, error stops polling, open kept across a poll),
+`TestPulseRow` (re-link names the old target, pointer/structural undo,
+`/pulse/row` 204, `_view_paths_split`), `TestPulseView` (exactly four AND the
+fifth named, repeated params, stale `view_main`), `test_config_manual.py`
+(partial never cached, requested-set union, a failed probe remembered),
+`TestReviewRound4l` (Roots, abstract), `test_undo_trail.py` (alias
+sections), `test_bundles.py` (the whole page map + every PATHS regex).
+
+**Deferred, on purpose.** No progress indicator during a bundle hold (tens
+of ms on localhost); the Pulses table's count header after a 204 row removal
+(the next structural refetch corrects it); rename/duplicate/delete from a
+compare view fall back to a single-pulse view; the dataset-poll-driven
+`liveDriftChanged` reaches the Diagnostics list only through the drift
+poller's own cadence.
 
 ## 5. Tooling that came out of the night
 

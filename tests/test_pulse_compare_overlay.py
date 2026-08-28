@@ -23,9 +23,12 @@ def test_the_guard_rule_exists_and_the_compare_card_is_a_host():
     app = (_STATIC / "app.js").read_text(encoding="utf-8")
     # docs/141 4k: Compare is the pulse INSPECTOR with 2-4 pulses in view now --
     # the overlay is gone, the button opens the same route the rows use
-    assert '"/pulse/detail?path=" + encodeURIComponent(paths[0])' in app and '"&paths=" + encodeURIComponent(paths.join(","))' in app
+    assert '"/pulse/detail?path=" + encodeURIComponent(paths[0])' in app
+    # docs/141 4l-review: paths= is repeated per pulse, never comma-joined
+    assert 'paths.map(function (p) { return "&paths=" + encodeURIComponent(p); }).join("")' in app and 'paths.join(",")' not in app
     assert 'var _PULSE_MAX_COMPARE = 4;' in app
-    assert 'pulse-compare-card' not in app.split("window.openPulseCompare = function")[1].split("window.closePulseCompare")[0]
+    # docs/141 4l-review: the overlay's close handler + Escape listener were dead code and are gone
+    assert "window.closePulseCompare" not in app and "pulse-compare-overlay" not in app and "_PULSE_COMPARE_COLORS" not in app
 
 
 def test_every_overlay_that_borrows_the_class_has_a_host():

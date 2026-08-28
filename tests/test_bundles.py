@@ -88,6 +88,14 @@ def test_the_manifest_names_every_lazy_file_once_and_the_page_map_covers_the_rou
         assert files and all(f in man["files"] for f in files), name
     for page, bundles in man["pages"].items():
         assert all(b in man["bundles"] for b in bundles), page
+    # every page token base.html maps (a dropped token used to pass every pin -- 4l-review)
+    assert set(man["pages"]) == {
+        "bulk", "table", "pulses", "generate", "regenerate", "instrument", "topology", "trends", "trend",
+        "qubits", "pairs", "resonators", "flux", "couplers", "qdac",
+        "datasets", "dataset_detail", "dataset_compare", "collections", "fit-audit",
+        "scheduler", "autofit", "compare_hub", "diff",
+    }
+    assert man["pages"]["topology"] == ["chipstatus", "components"] and man["pages"]["trends"] == ["chipstatus", "datasets"]
     # the JS path map agrees with the page map on the pages that matter
     app_js = (_STATIC / "app.js").read_text(encoding="utf-8")
     assert "window.Bundles = (function () {" in app_js
@@ -95,7 +103,13 @@ def test_the_manifest_names_every_lazy_file_once_and_the_page_map_covers_the_rou
                   '["components"]', '["datasets"]', '["scheduler"]', '["autofit"]', '["compare"]'):
         assert token in app_js, token
     assert 'document.addEventListener("htmx:confirm", function (evt) {' in app_js
-    assert "d.issueRequest(true)" in app_js
+    assert "d.issueRequest();" in app_js and "d.issueRequest(true)" not in app_js, "the skip flag would skip hx-confirm"
+    # every PATHS regex the loader carries (a removed line used to pass every pin -- 4l-review)
+    for rx in ('/^\\/bulk(', '/^\\/table(', '/^\\/pulses?(', '/^\\/(generate|regenerate)(', '/^\\/instrument(',
+               '/^\\/topology(', '/^\\/chip-status(', '/^\\/wiring(', '/^\\/trends?(',
+               '/^\\/(qubits|pairs|resonators|flux|couplers|qdac)(', '/^\\/(datasets?|collections|fit-audit)(',
+               '/^\\/scheduler(', '/^\\/autofit(', '/^\\/(compare-hub|compare|diff)('):
+        assert rx in app_js, rx
 
 
 def test_global_controls_reach_into_bundles_through_the_loader():

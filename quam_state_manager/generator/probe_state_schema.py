@@ -329,6 +329,11 @@ def _dump_class(path: str) -> dict:
         return entry
     entry["importable"] = True
     entry["canonical"] = f"{cls.__module__}.{cls.__qualname__}"
+    try:
+        import inspect as _inspect
+        entry["abstract"] = bool(_inspect.isabstract(cls))     # listed, badged, never offered as instantiable
+    except Exception:  # noqa: BLE001
+        entry["abstract"] = False
     entry["bases"] = [
         f"{b.__module__}.{b.__qualname__}"
         for b in cls.__mro__[1:]
@@ -505,19 +510,36 @@ _CATALOG_ROOTS = (
     "quam.components",
     "quam_builder.architecture.superconducting",
     "quam_builder.architecture.superconducting.components",
+    # the modern pulse homes (docs/53): GaussianPulse & co. live here, and a
+    # chip that uses none of them left them out of the "full" catalogue
+    # (docs/141 4l-review); absent on quam_builder 0.2.0, which is tolerated
+    "quam_builder.common",
 )
 
 
-def _import_root_modules(root: str) -> list[str]:
+def _import_root_modules(root: str, status: dict | None = None) -> list[str]:
     """Import *root* and each of its immediate submodules; return the names
-    that imported (errors are per-module, never fatal)."""
+    that imported (errors are per-module, never fatal). *status* records
+    ``ok`` / ``absent`` (the package itself is not installed) / ``error: …``
+    (installed but broken) per root, so a PARTIAL catalogue is never cached
+    as the full one (docs/141 4l-review)."""
     import importlib
     import pkgutil
     done: list[str] = []
     try:
         pkg = importlib.import_module(root)
-    except Exception:  # noqa: BLE001 -- the package is simply absent in this env
+    except ModuleNotFoundError as exc:
+        top = root.split(".")[0]
+        missing = (getattr(exc, "name", "") or "")
+        if status is not None:
+            status[root] = "absent" if (missing == top or missing.startswith(top + ".")) else f"error: {type(exc).__name__}: {exc}"
         return done
+    except Exception as exc:  # noqa: BLE001 -- installed but broken
+        if status is not None:
+            status[root] = f"error: {type(exc).__name__}: {exc}"
+        return done
+    if status is not None:
+        status[root] = "ok"
     done.append(root)
     path = getattr(pkg, "__path__", None)
     if not path:
@@ -534,12 +556,13 @@ def _import_root_modules(root: str) -> list[str]:
     return done
 
 
-def enumerate_catalog(class_paths: list[str]) -> dict:
+def enumerate_catalog(class_paths: list[str], roots_status: dict | None = None) -> dict:
     """``{canonical class path: category}`` for every QuamComponent subclass
-    reachable after importing the known roots and *class_paths*."""
+    reachable after importing the known roots and *class_paths*; the per-root
+    import outcome lands in *roots_status* when given."""
     import importlib
     for root in _CATALOG_ROOTS:
-        _import_root_modules(root)
+        _import_root_modules(root, roots_status)
     for cp in class_paths:
         try:
             _import_class(cp)
@@ -581,6 +604,9 @@ def _catalog_category(mod: str, name: str) -> str:
     n = name.lower()
     if m.startswith("quam_config") or (not m.startswith("quam.") and not m.startswith("quam_builder")):
         return "Lab (quam_config)"
+    # a QPU root FIRST: FluxTunableQuam was filed under "Flux & couplers" (4l-review)
+    if "quam" in n and ("root" in m or n.endswith("quam")):
+        return "Roots"
     if "qubit_pair" in m or "qubitpair" in n or n.endswith("pair"):
         return "Qubit pairs"
     if ".qubit" in m or n.endswith("qubit") or "transmon" in n:
@@ -642,7 +668,9 @@ def main() -> int:
         requested = [str(c) for c in spec.get("classes", [])]
         result.update(dump_schemas(requested, pulse_roster=bool(spec.get("pulse_roster", True))))
         if args.catalog:
-            cat = enumerate_catalog(requested)
+            roots_status: dict = {}
+            cat = enumerate_catalog(requested, roots_status)
+            result["catalog_roots"] = roots_status
             entries = {}
             for path, category in cat.items():
                 try:

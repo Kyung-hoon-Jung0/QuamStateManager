@@ -1485,6 +1485,40 @@ class TestPulseRow:
         und = _json.loads(loaded_client.post("/undo").headers["HX-Trigger"])
         assert set(und["pulses-rows-changed"]["paths"]) >= {f"{XY}.x180_DragCosine", f"{XY}.x90_DragCosine"}
 
+    def test_structural_changes_and_pointer_moves_refetch_the_table(self, loaded_client):
+        import json as _json
+        # a re-link names the OLD target's row too (its used_by changed) -- docs/141 4l-review
+        resp = loaded_client.post("/pulse/edit", data={
+            "path": f"{XY}.x90_DragCosine", "dot_path": f"{XY}.x90_DragCosine.length",
+            "mode": "pointer", "value": "#../saturation/length",
+        })
+        assert resp.status_code == 200, resp.data[:200]
+        trig = _json.loads(resp.headers["HX-Trigger"])
+        assert set(trig["pulses-rows-changed"]["paths"]) >= {f"{XY}.x90_DragCosine", f"{XY}.x180_DragCosine", f"{XY}.saturation"}
+        # its undo moves a pointer back: the row patch cannot see the other end -> structural
+        und = _json.loads(loaded_client.post("/undo").headers["HX-Trigger"])
+        assert und.get("pulses-changed") is True and "pulses-rows-changed" not in und
+        # a path no pulse row owns (the anharmonicity a DRAG pulse points at) -> structural
+        r = loaded_client.post("/field/edit", data={"dot_path": "qubits.qA1.anharmonicity", "value": "-210000000"})
+        assert r.status_code == 200, r.data[:200]
+        und2 = _json.loads(loaded_client.post("/undo").headers["HX-Trigger"])
+        assert und2.get("pulses-changed") is True and "pulses-rows-changed" not in und2
+
+    def test_a_row_that_left_the_page_filter_answers_204(self, loaded_client):
+        assert loaded_client.get(f"/pulse/row?path={XY}.saturation&q=saturation").status_code == 200
+        assert loaded_client.get(f"/pulse/row?path={XY}.saturation&q=zzz_no_such").status_code == 204
+        assert loaded_client.get(f"/pulse/row?path={XY}.saturation&channel=resonator").status_code == 204
+        assert loaded_client.get(f"/pulse/row?path={XY}.saturation&channel=xy").status_code == 200
+
+    def test_view_paths_are_split_per_param_not_per_comma(self):
+        from quam_state_manager.web.routes import _view_paths_arg, _view_paths_split
+        a, b = f"{XY}.x180", f"{XY}.x90"
+        assert _view_paths_arg([a, b]) == [a, b]
+        assert _view_paths_arg(f"{a},{b}") == [a, b], "a comma-joined value is still accepted"
+        assert _view_paths_arg([a, a, b]) == [a, b]
+        assert _view_paths_split(["qubits.qA1.xy.operations.a,b"]) == ["qubits.qA1.xy.operations.a,b"], "a real op name with a comma is ONE path"
+        assert _view_paths_arg([f"{XY}.p{i}" for i in range(6)]) == [f"{XY}.p{i}" for i in range(4)]
+
     def test_the_table_only_refetches_for_a_structural_change(self):
         from pathlib import Path as _P
         tpl = (_P(__file__).resolve().parent.parent / "quam_state_manager" / "web" / "templates" / "_pulses.html").read_text(encoding="utf-8")
@@ -1505,7 +1539,8 @@ class TestPulseView:
         assert html.count('class="detail-section pulse-sec"') == 2
         assert f'data-pulse-path="{XY}.x180_DragCosine"' in html and f'data-pulse-path="{XY}.x90_DragCosine"' in html
         assert html.count("--sec-color: var(--pico-primary)") == 1 and "--sec-color: #e67e22" in html
-        assert html.count('name="view_paths"') >= 2 and f'value="{XY}.x180_DragCosine,{XY}.x90_DragCosine"' in html
+        # docs/141 4l-review: one hidden input per pulse in view, never a comma-joined value
+        assert html.count('name="view_paths"') >= 4 and f'<input type="hidden" name="view_paths" value="{XY}.x180_DragCosine"><input type="hidden" name="view_paths" value="{XY}.x90_DragCosine">' in html
         import json as _json
         data = _json.loads(html.split('<script id="pulse-detail-data" type="application/json">')[1].split("</script>")[0])
         assert data["mode"] == "compare" and [p["path"] for p in data["pulses"]] == [f"{XY}.x180_DragCosine", f"{XY}.x90_DragCosine"]
@@ -1527,4 +1562,16 @@ class TestPulseView:
         assert html.count('class="detail-section pulse-sec"') == 1 and '"mode": "single"' in html
         many = ",".join([f"{XY}.x180_DragCosine", f"{XY}.x90_DragCosine", f"{XY}.saturation", f"{XY}.mystery", "qubits.qA1.resonator.operations.readout"])
         html = loaded_client.get(f"/pulse/detail?paths={many}").data.decode()
-        assert html.count('class="detail-section pulse-sec"') <= 4
+        # docs/141 4l-review: exactly four, and the fifth is NAMED, never silently dropped
+        assert html.count('class="detail-section pulse-sec"') == 4
+        assert 'class="muted pulse-view-note"' in html and "readout" in html.split('pulse-view-note')[1].split("</span>")[0]
+        # repeated paths= params (a comma is legal inside a foreign op name) render the same view
+        rep = "&".join("paths=" + p for p in many.split(","))
+        html2 = loaded_client.get(f"/pulse/detail?{rep}").data.decode()
+        assert html2.count('class="detail-section pulse-sec"') == 4
+        # a stale main pulse on an edit: the write lands and the view re-renders around the edited pulse
+        resp = loaded_client.post("/pulse/edit", data={
+            "path": f"{XY}.saturation", "dot_path": f"{XY}.saturation.length", "mode": "value", "value": "64",
+            "view_main": f"{XY}.gone_meanwhile", "view_paths": [f"{XY}.gone_meanwhile", f"{XY}.saturation"],
+        })
+        assert resp.status_code == 200 and 'data-committed="64"' in resp.data.decode()

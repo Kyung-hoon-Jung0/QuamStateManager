@@ -48,13 +48,12 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='pico.min.css') }}">
     {# Stylesheet up top so CSS downloads in parallel with the scripts. #}
     <link rel="stylesheet" href="{{ asset_url('style.css') }}">
-    {# Scripts load eagerly (NOT deferred): UI_CONFIG (app.js) and DatasetVirtual
-       (dataset-virtual.js) are read by parse-time inline scripts in full-page
-       template renders (e.g. /topology, /trends, /datasets on direct load or
-       refresh), so they must be defined before the <body> parses. Deferring them
-       silently broke those pages on full-page load. The app is served locally,
-       so eager JS costs ~nothing. Plotly is the one exception — it's lazy-loaded
-       on demand via window.requirePlotly() (see app.js), never eagerly. #}
+    {# Scripts load eagerly (NOT deferred): UI_CONFIG (app.js) is read by
+       parse-time inline scripts in full-page template renders (e.g. /topology,
+       /trends, /datasets on direct load or refresh); the page BUNDLES below
+       (docs/141 4l) are eager <head> tags for the same reason -- only their
+       set depends on the page. Deferring them left the globals undefined and
+       silently broke (or threw on) those pages. #}
     {# docs/124 §1.1 (the settle fix): htmx 2.0.4's attribute settle restores an
        id-matched element's class/style to the incoming MARKUP values ~20ms after
        every swap — wiping anything a script set during the swap window. That one
@@ -107,7 +106,7 @@
         'instrument': ['wiring'],
         'topology': ['chipstatus', 'components'], 'trends': ['chipstatus', 'datasets'], 'trend': ['chipstatus', 'datasets'],
         'qubits': ['components'], 'pairs': ['components'], 'resonators': ['components'], 'flux': ['components'],
-        'couplers': ['components'], 'qdac': ['components'], 'qubit_detail': ['components'], 'pair_detail': ['components'],
+        'couplers': ['components'], 'qdac': ['components'],
         'datasets': ['datasets'], 'dataset_detail': ['datasets'], 'dataset_compare': ['datasets'], 'collections': ['datasets'],
         'fit-audit': ['datasets'],
         'scheduler': ['scheduler'], 'autofit': ['autofit'],

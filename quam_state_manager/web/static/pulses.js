@@ -61,7 +61,10 @@ window.PulsesPage = (function () {
     function refreshCommittedPlot(root, sec) {
         if (!root || !document.body.contains(root) || !sec) return;
         var done = function () {
-            root._cpPending = Math.max(0, (root._cpPending || 0) - 1);
+            // per-section pending flags, the root count derived from them --
+            // two overlapping refreshes never zero each other (docs/141 4l-review)
+            sec._pending = false;
+            root._cpPending = sectionsOf(root).filter(function (sc) { return sc._pending; }).length;
             schedulePreview(root);
         };
         var key = committedKey(sec);
@@ -88,13 +91,22 @@ window.PulsesPage = (function () {
     /* Re-render the whole view from the server (the honest path for a change
        the in-place repaint cannot express: a list row, a re-link, an undo at
        a pointer target, a structural change). */
+    /* The view bar carries the view as a JSON list; the URL repeats paths=
+       per pulse -- a comma is legal inside a foreign op name (docs/141 4l-review). */
+    function viewPathsOf(bar) {
+        var raw = (bar && bar.getAttribute('data-view-paths')) || '';
+        try { var arr = JSON.parse(raw); if (Array.isArray(arr)) return arr.filter(Boolean); } catch (e) {}
+        return raw.split(',').filter(Boolean);
+    }
+    function viewUrl(main, paths) {
+        return '/pulse/detail?path=' + encodeURIComponent(main)
+             + (paths || []).map(function (p) { return '&paths=' + encodeURIComponent(p); }).join('');
+    }
     function reloadView(root) {
-        if (!document.body.contains(root) || !window.htmx) return;
+        if (!document.body.contains(root) || !window.htmx) return null;
         var bar = root.querySelector('.pulse-view-bar');
         var main = (bar && bar.getAttribute('data-view-main')) || root.getAttribute('data-pulse-path');
-        var paths = (bar && bar.getAttribute('data-view-paths')) || '';
-        var url = '/pulse/detail?path=' + encodeURIComponent(main) + (paths ? '&paths=' + encodeURIComponent(paths) : '');
-        window.htmx.ajax('GET', url, { target: '#inspector-pane', swap: 'innerHTML' });
+        return window.htmx.ajax('GET', viewUrl(main, viewPathsOf(bar)), { target: '#inspector-pane', swap: 'innerHTML' });
     }
     document.addEventListener('cellsReverted', function (evt) {
         var root = detailRoot();
@@ -109,11 +121,14 @@ window.PulsesPage = (function () {
             sec.el.querySelectorAll('input[data-param][data-target-path]').forEach(function (inp) {
                 var t = inp.getAttribute('data-target-path'); if (t) targets.push(t);
             });
+            // an alias section's inputs live at the TARGET's paths (docs/141 4l-review)
+            var homes = [sec.path];
+            if (sec.actualPath && sec.actualPath !== sec.path) homes.push(sec.actualPath);
             var mine = false;
             entries.forEach(function (e) {
                 var dp = (e && e.dot_path) || '';
                 if (!dp) return;
-                if (dp === sec.path || dp.indexOf(sec.path + '.') === 0) {
+                if (homes.some(function (h) { return dp === h || dp.indexOf(h + '.') === 0; })) {
                     mine = true;
                     if (!fieldPaths[dp] || e.created || e.deleted || e.old_kind === 'pointer') inPlace = false;
                 } else if (targets.some(function (t) { return dp === t || dp.indexOf(t + '.') === 0; })) {
@@ -124,19 +139,32 @@ window.PulsesPage = (function () {
         });
         if (!touched.length) return;
         // a refresh is due: the stale committed plot must not be drawn
-        // meanwhile (a flag until the debounce fires, then a count of the
+        // meanwhile (a flag until the debounce fires, then the count of the
         // sections still fetching -- never accumulated per press, a burst
         // of five presses is one refresh)
         root._cpPending = Math.max(root._cpPending || 0, 1);
-        if (!inPlace) {
-            _debounce('pulse-committed-refresh', function () { reloadView(root); }, COMMITTED_REFRESH_MS);
-            return;
-        }
+        // a reload once due STAYS due: an in-place entry arriving inside the
+        // same debounce window must not replace it (docs/141 4l-review)
+        if (!inPlace) root._reloadDue = true;
         touched.forEach(function (sec) { sec._refreshDue = true; });
         _debounce('pulse-committed-refresh', function () {
+            if (root._reloadDue) {
+                root._reloadDue = false;
+                var clear = function () {
+                    // the swap replaced the root on success; a reload that did
+                    // not land must not wedge the preview on the old one
+                    if (!document.body.contains(root)) return;
+                    root._cpPending = 0;
+                    secs.forEach(function (sc) { sc._refreshDue = false; sc._pending = false; });
+                    schedulePreview(root);
+                };
+                var p = reloadView(root);
+                if (p && typeof p.then === 'function') p.then(clear, clear); else clear();
+                return;
+            }
             var due = secs.filter(function (sc) { return sc._refreshDue; });
-            due.forEach(function (sc) { sc._refreshDue = false; });
-            root._cpPending = due.length;
+            due.forEach(function (sc) { sc._refreshDue = false; sc._pending = true; });
+            root._cpPending = secs.filter(function (sc) { return sc._pending; }).length;
             if (!due.length) { schedulePreview(root); return; }
             due.forEach(function (sc) { refreshCommittedPlot(root, sc); });
         }, COMMITTED_REFRESH_MS);
@@ -174,14 +202,13 @@ window.PulsesPage = (function () {
        both re-render the view from the server (one mechanism, one truth). */
     function navigateView(root, main, paths) {
         if (!window.htmx) return;
-        var url = '/pulse/detail?path=' + encodeURIComponent(main) + '&paths=' + encodeURIComponent(paths.join(','));
-        window.htmx.ajax('GET', url, { target: '#inspector-pane', swap: 'innerHTML' });
+        window.htmx.ajax('GET', viewUrl(main, paths), { target: '#inspector-pane', swap: 'innerHTML' });
     }
     function buildViewBar(root) {
         var bar = root.querySelector('.pulse-view-bar');
         if (!bar) return;
         var pick = bar.querySelector('.pulse-overlay-pick');
-        var view = (bar.getAttribute('data-view-paths') || '').split(',').filter(Boolean);
+        var view = viewPathsOf(bar);
         var main = bar.getAttribute('data-view-main') || view[0];
         bar.querySelectorAll('.pulse-overlay-x[data-drop-path]').forEach(function (x) {
             if (x._bound) return;
@@ -239,7 +266,7 @@ window.PulsesPage = (function () {
                 var isQ = t.name === 'Q';
                 var col = color || (isQ ? colors.q : colors.i);
                 var d = dash;
-                if (color && isQ) d = (dash === 'solid') ? 'dot' : 'dashdot';
+                if (color && isQ) d = (dash === 'solid') ? 'dot' : (dash === 'longdash' ? 'longdashdot' : 'dashdot');
                 data.push({
                     x: t.x, y: t.y,
                     name: t.name + suffix,
@@ -263,7 +290,9 @@ window.PulsesPage = (function () {
             pushTraces(committed, null, '', 'solid', 2, 1);
             pushTraces(preview, null, ' (preview)', 'dash', 1.6, 0.85);
         }
-        pushTraces(verify, null, ' (config)', 'dot', 1.5, 0.9);
+        // the config ground truth in its own colour + dash: a single pulse's
+        // committed Q (dotted, section colour) must never read as it (docs/141 4l-review)
+        pushTraces(verify, cssVar('--pico-muted-color', '#8a8a8a'), ' (config)', 'longdash', 1.5, 0.9);
 
         var layout = {
             margin: { l: 50, r: 10, t: 10, b: 40 },
@@ -350,20 +379,24 @@ window.PulsesPage = (function () {
                 if (!state.dirty || Object.keys(state.overrides).length === 0) {
                     sec.gen = (sec.gen || 0) + 1;      // drop an in-flight preview for this section
                     sec.previewPlot = null;
+                    sec.synthErr = '';
                     return;
                 }
                 anyDirty = true;
                 pending++;
                 fetchSynth({ path: sec.path, params: state.overrides }, function (data) {
                     if (!document.body.contains(root)) return;
+                    // one error line per section -- another section's success
+                    // never hides this one's (docs/141 4l-review)
                     if (data.ok && data.plot && data.plot.ok) {
                         sec.previewPlot = data.plot;
-                        showSynthErr(root, '');
+                        sec.synthErr = '';
                     } else {
                         sec.previewPlot = null;
-                        showSynthErr(root, (secs.length > 1 ? sec.label + ': ' : '')
-                            + (data.error || firstParamError(data.param_errors)));
+                        sec.synthErr = (secs.length > 1 ? sec.label + ': ' : '')
+                            + (data.error || firstParamError(data.param_errors));
                     }
+                    showSynthErr(root, secs.map(function (sc) { return sc.synthErr || ''; }).filter(Boolean).join(' \u00b7 '));
                     renderPulsePlot('pulse-detail-plot');
                 }, committedKey(sec), sec);
             });

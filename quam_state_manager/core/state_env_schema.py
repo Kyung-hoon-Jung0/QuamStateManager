@@ -265,21 +265,40 @@ def _catalog_cache_path(instance_path) -> Path:
     return Path(instance_path) / _CATALOG_CACHE_FILENAME
 
 
+_catalog_mem: dict[str, Any] = {"key": None, "data": {}}
+
+
 def _load_catalog_cache(instance_path) -> dict[str, dict]:
+    """The on-disk catalogue cache, memoised on (mtime, size): it is ~1 MB
+    per env and every /api/manual used to re-read and re-parse it (4l-review)."""
     p = _catalog_cache_path(instance_path)
-    if not p.exists():
+    try:
+        st = p.stat()
+        key = (str(p), st.st_mtime_ns, st.st_size)
+    except OSError:
+        _catalog_mem["key"] = None
+        _catalog_mem["data"] = {}
         return {}
+    if _catalog_mem["key"] == key:
+        return _catalog_mem["data"]
     try:
         import json
         data = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+        data = {}
+    data = data if isinstance(data, dict) else {}
+    _catalog_mem["key"] = key
+    _catalog_mem["data"] = data
+    return data
 
 
-def catalog_for_env(python_path: str | None, instance_path=None) -> dict | None:
+def catalog_for_env(python_path: str | None, instance_path=None,
+                    classes: list[str] | None = None) -> dict | None:
     """REQUEST-PATH read of the cached catalogue: ``{class path: entry}`` or
-    None when cold / stale (never spawns)."""
+    None when cold / stale (never spawns). With *classes* (the open chip's
+    inventory) a cache that never saw one of them is COLD too: the catalogue
+    is per env, but the lab classes it holds depend on which chip warmed it
+    (docs/141 4l-review) -- the next probe unions the requested sets."""
     if not python_path or instance_path is None:
         return None
     with _cache_lock:
@@ -290,7 +309,23 @@ def catalog_for_env(python_path: str | None, instance_path=None) -> dict | None:
     if sig is None or entry.get("signature") != sig:
         return None
     cat = entry.get("catalog")
-    return cat if isinstance(cat, dict) and cat else None
+    if not (isinstance(cat, dict) and cat):
+        return None
+    if classes:
+        seen = set(entry.get("requested") or [])
+        if any(c not in cat and c not in seen for c in classes if isinstance(c, str)):
+            return None
+    return cat
+
+
+def catalog_requested(python_path: str | None, instance_path=None) -> list[str]:
+    """The class paths every probe of this env was asked for so far."""
+    if not python_path or instance_path is None:
+        return []
+    with _cache_lock:
+        entry = _load_catalog_cache(instance_path).get(python_path)
+    req = (entry or {}).get("requested") if isinstance(entry, dict) else None
+    return [c for c in (req or []) if isinstance(c, str)]
 
 
 def probe_catalog(python_path: str, class_paths: list[str], instance_path=None, *,
@@ -302,7 +337,7 @@ def probe_catalog(python_path: str, class_paths: list[str], instance_path=None, 
         result["error"] = "selected interpreter no longer exists"
         return result
     if instance_path is not None and not force:
-        cached = catalog_for_env(python_path, instance_path)
+        cached = catalog_for_env(python_path, instance_path, list(class_paths or []))
         if cached:
             result.update(ok=True, cached=True, catalog=cached)
             return result
@@ -310,7 +345,10 @@ def probe_catalog(python_path: str, class_paths: list[str], instance_path=None, 
         result["error"] = f"schema probe script not found: {STATE_SCHEMA_SCRIPT}"
         return result
     import json
-    requested = [c for c in dict.fromkeys(class_paths) if isinstance(c, str) and c][:_CLASS_CAP]
+    # union with what earlier probes of this env asked for, so two chips
+    # taking turns never flip the catalogue between their lab classes
+    prior = catalog_requested(python_path, instance_path) if instance_path is not None else []
+    requested = [c for c in dict.fromkeys(list(class_paths) + prior) if isinstance(c, str) and c][:_CLASS_CAP]
     outcome = _blank_outcome()
     work_dir = Path(tempfile.mkdtemp(prefix="quamcatalog_work_"))
     try:
@@ -334,7 +372,14 @@ def probe_catalog(python_path: str, class_paths: list[str], instance_path=None, 
     if not isinstance(cat, dict) or not cat:
         result["error"] = "the probe returned no classes"
         return result
-    result.update(ok=True, catalog=cat)
+    # a root that is INSTALLED but failed to import makes the catalogue
+    # partial: served for this request, named, never cached as the truth
+    roots = parsed.get("catalog_roots") if isinstance(parsed.get("catalog_roots"), dict) else {}
+    broken = {r: v for r, v in roots.items() if isinstance(v, str) and v.startswith("error")}
+    result.update(ok=True, catalog=cat, roots=roots, partial=bool(broken))
+    if broken:
+        result["error"] = "partial catalogue -- " + "; ".join(f"{r}: {v[7:]}" for r, v in broken.items())
+        return result
     if instance_path is not None:
         with _cache_lock:
             cache = _load_catalog_cache(instance_path)
@@ -343,6 +388,8 @@ def probe_catalog(python_path: str, class_paths: list[str], instance_path=None, 
                 "format": SCHEMA_FORMAT,
                 "versions": parsed.get("versions") or _env_versions(python_path),
                 "signature": _env_signature(python_path),
+                "requested": requested,
+                "roots": roots,
                 "catalog": cat,
             }
             while len(cache) > _MAX_CACHED_ENVS:

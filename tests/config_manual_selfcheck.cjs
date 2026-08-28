@@ -78,8 +78,8 @@ const calls = [];
 window.fetch = function (url) {
     calls.push(String(url));
     const body = String(url).indexOf('/api/manual/node') === 0
-        ? NODE : { ok: true, entries: ENTRIES, classes: CLASSES, categories: CATEGORIES, env: true, catalog: true,
-                   catalog_state: window.__catalogState, note: null, chip: 'chipA' };
+        ? NODE : { ok: true, entries: ENTRIES.slice(), classes: CLASSES.slice(), categories: CATEGORIES, env: true, catalog: true,   // a fresh copy per response, as JSON would be
+                   catalog_state: window.__catalogState, note: window.__catalogNote || null, chip: 'chipA' };
     return Promise.resolve({ json: () => Promise.resolve(body) });
 };
 global.fetch = window.fetch;
@@ -176,7 +176,7 @@ setTimeout(function () {
                     window.localStorage.setItem('quam_manual_size', JSON.stringify({ w: 700, h: 520 }));   // jsdom's real Storage
                     window.toggleConfigManual(); window.toggleConfigManual(d.getElementById('manual-btn'));
                     ok(pop.style.width === '700px' && pop.style.height === '520px', 'a remembered size is restored on open (' + pop.style.width + ' x ' + pop.style.height + '; stored=' + window.localStorage.getItem('quam_manual_size') + ' vw=' + window.innerWidth + ' open=' + !pop.classList.contains('manual-hidden') + ')');
-                    process.exit(fails ? 1 : 0);
+                    reviewPins(function () { process.exit(fails ? 1 : 0); });
                 }, 400);
             });
             return;
@@ -184,3 +184,71 @@ setTimeout(function () {
         }, 20);
     }, 20);
 }, 30);
+
+/* docs/141 4l-review pins (run last; the window is open and the catalogue 'ready') */
+function reviewPins(done) { setTimeout(function () { reviewPinsRun(done); }, 80); }   // let an in-flight load settle first
+function reviewPinsRun(done) {
+    const mk = (i, cls, clsPath, cat, used) => ({ id: cls + '.k' + i, key: 'k' + i, cls: cls, cls_path: clsPath, category: cat, used: used,
+        type: 'float', required: false, default: null, doc: 'd' + i, docs: null, source: 'class docstring', examples: [], present_in: 0, choices: null });
+    // (a) past the budget (400 rows): the OPEN class renders, a collapsed class defers to its toggle -- never an empty header
+    for (let i = 0; i < 430; i++) ENTRIES.push(mk(i, 'BigPort', 'quam.components.ports.BigPort', 'Ports', false));
+    for (let i = 0; i < 12; i++) ENTRIES.push(mk(i, 'UsedPulse', 'quam.components.pulses.UsedPulse', 'Pulses', true));
+    CLASSES.push({ cls: 'BigPort', cls_path: 'quam.components.ports.BigPort', doc: null, category: 'Ports', fields: 430, count: 0, known: true, used: false });
+    CLASSES.push({ cls: 'UsedPulse', cls_path: 'quam.components.pulses.UsedPulse', doc: null, category: 'Pulses', fields: 12, count: 2, known: true, used: true });
+    // (b) two classes sharing a leaf name
+    ENTRIES.push(mk(0, 'DragPulse', 'quam.components.pulses.DragPulse', 'Pulses', false));
+    ENTRIES.push(mk(1, 'DragPulse', 'quam_builder.common.pulses.DragPulse', 'Pulses', false));
+    CLASSES.push({ cls: 'DragPulse', cls_path: 'quam.components.pulses.DragPulse', doc: 'quam drag', category: 'Pulses', fields: 1, count: 0, known: true, used: false });
+    CLASSES.push({ cls: 'DragPulse', cls_path: 'quam_builder.common.pulses.DragPulse', doc: 'builder drag', category: 'Pulses', fields: 1, count: 0, known: true, used: false, abstract: true });
+    window.__catalogState = 'ready';
+    window.openConfigManual({ q: '' });               // back to SEARCH mode (the F1 pin above left the node view)
+    window.ConfigManual.load(true).then(function () {
+        window.ConfigManual._renderSearch('');
+        const cls = (leaf) => Array.from(body().querySelectorAll('.manual-class')).filter((c) => c.querySelector('.manual-class-name').textContent === leaf);
+        const used = cls('UsedPulse')[0], big = cls('BigPort')[0];
+        ok(used && used.open && used.querySelectorAll('.manual-entry').length === 12, 'past the budget the class the chip uses renders every key (' + (used && used.querySelectorAll('.manual-entry').length) + ')');
+        ok(big && !big.open && big.querySelectorAll('.manual-entry').length === 0 && !!big.querySelector('.manual-lazy'),
+           'a collapsed class past the budget defers its keys (no empty header: it says ' + (big && big.querySelector('.manual-badge').textContent) + ')');
+        big.open = true; big.dispatchEvent(new window.Event('toggle', { bubbles: true }));
+        ok(big.querySelectorAll('.manual-entry').length === 430 && !big.querySelector('.manual-lazy'), 'opening it renders its keys (' + big.querySelectorAll('.manual-entry').length + ')');
+        const drags = cls('DragPulse');
+        ok(drags.length === 2, 'two classes sharing a leaf name are two rows (' + drags.length + ')');
+        ok(drags.some((c) => /quam\.components\.pulses/.test(c.querySelector('.manual-class-mod').textContent))
+           && drags.some((c) => /quam_builder\.common\.pulses/.test(c.querySelector('.manual-class-mod').textContent)), 'each names its module');
+        ok(drags.some((c) => /abstract/.test(c.querySelector('summary').textContent)) && drags.some((c) => !/abstract/.test(c.querySelector('summary').textContent)),
+           'an abstract class is badged, the other is not');
+        // (d) a poll re-render keeps what the user opened, and does not re-render at all when nothing changed
+        window.__catalogState = 'loading';
+        window.ConfigManual.load(true).then(function () {
+            window.ConfigManual._renderSearch('');
+            const big2 = cls('BigPort')[0];
+            big2.open = true; big2.dispatchEvent(new window.Event('toggle', { bubbles: true }));
+            const n0 = calls.filter((c) => c === '/api/manual').length;
+            setTimeout(function () {
+                const n1 = calls.filter((c) => c === '/api/manual').length;
+                ok(n1 > n0, 'while loading the window polls (' + (n1 - n0) + ')');
+                ok(cls('BigPort')[0] === big2 && big2.open, 'an unchanged poll re-renders NOTHING (the same node, still open)');
+                ENTRIES.push(mk(999, 'UsedPulse', 'quam.components.pulses.UsedPulse', 'Pulses', true));   // the catalogue grew
+                setTimeout(function () {
+                    const big3 = cls('BigPort')[0];
+                    // (two open classes past the budget: the user's class keeps its keys up to the budget, and says how many more)
+                    ok(big3 !== big2 && big3.open && big3.querySelectorAll('.manual-entry').length >= 380 && /more keys in this class/.test(big3.textContent),
+                       'a changed poll re-renders, and the class the user opened stays open with its keys (' + big3.querySelectorAll('.manual-entry').length + ' new=' + (big3 !== big2) + ' open=' + big3.open + ' note=' + /more keys in this class/.test(big3.textContent) + ')');
+                    const used3 = cls('UsedPulse')[0];
+                    ok(used3 && used3.querySelectorAll('.manual-entry').length === 13, "the chip's own class keeps every key -- the budget serves it first (" + (used3 && used3.querySelectorAll('.manual-entry').length) + ')');
+                    // (c) an error state is final: the note shows and the poll stops
+                    window.__catalogState = 'error'; window.__catalogNote = 'The class catalogue could not be built: no quam in this interpreter';
+                    window.ConfigManual.load(true).then(function () {
+                        window.ConfigManual._renderSearch('');
+                        ok(/no quam in this interpreter/.test(body().textContent), 'the error state shows the reason');
+                        const e0 = calls.filter((c) => c === '/api/manual').length;
+                        setTimeout(function () {
+                            ok(calls.filter((c) => c === '/api/manual').length === e0, 'and the window stops polling');
+                            done();
+                        }, 400);
+                    });
+                }, 400);
+            }, 400);
+        });
+    });
+}

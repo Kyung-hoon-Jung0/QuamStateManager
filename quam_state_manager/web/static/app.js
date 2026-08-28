@@ -4029,7 +4029,7 @@ window.PhysAmp = (function () {
 window.smModalOpen = function () {
     if (document.querySelector('dialog[open]')) return true;
     var sel = '.ch-overlay, #state-review-overlay, #live-drift-overlay,'
-            + ' #version-diff-overlay, #pulse-compare-overlay,'
+            + ' #version-diff-overlay,'
             + ' #plot-apply-popup, #new-run-popup, #cmd-palette, #kb-cheatsheet,'
             + ' .modal';
     var els = document.querySelectorAll(sel);
@@ -4397,6 +4397,19 @@ window.PaneState = (function () {
         for (var k in stash) _purge(stash[k].holder);
         stash = {};
         _cur = location.pathname;
+        // docs/141 4l-review: on a Back into a page whose bundles are still
+        // loading, htmx's restore is DEFERRED by the loader (Bundles chains
+        // onpopstate) -- the mismatch check below would otherwise fire on
+        // the not-yet-restored pane, purge the history cache and re-fetch an
+        // 8.7 MB grid twice. Wait for the hold (set by the wrapper, which
+        // runs after this listener in the same dispatch: hence the 0 ms hop).
+        setTimeout(function () {
+            var pend = (window.Bundles && window.Bundles.pending) ? window.Bundles.pending() : null;
+            if (pend && typeof pend.then === 'function') pend.then(_historyCheck, _historyCheck);
+            else _historyCheck();
+        }, 0);
+    }
+    function _historyCheck() {
         // htmx's history cache may hold a snapshot taken while this pane was
         // PARKED (i.e. empty). Never leave the user on a blank pane: refetch.
         setTimeout(function () {
@@ -4671,6 +4684,9 @@ window.Bundles = (function () {
     function loadFile(file) {
         if (_loaded[file]) return Promise.resolve();
         if (_inflight[file]) return _inflight[file];
+        // a tag the page carries (or a load that landed since the first scan)
+        // is never fetched and executed a second time
+        if (document.querySelector('script[data-bundle-file="' + file + '"]')) { _loaded[file] = true; return Promise.resolve(); }
         var m = manifest();
         var url = m.files[file];
         if (!url) return Promise.reject(new Error("unknown bundle file " + file));
@@ -4680,7 +4696,11 @@ window.Bundles = (function () {
             sc.async = false;              // dynamic scripts with async=false run in insertion order
             sc.setAttribute("data-bundle-file", file);
             sc.onload = function () { _loaded[file] = true; delete _inflight[file]; resolve(); };
-            sc.onerror = function () { delete _inflight[file]; reject(new Error("failed to load " + file)); };
+            sc.onerror = function () {
+                // the failed tag leaves the page, so the next navigation retries with a fresh one
+                if (sc.parentNode) sc.parentNode.removeChild(sc);
+                delete _inflight[file]; reject(new Error("failed to load " + file));
+            };
             document.head.appendChild(sc);
         });
         return _inflight[file];
@@ -4709,7 +4729,7 @@ window.Bundles = (function () {
         [/^\/wiring(\/|$|\?)/, ["chipstatus", "components"]],
         [/^\/trends?(\/|$|\?)/, ["chipstatus", "datasets"]],
         [/^\/(qubits|pairs|resonators|flux|couplers|qdac)(\/|$|\?)/, ["components"]],
-        [/^\/(qubit|pair)\//, ["components"]],
+        // (the /qubit/<id> and /pair/<id> inspector partials reference no lazy global -- 4l-review audit)
         [/^\/(datasets?|collections|fit-audit)(\/|$|\?)/, ["datasets"]],
         [/^\/scheduler(\/|$|\?)/, ["scheduler"]], [/^\/autofit(\/|$|\?)/, ["autofit"]],
         [/^\/(compare-hub|compare|diff)(\/|$|\?)/, ["compare"]],
@@ -4731,15 +4751,33 @@ window.Bundles = (function () {
             return fn.apply(obj, args);
         }).catch(function (e) { if (window.showToast) window.showToast(String(e.message || e), "error"); });
     }
-    /* Hold an htmx request whose page needs bundles that are not here yet. */
+    /* Hold an htmx request whose page needs bundles that are not here yet.
+       docs/141 4l-review: (1) issueRequest() WITHOUT the skip flag -- the
+       flag also skips the element's own hx-confirm dialog (measured with
+       the real htmx 2.0.4; the plain call does not re-fire htmx:confirm);
+       (2) a held request is invisible to hx-sync="replace" until it is
+       issued, so a sequence per target reproduces `replace`: a newer
+       request for the same target that passed meanwhile supersedes it. */
+    var _seqByTarget = (typeof WeakMap === "function") ? new WeakMap() : null;
+    var _pending = Promise.resolve();
+    function pending() { return _pending; }
     document.addEventListener("htmx:confirm", function (evt) {
         var d = evt && evt.detail;
         if (!d || typeof d.issueRequest !== "function") return;
         var names = forPath(d.path || (d.requestConfig && d.requestConfig.path) || "");
+        var target = d.target || d.elt || null;
+        var seq = 0;
+        if (_seqByTarget && target && typeof target === "object") {
+            seq = (_seqByTarget.get(target) || 0) + 1;
+            _seqByTarget.set(target, seq);
+        }
         if (!names.length || loaded(names)) return;
         evt.preventDefault();
-        need(names).then(function () { d.issueRequest(true); },
-                         function () { d.issueRequest(true); });   // never strand a navigation on a lost script
+        var go = function () {
+            if (seq && _seqByTarget.get(target) !== seq) return;   // superseded (hx-sync replace)
+            d.issueRequest();                                       // never strand a navigation on a lost script
+        };
+        _pending = need(names).then(go, go);
     });
     /* Back/Forward: htmx restores a history entry WITHOUT an htmx:confirm (its
        localStorage cache, or its own HX-History-Restore-Request xhr), and the
@@ -4752,12 +4790,12 @@ window.Bundles = (function () {
             var names = (e && e.state && e.state.htmx) ? forPath(location.pathname + location.search) : [];
             var go = function () { if (prev) prev.call(window, e); };
             if (!names.length || loaded(names)) { go(); return; }
-            need(names).then(go, go);
+            _pending = need(names).then(go, go);      // PaneState's Back check waits on pending()
         };
     }
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", installPopstate);
     else installPopstate();
-    return { need: need, call: call, loaded: loaded, forPath: forPath, _manifest: manifest };
+    return { need: need, call: call, loaded: loaded, forPath: forPath, pending: pending, _manifest: manifest };
 })();
 
 /* One commit = POST → the whole #inspector-pane re-renders. Three things
@@ -5217,10 +5255,12 @@ document.addEventListener("keydown", function(evt) {
 
 function _revertCell(dotPath, oldValueStr) {
     // Revert inspector cell
-    var hidden = document.querySelector(
+    // every form carrying the path -- an alias section and its target in one
+    // view both show it (docs/141 4l-review)
+    var hiddens = document.querySelectorAll(
         'input[type="hidden"][name="dot_path"][value="' + dotPath + '"]'
     );
-    if (hidden) {
+    Array.prototype.forEach.call(hiddens, function (hidden) {
         var form = hidden.parentElement;
         var input = form.querySelector('input[name="value"]');
         if (input) {
@@ -5243,7 +5283,7 @@ function _revertCell(dotPath, oldValueStr) {
             td.classList.remove("cell-modified");
             td.removeAttribute("title");
         }
-    }
+    });
     // Revert Explorer tree node
     window._revertTreeNode && window._revertTreeNode(dotPath, oldValueStr);
 }
@@ -6678,7 +6718,6 @@ window.clearDetailPanelSearch = function(btnEl) {
     // Key-help (?) rows are for the LIVE state trees only (crud renders) --
     // never a compare view's other chip or an inspector's relative subtree.
     var _keyHelpOn = false;
-    var _TREE_SEARCH_LIST_MAX = 400;          // rows in that list
     // The flat result list for a broad tree search (see _searchTreeData).
     // `res` null removes it. Rows carry the dot path; clicking one expands the
     // tree to that single row and highlights it (the classic per-row cost, once).
@@ -15640,12 +15679,33 @@ document.addEventListener('click', function(evt) {
     // After any table-pane swap (load→/explorer, or sidebar nav): always refresh
     // the sidebar dots; mark Explorer rows when the Explorer is the swapped view;
     // re-apply the persisted diagnostics filter when the list is on screen.
+    // docs/141 4l-review: the self-refresh re-renders <details> with the
+    // server's default open state -- remember what the user folded first
+    var _diagOpenSnap = null;
+    document.addEventListener('htmx:beforeSwap', function(evt) {
+        if (!evt.detail || !evt.detail.target || evt.detail.target.id !== 'diag-findings') return;
+        var snap = {};
+        evt.detail.target.querySelectorAll('details.diag-domain[data-domain]').forEach(function (dt) {
+            snap[dt.getAttribute('data-domain')] = dt.open;
+        });
+        _diagOpenSnap = snap;
+    });
     document.addEventListener('htmx:afterSwap', function(evt) {
         if (!evt.detail || !evt.detail.target) return;
         // docs/141 4f: the findings list re-fetches itself on diagnostics-changed
         // (an inner swap of #diag-findings); the persisted bucket filter must be
         // re-applied to the fresh rows exactly as after a table-pane swap.
-        if (evt.detail.target.id === 'diag-findings') { _applyDiagFilter(); return; }
+        if (evt.detail.target.id === 'diag-findings') {
+            var snap = _diagOpenSnap; _diagOpenSnap = null;
+            if (snap) {
+                document.querySelectorAll('#diag-findings details.diag-domain[data-domain]').forEach(function (dt) {
+                    var k = dt.getAttribute('data-domain');
+                    if (k in snap) dt.open = snap[k];
+                });
+            }
+            _applyDiagFilter();
+            return;
+        }
         if (evt.detail.target.id !== 'table-pane') return;
         if (window._refreshSidebarDiagDots) window._refreshSidebarDiagDots();
         if (document.getElementById('explorer-tree-state') && window._applyExplorerSpecMarks) {
@@ -15695,28 +15755,65 @@ window.pulseTabActive = function (a) {
    touched and re-renders only those rows (GET /pulse/row); `pulses-changed`
    stays the structural whole-table re-fetch (its own htmx trigger). The
    checked state of a patched row survives the swap. */
+var _pulseRowGen = {};
+function _pulseRowEl(wrap, p) {
+    return wrap.querySelector('tr[data-pulse-path="' + (window.CSS && CSS.escape ? CSS.escape(p) : p) + '"]');
+}
+function _pulsesActiveFilter() {
+    var inp = document.querySelector('.table-filter input[name="q"]');
+    var tab = document.querySelector("#pulse-channel-tabs a.active");
+    var ch = "";
+    if (tab) { var m = (tab.getAttribute("hx-get") || "").match(/channel=([^&]+)/); if (m) ch = m[1]; }
+    return { q: inp ? inp.value.trim() : "", channel: ch };
+}
 document.addEventListener("pulses-rows-changed", function (evt) {
     var d = evt && evt.detail;
-    if (!d || !Array.isArray(d.paths) || !window.htmx) return;
+    if (!d || !Array.isArray(d.paths)) return;
     var wrap = document.getElementById("pulses-rows-wrap");
     if (!wrap) return;
-    var seen = {};
+    var structural = function () { if (window.htmx) window.htmx.trigger(document.body, "pulses-changed"); };
+    var filt = _pulsesActiveFilter();
+    var seen = {}, missing = false;
     d.paths.forEach(function (p) {
         if (!p || seen[p]) return;
         seen[p] = 1;
-        var tr = wrap.querySelector('tr[data-pulse-path="' + (window.CSS && CSS.escape ? CSS.escape(p) : p) + '"]');
-        if (!tr) return;
-        var chk = tr.querySelector(".pulse-sel-chk");
-        var wasChecked = !!(chk && chk.checked);
-        var r = window.htmx.ajax("GET", "/pulse/row?path=" + encodeURIComponent(p), { target: tr, swap: "outerHTML" });
-        if (r && typeof r.then === "function" && wasChecked) {
-            r.then(function () {
-                var tr2 = wrap.querySelector('tr[data-pulse-path="' + (window.CSS && CSS.escape ? CSS.escape(p) : p) + '"]');
-                var c2 = tr2 && tr2.querySelector(".pulse-sel-chk");
-                if (c2) c2.checked = true;
-            }, function () {});
-        }
+        if (!_pulseRowEl(wrap, p)) { missing = true; return; }
+        // docs/141 4l-review: NOT htmx.ajax -- every call on the shared body
+        // source joins htmx's default `last` queue, which DROPS the middle
+        // rows of a burst (measured). A plain fetch per row; the response
+        // re-targets the row at LANDING time (an earlier swap may have
+        // replaced it) and a per-path generation keeps an older response
+        // from overwriting a newer one. The page's filter rides along: a
+        // row that no longer matches it answers 204 and leaves the table.
+        var gen = (_pulseRowGen[p] = (_pulseRowGen[p] || 0) + 1);
+        var url = "/pulse/row?path=" + encodeURIComponent(p)
+                + (filt.channel ? "&channel=" + encodeURIComponent(filt.channel) : "")
+                + (filt.q ? "&q=" + encodeURIComponent(filt.q) : "");
+        fetch(url, { credentials: "same-origin", headers: { "HX-Request": "true" } })
+            .then(function (r) {
+                if (r.status === 204) return "";
+                return r.ok ? r.text() : Promise.reject(new Error("HTTP " + r.status));
+            })
+            .then(function (html) {
+                if (_pulseRowGen[p] !== gen) return;
+                var cur = _pulseRowEl(wrap, p);
+                if (!cur) return;
+                if (html === "") { cur.parentNode.removeChild(cur); return; }
+                var chk = cur.querySelector(".pulse-sel-chk");
+                var wasChecked = !!(chk && chk.checked);
+                var tpl = document.createElement("template");
+                tpl.innerHTML = html.trim();
+                var fresh = tpl.content.querySelector("tr");
+                if (!fresh) { structural(); return; }
+                cur.parentNode.replaceChild(fresh, cur);
+                if (window.htmx) window.htmx.process(fresh);
+                if (wasChecked) { var c2 = fresh.querySelector(".pulse-sel-chk"); if (c2) c2.checked = true; }
+            })
+            .catch(structural);
     });
+    // a row we cannot find (a pulse the change created, renamed or restored)
+    // means the table itself is stale -- the structural re-fetch
+    if (missing) structural();
 });
 
 function _pulsesSyncUrl() {
@@ -15757,21 +15854,26 @@ document.addEventListener("input", function (e) {
 
 var _pulseSelection = [];   // paths of selected pulses (max 5)
 var _PULSE_MAX_COMPARE = 4;   // docs/141 4k: the view holds up to four sections
-var _PULSE_COMPARE_COLORS = [
-    "var(--pico-primary)", "#e67e22", "#2ecc71", "#e74c3c", "#9b59b6"
-];
 
-window.pulseSelChanged = function () {
+window.pulseSelChanged = function (clicked) {
     _pulseSelection = [];
     document.querySelectorAll(".pulse-sel-chk:checked").forEach(function (cb) {
         _pulseSelection.push(cb.getAttribute("data-path"));
     });
-    // Enforce max by unchecking excess
+    // Enforce the cap by unchecking the box just clicked (not whichever
+    // sits last in DOM order -- docs/141 4l-review)
     if (_pulseSelection.length > _PULSE_MAX_COMPARE) {
-        _pulseSelection = _pulseSelection.slice(0, _PULSE_MAX_COMPARE);
-        document.querySelectorAll(".pulse-sel-chk:checked").forEach(function (cb, i) {
-            if (i >= _PULSE_MAX_COMPARE) cb.checked = false;
+        var extra = clicked && clicked.checked ? clicked : null;
+        if (!extra) {
+            var all = document.querySelectorAll(".pulse-sel-chk:checked");
+            extra = all[all.length - 1];
+        }
+        if (extra) extra.checked = false;
+        _pulseSelection = [];
+        document.querySelectorAll(".pulse-sel-chk:checked").forEach(function (cb) {
+            _pulseSelection.push(cb.getAttribute("data-path"));
         });
+        if (window.showToast) window.showToast("A view holds up to " + _PULSE_MAX_COMPARE + " pulses", "warning");
     }
     var bar = document.getElementById("pulse-compare-bar");
     var countEl = document.getElementById("pulse-compare-count");
@@ -15794,20 +15896,11 @@ window.openPulseCompare = function () {
        trace colour -- not a read-only overlay. Same route the rows use. */
     if (_pulseSelection.length < 2 || !window.htmx) return;
     var paths = _pulseSelection.slice(0, _PULSE_MAX_COMPARE);
+    // repeated paths= params: a comma is legal inside a foreign op name
     htmx.ajax("GET", "/pulse/detail?path=" + encodeURIComponent(paths[0])
-              + "&paths=" + encodeURIComponent(paths.join(",")),
+              + paths.map(function (p) { return "&paths=" + encodeURIComponent(p); }).join(""),
               { target: "#inspector-pane", swap: "innerHTML" });
 };
-
-window.closePulseCompare = function () {
-    var overlay = document.getElementById("pulse-compare-overlay");
-    if (overlay) overlay.style.display = "none";
-};
-document.addEventListener("keydown", function (evt) {
-    if (evt.key !== "Escape") return;
-    var overlay = document.getElementById("pulse-compare-overlay");
-    if (overlay && overlay.style.display !== "none") { evt.preventDefault(); window.closePulseCompare(); }
-});
 
 /* Strip any existing `key=` from a URL's query string and, when value is
    non-empty, append the fresh one — so overriding a baked query param can't
@@ -16634,9 +16727,13 @@ window.UndoNav = (function () {
     /* The pulse a parameter path belongs to (the three shapes the Pulses
        page itself enumerates), or null. */
     function pulseRootOf(dp) {
-        var m = /^(qubits\.[^.]+\.[^.]+\.operations\.[^.]+)(\.|$)/.exec(dp)
-             || /^(qubit_pairs\.[^.]+\.macros\.[^.]+)(\.|$)/.exec(dp)
-             || /^(qubit_pairs\.[^.]+\.[^.]+\.operations\.[^.]+)(\.|$)/.exec(dp);
+        // docs/141 4l-review: mirrors the server's _PULSE_PATH_RES -- a pair
+        // macro's pulse is its flux_pulse_qubit / coupler_flux_pulse SLOT
+        // (the macro itself is not a pulse and /pulse/detail refuses it), and
+        // only the four qubit channels + the pair drive channels carry pulses
+        var m = /^(qubits\.[^.]+\.(?:xy|z|resonator|xy_detuned)\.operations\.[^.]+)(\.|$)/.exec(dp)
+             || /^(qubit_pairs\.[^.]+\.macros\.[^.]+\.(?:flux_pulse_qubit|coupler_flux_pulse))(\.|$)/.exec(dp)
+             || /^(qubit_pairs\.[^.]+\.(?:cross_resonance|zz_drive|zz|xy_detuned)\.operations\.[^.]+)(\.|$)/.exec(dp);
         return m ? m[1] : null;
     }
 

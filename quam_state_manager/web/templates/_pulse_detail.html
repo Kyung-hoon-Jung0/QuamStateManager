@@ -129,7 +129,7 @@
 {# docs/141 4k: the pulses IN VIEW -- each a chip in its trace colour; × drops
    it from the view, the picker adds one (up to 4). Every pulse in view has
    its own parameter section below the plot. #}
-<div class="pulse-overlay-bar pulse-view-bar" data-view-paths="{{ view_paths }}" data-view-main="{{ main_path }}">
+<div class="pulse-overlay-bar pulse-view-bar" data-view-paths='{{ view_paths | tojson }}' data-view-main="{{ main_path }}">
     <span class="muted pulse-overlay-label">in view:</span>
     <span class="pulse-overlay-chips">
     {% for sec in sections %}
@@ -142,6 +142,10 @@
     <select class="pulse-overlay-pick" aria-label="Add a pulse to the view" hidden>
         <option value="">+ add pulse…</option>
     </select>
+    {% if dropped %}
+    {# docs/141 4l-review: never a silent drop #}
+    <span class="muted pulse-view-note" title="unknown, not a pulse, failed to render, or beyond the four-pulse view">not shown: {% for p in dropped %}<code>{{ p }}</code>{{ ", " if not loop.last }}{% endfor %}</span>
+    {% endif %}
 </div>
 <div id="pulse-detail-plot" class="pulse-detail-plot"></div>
 

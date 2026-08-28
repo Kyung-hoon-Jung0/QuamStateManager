@@ -47,10 +47,12 @@ const dom = new JSDOM(
     '<table>' + [OWN, SIB, BROKEN, OTHER].map((p) => '<tr><td><input type="checkbox" class="pulse-sel-chk" data-path="' + p + '"></td></tr>').join('') + '</table>' +
     '<div id="pulse-detail-root" data-pulse-path="' + OWN + '" data-actual-path="' + OWN + '">' +
     '<div class="pulse-plot-bar"><span class="pulse-dirty-pill" hidden></span><span class="pulse-synth-err" hidden></span></div>' +
-    '<div class="pulse-overlay-bar pulse-view-bar" data-view-paths="' + [OWN, SIB, BROKEN].join(',') + '" data-view-main="' + OWN + '">' +
+    '<div class="pulse-overlay-bar pulse-view-bar" data-view-paths=\'' + JSON.stringify([OWN, SIB, BROKEN]) + '\' data-view-main="' + OWN + '">' +
     '<span class="pulse-overlay-chips">' + chip(OWN, '#1095c1') + chip(SIB, '#e67e22') + chip(BROKEN, '#9b59b6') + '</span>' +
     '<select class="pulse-overlay-pick" hidden></select></div>' +
-    [OWN, SIB, BROKEN].map((p) => '<details open class="pulse-sec" data-pulse-path="' + p + '"><summary>s</summary></details>').join('') +
+    [OWN, SIB, BROKEN].map((p) => '<details open class="pulse-sec" data-pulse-path="' + p + '"><summary>s</summary>'
+        + '<form class="inline-edit pulse-edit-form"><input type="hidden" name="dot_path" value="' + p + '.amplitude">'
+        + '<input type="text" name="value" data-param="amplitude" data-kind="float" data-synth="1" data-committed="0.1" value="0.1"></form></details>').join('') +
     '<div id="pulse-detail-plot"></div>' +
     '<script id="pulse-detail-data" type="application/json">' + JSON.stringify(detail) + '</script>' +
     '</div></body></html>',
@@ -70,7 +72,12 @@ global._debounce = window._debounce;
 const ajax = [];
 window.htmx = { ajax: function (method, url, opts) { ajax.push({ method: method, url: url, opts: opts }); return Promise.resolve(); } };
 global.htmx = window.htmx;
-window.fetch = function () { return Promise.resolve({ json: () => Promise.resolve({ ok: true, plot: { ok: true, traces: [] } }) }); };
+const synthBodies = [];
+window.fetch = function (url, opts) {
+    const body = opts && opts.body ? JSON.parse(opts.body) : {};
+    synthBodies.push(body);
+    return Promise.resolve({ json: () => Promise.resolve({ ok: true, plot: { ok: true, traces: [{ name: 'I', x: [0, 1], y: [0, 0.5] }] } }) });
+};
 global.fetch = window.fetch;
 
 window.eval(fs.readFileSync(path.join(STATIC, 'pulses.js'), 'utf8'));
@@ -78,6 +85,8 @@ window.eval(fs.readFileSync(path.join(STATIC, 'pulses.js'), 'utf8'));
 const d = window.document;
 const root = d.getElementById('pulse-detail-root');
 const last = () => rendered[rendered.length - 1].names;
+// docs/141 4l-review: paths= is REPEATED per pulse (a comma is legal inside a foreign op name)
+const viewUrl = (main, paths) => '/pulse/detail?path=' + main + paths.map((p) => '&paths=' + p).join('');
 const has = (names, needle) => names.some((n) => String(n).indexOf(needle) !== -1);
 
 window.PulsesPage.initDetail();
@@ -94,12 +103,12 @@ setTimeout(function () {
     ok(ajax.length === 1 && ajax[0].method === 'GET' && ajax[0].opts && ajax[0].opts.target === '#inspector-pane',
        'dropping re-renders the inspector from the server');
     const dropUrl = ajax.length ? decodeURIComponent(ajax[0].url) : '';
-    ok(dropUrl === '/pulse/detail?path=' + OWN + '&paths=' + [OWN, BROKEN].join(','),
+    ok(dropUrl === viewUrl(OWN, [OWN, BROKEN]),
        'the dropped pulse is gone from the view, the main pulse kept (' + dropUrl + ')');
     // dropping the MAIN pulse hands the view to the next one
     root.querySelector('.pulse-overlay-x[data-drop-path="' + OWN + '"]').click();
     const dropMain = ajax.length === 2 ? decodeURIComponent(ajax[1].url) : '';
-    ok(dropMain === '/pulse/detail?path=' + SIB + '&paths=' + [SIB, BROKEN].join(','),
+    ok(dropMain === viewUrl(SIB, [SIB, BROKEN]),
        'dropping the main pulse promotes the next one (' + dropMain + ')');
     // 4. picker: other pulses only
     const pick = root.querySelector('.pulse-overlay-pick');
@@ -110,9 +119,20 @@ setTimeout(function () {
     ok(/q1 · xy\.x180_DragCosine/.test(pick.options[1].textContent), 'picker labels read owner · channel.op');
     pick.value = OTHER; pick.dispatchEvent(new window.Event('change', { bubbles: true }));
     const addUrl = ajax.length === 3 ? decodeURIComponent(ajax[2].url) : '';
-    ok(addUrl === '/pulse/detail?path=' + OWN + '&paths=' + [OWN, SIB, BROKEN, OTHER].join(','),
+    ok(addUrl === viewUrl(OWN, [OWN, SIB, BROKEN, OTHER]),
        'picking appends the pulse to the view and re-renders (' + addUrl + ')');
     ok(pick.value === '', 'the picker resets after a pick');
-    console.log(fails ? 'FAILED ' + fails : 'all ok');
-    process.exit(fails ? 1 : 0);
+    // 5. typing in section B previews B only (docs/141 4l-review pin): one
+    //    synth for SIB, A's committed trace still drawn, B's preview dashed
+    const nb = synthBodies.length;
+    const inpB = root.querySelector('.pulse-sec[data-pulse-path="' + SIB + '"] input[data-param="amplitude"]');
+    inpB.value = '0.5'; inpB.dispatchEvent(new window.Event('input', { bubbles: true }));
+    setTimeout(function () {
+        ok(synthBodies.length === nb + 1 && synthBodies[nb].path === SIB && synthBodies[nb].params && synthBodies[nb].params.amplitude === '0.5',
+           'typing in a companion section synthesizes THAT pulse with its override (' + JSON.stringify(synthBodies[nb]) + ')');
+        ok(has(last(), LABEL_Q) && !has(last(), LABEL_Q + ' (preview)'), "the main section's committed trace stays, with no preview of its own");
+        ok(has(last(), LABEL_C + ' (preview)'), "the edited section carries a preview trace (" + last().join(' | ') + ')');
+        console.log(fails ? 'FAILED ' + fails : 'all ok');
+        process.exit(fails ? 1 : 0);
+    }, 30);
 }, 30);

@@ -130,8 +130,16 @@ setTimeout(function () {
             const os1 = window.UndoNav.ownerSurface([{ dot_path: 'qubits.q1.xy.operations.saturation.length' }]);
             ok(os1.kind === 'pulse' && os1.url === '/pulse/detail?path=' + encodeURIComponent('qubits.q1.xy.operations.saturation'),
                'on the Pulses page the same path opens the pulse detail (' + os1.url + ')');
-            const os2 = window.UndoNav.ownerSurface([{ dot_path: 'qubit_pairs.q1-q2.macros.cz.flux_pulse_length' }]);
-            ok(os2.kind === 'pulse' && /qubit_pairs\.q1-q2\.macros\.cz$/.test(decodeURIComponent(os2.url.split('path=')[1])), 'a pair macro parameter too');
+            // docs/141 4l-review: a pair macro's PULSE is its flux_pulse_qubit /
+            // coupler_flux_pulse slot -- the macro itself is not a pulse and
+            // /pulse/detail refuses it (the old pin sent the macro root: a 404 toast)
+            const os2 = window.UndoNav.ownerSurface([{ dot_path: 'qubit_pairs.q1-q2.macros.cz.coupler_flux_pulse.amplitude' }]);
+            ok(os2.kind === 'pulse' && decodeURIComponent(os2.url.split('path=')[1]) === 'qubit_pairs.q1-q2.macros.cz.coupler_flux_pulse',
+               'a pair macro pulse parameter opens its SLOT pulse (' + os2.url + ')');
+            const os2b = window.UndoNav.ownerSurface([{ dot_path: 'qubit_pairs.q1-q2.macros.cz.flux_pulse_length' }]);
+            ok(os2b.kind !== 'pulse', 'a macro scalar is not a pulse: it keeps the pair inspector (' + os2b.kind + ')');
+            const os2c = window.UndoNav.ownerSurface([{ dot_path: 'qubits.q1.xy_cr.operations.x.amplitude' }]);
+            ok(os2c.kind !== 'pulse', 'a channel the server does not enumerate is not a pulse either');
             const os3 = window.UndoNav.ownerSurface([{ dot_path: 'qubits.q1.T1' }]);
             ok(os3.kind === 'inspector', 'a non-pulse path keeps the inspector');
             const ajaxed = [];
@@ -147,16 +155,43 @@ setTimeout(function () {
             wrap2.innerHTML = '<table><tbody><tr data-pulse-path="qubits.q1.xy.operations.x180"><td><input type="checkbox" class="pulse-sel-chk" checked></td></tr>'
                 + '<tr data-pulse-path="qubits.q1.xy.operations.x90"><td><input type="checkbox" class="pulse-sel-chk"></td></tr></tbody></table>';
             d.body.appendChild(wrap2);
+            // docs/141 4l-review: rows are fetched with fetch(), NEVER htmx.ajax --
+            // on the shared body source htmx's default `last` queue dropped the
+            // middle rows of a burst (measured with the real htmx)
             const ajaxed2 = [];
-            window.htmx.ajax = (m, u, o) => { ajaxed2.push(m + ' ' + u + ' -> ' + (o && o.target && o.target.getAttribute ? o.target.getAttribute('data-pulse-path') : o.target) + ' ' + (o && o.swap)); return Promise.resolve(); };
-            d.dispatchEvent(new CustomEvent('pulses-rows-changed', { detail: { paths: ['qubits.q1.xy.operations.x180', 'qubits.q1.xy.operations.x180', 'qubits.q9.xy.operations.nope'] }, bubbles: true }));
-            ok(ajaxed2.length === 1 && ajaxed2[0] === 'GET /pulse/row?path=qubits.q1.xy.operations.x180 -> qubits.q1.xy.operations.x180 outerHTML',
-               'a paths-carrying pulses-changed re-renders exactly the touched row that exists (' + ajaxed2.join(' | ') + ')');
-            d.dispatchEvent(new CustomEvent('pulses-changed', { detail: true, bubbles: true }));
-            d.dispatchEvent(new CustomEvent('pulses-changed', { bubbles: true }));
-            ok(ajaxed2.length === 1, 'the structural pulses-changed patches nothing here (the whole-table htmx trigger owns it)');
-            wrap2.remove();
-            setTimeout(function () { process.exit(fails ? 1 : 0); }, 120);   // after the never-expanded-leaf pins above
+            window.htmx.ajax = (m, u, o) => { ajaxed2.push(m + ' ' + u); return Promise.resolve(); };
+            const triggered = [];
+            window.htmx.trigger = (el, name) => { triggered.push(name); };
+            const fetched = [];
+            const pendingRes = [];
+            const rowHtml = (p, v) => '<tr data-pulse-path="' + p + '"><td><input type="checkbox" class="pulse-sel-chk"></td><td class="v">' + v + '</td></tr>';
+            window.fetch = (u) => new Promise((res) => { fetched.push(u); pendingRes.push(res); });
+            global.fetch = window.fetch;
+            d.dispatchEvent(new CustomEvent('pulses-rows-changed', { detail: { paths: ['qubits.q1.xy.operations.x180', 'qubits.q1.xy.operations.x180', 'qubits.q1.xy.operations.x90'] }, bubbles: true }));
+            ok(ajaxed2.length === 0 && fetched.length === 2
+               && fetched[0] === '/pulse/row?path=qubits.q1.xy.operations.x180' && fetched[1] === '/pulse/row?path=qubits.q1.xy.operations.x90',
+               'every touched row is fetched at once, once each, never through htmx.ajax (' + fetched.join(' | ') + ')');
+            ok(triggered.length === 0, 'rows that exist need no structural re-fetch');
+            // a second change to x180 while the first fetch is in flight: the OLDER response must not overwrite the newer
+            d.dispatchEvent(new CustomEvent('pulses-rows-changed', { detail: { paths: ['qubits.q1.xy.operations.x180'] }, bubbles: true }));
+            ok(fetched.length === 3, 'a second change re-fetches the row (' + fetched.length + ')');
+            pendingRes[2]({ ok: true, status: 200, text: () => Promise.resolve(rowHtml('qubits.q1.xy.operations.x180', 'NEW')) });
+            pendingRes[0]({ ok: true, status: 200, text: () => Promise.resolve(rowHtml('qubits.q1.xy.operations.x180', 'OLD')) });
+            pendingRes[1]({ ok: true, status: 204, text: () => Promise.resolve('') });
+            setTimeout(function () {
+                const tr180 = wrap2.querySelector('tr[data-pulse-path="qubits.q1.xy.operations.x180"]');
+                ok(tr180 && tr180.querySelector('.v') && tr180.querySelector('.v').textContent === 'NEW',
+                   'the newest response wins even when an older one lands later (' + (tr180 && tr180.querySelector('.v') ? tr180.querySelector('.v').textContent : 'none') + ')');
+                ok(tr180 && tr180.querySelector('.pulse-sel-chk').checked === true, 'the checkbox state survives the swap');
+                ok(!wrap2.querySelector('tr[data-pulse-path="qubits.q1.xy.operations.x90"]'), 'a 204 (the row no longer matches the page filter) removes the row');
+                // a path with no row: the table is structurally stale -> the whole-table trigger
+                d.dispatchEvent(new CustomEvent('pulses-rows-changed', { detail: { paths: ['qubits.q9.xy.operations.restored'] }, bubbles: true }));
+                ok(triggered.length === 1 && triggered[0] === 'pulses-changed', 'a row that does not exist triggers the structural re-fetch (' + triggered.join(',') + ')');
+                d.dispatchEvent(new CustomEvent('pulses-changed', { detail: true, bubbles: true }));
+                ok(fetched.length === 3, 'the structural pulses-changed patches nothing here (the whole-table htmx trigger owns it)');
+                wrap2.remove();
+            }, 30);
+            setTimeout(function () { process.exit(fails ? 1 : 0); }, 200);   // after the never-expanded-leaf + row pins above
         }, 50);
     }, 300);
 }, 50);

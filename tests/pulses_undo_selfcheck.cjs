@@ -154,5 +154,15 @@ function revert(dotPath, committed) {
     d.dispatchEvent(new CustomEvent('cellsReverted', { detail: { message: 'Undone', entries: [{ dot_path: PULSE + '.amplitude', old_value_str: '#./x90/amplitude', old_kind: 'pointer' }] } }));
     await sleep(300);
     ok(ajaxCalls.length === a10 + 1, 'a re-link (pointer kind) re-renders');
+    // docs/141 4l-review: a burst mixing a reload-needing entry with an
+    // in-place one inside the debounce window used to LOSE the reload (the
+    // in-place refresh replaced the same debounce key) -- one reload, no synth
+    const a11 = ajaxCalls.length, s11 = synthCalls.length;
+    d.dispatchEvent(new CustomEvent('cellsReverted', { detail: { message: 'Undone', entries: [{ dot_path: PULSE + '.waveform_I.1', old_value_str: '0.2' }] }, bubbles: true }));
+    await sleep(40);
+    d.dispatchEvent(new CustomEvent('cellsReverted', { detail: { message: 'Undone', entries: [{ dot_path: PULSE + '.amplitude', old_value_str: '0.31' }] }, bubbles: true }));
+    await sleep(300);
+    ok(ajaxCalls.length === a11 + 1 && synthCalls.length === s11,
+       'a reload once due stays due across the burst (reloads ' + (ajaxCalls.length - a11) + ', synths ' + (synthCalls.length - s11) + ')');
     process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e && e.stack || e); process.exit(1); });

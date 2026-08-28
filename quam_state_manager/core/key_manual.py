@@ -128,6 +128,8 @@ def _category_of(cls_path: str, entry: dict | None) -> str:
     name = _leaf(cls_path).lower()
     if mod.startswith("quam_config") or not (mod.startswith("quam.") or mod.startswith("quam_builder")):
         return "Lab (quam_config)"
+    if "quam" in name and ("root" in mod or name.endswith("quam")):
+        return "Roots"
     if "pair" in name:
         return "Qubit pairs"
     if "qubit" in name or "transmon" in name:
@@ -194,7 +196,8 @@ def manual_entries(state: Any, wiring: Any, manifest: dict | None,
             continue
         fields = entry["fields"]
         class_rows.append({"cls": leaf, "cls_path": cls_path, "doc": entry.get("doc"), "category": category,
-                           "fields": len(fields), "count": len(paths), "known": True, "used": bool(paths)})
+                           "fields": len(fields), "count": len(paths), "known": True, "used": bool(paths),
+                           "abstract": bool(entry.get("abstract"))})
         for name, rec in fields.items():
             if name in _SKIP_KEYS or not isinstance(rec, dict):
                 continue

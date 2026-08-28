@@ -24,6 +24,17 @@ def _run(name: str, must: str):
     assert must in res.stdout
 
 
+def test_alias_sections_follow_undo_too():
+    """docs/141 4l-review: an alias section's inputs live at the TARGET's
+    paths -- the undo listener matches them, and _revertCell repaints EVERY
+    form carrying the path (an alias and its target can share one view)."""
+    pulses = (_ROOT / "quam_state_manager" / "web" / "static" / "pulses.js").read_text(encoding="utf-8")
+    assert "if (sec.actualPath && sec.actualPath !== sec.path) homes.push(sec.actualPath);" in pulses
+    app = (_ROOT / "quam_state_manager" / "web" / "static" / "app.js").read_text(encoding="utf-8")
+    seg = app.split("function _revertCell(dotPath, oldValueStr) {")[1].split("// Revert Explorer tree node")[0]
+    assert "querySelectorAll(" in seg and "Array.prototype.forEach.call(hiddens, function (hidden) {" in seg
+
+
 def test_undo_trail_selfcheck():
     _run("undo_trail_selfcheck.cjs", "ok - go to field flashes + scrolls a VISIBLE field")
 

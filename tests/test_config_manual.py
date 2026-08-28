@@ -71,3 +71,87 @@ def test_config_manual_selfcheck():
                          capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
     assert res.returncode == 0, res.stdout + "\n" + res.stderr
     assert "ok - an undescribed key says so" in res.stdout
+
+
+# ---------------------------------------------------------------------------
+# docs/141 4l-review: the probe outcome is remembered, partial is never cached
+# ---------------------------------------------------------------------------
+import json as _json
+import sys as _sys
+import time as _time
+
+
+def _fake_outcome(result):
+    def run(cmd, work_dir, timeout, outcome, **kw):
+        outcome["ok"] = True
+        outcome["result"] = result
+    return run
+
+
+def test_a_partial_catalogue_is_served_but_never_cached(tmp_path, monkeypatch):
+    from quam_state_manager.core import state_env_schema as ses
+    cat = {"quam.components.pulses.SquarePulse": {"importable": True, "fields": {}, "category": "Pulses"}}
+    monkeypatch.setattr(ses, "_run_script_outcome", _fake_outcome({
+        "catalog": cat, "catalog_roots": {"quam.components": "ok", "quam_builder.common": "error: ImportError: boom"}, "versions": {}}))
+    res = ses.probe_catalog(_sys.executable, ["a.B"], str(tmp_path))
+    assert res["ok"] is True and res["partial"] is True and "partial" in res["error"] and "boom" in res["error"]
+    assert res["catalog"] == cat
+    assert ses.catalog_for_env(_sys.executable, str(tmp_path)) is None, "a partial catalogue is not the truth"
+    # an ABSENT root (quam_builder not installed) is not a failure
+    monkeypatch.setattr(ses, "_run_script_outcome", _fake_outcome({
+        "catalog": cat, "catalog_roots": {"quam.components": "ok", "quam_builder.common": "absent"}, "versions": {}}))
+    res = ses.probe_catalog(_sys.executable, ["a.B"], str(tmp_path))
+    assert res["ok"] is True and not res["partial"] and res["error"] is None
+    assert ses.catalog_for_env(_sys.executable, str(tmp_path)) == cat
+
+
+def test_the_requested_class_set_is_unioned_and_a_new_class_re_probes(tmp_path, monkeypatch):
+    from quam_state_manager.core import state_env_schema as ses
+    seen = []
+
+    def run(cmd, work_dir, timeout, outcome, **kw):
+        spec = _json.loads((Path(work_dir) / "_classes.json").read_text(encoding="utf-8"))
+        seen.append(sorted(spec["classes"]))
+        outcome["ok"] = True
+        outcome["result"] = {"catalog": {c: {"importable": True, "fields": {}} for c in spec["classes"]} | {"quam.X": {"importable": True, "fields": {}}},
+                             "catalog_roots": {"quam.components": "ok"}, "versions": {}}
+    monkeypatch.setattr(ses, "_run_script_outcome", run)
+    ses.probe_catalog(_sys.executable, ["lab.A"], str(tmp_path))
+    assert ses.catalog_for_env(_sys.executable, str(tmp_path), ["lab.A"]) is not None
+    assert ses.catalog_for_env(_sys.executable, str(tmp_path), ["lab.B"]) is None, "a class this catalogue never saw makes it cold"
+    ses.probe_catalog(_sys.executable, ["lab.B"], str(tmp_path))
+    assert seen[-1] == ["lab.A", "lab.B"], "the second probe asks for the union"
+    assert ses.catalog_requested(_sys.executable, str(tmp_path)) == ["lab.B", "lab.A"] or set(ses.catalog_requested(_sys.executable, str(tmp_path))) == {"lab.A", "lab.B"}
+    assert ses.catalog_for_env(_sys.executable, str(tmp_path), ["lab.A", "lab.B"]) is not None
+
+
+def test_a_failed_probe_is_remembered_not_relaunched(tmp_path, monkeypatch):
+    from quam_state_manager.core import state_env_schema as ses
+    from quam_state_manager.web import routes as R
+    from quam_state_manager.core import config_generator as cg
+    calls = []
+
+    def probe(python_path, classes, inst, **kw):
+        calls.append(1)
+        return {"ok": False, "cached": False, "error": "no quam in this interpreter", "catalog": {}}
+    monkeypatch.setattr(ses, "probe_catalog", probe)
+    monkeypatch.setattr(cg, "get_selected_env", lambda inst: _sys.executable)
+    R._catalog_outcome.pop(_sys.executable, None)
+    chip = tmp_path / "chip"
+    chip.mkdir()
+    (chip / "state.json").write_text(_json.dumps({"qubits": {"qA1": {"f_01": 5e9}}, "active_qubit_names": ["qA1"]}), encoding="utf-8")
+    (chip / "wiring.json").write_text("{}", encoding="utf-8")
+    app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+    c = app.test_client()
+    assert c.post("/load", data={"folder": str(chip)}).status_code in (200, 302)
+    d = c.get("/api/manual").get_json()
+    assert d["catalog_state"] in ("loading", "error")
+    for _ in range(50):                                   # the probe thread lands
+        if R._catalog_outcome.get(_sys.executable, {}).get("state") == "error":
+            break
+        _time.sleep(0.05)
+    d = c.get("/api/manual").get_json()
+    assert d["catalog_state"] == "error" and "no quam in this interpreter" in d["note"]
+    c.get("/api/manual"); c.get("/api/manual/node?path=qubits.qA1")
+    assert len(calls) == 1, f"one probe, remembered ({len(calls)} launched)"
+    R._catalog_outcome.pop(_sys.executable, None)

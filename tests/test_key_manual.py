@@ -311,3 +311,27 @@ class TestReviewFixes:
                 page = root / f
                 assert page.exists(), ref
                 assert anchor in slugs(page.read_text(encoding="utf-8")), f"{ref}: not a heading"
+
+
+class TestReviewRound4l:
+    """docs/141 4l-review of the catalogue."""
+
+    def test_a_qpu_root_is_filed_under_roots_in_both_classifiers(self):
+        assert key_manual._category_of("quam_builder.architecture.superconducting.qpu.flux_tunable_quam.FluxTunableQuam", None) == "Roots"
+        assert key_manual._category_of("quam_builder.architecture.superconducting.qpu.FixedFrequencyQuam", None) == "Roots"
+        from quam_state_manager.generator.probe_state_schema import _catalog_category
+        assert _catalog_category("quam_builder.architecture.superconducting.qpu.flux_tunable_quam", "FluxTunableQuam") == "Roots"
+        assert _catalog_category("quam_builder.architecture.superconducting.components.flux_line", "FluxLine") == "Flux & couplers"
+
+    def test_the_abstract_flag_reaches_the_class_row(self):
+        manifest = {"classes": {
+            "quam.components.ports.base_ports.BasePort": {
+                "importable": True, "abstract": True, "doc": "base",
+                "fields": {"port_id": {"type": {"base": "int"}, "raw": "int", "has_default": False, "default": None}}},
+            "quam.components.pulses.SquarePulse": {
+                "importable": True, "abstract": False, "doc": "sq",
+                "fields": {"amplitude": {"type": {"base": "float"}, "raw": "float", "has_default": False, "default": None}}},
+        }}
+        d = key_manual.manual_entries({}, {}, manifest)
+        rows = {c["cls"]: c for c in d["classes"]}
+        assert rows["BasePort"]["abstract"] is True and rows["SquarePulse"]["abstract"] is False
