@@ -9958,20 +9958,120 @@ def pulses_page():
 
 @bp.route("/pulse/detail")
 def pulse_detail():
-    """Inspector detail for one pulse: waveform plot + parameter table."""
+    """Inspector detail: one pulse (+ its companions) or, with ``paths=`` (up
+    to four, comma-separated), several pulses on one plot, each with its own
+    editable parameter section (docs/141 4k)."""
     path = request.args.get("path", "").strip()
-    return _render_pulse_detail(path)
+    paths = _view_paths_arg(request.args.get("paths"))
+    if paths and not path:
+        path = paths[0]
+    return _render_pulse_detail(path, paths=paths or None)
+
+
+_PULSE_VIEW_MAX = 4
+# section colours: the main pulse takes the app's primary, the others the
+# overlay hues pulses.js has always used -- the plot and the section agree
+_PULSE_SECTION_HUES = ("var(--pico-primary)", "#e67e22", "#9b59b6", "#2bb673", "#e74c3c")
+
+
+def _view_paths_arg(raw) -> list[str]:
+    out: list[str] = []
+    for part in (raw or "").split(","):
+        part = part.strip()
+        if part and part not in out and _is_pulse_path(part):
+            out.append(part)
+    return out[:_PULSE_VIEW_MAX]
+
+
+def _pulse_section_role(path: str) -> str:
+    leaf = path.rsplit(".", 1)[-1]
+    if _PAIR_MACRO_PULSE_RE.match(path):
+        if "coupler" in leaf:
+            return "coupler"
+        if "qubit" in leaf or "flux" in leaf:
+            return "qubit"
+        return "macro"
+    if path.startswith("qubit_pairs."):
+        return "pair"
+    return "qubit"
 
 
 def _render_pulse_detail(path: str, *, status_msg: str | None = None,
-                         status_level: str = "success"):
-    """Shared renderer for the pulse detail partial (GET + mutation responses)."""
+                         status_level: str = "success", paths: list[str] | None = None):
+    """Shared renderer for the pulse detail partial (GET + mutation responses).
+
+    docs/141 4k: the inspector is a VIEW of one to four pulses -- the main
+    pulse plus its companions (a CZ macro's qubit flux + coupler flux) or the
+    pulses picked for Compare -- one shared plot, one editable parameter
+    section per pulse, each in the colour its traces have."""
     store = _store()
     pulse_index = _pulse_index()
     if not store or not pulse_index:
         return render_template("_status.html", message="No state loaded",
                                level="warning")
 
+    main = _pulse_section_ctx(store, pulse_index, path)
+    if isinstance(main, tuple):
+        return main
+    view = [path]
+    if paths:
+        for p_ in paths:
+            if p_ not in view and len(view) < _PULSE_VIEW_MAX:
+                view.append(p_)
+    else:
+        for comp in _pulse_component_overlays(store, path):
+            if comp.get("default_on", True) and comp["path"] not in view and len(view) < _PULSE_VIEW_MAX:
+                view.append(comp["path"])
+    sections = [main]
+    for p_ in view[1:]:
+        ctx = _pulse_section_ctx(store, pulse_index, p_)
+        if not isinstance(ctx, tuple):
+            sections.append(ctx)
+    view_paths = [sec["path"] for sec in sections]
+    for i, sec in enumerate(sections):
+        sec["index"] = i
+        sec["color"] = _PULSE_SECTION_HUES[i % len(_PULSE_SECTION_HUES)]
+        sec["role"] = _pulse_section_role(sec["path"])
+        # what the section header and the trace legend call it: a pair
+        # macro's slot reads "q1-2 · cz_unipolar · coupler", a channel
+        # operation "q1 · xy · x180_DragCosine"
+        if _PAIR_MACRO_PULSE_RE.match(sec["path"]):
+            macro = str(sec["op_name"]).split(".")[0]
+            sec["short"] = macro
+            sec["label"] = f"{sec['owner']} · {macro} · {sec['role']}"
+        else:
+            sec["short"] = f"{sec['channel']} · {sec['op_name']}"
+            sec["label"] = f"{sec['owner']} · {sec['channel']} · {sec['op_name']}"
+    mode = "compare" if paths else ("group" if len(sections) > 1 else "single")
+
+    detail_json = json.dumps({
+        "path": path,
+        "actual_path": main["actual_path"],
+        "qclass": main["qclass"],
+        "spec_key": main["spec_key"],
+        "plot": main["plot"],
+        "overlays": [],
+        "mode": mode,
+        "pulses": [{"path": sec["path"], "actual_path": sec["actual_path"], "label": sec["label"],
+                    "role": sec["role"], "color": sec["color"], "index": sec["index"],
+                    "plot": sec["plot"]} for sec in sections],
+    })
+    return render_template(
+        "_pulse_detail.html",
+        sections=sections,
+        view_paths=",".join(view_paths),
+        view_mode=mode,
+        main_path=path,
+        detail_json=detail_json,
+        status_msg=status_msg,
+        status_level=status_level,
+        **{k: v for k, v in main.items() if k not in ("index", "color", "role", "label", "plot", "params_json")},
+    )
+
+
+def _pulse_section_ctx(store, pulse_index, path: str):
+    """Everything the inspector says about ONE pulse: its row, banners,
+    parameter rows, used-by and plot. An error is a (html, code) tuple."""
     if not _is_pulse_path(path):
         return render_template("_status.html",
                                message=f"Not a pulse path: {path!r}",
@@ -10077,53 +10177,34 @@ def _render_pulse_detail(path: str, *, status_msg: str | None = None,
                           else prev_links.get(f"{actual_path}.{fname}")),
         })
 
-    detail_json = json.dumps({
-        "path": path,
-        "actual_path": actual_path,
-        "qclass": payload.get("qclass") or row.get("qclass"),
-        "spec_key": payload.get("spec_key"),
-        "plot": _pulse_plot_traces(payload),
-        # Customer ask (2026-08-27): a CZ macro plays its qubit flux AND its
-        # coupler flux together, so the preview draws both by default.
-        "overlays": _pulse_component_overlays(store, path),
-    })
-
     is_qubit_op = bool(_PULSE_PATH_RES[0].match(path))
     used_by_target = pulse_index.used_by(actual_path)
-    # The delete button removes `path` (the alias itself when opened via
-    # one) — its confirm step must list THAT node's referrers, not the
-    # target's, or the real would-dangle set is hidden.
     delete_used_by = (pulse_index.used_by(path) if alias_chain
                       else used_by_target)
-    return render_template(
-        "_pulse_detail.html",
-        path=path,
-        actual_path=actual_path,
-        row=row,
-        spec=spec,
-        alias_chain=alias_chain,
-        op_name=row["op_name"],
-        owner=row["owner"],
-        channel=row["channel"],
-        class_short=row["class_short"],
-        # payload["qclass"] carries the RESOLVED target's __class__ — the
-        # alias row's own qclass is None, and the leaf-caution banner must
-        # show the chip's real stored path, not "None" (same source as
-        # detail_json above).
-        qclass=payload.get("qclass") or row.get("qclass"),
-        known=row["known"],
-        class_match=class_match,
-        unmodeled=unmodeled,
-        catalog_qclass=spec.qclass if spec else None,
-        params=param_rows,
-        used_by=used_by_target,
-        delete_used_by=delete_used_by,
-        synth_error=None if payload.get("ok") else payload.get("error"),
-        detail_json=detail_json,
-        can_rename=is_qubit_op and not alias_chain,
-        status_msg=status_msg,
-        status_level=status_level,
-    )
+    return {
+        "path": path,
+        "actual_path": actual_path,
+        "row": row,
+        "spec": spec,
+        "alias_chain": alias_chain,
+        "op_name": row["op_name"],
+        "owner": row["owner"],
+        "channel": row["channel"],
+        "class_short": row["class_short"],
+        "qclass": payload.get("qclass") or row.get("qclass"),
+        "spec_key": payload.get("spec_key"),
+        "known": row["known"],
+        "class_match": class_match,
+        "unmodeled": unmodeled,
+        "catalog_qclass": spec.qclass if spec else None,
+        "params": param_rows,
+        "used_by": used_by_target,
+        "delete_used_by": delete_used_by,
+        "synth_error": None if payload.get("ok") else payload.get("error"),
+        "can_rename": is_qubit_op and not alias_chain,
+        "plot": _pulse_plot_traces(payload),
+        "label": f"{row['owner']} · {row['channel']} · {row['op_name']}",
+    }
 
 
 def _pulse_mutation_response(detail, *, trigger: bool = True, paths=None):
@@ -10264,7 +10345,14 @@ def pulse_edit():
         _touched.append(_resolve_edit_path(store, dot_path))
     except Exception:  # noqa: BLE001 -- a pointer-mode write has no resolved target
         pass
-    return _pulse_mutation_response(_render_pulse_detail(path), paths=_touched)
+    # docs/141 4k: the form says which VIEW it lives in (main pulse + every
+    # section), so the re-render keeps the same sections in the same order
+    view_main = (request.form.get("view_main") or "").strip() or path
+    view_paths = _view_paths_arg(request.form.get("view_paths"))
+    if not _is_pulse_path(view_main):
+        view_main = path
+    return _pulse_mutation_response(
+        _render_pulse_detail(view_main, paths=view_paths or None), paths=_touched)
 
 
 @bp.route("/api/pulse/synth", methods=["POST"])

@@ -429,6 +429,41 @@ says structural instead. Pinned by `TestPulseRow` (route, one-template
 identity, the trigger payload after an edit and its undo including the
 pointer-linked sibling) and `undo_pages_selfcheck.cjs` (the client patcher).
 
+## 4k. The pulse inspector is a view of up to four pulses (user-directed)
+
+Users want to adjust the parameters of every pulse they are looking at — the
+CZ macro's qubit flux AND its coupler flux, and the pulses they put side by
+side with Compare — not one editable table under a read-only overlay.
+
+* **The view.** `/pulse/detail?path=<main>&paths=a,b,c,d` (≤4) renders one
+  plot and one parameter section per pulse. A main pulse alone still brings
+  its companions (a pair macro's other slots) as sections; Compare opens the
+  same route with the selection. `_render_pulse_detail` builds one context
+  per pulse (`_pulse_section_ctx`, the old body factored out) and the
+  template renders `_pulse_params_section.html` per section — the table
+  loop and the single view share it. Every form carries `view_main` +
+  `view_paths`, so a commit re-renders the same view with the same main.
+* **One colour per pulse, in the plot and in the section.** Section 0 = the
+  app's primary, then the overlay hues; the plot draws each section's
+  committed traces in its colour (I solid, Q dotted), a dirty section's
+  preview dashed in the same colour; the section carries the colour as a
+  quiet left rule + swatch, with a role chip (qubit / coupler / pair), the
+  owner and the macro or `channel · op`. The "in view" bar lists the pulses
+  as chips (× drops one, the picker adds one, cap 4) — both re-render from
+  the server: one mechanism, one truth.
+* **Previews per section.** `collectOverrides` is scoped to a section (a
+  dirty coupler field is not a qubit override); each dirty section gets its
+  own synth with its own generation token; the committed-plot cache and the
+  undo refresh are per section (`committedKey(sec)`), and a change the
+  in-place repaint cannot express re-renders the view (`reloadView`).
+
+Verified in real Chrome on the 20Q chip: the CZ macro opens as qubit +
+coupler sections (two colours, both editable); Compare of two xy pulses gives
+two sections; editing a float in section 2 previews in its colour; Enter keeps
+both sections; Ctrl+Z keeps both; no console errors. Pinned by
+`TestPulseView` (two sections, colours, the view survives a commit, the cap)
+and `pulses_undo_selfcheck.cjs` (unchanged pins over the sections model).
+
 ## 5. Tooling that came out of the night
 
 `scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js` (+ daytime: `cdp_profile.js` function-level CPU profile, `cdp_trace.js` per-phase trace of one keystroke, `cdp_type.js` char-by-char typing with a gap + debounce override, `cdp_undo.js` trusted Ctrl+Z/Ctrl+Shift+Z through the page's own UI, `cdp_virt.js` virtualization sampler): Chrome headless with the

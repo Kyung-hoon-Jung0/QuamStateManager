@@ -73,7 +73,7 @@ def test_burst_contract_ships():
     assert app.index('&& !inGridCell && !inChPanel && !inInline) return;') < app.index("if (evt.repeat) { evt.preventDefault(); return; }")
     assert 'if (d.stopped === "journal" && _remaining > 0 && window.UndoQueue) {' in app, "a journal-stopped burst re-queues the rest"
     pulses = (_STATIC / "pulses.js").read_text(encoding="utf-8")
-    assert "var PLOT_CACHE_MAX = 200;" in pulses and "function refreshCommittedPlot(root)" in pulses
+    assert "var PLOT_CACHE_MAX = 200;" in pulses and "function refreshCommittedPlot(root, sec)" in pulses   # docs/141 4k: per section
     assert "var _previewCache = new Map();" in pulses, "the live preview is memoised too"
     # user-directed 2026-08-28: the grids wait 200 ms of typing pause
     bulk = (_STATIC / "bulk-edit.js").read_text(encoding="utf-8")

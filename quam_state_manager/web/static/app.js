@@ -15639,7 +15639,7 @@ document.addEventListener("input", function (e) {
 /* ------------------------------------------------------------------ */
 
 var _pulseSelection = [];   // paths of selected pulses (max 5)
-var _PULSE_MAX_COMPARE = 5;
+var _PULSE_MAX_COMPARE = 4;   // docs/141 4k: the view holds up to four sections
 var _PULSE_COMPARE_COLORS = [
     "var(--pico-primary)", "#e67e22", "#2ecc71", "#e74c3c", "#9b59b6"
 ];
@@ -15672,97 +15672,14 @@ window.clearPulseSelection = function () {
 };
 
 window.openPulseCompare = function () {
-    if (_pulseSelection.length < 2) return;
-    // Create or reuse modal
-    var overlay = document.getElementById("pulse-compare-overlay");
-    if (!overlay) {
-        overlay = document.createElement("div");
-        overlay.id = "pulse-compare-overlay";
-        overlay.className = "state-review-overlay";
-        overlay.style.display = "none";
-        overlay.innerHTML =
-            '<div class="state-review-backdrop" onclick="closePulseCompare()"></div>' +
-            // `state-review-host`: the overlay's own stylesheet HIDES any
-            // .state-review-overlay whose host has no children (the empty-host
-            // click-trap guard, style.css). This card was not a host, so the
-            // rule kept the overlay display:none forever -- the fetch ran, the
-            // plot rendered into an invisible 0x0 div, and the button looked
-            // dead (user report, 2026-08-28, real-Chrome confirmed).
-            '<div class="state-review-host state-review-card pulse-compare-card">' +
-              '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem">' +
-                '<h3 style="margin:0">Pulse Waveform Comparison</h3>' +
-                '<button type="button" onclick="closePulseCompare()" style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--pico-muted-color)">&times;</button>' +
-              '</div>' +
-              '<div id="pulse-compare-plot" style="width:100%;height:400px"></div>' +
-              '<div id="pulse-compare-legend" style="margin-top:0.5rem"></div>' +
-            '</div>';
-        document.body.appendChild(overlay);
-    }
-    overlay.style.display = "flex";
-
-    // Purge any previous Plotly chart so re-renders work reliably.
-    var plotDiv = document.getElementById("pulse-compare-plot");
-    if (window.Plotly && plotDiv && plotDiv.data) {
-        try { Plotly.purge(plotDiv); } catch (e) {}
-    }
-    plotDiv.innerHTML = '<p class="muted" style="padding:2rem;text-align:center">Synthesizing waveforms…</p>';
-
-    fetch("/api/pulse/compare", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "HX-Request": "true" },
-        body: JSON.stringify({ paths: _pulseSelection })
-    })
-    .then(function (r) { return r.json(); })
-    .then(function (d) {
-        if (!d.ok) {
-            plotDiv.innerHTML = '<p class="muted" style="padding:2rem">' + (d.error || "Comparison failed") + '</p>';
-            return;
-        }
-        var traces = [];
-        var legendHtml = [];
-        d.pulses.forEach(function (p, idx) {
-            if (!p.ok || !p.plot || !p.plot.traces) return;
-            var color = _PULSE_COMPARE_COLORS[idx % _PULSE_COMPARE_COLORS.length];
-            p.plot.traces.forEach(function (t) {
-                traces.push({
-                    x: t.x, y: t.y,
-                    name: p.label + " " + t.name,
-                    mode: "lines",
-                    line: { color: color, width: t.name === "Q" ? 1.5 : 2,
-                            dash: t.name === "Q" ? "dot" : "solid" },
-                    hovertemplate: p.label + " " + t.name + ": %{y:.4g}<extra></extra>"
-                });
-            });
-            legendHtml.push(
-                '<span style="display:inline-flex;align-items:center;gap:0.3rem;margin-right:1rem">' +
-                '<span style="width:12px;height:3px;background:' + color + ';display:inline-block"></span>' +
-                '<span style="font-size:0.82rem">' + (p.label || p.path) + '</span></span>'
-            );
-        });
-
-        var cs = getComputedStyle(document.documentElement);
-        var cardBg = cs.getPropertyValue("--pico-card-background-color").trim() || "#1e2029";
-        var plotBg = cs.getPropertyValue("--pico-background-color").trim() || "#13141a";
-        var layout = {
-            margin: { t: 20, r: 20, b: 40, l: 50 },
-            xaxis: { title: "Time (ns)", gridcolor: "rgba(128,128,128,0.15)" },
-            yaxis: { title: "Amplitude", gridcolor: "rgba(128,128,128,0.15)" },
-            showlegend: false,
-            paper_bgcolor: cardBg,
-            plot_bgcolor: plotBg,
-            font: { color: cs.getPropertyValue("--pico-color").trim() }
-        };
-        if (window._plotlyRender) {
-            window._plotlyRender("pulse-compare-plot", traces, layout, { responsive: true });
-        } else if (window.Plotly) {
-            Plotly.newPlot("pulse-compare-plot", traces, layout, { responsive: true });
-        }
-        var legendEl = document.getElementById("pulse-compare-legend");
-        if (legendEl) legendEl.innerHTML = legendHtml.join("");
-    })
-    .catch(function () {
-        plotDiv.innerHTML = '<p class="muted" style="padding:2rem">Comparison request failed.</p>';
-    });
+    /* docs/141 4k (user): Compare is the pulse INSPECTOR with 2-4 pulses in
+       view -- one plot, one editable parameter section per pulse, each in its
+       trace colour -- not a read-only overlay. Same route the rows use. */
+    if (_pulseSelection.length < 2 || !window.htmx) return;
+    var paths = _pulseSelection.slice(0, _PULSE_MAX_COMPARE);
+    htmx.ajax("GET", "/pulse/detail?path=" + encodeURIComponent(paths[0])
+              + "&paths=" + encodeURIComponent(paths.join(",")),
+              { target: "#inspector-pane", swap: "innerHTML" });
 };
 
 window.closePulseCompare = function () {

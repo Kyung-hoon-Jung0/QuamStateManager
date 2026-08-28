@@ -21,10 +21,11 @@ def test_the_guard_rule_exists_and_the_compare_card_is_a_host():
     css = (_STATIC / "style.css").read_text(encoding="utf-8")
     assert ".state-review-overlay:not(:has(.state-review-host > *)) { display: none !important; }" in css
     app = (_STATIC / "app.js").read_text(encoding="utf-8")
-    assert '\'<div class="state-review-host state-review-card pulse-compare-card">\'' in app
-    assert "#pulse-compare-overlay" in app.split("window.smModalOpen = function")[1].split("return false;")[0], \
-        "global shortcuts must see the compare overlay as an open modal"
-    assert 'if (overlay && overlay.style.display !== "none") { evt.preventDefault(); window.closePulseCompare(); }' in app
+    # docs/141 4k: Compare is the pulse INSPECTOR with 2-4 pulses in view now --
+    # the overlay is gone, the button opens the same route the rows use
+    assert '"/pulse/detail?path=" + encodeURIComponent(paths[0])' in app and '"&paths=" + encodeURIComponent(paths.join(","))' in app
+    assert 'var _PULSE_MAX_COMPARE = 4;' in app
+    assert 'pulse-compare-card' not in app.split("window.openPulseCompare = function")[1].split("window.closePulseCompare")[0]
 
 
 def test_every_overlay_that_borrows_the_class_has_a_host():

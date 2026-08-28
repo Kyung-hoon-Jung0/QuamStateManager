@@ -1494,3 +1494,37 @@ class TestPulseRow:
         assert 'document.addEventListener("pulses-rows-changed", function (evt) {' in app and '"/pulse/row?path="' in app
         cs = (_P(__file__).resolve().parent.parent / "quam_state_manager" / "web" / "static" / "chip-status.js").read_text(encoding="utf-8")
         assert "addEventListener('pulses-rows-changed', onStateMutated)" in cs
+
+
+class TestPulseView:
+    """docs/141 4k: the inspector is a VIEW of one to four pulses -- one plot,
+    one editable parameter section per pulse, each in its trace colour."""
+
+    def test_two_pulses_render_two_sections_on_one_plot(self, loaded_client):
+        html = loaded_client.get(f"/pulse/detail?paths={XY}.x180_DragCosine,{XY}.x90_DragCosine").data.decode()
+        assert html.count('class="detail-section pulse-sec"') == 2
+        assert f'data-pulse-path="{XY}.x180_DragCosine"' in html and f'data-pulse-path="{XY}.x90_DragCosine"' in html
+        assert html.count("--sec-color: var(--pico-primary)") == 1 and "--sec-color: #e67e22" in html
+        assert html.count('name="view_paths"') >= 2 and f'value="{XY}.x180_DragCosine,{XY}.x90_DragCosine"' in html
+        import json as _json
+        data = _json.loads(html.split('<script id="pulse-detail-data" type="application/json">')[1].split("</script>")[0])
+        assert data["mode"] == "compare" and [p["path"] for p in data["pulses"]] == [f"{XY}.x180_DragCosine", f"{XY}.x90_DragCosine"]
+        assert all(p["plot"]["ok"] for p in data["pulses"])
+
+    def test_a_commit_keeps_the_view(self, loaded_client):
+        resp = loaded_client.post("/pulse/edit", data={
+            "path": f"{XY}.x90_DragCosine", "dot_path": f"{XY}.x90_DragCosine.amplitude",
+            "mode": "value", "value": "0.2",
+            "view_main": f"{XY}.x180_DragCosine", "view_paths": f"{XY}.x180_DragCosine,{XY}.x90_DragCosine",
+        })
+        html = resp.data.decode()
+        assert html.count('class="detail-section pulse-sec"') == 2
+        assert f'data-pulse-path="{XY}.x180_DragCosine"' in html.split('class="detail-section pulse-sec"')[1], "the main pulse stays first"
+        assert 'data-committed="0.2"' in html
+
+    def test_single_and_the_view_cap(self, loaded_client):
+        html = loaded_client.get(f"/pulse/detail?path={XY}.saturation").data.decode()
+        assert html.count('class="detail-section pulse-sec"') == 1 and '"mode": "single"' in html
+        many = ",".join([f"{XY}.x180_DragCosine", f"{XY}.x90_DragCosine", f"{XY}.saturation", f"{XY}.mystery", "qubits.qA1.resonator.operations.readout"])
+        html = loaded_client.get(f"/pulse/detail?paths={many}").data.decode()
+        assert html.count('class="detail-section pulse-sec"') <= 4

@@ -9604,6 +9604,19 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
    from — the parameter inputs below it (feedback #5 "inputs unclickable"). */
 .pulse-detail-plot { height: 260px; min-height: 260px; max-height: 260px; overflow: hidden; }
 .pulse-plot-empty { display: none; }
+/* docs/141 4k: one parameter section per pulse in view, carrying the colour
+   its traces have in the plot -- a quiet left rule + swatch, not a fill */
+.pulse-sec { border-left: 3px solid var(--sec-color, var(--pico-primary)); margin: 0.35rem 0 0; padding-left: 0.4rem; }
+.pulse-sec + .pulse-sec { border-top: none; }
+.pulse-sec > summary.pulse-sec-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.45rem; }
+.pulse-sec-swatch { display: inline-block; width: 0.7em; height: 0.7em; border-radius: 2px; background: var(--sec-color, var(--pico-primary)); align-self: center; }
+.pulse-sec-role { font-size: 0.72em; text-transform: uppercase; letter-spacing: .05em; padding: 0.02rem 0.4rem; border-radius: 999px; border: 1px solid var(--sec-color, var(--pico-primary)); color: var(--sec-color, var(--pico-primary)); }
+.pulse-sec-owner { font-weight: 700; }
+.pulse-sec-op code { font-size: 0.9em; }
+.pulse-sec-class { font-size: 0.8em; }
+.pulse-sec-note, .pulse-sec-usedby { font-size: 0.8em; margin: 0.2rem 0 0.3rem; }
+.pulse-view-bar .pulse-overlay-chip { cursor: default; }
+.pulse-view-bar .pulse-overlay-chip .pulse-sec-role { border: none; padding: 0; color: var(--ov-hue); }
 
 /* Overlay bar (customer 2026-08-27): companion / picked pulses drawn on the
    same axes. Each chip carries its trace hue as a left mark. */
