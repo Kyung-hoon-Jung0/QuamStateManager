@@ -464,6 +464,91 @@ both sections; Ctrl+Z keeps both; no console errors. Pinned by
 `TestPulseView` (two sections, colours, the view survives a commit, the cap)
 and `pulses_undo_selfcheck.cjs` (unchanged pins over the sections model).
 
+## 4l. Page-specific script bundles, loaded when the page is first visited (2026-08-28, evening)
+
+**What shipped.** `base.html` no longer loads every script on every page. Nine
+files stay core (htmx, split, search-query, `app.js`, auto-apply, plot-theme,
+calc, manual, undo-trail — `PlotTheme` is read bare in nine places of `app.js`,
+so it cannot leave). The other fifteen are grouped into named **bundles** and
+the template emits, per full-page render, only the current page's bundles as
+eager `<head>` tags (the parse-time inline scripts of `_bulkedit.html`,
+`_datasets.html` … are unchanged and still find their globals) plus ONE
+`#bundle-manifest` JSON naming every lazy file, its versioned URL, the bundles
+and the page map. `window.Bundles` in `app.js` is the loader:
+
+| bundle | files | pages |
+|---|---|---|
+| grid | bulk-edit, pair-edit, all-values | bulk, table |
+| pulses | pulses | pulses (+ every `/pulse/*` partial) |
+| wiring | topo-graph, wiring-grid | instrument |
+| chipstatus + components | topo-graph, chip-status / topo-graph, component-map | topology (+ its `/wiring` alias), trends |
+| components | topo-graph, component-map | qubits, pairs, resonators, flux, couplers, qdac, qubit/pair detail |
+| generate | topo-graph, wiring-grid, pulses, generate, generate_preview | generate, regenerate |
+| datasets | dataset-virtual, ndview | datasets, dataset detail/compare, collections, fit-audit, trends |
+| scheduler / autofit / compare | scheduler / autofit / topo-graph + compare-hub | scheduler / autofit / compare-hub, diff |
+
+Three seams, because htmx has three ways of putting content on the page:
+
+1. **`htmx:confirm`** — every htmx request passes through it and `evt.detail.issueRequest`
+   is the documented way to hold one. The loader maps the request URL to its
+   bundles (a regex table mirroring the routes); if any file is missing it
+   `preventDefault`s, appends the tags (all at once, `async=false` so they
+   EXECUTE in bundle order — topo-graph before component-map), and issues the
+   request when they have loaded. A lost script still issues the request —
+   the page renders and its widgets degrade, which beats a navigation that
+   silently never happens. The failed file is not marked loaded, so the next
+   navigation retries it.
+2. **Back/Forward** — htmx restores a history entry WITHOUT an `htmx:confirm`
+   (from its localStorage cache, or its own `HX-History-Restore-Request` xhr),
+   and the restored content's inline scripts expect the page's bundles. Real
+   scenario: full `/bulk` → sidebar → `/explorer` → F5 (core scripts only now)
+   → Back. Measured in real Chrome before the fix: `BulkEdit undefined`, the
+   grid unmounted. htmx chains the previous `window.onpopstate`; the loader
+   chains htmx's — installed at `DOMContentLoaded` AFTER htmx assigns it (app.js
+   runs during parse, before) — and holds the ORIGINAL event until the bundles
+   are here. After: `BulkEdit object`, 4,280 cold cells (mounted + virtualized),
+   zero console errors.
+3. **Global controls that reach into a bundle** — the Settings font/bold/spacing
+   buttons for the grids call `Bundles.call('grid', 'BulkEdit.setFont', 0.85)`:
+   load, then call; a missing target toasts instead of throwing.
+
+**Measured (A/B against a HEAD worktree on another port, same session, warm cache).**
+Script bytes per page: 2,236 KB on every page → 976 KB on `/explorer`, 1,035 on
+`/pulses`, 1,229 on `/topology`, 1,259 on `/bulk`. DCL on the light pages moved
+100–200 ms (`/explorer` 402→279, `/pulses` 249→82 on the first visit; within
+noise on repeats). **And a correction to §4i's open item**: the ~2 s before the
+`/bulk` mount is NOT script evaluation. With a warm cache all 2.2 MB of scripts
+evaluated in ≈0.2–0.3 s (HEAD `/explorer` DCL 229–402 ms). The `/bulk` document
+is **8.7 MB of HTML**: first byte at 1.1 s (server render), bytes complete at
+1.3–1.6 s, then a 1.1–1.2 s long task (parse + inline mount), then 0.5 + 0.3 +
+1.1 s of style/layout long tasks after DCL (the first paint of ~8,000 cells).
+That is where a cold `/bulk` goes; the bundle split does not touch it, and the
+next lever there is the size of the rendered grid, not the scripts. The cold
+`/bulk` mount clock itself stays at ~0.33 s (§4i).
+
+**What this means for the app.js split the user asked about.** The loader is the
+infrastructure; new page-specific JS should be born as a bundle. Carving the
+existing `app.js` (842 KB) is a different question: its biggest block, the JSON
+Tree Viewer (90 KB), is used by eight page families (explorer, diff, compare,
+dataset detail, the component pages, chip status, the wizard) and its IIFE also
+houses `NumberInput`, `_groupDigits` and `armPlainResize`, which the grids and
+the wizard read — it is shared UI, not a page feature. The clear-cut
+page-specific pieces (unified compare tree 16 KB, the instrument renderer ~30 KB,
+the dataset plot-apply popup ~35 KB) total ~10% of the file, and eight jsdom
+harnesses plus the greppable pins would follow each move. Given that script
+evaluation is ≈0.3 s warm for everything, the split is a maintainability
+decision, not a speed one — recorded here so the numbers are on the table.
+
+**Pinned.** `tests/test_bundles.py` (every page ships the core + only its own
+bundles, no file twice; the manifest names every lazy file once and every file
+exists; the JS path map agrees with the page map; no inline handler calls a grid
+global directly) + `tests/bundles_selfcheck.cjs` (40 asserts, the loader block
+executed under jsdom: manifest, present tags, URL map, ordered loading with
+`async=false`, the `htmx:confirm` hold, the lost-script contract, the
+Back/Forward hold with the ORIGINAL event, `Bundles.call`). `test_web`'s
+eager-script pin now checks `dataset-virtual.js` on the rendered `/datasets`
+page rather than in the template.
+
 ## 5. Tooling that came out of the night
 
 `scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js` (+ daytime: `cdp_profile.js` function-level CPU profile, `cdp_trace.js` per-phase trace of one keystroke, `cdp_type.js` char-by-char typing with a gap + debounce override, `cdp_undo.js` trusted Ctrl+Z/Ctrl+Shift+Z through the page's own UI, `cdp_virt.js` virtualization sampler): Chrome headless with the

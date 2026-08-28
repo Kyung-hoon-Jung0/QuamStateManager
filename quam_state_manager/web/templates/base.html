@@ -73,29 +73,53 @@
     {# The one query grammar (space=AND, standalone |=OR) — must precede every
        matcher that consumes it: app.js (trees), bulk/pair-edit, dataset-virtual. #}
     <script src="{{ asset_url('search-query.js') }}"></script>
+    {# docs/141 4l: the CORE scripts every page needs. The page-specific
+       bundles below are loaded only for the page that uses them -- on a full
+       load by the tags this template emits for THIS page, on an htmx
+       navigation by window.Bundles (app.js) before the request is issued
+       (htmx:confirm), so a swapped-in partial's inline script always finds
+       its globals. Every lazy file is listed ONCE, in the manifest. #}
     <script src="{{ asset_url('app.js') }}"></script>
-    <script src="{{ asset_url('dataset-virtual.js') }}"></script>
-    <script src="{{ asset_url('generate.js') }}"></script>
-    <script src="{{ asset_url('generate_preview.js') }}"></script>
-    <script src="{{ asset_url('topo-graph.js') }}"></script>
-    <script src="{{ asset_url('component-map.js') }}"></script>
-    <script src="{{ asset_url('wiring-grid.js') }}"></script>
-    <script src="{{ asset_url('chip-status.js') }}"></script>
-    <script src="{{ asset_url('bulk-edit.js') }}"></script>
     {# docs/117: the auto-apply flusher — kept out of app.js so its
        behaviour is testable in isolation under jsdom. #}
     <script src="{{ asset_url('auto-apply.js') }}"></script>
-    <script src="{{ asset_url('pair-edit.js') }}"></script>
-    <script src="{{ asset_url('all-values.js') }}"></script>
-    <script src="{{ asset_url('pulses.js') }}"></script>
     <script src="{{ asset_url('plot-theme.js') }}"></script>
-    <script src="{{ asset_url('ndview.js') }}"></script>
-    <script src="{{ asset_url('scheduler.js') }}"></script>
-    <script src="{{ asset_url('autofit.js') }}"></script>
     <script src="{{ asset_url('calc.js') }}"></script>
     <script src="{{ asset_url('manual.js') }}"></script>
     <script src="{{ asset_url('undo-trail.js') }}"></script>
-    <script src="{{ asset_url('compare-hub.js') }}"></script>
+    {% set bundle_files = {
+        'grid': ['bulk-edit.js', 'pair-edit.js', 'all-values.js'],
+        'pulses': ['pulses.js'],
+        'topo': ['topo-graph.js'],
+        'wiring': ['topo-graph.js', 'wiring-grid.js'],
+        'components': ['topo-graph.js', 'component-map.js'],
+        'chipstatus': ['topo-graph.js', 'chip-status.js'],
+        'generate': ['topo-graph.js', 'wiring-grid.js', 'pulses.js', 'generate.js', 'generate_preview.js'],
+        'datasets': ['dataset-virtual.js', 'ndview.js'],
+        'scheduler': ['scheduler.js'],
+        'autofit': ['autofit.js'],
+        'compare': ['topo-graph.js', 'compare-hub.js'],
+    } %}
+    {% set page_bundles = {
+        'bulk': ['grid'], 'table': ['grid'],
+        'pulses': ['pulses'],
+        'generate': ['generate'], 'regenerate': ['generate'],
+        'instrument': ['wiring'],
+        'topology': ['chipstatus', 'components'], 'trends': ['chipstatus', 'datasets'], 'trend': ['chipstatus', 'datasets'],
+        'qubits': ['components'], 'pairs': ['components'], 'resonators': ['components'], 'flux': ['components'],
+        'couplers': ['components'], 'qdac': ['components'], 'qubit_detail': ['components'], 'pair_detail': ['components'],
+        'datasets': ['datasets'], 'dataset_detail': ['datasets'], 'dataset_compare': ['datasets'], 'collections': ['datasets'],
+        'fit-audit': ['datasets'],
+        'scheduler': ['scheduler'], 'autofit': ['autofit'],
+        'compare_hub': ['compare'], 'diff': ['compare'],
+    } %}
+    {% set manifest = {} %}
+    {% for _b, _files in bundle_files.items() %}{% for _f in _files %}{% if _f not in manifest %}{% set _ = manifest.update({_f: asset_url(_f)}) %}{% endif %}{% endfor %}{% endfor %}
+    <script id="bundle-manifest" type="application/json">{{ {'files': manifest, 'bundles': bundle_files, 'pages': page_bundles} | tojson }}</script>
+    {% set _this = page_bundles.get(page if page is defined else '', []) %}
+    {% set _emitted = [] %}
+    {% for _b in _this %}{% for _f in bundle_files[_b] %}{% if _f not in _emitted %}{% set _ = _emitted.append(_f) %}
+    <script src="{{ asset_url(_f) }}" data-bundle-file="{{ _f }}"></script>{% endif %}{% endfor %}{% endfor %}
     {# C2: ts-local spans are hidden until JS localizes them (no UTC→local flash); with JS
        off, reveal them so the UTC fallback text still shows. #}
     <noscript><style>.ts-local{visibility:visible}</style></noscript>
@@ -875,46 +899,46 @@
         <div class="settings-sub">
         <span class="settings-sub-label">Table view</span>
         <div class="settings-options">
-        <button onclick="BulkEdit.setFont(0.85)" class="settings-opt bulk-font-preset" data-fs="0.85">S</button>
-        <button onclick="BulkEdit.setFont(1)" class="settings-opt bulk-font-preset" data-fs="1">M</button>
-        <button onclick="BulkEdit.setFont(1.25)" class="settings-opt bulk-font-preset" data-fs="1.25">L</button>
-        <button onclick="BulkEdit.toggleBold()" class="settings-opt bulk-bold-toggle" id="bulk-bold"
+        <button onclick="Bundles.call('grid', 'BulkEdit.setFont', 0.85)" class="settings-opt bulk-font-preset" data-fs="0.85">S</button>
+        <button onclick="Bundles.call('grid', 'BulkEdit.setFont', 1)" class="settings-opt bulk-font-preset" data-fs="1">M</button>
+        <button onclick="Bundles.call('grid', 'BulkEdit.setFont', 1.25)" class="settings-opt bulk-font-preset" data-fs="1.25">L</button>
+        <button onclick="Bundles.call('grid', 'BulkEdit.toggleBold')" class="settings-opt bulk-bold-toggle" id="bulk-bold"
                 aria-pressed="false" title="Bold values">B</button>
         </div>
         <label class="settings-slider" title="Font size">
         <span class="muted">Aa</span>
         <input type="range" id="bulk-font-slider" min="0.75" max="1.7" step="0.05" value="1"
-               oninput="BulkEdit.setFont(this.value)" aria-label="Table cell font size">
+               oninput="Bundles.call('grid', 'BulkEdit.setFont', this.value)" aria-label="Table cell font size">
         </label>
         <label class="settings-slider" title="Letter spacing (digit gap)">
         <span class="muted">&#8596;</span>
         <input type="range" id="bulk-ls-slider" min="0" max="0.12" step="0.02" value="0"
-               oninput="BulkEdit.setLetterSpacing(this.value)" aria-label="Table cell letter spacing">
+               oninput="Bundles.call('grid', 'BulkEdit.setLetterSpacing', this.value)" aria-label="Table cell letter spacing">
         </label>
         </div>
         <div class="settings-sub">
         <span class="settings-sub-label">Flat view</span>
         <div class="settings-options">
-        <button onclick="AllValues.setFont(0.85)" class="settings-opt" data-av-fs="0.85">S</button>
-        <button onclick="AllValues.setFont(1)" class="settings-opt" data-av-fs="1">M</button>
-        <button onclick="AllValues.setFont(1.2)" class="settings-opt" data-av-fs="1.2">L</button>
-        <button onclick="AllValues.toggleBold()" class="settings-opt" id="av-bold"
+        <button onclick="Bundles.call('grid', 'AllValues.setFont', 0.85)" class="settings-opt" data-av-fs="0.85">S</button>
+        <button onclick="Bundles.call('grid', 'AllValues.setFont', 1)" class="settings-opt" data-av-fs="1">M</button>
+        <button onclick="Bundles.call('grid', 'AllValues.setFont', 1.2)" class="settings-opt" data-av-fs="1.2">L</button>
+        <button onclick="Bundles.call('grid', 'AllValues.toggleBold')" class="settings-opt" id="av-bold"
                 aria-pressed="false" title="Bold values">B</button>
         </div>
         <label class="settings-slider" title="Font size">
         <span class="muted">Aa</span>
         <input type="range" id="av-font-slider" min="0.85" max="1.3" step="0.05" value="1"
-               oninput="AllValues.setFont(this.value)" aria-label="Flat view font size">
+               oninput="Bundles.call('grid', 'AllValues.setFont', this.value)" aria-label="Flat view font size">
         </label>
         <label class="settings-slider" title="Letter spacing (digit gap)">
         <span class="muted">&#8596;</span>
         <input type="range" id="av-ls-slider" min="0" max="0.12" step="0.02" value="0"
-               oninput="AllValues.setLetterSpacing(this.value)" aria-label="Flat view letter spacing">
+               oninput="Bundles.call('grid', 'AllValues.setLetterSpacing', this.value)" aria-label="Flat view letter spacing">
         </label>
         <label class="settings-slider" title="Row spacing">
         <span class="muted">&#8597;</span>
         <input type="range" id="av-rh-slider" min="1" max="1.6" step="0.05" value="1"
-               oninput="AllValues.setRowSpacing(this.value)" aria-label="Flat view row spacing">
+               oninput="Bundles.call('grid', 'AllValues.setRowSpacing', this.value)" aria-label="Flat view row spacing">
         </label>
         </div>
         </div>

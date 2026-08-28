@@ -1,12 +1,15 @@
-/* jsdom selfcheck for the Pulses-page overlay bar (customer ask 2026-08-27):
- * every pulse is time × voltage, so any set can share one plot. Pins:
- *   1. a CZ macro's companion pulse (server `overlays`, default_on) is DRAWN
- *      with the committed trace on first render, under its own label
- *   2. its chip is checked; unchecking removes the trace, re-checking restores
- *   3. the picker lists the library table's OTHER pulses (never its own path,
- *      never one already overlaid); picking one fetches /api/pulse/synth for
- *      that path and draws it; its × removes it
- *   4. a companion that failed to synth is labelled, never drawn as a line
+/* jsdom selfcheck for the Pulses-page VIEW bar (docs/141 4k, superseding the
+ * 2026-08-27 overlay bar): every pulse is time × voltage, so any set can share
+ * one plot. The server renders one section per pulse in view; the client draws
+ * every section's committed traces in its own colour under its own label, and
+ * the view bar drops/adds pulses by re-rendering the same route. Pins:
+ *   1. every section in view is DRAWN with the main trace on first render,
+ *      each under its own label (the legend suffix)
+ *   2. a section that failed to synth is never drawn as a line
+ *   3. × on a chip re-renders the view WITHOUT that pulse, keeping the main
+ *   4. the picker lists the library table's OTHER pulses (never one already in
+ *      view), labelled owner · channel.op; picking one re-renders the view
+ *      WITH it appended
  * Run: node tests/pulse_overlay_selfcheck.cjs   (driven by tests/test_pulse_overlay.py)
  */
 const fs = require('fs');
@@ -19,49 +22,55 @@ function ok(c, m) { if (!c) { console.error('FAIL: ' + m); fails++; } else { con
 
 const OWN = 'qubit_pairs.q1-2.macros.cz_bipolar.flux_pulse_qubit';
 const SIB = 'qubit_pairs.q1-2.macros.cz_bipolar.coupler_flux_pulse';
+const BROKEN = 'qubit_pairs.q1-2.macros.cz_bipolar.broken';
 const OTHER = 'qubits.q1.xy.operations.x180_DragCosine';
+const LABEL_Q = 'q1-2 · cz_bipolar · qubit';
+const LABEL_C = 'q1-2 · cz_bipolar · coupler';
 const detail = {
-    path: OWN, actual_path: OWN, qclass: 'CosineBipolarPulse',
+    path: OWN, actual_path: OWN, qclass: 'CosineBipolarPulse', mode: 'group',
     plot: { ok: true, traces: [{ name: 'I', x: [0, 1, 2], y: [0, 0.1, 0] }] },
-    overlays: [
-        { path: SIB, label: 'coupler_flux_pulse', default_on: true,
+    pulses: [
+        { path: OWN, actual_path: OWN, label: LABEL_Q, role: 'qubit', color: '#1095c1', index: 0,
+          plot: { ok: true, traces: [{ name: 'I', x: [0, 1, 2], y: [0, 0.1, 0] }] } },
+        { path: SIB, actual_path: SIB, label: LABEL_C, role: 'coupler', color: '#e67e22', index: 1,
           plot: { ok: true, traces: [{ name: 'I', x: [0, 1, 2], y: [0, -0.2, 0] }] } },
-        { path: 'qubit_pairs.q1-2.macros.cz_bipolar.broken', label: 'broken', default_on: true,
+        { path: BROKEN, actual_path: BROKEN, label: 'q1-2 · cz_bipolar · broken', role: 'pulse', color: '#9b59b6', index: 2,
           plot: { ok: false, error: 'boom' } },
     ],
 };
+function chip(p, color) {
+    return '<span class="pulse-overlay-chip on" style="--ov-hue: ' + color + '" title="' + p + '">' +
+        '<button type="button" class="pulse-overlay-x" data-drop-path="' + p + '">×</button></span>';
+}
 const dom = new JSDOM(
     '<!doctype html><html><body>' +
-    '<table><tr><td><input type="checkbox" class="pulse-sel-chk" data-path="' + OWN + '"></td></tr>' +
-    '<tr><td><input type="checkbox" class="pulse-sel-chk" data-path="' + SIB + '"></td></tr>' +
-    '<tr><td><input type="checkbox" class="pulse-sel-chk" data-path="' + OTHER + '"></td></tr></table>' +
-    '<div id="pulse-detail-root" data-pulse-path="' + OWN + '">' +
-    '<div class="pulse-plot-bar"><span class="pulse-synth-err" hidden></span><span class="pulse-dirty-pill" hidden></span></div>' +
-    '<div class="pulse-overlay-bar"><span class="pulse-overlay-chips"></span>' +
-    '<select class="pulse-overlay-pick" hidden><option value="">+ add pulse…</option></select></div>' +
+    '<table>' + [OWN, SIB, BROKEN, OTHER].map((p) => '<tr><td><input type="checkbox" class="pulse-sel-chk" data-path="' + p + '"></td></tr>').join('') + '</table>' +
+    '<div id="pulse-detail-root" data-pulse-path="' + OWN + '" data-actual-path="' + OWN + '">' +
+    '<div class="pulse-plot-bar"><span class="pulse-dirty-pill" hidden></span><span class="pulse-synth-err" hidden></span></div>' +
+    '<div class="pulse-overlay-bar pulse-view-bar" data-view-paths="' + [OWN, SIB, BROKEN].join(',') + '" data-view-main="' + OWN + '">' +
+    '<span class="pulse-overlay-chips">' + chip(OWN, '#1095c1') + chip(SIB, '#e67e22') + chip(BROKEN, '#9b59b6') + '</span>' +
+    '<select class="pulse-overlay-pick" hidden></select></div>' +
+    [OWN, SIB, BROKEN].map((p) => '<details open class="pulse-sec" data-pulse-path="' + p + '"><summary>s</summary></details>').join('') +
     '<div id="pulse-detail-plot"></div>' +
     '<script id="pulse-detail-data" type="application/json">' + JSON.stringify(detail) + '</script>' +
     '</div></body></html>',
     { url: 'http://localhost/pulses', pretendToBeVisual: true });
 const { window } = dom;
-global.window = window; global.document = window.document; global.CSS = window.CSS;
+global.window = window; global.document = window.document;
+global.HTMLElement = window.HTMLElement; global.Event = window.Event; global.CustomEvent = window.CustomEvent;
 global.getComputedStyle = window.getComputedStyle.bind(window);
-global.Event = window.Event; global.CustomEvent = window.CustomEvent; global.KeyboardEvent = window.KeyboardEvent;
-global.navigator = window.navigator; global.location = window.location;
-global.requestAnimationFrame = (f) => setTimeout(f, 0); window.requestAnimationFrame = global.requestAnimationFrame;
-global.ResizeObserver = class { observe() {} disconnect() {} unobserve() {} }; window.ResizeObserver = global.ResizeObserver;
-global.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} }; window.localStorage = global.localStorage;
-// the bits of app.js pulses.js leans on: an immediate debounce + a recording plot sink
+global.requestAnimationFrame = (f) => setTimeout(f, 0);
+global.localStorage = window.localStorage;
+
 const rendered = [];
 window._plotlyRender = function (id, data) { rendered.push({ id: id, names: data.map((t) => t.name) }); return null; };
 global._plotlyRender = window._plotlyRender;
 window._debounce = function (k, f) { f(); };
 global._debounce = window._debounce;
-const fetched = [];
-window.fetch = function (url, opts) {
-    fetched.push(JSON.parse(opts.body));
-    return Promise.resolve({ json: () => Promise.resolve({ ok: true, plot: { ok: true, traces: [{ name: 'I', x: [0, 1], y: [0, 0.3] }, { name: 'Q', x: [0, 1], y: [0, 0.1] }] } }) });
-};
+const ajax = [];
+window.htmx = { ajax: function (method, url, opts) { ajax.push({ method: method, url: url, opts: opts }); return Promise.resolve(); } };
+global.htmx = window.htmx;
+window.fetch = function () { return Promise.resolve({ json: () => Promise.resolve({ ok: true, plot: { ok: true, traces: [] } }) }); };
 global.fetch = window.fetch;
 
 window.eval(fs.readFileSync(path.join(STATIC, 'pulses.js'), 'utf8'));
@@ -69,42 +78,41 @@ window.eval(fs.readFileSync(path.join(STATIC, 'pulses.js'), 'utf8'));
 const d = window.document;
 const root = d.getElementById('pulse-detail-root');
 const last = () => rendered[rendered.length - 1].names;
+const has = (names, needle) => names.some((n) => String(n).indexOf(needle) !== -1);
 
 window.PulsesPage.initDetail();
 setTimeout(function () {
-    // 1. companion drawn by default, under its label
+    // 1. every section drawn, each under its own label
     ok(rendered.length > 0, 'first render happened');
-    ok(last().indexOf('coupler_flux_pulse') !== -1 && last().indexOf('I') !== -1,
-       'the companion coupler pulse is drawn WITH the committed trace (' + last().join(', ') + ')');
-    // 4. a failed companion is never a line
-    ok(last().indexOf('broken') === -1, 'a companion that failed to synth is not drawn');
-    const chips = root.querySelectorAll('.pulse-overlay-chip');
-    ok(chips.length === 2, 'one chip per companion (' + chips.length + ')');
-    ok(/no waveform/.test(chips[1].textContent), 'the failed companion says so on its chip');
-    // 2. toggle off / on
-    const cb = root.querySelector('input[data-overlay="' + SIB + '"]');
-    ok(cb && cb.checked, 'the companion chip starts checked');
-    cb.checked = false; cb.dispatchEvent(new window.Event('change', { bubbles: true }));
-    ok(last().indexOf('coupler_flux_pulse') === -1, 'unchecking removes the companion trace');
-    cb.checked = true; cb.dispatchEvent(new window.Event('change', { bubbles: true }));
-    ok(last().indexOf('coupler_flux_pulse') !== -1, 're-checking restores it');
-    // 3. picker: other pulses only
+    ok(has(last(), LABEL_Q) && has(last(), LABEL_C), 'both sections are drawn with their labels (' + last().join(' | ') + ')');
+    // 2. a failed section is never a line
+    ok(!has(last(), 'broken'), 'a section that failed to synth is not drawn');
+    // 3. × drops a pulse, the main pulse survives
+    const xs = root.querySelectorAll('.pulse-overlay-x[data-drop-path]');
+    ok(xs.length === 3, 'one drop button per pulse in view (' + xs.length + ')');
+    root.querySelector('.pulse-overlay-x[data-drop-path="' + SIB + '"]').click();
+    ok(ajax.length === 1 && ajax[0].method === 'GET' && ajax[0].opts && ajax[0].opts.target === '#inspector-pane',
+       'dropping re-renders the inspector from the server');
+    const dropUrl = ajax.length ? decodeURIComponent(ajax[0].url) : '';
+    ok(dropUrl === '/pulse/detail?path=' + OWN + '&paths=' + [OWN, BROKEN].join(','),
+       'the dropped pulse is gone from the view, the main pulse kept (' + dropUrl + ')');
+    // dropping the MAIN pulse hands the view to the next one
+    root.querySelector('.pulse-overlay-x[data-drop-path="' + OWN + '"]').click();
+    const dropMain = ajax.length === 2 ? decodeURIComponent(ajax[1].url) : '';
+    ok(dropMain === '/pulse/detail?path=' + SIB + '&paths=' + [SIB, BROKEN].join(','),
+       'dropping the main pulse promotes the next one (' + dropMain + ')');
+    // 4. picker: other pulses only
     const pick = root.querySelector('.pulse-overlay-pick');
     const vals = Array.prototype.map.call(pick.options, (o) => o.value).filter(Boolean);
     ok(!pick.hidden, 'the picker shows when the table lists other pulses');
-    ok(vals.indexOf(OWN) === -1 && vals.indexOf(SIB) === -1 && vals.indexOf(OTHER) !== -1,
-       'the picker offers only pulses not already on the plot (' + vals.join(',') + ')');
+    ok(vals.length === 1 && vals[0] === OTHER,
+       'the picker offers only pulses not already in view (' + vals.join(',') + ')');
     ok(/q1 · xy\.x180_DragCosine/.test(pick.options[1].textContent), 'picker labels read owner · channel.op');
     pick.value = OTHER; pick.dispatchEvent(new window.Event('change', { bubbles: true }));
-    setTimeout(function () {
-        ok(fetched.length === 1 && fetched[0].path === OTHER, 'picking fetches /api/pulse/synth for THAT path');
-        ok(last().indexOf('q1 · xy.x180_DragCosine I') !== -1 && last().indexOf('q1 · xy.x180_DragCosine Q') !== -1,
-           'a picked two-quadrature pulse draws both traces under its label');
-        const x = root.querySelector('.pulse-overlay-x');
-        ok(!!x, 'a picked overlay carries a × (companions do not)');
-        x.click();
-        ok(last().indexOf('q1 · xy.x180_DragCosine I') === -1, '× removes the picked overlay');
-        ok(root.querySelectorAll('.pulse-overlay-x').length === 0, 'and its chip');
-        process.exit(fails ? 1 : 0);
-    }, 20);
+    const addUrl = ajax.length === 3 ? decodeURIComponent(ajax[2].url) : '';
+    ok(addUrl === '/pulse/detail?path=' + OWN + '&paths=' + [OWN, SIB, BROKEN, OTHER].join(','),
+       'picking appends the pulse to the view and re-renders (' + addUrl + ')');
+    ok(pick.value === '', 'the picker resets after a pick');
+    console.log(fails ? 'FAILED ' + fails : 'all ok');
+    process.exit(fails ? 1 : 0);
 }, 30);

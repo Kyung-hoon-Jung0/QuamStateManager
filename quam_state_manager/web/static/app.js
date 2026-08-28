@@ -4643,6 +4643,123 @@ window.ValueDelta = (function () {
 /* ------------------------------------------------------------------ */
 /* Inline-edit commit plumbing (Pulses detail, Qubit/Pair inspector)    */
 /* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* Bundles (docs/141 4l): page-specific scripts, loaded when a page needs  */
+/* them                                                                   */
+/* ------------------------------------------------------------------ */
+/* base.html ships every page-specific file in a manifest and emits the
+   <script> tags for the page it renders; an htmx navigation to another page
+   loads that page's bundles BEFORE the request is issued (htmx:confirm is
+   the one hook that can hold a request), so the partial's inline script
+   finds its globals at swap time -- the same order a full load has. A
+   global control that reaches into a bundle (the Settings font buttons, the
+   floating Instrument Wiring panel) asks with Bundles.call / Bundles.need. */
+window.Bundles = (function () {
+    var _manifest = null;          // {files: {file: url}, bundles: {name: [files]}, pages: {page: [names]}}
+    var _loaded = {};              // file -> true (present or loaded)
+    var _inflight = {};            // file -> Promise
+    function manifest() {
+        if (_manifest) return _manifest;
+        var el = document.getElementById("bundle-manifest");
+        try { _manifest = el ? JSON.parse(el.textContent) : { files: {}, bundles: {}, pages: {} }; }
+        catch (e) { _manifest = { files: {}, bundles: {}, pages: {} }; }
+        // whatever the page already loaded counts as loaded
+        var tags = document.querySelectorAll("script[data-bundle-file]");
+        for (var i = 0; i < tags.length; i++) _loaded[tags[i].getAttribute("data-bundle-file")] = true;
+        return _manifest;
+    }
+    function loadFile(file) {
+        if (_loaded[file]) return Promise.resolve();
+        if (_inflight[file]) return _inflight[file];
+        var m = manifest();
+        var url = m.files[file];
+        if (!url) return Promise.reject(new Error("unknown bundle file " + file));
+        _inflight[file] = new Promise(function (resolve, reject) {
+            var sc = document.createElement("script");
+            sc.src = url;
+            sc.async = false;              // dynamic scripts with async=false run in insertion order
+            sc.setAttribute("data-bundle-file", file);
+            sc.onload = function () { _loaded[file] = true; delete _inflight[file]; resolve(); };
+            sc.onerror = function () { delete _inflight[file]; reject(new Error("failed to load " + file)); };
+            document.head.appendChild(sc);
+        });
+        return _inflight[file];
+    }
+    /* Files of a bundle EXECUTE in order (topo-graph before component-map). */
+    function need(names) {
+        var m = manifest();
+        var list = Array.isArray(names) ? names : [names];
+        var files = [];
+        list.forEach(function (n) { (m.bundles[n] || []).forEach(function (f) { if (files.indexOf(f) < 0) files.push(f); }); });
+        // all tags inserted at once (parallel fetch); async=false keeps execution in order
+        return Promise.all(files.map(loadFile)).then(function () {});
+    }
+    function loaded(names) {
+        var m = manifest();
+        var list = Array.isArray(names) ? names : [names];
+        return list.every(function (n) { return (m.bundles[n] || []).every(function (f) { return !!_loaded[f]; }); });
+    }
+    /* The page a URL belongs to -> its bundles (mirrors the routes). */
+    var PATHS = [
+        [/^\/bulk(\/|$|\?)/, ["grid"]], [/^\/table(\/|$|\?)/, ["grid"]],
+        [/^\/pulses?(\/|$|\?)/, ["pulses"]],
+        [/^\/(generate|regenerate)(\/|$|\?)/, ["generate"]],
+        [/^\/instrument(\/|$|\?)/, ["wiring"]],
+        [/^\/topology(\/|$|\?)/, ["chipstatus", "components"]], [/^\/chip-status(\/|$|\?)/, ["chipstatus", "components"]],
+        [/^\/wiring(\/|$|\?)/, ["chipstatus", "components"]],
+        [/^\/trends?(\/|$|\?)/, ["chipstatus", "datasets"]],
+        [/^\/(qubits|pairs|resonators|flux|couplers|qdac)(\/|$|\?)/, ["components"]],
+        [/^\/(qubit|pair)\//, ["components"]],
+        [/^\/(datasets?|collections|fit-audit)(\/|$|\?)/, ["datasets"]],
+        [/^\/scheduler(\/|$|\?)/, ["scheduler"]], [/^\/autofit(\/|$|\?)/, ["autofit"]],
+        [/^\/(compare-hub|compare|diff)(\/|$|\?)/, ["compare"]],
+    ];
+    function forPath(path) {
+        var out = [];
+        try { path = String(path || ""); if (path.indexOf("http") === 0) path = new URL(path).pathname + (new URL(path).search || ""); } catch (e) {}
+        PATHS.forEach(function (pr) { if (pr[0].test(path)) pr[1].forEach(function (n) { if (out.indexOf(n) < 0) out.push(n); }); });
+        return out;
+    }
+    /* A global control reaching into a bundle: load, then call. */
+    function call(bundle, dotted) {
+        var args = Array.prototype.slice.call(arguments, 2);
+        return need(bundle).then(function () {
+            var parts = dotted.split("."), obj = window;
+            for (var i = 0; i < parts.length - 1; i++) obj = obj && obj[parts[i]];
+            var fn = obj && obj[parts[parts.length - 1]];
+            if (typeof fn !== "function") throw new Error(dotted + " is not available");
+            return fn.apply(obj, args);
+        }).catch(function (e) { if (window.showToast) window.showToast(String(e.message || e), "error"); });
+    }
+    /* Hold an htmx request whose page needs bundles that are not here yet. */
+    document.addEventListener("htmx:confirm", function (evt) {
+        var d = evt && evt.detail;
+        if (!d || typeof d.issueRequest !== "function") return;
+        var names = forPath(d.path || (d.requestConfig && d.requestConfig.path) || "");
+        if (!names.length || loaded(names)) return;
+        evt.preventDefault();
+        need(names).then(function () { d.issueRequest(true); },
+                         function () { d.issueRequest(true); });   // never strand a navigation on a lost script
+    });
+    /* Back/Forward: htmx restores a history entry WITHOUT an htmx:confirm (its
+       localStorage cache, or its own HX-History-Restore-Request xhr), and the
+       restored content's inline scripts expect the page's bundles. htmx chains
+       the previous window.onpopstate; this chains htmx's, installed AFTER it
+       (htmx assigns at DOMContentLoaded; app.js runs before that). */
+    function installPopstate() {
+        var prev = window.onpopstate;
+        window.onpopstate = function (e) {
+            var names = (e && e.state && e.state.htmx) ? forPath(location.pathname + location.search) : [];
+            var go = function () { if (prev) prev.call(window, e); };
+            if (!names.length || loaded(names)) { go(); return; }
+            need(names).then(go, go);
+        };
+    }
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", installPopstate);
+    else installPopstate();
+    return { need: need, call: call, loaded: loaded, forPath: forPath, _manifest: manifest };
+})();
+
 /* One commit = POST → the whole #inspector-pane re-renders. Three things
    must hold across that swap or the surface feels broken (docs/75):
      1. the swap REMOVES the focused input, which fires focusout on it —

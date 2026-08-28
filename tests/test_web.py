@@ -1728,9 +1728,17 @@ class TestSidebarFeatures:
         base = (Path(__file__).resolve().parent.parent
                 / "quam_state_manager" / "web" / "templates" / "base.html")
         text = base.read_text(encoding="utf-8")
-        for fname in ("app.js", "dataset-virtual.js"):
-            m = re.search(r'<script\b([^>]*?)\bsrc="[^"]*' + re.escape(fname), text)
-            assert m, f"{fname} <script> tag not found in base.html"
+        # docs/141 4l: dataset-virtual.js is a PAGE bundle now -- it is emitted
+        # only on the dataset pages, but there it must still be an eager <head>
+        # tag (the parse-time inline scripts below have not moved).
+        from quam_state_manager.web.app import create_app
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            datasets_html = create_app(testing=True, instance_path=tmp).test_client().get(
+                "/datasets").get_data(as_text=True)
+        for fname, where in (("app.js", text), ("dataset-virtual.js", datasets_html)):
+            m = re.search(r'<script\b([^>]*?)\bsrc="[^"]*' + re.escape(fname), where)
+            assert m, f"{fname} <script> tag not found"
             assert "defer" not in m.group(1) and "async" not in m.group(1), (
                 f"{fname} must load eagerly (no defer/async): parse-time inline "
                 "scripts depend on its global being defined before <body> parses."
