@@ -1066,6 +1066,34 @@ N-way surface. Pinned in `test_compare_hub_routes.py::TestP4Redirects`
 renders without the hub's "Pick the comparison context", three → hub) and
 `test_web.py::test_compare_post_translates_paths`.
 
+## 4s. The clipped popovers (a §4q regression) and the Pairs picker (2026-08-29, user-directed)
+
+**The bug, and it was mine.** The user's screenshot: the Properties and
+Qubits popovers on Live State Edit looked cut off at the chip bar. §4q had
+given every toolbar row `will-change: transform` so the sideways-scroll
+translate would be cheap — and that made each row its own stacking context,
+so the chip bar (a later sibling, opaque) painted OVER the menus. The rows
+now carry no `will-change`; the inline `transform` still makes a stacking
+context while scrolled sideways, so they are ordered explicitly — the
+toolbar rows (which own the popovers) `z-index: 8`, the chip bar / notes /
+pair divider `6`, both above the sticky table header (2 / 4). Real Chrome:
+with Properties open (540 px tall), a hit-test at a point inside the menu
+and inside the chip bar's band returns the menu.
+
+**The ask: a Pairs button right of Qubits.** `⚯ Pairs` (only when the chip
+has pair rows) opens the same kind of menu for the PAIR grid's rows: every
+pair with a checkbox, All / None / Invert / only, a per-chip persisted
+hidden set (`quam_bulk_qhidden:pairs:<chip>`), a "N of M pairs — Show all"
+pill. It is folded into the existing follow rule (docs/126: a pair hides
+when a member qubit is hidden) — the menu says "qubit hidden" for those —
+and a pair with an unsaved edit can never be hidden (disabled checkbox,
+"unsaved edit"; None and Invert skip it). The Qubits picker rebuilds the
+Pairs menu when it changes, so the badges follow. Real Chrome (PJ, 30
+pairs): 30 listed, unchecking q1-2 hides its row, the pill reads 29 of 30,
+Show all restores. Pinned by `tests/test_bulk_pairs_picker.py` +
+`bulk_pairs_picker_selfcheck.cjs` (15 asserts — the dirty-follow guard
+needed its own scenario before its mutation was caught); mutation-checked 3/3.
+
 ## 5. Tooling that came out of the night
 
 `scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js` (+ daytime: `cdp_profile.js` function-level CPU profile, `cdp_trace.js` per-phase trace of one keystroke, `cdp_type.js` char-by-char typing with a gap + debounce override, `cdp_undo.js` trusted Ctrl+Z/Ctrl+Shift+Z through the page's own UI, `cdp_virt.js` virtualization sampler): Chrome headless with the

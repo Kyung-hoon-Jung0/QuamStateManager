@@ -51,6 +51,18 @@
         <button type="button" class="bulk-qubit-pill" id="bulk-qubit-pill" hidden
                 onclick="BulkEdit.showAllQubits()"
                 title="Some qubits are hidden by the &#9871; Qubits selection — click to show all"></button>
+        {% if pair_rows %}
+        {# docs/141 4s (user-directed): the same picker for the PAIR grid's rows —
+           per-chip persisted hidden set, a pair with an unsaved edit can never
+           be hidden; a pair whose qubit is hidden above follows it (docs/126). #}
+        <details class="bulk-colvis bulk-pairvis">
+            <summary class="btn-sm outline" title="Choose which qubit pairs (rows of the pair grid) are shown">&#9903; Pairs</summary>
+            <div class="bulk-colvis-menu bulk-qubitvis-menu" id="bulk-pairvis-menu" role="menu"></div>
+        </details>
+        <button type="button" class="bulk-qubit-pill" id="bulk-pair-pill" hidden
+                onclick="BulkEdit.showAllPairs()"
+                title="Some pairs are hidden by the &#9903; Pairs selection — click to show all"></button>
+        {% endif %}
         <span class="bulk-search-wrap">
             <input type="search" id="bulk-search" class="bulk-search"
                    placeholder="Search columns, qubits, numbers…" autocomplete="off"

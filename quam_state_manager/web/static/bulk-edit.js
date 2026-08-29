@@ -760,14 +760,111 @@
         });
         return out.length === 2 ? out : [];
     }
+    // docs/141 4s: the Pairs picker -- its own per-chip hidden set, on top of
+    // the qubit follow rule below (a hidden qubit still takes its pairs with it)
+    function _pKey() { return QHIDE_PREFIX + 'pairs:' + (QMETA.chip || 'chip'); }
+    function _pHidden() {
+        try {
+            var a = JSON.parse(localStorage.getItem(_pKey()) || '[]');
+            return new Set(Array.isArray(a) ? a : []);
+        } catch (e) { return new Set(); }
+    }
+    function _savePHidden(set) {
+        try { localStorage.setItem(_pKey(), JSON.stringify(Array.from(set))); } catch (e) {}
+    }
+    function _pairRows() {
+        var pt = document.getElementById('bulk-pair-table'); if (!pt) return [];
+        return Array.prototype.slice.call(pt.querySelectorAll('tbody tr[data-pair]'));
+    }
+    function _pairIds() { return _pairRows().map(function (r) { return r.getAttribute('data-pair') || ''; }); }
+    function _pDirtyIds() {
+        var d = {};
+        _pairRows().forEach(function (r) { if (_rowDirty(r)) d[r.getAttribute('data-pair') || ''] = true; });
+        return d;
+    }
     function _applyPairFollow(hid) {
-        var pt = document.getElementById('bulk-pair-table'); if (!pt) return;
-        Array.prototype.slice.call(pt.querySelectorAll('tbody tr[data-pair]')).forEach(function (r) {
-            var m = _pairMembers(r.getAttribute('data-pair'));
-            var off = m.length === 2 && (hid.has(m[0]) || hid.has(m[1]));
-            if (off && _rowDirty(r)) off = false;
+        var rows = _pairRows(); if (!rows.length) return;
+        var phid = _pHidden();
+        var shown = 0;
+        rows.forEach(function (r) {
+            var pid = r.getAttribute('data-pair') || '';
+            var m = _pairMembers(pid);
+            var off = (m.length === 2 && (hid.has(m[0]) || hid.has(m[1]))) || phid.has(pid);
+            if (off && _rowDirty(r)) off = false;      // an unsaved edit never vanishes
             r.classList.toggle('bulk-qubit-off', off);
+            if (!off) shown++;
         });
+        var pill = document.getElementById('bulk-pair-pill');
+        if (pill) {
+            pill.hidden = shown === rows.length;
+            pill.textContent = shown + ' of ' + rows.length + ' pairs \u2014 Show all';
+        }
+    }
+    function applyPairVis() {
+        _applyPairFollow(_qHidden());
+        if (window.BulkPairEdit && BulkPairEdit.applySearch) { try { BulkPairEdit.applySearch(); } catch (e) {} }
+    }
+    function _buildPairMenu() {
+        var menu = document.getElementById('bulk-pairvis-menu');
+        if (!menu) return;
+        var hid = _pHidden(), qhid = _qHidden();
+        var dirty = _pDirtyIds();
+        var ids = _pairIds();
+        var html = '<div class="bulk-colvis-actions">' +
+            '<button type="button" class="btn-xs outline" data-psel="all">All</button>' +
+            '<button type="button" class="btn-xs outline" data-psel="none">None</button>' +
+            '<button type="button" class="btn-xs outline" data-psel="invert">Invert</button></div>';
+        ids.forEach(function (pid) {
+            var isDirty = !!dirty[pid];
+            var m = _pairMembers(pid);
+            var followed = m.length === 2 && (qhid.has(m[0]) || qhid.has(m[1]));
+            var checked = !hid.has(pid) || isDirty;
+            html += '<label class="bulk-colvis-item bulk-qubit-item"><span>' +
+                '<input type="checkbox" data-pcb="' + _esc(pid) + '"' +
+                (checked ? ' checked' : '') + (isDirty ? ' disabled' : '') + '> ' + _esc(pid) + '</span>' +
+                (isDirty
+                    ? '<span class="bulk-qdirty" title="This pair has an unsaved edit \u2014 apply or reset it first">unsaved edit</span>'
+                    : (followed
+                        ? '<span class="bulk-qdirty" title="A qubit of this pair is hidden by the Qubits picker">qubit hidden</span>'
+                        : '<button type="button" class="bulk-qonly" data-ponly="' + _esc(pid) + '" title="Show only ' + _esc(pid) + '">only</button>')) +
+                '</label>';
+        });
+        menu.innerHTML = html;
+        if (!menu._pBound) {
+            menu._pBound = true;
+            menu.addEventListener('click', function (ev) {
+                var b = ev.target.closest('[data-psel],[data-ponly]');
+                if (!b) return;
+                ev.preventDefault();
+                var hid2 = _pHidden(), dirty2 = _pDirtyIds(), all = _pairIds();
+                if (b.hasAttribute('data-psel')) {
+                    var mode = b.getAttribute('data-psel');
+                    if (mode === 'all') hid2 = new Set();
+                    else if (mode === 'none') hid2 = new Set(all.filter(function (id) { return !dirty2[id]; }));
+                    else all.forEach(function (id) {
+                        if (dirty2[id]) { hid2.delete(id); return; }
+                        if (hid2.has(id)) hid2.delete(id); else hid2.add(id);
+                    });
+                } else {
+                    var only = b.getAttribute('data-ponly');
+                    hid2 = new Set(all.filter(function (id) { return id !== only && !dirty2[id]; }));
+                }
+                _savePHidden(hid2);
+                applyPairVis();
+                _buildPairMenu();
+            });
+            menu.addEventListener('change', function (ev) {
+                var cb = ev.target.closest('input[data-pcb]');
+                if (!cb) return;
+                var hid2 = _pHidden();
+                var id = cb.getAttribute('data-pcb');
+                if (cb.checked) hid2.delete(id);
+                else if (!_pDirtyIds()[id]) hid2.add(id);
+                _savePHidden(hid2);
+                applyPairVis();
+                _buildPairMenu();
+            });
+        }
     }
 
     function _buildQubitMenu() {
@@ -870,6 +967,7 @@
                 _saveQHidden(hid2);
                 applyQubitVis();
                 _buildQubitMenu();
+                _buildPairMenu();       // docs/141 4s: the 'qubit hidden' badges follow
             });
             menu.addEventListener('change', function (ev) {
                 var cb = ev.target.closest('input[data-qcb]');
@@ -881,6 +979,7 @@
                 _saveQHidden(hid2);
                 applyQubitVis();
                 _buildQubitMenu();
+                _buildPairMenu();       // docs/141 4s: the 'qubit hidden' badges follow
             });
         }
     }
@@ -1327,6 +1426,7 @@
             _lastDirtySig = sig;
             _applyQubitVisCore();
             _buildQubitMenu();
+            _buildPairMenu();
         }
     }
 
@@ -2707,6 +2807,7 @@
                 if (colvisDet) colvisDet.open = true;
             }
             _buildQubitMenu();
+            _buildPairMenu();
             _ph('qubit menu');
             _applyColumnVisibility();
             _ph('column visibility + search');
@@ -3201,7 +3302,15 @@
             _saveQHidden(new Set());
             applyQubitVis();
             _buildQubitMenu();
+            _buildPairMenu();
         },
+        // docs/141 4s: the Pairs pill
+        showAllPairs: function () {
+            _savePHidden(new Set());
+            applyPairVis();
+            _buildPairMenu();
+        },
+        _pairsHidden: function () { return Array.from(_pHidden()); },
         chips: ChipBar,   // docs/120 item 4 — quick-filter chip bar
         setFont: function (scale) { try { localStorage.setItem(FONT_KEY, String(scale)); } catch (e) {} _applyFont(); },
         setLetterSpacing: function (ls) { try { localStorage.setItem(LS_KEY, String(ls)); } catch (e) {} _applyFont(); },

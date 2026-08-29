@@ -9153,8 +9153,16 @@ html.topbar-hidden .chrome-reveal { display: block; }
    they are, so sticky has no room and they scrolled away -- real Chrome) but a
    translateX(scrollLeft) written by bulk-edit.js _pinBarsToScroll on the
    pane's scroll */
-.bulk-panel .bulk-toolbar, .bulk-panel .bulk-chipbar, .bulk-panel .bulk-pair-divider,
-.bulk-panel .bulk-dyn-truncated, .bulk-panel .bulk-virt-note { will-change: transform; }
+/* NO will-change here: it made every bar its own stacking context, and the
+   chip bar (a later sibling) then painted OVER the Properties / Qubits
+   popovers -- the menus looked cut off at the chip bar's top edge (user
+   screenshot, 2026-08-29). The inline transform still creates a stacking
+   context while scrolled sideways, so the bars are ordered explicitly:
+   the toolbar rows (which own the popovers) above the chip bar, both above
+   the sticky table header (z-index 2 / 4). */
+.bulk-panel .bulk-toolbar { position: relative; z-index: 8; }
+.bulk-panel .bulk-chipbar, .bulk-panel .bulk-dyn-truncated, .bulk-panel .bulk-virt-note { position: relative; z-index: 6; }
+.bulk-panel .bulk-pair-divider { position: relative; z-index: 6; }
 .bulk-scroll-top { display: none; }
 /* max-content (NOT min-width:100%) so the table keeps its natural column widths
    and never stretches the cells to fill when only a few columns are visible. */
