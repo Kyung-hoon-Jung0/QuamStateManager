@@ -64,7 +64,14 @@ class TestThirdSource:
         html = _get(env, _url(env))
         assert 'diff-panes-table' in html and 'diff-wb-list-3' not in html
         assert html.count('class="dp-pane-head') == 3
-        row = html.split('qubits.qA1.T1', 1)[1].split("</tr>", 1)[0]
+        # docs/141 4ab: the Keys column is a tree -- container rows with the
+        # count of differing keys beneath, leaves indented under them
+        assert '<th class="dp-key-col">Keys</th>' in html
+        assert 'class="dp-row dp-dir" data-path="qubits" data-parent="" data-depth="0"' in html
+        assert 'class="dp-row dp-dir" data-path="qubits.qA1" data-parent="qubits" data-depth="1"' in html
+        assert 'data-path="qubits.qA1.T1" data-parent="qubits.qA1" data-depth="2"' in html
+        assert 'class="dp-key dp-key-leaf">T1</span>' in html
+        row = html.split('data-path="qubits.qA1.T1"', 1)[1].split("</tr>", 1)[0]
         # A 1e-5 (baseline) -> B 2e-5 (+100%), C 5e-5 (+400%): both from the
         # house delta chip, against the BASELINE, not the previous column
         assert "(+100%)" in row and "(+400%)" in row and "(+150%)" not in row, row
@@ -75,7 +82,7 @@ class TestThirdSource:
 
     def test_the_baseline_is_a_url_parameter(self, env):
         html = _get(env, _url(env) + "&base=2")
-        row = html.split('qubits.qA1.T1', 1)[1].split("</tr>", 1)[0]
+        row = html.split('data-path="qubits.qA1.T1"', 1)[1].split("</tr>", 1)[0]
         # C 5e-5 is the baseline: A and B carry Δ against it
         assert ("80%)" in row and "60%)" in row and "+80%" not in row), row
         assert 'data-base="2"' in html

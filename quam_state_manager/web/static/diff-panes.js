@@ -25,6 +25,7 @@
         });
         var rows = root.querySelectorAll('tr.dp-row');
         Array.prototype.forEach.call(rows, function (tr) {
+            if (!tr.hasAttribute('data-groups')) return;     // a container row (4ab) carries no values
             var groups = (tr.getAttribute('data-groups') || '').split(',').map(function (g) { return parseInt(g, 10); });
             var cells = tr.querySelectorAll('td.dp-cell');
             var baseCell = cells[base];
@@ -76,10 +77,61 @@
         } catch (e) { /* a detached test realm has no URL to keep */ }
     }
 
+    /* docs/141 4ab: the key tree. A container row (tr.dp-dir) toggles
+       data-collapsed; a row is hidden exactly when ANY ancestor container is
+       collapsed (walk data-parent up through a path -> row map). Depth
+       buttons collapse every container at depth >= d. */
+    function applyVisibility(root) {
+        var byPath = {};
+        var rows = root.querySelectorAll('tr.dp-row');
+        Array.prototype.forEach.call(rows, function (tr) { byPath[tr.getAttribute('data-path')] = tr; });
+        Array.prototype.forEach.call(rows, function (tr) {
+            var p = tr.getAttribute('data-parent'), hidden = false, guard = 0;
+            while (p && guard++ < 64) {
+                var anc = byPath[p];
+                if (anc && anc.hasAttribute('data-collapsed')) { hidden = true; break; }
+                p = anc ? anc.getAttribute('data-parent') : '';
+            }
+            tr.hidden = hidden;
+        });
+        Array.prototype.forEach.call(root.querySelectorAll('tr.dp-dir'), function (tr) {
+            var t = tr.querySelector('.dp-toggle');
+            var collapsed = tr.hasAttribute('data-collapsed');
+            if (t) { t.setAttribute('aria-expanded', collapsed ? 'false' : 'true'); t.textContent = collapsed ? '▸' : '▾'; }
+        });
+    }
+    function setDepth(root, depth) {
+        Array.prototype.forEach.call(root.querySelectorAll('tr.dp-dir'), function (tr) {
+            var d = parseInt(tr.getAttribute('data-depth'), 10) || 0;
+            if (d >= depth) tr.setAttribute('data-collapsed', '1'); else tr.removeAttribute('data-collapsed');
+        });
+        applyVisibility(root);
+        Array.prototype.forEach.call(root.querySelectorAll('.dp-depth'), function (b) {
+            b.classList.toggle('outline', parseInt(b.getAttribute('data-depth'), 10) !== depth);
+        });
+    }
+
     function arm(root) {
         if (!root || root._dpArmed) return;
         root._dpArmed = true;
         root.addEventListener('click', function (ev) {
+            var tgl = ev.target && ev.target.closest ? ev.target.closest('.dp-toggle') : null;
+            if (tgl && root.contains(tgl)) {
+                ev.preventDefault();
+                var tr = tgl.closest('tr.dp-dir');
+                if (tr) {
+                    if (tr.hasAttribute('data-collapsed')) tr.removeAttribute('data-collapsed');
+                    else tr.setAttribute('data-collapsed', '1');
+                    applyVisibility(root);
+                }
+                return;
+            }
+            var dep = ev.target && ev.target.closest ? ev.target.closest('.dp-depth') : null;
+            if (dep && root.contains(dep)) {
+                ev.preventDefault();
+                setDepth(root, parseInt(dep.getAttribute('data-depth'), 10) || 0);
+                return;
+            }
             var btn = ev.target && ev.target.closest ? ev.target.closest('.dp-pane-title') : null;
             if (!btn || !root.contains(btn)) return;
             ev.preventDefault();
@@ -95,7 +147,7 @@
         Array.prototype.forEach.call(roots, arm);
     }
 
-    window.DiffPanes = { arm: arm, armAll: armAll, paint: paint };
+    window.DiffPanes = { arm: arm, armAll: armAll, paint: paint, applyVisibility: applyVisibility, setDepth: setDepth };
 
     // Every /diff request issued from inside the workbench (tab strip, view
     // toggle, show-more) carries the CURRENT baseline, whatever its button

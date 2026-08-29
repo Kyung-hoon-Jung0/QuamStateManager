@@ -14214,6 +14214,62 @@ def _diff_row_groups(row: dict) -> list[int]:
     return groups
 
 
+def _diff_tree_rows(rows: list[dict]) -> list[dict]:
+    """The pane view's KEY column as a tree (docs/141 4ab).
+
+    The differing leaves come in path order; this folds them into the JSON
+    hierarchy the Explorer / the 2-way diff tree show — one ``dir`` row per
+    container on the way down (with the count of differing leaves beneath it)
+    and one ``leaf`` row per differing leaf, in depth-first order, each row
+    naming its parent so the client can collapse a container (hide every
+    descendant) without re-asking the server. Only containers that lead to a
+    differing leaf exist: a subtree that agrees everywhere is never listed,
+    exactly like the pruned 2-way tree.
+    """
+    root: dict = {"_kids": {}, "_row": None}
+    for row in rows:
+        node = root
+        for seg in row["path"].split("."):
+            node = node["_kids"].setdefault(seg, {"_kids": {}, "_row": None})
+        node["_row"] = row
+
+    def count_leaves(node: dict) -> int:
+        n = 1 if node["_row"] is not None else 0
+        for kid in node["_kids"].values():
+            n += count_leaves(kid)
+        return n
+
+    out: list[dict] = []
+
+    def walk(node: dict, path: str, depth: int) -> None:
+        for name, kid in kid_order(node):
+            kid_path = f"{path}.{name}" if path else name
+            if kid["_row"] is not None and not kid["_kids"]:
+                out.append({"kind": "leaf", "path": kid_path, "name": name, "depth": depth,
+                            "parent": path, "row": kid["_row"]})
+                continue
+            out.append({"kind": "dir", "path": kid_path, "name": name, "depth": depth,
+                        "parent": path, "count": count_leaves(kid)})
+            if kid["_row"] is not None:
+                # a leaf that is ALSO a container on another side (rare: a
+                # value replaced by a subtree) -- show the value row under it
+                out.append({"kind": "leaf", "path": kid_path, "name": name, "depth": depth + 1,
+                            "parent": kid_path, "row": kid["_row"]})
+            walk(kid, kid_path, depth + 1)
+
+    def kid_order(node: dict):
+        # the flatten's own (string) order for the paths keeps the panes'
+        # row order identical to the plain list; numeric segments sort as
+        # numbers so list elements read 0, 1, 2 … 10, not 0, 1, 10, 2
+        def key(item):
+            name = item[0]
+            return (0, int(name), "") if name.isdigit() else (1, 0, name)
+        return sorted(node["_kids"].items(), key=key)
+
+    walk(root, "", 0)
+    return out
+
+
 def _diff_payload_n(srcs: list, tab: str) -> dict:
     """The pane view (docs/141 4z): one row per leaf where any two of the N
     sources differ (json_diff.diff_rows_n, path order), each row carrying its
@@ -14447,6 +14503,7 @@ def diff_view():
         except Exception as exc:      # noqa: BLE001 — never 500 the menu
             logger.warning("diff build failed: %s", exc, exc_info=True)
             error = "Could not build this diff."
+    tree_rows = _diff_tree_rows(rows) if (view == "panes" and rows) else []
 
     # docs/132: the per-row take renders only when the working: side IS the
     # open chip — a pushed URL survives a chip switch, and the write always
@@ -14464,7 +14521,7 @@ def diff_view():
         template,
         **_ctx(page="diff", a_ref=a_ref, b_ref=b_ref, c_ref=c_ref, tab=tab, view=view,
                d_ref=d_ref, e_ref=e_ref, srcs=srcs, slot_refs=slot_refs, base=base,
-               slots=_DIFF_SLOTS, slot_srcs=slot_srcs,
+               slots=_DIFF_SLOTS, slot_srcs=slot_srcs, tree_rows=tree_rows,
                src_a=src_a, src_b=src_b, src_c=src_c, payload=payload, error=error,
                rows=rows, more=more, next_rows=limit + _DIFF_LIST_PAGE,
                take_active_ok=take_active_ok,

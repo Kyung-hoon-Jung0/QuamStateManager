@@ -11874,9 +11874,23 @@ td.vc-cell-takeable:focus-within .vc-take,
 .diff-panes-table th, .diff-panes-table td { padding: 0.22rem 0.55rem; vertical-align: top; white-space: nowrap; }
 .diff-panes-table thead th { position: sticky; top: 0; z-index: 1; background: var(--pico-background-color);
     border-bottom: 2px solid var(--pico-muted-border-color); text-align: left; }
-.dp-path-col { max-width: 28rem; white-space: normal; word-break: break-all; font-size: 0.92em; }
-.dp-dirs { color: var(--pico-muted-color); }
-.dp-leaf { font-weight: 600; }
+/* docs/141 4ab: the KEYS column is a tree -- full-size, full-contrast names
+   (they are what is being read), indented by depth, a toggle per container,
+   the count of differing keys beneath each container. */
+.dp-key-col { min-width: 16rem; max-width: 30rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    padding-left: calc(0.55rem + var(--dp-depth, 0) * 1.05em) !important; }
+.dp-key { font-family: var(--pico-font-family-monospace, monospace); font-size: 0.95rem; color: var(--pico-color); }
+.dp-key-dir { font-weight: 600; }
+.dp-key-leaf { font-weight: 500; }
+.dp-toggle { all: unset; cursor: pointer; display: inline-block; width: 1.1em; text-align: center; color: var(--pico-muted-color); margin-right: 0.15em; }
+.dp-toggle:hover { color: var(--pico-primary); }
+.dp-toggle-gap { display: inline-block; width: 1.1em; margin-right: 0.15em; }
+.dp-count { margin-left: 0.45em; font-size: 0.72em; color: var(--pico-muted-color); vertical-align: middle;
+    padding: 0 0.35em; border: 1px solid var(--pico-muted-border-color); border-radius: 999px; }
+tr.dp-dir > td { background: color-mix(in srgb, var(--pico-muted-border-color) 28%, transparent); }
+tr.dp-dir > td.dp-cell-dir { border-left: 2px solid var(--pico-muted-border-color); }
+tr.dp-row[hidden] { display: none; }
+.diff-panes-tools { display: flex; align-items: center; gap: 0.3rem; margin: 0 0 0.3rem; font-size: 0.85em; }
 /* each pane is its own window: a left rule separates panes, the whole column shares one tint */
 .dp-pane-head, .dp-cell { border-left: 2px solid var(--pico-muted-border-color); min-width: 9rem; }
 .dp-pane-title { all: unset; cursor: pointer; display: flex; flex-direction: column; gap: 0.05rem; padding: 0.15rem 0.3rem; border-radius: 4px; }

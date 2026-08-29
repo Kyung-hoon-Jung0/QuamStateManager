@@ -1300,6 +1300,32 @@ Measured after (`cdp_rootrow.js`, a 220 px-wide sidebar, four roots incl.
 vs × at 186 px on every row, names whole, parent dirs clipped. Pinned by
 `tests/test_sidebar_root_row.py`.
 
+## 4ab. The pane view's Keys column is a tree (2026-08-29, user feedback on §4z)
+
+Three items on the first real use of §4z: the key text was small and grey
+("the one thing that matters is the hardest to read"), the column was called
+Leaf, and a flat dotted path per row lost the hierarchy the 2-way diff tree
+and the Explorer show. Now `_diff_tree_rows` (routes) folds the differing
+leaves into their JSON hierarchy — one `dir` row per container on the way
+down (toggle, name, the count of differing keys beneath it), one `leaf` row
+per differing key, depth-first, list indices ordered numerically — and only
+containers that lead to a differing key exist, exactly like the pruned
+2-way tree. Container rows keep an empty cell per pane so the panes stay
+aligned. Collapsing is client-side (`diff-panes.js`): a row is hidden when
+ANY ancestor container carries `data-collapsed` (walk `data-parent` through
+a path → row map — no re-ask), Depth 0/1/2/3/All buttons collapse every
+container at depth ≥ d, and a baseline switch never touches visibility
+(paint and visibility are independent). Keys render in the page's text
+colour at 0.95 rem (values stay 0.8 rem), the header says **Keys**, leaves
+are indented by depth (`--dp-depth`). Real Chrome, 5 runs of the 2025-06-24
+archive: 205 container rows + 272 keys, `qubits 272 → q1 13 → gate_fidelity
+1`, collapsing `qubits.q1` hides exactly its 21 descendants and nothing
+else, Depth 1 leaves the qubit rows, All restores, key font 19.95 px in
+`rgb(208,213,222)`, no console errors. Pinned by `diff_panes_selfcheck.cjs`
+(now 32; the no-ancestor-walk and depth-off-by-one mutations fail it),
+`TestTreeRows` in `test_diff_panes.py`, and the tree rows in
+`test_diff_three_way.py`.
+
 ## 5. Tooling that came out of the night
 
 `scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js` (+ daytime: `cdp_profile.js` function-level CPU profile, `cdp_trace.js` per-phase trace of one keystroke, `cdp_type.js` char-by-char typing with a gap + debounce override, `cdp_undo.js` trusted Ctrl+Z/Ctrl+Shift+Z through the page's own UI, `cdp_virt.js` virtualization sampler): Chrome headless with the
