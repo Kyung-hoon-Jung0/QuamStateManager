@@ -273,7 +273,9 @@ class TestTheHubIsStillThere:
         assert r.status_code == 302
         assert r.headers["Location"].startswith("/compare-hub?")
 
-    def test_the_diff_offers_the_way_to_it(self, env):
+    def test_the_diff_no_longer_links_to_it(self, env):
+        # docs/141 4y: the hub is retired as a destination -- the workbench
+        # carries no "Advanced" link into it any more
         html = _get(env, f"/diff?a={env['refs'][0]}&b={env['refs'][1]}") \
             .get_data(as_text=True)
-        assert "/compare-hub?src=" in html and "Advanced" in html
+        assert "/compare-hub?src=" not in html and "Advanced" not in html

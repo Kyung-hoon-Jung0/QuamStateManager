@@ -16,7 +16,7 @@
   <div class="diff-wb-head">
     <h2 style="margin:0">Diff</h2>
     <p class="muted" style="margin:0">
-      What is different between two versions of this chip — and by how much.
+      What is different between versions of this chip — and by how much.
     </p>
   </div>
 
@@ -24,6 +24,9 @@
         hx-swap="outerHTML" hx-push-url="true" hx-trigger="change">
     <input type="hidden" name="tab" value="{{ tab }}">
     <input type="hidden" name="view" value="{{ view }}">
+    {# docs/141 4y: the fourth and fifth sources ride along a picker change #}
+    <input type="hidden" name="d" value="{{ d_ref }}">
+    <input type="hidden" name="e" value="{{ e_ref }}">
     <label class="diff-side">
       <span class="diff-side-tag">A</span>
       <select name="a">
@@ -64,14 +67,13 @@
         {% endif %}
       </select>
     </label>
-    <a class="btn-sm outline" href="/compare-hub?src={{ a_ref | urlencode }}&amp;src={{ b_ref | urlencode }}{% if c_ref %}&amp;src={{ c_ref | urlencode }}{% endif %}"
-       title="The full comparison hub — entity mapping across different devices, tolerance presets, N-way baskets">Advanced…</a>
+    {# docs/141 4y: the Compare hub is retired as a destination -- no link. #}
   </form>
 
   <div class="ph-tabs diff-wb-tabs">
     {% for t in tabs %}
     <button type="button" class="ph-tab{% if t == tab %} active{% endif %}"
-            hx-get="/diff?a={{ a_ref | urlencode }}&amp;b={{ b_ref | urlencode }}&amp;c={{ c_ref | urlencode }}&amp;tab={{ t }}&amp;view={{ view }}"
+            hx-get="/diff?a={{ a_ref | urlencode }}&amp;b={{ b_ref | urlencode }}&amp;c={{ c_ref | urlencode }}&amp;d={{ d_ref | urlencode }}&amp;e={{ e_ref | urlencode }}&amp;tab={{ t }}&amp;view={{ view }}"
             hx-target="#diff-root" hx-swap="outerHTML" hx-push-url="true">
       {{ {'state': 'state.json', 'wiring': 'wiring.json',
           'node': 'node.json', 'data': 'data', 'figures': 'figures'}[t] }}</button>
@@ -79,7 +81,7 @@
     <span class="diff-view-toggle">
       {% for v, label in (('tree', 'Tree'), ('list', 'List')) %}
       <button type="button" class="btn-xs{% if v != view %} outline{% endif %}"
-              hx-get="/diff?a={{ a_ref | urlencode }}&amp;b={{ b_ref | urlencode }}&amp;c={{ c_ref | urlencode }}&amp;tab={{ tab }}&amp;view={{ v }}"
+              hx-get="/diff?a={{ a_ref | urlencode }}&amp;b={{ b_ref | urlencode }}&amp;c={{ c_ref | urlencode }}&amp;d={{ d_ref | urlencode }}&amp;e={{ e_ref | urlencode }}&amp;tab={{ tab }}&amp;view={{ v }}"
               hx-target="#diff-root" hx-swap="outerHTML" hx-push-url="true"
               title="{{ 'Nested, with context' if v == 'tree' else 'Flat, biggest change first' }}">{{ label }}</button>
       {% endfor %}
@@ -177,8 +179,8 @@
       </table>
       {% if more %}
       <p class="diff-wb-msg muted">{{ '{:,}'.format(more) }} more rows —
-        <a href="/diff?a={{ a_ref | urlencode }}&amp;b={{ b_ref | urlencode }}&amp;c={{ c_ref | urlencode }}&amp;tab={{ tab }}&amp;view=list&amp;rows={{ next_rows }}"
-           hx-get="/diff?a={{ a_ref | urlencode }}&amp;b={{ b_ref | urlencode }}&amp;c={{ c_ref | urlencode }}&amp;tab={{ tab }}&amp;view=list&amp;rows={{ next_rows }}"
+        <a href="/diff?a={{ a_ref | urlencode }}&amp;b={{ b_ref | urlencode }}&amp;c={{ c_ref | urlencode }}&amp;d={{ d_ref | urlencode }}&amp;e={{ e_ref | urlencode }}&amp;tab={{ tab }}&amp;view=list&amp;rows={{ next_rows }}"
+           hx-get="/diff?a={{ a_ref | urlencode }}&amp;b={{ b_ref | urlencode }}&amp;c={{ c_ref | urlencode }}&amp;d={{ d_ref | urlencode }}&amp;e={{ e_ref | urlencode }}&amp;tab={{ tab }}&amp;view=list&amp;rows={{ next_rows }}"
            hx-target="#diff-root" hx-swap="outerHTML">show more</a></p>
       {% endif %}
     {% elif view == 'list' %}

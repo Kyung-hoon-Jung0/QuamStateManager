@@ -1975,30 +1975,44 @@ class TestCompareRedirect:
 
     def test_compare_post_translates_paths(self, client, tmp_path):
         folders = []
-        for name in ("ra", "rb"):
+        for name in ("ra", "rb", "rc", "rd", "re"):
             f = tmp_path / name
             f.mkdir()
             (f / "state.json").write_text(json.dumps(_make_state()), encoding="utf-8")
             (f / "wiring.json").write_text(json.dumps(_make_wiring()), encoding="utf-8")
             folders.append(str(f))
-        resp = client.post("/compare", data={"paths": folders},
+        resp = client.post("/compare", data={"paths": folders[:2]},
                            headers={"HX-Request": "true"})
         assert resp.status_code == 200
-        loc = resp.headers["HX-Redirect"]
-        # docs/84 (2026-08-29): two checked sources open the DIFF workbench,
-        # like the Datasets table and the Versions panel; plain folders land
-        # on state.json
+        # docs/141 4y: the MAIN PANE navigates (HX-Location into #table-pane),
+        # never the whole document -- an HX-Redirect rebuilt the sidebar and
+        # lost every tick. Plain folders land on state.json.
+        assert "HX-Redirect" not in resp.headers
+        loc_obj = json.loads(resp.headers["HX-Location"])
+        assert loc_obj["target"] == "#table-pane" and loc_obj["swap"] == "innerHTML"
+        loc = loc_obj["path"]
         assert loc.startswith("/diff?a=ws%3A") and "&b=ws%3A" in loc and loc.endswith("&tab=state")
         assert "hint" not in loc   # manual basket (U1b)
-        resp = client.post("/compare", data={"paths": folders + [folders[0]]},
-                           headers={"HX-Request": "true"})
-        loc = resp.headers["HX-Redirect"]
-        assert loc.startswith("/compare-hub?") and loc.count("src=") == 3
+        # docs/141 4y: three, four, five all open the diff (a..e), never the hub
+        for n in (3, 4, 5):
+            resp = client.post("/compare", data={"paths": folders[:n]},
+                               headers={"HX-Request": "true"})
+            loc = json.loads(resp.headers["HX-Location"])["path"]
+            assert loc.startswith("/diff?a=ws%3A") and "compare-hub" not in loc
+            assert all(f"&{slot}=ws%3A" in loc for slot in "bcde"[:n - 1])
+            assert not any(f"&{slot}=" in loc for slot in "bcde"[n - 1:])
 
-    def test_compare_single_path_still_redirects(self, client):
+    def test_compare_single_path_is_refused_by_name(self, client):
+        # docs/141 4y: fewer than two (or more than five) is refused with the
+        # pane kept and a toast -- never a truncated basket, never the hub
+        resp = client.post("/compare", data={"paths": "only_one"},
+                           headers={"HX-Request": "true"})
+        assert resp.status_code == 200
+        assert resp.headers["HX-Reswap"] == "none"
+        assert "HX-Location" not in resp.headers and "HX-Redirect" not in resp.headers
+        assert "at least two" in json.loads(resp.headers["HX-Trigger"])["sm:toast"]["message"]
         resp = client.post("/compare", data={"paths": "only_one"})
-        assert resp.status_code == 302
-        assert "src=" in resp.headers["Location"]
+        assert resp.status_code == 302 and resp.headers["Location"] == "/diff"
 
 
 class TestStatusToast:

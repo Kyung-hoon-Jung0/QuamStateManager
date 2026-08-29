@@ -303,15 +303,13 @@
         <span class="ds-compare-msg-ready"><strong id="ds-compare-count">0</strong> selected</span>
         <span class="ds-compare-msg-over">Up to 5 runs.</span>
     </span>
+    {# docs/141 4y: ONE button -- 2..5 picked runs open the diff workbench
+       (figures first, then state / wiring / node / data). The N-run compare
+       page and its "Compare" button are retired with the Compare hub. #}
     <button id="ds-compare-btn" class="btn-sm"
             onclick="compareSelectedDatasets()" disabled
-            aria-label="Compare the selected runs">Compare</button>
-    {# docs/84: with exactly two runs picked, the useful answer is a diff —
-       what was asked differently, and what the chip looked like. #}
-    <button id="ds-diff-btn" class="btn-sm outline"
-            onclick="diffSelectedDatasets()" disabled
-            title="Show only what differs between these two runs"
-            aria-label="Diff the two selected runs">Diff</button>
+            title="Show only what differs between these runs, side by side"
+            aria-label="Diff the selected runs">Diff</button>
     <button class="btn-sm outline"
             onclick="clearDatasetCheckboxes()"
             aria-label="Clear the compare selection">Clear</button>

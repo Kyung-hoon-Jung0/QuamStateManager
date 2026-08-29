@@ -14070,6 +14070,23 @@ def _hub_redirect(url: str):
     return redirect(url)
 
 
+def _pane_redirect(url: str):
+    """Navigate the MAIN PANE only (docs/141 4y).
+
+    ``HX-Redirect`` reloads the whole document, which rebuilds the sidebar
+    and loses every ticked run -- the user ticked five, pressed Compare, and
+    found the sidebar cleared. ``HX-Location`` makes htmx GET the url into
+    ``#table-pane`` and push it, so the sidebar DOM (ticks, open groups,
+    scroll) is never touched. Plain browser requests still get a redirect.
+    """
+    if _is_htmx():
+        resp = make_response()
+        resp.headers["HX-Location"] = json.dumps(
+            {"path": url, "target": "#table-pane", "swap": "innerHTML"})
+        return resp
+    return redirect(url)
+
+
 def _legacy_src_token(path: str) -> str:
     """ws:/run: token for a legacy folder path — archive-run layouts get the
     honest ``run:`` origin (RUN badge), everything else ``ws:``."""
@@ -14082,7 +14099,13 @@ def _legacy_src_token(path: str) -> str:
     return f"ws:{path}"
 
 
-_DIFF_TABS = ("state", "wiring", "node", "data", "figures")
+# docs/141 4y (user-directed): figures FIRST and the default for runs -- what
+# a user compares first is what the runs produced, not the chip state.
+_DIFF_TABS = ("figures", "state", "wiring", "node", "data")
+# docs/141 4y: up to FIVE sources side by side (a..e). More stops being readable
+# and the sidebar refuses the sixth tick; the server never truncates silently.
+_DIFF_SLOTS = "abcde"
+_DIFF_MAX_SOURCES = 5
 _DIFF_LIST_PAGE = 300      # ranked rows per list page
 # One diff is one flatten of two documents (20-45 ms measured on real chips).
 # The tab strip and the tree/list toggle re-ask for the same pair, so a small
@@ -14211,7 +14234,7 @@ def _diff_figures_payload(srcs: list) -> dict:
     per figure NAME (union, first-seen order), a cell per (figure, source) --
     the image when that run has it, an honest blank when it does not."""
     cols, order = [], []
-    for slot, src in zip("abc", srcs):
+    for slot, src in zip(_DIFF_SLOTS, srcs):
         names, why = _diff_run_figures(src)
         for n in names:
             if n not in order:
@@ -14324,10 +14347,13 @@ def diff_view():
     # Customer (2026-08-27): an OPTIONAL third source. The 2-way page is
     # unchanged when it is absent; when present the list view grows a C
     # column and the figures tab a third column (the tree stays A -> B).
+    # docs/141 4y: d and e as well -- five sources side by side.
     c_ref = (request.args.get("c") or "").strip()
-    tab = (request.args.get("tab") or "state").strip()
+    slot_refs = [a_ref, b_ref, c_ref] + [
+        (request.args.get(k) or "").strip() for k in _DIFF_SLOTS[3:]]
+    tab = (request.args.get("tab") or "").strip()
     if tab not in _DIFF_TABS:
-        tab = "state"
+        tab = ""      # decided below, once the sources are known
     view = "list" if (request.args.get("view") or "").strip() == "list" else "tree"
     # The list is server-rendered, so it pages: 2,257 ranked rows of a real
     # cross-generation diff serialise to 1.2 MB, and the rows a user reads are
@@ -14338,8 +14364,10 @@ def diff_view():
         a_ref, b_ref = _diff_default_refs()
 
     error = ""
-    src_a = src_b = src_c = None
-    for ref, slot in ((a_ref, "a"), (b_ref, "b"), (c_ref, "c")):
+    slot_refs[0], slot_refs[1] = a_ref, b_ref
+    srcs: list = []              # resolved, in slot order, gaps dropped
+    slot_srcs: list = [None] * len(_DIFF_SLOTS)
+    for i, ref in enumerate(slot_refs):
         if not ref:
             continue
         try:
@@ -14347,12 +14375,15 @@ def diff_view():
         except compare_sources.SourceError as exc:
             error = str(exc)
             continue
-        if slot == "a":
-            src_a = resolved
-        elif slot == "b":
-            src_b = resolved
-        else:
-            src_c = resolved
+        slot_srcs[i] = resolved
+        srcs.append(resolved)
+    src_a, src_b, src_c = slot_srcs[0], slot_srcs[1], slot_srcs[2]
+    if not tab:
+        # figures for runs (they HAVE figures); a snapshot / the working copy
+        # has none, so those open on state rather than on an honest blank.
+        tab = "figures" if srcs and all(
+            getattr(s, "origin", "") not in ("history", "working") for s in srcs) else "state"
+    d_ref, e_ref = slot_refs[3], slot_refs[4]
 
     payload = None
     rows = []
@@ -14360,8 +14391,7 @@ def diff_view():
     if src_a is not None and src_b is not None and not error:
         try:
             if tab == "figures":
-                payload = _diff_figures_payload(
-                    [s for s in (src_a, src_b, src_c) if s is not None])
+                payload = _diff_figures_payload(srcs)
             elif src_c is not None and view == "list":
                 payload = _diff_payload3(src_a, src_b, src_c, tab)
             else:
@@ -14389,6 +14419,7 @@ def diff_view():
     return render_template(
         template,
         **_ctx(page="diff", a_ref=a_ref, b_ref=b_ref, c_ref=c_ref, tab=tab, view=view,
+               d_ref=d_ref, e_ref=e_ref, srcs=srcs, slot_refs=slot_refs,
                src_a=src_a, src_b=src_b, src_c=src_c, payload=payload, error=error,
                rows=rows, more=more, next_rows=limit + _DIFF_LIST_PAGE,
                take_active_ok=take_active_ok,
@@ -14522,7 +14553,7 @@ def diff_runs():
     """
     uids = [u for u in (request.args.get("uids") or "").split(",") if u.strip()]
     refs: list[str] = []
-    for uid in uids[:2]:
+    for uid in uids[:_DIFF_MAX_SOURCES]:
         resolved = _resolve_run(uid.strip())
         if not resolved:
             continue
@@ -14531,10 +14562,11 @@ def diff_runs():
         folder = run.get("folder_path")
         if folder:
             refs.append(f"run:{Path(folder) / 'quam_state'}")
-    if len(refs) != 2:
+    if len(refs) < 2:
         return _hub_redirect("/diff")
-    return _hub_redirect(
-        f"/diff?a={quote(refs[0])}&b={quote(refs[1])}&tab=node")
+    # docs/141 4y: 2..5 runs, figures first, and the main pane only.
+    qs = "&".join(f"{slot}={quote(r)}" for slot, r in zip(_DIFF_SLOTS, refs))
+    return _pane_redirect(f"/diff?{qs}&tab=figures")
 
 
 @bp.route("/diff/data")
@@ -15487,23 +15519,27 @@ def compare():
     still POSTs /trend directly; the /compare/* tab fragments stay until
     the redirect soaks."""
     all_paths = [p for p in request.form.getlist("paths") if p]
-    paths = all_paths[:_HUB_MAX_SOURCES]
-    # docs/84 (user-directed again, 2026-08-29): EXACTLY TWO checked runs open
-    # the diff workbench -- the same front door the Datasets table's "Compare
-    # selected" and the Versions panel's Compare use -- not the hub. Two run
-    # folders land on the node.json tab (what was ASKED differs more often
-    # than the chip); anything else on state.json. Three or more still go to
-    # the hub, which is the N-way surface.
-    if len(all_paths) == 2:
-        toks = [_legacy_src_token(p) for p in all_paths]
-        tab = "node" if all(t.startswith("run:") for t in toks) else "state"
-        return _hub_redirect(f"/diff?a={quote(toks[0])}&b={quote(toks[1])}&tab={tab}")
-    params: list[tuple[str, str]] = [("src", _legacy_src_token(p)) for p in paths]
-    if len(all_paths) > _HUB_MAX_SOURCES:   # never truncate silently
-        params.append(("trunc", str(len(all_paths))))
-    if not params:
-        params.append(("from", "compare"))
-    return _hub_redirect(f"/compare-hub?{urlencode(params)}")
+    n = len(all_paths)
+    # docs/141 4y (user-directed, 2026-08-29): EVERY tick count from 2 to 5
+    # opens the diff workbench -- the Compare hub is retired as a destination.
+    # Runs land on the figures tab (what they produced), anything else on
+    # state.json. Fewer than 2 or more than 5 is refused by name, never
+    # truncated: the sidebar already blocks the sixth tick, so this is the
+    # honest server-side floor for a hand-built request.
+    if n < 2 or n > _DIFF_MAX_SOURCES:
+        msg = ("Tick at least two runs to diff." if n < 2 else
+               f"{n} runs ticked -- the diff reads up to {_DIFF_MAX_SOURCES} "
+               f"side by side; untick {n - _DIFF_MAX_SOURCES}.")
+        if _is_htmx():
+            resp = make_response(render_template("_status.html", message=msg, level="warning"))
+            resp.headers["HX-Reswap"] = "none"      # keep the pane; the sidebar shows the count
+            resp.headers["HX-Trigger"] = json.dumps({"sm:toast": {"message": msg, "level": "warning"}})
+            return resp
+        return redirect("/diff")
+    toks = [_legacy_src_token(p) for p in all_paths]
+    tab = "figures" if all(t.startswith("run:") for t in toks) else "state"
+    qs = "&".join(f"{slot}={quote(t)}" for slot, t in zip(_DIFF_SLOTS, toks))
+    return _pane_redirect(f"/diff?{qs}&tab={tab}")
 
 
 @bp.route("/compare/diff")

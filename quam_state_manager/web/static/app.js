@@ -1237,18 +1237,46 @@ window.setFontSize = function(size) {
 // document so htmx tree re-renders never lose the behavior.
 (function() {
     var lastIdx = -1;
+    // docs/141 4y: the diff reads up to FIVE runs side by side. The sixth
+    // tick is refused here (with a toast), so the server's floor is never
+    // reached from the UI. One number everywhere: /compare, /diff/runs.
+    var MAX_DIFF = 5;
+    var SEL_KEY = 'quam_sidebar_compare_sel';
 
     function boxes() {
         return Array.prototype.slice.call(
             document.querySelectorAll('#sidebar-tree input[name="paths"]'));
+    }
+    function checkedValues() {
+        return boxes().filter(function(b) { return b.checked; })
+                      .map(function(b) { return b.value; });
+    }
+    // docs/141 4y: the ticks survive a tree re-render (workspace add /
+    // remove / filter / rescan) and an F5 -- the set is mirrored into
+    // sessionStorage on every change and re-applied after every swap.
+    function persist() {
+        try { sessionStorage.setItem(SEL_KEY, JSON.stringify(checkedValues())); } catch (e) {}
+    }
+    function restore() {
+        var want = null;
+        try { want = JSON.parse(sessionStorage.getItem(SEL_KEY) || 'null'); } catch (e) { want = null; }
+        if (!want || !want.length) return;
+        var set = {};
+        want.forEach(function(v) { set[v] = true; });
+        boxes().forEach(function(b) { if (set[b.value]) b.checked = true; });
     }
 
     function syncCompareCount() {
         var n = document.querySelectorAll(
             '#sidebar-tree input[name="paths"]:checked').length;
         var cmp = document.querySelector('#compare-form .btn-compare');
-        if (cmp) cmp.textContent = n > 1
-            ? 'Compare Selected (' + n + ')' : 'Compare Selected';
+        if (cmp) {
+            cmp.textContent = n > 1
+                ? 'Compare Selected (' + n + ')' : 'Compare Selected';
+            cmp.disabled = n < 2;
+            cmp.title = n < 2 ? 'Tick 2\u20135 runs to diff them side by side'
+                              : 'Open the diff of these ' + n + ' runs';
+        }
         var trend = document.querySelector('#compare-form .btn-trend');
         if (trend) trend.textContent = n > 1
             ? 'Trend Tracker (' + n + ')' : 'Trend Tracker';
@@ -1260,6 +1288,7 @@ window.setFontSize = function(size) {
     window.compareClearSelection = function() {
         boxes().forEach(function(b) { b.checked = false; });
         lastIdx = -1;
+        persist();
         syncCompareCount();
     };
 
@@ -1268,22 +1297,44 @@ window.setFontSize = function(size) {
         if (!t || t.name !== 'paths' || !t.closest || !t.closest('#sidebar-tree')) return;
         var all = boxes();
         var idx = all.indexOf(t);
-        if (ev.shiftKey && lastIdx >= 0 && idx >= 0 && lastIdx !== idx) {
-            var lo = Math.min(lastIdx, idx), hi = Math.max(lastIdx, idx);
+        var ranged = ev.shiftKey && lastIdx >= 0 && idx >= 0 && lastIdx !== idx;
+        var lo = ranged ? Math.min(lastIdx, idx) : idx, hi = ranged ? Math.max(lastIdx, idx) : idx;
+        if (ranged) {
             for (var i = lo; i <= hi; i++) all[i].checked = t.checked;
         }
         lastIdx = idx;
+        // the cap: untick what this click added beyond MAX_DIFF, from the
+        // far end of the range back towards the anchor (a plain click
+        // unticks just itself)
+        var over = checkedValues().length - MAX_DIFF;
+        if (over > 0 && t.checked) {
+            for (var j = hi; j >= lo && over > 0; j--) {
+                if (all[j].checked) { all[j].checked = false; over--; }
+            }
+            if (window.showToast) window.showToast('Up to ' + MAX_DIFF + ' runs can be diffed side by side.', 'warning');
+        }
+        persist();
         syncCompareCount();
     });
 
-    // Tree re-renders (workspace add/remove/filter) rebuild the checkboxes —
-    // re-sync the count (selections inside the swapped region are gone).
+    // Tree re-renders (workspace add/remove/filter/rescan) rebuild the
+    // checkboxes -- re-apply the remembered ticks, then re-sync the count.
     // Listener sits on document (always exists at eval time; the app-wide
     // rule forbids top-level document.body listeners).
     document.addEventListener('htmx:afterSwap', function(ev) {
         var el = ev.target;
-        if (el && el.id === 'sidebar-tree') { lastIdx = -1; syncCompareCount(); }
+        if (el && el.id === 'sidebar-tree') { lastIdx = -1; restore(); syncCompareCount(); }
     });
+    // HX-Trigger {"sm:toast": {message, level}} from a route that keeps the
+    // pane (HX-Reswap: none) but has something to say.
+    document.addEventListener('sm:toast', function(ev) {
+        var d = ev.detail || {};
+        if (d.message && window.showToast) window.showToast(d.message, d.level || 'info');
+    });
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function() { restore(); syncCompareCount(); });
+    } else { restore(); syncCompareCount(); }
+    window._sidebarCompareSel = { restore: restore, persist: persist, MAX: MAX_DIFF, KEY: SEL_KEY };
 })();
 
 // Global UI scale (Settings → "UI scale"): CSS zoom on <html>, 80%–150% in
@@ -12438,9 +12489,7 @@ window.updateCompareButton = function() {
     bar.setAttribute('data-state', newState);
     var btn = document.getElementById('ds-compare-btn');
     if (btn) btn.disabled = (newState !== 'ready');
-    // Diff is a TWO-run question (docs/84); the N-run compare covers 3+.
-    var dbtn = document.getElementById('ds-diff-btn');
-    if (dbtn) dbtn.disabled = (count !== 2);
+    // docs/141 4y: one button -- 2..5 runs open the diff workbench.
     var counter = document.getElementById('ds-compare-count');
     if (counter) counter.textContent = String(count);
 };
@@ -12474,9 +12523,9 @@ window.compareSelectedDatasets = function() {
     // the old Figures/Fit-Results/Parameters run comparison instead of the
     // diff view they actually wanted. Two selected now always means diff,
     // whichever button is pressed; the N-run comparison is for 3+ only.
-    if (ids.length === 2) { window.diffSelectedDatasets(); return; }
-    htmx.ajax('GET', '/datasets/compare?ids=' + ids.join(','),
-              {source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML'});
+    // docs/141 4y: EVERY count from 2 to 5 opens the diff workbench (the
+    // N-run comparison page is retired with the Compare hub).
+    window.diffSelectedDatasets();
 };
 
 /* docs/84: exactly two runs is the case an IDE-style diff answers best —
@@ -12484,8 +12533,8 @@ window.compareSelectedDatasets = function() {
    data came out. The N-run comparison above stays for 3+. */
 window.diffSelectedDatasets = function() {
     var uids = _selectedRunIds();   // the virtual table's selection IS uids
-    if (uids.length !== 2) {
-        if (window.showToast) window.showToast('Pick exactly two runs to diff.', 'info');
+    if (uids.length < 2 || uids.length > 5) {
+        if (window.showToast) window.showToast('Pick 2–5 runs to diff.', 'info');
         return;
     }
     var url = '/diff/runs?uids=' + uids.map(encodeURIComponent).join(',');

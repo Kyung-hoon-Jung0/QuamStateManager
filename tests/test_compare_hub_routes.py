@@ -862,20 +862,21 @@ class TestP4Redirects:
         run_qs = (tmp_path / "arch" / "chipR" / "2026-07-04"
                   / "#12_rabi_153000" / "quam_state")
         _write_quam(run_qs)
-        # docs/84 again (2026-08-29): exactly TWO checked sources open the diff
-        # workbench (the Datasets / Versions front door), so the tokens ride
-        # a= / b=; a third source is what sends the basket to the hub
+        # docs/141 4y: 2..5 sources ALL open the diff workbench on a..e; a
+        # mixed pair (folder + run) lands on state.json
         resp = c.post("/compare", data={"paths": [str(a), str(run_qs)]})
         assert resp.status_code == 302
         loc = resp.headers["Location"]
         assert loc.startswith("/diff?a=ws%3A") and "&b=run%3A" in loc and loc.endswith("&tab=state")
         resp = c.post("/compare", data={"paths": [str(a), str(run_qs), str(a)]})
         loc = resp.headers["Location"]
-        assert loc.startswith("/compare-hub?") and "src=ws%3A" in loc and "src=run%3A" in loc
+        assert loc.startswith("/diff?a=ws%3A") and "&b=run%3A" in loc and "&c=ws%3A" in loc
+        assert "compare-hub" not in loc
 
-    def test_two_checked_runs_open_the_diff_on_node_json(self, env, tmp_path):
-        """Two archive runs differ in what was ASKED more often than in the
-        chip -- the node.json tab, as /diff/runs chooses."""
+    def test_two_checked_runs_open_the_diff_on_figures(self, env, tmp_path):
+        """docs/141 4y: runs open on the FIGURES tab (what they produced comes
+        first), through HX-Location into the main pane -- the sidebar keeps
+        its ticks."""
         c, _a, _b = env
         r1 = tmp_path / "arch" / "chipR" / "2026-07-04" / "#12_rabi_153000" / "quam_state"
         r2 = tmp_path / "arch" / "chipR" / "2026-07-04" / "#13_ramsey_154000" / "quam_state"
@@ -883,8 +884,11 @@ class TestP4Redirects:
         _write_quam(r2)
         resp = c.post("/compare", data={"paths": [str(r1), str(r2)]}, headers={"HX-Request": "true"})
         assert resp.status_code == 200
-        loc = resp.headers["HX-Redirect"]
-        assert loc.startswith("/diff?a=run%3A") and "&b=run%3A" in loc and loc.endswith("&tab=node")
+        assert "HX-Redirect" not in resp.headers
+        loc_obj = json.loads(resp.headers["HX-Location"])
+        assert loc_obj["target"] == "#table-pane"
+        loc = loc_obj["path"]
+        assert loc.startswith("/diff?a=run%3A") and "&b=run%3A" in loc and loc.endswith("&tab=figures")
         page = c.get(loc)
         assert page.status_code == 200 and b"Pick the comparison context" not in page.data
 
@@ -899,15 +903,17 @@ class TestP4Redirects:
         assert b'data-sources="2"' in r.data
         assert b"Pick the comparison context" in r.data   # axiom 2 intact
 
-    def test_source_cap_applies_to_legacy_translation(self, env):
+    def test_more_than_five_is_refused_by_name(self, env):
+        """docs/141 4y: the diff reads up to five; a hand-built request with
+        more is refused naming the count -- never truncated, never the hub."""
         c, a, b = env
-        paths = [str(a), str(b)] * 6      # 12 → capped at 8
+        paths = [str(a), str(b)] * 6      # 12
+        resp = c.post("/compare", data={"paths": paths}, headers={"HX-Request": "true"})
+        assert resp.status_code == 200 and resp.headers["HX-Reswap"] == "none"
+        msg = json.loads(resp.headers["HX-Trigger"])["sm:toast"]["message"]
+        assert "12 runs" in msg and "untick 7" in msg
         resp = c.post("/compare", data={"paths": paths})
-        loc = resp.headers["Location"]
-        assert loc.count("src=") == 8
-        assert "trunc=12" in loc          # never truncate silently
-        r = c.get(loc)
-        assert b"first 8 of" in r.data and b"12" in r.data
+        assert resp.status_code == 302 and resp.headers["Location"] == "/diff"
 
     def test_command_palette_points_at_hub(self, env):
         """The palette follows the front door (docs/84): Compare opens the diff

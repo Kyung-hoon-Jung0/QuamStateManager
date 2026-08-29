@@ -1207,6 +1207,39 @@ fills the pane, reflows with it). Real Chrome on the PJ chip
 Pinned by `tests/col_resize_selfcheck.cjs` (16 assertions, offsetWidth
 stubbed per header; the no-fit mutation fails it) + `tests/test_col_resize.py`.
 
+## 4y. Compare Selected: figures first, the ticks stay, 2–5 all open the Diff (2026-08-29, user-directed)
+
+Three asks on the sidebar's run comparison, one commit. **① Figures first.**
+`_DIFF_TABS` is now `figures · state.json · wiring.json · node.json · data`
+and the default tab is decided AFTER the sources resolve: figures when every
+source is a run (runs have figures), state.json otherwise (a snapshot or the
+working copy has none — an honest blank is not a landing page). `/compare`
+(sidebar) and `/diff/runs` (Datasets table) both open runs on figures.
+**② The ticks stay.** `/compare` answered with `HX-Redirect`, a whole-document
+reload that rebuilt the sidebar and dropped every tick. It now answers with
+`HX-Location {path, target: "#table-pane", swap: "innerHTML"}`
+(`_pane_redirect`): htmx GETs the diff into the main pane and pushes the URL;
+the sidebar DOM is never touched. The checked set is also mirrored into
+`sessionStorage` (`quam_sidebar_compare_sel`) and re-applied after every
+`#sidebar-tree` swap (filter, rescan, workspace add/remove) and at load, so a
+re-render or an F5 keeps them too. **③ 2, 3, 4, 5 → Diff.** Every tick count
+from two to five opens `/diff?a..e` (slots `_DIFF_SLOTS = "abcde"`); the
+Compare hub is retired as a destination — no sidebar/Datasets/workbench link
+reaches it (its routes stay for bookmarks until the code is removed
+separately). The SIXTH tick is refused in the sidebar (toast; a shift range is
+clamped from its far end), Compare Selected is disabled below two, and the
+server refuses <2 or >5 by name (`HX-Reswap: none` + an `sm:toast` trigger —
+a new document-level bridge to `showToast`) rather than truncating. The
+Datasets toolbar keeps ONE button (Diff, 2–5) — its N-run comparison page is
+retired with the hub. Real Chrome on the PJ chip + the 2025-06-24 archive
+(`cdp_sidebar_diff.js`): tick 3 → Compare: same document, `/diff?a=run…`
+pushed, figures active, tab order as specified, 3 figure columns, ticks and
+count kept; 6th tick refused with the toast at 5; a filter round trip keeps
+all 5; no console errors. Pinned by `tests/sidebar_compare_selfcheck.cjs`
+(21; no-cap and no-restore mutations fail it), `test_sidebar_compare.py`,
+rewritten `TestCompareRedirect` / `TestP4Redirects` pins, and
+`test_the_diff_no_longer_links_to_it`. The N-way pane view itself is §4z.
+
 ## 5. Tooling that came out of the night
 
 `scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js` (+ daytime: `cdp_profile.js` function-level CPU profile, `cdp_trace.js` per-phase trace of one keystroke, `cdp_type.js` char-by-char typing with a gap + debounce override, `cdp_undo.js` trusted Ctrl+Z/Ctrl+Shift+Z through the page's own UI, `cdp_virt.js` virtualization sampler): Chrome headless with the

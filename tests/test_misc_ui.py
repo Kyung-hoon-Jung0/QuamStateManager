@@ -214,8 +214,10 @@ class TestDatasetCompareGoesToDiffAtTwo:
             js, re.S)
         assert m, "compareSelectedDatasets definition not found"
         body = m.group(1)
-        assert re.search(
-            r"ids\.length === 2\) \{ window\.diffSelectedDatasets\(\); return; \}",
-            body), "must delegate to the diff workbench at exactly 2"
-        # the delegation must run BEFORE the old-page htmx.ajax call
-        assert body.index("diffSelectedDatasets") < body.index("/datasets/compare")
+        # docs/141 4y: EVERY count (2..5) delegates to the diff workbench; the
+        # N-run comparison page is no longer reachable from the button
+        assert "window.diffSelectedDatasets();" in body
+        assert "/datasets/compare" not in body
+        tpl = _read("quam_state_manager/web/templates/_datasets.html")
+        assert 'id="ds-diff-btn"' not in tpl, "one button, not two"
+        assert 'id="ds-compare-btn"' in tpl and 'aria-label="Diff the selected runs">Diff</button>' in tpl
