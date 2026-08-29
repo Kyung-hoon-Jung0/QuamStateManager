@@ -1985,9 +1985,15 @@ class TestCompareRedirect:
                            headers={"HX-Request": "true"})
         assert resp.status_code == 200
         loc = resp.headers["HX-Redirect"]
-        assert loc.startswith("/compare-hub?")
-        assert loc.count("src=") == 2
+        # docs/84 (2026-08-29): two checked sources open the DIFF workbench,
+        # like the Datasets table and the Versions panel; plain folders land
+        # on state.json
+        assert loc.startswith("/diff?a=ws%3A") and "&b=ws%3A" in loc and loc.endswith("&tab=state")
         assert "hint" not in loc   # manual basket (U1b)
+        resp = client.post("/compare", data={"paths": folders + [folders[0]]},
+                           headers={"HX-Request": "true"})
+        loc = resp.headers["HX-Redirect"]
+        assert loc.startswith("/compare-hub?") and loc.count("src=") == 3
 
     def test_compare_single_path_still_redirects(self, client):
         resp = client.post("/compare", data={"paths": "only_one"})

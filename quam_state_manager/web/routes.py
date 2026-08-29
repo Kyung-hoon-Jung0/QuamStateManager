@@ -15488,6 +15488,16 @@ def compare():
     the redirect soaks."""
     all_paths = [p for p in request.form.getlist("paths") if p]
     paths = all_paths[:_HUB_MAX_SOURCES]
+    # docs/84 (user-directed again, 2026-08-29): EXACTLY TWO checked runs open
+    # the diff workbench -- the same front door the Datasets table's "Compare
+    # selected" and the Versions panel's Compare use -- not the hub. Two run
+    # folders land on the node.json tab (what was ASKED differs more often
+    # than the chip); anything else on state.json. Three or more still go to
+    # the hub, which is the N-way surface.
+    if len(all_paths) == 2:
+        toks = [_legacy_src_token(p) for p in all_paths]
+        tab = "node" if all(t.startswith("run:") for t in toks) else "state"
+        return _hub_redirect(f"/diff?a={quote(toks[0])}&b={quote(toks[1])}&tab={tab}")
     params: list[tuple[str, str]] = [("src", _legacy_src_token(p)) for p in paths]
     if len(all_paths) > _HUB_MAX_SOURCES:   # never truncate silently
         params.append(("trunc", str(len(all_paths))))

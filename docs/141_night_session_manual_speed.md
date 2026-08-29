@@ -1050,6 +1050,22 @@ scroller choice and the mount-time bar pinning) + the extended
 mutation-checked 3/3 (the wrap scrolling again, the bars unpinned, the wrap
 as the scroller).
 
+## 4r. Two checked runs in the sidebar open the Diff, not the hub (2026-08-29, user-directed)
+
+The user ticked two runs in the sidebar tree, pressed "Compare Selected",
+and landed on the Compare hub ("2 sources … These sources fingerprint as
+the same chip") — while the Datasets table's "Compare selected" and the
+Versions panel's Compare open the diff workbench (docs/84's front door).
+The sidebar form still went through the docs/49 adapter: `POST /compare`
+translated every basket into hub `src=` tokens. Now exactly two checked
+sources redirect to `/diff?a=…&b=…` — two archive runs on the node.json tab
+(what was ASKED differs more often than the chip, as `/diff/runs` chooses),
+anything else on state.json — and three or more still go to the hub, the
+N-way surface. Pinned in `test_compare_hub_routes.py::TestP4Redirects`
+(mixed pair → `/diff … &tab=state`, two runs → `&tab=node` and the page
+renders without the hub's "Pick the comparison context", three → hub) and
+`test_web.py::test_compare_post_translates_paths`.
+
 ## 5. Tooling that came out of the night
 
 `scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js` (+ daytime: `cdp_profile.js` function-level CPU profile, `cdp_trace.js` per-phase trace of one keystroke, `cdp_type.js` char-by-char typing with a gap + debounce override, `cdp_undo.js` trusted Ctrl+Z/Ctrl+Shift+Z through the page's own UI, `cdp_virt.js` virtualization sampler): Chrome headless with the

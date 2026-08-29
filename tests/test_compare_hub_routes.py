@@ -862,11 +862,31 @@ class TestP4Redirects:
         run_qs = (tmp_path / "arch" / "chipR" / "2026-07-04"
                   / "#12_rabi_153000" / "quam_state")
         _write_quam(run_qs)
+        # docs/84 again (2026-08-29): exactly TWO checked sources open the diff
+        # workbench (the Datasets / Versions front door), so the tokens ride
+        # a= / b=; a third source is what sends the basket to the hub
         resp = c.post("/compare", data={"paths": [str(a), str(run_qs)]})
         assert resp.status_code == 302
         loc = resp.headers["Location"]
-        assert "src=ws%3A" in loc
-        assert "src=run%3A" in loc
+        assert loc.startswith("/diff?a=ws%3A") and "&b=run%3A" in loc and loc.endswith("&tab=state")
+        resp = c.post("/compare", data={"paths": [str(a), str(run_qs), str(a)]})
+        loc = resp.headers["Location"]
+        assert loc.startswith("/compare-hub?") and "src=ws%3A" in loc and "src=run%3A" in loc
+
+    def test_two_checked_runs_open_the_diff_on_node_json(self, env, tmp_path):
+        """Two archive runs differ in what was ASKED more often than in the
+        chip -- the node.json tab, as /diff/runs chooses."""
+        c, _a, _b = env
+        r1 = tmp_path / "arch" / "chipR" / "2026-07-04" / "#12_rabi_153000" / "quam_state"
+        r2 = tmp_path / "arch" / "chipR" / "2026-07-04" / "#13_ramsey_154000" / "quam_state"
+        _write_quam(r1)
+        _write_quam(r2)
+        resp = c.post("/compare", data={"paths": [str(r1), str(r2)]}, headers={"HX-Request": "true"})
+        assert resp.status_code == 200
+        loc = resp.headers["HX-Redirect"]
+        assert loc.startswith("/diff?a=run%3A") and "&b=run%3A" in loc and loc.endswith("&tab=node")
+        page = c.get(loc)
+        assert page.status_code == 200 and b"Pick the comparison context" not in page.data
 
     def test_redirected_legacy_post_lands_on_working_hub(self, env):
         """Follow the translation end-to-end: the hub page renders the
