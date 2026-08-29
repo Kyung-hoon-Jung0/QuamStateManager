@@ -71,6 +71,20 @@ btns(A)[2].click();                                    // L on panel A
 ok(A.style.getPropertyValue('--topo-density-scale') === '' && JSON.parse(win.localStorage.getItem('quam_chip_density_panels')).readout_frequency === 1,
    'L removes the inline override (the CSS default, 1) and is remembered as 1');
 ok(win.ChipStatus.density.get('T1') === 0.7 && win.ChipStatus.density.get('nope') === 1, 'get() answers per key, 1 when unknown');
+// the fine slider (the user asked it back): one per panel, bound to the key
+const slA = A.querySelector('.topo-density-pslider[data-density-panel="readout_frequency"]');
+const slB = B.querySelector('.topo-density-pslider[data-density-panel="T1"]');
+ok(!!slA && !!slB && slA.min === '0.35' && slA.max === '1.15', 'each panel carries its own fine slider (0.35–1.15: the floor the user asked for)');
+win.ChipStatus.density.set('T1', 0.1);
+ok(win.ChipStatus.density.get('T1') === 0.35, 'a value under the floor clamps to 0.35 (' + win.ChipStatus.density.get('T1') + ')');
+win.ChipStatus.density.set('T1', 0.7);
+ok(slB.value === '0.7', 'the slider shows the panel\'s current size (' + slB.value + ')');
+slB.value = '0.6'; slB.dispatchEvent(new win.Event('input', { bubbles: true }));
+ok(B.style.getPropertyValue('--topo-density-scale') === '0.6' && JSON.parse(win.localStorage.getItem('quam_chip_density_panels')).T1 === 0.6,
+   'dragging the slider sets and remembers THAT panel\'s size');
+ok(btns(B).filter((b) => b.classList.contains('active')).length === 0, 'a between-preset size lights no preset');
+btns(B)[1].click();
+ok(slB.value === '0.85', 'a preset click moves the slider (' + slB.value + ')');
 win.ChipStatus.density.set('T1', 5);
 ok(win.ChipStatus.density.get('T1') === 1.15, 'a value outside the range is clamped (' + win.ChipStatus.density.get('T1') + ')');
 

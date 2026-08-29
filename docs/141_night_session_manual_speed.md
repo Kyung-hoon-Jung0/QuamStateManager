@@ -893,8 +893,14 @@ renders its fidelity group into `#topo-fidelity-panels` inside the Fidelity
 wrapper (after `build2QRBPanels`' block, now a sub-heading, not its own
 `<h3>`), the other groups stay in `#topo-metric-panels`. The density
 controller is per panel: `controlHtml(key)` beside every metric / 2Q-gate
-panel title, ONE delegated click listener on the dashboard (panels are built
-lazily), the scale written as `--topo-density-scale` on THAT `.topo-section`
+panel title — S · M · L **and the fine slider** (the user asked it back after
+the first cut dropped it; both are ~0.58 em of the title, the letters having
+been "too big beside it" — 0.68 rem buttons, a 4 rem slider), with the floor
+the user asked for: a panel down to 0.35 (S / M / L unchanged) and the hero
+map down to 0.25× (was 0.5×; the 4× ceiling "was already enough"), ONE
+delegated click + input listener on the
+dashboard (panels are built lazily), the scale written as
+`--topo-density-scale` on THAT `.topo-section`
 — the derived cell sizes are now re-computed at the section (a custom
 property computed on the dashboard never saw a child's override), persisted
 per panel key in `quam_chip_density_panels`. The GEF metric:
@@ -936,7 +942,7 @@ Pinned by `tests/test_chip_status_layout.py` (order — raw and parsed —,
 sub-nav, sidebar, the Health row, the route, `TAB_SPEC` / `PANEL_DEFS`, the
 controls, the glossary + thresholds + Trends labels, the GEF formula /
 QueryEngine / page / history index + upgrade, the jump-guard wiring) +
-`chip_density_selfcheck.cjs` (21 asserts: per-panel size + the jump guard);
+`chip_density_selfcheck.cjs` (26 asserts: per-panel size, the fine slider, the jump guard);
 mutation-checked 4/4.
 
 ## 4p. A new run folder reaches the screen in well under a second (2026-08-29, user-directed)

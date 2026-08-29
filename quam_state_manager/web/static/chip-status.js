@@ -14,7 +14,8 @@ window.ChipStatus = window.ChipStatus || {};
    .topo-section; fonts are untouched) and persisted per panel key. The
    dashboard-wide scale stays 1 — the old Health-row "Tiles" slider is gone. */
 window.ChipStatus.density = (function () {
-    var KEY = 'quam_chip_density_panels', MIN = 0.55, MAX = 1.15;
+    // MIN 0.55 -> 0.35 (user: the floor was not low enough); S/M/L presets unchanged
+    var KEY = 'quam_chip_density_panels', MIN = 0.35, MAX = 1.15;
     var PRESETS = [['S', 0.7], ['M', 0.85], ['L', 1]];
     var _store = null;
     function clamp(v) { return Math.max(MIN, Math.min(MAX, v)); }
@@ -45,6 +46,8 @@ window.ChipStatus.density = (function () {
         el.querySelectorAll('.density-preset[data-density-panel]').forEach(function (b) {
             b.classList.toggle('active', Math.abs(parseFloat(b.getAttribute('data-density')) - v) < 1e-6);
         });
+        var sl = el.querySelector('.topo-density-pslider[data-density-panel]');
+        if (sl && Math.abs(parseFloat(sl.value) - v) > 1e-6) sl.value = v;
         // The metric bar charts are the one Chip Status surface no observer
         // can serve: a size change reflows SIBLINGS without moving any outer
         // container's box (docs/123 §7). Debounced; resizeWithin hands each
@@ -73,6 +76,9 @@ window.ChipStatus.density = (function () {
             out += '<button type="button" class="btn-sm outline density-preset' + (Math.abs(pr[1] - v) < 1e-6 ? ' active' : '')
                 + '" data-density-panel="' + k + '" data-density="' + pr[1] + '" aria-label="' + pr[0] + ' tiles">' + pr[0] + '</button>';
         });
+        // the fine slider the user asked back (it sat beside S/M/L on the old Health row)
+        out += '<input type="range" class="topo-density-pslider" data-density-panel="' + k + '" min="' + MIN + '" max="' + MAX
+            + '" step="0.05" value="' + v.toFixed(2) + '" aria-label="Tile size (fine)" title="Tile size (fine)">';
         return out + '</span>';
     }
     function init() {
@@ -84,6 +90,11 @@ window.ChipStatus.density = (function () {
                 if (!b) return;
                 e.preventDefault();
                 set(b.getAttribute('data-density-panel'), parseFloat(b.getAttribute('data-density')));
+            });
+            d.addEventListener('input', function (e) {
+                var sl = e.target;
+                if (!sl || !sl.classList || !sl.classList.contains('topo-density-pslider')) return;
+                set(sl.getAttribute('data-density-panel'), parseFloat(sl.value));
             });
         }
         applyAll(d);
@@ -1195,7 +1206,7 @@ window.ChipStatus.mount = function (opts) {
         var zoom = null;
         try {
             var zRaw = parseFloat(localStorage.getItem(ZOOM_KEY));
-            if (zRaw >= 0.5 && zRaw <= 4) zoom = zRaw;
+            if (zRaw >= 0.25 && zRaw <= 4) zoom = zRaw;   // floor 0.5 -> 0.25 (user-directed)
         } catch (e) {}
         // docs/126: compact mode trades stone/marker footprint for TEXT — the
         // small-monitor answer. Fonts grow relative to the cell (CSS on
@@ -1362,7 +1373,7 @@ window.ChipStatus.mount = function (opts) {
             // button bar (width:100% + flex:1 children) — real-browser caught.
             bar += '<span class="topo-hero-zoomctl" aria-label="Map size">'
                  + '<button type="button" class="topo-hero-zbtn" data-hero-zoom="out" title="Smaller">&minus;</button>'
-                 + '<input type="range" class="topo-hero-zslider" min="0.5" max="4" step="0.05"'
+                 + '<input type="range" class="topo-hero-zslider" min="0.25" max="4" step="0.05"'
                  + ' value="' + zoom.toFixed(2) + '" aria-label="Map size" title="Map size">'
                  + '<button type="button" class="topo-hero-zbtn" data-hero-zoom="in" title="Bigger">+</button>'
                  + '<button type="button" class="topo-hero-zbtn" data-hero-zoom="fit" title="Fit the pane width">Fit</button>'
@@ -1582,7 +1593,7 @@ window.ChipStatus.mount = function (opts) {
             // rebuild (a full re-render mid-slider-drag would destroy the
             // slider under the pointer).
             function _applyZoom(z) {
-                zoom = Math.min(4, Math.max(0.5, z));
+                zoom = Math.min(4, Math.max(0.25, z));
                 try { localStorage.setItem(ZOOM_KEY, String(zoom)); } catch (e) {}
                 var el = host.querySelector('svg.topo-hero-svg');
                 if (el) el.style.width = Math.round(zoom * 100) + '%';

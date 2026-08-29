@@ -4230,8 +4230,13 @@ td.col-delta .val-delta { margin-left: 0; }
     --topo-heatmap-cell-min: calc(var(--topo-density-scale) * 140px);
     --topo-card-min-width: calc(var(--topo-density-scale) * 265px);
 }
-/* right of the title WORD (the user's placement), not at the row's far edge */
-.topo-density-ctl-panel { font-size: 0.72em; font-weight: 400; }
+/* right of the title WORD (the user's placement), not at the row's far edge;
+   smaller than the title (user feedback: the letters were too big beside it) */
+.topo-density-ctl-panel { font-size: 0.58em; font-weight: 400; gap: 0.2rem; }
+/* explicit rem sizes: the h4's em and Pico's button rules made the letters
+   20 px beside a 26 px title (measured) -- these win by specificity */
+.topo-density-ctl-panel button.density-preset { font-size: 0.68rem; height: 1.25rem; line-height: 1.1; padding: 0 0.3rem; min-width: 1.4rem; }
+.topo-density-ctl-panel input.topo-density-pslider { width: 4rem; min-width: 0; margin: 0 0 0 0.15rem; padding: 0; height: 0.9rem; vertical-align: middle; }
 /* a jump from the sticky sub-nav lands the section title BELOW the bar */
 .topo-dashboard .topo-section { scroll-margin-top: 3.2rem; }
 .topo-density-ctl { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.82em; }

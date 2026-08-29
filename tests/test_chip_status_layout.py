@@ -151,6 +151,19 @@ class TestClientTables:
     def test_every_panel_title_carries_its_own_size_control(self):
         # the metric panels and the 2Q-gate panels both put the control right of the title
         assert JS.count("window.ChipStatus.density.controlHtml(") == 2
+        # S · M · L AND the fine slider (the user asked the slider back), both
+        # bound to the panel key, smaller than the title
+        ctl = JS[JS.index("function controlHtml(key) {"):JS.index("function init() {")]
+        assert 'class="topo-density-pslider" data-density-panel="' in ctl and 'min="\' + MIN + \'" max="\' + MAX' in ctl
+        assert "d.addEventListener('input', function (e) {" in JS
+        css = (ROOT / "quam_state_manager" / "web" / "static" / "style.css").read_text(encoding="utf-8")
+        assert ".topo-density-ctl-panel { font-size: 0.58em;" in css
+        assert ".topo-density-ctl-panel button.density-preset { font-size: 0.68rem; height: 1.25rem;" in css
+        assert ".topo-density-ctl-panel input.topo-density-pslider { width: 4rem;" in css
+        # the floors the user asked for: panel size down to 0.35, the hero map down to 0.25x
+        assert "MIN = 0.35, MAX = 1.15" in JS
+        assert 'class="topo-hero-zslider" min="0.25" max="4"' in JS
+        assert "zoom = Math.min(4, Math.max(0.25, z));" in JS and "if (zRaw >= 0.25 && zRaw <= 4) zoom = zRaw;" in JS
         assert 'data-density-panel="\' + def.key + \'"' in JS
         assert "data-density-panel=\"' + _esc(dKey) + '\"" in JS
         # the 2Q RB block is a sub-heading of Fidelity, not its own h3 section
