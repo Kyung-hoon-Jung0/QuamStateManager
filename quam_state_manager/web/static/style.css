@@ -3810,7 +3810,10 @@ td.col-delta .val-delta { margin-left: 0; }
 /* docs/126 ②: the container owns the overflow on BOTH axes — the map renders
    at zoom × pane width (default 2×) and scrolls inside this box, so a big or
    tall chip never buries the sections below. */
-.topo-hero-scroll { overflow: auto; max-height: 82vh; }
+/* docs/141 4q: no inner vertical scroll -- the hero grows to its map and the
+   page (#table-pane) is the one scroller; a map zoomed wider than the pane
+   still scrolls sideways inside. */
+.topo-hero-scroll { overflow-x: auto; overflow-y: visible; max-height: none; }
 .topo-hero-note {
     position: absolute; top: 6px; left: 6px; z-index: 2; pointer-events: none;
     font-size: .78em; font-weight: 600; padding: .15rem .55rem; border-radius: 4px;
@@ -9132,16 +9135,31 @@ html.topbar-hidden .chrome-reveal { display: block; }
    can be scrolled left/right without first scrolling down to the bottom bar. */
 .bulk-scroll-top { overflow-x: auto; overflow-y: hidden; }
 .bulk-scroll-top > div { height: 1px; }
-.bulk-table-wrap { overflow: auto; max-height: calc(100vh - 185px); border: 1px solid var(--pico-muted-border-color); border-radius: 6px; }
+/* docs/141 4q (user-directed): ONE vertical scroller. The wrap used to scroll
+   inside itself (overflow:auto + a 100vh cap) while #table-pane scrolled the
+   page -- two bars, and users scrolled the grid to its end only to scroll
+   the page again. The wrap is now a frame around a max-content table and
+   #table-pane (overflow-y:auto => both axes) is the only scroller: its
+   horizontal bar sits at the viewport edge, the sticky header / row head /
+   apply column anchor to it, cold columns hydrate on ITS scroll. */
+.bulk-table-wrap { overflow: visible; max-height: none; width: max-content; max-width: none; border: 1px solid var(--pico-muted-border-color); border-radius: 6px; }
+/* the rows above and between the grids stay put while the pane scrolls
+   sideways: NOT position:sticky (their containing block is exactly as wide as
+   they are, so sticky has no room and they scrolled away -- real Chrome) but a
+   translateX(scrollLeft) written by bulk-edit.js _pinBarsToScroll on the
+   pane's scroll */
+.bulk-panel .bulk-toolbar, .bulk-panel .bulk-chipbar, .bulk-panel .bulk-pair-divider,
+.bulk-panel .bulk-dyn-truncated, .bulk-panel .bulk-virt-note { will-change: transform; }
+.bulk-scroll-top { display: none; }
 /* max-content (NOT min-width:100%) so the table keeps its natural column widths
    and never stretches the cells to fill when only a few columns are visible. */
 .bulk-table { border-collapse: separate; border-spacing: 0; font-size: 0.86em; width: max-content; }
 .bulk-table th, .bulk-table td { padding: 1px 3px; border-bottom: 1px solid var(--pico-muted-border-color); white-space: nowrap; vertical-align: middle; }
-.bulk-table thead th { position: sticky; top: 0; z-index: 2; background: var(--pico-card-background-color); text-align: left; padding: 5px 7px; border-bottom: 2px solid var(--pico-muted-border-color); }
+.bulk-table thead th { position: sticky; top: calc(-1 * var(--table-pane-pad-v, 0px)); z-index: 2; background: var(--pico-card-background-color); text-align: left; padding: 5px 7px; border-bottom: 2px solid var(--pico-muted-border-color); }
 /* Group-header band: one spanning cell per section, over its columns. The 2nd
    header row (the column heads) sticks BELOW the band — its sticky `top` is offset
    by the band's measured height (--bulk-grouphead-h, set by JS; varies with font). */
-.bulk-table .bulk-head-row th { top: var(--bulk-grouphead-h, 1.7rem); }
+.bulk-table .bulk-head-row th { top: calc(var(--bulk-grouphead-h, 1.7rem) - var(--table-pane-pad-v, 0px)); }
 .bulk-group-row .bulk-group-head {
     text-align: center; font-weight: 700; text-transform: none; letter-spacing: 0;
     color: var(--pico-color); background: var(--pico-card-sectioning-background-color);
@@ -9150,7 +9168,7 @@ html.topbar-hidden .chrome-reveal { display: block; }
 /* Subtle separator between groups, carried from the band down into the body. */
 .bulk-col-group-start { border-left: 2px solid var(--pico-muted-border-color); }
 /* Frozen first column (qubit id) + its sticky-header corner. */
-.bulk-corner, .bulk-rowhead { position: sticky; left: 0; background: var(--pico-card-background-color); font-weight: 600; text-align: left; padding-right: 10px; border-right: 1px solid var(--pico-muted-border-color); }
+.bulk-corner, .bulk-rowhead { position: sticky; left: calc(-1 * var(--table-pane-pad-h, 0px)); background: var(--pico-card-background-color); font-weight: 600; text-align: left; padding-right: 10px; border-right: 1px solid var(--pico-muted-border-color); }
 .bulk-rowhead { font-size: calc(0.92rem * var(--bulk-fs)); }   /* match the cell text size */
 .bulk-corner { z-index: 3; }
 .bulk-rowhead { z-index: 1; }
@@ -9222,7 +9240,7 @@ html.topbar-hidden .chrome-reveal { display: block; }
    its input-driven width. */
 .bulk-phys { display: block; font-size: 0.7em; opacity: 0.65; font-family: var(--font-ui); max-width: 24ch; white-space: normal; }
 .bulk-band-warn-count, #bulk-band-warn { color: var(--color-error-text); font-size: 0.82em; font-weight: 600; }
-.bulk-apply-col { text-align: center; position: sticky; right: 0; background: var(--pico-card-background-color); }
+.bulk-apply-col { text-align: center; position: sticky; right: calc(-1 * var(--table-pane-pad-h, 0px)); background: var(--pico-card-background-color); }
 .btn-xs { padding: 0.05rem 0.5rem; font-size: 0.78em; width: auto; margin: 0; }
 .bulk-row-error { display: block; color: var(--color-error-text); font-size: 0.72em; max-width: 20ch; white-space: normal; }
 /* These two error spans use display:block, which OVERRIDES the HTML `hidden`

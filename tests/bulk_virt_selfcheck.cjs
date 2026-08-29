@@ -87,7 +87,7 @@ function bigWorld(nCols, nRows, presearch) {
     Object.defineProperty(h, 'offsetLeft', { get: function () { win.__geomReads++; return 60 + i * COL_W; } });
     Object.defineProperty(h, 'offsetWidth', { get: function () { win.__geomReads++; return COL_W; } });
   });
-  const wrap = win.document.querySelector('.bulk-table-wrap');
+  const wrap = win.document.getElementById('table-pane');    // docs/141 4q: the ONE scroller
   Object.defineProperty(wrap, 'clientWidth', { value: WRAP_W });
   wrap.scrollLeft = 0;
   win.htmx = { ajax: function () {} };

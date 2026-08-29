@@ -1000,6 +1000,50 @@ visible / stop, the popup poll's in-flight guard). Mutation-checked 4/4
 (a watcher that never ticks, a handshake that wakes, two in flight, a popup
 poll that ignores the wake).
 
+## 4q. One scrollbar (2026-08-29, user-directed)
+
+**The complaint.** On Chip Status the topology map scrolled inside its own
+box; on Live State Edit the grid scrolled inside its wrap (`overflow:auto`
++ a `100vh − 185px` cap) — and in both cases `#table-pane` scrolled the
+page around them. Users scrolled the grid to its end and then had to scroll
+the page again, and did not always know which bar they were holding. "Make
+both a single scroll."
+
+**What changed.** `#table-pane` is now the ONE vertical scroller on both
+pages. `.bulk-table-wrap` is a frame around a `max-content` table
+(`overflow: visible; max-height: none; width: max-content`); the pane's own
+horizontal bar sits at the viewport edge, so the top-of-table scrollbar proxy
+(`#bulk-scroll-top` + its sync code path) is gone. The sticky parts re-anchor
+to the pane with its padding subtracted: `thead th` at
+`top: −pad-v`, the second header row at `grouphead-h − pad-v`, the row heads
+at `left: −pad-h`, the Apply column at `right: −pad-h`. Cold-column
+hydration listens to, and measures, the pane (`_scrollerOf` → `#table-pane`,
+the wrap only as a fallback for a table mounted elsewhere); the jsdom
+harnesses define their scroll geometry on the pane. The topology hero:
+`.topo-hero-scroll { overflow-x: auto; overflow-y: visible; max-height: none }`
+— it grows to its map, and a map zoomed wider than the pane still scrolls
+sideways inside.
+
+**What real Chrome corrected.** The toolbar rows, the chip bar and the pair
+divider were given `position: sticky; left: 0` to stay put while the pane
+scrolls sideways — and scrolled away anyway (the toolbar at −2475 px):
+sticky needs room inside its containing block, and those rows are exactly as
+wide as theirs. They are now moved by `translateX(scrollLeft)` on the pane's
+scroll (`_pinBarsToScroll`, one rAF per event). Measured after: `/bulk` wrap
+scrollHeight = clientHeight (no inner bar), the pane 3,373 px tall for a
+759 px viewport; after `scrollTop = 400` the header row stays at the pane's
+top (33 px, under the group band) and q1 has scrolled beneath it; after
+`scrollLeft = 2500` cold columns hydrate (4,260 → 4,000 cold cells), the row
+heads stay at 0 and the toolbar at 25 px (its padding). `/topology`: the hero
+1,073 px = 1,073 px, no inner bar. No console errors.
+
+Pinned by `tests/test_single_scroll.py` (the wrap and the hero rules, the
+pane-anchored sticky offsets, the proxy gone from template and CSS, the
+scroller choice and the mount-time bar pinning) + the extended
+`bulk_virt_server_selfcheck.cjs` (the toolbar follows the pane's scroll);
+mutation-checked 3/3 (the wrap scrolling again, the bars unpinned, the wrap
+as the scroller).
+
 ## 5. Tooling that came out of the night
 
 `scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js` (+ daytime: `cdp_profile.js` function-level CPU profile, `cdp_trace.js` per-phase trace of one keystroke, `cdp_type.js` char-by-char typing with a gap + debounce override, `cdp_undo.js` trusted Ctrl+Z/Ctrl+Shift+Z through the page's own UI, `cdp_virt.js` virtualization sampler): Chrome headless with the

@@ -1709,12 +1709,13 @@ class TestSidebarFeatures:
         assert "view=full" not in text, "Full View was removed in the Phase C scroll dashboard"
         assert "view=distributions" not in text, "Distributions was removed (docs/126 ②)"
         assert "view=trends" in text
-        assert text.index("view=topology") < text.index("view=overview") < text.index("view=gate"), (
-            "Topology should lead, then Overview, then Gate."
-        )
-        # Trends reads history rather than the loaded chip, so it sits last —
-        # after the live-state sections, not among them.
-        assert text.index("view=calibration") < text.index("view=trends")
+        # docs/141 4o (user-directed order): Overview leads, Health right below
+        # it, then Topology, then Trends, then Fidelity (which absorbed the old
+        # Gate (2Q) tab), then the rest. No "gate" sub-link any more.
+        assert "view=gate" not in text, "Gate (2Q) was absorbed by Fidelity (docs/141 4o)"
+        order = ["overview", "health", "topology", "trends", "fidelity", "coherence", "frequencies", "calibration"]
+        idx = [text.index(f"view={v}") for v in order]
+        assert idx == sorted(idx), "the sidebar sub-links follow the page order"
 
     def test_core_scripts_not_deferred(self):
         """app.js (UI_CONFIG) and dataset-virtual.js (DatasetVirtual) must load

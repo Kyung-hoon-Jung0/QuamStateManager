@@ -1769,6 +1769,38 @@
         el.textContent = msg || '';
         el.hidden = !msg;
     }
+    // docs/141 4q: the ONE vertical scroller is #table-pane (the wrap is a
+    // frame now) -- hydration listens to, and measures, that element. The
+    // wrap fallback keeps a table mounted outside the pane (a test page)
+    // working; a jsdom harness defines its geometry on the pane.
+    function _scrollerOf(t) {
+        return document.getElementById('table-pane') || t.closest('.bulk-table-wrap') || t.parentElement;
+    }
+    // docs/141 4q: the toolbar rows, the chip bar and the pair divider are as
+    // wide as their containing block, so position:sticky has no room to hold
+    // them while the pane scrolls sideways (real Chrome: the toolbar left at
+    // -2475 px). Move them by the pane's scrollLeft instead, one rAF per
+    // scroll event, so the search box and Apply all stay where the user is.
+    var _BAR_SEL = '.bulk-toolbar, .bulk-chipbar, .bulk-pair-divider, .bulk-dyn-truncated, .bulk-virt-note';
+    function _pinBars(scroller) {
+        var x = scroller.scrollLeft || 0;
+        var tf = x ? 'translateX(' + x + 'px)' : '';
+        (scroller.querySelectorAll ? scroller : document).querySelectorAll(_BAR_SEL).forEach(function (b) { if (b.style.transform !== tf) b.style.transform = tf; });
+    }
+    function _pinBarsToScroll() {
+        var t = table(); if (!t) return;
+        var s = _scrollerOf(t); if (!s) return;
+        if (!s._barsBound) {
+            s._barsBound = true;
+            var pending = false;
+            s.addEventListener('scroll', function () {
+                if (pending) return;
+                pending = true;
+                (window.requestAnimationFrame || function (f) { setTimeout(f, 0); })(function () { pending = false; _pinBars(s); });
+            }, { passive: true });
+        }
+        _pinBars(s);                                   // a re-mount with the pane already scrolled
+    }
     function _virtStyleEl() {
         var el = document.getElementById('bulk-virt-width-style');
         if (!el) { el = document.createElement('style'); el.id = 'bulk-virt-width-style'; document.head.appendChild(el); }
@@ -1844,7 +1876,7 @@
         // the client's own gates say (the server applied the same gates)
         var srv = _serverCold(t);
         if (!srv && tds.length < _VIRT_MIN_CELLS) return;
-        var wrap = t.closest('.bulk-table-wrap') || t.parentElement;
+        var wrap = _scrollerOf(t);
         // LAYOUT-FREE (docs/141 4i): nothing here reads offsetLeft, clientWidth
         // or any other geometry. Reading one before the first paint forces the
         // layout of the FULL 8,000-cell table (~450 ms on the 20Q chip), and
@@ -2692,6 +2724,7 @@
             // geometry of the PRUNED table) hydrates anything on screen it
             // called cold -- a drag-resized or zoomed grid (docs/141 4l-review)
             if (_virt) _virtOnScroll();
+            _pinBarsToScroll();      // docs/141 4q: the toolbar rows follow the pane's sideways scroll
             // docs/111 (#11): selection/fill/paste/pins + the dyn-reload
             // edit carry. Pins re-apply AFTER virtualization (a pinned cold
             // column is hydrated by _applyColPins itself).

@@ -96,7 +96,7 @@ function world(opts) {
     Object.defineProperty(h, 'offsetLeft', { get: function () { win.__geomReads++; return 60 + i * 400; } });
     Object.defineProperty(h, 'offsetWidth', { get: function () { win.__geomReads++; return 130; } });
   });
-  const wrap = win.document.querySelector('.bulk-table-wrap');
+  const wrap = win.document.getElementById('table-pane');    // docs/141 4q: the ONE scroller
   Object.defineProperty(wrap, 'clientWidth', { value: 200 });
   wrap.scrollLeft = 0;
   win.htmx = { ajax: function () {} };
@@ -164,6 +164,10 @@ async function main() {
   ok(win._log.fetches.length === 1 && /\/bulk\/cells\?cols=c3%2Cc4(&|$)/.test(win._log.fetches[0]),
      'one request carries every due column and only those (' + win._log.fetches.join(' | ') + ')');
   ok(/chip=chipA/.test(win._log.fetches[0] || ''), 'the request names the chip the page was rendered for');
+  // docs/141 4q: the pane is the ONE scroller, so the toolbar row is moved
+  // along with it (it would otherwise scroll out to the left)
+  ok(doc.querySelector('.bulk-toolbar').style.transform === 'translateX(1200px)',
+     'the toolbar follows the pane\'s sideways scroll (' + doc.querySelector('.bulk-toolbar').style.transform + ')');
   st = win.BulkEdit._virtState();
   ok(st && st.inflight.length === 2, 'the two columns are in flight');
   W.wrap.dispatchEvent(new win.Event('scroll'));       // a second pass while in flight
