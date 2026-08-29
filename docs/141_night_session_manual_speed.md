@@ -1150,6 +1150,21 @@ tail, since the closer binds a tick later — a click on the Settings button
 never closing the Calculator; 31 asserts). Mutation-checked 3/3 (the closer
 ignoring nothing, no click threshold, the frame rule placed early).
 
+## 4v. The double frame on "Review N schema changes" (2026-08-29, user-directed)
+
+The Environment-schema review (and the type-fix repair dialog) ride the
+shared `.ch-overlay` / `.ch-card` shell and put their own `.tfx-card` inside
+it; `.tfx-host` strips the shell's padding, background and shadow so one
+frame shows. As a single class it lost to `.ch-card`, defined later at the
+same specificity — so both frames painted: measured in real Chrome, the
+inner card sat 20 px right and 16 px down of the outer and 40 px wider than
+the outer's content box, the × on the outer edge. The rule is
+`.ch-card.tfx-host` now (two classes beat source order); measured after, the
+host and the inner card coincide exactly (240,302 · 920×296), the host
+transparent and shadowless. Same lesson as §4u's frame rule: at equal
+specificity, source order decides — say so with specificity when a rule
+must win. Pinned by `tests/test_modal_frames.py`.
+
 ## 5. Tooling that came out of the night
 
 `scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js` (+ daytime: `cdp_profile.js` function-level CPU profile, `cdp_trace.js` per-phase trace of one keystroke, `cdp_type.js` char-by-char typing with a gap + debounce override, `cdp_undo.js` trusted Ctrl+Z/Ctrl+Shift+Z through the page's own UI, `cdp_virt.js` virtualization sampler): Chrome headless with the

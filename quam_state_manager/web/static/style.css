@@ -10957,7 +10957,14 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 /* ── Stored-as-text auto-correction dialog (docs/77) ──────────────────────
    Rides the shared .ch-overlay / .ch-card modal chrome; only the plan table
    and its "what SM will not touch" section are specific here. */
-.tfx-host { padding: 0; background: none; box-shadow: none; }
+/* docs/141 4v: the host is the shared .ch-card shell and the dialog's own
+   .tfx-card sits INSIDE it -- this rule strips the shell so only one frame
+   shows. As a single class it lost to `.ch-card` (defined later, same
+   specificity): both frames painted, the inner card 20 px right / 16 px down
+   of the outer and 40 px wider than its content box -- the "odd border" the
+   user saw on Review N schema changes (measured in real Chrome). Two classes
+   win regardless of source order. */
+.ch-card.tfx-host { padding: 0; background: none; box-shadow: none; border-radius: 0; }
 .tfx-card {
     background: var(--pico-card-background-color);
     border-radius: 12px; padding: .8rem 1rem .7rem;
