@@ -13325,7 +13325,12 @@ document.addEventListener('htmx:afterSwap', function(evt) {
         }, delayMs);
     }
 
+    // docs/141 4p: a wake that arrives while a poll is in flight is not lost
+    // and not doubled -- it runs once more when this one lands.
+    var _inFlight = false, _wakeAgain = false;
     function pollForNewRuns() {
+        if (_inFlight) { _wakeAgain = true; return; }
+        _inFlight = true;
         _fetchWithTimeout('/datasets/poll', POLL_FETCH_TIMEOUT_MS)
             .then(function(r) {
                 if (!r.ok) throw new Error("HTTP " + r.status);
@@ -13361,6 +13366,10 @@ document.addEventListener('htmx:afterSwap', function(evt) {
                 var backoff = Math.min(POLL_SECS * 1000 * Math.pow(2, _failures - 1),
                                        POLL_MAX_BACKOFF_MS);
                 _schedule(backoff);
+            })
+            .finally(function() {
+                _inFlight = false;
+                if (_wakeAgain) { _wakeAgain = false; if (_pollTimer) clearTimeout(_pollTimer); pollForNewRuns(); }
             });
     }
 
@@ -13389,6 +13398,22 @@ document.addEventListener('htmx:afterSwap', function(evt) {
             pollForNewRuns();
         }
     });
+    // docs/141 4p: the server's run watcher (live-wake.js) says a run folder
+    // changed -- poll NOW instead of at the next 60 s tick. That is what makes
+    // the new-run popup appear about a second after qualibrate saves.
+    document.addEventListener("sm:runs-changed", function() {
+        if (_pollTimer) clearTimeout(_pollTimer);
+        pollForNewRuns();
+    });
+    window.NewRunPoll = { pollNow: function () { if (_pollTimer) clearTimeout(_pollTimer); pollForNewRuns(); },
+                          _state: function () { return { inFlight: _inFlight, wakeAgain: _wakeAgain }; } };
+    // docs/141 4p: the FIRST poll only records the baseline ("the latest run
+    // is this one") and never pops. It used to happen at the first
+    // visibilitychange, so on a freshly opened page the first WAKE became the
+    // baseline and the run that caused it was never shown (real Chrome, 2026-
+    // 08-29). Baseline shortly after load instead; a run landing inside this
+    // 1.5 s window is the one case the wake cannot announce.
+    _schedule(1500);
 
     function _showNewRunPopup(data) {
         var popup = document.getElementById('new-run-popup');

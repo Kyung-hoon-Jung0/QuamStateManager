@@ -939,6 +939,67 @@ QueryEngine / page / history index + upgrade, the jump-guard wiring) +
 `chip_density_selfcheck.cjs` (21 asserts: per-panel size + the jump guard);
 mutation-checked 4/4.
 
+## 4p. A new run folder reaches the screen in well under a second (2026-08-29, user-directed)
+
+**The ask.** "When qualibrate finishes and saves a new experiment folder, the
+popup should appear almost at once." Before: the new-run popup rode the
+sidebar's 60 s `/datasets/poll`, the Datasets table its 5 s
+`/datasets/changes-since` — a 5–60 s wait, by design, and every shorter
+interval would have been a scan tax on an idle lab.
+
+**The design (the user chose it from the proposal, then "do it now").**
+Push, not faster polling. `core/run_watch.py` is a stat-based watcher
+(`watchdog` is not in the customer envs): every 0.5 s a daemon thread takes
+each active dataset root's *signature* — the root's mtime, the newest date
+directory's name + mtime, the newest run directory's name + mtime + the
+count — and bumps a tick when any of them moves. Two `scandir`s and three
+`stat`s per root, ~1 ms. NTFS/ext4 move a directory's mtime when an entry
+appears, so a new run directory moves the date directory; qualibrate then
+writes node.json into the run over some hundreds of ms, which moves the run
+directory — the second tick is what turns docs/80's `incomplete` run into a
+complete one on screen. `GET /datasets/wait?since=<tick>` long-polls on the
+watcher's condition (≤25 s, one thread per waiting window — the servers all
+run `threaded=True`), refreshing the watched roots from the active dataset
+folders on every call; `since=-1` is the handshake, answered at once and
+never as a change. `live-wake.js` (a core script) keeps ONE wait open,
+wakes the consumers on a moved tick — `sm:runs-changed` for the popup poll,
+`DatasetVirtual.pollNow()` for the table — pauses while the tab is hidden,
+backs off exponentially on failure. The existing polls keep their cadence as
+the safety net; this only makes them fire NOW. Both consumers got an
+in-flight guard: a wake during a poll runs once more after it, never in
+parallel.
+
+**Three things only real Chrome showed (a scratch workspace root, a run
+directory created then node.json 150 ms later, the popup watched at 50 ms).**
+① The first cut's client swallowed the first answer ("the page just loaded")
+— but on a fresh server the first REAL change is tick 0 → 1, and it arrived
+as that first answer: no popup. Hence the `since=-1` handshake. ② A root
+added at the handshake was baselined by the thread's next look, so a run
+landing in that half second was folded into the baseline: `set_roots` now
+baselines a new root synchronously. ③ The popup poll's own first run — the
+one that records "the latest run is this one" and never pops — used to
+happen at the first `visibilitychange`, so on a freshly opened page the
+first WAKE became the baseline and the run that caused it was never shown;
+it now baselines 1.5 s after load. Measured after the three fixes, three
+trials: **popup visible 544 / 221 / 360 ms after the folder appeared** (the
+node.json landed at +150 ms), no console errors.
+
+**Honest limits.** A run landing inside the first 1.5 s of a page's life is
+announced by the 60 s poll, not the wake. A root that cannot be read never
+ticks (the polls still scan it). One waiting thread per open window: fine
+for a lab's 1–3 windows, not a public server. The stat signature reads the
+NEWEST date directory only — a run written into an old date (a clock skew,
+a re-run into yesterday's folder) is caught by the regular polls.
+
+Pinned by `tests/test_run_watch.py` (the signature's four movers and
+non-movers, baseline-then-tick, roots churn, early wake vs timeout, a
+raising signature, the route's clamps + handshake + one-interval answer +
+one watcher per app, the wiring) + `live_wake_selfcheck.cjs` (22 asserts:
+handshake, one in flight, wake once per change, backoff 1 s / 2 s, hidden /
+visible / stop, the popup poll's in-flight guard). Mutation-checked 4/4
+(a watcher that never ticks, a handshake that wakes, two in flight, a popup
+poll that ignores the wake).
+
 ## 5. Tooling that came out of the night
 
 `scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js` (+ daytime: `cdp_profile.js` function-level CPU profile, `cdp_trace.js` per-phase trace of one keystroke, `cdp_type.js` char-by-char typing with a gap + debounce override, `cdp_undo.js` trusted Ctrl+Z/Ctrl+Shift+Z through the page's own UI, `cdp_virt.js` virtualization sampler): Chrome headless with the

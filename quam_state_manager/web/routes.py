@@ -19495,6 +19495,57 @@ def datasets_rescan():
     return redirect(url_for("main.datasets"))
 
 
+def _run_watcher():
+    """The one RunWatcher per app (docs/141 §4p), started on first use. It
+    watches whatever the active dataset folders are at each /datasets/wait."""
+    from quam_state_manager.core import run_watch
+    app = current_app._get_current_object()
+    w = app.config.get("run_watcher")
+    if w is None:
+        w = run_watch.RunWatcher()
+        app.config["run_watcher"] = w
+    if not w.running:
+        w.start()
+    return w
+
+
+@bp.route("/datasets/wait")
+def datasets_wait():
+    """docs/141 §4p — long-poll: answer when a run folder changed, else after
+    the timeout. ``since`` is the tick the client last saw; ``timeout`` is
+    clamped to 25 s. The watched roots are refreshed from the active dataset
+    folders on every call, so a folder added or removed in the UI is picked
+    up within one wait. Never an error: an unreadable root simply never
+    changes; a watcher failure answers the current tick after the timeout."""
+    w = _run_watcher()
+    try:
+        since = int(request.args.get("since", "0"))
+    except (TypeError, ValueError):
+        since = 0
+    try:
+        timeout = float(request.args.get("timeout", "25"))
+    except (TypeError, ValueError):
+        timeout = 25.0
+    try:
+        active = _active_dataset_stores(fast=True)
+        w.set_roots([f["path"] for f in active if f.get("path")])
+    except Exception:
+        logger.exception("datasets/wait: could not resolve the active data folders")
+    if since < 0:
+        # the handshake: "what is your tick now?" -- answered at once, never
+        # a change (the page has just loaded and polled). Every later wait
+        # carries a real cursor, so the FIRST change on a fresh server (tick
+        # 0 -> 1) is reported as the change it is.
+        tick = w.wait(w.tick, 0.0)
+        resp = jsonify({"tick": tick, "changed": False, "roots": len(w.roots)})
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+    tick = w.wait(since, timeout)
+    resp = jsonify({"tick": tick, "changed": tick != since, "roots": len(w.roots)})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @bp.route("/datasets/poll")
 def datasets_poll():
     """New-run poll across ALL active folders.

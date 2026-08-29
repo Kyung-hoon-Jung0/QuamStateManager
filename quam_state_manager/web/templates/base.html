@@ -86,6 +86,9 @@
     <script src="{{ asset_url('calc.js') }}"></script>
     <script src="{{ asset_url('manual.js') }}"></script>
     <script src="{{ asset_url('undo-trail.js') }}"></script>
+    {# docs/141 4p: the long-poll that wakes the run polls the moment a run
+       folder changes — core (the new-run popup lives on every page). #}
+    <script src="{{ asset_url('live-wake.js') }}"></script>
     {% set bundle_files = {
         'grid': ['bulk-edit.js', 'pair-edit.js', 'all-values.js'],
         'pulses': ['pulses.js'],
