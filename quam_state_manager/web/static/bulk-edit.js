@@ -153,6 +153,12 @@
             var keys = _dynHidden();
             evt.detail.path = _bulkSetQueryParam(p, 'dynhide', keys.length ? keys.join(',') : '');
             if (evt.detail.parameters) delete evt.detail.parameters['dynhide'];
+            // docs/141 4n: the viewport the server plans its cold columns for
+            // (screen.availWidth — no layout read; the server is conservative
+            // with it, never fewer hot columns than _virtInit would keep)
+            var vw = (window.screen && window.screen.availWidth) || 0;
+            evt.detail.path = _bulkSetQueryParam(evt.detail.path, 'vw', vw > 0 ? String(vw) : '');
+            if (evt.detail.parameters) delete evt.detail.parameters['vw'];
         });
     }
     // Re-GET /bulk into the table pane — the same idiom the cross-surface
@@ -1195,6 +1201,11 @@
     // ── sort + per-column min/max ────────────────────────────────────────────
     function sort(key) {
         var t = table(); if (!t) return;
+        // a server-cold column has no values to sort by yet: fetch, then sort
+        if (_virt && _virt.remote && _virt.remote.has(key)) {
+            _virtHydrateCols([key]).then(function () { if (!(_virt && _virt.remote && _virt.remote.has(key))) sort(key); });
+            return;
+        }
         var tbody = t.querySelector('tbody');
         if (sortKey === key) sortDir = -sortDir; else { sortKey = key; sortDir = 1; }
         var rows = _rows();
@@ -1677,7 +1688,8 @@
         var byResolved = {};
         (results || []).forEach(function (res) { if (res.resolved_path) byResolved[res.resolved_path] = res; });
         if (!Object.keys(byResolved).length) return;
-        _virtHydrateAll();           // docs/105 #1 - path-addressed repaint must see every input
+        _virtHydrateLocal();         // docs/105 #1 - path-addressed repaint must see every input
+                                     // (a server-cold column arrives fresh from the working copy)
         _cells(t).forEach(function (c) {
             if (c.getAttribute('data-linkable') !== '1') return;   // only linked siblings cross-sync
             var res = byResolved[c.getAttribute('data-resolved')];
@@ -1720,7 +1732,43 @@
     var _VIRT_MIN_CELLS = 600;       // pre-filter only — the real gate is below
     var _VIRT_MIN_COLD = 800;        // cold CELLS that make the detach worth it
     var _VIRT_BUFFER = 1.5;          // hydrate up to 1.5 viewports ahead
-    var _virt = null;                // { html:Map, vals:Map, cold:Set, wrap }
+    var _virt = null;                // { html:Map, vals:Map, cold:Set, remote:Set, inflight:Map, wrap, byPath }
+    // docs/141 4n: the SERVER now renders the columns past the look-ahead
+    // window as empty tds (class bulk-td-cold) and ships their values in
+    // #bulk-cold-map; _virtInit adopts them into the same _virt structure the
+    // client-side detach fills, marked `remote` — hydration of a remote column
+    // is GET /bulk/cells (the page's own cell macro), of a local one the
+    // stashed fragment. Everything downstream (search, stats, repaints,
+    // navigation) sees one cold set.
+    function _serverCold(t) {
+        var tds = t.querySelectorAll('tbody td.bulk-td-cold[data-col-key]');
+        if (!tds.length) return null;
+        var keys = new Set();
+        Array.prototype.forEach.call(tds, function (td) { keys.add(td.getAttribute('data-col-key')); });
+        var map = { rows: [], cols: {} };
+        try {
+            var el = document.getElementById('bulk-cold-map');
+            if (el) map = JSON.parse(el.textContent || '{}') || map;
+        } catch (e) { map = { rows: [], cols: {} }; }
+        var rowIndex = {};
+        (map.rows || []).forEach(function (id, i) { rowIndex[id] = i; });
+        return { keys: keys, map: map, rowIndex: rowIndex };
+    }
+    function _virtNote(msg) {
+        var t = table(); if (!t) return;
+        var wrap = t.closest('.bulk-table-wrap') || t.parentElement;
+        var el = document.getElementById('bulk-virt-note');
+        if (!el) {
+            if (!msg) return;
+            el = document.createElement('p');
+            el.id = 'bulk-virt-note'; el.className = 'muted bulk-virt-note';
+            el.style.cssText = 'margin:.15rem 0 .3rem;font-size:.78em';
+            el.setAttribute('aria-live', 'polite');
+            if (wrap && wrap.parentNode) wrap.parentNode.insertBefore(el, wrap); else return;
+        }
+        el.textContent = msg || '';
+        el.hidden = !msg;
+    }
     function _virtStyleEl() {
         var el = document.getElementById('bulk-virt-width-style');
         if (!el) { el = document.createElement('style'); el.id = 'bulk-virt-width-style'; document.head.appendChild(el); }
@@ -1792,7 +1840,10 @@
         _virtStyleEl().textContent = '';
         var t = table(); if (!t) return;
         var tds = t.querySelectorAll('tbody td[data-col-key]');
-        if (tds.length < _VIRT_MIN_CELLS) return;
+        // server-cold columns are ALREADY empty: they must be adopted whatever
+        // the client's own gates say (the server applied the same gates)
+        var srv = _serverCold(t);
+        if (!srv && tds.length < _VIRT_MIN_CELLS) return;
         var wrap = t.closest('.bulk-table-wrap') || t.parentElement;
         // LAYOUT-FREE (docs/141 4i): nothing here reads offsetLeft, clientWidth
         // or any other geometry. Reading one before the first paint forces the
@@ -1826,14 +1877,19 @@
                 var forced = _colWidths && _colWidths[k0] ? parseFloat(_colWidths[k0]) : 0;
                 if (forced > 0) { est[k0] = forced + _VIRT_EST_PAD; return; }
                 var inp = td.querySelector('.bulk-cell');
-                var size = inp ? (parseInt(inp.getAttribute('size'), 10) || 8) : 8;
+                if (!inp) return;      // a server-cold cell: the header's data-maxlen decides (below)
+                var size = parseInt(inp.getAttribute('size'), 10) || 8;
                 est[k0] = size * pxChar + _VIRT_EST_PAD;
             });
         }
         var widths = [];
         t.querySelectorAll('th.bulk-col-head[data-col-key]').forEach(function (h) {
             var k = h.getAttribute('data-col-key');
-            var w = est[k] || (8 * pxChar + _VIRT_EST_PAD);
+            // docs/141 4n: the server's value-fit width (data-maxlen) is the
+            // same number the input's size attr carried — it is what makes a
+            // server-cold column's freeze exact with no cell to read
+            var ml = parseInt(h.getAttribute('data-maxlen'), 10);
+            var w = est[k] || ((ml > 0 ? ml : 8) * pxChar + _VIRT_EST_PAD);
             var label = h.querySelector('.bulk-col-label');
             var lw = label ? label.textContent.length * 7.5 + 30 : 0;
             // freeze a cold column at its ESTIMATED value-fit width (by
@@ -1847,20 +1903,38 @@
                 if (ck) widths.push('#bulk-table th.' + ck[1] + '{min-width:' + Math.round(Math.max(w, lw)) + 'px}');
             };
             if (_thHidden(h)) { cold.add(k); freeze(); return; }
-            if (x > edge) { cold.add(k); freeze(); }
+            // a server-cold column is cold whatever the client's estimate says
+            // (its cells are not here); it still takes its width on screen
+            if (x > edge || (srv && srv.keys.has(k))) { cold.add(k); freeze(); }
             x += Math.max(w, lw);
         });
-        if (!cold.size) return;
-        // The real gate: enough cells actually go cold to repay detaching them.
-        if (cold.size * _rows().length < _VIRT_MIN_COLD) return;
+        if (!srv) {
+            if (!cold.size) return;
+            // The real gate: enough cells actually go cold to repay detaching them.
+            if (cold.size * _rows().length < _VIRT_MIN_COLD) return;
+        }
         // byPath: dot path -> column key for every detached cell, so a
         // path-addressed repaint (undo) hydrates ONE column, not the grid
-        _virt = { html: new Map(), vals: new Map(), cold: cold, wrap: wrap, byPath: {} };
+        _virt = { html: new Map(), vals: new Map(), cold: cold, wrap: wrap, byPath: {},
+                  remote: new Set(), inflight: new Map(), failed: 0 };
         _virtStyleEl().textContent = widths.join('\n');
         _ph('virt: plan');
         Array.prototype.forEach.call(tds, function (td) {
             var colKey = td.getAttribute('data-col-key');
             if (!_virt.cold.has(colKey)) return;
+            if (srv && td.classList.contains('bulk-td-cold') && srv.keys.has(colKey)) {
+                // a server-cold cell: its value + paths come from the map
+                _virt.remote.add(colKey);
+                var tr = td.parentNode;
+                var ri = srv.rowIndex[tr && tr.getAttribute ? tr.getAttribute('data-qubit') : ''];
+                var ent = (srv.map.cols && srv.map.cols[colKey] && ri != null) ? srv.map.cols[colKey][ri] : null;
+                if (ent) {
+                    if (ent[0]) _virt.vals.set(td, String(ent[0]).toLowerCase());
+                    if (ent[1]) _virt.byPath[ent[1]] = colKey;
+                    if (ent[2]) _virt.byPath[ent[2]] = colKey;
+                }
+                return;
+            }
             var inp = td.querySelector('.bulk-cell');
             var v = inp ? String(inp.value) : (td.textContent || '');
             if (inp) {
@@ -1879,7 +1953,7 @@
             _virt.html.set(td, frag);
             td.classList.add('bulk-td-cold');
         });
-        _ph('virt: detach ' + _virt.html.size + ' cells');
+        _ph('virt: detach ' + _virt.html.size + ' cells' + (_virt.remote.size ? ', ' + _virt.remote.size + ' server-cold columns' : ''));
         if (wrap && !wrap._virtScrollBound) {
             wrap._virtScrollBound = true;
             wrap.addEventListener('scroll', _virtOnScroll, { passive: true });
@@ -1891,11 +1965,20 @@
     function _thHidden(h) {
         return h.classList.contains('bulk-col-hidden') || h.classList.contains('bulk-search-hidden');
     }
+    // Returns a Promise that resolves when every named column is here: the
+    // local ones (stashed fragments) synchronously, before it is even
+    // returned; the server-cold ones after GET /bulk/cells lands. A caller
+    // that only needs what can be had NOW ignores the promise.
+    var _resolved = { then: function (f) { try { f(); } catch (e) {} return _resolved; }, catch: function () { return _resolved; } };
     function _virtHydrateCols(keys) {
-        if (!_virt || !keys || !keys.length) return;
+        if (!_virt || !keys || !keys.length) return _resolved;
         var due = keys.filter(function (k) { return _virt.cold.has(k); });
-        if (!due.length) return;
-        var t = table(); if (!t) { _virt = null; return; }
+        if (!due.length) return _resolved;
+        var t = table(); if (!t) { _virt = null; return _resolved; }
+        var remote = due.filter(function (k) { return _virt.remote.has(k); });
+        due = due.filter(function (k) { return !_virt.remote.has(k); });
+        var pending = remote.length ? _virtFetch(remote) : null;
+        if (!due.length) return pending || _resolved;
         // ONE cold-cell scan + ONE PhysAmp pass for the whole batch. The old
         // per-column path (a full-table querySelectorAll AND a whole-table
         // PhysAmp.applyAll per column) is what made a broad patch press cost
@@ -1916,7 +1999,12 @@
             }
             td.classList.remove('bulk-td-cold');
         });
-        if (!_virt.cold.size) { _virt = null; _virtStyleEl().textContent = ''; }
+        _virtLanded(t, set);
+        return pending || _resolved;
+    }
+    // the common tail of a hydration, local or remote
+    function _virtLanded(t, set) {
+        if (_virt && !_virt.cold.size) { _virt = null; _virtStyleEl().textContent = ''; }
         _hayCache = null;            // hydrated inputs join the DOM haystacks
         // a cold column's header stats were left alone (below); now that its
         // cells are here, compute them -- for these columns only
@@ -1926,16 +2014,90 @@
         // the re-inserted text would be stale; reformat on arrival.
         if (window.PhysAmp) window.PhysAmp.applyAll(t);
     }
-    function _virtHydrateCol(key) { _virtHydrateCols([key]); }
+    // docs/141 4n: fetch the cells of server-cold columns. ONE request per
+    // batch, a column already in flight is not asked for twice, a failed
+    // batch stays cold (the next pass asks again) and says so in one line.
+    // The chip name guards against another chip having been opened in this
+    // server context since the page rendered (409 → the columns stay empty
+    // and the note says why; the state-changed refresh re-renders the pane).
+    function _virtFetch(keys) {
+        var v = _virt;
+        var fresh = keys.filter(function (k) { return !v.inflight.has(k); });
+        var waits = keys.map(function (k) { return v.inflight.get(k); }).filter(Boolean);
+        if (fresh.length) {
+            var url = '/bulk/cells?cols=' + encodeURIComponent(fresh.join(','));
+            var dh = _dynHidden();
+            if (dh.length) url += '&dynhide=' + encodeURIComponent(dh.join(','));
+            if (QMETA && QMETA.chip) url += '&chip=' + encodeURIComponent(QMETA.chip);
+            var req = fetch(url, { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
+                .then(function (r) {
+                    return r.json().catch(function () { return {}; }).then(function (d) {
+                        if (!r.ok || !d || !d.ok) {
+                            var err = new Error((d && d.error) || ('HTTP ' + r.status));
+                            err.status = r.status;
+                            throw err;
+                        }
+                        return d;
+                    });
+                })
+                .then(function (d) {
+                    fresh.forEach(function (k) { v.inflight.delete(k); });
+                    if (_virt !== v) return;                 // a re-mount happened meanwhile
+                    _virtApplyCells(d.cells || {}, fresh);
+                    if (v.failed) { v.failed = 0; _virtNote(''); }
+                })
+                .catch(function (e) {
+                    fresh.forEach(function (k) { v.inflight.delete(k); });
+                    if (_virt !== v) return;
+                    v.failed = (v.failed || 0) + fresh.length;
+                    _virtNote(fresh.length + ' column' + (fresh.length === 1 ? '' : 's') + ' could not be loaded'
+                        + (e && e.status === 409 ? ' — ' + e.message + '; reload the page' : ' — scroll again to retry')
+                        + (e && e.message && e.status !== 409 ? ' (' + e.message + ')' : ''));
+                });
+            fresh.forEach(function (k) { v.inflight.set(k, req); });
+            waits.push(req);
+        }
+        return Promise.all(waits).then(function () {}, function () {});
+    }
+    // land fetched cells: the td's contents become the server's markup (the
+    // same macro the page rendered with), the column leaves the cold set
+    function _virtApplyCells(cells, keys) {
+        var t = table(); if (!t || !_virt) return;
+        var set = {};
+        keys.forEach(function (k) {
+            if (!cells[k]) return;                  // not answered: stays cold, retried
+            set[k] = 1; _virt.cold.delete(k); _virt.remote.delete(k);
+        });
+        if (!Object.keys(set).length) return;
+        t.querySelectorAll('td.bulk-td-cold').forEach(function (td) {
+            var k = td.getAttribute('data-col-key');
+            if (!k || !set[k]) return;
+            var tr = td.parentNode;
+            var id = tr && tr.getAttribute ? tr.getAttribute('data-qubit') : '';
+            var html = cells[k][id];
+            td.innerHTML = html != null ? html : '';
+            _virt.vals.delete(td);
+            td.classList.remove('bulk-td-cold');
+        });
+        _virtLanded(t, set);
+    }
+    function _virtHydrateCol(key) { return _virtHydrateCols([key]); }
     function _virtEnsureTd(td) {
         if (_virt && td) {
             var k = td.getAttribute('data-col-key');
+            // a local column is here before this returns; a server-cold one
+            // starts its fetch and is here on the next keypress / scroll pass
             if (k && _virt.cold.has(k)) _virtHydrateCol(k);
         }
     }
     function _virtHydrateAll() {
+        if (!_virt) return _resolved;
+        return _virtHydrateCols(Array.from(_virt.cold));
+    }
+    // only what can be had without a request: the client-detached fragments
+    function _virtHydrateLocal() {
         if (!_virt) return;
-        _virtHydrateCols(Array.from(_virt.cold));
+        _virtHydrateCols(Array.from(_virt.cold).filter(function (k) { return !_virt.remote.has(k); }));
     }
     var _virtScrollPending = false;
     function _virtOnScroll(immediate) {
@@ -1952,14 +2114,24 @@
             if (!_virt) return;
             var t = table(); if (!t) return;
             var wrap = _virt.wrap;
-            var edge = (wrap ? wrap.scrollLeft + wrap.clientWidth : 0)
-                + ((wrap && wrap.clientWidth) || 1200) * _VIRT_BUFFER;
+            var cw = (wrap && wrap.clientWidth) || 1200;
+            var edge = (wrap ? wrap.scrollLeft + wrap.clientWidth : 0) + cw * _VIRT_BUFFER;
+            // docs/141 4n: a WINDOW, not everything left of the edge. A jump
+            // to the far right (the scrollbar dragged) used to hydrate every
+            // column the user skipped over -- with server-cold columns that
+            // was one request for the whole grid (198 columns on the 20Q
+            // chip, measured). Columns left of the window stay cold; scrolling
+            // back runs this pass again, and keyboard navigation hydrates
+            // through _virtEnsureTd regardless.
+            var left = (wrap ? wrap.scrollLeft : 0) - cw * _VIRT_BUFFER;
             var due = [];
             t.querySelectorAll('th.bulk-col-head[data-col-key]').forEach(function (h) {
                 var k = h.getAttribute('data-col-key');
                 // a hidden column (search or checkbox) reports offsetLeft 0 --
                 // it is not on screen, do not hydrate it
-                if (_virt && _virt.cold.has(k) && !_thHidden(h) && h.offsetLeft < edge) due.push(k);
+                if (!_virt || !_virt.cold.has(k) || _thHidden(h)) return;
+                var x = h.offsetLeft;
+                if (x < edge && x + (h.offsetWidth || 0) > left) due.push(k);
             });
             _virtHydrateCols(due);
     }
@@ -2332,7 +2504,15 @@
         var missing = _editCarry.list.some(function (it) {
             return !t.querySelector('.bulk-cell[data-dot-path="' + _cssEsc(it.dp) + '"]');
         });
-        if (missing) _virtHydrateAll();
+        if (missing) {
+            var pending = _virtHydrateAll();
+            if (_virt && _virt.remote && _virt.remote.size) {
+                var carry = _editCarry;
+                _editCarry = null; window._dynReloadAt = 0;
+                pending.then(function () { _editCarry = carry; carry.at = Date.now(); _consumeEditCarry(); });
+                return;
+            }
+        }
         var n = 0, lost = 0;
         _editCarry.list.forEach(function (it) {
             var c = t.querySelector('.bulk-cell[data-dot-path="' + _cssEsc(it.dp) + '"]');
@@ -3166,7 +3346,9 @@
             entries.forEach(function (e) {
                 if (!e || !e.dot_path || sel(e.dot_path).length) return;
                 var ck = _virt.byPath && _virt.byPath[e.dot_path];
-                if (ck && dueKeys.indexOf(ck) < 0) dueKeys.push(ck);
+                // a server-cold column needs no repaint: it is rendered from
+                // the (already reverted) working copy when it is fetched
+                if (ck && !_virt.remote.has(ck) && dueKeys.indexOf(ck) < 0) dueKeys.push(ck);
             });
             if (dueKeys.length) _virtHydrateCols(dueKeys);
         }
@@ -3231,6 +3413,13 @@
         return { patched: patched, missing: missing, covered: covered, uncovered: uncovered };
     }
     BulkEdit.revertPaths = _revertPaths;
+    BulkEdit._virtState = function () {
+        return _virt ? { cold: Array.from(_virt.cold), remote: Array.from(_virt.remote),
+                         inflight: Array.from(_virt.inflight.keys()), failed: _virt.failed || 0 } : null;
+    };
+    BulkEdit._virtHydrateCols = _virtHydrateCols;
+    BulkEdit._setCarry = function (c) { _editCarry = c; };
+    BulkEdit._syncApplied = _syncAppliedAcrossTable;
 
     // docs/111 test hooks (jsdom selfcheck drives the internals directly)
     BulkEdit._ge = {

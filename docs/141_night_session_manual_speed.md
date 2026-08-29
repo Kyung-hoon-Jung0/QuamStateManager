@@ -773,6 +773,103 @@ the real grids, 22 asserts). Mutation-checked 5/5 — a glued sibling, the old
 template, no chip creation, no message creation, a chip created on mouseout
 each trip exactly the pin written for it.
 
+## 4n. The server stops rendering what the client was about to throw away (2026-08-29, user-directed)
+
+**The decision.** After §4m the user chose option 3 of the six offered —
+"do it now, while the code is still this size; modularity and stability
+both, and speed" — so the columns past the client's look-ahead window are
+now rendered COLD on the server: an empty `<td>` that keeps its identity
+(`ck-N`, the flag classes, `data-col-key`) plus one value map, and filled on
+demand. Before this the server rendered every one of ~8,000 cells for the
+client to detach two thirds of them at mount (docs/105): 68% of the
+server's time was Jinja (cProfile: 0.67 s of 0.98 s under the profiler —
+`_build_bulk_cell` was 0.16 s, gzip 0.05 s), and the client parsed 4,000
+cells it then pulled out of the DOM.
+
+**One renderer, three seams.** The cell contents moved out of
+`_bulkedit.html` into `_bulk_cell_macros.html` (`qubit_cell`, `pair_cell`):
+the page renders every hot cell through them and `GET /bulk/cells` renders a
+cold column's cells through the SAME macro — a hydrated cell is byte-
+identical to one rendered with the page, and that identity is a pinned
+property, not a convention. `core/bulk_virt.py` is the planner: the
+client's own estimate mirrored (cumulative value-fit widths from `maxlen`
+against the viewport × 2.5, hidden-at-mount columns cold and widthless, the
+600-cell / 800-cold gates), deliberately CONSERVATIVE — px/char is the
+client's 16-px-root fallback (the smallest glyph it ever assumes) and an
+absent hint means a 1,920-px screen — so a server-cold column is always one
+the client would have detached, never fewer hot columns than before. The
+client's `htmx:configRequest` hook sends `vw=screen.availWidth` beside
+`dynhide`. `_qubit_bulk_grid()` left `bulk_edit()` so the grid can be
+memoized per context on (`mutation_seq`, change-log length, `dynhide`) —
+the all-values ETag's own key — and a hydration a moment after the page
+renders reads the very dicts the page rendered from; a mutation in between
+changes the key and the column arrives from the current working copy. The
+route takes `?cols=`, names unknown keys, answers 409 when a different chip
+is open in this context (`?chip=`), gzips like `/bulk`.
+
+**The client adopts, then fetches.** `_virtInit` reads the server-cold tds
+and `#bulk-cold-map` (display + paths per cell, row order) into the same
+`_virt` the client-side detach fills — `vals` for whole-chip search,
+`byPath` for path-addressed repaints — marked `remote`; it adopts them
+whatever its own gates say (the server applied the gates), reads no
+geometry (pinned), and freezes a cold column's width from the header's new
+`data-maxlen` (a cell-less column had no `size` to read; the estimate is
+now independent of row 0 for every column). `_virtHydrateCols` returns a
+promise: local fragments land before it returns, remote columns after ONE
+`GET /bulk/cells` per pass carrying every due column, a column in flight
+never asked for twice, a failed batch left cold with one honest line and
+retried on the next pass, a 409 naming the chip and asking for a reload.
+Callers that need a cell NOW: the apply-echo sync hydrates only local
+columns (a server-cold column is rendered from the working copy when
+fetched — hydrating it here would fetch the whole grid on every apply);
+the undo repaint skips remote columns for the same reason (they count as
+`missing`, which triggers no rebuild — docs/122's contract); the dyn-reload
+edit carry places what is here and the rest when the fetch lands; a sort by
+a cold column fetches, then sorts; Tab into a cold column starts the fetch
+and lands on the next keypress.
+
+**Proven identical, twice.** The macro refactor alone: the hot render's
+7,810 cells, 0 differences. Then the cold render (`vw=1600`, 4,040 cold
+cells, 202 columns) hydrated through `/bulk/cells` the way the client does
+and tokenised: 7,810 cells, 0 differences against the hot render. In-process
+on the PJ chip: `/bulk` 3,903,227 → 2,903,518 bytes (the cold map is 244 KB
+of that), warm server time 411 → 276 ms (the first render after a mutation
+builds the grid: ~420 ms), a 5-column hydration 6 ms / 43 KB.
+
+**Real Chrome (headless, PJ chip, b1b9050 served on 5198 beside this
+change on 5199, 10 alternating full loads each, medians).** Document
+3,812 → 2,848 KB; first byte 445 → 281 ms; DCL 1,510 → 953 ms; `load`
+1,814 → 1,253 ms; the mount's cold-column plan+detach is 6 ms for 340
+client-detached cells + 198 server-cold columns. Against the morning's
+e898cdb (§4m's baseline): document 8,767 → 2,848 KB, `load` 2,013 →
+1,253 ms, first byte 494 → 281 ms. Functional, on the same chip: a value
+that lives only in a cold column is found by the search (the row shown,
+"1 of 20"); scrolling the grid hydrates through `/bulk/cells` with no note
+and no console error; a hydrated cell is a real input — typing arms the
+row's Apply, restoring the value clears it. The first scroll-to-the-end
+fetched every column the user skipped (198 columns in one request), so the
+pass became a WINDOW: columns left of `scrollLeft − 1.5 viewports` stay
+cold until scrolled back to (keyboard navigation still hydrates through
+`_virtEnsureTd`).
+
+**Not in this cut, on purpose.** The PAIR grid renders whole (1,530 cells
+on this chip, ~0.6 MB): `pair-edit.js` has no virtualization at all and the
+qubit grid's mechanism is the one worth generalizing into a shared module
+before a second consumer appears — a follow-up, with the same golden. The
+cold td skeleton itself is ~0.5 MB (long derived keys in `data-col-key`,
+76 JS consumers); the 329 headers ~0.5 MB. Navigation into a cold column
+is one keypress late (the fetch), never wrong.
+
+Pinned by `tests/test_bulk_virt_server.py` (planner mirror + gates +
+hint clamping, the cold render and its map, hydration byte-identity against
+the hot render, the memo and its invalidation, the chip guard, gzip) +
+`bulk_virt_server_selfcheck.cjs` (36 asserts: adoption without geometry,
+data-maxlen freeze, cold-value search, one request per pass, in-flight
+dedup, landed markup, the windowed pass, failure + retry + 409 note,
+undo-missing without a fetch, the apply sync fetching nothing, the carry
+landing after the fetch, sort-after-fetch, the vw hint). Mutation-checked
+9/9.
+
 ## 5. Tooling that came out of the night
 
 `scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js` (+ daytime: `cdp_profile.js` function-level CPU profile, `cdp_trace.js` per-phase trace of one keystroke, `cdp_type.js` char-by-char typing with a gap + debounce override, `cdp_undo.js` trusted Ctrl+Z/Ctrl+Shift+Z through the page's own UI, `cdp_virt.js` virtualization sampler): Chrome headless with the

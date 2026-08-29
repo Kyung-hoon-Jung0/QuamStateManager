@@ -1,3 +1,5 @@
+{%- import '_bulk_cell_macros.html' as cells -%}
+{%- set cold_keys = cold_keys or [] -%}
 <div class="bulk-panel" id="bulk-panel">
     {# Title row: just the title + the help (ⓘ) toggle beside it. #}
     <div class="bulk-toolbar bulk-toolbar-title">
@@ -148,7 +150,7 @@
                 <tr class="bulk-head-row">
                     {% for c in columns %}
                     <th scope="col" class="bulk-col-head ck-{{ loop.index0 }}{% if not c.default_on %} bulk-col-hidden{% endif %}{% if c.group_start %} bulk-col-group-start{% endif %}"
-                        data-col-key="{{ c.key }}" data-section="{{ c.section }}"
+                        data-col-key="{{ c.key }}" data-section="{{ c.section }}" data-maxlen="{{ c.maxlen }}"
                         title="{{ c.section }} · click to sort · drag the right edge to resize">
                         <span class="bulk-col-label">{{ c.label }}</span>{% if c.unit %} <span class="bulk-col-unit unit">({{ c.unit }})</span>{% endif %}{% if c.multi %}<span class="bulk-col-multi" title="Some qubits carry up to {{ c.multi }} operations under this name — one per neighbour. Each cell shows and edits that qubit's first; hover a cell to see which one.">&#8314;</span>{% endif %}<span class="bulk-sort-caret" aria-hidden="true"></span>
                         <span class="bulk-col-stats muted" data-col-stats="{{ c.key }}"></span>
@@ -168,38 +170,13 @@
                 {% for row in rows %}
                 <tr data-qubit="{{ row.id }}">
                     <th class="bulk-rowhead" scope="row" data-col-key="__id__">{{ row.id }}</th>
-                {#- Cell markup (docs/141 §4m): ONE tag per line and Jinja whitespace
-                    control, so a rendered cell carries no whitespace-only text nodes
-                    except the single space that separates two INLINE siblings (the
-                    quote mark, the pointer glyph, the ✎ button) — a 20Q chip's grid
-                    went from 9.0 MB to ~3 MB and lost ~60,000 DOM nodes with the render
-                    pinned identical by tests/test_bulk_markup.py. The before→after
-                    hover chip (.bulk-ba) and the band message (.bulk-band-msg) are no
-                    longer rendered per cell: the grids create them on first use.
-                    r6 item 4: a real LIST value is a compact JSON preview + the ✎
-                    whole-value JSON editor (NOT a text input; the scalar coercer can't
-                    take a list). 'missing' = this qubit does not carry the leaf at all
-                    (a per-neighbour operation belonging to a pair it is not in) —
-                    deliberately NOT the same as declared-but-null, which stays a
-                    fillable box. r14 honesty: a string that reads like a number renders
-                    WITH its quotes (outside the input, so editing stays clean) — "0.13"
-                    the text must never look identical to 0.13 the real. docs/109: the
-                    TRUE physical output is always visible, recomputed live as the user
-                    types (data-phys-* attrs). -#}
                     {%- for cell in row.cells -%}
                     {%- set col = columns[loop.index0] -%}
-                    <td class="bulk-td ck-{{ loop.index0 }}{% if not col.default_on %} bulk-col-hidden{% endif %}{% if col.group_start %} bulk-col-group-start{% endif %}{% if cell.is_pointer %} bulk-td-pointer{% endif %}{% if cell.lo and cell.lo.peer_qubit %} bulk-td-lo{% endif %}{% if cell.kind in ('listedit', 'runtime', 'missing') %} bulk-td-ro{% endif %}" data-col-key="{{ col.key }}">
-                        {%- if cell.kind == 'listedit' -%}
-                        <span class="bulk-cell-list{% if cell.modified %} bulk-cell-modified{% endif %}" data-path="{{ cell.dot_path }}" title="{{ cell.dot_path }} — list value; ✎ edits the whole JSON">{{ cell.display }}</span> <button type="button" class="bulk-list-edit" title="Edit as JSON (Ctrl+Enter saves, Esc cancels)" onclick="BulkEdit.openJsonCell('{{ cell.dot_path }}', this)">&#9998;</button>
-                        {%- elif cell.kind in ('runtime', 'missing') -%}
-                        <input type="text" class="bulk-cell bulk-cell-ro{% if cell.kind == 'runtime' %} bulk-cell-runtime{% endif %}" value="{{ cell.display }}" size="{{ col.maxlen }}" readonly tabindex="-1" data-dot-path="{{ cell.dot_path }}" data-resolved="{{ cell.resolved_path }}" data-orig="{{ cell.display }}"{% if cell.kind == 'missing' %} placeholder="—"{% endif %} title="{{ cell.dot_path }}{% if cell.kind == 'runtime' %} — computed at runtime (read-only){% else %}this qubit does not carry this parameter{% endif %}">
-                        {%- else -%}
-                        {%- if cell.str_numeric %}<span class="bulk-strq" aria-hidden="true">"</span> {% endif -%}
-                        <input type="text" class="bulk-cell{% if cell.modified %} bulk-cell-modified{% endif %}{% if cell.str_numeric %} bulk-cell-str{% endif %}" value="{{ cell.display }}" size="{{ col.maxlen }}" data-dot-path="{{ cell.dot_path }}" data-resolved="{{ cell.resolved_path }}"{% if cell.linkable %} data-linkable="1"{% endif %}{% if cell.is_pointer %} data-is-pointer="1"{% endif %}{% if cell.str_numeric %} data-str-numeric="1"{% endif %} data-orig="{{ cell.display }}"{% if cell.modified %} data-baseline="{{ cell.old_display }}"{% endif %}{% if cell.lo %} data-lo-field="{{ cell.lo.field }}"{% if cell.lo.band is not none %} data-band="{{ cell.lo.band }}"{% endif %}{% if cell.lo.freq is not none %} data-freq="{{ cell.lo.freq }}"{% endif %}{% if cell.lo.peer_band is not none %} data-peer-band="{{ cell.lo.peer_band }}"{% endif %}{% if cell.lo.peer_qubit %} data-peer="{{ cell.lo.peer_qubit }}"{% endif %}{% endif %}{% if cell.missing %} placeholder="not set" data-missing="1"{% endif %}{% if cell.phys %} data-phys-kind="{{ cell.phys.kind }}"{% if cell.phys.kind == 'mw' %} data-phys-fsp="{{ cell.phys.fsp }}"{% endif %}{% endif %} title="{{ cell.dot_path }}{% if cell.str_numeric %} — stored as TEXT (string), not a real: edits keep text unless the type is converted (Json Tree View ⚙ → real, or edit there){% endif %}{% if cell.lo and cell.lo.peer_qubit %} — shares the LO with {{ cell.lo.peer_qubit }} (band {{ cell.lo.peer_band }}); coupled ports must use the same band{% elif cell.ptr_kind == 'runtime' %} — a value the component computes at runtime; the reference shown is how the chip declares it{% elif cell.ptr_kind == 'dangling' %} — a reference that currently resolves to NOTHING (dangling). The value shown IS the reference; type a pointer to re-point it{% elif cell.ptr_kind %} — a reference to a {{ cell.ptr_kind }}, not a value. The value shown IS the reference; type a pointer to re-point it{% elif cell.is_pointer %} — pointer alias (edits the resolved target){% endif %}{% if cell.phys and cell.phys.kind == 'mw' %} — actual output shown below (P = FSP {{ cell.phys.fsp }} dBm + 20·log10|amp|; V is rms @ 50 Ω){% elif cell.phys %} — actual output shown below (LF amplitude IS the output voltage){% endif %}">
-                        {%- if cell.str_numeric %} <span class="bulk-strq" aria-hidden="true">"</span>{% endif -%}
-                        {%- if cell.lo and cell.lo.peer_qubit %} <span class="bulk-shared" title="Shares the LO with {{ cell.lo.peer_qubit }} (band {{ cell.lo.peer_band }}) — LO-coupled ports must use the same band (bands 1 & 3 compatible; band 2 only with band 2)">&#9888;</span>{% elif cell.is_pointer %} {% if cell.ptr_kind == 'runtime' %}<span class="bulk-ptr" title="Computed at runtime by the component — the reference is how the chip declares it">&#8635;</span>{% elif cell.ptr_kind == 'dangling' %}<span class="bulk-ptr bulk-ptr-dangling" title="Dangling reference — it resolves to nothing on this chip">&#9888;&#8599;</span>{% elif cell.ptr_kind %}<span class="bulk-ptr bulk-ptr-ref" title="A reference to a {{ cell.ptr_kind }} — the cell IS the reference; type a pointer to re-point it">&#8599;</span>{% else %}<span class="bulk-ptr" title="JSON pointer — editing writes the resolved target">&#8599;</span>{% endif %}{% endif -%}
-                        {%- if cell.phys %} <span class="bulk-phys" aria-hidden="true"{% if cell.phys.kind == 'mw' %} data-dbm="{{ cell.phys.dbm }}"{% endif %}>{{ cell.phys.text }}</span>{% endif -%}
-                        {%- endif -%}
+                    <td class="bulk-td ck-{{ loop.index0 }}{% if not col.default_on %} bulk-col-hidden{% endif %}{% if col.group_start %} bulk-col-group-start{% endif %}{% if cell.is_pointer %} bulk-td-pointer{% endif %}{% if cell.lo and cell.lo.peer_qubit %} bulk-td-lo{% endif %}{% if cell.kind in ('listedit', 'runtime', 'missing') %} bulk-td-ro{% endif %}{% if col.key in cold_keys %} bulk-td-cold{% endif %}" data-col-key="{{ col.key }}">
+                        {#- docs/141 4n: a server-cold column ships an EMPTY td (its value
+                            rides the #bulk-cold-map script below); the client fills it
+                            from GET /bulk/cells, which renders the same macro. -#}
+                        {%- if col.key not in cold_keys %}{{ cells.qubit_cell(cell, col) }}{% endif -%}
                     </td>
                     {%- endfor %}
                     <td class="bulk-apply-col">
@@ -256,7 +233,7 @@
                 <tr class="bulk-head-row">
                     {% for c in pair_columns %}
                     <th scope="col" class="bulk-col-head ck-{{ loop.index0 }}{% if not c.default_on %} bulk-col-hidden{% endif %}{% if c.group_start %} bulk-col-group-start{% endif %}"
-                        data-col-key="{{ c.key }}" data-section="{{ c.section }}"
+                        data-col-key="{{ c.key }}" data-section="{{ c.section }}" data-maxlen="{{ c.maxlen }}"
                         title="{{ c.section }} · click to sort · drag the right edge to resize">
                         <span class="bulk-col-label">{{ c.label }}</span>{% if c.unit %} <span class="bulk-col-unit unit">({{ c.unit }})</span>{% endif %}<span class="bulk-sort-caret" aria-hidden="true"></span>
                         <span class="bulk-col-stats muted" data-col-stats="{{ c.key }}"></span>
@@ -276,38 +253,10 @@
                 {% for row in pair_rows %}
                 <tr data-qubit="{{ row.id }}" data-pair="{{ row.id }}">
                     <th class="bulk-rowhead" scope="row" data-col-key="__id__">{{ row.id }}</th>
-                {#- Cell markup (docs/141 §4m): ONE tag per line and Jinja whitespace
-                    control, so a rendered cell carries no whitespace-only text nodes
-                    except the single space that separates two INLINE siblings (the
-                    quote mark, the pointer glyph, the ✎ button) — a 20Q chip's grid
-                    went from 9.0 MB to ~3 MB and lost ~60,000 DOM nodes with the render
-                    pinned identical by tests/test_bulk_markup.py. The before→after
-                    hover chip (.bulk-ba) and the band message (.bulk-band-msg) are no
-                    longer rendered per cell: the grids create them on first use.
-                    r6 item 4: a real LIST value is a compact JSON preview + the ✎
-                    whole-value JSON editor (NOT a text input; the scalar coercer can't
-                    take a list). 'missing' = this qubit does not carry the leaf at all
-                    (a per-neighbour operation belonging to a pair it is not in) —
-                    deliberately NOT the same as declared-but-null, which stays a
-                    fillable box. r14 honesty: a string that reads like a number renders
-                    WITH its quotes (outside the input, so editing stays clean) — "0.13"
-                    the text must never look identical to 0.13 the real. docs/109: the
-                    TRUE physical output is always visible, recomputed live as the user
-                    types (data-phys-* attrs). -#}
                     {%- for cell in row.cells -%}
                     {%- set col = pair_columns[loop.index0] -%}
                     <td class="bulk-td ck-{{ loop.index0 }}{% if not col.default_on %} bulk-col-hidden{% endif %}{% if col.group_start %} bulk-col-group-start{% endif %}{% if cell.kind in ('runtime','list','missing') %} bulk-td-ro{% endif %}{% if cell.is_pointer and cell.kind == 'scalar' %} bulk-td-pointer{% endif %}{% if cell.lo and cell.lo.peer_qubit %} bulk-td-lo{% endif %}" data-col-key="{{ col.key }}">
-                        {%- if cell.kind == 'list' -%}
-                        <input type="text" class="bulk-cell bulk-cell-ro" value="{{ cell.display }}" size="{{ col.maxlen }}" readonly tabindex="-1" data-dot-path="{{ cell.dot_path }}" data-resolved="{{ cell.resolved_path }}" data-orig="{{ cell.display }}" title="{{ cell.dot_path }} — list value; open the pair inspector to edit" aria-label="{{ cell.dot_path }} (list — open inspector to edit)"> <a class="bulk-ro-link" href="#" tabindex="-1" onclick="return BulkPairEdit.openPair('{{ row.id }}')" title="Open {{ row.id }} in the inspector to edit this list">&#8599;</a> <button type="button" class="bulk-list-edit" title="Edit as JSON (Ctrl+Enter saves, Esc cancels)" onclick="BulkEdit.openJsonCell('{{ cell.dot_path }}', this)">&#9998;</button>
-                        {%- elif cell.kind in ('runtime', 'missing') -%}
-                        <input type="text" class="bulk-cell bulk-cell-ro{% if cell.kind == 'runtime' %} bulk-cell-runtime{% endif %}" value="{{ cell.display }}" size="{{ col.maxlen }}" readonly tabindex="-1" data-dot-path="{{ cell.dot_path }}" data-resolved="{{ cell.resolved_path }}" data-orig="{{ cell.display }}"{% if cell.missing and cell.kind == 'missing' %} placeholder="—"{% endif %} title="{{ cell.dot_path }}{% if cell.kind == 'runtime' %} — computed at runtime (read-only){% endif %}">
-                        {%- else -%}
-                        {%- if cell.str_numeric %}<span class="bulk-strq" aria-hidden="true">"</span> {% endif -%}
-                        <input type="text" class="bulk-cell{% if cell.modified %} bulk-cell-modified{% endif %}{% if cell.str_numeric %} bulk-cell-str{% endif %}" value="{{ cell.display }}" size="{{ col.maxlen }}" data-dot-path="{{ cell.dot_path }}" data-resolved="{{ cell.resolved_path }}"{% if cell.linkable %} data-linkable="1"{% endif %}{% if cell.is_pointer %} data-is-pointer="1"{% endif %}{% if cell.str_numeric %} data-str-numeric="1"{% endif %} data-orig="{{ cell.display }}"{% if cell.modified %} data-baseline="{{ cell.old_display }}"{% endif %}{% if cell.lo %} data-lo-field="{{ cell.lo.field }}"{% if cell.lo.band is not none %} data-band="{{ cell.lo.band }}"{% endif %}{% if cell.lo.freq is not none %} data-freq="{{ cell.lo.freq }}"{% endif %}{% if cell.lo.peer_band is not none %} data-peer-band="{{ cell.lo.peer_band }}"{% endif %}{% if cell.lo.peer_qubit %} data-peer="{{ cell.lo.peer_qubit }}"{% endif %}{% endif %}{% if cell.missing %} placeholder="not set" data-missing="1"{% endif %}{% if cell.phys %} data-phys-kind="{{ cell.phys.kind }}"{% if cell.phys.kind == 'mw' %} data-phys-fsp="{{ cell.phys.fsp }}"{% endif %}{% endif %} title="{{ cell.dot_path }}{% if cell.str_numeric %} — stored as TEXT (string), not a real: edits keep text unless the type is converted (Json Tree View ⚙ → real, or edit there){% endif %}{% if cell.ptr_kind == 'runtime' %} — a value the component computes at runtime; the reference shown is how the chip declares it{% elif cell.ptr_kind == 'runtime' %} — a value the component computes at runtime; the reference shown is how the chip declares it{% elif cell.ptr_kind == 'dangling' %} — a reference that currently resolves to NOTHING (dangling). The value shown IS the reference; type a pointer to re-point it{% elif cell.ptr_kind %} — a reference to a {{ cell.ptr_kind }}, not a value. The value shown IS the reference; type a pointer to re-point it{% elif cell.is_pointer %} — pointer alias (edits the resolved target){% endif %}{% if cell.phys and cell.phys.kind == 'mw' %} — actual output shown below (P = FSP {{ cell.phys.fsp }} dBm + 20·log10|amp|; V is rms @ 50 Ω){% elif cell.phys %} — actual output shown below (LF amplitude IS the output voltage){% endif %}">
-                        {%- if cell.str_numeric %} <span class="bulk-strq" aria-hidden="true">"</span>{% endif -%}
-                        {%- if cell.is_pointer %} {% if cell.ptr_kind == 'runtime' %}<span class="bulk-ptr" title="Computed at runtime by the component — the reference is how the chip declares it">&#8635;</span>{% elif cell.ptr_kind == 'dangling' %}<span class="bulk-ptr bulk-ptr-dangling" title="Dangling reference — it resolves to nothing on this chip">&#9888;&#8599;</span>{% elif cell.ptr_kind %}<span class="bulk-ptr bulk-ptr-ref" title="A reference to a {{ cell.ptr_kind }} — the cell IS the reference; type a pointer to re-point it">&#8599;</span>{% else %}<span class="bulk-ptr" title="JSON pointer — editing writes the resolved target">&#8599;</span>{% endif %}{% endif -%}
-                        {%- if cell.phys %} <span class="bulk-phys" aria-hidden="true"{% if cell.phys.kind == 'mw' %} data-dbm="{{ cell.phys.dbm }}"{% endif %}>{{ cell.phys.text }}</span>{% endif -%}
-                        {%- endif -%}
+                        {{- cells.pair_cell(cell, col, row.id) -}}
                     </td>
                     {%- endfor %}
                     <td class="bulk-apply-col">
@@ -424,6 +373,12 @@
     </div>{# /pane: allvalues #}
 </div>
 
+{%- if cold_map %}
+{# docs/141 4n: what the client keeps for every server-cold cell (display for
+   whole-chip search, the paths for path-addressed repaints) — read by
+   _virtInit BEFORE the mount below runs. #}
+<script type="application/json" id="bulk-cold-map">{{ cold_map | script_json }}</script>
+{%- endif %}
 <script>
     if (window.BulkEdit && BulkEdit.mount) BulkEdit.mount({{ columns | script_json }}, {{ band_meta | script_json }}, {{ (dyn_cols or []) | script_json }}, {{ {'chip': active_name or '', 'qubits': qubit_meta or []} | script_json }});
     {% if pair_rows %}

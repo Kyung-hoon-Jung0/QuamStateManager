@@ -4721,18 +4721,12 @@ def qdac_page():
         instrument=qdac_mod.instrument(root), cabling=groups)
 
 
-@bp.route("/bulk")
-def bulk_edit():
-    """Bulk-tune panel: rows = qubits, columns = the high-churn fields, every cell
-    an editable input. Commits route through the SAME atomic /field/edit-batch +
-    working-copy path the inspector uses — this is purely a denser entry surface,
-    no new mutation code. Read-only render."""
-    engine = _engine()
-    store = _store()
-    if not engine or not store:
-        return render_template("_empty_state.html", page="live state editing")
-
-    from quam_state_manager.core import mw_fem
+def _qubit_bulk_grid(store: QuamStore, dyn_hidden: set[str], modified: dict) -> dict[str, Any]:
+    """Build the Live-Edit QUBIT grid: columns (curated + derived, minus the
+    client's hidden set and the dead-channel prune), one row of resolved cells
+    per qubit, the header groups, the client's column model and the row-picker
+    metadata. Lifted out of ``bulk_edit`` (docs/141 §4n) so ``/bulk/cells`` can
+    render a cold column from the very grid the page was rendered from."""
     from quam_state_manager.core.qubit_columns import derive_qubit_columns
 
     # Dynamic (derived) columns — full coverage of every qubit leaf (r6 item 4).
@@ -4745,7 +4739,6 @@ def bulk_edit():
     # Stale/unknown keys are silently ignored (the chip may have changed
     # under a saved set).
     dyn_model, _curated = derive_qubit_columns(store)
-    _dyn_hidden = {k for k in (request.args.get("dynhide") or "").split(",") if k}
     specs: list[dict[str, Any]] = list(_BULK_COLUMNS_SPEC) + [
         {"section": c["section"], "key": c["key"], "label": c["label"],
          "tmpl": c["tmpl"], "unit": c["unit"], "default_on": True,
@@ -4756,7 +4749,7 @@ def bulk_edit():
          "paths": c.get("paths") or {}, "modes": c.get("modes") or {},
          "multi": c.get("multi", 0), "search": c.get("search", "")}
         for c in dyn_model
-        if c.get("kind") != "note" and c["key"] not in _dyn_hidden
+        if c.get("kind") != "note" and c["key"] not in dyn_hidden
     ]
 
     columns = [
@@ -4767,8 +4760,6 @@ def bulk_edit():
          "search": c.get("search", "")}
         for c in specs
     ]
-    modified = _modified_map()
-
     # (kind, con, fem, port) -> {qubit (owner), band, freq} — built as cells
     # resolve, then used to compute each port's LO-coupled peer (Out2↔Out3, …).
     port_info: dict[tuple, dict[str, Any]] = {}
@@ -4869,12 +4860,6 @@ def bulk_edit():
         g = (merged.get("qubits", {}).get(qid) or {}).get("grid_location")
         qubit_meta.append({"id": qid, "grid": g if isinstance(g, str) else None})
 
-    # Pair grid (stacked below the qubit table): columns are DERIVED from the chip's
-    # real pair leaves — lab-flexible, no hardcoded gate/leaf names. Same cell
-    # pipeline + commit path. Empty for chips with no pairs / no editable pair leaves.
-    pair_columns, pair_groups, pair_rows = _pair_bulk_grid(store, modified)
-
-    band_meta = {"bands": {str(b): list(r) for b, r in mw_fem.BANDS.items()}}
     # Client model for the Properties menu + search hint: key/label/section/
     # unit/kind only — never the per-qubit tmpl values (the server re-derives
     # cells from ?dynhide; the client only needs identity + display metadata).
@@ -4888,6 +4873,76 @@ def bulk_edit():
     # its z-port filter columns with no trace). Surface it as an honest line.
     dyn_truncated = next(
         (c["label"] for c in dyn_model if c.get("kind") == "note"), None)
+    return {"columns": columns, "rows": rows, "column_groups": column_groups,
+            "dyn_cols": dyn_cols, "dyn_truncated": dyn_truncated,
+            "qubit_meta": qubit_meta, "qids": qids}
+
+
+def _bulk_grid_key(store: QuamStore, dyn_hidden: set[str]) -> tuple:
+    """What the grid depends on: the store's mutation_seq AND the change-log
+    length (a per-row reset clears log entries without advancing the seq —
+    the /bulk/all-values ETag precedent), plus the hidden-column set."""
+    return (getattr(store, "mutation_seq", None),
+            len(getattr(store, "change_log", None) or ()),
+            tuple(sorted(dyn_hidden)))
+
+
+def _bulk_grid_cached(store: QuamStore, dyn_hidden: set[str], modified: dict) -> dict[str, Any]:
+    """The qubit grid, memoized per context on ``_bulk_grid_key``: the page
+    render fills it, a hydration request a moment later reads it (the cells
+    are the SAME dicts the page rendered from); any mutation in between
+    changes the key and the grid is rebuilt from the current working copy."""
+    ctx = _active_ctx() or {}
+    key = _bulk_grid_key(store, dyn_hidden)
+    hit = ctx.get("bulk_grid_cache")
+    if hit and hit.get("key") == key and hit.get("store") is store:
+        return hit["grid"]
+    grid = _qubit_bulk_grid(store, dyn_hidden, modified)
+    ctx["bulk_grid_cache"] = {"key": key, "store": store, "grid": grid}
+    return grid
+
+
+@bp.route("/bulk")
+def bulk_edit():
+    """Bulk-tune panel: rows = qubits, columns = the high-churn fields, every cell
+    an editable input. Commits route through the SAME atomic /field/edit-batch +
+    working-copy path the inspector uses — this is purely a denser entry surface,
+    no new mutation code. Read-only render."""
+    engine = _engine()
+    store = _store()
+    if not engine or not store:
+        return render_template("_empty_state.html", page="live state editing")
+
+    from quam_state_manager.core import bulk_virt, mw_fem
+
+    # Dynamic (derived) columns — full coverage of every qubit leaf (r6 item 4).
+    # r7: default to ALL VISIBLE; ?dynhide= is the client's persisted HIDDEN
+    # set (quam_bulk_dynhidden): absent/empty hides nothing. Stale/unknown keys
+    # are silently ignored (the chip may have changed under a saved set).
+    _dyn_hidden = {k for k in (request.args.get("dynhide") or "").split(",") if k}
+    modified = _modified_map()
+    g = _bulk_grid_cached(store, _dyn_hidden, modified)
+    columns, rows, column_groups = g["columns"], g["rows"], g["column_groups"]
+    dyn_cols, dyn_truncated, qubit_meta = g["dyn_cols"], g["dyn_truncated"], g["qubit_meta"]
+    merged = store.merged
+
+    # docs/141 4n: columns past the client's look-ahead window (the same
+    # layout-free estimate bulk-edit.js makes, conservative) render as EMPTY
+    # tds + a value map; the client fills them from GET /bulk/cells on demand.
+    # The vw hint is screen.availWidth from the htmx configRequest hook; a
+    # full-page load has none and gets the wide default (more hot columns).
+    cold_keys = bulk_virt.plan(columns, len(rows), request.args.get("vw"))
+    cold_map = bulk_virt.cold_map(columns, rows, cold_keys) if cold_keys else None
+
+    # Pair grid (stacked below the qubit table): columns are DERIVED from the chip's
+    # real pair leaves — lab-flexible, no hardcoded gate/leaf names. Same cell
+    # pipeline + commit path. Empty for chips with no pairs / no editable pair leaves.
+    pair_columns, pair_groups, pair_rows = _pair_bulk_grid(store, modified)
+
+    band_meta = {"bands": {str(b): list(r) for b, r in mw_fem.BANDS.items()}}
+    # Client model for the Properties menu + search hint: key/label/section/
+    # unit/kind only — never the per-qubit tmpl values (the server re-derives
+    # cells from ?dynhide; the client only needs identity + display metadata).
     # docs/120 item 4 — validated against BOTH grids, because they share the
     # one #bulk-search box, so a chip must not go dead just because its columns
     # live in the pair table.
@@ -4898,7 +4953,8 @@ def bulk_edit():
                                             dyn_cols=dyn_cols, qubit_meta=qubit_meta,
                                             pair_columns=pair_columns, pair_groups=pair_groups,
                                             pair_rows=pair_rows, filter_chips=filter_chips,
-                                            dyn_truncated=dyn_truncated))
+                                            dyn_truncated=dyn_truncated,
+                                            cold_keys=cold_keys, cold_map=cold_map))
     # docs/103: this is the app's largest response by an order of magnitude
     # (measured 10.0 MB / 6.5 MB HTML on real 21Q/10Q chips — docs/85 ships
     # every cell deliberately). Repetitive table markup gzips ~25x, so
@@ -4914,6 +4970,58 @@ def bulk_edit():
     if accepts_gzip:
         resp.headers["Content-Encoding"] = "gzip"
     resp.headers["Vary"] = "Accept-Encoding"
+    return resp
+
+
+@bp.route("/bulk/cells")
+def bulk_cells():
+    """docs/141 §4n — fill server-cold columns of the Live-Edit qubit grid.
+
+    ``?cols=k1,k2`` names the columns; the response carries, per column and
+    per qubit id, the cell's CONTENTS rendered through the SAME Jinja macro
+    the page used (``_bulk_cell_macros.html``), so a hydrated cell is
+    byte-identical to one that came with the page. The grid is the memoized
+    one the page was rendered from when nothing changed since, else the
+    current working copy — a cell filled after an edit shows the edit.
+    ``?chip=`` is the page's chip name: a different chip open in this
+    context now answers 409 rather than cells from the wrong chip."""
+    from quam_state_manager.core import bulk_virt
+    store = _store()
+    if not store:
+        return jsonify({"ok": False, "error": "no chip loaded"}), 409
+    want_chip = request.args.get("chip")
+    ident = _active_chip_identity()
+    have_chip = ident["name"] if ident else None
+    if want_chip is not None and want_chip != (have_chip or ""):
+        return jsonify({"ok": False, "error": "a different chip is open",
+                        "chip": have_chip}), 409
+    dyn_hidden = {k for k in (request.args.get("dynhide") or "").split(",") if k}
+    g = _bulk_grid_cached(store, dyn_hidden, _modified_map())
+    columns, rows = g["columns"], g["rows"]
+    keys, unknown = bulk_virt.parse_cols(request.args.get("cols"), [c["key"] for c in columns])
+    if not keys:
+        return jsonify({"ok": False, "error": "no known column named", "unknown": unknown}), 400
+    idx = {c["key"]: i for i, c in enumerate(columns)}
+    macro = current_app.jinja_env.get_template("_bulk_cell_macros.html").module.qubit_cell
+    cells: dict[str, dict[str, str]] = {k: {} for k in keys}
+    for row in rows:
+        rcells = row["cells"]
+        for k in keys:
+            i = idx[k]
+            cells[k][row["id"]] = str(macro(rcells[i], columns[i]))
+    payload = {"ok": True, "chip": have_chip, "cells": cells, "unknown": unknown,
+               "seq": getattr(store, "mutation_seq", None)}
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    accepts_gzip = "gzip" in request.headers.get("Accept-Encoding", "")
+    if accepts_gzip:
+        body = gzip.compress(body, compresslevel=5)
+    resp = current_app.response_class(body)
+    resp.headers["Content-Type"] = "application/json; charset=utf-8"
+    resp.headers["Content-Length"] = str(len(body))
+    if accepts_gzip:
+        resp.headers["Content-Encoding"] = "gzip"
+    resp.headers["Vary"] = "Accept-Encoding"
+    resp.headers["Cache-Control"] = "no-store"
     return resp
 
 
