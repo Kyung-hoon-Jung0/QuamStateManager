@@ -1,0 +1,83 @@
+{# The pane view (docs/141 4z, user-directed): N sources side by side, the
+   way an IDE lays out N files — one pane per source under its own title,
+   rows aligned across panes (one scroll), ONLY the leaves where any two
+   sources differ, and every cell that differs from the BASELINE pane
+   highlighted with its Δ. Clicking a pane title makes that source the
+   baseline: the row set does not depend on the baseline (a row is listed
+   when any two sides differ), so the switch is a client-side re-paint of
+   `data-g` equality groups computed server-side by json_diff's own rule
+   (_diff_row_groups) — never a second equality in JavaScript.
+
+   Column 0 = the leaf path. Each pane column carries data-i (its index);
+   header buttons switch the baseline; the initial baseline (`base`) is
+   painted server-side so the page is right before any script runs. #}
+{% from '_delta_macros.html' import delta_chip %}
+{% set n = srcs | length %}
+<div class="diff-panes-wrap" id="diff-panes" data-base="{{ base }}" data-n="{{ n }}">
+  <p class="muted diff-panes-note">
+    {{ n }} sources · only leaves whose values differ between at least two of them are listed
+    ({{ '{:,}'.format(payload.counts.same) }} agree) · cells that differ from the
+    <b>baseline</b> are highlighted — click a pane title to make it the baseline.
+  </p>
+  <div class="diff-panes-scroll">
+    <table class="diff-panes-table" id="diff-panes-table">
+      <thead>
+        <tr>
+          <th class="dp-path-col">Leaf</th>
+          {% for src in srcs %}
+          {% set i = loop.index0 %}
+          <th class="dp-pane-head{% if i == base %} dp-base{% endif %}" data-i="{{ i }}">
+            <button type="button" class="dp-pane-title" data-i="{{ i }}"
+                    title="{{ src.ref }} — click to make this pane the baseline">
+              <span class="dp-slot">{{ slots[i] | upper }}</span>
+              <span class="dp-label">{{ src.label }}</span>
+              <span class="dp-base-tag">baseline</span>
+            </button>
+          </th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        {% set _parts = r.path.rsplit('.', 1) %}
+        <tr class="dp-row" data-groups="{{ r.groups | join(',') }}">
+          <td class="dp-path-col"><code class="dot-path" title="{{ r.path }}">{%- if _parts | length == 2 -%}<span class="dp-dirs">{{ _parts[0] }}.</span><span class="dp-leaf">{{ _parts[1] }}</span>{%- else -%}{{ r.path }}{%- endif -%}</code></td>
+          {% for v in r.vals %}
+          {% set i = loop.index0 %}
+          {% set _num = r.present[i] and (v is number) and (v is not boolean) %}
+          {% set _numlike = _num or (r.present[i] and v is string) %}
+          <td class="dp-cell{% if i == base %} dp-base{% elif r.groups[i] != r.groups[base] %} dp-diff{% else %} dp-same{% endif %}"
+              data-i="{{ i }}"{% if _numlike %} data-v="{{ v }}"{% endif %}>
+            {% if not r.present[i] %}
+            <span class="muted dp-absent" title="this leaf does not exist in this source">&ndash;</span>
+            {% elif v is none %}
+            <span class="dp-val dp-null" title="stored null in this source">null</span>
+            {% else %}
+            <span class="dp-val">{{ v | groupdigits }}</span>
+            {% endif %}
+            {# the Δ against the baseline, painted server-side for the initial
+               baseline and re-painted client-side on a switch #}
+            {% set _show_d = i != base and r.groups[i] != r.groups[base] and r.present[i] and r.present[base] %}
+            <span class="dp-delta"{% if not _show_d %} hidden{% endif %}>{% if _show_d %}{{ delta_chip(r.vals[base], v) }}{% endif %}</span>
+          </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if not rows %}
+  <p class="diff-wb-msg muted">These {{ n }} sources hold identical content on every leaf
+    ({{ '{:,}'.format(payload.counts.same) }} values compared).</p>
+  {% endif %}
+  {% if more %}
+  {% set _qs = [] %}
+  {% for sl in slots %}{% if slot_refs[loop.index0] %}{% set _ = _qs.append(sl ~ '=' ~ (slot_refs[loop.index0] | urlencode)) %}{% endif %}{% endfor %}
+  <div class="ph-changes-more">
+    <button type="button" class="btn-sm outline"
+            hx-get="/diff?{{ _qs | join('&amp;') }}&amp;tab={{ tab }}&amp;view=panes&amp;base={{ base }}&amp;rows={{ next_rows }}"
+            hx-target="#diff-root" hx-swap="outerHTML">
+      Show {{ '{:,}'.format(more) }} more</button>
+  </div>
+  {% endif %}
+</div>

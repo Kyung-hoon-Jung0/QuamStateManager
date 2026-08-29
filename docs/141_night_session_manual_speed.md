@@ -1240,6 +1240,49 @@ all 5; no console errors. Pinned by `tests/sidebar_compare_selfcheck.cjs`
 rewritten `TestCompareRedirect` / `TestP4Redirects` pins, and
 `test_the_diff_no_longer_links_to_it`. The N-way pane view itself is §4z.
 
+## 4z. The pane view: N runs side by side, differences against a baseline you pick (2026-08-29, user-directed, CRITICAL)
+
+The ask, verbatim in spirit: like VS Code — one window per run under its own
+title, only the differences listed, and clicking a run's title makes it the
+reference; default the first column. **Shape.** `/diff?a..e&view=panes&base=k`
+renders `_diff_panes.html`: a single table whose column 0 is the leaf path and
+whose columns 1..N are the panes (own header button, own left rule, rows
+aligned so one scroll moves every pane — the IDE's synchronized scroll for
+free). Rows = `json_diff.diff_rows_n` (one per leaf where ANY two sources
+differ, path order; a leaf all N agree on is never rendered), 300 per page
+with Show more. **Baseline.** The row set is baseline-independent, so the
+switch is a client re-paint, and it never re-derives equality: the server
+stamps every row with equality GROUPS (`_diff_row_groups` — `groups[i] ==
+groups[j]` iff json_diff's own `_eq` → `differ.compare_equal` says equal,
+absent = −1) and the client (`diff-panes.js`, shipped in the 'compare'
+bundle) classes each cell `dp-base` / `dp-diff` / `dp-same` by comparing
+integers against the baseline's. A Δ (`window.ValueDelta`, docs/76) renders
+ONLY on a cell that differs from the baseline and is numeric on both sides —
+an equal cell would read "0", which the highlight already says (the first
+real-Chrome pass showed exactly that "0" on every equal cell; fixed on both
+render paths). The initial baseline is painted server-side (`base=`), so the
+page is right before any script runs; a click updates `#diff-root[data-base]`,
+the picker's hidden input, and `history.replaceState`. **htmx captures a
+button's path at init**, so rewriting `hx-get` after a switch did nothing (the
+node.json tab came back on baseline 0 — caught in real Chrome); the request
+itself is now rewritten in `htmx:configRequest` for `/diff` requests issued
+from inside the workbench. **Two vs three+.** Three or more sources are ALWAYS
+panes (the tree reads A → B only; the 3-way list from 2026-08-27 is retired);
+two default to the tree with a third toggle, Panes, beside Tree/List. The
+picker row offers one select per slot in use plus the next empty one (A, B, C
+for two; D appears once C carries a source; five at most). Real Chrome on the
+2025-06-24 archive: 5 runs → 5 panes, 272 differing leaves of 3,844 (state),
+119 (node.json), pane view reached 353 ms after the tab press; click B →
+header/column re-marked, 305 differing cells each with a Δ against B, URL
+`base=1`, node.json tab keeps baseline 1; 2 runs → Tree/List/Panes toggle,
+Panes = 2 panes, 28 rows. Pinned by `tests/diff_panes_selfcheck.cjs` (21;
+no-rewrite, Δ-on-equal and no-same-class mutations each fail it),
+`tests/test_diff_panes.py` (`_diff_row_groups` rule), and the rewritten
+`tests/test_diff_three_way.py` (three sources are panes whatever view is
+asked, two can ask for panes, `base=` clamps, Δ against the baseline not the
+previous column). Left as is on purpose: the Versions panel's own N-way
+(`/diff/versions`, docs/128) — a different surface with its own pins.
+
 ## 5. Tooling that came out of the night
 
 `scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js` (+ daytime: `cdp_profile.js` function-level CPU profile, `cdp_trace.js` per-phase trace of one keystroke, `cdp_type.js` char-by-char typing with a gap + debounce override, `cdp_undo.js` trusted Ctrl+Z/Ctrl+Shift+Z through the page's own UI, `cdp_virt.js` virtualization sampler): Chrome headless with the

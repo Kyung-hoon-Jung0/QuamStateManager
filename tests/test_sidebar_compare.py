@@ -35,7 +35,9 @@ def test_one_number_everywhere():
 
 def test_the_workbench_carries_every_slot():
     tpl = (_ROOT / "quam_state_manager/web/templates/_diff_workbench.html").read_text(encoding="utf-8")
-    assert 'name="d" value="{{ d_ref }}"' in tpl and 'name="e" value="{{ e_ref }}"' in tpl
+    # docs/141 4z: one picker per slot in use (a select per slot letter)
+    assert '<select name="{{ slots[i] }}">' in tpl and "range(_nslots)" in tpl
+    assert 'name="base" value="{{ base }}"' in tpl
     assert "compare-hub" not in tpl.replace("{# docs/141 4y: the Compare hub is retired as a destination -- no link. #}", "")
     # every tab / view / paging link carries d and e beside c
     assert tpl.count("&amp;c={{ c_ref | urlencode }}") == tpl.count("&amp;d={{ d_ref | urlencode }}&amp;e={{ e_ref | urlencode }}")

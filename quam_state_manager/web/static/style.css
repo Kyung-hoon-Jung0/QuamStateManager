@@ -11853,3 +11853,36 @@ td.vc-cell-takeable:focus-within .vc-take,
     .btn-workspace-refresh.htmx-request:not(.ws-kick)::after {
         animation-duration: 1.4s; }
 }
+
+/* docs/141 4z: the diff workbench's pane view -- N sources side by side, one
+   pane per source under its own title, rows aligned (one scroll), only the
+   differing leaves, cells that differ from the BASELINE pane highlighted. */
+.diff-panes-note { margin: 0.4rem 0 0.3rem; font-size: 0.85em; }
+.diff-panes-scroll { overflow: auto; max-width: 100%; }
+.diff-panes-table { width: auto; margin: 0; font-size: 0.8rem; border-collapse: separate; border-spacing: 0; }
+.diff-panes-table th, .diff-panes-table td { padding: 0.22rem 0.55rem; vertical-align: top; white-space: nowrap; }
+.diff-panes-table thead th { position: sticky; top: 0; z-index: 1; background: var(--pico-background-color);
+    border-bottom: 2px solid var(--pico-muted-border-color); text-align: left; }
+.dp-path-col { max-width: 28rem; white-space: normal; word-break: break-all; font-size: 0.92em; }
+.dp-dirs { color: var(--pico-muted-color); }
+.dp-leaf { font-weight: 600; }
+/* each pane is its own window: a left rule separates panes, the whole column shares one tint */
+.dp-pane-head, .dp-cell { border-left: 2px solid var(--pico-muted-border-color); min-width: 9rem; }
+.dp-pane-title { all: unset; cursor: pointer; display: flex; flex-direction: column; gap: 0.05rem; padding: 0.15rem 0.3rem; border-radius: 4px; }
+.dp-pane-title:hover { background: var(--pico-card-sectioning-background-color); }
+.dp-pane-title:focus-visible { outline: 2px solid var(--pico-primary); }
+.dp-slot { font-weight: 700; color: var(--pico-primary); font-size: 0.85em; }
+.dp-label { font-weight: 600; }
+.dp-base-tag { display: none; font-size: 0.7em; text-transform: uppercase; letter-spacing: .04em; color: var(--pico-primary); }
+.dp-pane-head.dp-base .dp-base-tag { display: inline; }
+.dp-pane-head.dp-base { border-left-color: var(--pico-primary); }
+.dp-pane-head.dp-base .dp-pane-title { background: var(--diff-cell-bg, rgba(128,128,128,0.12)); cursor: default; }
+.dp-cell.dp-base { border-left-color: var(--pico-primary); background: color-mix(in srgb, var(--pico-primary) 6%, transparent); }
+.dp-cell.dp-diff { background: var(--diff-cell-bg, rgba(255, 196, 0, 0.14)); }
+.dp-cell.dp-diff .dp-val { font-weight: 600; }
+.dp-cell.dp-same .dp-val { color: var(--pico-muted-color); }
+.dp-val { font-variant-numeric: tabular-nums; }
+.dp-null { font-style: italic; color: var(--pico-muted-color); }
+.dp-delta { display: block; font-size: 0.85em; line-height: 1.15; }
+.dp-delta[hidden] { display: none; }
+.diff-view-fixed { font-size: 0.8em; padding: 0 0.4rem; }

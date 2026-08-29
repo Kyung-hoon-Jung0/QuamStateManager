@@ -21,7 +21,7 @@ CORE = {"htmx.min.js", "split.min.js", "search-query.js", "app.js", "auto-apply.
         "plot-theme.js", "calc.js", "manual.js", "undo-trail.js"}
 LAZY = {"bulk-edit.js", "pair-edit.js", "all-values.js", "pulses.js", "topo-graph.js", "wiring-grid.js",
         "component-map.js", "chip-status.js", "generate.js", "generate_preview.js", "dataset-virtual.js",
-        "ndview.js", "scheduler.js", "autofit.js", "compare-hub.js"}
+        "ndview.js", "scheduler.js", "autofit.js", "compare-hub.js", "diff-panes.js"}
 
 
 def _scripts(html: str):

@@ -54,31 +54,50 @@ class TestThirdSource:
     def test_two_way_page_keeps_its_shape_and_offers_c(self, env):
         html = _get(env, _url(env, three=False))
         assert 'name="c"' in html and "optional third" in html
-        assert 'data-diff3="1"' not in html and 'diff-wb-list-3' not in html
-        assert '<th>C</th>' not in html
+        # docs/141 4z: two sources keep the 2-way list; no pane table
+        assert 'diff-panes-table' not in html and 'diff-wb-list-3' not in html
+        assert 'name="d"' not in html, "D appears only once C carries a source... or D does"
 
-    def test_three_way_list_shows_all_three_values(self, env):
+    def test_three_way_is_the_pane_view(self, env):
+        # docs/141 4z: three sources are read as PANES -- one per source,
+        # every value beside each other, Δ against the baseline (A by default)
         html = _get(env, _url(env))
-        assert 'diff-wb-list-3' in html and '<th>C</th>' in html
-        row = html.split('data-diff3="1"', 1)[1].split("</tr>", 1)[0]
-        assert "qubits.qA1.T1" in row
-        # A 1e-5 -> B 2e-5 -> C 5e-5: both deltas rendered, from the house
-        # delta chip, in their own columns (format-agnostic on the values)
-        assert "(+100%)" in row and "(+150%)" in row, row
-        assert row.count('<td class="diff-list-c"><code>') == 1
+        assert 'diff-panes-table' in html and 'diff-wb-list-3' not in html
+        assert html.count('class="dp-pane-head') == 3
+        row = html.split('qubits.qA1.T1', 1)[1].split("</tr>", 1)[0]
+        # A 1e-5 (baseline) -> B 2e-5 (+100%), C 5e-5 (+400%): both from the
+        # house delta chip, against the BASELINE, not the previous column
+        assert "(+100%)" in row and "(+400%)" in row and "(+150%)" not in row, row
+        assert row.count("dp-diff") == 2 and row.count("dp-base") == 1
         # f_01 agrees on all three -> not a row
         assert "qubits.qA1.f_01" not in html
+        assert 'name="d"' in html and 'name="e"' not in html, "the next empty slot is offered, not all of them"
+
+    def test_the_baseline_is_a_url_parameter(self, env):
+        html = _get(env, _url(env) + "&base=2")
+        row = html.split('qubits.qA1.T1', 1)[1].split("</tr>", 1)[0]
+        # C 5e-5 is the baseline: A and B carry Δ against it
+        assert ("80%)" in row and "60%)" in row and "+80%" not in row), row
+        assert 'data-base="2"' in html
+        # out of range clamps to the last pane
+        assert 'data-base="2"' in _get(env, _url(env) + "&base=9")
 
     def test_tab_strip_and_view_toggle_carry_c(self, env):
         html = _get(env, _url(env))
         c_q = quote(env["cc"])
-        assert html.count(f"&amp;c={c_q}&amp;tab=") >= 5, "every tab button carries c"
-        assert f"&amp;c={c_q}&amp;tab=state&amp;view=tree" in html
+        assert html.count(f"&amp;c={c_q}&amp;d=&amp;e=&amp;tab=") >= 5, "every tab button carries c (and the empty d/e)"
+        # three sources: no tree/list toggle, the view is fixed at panes
+        assert "3 panes" in html and "view=tree" not in html
 
-    def test_tree_view_says_it_reads_a_to_b(self, env):
+    def test_three_sources_are_panes_whatever_view_is_asked(self, env):
+        # docs/141 4z: the tree reads A -> B only, so it is never offered for 3+
         html = _get(env, _url(env, view="tree"))
-        assert "diff-tree-c-note" in html and 'id="diff-tree"' in html
-        assert "diff-tree-c-note" not in _get(env, _url(env, view="tree", three=False))
+        assert 'diff-panes-table' in html and 'id="diff-tree"' not in html
+        two = _get(env, _url(env, view="tree", three=False))
+        assert 'id="diff-tree"' in two and 'diff-panes-table' not in two
+        # two sources can ASK for panes
+        two_p = _get(env, _url(env, view="panes", three=False))
+        assert 'diff-panes-table' in two_p and two_p.count('class="dp-pane-head') == 2
 
     def test_three_way_never_offers_take(self, env):
         """A per-value take writes into the WORKING side (docs/132); with a
@@ -91,7 +110,7 @@ class TestThirdSource:
         two = _get(env, f"/diff?a={quote(env['a'])}&b={quote(working)}&tab=state&view=list")
         assert "sv-take" in two, "the 2-way page must still offer the take (else this pin is vacuous)"
         three = _get(env, f"/diff?a={quote(env['a'])}&b={quote(working)}&c={quote(env['cc'])}&tab=state&view=list")
-        assert 'diff-wb-list-3' in three and "sv-take" not in three
+        assert 'diff-panes-table' in three and "sv-take" not in three
 
 
 class TestRowsN:

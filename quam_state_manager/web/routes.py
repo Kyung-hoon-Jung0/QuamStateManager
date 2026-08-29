@@ -14185,19 +14185,52 @@ def _diff_payload(src_a, src_b, tab: str, *, with_rows: bool) -> dict:
     return res if with_rows else {**res, "rows": []}
 
 
-def _diff_payload3(src_a, src_b, src_c, tab: str) -> dict:
-    """The list view with a third source: one row per leaf where any two of
-    the three differ (json_diff.diff_rows_n). Not memoized -- a 3-way ask is
-    rare next to the tab-strip re-asks the 2-way memo exists for."""
+def _diff_row_groups(row: dict) -> list[int]:
+    """Equality classes of one N-way row's cells (docs/141 4z).
+
+    ``groups[i] == groups[j]`` exactly when side i and side j hold the same
+    value under json_diff's OWN equality (``_eq`` -> ``differ.compare_equal``,
+    the docs/118 one-rule); an absent cell is -1. The pane view highlights a
+    cell when its group differs from the BASELINE column's group, and the
+    baseline can be switched client-side by comparing these integers -- so
+    the row verdict and the cell verdict can never use two different rules,
+    and no equality is re-derived in JavaScript.
+    """
+    groups: list[int] = []
+    reps: list[Any] = []
+    for present, val in zip(row["present"], row["vals"]):
+        if not present:
+            groups.append(-1)
+            continue
+        gid = -1
+        for k, rv in enumerate(reps):
+            if json_diff._eq(rv, val):
+                gid = k
+                break
+        if gid < 0:
+            reps.append(val)
+            gid = len(reps) - 1
+        groups.append(gid)
+    return groups
+
+
+def _diff_payload_n(srcs: list, tab: str) -> dict:
+    """The pane view (docs/141 4z): one row per leaf where any two of the N
+    sources differ (json_diff.diff_rows_n, path order), each row carrying its
+    equality groups. Not memoized -- an N-way ask is rare next to the
+    tab-strip re-asks the 2-way memo exists for."""
     docs, whys = [], []
-    for src in (src_a, src_b, src_c):
+    for src in srcs:
         doc, why = _diff_side_doc(src, tab)
         docs.append(doc)
         whys.append(why)
     if any(d is None for d in docs):
         return {"ok": False, "unavailable": next(w for w in whys if w),
                 "counts": {"changed": 0, "added": 0, "removed": 0, "same": 0, "total": 0}}
-    return json_diff.diff_rows_n(docs)
+    res = json_diff.diff_rows_n(docs)
+    for row in res["rows"]:
+        row["groups"] = _diff_row_groups(row)
+    return res
 
 
 _DIFF_FIG_EXT = (".png", ".jpg", ".jpeg", ".svg", ".webp")
@@ -14354,7 +14387,10 @@ def diff_view():
     tab = (request.args.get("tab") or "").strip()
     if tab not in _DIFF_TABS:
         tab = ""      # decided below, once the sources are known
-    view = "list" if (request.args.get("view") or "").strip() == "list" else "tree"
+    view = (request.args.get("view") or "").strip()
+    if view not in ("tree", "list", "panes"):
+        view = ""       # decided below: panes for 3+ sources, tree for two
+    base = _int_arg("base", 0, minimum=0)
     # The list is server-rendered, so it pages: 2,257 ranked rows of a real
     # cross-generation diff serialise to 1.2 MB, and the rows a user reads are
     # the first screenful.
@@ -14384,6 +14420,14 @@ def diff_view():
         tab = "figures" if srcs and all(
             getattr(s, "origin", "") not in ("history", "working") for s in srcs) else "state"
     d_ref, e_ref = slot_refs[3], slot_refs[4]
+    # docs/141 4z: three or more sources are ALWAYS read as panes (the tree
+    # reads A -> B only and the 3-way list is retired); two default to the
+    # tree, with panes one click away.
+    if len(srcs) >= 3:
+        view = "panes"
+    elif not view:
+        view = "tree"
+    base = min(base, max(0, len(srcs) - 1))
 
     payload = None
     rows = []
@@ -14392,11 +14436,11 @@ def diff_view():
         try:
             if tab == "figures":
                 payload = _diff_figures_payload(srcs)
-            elif src_c is not None and view == "list":
-                payload = _diff_payload3(src_a, src_b, src_c, tab)
+            elif view == "panes":
+                payload = _diff_payload_n(srcs, tab)
             else:
                 payload = _diff_payload(src_a, src_b, tab, with_rows=(view == "list"))
-            if view == "list" and tab != "figures":
+            if view in ("list", "panes") and tab != "figures":
                 all_rows = payload.get("rows") or []
                 rows = all_rows[:limit]
                 more = max(0, len(all_rows) - len(rows))
@@ -14419,7 +14463,8 @@ def diff_view():
     return render_template(
         template,
         **_ctx(page="diff", a_ref=a_ref, b_ref=b_ref, c_ref=c_ref, tab=tab, view=view,
-               d_ref=d_ref, e_ref=e_ref, srcs=srcs, slot_refs=slot_refs,
+               d_ref=d_ref, e_ref=e_ref, srcs=srcs, slot_refs=slot_refs, base=base,
+               slots=_DIFF_SLOTS, slot_srcs=slot_srcs,
                src_a=src_a, src_b=src_b, src_c=src_c, payload=payload, error=error,
                rows=rows, more=more, next_rows=limit + _DIFF_LIST_PAGE,
                take_active_ok=take_active_ok,
