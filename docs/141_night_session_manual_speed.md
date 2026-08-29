@@ -1094,6 +1094,18 @@ Show all restores. Pinned by `tests/test_bulk_pairs_picker.py` +
 `bulk_pairs_picker_selfcheck.cjs` (15 asserts — the dirty-follow guard
 needed its own scenario before its mutation was caught); mutation-checked 3/3.
 
+## 4t. The lone "All" chip on Collections (2026-08-29, user-directed)
+
+Under the Experiments filter on Collections sat a second "All" chip that
+stayed lit whatever experiment was picked. It was the tag-filter row
+(`#tag-filter-grid`) rendered for a workspace with no tagged run — nothing
+but its "All". The row now renders only when `collection_tags` is
+non-empty; `app.js` already tolerated its absence (the `htmx:afterSwap`
+re-sync clears a stale tag selection when the grid is not there). Pinned by
+`test_web.py::test_collections_without_any_tag_has_no_tag_row` (no tags →
+no row and the Experiments row stays; one tag → the row with All + the
+tag) beside the existing tagged-workspace pin.
+
 ## 5. Tooling that came out of the night
 
 `scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js` (+ daytime: `cdp_profile.js` function-level CPU profile, `cdp_trace.js` per-phase trace of one keystroke, `cdp_type.js` char-by-char typing with a gap + debounce override, `cdp_undo.js` trusted Ctrl+Z/Ctrl+Shift+Z through the page's own UI, `cdp_virt.js` virtualization sampler): Chrome headless with the

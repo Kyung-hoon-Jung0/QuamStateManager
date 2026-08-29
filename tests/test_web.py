@@ -4979,6 +4979,27 @@ class TestCollectionsAndFavoriteTag:
         assert ds.toggle_bookmark(rid) is False
         assert FAVORITE_TAG not in ds.runs[rid].tags and ds.runs[rid].bookmarked is False
 
+    def test_collections_without_any_tag_has_no_tag_row(self, tmp_path):
+        """docs/141 4t: with no tagged run the tag-filter row rendered as a
+        lone "All" chip under the Experiments filter that stayed lit whatever
+        experiment was picked (user screenshot). No tags -> no row; a tag ->
+        the row with All + the tag."""
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        data = tmp_path / "data"
+        data.mkdir()
+        _seed_dataset_run(data, 21)
+        _seed_dataset_run(data, 22)
+        c = app.test_client()
+        c.post("/workspace/add", data={"folder": str(data)})
+        headers = {"HX-Request": "true"}
+        coll = c.get("/collections", headers=headers).get_data(as_text=True)
+        assert 'id="tag-filter-grid"' not in coll and 'onclick="toggleTagFilter' not in coll
+        assert 'id="exp-filter-grid"' in coll            # the Experiments row itself stays
+        from quam_state_manager.web import routes as _r
+        c.post(f"/dataset/{_r._dataset_uid(_r._folder_key(data), 21)}/tag", json={"tag": "flagged"})
+        coll = c.get("/collections", headers=headers).get_data(as_text=True)
+        assert 'id="tag-filter-grid"' in coll and 'data-tag="flagged"' in coll and 'data-tag=""' in coll
+
     def test_collections_shows_only_tagged_and_has_tag_grid(self, tmp_path):
         app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
         data = tmp_path / "data"

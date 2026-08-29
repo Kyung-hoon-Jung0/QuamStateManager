@@ -169,11 +169,15 @@
     {% endif %}
 </div>
 
-{% if is_collections %}
+{% if is_collections and collection_tags %}
 {# Tag-filter chips — multi-select (clicking a 2nd keeps the 1st), OR filter with
    match-count ranking (rows matching the most selected tags float to the top),
    handled in dataset-virtual.js. The reserved "favorite" tag is pinned first
-   and shown as ★ (it's also what the row star toggles). #}
+   and shown as ★ (it's also what the row star toggles).
+   docs/141 4t: rendered only when the workspace HAS a tag -- with none, the
+   row was a lone "All" chip under the Experiments filter that stayed lit
+   whatever experiment was picked (user screenshot). app.js already tolerates
+   the grid's absence (the afterSwap re-sync clears the selection). #}
 <div class="tag-filter-sections" id="tag-filter-grid">
     <div class="tag-filter-topbar">
         <span class="tag-chip active" data-tag="" onclick="toggleTagFilter('', this)"
