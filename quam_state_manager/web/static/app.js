@@ -7532,6 +7532,12 @@ window.clearDetailPanelSearch = function(btnEl) {
             }
         }
         if (span.children.length) row.appendChild(span);
+        // docs/141 4w: the ? (Config Manual) sits RIGHT of the action group, and
+        // like the group it only shows on hover. The group is built lazily on the
+        // first mouseover, after the ? was appended at render time, so re-append
+        // the ? here to keep it last.
+        var help = row.querySelector(":scope > .tree-help");
+        if (help) row.appendChild(help);
     }
 
     function _closeCrudPanels(node) {

@@ -155,3 +155,14 @@ def test_a_failed_probe_is_remembered_not_relaunched(tmp_path, monkeypatch):
     c.get("/api/manual"); c.get("/api/manual/node?path=qubits.qA1")
     assert len(calls) == 1, f"one probe, remembered ({len(calls)} launched)"
     R._catalog_outcome.pop(_sys.executable, None)
+
+
+def test_tree_help_hover_selfcheck():
+    """docs/141 4w: the tree row's ? is a hover tool and sits right of the row's action group."""
+    node = shutil.which("node")
+    if subprocess.run([node, "-e", "require('jsdom')"], capture_output=True, cwd=str(_ROOT)).returncode != 0:
+        pytest.skip("jsdom not installed for node")
+    res = subprocess.run([node, str(_ROOT / "tests" / "tree_help_hover_selfcheck.cjs")],
+                         capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "ok - the ? FOLLOWS the action group in DOM order" in res.stdout

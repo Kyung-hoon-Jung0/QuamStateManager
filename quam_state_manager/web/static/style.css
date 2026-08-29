@@ -1227,6 +1227,11 @@ html.topbar-hidden .topbar-reveal { display: block; }
     cursor: help; opacity: 0.55; vertical-align: middle;
 }
 .key-help-btn:hover { opacity: 1; color: var(--pico-primary); border-color: var(--pico-primary); }
+/* docs/141 4w: on a Json-tree row the ? is hover-revealed like the row's
+   other tools (a ? on every row read as clutter), and it sits right of them. */
+.key-help-btn.tree-help { opacity: 0; margin-left: 0.45em; transition: opacity 0.12s, color 0.12s; }
+.tree-row:hover .key-help-btn.tree-help { opacity: 0.7; }
+.tree-row .key-help-btn.tree-help:hover { opacity: 1; }
 .calc-header {
     display: flex; align-items: center; justify-content: space-between;
     padding: 0.3rem 0.55rem; border-bottom: 1px solid var(--pico-muted-border-color);

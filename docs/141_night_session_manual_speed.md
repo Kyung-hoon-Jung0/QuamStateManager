@@ -1165,6 +1165,26 @@ transparent and shadowless. Same lesson as §4u's frame rule: at equal
 specificity, source order decides — say so with specificity when a rule
 must win. Pinned by `tests/test_modal_frames.py`.
 
+## 4w. The Json tree's ? is a hover tool, right of the others (2026-08-29, user-directed)
+
+The Config Manual's `?` (§4h) was painted on EVERY tree row at rest (opacity
+0.55) while the row's ✎ ⧉ ＋ ✕ only show on hover — the user read it as
+clutter — and it sat LEFT of that group ("✎ ? ⧉ + ✕"). The order was an
+artefact of construction: the `?` is appended when the row renders, but the
+action group is built lazily on the first `mouseover` (`_buildRowActions`)
+and appended after it. Fix: `_buildRowActions` re-appends the row's
+`.tree-help` after attaching the group (moved, never duplicated), and
+`.key-help-btn.tree-help` is `opacity: 0` at rest, 0.7 on row hover, 1 on
+direct hover — the same reveal the other tools use (two-class rule, so it
+beats the generic `.key-help-btn` 0.55 regardless of source order). F1 still
+opens the manual for the focused key, so the hover-only `?` loses nothing.
+Real Chrome on the PJ chip (`cdp_treehelp.js`): opacity 0 → 0.7 on hover,
+the `?` the row's last child at x=532 against the group's right edge 526,
+back to 0 when the mouse leaves, no console errors. Pinned by
+`tests/tree_help_hover_selfcheck.cjs` (15 assertions, driven by
+`test_config_manual.py`; both mutations — no re-append, visible at rest —
+fail it).
+
 ## 5. Tooling that came out of the night
 
 `scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js` (+ daytime: `cdp_profile.js` function-level CPU profile, `cdp_trace.js` per-phase trace of one keystroke, `cdp_type.js` char-by-char typing with a gap + debounce override, `cdp_undo.js` trusted Ctrl+Z/Ctrl+Shift+Z through the page's own UI, `cdp_virt.js` virtualization sampler): Chrome headless with the
