@@ -1,0 +1,270 @@
+"""docs/141 §4o — the Chip Status page, laid out the way the user asked.
+
+1) Overview first; 2) Health right below it, WITHOUT the row-level "Tiles"
+size control — that control now sits right of each panel's own title;
+3) Topology next; 4) then Trends; 5) then Fidelity, which absorbed the old
+"Gate (2Q)" tab: 2Q gate (RB) first, then 1Q gate, then readout; 5-1) the
+IQ-blob metric is "Readout Fidelity (GE)" / "(GEF)" everywhere in SM, badge
+form "Read. Fid. (GE)" — never "IQ Blob", never "Assign".
+
+Pinned here: the template's section order and sub-nav; the sidebar
+sub-links; the route accepting ?view=health and still ?view=gate; the JS
+tables (TAB_SPEC, PANEL_DEFS) and the per-panel control; the glossary,
+thresholds and Trends labels; the GEF metric derived by QueryEngine and by
+the history index (extraction + the v3→v4 content upgrade). The jsdom
+harness (chip_density_selfcheck.cjs) pins the per-panel size behaviour.
+"""
+from __future__ import annotations
+
+import json
+import re
+import shutil
+import sqlite3
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from quam_state_manager.core import chip_health
+from quam_state_manager.core.query import _assignment_fidelity, _assignment_fidelity_n
+from quam_state_manager.web.app import create_app
+
+ROOT = Path(__file__).resolve().parent.parent
+TPL = ROOT / "quam_state_manager" / "web" / "templates"
+JS = (ROOT / "quam_state_manager" / "web" / "static" / "chip-status.js").read_text(encoding="utf-8")
+WIRING = (TPL / "_wiring.html").read_text(encoding="utf-8")
+BASE = (TPL / "base.html").read_text(encoding="utf-8")
+
+
+def _state() -> dict:
+    def _q(i, gef):
+        q = {"id": f"q{i}", "f_01": 5e9 + i * 1e6, "anharmonicity": -220e6, "T1": 2.4e-5, "T2ramsey": 2e-5, "T2echo": 3e-5,
+             "gate_fidelity": {"averaged": 0.995, "x180": 0.996, "x90": 0.997},
+             "xy": {"RF_frequency": 5e9, "operations": {"x180_DragCosine": {"amplitude": 0.1, "length": 40}}},
+             "resonator": {"RF_frequency": 7e9,
+                           "confusion_matrix": [[0.97, 0.03], [0.05, 0.95]],
+                           "operations": {"readout": {"amplitude": 0.04, "length": 1000}}},
+             "z": {"joint_offset": 0.05}, "grid_location": f"{i},0"}
+        if gef:
+            q["resonator"]["gef_confusion_matrix"] = [[0.90, 0.06, 0.04], [0.08, 0.86, 0.06], [0.05, 0.10, 0.85]]
+        return q
+    return {"qubits": {"q0": _q(0, True), "q1": _q(1, True), "q2": _q(2, False)},
+            "qubit_pairs": {}, "active_qubit_names": ["q0", "q1", "q2"]}
+
+
+@pytest.fixture
+def client(tmp_path: Path):
+    (tmp_path / "state.json").write_text(json.dumps(_state()), encoding="utf-8")
+    (tmp_path / "wiring.json").write_text(json.dumps({"wiring": {"qubits": {}}, "network": {"host": "10.1.1.1"}}),
+                                          encoding="utf-8")
+    app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
+    c = app.test_client()
+    assert c.post("/load", data={"folder": str(tmp_path)}).status_code in (200, 302)
+    return c
+
+
+class TestSectionOrder:
+    def test_the_page_order_is_overview_health_topology_trends_fidelity(self):
+        marks = [m.group(1) or m.group(2) for m in re.finditer(
+            r'<div class="topo-section[^"]*" (?:data-topo-section="(\w+)"|id="(sec-\w+)")', WIRING)]
+        assert marks[:5] == ["overview", "health", "sec-topology", "trends", "fidelity"], marks
+        # the Fidelity section holds the 2Q RB host FIRST, then the 1Q/readout host
+        fid = WIRING[WIRING.index('data-topo-section="fidelity"'):]
+        fid = fid[:fid.index("<!--")]
+        assert fid.index('id="topo-2q-rb-panels"') < fid.index('id="topo-fidelity-panels"')
+        assert '<h3 class="topo-section-title">Fidelity</h3>' in fid
+        # the remaining metric groups come after
+        assert WIRING.index('data-topo-section="fidelity"') < WIRING.index('id="topo-metric-panels"')
+
+    def test_the_browser_sees_the_sections_in_order(self, client):
+        """Parsed the way a browser parses it — the raw-text pin above cannot
+        tell a section from a section swallowed by an unclosed banner comment
+        (exactly what the first cut of this layout did: the Fidelity wrapper
+        was in the bytes and absent from the DOM, real Chrome, 2026-08-29)."""
+        from html.parser import HTMLParser
+
+        class P(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.seen = []
+                self.comments = 0
+
+            def handle_starttag(self, tag, attrs):
+                a = dict(attrs)
+                if a.get("data-topo-section"):
+                    self.seen.append(a["data-topo-section"])
+                elif a.get("id") in ("sec-topology", "topo-fidelity-panels", "topo-metric-panels"):
+                    self.seen.append(a["id"])
+
+            def handle_comment(self, data):
+                self.comments += 1
+                assert "<div" not in data, f"markup inside a comment: {data[:120]!r}"
+
+        body = client.get("/topology", headers={"HX-Request": "true"}).get_data(as_text=True)
+        p = P()
+        p.feed(body)
+        assert p.seen == ["overview", "health", "sec-topology", "trends", "fidelity", "2qrb",
+                          "topo-fidelity-panels", "metrics"], p.seen
+        assert p.comments >= 8
+
+    def test_the_subnav_follows_the_page_and_has_no_gate_tab(self):
+        views = re.findall(r'class="topo-subnav-btn" role="tab" data-view="(\w+)"', WIRING)
+        assert views == ["overview", "health", "topology", "trends", "fidelity", "coherence", "frequencies", "calibration"]
+        assert "Gate (2Q)" not in WIRING
+
+    def test_the_sidebar_sublinks_follow_the_same_order(self):
+        ul = BASE[BASE.index('id="chip-status-subnav"'):]
+        ul = ul[:ul.index("</ul>")]
+        assert re.findall(r'data-view="(\w+)"', ul) == ["overview", "health", "topology", "trends", "fidelity",
+                                                         "coherence", "frequencies", "calibration"]
+        assert ">Health<" in ul and "Gate (2Q)" not in ul
+
+    def test_the_health_row_lost_the_tiles_control(self):
+        health = WIRING[WIRING.index('data-topo-section="health"'):WIRING.index("{# Phase C")]
+        assert "topo-density" not in health and "Tiles" not in health and "density-preset" not in health
+
+    def test_the_route_accepts_health_and_still_gate(self, client):
+        for v in ("health", "gate", "fidelity", "overview"):
+            r = client.get(f"/topology?view={v}", headers={"HX-Request": "true"})
+            assert r.status_code == 200
+            assert f"chipView: {json.dumps(v)}" in r.get_data(as_text=True), v
+
+
+class TestClientTables:
+    def test_tab_spec(self):
+        spec = JS[JS.index("var TAB_SPEC = {"):JS.index("var _chipSectionBuilt")]
+        keys = re.findall(r"^\s+(\w+):\s+\{ build:", spec, re.M)
+        assert keys == ["overview", "health", "topology", "fidelity", "coherence", "frequencies", "calibration", "trends"]
+        assert "gate:" not in spec
+        assert "fidelity:     { build: ['2qrb', 'metrics'], sel: '[data-topo-section=\"fidelity\"]' }" in spec
+        assert "if (view === 'gate') view = 'fidelity';" in JS
+
+    def test_panel_defs_order_and_names(self):
+        defs = JS[JS.index("var PANEL_DEFS = ["):JS.index("function findProp")]
+        keys = re.findall(r"\{key:'(\w+)',", defs)
+        fid = [k for k in keys if "fidelity" in k]
+        assert fid == ["gate_fidelity_avg", "gate_fidelity_x180", "gate_fidelity_x90",
+                       "assignment_fidelity", "assignment_fidelity_gef", "ro_fidelity_g", "ro_fidelity_e"]
+        assert "title:'Readout Fidelity (GE) (%)'" in defs and "title:'Readout Fidelity (GEF) (%)'" in defs
+        assert "IQ Blob" not in JS and "Assign" not in JS
+
+    def test_every_panel_title_carries_its_own_size_control(self):
+        # the metric panels and the 2Q-gate panels both put the control right of the title
+        assert JS.count("window.ChipStatus.density.controlHtml(") == 2
+        assert 'data-density-panel="\' + def.key + \'"' in JS
+        assert "data-density-panel=\"' + _esc(dKey) + '\"" in JS
+        # the 2Q RB block is a sub-heading of Fidelity, not its own h3 section
+        assert "2Q Gate Fidelity \\u2014 RB</h4>" in JS
+        assert "Gate Fidelity \\u2014 2Q RB</h3>" not in JS
+
+    def test_a_jump_below_trends_is_re_anchored_when_trends_lands(self):
+        """Trends is above Fidelity now and arrives late: the jump guard is a
+        top-level core, noted on every scrolled jump, and re-run once the
+        Trends swap lands (the harness pins its behaviour)."""
+        assert "window.ChipStatus.jumpGuard = (function () {" in JS
+        assert "if (scroll !== false) _jump.note(view);" in JS
+        after = JS[JS.index("var p = htmx.ajax('GET', '/topology/trends'"):]
+        assert "requestAnimationFrame(function () { _jump.reanchor(); });" in after[:1500]
+        assert ".topo-dashboard .topo-section { scroll-margin-top:" in (ROOT / "quam_state_manager" / "web" / "static" / "style.css").read_text(encoding="utf-8")
+
+    def test_the_overview_names_readout_fidelity_ge_and_gef(self):
+        assert "metricTile('Readout Fidelity (GE)'" in JS
+        assert "metricTile('Readout Fidelity (GEF)'" in JS
+        assert "metricTile('Readout Fidelity'," not in JS
+
+
+class TestNaming:
+    def test_the_glossary(self):
+        ge = chip_health.metric_meta("assignment_fidelity")
+        gef = chip_health.metric_meta("assignment_fidelity_gef")
+        assert ge["label"] == "Readout fidelity (GE)" and ge["abbr"] == "Read. Fid. (GE)"
+        assert gef["label"] == "Readout fidelity (GEF)" and gef["abbr"] == "Read. Fid. (GEF)"
+        assert gef["direction"] == "higher"
+        for m in chip_health.METRIC_META.values():
+            assert "IQ Blob" not in m["label"] and "Assign" not in m["label"] and "Assign" not in m["abbr"]
+        assert chip_health.DEFAULT_THRESHOLDS["assignment_fidelity_gef"]["warn"] == 0.90
+        assert chip_health.verdict(0.85, chip_health.DEFAULT_THRESHOLDS["assignment_fidelity_gef"]) == "warn"
+        assert chip_health.physicality("assignment_fidelity_gef", 1.2) is False
+
+    def test_trends_labels(self):
+        from quam_state_manager.web import routes as R
+        assert R._TREND_LABEL_OVERRIDES == {"assignment_fidelity": "Readout Fidelity (GE)",
+                                            "assignment_fidelity_gef": "Readout Fidelity (GEF)"}
+
+
+class TestGefMetric:
+    def test_the_formula_reads_all_three_states(self):
+        cm = [[0.90, 0.06, 0.04], [0.08, 0.86, 0.06], [0.05, 0.10, 0.85]]
+        assert _assignment_fidelity_n(cm) == pytest.approx((0.90 + 0.86 + 0.85) / 3)
+        # the 2x2 helper is unchanged for GE
+        assert _assignment_fidelity([[0.97, 0.03], [0.05, 0.95]]) == pytest.approx(0.96)
+        # a matrix that is not row-stochastic reads missing, never a number
+        assert _assignment_fidelity_n([[900, 60, 40], [80, 860, 60], [50, 100, 850]]) is None
+        assert _assignment_fidelity_n(None) is None and _assignment_fidelity_n([[1.0]]) is None
+
+    def test_query_engine_derives_it_per_qubit(self, client):
+        from quam_state_manager.web import routes as R
+        with client.application.app_context():
+            with client.application.test_request_context("/"):
+                nodes = {n["id"]: n for n in R._engine().get_topology()["nodes"]}
+        q0, q2 = nodes["q0"], nodes["q2"]
+        assert q0["assignment_fidelity_gef"] == pytest.approx((0.90 + 0.86 + 0.85) / 3)
+        assert q0["metrics"]["assignment_fidelity_gef"]["value"] == pytest.approx((0.90 + 0.86 + 0.85) / 3)
+        assert q0["assignment_fidelity"] == pytest.approx(0.96)
+        assert q2["assignment_fidelity_gef"] is None and q2["assignment_fidelity"] == pytest.approx(0.96)
+
+    def test_the_chip_status_page_ships_it(self, client):
+        body = client.get("/topology", headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert '"assignment_fidelity_gef"' in body
+        assert "Readout fidelity (GEF)" in body          # metric_meta reaches the page
+
+    def test_history_index_extracts_and_upgrades_it(self, tmp_path):
+        from quam_state_manager.core.history import (
+            HistoryManager, _INDEX_SCHEMA_VERSION, DEFAULT_TRACKED_PROPERTIES)
+        assert "assignment_fidelity_gef" in DEFAULT_TRACKED_PROPERTIES and _INDEX_SCHEMA_VERSION >= 4
+        chip = tmp_path / "chip" / "quam_state"
+        chip.mkdir(parents=True)
+        (chip / "state.json").write_text(json.dumps(_state()), encoding="utf-8")
+        (chip / "wiring.json").write_text(json.dumps({"wiring": {}, "network": {"host": "1.1.1.1", "cluster_name": "C"}}),
+                                          encoding="utf-8")
+        hm = HistoryManager(tmp_path / "instance")
+        hm.check_and_snapshot(chip, "manual", force=True)
+        idx = hm._index_path(chip)
+        gef = (0.90 + 0.86 + 0.85) / 3
+        conn = sqlite3.connect(str(idx), isolation_level=None)
+        try:
+            # a freshly built index carries the GEF rows for the qubits that have the matrix
+            got = dict(conn.execute("SELECT qubit, value FROM param_history WHERE property='assignment_fidelity_gef'").fetchall())
+            assert got["q0"] == pytest.approx(gef) and got["q1"] == pytest.approx(gef)
+            assert got.get("q2") is None
+            # simulate a v3 index: no GEF rows yet
+            conn.execute("DELETE FROM param_history WHERE property='assignment_fidelity_gef'")
+            conn.execute("PRAGMA user_version=3")
+        finally:
+            conn.close()
+        hm._schema_verified.discard(str(hm._history_dir(chip)))
+        hm._ensure_index_fresh(chip)
+        conn = sqlite3.connect(str(idx), isolation_level=None)
+        try:
+            got = dict(conn.execute("SELECT qubit, value FROM param_history WHERE property='assignment_fidelity_gef'").fetchall())
+            ver = conn.execute("PRAGMA user_version").fetchone()[0]
+        finally:
+            conn.close()
+        assert got.get("q0") == pytest.approx(gef), got
+        assert ver == _INDEX_SCHEMA_VERSION
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_chip_density_selfcheck():
+    """Per-panel tile size against the REAL chip-status.js under jsdom."""
+    node = shutil.which("node")
+    try:
+        subprocess.run([node, "-e", "require('jsdom')"], check=True, capture_output=True, timeout=30)
+    except Exception:
+        pytest.skip("jsdom not installed")
+    r = subprocess.run([node, str(ROOT / "tests" / "chip_density_selfcheck.cjs")],
+                       capture_output=True, text=True, encoding="utf-8", timeout=180, cwd=str(ROOT))
+    if r.returncode == 2:
+        pytest.skip("jsdom not installed")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.count("ok - ") >= 10, r.stdout

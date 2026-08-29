@@ -870,6 +870,75 @@ undo-missing without a fetch, the apply sync fetching nothing, the carry
 landing after the fetch, sort-after-fetch, the vw hint). Mutation-checked
 9/9.
 
+## 4o. Chip Status, laid out the way the user asked (2026-08-29, user-directed)
+
+Five numbered items, taken literally. **1)** Overview is the first section.
+**2)** Health sits right below it, and the row-level "Tiles" control (S / M /
+L + slider, one scale for the whole dashboard) is gone from the Health row —
+**2-1)** each panel now carries its own S · M · L right of its title word
+("Readout Frequency  S M L"). **3)** Topology follows Health. **4)** Trends
+follows Topology. **5)** "Gate (2Q)" no longer exists as a tab: the Fidelity
+section opens with the 2Q gate fidelity (RB) panels, then the 1Q gate panels,
+then readout. **5-1)** The IQ-blob metric is named for what it is, everywhere
+in SM: **Readout Fidelity (GE)** (two-state, from `confusion_matrix`) and
+**Readout Fidelity (GEF)** (three-state, from `gef_confusion_matrix`), badge
+form "Read. Fid. (GE)" — never "IQ Blob", never "Assign".
+
+**How.** `_wiring.html` is reassembled in that order (a page-title row with
+the diagnostics badge leads; the Topology toolbar keeps its own heading);
+the sub-nav and the sidebar sub-links follow the same order; the route
+accepts `?view=health` and still `?view=gate` (the client maps it onto
+Fidelity). `TAB_SPEC.fidelity` builds both lazy hosts; `buildMetricPanels`
+renders its fidelity group into `#topo-fidelity-panels` inside the Fidelity
+wrapper (after `build2QRBPanels`' block, now a sub-heading, not its own
+`<h3>`), the other groups stay in `#topo-metric-panels`. The density
+controller is per panel: `controlHtml(key)` beside every metric / 2Q-gate
+panel title, ONE delegated click listener on the dashboard (panels are built
+lazily), the scale written as `--topo-density-scale` on THAT `.topo-section`
+— the derived cell sizes are now re-computed at the section (a custom
+property computed on the dashboard never saw a child's override), persisted
+per panel key in `quam_chip_density_panels`. The GEF metric:
+`query._assignment_fidelity_n` (mean diagonal over ALL n states — the 2×2
+formula would silently drop the f row), a node metric, a glossary entry with
+thresholds (warn 0.90 / fail 0.80: three-state discrimination runs lower than
+two-state on the same readout), a Trends label, and a tracked history
+property with a v3→v4 content upgrade (`_DERIVED_FIDELITY_PROPS` is now the
+one table the live extractor and both upgrades read). A chip without the
+matrix (PJ stores `null`) shows no GEF tile and no GEF panel — never a
+permanent "no data" box.
+
+**What the first cut got wrong, and the pin that could not see it.** The
+new Fidelity banner comment had no `-->` (the originals' closing was hidden
+by a byte-counting `cut` in the terminal), so the wrapper was in the bytes
+and absent from the DOM — the raw-text order pin was green while real Chrome
+showed no Fidelity section at all. `test_the_browser_sees_the_sections_in_order`
+now parses the rendered page with a comment-aware parser and refuses markup
+inside any comment.
+
+**The second thing real Chrome showed.** Trends now sits above Fidelity and
+is fetched lazily, so a jump to Fidelity (`?view=fidelity`, the sidebar
+sub-link) landed on the three Trends charts that arrived a moment later and
+pushed everything down. `ChipStatus.jumpGuard` (a top-level core, no mount
+needed) remembers the last jump; when the Trends swap lands, a jump made
+within 8 s to a section below Trends is scrolled back to (`scroll-margin-top`
+keeps the title out from under the sticky sub-nav). Measured after the fix:
+Fidelity's top 64 px below the pane top, Trends' bottom above it.
+
+**Real Chrome (PJ 20Q):** order Overview · Health · Topology · Trends ·
+Fidelity · (Coherence · Frequencies · Calibration); no size control in the
+Health row; Fidelity heads: 2Q Gate Fidelity — RB (Standard RB, six gates) →
+1Q Gate & Readout Fidelity → 1Q Gate Fidelity, Readout Fidelity (GE), |g⟩,
+|e⟩; 10 panels, 10 controls; M on the first panel writes 0.85 on that
+section only (cell 132 → 112 px), the dashboard untouched; no console
+errors.
+
+Pinned by `tests/test_chip_status_layout.py` (order — raw and parsed —,
+sub-nav, sidebar, the Health row, the route, `TAB_SPEC` / `PANEL_DEFS`, the
+controls, the glossary + thresholds + Trends labels, the GEF formula /
+QueryEngine / page / history index + upgrade, the jump-guard wiring) +
+`chip_density_selfcheck.cjs` (21 asserts: per-panel size + the jump guard);
+mutation-checked 4/4.
+
 ## 5. Tooling that came out of the night
 
 `scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js` (+ daytime: `cdp_profile.js` function-level CPU profile, `cdp_trace.js` per-phase trace of one keystroke, `cdp_type.js` char-by-char typing with a gap + debounce override, `cdp_undo.js` trusted Ctrl+Z/Ctrl+Shift+Z through the page's own UI, `cdp_virt.js` virtualization sampler): Chrome headless with the

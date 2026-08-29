@@ -510,12 +510,14 @@
                         {# Chip Status sections — one scrolling dashboard; these mirror the
                            in-page scroll-spy jump bar (kept in sync by setChipStatusView). #}
                         <ul class="nav-subitems" id="chip-status-subnav">
-                            <li><a href="/topology?view=topology" data-view="topology"
-                                   onclick="return chipNavView('topology', event)">Topology</a></li>
                             <li><a href="/topology?view=overview" data-view="overview"
                                    onclick="return chipNavView('overview', event)">Overview</a></li>
-                            <li><a href="/topology?view=gate" data-view="gate"
-                                   onclick="return chipNavView('gate', event)">Gate (2Q)</a></li>
+                            <li><a href="/topology?view=health" data-view="health"
+                                   onclick="return chipNavView('health', event)">Health</a></li>
+                            <li><a href="/topology?view=topology" data-view="topology"
+                                   onclick="return chipNavView('topology', event)">Topology</a></li>
+                            <li><a href="/topology?view=trends" data-view="trends"
+                                   onclick="return chipNavView('trends', event)">Trends</a></li>
                             <li><a href="/topology?view=fidelity" data-view="fidelity"
                                    onclick="return chipNavView('fidelity', event)">Fidelity</a></li>
                             <li><a href="/topology?view=coherence" data-view="coherence"
@@ -524,8 +526,6 @@
                                    onclick="return chipNavView('frequencies', event)">Frequencies</a></li>
                             <li><a href="/topology?view=calibration" data-view="calibration"
                                    onclick="return chipNavView('calibration', event)">Calibration</a></li>
-                            <li><a href="/topology?view=trends" data-view="trends"
-                                   onclick="return chipNavView('trends', event)">Trends</a></li>
                         </ul>
                     </li>
                     {# Compare — docs/84 made the DIFF the front door: the hub

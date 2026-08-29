@@ -28,6 +28,7 @@ _NODE_METRIC_KEYS = (
     "readout_frequency", "x180_amplitude", "x180_length", "x180_alpha",
     "x90_amplitude", "saturation_amplitude", "readout_amplitude",
     "readout_length", "readout_threshold", "assignment_fidelity",
+    "assignment_fidelity_gef",
     "ro_fidelity_g", "ro_fidelity_e", "gate_fidelity_avg",
     "gate_fidelity_x180", "gate_fidelity_x90",
 )
@@ -642,6 +643,9 @@ class QueryEngine:
                 "readout_length": ro.get("length"),
                 "readout_threshold": ro.get("threshold"),
                 "assignment_fidelity": _assignment_fidelity(rr.get("confusion_matrix")),
+                # docs/141 4o: three-state (g/e/f) readout fidelity, from the
+                # 3x3 matrix the GEF discrimination node stores beside the 2x2
+                "assignment_fidelity_gef": _assignment_fidelity_n(rr.get("gef_confusion_matrix")),
                 "ro_fidelity_g": _cm_diag(rr.get("confusion_matrix"), 0),
                 "ro_fidelity_e": _cm_diag(rr.get("confusion_matrix"), 1),
                 "gate_fidelity_avg": gf.get("averaged") if isinstance(gf, dict) else None,
@@ -1254,6 +1258,19 @@ def _assignment_fidelity(confusion_matrix: Any) -> float | None:
     try:
         return (confusion_matrix[0][0] + confusion_matrix[1][1]) / 2
     except (IndexError, TypeError):
+        return None
+
+
+def _assignment_fidelity_n(confusion_matrix: Any) -> float | None:
+    """Assignment fidelity of an n-state confusion matrix: the mean of the
+    diagonal over ALL n states (a 3x3 g/e/f matrix reads all three — the 2x2
+    formula above would silently ignore the f row). Same validator."""
+    if not _valid_confusion_matrix(confusion_matrix):
+        return None
+    try:
+        n = len(confusion_matrix)
+        return sum(confusion_matrix[i][i] for i in range(n)) / n
+    except (IndexError, TypeError, ZeroDivisionError):
         return None
 
 

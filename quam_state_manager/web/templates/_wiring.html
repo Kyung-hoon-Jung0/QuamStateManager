@@ -6,6 +6,11 @@
 <!-- The old always-on summary strip was folded into the richer Overview section
      below (Section 3, data-topo-section="overview"). -->
 
+<div class="topo-section" data-topo-section="overview">
+    <h3 class="topo-section-title">Overview</h3>
+    <div class="topo-summary-cards" id="topo-overview-tiles"></div>
+</div>
+
 <!-- ═══════════════════════════════════════════════════════════════════
      Section 1.5: Chip Health Summary — at a glance: broken? stale? in spec?
      (built client-side from topo.summary + thresholds + recency + diagnostics)
@@ -24,13 +29,6 @@
                 <a class="btn-sm" href="/topology/report?format=html" download onclick="return ChipStatus.reportHref(this,'html')">HTML</a>
             </div>
         </details>
-        <span class="topo-density-ctl" title="Tile size — shrink the boxes (the numbers stay the same size)">
-            <span class="density-label">Tiles</span>
-            <button type="button" class="btn-sm outline density-preset" data-density="0.7">S</button>
-            <button type="button" class="btn-sm outline density-preset" data-density="0.85">M</button>
-            <button type="button" class="btn-sm outline density-preset" data-density="1">L</button>
-            <input type="range" id="topo-density-slider" min="0.55" max="1.15" step="0.05" value="1" aria-label="Tile size">
-        </span>
         <span class="topo-health-asof muted" id="topo-health-asof"></span>
     </div>
     <div class="topo-thresh-editor" id="topo-thresh-editor" hidden></div>
@@ -42,23 +40,22 @@
    smooth-scrolls to the section; scrolling highlights the matching tab. Lives
    at top level so it stays pinned across every section. #}
 <div class="topo-subnav" role="tablist" aria-label="Chip Status sections">
-    <button type="button" class="topo-subnav-btn" role="tab" data-view="topology"
-            onclick="setChipStatusView('topology', this, true)" title="Jump to the chip topology diagram">Topology</button>
     <button type="button" class="topo-subnav-btn" role="tab" data-view="overview"
             onclick="setChipStatusView('overview', this, true)" title="Jump to the per-metric overview">Overview</button>
-    <button type="button" class="topo-subnav-btn" role="tab" data-view="gate"
-            onclick="setChipStatusView('gate', this, true)" title="Jump to the 2Q gate fidelity (RB)">Gate (2Q)</button>
+    <button type="button" class="topo-subnav-btn" role="tab" data-view="health"
+            onclick="setChipStatusView('health', this, true)" title="Jump to the chip health summary">Health</button>
+    <button type="button" class="topo-subnav-btn" role="tab" data-view="topology"
+            onclick="setChipStatusView('topology', this, true)" title="Jump to the chip topology diagram">Topology</button>
+    <button type="button" class="topo-subnav-btn" role="tab" data-view="trends"
+            onclick="setChipStatusView('trends', this, true)" title="Jump to the chip-wide trends">Trends</button>
     <button type="button" class="topo-subnav-btn" role="tab" data-view="fidelity"
-            onclick="setChipStatusView('fidelity', this, true)" title="Jump to the fidelity panels">Fidelity</button>
+            onclick="setChipStatusView('fidelity', this, true)" title="Jump to the fidelity panels — 2Q gate (RB), 1Q gate, readout">Fidelity</button>
     <button type="button" class="topo-subnav-btn" role="tab" data-view="coherence"
             onclick="setChipStatusView('coherence', this, true)" title="Jump to the coherence panels">Coherence</button>
     <button type="button" class="topo-subnav-btn" role="tab" data-view="frequencies"
             onclick="setChipStatusView('frequencies', this, true)" title="Jump to the frequency panels">Frequencies</button>
     <button type="button" class="topo-subnav-btn" role="tab" data-view="calibration"
             onclick="setChipStatusView('calibration', this, true)" title="Jump to the calibration panels">Calibration</button>
-    {# docs/120 items 5+9 #}
-    <button type="button" class="topo-subnav-btn" role="tab" data-view="trends"
-            onclick="setChipStatusView('trends', this, true)" title="Jump to the chip-wide trends">Trends</button>
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════
@@ -118,21 +115,6 @@
 <!-- ═══════════════════════════════════════════════════════════════════
      Section 3: Qubit Heatmap Grid
      ═══════════════════════════════════════════════════════════════════ -->
-<div class="topo-section" data-topo-section="overview">
-    <h3 class="topo-section-title">Overview</h3>
-    <div class="topo-summary-cards" id="topo-overview-tiles"></div>
-</div>
-
-<!-- ═══════════════════════════════════════════════════════════════════
-     Section 5: Gate Fidelity — 2Q RB (pair-based: grid + bar chart)
-     ═══════════════════════════════════════════════════════════════════ -->
-<div id="topo-2q-rb-panels" data-topo-section="2qrb"></div>
-
-<!-- ═══════════════════════════════════════════════════════════════════
-     Section 6: Per-Metric Detail Panels (grid + bar chart each)
-     ═══════════════════════════════════════════════════════════════════ -->
-<div id="topo-metric-panels" data-topo-section="metrics"></div>
-
 <!-- ═══════════════════════════════════════════════════════════════════
      docs/120 items 5+9 — chip-wide Trends: every qubit on ONE plot per
      metric. Param History answers "how did THIS qubit move"; the customer
@@ -144,6 +126,24 @@
     <h3 class="topo-section-title">Trends</h3>
     <div id="topo-trends" class="topo-trends"></div>
 </div>
+
+<!-- ═════════════════════════════════════════════════════════════════
+     Section 5: Fidelity — 2Q gate (RB, pair-based) first, then the 1Q gate
+     and readout panels (docs/141 4o: the old 2Q-gate tab is absorbed here). The two
+     inner hosts are filled lazily by build2QRBPanels / buildMetricPanels.
+     ═════════════════════════════════════════════════════════════════ -->
+<div class="topo-section" data-topo-section="fidelity" id="sec-fidelity">
+    <h3 class="topo-section-title">Fidelity</h3>
+    <div id="topo-2q-rb-panels" data-topo-section="2qrb"></div>
+    <div id="topo-fidelity-panels"></div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     Section 6: Per-Metric Detail Panels — coherence, frequencies,
+     calibration (grid + bar chart each; the fidelity group renders into
+     #topo-fidelity-panels above)
+     ═══════════════════════════════════════════════════════════════════ -->
+<div id="topo-metric-panels" data-topo-section="metrics"></div>
 
 <!-- JSON drill-down panel (hidden by default) -->
 <div id="json-panel" class="json-panel hidden">

@@ -145,8 +145,14 @@ METRIC_META: dict[str, dict[str, Any]] = {
     "readout_threshold": {"label": "Readout threshold", "abbr": "RO thr", "direction": "neutral",
                     "blurb": "IQ discrimination threshold separating |g⟩ from |e⟩."},
     # readout / gate fidelities — higher is better
-    "assignment_fidelity": {"label": "Readout assignment fidelity", "abbr": "Assign F", "direction": "higher",
-                    "blurb": "Single-shot fidelity of assigning the measured state from the IQ blobs. Higher is better."},
+    # docs/141 4o (user-directed): the IQ-blob metric is named for what it IS
+    # everywhere in SM — readout fidelity; (GE) = two-state from the confusion
+    # matrix, (GEF) = three-state from gef_confusion_matrix. The badge form is
+    # "Read. Fid." (never "Assign").
+    "assignment_fidelity": {"label": "Readout fidelity (GE)", "abbr": "Read. Fid. (GE)", "direction": "higher",
+                    "blurb": "Single-shot fidelity of assigning |g⟩ / |e⟩ from the IQ blobs (mean diagonal of the 2×2 confusion matrix). Higher is better."},
+    "assignment_fidelity_gef": {"label": "Readout fidelity (GEF)", "abbr": "Read. Fid. (GEF)", "direction": "higher",
+                    "blurb": "Single-shot fidelity of assigning |g⟩ / |e⟩ / |f⟩ (mean diagonal of the 3×3 g/e/f confusion matrix). Higher is better."},
     "ro_fidelity_g": {"label": "Readout fidelity |g⟩", "abbr": "RO_fg", "direction": "higher",
                     "blurb": "Probability of correctly reading |g⟩ when the qubit is in |g⟩. Higher is better."},
     "ro_fidelity_e": {"label": "Readout fidelity |e⟩", "abbr": "RO_fe", "direction": "higher",
@@ -191,6 +197,8 @@ _THRESHOLD_BOUNDS: dict[str, dict[str, float]] = {
     "T2ramsey":            {"warn": 20e-6, "fail": 5e-6},
     "T2echo":              {"warn": 30e-6, "fail": 10e-6},
     "assignment_fidelity": {"warn": 0.95,  "fail": 0.90},
+    # three-state discrimination runs lower than two-state on the same readout
+    "assignment_fidelity_gef": {"warn": 0.90, "fail": 0.80},
     "gate_fidelity_avg":   {"warn": 0.99,  "fail": 0.95},
     "cz_fidelity":         {"warn": 0.95,  "fail": 0.90},
 }
@@ -227,7 +235,7 @@ def verdict(value: Any, thresh: dict[str, Any] | None) -> str | None:
 # it raw + hatched as "likely failed fit". Metrics not listed get only the
 # finite-number check (e.g. anharmonicity is legitimately negative).
 _FIDELITY_KEYS = frozenset({
-    "assignment_fidelity", "gate_fidelity_avg", "gate_fidelity_x180",
+    "assignment_fidelity", "assignment_fidelity_gef", "gate_fidelity_avg", "gate_fidelity_x180",
     "gate_fidelity_x90", "ro_fidelity_g", "ro_fidelity_e", "cz_fidelity",
 })
 _POSITIVE_KEYS = frozenset({"T1", "T2ramsey", "T2echo"})

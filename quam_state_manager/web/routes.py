@@ -8561,7 +8561,9 @@ def wiring_view():
     # bare /topology from the main "Chip Status" item) → client default, which is
     # the topology-diagram-only view.
     # Phase C scroll-spy sections (+ "full" kept for old bookmarks → topology).
-    _CHIP_VIEWS = {"topology", "overview", "gate", "fidelity",
+    # docs/141 4o: "health" joined; "gate" stays accepted (old links) and the
+    # client maps it onto the Fidelity section that absorbed it.
+    _CHIP_VIEWS = {"topology", "overview", "health", "gate", "fidelity",
                    "coherence", "frequencies", "calibration", "trends", "full"}
     chip_view = request.args.get("view", "").strip().lower()
     if chip_view not in _CHIP_VIEWS:
@@ -9187,7 +9189,10 @@ def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str]) -> list
 # Trends-only display-name overrides (chip_health.METRIC_META's "Readout
 # assignment fidelity" stays the formal glossary text for Diagnostics/the
 # threshold editor — this is purely what the Trends pill/chart title says).
-_TREND_LABEL_OVERRIDES: dict[str, str] = {"assignment_fidelity": "IQ Blobs"}
+_TREND_LABEL_OVERRIDES: dict[str, str] = {
+    "assignment_fidelity": "Readout Fidelity (GE)",
+    "assignment_fidelity_gef": "Readout Fidelity (GEF)",
+}
 
 
 @bp.route("/topology/trends")

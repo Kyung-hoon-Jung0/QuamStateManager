@@ -8,61 +8,111 @@
  * processed. */
 window.ChipStatus = window.ChipStatus || {};
 
-/* DensityController (Phase 1) — the first factored core. Owns the tile-size
-   control: a 0.55–1.15 scale written to .topo-dashboard's --topo-density-scale
-   (CSS derives the cell sizes; fonts are untouched), with S/M/L presets + a fine
-   slider, persisted to localStorage. Scoped to the dashboard so it never leaks. */
+/* DensityController — per-PANEL tile size (docs/141 §4o, user-directed). Each
+   metric panel's title carries its own S / M / L; the chosen scale is written
+   to THAT panel's --topo-density-scale (CSS derives the cell sizes per
+   .topo-section; fonts are untouched) and persisted per panel key. The
+   dashboard-wide scale stays 1 — the old Health-row "Tiles" slider is gone. */
 window.ChipStatus.density = (function () {
-    var KEY = 'quam_chip_density', MIN = 0.55, MAX = 1.15;
+    var KEY = 'quam_chip_density_panels', MIN = 0.55, MAX = 1.15;
+    var PRESETS = [['S', 0.7], ['M', 0.85], ['L', 1]];
+    var _store = null;
     function clamp(v) { return Math.max(MIN, Math.min(MAX, v)); }
     function load() {
-        var s = NaN;
-        try { s = parseFloat(localStorage.getItem(KEY)); } catch (e) {}
-        return (isFinite(s) && s > 0) ? clamp(s) : 1;
+        if (_store) return _store;
+        _store = {};
+        try {
+            var o = JSON.parse(localStorage.getItem(KEY) || '{}');
+            if (o && typeof o === 'object' && !Array.isArray(o)) _store = o;
+        } catch (e) {}
+        return _store;
+    }
+    function get(key) {
+        var v = parseFloat(load()[key]);
+        return (isFinite(v) && v > 0) ? clamp(v) : 1;
+    }
+    function _cssKey(key) { return String(key).replace(/["\\]/g, ''); }
+    function panelEl(key) {
+        return document.querySelector('.topo-section[data-density-panel="' + _cssKey(key) + '"]');
     }
     var _rsT = null;
-    function apply(s) {
-        var d = document.querySelector('.topo-dashboard');
-        if (!d) return;
-        s = clamp(s);
-        d.style.setProperty('--topo-density-scale', s);
+    function applyPanel(key, el) {
+        el = el || panelEl(key);
+        if (!el) return;
+        var v = get(key);
+        if (v === 1) el.style.removeProperty('--topo-density-scale');
+        else el.style.setProperty('--topo-density-scale', v);
+        el.querySelectorAll('.density-preset[data-density-panel]').forEach(function (b) {
+            b.classList.toggle('active', Math.abs(parseFloat(b.getAttribute('data-density')) - v) < 1e-6);
+        });
         // The metric bar charts are the one Chip Status surface no observer
-        // can serve: this slider reflows SIBLINGS without moving any outer
-        // container's box (docs/123 §7). The setter is therefore the resize
-        // trigger — debounced (the slider fires per pixel), and safe to call
-        // since docs/125 fix 5: resizeWithin hands each chart's layout back
-        // untouched, so the window-resize path stays alive.
+        // can serve: a size change reflows SIBLINGS without moving any outer
+        // container's box (docs/123 §7). Debounced; resizeWithin hands each
+        // chart's layout back untouched (docs/125 fix 5).
         clearTimeout(_rsT);
         _rsT = setTimeout(function () {
-            if (window.PlotHost) {
-                try { window.PlotHost.resizeWithin(d); } catch (e) {}
-            }
+            if (window.PlotHost) { try { window.PlotHost.resizeWithin(el); } catch (e) {} }
         }, 150);
-        var sl = document.getElementById('topo-density-slider');
-        if (sl && parseFloat(sl.value) !== s) sl.value = s;
-        var preds = document.querySelectorAll('.density-preset');
-        for (var i = 0; i < preds.length; i++) {
-            preds[i].classList.toggle('active',
-                Math.abs(parseFloat(preds[i].getAttribute('data-density')) - s) < 1e-6);
-        }
     }
-    function set(s) {
-        s = clamp(s);
-        try { localStorage.setItem(KEY, String(s)); } catch (e) {}
-        apply(s);
+    function set(key, v) {
+        load()[String(key)] = clamp(v);
+        try { localStorage.setItem(KEY, JSON.stringify(_store)); } catch (e) {}
+        applyPanel(String(key));
+    }
+    // apply every remembered size under `root` (a freshly built container)
+    function applyAll(root) {
+        (root || document).querySelectorAll('.topo-section[data-density-panel]').forEach(function (el) {
+            applyPanel(el.getAttribute('data-density-panel'), el);
+        });
+    }
+    // the S / M / L control a builder puts beside a panel's title
+    function controlHtml(key) {
+        var k = _cssKey(key), v = get(k);
+        var out = '<span class="topo-density-ctl topo-density-ctl-panel" title="Tile size for this panel (the numbers stay the same size)">';
+        PRESETS.forEach(function (pr) {
+            out += '<button type="button" class="btn-sm outline density-preset' + (Math.abs(pr[1] - v) < 1e-6 ? ' active' : '')
+                + '" data-density-panel="' + k + '" data-density="' + pr[1] + '" aria-label="' + pr[0] + ' tiles">' + pr[0] + '</button>';
+        });
+        return out + '</span>';
     }
     function init() {
-        apply(load());
-        var sl = document.getElementById('topo-density-slider');
-        if (sl) sl.addEventListener('input', function () { set(parseFloat(sl.value)); });
-        var preds = document.querySelectorAll('.density-preset');
-        for (var i = 0; i < preds.length; i++) {
-            (function (b) {
-                b.addEventListener('click', function () { set(parseFloat(b.getAttribute('data-density'))); });
-            })(preds[i]);
+        var d = document.querySelector('.topo-dashboard');
+        if (d && !d._densityBound) {
+            d._densityBound = true;          // ONE delegated listener: panels are built lazily
+            d.addEventListener('click', function (e) {
+                var b = e.target.closest && e.target.closest('.density-preset[data-density-panel]');
+                if (!b) return;
+                e.preventDefault();
+                set(b.getAttribute('data-density-panel'), parseFloat(b.getAttribute('data-density')));
+            });
         }
+        applyAll(d);
     }
-    return { init: init, set: set, apply: apply };
+    return { init: init, set: set, get: get, applyAll: applyAll, controlHtml: controlHtml, presets: PRESETS };
+})();
+
+/* JumpGuard (docs/141 4o) — Trends sits above Fidelity / Coherence / … and is
+   fetched lazily, so a jump to a section below it (a sidebar sub-link, ?view=)
+   landed on the charts that arrived a moment later and pushed everything down.
+   Remember the last jump; when Trends lands, put that section back at the top
+   of the pane. A core with no DOM assumptions of its own: the caller hands it
+   the selector for a view. */
+window.ChipStatus.jumpGuard = (function () {
+    var last = null, WINDOW_MS = 8000;
+    var BELOW = ['fidelity', 'coherence', 'frequencies', 'calibration'];   // rendered below Trends
+    return {
+        note: function (view) { last = { view: view, at: Date.now() }; },
+        below: BELOW,
+        reanchor: function (selOf) {
+            if (!last || Date.now() - last.at > WINDOW_MS) return false;
+            if (BELOW.indexOf(last.view) < 0) return false;
+            var sel = selOf ? selOf(last.view) : null;
+            var el = sel && document.querySelector(sel);
+            if (!el || !el.scrollIntoView) return false;
+            el.scrollIntoView({ behavior: 'auto', block: 'start' });
+            return true;
+        }
+    };
 })();
 
 /* LayoutController (Phase 1) — the two-stable-renderings rule. A single debounced
@@ -435,6 +485,7 @@ window.ChipStatus.mount = function (opts) {
         {key:'gate_fidelity_x180',fmtFn:function(v){return fmtPct(v,2);}},
         {key:'gate_fidelity_x90', fmtFn:function(v){return fmtPct(v,2);}},
         {key:'assignment_fidelity',fmtFn:function(v){return fmtPct(v,2);}},
+        {key:'assignment_fidelity_gef',fmtFn:function(v){return fmtPct(v,2);}},
         {key:'x180_amplitude',    fmtFn:function(v){return fmtNum(v,4);}},
         {key:'x180_length',       fmtFn:function(v){return fmt(v,'ns');}},
         {key:'x180_alpha',        fmtFn:function(v){return fmtNum(v,4);}},
@@ -668,7 +719,11 @@ window.ChipStatus.mount = function (opts) {
             // 1 - error_per_gate (27_single_qubit_randomized_benchmarking.py).
             withErrLine(metricTile('1Q Gate Fidelity', nodeAgg('gate_fidelity_avg'), pct, fidRange, 'gate_fidelity_avg'),
                         nodeAgg('gate_fidelity_avg'), 'EPG', null),
-            metricTile('Readout Fidelity', nodeAgg('assignment_fidelity'), pct, roRange, 'assignment_fidelity'),
+            metricTile('Readout Fidelity (GE)', nodeAgg('assignment_fidelity'), pct, roRange, 'assignment_fidelity'),
+            // three-state readout, only on a chip that measured it (no permanent "no data" tile)
+            (nodeAgg('assignment_fidelity_gef').count > 0
+                ? metricTile('Readout Fidelity (GEF)', nodeAgg('assignment_fidelity_gef'), pct, roRange, 'assignment_fidelity_gef')
+                : null),
             // Standard RB fits the CLIFFORD fidelity (1-EPC); interleaved RB
             // fits the GATE fidelity (1-EPG). A Clifford is ~5.4 two-qubit
             // gates here, so the titles say which is which and each tile also
@@ -694,6 +749,7 @@ window.ChipStatus.mount = function (opts) {
         ];
 
         var html = '';
+        tiles = tiles.filter(Boolean);
         tiles.forEach(function(c) {
             var border = c.muted ? 'var(--pico-muted-border-color)' : (c.color || 'var(--pico-muted-border-color)');
             var titleHtml = c.metricKey ? labelHtml(c.metricKey, false, c.title) : _esc(c.title);
@@ -1038,6 +1094,7 @@ window.ChipStatus.mount = function (opts) {
               fmtFn: function(v) { return fmt(v, 'GHz'); } },
             { key: 'gate_fidelity_avg',   fmtFn: function(v) { return fmtPct(v, 2) + '%'; } },
             { key: 'assignment_fidelity', fmtFn: function(v) { return fmtPct(v, 2) + '%'; } },
+            { key: 'assignment_fidelity_gef', fmtFn: function(v) { return fmtPct(v, 2) + '%'; } },
             { key: 'T1',                  fmtFn: function(v) { return fmt(v, 'us'); } },
             { key: 'T2echo',              fmtFn: function(v) { return fmt(v, 'us'); } },
         ].filter(function(m) {
@@ -1811,7 +1868,9 @@ window.ChipStatus.mount = function (opts) {
 
         // Pass 1: accumulate HTML + render specs, then ONE innerHTML write below
         // (per-panel `+=` re-serialized the growing DOM each panel = the freeze).
-        var html = ['<h3 class="topo-section-title" style="margin-top:1.5rem">Gate Fidelity \u2014 2Q RB</h3>'];
+        // docs/141 4o: the first block of the Fidelity section (the wrapper's
+        // <h3> says Fidelity); this is its sub-heading.
+        var html = ['<h4 class="topo-section-title topo-fidelity-subtitle" style="margin-top:0.5rem;font-size:1.05em">2Q Gate Fidelity \u2014 RB</h4>'];
         var specs = [];
 
         // ── Render panels per RB type, then per gate ────────────────
@@ -1820,7 +1879,7 @@ window.ChipStatus.mount = function (opts) {
             if (!gates) return;
 
             var rbLabel = rbType === 'StandardRB' ? 'Standard RB' : 'Interleaved RB';
-            html.push('<h4 class="topo-section-title" style="margin-top:1rem;font-size:1.05em">' + rbLabel + '</h4>');
+            html.push('<h5 class="topo-section-title" style="margin-top:0.8rem;font-size:1em">' + rbLabel + '</h5>');
 
             var gateNames = Object.keys(gates).sort(function(a, b) {
                 return gates[b].length - gates[a].length;  // most results first
@@ -1848,10 +1907,12 @@ window.ChipStatus.mount = function (opts) {
                 var secId = 'rb-' + rbType + '-' + gateName.replace(/[^a-zA-Z0-9]/g, '-');
                 var chartId = secId + '-chart';
 
-                var sectionHtml = '<div class="topo-section" id="' + secId + '">';
+                var dKey = '2q:' + rbType + ':' + gateName;
+                var sectionHtml = '<div class="topo-section" id="' + secId + '" data-density-panel="' + _esc(dKey) + '">';
                 // Stat line is its OWN block below the title (not inside the <h4>) so
                 // at narrow width it wraps cleanly instead of lapping onto the grid.
-                sectionHtml += '<h4 class="topo-metric-panel-title">' + gateLabel + '</h4>';
+                sectionHtml += '<h4 class="topo-metric-panel-title">' + gateLabel
+                    + window.ChipStatus.density.controlHtml(dKey) + '</h4>';
                 sectionHtml += '<div class="topo-metric-panel-stat">'
                     + 'avg ' + (agg.avg * 100).toFixed(2) + '% <span>med ' + (agg.median * 100).toFixed(2)
                     + '%</span> <span>min ' + (agg.min * 100).toFixed(2) + '%</span> <span>max ' + (agg.max * 100).toFixed(2)
@@ -1964,6 +2025,7 @@ window.ChipStatus.mount = function (opts) {
         // ── Click handlers: pair cell → inspector ────────────────────
         // Single DOM write, then re-query click handlers, then render charts.
         container.innerHTML = html.join('');
+        window.ChipStatus.density.applyAll(container);
 
         container.querySelectorAll('.heatmap-cell[data-pair]').forEach(function(cell) {
             cell.addEventListener('click', function() {
@@ -1987,10 +2049,14 @@ window.ChipStatus.mount = function (opts) {
 
         // Define which metrics get their own full panel, in display order
         var PANEL_DEFS = [
-            {key:'gate_fidelity_avg', title:'Gate Fidelity \u2014 RB avg (%)',group:'fidelity'},
-            {key:'gate_fidelity_x180',title:'Gate Fidelity x180 (%)',   group:'fidelity'},
-            {key:'gate_fidelity_x90', title:'Gate Fidelity x90 (%)',    group:'fidelity'},
-            {key:'assignment_fidelity',title:'IQ Blob (%)',             group:'fidelity'},
+            {key:'gate_fidelity_avg', title:'1Q Gate Fidelity \u2014 RB avg (%)',group:'fidelity'},
+            {key:'gate_fidelity_x180',title:'1Q Gate Fidelity x180 (%)',group:'fidelity'},
+            {key:'gate_fidelity_x90', title:'1Q Gate Fidelity x90 (%)', group:'fidelity'},
+            // docs/141 4o (user-directed): the IQ-blob metric is named for what
+            // it IS everywhere in SM — readout fidelity, two-state (GE) from the
+            // confusion matrix, three-state (GEF) from gef_confusion_matrix.
+            {key:'assignment_fidelity',title:'Readout Fidelity (GE) (%)', group:'fidelity'},
+            {key:'assignment_fidelity_gef',title:'Readout Fidelity (GEF) (%)', group:'fidelity'},
             {key:'ro_fidelity_g',     title:'Readout Fidelity |g\u27E9 (%)',group:'fidelity'},
             {key:'ro_fidelity_e',     title:'Readout Fidelity |e\u27E9 (%)',group:'fidelity'},
             {key:'T1',                title:'T1 (\u00b5s)',             group:'coherence'},
@@ -2025,6 +2091,12 @@ window.ChipStatus.mount = function (opts) {
         // Pass 1: accumulate HTML + render specs; ONE innerHTML write below.
         var html = [];
         var specs = [];
+        // docs/141 4o: the fidelity group lives in the Fidelity section (after
+        // the 2Q RB panels) when the page has one; the other groups keep
+        // this container.
+        var fidHost = document.getElementById('topo-fidelity-panels');
+        var fidHtml = [];
+        var sink = function (def) { return (fidHost && def.group === 'fidelity') ? fidHtml : html; };
 
         PANEL_DEFS.forEach(function(def) {
             var prop = findProp(def.key);
@@ -2039,8 +2111,12 @@ window.ChipStatus.mount = function (opts) {
             // Group header
             if (def.group !== prevGroup) {
                 prevGroup = def.group;
-                var groupLabel = {fidelity:'1Q RB & Readout Fidelity', coherence:'Coherence', frequency:'Frequencies', calibration:'Calibration'}[def.group] || def.group;
-                html.push('<h3 class="topo-section-title" data-group="' + def.group + '" style="margin-top:1.5rem">' + groupLabel + '</h3>');
+                var groupLabel = {fidelity:'1Q Gate & Readout Fidelity', coherence:'Coherence', frequency:'Frequencies', calibration:'Calibration'}[def.group] || def.group;
+                if (fidHost && def.group === 'fidelity') {
+                    fidHtml.push('<h4 class="topo-section-title topo-fidelity-subtitle" data-group="fidelity" style="margin-top:1rem;font-size:1.05em">' + groupLabel + '</h4>');
+                } else {
+                    html.push('<h3 class="topo-section-title" data-group="' + def.group + '" style="margin-top:1.5rem">' + groupLabel + '</h3>');
+                }
             }
 
             var secId = 'mp-' + def.key.replace(/[^a-zA-Z0-9]/g, '-');
@@ -2056,11 +2132,13 @@ window.ChipStatus.mount = function (opts) {
                 verdict: function(v) { return _verdict(v, thresholds[def.key]); },
             });
 
-            var sectionHtml = '<div class="topo-section" data-group="' + def.group + '" id="' + secId + '">';
+            var sectionHtml = '<div class="topo-section" data-group="' + def.group + '" id="' + secId + '" data-density-panel="' + def.key + '">';
             // Keep the curated title text (it carries the unit suffix) but pull the
             // good-direction arrow + plain-language tooltip from META — so direction
             // and blurb have one source, even though the display string stays bespoke.
-            sectionHtml += '<h4 class="topo-metric-panel-title">' + labelHtml(def.key, false, def.title) + '</h4>';
+            // docs/141 4o: the panel's own S / M / L sits right of its title.
+            sectionHtml += '<h4 class="topo-metric-panel-title">' + labelHtml(def.key, false, def.title)
+                + window.ChipStatus.density.controlHtml(def.key) + '</h4>';
             sectionHtml += '<div class="topo-metric-panel-stat">'
                 + 'avg ' + prop.fmtFn(agg.avg) + ' <span>med ' + prop.fmtFn(agg.median)
                 + '</span> <span>min ' + prop.fmtFn(agg.min) + '</span> <span>max ' + prop.fmtFn(agg.max)
@@ -2127,7 +2205,7 @@ window.ChipStatus.mount = function (opts) {
             sectionHtml += '<div class="topo-metric-bar-chart" id="' + chartId + '"></div>';
             sectionHtml += '</div>'; // close panel-row
             sectionHtml += '</div>'; // close section
-            html.push(sectionHtml);
+            sink(def).push(sectionHtml);
 
             // ── Render bar chart (compact + annotated) ───────────────
             // Gated: an unphysical fit is excluded from the bars too (no −473µs bar).
@@ -2185,10 +2263,15 @@ window.ChipStatus.mount = function (opts) {
             }
         });
 
-        // Single DOM write, then re-query click handlers, then render charts.
+        // Single DOM write per host, then re-query click handlers, then render charts.
         container.innerHTML = html.join('');
+        if (fidHost) fidHost.innerHTML = fidHtml.join('');
+        window.ChipStatus.density.applyAll(container);
+        if (fidHost) window.ChipStatus.density.applyAll(fidHost);
+        var hosts = fidHost ? [container, fidHost] : [container];
+        var eachCell = function (sel, fn) { hosts.forEach(function (h) { h.querySelectorAll(sel).forEach(fn); }); };
 
-        container.querySelectorAll('.heatmap-cell[data-qubit]').forEach(function(cell) {
+        eachCell('.heatmap-cell[data-qubit]', function(cell) {
             cell.addEventListener('click', function() {
                 var qid = cell.getAttribute('data-qubit');
                 if (qid) htmx.ajax('GET', '/qubit/' + qid, {source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML'});
@@ -2316,11 +2399,15 @@ window.ChipStatus.mount = function (opts) {
     // scroll-spy jump bar. Each tab → the section/group it scrolls to (the 4
     // metric-family tabs share the 'metrics' section, scrolling to their own
     // [data-group] sub-panel).
+    // docs/141 4o (user-directed order): Overview · Health · Topology · Trends ·
+    // Fidelity (2Q RB first, then 1Q, then readout) · Coherence · Frequencies ·
+    // Calibration. 'gate' survives as an alias of 'fidelity' (old links, the
+    // remembered view).
     var TAB_SPEC = {
-        topology:     { build: null,           sel: '#sec-topology' },
         overview:     { build: null,           sel: '[data-topo-section="overview"]' },
-        gate:         { build: '2qrb',          sel: '[data-topo-section="2qrb"]' },
-        fidelity:     { build: 'metrics',       sel: '#topo-metric-panels [data-group="fidelity"]' },
+        health:       { build: null,           sel: '[data-topo-section="health"]' },
+        topology:     { build: null,           sel: '#sec-topology' },
+        fidelity:     { build: ['2qrb', 'metrics'], sel: '[data-topo-section="fidelity"]' },
         coherence:    { build: 'metrics',       sel: '#topo-metric-panels [data-group="coherence"]' },
         frequencies:  { build: 'metrics',       sel: '#topo-metric-panels [data-group="frequency"]' },
         calibration:  { build: 'metrics',       sel: '#topo-metric-panels [data-group="calibration"]' },
@@ -2329,8 +2416,22 @@ window.ChipStatus.mount = function (opts) {
     };
     var _chipSectionBuilt = {};   // section key -> built once (lazy heavy builders)
     var _suppressSpyUntil = 0;    // ignore scroll-spy briefly after a click-jump
+    // docs/141 4o: Trends now sits ABOVE Fidelity / Coherence / … and is fetched
+    // lazily, so a jump to a section below it (a sidebar sub-link, ?view=)
+    // landed on Trends once its charts arrived and pushed everything down
+    // (real Chrome, PJ chip). Remember the last jump; when Trends lands, put
+    // that section back at the top of the pane.
+    var _jump = {
+        note: function (view) { window.ChipStatus.jumpGuard.note(view); },
+        reanchor: function () {
+            var did = window.ChipStatus.jumpGuard.reanchor(function (v) { return TAB_SPEC[v] && TAB_SPEC[v].sel; });
+            if (did) _suppressSpyUntil = Date.now() + 800;
+            return did;
+        }
+    };
 
     function _ensureSectionBuilt(key) {
+        if (Array.isArray(key)) { key.forEach(_ensureSectionBuilt); return; }
         if (!key || _chipSectionBuilt[key]) return;
         else if (key === '2qrb') { _chipSectionBuilt[key] = true; build2QRBPanels(); }
         else if (key === 'metrics') { _chipSectionBuilt[key] = true; buildMetricPanels(); }
@@ -2354,7 +2455,11 @@ window.ChipStatus.mount = function (opts) {
                     if (!document.querySelector('.topo-trend-box')
                         && !document.querySelector('.topo-trends-controls')) {
                         _chipSectionBuilt[key] = false;   // nothing arrived — retry later
+                        return;
                     }
+                    // the charts just pushed everything below them down: a
+                    // jump made a moment ago goes back to where it pointed
+                    requestAnimationFrame(function () { _jump.reanchor(); });
                 }, function () { _chipSectionBuilt[key] = false; });
             }
         }
@@ -2383,8 +2488,10 @@ window.ChipStatus.mount = function (opts) {
 
     // Click a tab → build its section if needed, then smooth-scroll to it.
     window.setChipStatusView = function(view, btn, scroll) {
-        var spec = TAB_SPEC[view] || TAB_SPEC.topology;
+        if (view === 'gate') view = 'fidelity';          // absorbed (docs/141 4o)
+        var spec = TAB_SPEC[view] || TAB_SPEC.overview;
         try { localStorage.setItem('quam_chipstatus_view', view); } catch (e) {}
+        if (scroll !== false) _jump.note(view);
         _setActiveTab(view);
         _suppressSpyUntil = Date.now() + 800;     // don't let the spy fight the jump
         _ensureSectionBuilt(spec.build);

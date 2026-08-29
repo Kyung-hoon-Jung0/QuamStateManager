@@ -164,17 +164,21 @@ class TestSelectionSemantics:
         for m in DEFAULT_TRACKED_PROPERTIES:
             assert f'data-trend-metric="{m}"' in body
 
-    def test_assignment_fidelity_reads_iq_blobs(self, client):
-        """Customer report: the same metric shows real values as "IQ Blob (%)"
+    def test_assignment_fidelity_reads_readout_fidelity_ge(self, client):
+        """Customer report: the same metric showed real values under one name
         on the Chip Status hero map, but Trends' own pill/chart said the raw
         key "assignment_fidelity" and (before the history.py fix) always
         claimed nothing was recorded. The DATA key (JS toggle value, SQLite
-        column) must stay assignment_fidelity; only the visible TEXT changes."""
+        column) must stay assignment_fidelity; only the visible TEXT changes —
+        and since docs/141 4o that text is "Readout Fidelity (GE)" everywhere
+        (the user's naming: never "IQ Blob", never "Assign")."""
         body = client.get(
-            "/topology/trends?metrics=assignment_fidelity").get_data(as_text=True)
+            "/topology/trends?metrics=assignment_fidelity,assignment_fidelity_gef").get_data(as_text=True)
         assert 'data-trend-metric="assignment_fidelity"' in body
-        assert ">IQ Blobs<" in body
+        assert ">Readout Fidelity (GE)<" in body
+        assert ">Readout Fidelity (GEF)<" in body
         assert ">assignment_fidelity<" not in body
+        assert "IQ Blob" not in body and "Assign" not in body
 
 
 class TestItIsRegisteredEverywhere:

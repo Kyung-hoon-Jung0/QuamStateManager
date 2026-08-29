@@ -4218,6 +4218,19 @@ td.col-delta .val-delta { margin-left: 0; }
     --topo-heatmap-cell-min: calc(var(--topo-density-scale) * 140px);
     --topo-card-min-width: calc(var(--topo-density-scale) * 265px);
 }
+/* docs/141 4o: the size is PER PANEL — each metric / 2Q-gate panel's S · M · L
+   writes --topo-density-scale on that .topo-section, and the derived sizes are
+   re-computed at the section (a custom property computed on the dashboard
+   would not see a child's override). */
+.topo-dashboard .topo-section {
+    --topo-panel-cell-size: calc(var(--topo-density-scale) * 132px);
+    --topo-heatmap-cell-min: calc(var(--topo-density-scale) * 140px);
+    --topo-card-min-width: calc(var(--topo-density-scale) * 265px);
+}
+/* right of the title WORD (the user's placement), not at the row's far edge */
+.topo-density-ctl-panel { font-size: 0.72em; font-weight: 400; }
+/* a jump from the sticky sub-nav lands the section title BELOW the bar */
+.topo-dashboard .topo-section { scroll-margin-top: 3.2rem; }
 .topo-density-ctl { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.82em; }
 .topo-density-ctl .density-label { color: var(--pico-muted-color); }
 .topo-density-ctl .density-preset {
@@ -4469,7 +4482,8 @@ a.topo-health-tile:hover { background: var(--pico-card-sectioning-background-col
 }
 .topo-metric-topo-grid .heatmap-cell-name { font-size: var(--topo-panel-name-size); }
 .topo-metric-topo-grid .heatmap-cell-value { font-size: var(--topo-panel-value-size); }
-.topo-metric-panel-title { font-size: var(--topo-panel-title-size); font-weight: 600; margin: 0 0 0.15rem 0; }
+.topo-metric-panel-title { font-size: var(--topo-panel-title-size); font-weight: 600; margin: 0 0 0.15rem 0;
+    display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }   /* docs/141 4o: title · S M L */
 /* Own block below the title (was an inline span in the <h4> that lapped the grid
    at narrow width). flex-wrap so it never overflows; muted so it reads as caption. */
 .topo-metric-panel-stat {
