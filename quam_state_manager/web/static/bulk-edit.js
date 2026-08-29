@@ -1441,11 +1441,28 @@
     }
 
     // ── before/after hover ───────────────────────────────────────────────────
+    // docs/141 §4m: the before→after chip is CREATED on first hover, not rendered
+    // per cell (4,000+ cells × 4 spans on a 20Q chip). Its "old" text is the
+    // cell's data-baseline, which every path sets BEFORE marking a cell modified
+    // (the server for a tray-pending cell, applyRow / the cross-table sync /
+    // markModified here); the apply sites keep an existing chip in sync.
+    function _ensureBA(td, cell) {
+        if (td.querySelector('.bulk-ba')) return;
+        var ba = document.createElement('span');
+        ba.className = 'bulk-ba'; ba.setAttribute('aria-hidden', 'true');
+        var o = document.createElement('span'); o.className = 'bulk-ba-old';
+        o.textContent = cell.hasAttribute('data-baseline') ? cell.getAttribute('data-baseline') : (cell.getAttribute('data-orig') || '');
+        var n = document.createElement('span'); n.className = 'bulk-ba-new';
+        var d = document.createElement('span'); d.className = 'bulk-ba-delta'; d.hidden = true;
+        ba.appendChild(o); ba.appendChild(document.createTextNode(' → ')); ba.appendChild(n); ba.appendChild(d);
+        td.appendChild(ba);
+    }
     function _hoverBA(e, show) {
         var td = e.target.closest && e.target.closest('.bulk-td');
         if (!td) return;
         var cell = td.querySelector('.bulk-cell');
         if (!cell || !cell.classList.contains('bulk-cell-modified')) return;
+        if (show) _ensureBA(td, cell);
         var newEl = td.querySelector('.bulk-ba-new');
         if (newEl) newEl.textContent = cell.value;
         // docs/76: the hover chip answers "by how much?", not just "from what".
@@ -1465,6 +1482,15 @@
     }
     // Validate one LO cell (a band or a frequency) against its band range + LO peer.
     // Sets/clears a `bulk-band-warn` highlight + an inline message; returns true if warned.
+    // docs/141 §4m: the inline band message is created the first time a cell
+    // actually warns (it sat in every cell before); it goes where the render
+    // used to put it — before the physical-output line.
+    function _ensureBandMsg(td) {
+        var el = document.createElement('span'); el.className = 'bulk-band-msg'; el.hidden = true;
+        var phys = td.querySelector('.bulk-phys');
+        if (phys) td.insertBefore(el, phys); else td.appendChild(el);
+        return el;
+    }
     function _validateBand(cell) {
         var field = cell.getAttribute('data-lo-field');
         var td = cell.closest('.bulk-td');
@@ -1491,6 +1517,7 @@
             }
         }
         cell.classList.toggle('bulk-band-warn', !!msg);
+        if (msg && !msgEl && td) msgEl = _ensureBandMsg(td);
         if (msgEl) { msgEl.textContent = msg; msgEl.hidden = !msg; }
         return !!msg;
     }

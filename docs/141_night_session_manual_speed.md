@@ -700,6 +700,79 @@ compare view fall back to a single-pulse view; the dataset-poll-driven
 `liveDriftChanged` reaches the Diagnostics list only through the drift
 poller's own cadence.
 
+## 4m. The /bulk document: 9.0 MB of which 51% was whitespace (2026-08-29, user-directed)
+
+**What was measured first.** The user asked what could be done about the
+~2 s before the grid mounts, which §4l had pinned on the DOCUMENT, not on JS.
+Rendering `/bulk` in-process on the PJ 20Q chip: 8,977,141 bytes, 7,810
+cells (qubit grid 4,480 + pair grid 1,530 in the live render, more in-process
+with every column), **1,140 bytes per cell of which ~250 were information**;
+42,072 elements, 36,723 whitespace-only text nodes. Where the bytes went:
+3.6 MB was whitespace — each `{% if %}` in the cell template left a blank
+indented line, and every `<input>` carried its eight attributes on eight
+32-space-indented lines; 0.69 MB was the before→after hover chip
+(`.bulk-ba`, four spans) rendered in every cell for the one the user might
+hover; 0.17 MB the empty `.bulk-band-msg`; 0.6 MB `title` attributes of which
+113 KB were a plain copy of the dot-path; `data-resolved` equal to
+`data-dot-path` on 3,332 cells.
+
+**What was done — 1 + 2 of the six options given.** ① The two cell blocks of
+`_bulkedit.html` are one tag per line with Jinja whitespace control
+(`{%- -%}`), and a single literal space is kept wherever the render had
+whitespace between two INLINE siblings — the quote marks around a numeric
+string, the pointer glyph after the input, the ✎ button after a list preview,
+the ↗ link in a pair list cell. Whitespace at a cell's edges and between cells
+is not load-bearing (leading/trailing collapsible space in a block is
+discarded; whitespace between table cells never forms a cell) and is gone.
+`trim_blocks` was NOT turned on globally: it would touch 63 templates for no
+measurable gain outside this one. ② `.bulk-ba` and `.bulk-band-msg` are no
+longer rendered: `_ensureBA(td, cell)` in both grids creates the chip on the
+first hover of a MODIFIED cell (old text = `data-baseline`, which every path
+already set before marking a cell modified; fallback `data-orig`), and
+`_ensureBandMsg(td)` creates the message the first time a cell actually
+warns, inserted before `.bulk-phys` where the render used to put it. The
+apply / cross-table-sync / markModified sites keep their `if (old) old.textContent = …`
+— a no-op until the chip exists, in sync after.
+
+**How the render was proven identical.** `scratchpad/bulk_golden.py`
+tokenises every `.bulk-td` of the in-process render (elements with sorted
+attributes, text, and whether a whitespace text node sits between siblings),
+drops the two deliberately removed subtrees and edge/adjacent whitespace, and
+compares before vs after: **7,810 cells, 0 differing.** Result: 8,977,141 →
+3,903,227 bytes; elements 42,072 → 21,528; whitespace text nodes 36,723 →
+6,000 (the remainder is between rows and header cells). Per cell 1,140 → 404
+bytes.
+
+**What it bought in real Chrome (headless, PJ chip, the HEAD tree served on
+5198 beside the change on 5199, 10 alternating loads each, medians).**
+Document 8,767 → 3,812 KB. Main-thread long-task time before `load`
+1,022 → 750 ms; the parse+mount long task 738 → 391 ms; `load` 2,013 →
+1,825 ms; the mount's `stats` phase 70 → 34 ms and cold-column detach
+79 → 55 ms (fewer nodes to walk). First byte unchanged (~450–500 ms — Jinja
+was never the cost) and DCL within the run-to-run noise (1,305 vs 1,572
+medians the wrong way, ±500 ms spreads). Honest reading: the change halves
+the document and the parse task and takes ~0.2–0.3 s off the load; it does
+not touch the ~0.45 s server floor or the layout of a 329-column table.
+
+**Not done, deliberately.** `data-resolved` dedup (~170 KB after the cut): a
+cell whose own path is another cell's resolved target must still be found by
+the `[data-resolved="…"]` link selectors, so every selector in two files would
+need a `:not([data-resolved])` twin — small win, real risk. Plain `title`
+copies (113 KB): a lazy `title` on hover for 3% of the file. `data-col-key`
+on every td (531 KB — dynamic keys are long): 76 JS consumers. The next real
+lever is option 3 of the list given to the user — the server rendering only
+the columns near the viewport and shipping the rest as the value map the
+client-side hydration (docs/105) already keeps — a separate campaign with
+search, column history, undo repaint and paste all riding on that map.
+
+Pinned by `tests/test_bulk_markup.py` (one-line cells, no whitespace between
+cells, the one space between inline siblings for all four cases, no per-cell
+chip or message, average cell < 650 bytes, every attribute the grids read
+still present) + `bulk_markup_selfcheck.cjs` (lazy chip and message against
+the real grids, 22 asserts). Mutation-checked 5/5 — a glued sibling, the old
+template, no chip creation, no message creation, a chip created on mouseout
+each trip exactly the pin written for it.
+
 ## 5. Tooling that came out of the night
 
 `scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js` (+ daytime: `cdp_profile.js` function-level CPU profile, `cdp_trace.js` per-phase trace of one keystroke, `cdp_type.js` char-by-char typing with a gap + debounce override, `cdp_undo.js` trusted Ctrl+Z/Ctrl+Shift+Z through the page's own UI, `cdp_virt.js` virtualization sampler): Chrome headless with the
@@ -713,5 +786,6 @@ localhost). Used for every number above and for four visual checks.
 `test_key_manual.py` (+ `TestReviewFixes`), `test_config_manual.py` +
 `config_manual_selfcheck.cjs`, `test_undo_trail.py` + `undo_trail_selfcheck.cjs` +
 `tree_search_list_selfcheck.cjs`, `bulk_search_selfcheck.cjs` (class-selector hide),
-`ctrlz_selfcheck.cjs` (new fallback contract). Every new pin mutation-checked
-(3/3, 6/6, 7/7); a wrong mutation and two vacuous pins were found and rewritten.
+`ctrlz_selfcheck.cjs` (new fallback contract), `test_bulk_markup.py` +
+`bulk_markup_selfcheck.cjs` (§4m). Every new pin mutation-checked
+(3/3, 6/6, 7/7, 5/5); a wrong mutation and two vacuous pins were found and rewritten.
