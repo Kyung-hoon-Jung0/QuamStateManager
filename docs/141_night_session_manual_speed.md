@@ -1283,6 +1283,23 @@ asked, two can ask for panes, `base=` clamps, Δ against the baseline not the
 previous column). Left as is on purpose: the Versions panel's own N-way
 (`/diff/versions`, docs/128) — a different surface with its own pins.
 
+## 4aa. The workspace root row: a long path no longer runs under the × (2026-08-29, user-directed)
+
+The sidebar root row rendered the path as a plain inline span truncated
+server-side at 35 characters — narrower than that and the text spilled under
+the absolutely pinned × and the chevron (user screenshot). The row now reads
+**folder name** first (whole, bold, the thing you actually recognise), then
+the parent path dimmed and ellipsized by CSS, the full path in the row's
+title; the summary reserves a 2.9 rem right column for × + chevron. First
+attempt still overlapped in real Chrome: `#sidebar details > summary
+{ padding }` is an id selector and beat the class rule on SPECIFICITY (the
+day's fourth cascade lesson, a different axis from §4u/§4v's source order) —
+the reserve is `#sidebar details.tree-root > summary.tree-root-label` now.
+Measured after (`cdp_rootrow.js`, a 220 px-wide sidebar, four roots incl.
+`D:\work\Customer_Codes\CQT\CS_installations`): label right edge 140–157 px
+vs × at 186 px on every row, names whole, parent dirs clipped. Pinned by
+`tests/test_sidebar_root_row.py`.
+
 ## 5. Tooling that came out of the night
 
 `scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js` (+ daytime: `cdp_profile.js` function-level CPU profile, `cdp_trace.js` per-phase trace of one keystroke, `cdp_type.js` char-by-char typing with a gap + debounce override, `cdp_undo.js` trusted Ctrl+Z/Ctrl+Shift+Z through the page's own UI, `cdp_virt.js` virtualization sampler): Chrome headless with the

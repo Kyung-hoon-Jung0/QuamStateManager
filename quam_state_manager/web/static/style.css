@@ -1687,8 +1687,19 @@ hr.sidebar-section-divider { margin: 0.6rem 0; border-color: var(--pico-muted-bo
 
 /* Tree entries */
 .tree-root { margin-bottom: .1rem; position: relative; }
-.tree-root-label { display: flex; align-items: center; justify-content: space-between; gap: .2rem; font-size: var(--tree-root-label-font); }
-.tree-root-label > span { padding-right: 2.6rem; }   /* room for the × button + the collapse chevron */
+/* docs/141 4aa: the root row never overlaps its controls -- the label is a
+   min-width:0 flex child that ellipsizes, and the summary reserves a right
+   column (2.9rem) for the absolutely-pinned × plus Pico's disclosure chevron.
+   Name first (whole, bold), parent path dimmed and cut with an ellipsis. */
+.tree-root-label { display: flex; align-items: center; gap: .2rem; font-size: var(--tree-root-label-font); min-width: 0; }
+/* the reserve must OUTRANK `#sidebar details > summary { padding: … }` (an id
+   selector, style.css ~1413) -- as a bare class it lost on specificity and
+   the label still ran under the × (measured in real Chrome) */
+#sidebar details.tree-root > summary.tree-root-label { padding-right: 2.9rem; }
+.tree-root-path { flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: .35em; overflow: hidden; }
+.tree-root-name { flex: 0 1 auto; min-width: 3ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.tree-root-dir { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--pico-muted-color); font-size: .92em; }
 /* Remove button — pinned to the <summary> row, kept out of <summary> itself.
    Sits to the LEFT of Pico's summary::after disclosure chevron (a 1rem icon at
    the far right of the flex summary) so the two no longer overlap. */
