@@ -1106,6 +1106,50 @@ re-sync clears a stale tag selection when the grid is not there). Pinned by
 no row and the Experiments row stays; one tag → the row with All + the
 tag) beside the existing tagged-workspace pin.
 
+## 4u. Three tool windows, one frame, one drag core (2026-08-29, user-directed)
+
+**The ask.** Make the Calculator and Settings float like the Config Manual,
+with the same frame; Settings could not be dragged at all; and "select the
+Calculator, press Settings, the Calculator vanishes" — a bug.
+
+**What was there.** Two copies of the same drag loop (calc.js, manual.js),
+none for Settings; each tool's toggle explicitly closed the other (docs/89
+called it a singleton, and the harness pinned it); and a second, quieter
+path: the Calculator's outside-click closer, bound a tick after it opens,
+counted the click on the Settings BUTTON as "outside".
+
+**What changed.** `web/static/float-panel.js` is the one drag core (a
+core script, before its callers): a header press plus a move under 4 px is
+a click; a real drag commits the panel to fixed coordinates with the owner's
+float class and `fp-floating`, follows the mouse clamped inside the
+viewport, ignores the header's own buttons, ends on a lost mouseup or a
+window blur; `unfloat()` puts a panel back under its anchor. calc.js and
+manual.js delegate to it (their classes `calc-floating` / `manual-floating`
+kept for CSS and the outside-click exemption). Settings gained a header
+(title + ×, the handle), `settings-floating`, and the same rule the
+Calculator has: dragged once, it stays open on an outside click. Neither
+toggle touches the other window; both outside-click closers ignore the
+other tool's button and window. One frame for the three: the Config
+Manual's SM-blue 1.5 px edge, 10 px rounding and shadow, in ONE rule placed
+AFTER the three panels' own rules (same specificity — placed earlier, the
+Calculator kept its old 1 px / 6 px frame, which real Chrome showed).
+
+**Real Chrome (PJ chip):** Calculator then Settings — both visible; a
+120 × 80 px drag of the Settings header floats it (`position: fixed`,
+`settings-floating`); an outside click leaves the dragged Settings open
+(the never-dragged Calculator closes, as before); the three panels' computed
+border colour / radius / shadow are identical. No console errors.
+
+Pinned by `tests/test_float_panel.py` (script order, the owners delegating,
+the copied loops gone, the Settings header + floating rule, the shared
+frame rule and its position, neither toggle touching the other, both
+closers ignoring the other tool) + `float_panel_selfcheck.cjs` (15 asserts
+on the core) + the rewritten §4 of `sidebar_tools_selfcheck.cjs` (two
+windows, the header drag, surviving an outside click, and — as an async
+tail, since the closer binds a tick later — a click on the Settings button
+never closing the Calculator; 31 asserts). Mutation-checked 3/3 (the closer
+ignoring nothing, no click threshold, the frame rule placed early).
+
 ## 5. Tooling that came out of the night
 
 `scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js` (+ daytime: `cdp_profile.js` function-level CPU profile, `cdp_trace.js` per-phase trace of one keystroke, `cdp_type.js` char-by-char typing with a gap + debounce override, `cdp_undo.js` trusted Ctrl+Z/Ctrl+Shift+Z through the page's own UI, `cdp_virt.js` virtualization sampler): Chrome headless with the

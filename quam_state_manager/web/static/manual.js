@@ -372,42 +372,11 @@ window.ConfigManual = (function () {
     };
 
     function enableDrag(p) {
+        // docs/141 4u: float-panel.js is the one drag core (was a copy of the
+        // calculator's); manual-floating stays the class CSS keys on
         var head = p.querySelector('.manual-header');
-        var dragging = false, committed = false, sx = 0, sy = 0, ox = 0, oy = 0;
-        function endDrag() {
-            dragging = false; committed = false;
-            document.removeEventListener('mousemove', onMove);
-            document.removeEventListener('mouseup', endDrag);
-        }
-        function commit() {
-            var r = p.getBoundingClientRect();
-            p.classList.add('manual-floating');
-            p.style.left = r.left + 'px'; p.style.top = r.top + 'px'; p.style.width = r.width + 'px';
-            ox = r.left; oy = r.top; committed = true;
-        }
-        function onMove(e) {
-            if (!dragging) return;
-            if (e.buttons === 0) { endDrag(); return; }
-            if (!committed) {
-                if (Math.abs(e.clientX - sx) + Math.abs(e.clientY - sy) < 4) return;
-                commit();
-            }
-            var w = p.offsetWidth, h = p.offsetHeight;
-            var nx = ox + (e.clientX - sx), ny = oy + (e.clientY - sy);
-            var maxX = window.innerWidth - w - 4, maxY = window.innerHeight - h - 4;
-            nx = Math.max(4, Math.min(nx, Math.max(4, maxX)));
-            ny = Math.max(4, Math.min(ny, Math.max(4, maxY)));
-            p.style.left = nx + 'px'; p.style.top = ny + 'px';
-        }
-        head.addEventListener('mousedown', function (e) {
-            if (e.button !== 0) return;
-            if (e.target.closest && e.target.closest('.manual-header-tools')) return;
-            dragging = true; committed = false; sx = e.clientX; sy = e.clientY;
-            document.addEventListener('mousemove', onMove);
-            document.addEventListener('mouseup', endDrag);
-            e.preventDefault();
-        });
-        window.addEventListener('blur', function () { if (dragging) endDrag(); });
+        if (!head || !window.FloatPanel) return;
+        window.FloatPanel.drag(p, { handle: head, tools: '.manual-header-tools', floatClass: 'manual-floating' });
     }
 
     function wire() {

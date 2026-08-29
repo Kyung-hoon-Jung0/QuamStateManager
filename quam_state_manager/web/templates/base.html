@@ -83,6 +83,9 @@
        behaviour is testable in isolation under jsdom. #}
     <script src="{{ asset_url('auto-apply.js') }}"></script>
     <script src="{{ asset_url('plot-theme.js') }}"></script>
+    {# docs/141 4u: the one drag core the Calculator, Settings and the Config
+       Manual float with -- before the scripts that call it #}
+    <script src="{{ asset_url('float-panel.js') }}"></script>
     <script src="{{ asset_url('calc.js') }}"></script>
     <script src="{{ asset_url('manual.js') }}"></script>
     <script src="{{ asset_url('undo-trail.js') }}"></script>
@@ -831,7 +834,14 @@
            whichever trigger opened them. They cannot live inside #sidebar: it is
            overflow-y:auto, which CLIPS an absolutely-positioned child, and it
            collapses to width 0 with pointer-events:none. #}
-        <div id="settings-dropdown" class="settings-dropdown settings-hidden">
+        <div id="settings-dropdown" class="settings-dropdown settings-hidden" role="dialog" aria-modal="false" aria-label="Settings">
+        {# docs/141 4u: a header like the Calculator's -- the drag handle and the close #}
+        <div class="settings-header" id="settings-header">
+        <strong class="settings-title">Settings</strong>
+        <span class="settings-header-tools">
+        <button type="button" class="calc-close" onclick="toggleSettings()" title="Close" aria-label="Close">&times;</button>
+        </span>
+        </div>
         <div class="settings-group">
         <small class="settings-label">Font size</small>
         <div class="settings-options">

@@ -1018,6 +1018,19 @@ html.topbar-hidden .topbar-reveal { display: block; }
     margin-top: 0.2rem;
 }
 .settings-hidden { display: none; }
+/* docs/141 4u: Settings floats like the Calculator; its header is the handle */
+.settings-dropdown.settings-floating { position: fixed; right: auto; top: auto; margin-top: 0; }
+.settings-dropdown { padding: 0; }
+.settings-dropdown > .settings-group { padding: 0.4rem 0.5rem; }
+.settings-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0.3rem 0.55rem; border-bottom: 1px solid var(--pico-muted-border-color);
+    position: sticky; top: 0; background: var(--pico-background-color); z-index: 1;
+    cursor: grab; user-select: none; touch-action: none;
+}
+.settings-header:active { cursor: grabbing; }
+.settings-title { font-size: 0.85rem; font-weight: 700; }
+.settings-header-tools { display: flex; gap: 0.15rem; cursor: default; }
 
 .settings-label {
     display: block; font-size: 0.75em; font-weight: 600;
@@ -1083,6 +1096,14 @@ html.topbar-hidden .topbar-reveal { display: block; }
     resize: both; overflow: hidden;
 }
 .manual-hidden { display: none; }
+/* docs/141 4u (user): ONE frame for the three tool windows -- the Config
+   Manual's SM-blue edge, rounding and shadow, on the Calculator and Settings
+   too (their sizes stay their own) */
+.settings-dropdown, .calc-popover, .manual-popover {
+    border: 1.5px solid color-mix(in srgb, var(--pico-primary) 60%, transparent);
+    border-radius: 10px;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.26), 0 0 0 1px color-mix(in srgb, var(--pico-primary) 12%, transparent);
+}
 /* Undo trail panel (2026-08-28): bottom-right, compact, out of the way of
    the tray; the latest step is emphasised, older ones fade. */
 .undo-trail {

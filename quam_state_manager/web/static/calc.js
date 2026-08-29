@@ -264,9 +264,8 @@
             : document.getElementById('calc-btn'));
         if (!pop || !btn) return;
         var willOpen = pop.classList.contains('calc-hidden');
-        // singleton: never overlap the settings dropdown
-        var sd = document.getElementById('settings-dropdown');
-        if (sd) sd.classList.add('settings-hidden');
+        // docs/141 4u (user: "a bug"): the Calculator and Settings are two
+        // windows, not a singleton -- opening one leaves the other alone
         pop.classList.toggle('calc-hidden', !willOpen);
         document.querySelectorAll('.calc-btn').forEach(function (b) {
             b.classList.toggle('calc-open', willOpen);
@@ -312,6 +311,9 @@
         // the gesture that actually communicated the intent).
         if (pop.classList.contains('calc-floating')) return;
         if (pop.contains(e.target) || (e.target.closest && e.target.closest('.calc-btn'))) return;
+        // docs/141 4u: a click on Settings (its button or its window) is not
+        // "outside" -- that click is what used to make the Calculator vanish
+        if (e.target.closest && e.target.closest('.settings-btn, #settings-dropdown')) return;
         window.toggleCalc();
     }
     // (docs/126 ⑥: the pin button was removed on customer request — nobody
@@ -382,46 +384,13 @@
     // first real drag (then position:fixed via .calc-floating); pin/close still click
     // (excluded from the drag), and toggleCalc / outside-click / Escape are unchanged.
     function enableDrag() {
+        // docs/141 4u: the drag lives in float-panel.js (one core for the
+        // Calculator, Settings and the Config Manual); calc-floating stays
+        // the class the outside-click exemption and the CSS key on
         var pop = document.getElementById('calc-popover');
         var head = document.getElementById('calc-header');
-        if (!pop || !head) return;
-        var dragging = false, committed = false, sx = 0, sy = 0, ox = 0, oy = 0;
-        function endDrag() {
-            dragging = false; committed = false;
-            document.removeEventListener('mousemove', onMove);
-            document.removeEventListener('mouseup', endDrag);
-        }
-        function commit() {
-            // Float ONLY on a real drag — a plain header click stays anchored under the
-            // badge (audit P2: mousedown used to snap it to position:fixed immediately).
-            var r = pop.getBoundingClientRect();
-            pop.classList.add('calc-floating');
-            pop.style.left = r.left + 'px'; pop.style.top = r.top + 'px'; pop.style.width = r.width + 'px';
-            ox = r.left; oy = r.top; committed = true;
-        }
-        function onMove(e) {
-            if (!dragging) return;
-            if (e.buttons === 0) { endDrag(); return; }   // missed mouseup (released over chrome) → self-heal
-            if (!committed) {
-                if (Math.abs(e.clientX - sx) + Math.abs(e.clientY - sy) < 4) return;  // click, not drag
-                commit();
-            }
-            var w = pop.offsetWidth, h = pop.offsetHeight;
-            var nx = ox + (e.clientX - sx), ny = oy + (e.clientY - sy);
-            var maxX = window.innerWidth - w - 4, maxY = window.innerHeight - h - 4;
-            nx = Math.max(4, Math.min(nx, Math.max(4, maxX)));
-            ny = Math.max(4, Math.min(ny, Math.max(4, maxY)));
-            pop.style.left = nx + 'px'; pop.style.top = ny + 'px';
-        }
-        head.addEventListener('mousedown', function (e) {
-            if (e.button !== 0) return;
-            if (e.target.closest && e.target.closest('.calc-header-tools')) return;  // pin/close stay clickable
-            dragging = true; committed = false; sx = e.clientX; sy = e.clientY;
-            document.addEventListener('mousemove', onMove);
-            document.addEventListener('mouseup', endDrag);
-            e.preventDefault();
-        });
-        window.addEventListener('blur', function () { if (dragging) endDrag(); });
+        if (!pop || !head || !window.FloatPanel) return;
+        window.FloatPanel.drag(pop, { handle: head, tools: '.calc-header-tools', floatClass: 'calc-floating' });
     }
 
     if (document.readyState === 'loading')

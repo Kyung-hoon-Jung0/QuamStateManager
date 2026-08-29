@@ -1150,18 +1150,30 @@ window._toolTrigger = function (selector, preferred) {
 window.toggleSettings = function(trigger) {
     var dd = document.getElementById("settings-dropdown");
     if (!dd) return;
-    var opening = dd.classList.toggle("settings-hidden");
-    if (!opening) {
-        // singleton: never overlap the calculator (mirrors toggleCalc)
-        var cp = document.getElementById("calc-popover");
-        if (cp) cp.classList.add("calc-hidden");
+    var willOpen = dd.classList.contains("settings-hidden");
+    dd.classList.toggle("settings-hidden", !willOpen);
+    if (!willOpen) return;
+    // docs/141 4u (user-directed): Settings is a floating window like the
+    // Calculator and the Config Manual -- it no longer closes the Calculator,
+    // its header drags (float-panel.js), and once dragged it stays open on an
+    // outside click (a dragged window is the user saying "keep it around").
+    // Until dragged it is anchored under its trigger, as before.
+    if (!dd.classList.contains("settings-floating")) {
         window._anchorPopover(dd, window._toolTrigger(".settings-btn", trigger));
-        setTimeout(function() {
-            document.addEventListener("click", function closer(e) {
-                if (!dd.contains(e.target) && !e.target.closest(".settings-btn")) {
-                    dd.classList.add("settings-hidden");
-                }
-                document.removeEventListener("click", closer);
+    }
+    var head = document.getElementById("settings-header");
+    if (head && window.FloatPanel) {
+        window.FloatPanel.drag(dd, { handle: head, tools: ".settings-header-tools", floatClass: "settings-floating" });
+    }
+    if (!dd._closerBound) {
+        dd._closerBound = true;
+        // deferred so the click that opened it is not the click that closes it
+        setTimeout(function () {
+            document.addEventListener("click", function (e) {
+                if (dd.classList.contains("settings-hidden")) return;
+                if (dd.classList.contains("settings-floating")) return;
+                if (dd.contains(e.target) || (e.target.closest && e.target.closest(".settings-btn, .calc-btn, #calc-popover"))) return;
+                dd.classList.add("settings-hidden");
             });
         }, 0);
     }

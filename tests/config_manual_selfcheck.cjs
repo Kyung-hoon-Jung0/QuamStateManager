@@ -85,6 +85,7 @@ window.fetch = function (url) {
 global.fetch = window.fetch;
 
 window.eval(fs.readFileSync(path.join(STATIC, 'search-query.js'), 'utf8'));
+window.eval(fs.readFileSync(path.join(STATIC, 'float-panel.js'), 'utf8'));   // docs/141 4u: the drag core manual.js delegates to
 window.eval(fs.readFileSync(path.join(STATIC, 'manual.js'), 'utf8'));
 const d = window.document;
 const pop = d.getElementById('manual-popover');

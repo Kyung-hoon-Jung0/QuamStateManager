@@ -47,7 +47,10 @@ const DOM = `
       <button class="sidebar-tool calc-btn" id="calc-btn" onclick="toggleCalc(this)" aria-expanded="false"></button>
     </div>
   </aside>
-  <div id="settings-dropdown" class="settings-dropdown settings-hidden"></div>
+  <div id="settings-dropdown" class="settings-dropdown settings-hidden">
+    <div class="settings-header" id="settings-header"><b>Settings</b><span class="settings-header-tools"><button id="settings-x" onclick="toggleSettings()">×</button></span></div>
+    <div class="settings-group"><button id="settings-inner">S</button></div>
+  </div>
   <div id="calc-popover" class="calc-popover calc-hidden">
     <div class="calc-header" id="calc-header"></div>
     <input id="calc-s1-dp"><input id="calc-s1-amp"><input id="calc-s1-from"><input id="calc-s1-to">
@@ -98,6 +101,7 @@ function rect(el, r) {
 }
 
 window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
+window.eval(fs.readFileSync(path.join(STATIC, 'float-panel.js'), 'utf8'));   // docs/141 4u: the drag core
 window.eval(fs.readFileSync(path.join(STATIC, 'calc.js'), 'utf8'));
 
 const doc = window.document;
@@ -152,14 +156,39 @@ ok(pop.style.left === '12px', 'expanded again: back to the sidebar trigger');
 window.toggleCalc();
 
 /* ── 4. singleton ─────────────────────────────────────────────────────── */
+/* docs/141 4u (user: "a bug"): the two tools are two WINDOWS now, never a
+   singleton -- opening one leaves the other where it is */
 window.toggleCalc(sideCalc);
 window.toggleSettings(sideSet);
-ok(pop.classList.contains('calc-hidden'), 'opening Settings closes the Calculator');
+ok(!pop.classList.contains('calc-hidden'), 'opening Settings leaves the Calculator open');
 ok(!dd.classList.contains('settings-hidden'), 'settings dropdown open');
 ok(dd.classList.contains('pop-anchored'), 'settings dropdown is anchored too');
 window.toggleCalc(sideCalc);
-ok(dd.classList.contains('settings-hidden'), 'opening the Calculator closes Settings');
+ok(dd.classList.contains('settings-hidden') === false, 'closing the Calculator leaves Settings open');
 window.toggleCalc(sideCalc);
+ok(!pop.classList.contains('calc-hidden') && !dd.classList.contains('settings-hidden'), 'both open at once');
+/* Settings drags by its header and, once dragged, survives an outside click */
+rect(dd, { left: 12, top: 60, width: 220, height: 180, right: 232, bottom: 240 });
+Object.defineProperty(dd, 'offsetWidth', { value: 220, configurable: true });
+Object.defineProperty(dd, 'offsetHeight', { value: 180, configurable: true });
+const sh = doc.getElementById('settings-header');
+function mouse(el, type, x, y) { el.dispatchEvent(new window.MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, buttons: 1 })); }
+mouse(sh, 'mousedown', 50, 70);
+mouse(doc, 'mousemove', 150, 170);
+mouse(doc, 'mouseup', 150, 170);
+ok(dd.classList.contains('settings-floating') && dd.classList.contains('fp-floating') && dd.style.left === '112px' && dd.style.top === '160px',
+   'dragging the Settings header floats it at the dragged position (' + dd.style.left + ',' + dd.style.top + ')');
+mouse(doc.getElementById('outside-field'), 'mousedown', 500, 500);
+doc.getElementById('outside-field').dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+ok(!dd.classList.contains('settings-hidden'), 'a dragged Settings window survives an outside click');
+window.toggleSettings();                 // what the header's × calls (inline onclick does not run under jsdom here)
+ok(dd.classList.contains('settings-hidden'), 'its own close button closes it');
+window.toggleSettings(sideSet);
+ok(!dd.classList.contains('settings-hidden') && dd.classList.contains('settings-floating') && dd.style.left === '112px',
+   'reopened where it was left (still floating)');
+window.toggleSettings(sideSet);
+window.toggleCalc(sideCalc);
+ok(pop.classList.contains('calc-hidden') && dd.classList.contains('settings-hidden'), 'both closed again');
 
 /* ── 5. Alt+C ─────────────────────────────────────────────────────────── */
 function alt(target, key) {
@@ -179,5 +208,19 @@ pop.style.left = '400px';
 window.toggleCalc(sideCalc);
 ok(pop.style.left === '400px', 'a floating (dragged) popover is not snapped back to the trigger');
 pop.classList.remove('calc-floating');
+window.toggleCalc(sideCalc);                         // closed again
 
-process.exit(fails ? 1 : 0);
+/* ── 7. the second path that used to close the Calculator ──────────────
+   Its outside-click closer (bound a tick after opening) saw the click on
+   the Settings BUTTON as "outside" (real Chrome, 2026-08-29). Async: the
+   closer is bound in a setTimeout, so the click must come a tick later. */
+window.toggleCalc(sideCalc);                         // open, anchored (not dragged)
+setTimeout(function () {
+  sideSet.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  ok(!pop.classList.contains('calc-hidden'), 'a click on the Settings button does not close the Calculator');
+  doc.getElementById('settings-inner').dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  ok(!pop.classList.contains('calc-hidden'), 'nor does a click inside the Settings window');
+  doc.getElementById('outside-field').dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  ok(pop.classList.contains('calc-hidden'), 'a click elsewhere still closes an anchored (never dragged) Calculator');
+  process.exit(fails ? 1 : 0);
+}, 20);
