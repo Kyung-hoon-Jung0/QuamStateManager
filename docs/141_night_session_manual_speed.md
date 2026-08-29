@@ -1185,6 +1185,28 @@ back to 0 when the mouse leaves, no console errors. Pinned by
 `test_config_manual.py`; both mutations — no re-append, visible at rest —
 fail it).
 
+## 4x. Pulses column resize: one column moves, the others hold (2026-08-29, user-directed)
+
+A user dragged the Pulses table's WAVEFORM column narrower and watched
+OWNER / CHANNEL / OPERATION widen instead. `enhanceColumnResize` (app.js,
+the shared resizer the Pulses table opts into) freezes every column to px
+and flips `table-layout: fixed` on the first drag, but left the table at
+Pico's `width: 100%` — and under fixed layout the browser redistributes the
+space a shrunk column gives up across the other columns, so the total was
+being held constant and the widths traded inside it. Now, once any column is
+under manual control, the table is exactly as wide as its columns:
+`fitTableToColumns()` freezes any unpinned column at its laid-out width and
+sets the table's width to their sum, re-derived on every drag step and on a
+re-render that restores saved widths (saved widths never actually held
+before, for the same reason). A double-click still clears its column and
+releases the table width so that column auto-fits the pane; the next drag
+re-freezes and re-pins. With nothing saved the table is untouched (still
+fills the pane, reflows with it). Real Chrome on the PJ chip
+(`cdp_colresize.js`, WAVEFORM handle dragged −150 px): Waveform 155 → 36 px
+(the floor) and every other column byte-identical, table 1179 → 1060 px.
+Pinned by `tests/col_resize_selfcheck.cjs` (16 assertions, offsetWidth
+stubbed per header; the no-fit mutation fails it) + `tests/test_col_resize.py`.
+
 ## 5. Tooling that came out of the night
 
 `scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js` (+ daytime: `cdp_profile.js` function-level CPU profile, `cdp_trace.js` per-phase trace of one keystroke, `cdp_type.js` char-by-char typing with a gap + debounce override, `cdp_undo.js` trusted Ctrl+Z/Ctrl+Shift+Z through the page's own UI, `cdp_virt.js` virtualization sampler): Chrome headless with the

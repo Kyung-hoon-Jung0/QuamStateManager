@@ -793,6 +793,22 @@ window.enhanceColumnResize = function(tableId, storageKey) {
     function persist() {
         try { localStorage.setItem(storageKey, JSON.stringify(saved)); } catch (e) {}
     }
+    // docs/141 4x: one column moves, the others hold. Under table-layout:fixed
+    // the table keeps Pico's width:100%, so the space a shrunk column gives up
+    // is redistributed to every other column (the user dragged WAVEFORM
+    // narrower and watched OWNER/CHANNEL/OPERATION widen). Once any column is
+    // under manual control the table is exactly as wide as its columns: every
+    // unpinned column is frozen at its current width and the table's width is
+    // their sum, re-derived on every drag step.
+    function fitTableToColumns() {
+        var sum = 0;
+        ths.forEach(function(th) {
+            if (!th.style.width) th.style.width = th.offsetWidth + 'px';
+            sum += parseFloat(th.style.width) || 0;
+        });
+        table.style.width = sum + 'px';
+    }
+    var anySaved = Object.keys(saved).some(function(k) { return saved[k]; });
 
     ths.forEach(function(th, i) {
         if (saved[i]) th.style.width = saved[i] + 'px';
@@ -812,6 +828,7 @@ window.enhanceColumnResize = function(tableId, storageKey) {
                 var w = Math.max(36, startW + (ev.clientX - startX));
                 th.style.width = w + 'px';
                 saved[i] = w;
+                fitTableToColumns();
             }
             function up() {
                 dragging = false;
@@ -827,8 +844,12 @@ window.enhanceColumnResize = function(tableId, storageKey) {
         h.addEventListener('dblclick', function(e) {
             e.preventDefault(); e.stopPropagation();
             th.style.width = ''; delete saved[i]; persist();
+            // the cleared column takes the pane's remaining width (auto-fit to
+            // the space); the next drag re-freezes it and pins the table again
+            table.style.width = '';
         });
     });
+    if (anySaved) fitTableToColumns();   // saved widths only stick when the table is their sum
 };
 
 /* ------------------------------------------------------------------ */
