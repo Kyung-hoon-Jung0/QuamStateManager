@@ -109,11 +109,29 @@ window.ChipStatus.density = (function () {
    of the pane. A core with no DOM assumptions of its own: the caller hands it
    the selector for a view. */
 window.ChipStatus.jumpGuard = (function () {
-    var last = null, WINDOW_MS = 8000;
+    var last = null, WINDOW_MS = 8000, armedPane = null;
     var BELOW = ['fidelity', 'coherence', 'frequencies', 'calibration'];   // rendered below Trends
+    /* docs/141 4ac: the guard must not fight the USER. It used to re-anchor on
+       nothing but the age of the jump, so a deliberate scroll made inside the
+       8 s window was yanked back the moment the lazy Trends charts landed
+       (measured: the user scrolled up 900 px and the pane jumped back 7 s
+       later). Position cannot answer "did the user move?" -- the jump itself
+       moves the pane by thousands of px, and `note()` runs BEFORE the smooth
+       scroll starts. So ask for INTENT: a wheel, a touch or a key on the pane
+       cancels the pending re-anchor. A smooth scrollIntoView emits none of
+       those three. */
+    function cancel() { last = null; }
+    function arm(pane) {
+        if (!pane || armedPane === pane) return;
+        armedPane = pane;
+        ['wheel', 'touchstart', 'keydown'].forEach(function (t) {
+            pane.addEventListener(t, cancel, { passive: true });
+        });
+    }
     return {
-        note: function (view) { last = { view: view, at: Date.now() }; },
+        note: function (view, pane) { last = { view: view, at: Date.now() }; arm(pane); },
         below: BELOW,
+        cancel: cancel,
         reanchor: function (selOf) {
             if (!last || Date.now() - last.at > WINDOW_MS) return false;
             if (BELOW.indexOf(last.view) < 0) return false;
@@ -2433,7 +2451,7 @@ window.ChipStatus.mount = function (opts) {
     // (real Chrome, PJ chip). Remember the last jump; when Trends lands, put
     // that section back at the top of the pane.
     var _jump = {
-        note: function (view) { window.ChipStatus.jumpGuard.note(view); },
+        note: function (view) { window.ChipStatus.jumpGuard.note(view, _scrollPane()); },
         reanchor: function () {
             var did = window.ChipStatus.jumpGuard.reanchor(function (v) { return TAB_SPEC[v] && TAB_SPEC[v].sel; });
             if (did) _suppressSpyUntil = Date.now() + 800;
@@ -2969,8 +2987,15 @@ window.ChipStatus.mount = function (opts) {
     // A deep-link ?view= (left-nav sub-item or a shared link) scrolls to that
     // section; a bare /topology load stays at the top (topology), by design — we
     // do NOT resume the last-used localStorage view.
-    if (_serverChipView && TAB_SPEC[_serverChipView]) {
-        window.setChipStatusView(_serverChipView, null, true);
+    // docs/141 4ac: normalise the alias HERE. 4o kept accepting ?view=gate for
+    // old links and maps it onto Fidelity inside setChipStatusView -- but this
+    // guard tests the RAW value against TAB_SPEC, from which the same commit
+    // deliberately removed `gate`, so the branch was skipped and the mapping
+    // never ran: an old bookmark landed on Topology with no sign anything was
+    // ignored.
+    var _deepView = (_serverChipView === 'gate') ? 'fidelity' : _serverChipView;
+    if (_deepView && TAB_SPEC[_deepView]) {
+        window.setChipStatusView(_deepView, null, true);
     } else {
         _setActiveTab('topology');
     }

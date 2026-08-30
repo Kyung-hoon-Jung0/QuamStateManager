@@ -716,22 +716,29 @@ class TestP2DeepLinks:
             return hm._key_for(path), hm.list_snapshots(path)[0].timestamp
 
     def test_state_history_page_has_compare_link(self, env):
+        """docs/141 4ac: the row's Compare button opens the DIFF WORKBENCH now.
+        4y retired the hub as a destination but its sweep was grep-driven and
+        these rows render only on a chip that has snapshots, so the button --
+        and this pin, written for docs/49 -- kept the hub."""
         c, a, _b = env
         c.post("/load", data={"folder": str(a)})
         self._snapshot(c, a)
         r = c.get("/state-history")
         assert r.status_code == 200
-        assert b"/compare-hub?src=hist:" in r.data
+        assert b"/compare-hub?src=hist:" not in r.data, "the hub is retired as a destination"
+        assert b"/diff?a=hist:" in r.data and b"&b=working:" in r.data
         # the in-row diff STAYS verbatim (U1a)
         assert b"View changes vs current" in r.data
 
     def test_history_drawer_has_compare_link(self, env):
+        """Same as above for the Param History panel (docs/141 4ac)."""
         c, a, _b = env
         c.post("/load", data={"folder": str(a)})
         self._snapshot(c, a)
         r = c.get("/api/history")
         assert r.status_code == 200
-        assert b"/compare-hub?src=hist:" in r.data
+        assert b"/compare-hub?src=hist:" not in r.data, "the hub is retired as a destination"
+        assert b"/diff?a=hist:" in r.data and b"&b=working:" in r.data
         assert b"View Changes" in r.data          # drawer diff stays (U1a)
 
     def test_deep_link_resolves_with_primary_suggestion(self, env):

@@ -265,7 +265,10 @@ class TestWiring:
         # the baseline poll runs shortly after load -- otherwise the first WAKE
         # becomes the baseline and the run that caused it is never shown
         tail = app_js[app_js.index("window.NewRunPoll = {"):]
-        assert "_schedule(1500);" in tail[:900]
+        # docs/141 4ac: gated on the popup existing. Unconditional, it put a
+        # background request into every jsdom harness that evaluates app.js,
+        # which is what made version_diff_selfcheck.cjs flake ~50% of runs.
+        assert "if (document.getElementById('new-run-popup')) _schedule(1500);" in tail[:1600]
         ds = (ROOT / "quam_state_manager/web/static/dataset-virtual.js").read_text(encoding="utf-8")
         assert "pollNow: function () {" in ds and "state.pollWakeAgain" in ds
         lw = (ROOT / "quam_state_manager/web/static/live-wake.js").read_text(encoding="utf-8")
@@ -285,3 +288,154 @@ def test_live_wake_selfcheck():
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout + r.stderr
     assert r.stdout.count("ok - ") >= 12, r.stdout
+
+
+class TestPoolSafety:
+    """docs/141 4ac (CRITICAL) -- a long poll must never take the WSGI pool.
+
+    `live-wake.js` is a CORE script, so every open SM tab permanently holds one
+    `/datasets/wait` for up to 25 s. `qsm serve` / `qsm browser` run waitress at
+    its default `threads=4`: four tabs took the whole pool and `GET /` measured
+    22.8 s. The desktop launcher (`app.run(threaded=True)`) was never affected,
+    which is why the doc's "the servers all run threaded=True" read as true.
+    """
+
+    def test_serve_gives_waitress_more_threads_than_the_wait_bound(self, monkeypatch):
+        from quam_state_manager import cli
+        from quam_state_manager.web import routes
+
+        captured = {}
+
+        def fake_serve(app, **kw):
+            captured.update(kw)
+
+        monkeypatch.setattr(cli, "waitress_serve", fake_serve, raising=False)
+        assert cli._SERVE_THREADS >= 8, "waitress's default 4 is what froze the UI"
+        assert cli._SERVE_THREADS > routes._WAIT_SLOTS_N + 2, \
+            "the pool must keep workers for ordinary requests while every slot waits"
+        src = (Path(cli.__file__)).read_text(encoding="utf-8")
+        assert "threads=_SERVE_THREADS" in src, "the constant must actually reach waitress"
+
+    def test_a_refused_wait_answers_saturated_instead_of_blocking(self, tmp_path):
+        """When every slot is taken the route answers at once rather than
+        holding another worker -- and says so, so the client can back off."""
+        import threading as _t
+        from quam_state_manager.web import routes
+
+        app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
+        c = app.test_client()
+        with app.app_context():
+            sem = routes._wait_slots()
+            taken = [sem.acquire(blocking=False) for _ in range(routes._WAIT_SLOTS_N)]
+        assert all(taken), "fixture: every slot is held"
+        try:
+            t0 = time.monotonic()
+            r = c.get("/datasets/wait?since=0&timeout=25")
+            dt = time.monotonic() - t0
+            assert r.status_code == 200
+            body = r.get_json()
+            assert body.get("saturated") is True, body
+            assert body.get("changed") is False
+            # short enough to be invisible, long enough that a client which
+            # ignores `saturated` still cannot spin (C2-2 measured ~73 req/s)
+            assert routes._WAIT_SATURATED_FLOOR_S >= 1.0
+            assert dt < 10.0, f"a refused wait must not block the worker ({dt:.1f}s)"
+            assert dt >= routes._WAIT_SATURATED_FLOOR_S - 0.2, \
+                f"a refused wait must still cost a floor ({dt:.2f}s)"
+        finally:
+            with app.app_context():
+                for _ in range(routes._WAIT_SLOTS_N):
+                    routes._wait_slots().release()
+
+    def test_the_semaphore_is_per_app_not_a_module_global(self, tmp_path):
+        """A test session, an embedded host and the desktop launcher all create
+        several apps; a module-level semaphore would make one app's waiters
+        throttle another's (and the desktop pool is unbounded anyway)."""
+        from quam_state_manager.web import routes
+
+        a = create_app(testing=True, instance_path=str(tmp_path / "a"))
+        b = create_app(testing=True, instance_path=str(tmp_path / "b"))
+        with a.app_context():
+            sa = routes._wait_slots()
+        with b.app_context():
+            sb = routes._wait_slots()
+        assert sa is not sb
+        with a.app_context():
+            assert routes._wait_slots() is sa, "and it is stable within one app"
+
+    def test_a_normal_wait_still_answers_the_tick(self, tmp_path):
+        """The guard must not change the ordinary path."""
+        app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
+        c = app.test_client()
+        r = c.get("/datasets/wait?since=-1")
+        assert r.status_code == 200
+        body = r.get_json()
+        assert body["changed"] is False and "saturated" not in body
+        r2 = c.get("/datasets/wait?since=0&timeout=0.2")
+        assert r2.status_code == 200 and "tick" in r2.get_json()
+
+
+class TestSecondTick:
+    """docs/141 4ac (R2-2/R2-3). The module's docstring promises a SECOND tick
+    when qualibrate writes node.json into the run it just created -- that is
+    what turns docs/80's `incomplete` run into a complete one on screen.
+
+    It never fired on Windows: `DirEntry.stat()` is served from the
+    FindFirstFile listing (the PARENT directory's cached copy of the child's
+    timestamps) and NTFS does not refresh it for a write INSIDE the child.
+    The pins could not see it because every one of them called `_bump_mtime`
+    (an explicit `os.utime` on the run directory) first -- a direct metadata
+    write, which DOES propagate, unlike the real event. So these tests use no
+    `os.utime` anywhere.
+    """
+
+    @staticmethod
+    def _run_dir(root, date="2026-08-30", name="#1_foo_120000"):
+        d = root / date / name
+        d.mkdir(parents=True)
+        return d
+
+    def test_a_file_landing_in_the_newest_run_moves_the_signature(self, tmp_path):
+        from quam_state_manager.core import run_watch
+
+        run = self._run_dir(tmp_path)
+        before = run_watch.signature(str(tmp_path))
+        assert before is not None
+        time.sleep(0.05)
+        (run / "node.json").write_text('{"id": 1}', encoding="utf-8")
+        after = run_watch.signature(str(tmp_path))
+        assert after != before, \
+            "a write INSIDE the newest run must move the signature (no os.utime here)"
+
+    def test_a_write_into_an_older_run_of_the_same_day_also_ticks(self, tmp_path):
+        """The trigger is 'any write inside the newest date directory', not
+        'the run being created'. docs/141 4ac widened it deliberately (the
+        alternative -- statting only the newest run -- needs a correct 'newest',
+        and run folders are `#<id>_...`, so `#10_` sorts below `#9_`)."""
+        from quam_state_manager.core import run_watch
+
+        old = self._run_dir(tmp_path, name="#1_old_100000")
+        self._run_dir(tmp_path, name="#2_new_120000")
+        before = run_watch.signature(str(tmp_path))
+        time.sleep(0.05)
+        (old / "figure.png").write_bytes(b"x")
+        assert run_watch.signature(str(tmp_path)) != before
+
+    def test_the_first_tick_still_fires_for_a_new_run_directory(self, tmp_path):
+        from quam_state_manager.core import run_watch
+
+        (tmp_path / "2026-08-30").mkdir(parents=True)
+        before = run_watch.signature(str(tmp_path))
+        time.sleep(0.05)
+        (tmp_path / "2026-08-30" / "#7_bar_130000").mkdir()
+        assert run_watch.signature(str(tmp_path)) != before
+
+    def test_the_source_uses_os_stat_not_direntry_stat(self):
+        """The mechanism, pinned where a filesystem cannot be relied on to
+        reproduce it: DirEntry.stat() is the cache read."""
+        src = (Path(__file__).resolve().parent.parent
+               / "quam_state_manager/core/run_watch.py").read_text(encoding="utf-8")
+        i = src.index("runs.append(")
+        line = src[i:src.index(chr(10), i)]
+        assert "os.stat(os.path.join(dpath, e.name))" in line, line
+        assert "e.stat(" not in line

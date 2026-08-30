@@ -801,12 +801,43 @@ window.enhanceColumnResize = function(tableId, storageKey) {
     // unpinned column is frozen at its current width and the table's width is
     // their sum, re-derived on every drag step.
     function fitTableToColumns() {
-        var sum = 0;
+        var sum = 0, unmeasured = false;
         ths.forEach(function(th) {
-            if (!th.style.width) th.style.width = th.offsetWidth + 'px';
+            if (!th.style.width) {
+                var w = th.offsetWidth;
+                // docs/141 4ac: a table with no layout box (display:none, a
+                // hidden tab) reports 0 -- freezing that would pin every
+                // unpinned column at 0px and the table at the sum of the
+                // pinned ones alone. Leave it auto and try again later.
+                if (!w) { unmeasured = true; return; }
+                th.style.width = w + 'px';
+            }
             sum += parseFloat(th.style.width) || 0;
         });
+        if (unmeasured) return false;
         table.style.width = sum + 'px';
+        return true;
+    }
+    /* docs/141 4ac: re-derive when the box the widths were measured in changes.
+       Only the ACCIDENTAL freezes are released -- a column the user actually
+       dragged (`saved[i]`) keeps its width, which is the whole point of 4x.
+       Without this, one saved width pinned a /pulses table to the width of the
+       window it first rendered in: widening the browser left the rest of the
+       pane empty for the life of the page. */
+    function refitToBox() {
+        if (!Object.keys(saved).some(function(k) { return saved[k]; })) return;
+        ths.forEach(function(th, i) { if (!saved[i]) th.style.width = ''; });
+        table.style.width = '';
+        fitTableToColumns();
+    }
+    if (typeof ResizeObserver === 'function' && !table._fitRO) {
+        var host = table.parentElement || table;
+        var raf = null;
+        table._fitRO = new ResizeObserver(function() {
+            if (raf) return;                       // one re-fit per frame
+            raf = requestAnimationFrame(function() { raf = null; refitToBox(); });
+        });
+        try { table._fitRO.observe(host); } catch (e) {}
     }
     var anySaved = Object.keys(saved).some(function(k) { return saved[k]; });
 
@@ -1193,7 +1224,11 @@ window.toggleSettings = function(trigger) {
             document.addEventListener("click", function (e) {
                 if (dd.classList.contains("settings-hidden")) return;
                 if (dd.classList.contains("settings-floating")) return;
-                if (dd.contains(e.target) || (e.target.closest && e.target.closest(".settings-btn, .calc-btn, #calc-popover"))) return;
+                // docs/141 4ac: every tool window, not the literal pair -- the
+                // Config Manual was "outside" and closed Settings.
+                var _tools = (window.FloatPanel && window.FloatPanel.TOOLS_SEL)
+                    || ".settings-btn, .calc-btn, #calc-popover, .manual-btn, #manual-popover";
+                if (dd.contains(e.target) || (e.target.closest && e.target.closest(_tools))) return;
                 dd.classList.add("settings-hidden");
             });
         }, 0);
@@ -1254,28 +1289,87 @@ window.setFontSize = function(size) {
     // docs/141 4y: the ticks survive a tree re-render (workspace add /
     // remove / filter / rescan) and an F5 -- the set is mirrored into
     // sessionStorage on every change and re-applied after every swap.
+    function stored() {
+        try {
+            var a = JSON.parse(sessionStorage.getItem(SEL_KEY) || '[]');
+            return Array.isArray(a) ? a : [];
+        } catch (e) { return []; }
+    }
+    function write(list) {
+        try { sessionStorage.setItem(SEL_KEY, JSON.stringify(list)); } catch (e) {}
+    }
+    /* docs/141 4ac: the mirror is the SELECTION MODEL, not a snapshot of the
+       DOM. The sidebar filter is a server re-render that REMOVES the rows it
+       does not match, so writing `checkedValues()` verbatim meant the first
+       click after a filter deleted every tick the filter had hidden -- three
+       runs became one, silently. persist() therefore keeps the stored entries
+       whose checkbox is not on screen and replaces only the on-screen part. */
     function persist() {
-        try { sessionStorage.setItem(SEL_KEY, JSON.stringify(checkedValues())); } catch (e) {}
+        var present = {};
+        boxes().forEach(function(b) { present[b.value] = true; });
+        var offscreen = stored().filter(function(v) { return !present[v]; });
+        write(offscreen.concat(checkedValues()));
     }
     function restore() {
-        var want = null;
-        try { want = JSON.parse(sessionStorage.getItem(SEL_KEY) || 'null'); } catch (e) { want = null; }
-        if (!want || !want.length) return;
+        noteSeen();                     // this render's rows are now "known"
+        var want = stored();
+        if (!want.length) return;
         var set = {};
         want.forEach(function(v) { set[v] = true; });
         boxes().forEach(function(b) { if (set[b.value]) b.checked = true; });
+        // deliberately NO prune here: restore() runs on every tree swap,
+        // including the filter re-render, where "not in the DOM" means
+        // "filtered out", not "gone" (docs/141 4ac -- pruning here cancels
+        // the merge above and loses a selection HEAD keeps).
+    }
+    /* The entries the model holds that this tree cannot show. They ride the
+       compare form as hidden inputs, so the count on the button is the count
+       the press actually diffs.
+
+       A stored path only counts as "off screen" if a tree render has SHOWN it
+       at least once this session: that is what tells a filtered-out run (real,
+       still selected) from a stale mirror entry (a deleted run, a mirror
+       carried across a workspace change). Without the distinction a dead path
+       would inflate the button and be submitted to /compare. */
+    var seen = Object.create(null);
+    function noteSeen() { boxes().forEach(function(b) { seen[b.value] = true; }); }
+    function offscreenValues() {
+        var present = {};
+        boxes().forEach(function(b) { present[b.value] = true; });
+        return stored().filter(function(v) { return !present[v] && seen[v]; });
+    }
+    function selectedAll() { return offscreenValues().concat(checkedValues()); }
+    function syncHiddenInputs(off) {
+        var form = document.getElementById('compare-form');
+        if (!form) return;
+        Array.prototype.slice.call(
+            form.querySelectorAll('input.sidebar-sel-offscreen')).forEach(function(el) {
+            el.parentNode.removeChild(el);
+        });
+        off.forEach(function(v) {
+            var el = document.createElement('input');
+            el.type = 'hidden'; el.name = 'paths'; el.value = v;
+            el.className = 'sidebar-sel-offscreen';
+            form.appendChild(el);
+        });
     }
 
     function syncCompareCount() {
-        var n = document.querySelectorAll(
-            '#sidebar-tree input[name="paths"]:checked').length;
+        noteSeen();
+        var off = offscreenValues();
+        var onScreen = checkedValues().length;
+        var n = onScreen + off.length;
+        syncHiddenInputs(off);
         var cmp = document.querySelector('#compare-form .btn-compare');
         if (cmp) {
             cmp.textContent = n > 1
-                ? 'Compare Selected (' + n + ')' : 'Compare Selected';
+                ? 'Compare Selected (' + n + (off.length ? ' \u2014 ' + off.length + ' not in view' : '') + ')'
+                : 'Compare Selected';
             cmp.disabled = n < 2;
             cmp.title = n < 2 ? 'Tick 2\u20135 runs to diff them side by side'
-                              : 'Open the diff of these ' + n + ' runs';
+                              : (n > MAX_DIFF
+                                 ? n + ' runs selected \u2014 the diff reads up to ' + MAX_DIFF
+                                 : 'Open the diff of these ' + n + ' runs');
         }
         var trend = document.querySelector('#compare-form .btn-trend');
         if (trend) trend.textContent = n > 1
@@ -1288,7 +1382,16 @@ window.setFontSize = function(size) {
     window.compareClearSelection = function() {
         boxes().forEach(function(b) { b.checked = false; });
         lastIdx = -1;
-        persist();
+        write([]);                    // Clear is the one place the model empties
+        syncCompareCount();
+    };
+    /* A workspace root really going away is the OTHER place a path stops
+       existing (an F5 or a filter is not). Called by the workspace remove
+       handler; harmless when the prefix matches nothing. */
+    window.compareForgetUnder = function(prefix) {
+        if (!prefix) return;
+        var pre = String(prefix);
+        write(stored().filter(function(v) { return String(v).indexOf(pre) !== 0; }));
         syncCompareCount();
     };
 
@@ -1302,13 +1405,19 @@ window.setFontSize = function(size) {
         if (ranged) {
             for (var i = lo; i <= hi; i++) all[i].checked = t.checked;
         }
+        var anchor = lastIdx;          // BEFORE it moves -- the cap needs it
         lastIdx = idx;
-        // the cap: untick what this click added beyond MAX_DIFF, from the
-        // far end of the range back towards the anchor (a plain click
-        // unticks just itself)
-        var over = checkedValues().length - MAX_DIFF;
+        // the cap: untick what this click added beyond MAX_DIFF, walking back
+        // from the end the user dragged TO so the run they ANCHORED on is the
+        // one that survives. docs/141 4ac: this used to walk from `hi`
+        // unconditionally, so a sweep UPWARD from an older run silently kept
+        // "the five newest" and dropped the run the sweep started from.
+        var over = selectedAll().length - MAX_DIFF;
         if (over > 0 && t.checked) {
-            for (var j = hi; j >= lo && over > 0; j--) {
+            var draggedUp = ranged && idx > anchor;      // the far end is `hi`
+            var from = draggedUp ? hi : (ranged ? lo : hi);
+            var dir = draggedUp ? -1 : (ranged ? 1 : -1);
+            for (var j = from; over > 0 && j >= lo && j <= hi; j += dir) {
                 if (all[j].checked) { all[j].checked = false; over--; }
             }
             if (window.showToast) window.showToast('Up to ' + MAX_DIFF + ' runs can be diffed side by side.', 'warning');
@@ -1322,8 +1431,17 @@ window.setFontSize = function(size) {
     // Listener sits on document (always exists at eval time; the app-wide
     // rule forbids top-level document.body listeners).
     document.addEventListener('htmx:afterSwap', function(ev) {
+        // docs/141 4ac: CONTAINMENT, not identity. The tree caps a group at 50
+        // and offers "Show all N", whose hx-target is `closest ul` -- an
+        // element INSIDE #sidebar-tree. `el.id === 'sidebar-tree'` missed it,
+        // so one press replaced the checkboxes with fresh unticked ones while
+        // the button still read "Compare Selected (3)" and the press then hit
+        // the server's own "Tick at least two runs" refusal.
         var el = ev.target;
-        if (el && el.id === 'sidebar-tree') { lastIdx = -1; restore(); syncCompareCount(); }
+        if (!el || !el.closest) return;
+        if (el.id === 'sidebar-tree' || el.closest('#sidebar-tree')) {
+            lastIdx = -1; restore(); syncCompareCount();
+        }
     });
     // HX-Trigger {"sm:toast": {message, level}} from a route that keeps the
     // pane (HX-Reswap: none) but has something to say.
@@ -1334,7 +1452,8 @@ window.setFontSize = function(size) {
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', function() { restore(); syncCompareCount(); });
     } else { restore(); syncCompareCount(); }
-    window._sidebarCompareSel = { restore: restore, persist: persist, MAX: MAX_DIFF, KEY: SEL_KEY };
+    window._sidebarCompareSel = { restore: restore, persist: persist, MAX: MAX_DIFF,
+                                 KEY: SEL_KEY, all: selectedAll, offscreen: offscreenValues };
 })();
 
 // Global UI scale (Settings → "UI scale"): CSS zoom on <html>, 80%–150% in
@@ -4344,8 +4463,12 @@ window.PaneState = (function () {
         if (KEEP.indexOf(route) < 0) return;
         var holder = document.createElement('div');
         while (p.firstChild) holder.appendChild(p.firstChild);
+        // docs/141 4ac: scrollX too. 4q made #table-pane the ONE scroller
+        // on /bulk, and the toolbar rows' inline transform is a FUNCTION of
+        // its scrollLeft -- parking the bars without their pane's sideways
+        // position left them translated over a pane reset to 0.
         stash[route] = { holder: holder, seq: seqNow(), chip: chipNow(),
-                         scroll: p.scrollTop, order: ++_order };
+                         scroll: p.scrollTop, scrollX: p.scrollLeft, order: ++_order };
         var keys = Object.keys(stash);
         if (keys.length > MAX) {
             keys.sort(function (a, b) { return stash[a].order - stash[b].order; });
@@ -4386,6 +4509,7 @@ window.PaneState = (function () {
         p.innerHTML = '';
         while (e.holder.firstChild) p.appendChild(e.holder.firstChild);
         p.scrollTop = e.scroll || 0;
+        p.scrollLeft = e.scrollX || 0;      // docs/141 4ac -- BEFORE paneRestored
         if (window.PhysAmp) window.PhysAmp.applyAll(p);
         document.dispatchEvent(new CustomEvent('paneRestored',
                                                { detail: { route: route } }));
@@ -13501,7 +13625,12 @@ document.addEventListener('htmx:afterSwap', function(evt) {
     // baseline and the run that caused it was never shown (real Chrome, 2026-
     // 08-29). Baseline shortly after load instead; a run landing inside this
     // 1.5 s window is the one case the wake cannot announce.
-    _schedule(1500);
+    // docs/141 4ac: gated on the popup existing. It ships in base.html, so
+    // every page that has this poll has it and the app is unchanged -- but an
+    // unconditional timer put a background request into every jsdom harness
+    // that evaluates app.js, which is what made version_diff_selfcheck.cjs
+    // flake (a failure this range introduced and the handoff called inherited).
+    if (document.getElementById('new-run-popup')) _schedule(1500);
 
     function _showNewRunPopup(data) {
         var popup = document.getElementById('new-run-popup');

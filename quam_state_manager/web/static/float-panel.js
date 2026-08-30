@@ -60,6 +60,26 @@
         return true;
     }
     function isFloating(panel) { return !!panel && panel.classList.contains('fp-floating'); }
+    /* docs/141 4ac: the clamp was a DRAG-time invariant, and the viewport is
+       the other half of the constraint -- it changes without a drag (a window
+       resize, maximise/restore, the desktop window being resized, devtools
+       docking, a zoom change). A floated panel is position:fixed with inline
+       coordinates, so narrowing the window left it off screen for the life of
+       the page: reopening does not help (the owners skip re-anchoring while
+       floating) and `unfloat()` has no production caller. */
+    function clampIntoView(panel) {
+        if (!isFloating(panel)) return;
+        var w = panel.offsetWidth, h = panel.offsetHeight;
+        var x = parseFloat(panel.style.left), y = parseFloat(panel.style.top);
+        if (isNaN(x) || isNaN(y)) return;
+        var maxX = window.innerWidth - w - PAD, maxY = window.innerHeight - h - PAD;
+        panel.style.left = Math.max(PAD, Math.min(x, Math.max(PAD, maxX))) + 'px';
+        panel.style.top = Math.max(PAD, Math.min(y, Math.max(PAD, maxY))) + 'px';
+    }
+    function clampAll() {
+        Array.prototype.forEach.call(document.querySelectorAll('.fp-floating'), clampIntoView);
+    }
+    window.addEventListener('resize', clampAll);
     // back to "anchored under the trigger" (an owner may offer this on close)
     function unfloat(panel, floatClass) {
         if (!panel) return;
@@ -67,5 +87,11 @@
         if (floatClass) panel.classList.remove(floatClass);
         panel.style.left = ''; panel.style.top = ''; panel.style.width = '';
     }
-    window.FloatPanel = { drag: drag, isFloating: isFloating, unfloat: unfloat, THRESHOLD: THRESHOLD };
+    /* The one place the tool windows are named. docs/141 4ac: each closer used
+       to carry its own literal pair, so the third window (the Config Manual)
+       was "outside" both of the others and closed them. */
+    var TOOLS_SEL = '.settings-btn, #settings-dropdown, .calc-btn, #calc-popover, .manual-btn, #manual-popover';
+    window.FloatPanel = { drag: drag, isFloating: isFloating, unfloat: unfloat,
+                          clampIntoView: clampIntoView, clampAll: clampAll,
+                          TOOLS_SEL: TOOLS_SEL, THRESHOLD: THRESHOLD };
 })();

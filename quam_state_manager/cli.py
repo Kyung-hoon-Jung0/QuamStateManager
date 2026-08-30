@@ -139,6 +139,12 @@ def _format_cell(value, field: str | None = None) -> str:
     return str(value)
 
 
+#: waitress worker threads for `qsm serve` / `qsm browser`. Must stay well
+#: above `routes._WAIT_SLOTS_N` so a full set of long polls can never take
+#: the pool (docs/141 4ac).
+_SERVE_THREADS = 16
+
+
 def _run_app(flask_app, *, host: str, port: int, debug: bool) -> None:
     """Serve ``flask_app``.
 
@@ -160,7 +166,12 @@ def _run_app(flask_app, *, host: str, port: int, debug: bool) -> None:
         flask_app.run(host=host, port=port, debug=False)
         return
     try:
-        waitress_serve(flask_app, host=host, port=port)
+        # docs/141 4ac: waitress defaults to threads=4, and docs/141 4p made
+        # `live-wake.js` a CORE script -- so every open tab permanently holds
+        # one thread in a <=25 s `/datasets/wait` long poll and four tabs
+        # froze the whole UI (measured: GET / at 22.8 s). Idle-blocked
+        # threads cost nothing; the route also bounds its own waiters.
+        waitress_serve(flask_app, host=host, port=port, threads=_SERVE_THREADS)
     except OSError as exc:
         # docs/104 #17: the friendly banner prints BEFORE the bind, so a
         # second `qsm serve` on the same port used to say "open http://..."

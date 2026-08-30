@@ -11,6 +11,11 @@
     'use strict';
     if (window.LiveWake) return;
     var WAIT_TIMEOUT_S = 25, ABORT_MS = 35000, BACKOFF_MIN_MS = 1000, BACKOFF_MAX_MS = 30000;
+    // docs/141 4ac: the server bounds how many waits may block at once and
+    // answers `saturated` AT ONCE when the bound is reached. Going straight
+    // back to waiting on that answer is a busy loop (measured ~73 req/s from
+    // one tab), so a saturated answer is the one success that waits.
+    var SATURATED_MS = 5000;
     // tick -1 = "not yet in contact": the first request is a handshake the
     // server answers at once with its current tick (no wake — the page has
     // just loaded and polled). Every later answer with a moved tick is a real
@@ -46,7 +51,7 @@
                 var changed = !!d.changed && !handshake;
                 tick = d.tick;
                 if (changed) wake({ tick: tick });
-                schedule(0);                                // straight back to waiting
+                schedule(d.saturated ? SATURATED_MS : 0);   // straight back to waiting
             })
             .catch(function () {
                 clearTimeout(abortTimer); inFlight = false;

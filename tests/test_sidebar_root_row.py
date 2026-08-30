@@ -70,8 +70,27 @@ def test_the_row_carries_name_then_dimmed_parent_and_the_full_path_as_title(clie
     assert f'class="tree-root-dir">{parent}</span>' in html
     assert f'<summary class="tree-root-label" title="{deep}">' in html
     # no server-side truncation any more: the text is whole, CSS clips it
-    assert "..." not in html.split('class="tree-root-path"', 1)[1].split("</summary>", 1)[0]
+    span = html.split('class="tree-root-path"', 1)[1].split("</summary>", 1)[0]
+    assert "..." not in span
+    # docs/141 4ac: NAME FIRST is the section, and nothing pinned it -- swapping
+    # the two spans restored the pre-fix reading order (parent first, name last)
+    # with all three tests green. DOM order is visual order in this flex row.
+    assert span.index("tree-root-name") < span.index("tree-root-dir"), \
+        "the folder name must come before the dimmed parent"
     c.post("/workspace/remove", data={"folder": str(deep)}, headers={"HX-Request": "true"})
+
+
+def test_the_dimmed_parent_keeps_a_usable_minimum(client):
+    """docs/141 4ac (R3-6): `flex: 1 1 0; min-width: 0` gave the parent NO
+    space at a realistic sidebar width -- measured 0 visible characters at
+    260 px and 3 at 220 px -- so two roots ending in the same folder name
+    rendered identically. It keeps a small basis now and is clipped from the
+    LEFT, where the distinguishing part is not."""
+    rule = _rule(".tree-root-dir")
+    assert "flex: 1 1 0" not in rule, "a zero basis is what starved it"
+    assert "min-width: 4ch" in rule or "min-width: 3ch" in rule
+    assert "direction: rtl" in rule, "clip the HEAD of the parent path, not its tail"
+    assert "text-overflow: ellipsis" in rule
 
 
 def test_a_drive_root_has_a_name_and_no_parent(client):

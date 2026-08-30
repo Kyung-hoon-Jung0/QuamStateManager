@@ -22,9 +22,19 @@
 {% from '_delta_macros.html' import delta_chip %}
 {% set n = srcs | length %}
 <div class="diff-panes-wrap" id="diff-panes" data-base="{{ base }}" data-n="{{ n }}">
+  {# docs/141 4ac: what is SHOWN and what was FOUND are two numbers, and the
+     note used to state only the first. counts.changed is every differing leaf
+     (counted past the row cap), counts.shown is how many came back, and
+     `rows` is this page of them. #}
+  {% set _found = payload.counts.changed %}
+  {% set _shown = payload.counts.get('shown', _found) %}
   <p class="muted diff-panes-note">
     {{ n }} sources · only keys whose values differ between at least two of them are listed
-    ({{ '{:,}'.format(payload.counts.same) }} agree) · cells that differ from the
+    ({{ '{:,}'.format(payload.counts.same) }} agree)
+    {%- if rows | length < _found %} · showing <b>{{ '{:,}'.format(rows | length) }}</b>
+    of {{ '{:,}'.format(_found) }} differing keys
+    {%- if _shown < _found %} (the diff stops collecting rows at {{ '{:,}'.format(_shown) }}; the rest are counted, not listed){% endif %}
+    {%- endif %} · cells that differ from the
     <b>baseline</b> are highlighted — click a pane title to make it the baseline.
   </p>
   <div class="diff-panes-tools">
@@ -56,18 +66,18 @@
       <tbody>
         {% for t in tree_rows %}
         {% if t.kind == 'dir' %}
-        <tr class="dp-row dp-dir" data-path="{{ t.path }}" data-parent="{{ t.parent }}" data-depth="{{ t.depth }}"
+        <tr class="dp-row dp-dir" data-path="{{ t.key }}" data-parent="{{ t.parent }}" data-depth="{{ t.depth }}"
             style="--dp-depth: {{ t.depth }}">
-          <td class="dp-key-col">
+          <td class="dp-key-col" title="{{ t.path }}">
             <button type="button" class="dp-toggle" aria-expanded="true" title="Collapse / expand">&#9662;</button>
             <span class="dp-key dp-key-dir">{{ t.name }}</span>
-            <span class="dp-count" title="{{ t.count }} differing key{{ '' if t.count == 1 else 's' }} inside">{{ t.count }}</span>
+            <span class="dp-count" title="{{ t.count }} differing key{{ '' if t.count == 1 else 's' }} inside{% if payload.truncated %} (of the first {{ '{:,}'.format(_shown) }} the diff collected){% endif %}{% if rows | length < _found %} — this page lists {{ rows | length }}{% endif %}">{{ t.count }}</span>
           </td>
           {% for src in srcs %}<td class="dp-cell dp-cell-dir" data-i="{{ loop.index0 }}"></td>{% endfor %}
         </tr>
         {% else %}
         {% set r = t.row %}
-        <tr class="dp-row dp-leaf" data-groups="{{ r.groups | join(',') }}" data-path="{{ t.path }}" data-parent="{{ t.parent }}" data-depth="{{ t.depth }}"
+        <tr class="dp-row dp-leaf" data-eq="{{ r.eq | join(',') }}" data-path="{{ t.key }}" data-parent="{{ t.parent }}" data-depth="{{ t.depth }}"
             style="--dp-depth: {{ t.depth }}">
           <td class="dp-key-col" title="{{ r.path }}">
             <span class="dp-toggle-gap"></span>
@@ -77,7 +87,7 @@
           {% set i = loop.index0 %}
           {% set _num = r.present[i] and (v is number) and (v is not boolean) %}
           {% set _numlike = _num or (r.present[i] and v is string) %}
-          <td class="dp-cell{% if i == base %} dp-base{% elif r.groups[i] != r.groups[base] %} dp-diff{% else %} dp-same{% endif %}"
+          <td class="dp-cell{% if i == base %} dp-base{% elif r.eq[base][i] != '1' %} dp-diff{% else %} dp-same{% endif %}"
               data-i="{{ i }}"{% if _numlike %} data-v="{{ v }}"{% endif %}>
             {% if not r.present[i] %}
             <span class="muted dp-absent" title="this key does not exist in this source">&ndash;</span>
@@ -88,7 +98,7 @@
             {% endif %}
             {# the Δ against the baseline, painted server-side for the initial
                baseline and re-painted client-side on a switch #}
-            {% set _show_d = i != base and r.groups[i] != r.groups[base] and r.present[i] and r.present[base] %}
+            {% set _show_d = i != base and r.eq[base][i] != '1' and r.present[i] and r.present[base] %}
             <span class="dp-delta"{% if not _show_d %} hidden{% endif %}>{% if _show_d %}{{ delta_chip(r.vals[base], v) }}{% endif %}</span>
           </td>
           {% endfor %}
@@ -107,7 +117,7 @@
   {% for sl in slots %}{% if slot_refs[loop.index0] %}{% set _ = _qs.append(sl ~ '=' ~ (slot_refs[loop.index0] | urlencode)) %}{% endif %}{% endfor %}
   <div class="ph-changes-more">
     <button type="button" class="btn-sm outline"
-            hx-get="/diff?{{ _qs | join('&amp;') }}&amp;tab={{ tab }}&amp;view=panes&amp;base={{ base }}&amp;rows={{ next_rows }}"
+            hx-get="/diff?{{ _qs | join('&') }}&amp;tab={{ tab }}&amp;view=panes&amp;base={{ base }}&amp;rows={{ next_rows }}"
             hx-target="#diff-root" hx-swap="outerHTML">
       Show {{ '{:,}'.format(more) }} more</button>
   </div>

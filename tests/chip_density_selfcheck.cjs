@@ -115,8 +115,71 @@ ok(J.reanchor(selOf) === false && scrolled.length === 1, 'a jump to a section AB
 J.note('coherence');
 ok(J.reanchor(selOf) === false && scrolled.length === 1, 'a section that is not on the page yet is not scrolled to');
 J.note('fidelity');
+const _realNow = win.Date.now;
 win.Date.now = (function (orig) { return function () { return orig() + 9000; }; })(win.Date.now);
 ok(J.reanchor(selOf) === false, 'a jump older than the window is not re-anchored (the user has scrolled on)');
+win.Date.now = _realNow;
+
+/* docs/141 4ac -- the guard YIELDS TO THE USER, and the positive case above is
+   not vacuous.
+
+   R2-10 measured that setting WINDOW_MS to 0 left every §4o pin green: `note`
+   and `reanchor` ran in the same millisecond, so "is the jump fresh?" was
+   never actually asked. Advancing the clock a little between them is what
+   makes the positive assertion mean something -- and it is the same clock
+   move the negative case below needs. */
+{
+  const pane = doc.getElementById('table-pane') || (function () {
+    const d = doc.createElement('div'); d.id = 'table-pane'; doc.body.appendChild(d); return d;
+  })();
+  const before = scrolled.length;
+
+  // positive control WITH a real gap: a fresh jump, 100 ms later, still anchors
+  J.note('fidelity', pane);
+  win.Date.now = (function (orig) { return function () { return orig() + 100; }; })(_realNow);
+  ok(J.reanchor(selOf) === true && scrolled.length === before + 1,
+     'a jump made 100 ms ago is still re-anchored (the window is really consulted)');
+  win.Date.now = _realNow;
+
+  // and the user's own scroll cancels it
+  J.note('fidelity', pane);
+  pane.dispatchEvent(new win.Event('wheel'));
+  win.Date.now = (function (orig) { return function () { return orig() + 100; }; })(_realNow);
+  ok(J.reanchor(selOf) === false && scrolled.length === before + 1,
+     'a wheel on the pane cancels the pending re-anchor (the user moved on)');
+  win.Date.now = _realNow;
+
+  // a keypress counts too, and re-noting re-arms
+  J.note('fidelity', pane);
+  pane.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'PageDown' }));
+  win.Date.now = (function (orig) { return function () { return orig() + 100; }; })(_realNow);
+  ok(J.reanchor(selOf) === false, 'a key on the pane cancels it too');
+  win.Date.now = _realNow;
+  J.note('fidelity', pane);
+  win.Date.now = (function (orig) { return function () { return orig() + 100; }; })(_realNow);
+  ok(J.reanchor(selOf) === true, 'a NEW jump re-arms the guard');
+  win.Date.now = _realNow;
+}
+
+/* docs/141 4ac -- ?view=gate must reach Fidelity. TAB_SPEC has no `gate`
+   entry (this range removed it, and a pin asserts its absence), so the
+   deep-link guard rejected the alias before setChipStatusView could map it. */
+{
+  const src = read('chip-status.js');
+  const i = src.indexOf('var _deepView = ');
+  ok(i > 0, 'the deep-link path normalises the gate alias before the TAB_SPEC test');
+  ok(/_deepView\s*=\s*\(_serverChipView === 'gate'\) \? 'fidelity' : _serverChipView/.test(src),
+     'and it maps gate -> fidelity');
+  const guard = src.slice(i, i + 400);
+  ok(/if \(_deepView && TAB_SPEC\[_deepView\]\)/.test(guard),
+     'the guard then tests the NORMALISED view, not the raw one');
+
+  /* the guard can only yield to the user if the CALLER hands it the pane the
+     user scrolls -- the harness drives jumpGuard directly, so only the source
+     can say whether the production wrapper does. */
+  ok(/jumpGuard\.note\(view,\s*_scrollPane\(\)\)/.test(src),
+     'the production _jump.note passes the scroll pane, so the guard can arm on it');
+}
 
 console.log(fails ? ('FAILED ' + fails) : 'chip_density_selfcheck: all ok');
 process.exit(fails ? 1 : 0);

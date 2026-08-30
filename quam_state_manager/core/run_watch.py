@@ -17,8 +17,19 @@ created, renamed or removed, so a new run directory moves the date
 directory's mtime; qualibrate then writes node.json / data files INTO the
 run directory over some hundreds of ms, which moves the run directory's
 mtime — the second tick is what turns a half-written run (docs/80's
-``incomplete``) into a complete one on the client. Two ``scandir`` calls and
-three ``stat`` calls per root per interval: ~1 ms on a lab's workspace.
+``incomplete``) into a complete one on the client.
+
+Cost and reach, corrected in docs/141 4ac: the run mtimes come from
+``os.stat`` per entry, not ``DirEntry.stat()`` (a Windows cache read that
+never sees a write inside the directory), so a poll is two ``scandir`` calls
+plus one ``stat`` per run in the NEWEST date directory -- a few ms at a few
+hundred runs, every ``interval_s``, per root. The trigger is therefore "any
+write inside the newest date directory", not only "the run being created": a
+figure landing in an older run of the same day ticks too. That is a wake, not
+a scan, and ``/datasets/wait``'s own bound is what keeps a burst of them from
+costing anything (docs/141 4ac). A root whose date directories are absent --
+runs sitting directly under it -- degrades to the root's own mtime and gets
+the first tick only.
 
 Pure and testable: ``signature`` is a function of a path; ``RunWatcher``
 runs without a Flask app (``poll_once`` can be driven by hand).
@@ -59,7 +70,16 @@ def signature(root: str) -> tuple | None:
             for e in it:
                 try:
                     if e.is_dir(follow_symlinks=False):
-                        runs.append((e.name, e.stat(follow_symlinks=False).st_mtime_ns))
+                        # docs/141 4ac: os.stat, NOT DirEntry.stat(). On Windows
+                        # DirEntry.stat() is served from the FindFirstFile
+                        # listing -- the PARENT directory's cached copy of the
+                        # child's timestamps -- and NTFS does not refresh that
+                        # when a file is written INSIDE the child. The run
+                        # directory's mtime therefore never moved and the
+                        # "second tick" this module's docstring describes never
+                        # fired at all (measured: never within 20 s; 0.50 s
+                        # with a real stat).
+                        runs.append((e.name, os.stat(os.path.join(dpath, e.name)).st_mtime_ns))
                 except OSError:
                     continue
     except OSError:

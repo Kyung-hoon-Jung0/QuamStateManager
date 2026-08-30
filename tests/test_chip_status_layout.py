@@ -281,3 +281,45 @@ def test_chip_density_selfcheck():
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout + r.stderr
     assert r.stdout.count("ok - ") >= 10, r.stdout
+
+
+class Test4acGefHonesty:
+    """docs/141 4ac -- what the GEF metric refuses to claim (R2-9, R7-6/R2-11)."""
+
+    def test_a_nan_never_passes_as_a_probability_distribution(self):
+        """`nan < -1e-9` is False and `abs(nan - 1.0) > 0.02` is False, so every
+        numeric gate the validator had let a NaN through: the row "summed to 1"
+        and a matrix that is not a distribution produced a confident, GREEN
+        fidelity. The validator is shared, so this hardens the GE metric and
+        the per-state diagonals too."""
+        from quam_state_manager.core import query
+
+        nan = float("nan")
+        assert query._valid_confusion_matrix([[nan, 0.0], [0.0, 1.0]]) is False
+        assert query._valid_confusion_matrix([[1.0, nan], [0.0, 1.0]]) is False
+        assert query._valid_confusion_matrix([[float("inf"), 0.0], [0.0, 1.0]]) is False
+        assert query._assignment_fidelity([[nan, 0.0], [0.0, 1.0]]) is None
+        assert query._assignment_fidelity_n(
+            [[nan, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]) is None
+        assert query._cm_diag([[nan, 0.0], [0.0, 1.0]], 1) is None
+        # and a real matrix is untouched
+        assert query._valid_confusion_matrix([[0.98, 0.02], [0.03, 0.97]]) is True
+        assert query._assignment_fidelity([[0.98, 0.02], [0.03, 0.97]]) == pytest.approx(0.975)
+
+    def test_a_two_state_matrix_is_not_a_gef_number(self):
+        """A 2x2 stored under `gef_confusion_matrix` averaged to a correct GE
+        value wearing the GEF label -- and scored against the GEF thresholds,
+        which are deliberately LOWER because three-state discrimination runs
+        worse. A blank is what SM already shows for a chip with no matrix."""
+        from quam_state_manager.core import query
+
+        two = [[0.98, 0.02], [0.03, 0.97]]
+        three = [[0.95, 0.03, 0.02], [0.04, 0.93, 0.03], [0.05, 0.05, 0.90]]
+        assert query._assignment_fidelity_n(two) is None
+        assert query._assignment_fidelity_n(three) == pytest.approx((0.95 + 0.93 + 0.90) / 3)
+        # the GE metric still reads a 2x2 -- it is the one that means two states
+        assert query._assignment_fidelity(two) == pytest.approx(0.975)
+        # the floor is a named parameter, so a caller that really wants n>=2
+        # has to say so
+        assert query._assignment_fidelity_n(two, n_min=2) == pytest.approx(0.975)
+        assert query._GEF_MIN_STATES == 3

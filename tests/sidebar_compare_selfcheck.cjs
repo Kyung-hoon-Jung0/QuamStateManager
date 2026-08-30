@@ -14,9 +14,10 @@ const STATIC = path.join(__dirname, '..', 'quam_state_manager', 'web', 'static')
 let fails = 0;
 function ok(c, m) { if (!c) { console.error('FAIL: ' + m); fails++; } else { console.log('ok - ' + m); } }
 
-function treeHtml(n) {
-  let h = '<ul>';
+function treeHtml(n, keep) {
+  let h = '<ul id="grp">';
   for (let i = 0; i < n; i++) {
+    if (keep && keep.indexOf(i) < 0) continue;        // a FILTERED tree: the row is gone, not hidden
     h += '<li class="tree-entry"><div class="tree-entry-label"><input type="checkbox" name="paths" value="/w/run' + i + '" form="compare-form"><span class="entry-name">run' + i + '</span></div></li>';
   }
   return h + '</ul>';
@@ -110,6 +111,105 @@ function settle() { return new Promise((r) => setTimeout(r, 20)); }
   ok(checked(win) === 0, 'a cleared mirror restores nothing');
 }
 
+// 3b. docs/141 4ac -- "Show all N" swaps an INNER <ul>, not #sidebar-tree
+{
+  const { win } = makeWorld();
+  await settle();
+  const all = boxes(win);
+  click(win, all[0]); click(win, all[1]); click(win, all[2]);
+  ok(checked(win) === 3 && label(win) === 'Compare Selected (3)', 'fixture: three ticked');
+  // the tree's group cap offers "Show all N" with hx-target="closest ul"
+  const ul = win.document.getElementById('grp');
+  ul.innerHTML = treeHtml(12).replace(/^<ul id="grp">/, '').replace(/<\/ul>$/, '');
+  ul.dispatchEvent(new win.CustomEvent('htmx:afterSwap', { bubbles: true }));
+  await settle();
+  ok(checked(win) === 3,
+     'a swap of an element INSIDE #sidebar-tree re-applies the ticks (' + checked(win) + ')');
+  ok(label(win) === 'Compare Selected (3)',
+     'and the button still names three (' + label(win) + ')');
+}
+
+// 3c. docs/141 4ac -- a tick made while the tree is FILTERED keeps the rest
+{
+  const { win, store } = makeWorld();
+  await settle();
+  let all = boxes(win);
+  click(win, all[0]); click(win, all[1]); click(win, all[2]);
+  ok(checked(win) === 3, 'fixture: three ticked before the filter');
+
+  // the sidebar filter is a server re-render that REMOVES non-matching rows
+  const tree = win.document.getElementById('sidebar-tree');
+  tree.innerHTML = treeHtml(8, [5, 6, 7]);
+  tree.dispatchEvent(new win.CustomEvent('htmx:afterSwap', { bubbles: true }));
+  await settle();
+  ok(checked(win) === 0, 'fixture: the filter shows none of the three');
+  ok(/not in view/.test(label(win)) && /\(3/.test(label(win)),
+     'the button says three are selected but off screen (' + label(win) + ')');
+
+  click(win, boxes(win)[0]);                      // tick run5 while filtered
+  await settle();
+  ok(JSON.parse(store.quam_sidebar_compare_sel).length === 4,
+     'the mirror MERGES: four selected, not one (' + store.quam_sidebar_compare_sel + ')');
+
+  tree.innerHTML = treeHtml(8);
+  tree.dispatchEvent(new win.CustomEvent('htmx:afterSwap', { bubbles: true }));
+  await settle();
+  all = boxes(win);
+  ok(checked(win) === 4 && all[0].checked && all[1].checked && all[2].checked && all[5].checked,
+     'clearing the filter brings all four back (' + checked(win) + ')');
+  ok(label(win) === 'Compare Selected (4)', 'and the count agrees (' + label(win) + ')');
+}
+
+// 3d. docs/141 4ac -- the off-screen ticks are SUBMITTED, so the number on the
+//     button is the number the press diffs
+{
+  const { win } = makeWorld();
+  await settle();
+  const all = boxes(win);
+  click(win, all[0]); click(win, all[1]);
+  const tree = win.document.getElementById('sidebar-tree');
+  tree.innerHTML = treeHtml(8, [4, 5]);
+  tree.dispatchEvent(new win.CustomEvent('htmx:afterSwap', { bubbles: true }));
+  await settle();
+  click(win, boxes(win)[0]);                      // run4, while run0/run1 are off screen
+  await settle();
+  const form = win.document.getElementById('compare-form');
+  // what the browser serialises: the form's own hidden inputs PLUS the tree's
+  // checked boxes, which are associated by the form="compare-form" attribute
+  const submitted = Array.from(form.querySelectorAll('input.sidebar-sel-offscreen'))
+    .map((el) => el.value)
+    .concat(boxes(win).filter((b) => b.checked).map((b) => b.value)).sort();
+  ok(submitted.length === 3 && submitted.join(',') === '/w/run0,/w/run1,/w/run4',
+     'the form carries every selected run, on screen or not (' + submitted.join(',') + ')');
+  ok(/\(3/.test(label(win)), 'and the button names three (' + label(win) + ')');
+}
+
+// 3e. docs/141 4ac -- a shift range clamped from the end the user dragged TO
+{
+  const { win } = makeWorld();
+  await settle();
+  const all = boxes(win);
+  click(win, all[7]);                 // anchor on an OLDER run
+  click(win, all[0], true);           // sweep upward to the newest
+  ok(checked(win) === 5, 'an upward sweep of 8 is clamped to 5');
+  ok(all[7].checked, 'the run the sweep ANCHORED on survives the clamp');
+  ok(!all[0].checked && !all[1].checked && !all[2].checked,
+     'and the three dropped are the far end of the drag (' +
+     all.map((b, i) => (b.checked ? i : '')).filter((x) => x !== '').join(',') + ')');
+}
+
+// 3f. docs/141 4ac -- a stale mirror entry never seen in any tree is not counted
+{
+  const { win } = makeWorld(['/w/run1', '/w/ghost']);
+  await settle();
+  ok(checked(win) === 1, 'the one real remembered run is re-ticked');
+  ok(label(win) === 'Compare Selected' && cmpDisabled(win),
+     'a path no tree ever showed does not inflate the count (' + label(win) + ')');
+  const form = win.document.getElementById('compare-form');
+  ok(form.querySelectorAll('input.sidebar-sel-offscreen').length === 0,
+     'and it is not submitted');
+}
+
 // 4. a reload restores from the mirror at script eval time
 {
   const { win } = makeWorld(['/w/run2', '/w/run5', '/w/nonexistent']);
@@ -129,6 +229,6 @@ function settle() { return new Promise((r) => setTimeout(r, 20)); }
   ok(toasts.length === 1, 'an empty detail shows nothing');
 }
 
-console.log(fails ? ('FAILED: ' + fails) : 'ALL OK (21 assertions)');
+console.log(fails ? ('FAILED: ' + fails) : 'ALL OK (35 assertions)');
 process.exit(fails ? 1 : 0);
 })();

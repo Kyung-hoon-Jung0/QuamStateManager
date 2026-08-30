@@ -39,6 +39,9 @@
     var BANDS = {};                // {"1":[lo,hi], ...} MW-FEM band ranges (from server)
     var DYN = [];                  // FULL dynamic model: {key,label,section,unit,kind}
     var QMETA = { chip: '', qubits: [] };   // ⚏ Qubits payload: {id, grid:"c,r"|null} per qubit
+    // docs/141 4ac: `chip` is the DISPLAY name -- it is also the localStorage
+    // key prefix for the Qubits/Pairs pickers, so it must not change. `chipKey`
+    // folds the chip's PATH in and is what the /bulk/cells gate compares.
     var _dynHintKeys = [];         // dyn keys matching the current search but hidden
     var _colHintKeys = [];         // RENDERED columns matching the search but checkbox-hidden
     var _pairHintKeys = [];        // the pair grid's hidden matches (via BulkPairEdit)
@@ -2047,8 +2050,11 @@
         }
         // byPath: dot path -> column key for every detached cell, so a
         // path-addressed repaint (undo) hydrates ONE column, not the grid
+        // pathTd (docs/141 4ac): dot path -> the server-cold <td> that holds
+        // its value in `vals`. byPath only names the COLUMN, which is enough
+        // to decide what to hydrate but not to repair one cell's search text.
         _virt = { html: new Map(), vals: new Map(), cold: cold, wrap: wrap, byPath: {},
-                  remote: new Set(), inflight: new Map(), failed: 0 };
+                  pathTd: {}, remote: new Set(), inflight: new Map(), failed: 0 };
         _virtStyleEl().textContent = widths.join('\n');
         _ph('virt: plan');
         Array.prototype.forEach.call(tds, function (td) {
@@ -2062,8 +2068,8 @@
                 var ent = (srv.map.cols && srv.map.cols[colKey] && ri != null) ? srv.map.cols[colKey][ri] : null;
                 if (ent) {
                     if (ent[0]) _virt.vals.set(td, String(ent[0]).toLowerCase());
-                    if (ent[1]) _virt.byPath[ent[1]] = colKey;
-                    if (ent[2]) _virt.byPath[ent[2]] = colKey;
+                    if (ent[1]) { _virt.byPath[ent[1]] = colKey; _virt.pathTd[ent[1]] = td; }
+                    if (ent[2]) { _virt.byPath[ent[2]] = colKey; _virt.pathTd[ent[2]] = td; }
                 }
                 return;
             }
@@ -2102,6 +2108,20 @@
     // returned; the server-cold ones after GET /bulk/cells lands. A caller
     // that only needs what can be had NOW ignores the promise.
     var _resolved = { then: function (f) { try { f(); } catch (e) {} return _resolved; }, catch: function () { return _resolved; } };
+    /* docs/141 4ac: a server-cold cell's search text lives ONLY in the cold
+       map. Callers that learn a new display value for a path but deliberately
+       do not repaint the cell (an undo of a remote column, the apply echo)
+       must still repair it, or the whole-chip search answers from a snapshot
+       taken before the edit. Returns true when it patched something. */
+    function _virtPatchColdValue(dotPath, disp) {
+        if (!_virt || !_virt.pathTd) return false;
+        var td = _virt.pathTd[dotPath];
+        if (!td || !_virt.remote.has(td.getAttribute('data-col-key'))) return false;
+        _virt.vals.set(td, String(disp == null ? '' : disp).toLowerCase());
+        _virtPatchColdValue.flushHay = true;
+        return true;
+    }
+
     function _virtHydrateCols(keys) {
         if (!_virt || !keys || !keys.length) return _resolved;
         var due = keys.filter(function (k) { return _virt.cold.has(k); });
@@ -2160,7 +2180,10 @@
             var url = '/bulk/cells?cols=' + encodeURIComponent(fresh.join(','));
             var dh = _dynHidden();
             if (dh.length) url += '&dynhide=' + encodeURIComponent(dh.join(','));
-            if (QMETA && QMETA.chip) url += '&chip=' + encodeURIComponent(QMETA.chip);
+            // the path-folded token when the page shipped one, else the display
+            // name (an older page); the route accepts both (docs/141 4ac)
+            var _tok = QMETA && (QMETA.chipKey || QMETA.chip);
+            if (_tok) url += '&chip=' + encodeURIComponent(_tok);
             var req = fetch(url, { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
                 .then(function (r) {
                     return r.json().catch(function () { return {}; }).then(function (d) {
@@ -2783,6 +2806,7 @@
             DYN = Array.isArray(dynModel) ? dynModel : [];
             if (qubitMeta && typeof qubitMeta === 'object') {
                 QMETA = { chip: String(qubitMeta.chip || ''),
+                          chipKey: String(qubitMeta.chipKey || ''),
                           qubits: Array.isArray(qubitMeta.qubits) ? qubitMeta.qubits : [] };
             }
             var t = table();
@@ -2821,6 +2845,19 @@
             _ph('PhysAmp');
             _virtInit();            // docs/105 #1 - after layout is final
             _ph('virtualization');
+            // docs/141 4ac (CRITICAL): the mount's first applySearch runs
+            // inside _applyColumnVisibility ABOVE, before _virt exists -- and
+            // the cold cells' contribution to the haystack is behind
+            // `if (_virt)`. A REMEMBERED search (localStorage quam_bulk_search,
+            // restored into the box a few lines up) therefore matched nothing
+            // in any server-cold column: the grid read "0 of 20" and hid every
+            // row, permanently, on the ordinary htmx nav into this page.
+            // _hayCache must be dropped too -- it is keyed on the hidden-column
+            // set alone, so a second applySearch would reuse the column
+            // haystacks built while _virt was still null (measured: without
+            // this line the re-run is a no-op).
+            var _sb0 = document.getElementById('bulk-search');
+            if (_virt && _sb0 && _sb0.value) { _hayCache = null; applySearch(); }
             // the estimate is conservative, not exact: one rAF pass (real
             // geometry of the PRUNED table) hydrates anything on screen it
             // called cold -- a drag-resized or zoomed grid (docs/141 4l-review)
@@ -3479,6 +3516,7 @@
         var absent = entries.some(function (e) {
             return e && e.dot_path && !sel(e.dot_path).length;
         });
+        _virtPatchColdValue.flushHay = false;
         // docs/141 4l-review: hydrate only the cold columns the named paths
         // live in (the byPath map _virtInit built) -- an undo of a pair-grid
         // or hidden-column path used to un-virtualize the whole grid; a path
@@ -3489,8 +3527,15 @@
                 if (!e || !e.dot_path || sel(e.dot_path).length) return;
                 var ck = _virt.byPath && _virt.byPath[e.dot_path];
                 // a server-cold column needs no repaint: it is rendered from
-                // the (already reverted) working copy when it is fetched
-                if (ck && !_virt.remote.has(ck) && dueKeys.indexOf(ck) < 0) dueKeys.push(ck);
+                // the (already reverted) working copy when it is fetched --
+                // but its SEARCH TEXT is the cold map, which nothing else
+                // updates, so patch that one cell (docs/141 4ac).
+                if (ck && _virt.remote.has(ck)) {
+                    _virtPatchColdValue(e.dot_path,
+                        e.old_value_disp != null ? e.old_value_disp : e.old_value_str);
+                    return;
+                }
+                if (ck && dueKeys.indexOf(ck) < 0) dueKeys.push(ck);
             });
             if (dueKeys.length) _virtHydrateCols(dueKeys);
         }
@@ -3547,6 +3592,7 @@
             else uncovered.push(e.dot_path);   // found (cs.length > 0) but not honestly repainted
         });
         rows.forEach(_refreshRow);
+        if (_virtPatchColdValue.flushHay) { _hayCache = null; _virtPatchColdValue.flushHay = false; }
         if (patched) _refreshGlobal();
         // `covered` (not a missing COUNT) is what the caller needs: with both
         // grids on screen a qubit leaf is legitimately absent from the pair
@@ -3578,4 +3624,18 @@
     if (document.getElementById('bulk-table') && !window.__bulkAutoMounted) {
         // full-page load path; the partial calls mount(columns) itself with the model
     }
+
+    /* docs/141 4ac (CRITICAL): PaneState's keep-alive (docs/110, extended to
+       /bulk by docs/139) re-attaches the parked DOM WITHOUT re-running mount(),
+       so nothing re-derives the toolbar rows' translateX -- which 4q made a
+       function of #table-pane.scrollLeft. Returning to Live State Edit painted
+       the whole control surface (search box, Properties / Qubits / Pairs, Apply
+       all, the chip bar) outside the pane until the user happened to scroll.
+       PaneState now restores scrollLeft BEFORE this event, so re-deriving from
+       the pane is enough; _pinBarsToScroll's own listener is bind-once
+       (s._barsBound), so re-entering it cannot stack handlers. */
+    document.addEventListener('paneRestored', function (ev) {
+        if (!table()) return;                       // not the grid's pane
+        try { _pinBarsToScroll(); } catch (e) {}
+    });
 })();

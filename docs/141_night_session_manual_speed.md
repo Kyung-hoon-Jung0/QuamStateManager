@@ -705,8 +705,9 @@ poller's own cadence.
 **What was measured first.** The user asked what could be done about the
 ~2 s before the grid mounts, which §4l had pinned on the DOCUMENT, not on JS.
 Rendering `/bulk` in-process on the PJ 20Q chip: 8,977,141 bytes, 7,810
-cells (qubit grid 4,480 + pair grid 1,530 in the live render, more in-process
-with every column), **1,140 bytes per cell of which ~250 were information**;
+cells (qubit grid 4,480 + pair grid 3,330 in the live render — the "1,530"
+this line carried until docs/141 §4ac did not reconcile with the 7,810 beside
+it: the pair grid is 111 columns x 30 pairs), **1,140 bytes per cell of which ~250 were information**;
 42,072 elements, 36,723 whitespace-only text nodes. Where the bytes went:
 3.6 MB was whitespace — each `{% if %}` in the cell template left a blank
 indented line, and every `<input>` carried its eight attributes on eight
@@ -740,8 +741,9 @@ attributes, text, and whether a whitespace text node sits between siblings),
 drops the two deliberately removed subtrees and edge/adjacent whitespace, and
 compares before vs after: **7,810 cells, 0 differing.** Result: 8,977,141 →
 3,903,227 bytes; elements 42,072 → 21,528; whitespace text nodes 36,723 →
-6,000 (the remainder is between rows and header cells). Per cell 1,140 → 404
-bytes.
+6,000 (the remainder is between rows and header cells). Per cell (whole document / cells) 1,149 → 500 bytes; counting only what a
+cell's own markup contributes, 1,140 → 404. §4ac: the two denominators were
+mixed here, and neither number followed from the totals this section states.
 
 **What it bought in real Chrome (headless, PJ chip, the HEAD tree served on
 5198 beside the change on 5199, 10 alternating loads each, medians).**
@@ -794,10 +796,27 @@ identical to one rendered with the page, and that identity is a pinned
 property, not a convention. `core/bulk_virt.py` is the planner: the
 client's own estimate mirrored (cumulative value-fit widths from `maxlen`
 against the viewport × 2.5, hidden-at-mount columns cold and widthless, the
-600-cell / 800-cold gates), deliberately CONSERVATIVE — px/char is the
-client's 16-px-root fallback (the smallest glyph it ever assumes) and an
-absent hint means a 1,920-px screen — so a server-cold column is always one
-the client would have detached, never fewer hot columns than before. The
+600-cell / 800-cold gates), deliberately CONSERVATIVE. **Corrected in §4ac**:
+the plan matches the client EXACTLY when the `vw` hint arrives (the hint is
+`screen.availWidth`, the same quantity `_virtInit` uses for its own edge), and
+is conservative against the client's DEFAULT font scale. The original sentence
+here — "a server-cold column is always one the client would have detached,
+never fewer hot columns than before" — is false in two measured
+configurations: a page loaded WITHOUT the hint (a full load, an F5, a
+bookmark) is planned for 1,920 px, so a 2,560 / 3,440 / 3,840-px screen gets
+5 / 20 / 26 columns cold the client would have kept hot; and the Live-Edit
+table-size slider (`--bulk-fs`, min 0.75) takes the client's px/char below the
+server's 8.0, putting the server 2–6 columns ahead. Neither is visible at
+`scrollLeft = 0` — the first such column sits past 4,000 px — and the mount's
+own rAF pass hydrates whatever is on screen; what is lost is look-ahead
+buffer, one extra `GET /bulk/cells` on the first sideways scroll. The
+constants were deliberately NOT lowered: doing so gives back a measured part
+of this section for every user (198 → 164 cold columns on the PJ chip), and
+"server ⊆ client" cannot be pinned as a property anyway — a drag-resized
+column (docs/111 `quam_bulk_col_widths`) overrides the client's own estimate
+and the server cannot know it. What IS pinned now is that every width metric
+the server mirrors matches the client's, which is the part that can be true.
+The
 client's `htmx:configRequest` hook sends `vw=screen.availWidth` beside
 `dynhide`. `_qubit_bulk_grid()` left `bulk_edit()` so the grid can be
 memoized per context on (`mutation_seq`, change-log length, `dynhide`) —
@@ -852,8 +871,10 @@ pass became a WINDOW: columns left of `scrollLeft − 1.5 viewports` stay
 cold until scrolled back to (keyboard navigation still hydrates through
 `_virtEnsureTd`).
 
-**Not in this cut, on purpose.** The PAIR grid renders whole (1,530 cells
-on this chip, ~0.6 MB): `pair-edit.js` has no virtualization at all and the
+**Not in this cut, on purpose.** The PAIR grid renders whole (§4ac, measured:
+3,330 cells / ~1.5 MB on this chip — **51% of the remaining document**, i.e. the
+largest single block left, not the small leftover this paragraph's ordering
+implied): `pair-edit.js` has no virtualization at all and the
 qubit grid's mechanism is the one worth generalizing into a shared module
 before a second consumer appears — a follow-up, with the same golden. The
 cold td skeleton itself is ~0.5 MB (long derived keys in `data-col-key`,
@@ -863,7 +884,7 @@ is one keypress late (the fetch), never wrong.
 Pinned by `tests/test_bulk_virt_server.py` (planner mirror + gates +
 hint clamping, the cold render and its map, hydration byte-identity against
 the hot render, the memo and its invalidation, the chip guard, gzip) +
-`bulk_virt_server_selfcheck.cjs` (36 asserts: adoption without geometry,
+`bulk_virt_server_selfcheck.cjs` (37 asserts, plus the §4ac additions: adoption without geometry,
 data-maxlen freeze, cold-value search, one request per pass, in-flight
 dedup, landed markup, the windowed pass, failure + retry + 409 note,
 undo-missing without a fetch, the apply sync fetching nothing, the carry
@@ -942,7 +963,7 @@ Pinned by `tests/test_chip_status_layout.py` (order — raw and parsed —,
 sub-nav, sidebar, the Health row, the route, `TAB_SPEC` / `PANEL_DEFS`, the
 controls, the glossary + thresholds + Trends labels, the GEF formula /
 QueryEngine / page / history index + upgrade, the jump-guard wiring) +
-`chip_density_selfcheck.cjs` (26 asserts: per-panel size, the fine slider, the jump guard);
+`chip_density_selfcheck.cjs` (27 asserts, plus the §4ac additions: per-panel size, the fine slider, the jump guard);
 mutation-checked 4/4.
 
 ## 4p. A new run folder reaches the screen in well under a second (2026-08-29, user-directed)
@@ -991,7 +1012,13 @@ trials: **popup visible 544 / 221 / 360 ms after the folder appeared** (the
 node.json landed at +150 ms), no console errors.
 
 **Honest limits.** A run landing inside the first 1.5 s of a page's life is
-announced by the 60 s poll, not the wake. A root that cannot be read never
+announced by the 60 s poll, not the wake. (§4ac adds two this list missed:
+the run mtimes were read through `DirEntry.stat()`, a Windows CACHE read that
+never sees a write inside the directory, so the "second tick" below never
+fired at all on the customer's platform — `os.stat` now, which also widens
+the trigger to any write inside the newest date directory; and a root whose
+runs sit directly under it, with no date directories, gets the first tick
+only.) A root that cannot be read never
 ticks (the polls still scan it). One waiting thread per open window: fine
 for a lab's 1–3 windows, not a public server. The stat signature reads the
 NEWEST date directory only — a run written into an old date (a clock skew,
@@ -1051,6 +1078,12 @@ mutation-checked 3/3 (the wrap scrolling again, the bars unpinned, the wrap
 as the scroller).
 
 ## 4r. Two checked runs in the sidebar open the Diff, not the hub (2026-08-29, user-directed)
+
+> **Superseded by §4y** (five commits later, the same night). 2–5 ticks all
+> open the diff and the Compare hub is retired as a destination; two archive
+> runs open on **figures**, not `tab=node`. The pin this section names now
+> asserts the opposite of the sentence below. What follows is the state at
+> `2012a3d`, kept for the history. (docs/141 §4ac)
 
 The user ticked two runs in the sidebar tree, pressed "Compare Selected",
 and landed on the Compare hub ("2 sources … These sources fingerprint as
@@ -1330,6 +1363,235 @@ big" beside the values — keys now inherit the value cells' face and size
 (measured 16.8 px system sans on both) and differ only in weight (leaf 500,
 container 600 vs 400). Pinned by `test_keys_share_the_values_face_and_size`.
 
+## 4ac. Review round over §4m–§4ab (seven reviewers + seven verifiers + two critics, 2026-08-30)
+
+Method: docs/141 §4l-review, one size up. Seven reviewers took a dimension each
+(the /bulk document and its server-side virtualization; Chip Status + the run
+watcher; the UI cascade fixes; Compare Selected; the pane view; **the document
+itself**; and the seams between all of them), each in its own worktree with its
+own server and real headless Chrome. Every finding then went to a **verifier**
+whose brief was to REFUTE it — reproduce independently or mark it refuted — and
+who also reviewed the proposed FIX for blast radius. Two critics closed the
+round: a completeness critic (what did nobody run?) and a **fix-risk critic**
+(which proposed fixes are wrong, and do any two conflict?).
+
+**Raised: 5 CRITICAL, ~28 MAJOR, ~45 MINOR. Refuted: 2. Verifiers filed 12 of
+their own; the critics 5 + 25.** Everything below was re-executed by the
+coordinator before a line was changed.
+
+**The fix-risk critic earned the round.** Five of the proposed fixes were wrong
+in ways that would have shipped:
+
+* **R4-2 and R4-9 cancel each other, and R4-9 alone destroys a selection HEAD
+  keeps.** One reviewer wanted `persist()` to MERGE (keep what the filter
+  removed from the DOM), the other wanted `restore()` to PRUNE (drop what the
+  DOM cannot show). `restore()` runs on the very filter re-render the merge
+  exists to survive, so it runs first and wins: applying both nullifies the
+  first, and applying the second alone turns "filter, clear the filter, ticks
+  intact" — a case HEAD handles correctly and `cdp_sidebar_diff.js` verifies —
+  into a total loss. Taken: the merge only. Pruning happens where a path really
+  goes away (Clear, a workspace root removed), never on a swap.
+* **R2-1's server half without its client half is worse than the bug.** Bounding
+  the long polls makes a refused one answer instantly, and `live-wake.js` infers
+  "the wait really waited" from "the request succeeded": the critic measured
+  **~73 requests/second from one tab**, against a design rate of 0.04. Shipped
+  as three parts that only work together.
+* **R2-5's jump-guard fix silently switches §4o's feature off.** It compared
+  `pane.scrollTop` against the value recorded at `note()` time — but `note()`
+  runs BEFORE the rAF that performs the smooth scroll, so the position always
+  differs by the time `reanchor()` runs and the guard never fires again.
+* **R1-1's fix for the CRITICAL search bug is a no-op as filed.** Verified by
+  applying it verbatim: `applySearch` memoises the column haystacks on the
+  hidden-column set alone, so the second call reuses the ones built while
+  `_virt` was still null. `_hayCache = null` is mandatory, not cosmetic.
+* **R5-3's `\u0000` row key** would put a NUL into an HTML attribute, where the
+  tokenizer replaces it with U+FFFD and raises a parse error.
+
+### The five CRITICALs
+
+**① The pane view's only paging control destroyed the comparison.**
+`_diff_panes.html` built the Show-more URL with `{{ _qs | join('&amp;') }}` —
+a plain Python string holding `&amp;`, which Jinja's autoescape escaped AGAIN
+to `&amp;amp;`. The browser resolves that to a literal `&amp;`, which is not a
+query separator, so every slot after `a=` was dropped: one press replaced a
+five-pane comparison with "Pick two sources to compare." The author's own
+real-Chrome pass used 5 runs of one chip — 272 rows, under the 300-row page —
+so the button was never present. `join('&')`.
+
+**② A capped N-way diff invented its "agree" count.** `json_diff.diff_rows_n`
+stopped emitting rows at `ROW_CAP` and then computed
+`same = len(paths) - len(rows)`, so every path it never examined was counted as
+agreeing. On the real chip-vs-#1226 pair the page read "5,957 agree" where the
+truth was 890, hid 5,354 differing leaves, and — at `rows=5000`, where the
+Show-more button disappears — read as complete. The same two sources one click
+away (Tree or List) printed the honest 890, so the page contradicted itself.
+The cap now bounds what is RENDERED, never what is counted: `counts.changed` is
+every differing leaf, `counts.same` every leaf that truly agrees, `counts.shown`
+what came back, and the note says "showing N of M differing keys" with the
+collection limit named when it bites.
+
+**③ A remembered search left the Live-Edit grid empty, permanently.** The
+search box is restored from `localStorage` before `mount()`, and the mount's
+first `applySearch` runs inside `_applyColumnVisibility` — BEFORE `_virtInit`,
+while the cold cells' contribution to the haystack is still behind
+`if (_virt)`. So a search for a value living only in a server-cold column
+matched nothing: "0 of 20", every row hidden, still there at 7.5 s, with no
+escape but clearing the box. Not an F5 edge case — the verifier showed the
+ordinary htmx sidebar navigation fails identically, and the pre-range tree
+answers "1 of 20" on the same steps.
+
+**④ Four SM tabs froze the whole UI for 22 seconds.** `live-wake.js` is a CORE
+script, so every open tab permanently holds one `/datasets/wait` for up to 25 s;
+`qsm serve` and `qsm browser` run waitress at its default `threads=4`. Four
+tabs took the pool and `GET /` measured 22.8 s. §4p's "the servers all run
+`threaded=True`" is true of the desktop launcher and false of the two commands
+that are actually installed as console scripts. Fixed in three parts: waitress
+gets 16 threads, a per-app semaphore bounds blocked waits (with a floor, so
+even a stale client cannot spin), and the client backs off on `saturated`.
+
+**⑤ Coming back to Live State Edit painted the toolbar 3,000 px off screen.**
+§4q made the bars' inline `translateX` a function of `#table-pane.scrollLeft`;
+docs/110's PaneState parks the bars (they are the pane's children) but not the
+pane's sideways position, and docs/139's skip-restore deliberately does not
+re-run the mount. So the search box, the Properties / ⚏ Qubits / ⚯ Pairs
+pickers, Apply all, the chip bar and the pair divider all rendered outside the
+pane — no console error, no clue — until the user happened to scroll. Worse, the
+docs/113 `/` shortcut "recovered" the search box by throwing the grid 2,515 px
+sideways. PaneState now round-trips `scrollLeft` (which also gives the user back
+the column they were looking at, silently lost since §4q) and the grid
+re-derives the bars on `paneRestored`.
+
+### The pane view (§4z / §4ab)
+
+**Equality CLASSES cannot express the rule they claimed to.** `_diff_row_groups`
+and §4z both stated `groups[i] == groups[j]` **exactly when** json_diff's own
+`_eq` says equal. `differ.compare_equal` compares numbers with a relative
+tolerance, so `_eq` is not transitive and induces no partition: with
+`a=1.0, b=a(1+0.9e-9), c=b(1+0.9e-9)`, `eq(a,b)` and `eq(b,c)` hold while
+`eq(a,c)` does not. First-match grouping answered `[0,0,1]` for (a,b,c) and
+`[0,0,0]` for the same three values as (b,a,c) — so with B as the baseline the
+pane painted C as differing from a value the app's one comparison rule calls
+equal, and which slot a run was dropped into changed the picture. Rows now carry
+the **pairwise matrix** (`data-eq`, at most 25 characters for five sources) and
+the client reads the baseline's row out of it: the docs/118 rule asked directly,
+for every baseline, with no transitivity assumption. `diff_rows_n` had the
+mirror bug — every side compared against the FIRST present value only, so such a
+triple was called "all equal" and the row never rendered at all.
+
+Also: a key that is a leaf on one side and a container on another gave two rows
+the same `data-path`, and the client's collapse map is keyed on it — the
+container lost to its own value row, its toggle hid nothing, every descendant
+resolved its ancestor to a row that can never be collapsed, and the value row's
+parent was itself (a self-loop escaped only at the 64-step guard). The value row
+has its own key now, the map lets a container win any collision, and the walk
+stops at a self-reference. A container's count was the count **within the page**
+(`ds_raw` read 70 on page 1 and 182 on page 2) under a tooltip stating it as
+fact — counted over the whole diff now, and the tooltip says when the row cap or
+the page bounds it. Clearing slot A or B blanked a five-pane comparison to "Pick
+two sources" while the pickers still showed four selected — the slots are
+compacted server-side, which also makes the pane letters and the picker letters
+one alphabet (they disagreed whenever a middle slot was empty, and `base=`
+indexes the compacted list, so a bookmarked baseline silently meant another
+run). `+0 added −0 removed` beside thousands of one-sided keys is now a
+one-sided count; five identical runs no longer read "These two are identical";
+the tree walk moved INSIDE the route's never-500 guard, where a unicode digit
+(`isdigit()` true, `int()` refuses) would otherwise have taken the page down.
+
+### The grid (§4m / §4n / §4q / §4s)
+
+Beside ③: a server-cold column's value map is a SNAPSHOT taken at render, and
+it is the only search haystack a cold cell has. The undo repaint and the apply
+echo deliberately skip remote columns — correct for the DOM, wrong for that map:
+after an undo the whole-chip search matched a value the chip no longer held and
+missed the one it did. The map is repaired per cell now, for no round trip.
+
+`/bulk/cells`' `?chip=` gate compared the DISPLAY NAME, which for a plain folder
+is the basename — so a chip and its backup, or two labs' `quam_state` folders
+added as separate roots, were one chip to it: the completeness critic measured
+B's values hydrating a page rendered from A, 20/20 rows, into inputs whose
+`data-orig` still held A's. The gate carries a path-folded token now;
+`QMETA.chip` stays the display name because it is also the picker's
+`localStorage` prefix.
+
+### Pins, and the one that had been red for eight commits
+
+`tests/test_single_scroll.py::test_the_rows_between_the_grids_stay_put_sideways`
+indexed a selector list §4s deleted, so it raised `ValueError` before reaching a
+single assertion — **RED on the branch since 0c72989**, contradicting the
+handoff's "green except the three known failures", and found independently by
+four reviewers. Its second line asserted the very `will-change: transform` §4s
+removed *because it was the bug*, so repairing the string would have re-asserted
+the defect. Rewritten against what §4s shipped; the mutation check is why it
+matters (deleting the mount-time `_pinBarsToScroll()` used to change nothing in
+this file's output).
+
+`version_diff_selfcheck.cjs`'s intermittency was **introduced by this range**,
+not inherited: §4p's popup-poll baseline now fires unconditionally 1.5 s after
+load, which is about when the harness reaches a `posted.length === 0`
+assertion, so an unrelated background request decided the run. The handoff and
+this round's own brief both called it pre-existing. The assertion counts the
+take door now and the timer is gated on the popup existing — **10/10 green**
+where it was failing about half the time.
+
+Other blind pins closed: the §4s dirty-pair guard's set-level half (both
+mutations stayed green — the row stayed visible because a SECOND guard masks
+it, while the pair id was still persisted, so it would vanish the moment the
+edit cleared); `_diff_row_eq`'s non-transitive case; the server-side Δ gate
+(removing it fabricated a "0" on 708 equal cells with every test green, because
+no fixture ever rendered an equal cell); `test_sidebar_root_row.py` was blind to
+the name-first ordering that IS §4aa; the §4o jump guard's positive assertion
+was vacuous (`WINDOW_MS = 0` stayed green — `note` and `reanchor` landed in the
+same millisecond).
+
+### The rest, briefly
+
+§4u's "three tool windows" fix hard-coded the pair Calculator↔Settings, so the
+Config Manual — the third window the same section ships the frame and the drag
+core to — still closed the other two, exactly the bug the user reported; the
+tool set is named once in the core now. A floated panel was never re-clamped, so
+narrowing the window stranded it off screen for the life of the page (reopening
+does not help: both owners skip re-anchoring while floating, and `unfloat()` has
+no production caller). §4x's `fitTableToColumns` froze every unpinned column at
+whatever `offsetWidth` happened to be at render — with one saved width, a
+/pulses render made in a narrow window pinned the table there for good, leaving
+630 px of the pane empty; and with no layout box it froze them at 0 px (the
+author's own weak spot #1, mechanism confirmed, no reachable trigger found). The
+sidebar's "Show all N" swaps an INNER `<ul>`, which the tick-restore listener
+missed by testing `el.id === 'sidebar-tree'` — every tick vanished while the
+button still claimed them and the press then hit the server's own refusal. A
+shift-range clamp always dropped the highest indices, so sweeping upward from an
+older run kept "the five newest" and dropped the run the sweep started from.
+Two live buttons (State History rows, the Param History panel) still opened the
+Compare hub §4y calls retired — repointed at the workbench, and the two hub-era
+pins that guarded them were pinning unreachable UI. A NaN off the diagonal
+passed the confusion-matrix validator (`nan < -1e-9` is False and
+`abs(nan-1) > 0.02` is False), producing a confident green fidelity from a
+matrix that is not a distribution; and a 2×2 stored under `gef_confusion_matrix`
+was presented as three-state "Readout Fidelity (GEF)" and scored against its
+deliberately lower thresholds.
+
+**Deliberately NOT changed**, on the verifiers' evidence: the Alt+click dataset
+basket still opens `/datasets/compare` (it is the only path that compares 6–8
+runs, and it predates this range) and the inspector's "vs prev" still 302s there
+(it targets `#inspector-pane`, where `_pane_redirect`'s hardcoded `#table-pane`
+would land wrongly) — §4y's "no link reaches it" is corrected to name what was
+actually swept, rather than the code being changed to fit the sentence.
+
+**Corrections to the doc's own numbers**, from the doc auditor: the pair grid is
+**3,330 cells / ~1.5 MB**, not "1,530 cells / ~0.6 MB" — it does not reconcile
+with the 7,810 in the same sentence, and after §4n it is the LARGEST remaining
+block of `/bulk` (51%), not a small leftover. "never fewer hot columns than
+before" is false in two measurable configurations (the table-size slider below
+its S preset, and the `vw` hint that a full page load never sends), and the
+constant the whole conservatism argument rests on was unpinned. §4n's
+`bulk_virt_server_selfcheck.cjs` executes 37 asserts, not 36;
+`chip_density_selfcheck.cjs` 27, not 26. "Per cell 1,140 → 404 bytes" follows
+from no denominator the section states (its own totals give 1,149 → 500).
+`D:\2025-06-24` holds 103 run folders, not 101. §4r is superseded by §4y and
+says the opposite of what ships, in this doc and in CLAUDE.md. §4p's honest-limits
+list omits the flat-root shape and the fact that `DirEntry.stat()` on Windows is
+a cache read, so the documented "second tick" never fires there.
+
 ## 5. Tooling that came out of the night
 
 `scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js` (+ daytime: `cdp_profile.js` function-level CPU profile, `cdp_trace.js` per-phase trace of one keystroke, `cdp_type.js` char-by-char typing with a gap + debounce override, `cdp_undo.js` trusted Ctrl+Z/Ctrl+Shift+Z through the page's own UI, `cdp_virt.js` virtualization sampler): Chrome headless with the
@@ -1346,3 +1608,38 @@ localhost). Used for every number above and for four visual checks.
 `ctrlz_selfcheck.cjs` (new fallback contract), `test_bulk_markup.py` +
 `bulk_markup_selfcheck.cjs` (§4m). Every new pin mutation-checked
 (3/3, 6/6, 7/7, 5/5); a wrong mutation and two vacuous pins were found and rewritten.
+
+**§4n–§4ab** (this list stopped at §4m until §4ac):
+`test_bulk_virt_server.py` + `bulk_virt_server_selfcheck.cjs` (§4n),
+`test_chip_status_layout.py` + `chip_density_selfcheck.cjs` (§4o),
+`test_run_watch.py` + `live_wake_selfcheck.cjs` (§4p),
+`test_single_scroll.py` (§4q),
+`test_bulk_pairs_picker.py` + `bulk_pairs_picker_selfcheck.cjs` (§4s),
+`test_web.py::test_collections_without_any_tag_has_no_tag_row` (§4t),
+`test_float_panel.py` + `float_panel_selfcheck.cjs` + `sidebar_tools_selfcheck.cjs` (§4u),
+`test_modal_frames.py` (§4v),
+`tree_help_hover_selfcheck.cjs` (§4w),
+`test_col_resize.py` + `col_resize_selfcheck.cjs` (§4x),
+`test_sidebar_compare.py` + `sidebar_compare_selfcheck.cjs` (§4y),
+`test_diff_panes.py` + `test_diff_three_way.py` + `diff_panes_selfcheck.cjs` (§4z/§4ab),
+`test_sidebar_root_row.py` (§4aa).
+
+**§4ac** adds, to those same files: `Test4acRegressions` and the pane-view
+paging / cap / slot cases (`test_diff_three_way.py`), `TestRowEq` and the
+tree-row identity + whole-diff counts (`test_diff_panes.py`),
+`TestChipGateIdentity` and `TestWidthMetricsMirror` (`test_bulk_virt_server.py`),
+`TestPoolSafety` and `TestSecondTick` (`test_run_watch.py`),
+`Test4acGefHonesty` (`test_chip_status_layout.py`),
+`test_a_restored_pane_re_derives_the_bars` + the rewritten sideways-scroll test
+(`test_single_scroll.py`), the re-fit and zero-freeze cases
+(`test_col_resize.py`), the name-first ordering and the parent's minimum
+(`test_sidebar_root_row.py`), the tool-set and resize-clamp cases
+(`test_float_panel.py`), `test_no_history_row_opens_the_hub`
+(`test_diff_workbench.py`), and new blocks in `diff_panes_selfcheck.cjs` (44),
+`sidebar_compare_selfcheck.cjs` (35), `bulk_virt_server_selfcheck.cjs`,
+`chip_density_selfcheck.cjs`, `live_wake_selfcheck.cjs` and
+`bulk_pairs_picker_selfcheck.cjs`. **Mutation-checked: 11/11 (pane view),
+5/5 (§4n grid), 5/5 (§4q + PaneState), 8/8 (§4y selection), 6/6 (§4p pool),
+7/7 (§4o), 10/10 (UI cascade), 6/6 (the width-metric constants), 3/3 (the
+dirty-pair set guard), 1/1 (the chip gate)** — every one of them written
+because the mutation it catches passed before.

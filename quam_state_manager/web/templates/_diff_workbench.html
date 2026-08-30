@@ -109,10 +109,17 @@
     {% set c = payload.counts %}
     <div class="diff-wb-counts">
       <span class="diff-count diff-count-changed">{{ '{:,}'.format(c.changed) }} changed</span>
+      {# docs/141 4ac: added/removed are a TWO-sided verdict. For N sources
+         "added" names no side, so the N-way payload reports how many keys are
+         one-sided instead of printing +0 / -0 beside thousands of them. #}
+      {% if view == 'panes' %}
+      <span class="diff-count diff-count-added">{{ '{:,}'.format(c.get('one_sided', 0)) }} on some sources only</span>
+      {% else %}
       <span class="diff-count diff-count-added">+{{ '{:,}'.format(c.added) }} added</span>
       <span class="diff-count diff-count-removed">&minus;{{ '{:,}'.format(c.removed) }} removed</span>
+      {% endif %}
       <span class="muted">{{ '{:,}'.format(c.same) }} identical</span>
-      {% if payload.truncated %}<span class="warn">· capped</span>{% endif %}
+      {% if payload.truncated %}<span class="warn" title="the row list stops at the cap; the counts above are the whole diff">· capped</span>{% endif %}
       <span class="diff-wb-labels muted">
         {% for src in srcs %}<b>{{ slots[loop.index0] | upper }}</b> {{ src.label }}{% if not loop.last %} &nbsp; {% endif %}{% endfor %}
       </span>
@@ -140,7 +147,10 @@
       {% endif %}
     {% endif %}
     {% if c.total == 0 %}
-      <p class="diff-wb-msg muted">These two are identical
+      {# docs/141 4ac: "two" was hard-coded, so five identical runs read as
+         "These two are identical" and _diff_panes.html's own N-aware line
+         could never render. #}
+      <p class="diff-wb-msg muted">{% if srcs | length > 2 %}These {{ srcs | length }} sources are identical{% else %}These two are identical{% endif %}
         ({{ '{:,}'.format(c.same) }} values compared).</p>
     {% elif view == 'panes' %}
       {% include '_diff_panes.html' %}

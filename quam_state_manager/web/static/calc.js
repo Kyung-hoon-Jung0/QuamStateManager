@@ -311,9 +311,14 @@
         // the gesture that actually communicated the intent).
         if (pop.classList.contains('calc-floating')) return;
         if (pop.contains(e.target) || (e.target.closest && e.target.closest('.calc-btn'))) return;
-        // docs/141 4u: a click on Settings (its button or its window) is not
-        // "outside" -- that click is what used to make the Calculator vanish
-        if (e.target.closest && e.target.closest('.settings-btn, #settings-dropdown')) return;
+        // docs/141 4u: a click on ANOTHER TOOL WINDOW (its button or its body)
+        // is not "outside" -- that click is what used to make the Calculator
+        // vanish. 4ac: the list was the literal pair Settings+Calculator, so
+        // the Config Manual -- the third window of the same section -- still
+        // closed this one. FloatPanel.TOOLS_SEL is the one place they are named.
+        var _tools = (window.FloatPanel && window.FloatPanel.TOOLS_SEL)
+            || '.settings-btn, #settings-dropdown, .manual-btn, #manual-popover';
+        if (e.target.closest && e.target.closest(_tools)) return;
         window.toggleCalc();
     }
     // (docs/126 ⑥: the pin button was removed on customer request — nobody

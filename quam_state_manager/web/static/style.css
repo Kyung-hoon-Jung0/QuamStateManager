@@ -1698,8 +1698,7 @@ hr.sidebar-section-divider { margin: 0.6rem 0; border-color: var(--pico-muted-bo
 #sidebar details.tree-root > summary.tree-root-label { padding-right: 2.9rem; }
 .tree-root-path { flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: .35em; overflow: hidden; }
 .tree-root-name { flex: 0 1 auto; min-width: 3ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-.tree-root-dir { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    color: var(--pico-muted-color); font-size: .92em; }
+.tree-root-dir { flex: 1 1 6ch; min-width: 4ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.62; font-size: 0.86em; direction: rtl; text-align: left; unicode-bidi: plaintext; }
 /* Remove button — pinned to the <summary> row, kept out of <summary> itself.
    Sits to the LEFT of Pico's summary::after disclosure chevron (a 1rem icon at
    the far right of the flex summary) so the two no longer overlap. */

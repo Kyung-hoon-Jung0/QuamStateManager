@@ -123,6 +123,21 @@ function world(opts) {
       }, opts.delay || 60);
     });
   };
+  // docs/141 4ac: a REMEMBERED search. mount() fills the box FROM
+  // localStorage['quam_bulk_search'] itself, so that is what has to be seeded
+  // -- writing the box directly is overwritten a line later, exactly as it
+  // would be in the app.
+  if (opts.search) {
+    const store = { quam_bulk_search: opts.search };
+    Object.defineProperty(win, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: function (k) { return Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null; },
+        setItem: function (k, v) { store[k] = String(v); },
+        removeItem: function (k) { delete store[k]; },
+      },
+    });
+  }
   new win.Function(BULK_JS).call(win);
   win.BulkEdit.mount(COLS, { bands: {} }, [], { chip: 'chipA', qubits: [] });
   win.__mountReads = win.__geomReads;                    // what the MOUNT read (the later scroll pass may read geometry)
@@ -156,6 +171,65 @@ async function main() {
   await tick(250);
   // the search's pass may have asked for on-screen cold columns; reset the log
   win._log.fetches.length = 0;
+
+  /* ── docs/141 4ac (CRITICAL): a REMEMBERED search at MOUNT ────────── */
+  {
+    const W2 = world({ search: '9026' });                 // the value lives only in a server-cold column
+    await tick(250);
+    const d2 = W2.doc;
+    const hid = (id) => d2.querySelector('tr[data-qubit="' + id + '"]').classList.contains('bulk-row-hidden');
+    const visible2 = Array.prototype.filter.call(
+      d2.querySelectorAll('tr[data-qubit]'), (r) => !r.classList.contains('bulk-row-hidden')
+    ).map((r) => r.getAttribute('data-qubit'));
+    ok(visible2.length === 1 && visible2[0] === 'q2',
+       'a search restored BEFORE the mount finds its server-cold value and hides the rest ('
+       + JSON.stringify(visible2) + ')');
+    ok((d2.getElementById('bulk-search-count').textContent || '').indexOf('1 of ') === 0,
+       'and the count says 1, not 0 (' + d2.getElementById('bulk-search-count').textContent + ')');
+    // restore the shared world for the rest of the run
+    global.window = win; global.document = doc;
+  }
+
+  /* ── docs/141 4ac: an undo in a server-cold column repairs its SEARCH ─ */
+  {
+    const W3 = world();
+    await tick(40);
+    const w3 = W3.win, d3 = W3.doc;
+    const st3 = w3.BulkEdit._virtState();
+    ok(st3 && st3.remote.length > 0, 'fixture: the third world has server-cold columns');
+    // the path of a value that lives only in a cold column, from the cold map
+    const map = JSON.parse(d3.getElementById('bulk-cold-map').textContent);
+    const colKey = Object.keys(map.cols)[0];
+    const rowId = map.rows[0];
+    const ent = map.cols[colKey][0];
+    const dotPath = ent[1];
+    const before = String(ent[0]);
+    const sb3 = d3.getElementById('bulk-search');
+    const shown = () => Array.prototype.filter.call(
+      d3.querySelectorAll('tr[data-qubit]'), (r) => !r.classList.contains('bulk-row-hidden')
+    ).map((r) => r.getAttribute('data-qubit'));
+
+    sb3.value = before; sb3.dispatchEvent(new w3.Event('input', { bubbles: true }));
+    await tick(250);
+    ok(shown().indexOf(rowId) >= 0, 'fixture: the pre-undo value is found in the cold column');
+
+    // an undo names the path and its new display value; the cell is remote, so
+    // nothing repaints -- only the cold map can carry the new search text
+    w3.BulkEdit.revertPaths([{ dot_path: dotPath, old_value_disp: 'ZZZ9' }]);
+    await tick(60);
+
+    sb3.value = 'ZZZ9'; sb3.dispatchEvent(new w3.Event('input', { bubbles: true }));
+    await tick(250);
+    ok(shown().indexOf(rowId) >= 0,
+       'after the undo the search finds the value the chip now holds');
+    sb3.value = before; sb3.dispatchEvent(new w3.Event('input', { bubbles: true }));
+    await tick(250);
+    ok(shown().indexOf(rowId) < 0,
+       'and no longer matches the value it replaced (the map is not a stale snapshot)');
+    ok(w3._log.fetches.length === 0 || !w3._log.fetches.some((u) => u.indexOf('cols=' + colKey) >= 0),
+       'repairing the map costs no /bulk/cells round trip');
+    global.window = win; global.document = doc;
+  }
 
   /* ── hydration on a scroll pass ───────────────────────────────────── */
   W.wrap.scrollLeft = 1200;                               // edge 1700: c3 (1260) + c4 (1660) due, c5/c6 not

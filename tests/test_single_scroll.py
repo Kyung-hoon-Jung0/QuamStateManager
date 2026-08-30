@@ -51,13 +51,57 @@ class TestOneScroller:
     def test_the_rows_between_the_grids_stay_put_sideways(self):
         """position:sticky cannot hold a row that is exactly as wide as its
         containing block (real Chrome: the toolbar left at -2475 px), so the
-        grid moves those rows by the pane's scrollLeft itself."""
-        i = CSS.index(".bulk-panel .bulk-toolbar, .bulk-panel .bulk-chipbar, .bulk-panel .bulk-pair-divider,")
-        assert "will-change: transform" in CSS[i:i + 300] and "position: sticky" not in CSS[i:i + 300]
+        grid moves those rows by the pane's scrollLeft itself.
+
+        docs/141 4ac: this test indexed a selector list that §4s (0c72989)
+        deleted, so it raised ValueError before reaching a single assertion
+        and had been RED for the last eight commits of the range — while its
+        second line asserted the very ``will-change: transform`` §4s removed
+        *because it was the bug* (it made each bar a stacking context and the
+        chip bar painted over the Properties / Qubits popovers). Repairing
+        only the string would have re-asserted the defect. It now pins what
+        §4s actually shipped, and the mutation check below is the reason the
+        rewrite exists: with the old form, deleting the mount-time
+        ``_pinBarsToScroll()`` changed nothing in this file's output.
+        """
+        toolbar = _rule(".bulk-panel .bulk-toolbar")
+        assert "z-index: 8" in toolbar and "position: relative" in toolbar
+        assert "position: sticky" not in toolbar
+        for sel in (".bulk-panel .bulk-chipbar, .bulk-panel .bulk-dyn-truncated, .bulk-panel .bulk-virt-note",
+                    ".bulk-panel .bulk-pair-divider"):
+            r = _rule(sel)
+            assert "z-index: 6" in r and "position: sticky" not in r
+        # 4s: the toolbar owns the popovers, so it must outrank the bars below it
+        assert CSS.index(".bulk-panel .bulk-toolbar {") >= 0
+        i = CSS.index(".bulk-panel .bulk-toolbar {")
+        assert "will-change" not in CSS[i:i + 400], \
+            "4s removed will-change from these rows -- it made each one a stacking context"
         assert "function _pinBarsToScroll() {" in JS and "'translateX(' + x + 'px)'" in JS
         k = JS.index("_virtInit();            // docs/105 #1")
         # the live call at mount, not a commented-out one (mutation-checked)
-        assert "\n            _pinBarsToScroll();" in JS[k:k + 900]
+        assert "\n            _pinBarsToScroll();" in JS[k:k + 1800]
+
+    def test_a_restored_pane_re_derives_the_bars(self):
+        """docs/141 4ac (CRITICAL, R7-1). The bars' inline transform is a
+        function of ``#table-pane.scrollLeft``; docs/110's PaneState parks the
+        bars (they are the pane's children) but not the pane's own scrollLeft,
+        and the docs/139 skip-restore path deliberately does not re-run the
+        mount. So returning to Live State Edit re-attached a toolbar still
+        translated by 3,000 px over a pane at 0 — the search box, the
+        Properties / Qubits / Pairs pickers, Apply all and the chip bar all
+        painted outside the pane, with no console error and no clue, until the
+        user happened to scroll sideways.
+        """
+        app = (ROOT / "quam_state_manager/web/static/app.js").read_text(encoding="utf-8")
+        assert "scrollX: p.scrollLeft" in app, "the parked pane remembers its sideways position"
+        assert "p.scrollLeft = e.scrollX || 0;" in app, "and gets it back before paneRestored fires"
+        i = app.index("p.scrollLeft = e.scrollX || 0;")
+        j = app.index("paneRestored")
+        assert i < j, "scrollLeft must be restored BEFORE the event the grid listens to"
+        assert "document.addEventListener('paneRestored'" in JS, \
+            "bulk-edit.js re-derives the bars when its pane comes back"
+        k = JS.index("document.addEventListener('paneRestored'")
+        assert "_pinBarsToScroll()" in JS[k:k + 500]
 
     def test_the_top_scrollbar_proxy_is_gone(self):
         assert 'id="bulk-scroll-top"' not in TPL

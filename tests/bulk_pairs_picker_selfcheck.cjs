@@ -89,6 +89,41 @@ dirtyCell.value = '0.99'; dirtyCell.dispatchEvent(new win.Event('input', { bubbl
 menu.querySelector('[data-psel="none"]').click();
 ok(!off(doc, 'q1-2') && off(doc, 'q2-3') && off(doc, 'q1-3'), 'None hides every pair except the one with an unsaved edit');
 ok(cb(doc, 'q1-2').disabled && cb(doc, 'q1-2').checked && /unsaved edit/.test(menu.textContent), 'its checkbox is disabled and says why');
+
+/* docs/141 4ac (R1-5): the guard has TWO halves and only one was pinned. Every
+   assertion around this one is about the ROW being visible -- which a second,
+   independent guard at render time (`if (off && _rowDirty(r)) off = false`)
+   provides on its own, so deleting either SET-level guard left this file green
+   (both mutations executed). What a row assertion cannot see is that the pair
+   id would still be PERSISTED: it sits in quam_bulk_qhidden:pairs:<chip>, and
+   the row vanishes the moment the edit is applied or reset -- silently, per
+   chip, across reloads. The STORED SET is the thing to assert, and it has to
+   be asserted while it is non-empty (after None, not after Invert). */
+{
+  const stored = function () {
+    try { return JSON.parse(win.localStorage.getItem('quam_bulk_qhidden:pairs:chipA') || '[]'); }
+    catch (e) { return []; }
+  };
+  const afterNone = stored();
+  ok(afterNone.length === 2 && afterNone.indexOf('q1-2') < 0,
+     'None hides the other two and never PERSISTS the dirty pair: ' + JSON.stringify(afterNone));
+  // a change forced onto the disabled checkbox neither hides nor persists it
+  const box = cb(doc, 'q1-2');
+  box.checked = false;
+  box.dispatchEvent(new win.Event('change', { bubbles: true }));
+  ok(stored().indexOf('q1-2') < 0 && !off(doc, 'q1-2'),
+     'the checkbox path does not persist it either: ' + JSON.stringify(stored()));
+  // and "only" another pair leaves the dirty one alone, in the set as well
+  menu.querySelector('[data-ponly="q2-3"]').click();
+  const afterOnly = stored();
+  ok(afterOnly.indexOf('q1-2') < 0 && afterOnly.indexOf('q1-3') >= 0,
+     '"only" hides the rest and still does not persist the dirty pair: ' + JSON.stringify(afterOnly));
+  // put the picker back where the surrounding scenario left it (None), so this
+  // probe does not change what the assertions after it are testing
+  menu.querySelector('[data-pmenu="none"], .bulk-pairmenu-none, [data-psel="none"]')
+    ? menu.querySelector('[data-pmenu="none"], .bulk-pairmenu-none, [data-psel="none"]').click()
+    : null;
+}
 menu.querySelector('[data-psel="invert"]').click();
 ok(!off(doc, 'q1-2') && !off(doc, 'q2-3') && !off(doc, 'q1-3'), 'Invert flips the others and leaves the dirty pair shown');
 dirtyCell.value = '0.1'; dirtyCell.dispatchEvent(new win.Event('input', { bubbles: true }));

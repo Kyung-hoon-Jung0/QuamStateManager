@@ -4878,6 +4878,26 @@ def _qubit_bulk_grid(store: QuamStore, dyn_hidden: set[str], modified: dict) -> 
             "qubit_meta": qubit_meta, "qids": qids}
 
 
+def _bulk_chip_gate_token() -> str | None:
+    """Identity of the chip the Live-Edit grid was rendered from (docs/141 4ac).
+
+    The display NAME cannot serve: `_active_chip_identity` says so itself --
+    it is shared across per-experiment loads of one chip, and for a plain
+    folder it is just the basename. The PATH is what distinguishes them, so
+    the token is ``<name>#<8 hex of the path>``: short enough for a query
+    string, stable across renders, and never a control character.
+    """
+    ident = _active_chip_identity()
+    if not ident:
+        return None
+    name = ident.get("name") or "chip"
+    path = str(ident.get("path") or "")
+    if not path:
+        return name
+    h = hashlib.sha1(path.encode("utf-8", "replace")).hexdigest()[:8]
+    return f"{name}#{h}"
+
+
 def _bulk_grid_key(store: QuamStore, dyn_hidden: set[str]) -> tuple:
     """What the grid depends on: the store's mutation_seq AND the change-log
     length (a per-row reset clears log entries without advancing the seq —
@@ -4954,6 +4974,7 @@ def bulk_edit():
                                             pair_columns=pair_columns, pair_groups=pair_groups,
                                             pair_rows=pair_rows, filter_chips=filter_chips,
                                             dyn_truncated=dyn_truncated,
+                                            active_chip_key=_bulk_chip_gate_token() or "",
                                             cold_keys=cold_keys, cold_map=cold_map))
     # docs/103: this is the app's largest response by an order of magnitude
     # (measured 10.0 MB / 6.5 MB HTML on real 21Q/10Q chips — docs/85 ships
@@ -4992,9 +5013,16 @@ def bulk_cells():
     want_chip = request.args.get("chip")
     ident = _active_chip_identity()
     have_chip = ident["name"] if ident else None
-    if want_chip is not None and want_chip != (have_chip or ""):
+    # docs/141 4ac: the NAME is not an identity. For a non-generic folder it is
+    # `Path(path).name` verbatim, so a chip and its backup -- or two labs'
+    # `quam_state` folders added as separate roots -- are one chip to this
+    # gate, and the wrong chip's calibrated values hydrate the page silently.
+    # The bare name stays acceptable so a page rendered before this change can
+    # still hydrate itself.
+    have_tok = _bulk_chip_gate_token()
+    if want_chip is not None and want_chip not in ((have_chip or ""), (have_tok or "")):
         return jsonify({"ok": False, "error": "a different chip is open",
-                        "chip": have_chip}), 409
+                        "chip": have_tok or have_chip}), 409
     dyn_hidden = {k for k in (request.args.get("dynhide") or "").split(",") if k}
     g = _bulk_grid_cached(store, dyn_hidden, _modified_map())
     columns, rows = g["columns"], g["rows"]
@@ -5009,7 +5037,8 @@ def bulk_cells():
         for k in keys:
             i = idx[k]
             cells[k][row["id"]] = str(macro(rcells[i], columns[i]))
-    payload = {"ok": True, "chip": have_chip, "cells": cells, "unknown": unknown,
+    payload = {"ok": True, "chip": have_tok or have_chip, "cells": cells,
+               "unknown": unknown,
                "seq": getattr(store, "mutation_seq", None)}
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     accepts_gzip = "gzip" in request.headers.get("Accept-Encoding", "")
@@ -14185,36 +14214,54 @@ def _diff_payload(src_a, src_b, tab: str, *, with_rows: bool) -> dict:
     return res if with_rows else {**res, "rows": []}
 
 
-def _diff_row_groups(row: dict) -> list[int]:
-    """Equality classes of one N-way row's cells (docs/141 4z).
+def _diff_row_eq(row: dict) -> list[str]:
+    """The PAIRWISE equality of one N-way row's cells (docs/141 4z, corrected
+    in 4ac).
 
-    ``groups[i] == groups[j]`` exactly when side i and side j hold the same
-    value under json_diff's OWN equality (``_eq`` -> ``differ.compare_equal``,
-    the docs/118 one-rule); an absent cell is -1. The pane view highlights a
-    cell when its group differs from the BASELINE column's group, and the
-    baseline can be switched client-side by comparing these integers -- so
-    the row verdict and the cell verdict can never use two different rules,
-    and no equality is re-derived in JavaScript.
+    ``eq[i][j] == "1"`` exactly when side i and side j hold the same value
+    under json_diff's OWN equality (``_eq`` -> ``differ.compare_equal``, the
+    docs/118 one-rule); two absent cells count as equal to each other and to
+    nothing else. The pane view highlights a cell when it differs from the
+    BASELINE column, and the client reads that answer straight out of this
+    matrix -- so the row verdict and the cell verdict can never use two
+    different rules, and no equality is re-derived in JavaScript.
+
+    **Why a matrix and not equality CLASSES.** ``compare_equal`` compares
+    numbers with a relative tolerance, so ``_eq`` is not transitive and
+    induces no partition: with a = 1.0, b = a*(1+0.9e-9), c = b*(1+0.9e-9),
+    ``_eq(a,b)`` and ``_eq(b,c)`` are true while ``_eq(a,c)`` is false. The
+    first-match group ids this replaces answered [0, 0, 1] for (a,b,c) and
+    [0, 0, 0] for the same three values in the order (b,a,c) -- so with B as
+    the baseline the pane painted C as differing from a value the app's own
+    one rule calls equal, and which slot a run was dropped into changed the
+    picture. N is at most 5 (``_DIFF_MAX_SOURCES``), so the matrix is at most
+    25 characters per row.
     """
-    groups: list[int] = []
-    reps: list[Any] = []
-    for present, val in zip(row["present"], row["vals"]):
-        if not present:
-            groups.append(-1)
-            continue
-        gid = -1
-        for k, rv in enumerate(reps):
-            if json_diff._eq(rv, val):
-                gid = k
-                break
-        if gid < 0:
-            reps.append(val)
-            gid = len(reps) - 1
-        groups.append(gid)
-    return groups
+    n = len(row["vals"])
+    present, vals = row["present"], row["vals"]
+    out = [["0"] * n for _ in range(n)]
+    for i in range(n):
+        out[i][i] = "1"
+        for j in range(i + 1, n):
+            if not present[i] or not present[j]:
+                same = (not present[i]) and (not present[j])
+            else:
+                same = json_diff._eq(vals[i], vals[j])
+            out[i][j] = out[j][i] = "1" if same else "0"
+    return ["".join(r) for r in out]
 
 
-def _diff_tree_rows(rows: list[dict]) -> list[dict]:
+#: the row key of the VALUE row of a key that is also a container on another
+#: side, so the client's collapse map keeps BOTH rows (docs/141 4ac). It rides
+#: `data-path`, so it must be attribute-safe: U+0000 was the first choice and
+#: is exactly wrong -- the HTML tokenizer replaces NUL with U+FFFD and raises a
+#: parse error, and `data-path` is what any future path-addressed feature would
+#: read. A JSON key CAN end in this text; that is why the client keeps its own
+#: rule that a container row always wins the map.
+_DIFF_VALUE_ROW_SUFFIX = "#value"
+
+
+def _diff_tree_rows(rows: list[dict], *, total_rows: list[dict] | None = None) -> list[dict]:
     """The pane view's KEY column as a tree (docs/141 4ab).
 
     The differing leaves come in path order; this folds them into the JSON
@@ -14225,19 +14272,38 @@ def _diff_tree_rows(rows: list[dict]) -> list[dict]:
     descendant) without re-asking the server. Only containers that lead to a
     differing leaf exist: a subtree that agrees everywhere is never listed,
     exactly like the pruned 2-way tree.
+
+    docs/141 4ac, two corrections:
+
+    * every row carries a ``key`` that is UNIQUE among the rows. The tree is
+      built by splitting on ``.``, and a key that is a leaf on one side and a
+      container on another produces a ``dir`` row and a ``leaf`` row with the
+      same dot path. The client's collapse map is ``{data-path: row}``, so the
+      duplicate silently overwrote the container with its own value row: the
+      container's toggle then hid nothing, every descendant resolved its
+      ancestor to a row that can never be collapsed, and the value row's
+      parent was itself — a self-loop the ancestor walk only escaped at its
+      64-step guard.
+    * ``count`` is the count over ``total_rows`` (every differing leaf) when
+      the caller passes them, not over the page slice. The tree is rebuilt
+      per page, so a container on page 1 of a 412-row diff read "70" and the
+      same container on page 2 read "182", under a tooltip stating it as the
+      whole truth.
     """
-    root: dict = {"_kids": {}, "_row": None}
+    root: dict = {"_kids": {}, "_row": None, "_total": 0}
     for row in rows:
         node = root
         for seg in row["path"].split("."):
-            node = node["_kids"].setdefault(seg, {"_kids": {}, "_row": None})
+            node = node["_kids"].setdefault(seg, {"_kids": {}, "_row": None, "_total": 0})
         node["_row"] = row
-
-    def count_leaves(node: dict) -> int:
-        n = 1 if node["_row"] is not None else 0
-        for kid in node["_kids"].values():
-            n += count_leaves(kid)
-        return n
+    # the TRUE count per container: walk every differing leaf, page or not
+    for row in (total_rows if total_rows is not None else rows):
+        node = root
+        for seg in row["path"].split("."):
+            node = node["_kids"].get(seg) if node else None
+            if node is None:
+                break
+            node["_total"] += 1
 
     out: list[dict] = []
 
@@ -14245,25 +14311,35 @@ def _diff_tree_rows(rows: list[dict]) -> list[dict]:
         for name, kid in kid_order(node):
             kid_path = f"{path}.{name}" if path else name
             if kid["_row"] is not None and not kid["_kids"]:
-                out.append({"kind": "leaf", "path": kid_path, "name": name, "depth": depth,
-                            "parent": path, "row": kid["_row"]})
+                out.append({"kind": "leaf", "path": kid_path, "key": kid_path, "name": name,
+                            "depth": depth, "parent": path, "row": kid["_row"]})
                 continue
-            out.append({"kind": "dir", "path": kid_path, "name": name, "depth": depth,
-                        "parent": path, "count": count_leaves(kid)})
+            out.append({"kind": "dir", "path": kid_path, "key": kid_path, "name": name,
+                        "depth": depth, "parent": path, "count": kid["_total"]})
             if kid["_row"] is not None:
                 # a leaf that is ALSO a container on another side (rare: a
-                # value replaced by a subtree) -- show the value row under it
-                out.append({"kind": "leaf", "path": kid_path, "name": name, "depth": depth + 1,
-                            "parent": kid_path, "row": kid["_row"]})
+                # value replaced by a subtree) -- show the value row under it,
+                # under its OWN key so the collapse map keeps both rows
+                out.append({"kind": "leaf", "path": kid_path,
+                            "key": kid_path + _DIFF_VALUE_ROW_SUFFIX, "name": name,
+                            "depth": depth + 1, "parent": kid_path, "row": kid["_row"]})
             walk(kid, kid_path, depth + 1)
 
     def kid_order(node: dict):
         # the flatten's own (string) order for the paths keeps the panes'
         # row order identical to the plain list; numeric segments sort as
-        # numbers so list elements read 0, 1, 2 … 10, not 0, 1, 10, 2
+        # numbers so list elements read 0, 1, 2 … 10, not 0, 1, 10, 2.
+        # `isdigit` is true for unicode digits `int()` refuses (U+00B2 and the
+        # rest of the No/Nd split), so the cast is guarded -- this runs while
+        # the page is being rendered (docs/141 4ac).
         def key(item):
             name = item[0]
-            return (0, int(name), "") if name.isdigit() else (1, 0, name)
+            if name.isdigit():
+                try:
+                    return (0, int(name), "")
+                except ValueError:
+                    pass
+            return (1, 0, name)
         return sorted(node["_kids"].items(), key=key)
 
     walk(root, "", 0)
@@ -14285,7 +14361,7 @@ def _diff_payload_n(srcs: list, tab: str) -> dict:
                 "counts": {"changed": 0, "added": 0, "removed": 0, "same": 0, "total": 0}}
     res = json_diff.diff_rows_n(docs)
     for row in res["rows"]:
-        row["groups"] = _diff_row_groups(row)
+        row["eq"] = _diff_row_eq(row)
     return res
 
 
@@ -14458,6 +14534,7 @@ def diff_view():
     error = ""
     slot_refs[0], slot_refs[1] = a_ref, b_ref
     srcs: list = []              # resolved, in slot order, gaps dropped
+    kept_refs: list = []         # the refs of `srcs`, same order
     slot_srcs: list = [None] * len(_DIFF_SLOTS)
     for i, ref in enumerate(slot_refs):
         if not ref:
@@ -14469,6 +14546,18 @@ def diff_view():
             continue
         slot_srcs[i] = resolved
         srcs.append(resolved)
+        kept_refs.append(ref)
+    # docs/141 4ac: COMPACT the slots. Clearing the A or B select in the
+    # picker (one click, and the form auto-submits) left `src_a`/`src_b` None
+    # while three other slots held sources -- the gate below then blanked a
+    # five-pane comparison to "Pick two sources to compare." while the pickers
+    # above still showed four selected. Compacting also makes the pane letters
+    # and the picker letters the same alphabet: before this, clearing C while
+    # D held a source rendered that source as pane "C" and picker "D", and
+    # `base=` (which indexes the compacted list) silently meant another run.
+    slot_srcs = list(srcs) + [None] * (len(_DIFF_SLOTS) - len(srcs))
+    slot_refs = kept_refs + [""] * (len(_DIFF_SLOTS) - len(kept_refs))
+    a_ref, b_ref, c_ref = slot_refs[0], slot_refs[1], slot_refs[2]
     src_a, src_b, src_c = slot_srcs[0], slot_srcs[1], slot_srcs[2]
     if not tab:
         # figures for runs (they HAVE figures); a snapshot / the working copy
@@ -14487,7 +14576,9 @@ def diff_view():
 
     payload = None
     rows = []
+    all_rows: list = []
     more = 0
+    tree_rows: list = []
     if src_a is not None and src_b is not None and not error:
         try:
             if tab == "figures":
@@ -14500,10 +14591,15 @@ def diff_view():
                 all_rows = payload.get("rows") or []
                 rows = all_rows[:limit]
                 more = max(0, len(all_rows) - len(rows))
+            # docs/141 4ac: inside the guard. The tree walk splits paths and
+            # sorts numeric segments, and a raise there used to escape the
+            # "never 500 the menu" try because it sat after it.
+            if view == "panes" and rows:
+                tree_rows = _diff_tree_rows(rows, total_rows=all_rows)
         except Exception as exc:      # noqa: BLE001 — never 500 the menu
             logger.warning("diff build failed: %s", exc, exc_info=True)
             error = "Could not build this diff."
-    tree_rows = _diff_tree_rows(rows) if (view == "panes" and rows) else []
+            rows, tree_rows, more = [], [], 0
 
     # docs/132: the per-row take renders only when the working: side IS the
     # open chip — a pushed URL survives a chip switch, and the write always
@@ -19643,6 +19739,25 @@ def datasets_rescan():
     return redirect(url_for("main.datasets"))
 
 
+#: How many `/datasets/wait` long polls may block at once. Sized well under
+#: `cli._SERVE_THREADS` so the pool always keeps workers for ordinary requests;
+#: a lab runs 1-3 windows, so this is never reached in practice (docs/141 4ac).
+_WAIT_SLOTS_N = 4
+#: What a REFUSED wait costs before it answers. Long enough that even a client
+#: that ignores `saturated` cannot spin, short enough to be invisible.
+_WAIT_SATURATED_FLOOR_S = 2.0
+
+
+def _wait_slots():
+    """The per-app semaphore bounding blocked long polls (docs/141 4ac)."""
+    app = current_app._get_current_object()
+    sem = app.config.get("_wait_slots")
+    if sem is None:
+        sem = threading.Semaphore(_WAIT_SLOTS_N)
+        app.config["_wait_slots"] = sem
+    return sem
+
+
 def _run_watcher():
     """The one RunWatcher per app (docs/141 §4p), started on first use. It
     watches whatever the active dataset folders are at each /datasets/wait."""
@@ -19688,7 +19803,30 @@ def datasets_wait():
         resp = jsonify({"tick": tick, "changed": False, "roots": len(w.roots)})
         resp.headers["Cache-Control"] = "no-store"
         return resp
-    tick = w.wait(since, timeout)
+    # docs/141 4ac (CRITICAL): bound how many of these can block at once. A
+    # blocked wait owns a WSGI worker, `live-wake.js` is a core script, and
+    # `qsm serve` runs waitress -- four tabs took the whole default pool and
+    # every other request waited out the timeout. The semaphore lives on the
+    # app (never a module global: a test session or an embedded host creates
+    # several apps, and the desktop launcher's pool is unbounded anyway).
+    #
+    # A refused wait sleeps a SHORT floor before answering. That floor is not
+    # politeness: a client that goes straight back to waiting on any success
+    # cannot tell a 0 ms answer from a 25 s one, and an immediate `saturated`
+    # measured ~73 requests/second from a single tab -- strictly worse than
+    # the freeze. The floor bounds a stale client; `saturated` lets a current
+    # one back off properly.
+    slots = _wait_slots()
+    if not slots.acquire(blocking=False):
+        time.sleep(min(_WAIT_SATURATED_FLOOR_S, max(0.0, timeout)))
+        resp = jsonify({"tick": w.tick, "changed": False,
+                        "roots": len(w.roots), "saturated": True})
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+    try:
+        tick = w.wait(since, timeout)
+    finally:
+        slots.release()
     resp = jsonify({"tick": tick, "changed": tick != since, "roots": len(w.roots)})
     resp.headers["Cache-Control"] = "no-store"
     return resp

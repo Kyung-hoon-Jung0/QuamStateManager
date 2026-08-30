@@ -420,7 +420,12 @@ function partial(ts, extra) {
     posted.length = 0;
     ctrlZ(false);
     await tick();
-    ok(posted.length === 0,
+    // docs/141 4ac: count the TAKE DOOR, not every request the page makes.
+    // 4p's popup-poll baseline fires ~1.5 s after load, which is about when
+    // this assertion runs, so `posted.length` was a coin flip on an unrelated
+    // background fetch.
+    var strayTakes = posted.filter(function (r) { return /field\/edit/.test(r.url || r); });
+    ok(strayTakes.length === 0,
        'out of scope, the RAM stack never consumes the press');
     overlayEl.style.display = 'flex';
 

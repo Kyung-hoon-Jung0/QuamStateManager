@@ -64,13 +64,44 @@ class TestWiring:
         tc = CALC[CALC.index("window.toggleCalc = function (trigger) {"):CALC.index("function _calcOutside(e) {")]
         assert "settings-dropdown" not in tc and "settings-hidden" not in tc
 
-    def test_the_outside_click_closers_ignore_the_other_tool(self):
+    def test_the_outside_click_closers_ignore_EVERY_other_tool(self):
         """The second path that closed the Calculator: its outside-click closer
-        saw the click on the Settings button as "outside" (real Chrome)."""
-        co = CALC[CALC.index("function _calcOutside(e) {"):CALC.index("function _calcOutside(e) {") + 900]
-        assert "e.target.closest('.settings-btn, #settings-dropdown')" in co
+        saw the click on the Settings button as "outside" (real Chrome).
+
+        docs/141 4ac: each closer carried its own LITERAL pair, written when
+        only two tools existed, so the Config Manual -- the third window this
+        very section ships the frame and the drag core to -- was "outside"
+        both and closed them. Four reproductions: opening the manual closed an
+        open Calculator and an open Settings, and clicking INSIDE the manual
+        did the same. The tool set is named once now, in the core.
+        """
+        fp = (ROOT / "quam_state_manager/web/static/float-panel.js").read_text(encoding="utf-8")
+        assert "TOOLS_SEL" in fp, "the core names the tool set"
+        i = fp.index("var TOOLS_SEL = ")
+        sel = fp[i:fp.index(";", i)]
+        for token in (".settings-btn", "#settings-dropdown", ".calc-btn",
+                      "#calc-popover", ".manual-btn", "#manual-popover"):
+            assert token in sel, f"{token} missing from FloatPanel.TOOLS_SEL"
+
+        co = CALC[CALC.index("function _calcOutside(e) {"):CALC.index("function _calcOutside(e) {") + 1200]
+        assert "FloatPanel.TOOLS_SEL" in co, "the Calculator's closer reads the shared set"
+        assert "#manual-popover" in co, "and degrades to a list that still names the manual"
         ts = APP[APP.index("window.toggleSettings = function(trigger) {"):APP.index("window.setFontSize = function")]
-        assert 'e.target.closest(".settings-btn, .calc-btn, #calc-popover")' in ts
+        assert "FloatPanel.TOOLS_SEL" in ts and "#manual-popover" in ts
+
+    def test_a_floating_panel_is_re_clamped_when_the_window_shrinks(self):
+        """docs/141 4ac (R3-2): the clamp was a drag-time invariant only. A
+        floated panel is position:fixed with inline coordinates, so narrowing
+        the window stranded it off screen for the LIFE OF THE PAGE -- closing
+        and reopening did not help (both owners skip re-anchoring while
+        floating) and `unfloat()` has no production caller."""
+        fp = (ROOT / "quam_state_manager/web/static/float-panel.js").read_text(encoding="utf-8")
+        assert "function clampIntoView(panel)" in fp
+        assert "window.addEventListener('resize', clampAll)" in fp
+        i = fp.index("function clampIntoView(panel)")
+        body = fp[i:i + 700]
+        assert "if (!isFloating(panel)) return;" in body, "an anchored panel must not be moved"
+        assert "window.innerWidth" in body and "window.innerHeight" in body
 
     def test_the_frame_rule_comes_after_the_panels_own_rules(self):
         """Same specificity: source order decides. Placed before .calc-popover's

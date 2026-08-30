@@ -132,6 +132,26 @@ async function main() {
      'the popup poll runs a wake that arrived mid-flight once more, never in parallel');
   ok(APP.indexOf('document.addEventListener("sm:runs-changed", function() {') > 0, 'the popup poll listens to sm:runs-changed');
 
+  /* docs/141 4ac -- a `saturated` answer is the one success that WAITS.
+     The server now bounds how many long polls may block at once (a blocked
+     wait owns a WSGI worker, and `qsm serve` runs waitress at a fixed pool),
+     and answers a refused one AT ONCE. A client that goes straight back to
+     waiting on any success turns that fast answer into a busy loop -- measured
+     ~73 requests/second from a single tab, strictly worse than the freeze. */
+  {
+    const w2 = world();
+    await tick(10);
+    const before = w2._log.urls.length;
+    // answer every open and future wait immediately with `saturated`
+    for (let i = 0; i < 40; i++) w2._answers.push({ tick: 7, changed: false, saturated: true });
+    answer(w2, { tick: 7, changed: false, saturated: true });
+    await tick(300);
+    const issued = w2._log.urls.length - before;
+    ok(issued <= 2,
+       'a saturated answer is not re-issued at once (' + issued + ' requests in 300 ms)');
+    ok(w2.LiveWake.state().wakes === 0, 'and a saturated answer is never read as a change');
+  }
+
   console.log(fails ? ('FAILED ' + fails) : 'live_wake_selfcheck: all ok');
   process.exit(fails ? 1 : 0);
 }

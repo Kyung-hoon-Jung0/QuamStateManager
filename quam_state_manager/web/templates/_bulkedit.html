@@ -391,7 +391,7 @@
 <script type="application/json" id="bulk-cold-map">{{ cold_map | script_json }}</script>
 {%- endif %}
 <script>
-    if (window.BulkEdit && BulkEdit.mount) BulkEdit.mount({{ columns | script_json }}, {{ band_meta | script_json }}, {{ (dyn_cols or []) | script_json }}, {{ {'chip': active_name or '', 'qubits': qubit_meta or []} | script_json }});
+    if (window.BulkEdit && BulkEdit.mount) BulkEdit.mount({{ columns | script_json }}, {{ band_meta | script_json }}, {{ (dyn_cols or []) | script_json }}, {{ {'chip': active_name or '', 'chipKey': (active_chip_key if active_chip_key is defined else '') or '', 'qubits': qubit_meta or []} | script_json }});
     {% if pair_rows %}
     if (window.BulkPairEdit && BulkPairEdit.mount) BulkPairEdit.mount({{ pair_columns | script_json }});
     {% endif %}

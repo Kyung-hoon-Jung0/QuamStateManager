@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import re
+from urllib.parse import quote
 import shutil
 import subprocess
 from pathlib import Path
@@ -330,3 +331,137 @@ def test_bulk_virt_server_selfcheck():
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout + r.stderr
     assert r.stdout.count("ok - ") >= 28, r.stdout
+
+
+class TestChipGateIdentity:
+    """docs/141 4ac (C1-2). `/bulk/cells` promised "a different chip open in
+    this context now answers 409 rather than cells from the wrong chip", and
+    compared the DISPLAY NAME -- which, for a plain folder, is the basename.
+    A chip and its backup, or two labs' `quam_state` folders added as separate
+    workspace roots, were one chip to that gate: the completeness critic
+    measured B's values hydrating a page rendered from A, 20/20 rows, into
+    editable inputs whose `data-orig` still held A's values.
+    """
+
+    @staticmethod
+    def _chip(root, name, bump):
+        d = root / name / "CHIP"
+        d.mkdir(parents=True)
+        (d / "state.json").write_text(json.dumps({
+            "qubits": {f"q{i}": {"T1": 1e-5 + bump + i * 1e-7,
+                                 "f_01": 5e9 + bump,
+                                 "xy": {"operations": {"x180": {"amplitude": 0.1 + bump}}}}
+                       for i in range(6)},
+            "qubit_pairs": {},
+            "active_qubit_names": [f"q{i}" for i in range(6)]}), encoding="utf-8")
+        (d / "wiring.json").write_text(json.dumps({"wiring": {}, "network": {"host": "1.1.1.1"}}), encoding="utf-8")
+        return d
+
+    def test_two_chips_with_the_same_folder_name_do_not_hydrate_each_other(self, tmp_path):
+        a = self._chip(tmp_path, "labA", 0.0)
+        b = self._chip(tmp_path, "backup", 7.0)
+        assert a.name == b.name, "fixture: the same basename in two parents"
+
+        app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
+        c = app.test_client()
+        assert c.post("/load", data={"folder": str(a)}).status_code in (200, 302)
+        html = c.get("/bulk", headers={"HX-Request": "true"}).get_data(as_text=True)
+        m = re.search(r"'chipKey':\s*'([^']*)'", html) or re.search(r'"chipKey":\s*"([^"]*)"', html)
+        assert m, "the page must ship a gate token"
+        tok_a = m.group(1)
+        assert tok_a, "and it must not be empty"
+
+        # the SAME context now holds the other chip
+        assert c.post("/load", data={"folder": str(b)}).status_code in (200, 302)
+        r = c.get(f"/bulk/cells?cols=T1&chip={quote(tok_a)}")
+        assert r.status_code == 409, \
+            f"chip B must refuse A's token, got {r.status_code}: {r.get_data(as_text=True)[:200]}"
+
+        # and B's own token still works, so the gate is not simply always-on
+        html_b = c.get("/bulk", headers={"HX-Request": "true"}).get_data(as_text=True)
+        mb = re.search(r"'chipKey':\s*'([^']*)'", html_b) or re.search(r'"chipKey":\s*"([^"]*)"', html_b)
+        assert mb and mb.group(1) and mb.group(1) != tok_a, "the two tokens differ"
+        assert c.get(f"/bulk/cells?cols=T1&chip={quote(mb.group(1))}").status_code == 200
+
+    def test_the_display_name_is_still_accepted(self, tmp_path):
+        """An older page (rendered before this change) sends the bare name and
+        must still be able to hydrate itself."""
+        a = self._chip(tmp_path, "solo", 0.0)
+        app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
+        c = app.test_client()
+        c.post("/load", data={"folder": str(a)})
+        assert c.get(f"/bulk/cells?cols=T1&chip={quote(a.name)}").status_code == 200
+
+    def test_the_storage_key_prefix_did_not_move(self, tmp_path):
+        """`QMETA.chip` is also the localStorage prefix for the Qubits/Pairs
+        pickers (`quam_bulk_qhidden:<chip>`), so it must stay the DISPLAY name
+        -- folding the path into it would silently drop every persisted set."""
+        js = (Path(__file__).resolve().parent.parent / "quam_state_manager/web/static/bulk-edit.js").read_text(encoding="utf-8")
+        assert "QHIDE_PREFIX + (QMETA.chip || 'chip')" in js
+        assert "QMETA.chipKey" in js, "the token rides beside it"
+        i = js.index("var _tok = QMETA && (QMETA.chipKey || QMETA.chip);")
+        assert "&chip=' + encodeURIComponent(_tok)" in js[i:i + 300]
+
+
+class TestWidthMetricsMirror:
+    """docs/141 4ac. `core/bulk_virt.py` says its numbers are the client's,
+    mirrored. Nothing checked that, and every plan test derives its expected
+    edge from those same constants, so all four could be changed with the
+    suite green -- while the plan they produce decides how much of a real
+    chip arrives empty."""
+
+    @staticmethod
+    def _js():
+        return (Path(__file__).resolve().parent.parent
+                / "quam_state_manager/web/static/bulk-edit.js").read_text(encoding="utf-8")
+
+    def test_the_width_metrics_mirror_the_client(self):
+        from quam_state_manager.core import bulk_virt
+
+        js = self._js()
+        m = re.search(r"_VIRT_EST_PAD\s*=\s*([\d.]+)", js)
+        assert m, "the client's cell padding constant"
+        assert bulk_virt.PAD_PX == float(m.group(1)), \
+            f"PAD_PX {bulk_virt.PAD_PX} != the client's {m.group(1)}"
+
+        # the header-label estimate: `<label length> * A + B`
+        lab = re.search(r"\.length\s*\*\s*([\d.]+)\s*\+\s*([\d.]+)", js)
+        assert lab, "the client's label width estimate"
+        assert bulk_virt.LABEL_PX_PER_CHAR == float(lab.group(1))
+        assert bulk_virt.LABEL_PAD_PX == float(lab.group(2))
+
+        buf = re.search(r"_VIRT_BUFFER\s*=\s*([\d.]+)", js)
+        assert buf and bulk_virt.BUFFER == float(buf.group(1))
+        cells = re.search(r"_VIRT_MIN_CELLS\s*=\s*(\d+)", js)
+        assert cells and bulk_virt.MIN_CELLS == int(cells.group(1))
+        cold = re.search(r"_VIRT_MIN_COLD\s*=\s*(\d+)", js)
+        assert cold and bulk_virt.MIN_COLD == int(cold.group(1))
+
+    def test_the_server_never_assumes_a_wider_glyph_than_the_client_default(self):
+        """The one direction that can be asserted. `server <= client` in
+        general is NOT a property -- a drag-resized column (docs/111) overrides
+        the client's estimate and the server cannot know it -- but the server
+        must not exceed what the client computes at its DEFAULT font scale."""
+        from quam_state_manager.core import bulk_virt
+
+        js = self._js()
+        m = re.search(r"rootPx\s*\*\s*([\d.]+)\s*\*\s*fs\s*\*\s*([\d.]+)", js)
+        assert m, "the client's px/char formula (_virtPxPerChar)"
+        a, b = float(m.group(1)), float(m.group(2))
+        default_root, default_fs = 16.0, 1.0
+        client_default = default_root * a * default_fs * b
+        assert bulk_virt.PX_PER_CHAR <= client_default + 1e-9, (
+            f"the server would plan colder than the client's own default "
+            f"({bulk_virt.PX_PER_CHAR} > {client_default:.3f})")
+
+    def test_the_hint_is_the_quantity_the_client_measures_with(self):
+        """The plan matches the client exactly only because both use
+        `screen.availWidth` -- not `innerWidth`, which forces layout in Blink
+        (docs/141 4i) and is a different number besides."""
+        js = self._js()
+        i = js.index("var vw = ")
+        assert "window.screen.availWidth" in js[i:i + 200], js[i:i + 120]
+        # and the planner's own edge reads the same quantity
+        j = js.index("var edge = ")
+        assert "window.screen.availWidth" in js[j:j + 200], js[j:j + 120]
+        assert "innerWidth" not in js[i:i + 200] and "innerWidth" not in js[j:j + 200]

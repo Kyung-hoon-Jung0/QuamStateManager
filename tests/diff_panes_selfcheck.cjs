@@ -1,8 +1,8 @@
 /* jsdom selfcheck for docs/141 4z: the diff workbench's pane view client
  * (web/static/diff-panes.js).
  *  - clicking a pane title makes it the baseline: header + column marked,
- *    every other cell re-classed diff/same from the SERVER's equality groups
- *    (data-groups), never a JS equality
+ *    every other cell re-classed diff/same from the SERVER's PAIRWISE
+ *    equality matrix (data-eq), never a JS equality
  *  - a Δ appears only on a cell that DIFFERS from the baseline and is numeric
  *    on both sides (window.ValueDelta), never on an equal or absent cell
  *  - the workbench's own htmx requests carry the CURRENT baseline
@@ -18,7 +18,7 @@ const STATIC = path.join(__dirname, '..', 'quam_state_manager', 'web', 'static')
 let fails = 0;
 function ok(c, m) { if (!c) { console.error('FAIL: ' + m); fails++; } else { console.log('ok - ' + m); } }
 
-// three panes; rows: (1e-5, 2e-5, 1e-5) groups 0,1,0 ; ("a", absent, "a") groups 0,-1,0 ; (5, 5, 7) groups 0,0,1
+// three panes; rows: (1e-5, 2e-5, 1e-5) eq 101/010/101 ; ("a", absent, "a") eq 101/010/101 ; (5, 5, 7) eq 110/110/001
 function cell(i, v, hasV) {
   return '<td class="dp-cell' + (i === 0 ? ' dp-base' : '') + '" data-i="' + i + '"' + (hasV ? ' data-v="' + v + '"' : '') + '>' +
     (v === null ? '<span class="muted dp-absent">–</span>' : '<span class="dp-val">' + v + '</span>') + '<span class="dp-delta" hidden></span></td>';
@@ -30,9 +30,9 @@ function dirRow(path, depth, count) {
 }
 const TOOLS = '<div class="diff-panes-tools"><button type="button" class="btn-xs outline dp-depth" data-depth="0">0</button><button type="button" class="btn-xs outline dp-depth" data-depth="1">1</button><button type="button" class="btn-xs dp-depth" data-depth="99">All</button></div>';
 const ROWS = dirRow('qubits', 0, 3) + dirRow('qubits.q1', 1, 3) +
-  '<tr class="dp-row dp-leaf" data-groups="0,1,0" data-path="qubits.q1.T1" data-parent="qubits.q1" data-depth="2"><td class="dp-key-col"><code class="dot-path">qubits.q1.T1</code></td>' + cell(0, '1e-05', true) + cell(1, '2e-05', true) + cell(2, '1e-05', true) + '</tr>' +
-  '<tr class="dp-row dp-leaf" data-groups="0,-1,0" data-path="qubits.q1.name" data-parent="qubits.q1" data-depth="2"><td class="dp-key-col"><code class="dot-path">qubits.q1.name</code></td>' + cell(0, 'a', true) + cell(1, null, false) + cell(2, 'a', true) + '</tr>' +
-  '<tr class="dp-row dp-leaf" data-groups="0,0,1" data-path="qubits.q1.n" data-parent="qubits.q1" data-depth="2"><td class="dp-key-col"><code class="dot-path">qubits.q1.n</code></td>' + cell(0, '5', true) + cell(1, '5', true) + cell(2, '7', true) + '</tr>';
+  '<tr class="dp-row dp-leaf" data-eq="101,010,101" data-path="qubits.q1.T1" data-parent="qubits.q1" data-depth="2"><td class="dp-key-col"><code class="dot-path">qubits.q1.T1</code></td>' + cell(0, '1e-05', true) + cell(1, '2e-05', true) + cell(2, '1e-05', true) + '</tr>' +
+  '<tr class="dp-row dp-leaf" data-eq="101,010,101" data-path="qubits.q1.name" data-parent="qubits.q1" data-depth="2"><td class="dp-key-col"><code class="dot-path">qubits.q1.name</code></td>' + cell(0, 'a', true) + cell(1, null, false) + cell(2, 'a', true) + '</tr>' +
+  '<tr class="dp-row dp-leaf" data-eq="110,110,001" data-path="qubits.q1.n" data-parent="qubits.q1" data-depth="2"><td class="dp-key-col"><code class="dot-path">qubits.q1.n</code></td>' + cell(0, '5', true) + cell(1, '5', true) + cell(2, '7', true) + '</tr>';
 const HEAD = ['A', 'B', 'C'].map((s, i) => '<th class="dp-pane-head' + (i === 0 ? ' dp-base' : '') + '" data-i="' + i + '"><button type="button" class="dp-pane-title" data-i="' + i + '"><span class="dp-slot">' + s + '</span><span class="dp-label">run ' + s + '</span><span class="dp-base-tag">baseline</span></button></th>').join('');
 const DOM = '<div id="diff-root" data-base="0" data-n="3">' +
   '<form class="diff-wb-pickers"><input type="hidden" name="base" value="0"></form>' +
@@ -136,11 +136,105 @@ ok(Array.from(root.querySelectorAll('tr.dp-dir td.dp-cell')).every((td) => !td.c
   d.querySelectorAll('.dp-pane-title')[0].click();
 }
 
+// docs/141 4ac -- the non-transitive tolerance. b and c ARE equal under the
+// app's one rule while a differs from c: with B as the baseline, C must read
+// dp-same and carry no delta. Group ids could not express this (b and c landed
+// in different classes), so this row is the regression that replaced them.
+{
+  const tb = root.querySelector('tbody');
+  tb.insertAdjacentHTML('beforeend',
+    '<tr class="dp-row dp-leaf" id="tol-row" data-eq="110,111,011" data-path="qubits.q1.f_01" data-parent="qubits.q1" data-depth="2">' +
+    '<td class="dp-key-col"><code class="dot-path">qubits.q1.f_01</code></td>' +
+    cell(0, '1', true) + cell(1, '1.0000000009', true) + cell(2, '1.0000000018', true) + '</tr>');
+  window.DiffPanes.paint(root, 1);
+  const tds = d.getElementById('tol-row').querySelectorAll('td.dp-cell');
+  const kind = (i) => ['dp-base', 'dp-diff', 'dp-same'].filter((c) => tds[i].classList.contains(c)).join('|');
+  const dl = (i) => { const e = tds[i].querySelector('.dp-delta'); return e.hidden ? null : e.textContent.trim(); };
+  ok(kind(1) === 'dp-base' && kind(0) === 'dp-same' && kind(2) === 'dp-same',
+     'a non-transitive tolerance: against B, both A and C read as SAME');
+  ok(dl(0) === null && dl(2) === null, 'and neither equal cell carries a fabricated Δ');
+  window.DiffPanes.paint(root, 0);
+  ok(kind(2) === 'dp-diff', 'against A, C differs -- the row is listed for a reason');
+  d.getElementById('tol-row').remove();
+  window.DiffPanes.paint(root, 0);
+}
+
+// docs/141 4ac -- a key that is a leaf on one side and a container on another.
+// The server gives the value row its own key; the client must collapse the
+// container over BOTH the value row and the real children, and must not walk
+// a self-loop.
+{
+  const tb = root.querySelector('tbody');
+  const before = tb.innerHTML;
+  tb.insertAdjacentHTML('beforeend',
+    dirRow('extras', 0, 2).replace('data-path="extras"', 'data-path="extras"') +
+    '<tr class="dp-row dp-dir" data-path="extras.note" data-parent="extras" data-depth="1"><td class="dp-key-col"><button type="button" class="dp-toggle" aria-expanded="true">\u25be</button><span class="dp-key dp-key-dir">note</span><span class="dp-count">2</span></td><td class="dp-cell dp-cell-dir" data-i="0"></td><td class="dp-cell dp-cell-dir" data-i="1"></td><td class="dp-cell dp-cell-dir" data-i="2"></td></tr>' +
+    '<tr class="dp-row dp-leaf" id="val-row" data-eq="100,010,001" data-path="extras.note\u0000value" data-parent="extras.note" data-depth="2"><td class="dp-key-col"><code class="dot-path">extras.note</code></td>' + cell(0, 'x', true) + cell(1, 'y', true) + cell(2, 'z', true) + '</tr>' +
+    '<tr class="dp-row dp-leaf" id="kid-row" data-eq="100,010,001" data-path="extras.note.deep" data-parent="extras.note" data-depth="2"><td class="dp-key-col"><code class="dot-path">extras.note.deep</code></td>' + cell(0, '1', true) + cell(1, '2', true) + cell(2, '3', true) + '</tr>');
+  const dirNote = root.querySelector('tr.dp-dir[data-path="extras.note"]');
+  const dirEx = root.querySelector('tr.dp-dir[data-path="extras"]');
+  const val = d.getElementById('val-row'), kid = d.getElementById('kid-row');
+  dirNote.querySelector('.dp-toggle').click();
+  ok(val.hidden && kid.hidden && !dirNote.hidden,
+     'collapsing the doubled container hides its value row AND its real child');
+  dirNote.querySelector('.dp-toggle').click();
+  ok(!val.hidden && !kid.hidden, 'expanding shows both again');
+  dirEx.querySelector('.dp-toggle').click();
+  ok(dirNote.hidden && val.hidden && kid.hidden,
+     'collapsing the ancestor leaves no orphan under the doubled key');
+  dirEx.querySelector('.dp-toggle').click();
+  root.querySelector('.dp-depth[data-depth="0"]').click();
+  ok(![dirNote, val, kid].some((r) => !r.hidden), 'Depth 0 collapses every container, doubled key included');
+  root.querySelector('.dp-depth[data-depth="99"]').click();
+  tb.innerHTML = before;
+  window.DiffPanes.arm(root);
+}
+
+// docs/141 4ac -- the collapse map's two defences, exercised against markup
+// that CARRIES the old defect: a dir row and a leaf row under the same
+// data-path, and a row whose parent is itself.
+{
+  const tb = root.querySelector('tbody');
+  const before = tb.innerHTML;
+  tb.insertAdjacentHTML('beforeend',
+    '<tr class="dp-row dp-dir" id="dup-dir" data-path="dup" data-parent="" data-depth="0"><td class="dp-key-col"><button type="button" class="dp-toggle" aria-expanded="true">\u25be</button><span class="dp-key dp-key-dir">dup</span><span class="dp-count">1</span></td><td class="dp-cell dp-cell-dir" data-i="0"></td><td class="dp-cell dp-cell-dir" data-i="1"></td><td class="dp-cell dp-cell-dir" data-i="2"></td></tr>' +
+    // the SAME data-path as the container above (the pre-4ac server markup)
+    '<tr class="dp-row dp-leaf" id="dup-leaf" data-eq="100,010,001" data-path="dup" data-parent="dup" data-depth="1"><td class="dp-key-col"><code class="dot-path">dup</code></td>' + cell(0, 'x', true) + cell(1, 'y', true) + cell(2, 'z', true) + '</tr>' +
+    '<tr class="dp-row dp-leaf" id="dup-kid" data-eq="100,010,001" data-path="dup.kid" data-parent="dup" data-depth="1"><td class="dp-key-col"><code class="dot-path">dup.kid</code></td>' + cell(0, '1', true) + cell(1, '2', true) + cell(2, '3', true) + '</tr>');
+  const dupDir = d.getElementById('dup-dir');
+  const dupLeaf = d.getElementById('dup-leaf');
+  const dupKid = d.getElementById('dup-kid');
+  dupDir.setAttribute('data-collapsed', '1');
+  window.DiffPanes.applyVisibility(root);
+  ok(dupKid.hidden, 'a duplicate data-path never lets a leaf shadow the container that owns the toggle');
+  ok(dupLeaf.hidden, 'and the shadowing leaf hides with it');
+  dupDir.removeAttribute('data-collapsed');
+  window.DiffPanes.applyVisibility(root);
+  ok(!dupKid.hidden && !dupLeaf.hidden, 'expanding shows both again');
+
+  // a row whose parent is ITSELF: the walk must stop, not spin to its guard
+  tb.insertAdjacentHTML('beforeend',
+    '<tr class="dp-row dp-leaf" id="self-row" data-eq="100,010,001" data-path="loop" data-parent="loop" data-depth="0"><td class="dp-key-col"><code class="dot-path">loop</code></td>' + cell(0, '1', true) + cell(1, '2', true) + cell(2, '3', true) + '</tr>');
+  const selfRow = d.getElementById('self-row');
+  // a row whose parent resolves to ITSELF must not be treated as its own
+  // ancestor: with the guard the walk stops, without it the row collapses
+  // itself the moment anything marks it collapsed.
+  selfRow.setAttribute('data-collapsed', '1');
+  const t0 = Date.now();
+  window.DiffPanes.applyVisibility(root);
+  ok(!selfRow.hidden, 'a self-referencing parent is not its own ancestor (the walk stops at it)');
+  ok((Date.now() - t0) < 500, 'and the walk terminates promptly');
+  selfRow.removeAttribute('data-collapsed');
+  window.DiffPanes.applyVisibility(root);
+  tb.innerHTML = before;
+  window.DiffPanes.arm(root);
+}
+
 // idempotent re-arm (an htmx swap fires afterSwap)
 d.dispatchEvent(new window.CustomEvent('htmx:afterSwap', { bubbles: true }));
 d.querySelectorAll('.dp-pane-title')[2].click();
 ok(heads() === '001', 'after a swap event one click still means one switch (no double handlers)');
 
-console.log(fails ? ('FAILED: ' + fails) : 'ALL OK (32 assertions)');
+console.log(fails ? ('FAILED: ' + fails) : 'ALL OK (44 assertions)');
 process.exit(fails ? 1 : 0);
 })();

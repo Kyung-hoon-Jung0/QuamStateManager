@@ -1,13 +1,16 @@
 /* The diff workbench's pane view (docs/141 4z): N sources side by side,
  * only the differing leaves, and a BASELINE the user picks by clicking a
  * pane title. The row set is baseline-independent (a row is listed when
- * any two sources differ), so a switch is a pure re-paint: every cell
- * carries the equality group json_diff assigned server-side (row
- * data-groups = "g0,g1,…", -1 = absent) and is highlighted exactly when
- * its group differs from the baseline column's group — the same rule that
- * decided the row exists, never a second equality in JavaScript. The Δ
- * beside a highlighted numeric cell is window.ValueDelta (docs/76), the
- * one Δ implementation the whole app shares.
+ * any two sources differ), so a switch is a pure re-paint: every row
+ * carries the PAIRWISE equality json_diff computed server-side (row
+ * data-eq = "11000,11000,…" — one string per side, '1' at j iff side i
+ * equals side j) and a cell is highlighted exactly when its row of that
+ * matrix says it differs from the baseline column — the same rule that
+ * decided the row exists, never a second equality in JavaScript. It is a
+ * matrix and not a group id because the rule carries a float tolerance and
+ * is therefore not transitive (docs/141 4ac). The Δ beside a highlighted
+ * numeric cell is window.ValueDelta (docs/76), the one Δ implementation the
+ * whole app shares.
  *
  * Bundled with the /diff page ('compare' bundle, base.html). Idempotent per
  * #diff-panes element; re-armed on every htmx swap of the workbench.
@@ -25,21 +28,23 @@
         });
         var rows = root.querySelectorAll('tr.dp-row');
         Array.prototype.forEach.call(rows, function (tr) {
-            if (!tr.hasAttribute('data-groups')) return;     // a container row (4ab) carries no values
-            var groups = (tr.getAttribute('data-groups') || '').split(',').map(function (g) { return parseInt(g, 10); });
+            if (!tr.hasAttribute('data-eq')) return;     // a container row (4ab) carries no values
+            var eq = (tr.getAttribute('data-eq') || '').split(',');
+            var baseEq = eq[base] || '';
             var cells = tr.querySelectorAll('td.dp-cell');
             var baseCell = cells[base];
             var baseVal = baseCell ? baseCell.getAttribute('data-v') : null;
-            var basePresent = groups[base] !== -1;
+            var isPresent = function (td) { return !!td && !td.querySelector('.dp-absent'); };
+            var basePresent = isPresent(baseCell);
             Array.prototype.forEach.call(cells, function (td, i) {
                 var isBase = i === base;
-                var same = !isBase && groups[i] === groups[base];
+                var same = !isBase && baseEq.charAt(i) === '1';
                 td.classList.toggle('dp-base', isBase);
                 td.classList.toggle('dp-diff', !isBase && !same);
                 td.classList.toggle('dp-same', same);
                 var d = td.querySelector('.dp-delta');
                 if (!d) return;
-                var present = groups[i] !== -1;
+                var present = isPresent(td);
                 // a Δ only where the cell DIFFERS from the baseline: an equal
                 // cell would read "0", which says nothing the highlight does not
                 if (isBase || same || !present || !basePresent || baseVal === null || !td.hasAttribute('data-v') || !window.ValueDelta) {
@@ -84,13 +89,20 @@
     function applyVisibility(root) {
         var byPath = {};
         var rows = root.querySelectorAll('tr.dp-row');
-        Array.prototype.forEach.call(rows, function (tr) { byPath[tr.getAttribute('data-path')] = tr; });
+        // docs/141 4ac: a CONTAINER row always wins the map. The server gives
+        // every row a unique data-path now, but keep the rule: a duplicate key
+        // must never let a leaf shadow the container whose toggle owns it.
+        Array.prototype.forEach.call(rows, function (tr) {
+            var k = tr.getAttribute('data-path');
+            if (!byPath[k] || tr.classList.contains('dp-dir')) byPath[k] = tr;
+        });
         Array.prototype.forEach.call(rows, function (tr) {
             var p = tr.getAttribute('data-parent'), hidden = false, guard = 0;
             while (p && guard++ < 64) {
                 var anc = byPath[p];
-                if (anc && anc.hasAttribute('data-collapsed')) { hidden = true; break; }
-                p = anc ? anc.getAttribute('data-parent') : '';
+                if (!anc || anc === tr) break;          // no such ancestor, or a self-loop
+                if (anc.hasAttribute('data-collapsed')) { hidden = true; break; }
+                p = anc.getAttribute('data-parent');
             }
             tr.hidden = hidden;
         });
