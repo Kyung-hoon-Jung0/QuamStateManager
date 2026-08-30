@@ -23,6 +23,8 @@ try { ({ JSDOM } = require('jsdom')); } catch (e) {
 }
 
 const ROOT = path.join(__dirname, '..');
+const GRID_VIRT_JS = fs.readFileSync(
+    path.join(ROOT, 'quam_state_manager', 'web', 'static', 'grid-virt.js'), 'utf8');
 const BULK_JS = fs.readFileSync(
     path.join(ROOT, 'quam_state_manager', 'web', 'static', 'bulk-edit.js'), 'utf8');
 const PAIR_JS = fs.readFileSync(
@@ -83,7 +85,8 @@ function world() {
         { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/' });
     const win = dom.window;
     win.htmx = { ajax: function () {} };
-    new win.Function(BULK_JS).call(win);
+    new win.Function(GRID_VIRT_JS).call(win);
+  new win.Function(BULK_JS).call(win);
     new win.Function(PAIR_JS).call(win);
     return win;
 }

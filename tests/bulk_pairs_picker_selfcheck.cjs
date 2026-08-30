@@ -23,6 +23,7 @@ try {
 }
 
 const STATIC = path.join(__dirname, '..', 'quam_state_manager', 'web', 'static');
+const GRID_VIRT_JS = fs.readFileSync(path.join(STATIC, 'grid-virt.js'), 'utf8');
 const BULK_JS = fs.readFileSync(path.join(STATIC, 'bulk-edit.js'), 'utf8');
 
 let fails = 0;
@@ -58,6 +59,7 @@ function world(storage) {
   if (storage) Object.keys(storage).forEach(function (k) { win.localStorage.setItem(k, storage[k]); });
   win.htmx = { ajax: function () {} };
   win.fetch = function () { return Promise.reject(new Error('no fetch expected')); };
+  new win.Function(GRID_VIRT_JS).call(win);
   new win.Function(BULK_JS).call(win);
   win.BulkEdit.mount([{ key: 'f', label: 'f', section: 'S', unit: '', default_on: true }], { bands: {} }, [],
     { chip: 'chipA', qubits: QUBITS.map(function (q) { return { id: q, grid: null }; }) });

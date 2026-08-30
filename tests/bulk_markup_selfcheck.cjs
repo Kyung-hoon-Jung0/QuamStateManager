@@ -28,6 +28,7 @@ try {
 
 const STATIC = path.join(__dirname, '..', 'quam_state_manager', 'web', 'static');
 const read = (f) => fs.readFileSync(path.join(STATIC, f), 'utf8');
+const GRID_VIRT_JS = read('grid-virt.js');
 const BULK_JS = read('bulk-edit.js');
 const PAIR_JS = read('pair-edit.js');
 const SQ_JS = read('search-query.js');
@@ -80,6 +81,7 @@ function input(win, el) { el.dispatchEvent(new win.Event('input', { bubbles: tru
 
 function qubitGrid() {
   const win = world(BULK_DOM);
+  new win.Function(GRID_VIRT_JS).call(win);
   new win.Function(BULK_JS).call(win);
   win.BulkEdit.mount(COLS, { bands: { '1': [50e6, 5.5e9] } }, []);
   const doc = win.document;

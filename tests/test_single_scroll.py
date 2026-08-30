@@ -110,11 +110,17 @@ class TestOneScroller:
     def test_hydration_listens_to_the_pane(self):
         assert "function _scrollerOf(t) {" in JS
         assert "return document.getElementById('table-pane') || t.closest('.bulk-table-wrap') || t.parentElement;" in JS
-        i = JS.index("function _virtInit() {")
-        assert "var wrap = _scrollerOf(t);" in JS[i:i + 3000]
-        # the visual frame is still what the note is inserted before
-        j = JS.index("function _virtNote(msg) {")
-        assert "t.closest('.bulk-table-wrap')" in JS[j:j + 400]
+        # docs/141 4ad: the hydration core moved to grid-virt.js; the qubit
+        # grid hands it the scroller, which is what this pin is about.
+        i = JS.index("window.GridVirt.create({")
+        assert "scroller: _scrollerOf," in JS[i:i + 1400]
+        core = (ROOT / "quam_state_manager/web/static/grid-virt.js").read_text(encoding="utf-8")
+        j = core.index("function init() {")
+        assert "var wrap = scrollerOf(t);" in core[j:j + 3000]
+        # the visual frame is still what the note is inserted before (the note
+        # moved into the shared core with the rest of the mechanism, 4ad)
+        j = core.index("function note(msg) {")
+        assert "t.closest('.bulk-table-wrap')" in core[j:j + 400]
 
 
 class TestRendered:

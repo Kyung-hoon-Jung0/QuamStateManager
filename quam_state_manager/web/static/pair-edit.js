@@ -31,6 +31,49 @@
     var _colWidths = {};
     var _resize = null, _resizeJustEnded = false;
     var _pairSearchTimer = null;   // debounce for the shared #bulk-search box
+    /* docs/141 4ad: cold-column virtualization, the same mechanism the qubit
+       grid has had since §4n, through the shared core. On the PJ 20Q chip this
+       table was 1.49 MB of a 2.81 MB document -- 53%, the largest single block
+       left once the qubit grid was slimmed. `_pvirt` mirrors the core's state
+       for the call sites that read it directly; the core announces every
+       change (onState) so the mirror cannot go stale. */
+    var _pgv = null, _pvirt = null;
+    function _pairVirt() {
+        if (_pgv) return _pgv;
+        if (!window.GridVirt) return null;
+        _pgv = window.GridVirt.create({
+            table: table,
+            rows: _rows,
+            // docs/141 4q: #table-pane is the ONE scroller for both grids
+            scroller: function (t) {
+                return document.getElementById('table-pane')
+                    || t.closest('.bulk-table-wrap') || t.parentElement;
+            },
+            styleId: 'bulk-pair-virt-width-style',
+            noteId: 'bulk-pair-virt-note',
+            mapId: 'bulk-pair-cold-map',
+            tableSel: '#bulk-pair-table',
+            rowAttr: 'data-pair',
+            colWidths: function () { return _colWidths; },
+            urlParams: function () {
+                var q = '&grid=pair';
+                var tok = window.__bulkChipKey || '';
+                if (tok) q += '&chip=' + encodeURIComponent(tok);
+                return q;
+            },
+            onLanded: function (t, set) {
+                try { _recomputeStats(); } catch (e) {}
+                try { _markLinkedCells(); } catch (e) {}
+            },
+            onState: function (st) { _pvirt = st; },
+        });
+        return _pgv;
+    }
+    function _pairVirtInit() {
+        var gv = _pairVirt();
+        if (!gv) { _pvirt = null; return; }
+        gv.init();
+    }
 
     function table() { return document.getElementById('bulk-pair-table'); }
     function _cells(scope) { return Array.prototype.slice.call(scope.querySelectorAll('.bulk-cell')); }
@@ -213,6 +256,21 @@
                 hs.push(h);
                 if (colHay[k]) colHay[k].push(h);
             });
+            // docs/141 4ad: a cold (unhydrated) cell contributes its STORED
+            // value -- the search must stay whole-chip (docs/85) even for
+            // columns whose inputs are not mounted yet. Same contract the
+            // qubit grid has had since §4n.
+            if (_pvirt) {
+                r.querySelectorAll('td.bulk-td-cold').forEach(function (td) {
+                    var ck = td.getAttribute('data-col-key');
+                    if (hide.has(ck)) return;
+                    var cd = _pgv ? _pgv.valOf(td) : '';
+                    if (!cd) return;
+                    var chh = cd + ' ' + cd.replace(/,/g, '');
+                    hs.push(chh);
+                    if (colHay[ck]) colHay[ck].push(chh);
+                });
+            }
             return hs;
         });
 
@@ -238,6 +296,13 @@
     // ── sort + per-column min/max ────────────────────────────────────────────
     function sort(key) {
         var t = table(); if (!t) return;
+        // docs/141 4ad: sorting by a column whose cells are not here would
+        // read every value as empty. Fetch, then sort (the qubit grid does the
+        // same since §4n).
+        if (_pvirt && _pgv && _pgv.isCold(key)) {
+            _pgv.hydrateCols([key]).then(function () { sort(key); });
+            return;
+        }
         var tbody = t.querySelector('tbody');
         if (sortKey === key) sortDir = -sortDir; else { sortKey = key; sortDir = 1; }
         var rows = _rows();
@@ -566,6 +631,16 @@
             _applyColumnVisibility();
             _recomputeStats();
             _markLinkedCells();
+            // docs/141 4ad: adopt the server-cold columns (and detach any the
+            // client's own estimate calls cold) AFTER the column visibility and
+            // the persisted widths are settled -- the plan reads both. Then one
+            // pass hydrates whatever the estimate got wrong and is on screen.
+            _pairVirtInit();
+            // DEFERRED, never immediate: the pass reads real geometry, and
+            // reading it during the mount forces the layout of the whole table
+            // -- the ~450 ms §4i removed. One rAF later the table is already a
+            // fraction of its size (docs/141 4ad; the qubit grid does the same).
+            if (_pvirt) _pgv.onScroll();
             if (t._pairBound) { _refreshGlobal(); return; }
             t._pairBound = true;
 
@@ -828,7 +903,14 @@
     // tabindex="-1"; these handlers preventDefault() and focus by hand, which
     // overrode that. The pair grid has always rendered blanks for a column a
     // given pair does not carry, so a single-step move could strand the caret.
+    // docs/141 4ad: Tab/arrow into a cold column starts its fetch; the cell
+    // lands on the next keypress, never wrong.
+    function _pairEnsureTd(td) { if (_pgv) _pgv.ensureTd(td); }
     function _editableIn(td) {
+        // docs/141 4ad: a cold cell has no input at all, so navigation would
+        // step straight over the column. Start its fetch; the cell lands on
+        // the next keypress (never a wrong value, just one press late).
+        if (td && td.classList && td.classList.contains('bulk-td-cold')) _pairEnsureTd(td);
         var c = td && td.querySelector('.bulk-cell');
         return c && !c.classList.contains('bulk-cell-ro') ? c : null;
     }
@@ -891,9 +973,25 @@
     /* docs/122 item 3 — the pair grid's half of the undo repaint.
        Same contract as BulkEdit.revertPaths: patch every cell the /undo
        response named, report what could not be reached, and leave the decision
-       about an authoritative refetch to the caller. There is no cold-column
-       hydration here because the pair grid is not virtualised. */
+       about an authoritative refetch to the caller. Since docs/141 4ad the pair
+       grid IS virtualised, so a cold column has no cell to repaint -- see the
+       cold-map patch below, which is what keeps the search honest without a
+       round trip. */
     function _revertPaths(entries) {
+        // docs/141 4ad + 4ac: a server-cold column has no cell to repaint --
+        // it is rendered from the (already reverted) working copy when it is
+        // fetched -- but its SEARCH TEXT is the cold map, which nothing else
+        // updates. Patch that one cell, for no round trip.
+        if (_pvirt && entries && entries.length) {
+            entries.forEach(function (e) {
+                if (!e || !e.dot_path) return;
+                var ck = _pgv.colOfPath(e.dot_path);
+                if (ck && _pgv.isRemote(ck)) {
+                    _pgv.patchColdValue(e.dot_path,
+                        e.old_value_disp != null ? e.old_value_disp : e.old_value_str);
+                }
+            });
+        }
         var t = table();
         if (!t || !entries || !entries.length) return { patched: 0, missing: 0 };
         var esc = function (k) {

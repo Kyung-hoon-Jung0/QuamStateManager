@@ -4922,6 +4922,24 @@ def _bulk_grid_cached(store: QuamStore, dyn_hidden: set[str], modified: dict) ->
     return grid
 
 
+def _pair_grid_cached(store: QuamStore, modified: dict) -> tuple:
+    """The PAIR grid, memoized on the same key (docs/141 4ad).
+
+    Same reason as the qubit memo: ``/bulk/cells?grid=pair`` runs a moment
+    after the page render and must fill cells from the very dicts the page was
+    rendered from, or a hydrated cell could disagree with its neighbours. The
+    key ignores ``dynhide`` -- that is the qubit grid's control; the pair grid
+    has its own hidden-column set and it lives in the browser."""
+    ctx = _active_ctx() or {}
+    key = _bulk_grid_key(store, set())
+    hit = ctx.get("pair_grid_cache")
+    if hit and hit.get("key") == key and hit.get("store") is store:
+        return hit["grid"]
+    grid = _pair_bulk_grid(store, modified)
+    ctx["pair_grid_cache"] = {"key": key, "store": store, "grid": grid}
+    return grid
+
+
 @bp.route("/bulk")
 def bulk_edit():
     """Bulk-tune panel: rows = qubits, columns = the high-churn fields, every cell
@@ -4957,7 +4975,16 @@ def bulk_edit():
     # Pair grid (stacked below the qubit table): columns are DERIVED from the chip's
     # real pair leaves — lab-flexible, no hardcoded gate/leaf names. Same cell
     # pipeline + commit path. Empty for chips with no pairs / no editable pair leaves.
-    pair_columns, pair_groups, pair_rows = _pair_bulk_grid(store, modified)
+    pair_columns, pair_groups, pair_rows = _pair_grid_cached(store, modified)
+    # docs/141 4ad: and it is virtualized the same way. On the PJ 20Q chip this
+    # table was 1.49 MB of a 2.81 MB document — 53%, the largest single block
+    # left after §4n — while the qubit grid beside it had been slimmed to a
+    # third. Same planner, same gates, same macro: `core/bulk_virt` needed no
+    # change, because it takes columns + rows and the pair grid's rows already
+    # had the shape it reads.
+    pair_cold_keys = bulk_virt.plan(pair_columns, len(pair_rows), request.args.get("vw"))
+    pair_cold_map = (bulk_virt.cold_map(pair_columns, pair_rows, pair_cold_keys)
+                     if pair_cold_keys else None)
 
     band_meta = {"bands": {str(b): list(r) for b, r in mw_fem.BANDS.items()}}
     # Client model for the Properties menu + search hint: key/label/section/
@@ -4975,7 +5002,9 @@ def bulk_edit():
                                             pair_rows=pair_rows, filter_chips=filter_chips,
                                             dyn_truncated=dyn_truncated,
                                             active_chip_key=_bulk_chip_gate_token() or "",
-                                            cold_keys=cold_keys, cold_map=cold_map))
+                                            cold_keys=cold_keys, cold_map=cold_map,
+                                            pair_cold_keys=pair_cold_keys,
+                                            pair_cold_map=pair_cold_map))
     # docs/103: this is the app's largest response by an order of magnitude
     # (measured 10.0 MB / 6.5 MB HTML on real 21Q/10Q chips — docs/85 ships
     # every cell deliberately). Repetitive table markup gzips ~25x, so
@@ -5023,22 +5052,33 @@ def bulk_cells():
     if want_chip is not None and want_chip not in ((have_chip or ""), (have_tok or "")):
         return jsonify({"ok": False, "error": "a different chip is open",
                         "chip": have_tok or have_chip}), 409
-    dyn_hidden = {k for k in (request.args.get("dynhide") or "").split(",") if k}
-    g = _bulk_grid_cached(store, dyn_hidden, _modified_map())
-    columns, rows = g["columns"], g["rows"]
+    # docs/141 4ad: ?grid=pair serves the PAIR grid's cells through the pair
+    # macro. Anything else (absent, "qubit") is the qubit grid, so an older
+    # page's request means exactly what it always did.
+    which = (request.args.get("grid") or "qubit").strip().lower()
+    if which not in ("qubit", "pair"):
+        return jsonify({"ok": False, "error": f"unknown grid {which!r}"}), 400
+    macros = current_app.jinja_env.get_template("_bulk_cell_macros.html").module
+    if which == "pair":
+        columns, _groups, rows = _pair_grid_cached(store, _modified_map())
+        render = lambda cell, col, rid: str(macros.pair_cell(cell, col, rid))  # noqa: E731
+    else:
+        dyn_hidden = {k for k in (request.args.get("dynhide") or "").split(",") if k}
+        g = _bulk_grid_cached(store, dyn_hidden, _modified_map())
+        columns, rows = g["columns"], g["rows"]
+        render = lambda cell, col, rid: str(macros.qubit_cell(cell, col))      # noqa: E731
     keys, unknown = bulk_virt.parse_cols(request.args.get("cols"), [c["key"] for c in columns])
     if not keys:
         return jsonify({"ok": False, "error": "no known column named", "unknown": unknown}), 400
     idx = {c["key"]: i for i, c in enumerate(columns)}
-    macro = current_app.jinja_env.get_template("_bulk_cell_macros.html").module.qubit_cell
     cells: dict[str, dict[str, str]] = {k: {} for k in keys}
     for row in rows:
         rcells = row["cells"]
         for k in keys:
             i = idx[k]
-            cells[k][row["id"]] = str(macro(rcells[i], columns[i]))
-    payload = {"ok": True, "chip": have_tok or have_chip, "cells": cells,
-               "unknown": unknown,
+            cells[k][row["id"]] = render(rcells[i], columns[i], row["id"])
+    payload = {"ok": True, "chip": have_tok or have_chip, "grid": which,
+               "cells": cells, "unknown": unknown,
                "seq": getattr(store, "mutation_seq", None)}
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     accepts_gzip = "gzip" in request.headers.get("Accept-Encoding", "")

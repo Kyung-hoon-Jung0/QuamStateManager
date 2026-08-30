@@ -33,6 +33,7 @@ try {
 }
 
 const ROOT = path.join(__dirname, '..');
+const GRID_VIRT_JS = fs.readFileSync(path.join(ROOT, 'quam_state_manager', 'web', 'static', 'grid-virt.js'), 'utf8');
 const BULK_JS = fs.readFileSync(path.join(ROOT, 'quam_state_manager', 'web', 'static', 'bulk-edit.js'), 'utf8');
 
 let fails = 0;
@@ -138,6 +139,7 @@ function world(opts) {
       },
     });
   }
+  new win.Function(GRID_VIRT_JS).call(win);
   new win.Function(BULK_JS).call(win);
   win.BulkEdit.mount(COLS, { bands: {} }, [], { chip: 'chipA', qubits: [] });
   win.__mountReads = win.__geomReads;                    // what the MOUNT read (the later scroll pass may read geometry)

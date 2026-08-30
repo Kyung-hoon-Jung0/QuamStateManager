@@ -1832,46 +1832,14 @@
     // narrow-but-tall chip the way a bare cell count is. `_VIRT_MIN_CELLS`
     // stays as a cheap pre-filter so a genuinely small grid never even walks
     // its headers.
-    var _VIRT_MIN_CELLS = 600;       // pre-filter only — the real gate is below
-    var _VIRT_MIN_COLD = 800;        // cold CELLS that make the detach worth it
-    var _VIRT_BUFFER = 1.5;          // hydrate up to 1.5 viewports ahead
-    var _virt = null;                // { html:Map, vals:Map, cold:Set, remote:Set, inflight:Map, wrap, byPath }
-    // docs/141 4n: the SERVER now renders the columns past the look-ahead
-    // window as empty tds (class bulk-td-cold) and ships their values in
-    // #bulk-cold-map; _virtInit adopts them into the same _virt structure the
-    // client-side detach fills, marked `remote` — hydration of a remote column
-    // is GET /bulk/cells (the page's own cell macro), of a local one the
-    // stashed fragment. Everything downstream (search, stats, repaints,
-    // navigation) sees one cold set.
-    function _serverCold(t) {
-        var tds = t.querySelectorAll('tbody td.bulk-td-cold[data-col-key]');
-        if (!tds.length) return null;
-        var keys = new Set();
-        Array.prototype.forEach.call(tds, function (td) { keys.add(td.getAttribute('data-col-key')); });
-        var map = { rows: [], cols: {} };
-        try {
-            var el = document.getElementById('bulk-cold-map');
-            if (el) map = JSON.parse(el.textContent || '{}') || map;
-        } catch (e) { map = { rows: [], cols: {} }; }
-        var rowIndex = {};
-        (map.rows || []).forEach(function (id, i) { rowIndex[id] = i; });
-        return { keys: keys, map: map, rowIndex: rowIndex };
-    }
-    function _virtNote(msg) {
-        var t = table(); if (!t) return;
-        var wrap = t.closest('.bulk-table-wrap') || t.parentElement;
-        var el = document.getElementById('bulk-virt-note');
-        if (!el) {
-            if (!msg) return;
-            el = document.createElement('p');
-            el.id = 'bulk-virt-note'; el.className = 'muted bulk-virt-note';
-            el.style.cssText = 'margin:.15rem 0 .3rem;font-size:.78em';
-            el.setAttribute('aria-live', 'polite');
-            if (wrap && wrap.parentNode) wrap.parentNode.insertBefore(el, wrap); else return;
-        }
-        el.textContent = msg || '';
-        el.hidden = !msg;
-    }
+    // docs/141 4ad: the mechanism itself now lives in web/static/grid-virt.js
+    // so the PAIR grid can have it too (§4n said to generalize it before a
+    // second consumer appeared). This file keeps the qubit grid's DOM facts --
+    // its table, its element ids, its hooks -- and `_virt` stays a live
+    // reference to the instance's state because ~20 call sites read
+    // `_virt.cold` / `.remote` / `.byPath` / `.vals` directly.
+    var _gv = null;                  // the GridVirt instance
+    var _virt = null;                // its state, or null
     // docs/141 4q: the ONE vertical scroller is #table-pane (the wrap is a
     // frame now) -- hydration listens to, and measures, that element. The
     // wrap fallback keeps a table mounted outside the pane (a test page)
@@ -1904,11 +1872,6 @@
         }
         _pinBars(s);                                   // a re-mount with the pane already scrolled
     }
-    function _virtStyleEl() {
-        var el = document.getElementById('bulk-virt-width-style');
-        if (!el) { el = document.createElement('style'); el.id = 'bulk-virt-width-style'; document.head.appendChild(el); }
-        return el;
-    }
     // docs/126 ③: search-hidden QUBIT-grid columns, as one stylesheet (tds)
     // + a key set (cell navigation) — see the applySearch note.
     var _searchHiddenKeys = {};
@@ -1940,356 +1903,80 @@
         });
         return m;
     }
-    // Estimated rendered width of a column from its first cell's input
-    // `size` (the server's value-fit width): ~8 px per character + the cell
-    // padding. Only has to be CONSERVATIVE -- see _virtInit.
-    var _VIRT_EST_PX_PER_CHAR = 8;      // the 16px-root fallback (see _virtPxPerChar)
-    var _VIRT_EST_PAD = 28;
-    /* The cell font is calc(0.92rem * --bulk-fs) mono with --bulk-ls
-       letter-spacing, and the root font is 21px under UI scaling (docs/136
-       §18c): a literal 8 px/char froze widths BELOW the hydrated ones there,
-       so every hydration widened the column -- the layout churn the freeze
-       exists to remove (docs/141 4l-review). A computed style of the root is
-       a STYLE read, never a layout; a mono glyph is ~0.62em wide. */
-    function _virtPxPerChar() {
-        // INLINE root styles only: the UI scale writes documentElement.style
-        // .fontSize and _applyGlobalScale writes --bulk-fs / --bulk-ls there,
-        // so no computed style is needed (getComputedStyle would evaluate the
-        // media queries -- a viewport read; measured in the harness)
-        // the UI font size is a data attribute on <html> mapped by the
-        // stylesheet (--font-size-base: 17px, small 15, large 19)
-        var rootPx = 17, fs = 1, ls = 0;
-        try {
-            var st = document.documentElement.style;
-            var uiSize = document.documentElement.getAttribute('data-font-size') || '';
-            rootPx = parseFloat(st.fontSize) || ({ small: 15, large: 19 })[uiSize] || 17;
-            fs = parseFloat(st.getPropertyValue('--bulk-fs')) || 1;
-            var lsRaw = (st.getPropertyValue('--bulk-ls') || '').trim();
-            ls = lsRaw.slice(-2) === 'em' ? (parseFloat(lsRaw) || 0) * rootPx * 0.92 * fs : (parseFloat(lsRaw) || 0);
-        } catch (e) {}
-        var px = rootPx * 0.92 * fs * 0.62 + (isNaN(ls) ? 0 : ls);
-        return (isFinite(px) && px > 0) ? px : _VIRT_EST_PX_PER_CHAR;
+    /* ── the qubit grid's binding to GridVirt (docs/141 4ad) ───────────────
+       Every name below existed before as a local function; they are wrappers
+       now so no call site in this file changed. The DOM facts the core cannot
+       know are the arguments. */
+    function _virtInstance() {
+        if (_gv) return _gv;
+        if (!window.GridVirt) return null;
+        _gv = window.GridVirt.create({
+            table: table,
+            rows: _rows,
+            scroller: _scrollerOf,
+            styleId: 'bulk-virt-width-style',
+            noteId: 'bulk-virt-note',
+            mapId: 'bulk-cold-map',
+            tableSel: '#bulk-table',
+            rowAttr: 'data-qubit',
+            colWidths: function () { return _colWidths; },
+            urlParams: function () {
+                var q = '';
+                var dh = _dynHidden();
+                if (dh.length) q += '&dynhide=' + encodeURIComponent(dh.join(','));
+                // the path-folded token when the page shipped one, else the
+                // display name (an older page); the route accepts both (4ac)
+                var tok = QMETA && (QMETA.chipKey || QMETA.chip);
+                if (tok) q += '&chip=' + encodeURIComponent(tok);
+                return q;
+            },
+            onLanded: function (t, set) {
+                _hayCache = null;        // hydrated inputs join the DOM haystacks
+                // a cold column's header stats were left alone; now that its
+                // cells are here, compute them -- for these columns only
+                try { _recomputeStats(set); } catch (e) {}
+            },
+            phase: _ph,
+            onState: function (st) { _virt = st; },
+        });
+        return _gv;
     }
+    // onState keeps `_virt` live; this stays as the ONE place that reads the
+    // core's state, so a future caller cannot reintroduce a stale mirror.
+    function _virtSync() { _virt = _gv ? _gv.state() : null; return _virt; }
     function _virtInit() {
-        _virt = null;
-        _virtStyleEl().textContent = '';
-        var t = table(); if (!t) return;
-        var tds = t.querySelectorAll('tbody td[data-col-key]');
-        // server-cold columns are ALREADY empty: they must be adopted whatever
-        // the client's own gates say (the server applied the same gates)
-        var srv = _serverCold(t);
-        if (!srv && tds.length < _VIRT_MIN_CELLS) return;
-        var wrap = _scrollerOf(t);
-        // LAYOUT-FREE (docs/141 4i): nothing here reads offsetLeft, clientWidth
-        // or any other geometry. Reading one before the first paint forces the
-        // layout of the FULL 8,000-cell table (~450 ms on the 20Q chip), and
-        // every later forced layout during the load -- the topbar measure, a
-        // textarea auto-grow, the pair grid's sticky offset -- paid it again
-        // because the table was still whole. Coldness is ESTIMATED from each
-        // column's value-fit input width against the window width (a column
-        // whose estimated left edge is past 2.5 viewports is cold). The
-        // estimate only has to be conservative: the scroll pass reads real
-        // geometry later, on a table that is by then a fraction of the size,
-        // and hydrates anything the estimate got wrong the moment it is on
-        // screen (offsetLeft < edge).
-        // NOT window.innerWidth: Blink updates style + layout to answer it
-        // (the scrollbar question), i.e. the full-table layout this function
-        // exists to avoid -- measured 1.4 s inside "plan" on re-navigation.
-        // screen.availWidth needs no layout and bounds the viewport from
-        // above (more hot columns than needed, never fewer).
-        var edge = ((window.screen && window.screen.availWidth) || 1600) * (1 + _VIRT_BUFFER);
-        var cold = new Set();
-        var x = 0;
-        var row0 = t.querySelector('tbody tr');
-        var est = {};
-        var pxChar = _virtPxPerChar();
-        if (row0) {
-            Array.prototype.forEach.call(row0.querySelectorAll('td[data-col-key]'), function (td) {
-                var k0 = td.getAttribute('data-col-key');
-                // a drag-resized column has a REAL width in JS (docs/111,
-                // quam_bulk_col_widths) -- the value-fit estimate would call a
-                // narrowed column cold while it sits on screen (docs/141 4l-review)
-                var forced = _colWidths && _colWidths[k0] ? parseFloat(_colWidths[k0]) : 0;
-                if (forced > 0) { est[k0] = forced + _VIRT_EST_PAD; return; }
-                var inp = td.querySelector('.bulk-cell');
-                if (!inp) return;      // a server-cold cell: the header's data-maxlen decides (below)
-                var size = parseInt(inp.getAttribute('size'), 10) || 8;
-                est[k0] = size * pxChar + _VIRT_EST_PAD;
-            });
-        }
-        var widths = [];
-        t.querySelectorAll('th.bulk-col-head[data-col-key]').forEach(function (h) {
-            var k = h.getAttribute('data-col-key');
-            // docs/141 4n: the server's value-fit width (data-maxlen) is the
-            // same number the input's size attr carried — it is what makes a
-            // server-cold column's freeze exact with no cell to read
-            var ml = parseInt(h.getAttribute('data-maxlen'), 10);
-            var w = est[k] || ((ml > 0 ? ml : 8) * pxChar + _VIRT_EST_PAD);
-            var label = h.querySelector('.bulk-col-label');
-            var lw = label ? label.textContent.length * 7.5 + 30 : 0;
-            // freeze a cold column at its ESTIMATED value-fit width (by
-            // class, no layout read): without it a pruned column shrinks
-            // to its header and every hydration widens it again -- a
-            // layout churn of ~0.9 s per search keystroke, measured. A
-            // hidden-at-mount column is frozen too: its rule is inert while
-            // it is display:none and stops the widen-on-scroll once shown.
-            var ck = /(?:^|\s)(ck-\d+)(?:\s|$)/.exec(h.className || '');
-            var freeze = function () {
-                if (ck) widths.push('#bulk-table th.' + ck[1] + '{min-width:' + Math.round(Math.max(w, lw)) + 'px}');
-            };
-            if (_thHidden(h)) { cold.add(k); freeze(); return; }
-            // a server-cold column is cold whatever the client's estimate says
-            // (its cells are not here); it still takes its width on screen
-            if (x > edge || (srv && srv.keys.has(k))) { cold.add(k); freeze(); }
-            x += Math.max(w, lw);
-        });
-        if (!srv) {
-            if (!cold.size) return;
-            // The real gate: enough cells actually go cold to repay detaching them.
-            if (cold.size * _rows().length < _VIRT_MIN_COLD) return;
-        }
-        // byPath: dot path -> column key for every detached cell, so a
-        // path-addressed repaint (undo) hydrates ONE column, not the grid
-        // pathTd (docs/141 4ac): dot path -> the server-cold <td> that holds
-        // its value in `vals`. byPath only names the COLUMN, which is enough
-        // to decide what to hydrate but not to repair one cell's search text.
-        _virt = { html: new Map(), vals: new Map(), cold: cold, wrap: wrap, byPath: {},
-                  pathTd: {}, remote: new Set(), inflight: new Map(), failed: 0 };
-        _virtStyleEl().textContent = widths.join('\n');
-        _ph('virt: plan');
-        Array.prototype.forEach.call(tds, function (td) {
-            var colKey = td.getAttribute('data-col-key');
-            if (!_virt.cold.has(colKey)) return;
-            if (srv && td.classList.contains('bulk-td-cold') && srv.keys.has(colKey)) {
-                // a server-cold cell: its value + paths come from the map
-                _virt.remote.add(colKey);
-                var tr = td.parentNode;
-                var ri = srv.rowIndex[tr && tr.getAttribute ? tr.getAttribute('data-qubit') : ''];
-                var ent = (srv.map.cols && srv.map.cols[colKey] && ri != null) ? srv.map.cols[colKey][ri] : null;
-                if (ent) {
-                    if (ent[0]) _virt.vals.set(td, String(ent[0]).toLowerCase());
-                    if (ent[1]) { _virt.byPath[ent[1]] = colKey; _virt.pathTd[ent[1]] = td; }
-                    if (ent[2]) { _virt.byPath[ent[2]] = colKey; _virt.pathTd[ent[2]] = td; }
-                }
-                return;
-            }
-            var inp = td.querySelector('.bulk-cell');
-            var v = inp ? String(inp.value) : (td.textContent || '');
-            if (inp) {
-                var a1 = inp.getAttribute('data-dot-path'), a2 = inp.getAttribute('data-resolved');
-                if (a1) _virt.byPath[a1] = colKey;
-                if (a2) _virt.byPath[a2] = colKey;
-            } else {
-                var ls = td.querySelector('.bulk-cell-list[data-path]');
-                if (ls) _virt.byPath[ls.getAttribute('data-path')] = colKey;
-            }
-            _virt.vals.set(td, v.toLowerCase());
-            // the cell's NODES move into a fragment (docs/141 4i): no
-            // innerHTML serialisation here, no re-parse on hydrate
-            var frag = document.createDocumentFragment();
-            while (td.firstChild) frag.appendChild(td.firstChild);
-            _virt.html.set(td, frag);
-            td.classList.add('bulk-td-cold');
-        });
-        _ph('virt: detach ' + _virt.html.size + ' cells' + (_virt.remote.size ? ', ' + _virt.remote.size + ' server-cold columns' : ''));
-        if (wrap && !wrap._virtScrollBound) {
-            wrap._virtScrollBound = true;
-            wrap.addEventListener('scroll', _virtOnScroll, { passive: true });
-        }
+        var gv = _virtInstance();
+        if (!gv) { _virt = null; return; }
+        gv.init();
+        _virtSync();
     }
-    // hidden by the column checkboxes or by the search: not on screen (class
-    // based, not offsetParent -- jsdom has no layout and the harness must see
-    // the same answer as Chrome)
-    function _thHidden(h) {
-        return h.classList.contains('bulk-col-hidden') || h.classList.contains('bulk-search-hidden');
-    }
-    // Returns a Promise that resolves when every named column is here: the
-    // local ones (stashed fragments) synchronously, before it is even
-    // returned; the server-cold ones after GET /bulk/cells lands. A caller
-    // that only needs what can be had NOW ignores the promise.
-    var _resolved = { then: function (f) { try { f(); } catch (e) {} return _resolved; }, catch: function () { return _resolved; } };
-    /* docs/141 4ac: a server-cold cell's search text lives ONLY in the cold
-       map. Callers that learn a new display value for a path but deliberately
-       do not repaint the cell (an undo of a remote column, the apply echo)
-       must still repair it, or the whole-chip search answers from a snapshot
-       taken before the edit. Returns true when it patched something. */
+    function _virtStyleEl() { var gv = _virtInstance(); return gv ? gv.styleEl() : document.createElement('style'); }
+    function _virtNote(msg) { var gv = _virtInstance(); if (gv) gv.note(msg); }
+    function _thHidden(h) { return window.GridVirt ? window.GridVirt.thHidden(h) : false; }
+    function _virtPxPerChar() { return window.GridVirt ? window.GridVirt.pxPerChar() : 8; }
+    var _resolved = { then: function (f) { try { f(); } catch (e) {} return _resolved; },
+                      catch: function () { return _resolved; } };
     function _virtPatchColdValue(dotPath, disp) {
-        if (!_virt || !_virt.pathTd) return false;
-        var td = _virt.pathTd[dotPath];
-        if (!td || !_virt.remote.has(td.getAttribute('data-col-key'))) return false;
-        _virt.vals.set(td, String(disp == null ? '' : disp).toLowerCase());
-        _virtPatchColdValue.flushHay = true;
-        return true;
+        if (!_gv) return false;
+        var hit = _gv.patchColdValue(dotPath, disp);
+        if (hit) _virtPatchColdValue.flushHay = true;
+        return hit;
     }
-
     function _virtHydrateCols(keys) {
-        if (!_virt || !keys || !keys.length) return _resolved;
-        var due = keys.filter(function (k) { return _virt.cold.has(k); });
-        if (!due.length) return _resolved;
-        var t = table(); if (!t) { _virt = null; return _resolved; }
-        var remote = due.filter(function (k) { return _virt.remote.has(k); });
-        due = due.filter(function (k) { return !_virt.remote.has(k); });
-        var pending = remote.length ? _virtFetch(remote) : null;
-        if (!due.length) return pending || _resolved;
-        // ONE cold-cell scan + ONE PhysAmp pass for the whole batch. The old
-        // per-column path (a full-table querySelectorAll AND a whole-table
-        // PhysAmp.applyAll per column) is what made a broad patch press cost
-        // 1.2–1.6 s on the real 20Q chip — clicking "Qubit" survives ~100
-        // cold columns, so the table was scanned ~200 times per click
-        // (docs/126 ③, CDP-profiled: 253 ms querySelectorAll + 740 ms style
-        // recalc from the interleaved writes).
-        var set = {};
-        due.forEach(function (k) { set[k] = 1; _virt.cold.delete(k); });
-        t.querySelectorAll('td.bulk-td-cold').forEach(function (td) {
-            var k = td.getAttribute('data-col-key');
-            if (!k || !set[k]) return;
-            var h = _virt.html.get(td);
-            if (h != null) {
-                if (typeof h === 'string') td.innerHTML = h;       // an older stash (never, after 4i)
-                else td.appendChild(h);                           // the fragment: nodes back, verbatim
-                _virt.html.delete(td); _virt.vals.delete(td);
-            }
-            td.classList.remove('bulk-td-cold');
-        });
-        _virtLanded(t, set);
-        return pending || _resolved;
-    }
-    // the common tail of a hydration, local or remote
-    function _virtLanded(t, set) {
-        if (_virt && !_virt.cold.size) { _virt = null; _virtStyleEl().textContent = ''; }
-        _hayCache = null;            // hydrated inputs join the DOM haystacks
-        // a cold column's header stats were left alone (below); now that its
-        // cells are here, compute them -- for these columns only
-        try { _recomputeStats(set); } catch (e) {}
-        // docs/109: cold cells were detached with their SERVER-rendered dBm
-        // annotations — if the viewer switched the MW-power unit meanwhile,
-        // the re-inserted text would be stale; reformat on arrival.
-        if (window.PhysAmp) window.PhysAmp.applyAll(t);
-    }
-    // docs/141 4n: fetch the cells of server-cold columns. ONE request per
-    // batch, a column already in flight is not asked for twice, a failed
-    // batch stays cold (the next pass asks again) and says so in one line.
-    // The chip name guards against another chip having been opened in this
-    // server context since the page rendered (409 → the columns stay empty
-    // and the note says why; the state-changed refresh re-renders the pane).
-    function _virtFetch(keys) {
-        var v = _virt;
-        var fresh = keys.filter(function (k) { return !v.inflight.has(k); });
-        var waits = keys.map(function (k) { return v.inflight.get(k); }).filter(Boolean);
-        if (fresh.length) {
-            var url = '/bulk/cells?cols=' + encodeURIComponent(fresh.join(','));
-            var dh = _dynHidden();
-            if (dh.length) url += '&dynhide=' + encodeURIComponent(dh.join(','));
-            // the path-folded token when the page shipped one, else the display
-            // name (an older page); the route accepts both (docs/141 4ac)
-            var _tok = QMETA && (QMETA.chipKey || QMETA.chip);
-            if (_tok) url += '&chip=' + encodeURIComponent(_tok);
-            var req = fetch(url, { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
-                .then(function (r) {
-                    return r.json().catch(function () { return {}; }).then(function (d) {
-                        if (!r.ok || !d || !d.ok) {
-                            var err = new Error((d && d.error) || ('HTTP ' + r.status));
-                            err.status = r.status;
-                            throw err;
-                        }
-                        return d;
-                    });
-                })
-                .then(function (d) {
-                    fresh.forEach(function (k) { v.inflight.delete(k); });
-                    if (_virt !== v) return;                 // a re-mount happened meanwhile
-                    _virtApplyCells(d.cells || {}, fresh);
-                    if (v.failed) { v.failed = 0; _virtNote(''); }
-                })
-                .catch(function (e) {
-                    fresh.forEach(function (k) { v.inflight.delete(k); });
-                    if (_virt !== v) return;
-                    v.failed = (v.failed || 0) + fresh.length;
-                    _virtNote(fresh.length + ' column' + (fresh.length === 1 ? '' : 's') + ' could not be loaded'
-                        + (e && e.status === 409 ? ' — ' + e.message + '; reload the page' : ' — scroll again to retry')
-                        + (e && e.message && e.status !== 409 ? ' (' + e.message + ')' : ''));
-                });
-            fresh.forEach(function (k) { v.inflight.set(k, req); });
-            waits.push(req);
-        }
-        return Promise.all(waits).then(function () {}, function () {});
-    }
-    // land fetched cells: the td's contents become the server's markup (the
-    // same macro the page rendered with), the column leaves the cold set
-    function _virtApplyCells(cells, keys) {
-        var t = table(); if (!t || !_virt) return;
-        var set = {};
-        keys.forEach(function (k) {
-            if (!cells[k]) return;                  // not answered: stays cold, retried
-            set[k] = 1; _virt.cold.delete(k); _virt.remote.delete(k);
-        });
-        if (!Object.keys(set).length) return;
-        t.querySelectorAll('td.bulk-td-cold').forEach(function (td) {
-            var k = td.getAttribute('data-col-key');
-            if (!k || !set[k]) return;
-            var tr = td.parentNode;
-            var id = tr && tr.getAttribute ? tr.getAttribute('data-qubit') : '';
-            var html = cells[k][id];
-            td.innerHTML = html != null ? html : '';
-            _virt.vals.delete(td);
-            td.classList.remove('bulk-td-cold');
-        });
-        _virtLanded(t, set);
+        if (!_gv) return _resolved;
+        var r = _gv.hydrateCols(keys);
+        _virtSync();
+        return r && r.then ? r.then(function () { _virtSync(); }) : (_virtSync(), _resolved);
     }
     function _virtHydrateCol(key) { return _virtHydrateCols([key]); }
-    function _virtEnsureTd(td) {
-        if (_virt && td) {
-            var k = td.getAttribute('data-col-key');
-            // a local column is here before this returns; a server-cold one
-            // starts its fetch and is here on the next keypress / scroll pass
-            if (k && _virt.cold.has(k)) _virtHydrateCol(k);
-        }
-    }
-    function _virtHydrateAll() {
-        if (!_virt) return _resolved;
-        return _virtHydrateCols(Array.from(_virt.cold));
-    }
-    // only what can be had without a request: the client-detached fragments
+    function _virtHydrateAll() { return _gv ? _virtHydrateCols(Array.from((_gv.state() || { cold: [] }).cold)) : _resolved; }
     function _virtHydrateLocal() {
-        if (!_virt) return;
+        if (!_gv || !_virt) return;
         _virtHydrateCols(Array.from(_virt.cold).filter(function (k) { return !_virt.remote.has(k); }));
     }
-    var _virtScrollPending = false;
-    function _virtOnScroll(immediate) {
-        if (!_virt) return;
-        if (immediate) { _virtScrollPending = false; _virtPass(); return; }
-        if (_virtScrollPending) return;
-        _virtScrollPending = true;
-        window.requestAnimationFrame(function () {
-            _virtScrollPending = false;
-            _virtPass();
-        });
-    }
-    function _virtPass() {
-            if (!_virt) return;
-            var t = table(); if (!t) return;
-            var wrap = _virt.wrap;
-            var cw = (wrap && wrap.clientWidth) || 1200;
-            var edge = (wrap ? wrap.scrollLeft + wrap.clientWidth : 0) + cw * _VIRT_BUFFER;
-            // docs/141 4n: a WINDOW, not everything left of the edge. A jump
-            // to the far right (the scrollbar dragged) used to hydrate every
-            // column the user skipped over -- with server-cold columns that
-            // was one request for the whole grid (198 columns on the 20Q
-            // chip, measured). Columns left of the window stay cold; scrolling
-            // back runs this pass again, and keyboard navigation hydrates
-            // through _virtEnsureTd regardless.
-            var left = (wrap ? wrap.scrollLeft : 0) - cw * _VIRT_BUFFER;
-            var due = [];
-            t.querySelectorAll('th.bulk-col-head[data-col-key]').forEach(function (h) {
-                var k = h.getAttribute('data-col-key');
-                // a hidden column (search or checkbox) reports offsetLeft 0 --
-                // it is not on screen, do not hydrate it
-                if (!_virt || !_virt.cold.has(k) || _thHidden(h)) return;
-                var x = h.offsetLeft;
-                if (x < edge && x + (h.offsetWidth || 0) > left) due.push(k);
-            });
-            _virtHydrateCols(due);
-    }
+    function _virtEnsureTd(td) { if (_gv) { _gv.ensureTd(td); _virtSync(); } }
+    function _virtOnScroll(immediate) { if (_gv) { _gv.onScroll(immediate); _virtSync(); } }
+    function _virtPass() { if (_gv) { _gv.pass(); _virtSync(); } }
 
     // ── column drag-resize (override the value-fit width per column) ─────────
     // The cells stay size-attr value-fit by default; dragging a header's right

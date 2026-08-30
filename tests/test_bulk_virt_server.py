@@ -399,8 +399,9 @@ class TestChipGateIdentity:
         js = (Path(__file__).resolve().parent.parent / "quam_state_manager/web/static/bulk-edit.js").read_text(encoding="utf-8")
         assert "QHIDE_PREFIX + (QMETA.chip || 'chip')" in js
         assert "QMETA.chipKey" in js, "the token rides beside it"
-        i = js.index("var _tok = QMETA && (QMETA.chipKey || QMETA.chip);")
-        assert "&chip=' + encodeURIComponent(_tok)" in js[i:i + 300]
+        # docs/141 4ad: the token now rides the binding's urlParams()
+        i = js.index("var tok = QMETA && (QMETA.chipKey || QMETA.chip);")
+        assert "&chip=' + encodeURIComponent(tok)" in js[i:i + 300]
 
 
 class TestWidthMetricsMirror:
@@ -412,6 +413,15 @@ class TestWidthMetricsMirror:
 
     @staticmethod
     def _js():
+        """The client half of the width estimate. docs/141 4ad moved the
+        mechanism into grid-virt.js so the pair grid could share it; the
+        arithmetic this pin mirrors went with it, and the qubit grid's
+        BINDING to it stayed in bulk-edit.js."""
+        return (Path(__file__).resolve().parent.parent
+                / "quam_state_manager/web/static/grid-virt.js").read_text(encoding="utf-8")
+
+    @staticmethod
+    def _owner_js():
         return (Path(__file__).resolve().parent.parent
                 / "quam_state_manager/web/static/bulk-edit.js").read_text(encoding="utf-8")
 
@@ -419,7 +429,7 @@ class TestWidthMetricsMirror:
         from quam_state_manager.core import bulk_virt
 
         js = self._js()
-        m = re.search(r"_VIRT_EST_PAD\s*=\s*([\d.]+)", js)
+        m = re.search(r"EST_PAD\s*=\s*([\d.]+)", js)
         assert m, "the client's cell padding constant"
         assert bulk_virt.PAD_PX == float(m.group(1)), \
             f"PAD_PX {bulk_virt.PAD_PX} != the client's {m.group(1)}"
@@ -430,11 +440,11 @@ class TestWidthMetricsMirror:
         assert bulk_virt.LABEL_PX_PER_CHAR == float(lab.group(1))
         assert bulk_virt.LABEL_PAD_PX == float(lab.group(2))
 
-        buf = re.search(r"_VIRT_BUFFER\s*=\s*([\d.]+)", js)
+        buf = re.search(r"BUFFER\s*=\s*([\d.]+)", js)
         assert buf and bulk_virt.BUFFER == float(buf.group(1))
-        cells = re.search(r"_VIRT_MIN_CELLS\s*=\s*(\d+)", js)
+        cells = re.search(r"MIN_CELLS\s*=\s*(\d+)", js)
         assert cells and bulk_virt.MIN_CELLS == int(cells.group(1))
-        cold = re.search(r"_VIRT_MIN_COLD\s*=\s*(\d+)", js)
+        cold = re.search(r"MIN_COLD\s*=\s*(\d+)", js)
         assert cold and bulk_virt.MIN_COLD == int(cold.group(1))
 
     def test_the_server_never_assumes_a_wider_glyph_than_the_client_default(self):
@@ -458,10 +468,286 @@ class TestWidthMetricsMirror:
         """The plan matches the client exactly only because both use
         `screen.availWidth` -- not `innerWidth`, which forces layout in Blink
         (docs/141 4i) and is a different number besides."""
-        js = self._js()
-        i = js.index("var vw = ")
-        assert "window.screen.availWidth" in js[i:i + 200], js[i:i + 120]
-        # and the planner's own edge reads the same quantity
-        j = js.index("var edge = ")
-        assert "window.screen.availWidth" in js[j:j + 200], js[j:j + 120]
-        assert "innerWidth" not in js[i:i + 200] and "innerWidth" not in js[j:j + 200]
+        owner = self._owner_js()
+        i = owner.index("var vw = ")
+        assert "window.screen.availWidth" in owner[i:i + 200], owner[i:i + 120]
+        # and the core's own edge reads the same quantity
+        core = self._js()
+        j = core.index("var edge = ")
+        assert "window.screen.availWidth" in core[j:j + 200], core[j:j + 120]
+        assert "innerWidth" not in owner[i:i + 200] and "innerWidth" not in core[j:j + 200]
+
+
+class TestGridVirtBinding:
+    """docs/141 4ad. The mechanism is shared now, so WHICH grid an instance is
+    driving is a fact that lives only in the binding -- and it is exactly what
+    a second consumer can get wrong (the wrong table, the wrong row attribute,
+    a shared element id that lets one grid wipe the other's width rules)."""
+
+    @staticmethod
+    def _read(name):
+        return (Path(__file__).resolve().parent.parent
+                / "quam_state_manager/web/static" / name).read_text(encoding="utf-8")
+
+    @staticmethod
+    def _code(js):
+        """The file with its comments removed -- the claim below is about what
+        the CODE names, and the module's prose legitimately explains which two
+        grids it was lifted out of."""
+        out, i, n = [], 0, len(js)
+        while i < n:
+            if js.startswith("/*", i):
+                i = js.find("*/", i)
+                i = n if i < 0 else i + 2
+            elif js.startswith("//", i):
+                j = js.find("\n", i)
+                i = n if j < 0 else j
+            else:
+                out.append(js[i])
+                i += 1
+        return "".join(out)
+
+    def test_the_core_knows_nothing_about_qubits_or_pairs(self):
+        core = self._code(self._read("grid-virt.js"))
+        # `.bulk-table-wrap` is NOT in this list on purpose: the pair wrap
+        # carries that class too (`class="bulk-table-wrap bulk-pair-table-wrap"`),
+        # so it is the shared frame, not one grid's fact.
+        for word in ("qubit", "data-pair", "#bulk-table", "#bulk-pair-table",
+                     "bulk-pair-table-wrap", "QMETA", "dynhide",
+                     "BulkEdit", "BulkPairEdit"):
+            assert word not in core, f"grid-virt.js's CODE must not name {word!r}"
+
+    def test_the_qubit_binding_names_its_own_dom(self):
+        owner = self._read("bulk-edit.js")
+        i = owner.index("window.GridVirt.create({")
+        block = owner[i:i + 1400]
+        assert "styleId: 'bulk-virt-width-style'" in block
+        assert "noteId: 'bulk-virt-note'" in block
+        assert "mapId: 'bulk-cold-map'" in block
+        assert "tableSel: '#bulk-table'" in block
+        assert "rowAttr: 'data-qubit'" in block
+
+    def test_the_two_grids_share_no_element_id(self):
+        """One <style> for both would let each grid erase the other's frozen
+        widths; one note element would make one grid's failure line appear
+        over the other's table."""
+        owner = self._read("bulk-edit.js")
+        pair = self._read("pair-edit.js")
+        if "window.GridVirt.create({" not in pair:
+            pytest.skip("the pair grid does not use GridVirt yet")
+        def ids(js):
+            i = js.index("window.GridVirt.create({")
+            b = js[i:i + 1400]
+            return {k: re.search(k + r": '([^']+)'", b).group(1)
+                    for k in ("styleId", "noteId", "mapId", "tableSel")}
+        a, b = ids(owner), ids(pair)
+        for k in a:
+            assert a[k] != b[k], f"both grids use {k}={a[k]!r}"
+
+    def test_the_scroll_binding_is_per_instance(self):
+        """Both grids scroll the SAME element (#table-pane, docs/141 4q), so a
+        single `_virtScrollBound` flag on it would let whichever grid mounted
+        first silence the other's hydration."""
+        core = self._read("grid-virt.js")
+        assert "'_virtScrollBound_' + styleId" in core, \
+            "the scroll-bound flag must be per instance, not per element"
+
+
+class TestPairGridVirt:
+    """docs/141 4ad -- the PAIR grid is virtualized by the same mechanism.
+
+    §4n left it whole on purpose ("generalize the mechanism into a shared
+    module before a second consumer appears"), and §4ac then measured what
+    that cost: 1,489,999 of the document's 2,809,432 bytes on the PJ 20Q chip
+    -- 53%, the largest single block left once the qubit grid had been
+    slimmed. `core/bulk_virt` needed no change at all: it takes columns + rows
+    and the pair grid's rows already had the shape it reads.
+    """
+
+    @staticmethod
+    def _chip(tmp_path, n_pairs=30, n_macros=14):
+        """A chip with enough pair cells to cross BOTH client gates:
+        MIN_CELLS (columns x rows) and MIN_COLD (cold cells). 30 pairs x
+        58 derived columns clears them with room; 1 pair does not, which
+        is what `test_a_small_chip_is_left_alone` rides."""
+        qubits = {}
+        pairs = {}
+        names = [f"q{i}" for i in range(n_pairs + 1)]
+        for q in names:
+            qubits[q] = {"T1": 1e-5, "f_01": 5e9,
+                         "xy": {"operations": {"x180": {"amplitude": 0.1}}},
+                         "resonator": {"operations": {"readout": {"amplitude": 0.04}}}}
+        for i in range(n_pairs):
+            a, b = names[i], names[i + 1]
+            pairs[f"{a}-{b}"] = {
+                "qubit_control": f"#/qubits/{a}", "qubit_target": f"#/qubits/{b}",
+                "gate_fidelity": {"averaged": 0.99 + i * 1e-4},
+                "confusion": [[0.98, 0.02], [0.03, 0.97]],
+                "macros": {f"cz_{k}": {"amplitude": 0.1 + k * 0.01,
+                                       "duration": 40 + k,
+                                       "phase_shift": 0.01 * k,
+                                       "detuning": 1e6 + k}
+                           for k in range(n_macros)},
+            }
+        d = tmp_path / "chip"
+        d.mkdir()
+        (d / "state.json").write_text(json.dumps({
+            "qubits": qubits, "qubit_pairs": pairs,
+            "active_qubit_names": names,
+            "active_qubit_pair_names": list(pairs)}), encoding="utf-8")
+        (d / "wiring.json").write_text(json.dumps(
+            {"wiring": {}, "network": {"host": "1.1.1.1"}}), encoding="utf-8")
+        return d
+
+    def _client(self, tmp_path):
+        d = self._chip(tmp_path)
+        app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
+        c = app.test_client()
+        assert c.post("/load", data={"folder": str(d)}).status_code in (200, 302)
+        return c
+
+    def test_the_planner_reads_pair_columns_unchanged(self, tmp_path):
+        """The reason this was a lift and not a rebuild."""
+        from quam_state_manager.core import bulk_virt
+        from quam_state_manager.web import routes as R
+
+        d = self._chip(tmp_path)
+        app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
+        c = app.test_client()
+        c.post("/load", data={"folder": str(d)})
+        with app.test_request_context("/bulk"):
+            cols, _g, rows = R._pair_bulk_grid(R._store(), R._modified_map())
+        assert cols and rows
+        for col in cols:
+            assert "key" in col and "maxlen" in col and "default_on" in col
+        assert all(set(r) >= {"id", "cells"} for r in rows)
+        cold = bulk_virt.plan(cols, len(rows), 1200)
+        assert cold and cold <= {c0["key"] for c0 in cols}
+
+    def test_a_cold_pair_column_ships_empty_with_its_value_in_the_map(self, tmp_path):
+        c = self._client(tmp_path)
+        html = c.get("/bulk?vw=800", headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert 'id="bulk-pair-cold-map"' in html, "the pair grid must ship its OWN map"
+        m = re.search(r'id="bulk-pair-cold-map">(.*?)</script>', html, re.S)
+        cmap = json.loads(m.group(1))
+        assert cmap["cols"] and cmap["rows"]
+        # every cold pair column's tds are empty, and keep their identity
+        pair_block = html[html.index('id="bulk-pair-table"'):html.index("</table>", html.index('id="bulk-pair-table"'))]
+        for key in cmap["cols"]:
+            hits = re.findall(
+                r'<td class="[^"]*bulk-td-cold[^"]*" data-col-key="' + re.escape(key) + r'"></td>',
+                pair_block)
+            assert hits, f"{key} should render as empty cold tds"
+            assert len(hits) == len(cmap["rows"])
+        # and a HOT pair column still carries its input
+        assert 'class="bulk-cell' in pair_block
+
+    def test_the_two_grids_do_not_share_a_cold_map(self, tmp_path):
+        """One id would let each grid read the other's values into its search
+        haystack -- and the row ids do not even overlap. Checked on the REAL
+        chip when it is here (both grids virtualized there); on the synthetic
+        one the qubit grid stays whole, which is itself worth asserting."""
+        c = self._client(tmp_path)
+        html = c.get("/bulk?vw=800", headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert html.count('id="bulk-pair-cold-map"') == 1, "one map per grid"
+        assert html.count('id="bulk-cold-map"') <= 1
+        pm = json.loads(re.search(r'id="bulk-pair-cold-map">(.*?)</script>', html, re.S).group(1))
+        qmm = re.search(r'id="bulk-cold-map">(.*?)</script>', html, re.S)
+        if qmm:
+            qm = json.loads(qmm.group(1))
+            assert not (set(qm["rows"]) & set(pm["rows"])), \
+                "qubit ids and pair ids are different rows"
+        # the pair map's rows ARE the pair ids, never a qubit id
+        assert all("-" in r for r in pm["rows"]), pm["rows"][:4]
+
+    def test_the_route_serves_the_pair_grid_through_the_pair_macro(self, tmp_path):
+        c = self._client(tmp_path)
+        html = c.get("/bulk?vw=800", headers={"HX-Request": "true"}).get_data(as_text=True)
+        pm = json.loads(re.search(r'id="bulk-pair-cold-map">(.*?)</script>', html, re.S).group(1))
+        key = sorted(pm["cols"])[0]
+        r = c.get(f"/bulk/cells?grid=pair&cols={quote(key)}")
+        assert r.status_code == 200
+        d = r.get_json()
+        assert d["ok"] and d["grid"] == "pair"
+        assert set(d["cells"][key]) == set(pm["rows"]), "one cell per PAIR row"
+        # the pair macro's own marks, which the qubit macro never emits
+        joined = " ".join(d["cells"][key].values())
+        assert "bulk-cell" in joined
+
+    def test_an_unknown_grid_is_refused_by_name(self, tmp_path):
+        c = self._client(tmp_path)
+        r = c.get("/bulk/cells?grid=banana&cols=x")
+        assert r.status_code == 400 and "banana" in r.get_json()["error"]
+
+    def test_no_grid_parameter_still_means_the_qubit_grid(self, tmp_path):
+        """An older page's request must mean exactly what it always did."""
+        c = self._client(tmp_path)
+        html = c.get("/bulk?vw=800", headers={"HX-Request": "true"}).get_data(as_text=True)
+        # a QUBIT column key, from the qubit table's own headers (this chip's
+        # qubit grid is small enough to render whole, so there is no map)
+        qtab = html[html.index('id="bulk-table"'):html.index('id="bulk-pair-table"')]
+        key = re.search(r'<th scope="col" class="bulk-col-head[^"]*"\s+data-col-key="([^"]+)"', qtab).group(1)
+        r = c.get(f"/bulk/cells?cols={quote(key)}")
+        assert r.status_code == 200
+        d = r.get_json()
+        assert d["grid"] == "qubit", d
+        rows = set(d["cells"][key])
+        assert rows and all(not x.count("-") for x in rows), rows
+
+    def test_a_pair_column_is_not_reachable_from_the_qubit_grid(self, tmp_path):
+        """The two column namespaces are separate; asking the wrong grid for a
+        key must be an honest 'no known column named', never someone else's."""
+        c = self._client(tmp_path)
+        html = c.get("/bulk?vw=800", headers={"HX-Request": "true"}).get_data(as_text=True)
+        pm = json.loads(re.search(r'id="bulk-pair-cold-map">(.*?)</script>', html, re.S).group(1))
+        pair_key = sorted(pm["cols"])[0]
+        r = c.get(f"/bulk/cells?cols={quote(pair_key)}")     # no grid= -> qubit
+        assert r.status_code == 400
+        assert pair_key in (r.get_json().get("unknown") or [])
+
+    def test_a_small_chip_is_left_alone(self, tmp_path):
+        """The gate every small chip rides: below it the pair render is what it
+        always was, cold map and all absent."""
+        d = self._chip(tmp_path, n_pairs=1, n_macros=2)
+        app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
+        c = app.test_client()
+        c.post("/load", data={"folder": str(d)})
+        html = c.get("/bulk?vw=800", headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert 'id="bulk-pair-cold-map"' not in html
+        pair_block = html[html.index('id="bulk-pair-table"'):html.index("</table>", html.index('id="bulk-pair-table"'))]
+        assert "bulk-td-cold" not in pair_block
+
+    def test_the_pair_grid_is_memoized_and_invalidated_by_an_edit(self, tmp_path):
+        """A hydration a moment after the render must read the very dicts the
+        page rendered from -- and must NOT after a mutation."""
+        from quam_state_manager.web import routes as R
+
+        d = self._chip(tmp_path)
+        app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
+        c = app.test_client()
+        c.post("/load", data={"folder": str(d)})
+        calls = []
+        real = R._pair_bulk_grid
+
+        def counted(store, modified):
+            calls.append(1)
+            return real(store, modified)
+
+        R._pair_bulk_grid = counted
+        try:
+            c.get("/bulk?vw=800", headers={"HX-Request": "true"})
+            n_after_render = len(calls)
+            c.get("/bulk/cells?grid=pair&cols=" + quote("__none__"))
+            assert len(calls) == n_after_render, "the hydration reused the memo"
+            html = c.get("/bulk?vw=800", headers={"HX-Request": "true"}).get_data(as_text=True)
+            pm = json.loads(re.search(r'id="bulk-pair-cold-map">(.*?)</script>', html, re.S).group(1))
+            key = sorted(pm["cols"])[0]
+            path = pm["cols"][key][0][1]
+            before = len(calls)
+            ed = c.post("/field/edit", data={"dot_path": path, "value": "0.5"},
+                        headers={"HX-Request": "true"})
+            assert ed.status_code in (200, 204), (ed.status_code, ed.get_data(as_text=True)[:200])
+            c.get(f"/bulk/cells?grid=pair&cols={quote(key)}")
+            assert len(calls) > before, "an edit must invalidate the memo"
+        finally:
+            R._pair_bulk_grid = real

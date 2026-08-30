@@ -1643,3 +1643,223 @@ tree-row identity + whole-diff counts (`test_diff_panes.py`),
 7/7 (§4o), 10/10 (UI cascade), 6/6 (the width-metric constants), 3/3 (the
 dirty-pair set guard), 1/1 (the chip gate)** — every one of them written
 because the mutation it catches passed before.
+
+---
+
+## 4ad. The pair grid virtualizes too — and the mechanism became a module first
+
+**2026-08-31, user-directed ("페어 그리드 서버 가상화도 진행해줘").** §4n shipped
+server-side column virtualization for the qubit grid and deliberately left the
+pair grid whole, recording the follow-up as *"generalize the mechanism into a
+shared module first."* §4ac then measured what deferring it cost: the pair grid
+is **3,330 cells / ~1.5 MB, 53% of the `/bulk` document** — after §4n had made
+the qubit half small, the pair half was the largest block left.
+
+This section does the follow-up in the order §4n named: **extract, then reuse.**
+
+### 1. What was actually shared, and what was one grid's DOM fact
+
+The §4n virtualization was ~470 lines living inside `bulk-edit.js`, reachable
+only through the closure it was written in. Reading it against what the pair
+grid needs split it cleanly in two:
+
+* **The mechanism** — a cold set, a remote set, a value map, width freezing by
+  generated stylesheet, a scroll pass that computes a look-ahead window from
+  header geometry, one request per pass with in-flight dedup, adoption of
+  server-cold `<td>`s, `ensureTd` hydration on demand, the failure note.
+* **The grid's own facts** — which table, which row attribute (`data-qubit` vs
+  `data-pair`), which element ids, which extra URL parameters, what to do when
+  a batch lands (the qubit grid recomputes its header statistics; the pair grid
+  has none).
+
+`web/static/grid-virt.js` (507 lines) is the mechanism. `GridVirt.create(opts)`
+returns an instance; both grids pass their own facts in. Three rules the
+extraction is built on, each of which a mutation now guards:
+
+1. **The core carries no default for a grid's DOM fact.** `rowAttr` has no
+   fallback — a shared core that defaults to `'data-qubit'` silently half-works
+   for the second consumer. My own new pin caught exactly that leak while the
+   extraction was in progress.
+2. **Per-instance state is keyed by the instance.** The scroll listener's
+   "already bound" flag is `wrap['_virtScrollBound_' + styleId]`, not one shared
+   property — both grids scroll inside the same `#table-pane` (§4q), so an
+   element-level flag would let whichever grid mounted first suppress the
+   other's listener forever.
+3. **The owner keeps a live mirror, not a copy.** `bulk-edit.js` still has
+   `_virt` (many call sites read it), so the core announces **every** assignment
+   of its state through an `onState` callback. The first extraction nulled the
+   state inside the core's own scroll listener and the owner's mirror went
+   stale — caught by an existing §4n pin, which is what pins are for.
+
+`bulk-edit.js` is 3,641 → 3,328 lines (205,432 → 190,407 bytes); `pair-edit.js`
+953 → 1,049; `grid-virt.js` is 28,171 new bytes. Script total **+19 KB**, which
+is the honest price of the extraction — set against **−511 KB** of document
+below, per page load, on every visit.
+
+### 2. The server half
+
+`core/bulk_virt.py` needed **no change at all**: `plan(columns, n_rows, viewport)`
+already takes any column list, and a pair column dict carries the same
+`default_on` / `maxlen` keys the estimate reads. That is the measured evidence
+that §4n's planner really was generic — verified before writing any code:
+
+```
+pair grid: 111 columns x 30 rows = 3,330 cells
+  columns without default_on: 0
+  columns without maxlen   : 0
+  plan(vw=None): 91 of 111 columns cold (2,730 cells)
+  plan(vw=1600): 94 of 111 columns cold
+  plan(vw=2560): 86 of 111 columns cold
+```
+
+What did change:
+
+* `routes._pair_grid_cached(store, modified)` memoizes the pair grid on the same
+  `_bulk_grid_key` the qubit grid uses (`mutation_seq`, change-log length,
+  `dynhide`), stored at `ctx["pair_grid_cache"]` — `/bulk/cells?grid=pair` must
+  not rebuild the whole pair grid per hydration request.
+* `/bulk` plans the pair columns and passes `pair_cold_keys` + `pair_cold_map`
+  to the template.
+* `/bulk/cells` gained `?grid=qubit|pair`. **An unknown grid is a 400, not a
+  fallback** — a typo that silently served qubit cells into pair rows would put
+  wrong numbers on screen, which is the one failure this whole mechanism must
+  never have. No `grid=` at all still means qubit (every §4n client is
+  unchanged), and the response echoes `"grid"` so a client can tell.
+* The pair branch renders `macros.pair_cell(cell, col, rid)` — the same macro
+  `_bulkedit.html` uses, which is what makes the golden below possible.
+
+`_bulkedit.html` marks a cold pair `<td>` exactly as §4n marks a qubit one: the
+identity survives (`ck-N`, flag classes, `data-col-key`), only the contents are
+withheld, plus one `#bulk-pair-cold-map` JSON value map so the whole-chip search
+still sees every value.
+
+### 3. The client half
+
+`pair-edit.js` binds its own `GridVirt` instance with its own element ids
+(`bulk-pair-virt-width-style`, `bulk-pair-virt-note`, `bulk-pair-cold-map`,
+`#bulk-pair-table`), `rowAttr: 'data-pair'`, and `urlParams` returning
+`&grid=pair` plus the chip token. **The two grids share no element id** — pinned,
+because a shared style element would mean one grid's width freeze silently
+overwriting the other's.
+
+Four places had to learn that a pair cell may not be here yet, each the mirror
+of its §4n qubit counterpart:
+
+* `applySearch` folds the cold map into `rowHay` (a value in a cold column is
+  still a value on that row).
+* `sort(key)` fetches a cold column before sorting by it.
+* `_editableIn(td)` hydrates a cold `<td>` before treating it as editable — Tab
+  navigation lands on cold cells constantly.
+* `_revertPaths` patches the cold **map** for a remote column instead of fetching
+  it; an undo must not cost a round trip (§4ac / docs/122 ③).
+
+**The mount does not read geometry.** §4i's rule is that nothing during mount may
+touch `offsetLeft` / `clientWidth` / `innerWidth`, because that forces a full
+table layout. The first pair binding called `onScroll(true)` inline and my own
+new harness caught four geometry reads; the pass is deferred now.
+
+### 4. Measured
+
+Same harness, same chip (PJ_10082026, 20Q, 452 qubit columns × 111 pair columns):
+
+| | before §4ad | after |
+|---|---|---|
+| `/bulk` document | 2,809,432 B | **2,297,984 B** (−18.2%) |
+| pair table block | ~1.5 MB (53%) | **865,210 B (37.7%)** |
+| pair cold columns | — | 91 of 111 (2,730 of 3,330 cells) |
+| pair cold map | — | 122,095 B |
+
+Cumulative for the `/bulk` document across §4m → §4n → §4ad: **8.98 MB → 2.30 MB.**
+
+**Three goldens, all at the cell-token level on the real chip:**
+
+* Pair cold-render + hydration vs. the whole render: **3,330 cells, 0 differences.**
+* Qubit cells across the change: **4,480 cells, 0 differences** (§4ad touches
+  nothing on the qubit side).
+* Every pair cell that differs from the pre-§4ad render (2,730 of them) is
+  **exactly an empty cold `<td>`** — open tag carrying `bulk-td-cold`, close tag,
+  no content. Zero wrong values.
+
+**Real Chrome** (headless, CDP, the same 20Q chip): a search for a value that
+lives only in a cold pair column finds its row; a hydrated pair cell arms and
+disarms its row's Apply exactly like a hot one; a full-width scroll sweep ends at
+570 cold / 2,760 hot with 11 `/bulk/cells` calls and 0 failures; no console
+errors.
+
+### 5. A 400 was retried forever
+
+Chasing a `400 no known column named` seen **once** in real Chrome — and **not
+reproduced** in three later runs including a cold server and a full-width sweep,
+so it is recorded here as an open observation, not a diagnosis — established
+something that does not depend on reproducing it:
+
+`fetchCells`' catch kept a failed batch in the cold set so the next scroll pass
+would retry. For a network error that is right; the next attempt may well
+succeed. For a **400** it is a loop that cannot end, because the server's answer
+cannot change without a new page — a column it does not know it will not know a
+second later. Every scroll pass re-requested it, forever.
+
+A 400 now retires those columns from the cold and remote sets (their values stay
+in the map, so the whole-chip search still finds them) and says, once, what a
+reload would fix. A network error or a 409 still keeps them cold, because those
+answers **can** change.
+
+### 6. Pins
+
+* `tests/pair_virt_server_selfcheck.cjs` — 29 executed asserts driving the real shipped
+  `grid-virt.js` + `pair-edit.js` under jsdom: adoption, no geometry read at
+  mount, its own style/note/map elements, cold values in the search haystack,
+  one request per pass, in-flight dedup, server markup adopted verbatim, header
+  stats untouched, sort-then-fetch, undo repairing the map with no round trip,
+  the failure note, Tab hydration.
+* `tests/test_bulk_virt_server.py` — `TestGridVirtBinding` (the core names no
+  grid's DOM fact; the qubit binding names its own; the two grids share no
+  element id; the scroll flag is per instance) and `TestPairGridVirt` (the
+  planner reads pair columns; cold pair `<td>`s are empty and mapped; no shared
+  map; the pair macro; an unknown `grid=` is 400; no `grid=` still means qubit; a
+  pair column key is unreachable from the qubit grid; a small chip is untouched;
+  memoized and invalidated). `TestWidthMetricsMirror` follows the width metrics
+  into `grid-virt.js`.
+
+**Mutation-checked: 18 of 19 caught; the 19th is a no-op, not a gap.** Seven
+server/template mutations (pair never planned, no map emitted, `grid=` ignored,
+pair served by the qubit macro, grid not memoized, cold `<td>` still rendered,
+shared map id), nine client mutations (pair never adopts, cold values leave the
+search, sort does not wait, nav skips cold, undo leaves a stale map, pair uses
+the qubit style id / the qubit map / forgets `grid=`, the mount pass runs
+immediately), and two on the shared core (a shared scroll flag, no `onState`).
+
+The nineteenth — make `pair-edit.js` pass `rowAttr: 'data-qubit'` — **stayed
+green, and should have.** A real pair row is
+`<tr data-qubit="{{ row.id }}" data-pair="{{ row.id }}">`
+(`_bulkedit.html:266`): both attributes carry the same value on every row, so
+the two selectors are the same string and the mutation changes nothing
+observable. A pin cannot fail on a mutation that does not mutate anything, and
+writing one that did would mean pinning a coincidence.
+
+The rule that mutation was *meant* to test is a **design** rule — a shared core
+must not name one consumer's DOM fact — so it is guarded by a design pin
+instead: reintroducing `var rowAttr = opts.rowAttr || 'data-qubit';` in
+`grid-virt.js` fails
+`TestGridVirtBinding::test_the_core_knows_nothing_about_qubits_or_pairs`,
+verified by mutation. That is the honest shape of it: the *behaviour* is
+identical here by coincidence of the markup, and only the *design* is
+enforceable — which is exactly why the default was removed rather than
+corrected. A third grid whose rows carry only their own attribute would have
+been silently half-broken by it.
+
+A fixture lesson worth recording, because it cost two rounds: the planner's own
+floors mean a small fixture proves nothing. 40 columns × 12 rows is 480 cells,
+under `MIN_CELLS` 600 — nothing goes cold and every assertion passes vacuously.
+40 × 30 gives 26 cold × 30 = 780, under `MIN_COLD` 800 — same. The fixture is
+30 pairs × 14 macros.
+
+### 7. A harness lesson (mine, not the product's)
+
+The wiring script that added `grid-virt.js` to the harnesses that load
+`bulk-edit.js` truncated a two-line `const BULK_JS = fs.readFileSync(` in four
+files, leaving them syntactically dead. **The loop I was checking them with used
+`tail -1` to spot failures, and a hard Node crash's last line is
+`Node.js v24.18.0` — so two of the four read as green.** The canonical loop in
+CLAUDE.md uses the **exit code**; this is why. All four are repaired and 95/95
+harnesses are green over two consecutive full runs.

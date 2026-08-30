@@ -19,7 +19,7 @@ _STATIC = _ROOT / "quam_state_manager" / "web" / "static"
 
 CORE = {"htmx.min.js", "split.min.js", "search-query.js", "app.js", "auto-apply.js",
         "plot-theme.js", "calc.js", "manual.js", "undo-trail.js"}
-LAZY = {"bulk-edit.js", "pair-edit.js", "all-values.js", "pulses.js", "topo-graph.js", "wiring-grid.js",
+LAZY = {"grid-virt.js", "bulk-edit.js", "pair-edit.js", "all-values.js", "pulses.js", "topo-graph.js", "wiring-grid.js",
         "component-map.js", "chip-status.js", "generate.js", "generate_preview.js", "dataset-virtual.js",
         "ndview.js", "scheduler.js", "autofit.js", "compare-hub.js", "diff-panes.js"}
 
@@ -61,7 +61,7 @@ def client():
 def test_every_page_ships_the_core_and_only_its_own_bundles(client):
     seen = {}
     for url, want, unwanted in (
-        ("/bulk", {"bulk-edit.js", "pair-edit.js", "all-values.js"}, {"chip-status.js", "generate.js", "pulses.js"}),
+        ("/bulk", {"grid-virt.js", "bulk-edit.js", "pair-edit.js", "all-values.js"}, {"chip-status.js", "generate.js", "pulses.js"}),
         ("/pulses", {"pulses.js"}, {"bulk-edit.js", "chip-status.js", "generate.js"}),
         ("/explorer", set(), LAZY),
         ("/topology", {"chip-status.js", "topo-graph.js", "component-map.js"}, {"bulk-edit.js", "generate.js"}),

@@ -26,6 +26,8 @@ try {
 }
 
 const ROOT = path.join(__dirname, '..');
+const GRID_VIRT_JS = fs.readFileSync(
+  path.join(ROOT, 'quam_state_manager', 'web', 'static', 'grid-virt.js'), 'utf8');
 const BULK_JS = fs.readFileSync(
   path.join(ROOT, 'quam_state_manager', 'web', 'static', 'bulk-edit.js'), 'utf8');
 
@@ -92,6 +94,7 @@ function bigWorld(nCols, nRows, presearch) {
   wrap.scrollLeft = 0;
   win.htmx = { ajax: function () {} };
   if (presearch) win.localStorage.setItem('quam_bulk_search', presearch);   // a remembered search, applied at mount
+  new win.Function(GRID_VIRT_JS).call(win);
   new win.Function(BULK_JS).call(win);
   win.BulkEdit.mount(colsModel, { bands: {} }, []);
   return { win: win, doc: win.document, wrap: wrap, cols: colsModel };

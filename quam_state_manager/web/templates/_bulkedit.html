@@ -1,5 +1,6 @@
 {%- import '_bulk_cell_macros.html' as cells -%}
 {%- set cold_keys = cold_keys or [] -%}
+{%- set pair_cold_keys = pair_cold_keys or [] -%}
 <div class="bulk-panel" id="bulk-panel">
     {# Title row: just the title + the help (ⓘ) toggle beside it. #}
     <div class="bulk-toolbar bulk-toolbar-title">
@@ -266,8 +267,11 @@
                     <th class="bulk-rowhead" scope="row" data-col-key="__id__">{{ row.id }}</th>
                     {%- for cell in row.cells -%}
                     {%- set col = pair_columns[loop.index0] -%}
-                    <td class="bulk-td ck-{{ loop.index0 }}{% if not col.default_on %} bulk-col-hidden{% endif %}{% if col.group_start %} bulk-col-group-start{% endif %}{% if cell.kind in ('runtime','list','missing') %} bulk-td-ro{% endif %}{% if cell.is_pointer and cell.kind == 'scalar' %} bulk-td-pointer{% endif %}{% if cell.lo and cell.lo.peer_qubit %} bulk-td-lo{% endif %}" data-col-key="{{ col.key }}">
-                        {{- cells.pair_cell(cell, col, row.id) -}}
+                    <td class="bulk-td ck-{{ loop.index0 }}{% if not col.default_on %} bulk-col-hidden{% endif %}{% if col.group_start %} bulk-col-group-start{% endif %}{% if cell.kind in ('runtime','list','missing') %} bulk-td-ro{% endif %}{% if cell.is_pointer and cell.kind == 'scalar' %} bulk-td-pointer{% endif %}{% if cell.lo and cell.lo.peer_qubit %} bulk-td-lo{% endif %}{% if col.key in pair_cold_keys %} bulk-td-cold{% endif %}" data-col-key="{{ col.key }}">
+                        {#- docs/141 4ad: a server-cold column ships an EMPTY td (its value
+                            rides #bulk-pair-cold-map below); the client fills it from
+                            GET /bulk/cells?grid=pair through this same macro. -#}
+                        {%- if col.key not in pair_cold_keys %}{{ cells.pair_cell(cell, col, row.id) }}{% endif -%}
                     </td>
                     {%- endfor %}
                     <td class="bulk-apply-col">
@@ -384,6 +388,12 @@
     </div>{# /pane: allvalues #}
 </div>
 
+{%- if pair_cold_map %}
+{# docs/141 4ad: the pair grid's cold map -- its own element, because the two
+   grids are two GridVirt instances and one shared id would let each read the
+   other's values. #}
+<script type="application/json" id="bulk-pair-cold-map">{{ pair_cold_map | script_json }}</script>
+{%- endif %}
 {%- if cold_map %}
 {# docs/141 4n: what the client keeps for every server-cold cell (display for
    whole-chip search, the paths for path-addressed repaints) — read by
@@ -391,6 +401,7 @@
 <script type="application/json" id="bulk-cold-map">{{ cold_map | script_json }}</script>
 {%- endif %}
 <script>
+    window.__bulkChipKey = {{ ((active_chip_key if active_chip_key is defined else '') or '') | tojson }};
     if (window.BulkEdit && BulkEdit.mount) BulkEdit.mount({{ columns | script_json }}, {{ band_meta | script_json }}, {{ (dyn_cols or []) | script_json }}, {{ {'chip': active_name or '', 'chipKey': (active_chip_key if active_chip_key is defined else '') or '', 'qubits': qubit_meta or []} | script_json }});
     {% if pair_rows %}
     if (window.BulkPairEdit && BulkPairEdit.mount) BulkPairEdit.mount({{ pair_columns | script_json }});
