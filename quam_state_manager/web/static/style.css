@@ -1070,14 +1070,23 @@ html.topbar-hidden .topbar-reveal { display: block; }
 /* r8 feedback: rows compacted (tighter vertical rhythm) while the TYPE gets
    BIGGER — 12.5px was too small to read at a glance; width grows with it so
    rows don't flex-wrap into ragged empty space. */
+/* docs/141 4ae (user): the Calculator could not be resized -- the one tool
+   window of the three that could not. Same shape as the Config Manual: a flex
+   column whose BODY scrolls, `resize: both` on a clipped box (CSS resize does
+   nothing while overflow is visible), size remembered by calc.js. The header
+   and the expression footer stay put while the sections scroll. */
 .calc-popover {
     position: absolute; right: 0; top: 100%; z-index: 120;
-    width: 348px; max-width: 92vw; max-height: min(560px, 80vh); overflow-y: auto;
+    width: 348px; max-width: 96vw; height: min(560px, 80vh); max-height: 94vh;
+    min-width: 260px; min-height: 200px;
+    display: flex; flex-direction: column;
     background: var(--pico-background-color);
     border: 1px solid var(--pico-muted-border-color);
     border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,0.18);
     margin-top: 0.2rem; font-size: 13.5px;
+    resize: both; overflow: hidden;
 }
+.calc-header, .calc-foot { flex: 0 0 auto; }
 .calc-hidden { display: none; }
 /* Config Manual window (2026-08-27) — the calculator's shell, wider and
    taller, because it is read while editing: search bar pinned under the
@@ -1103,6 +1112,17 @@ html.topbar-hidden .topbar-reveal { display: block; }
     border: 1.5px solid color-mix(in srgb, var(--pico-primary) 60%, transparent);
     border-radius: 10px;
     box-shadow: 0 8px 28px rgba(0,0,0,0.26), 0 0 0 1px color-mix(in srgb, var(--pico-primary) 12%, transparent);
+}
+/* docs/141 4ae (user: "모서리가 끊겨있어"): each window's header is a sticky
+   child with its own opaque background, painted OVER the parent's rounded top
+   corners -- so the frame read as broken at both of them. The panel's own
+   overflow is what usually clips a child to the radius, and only two of the
+   three have one (calc: overflow-y auto, manual: hidden; settings: visible).
+   Rounding the header itself fixes it for all three regardless of overflow.
+   8.5px = the 10px outer radius minus the 1.5px border, so the curves are
+   concentric. */
+.settings-header, .calc-header, .manual-header {
+    border-top-left-radius: 8.5px; border-top-right-radius: 8.5px;
 }
 /* Undo trail panel (2026-08-28): bottom-right, compact, out of the way of
    the tray; the latest step is emphasised, older ones fade. */
@@ -1249,23 +1269,58 @@ html.topbar-hidden .topbar-reveal { display: block; }
 }
 .calc-close:hover { background: var(--pico-muted-border-color); color: var(--pico-contrast); }
 
-.calc-body { padding: 0.1rem 0.55rem; }
-/* B2: clear per-section separation — hairline top divider + a bold, full-contrast,
-   readable header with a rotating caret (was a faint tiny all-caps blur). */
-.calc-sec { border-top: 1px solid var(--pico-muted-border-color); padding: 0.05rem 0 0.18rem; }
-.calc-sec:first-child { border-top: 0; }
+.calc-body { flex: 1 1 auto; overflow-y: auto; padding: 0.3rem 0.5rem 0.5rem; }
+/* docs/141 4ae (user: "너무 밋밋해서 전혀 구분이 안가"): a hairline between
+   sections was not a boundary -- each section is now a CARD (border, radius,
+   its own surface) whose header is a real title bar, tinted SM-blue while
+   open so which one you are in is visible at a glance.
+
+   And the colour was a lie in the stylesheet: the `color: var(--pico-contrast)`
+   on .calc-sec-label (specificity 0,1,0) never won -- Pico paints
+   `details summary:not([role])` (0,1,1) and `details[open] > summary:not(
+   [role]):not(:focus)` (0,3,1) with its ACCORDION variables, so every section
+   title rendered in the muted grey (measured #98a1b3 against the page's
+   #d0d5de) the comment claimed it had escaped. Fixed through Pico's own
+   mechanism rather than a specificity war: set the two accordion variables on
+   the popover and every summary inside it inherits the right colour. */
+.calc-popover {
+    --pico-accordion-close-summary-color: var(--pico-color);
+    --pico-accordion-open-summary-color: var(--pico-color);
+}
+.calc-sec {
+    border: 1px solid var(--pico-muted-border-color); border-radius: 8px;
+    margin: 0.35rem 0; background: var(--pico-card-background-color); overflow: hidden;
+}
+.calc-sec > *:not(summary) { padding-left: 0.55rem; padding-right: 0.55rem; }
+.calc-sec > summary + * { margin-top: 0.3rem; }
+.calc-sec > :last-child { margin-bottom: 0.35rem; }
 .calc-sec-label {
-    font-size: 0.92em; font-weight: 700; letter-spacing: 0.01em;
-    color: var(--pico-contrast); cursor: pointer; padding: 0.22rem 0; list-style: none;
+    display: flex; align-items: center; gap: 0.1rem;
+    font-size: 0.95em; font-weight: 700; letter-spacing: 0.01em;
+    color: var(--pico-color); cursor: pointer; padding: 0.3rem 0.55rem; list-style: none;
+    border-bottom: 1px solid transparent;
+}
+.calc-sec-label:hover { background: color-mix(in srgb, var(--pico-primary) 8%, transparent); }
+.calc-sec[open] > .calc-sec-label {
+    background: color-mix(in srgb, var(--pico-primary) 10%, transparent);
+    border-bottom-color: var(--pico-muted-border-color);
 }
 .calc-sec-label::-webkit-details-marker { display: none; }
+/* Pico draws its OWN accordion chevron as summary::after, so the app's
+   caret made TWO marks on every section header. One disclosure mark per
+   header: keep the app's left caret, the same one the Json tree and the
+   Config Manual use. */
+.calc-sec-label::after { display: none; }
 .calc-sec-label::before {
     content: '\25B8'; display: inline-block; width: 0.85em; margin-right: 0.15rem;
-    font-size: 0.8em; color: var(--pico-muted-color); transition: transform .12s;
+    font-size: 0.8em; color: var(--pico-primary); transition: transform .12s;
 }
 .calc-sec[open] > .calc-sec-label::before { transform: rotate(90deg); }
 .calc-row { display: flex; align-items: center; gap: 0.3rem; margin: 0.08rem 0; flex-wrap: wrap; }
-.calc-field { display: flex; align-items: center; gap: 0.3rem; flex: 1 1 auto; color: var(--pico-muted-color); }
+/* 4ae: these are the row's own labels, not commentary -- muted grey made the
+   calculator unreadable at a glance. Grey is kept for the help lines, the
+   units and the "or" connector, which ARE annotations. */
+.calc-field { display: flex; align-items: center; gap: 0.3rem; flex: 1 1 auto; color: var(--pico-color); }
 .calc-field-sm { flex: 0 0 auto; }
 /* Scoped under .calc-popover so the specificity beats Pico's input margin/height
    (the documented "Pico form-control margin beats a bare .class reset" gotcha). */
@@ -1277,11 +1332,12 @@ html.topbar-hidden .topbar-reveal { display: block; }
 }
 .calc-popover .calc-in:focus { border-color: var(--pico-primary); background: var(--pico-card-background-color); outline: none; box-shadow: none; }
 .calc-popover .calc-in-sm { flex: 0 0 3.6rem; min-width: 2.5rem; }
-.calc-unit { color: var(--pico-muted-color); font-size: 0.78em; }
+.calc-unit { color: var(--pico-muted-color); font-size: 0.82em; }
 .calc-or { color: var(--pico-muted-color); font-size: 0.82em; }
 .calc-result { display: flex; align-items: center; gap: 0.35rem; margin: 0.08rem 0; }
-.calc-rlabel { flex: 1 1 auto; color: var(--pico-muted-color); font-size: 0.82em; }
-.calc-rval { font-family: var(--font-mono); font-variant-numeric: tabular-nums; user-select: all; }
+.calc-rlabel { flex: 1 1 auto; color: var(--pico-color); font-size: 0.86em; }
+.calc-rval { font-family: var(--font-mono); font-variant-numeric: tabular-nums; user-select: all;
+    color: var(--pico-contrast); font-weight: 600; }
 .calc-rval.calc-err { color: var(--color-error-text); }
 .calc-copy {
     background: none; border: none; cursor: pointer; padding: 0 0.2rem; opacity: 0;
@@ -1290,7 +1346,7 @@ html.topbar-hidden .topbar-reveal { display: block; }
 .calc-result:hover .calc-copy, .calc-row:hover .calc-copy, .calc-expr-row:hover .calc-copy { opacity: 1; }
 .calc-copy:hover { color: var(--pico-primary); }
 .calc-chain { font-size: 0.78em; text-decoration: none; color: var(--diag-info-text); margin-left: 0.2rem; }
-.calc-help { margin: 0.2rem 0 0.05rem; font-size: 11.5px; color: var(--pico-muted-color); line-height: 1.35; }
+.calc-help { margin: 0.25rem 0 0.05rem; font-size: 0.8em; color: var(--pico-muted-color); line-height: 1.4; }
 .calc-foot {
     padding: 0.3rem 0.55rem; border-top: 1px solid var(--pico-muted-border-color);
     position: sticky; bottom: 0; background: var(--pico-background-color);
@@ -11898,6 +11954,17 @@ tr.dp-row[hidden] { display: none; }
    the tree toolbar's box, so the two read as one control. */
 .diff-panes-tools { flex-wrap: wrap; }
 .diff-panes-tools .tree-search-icon { font-size: 0.9em; color: var(--pico-muted-color); flex-shrink: 0; }
+/* docs/141 4ae (user: "돋보기가 내부 글자랑 겹친다"): Pico gives EVERY
+   input[type=search] its own magnifier as a background image plus a
+   padding-inline-start that reserves room for it. A box that also carries the
+   app's own 🔍 span therefore drew TWO -- and because a compact padding
+   shorthand overrides the reserve, Pico's landed on top of the first letter
+   of the placeholder. The contract, stated as a selector so the pairing
+   cannot come back: an input preceded by our icon does not draw its own. */
+.tree-search-icon + input[type="search"] {
+    background-image: none;
+    padding-inline-start: 0.5rem;
+}
 .diff-panes-tools input[type="search"].dp-search {
     flex: 0 1 20rem; min-width: 9rem; margin: 0;
     font-size: 0.92em; padding: 0.15rem 0.4rem; height: auto;

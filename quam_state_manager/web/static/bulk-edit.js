@@ -1033,7 +1033,7 @@
         // part every surface now shares. No pipe → singleton groups → the
         // loops below are byte-for-byte the old every-token AND.
         var tokGroups = window.SearchQuery
-            ? SearchQuery.groupBy(tokInfo, function (ti) { return ti.tok; })
+            ? window.SearchQuery.groupBy(tokInfo, function (ti) { return ti.tok; })
             : tokInfo.map(function (ti) { return [ti]; });
 
         // A token that doesn't restrict an axis is neutral (true) there —
@@ -1264,12 +1264,12 @@
             _colHintKeys = [];
             _pairHintKeys = [];
             if (q.length >= 2) {
-                var _hintGroups = window.SearchQuery ? SearchQuery.groups(q)
+                var _hintGroups = window.SearchQuery ? window.SearchQuery.groups(q)
                     : tokens.map(function (t) { return [t]; });
                 var _match = function (c) {
                     var hay = (c.label + ' ' + c.key + ' ' + (c.section || '')).toLowerCase();
                     return window.SearchQuery
-                        ? SearchQuery.matchesHay(hay, _hintGroups)
+                        ? window.SearchQuery.matchesHay(hay, _hintGroups)
                         : tokens.every(function (tok) { return hay.indexOf(tok) >= 0; });
                 };
                 COLS.forEach(function (c) {

@@ -9,7 +9,7 @@
    change or a "Show more"; the server never filters by it. #}
 <span class="tree-search-icon" aria-hidden="true">&#128269;</span>
 <input type="search" class="dp-search" value="{{ q }}" autocomplete="off"
-       placeholder="Search keys and values…"
+       placeholder="{{ search_hint() }}"
        aria-label="Filter the differences by key or value"
-       title="Space = AND, a standalone | = OR. Matches the key path and the values on screen.">
+       title="{{ search_title() }} Matches the key path and the values on screen.">
 <span class="dp-search-count muted" aria-live="polite"></span>

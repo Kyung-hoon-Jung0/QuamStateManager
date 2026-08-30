@@ -1,7 +1,8 @@
 <div class="table-header-row">
     <h2>Couplers <small class="muted">({{ total }})</small></h2>
     <div class="table-filter">
-        <input type="search" placeholder="Filter couplers..." autocomplete="off"
+        <input type="search" placeholder="{{ search_hint() }}" title="{{ search_title() }}"
+               aria-label="Filter couplers" autocomplete="off"
                oninput="filterTable(this, 'couplers-table')">
         <small id="couplers-table-filter-count" class="muted"></small>
     </div>

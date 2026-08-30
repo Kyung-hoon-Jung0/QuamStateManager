@@ -16,7 +16,7 @@
     <h2>Pulses <small class="muted">({{ total }})</small></h2>
     <div class="table-filter">
         <input type="search" name="q" value="{{ active_query or '' }}"
-               placeholder="Search all pulses…" autocomplete="off"
+               placeholder="{{ search_hint() }}" title="{{ search_title() }}" autocomplete="off"
                hx-get="/pulses?rows=1&channel={{ active_channel }}&per_page={{ per_page }}"
                hx-trigger="keyup changed delay:200ms, search"
                hx-target="#pulses-rows-wrap" hx-swap="innerHTML"

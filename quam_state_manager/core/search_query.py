@@ -84,3 +84,40 @@ def matches_hay(hay_lower: str, grps: Sequence[Sequence[str]]) -> bool:
         if not any(tok in hay_lower for tok in grp):
             return False
     return True
+
+
+# ── The one search hint, docs/141 4ae (user-directed) ────────────────────────
+#
+# Thirteen search boxes carried thirteen hand-written placeholders ("Search
+# keys or values...", "Search all pulses…", "Search: q2, q5, time · rabi ·
+# tag:flagged · is:bookmarked"), and none of them said what the grammar
+# actually is — so the AND/OR the whole app shares was invisible everywhere
+# except the two boxes that happened to spell it out. The grammar IS the
+# thing worth saying in the little space a placeholder has: examples are
+# guessable, operators are not.
+#
+# Shape: "Search: space = AND, | = OR" plus, only where the surface really
+# has them, its own scope tokens. The full sentence lives in the `title`
+# (SEARCH_TITLE) so nothing is lost to the compaction.
+HINT = "space = AND, | = OR"
+SEARCH_TITLE = (
+    "Space between words = AND (every word must match). "
+    "A standalone | between two words = OR. Any other pipe is a literal."
+)
+
+
+def search_hint(*extras: str) -> str:
+    """The placeholder every SM search box uses.
+
+    ``extras`` are the surface's OWN scope tokens (``"tag:"``, ``"is:"``) —
+    kept to what that box can really do, appended after the grammar and
+    never instead of it.
+    """
+    parts = [HINT] + [e for e in extras if e]
+    return "Search: " + ", ".join(parts)
+
+
+def search_title(*extras: str) -> str:
+    """The full grammar sentence for the box's tooltip."""
+    tail = (" Scopes here: " + ", ".join(e for e in extras if e) + ".") if any(extras) else ""
+    return SEARCH_TITLE + tail

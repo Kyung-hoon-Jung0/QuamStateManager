@@ -142,7 +142,9 @@
 <details class="compare-section" open>
     <summary>State Property Differences <small class="muted">({{ diff_count }})</small></summary>
     <div class="table-filter">
-        <input type="search" oninput="filterTable(this, 'diff-table')" placeholder="Filter differences...">
+        <input type="search" oninput="filterTable(this, 'diff-table')"
+               placeholder="{{ search_hint() }}" title="{{ search_title() }}"
+               aria-label="Filter the differences">
         <small id="diff-table-filter-count" class="muted"></small>
     </div>
     <div class="table-scroll">

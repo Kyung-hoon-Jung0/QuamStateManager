@@ -225,7 +225,7 @@
         // never OR operands (their pipe stays literal). No pipe → singleton
         // groups → exactly the old AND evaluation.
         var groups = (window.SearchQuery
-            ? SearchQuery.groupBy(items,
+            ? window.SearchQuery.groupBy(items,
                 function (it) { return it.kind === 'free' ? it.value : ''; },
                 function (it) { return !it.negate; })
             : items.map(function (it) { return [it]; }));

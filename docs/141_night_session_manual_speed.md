@@ -1411,7 +1411,117 @@ filtering, either view dropping the box, the chips losing `data-count`, the
 paging truth unpublished, and `data-more` decorative rather than the real
 remainder — the number the search reports as unsearchable).
 
+## 4ae. Four window-and-search reports (2026-08-30, user-directed)
+
+> "1. settings의 저 메뉴의 양쪽 위에 있는 모서리가 끊겨있어 · 2. calculator는 크기
+> 조절이 안되고 있어 · 3. calculator 내부의 각 섹션 … 너무 밋밋해서 전혀 구분이
+> 안가 … gray 색상은 주석이나 쓰일 곳이지 … 4. 돋보기가 내부 글자랑 겹친다 …
+> 이제는 내부 SM 전체에 걸쳐서 문구를 이렇게 바꾸자. Search: space = AND, | = OR"
+
+Each was reproduced in real headless Chrome first, and the first three all had a
+cause other than the obvious one.
+
+**① The corner was a child painting over its parent.** The three tool windows
+(§4u) share one 10 px radius + 1.5 px SM-blue border, and each has a sticky
+header with its own opaque background. A rounded corner clips its children only
+where the box has an `overflow` — the Calculator has `overflow-y: auto` and the
+Config Manual `overflow: hidden`, but Settings is `overflow: visible`, so its
+square header simply painted over both top corners. Measured: panel radius
+10 px, header radius 0, panel overflow `visible`. Rounding the HEADER instead
+(8.5 px = 10 − 1.5, so the curves stay concentric) fixes it independently of any
+overflow, and is applied to all three so the next window to lose its clip does
+not re-open the bug. A/B at 6× on the real page: a hard right angle with the
+border broken, versus one continuous curve.
+
+**② The Calculator was the one tool window that could not be resized.**
+`resize: none`, `display: block`, one scroll for the whole popover. It is now
+the Config Manual's shape: a flex column with `resize: both` on a clipped box
+(CSS `resize` is inert while `overflow: visible` — the trap worth naming), the
+BODY scrolling so the header and the expression footer stay put, and the size
+remembered in `quam_calc_size` under the same contract manual.js uses — only a
+size the USER set is stored, so opening on a small screen (where the restore
+clamps to the viewport) never shrinks what was remembered.
+
+**③ The section titles were grey because the rule that says otherwise never
+won.** `.calc-sec-label { color: var(--pico-contrast) }` is specificity (0,1,0);
+Pico paints `details summary:not([role])` at (0,1,1) and
+`details[open] > summary:not([role]):not(:focus)` at (0,3,1), both from its
+ACCORDION variables. So every section header rendered in the muted grey
+(measured `#98a1b3` against the page's `#d0d5de`) that a 2026-era comment in the
+stylesheet claimed it had escaped — the fourth time this project has been bitten
+by "the rule I can see is not the rule that wins". Fixed through Pico's own
+mechanism rather than a specificity war: the two accordion variables are set on
+`.calc-popover`, so every summary inside inherits the right colour and nothing
+has to out-specify anything. Sections became CARDS (border, 8 px radius, their
+own surface) with the open one's header tinted SM-blue 10%, which is what makes
+"which section am I in" visible at a glance. Grey was then put back where grey
+belongs: the row labels (`.calc-field`) and result labels (`.calc-rlabel`) are
+what the row IS, so they read in the page colour; the help lines, the units and
+the "or" connector are annotations and stay muted; result VALUES got weight 600
+and full contrast. The before-shot also showed TWO disclosure marks per header —
+Pico draws its own chevron as `summary::after` beside the app's caret — so the
+Pico one is hidden and the left caret (the same one the Json tree and the Config
+Manual use) stands alone.
+
+**④ There were two magnifiers, and one of them was Pico's.** Pico gives every
+`input[type=search]` a background magnifier plus a `padding-inline-start` that
+reserves room for it. §4ad's box carries the app's own 🔍 span AND is
+`type="search"`, and its compact padding shorthand overrode the reserve — so
+Pico's icon landed on the first letter of the placeholder while ours sat
+correctly outside. The fix is stated as a selector so the pairing cannot come
+back: `.tree-search-icon + input[type="search"]` draws no background image.
+(Worth recording: the first measurement said "no overlap", because it compared
+the two ELEMENTS' boxes. The second icon was not an element.)
+
+**The placeholder, everywhere.** Every search box carried its own
+hand-written string — "Search keys or values...", "Search all pulses…",
+"Filter qubits..." — and only two of them mentioned the AND/OR grammar the whole
+app shares (docs/96). Examples are guessable; operators are not. `search_hint()`
+/ `search_title()` in `core/search_query.py` (Jinja globals) are now the ONE
+source: **`Search: space = AND, | = OR`**, with a surface's own scopes appended
+after the grammar and never instead of it (`…, tag:, is:`), and the full
+sentence in the `title` so nothing is lost to the compaction. Twenty-three
+call sites across twenty templates use it. A template that hand-writes a search placeholder is now a test failure.
+
+**Three of those boxes could not keep the promise, so they were fixed too.**
+`filterTable` (every component table: Qubits, Pairs, Flux, Couplers,
+Resonators, QDAC), `filterDetailPanel` (the inspector's in-panel search) and the
+all-values grid were AND-only private splits. They now compose through
+`SearchQuery` — the plain surfaces via `groups`/`matchesHay`, the scoped grid via
+`groupBy` at the group level exactly as the bulk grid does. Three boxes stay
+exempt BY ID and are pinned as exactly three: `sort-key-filter`,
+`sort-param-filter`, `sched-lib-filter` are pickers over a short list of names,
+not document search.
+
+**And a standing-rule sweep fell out of it.** Eleven sites across app.js,
+bulk-edit.js, pair-edit.js and dataset-virtual.js read `window.SearchQuery` in
+the guard and a BARE `SearchQuery` in the call. In a browser those are the same
+binding; in a Node realm the call throws instead of degrading — the docs/125
+`CSS`-global trap. All eleven now name `window.` on both sides, and the pin
+fails on any `window.SearchQuery ? SearchQuery.…` that comes back.
+
+Verified in real Chrome on the PJ_10082026 chip: settings corner A/B at 6×, the
+Calculator resizable with its body scrolling and its size surviving a close,
+section titles at `#d0d5de` on a tinted card header, one magnifier, the house
+placeholder rendering on every page, zero console errors. Pinned by
+`tests/test_search_hint.py` (19) + `tests/search_hint_selfcheck.cjs` (17),
+mutation-checked **22/22** (each of the four fixes reverted one way at a time:
+the header radius, `resize`, the overflow that makes it work, the scrolling
+body, the size store / apply / clamp-guard, the accordion variables, the card,
+the open marker, the duplicate chevron, the muted labels, Pico's magnifier, a
+hand-written placeholder on two surfaces, dropped scopes, a hint that stops
+naming the OR, scopes replacing the grammar, each AND-only regression, and a
+bare global creeping back). One thing to record for the next person: writing
+`.calc-sec-label { color: … }` inside a CSS *comment* broke an existing grep pin
+in `test_calc.py`, which slices from the first occurrence of that literal — the
+comment was rephrased, not the pin.
+
 ## 5. Tooling that came out of the night
+
+`scratchpad/cdp_dsearch.js` (the diff search box end to end, §4ad),
+`cdp_ui4.js` (the three tool windows + the search box in one pass) and
+`cdp_corner.js` (an A/B of ONE CSS rule inside a single page load, captured at
+6x — the way to show a 1-pixel geometry fix) joined the set in §4ad/§4ae.
 
 `scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js` (+ daytime: `cdp_profile.js` function-level CPU profile, `cdp_trace.js` per-phase trace of one keystroke, `cdp_type.js` char-by-char typing with a gap + debounce override, `cdp_undo.js` trusted Ctrl+Z/Ctrl+Shift+Z through the page's own UI, `cdp_virt.js` virtualization sampler): Chrome headless with the
 DevTools protocol over Node's built-in WebSocket — real long-task + trace splits and
@@ -1426,6 +1536,7 @@ localhost). Used for every number above and for four visual checks.
 `tree_search_list_selfcheck.cjs`, `bulk_search_selfcheck.cjs` (class-selector hide),
 `ctrlz_selfcheck.cjs` (new fallback contract), `test_bulk_markup.py` +
 `bulk_markup_selfcheck.cjs` (§4m), `diff_panes_selfcheck.cjs` +
-`test_diff_panes.py` + `test_diff_three_way.py::TestSearchBox` (§4ad).
+`test_diff_panes.py` + `test_diff_three_way.py::TestSearchBox` (§4ad),
+`test_search_hint.py` + `search_hint_selfcheck.cjs` (§4ae).
 Every new pin mutation-checked
 (3/3, 6/6, 7/7, 5/5); a wrong mutation and two vacuous pins were found and rewritten.

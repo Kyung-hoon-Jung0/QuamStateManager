@@ -50,7 +50,7 @@
 {% if inspector_type in ('qubit', 'pair') %}
 <div class="detail-search">
     <input type="search" class="detail-search-input"
-           placeholder="Search keys, values, or sections…"
+           placeholder="{{ search_hint() }}" title="{{ search_title() }}"
            aria-label="Filter properties"
            oninput="filterDetailPanel(this)">
     <small class="detail-search-count muted"></small>

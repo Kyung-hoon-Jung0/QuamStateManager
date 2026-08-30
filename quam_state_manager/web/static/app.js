@@ -5976,6 +5976,10 @@ document.addEventListener('keydown', function(e) {
 window.filterTable = function(inputEl, tableId) {
     var raw = (inputEl.value || "").toLowerCase().trim();
     _debounce('filter-' + tableId, function() {
+        // docs/141 4ae: the app's ONE grammar (SearchQuery -- space = AND,
+        // a standalone `|` = OR) instead of a private AND split, so the shared
+        // placeholder names something this box really does.
+        var grps = (raw && window.SearchQuery) ? window.SearchQuery.groups(raw) : null;
         var terms = raw ? raw.split(/\s+/) : [];
         var table = document.getElementById(tableId);
         if (!table) return;
@@ -5995,7 +5999,8 @@ window.filterTable = function(inputEl, tableId) {
         // Batch: compute matches, then write display in one pass
         for (var i = 0; i < rows.length; i++) {
             var match = true;
-            for (var j = 0; j < terms.length; j++) {
+            if (grps) match = window.SearchQuery.matchesHay(texts[i], grps);
+            else for (var j = 0; j < terms.length; j++) {
                 if (texts[i].indexOf(terms[j]) === -1) { match = false; break; }
             }
             rows[i].style.display = match ? "" : "none";
@@ -6034,6 +6039,8 @@ window.filterDetailPanel = function(inputEl) {
         var article = _detailPanelArticle();
         if (!article) return;
         var terms = raw ? raw.split(/\s+/) : [];
+        // docs/141 4ae: same one grammar -- AND as before, plus a standalone `|`
+        var dGrps = (raw && window.SearchQuery) ? window.SearchQuery.groups(raw) : null;
 
         var sections = article.querySelectorAll("details.detail-section");
         var totalRows = 0;
@@ -6063,7 +6070,8 @@ window.filterDetailPanel = function(inputEl) {
                     hay += " " + (inputs[k].value || "").toLowerCase();
                 }
                 var matched = true;
-                for (var j = 0; j < terms.length; j++) {
+                if (dGrps) matched = window.SearchQuery.matchesHay(hay, dGrps);
+                else for (var j = 0; j < terms.length; j++) {
                     if (hay.indexOf(terms[j]) === -1) { matched = false; break; }
                 }
                 rows[i].style.display = matched ? "" : "none";
@@ -6864,7 +6872,7 @@ window.clearDetailPanelSearch = function(btnEl) {
         // in the node's key+value haystack OR its dot-path; joining the two
         // with a space is exact because tokens cannot contain one. Strictly
         // additive: a phrase match implies every token matches.
-        var grps = window.SearchQuery ? SearchQuery.groups(q) : [[q]];
+        var grps = window.SearchQuery ? window.SearchQuery.groups(q) : [[q]];
 
         // O(N) scan over pre-lowercased fields. keepPaths = matches + ancestors.
         var matchPaths = new Set();
@@ -6872,7 +6880,7 @@ window.clearDetailPanelSearch = function(btnEl) {
         for (var j = 0; j < flat.length; j++) {
             var e = flat[j];
             if (window.SearchQuery
-                    ? SearchQuery.matchesHay(e.hayLower + ' ' + e.pathLower, grps)
+                    ? window.SearchQuery.matchesHay(e.hayLower + ' ' + e.pathLower, grps)
                     : (e.hayLower.indexOf(q) >= 0 || e.pathLower.indexOf(q) >= 0)) {
                 matchPaths.add(e.path);
                 var p = e.path;
@@ -6991,7 +6999,7 @@ window.clearDetailPanelSearch = function(btnEl) {
 
         // Same grammar as _searchTreeData — this DOM path serves the unified
         // compare tree, which must not answer differently from the data path.
-        var grpsD = window.SearchQuery ? SearchQuery.groups(q) : [[q]];
+        var grpsD = window.SearchQuery ? window.SearchQuery.groups(q) : [[q]];
 
         var matches = [];
         for (var j = 0; j < nodes.length; j++) {
@@ -7004,7 +7012,7 @@ window.clearDetailPanelSearch = function(btnEl) {
             }
             var pathAttr = (nd.getAttribute("data-path") || "").toLowerCase();
             if (window.SearchQuery
-                    ? SearchQuery.matchesHay(hay + ' ' + pathAttr, grpsD)
+                    ? window.SearchQuery.matchesHay(hay + ' ' + pathAttr, grpsD)
                     : (hay.indexOf(q) >= 0 || pathAttr.indexOf(q) >= 0)) {
                 nd.classList.add("tree-highlight");
                 matches.push(nd);

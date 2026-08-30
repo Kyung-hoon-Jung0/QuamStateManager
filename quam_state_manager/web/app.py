@@ -419,6 +419,14 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
             return all(_json_attr_safe(x) for x in v.values())
         return True
     app.jinja_env.globals["json_attr_safe"] = _json_attr_safe
+    # `search_hint` / `search_title` — docs/141 4ae: ONE placeholder text for
+    # every search box in the app. Thirteen boxes carried thirteen hand-written
+    # strings and none of them named the AND/OR grammar they all share; a
+    # template that writes its own placeholder is now a test failure.
+    from quam_state_manager.core.search_query import (
+        search_hint as _search_hint, search_title as _search_title)
+    app.jinja_env.globals["search_hint"] = _search_hint
+    app.jinja_env.globals["search_title"] = _search_title
     app.jinja_env.filters["value_delta"] = _value_delta.compute
     app.jinja_env.filters["delta_describe"] = _value_delta.describe
 

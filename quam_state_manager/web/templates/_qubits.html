@@ -1,7 +1,8 @@
 <div class="table-header-row">
     <h2>Qubits <small class="muted">({{ total }}{% if active_chain %} &mdash; Chain {{ active_chain }}{% endif %})</small></h2>
     <div class="table-filter">
-        <input type="search" placeholder="Filter qubits..." autocomplete="off"
+        <input type="search" placeholder="{{ search_hint() }}" title="{{ search_title() }}"
+               aria-label="Filter qubits" autocomplete="off"
                oninput="filterTable(this, 'qubits-table')">
         <small id="qubits-table-filter-count" class="muted"></small>
     </div>

@@ -203,7 +203,7 @@
       <div class="tree-toolbar diff-tree-toolbar">
         <span class="tree-search-icon">&#128269;</span>
         <input type="text" class="tree-search" id="diff-tree-search"
-               placeholder="Search the differences…" autocomplete="off"
+               placeholder="{{ search_hint() }}" title="{{ search_title() }}" autocomplete="off"
                oninput="jsonTreeSearch('diff-tree', this.value)">
         <div class="tree-depth-group">
           <span class="tree-depth-label">Depth:</span>

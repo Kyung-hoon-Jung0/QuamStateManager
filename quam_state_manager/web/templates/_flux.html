@@ -1,7 +1,8 @@
 <div class="table-header-row">
     <h2>Flux <small class="muted">({{ total }}{% if active_chain %} &mdash; Chain {{ active_chain }}{% endif %})</small></h2>
     <div class="table-filter">
-        <input type="search" placeholder="Filter flux channels..." autocomplete="off"
+        <input type="search" placeholder="{{ search_hint() }}" title="{{ search_title() }}"
+               aria-label="Filter flux channels" autocomplete="off"
                oninput="filterTable(this, 'flux-table')">
         <small id="flux-table-filter-count" class="muted"></small>
     </div>
