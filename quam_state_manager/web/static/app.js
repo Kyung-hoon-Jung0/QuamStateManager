@@ -153,13 +153,20 @@ var UI_CONFIG = {
         twpa_ro:   '#a93226',   /* TWPA readout        — dark red */
         twpa_in:   '#d63384',   /* TWPA input          — magenta  */
         digital:   '#54617a',   /* Digital output / trigger — slate */
-        z_qdac:    '#f1c40f',   /* Bias-tee flux port (z + QDAC-II) — amber.
+        z_qdac:    '#a9791c',   /* Bias-tee flux port (z + QDAC-II) — dark amber.
                                    Its own colour on purpose (docs/136 r2):
                                    the dashed-ring mark was invisible at port
                                    size. Amber is the widest free hue gap in
                                    this palette — gold rr_in is orange-family
                                    and lives on MW-FEM input columns, never
-                                   beside an LF-FEM z output. */
+                                   beside an LF-FEM z output.
+                                   docs/141 4ah (user): darkened from #f1c40f so
+                                   the label can be WHITE like every other port
+                                   — the bright fill forced a black label, and
+                                   one port lettered differently from the rest
+                                   read as a rendering fault rather than as a
+                                   role. Contrast on white at this darkness is
+                                   4.6:1 (WCAG AA for the bold 700 label). */
         fallback:  '#999999',   /* any unrecognised role — gray   */
     },
 
@@ -9051,9 +9058,12 @@ function _appendPortCircle(svg, cx, cy, r, roleColors, assignment, rawWiring, ed
     } else {
         fontSize = 7;  // multi-member feedline sub-circles
     }
-    // White text fails on the amber bias-tee fill — dark label there instead.
+    // docs/141 4ah (user): ONE label colour for every port. The bias-tee fill is
+    // dark enough for white now, so the black label that the bright amber
+    // needed is gone — a port whose lettering differs from its neighbours reads
+    // as a glitch, not as a role, and the fill already carries the role.
     var txt = _svgText(cx, cy + Math.round(fontSize * 0.36), display, fontSize, '700',
-        qdacShared ? '#1f2430' : UI_CONFIG.instrumentWiring.portLabelColor, 'middle');
+        UI_CONFIG.instrumentWiring.portLabelColor, 'middle');
     txt.setAttribute('font-family', 'monospace');
     g.appendChild(txt);
 

@@ -1553,6 +1553,46 @@ including the two the first version of the pins MISSED: a warning whose guard is
 disabled, and one that stops naming the coupler-less route. A message in the
 source proves nothing if nothing reaches it.
 
+## 4ag. A QDAC-II has four trigger sockets, so a chip cannot have twelve (2026-08-31, user-directed)
+
+> "qdac2는 external trigger를 총 4개만 받아 … 즉, 우리는 digital port 4개만 쓰고,
+> 각각의 digital port에 중복해서 qubit을 할당해야해. qdac이 1대만 있거든."
+
+`_allocate_qdac_triggers` gave every QDAC-biased qubit its OWN dedicated digital
+output — a docs/119 decision recorded in its own docstring as "simpler, and
+correct per the 'no port sharing' UI decision". It is not correct: a QDAC-II has
+exactly four external trigger inputs, and an ext input is a physical socket, so
+every qubit armed on the same ext is BY DEFINITION on the same cable. Measured on
+the 17Q reproduction: **12 biased qubits produced 12 digital output ports** for
+four sockets — a chip that cannot be built. (The pinned path already shared
+correctly, from docs/135 ⑤; only the auto path invented ports.)
+
+The auto pass now allocates **one port per distinct ext** and maps that ext's
+other qubits onto it, and says so: `ext1 -> 4 qubits, ext2 -> 3 qubits, …` plus
+the reason (qubits on one cable arm together — the operational limit of owning a
+single QDAC). Re-measured on the same chip with all 13 qubits biased: **4 digital
+ports, port N ↔ extN**, 3–4 qubits each, `generate_config()` declaring digital
+outputs 1–4 on one FEM. A qubit that declares no ext still allocates its own port
+— there is nothing to group it with, and guessing a socket is worse than a port.
+
+## 4ah. One label colour for every port (2026-08-31, user feedback)
+
+> "노란색에 검은색 폰트로 q2, q3 이렇게 써있는데, 이거 좀 더 진한 dark yellow 색상으로
+> 하고, font color는 다른 port와 동일하게 white로 통일해줄수 있어?"
+
+docs/136 r2 gave the bias-tee port an amber fill (`#f1c40f`) bright enough that a
+white label failed contrast, so that one port was lettered black while every
+other port in the rack is white. On the real rack that reads as a rendering
+fault, not as a role — the fill is already carrying the role. The fill is
+`#a9791c` now (4.6:1 against white, AA for the bold 700 label) and the label
+colour branch is gone: `UI_CONFIG.instrumentWiring.portLabelColor` for every
+port, no exceptions. `/flux`'s `.flux-src-tee` chip follows the same value, since
+its whole point is that "bias tee" is ONE colour app-wide. Verified in real
+Chrome on the 17Q chip: 12 tee ports at `#a9791c` with `#ffffff` labels, a plain
+z port at `#3498db` with the same `#ffffff`. Pinned by
+`instrument_qdac_selfcheck.cjs`, whose label assertion now compares the two ports
+to each other rather than pinning two different literals.
+
 ## 5. Tooling that came out of the night
 
 `scratchpad/cdp_dsearch.js` (the diff search box end to end, §4ad),

@@ -2588,11 +2588,13 @@ th.sortable.sort-desc::after { content: '\25BC'; opacity: 0.8; }
 .flux-src-qdac { color: var(--color-accent); border-color: var(--color-accent); }
 .flux-src-tee {
     /* docs/136 r2 — the same amber as the bias-tee port on the wiring diagram
-       (UI_CONFIG.roleColors.z_qdac), so "bias tee" is ONE colour app-wide. A
-       darker text shade of it here for AA contrast on the light background;
-       the dash is kept as the "two sources on one line" secondary cue. */
-    color: #9a7d00; border-color: #d4ac0d;
-    background: rgba(241, 196, 15, 0.13);
+       (UI_CONFIG.roleColors.z_qdac), so "bias tee" is ONE colour app-wide. The
+       dash is kept as the "two sources on one line" secondary cue.
+       docs/141 4ah: the port fill was darkened to #a9791c so its label could be
+       white like every other port's; this chip follows it, or the two surfaces
+       stop naming the same thing with the same colour. */
+    color: #a9791c; border-color: #a9791c;
+    background: rgba(169, 121, 28, 0.14);
     border-style: dashed;
 }
 

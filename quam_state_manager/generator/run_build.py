@@ -1138,7 +1138,26 @@ def _allocate_qdac_triggers(spec: dict, instruments) -> tuple[dict, list, dict]:
                 f"{ext_port[ext][2]}) — one OPX digital output arms every "
                 f"qubit on that ext input.")
 
+    # docs/141 4ag (user, hardware): a QDAC-II has exactly FOUR external
+    # trigger inputs, and one QDAC means at most four cables. An ext input is a
+    # physical socket, so every qubit armed on the same ext is BY DEFINITION on
+    # the same cable — the old "one dedicated digital output per biased qubit"
+    # default produced a chip that cannot be built (12 biased qubits -> 12
+    # digital ports for 4 sockets, measured on the 17Q reproduction). Allocate
+    # ONE port per distinct ext and let its qubits share it; that costs the
+    # operational limitation the lab already lives with (qubits on one cable
+    # arm together) and is the only wiring that exists.
     unpinned = [q for q in qids if q not in pinned]
+    ext_of = {q: (qdac_qubits.get(q) or {}).get("trigger_port") for q in unpinned}
+    # one representative per ext; a qubit that declares no ext cannot be grouped
+    reps: dict = {}
+    for q in unpinned:
+        ext = ext_of.get(q)
+        if ext:
+            reps.setdefault(ext, q)
+    followers = {q: reps[ext_of[q]] for q in unpinned
+                 if ext_of.get(q) and reps[ext_of[q]] != q}
+    unpinned = [q for q in unpinned if q not in followers]
     if not unpinned:
         return dict(pinned), warnings, _pinned_allocation()
     try:
@@ -1230,6 +1249,29 @@ def _allocate_qdac_triggers(spec: dict, instruments) -> tuple[dict, list, dict]:
             ch["con"], ch["slot"], ch["port"] = triple
         taken.add(triple)
         pins[qid] = triple
+
+    # 4ag: every qubit that shares an ext joins the port its representative got.
+    # One cable, one socket -- the sharing is the hardware, not a saving.
+    for qid, rep in followers.items():
+        if rep in pins:
+            pins[qid] = pins[rep]
+            allocation[qid] = {"qt": [{
+                "instrument_id": _fem_kind_at(spec, *pins[rep][:2]),
+                "con": pins[rep][0], "slot": pins[rep][1], "port": pins[rep][2],
+                "io_type": "digital", "signal_type": "digital",
+            }]}
+    if followers:
+        by_ext: dict = {}
+        for qid in list(followers) + list(reps.values()):
+            by_ext.setdefault(ext_of.get(qid), []).append(qid)
+        shared = ", ".join(
+            f"{ext} -> {len(qs)} qubits" for ext, qs in sorted(by_ext.items())
+            if len(qs) > 1)
+        if shared:
+            warnings.append(
+                "QDAC trigger cabling shares one OPX digital output per ext "
+                f"input ({shared}). A QDAC-II has four ext sockets, so qubits "
+                "on the same ext are on the same cable and arm together.")
 
     missing = sorted(set(qids) - set(pins))
     if missing:
