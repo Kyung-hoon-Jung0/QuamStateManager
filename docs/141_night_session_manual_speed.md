@@ -1516,6 +1516,43 @@ bare global creeping back). One thing to record for the next person: writing
 in `test_calc.py`, which slices from the first occurrence of that literal — the
 comment was rephrased, not the pin.
 
+## 4af. A declared pair that built nothing, and said nothing (2026-08-31, user-directed)
+
+Found while reproducing the customer's SNU_17Q chip for KH_20260824. That chip's
+16 `FluxTunableTransmonPair`s all carry `coupler: None` — their CZ moves one
+qubit's own flux — so the spec was written with the 16 pairs declared and no
+coupler line. The build reported **`ok: True`, no warnings**, and produced a chip
+with **zero pairs**.
+
+**I first told the user SM's line vocabulary could not express this. That was
+wrong, and worth recording as the actual lesson.** A pair materialises from a
+pair LINE (`coupler` / `cross_resonance` / `zz_drive`, each of which allocates a
+DC channel) **or** from the `pair_gate: "cz_fixed"` gate, which
+`_finalize_pair_gates` creates with `coupler: None` and seeds the CZ macros on
+the moving qubit's z. That is exactly the coupler-less pair. Setting it produced
+all 16 pairs with the same five macros the real 17Q pairs carry
+(`cz_unipolar`, `cz_flattop`, `cz_bipolar`, `cz_SNZ`, `cz_flattop_erf`),
+`coupler: None`, `moving_qubit: control` — from SM's own generator, with no
+post-step.
+
+So the gap was never the vocabulary; it was the **silence**. Declaring pairs and
+giving neither a line nor the gate is a spec that cannot do what it says, and
+nothing said so — the chip looked built, and the absence only surfaces when
+someone runs a two-qubit node on it. `_declared_pairs_not_built(spec, machine)`
+now reports those ids in the build result (`pairs_declared_not_built`) and raises
+a warning naming BOTH ways out, including that the gate's pair has no coupler —
+because sending a chip that has no couplers down the line route costs a DC
+channel per pair it does not have. On the 17Q spec the LF budget makes that fatal
+rather than merely wasteful: 3 LF-FEMs are 24 channels, 13 go to flux, and 16
+couplers do not fit in the remaining 11 (the original attempt died as
+`NotEnoughChannelsException`, which named a channel shortage rather than the
+design mistake behind it).
+
+Pinned by `tests/test_pairs_declared_not_built.py` (11), mutation-checked 7/7 —
+including the two the first version of the pins MISSED: a warning whose guard is
+disabled, and one that stops naming the coupler-less route. A message in the
+source proves nothing if nothing reaches it.
+
 ## 5. Tooling that came out of the night
 
 `scratchpad/cdp_dsearch.js` (the diff search box end to end, §4ad),
