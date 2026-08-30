@@ -11879,7 +11879,9 @@ td.vc-cell-takeable:focus-within .vc-take,
    the count of differing keys beneath each container. */
 .dp-key-col { min-width: 16rem; max-width: 30rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     padding-left: calc(0.55rem + var(--dp-depth, 0) * 1.05em) !important; }
-.dp-key { font-family: var(--pico-font-family-monospace, monospace); font-size: 0.95rem; color: var(--pico-color); }
+/* user feedback (4ab'): the same face and size as the value cells, only a
+   touch heavier -- a monospace key a size up read as "too big" beside them */
+.dp-key { font-family: inherit; font-size: 1em; color: var(--pico-color); }
 .dp-key-dir { font-weight: 600; }
 .dp-key-leaf { font-weight: 500; }
 .dp-toggle { all: unset; cursor: pointer; display: inline-block; width: 1.1em; text-align: center; color: var(--pico-muted-color); margin-right: 0.15em; }

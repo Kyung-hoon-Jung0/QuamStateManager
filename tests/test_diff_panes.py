@@ -87,6 +87,16 @@ class TestTreeRows:
             ("dir", "a", 0), ("dir", "a.b", 1), ("leaf", "a.b", 2), ("leaf", "a.b.c", 2)]
 
 
+def test_keys_share_the_values_face_and_size():
+    """4ab' (user): keys read in the same face/size as the value cells, only a touch heavier."""
+    css = (_ROOT / "quam_state_manager/web/static/style.css").read_text(encoding="utf-8")
+    i = css.index("\n.dp-key {")
+    rule = css[i:css.index("}", i)]
+    assert "font-family: inherit" in rule and "font-size: 1em" in rule and "monospace" not in rule
+    assert "color: var(--pico-color)" in rule
+    assert ".dp-key-leaf { font-weight: 500; }" in css and ".dp-key-dir { font-weight: 600; }" in css
+
+
 def test_the_bundle_ships_the_client():
     base = (_ROOT / "quam_state_manager/web/templates/base.html").read_text(encoding="utf-8")
     assert "'compare': ['topo-graph.js', 'compare-hub.js', 'diff-panes.js']" in base

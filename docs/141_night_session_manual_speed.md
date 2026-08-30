@@ -1325,6 +1325,10 @@ else, Depth 1 leaves the qubit rows, All restores, key font 19.95 px in
 (now 32; the no-ancestor-walk and depth-off-by-one mutations fail it),
 `TestTreeRows` in `test_diff_panes.py`, and the tree rows in
 `test_diff_three_way.py`.
+**Same-day amendment (user):** the monospace key one size up read as "too
+big" beside the values — keys now inherit the value cells' face and size
+(measured 16.8 px system sans on both) and differ only in weight (leaf 500,
+container 600 vs 400). Pinned by `test_keys_share_the_values_face_and_size`.
 
 ## 5. Tooling that came out of the night
 
