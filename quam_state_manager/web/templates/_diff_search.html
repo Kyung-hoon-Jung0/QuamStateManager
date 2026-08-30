@@ -1,0 +1,15 @@
+{# docs/141 4ad (user): the search box the diff never had.
+
+   One widget for the pane view and the list view — the two surfaces that
+   showed hundreds of differing keys with no way to reach one. The FILTER is
+   client-side (diff-panes.js) over the rows the page already holds, with the
+   app's one search grammar (window.SearchQuery — space = AND, a standalone
+   `|` = OR, docs/96), so a keystroke costs no round trip. The query rides
+   `?q=` only so the box comes back filled after a tab switch, a source
+   change or a "Show more"; the server never filters by it. #}
+<span class="tree-search-icon" aria-hidden="true">&#128269;</span>
+<input type="search" class="dp-search" value="{{ q }}" autocomplete="off"
+       placeholder="Search keys and values…"
+       aria-label="Filter the differences by key or value"
+       title="Space = AND, a standalone | = OR. Matches the key path and the values on screen.">
+<span class="dp-search-count muted" aria-live="polite"></span>

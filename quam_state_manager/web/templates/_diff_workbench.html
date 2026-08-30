@@ -145,6 +145,10 @@
     {% elif view == 'panes' %}
       {% include '_diff_panes.html' %}
     {% elif view == 'list' %}
+      {# docs/141 4ad: the list had no search either -- same box, same
+         grammar, flat rows (there is no tree to keep open here). #}
+      <div id="diff-list" class="diff-list-wrap" data-more="{{ more }}">
+      <div class="diff-panes-tools">{% include '_diff_search.html' %}</div>
       <table class="diff-wb-list">
         <thead><tr><th>Parameter</th><th>A</th><th></th><th>B</th><th>Δ</th>{% if _take_from %}<th></th>{% endif %}</tr></thead>
         <tbody>
@@ -186,6 +190,7 @@
         {% endfor %}
         </tbody>
       </table>
+      </div>
       {% if more %}
       <div class="ph-changes-more">
         <button type="button" class="btn-sm outline"

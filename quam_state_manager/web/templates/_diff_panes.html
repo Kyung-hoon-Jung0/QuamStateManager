@@ -21,13 +21,16 @@
    painted server-side so the page is right before any script runs. #}
 {% from '_delta_macros.html' import delta_chip %}
 {% set n = srcs | length %}
-<div class="diff-panes-wrap" id="diff-panes" data-base="{{ base }}" data-n="{{ n }}">
+<div class="diff-panes-wrap" id="diff-panes" data-base="{{ base }}" data-n="{{ n }}"
+     data-more="{{ more }}">
   <p class="muted diff-panes-note">
     {{ n }} sources · only keys whose values differ between at least two of them are listed
     ({{ '{:,}'.format(payload.counts.same) }} agree) · cells that differ from the
     <b>baseline</b> are highlighted — click a pane title to make it the baseline.
   </p>
   <div class="diff-panes-tools">
+    {% include '_diff_search.html' %}
+    <span class="dp-tools-sep"></span>
     <span class="tree-depth-label">Depth:</span>
     <button type="button" class="btn-xs outline dp-depth" data-depth="0" title="Collapse every container">0</button>
     <button type="button" class="btn-xs outline dp-depth" data-depth="1">1</button>
@@ -61,7 +64,8 @@
           <td class="dp-key-col">
             <button type="button" class="dp-toggle" aria-expanded="true" title="Collapse / expand">&#9662;</button>
             <span class="dp-key dp-key-dir">{{ t.name }}</span>
-            <span class="dp-count" title="{{ t.count }} differing key{{ '' if t.count == 1 else 's' }} inside">{{ t.count }}</span>
+            <span class="dp-count" data-count="{{ t.count }}"
+                  title="{{ t.count }} differing key{{ '' if t.count == 1 else 's' }} inside">{{ t.count }}</span>
           </td>
           {% for src in srcs %}<td class="dp-cell dp-cell-dir" data-i="{{ loop.index0 }}"></td>{% endfor %}
         </tr>

@@ -27,6 +27,8 @@ def test_diff_panes_selfcheck():
                          capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
     assert res.returncode == 0, res.stdout + res.stderr
     assert "ok - a tab-strip request is rewritten to the current baseline" in res.stdout
+    assert "ok - two words are AND (SearchQuery)" in res.stdout
+    assert "ok - a search expands the containers on the way to a hit" in res.stdout
 
 
 class TestRowGroups:
@@ -105,3 +107,20 @@ def test_the_bundle_ships_the_client():
     # the client never re-derives equality: it reads the server's groups
     assert "data-groups" in js and "compare_equal" not in js and "parseFloat(" not in js
     assert "applyVisibility" in js and "data-collapsed" in js, "the key tree collapses client-side"
+
+    # docs/141 4ad: the search is the app's ONE grammar, filtering client-side
+    assert "window.SearchQuery.groups" in js and "window.SearchQuery.matchesHay" in js, \
+        "the diff search must use the shared grammar, not a private tokenizer"
+    assert "data-nomatch" in js and "data-more" in js, \
+        "rows are marked, and the unloaded rest is named"
+
+
+def test_the_search_box_is_one_partial_for_both_views():
+    """4ad: the pane view and the list view render the SAME widget -- two
+    copies would drift the way the five search boxes docs/96 unified did."""
+    root = _ROOT / "quam_state_manager/web/templates"
+    part = (root / "_diff_search.html").read_text(encoding="utf-8")
+    assert 'type="search"' in part and 'class="dp-search"' in part
+    assert 'value="{{ q }}"' in part
+    for name in ("_diff_panes.html", "_diff_workbench.html"):
+        assert "_diff_search.html" in (root / name).read_text(encoding="utf-8"), name

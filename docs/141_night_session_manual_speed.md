@@ -1330,6 +1330,87 @@ big" beside the values — keys now inherit the value cells' face and size
 (measured 16.8 px system sans on both) and differ only in weight (leaf 500,
 container 600 vs 400). Pinned by `test_keys_share_the_values_face_and_size`.
 
+## 4ad. The diff had no search (2026-08-30, user-directed)
+
+> "잘 되었는데, 검색 feature가 전혀 없네? live edit이나 json tree view에 있는 검색말이야."
+
+Correct, and it was the one surface with hundreds of rows and no way to reach
+one: the pane view (§4z/§4ab) and the list view had no search box at all. The
+2-way TREE view has had one since docs/84 (`jsonTreeSearch`), which is exactly
+why the gap read as an inconsistency rather than as a missing feature.
+
+**One box, one grammar, both views.** `_diff_search.html` is a single partial
+included by `_diff_panes.html` and by the list branch of `_diff_workbench.html`
+— two copies would drift the way the five search boxes docs/96 unified did. It
+is `input[type=search]`, so `/` (docs/113's focus-search) reaches it with no new
+wiring, and matching is `window.SearchQuery` (space = AND, a standalone `|` =
+OR, tight-binding — docs/96), never a private tokenizer.
+
+**Client-side, because the rows are already here.** Every row the page holds is
+in the DOM, so a keystroke costs no round trip and no re-render. A leaf shows
+when the AND-of-OR groups all match its haystack — its dot path plus every
+pane's value in BOTH forms, the raw one (`data-v`) and the grouped one on
+screen, so `7003542323` and `7,003,542,323` find the same row. A container shows
+when a matching leaf is beneath it (an ancestor walk over `data-parent`, the
+same map the collapse walk uses), and its count chip re-counts to the matches
+(`3` → `1 of 3 differing keys match`), restoring `data-count` when the box
+clears.
+
+**A hit you cannot see is not a hit.** A search expands the containers on the
+way to a match, and restores the collapse state it found when the box is cleared
+— unless the user collapsed something themselves during the search, in which
+case their state wins and nothing is restored. Measured on the real chip: Depth
+0 (80 containers collapsed, 1 row visible) → typing `q11` opens exactly the 13
+rows of that subtree and leaves 73 containers collapsed → clearing puts all 80
+back.
+
+**The query rides the URL, and the server still does not filter.** `?q=` is
+echoed into the box (escaped, capped at 200 chars) and carried onto every /diff
+request the workbench issues, as a PARAMETER only (no button's URL holds one, so
+htmx appends it exactly once) — the same `htmx:configRequest` channel §4z uses
+for the baseline. So a tab switch, a source change or a "Show more" comes back
+with the box still filled and the filter re-applied. What the server must NOT do
+is filter by it: the counts above the table (`28 changed · 3,816 identical`)
+describe the whole diff, and a server-side filter would silently make them
+describe what someone typed instead. Pinned by an equality test over the two
+rendered pages.
+
+**Honest about what it could not see.** The row set is paged
+(`_DIFF_LIST_PAGE = 300`), so with rows still unloaded the count reads
+`21 of 91 keys · 1,957 more not loaded` — the "Show N more" button below is
+still the way to load them, and it now carries the query too. And a
+filtered-to-nothing table is a header over blank space, which reads as broken:
+`.dp-empty-note` says `No key matches "zzzz" — the search reads key paths and
+the values on screen` under the table, where the user is looking.
+
+**One §4ab defect fell out of writing this.** The collapse walk keyed its
+path → row map last-wins, so for a leaf that is ALSO a container on another side
+(both rows carry the same `data-path`, and the leaf's parent IS its own path) the
+walk found the leaf, read its parent as itself, and spun to the 64-guard —
+collapsing that container hid its children but not its own value row. The map now
+prefers the `dp-dir` row, which is the only row that can be collapsed.
+
+**Real Chrome, the PJ_10082026 chip against 3 runs of the 2025-06-24 archive**
+(171 rows / 91 differing keys): `/` focuses the box; typing through Chrome's own
+input pipeline gives `q11` → `6 of 91 keys`, `RF_frequency` → 21,
+`q11 resonator` → none (AND), `RF_frequency | T1` → 21 (OR), a pasted value
+`1.6717958988072346e-05` → the one row that holds it; Escape clears from inside
+the box; switching to node.json keeps `&q=resonator` in the URL and re-applies it
+(`1 of 107 keys`); a baseline switch leaves the filter alone; zero console
+errors. Two sources, List view: `q11` → `3 of 45 rows`, and the query carried
+across the view switch.
+
+Pinned by `diff_panes_selfcheck.cjs` (32 → 60 assertions), `TestSearchBox` in
+`test_diff_three_way.py` and the partial/grammar pins in `test_diff_panes.py`.
+Mutation-checked 13/13 client (filter ignored, no auto-expand, no restore, a
+manual toggle no longer winning, the map regression above, the unloaded rest
+unnamed, the query not riding the request, chips keeping the full count, Escape
+dead, the list filter hiding nothing, no empty note, the note never leaving, AND
+silently becoming OR) and 8/8 server (query not echoed, unbounded, the server
+filtering, either view dropping the box, the chips losing `data-count`, the
+paging truth unpublished, and `data-more` decorative rather than the real
+remainder — the number the search reports as unsearchable).
+
 ## 5. Tooling that came out of the night
 
 `scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js` (+ daytime: `cdp_profile.js` function-level CPU profile, `cdp_trace.js` per-phase trace of one keystroke, `cdp_type.js` char-by-char typing with a gap + debounce override, `cdp_undo.js` trusted Ctrl+Z/Ctrl+Shift+Z through the page's own UI, `cdp_virt.js` virtualization sampler): Chrome headless with the
@@ -1344,5 +1425,7 @@ localhost). Used for every number above and for four visual checks.
 `config_manual_selfcheck.cjs`, `test_undo_trail.py` + `undo_trail_selfcheck.cjs` +
 `tree_search_list_selfcheck.cjs`, `bulk_search_selfcheck.cjs` (class-selector hide),
 `ctrlz_selfcheck.cjs` (new fallback contract), `test_bulk_markup.py` +
-`bulk_markup_selfcheck.cjs` (§4m). Every new pin mutation-checked
+`bulk_markup_selfcheck.cjs` (§4m), `diff_panes_selfcheck.cjs` +
+`test_diff_panes.py` + `test_diff_three_way.py::TestSearchBox` (§4ad).
+Every new pin mutation-checked
 (3/3, 6/6, 7/7, 5/5); a wrong mutation and two vacuous pins were found and rewritten.

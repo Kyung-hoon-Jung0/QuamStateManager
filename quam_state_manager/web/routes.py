@@ -14452,6 +14452,14 @@ def diff_view():
     # the first screenful.
     limit = _int_arg("rows", _DIFF_LIST_PAGE, minimum=1)
     limit = min(limit, json_diff.ROW_CAP)
+    # docs/141 4ad: the search box over the pane / list rows. The FILTER is
+    # client-side (every row the page holds is already in the DOM, so a
+    # keystroke costs no round trip); the query rides the URL only so that a
+    # tab switch, a source change or a "Show more" comes back with the box
+    # still filled -- the same "a tab keeps its state" contract PaneState
+    # gives every other surface. The server never filters by it: the counts
+    # above the table would then describe a population nobody asked about.
+    q = (request.args.get("q") or "").strip()[:200]
     if not a_ref and not b_ref:
         a_ref, b_ref = _diff_default_refs()
 
@@ -14524,6 +14532,7 @@ def diff_view():
                slots=_DIFF_SLOTS, slot_srcs=slot_srcs, tree_rows=tree_rows,
                src_a=src_a, src_b=src_b, src_c=src_c, payload=payload, error=error,
                rows=rows, more=more, next_rows=limit + _DIFF_LIST_PAGE,
+               q=q, all_rows=limit + more,
                take_active_ok=take_active_ok,
                tabs=_DIFF_TABS, options=_diff_source_options()))
 
