@@ -228,6 +228,73 @@ ok(!req.defaultPrevented,
     ok(downstream === 1, 'a real nav still reaches downstream listeners');
 }
 
+// -- 8b. docs/141 4ae (CRITICAL): park reads the offsets BEFORE detaching --
+// _park moved every child out of the pane and THEN read scrollTop/scrollLeft.
+// An element with nothing left to overflow is clamped to 0,0 by the browser,
+// so the capture was 0 every time: measured in real Chrome on the 20Q chip
+// (247 columns, 53,000 px wide) as parked {3000,400} -> captured {0,0} ->
+// restored {0,0}, i.e. EVERY keep-route return landed in the top-left corner
+// and 4ac's scrollX was a no-op from the day it was added.
+// jsdom has no layout and answers the stored number whether the element has
+// children or not, so the pane is given the browser's rule here — without
+// this emulation the pin below passes on the broken code too.
+function fakeScroll(el) {
+    var st = 0, sl = 0, writes = [];
+    Object.defineProperty(el, 'scrollTop', {
+        configurable: true,
+        get: function () { return el.firstChild ? st : 0; },
+        set: function (v) { st = el.firstChild ? (Number(v) || 0) : 0; writes.push('top:' + st); },
+    });
+    Object.defineProperty(el, 'scrollLeft', {
+        configurable: true,
+        get: function () { return el.firstChild ? sl : 0; },
+        set: function (v) { sl = el.firstChild ? (Number(v) || 0) : 0; writes.push('left:' + sl); },
+    });
+    return writes;
+}
+{
+    // the emulation itself, on a scratch node: emptied ⇒ 0 (the Chrome rule)
+    const probe = doc.createElement('div');
+    probe.innerHTML = '<i>x</i>';
+    fakeScroll(probe);
+    probe.scrollTop = 400; probe.scrollLeft = 3000;
+    const probeBefore = probe.scrollTop + '/' + probe.scrollLeft;
+    while (probe.firstChild) probe.removeChild(probe.firstChild);
+    ok(probeBefore === '400/3000' && probe.scrollTop === 0 && probe.scrollLeft === 0,
+       'scroll-restore: the harness pane clamps to 0,0 when emptied, like a browser');
+
+    const p0 = pane();
+    const writes = fakeScroll(p0);
+    window.PaneState.clear();
+    swapTo('/bulk', '<div id="bulk-scrolled">grid</div>');
+    p0.scrollTop = 400; p0.scrollLeft = 3000;          // the user scrolls the grid
+    swapTo('/explorer', '<div id="ex-fresh">explorer</div>');   // park /bulk
+    const parked = window.PaneState._stash()['/bulk'];
+    ok(!!parked && parked.scroll === 400 && parked.scrollX === 3000,
+       'park captures the pane offsets BEFORE the children are detached (got '
+       + JSON.stringify(parked ? { scroll: parked.scroll, scrollX: parked.scrollX } : null)
+       + ', want {scroll:400,scrollX:3000})');
+    let atRestore = null;
+    const onRestored = function () {
+        atRestore = { st: p0.scrollTop, sl: p0.scrollLeft, writes: writes.length };
+    };
+    doc.addEventListener('paneRestored', onRestored);
+    writes.length = 0;
+    swapTo('/bulk', '<div id="fresh-bulk">fresh server render</div>');
+    doc.removeEventListener('paneRestored', onRestored);
+    ok(!doc.getElementById('fresh-bulk'), 'scroll-restore: the parked grid came back');
+    ok(writes.indexOf('top:400') >= 0 && writes.indexOf('left:3000') >= 0,
+       'restore WRITES both offsets back onto the pane (got ' + JSON.stringify(writes) + ')');
+    ok(p0.scrollTop === 400 && p0.scrollLeft === 3000,
+       'the pane lands where the user left it (got ' + p0.scrollTop + '/' + p0.scrollLeft + ')');
+    // docs/141 4ac: bulk-edit.js re-derives the toolbar rows' translateX from
+    // #table-pane.scrollLeft inside this very handler, so the sideways
+    // position has to be on the pane BEFORE the event, not after.
+    ok(!!atRestore && atRestore.sl === 3000 && atRestore.st === 400,
+       'both offsets are already in place when paneRestored fires (got '
+       + JSON.stringify(atRestore) + ')');
+}
+
 // -- 9. Back after a skip-nav: content-route mismatch refetches (docs/139) --
 // Measured live before the fix: the skip pushes URLs htmx has no snapshot
 // for, so Back left /bulk's grid standing under /explorer -- not blank, so

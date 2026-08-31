@@ -23,6 +23,8 @@ try { ({ JSDOM } = require('jsdom')); } catch (e) {
 }
 
 const ROOT = path.join(__dirname, '..');
+const GRID_VIRT_JS = fs.readFileSync(
+    path.join(ROOT, 'quam_state_manager', 'web', 'static', 'grid-virt.js'), 'utf8');
 const BULK_JS = fs.readFileSync(
     path.join(ROOT, 'quam_state_manager', 'web', 'static', 'bulk-edit.js'), 'utf8');
 const PAIR_JS = fs.readFileSync(
@@ -83,7 +85,8 @@ function world() {
         { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/' });
     const win = dom.window;
     win.htmx = { ajax: function () {} };
-    new win.Function(BULK_JS).call(win);
+    new win.Function(GRID_VIRT_JS).call(win);
+  new win.Function(BULK_JS).call(win);
     new win.Function(PAIR_JS).call(win);
     return win;
 }
@@ -163,6 +166,40 @@ function cell(win, sel) { return win.document.querySelector(sel); }
        'readOnly: the cell is not written');
     ok((r.covered || []).indexOf('qubits.q1.locked') < 0,
        'readOnly: and the entry is NOT covered (nothing was repainted)');
+    // Review of 4ffee11: a FOUND-but-unwritable cell is uncovered (the
+    // caller's rebuild clears a stale badge); a path with NO cell is merely
+    // missing -- that one used to cost the 2.4 s whole-grid re-GET on every
+    // inspector / tree Ctrl+Z.
+    ok((r.uncovered || []).indexOf('qubits.q1.locked') >= 0,
+       'readOnly: a found-but-unwritable cell IS uncovered (docs/124 M-10 kept)');
+    const rm = win.BulkEdit.revertPaths([{
+        dot_path: 'qubits.q1.xy.operations.saturation.length', old_value_str: '1000', old_value_disp: '1,000',
+        old_kind: 'int',
+    }]);
+    ok(rm.missing === 1 && (rm.uncovered || []).length === 0,
+       'a path with no cell on the grid is missing, NOT uncovered (no rebuild for an off-grid undo)');
+    // the qubit grid's list column: a preview span (+ ✎), no input at all
+    const tr = win.document.querySelector('#bulk-table tbody tr');
+    const td = win.document.createElement('td'); td.className = 'bulk-td';
+    td.innerHTML = '<span class="bulk-cell-list bulk-cell-modified" data-path="qubits.q1.z.filters">[1, 2]…</span>'
+                 + '<button type="button" class="bulk-list-edit">✎</button>';
+    tr.appendChild(td);
+    const rl = win.BulkEdit.revertPaths([{
+        dot_path: 'qubits.q1.z.filters', old_value_str: '[]', old_value_disp: '[]', old_kind: 'list',
+    }]);
+    ok((rl.uncovered || []).indexOf('qubits.q1.z.filters') >= 0 && rl.missing === 0,
+       'listedit: the preview span is FOUND and uncovered (its edited preview + red marker need the rebuild)');
+    // the pair grid's list / runtime columns are readonly inputs: same contract
+    const ptr = win.document.querySelector('#bulk-pair-table tbody tr');
+    const ptd = win.document.createElement('td'); ptd.className = 'bulk-td';
+    ptd.innerHTML = '<input type="text" class="bulk-cell bulk-cell-ro" readonly value="[1]" data-orig="[1]"'
+                  + ' data-dot-path="qubit_pairs.p1.macros.cz.filters" data-resolved="qubit_pairs.p1.macros.cz.filters">';
+    ptr.appendChild(ptd);
+    const rp = win.BulkPairEdit.revertPaths([{
+        dot_path: 'qubit_pairs.p1.macros.cz.filters', old_value_str: '[]', old_value_disp: '[]', old_kind: 'list',
+    }]);
+    ok((rp.uncovered || []).indexOf('qubit_pairs.p1.macros.cz.filters') >= 0 && rp.missing === 0,
+       'pair grid: a readonly (list/runtime) cell is FOUND and uncovered');
 }
 
 // ── M-8: the pair grid's alias twin gets value AND baseline, no phantom dirty

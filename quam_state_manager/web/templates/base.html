@@ -48,13 +48,12 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='pico.min.css') }}">
     {# Stylesheet up top so CSS downloads in parallel with the scripts. #}
     <link rel="stylesheet" href="{{ asset_url('style.css') }}">
-    {# Scripts load eagerly (NOT deferred): UI_CONFIG (app.js) and DatasetVirtual
-       (dataset-virtual.js) are read by parse-time inline scripts in full-page
-       template renders (e.g. /topology, /trends, /datasets on direct load or
-       refresh), so they must be defined before the <body> parses. Deferring them
-       silently broke those pages on full-page load. The app is served locally,
-       so eager JS costs ~nothing. Plotly is the one exception — it's lazy-loaded
-       on demand via window.requirePlotly() (see app.js), never eagerly. #}
+    {# Scripts load eagerly (NOT deferred): UI_CONFIG (app.js) is read by
+       parse-time inline scripts in full-page template renders (e.g. /topology,
+       /trends, /datasets on direct load or refresh); the page BUNDLES below
+       (docs/141 4l) are eager <head> tags for the same reason -- only their
+       set depends on the page. Deferring them left the globals undefined and
+       silently broke (or threw on) those pages. #}
     {# docs/124 §1.1 (the settle fix): htmx 2.0.4's attribute settle restores an
        id-matched element's class/style to the incoming MARKUP values ~20ms after
        every swap — wiping anything a script set during the swap window. That one
@@ -73,27 +72,59 @@
     {# The one query grammar (space=AND, standalone |=OR) — must precede every
        matcher that consumes it: app.js (trees), bulk/pair-edit, dataset-virtual. #}
     <script src="{{ asset_url('search-query.js') }}"></script>
+    {# docs/141 4l: the CORE scripts every page needs. The page-specific
+       bundles below are loaded only for the page that uses them -- on a full
+       load by the tags this template emits for THIS page, on an htmx
+       navigation by window.Bundles (app.js) before the request is issued
+       (htmx:confirm), so a swapped-in partial's inline script always finds
+       its globals. Every lazy file is listed ONCE, in the manifest. #}
     <script src="{{ asset_url('app.js') }}"></script>
-    <script src="{{ asset_url('dataset-virtual.js') }}"></script>
-    <script src="{{ asset_url('generate.js') }}"></script>
-    <script src="{{ asset_url('generate_preview.js') }}"></script>
-    <script src="{{ asset_url('topo-graph.js') }}"></script>
-    <script src="{{ asset_url('component-map.js') }}"></script>
-    <script src="{{ asset_url('wiring-grid.js') }}"></script>
-    <script src="{{ asset_url('chip-status.js') }}"></script>
-    <script src="{{ asset_url('bulk-edit.js') }}"></script>
     {# docs/117: the auto-apply flusher — kept out of app.js so its
        behaviour is testable in isolation under jsdom. #}
     <script src="{{ asset_url('auto-apply.js') }}"></script>
-    <script src="{{ asset_url('pair-edit.js') }}"></script>
-    <script src="{{ asset_url('all-values.js') }}"></script>
-    <script src="{{ asset_url('pulses.js') }}"></script>
     <script src="{{ asset_url('plot-theme.js') }}"></script>
-    <script src="{{ asset_url('ndview.js') }}"></script>
-    <script src="{{ asset_url('scheduler.js') }}"></script>
-    <script src="{{ asset_url('autofit.js') }}"></script>
+    {# docs/141 4u: the one drag core the Calculator, Settings and the Config
+       Manual float with -- before the scripts that call it #}
+    <script src="{{ asset_url('float-panel.js') }}"></script>
     <script src="{{ asset_url('calc.js') }}"></script>
-    <script src="{{ asset_url('compare-hub.js') }}"></script>
+    <script src="{{ asset_url('manual.js') }}"></script>
+    <script src="{{ asset_url('undo-trail.js') }}"></script>
+    {# docs/141 4p: the long-poll that wakes the run polls the moment a run
+       folder changes — core (the new-run popup lives on every page). #}
+    <script src="{{ asset_url('live-wake.js') }}"></script>
+    {% set bundle_files = {
+        'grid': ['grid-virt.js', 'bulk-edit.js', 'pair-edit.js', 'all-values.js'],
+        'pulses': ['pulses.js'],
+        'topo': ['topo-graph.js'],
+        'wiring': ['topo-graph.js', 'wiring-grid.js'],
+        'components': ['topo-graph.js', 'component-map.js'],
+        'chipstatus': ['topo-graph.js', 'chip-status.js'],
+        'generate': ['topo-graph.js', 'wiring-grid.js', 'pulses.js', 'generate.js', 'generate_preview.js'],
+        'datasets': ['dataset-virtual.js', 'ndview.js'],
+        'scheduler': ['scheduler.js'],
+        'autofit': ['autofit.js'],
+        'compare': ['topo-graph.js', 'compare-hub.js', 'diff-panes.js'],
+    } %}
+    {% set page_bundles = {
+        'bulk': ['grid'], 'table': ['grid'],
+        'pulses': ['pulses'],
+        'generate': ['generate'], 'regenerate': ['generate'],
+        'instrument': ['wiring'],
+        'topology': ['chipstatus', 'components'], 'trends': ['chipstatus', 'datasets'], 'trend': ['chipstatus', 'datasets'],
+        'qubits': ['components'], 'pairs': ['components'], 'resonators': ['components'], 'flux': ['components'],
+        'couplers': ['components'], 'qdac': ['components'],
+        'datasets': ['datasets'], 'dataset_detail': ['datasets'], 'dataset_compare': ['datasets'], 'collections': ['datasets'],
+        'fit-audit': ['datasets'],
+        'scheduler': ['scheduler'], 'autofit': ['autofit'],
+        'compare_hub': ['compare'], 'diff': ['compare'],
+    } %}
+    {% set manifest = {} %}
+    {% for _b, _files in bundle_files.items() %}{% for _f in _files %}{% if _f not in manifest %}{% set _ = manifest.update({_f: asset_url(_f)}) %}{% endif %}{% endfor %}{% endfor %}
+    <script id="bundle-manifest" type="application/json">{{ {'files': manifest, 'bundles': bundle_files, 'pages': page_bundles} | tojson }}</script>
+    {% set _this = page_bundles.get(page if page is defined else '', []) %}
+    {% set _emitted = [] %}
+    {% for _b in _this %}{% for _f in bundle_files[_b] %}{% if _f not in _emitted %}{% set _ = _emitted.append(_f) %}
+    <script src="{{ asset_url(_f) }}" data-bundle-file="{{ _f }}"></script>{% endif %}{% endfor %}{% endfor %}
     {# C2: ts-local spans are hidden until JS localizes them (no UTC→local flash); with JS
        off, reveal them so the UTC fallback text still shows. #}
     <noscript><style>.ts-local{visibility:visible}</style></noscript>
@@ -293,6 +324,15 @@
                         aria-expanded="false" aria-controls="calc-popover"
                         title="Calculator — dBm · volt · amplitude · expression (Alt+C)">
                     {{ icon_calculator() }}<span class="sidebar-tool-label">Calculator</span></button>
+                {# Config Manual (2026-08-27, user-directed placement): directly
+                   below Settings / Calculator. Opens a movable window (manual.js)
+                   with the house search box over every state.json key the
+                   chip's classes can carry + the QM-docs config keys. #}
+                <button type="button" class="sidebar-tool manual-btn" id="manual-btn"
+                        onclick="toggleConfigManual(this)" aria-haspopup="dialog"
+                        aria-expanded="false" aria-controls="manual-popover"
+                        title="Config Manual — what each state.json key means, what values it takes, which keys a node can carry (F1 on a value)">
+                    <svg class="sidebar-tool-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M10 8h6M10 12h4"/></svg><span class="sidebar-tool-label">Config Manual</span></button>
                 {# docs/120 item 10 — the bookmark moved here from the top bar,
                    below Calculator per the user, so its slot could carry the
                    working-state version. It is a tool (tag + note this state),
@@ -476,12 +516,14 @@
                         {# Chip Status sections — one scrolling dashboard; these mirror the
                            in-page scroll-spy jump bar (kept in sync by setChipStatusView). #}
                         <ul class="nav-subitems" id="chip-status-subnav">
-                            <li><a href="/topology?view=topology" data-view="topology"
-                                   onclick="return chipNavView('topology', event)">Topology</a></li>
                             <li><a href="/topology?view=overview" data-view="overview"
                                    onclick="return chipNavView('overview', event)">Overview</a></li>
-                            <li><a href="/topology?view=gate" data-view="gate"
-                                   onclick="return chipNavView('gate', event)">Gate (2Q)</a></li>
+                            <li><a href="/topology?view=health" data-view="health"
+                                   onclick="return chipNavView('health', event)">Health</a></li>
+                            <li><a href="/topology?view=topology" data-view="topology"
+                                   onclick="return chipNavView('topology', event)">Topology</a></li>
+                            <li><a href="/topology?view=trends" data-view="trends"
+                                   onclick="return chipNavView('trends', event)">Trends</a></li>
                             <li><a href="/topology?view=fidelity" data-view="fidelity"
                                    onclick="return chipNavView('fidelity', event)">Fidelity</a></li>
                             <li><a href="/topology?view=coherence" data-view="coherence"
@@ -490,8 +532,6 @@
                                    onclick="return chipNavView('frequencies', event)">Frequencies</a></li>
                             <li><a href="/topology?view=calibration" data-view="calibration"
                                    onclick="return chipNavView('calibration', event)">Calibration</a></li>
-                            <li><a href="/topology?view=trends" data-view="trends"
-                                   onclick="return chipNavView('trends', event)">Trends</a></li>
                         </ul>
                     </li>
                     {# Compare — docs/84 made the DIFF the front door: the hub
@@ -794,7 +834,14 @@
            whichever trigger opened them. They cannot live inside #sidebar: it is
            overflow-y:auto, which CLIPS an absolutely-positioned child, and it
            collapses to width 0 with pointer-events:none. #}
-        <div id="settings-dropdown" class="settings-dropdown settings-hidden">
+        <div id="settings-dropdown" class="settings-dropdown settings-hidden" role="dialog" aria-modal="false" aria-label="Settings">
+        {# docs/141 4u: a header like the Calculator's -- the drag handle and the close #}
+        <div class="settings-header" id="settings-header">
+        <strong class="settings-title">Settings</strong>
+        <span class="settings-header-tools">
+        <button type="button" class="calc-close" onclick="toggleSettings()" title="Close" aria-label="Close">&times;</button>
+        </span>
+        </div>
         <div class="settings-group">
         <small class="settings-label">Font size</small>
         <div class="settings-options">
@@ -864,49 +911,65 @@
         <div class="settings-sub">
         <span class="settings-sub-label">Table view</span>
         <div class="settings-options">
-        <button onclick="BulkEdit.setFont(0.85)" class="settings-opt bulk-font-preset" data-fs="0.85">S</button>
-        <button onclick="BulkEdit.setFont(1)" class="settings-opt bulk-font-preset" data-fs="1">M</button>
-        <button onclick="BulkEdit.setFont(1.25)" class="settings-opt bulk-font-preset" data-fs="1.25">L</button>
-        <button onclick="BulkEdit.toggleBold()" class="settings-opt bulk-bold-toggle" id="bulk-bold"
+        <button onclick="Bundles.call('grid', 'BulkEdit.setFont', 0.85)" class="settings-opt bulk-font-preset" data-fs="0.85">S</button>
+        <button onclick="Bundles.call('grid', 'BulkEdit.setFont', 1)" class="settings-opt bulk-font-preset" data-fs="1">M</button>
+        <button onclick="Bundles.call('grid', 'BulkEdit.setFont', 1.25)" class="settings-opt bulk-font-preset" data-fs="1.25">L</button>
+        <button onclick="Bundles.call('grid', 'BulkEdit.toggleBold')" class="settings-opt bulk-bold-toggle" id="bulk-bold"
                 aria-pressed="false" title="Bold values">B</button>
         </div>
         <label class="settings-slider" title="Font size">
         <span class="muted">Aa</span>
         <input type="range" id="bulk-font-slider" min="0.75" max="1.7" step="0.05" value="1"
-               oninput="BulkEdit.setFont(this.value)" aria-label="Table cell font size">
+               oninput="Bundles.call('grid', 'BulkEdit.setFont', this.value)" aria-label="Table cell font size">
         </label>
         <label class="settings-slider" title="Letter spacing (digit gap)">
         <span class="muted">&#8596;</span>
         <input type="range" id="bulk-ls-slider" min="0" max="0.12" step="0.02" value="0"
-               oninput="BulkEdit.setLetterSpacing(this.value)" aria-label="Table cell letter spacing">
+               oninput="Bundles.call('grid', 'BulkEdit.setLetterSpacing', this.value)" aria-label="Table cell letter spacing">
         </label>
         </div>
         <div class="settings-sub">
         <span class="settings-sub-label">Flat view</span>
         <div class="settings-options">
-        <button onclick="AllValues.setFont(0.85)" class="settings-opt" data-av-fs="0.85">S</button>
-        <button onclick="AllValues.setFont(1)" class="settings-opt" data-av-fs="1">M</button>
-        <button onclick="AllValues.setFont(1.2)" class="settings-opt" data-av-fs="1.2">L</button>
-        <button onclick="AllValues.toggleBold()" class="settings-opt" id="av-bold"
+        <button onclick="Bundles.call('grid', 'AllValues.setFont', 0.85)" class="settings-opt" data-av-fs="0.85">S</button>
+        <button onclick="Bundles.call('grid', 'AllValues.setFont', 1)" class="settings-opt" data-av-fs="1">M</button>
+        <button onclick="Bundles.call('grid', 'AllValues.setFont', 1.2)" class="settings-opt" data-av-fs="1.2">L</button>
+        <button onclick="Bundles.call('grid', 'AllValues.toggleBold')" class="settings-opt" id="av-bold"
                 aria-pressed="false" title="Bold values">B</button>
         </div>
         <label class="settings-slider" title="Font size">
         <span class="muted">Aa</span>
         <input type="range" id="av-font-slider" min="0.85" max="1.3" step="0.05" value="1"
-               oninput="AllValues.setFont(this.value)" aria-label="Flat view font size">
+               oninput="Bundles.call('grid', 'AllValues.setFont', this.value)" aria-label="Flat view font size">
         </label>
         <label class="settings-slider" title="Letter spacing (digit gap)">
         <span class="muted">&#8596;</span>
         <input type="range" id="av-ls-slider" min="0" max="0.12" step="0.02" value="0"
-               oninput="AllValues.setLetterSpacing(this.value)" aria-label="Flat view letter spacing">
+               oninput="Bundles.call('grid', 'AllValues.setLetterSpacing', this.value)" aria-label="Flat view letter spacing">
         </label>
         <label class="settings-slider" title="Row spacing">
         <span class="muted">&#8597;</span>
         <input type="range" id="av-rh-slider" min="1" max="1.6" step="0.05" value="1"
-               oninput="AllValues.setRowSpacing(this.value)" aria-label="Flat view row spacing">
+               oninput="Bundles.call('grid', 'AllValues.setRowSpacing', this.value)" aria-label="Flat view row spacing">
         </label>
         </div>
         </div>
+        </div>
+        {# Config Manual window (2026-08-27) — body-level like the calculator:
+           anchored under its sidebar button until dragged by the header, then
+           fixed where the user left it. Content is rendered by manual.js. #}
+        <div id="manual-popover" class="manual-popover manual-hidden" role="dialog" aria-modal="false" aria-label="Config Manual">
+        <div class="manual-header" id="manual-header">
+        <strong class="manual-title">Config Manual</strong>
+        <span class="manual-header-tools">
+        <button type="button" class="manual-close" onclick="toggleConfigManual()" title="Close  (Esc)" aria-label="Close">&times;</button>
+        </span>
+        </div>
+        <div class="manual-searchbar">
+        <input type="search" class="manual-search" placeholder="Search keys: joint_offset, band, lo_mode … (space = AND, | = OR)"
+               aria-label="Search the config manual" autocomplete="off">
+        </div>
+        <div class="manual-body"><p class="muted manual-note">Loading…</p></div>
         </div>
         <div id="calc-popover" class="calc-popover calc-hidden" role="dialog" aria-modal="false" aria-label="Calculator">
         <div class="calc-header" id="calc-header">

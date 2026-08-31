@@ -245,6 +245,60 @@ class TestEditorWalk:
         assert _off(env) == 0.09
         assert len(_ctx(env)["store"].change_log) == 1
 
+    def test_undo_n_pops_k_actions_in_one_request(self, env):
+        # docs/141 4e: a burst the client coalesced -- one request, k actions,
+        # one response naming every reverted path (newest first)
+        c = env["client"]
+        for v in (0.09, 0.10, 0.11):
+            _edit(c, v)
+        r = c.post("/undo?n=2")
+        trig = _trigger(r)["cellsReverted"]
+        assert trig["message"].startswith("Undone: 2 actions, 2 changes")
+        assert [e["dot_path"] for e in trig["entries"]] == ["qubits.qA1.z.joint_offset"] * 2
+        assert _off(env) == 0.09 and len(_ctx(env)["store"].change_log) == 1
+        r = c.post("/redo?n=2")                # the two frames come back, in order
+        trig = _trigger(r)["cellsReverted"]
+        assert trig["message"].startswith("Redone: 2 actions, 2 changes")
+        assert _off(env) == 0.11 and len(_ctx(env)["store"].change_log) == 3
+        # The client writes the entries IN ORDER, last one wins: a redo burst
+        # over one path must therefore end with the NEWEST value (real-Chrome
+        # 2026-08-28: newest-first left the oldest value in the cell)
+        assert [e["old_value_str"] for e in trig["entries"]] == ["0.1", "0.11"]
+        # more than there is: undoes what exists, says so, never errors
+        r = c.post("/undo?n=50")
+        assert _trigger(r)["cellsReverted"]["message"].startswith("Undone: 3 actions")
+        assert _off(env) == 0.08 and not _ctx(env)["store"].change_log
+        # n is clamped and non-numeric n is one press
+        _edit(c, 0.2)
+        r = c.post("/undo?n=zzz")
+        assert "Undone:" in _trigger(r)["cellsReverted"]["message"] and _off(env) == 0.08
+
+    def test_undo_burst_stops_at_the_journal_boundary(self, env):
+        # a cross-save (jrn:) step is its own press, never a side effect of a burst
+        c = env["client"]
+        _edit(c, 0.09)
+        c.post("/save")                        # journal unit; the log is empty again
+        _edit(c, 0.10)
+        r = c.post("/undo?n=5")
+        trig = _trigger(r)["cellsReverted"]
+        assert trig["message"].startswith("Undone: qubits.qA1.z.joint_offset")   # ONE ordinary action
+        assert _off(env) == 0.09
+        # ... and the response SAYS the burst stopped, so the client can
+        # re-queue the four remaining presses (review of eaa0f05)
+        assert (trig["requested"], trig["consumed"], trig["stopped"], trig["level"]) == (5, 1, "journal", "success")
+        # a burst that runs out of log says "exhausted" (nothing to re-queue)
+        _edit(c, 0.2)
+        trig = _trigger(c.post("/undo?n=3"))["cellsReverted"]
+        assert (trig["consumed"], trig["stopped"]) == (1, "journal")   # the saved unit is next: a boundary, not exhaustion
+        c.post("/redo")
+        _edit(c, 0.21)
+        _ctx(env)["undo_units"] = []            # no journal: the log simply runs out
+        trig = _trigger(c.post("/undo?n=3"))["cellsReverted"]
+        assert trig["consumed"] >= 1 and trig["stopped"] in ("exhausted", "journal")
+        gids = [e.group_id for e in _ctx(env)["store"].change_log]
+        assert not any(isinstance(g, str) and g.startswith("jrn:") for g in gids), \
+            "the burst did not walk into the journal"
+
     def test_new_edit_invalidates_redo(self, env):
         c = env["client"]
         _edit(c, 0.09)

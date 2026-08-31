@@ -1,8 +1,10 @@
-"""Pulse overlays (customer ask 2026-08-27): every pulse is time × voltage, so
-any set can share one plot. The server hands the detail page the SAME
-component's companions (a CZ macro's qubit flux + coupler flux) synthesized
-and on by default; the client draws them and lets the user add any other
-pulse. Route pins here; the drawing is pinned by pulse_overlay_selfcheck.cjs."""
+"""The pulse inspector is a VIEW of up to four pulses (docs/141 4k, superseding
+the 2026-08-27 overlay bar): every pulse is time × voltage, so any set can
+share one plot. The server renders one section per pulse in view -- a CZ
+macro's qubit flux + coupler flux by default, or the 2-4 pulses picked for
+Compare -- each synthesized, each with the colour its traces wear in the
+shared plot; the view bar drops/adds pulses by re-rendering the same route.
+Route pins here; the drawing + view bar are pinned by pulse_overlay_selfcheck.cjs."""
 from __future__ import annotations
 
 import json
@@ -25,8 +27,8 @@ def _state() -> dict:
             "qA1": {
                 "xy": {
                     "operations": {
-                        "x180": {"amplitude": 0.2, "length": 40},
-                        "x90": {"amplitude": 0.1, "length": 40},
+                        "x180": {"amplitude": 0.2, "length": 40, "__class__": "quam.components.pulses.SquarePulse"},
+                        "x90": {"amplitude": 0.1, "length": 40, "__class__": "quam.components.pulses.SquarePulse"},
                     },
                 },
             },
@@ -62,47 +64,66 @@ def client(tmp_path):
     return c
 
 
-def _detail_json(client, path: str) -> dict:
-    html = client.get(f"/pulse/detail?path={path}").data.decode()
+def _detail(client, query: str):
+    html = client.get(f"/pulse/detail?{query}").data.decode()
     m = re.search(r'<script id="pulse-detail-data"[^>]*>(.*?)</script>', html, re.S)
     assert m, "detail JSON missing"
-    return json.loads(m.group(1))
+    return html, json.loads(m.group(1))
 
 
-def test_cz_macro_companion_is_offered_on_by_default(client):
-    d = _detail_json(client, f"{PAIR}.flux_pulse_qubit")
-    ov = d.get("overlays")
-    assert ov and [o["path"] for o in ov] == [f"{PAIR}.coupler_flux_pulse"]
-    assert ov[0]["label"] == "coupler_flux_pulse" and ov[0]["default_on"] is True
-    assert ov[0]["plot"]["ok"] is True and ov[0]["plot"]["traces"], "a REAL synth, not a stub"
-    # and it is symmetric: opening the coupler pulse offers the qubit pulse
-    d2 = _detail_json(client, f"{PAIR}.coupler_flux_pulse")
-    assert [o["path"] for o in d2["overlays"]] == [f"{PAIR}.flux_pulse_qubit"]
+def test_cz_macro_companion_is_in_view_by_default(client):
+    _, d = _detail(client, f"path={PAIR}.flux_pulse_qubit")
+    assert d["mode"] == "group"
+    assert [p["path"] for p in d["pulses"]] == [f"{PAIR}.flux_pulse_qubit", f"{PAIR}.coupler_flux_pulse"]
+    q, c = d["pulses"]
+    assert q["role"] == "qubit" and c["role"] == "coupler"
+    assert c["label"].endswith("cz_unipolar · coupler") and q["label"].endswith("cz_unipolar · qubit")
+    assert c["plot"]["ok"] is True and c["plot"]["traces"], "a REAL synth, not a stub"
+    assert q["color"] != c["color"], "one colour per pulse, shared by its section and its traces"
+    assert "overlays" not in d, "the 2026-08-27 overlay list is gone -- sections are the one model"
+    # and it is symmetric: opening the coupler pulse brings the qubit pulse along
+    _, d2 = _detail(client, f"path={PAIR}.coupler_flux_pulse")
+    assert [p["path"] for p in d2["pulses"]] == [f"{PAIR}.coupler_flux_pulse", f"{PAIR}.flux_pulse_qubit"]
 
 
 def test_no_companion_is_never_invented(client):
-    d = _detail_json(client, "qubit_pairs.qA1-qA2.macros.cz_solo.flux_pulse_qubit")
-    assert d["overlays"] == [], "an empty coupler slot must not produce an overlay"
+    _, d = _detail(client, "path=qubit_pairs.qA1-qA2.macros.cz_solo.flux_pulse_qubit")
+    assert d["mode"] == "single" and len(d["pulses"]) == 1, "an empty coupler slot must not produce a section"
 
 
 def test_channel_operations_are_alternatives_not_companions(client):
-    """x90 is not played WITH x180 — a channel's operations reach the plot
-    only through the picker, never as a default overlay."""
-    d = _detail_json(client, "qubits.qA1.xy.operations.x180")
-    assert d["overlays"] == []
+    """x90 is not played WITH x180 -- a channel's operations reach the view
+    only through the picker (or Compare), never as a default section."""
+    _, d = _detail(client, "path=qubits.qA1.xy.operations.x180")
+    assert d["mode"] == "single" and [p["path"] for p in d["pulses"]] == ["qubits.qA1.xy.operations.x180"]
 
 
-def test_overlay_bar_markup_present(client):
-    html = client.get(f"/pulse/detail?path={PAIR}.flux_pulse_qubit").data.decode()
-    assert 'class="pulse-overlay-bar"' in html and 'class="pulse-overlay-pick"' in html
+def test_compare_is_the_same_route_with_paths(client):
+    _, d = _detail(client, "path=qubits.qA1.xy.operations.x180&paths=qubits.qA1.xy.operations.x180,qubits.qA1.xy.operations.x90")
+    assert d["mode"] == "compare"
+    assert [p["path"] for p in d["pulses"]] == ["qubits.qA1.xy.operations.x180", "qubits.qA1.xy.operations.x90"]
+    assert all(p["plot"]["ok"] for p in d["pulses"])
+
+
+def test_view_bar_markup_present(client):
+    html, _ = _detail(client, f"path={PAIR}.flux_pulse_qubit")
+    assert 'class="pulse-overlay-bar pulse-view-bar"' in html and 'class="pulse-overlay-pick"' in html
+    assert html.count('class="pulse-overlay-chip on"') == 2, "one chip per pulse in view"
+    assert html.count("data-drop-path=") == 2, "with more than one pulse in view, every chip can be dropped"
+    # docs/141 4l-review: a JSON list, never a comma-joined string
+    assert f"""data-view-paths='["{PAIR}.flux_pulse_qubit", "{PAIR}.coupler_flux_pulse"]'""" in html
+    assert f'<input type="hidden" name="view_paths" value="{PAIR}.flux_pulse_qubit"><input type="hidden" name="view_paths" value="{PAIR}.coupler_flux_pulse">' in html
+    assert f'data-view-main="{PAIR}.flux_pulse_qubit"' in html
+    # a single-pulse view offers no drop
+    solo, _ = _detail(client, "path=qubits.qA1.xy.operations.x180")
+    assert solo.count('class="pulse-overlay-chip on"') == 1 and "data-drop-path=" not in solo
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
 def test_pulse_overlay_selfcheck():
-    node = shutil.which("node")
-    if subprocess.run([node, "-e", "require('jsdom')"], capture_output=True, cwd=str(_ROOT)).returncode != 0:
+    if subprocess.run(["node", "-e", "require('jsdom')"], capture_output=True, cwd=str(_ROOT)).returncode != 0:
         pytest.skip("jsdom not installed for node")
-    res = subprocess.run([node, str(_ROOT / "tests" / "pulse_overlay_selfcheck.cjs")],
+    res = subprocess.run(["node", str(_ROOT / "tests" / "pulse_overlay_selfcheck.cjs")],
                          capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
     assert res.returncode == 0, res.stdout + "\n" + res.stderr
-    assert "ok - the companion coupler pulse is drawn WITH the committed trace" in res.stdout
+    assert "ok -" in res.stdout and "FAIL" not in res.stdout + res.stderr

@@ -21,6 +21,7 @@ import csv
 import gzip
 import hashlib
 import io
+import contextlib
 import json
 import logging
 import math
@@ -834,6 +835,67 @@ def _evict_oldest_quam() -> None:
         len(_quam_cache))
 
 
+def _prune_context_registry(active_name: str | None) -> None:
+    """Keep ``app.config["contexts"]`` bounded by the LRU that owns the stores.
+    Caller holds ``_quam_cache_lock``.
+
+    ``_activate_quam`` publishes every chip it opens into BOTH ``_quam_cache``
+    (bounded, LRU) and ``app.config["contexts"]`` (unbounded, keyed by
+    ``folder.parent.name``). ``_evict_oldest_quam`` only ever popped the cache,
+    so an evicted chip's whole context -- store, engine, index, modifier, saver
+    and the two grid render memos -- stayed reachable through the registry for
+    the life of the process. Measured on 13 copies of a real 20Q chip:
+    ``len(_quam_cache) == 10`` but ``len(contexts) == 13``, 62.8 MB deep against
+    the ~40 MB the LRU budgets. Because a run archive is ``<run>/quam_state``,
+    ``folder.parent.name`` is distinct per run -- browsing run snapshots added
+    one permanent context each.
+
+    The invariant restored here: a registered context is either **in the cache**,
+    the **active** one, or **dirty**. Two separable actions:
+
+    * A context that is none of those three is dropped outright -- its store was
+      already evicted, and a re-open rebuilds it from the working folder
+      (``_build_quam_context`` path #2), exactly as the eviction contract says.
+    * A cached but NOT-active context keeps its store and drops only
+      ``bulk_grid_cache`` / ``pair_grid_cache``. Both memos are written solely
+      through ``_active_ctx()`` (they exist so a ``/bulk/cells`` hydration a
+      moment after the page render fills from the very dicts that rendered),
+      so a non-active context can never read its own memo again; the next
+      activation rebuilds it at the same ``mutation_seq``, which is the memo
+      key's own defined miss. They are also the bulk of the weight -- 5.5 MB of
+      the 6.2 MB per cached chip on the 20Q chip (qubit memo 3.2, pair memo 2.3).
+
+    The dirty guard is belt-and-braces: ``_evict_oldest_quam`` never evicts a
+    dirty context, so a dirty one is always still in the cache. It is kept so
+    that no future cache-pop path (e.g. the auto-sync failure eviction) can turn
+    this bookkeeping into the silent loss of an applied-but-unsaved change log --
+    the Bulk-Edit drift root cause, pinned by TestEvictionNeverLosesEdits.
+    ``_quam_ctx_dirty`` reads lock-free, so calling it here cannot invert the
+    ``store._lock -> _quam_cache_lock`` order.
+    """
+    contexts = current_app.config.get("contexts")
+    if not contexts:
+        return
+    cached = {id(v) for v in _quam_cache.values()}
+    kept: dict[str, Any] = {}
+    for name, ctx in contexts.items():
+        if name != active_name and isinstance(ctx, dict):
+            if id(ctx) in cached:
+                # Still loaded, just not what the user is looking at.
+                ctx.pop("bulk_grid_cache", None)
+                ctx.pop("pair_grid_cache", None)
+            elif not _quam_ctx_dirty(ctx):
+                continue    # evicted AND clean -> rebuilt from its working folder
+        kept[name] = ctx
+    if len(kept) != len(contexts):
+        # REBIND, never pop in place: _open_live_quam_ctxs,
+        # _find_quam_ctx_by_path, _hub_working_lookup and any_unsaved_changes
+        # all iterate this dict WITHOUT _quam_cache_lock, and a pop underneath
+        # a live iterator is a RuntimeError. A rebind leaves every in-flight
+        # reader iterating the snapshot it started on.
+        current_app.config["contexts"] = kept
+
+
 def _active_wc_lock(ctx: dict | None = None) -> threading.RLock:
     """The build lock for *ctx*'s folder (default: the active context).
 
@@ -1273,6 +1335,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         with _quam_cache_lock:
             current_app.config["contexts"][ctx_name] = current
             current_app.config["active_context"] = ctx_name
+            _prune_context_registry(ctx_name)
         return current
 
     # Slow path. Serialise builds for THIS folder so two threads don't
@@ -1350,6 +1413,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
                 _quam_cache.move_to_end(key)   # true LRU — mark most-recently used
             current_app.config["contexts"][ctx_name] = ctx
             current_app.config["active_context"] = ctx_name
+            _prune_context_registry(ctx_name)
         # Attach the per-key type policy (stat-cached manifest + sidecar), then
         # background-warm the schema manifest for this chip against the
         # selected env (no-op when the cache is already warm — stat-only check).
@@ -1445,11 +1509,16 @@ def _warm_state_schema_async(store, inst, live_folder=None) -> None:
     if not python_path:
         return
     try:
-        if state_env_schema.manifest_for_store(store, python_path, inst,
-                                               cached_only=True) is not None:
-            return                                # already warm — zero cost
         with store._lock:
             classes = state_env_schema.harvest_classes(store.state)
+        if state_env_schema.manifest_for_store(store, python_path, inst,
+                                               cached_only=True) is not None:
+            # the manifest is warm -- the Config Manual's catalogue may not be
+            # (a manifest cache predating it, or a cooled signature): start
+            # that alone, quietly (docs/141 4l-review)
+            if state_env_schema.catalog_for_env(python_path, inst, classes) is None:
+                _start_catalog_warm(python_path, classes, inst)
+            return                                # already warm — zero cost
     except Exception:  # noqa: BLE001 — warm-up must never break activation
         return
     key = python_path + "|" + ",".join(sorted(classes))
@@ -1461,6 +1530,15 @@ def _warm_state_schema_async(store, inst, live_folder=None) -> None:
     def _run():
         try:
             res = state_env_schema.probe_state_schema(python_path, classes, inst)
+            # docs/141 4h: the Config Manual's full class catalogue rides the
+            # same background warm-up -- quietly, after the chip's own
+            # manifest, so it is ready by the time someone opens the manual
+            # (a cold catalogue never blocks a request).
+            try:
+                if state_env_schema.catalog_for_env(python_path, inst, classes) is None:
+                    _start_catalog_warm(python_path, classes, inst)   # the one single-flight key
+            except Exception:  # noqa: BLE001
+                logger.debug("catalogue warm-up failed", exc_info=True)
             if res.get("ok") and live_folder:
                 from quam_state_manager.core import pulse_catalog, type_policy
                 manifest = {k: res[k] for k in
@@ -4706,18 +4784,12 @@ def qdac_page():
         instrument=qdac_mod.instrument(root), cabling=groups)
 
 
-@bp.route("/bulk")
-def bulk_edit():
-    """Bulk-tune panel: rows = qubits, columns = the high-churn fields, every cell
-    an editable input. Commits route through the SAME atomic /field/edit-batch +
-    working-copy path the inspector uses — this is purely a denser entry surface,
-    no new mutation code. Read-only render."""
-    engine = _engine()
-    store = _store()
-    if not engine or not store:
-        return render_template("_empty_state.html", page="live state editing")
-
-    from quam_state_manager.core import mw_fem
+def _qubit_bulk_grid(store: QuamStore, dyn_hidden: set[str], modified: dict) -> dict[str, Any]:
+    """Build the Live-Edit QUBIT grid: columns (curated + derived, minus the
+    client's hidden set and the dead-channel prune), one row of resolved cells
+    per qubit, the header groups, the client's column model and the row-picker
+    metadata. Lifted out of ``bulk_edit`` (docs/141 §4n) so ``/bulk/cells`` can
+    render a cold column from the very grid the page was rendered from."""
     from quam_state_manager.core.qubit_columns import derive_qubit_columns
 
     # Dynamic (derived) columns — full coverage of every qubit leaf (r6 item 4).
@@ -4730,7 +4802,6 @@ def bulk_edit():
     # Stale/unknown keys are silently ignored (the chip may have changed
     # under a saved set).
     dyn_model, _curated = derive_qubit_columns(store)
-    _dyn_hidden = {k for k in (request.args.get("dynhide") or "").split(",") if k}
     specs: list[dict[str, Any]] = list(_BULK_COLUMNS_SPEC) + [
         {"section": c["section"], "key": c["key"], "label": c["label"],
          "tmpl": c["tmpl"], "unit": c["unit"], "default_on": True,
@@ -4741,7 +4812,7 @@ def bulk_edit():
          "paths": c.get("paths") or {}, "modes": c.get("modes") or {},
          "multi": c.get("multi", 0), "search": c.get("search", "")}
         for c in dyn_model
-        if c.get("kind") != "note" and c["key"] not in _dyn_hidden
+        if c.get("kind") != "note" and c["key"] not in dyn_hidden
     ]
 
     columns = [
@@ -4752,8 +4823,6 @@ def bulk_edit():
          "search": c.get("search", "")}
         for c in specs
     ]
-    modified = _modified_map()
-
     # (kind, con, fem, port) -> {qubit (owner), band, freq} — built as cells
     # resolve, then used to compute each port's LO-coupled peer (Out2↔Out3, …).
     port_info: dict[tuple, dict[str, Any]] = {}
@@ -4854,12 +4923,6 @@ def bulk_edit():
         g = (merged.get("qubits", {}).get(qid) or {}).get("grid_location")
         qubit_meta.append({"id": qid, "grid": g if isinstance(g, str) else None})
 
-    # Pair grid (stacked below the qubit table): columns are DERIVED from the chip's
-    # real pair leaves — lab-flexible, no hardcoded gate/leaf names. Same cell
-    # pipeline + commit path. Empty for chips with no pairs / no editable pair leaves.
-    pair_columns, pair_groups, pair_rows = _pair_bulk_grid(store, modified)
-
-    band_meta = {"bands": {str(b): list(r) for b, r in mw_fem.BANDS.items()}}
     # Client model for the Properties menu + search hint: key/label/section/
     # unit/kind only — never the per-qubit tmpl values (the server re-derives
     # cells from ?dynhide; the client only needs identity + display metadata).
@@ -4873,6 +4936,123 @@ def bulk_edit():
     # its z-port filter columns with no trace). Surface it as an honest line.
     dyn_truncated = next(
         (c["label"] for c in dyn_model if c.get("kind") == "note"), None)
+    return {"columns": columns, "rows": rows, "column_groups": column_groups,
+            "dyn_cols": dyn_cols, "dyn_truncated": dyn_truncated,
+            "qubit_meta": qubit_meta, "qids": qids}
+
+
+def _bulk_chip_gate_token() -> str | None:
+    """Identity of the chip the Live-Edit grid was rendered from (docs/141 4ac).
+
+    The display NAME cannot serve: `_active_chip_identity` says so itself --
+    it is shared across per-experiment loads of one chip, and for a plain
+    folder it is just the basename. The PATH is what distinguishes them, so
+    the token is ``<name>#<8 hex of the path>``: short enough for a query
+    string, stable across renders, and never a control character.
+    """
+    ident = _active_chip_identity()
+    if not ident:
+        return None
+    name = ident.get("name") or "chip"
+    path = str(ident.get("path") or "")
+    if not path:
+        return name
+    h = hashlib.sha1(path.encode("utf-8", "replace")).hexdigest()[:8]
+    return f"{name}#{h}"
+
+
+def _bulk_grid_key(store: QuamStore, dyn_hidden: set[str]) -> tuple:
+    """What the grid depends on: the store's mutation_seq AND the change-log
+    length (a per-row reset clears log entries without advancing the seq —
+    the /bulk/all-values ETag precedent), plus the hidden-column set."""
+    return (getattr(store, "mutation_seq", None),
+            len(getattr(store, "change_log", None) or ()),
+            tuple(sorted(dyn_hidden)))
+
+
+def _bulk_grid_cached(store: QuamStore, dyn_hidden: set[str], modified: dict) -> dict[str, Any]:
+    """The qubit grid, memoized per context on ``_bulk_grid_key``: the page
+    render fills it, a hydration request a moment later reads it (the cells
+    are the SAME dicts the page rendered from); any mutation in between
+    changes the key and the grid is rebuilt from the current working copy."""
+    ctx = _active_ctx() or {}
+    key = _bulk_grid_key(store, dyn_hidden)
+    hit = ctx.get("bulk_grid_cache")
+    if hit and hit.get("key") == key and hit.get("store") is store:
+        return hit["grid"]
+    grid = _qubit_bulk_grid(store, dyn_hidden, modified)
+    ctx["bulk_grid_cache"] = {"key": key, "store": store, "grid": grid}
+    return grid
+
+
+def _pair_grid_cached(store: QuamStore, modified: dict) -> tuple:
+    """The PAIR grid, memoized on the same key (docs/141 4ad).
+
+    Same reason as the qubit memo: ``/bulk/cells?grid=pair`` runs a moment
+    after the page render and must fill cells from the very dicts the page was
+    rendered from, or a hydrated cell could disagree with its neighbours. The
+    key ignores ``dynhide`` -- that is the qubit grid's control; the pair grid
+    has its own hidden-column set and it lives in the browser."""
+    ctx = _active_ctx() or {}
+    key = _bulk_grid_key(store, set())
+    hit = ctx.get("pair_grid_cache")
+    if hit and hit.get("key") == key and hit.get("store") is store:
+        return hit["grid"]
+    grid = _pair_bulk_grid(store, modified)
+    ctx["pair_grid_cache"] = {"key": key, "store": store, "grid": grid}
+    return grid
+
+
+@bp.route("/bulk")
+def bulk_edit():
+    """Bulk-tune panel: rows = qubits, columns = the high-churn fields, every cell
+    an editable input. Commits route through the SAME atomic /field/edit-batch +
+    working-copy path the inspector uses — this is purely a denser entry surface,
+    no new mutation code. Read-only render."""
+    engine = _engine()
+    store = _store()
+    if not engine or not store:
+        return render_template("_empty_state.html", page="live state editing")
+
+    from quam_state_manager.core import bulk_virt, mw_fem
+
+    # Dynamic (derived) columns — full coverage of every qubit leaf (r6 item 4).
+    # r7: default to ALL VISIBLE; ?dynhide= is the client's persisted HIDDEN
+    # set (quam_bulk_dynhidden): absent/empty hides nothing. Stale/unknown keys
+    # are silently ignored (the chip may have changed under a saved set).
+    _dyn_hidden = {k for k in (request.args.get("dynhide") or "").split(",") if k}
+    modified = _modified_map()
+    g = _bulk_grid_cached(store, _dyn_hidden, modified)
+    columns, rows, column_groups = g["columns"], g["rows"], g["column_groups"]
+    dyn_cols, dyn_truncated, qubit_meta = g["dyn_cols"], g["dyn_truncated"], g["qubit_meta"]
+    merged = store.merged
+
+    # docs/141 4n: columns past the client's look-ahead window (the same
+    # layout-free estimate bulk-edit.js makes, conservative) render as EMPTY
+    # tds + a value map; the client fills them from GET /bulk/cells on demand.
+    # The vw hint is screen.availWidth from the htmx configRequest hook; a
+    # full-page load has none and gets the wide default (more hot columns).
+    cold_keys = bulk_virt.plan(columns, len(rows), request.args.get("vw"))
+    cold_map = bulk_virt.cold_map(columns, rows, cold_keys) if cold_keys else None
+
+    # Pair grid (stacked below the qubit table): columns are DERIVED from the chip's
+    # real pair leaves — lab-flexible, no hardcoded gate/leaf names. Same cell
+    # pipeline + commit path. Empty for chips with no pairs / no editable pair leaves.
+    pair_columns, pair_groups, pair_rows = _pair_grid_cached(store, modified)
+    # docs/141 4ad: and it is virtualized the same way. On the PJ 20Q chip this
+    # table was 1.49 MB of a 2.81 MB document — 53%, the largest single block
+    # left after §4n — while the qubit grid beside it had been slimmed to a
+    # third. Same planner, same gates, same macro: `core/bulk_virt` needed no
+    # change, because it takes columns + rows and the pair grid's rows already
+    # had the shape it reads.
+    pair_cold_keys = bulk_virt.plan(pair_columns, len(pair_rows), request.args.get("vw"))
+    pair_cold_map = (bulk_virt.cold_map(pair_columns, pair_rows, pair_cold_keys)
+                     if pair_cold_keys else None)
+
+    band_meta = {"bands": {str(b): list(r) for b, r in mw_fem.BANDS.items()}}
+    # Client model for the Properties menu + search hint: key/label/section/
+    # unit/kind only — never the per-qubit tmpl values (the server re-derives
+    # cells from ?dynhide; the client only needs identity + display metadata).
     # docs/120 item 4 — validated against BOTH grids, because they share the
     # one #bulk-search box, so a chip must not go dead just because its columns
     # live in the pair table.
@@ -4883,7 +5063,11 @@ def bulk_edit():
                                             dyn_cols=dyn_cols, qubit_meta=qubit_meta,
                                             pair_columns=pair_columns, pair_groups=pair_groups,
                                             pair_rows=pair_rows, filter_chips=filter_chips,
-                                            dyn_truncated=dyn_truncated))
+                                            dyn_truncated=dyn_truncated,
+                                            active_chip_key=_bulk_chip_gate_token() or "",
+                                            cold_keys=cold_keys, cold_map=cold_map,
+                                            pair_cold_keys=pair_cold_keys,
+                                            pair_cold_map=pair_cold_map))
     # docs/103: this is the app's largest response by an order of magnitude
     # (measured 10.0 MB / 6.5 MB HTML on real 21Q/10Q chips — docs/85 ships
     # every cell deliberately). Repetitive table markup gzips ~25x, so
@@ -4899,6 +5083,87 @@ def bulk_edit():
     if accepts_gzip:
         resp.headers["Content-Encoding"] = "gzip"
     resp.headers["Vary"] = "Accept-Encoding"
+    return resp
+
+
+@bp.route("/bulk/cells")
+def bulk_cells():
+    """docs/141 §4n — fill server-cold columns of the Live-Edit qubit grid.
+
+    ``?cols=k1,k2`` names the columns; the response carries, per column and
+    per qubit id, the cell's CONTENTS rendered through the SAME Jinja macro
+    the page used (``_bulk_cell_macros.html``), so a hydrated cell is
+    byte-identical to one that came with the page. The grid is the memoized
+    one the page was rendered from when nothing changed since, else the
+    current working copy — a cell filled after an edit shows the edit.
+    ``?chip=`` is the page's chip name: a different chip open in this
+    context now answers 409 rather than cells from the wrong chip."""
+    from quam_state_manager.core import bulk_virt
+    store = _store()
+    if not store:
+        return jsonify({"ok": False, "error": "no chip loaded"}), 409
+    want_chip = request.args.get("chip")
+    ident = _active_chip_identity()
+    have_chip = ident["name"] if ident else None
+    # docs/141 4ac: the NAME is not an identity. For a non-generic folder it is
+    # `Path(path).name` verbatim, so a chip and its backup -- or two labs'
+    # `quam_state` folders added as separate roots -- are one chip to this
+    # gate, and the wrong chip's calibrated values hydrate the page silently.
+    # The bare name stays acceptable so a page rendered before this change can
+    # still hydrate itself.
+    have_tok = _bulk_chip_gate_token()
+    if want_chip is not None and want_chip not in ((have_chip or ""), (have_tok or "")):
+        return jsonify({"ok": False, "error": "a different chip is open",
+                        "chip": have_tok or have_chip}), 409
+    # docs/141 4ad: ?grid=pair serves the PAIR grid's cells through the pair
+    # macro. Anything else (absent, "qubit") is the qubit grid, so an older
+    # page's request means exactly what it always did.
+    which = (request.args.get("grid") or "qubit").strip().lower()
+    if which not in ("qubit", "pair"):
+        return jsonify({"ok": False, "error": f"unknown grid {which!r}"}), 400
+    macros = current_app.jinja_env.get_template("_bulk_cell_macros.html").module
+    if which == "pair":
+        columns, _groups, rows = _pair_grid_cached(store, _modified_map())
+        render = lambda cell, col, rid: str(macros.pair_cell(cell, col, rid))  # noqa: E731
+    else:
+        dyn_hidden = {k for k in (request.args.get("dynhide") or "").split(",") if k}
+        g = _bulk_grid_cached(store, dyn_hidden, _modified_map())
+        columns, rows = g["columns"], g["rows"]
+        render = lambda cell, col, rid: str(macros.qubit_cell(cell, col))      # noqa: E731
+    keys, unknown = bulk_virt.parse_cols(request.args.get("cols"), [c["key"] for c in columns])
+    if unknown:
+        # docs/141 4ae B-9: the ONLY record this refusal leaves. The names went
+        # into a response body no client renders and nowhere else -- which is
+        # exactly why 4ad's own "a 400 `no known column named`, seen once, never
+        # reproduced" could not be diagnosed. One line, naming what was asked
+        # for, so the next occurrence is a grep away.
+        logger.warning(
+            "/bulk/cells: %d unknown column name(s) for the %s grid of %s: %s",
+            len(unknown), which, have_tok or have_chip or "?",
+            ",".join(unknown[:20]) + (" ..." if len(unknown) > 20 else ""))
+    if not keys:
+        return jsonify({"ok": False, "error": "no known column named", "unknown": unknown}), 400
+    idx = {c["key"]: i for i, c in enumerate(columns)}
+    cells: dict[str, dict[str, str]] = {k: {} for k in keys}
+    for row in rows:
+        rcells = row["cells"]
+        for k in keys:
+            i = idx[k]
+            cells[k][row["id"]] = render(rcells[i], columns[i], row["id"])
+    payload = {"ok": True, "chip": have_tok or have_chip, "grid": which,
+               "cells": cells, "unknown": unknown,
+               "seq": getattr(store, "mutation_seq", None)}
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    accepts_gzip = "gzip" in request.headers.get("Accept-Encoding", "")
+    if accepts_gzip:
+        body = gzip.compress(body, compresslevel=5)
+    resp = current_app.response_class(body)
+    resp.headers["Content-Type"] = "application/json; charset=utf-8"
+    resp.headers["Content-Length"] = str(len(body))
+    if accepts_gzip:
+        resp.headers["Content-Encoding"] = "gzip"
+    resp.headers["Vary"] = "Accept-Encoding"
+    resp.headers["Cache-Control"] = "no-store"
     return resp
 
 
@@ -8438,7 +8703,9 @@ def wiring_view():
     # bare /topology from the main "Chip Status" item) → client default, which is
     # the topology-diagram-only view.
     # Phase C scroll-spy sections (+ "full" kept for old bookmarks → topology).
-    _CHIP_VIEWS = {"topology", "overview", "gate", "fidelity",
+    # docs/141 4o: "health" joined; "gate" stays accepted (old links) and the
+    # client maps it onto the Fidelity section that absorbed it.
+    _CHIP_VIEWS = {"topology", "overview", "health", "gate", "fidelity",
                    "coherence", "frequencies", "calibration", "trends", "full"}
     chip_view = request.args.get("view", "").strip().lower()
     if chip_view not in _CHIP_VIEWS:
@@ -9064,7 +9331,10 @@ def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str]) -> list
 # Trends-only display-name overrides (chip_health.METRIC_META's "Readout
 # assignment fidelity" stays the formal glossary text for Diagnostics/the
 # threshold editor — this is purely what the Trends pill/chart title says).
-_TREND_LABEL_OVERRIDES: dict[str, str] = {"assignment_fidelity": "IQ Blobs"}
+_TREND_LABEL_OVERRIDES: dict[str, str] = {
+    "assignment_fidelity": "Readout Fidelity (GE)",
+    "assignment_fidelity_gef": "Readout Fidelity (GEF)",
+}
 
 
 @bp.route("/topology/trends")
@@ -9760,6 +10030,162 @@ def _pulse_plot_traces(payload: dict) -> dict:
     }
 
 
+def _pulse_rows_touched(store, pulse_index, paths) -> list[str] | None:
+    """The pulse rows a set of changed dot paths can have altered: each
+    path's own operation plus every operation whose pointer resolves into
+    it (an ``#../x90/amplitude`` field follows the target). None when the
+    change is too broad to patch row by row (the caller says structural)."""
+    from quam_state_manager.core.pulse_index import used_by
+    roots: list[str] = []
+    try:
+        known = {r["path"] for r in pulse_index.rows()}
+    except Exception:  # noqa: BLE001
+        return None
+    with store._lock:
+        rev = pulse_index.reverse_index()
+    for dp in paths or []:
+        if not isinstance(dp, str):
+            continue
+        root = _pulse_root_of(dp, known)
+        # docs/141 4l-review: a path that IS a pulse (a create / delete /
+        # rename / duplicate, or their undo) or that no pulse row owns (the
+        # anharmonicity a DRAG pulse points at, a qubit field) is a
+        # STRUCTURAL change -- the table re-fetches wholesale (pre-4j)
+        if root is None or root == dp:
+            return None
+        if root not in roots:
+            roots.append(root)
+        for ref in used_by(store.merged, root, rev):
+            r2 = _pulse_root_of(ref, known)
+            if r2 and r2 not in roots:
+                roots.append(r2)
+        if len(roots) > 24:
+            return None
+    return roots
+
+
+def _raw_at(store, dot_path: str):
+    node = store.merged
+    for seg in str(dot_path).split("."):
+        if isinstance(node, dict):
+            node = node.get(seg)
+        elif isinstance(node, list) and seg.isdigit() and int(seg) < len(node):
+            node = node[int(seg)]
+        else:
+            return None
+    return node
+
+
+def _pulses_changed_for_entries(store, pulse_index, entries) -> dict:
+    """Undo / redo: an entry that creates or deletes a subtree, or that moves
+    a POINTER (its old target's used_by changed too), is structural -- the
+    row patch cannot see the other end (docs/141 4l-review)."""
+    def _g(e, k):
+        return e.get(k) if isinstance(e, dict) else getattr(e, k, None)
+
+    def _ptr(v):
+        return isinstance(v, str) and v.startswith("#")
+
+    paths = []
+    for e in entries or []:
+        dp = _g(e, "dot_path")
+        if _g(e, "created") or _g(e, "deleted"):
+            return {"pulses-changed": True}
+        if _ptr(_g(e, "old_value")) or _ptr(_g(e, "old_value_str")) or _ptr(_g(e, "new_value")):
+            return {"pulses-changed": True}
+        try:
+            if _ptr(_raw_at(store, dp)):
+                return {"pulses-changed": True}
+        except Exception:  # noqa: BLE001
+            return {"pulses-changed": True}
+        paths.append(dp)
+    return _pulses_changed_payload(store, pulse_index, paths)
+
+
+def _pulse_root_of(dot_path: str, known: set[str]) -> str | None:
+    """The longest known operation path that is *dot_path* or an ancestor of it."""
+    parts = dot_path.split(".")
+    for n in range(len(parts), 0, -1):
+        cand = ".".join(parts[:n])
+        if cand in known:
+            return cand
+    return None
+
+
+def _pulses_changed_payload(store, pulse_index, paths) -> dict:
+    """The HX-Trigger entries for a value change: ``pulses-rows-changed``
+    with the rows that can be patched one by one, else the structural
+    ``pulses-changed`` (the table re-fetches wholesale). Two event NAMES
+    because an htmx trigger filter needs eval, which the CSP forbids."""
+    try:
+        roots = _pulse_rows_touched(store, pulse_index, paths) if pulse_index else None
+    except Exception:  # noqa: BLE001
+        roots = None
+    if roots is None:
+        return {"pulses-changed": True}
+    return {"pulses-rows-changed": {"paths": roots}}
+
+
+def _pulse_rows_filter(rows: list, channel: str, query: str) -> list:
+    """The Pulses table's channel tab + search filter: ONE truth for the page
+    and for ``/pulse/row`` (docs/141 4l-review), so a patched row that no
+    longer matches the active filter leaves the table."""
+    from quam_state_manager.core.pulse_index import GATE_SLOTS, PAIR_PULSE_CHANNELS
+    if channel == "flux":
+        # pair-gate flux slots only -- pair drive channels have their own tab
+        # (this filter used to be `owner_kind == "pair"`, which would silently
+        # swallow the CR rows into "Pair flux")
+        rows = [r for r in rows if r["owner_kind"] == "pair" and r["channel"] in GATE_SLOTS]
+    elif channel == "pair_drive":
+        rows = [r for r in rows if r["owner_kind"] == "pair" and r["channel"] in PAIR_PULSE_CHANNELS]
+    elif channel in ("xy", "z", "resonator", "xy_detuned"):
+        rows = [r for r in rows if r["owner_kind"] == "qubit" and r["channel"] == channel]
+    # SERVER-side search across the WHOLE library (not just the current page --
+    # the old client filter only saw the 50 rendered rows, so qubits on later
+    # pages were unfindable). Shared grammar (docs/96): space = AND, standalone
+    # | = OR; the haystack is owner / op name / class / channel / alias target /
+    # summary -- purely metadata, no waveform synthesis.
+    if query:
+        from quam_state_manager.core.search_query import groups as _sq_groups
+        from quam_state_manager.core.search_query import matches_hay as _sq_match
+        grps = _sq_groups(query)
+
+        def _hay(r):
+            return " ".join(str(x) for x in (
+                r.get("owner"), r.get("op_name"), r.get("class_short"),
+                r.get("channel"), r.get("alias_target"), r.get("summary"),
+            ) if x).lower()
+        rows = [r for r in rows if _sq_match(_hay(r), grps)]
+    return rows
+
+
+@bp.route("/pulse/row")
+def pulse_row():
+    """ONE pulse row, freshly rendered (docs/141 4j) -- what a value change
+    swaps in place instead of re-fetching the 500-row table."""
+    store = _store()
+    pulse_index = _pulse_index()
+    path = (request.args.get("path") or "").strip()
+    if not store or not pulse_index or not path:
+        return "", 404
+    row = next((r for r in pulse_index.rows() if r["path"] == path), None)
+    if row is None:
+        return "", 404
+    # the page's active filter rides along: a row that no longer matches it
+    # answers 204 and the client removes it (docs/141 4l-review)
+    if not _pulse_rows_filter([row], request.args.get("channel", ""),
+                              (request.args.get("q") or "").strip()):
+        return "", 204
+    row = dict(row)
+    from quam_state_manager.core.waveform_synth import sparkline_svg, synth_for_operation
+    if row.get("is_alias") or not row.get("known"):
+        row["spark_svg"] = None
+    else:
+        row["spark_svg"] = pulse_index.sparkline(
+            path, lambda p=path: sparkline_svg(synth_for_operation(store, p)))
+    return render_template("_pulse_row.html", r=row)
+
+
 @bp.route("/pulses")
 def pulses_page():
     """The Pulses library: every pulse on the chip in one flat table."""
@@ -9798,37 +10224,7 @@ def pulses_page():
     has_pair_drive = any(r["owner_kind"] == "pair"
                          and r["channel"] in PAIR_PULSE_CHANNELS
                          for r in all_rows)
-    if channel == "flux":
-        # pair-gate flux slots only — pair drive channels have their own tab
-        # (this filter used to be `owner_kind == "pair"`, which would silently
-        # swallow the CR rows into "Pair flux")
-        all_rows = [r for r in all_rows if r["owner_kind"] == "pair"
-                    and r["channel"] in GATE_SLOTS]
-    elif channel == "pair_drive":
-        all_rows = [r for r in all_rows if r["owner_kind"] == "pair"
-                    and r["channel"] in PAIR_PULSE_CHANNELS]
-    elif channel in ("xy", "z", "resonator", "xy_detuned"):
-        all_rows = [r for r in all_rows
-                    if r["owner_kind"] == "qubit" and r["channel"] == channel]
-
-    # SERVER-side search across the WHOLE library (not just the current page —
-    # the old client filter only saw the 50 rendered rows, so qubits on later
-    # pages were unfindable). AND-tokens over owner / op name / class / channel
-    # / alias target / summary — purely metadata, no waveform synthesis.
-    if query:
-        # Shared grammar (docs/96): space = AND, standalone | = OR. A plain
-        # query parses to singleton groups == the old every-term all(). The
-        # haystack is built once per row now — it used to be re-joined once
-        # per TERM (harmless at 0.4-1 ms over real chips, just wasteful).
-        from quam_state_manager.core.search_query import groups as _sq_groups
-        from quam_state_manager.core.search_query import matches_hay as _sq_match
-        grps = _sq_groups(query)
-        def _hay(r):
-            return " ".join(str(x) for x in (
-                r.get("owner"), r.get("op_name"), r.get("class_short"),
-                r.get("channel"), r.get("alias_target"), r.get("summary"),
-            ) if x).lower()
-        all_rows = [r for r in all_rows if _sq_match(_hay(r), grps)]
+    all_rows = _pulse_rows_filter(all_rows, channel, query)
 
     page_rows, total, page, total_pages = _paginate(all_rows, page, per_page)
 
@@ -9873,20 +10269,141 @@ def pulses_page():
 
 @bp.route("/pulse/detail")
 def pulse_detail():
-    """Inspector detail for one pulse: waveform plot + parameter table."""
+    """Inspector detail: one pulse (+ its companions) or, with ``paths=`` (up
+    to four, comma-separated), several pulses on one plot, each with its own
+    editable parameter section (docs/141 4k)."""
     path = request.args.get("path", "").strip()
-    return _render_pulse_detail(path)
+    requested = _view_paths_split(request.args.getlist("paths"))
+    paths = _view_paths_arg(requested)
+    if paths and not path:
+        path = paths[0]
+    return _render_pulse_detail(path, paths=paths or None, requested=requested)
+
+
+_PULSE_VIEW_MAX = 4
+# section colours: the main pulse takes the app's primary, the others the
+# overlay hues pulses.js has always used -- the plot and the section agree
+_PULSE_SECTION_HUES = ("var(--pico-primary)", "#e67e22", "#9b59b6", "#2bb673", "#e74c3c")
+
+
+def _view_paths_split(raw) -> list[str]:
+    """Every pulse path a view request names, in order, deduplicated -- from
+    repeated ``paths=`` params (a comma is legal inside a foreign op name,
+    docs/141 4l-review); a single comma-joined value is still accepted when
+    its parts are pulse paths."""
+    items = list(raw) if isinstance(raw, (list, tuple)) else [raw]
+    out: list[str] = []
+    for it in items:
+        it = (it or "").strip() if isinstance(it, str) else ""
+        if not it:
+            continue
+        parts = [it] if _is_pulse_path(it) else [p.strip() for p in it.split(",")]
+        for part in parts:
+            if part and part not in out:
+                out.append(part)
+    return out
+
+
+def _view_paths_arg(raw) -> list[str]:
+    """The pulse paths of a view: the valid ones, at most the view's four."""
+    return [p for p in _view_paths_split(raw) if _is_pulse_path(p)][:_PULSE_VIEW_MAX]
+
+
+def _pulse_section_role(path: str) -> str:
+    leaf = path.rsplit(".", 1)[-1]
+    if _PAIR_MACRO_PULSE_RE.match(path):
+        if "coupler" in leaf:
+            return "coupler"
+        if "qubit" in leaf or "flux" in leaf:
+            return "qubit"
+        return "macro"
+    if path.startswith("qubit_pairs."):
+        return "pair"
+    return "qubit"
 
 
 def _render_pulse_detail(path: str, *, status_msg: str | None = None,
-                         status_level: str = "success"):
-    """Shared renderer for the pulse detail partial (GET + mutation responses)."""
+                         status_level: str = "success", paths: list[str] | None = None,
+                         requested: list[str] | None = None):
+    """Shared renderer for the pulse detail partial (GET + mutation responses).
+
+    docs/141 4k: the inspector is a VIEW of one to four pulses -- the main
+    pulse plus its companions (a CZ macro's qubit flux + coupler flux) or the
+    pulses picked for Compare -- one shared plot, one editable parameter
+    section per pulse, each in the colour its traces have."""
     store = _store()
     pulse_index = _pulse_index()
     if not store or not pulse_index:
         return render_template("_status.html", message="No state loaded",
                                level="warning")
 
+    main = _pulse_section_ctx(store, pulse_index, path)
+    if isinstance(main, tuple):
+        return main
+    view = [path]
+    if paths:
+        for p_ in paths:
+            if p_ not in view and len(view) < _PULSE_VIEW_MAX:
+                view.append(p_)
+    else:
+        for comp in _pulse_component_overlays(store, path):
+            if comp.get("default_on", True) and comp["path"] not in view and len(view) < _PULSE_VIEW_MAX:
+                view.append(comp["path"])
+    sections = [main]
+    for p_ in view[1:]:
+        ctx = _pulse_section_ctx(store, pulse_index, p_)
+        if not isinstance(ctx, tuple):
+            sections.append(ctx)
+    view_paths = [sec["path"] for sec in sections]
+    # docs/141 4l-review: never a silent drop -- a requested pulse that is
+    # unknown, not a pulse, failed to render or fell beyond the four-pulse
+    # view is NAMED in the view bar
+    dropped = [p_ for p_ in (requested if requested is not None else (paths or []))
+               if p_ not in view_paths and p_ != path]
+    for i, sec in enumerate(sections):
+        sec["index"] = i
+        sec["color"] = _PULSE_SECTION_HUES[i % len(_PULSE_SECTION_HUES)]
+        sec["role"] = _pulse_section_role(sec["path"])
+        # what the section header and the trace legend call it: a pair
+        # macro's slot reads "q1-2 · cz_unipolar · coupler", a channel
+        # operation "q1 · xy · x180_DragCosine"
+        if _PAIR_MACRO_PULSE_RE.match(sec["path"]):
+            macro = str(sec["op_name"]).split(".")[0]
+            sec["short"] = macro
+            sec["label"] = f"{sec['owner']} · {macro} · {sec['role']}"
+        else:
+            sec["short"] = f"{sec['channel']} · {sec['op_name']}"
+            sec["label"] = f"{sec['owner']} · {sec['channel']} · {sec['op_name']}"
+    mode = "compare" if paths else ("group" if len(sections) > 1 else "single")
+
+    detail_json = json.dumps({
+        "path": path,
+        "actual_path": main["actual_path"],
+        "qclass": main["qclass"],
+        "spec_key": main["spec_key"],
+        "plot": main["plot"],
+        "mode": mode,
+        "pulses": [{"path": sec["path"], "actual_path": sec["actual_path"], "label": sec["label"],
+                    "role": sec["role"], "color": sec["color"], "index": sec["index"],
+                    "plot": sec["plot"]} for sec in sections],
+    })
+    return render_template(
+        "_pulse_detail.html",
+        sections=sections,
+        view_paths=view_paths,
+        dropped=dropped,
+        view_mode=mode,
+        main_path=path,
+        detail_json=detail_json,
+        status_msg=status_msg,
+        status_level=status_level,
+        **{k: v for k, v in main.items() if k not in ("index", "color", "role", "label", "plot", "params_json")},
+    )
+
+
+def _pulse_section_ctx(store, pulse_index, path: str):
+    """Everything the inspector says about ONE pulse: its row, banners,
+    parameter rows, used-by and plot. An error is a (html, code) tuple."""
     if not _is_pulse_path(path):
         return render_template("_status.html",
                                message=f"Not a pulse path: {path!r}",
@@ -9992,62 +10509,51 @@ def _render_pulse_detail(path: str, *, status_msg: str | None = None,
                           else prev_links.get(f"{actual_path}.{fname}")),
         })
 
-    detail_json = json.dumps({
-        "path": path,
-        "actual_path": actual_path,
-        "qclass": payload.get("qclass") or row.get("qclass"),
-        "spec_key": payload.get("spec_key"),
-        "plot": _pulse_plot_traces(payload),
-        # Customer ask (2026-08-27): a CZ macro plays its qubit flux AND its
-        # coupler flux together, so the preview draws both by default.
-        "overlays": _pulse_component_overlays(store, path),
-    })
-
     is_qubit_op = bool(_PULSE_PATH_RES[0].match(path))
     used_by_target = pulse_index.used_by(actual_path)
-    # The delete button removes `path` (the alias itself when opened via
-    # one) — its confirm step must list THAT node's referrers, not the
-    # target's, or the real would-dangle set is hidden.
     delete_used_by = (pulse_index.used_by(path) if alias_chain
                       else used_by_target)
-    return render_template(
-        "_pulse_detail.html",
-        path=path,
-        actual_path=actual_path,
-        row=row,
-        spec=spec,
-        alias_chain=alias_chain,
-        op_name=row["op_name"],
-        owner=row["owner"],
-        channel=row["channel"],
-        class_short=row["class_short"],
-        # payload["qclass"] carries the RESOLVED target's __class__ — the
-        # alias row's own qclass is None, and the leaf-caution banner must
-        # show the chip's real stored path, not "None" (same source as
-        # detail_json above).
-        qclass=payload.get("qclass") or row.get("qclass"),
-        known=row["known"],
-        class_match=class_match,
-        unmodeled=unmodeled,
-        catalog_qclass=spec.qclass if spec else None,
-        params=param_rows,
-        used_by=used_by_target,
-        delete_used_by=delete_used_by,
-        synth_error=None if payload.get("ok") else payload.get("error"),
-        detail_json=detail_json,
-        can_rename=is_qubit_op and not alias_chain,
-        status_msg=status_msg,
-        status_level=status_level,
-    )
+    return {
+        "path": path,
+        "actual_path": actual_path,
+        "row": row,
+        "spec": spec,
+        "alias_chain": alias_chain,
+        "op_name": row["op_name"],
+        "owner": row["owner"],
+        "channel": row["channel"],
+        "class_short": row["class_short"],
+        "qclass": payload.get("qclass") or row.get("qclass"),
+        "spec_key": payload.get("spec_key"),
+        "known": row["known"],
+        "class_match": class_match,
+        "unmodeled": unmodeled,
+        "catalog_qclass": spec.qclass if spec else None,
+        "params": param_rows,
+        "used_by": used_by_target,
+        "delete_used_by": delete_used_by,
+        "synth_error": None if payload.get("ok") else payload.get("error"),
+        "can_rename": is_qubit_op and not alias_chain,
+        "plot": _pulse_plot_traces(payload),
+        "label": f"{row['owner']} · {row['channel']} · {row['op_name']}",
+    }
 
 
-def _pulse_mutation_response(detail, *, trigger: bool = True):
+def _pulse_mutation_response(detail, *, trigger: bool = True, paths=None):
     """detail HTML + tray OOB + the pulses-changed table-refresh trigger."""
     if isinstance(detail, tuple):  # error (html, code) passthrough
         return detail
     resp = make_response(detail + "\n" + _tray_oob())
     if trigger:
-        resp.headers["HX-Trigger"] = "pulses-changed, diagnostics-changed"
+        if paths is not None:
+            # docs/141 4j: a VALUE change names the rows it touched so the
+            # open table patches them in place; a structural change (create /
+            # delete / rename / duplicate) keeps the plain trigger = re-fetch
+            resp.headers["HX-Trigger"] = json.dumps({
+                **_pulses_changed_payload(_store(), _pulse_index(), paths),
+                "diagnostics-changed": True})
+        else:
+            resp.headers["HX-Trigger"] = "pulses-changed, diagnostics-changed"
     return resp
 
 
@@ -10098,6 +10604,14 @@ def pulse_edit():
                                message="identity / type key — read-only",
                                level="error"), 400
 
+    # docs/141 4l-review: a re-link / break-link changes the OLD target's
+    # used_by too -- resolve it BEFORE the write so its row is patched
+    _old_target = None
+    if mode in ("pointer", "literal"):
+        try:
+            _old_target = _resolve_edit_path(store, dot_path)
+        except Exception:  # noqa: BLE001 -- a dangling pointer has no target
+            _old_target = None
     try:
         if mode == "pointer":
             value = raw_value.strip()
@@ -10166,7 +10680,27 @@ def pulse_edit():
                                level="error"), 400
 
     _invalidate_engine_cache()
-    return _pulse_mutation_response(_render_pulse_detail(path))
+    _touched = [dot_path]
+    try:
+        _touched.append(_resolve_edit_path(store, dot_path))
+    except Exception:  # noqa: BLE001 -- a pointer-mode write has no resolved target
+        pass
+    if _old_target and _old_target not in _touched:
+        _touched.append(_old_target)
+    # docs/141 4k: the form says which VIEW it lives in (main pulse + every
+    # section), so the re-render keeps the same sections in the same order
+    view_main = (request.form.get("view_main") or "").strip() or path
+    view_paths = _view_paths_arg(request.form.getlist("view_paths"))
+    if not _is_pulse_path(view_main):
+        view_main = path
+    resp = _render_pulse_detail(view_main, paths=view_paths or None)
+    if isinstance(resp, tuple) and view_main != path:
+        # docs/141 4l-review: the write already succeeded; a main pulse that
+        # vanished meanwhile (another window renamed it) must not turn into
+        # a 404 the UI drops -- re-render around the pulse just edited
+        view_paths = [p_ for p_ in view_paths if p_ != view_main]
+        resp = _render_pulse_detail(path, paths=view_paths or None)
+    return _pulse_mutation_response(resp, paths=_touched)
 
 
 @bp.route("/api/pulse/synth", methods=["POST"])
@@ -10239,6 +10773,157 @@ def api_pulse_compare():
             "plot": plot,
         })
     return jsonify({"ok": True, "pulses": pulses})
+
+
+def _manual_manifest(ctx) -> dict | None:
+    """The env schema manifest for the active chip, request-path mode (never
+    spawns): None when no environment is selected or nothing is cached yet."""
+    from quam_state_manager.core import state_env_schema
+    try:
+        inst = current_app.instance_path
+        python_path = config_generator.get_selected_env(inst)
+        if not python_path:
+            return None
+        return state_env_schema.manifest_for_store(ctx["store"], python_path, inst,
+                                                   cached_only=True)
+    except Exception:  # noqa: BLE001 — the manual degrades to the docs entries
+        logger.debug("manual manifest unavailable", exc_info=True)
+        return None
+
+
+# docs/141 4l-review: the outcome of the last catalogue probe per interpreter.
+# A probe that failed (no quam in the env, a deleted interpreter, a read-only
+# instance dir) used to be forgotten instantly -- every /api/manual spawned a
+# fresh subprocess and answered "loading" forever (41 launches per open
+# window measured). Now: the failure is remembered with its message, a
+# partial catalogue (a root that is installed but broken) is served but
+# named, and a retry waits _CATALOG_RETRY_S.
+_catalog_outcome: dict[str, dict] = {}
+_CATALOG_RETRY_S = 60.0
+
+
+def _start_catalog_warm(python_path: str, classes: list[str], inst) -> bool:
+    """Start ONE background catalogue probe for *python_path* (shared
+    single-flight key with the chip-load warm-up). False when one is running
+    or the last failure is too recent to retry."""
+    from quam_state_manager.core import state_env_schema
+    key = "catalog|" + python_path
+    last = _catalog_outcome.get(python_path)
+    if last and last.get("state") in ("error", "partial") and (time.time() - float(last.get("at") or 0)) < _CATALOG_RETRY_S:
+        return False
+    with _schema_warm_lock:
+        if key in _schema_warm_inflight:
+            return False
+        _schema_warm_inflight.add(key)
+
+    def _run():
+        try:
+            res = state_env_schema.probe_catalog(python_path, classes, inst)
+            if res.get("ok") and not res.get("partial"):
+                _catalog_outcome[python_path] = {"state": "ok", "error": None, "at": time.time()}
+            else:
+                _catalog_outcome[python_path] = {
+                    "state": "partial" if res.get("partial") else "error",
+                    "error": res.get("error") or "class-catalogue probe failed",
+                    "catalog": res.get("catalog") if res.get("partial") else None,
+                    "at": time.time()}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("class-catalogue probe failed", exc_info=True)
+            _catalog_outcome[python_path] = {"state": "error", "error": f"{type(exc).__name__}: {exc}", "at": time.time()}
+        finally:
+            with _schema_warm_lock:
+                _schema_warm_inflight.discard(key)
+
+    threading.Thread(target=_run, daemon=True).start()
+    return True
+
+
+def _manual_catalog(ctx) -> tuple[dict | None, str, str | None]:
+    """The class catalogue for the selected env and its state: ``ready`` /
+    ``loading`` (a warm-up is running) / ``partial`` (served, a root failed
+    to import -- the note says which) / ``error`` (the last probe failed --
+    the note says why; retried after a backoff) / ``none`` (no env)."""
+    from quam_state_manager.core import state_env_schema
+    try:
+        inst = current_app.instance_path
+        python_path = config_generator.get_selected_env(inst)
+    except Exception:  # noqa: BLE001
+        return None, "none", None
+    if not python_path:
+        return None, "none", None
+    try:
+        with ctx["store"]._lock:
+            classes = state_env_schema.harvest_classes(ctx["store"].state)
+    except Exception:  # noqa: BLE001
+        classes = []
+    try:
+        cat = state_env_schema.catalog_for_env(python_path, inst, classes)
+    except Exception:  # noqa: BLE001
+        logger.debug("catalogue read failed", exc_info=True)
+        cat = None
+    if cat:
+        return cat, "ready", None
+    last = _catalog_outcome.get(python_path)
+    if last and last.get("state") == "partial" and isinstance(last.get("catalog"), dict):
+        _start_catalog_warm(python_path, classes, inst)          # a retry after the backoff, quietly
+        return last["catalog"], "partial", last.get("error")
+    # cold: warm it quietly (the user is assumed not to open the manual the
+    # instant a chip loads -- docs/141 4h); the request never waits
+    started = _start_catalog_warm(python_path, classes, inst)
+    if not started and last and last.get("state") == "error":
+        return None, "error", last.get("error")
+    return None, "loading", None
+
+
+@bp.route("/api/manual")
+def api_manual():
+    """The Config Manual (2026-08-27, catalogue 2026-08-28): every key every
+    class the selected env OFFERS can carry (the chip's own classes carry
+    their used-at places), plus the QM-docs config keys, with type / default
+    / allowed values / meaning and the SOURCE of each description. With no
+    chip loaded only the docs entries are returned."""
+    from quam_state_manager.core import key_manual
+    ctx = _active_ctx()
+    if not ctx or ctx.get("type") != "quam":
+        data = key_manual.manual_entries({}, {}, None)
+        data["chip"] = None
+        data["catalog_state"] = "none"
+        return jsonify({"ok": True, **data})
+    store = ctx["store"]
+    manifest = _manual_manifest(ctx)
+    catalog, cat_state, cat_note = _manual_catalog(ctx)
+    data = key_manual.manual_entries(store.state, store.wiring, manifest, catalog)
+    data["chip"] = ctx.get("name") or ctx.get("path")
+    data["catalog_state"] = cat_state
+    if cat_note:
+        data["note"] = (("The class catalogue could not be built: " if cat_state == "error"
+                         else "The class catalogue is PARTIAL: ") + str(cat_note))
+    if manifest is None and catalog is None and cat_state == "loading":
+        try:
+            selected = config_generator.get_selected_env(current_app.instance_path)
+        except Exception:  # noqa: BLE001
+            selected = None
+        if selected:
+            data["note"] = ("Class documentation for the selected environment is loading in the "
+                            "background -- the QM docs entries are shown now.")
+    return jsonify({"ok": True, **data})
+
+
+@bp.route("/api/manual/node")
+def api_manual_node():
+    """What ONE place in the state can carry: the node's class fields with a
+    present/unset flag (a leaf path focuses its parent's view)."""
+    from quam_state_manager.core import key_manual
+    ctx = _active_ctx()
+    path = (request.args.get("path") or "").strip()
+    if not ctx or ctx.get("type") != "quam":
+        return jsonify({"ok": False, "reason": "No state loaded"})
+    if not path:
+        return jsonify({"ok": False, "reason": "path required"})
+    store = ctx["store"]
+    catalog, _cat_state, _cat_note = _manual_catalog(ctx)
+    return jsonify(key_manual.node_keys(store.state, store.wiring, _manual_manifest(ctx), path,
+                                        catalog=catalog))
 
 
 def _coerce_catalog_fields(spec, form) -> tuple[dict, dict]:
@@ -11374,6 +12059,22 @@ def state_tray():
     return _tray_html()
 
 
+_UNDO_BURST_MAX = 50
+
+
+def _undo_count() -> int:
+    """``?n=k`` on /undo and /redo (docs/141 4e): a burst of k presses that
+    the client coalesced while one request was in flight. One request, k
+    user actions, one response naming every reverted path. Clamped so a
+    stuck key cannot ask for a thousand."""
+    raw = request.args.get("n") or request.form.get("n") or "1"
+    try:
+        k = int(raw)
+    except (TypeError, ValueError):
+        k = 1
+    return max(1, min(k, _UNDO_BURST_MAX))
+
+
 @bp.route("/undo", methods=["POST"])
 def undo():
     modifier = _modifier()
@@ -11383,40 +12084,68 @@ def undo():
     ctx = _active_ctx()
     store = ctx.get("store") if ctx else None
 
-    # docs/107 routing: an ordinary group on top undoes exactly as before; an
-    # EMPTY log — or a ``jrn:`` staged step already on top — walks DEEPER into
-    # the cross-save journal (staging the next unit's inverse into the tray)
-    # instead of stopping at the save boundary. No peek route (docs/73): the
-    # decision is made here, on the server, from the log itself.
-    if store is not None:
-        top_gid = store.change_log[-1].group_id if store.change_log else None
-        if (not store.change_log
-                or (isinstance(top_gid, str)
-                    and top_gid.startswith(undo_journal.GID_PREFIX))):
-            return _undo_journal_step(ctx)
+    all_entries: list = []
+    groups = 0
+    n_req = _undo_count()
+    stopped = None          # None | "journal" | "error" | "exhausted"
+    err_text = ""
+    # ONE lock around the whole burst (review of eaa0f05): k pops as one
+    # critical section, so a foreign write cannot land between two of them
+    # and be undone as if it were the user's own.
+    _burst_lock = store._lock if store is not None else contextlib.nullcontext()
+    with _burst_lock:
+      for _ in range(n_req):
+        # docs/107 routing: an ordinary group on top undoes exactly as before;
+        # an EMPTY log — or a ``jrn:`` staged step already on top — walks
+        # DEEPER into the cross-save journal (staging the next unit's inverse
+        # into the tray) instead of stopping at the save boundary. No peek
+        # route (docs/73): the decision is made here, on the server, from the
+        # log itself. Inside a burst the journal boundary ends the burst: a
+        # cross-save step is its own press, never a side effect of a held key.
+        if store is not None:
+            top_gid = store.change_log[-1].group_id if store.change_log else None
+            if (not store.change_log
+                    or (isinstance(top_gid, str)
+                        and top_gid.startswith(undo_journal.GID_PREFIX))):
+                if groups == 0:
+                    return _undo_journal_step(ctx)
+                stopped = "journal"
+                break
 
-    _redo_begin(ctx, store)   # docs/107: a foreign edit since forks history
-    try:
-        # Undo the last USER ACTION atomically (a batch edit / rename undoes as
-        # one unit, not one Ctrl+Z per underlying entry).
-        entries = modifier.undo_group()
-    except KeyError as exc:
-        # e.g. restoring a deleted subtree whose key was re-created since
+        _redo_begin(ctx, store)   # docs/107: a foreign edit since forks history
+        try:
+            # Undo the last USER ACTION atomically (a batch edit / rename undoes
+            # as one unit, not one Ctrl+Z per underlying entry).
+            entries = modifier.undo_group()
+        except KeyError as exc:
+            # e.g. restoring a deleted subtree whose key was re-created since
+            _invalidate_engine_cache()
+            if groups == 0:
+                return render_template("_status.html", message=str(exc), level="error"), 409
+            stopped = "error"
+            err_text = str(exc)
+            break
         _invalidate_engine_cache()
-        return render_template("_status.html", message=str(exc), level="error"), 409
-    _invalidate_engine_cache()
-    if not entries:
+        if not entries:
+            stopped = "exhausted"
+            break
+        _redo_push_group(ctx, store, entries)   # docs/107: Ctrl+Shift+Z target
+        all_entries.extend(entries)
+        groups += 1
+    if not all_entries:
         # Nothing to undo — return the (unchanged) tray so the keyboard-triggered
         # outerHTML swap is a harmless no-op instead of replacing the tray with a
         # status line.
         return _tray_html()
-    _redo_push_group(ctx, store, entries)   # docs/107: Ctrl+Shift+Z target
+    entries = all_entries
 
     # Reverts are most-recent-first; report the oldest (the action's anchor) and
     # revert every affected cell/tree-node visually (reuses the /discard path).
     anchor = entries[-1]
     n = len(entries)
-    if n > 1:
+    if groups > 1:
+        message = f"Undone: {groups} actions, {n} changes ({anchor.dot_path} …)"
+    elif n > 1:
         message = f"Undone: {n} changes ({anchor.dot_path} …)"
     elif anchor.deleted:
         message = f"Undone: {anchor.dot_path} restored"
@@ -11437,7 +12166,7 @@ def undo():
         # Revert each affected inspector cell + Explorer tree node in place, and
         # toast the summary (handled client-side in the cellsReverted listener).
         "cellsReverted": {
-            "message": message,
+            "message": (message + f" — stopped: {err_text}") if stopped == "error" else message,
             # source_file + deleted feed UndoNav (r16 0-2, docs/73): the
             # RESPONSE is the authoritative what-was-undone signal (a peek-
             # then-undo design would race a concurrent commit), so the
@@ -11447,9 +12176,19 @@ def undo():
                                       deleted=e.deleted, source_file=e.source_file)
                 for e in entries
             ],
+            # A burst that stopped early says so (review of eaa0f05): the
+            # client re-queues `requested - consumed` presses at a journal
+            # boundary (each walks the journal on its own, as a single press
+            # does), shows an error toast + resyncs the grids on an error,
+            # and drops the rest when the log is simply exhausted.
+            "requested": n_req,
+            "consumed": groups,
+            "stopped": stopped,
+            "level": "error" if stopped == "error" else "success",
         },
-        # open Pulses/grids re-fetch their rows (no-op elsewhere)
-        "pulses-changed": True,
+        # open Pulses rows re-render in place for these paths (docs/141 4j);
+        # no-op elsewhere
+        **_pulses_changed_for_entries(store, _pulse_index(), entries),
         "diagnostics-changed": True,
     })
     return resp
@@ -11612,51 +12351,79 @@ def redo():
             for e in entries
         ])
 
-    frames = _redo_stack(ctx)
-    if not frames:
-        return _tray_html()
-    if ctx.get("redo_seq") != store.mutation_seq:
-        frames.clear()   # foreign mutation since — dead timeline, silent no-op
-        return _tray_html()
-    frame = frames.pop()
-
-    fents = list(reversed(frame["entries"]))   # chronological re-apply order
-    is_jrn = bool(frame.get("gid"))
-    gid = frame.get("gid") if is_jrn else (
-        modifier.new_group_id() if len(fents) > 1 else None)
-    staged: list = []
+    # docs/141 4e: ``?n=k`` re-applies up to k frames in one request (a
+    # coalesced burst); a jrn: step on top ends the burst (its own press).
+    all_fents: list = []
+    n_req = _undo_count()
+    stopped = None
+    err_text = ""
     with store._lock:
-        try:
-            for fe in fents:
-                if fe["created"]:
-                    e = modifier.create_subtree(fe["path"], fe["new"], group_id=gid)
-                elif fe["deleted"]:
-                    e = modifier.delete_subtree(fe["path"], group_id=gid)
-                else:
-                    e = modifier.set_value(fe["path"], fe["new"], coerce=False,
-                                           group_id=gid)
-                staged.append(e)
-        except Exception as exc:   # noqa: BLE001 — all-or-nothing, frame dropped
-            for _ in staged:
-                try:
-                    modifier.undo()
-                except Exception:
-                    logger.warning("redo rollback lagged", exc_info=True)
-                    break
-            _invalidate_engine_cache()
-            return render_template(
-                "_status.html",
-                message=f"Redo failed, nothing changed: {exc}",
-                level="error"), 409
-    if is_jrn:
-        # Re-staging a discarded journal step re-consumes its unit.
-        ctx["undo_cursor"] = max(int(ctx.get("undo_cursor") or 0) - 1, 0)
-    _redo_mark(ctx, store)
-    _invalidate_engine_cache()
+      for _ in range(n_req):
+        top_gid = store.change_log[-1].group_id if store.change_log else None
+        if isinstance(top_gid, str) and top_gid.startswith(undo_journal.GID_PREFIX):
+            stopped = "journal"
+            break
+        frames = _redo_stack(ctx)
+        if not frames:
+            stopped = "exhausted"
+            break
+        if ctx.get("redo_seq") != store.mutation_seq:
+            frames.clear()   # foreign mutation since — dead timeline, silent no-op
+            stopped = "exhausted"
+            break
+        frame = frames.pop()
 
+        fents = list(reversed(frame["entries"]))   # chronological re-apply order
+        is_jrn = bool(frame.get("gid"))
+        gid = frame.get("gid") if is_jrn else (
+            modifier.new_group_id() if len(fents) > 1 else None)
+        staged: list = []
+        failed = None
+        with store._lock:
+            try:
+                for fe in fents:
+                    if fe["created"]:
+                        e = modifier.create_subtree(fe["path"], fe["new"], group_id=gid)
+                    elif fe["deleted"]:
+                        e = modifier.delete_subtree(fe["path"], group_id=gid)
+                    else:
+                        e = modifier.set_value(fe["path"], fe["new"], coerce=False,
+                                               group_id=gid)
+                    staged.append(e)
+            except Exception as exc:   # noqa: BLE001 — all-or-nothing, frame dropped
+                for _ in staged:
+                    try:
+                        modifier.undo()
+                    except Exception:
+                        logger.warning("redo rollback lagged", exc_info=True)
+                        break
+                failed = exc
+        if failed is not None:
+            _invalidate_engine_cache()
+            if not all_fents:
+                return render_template(
+                    "_status.html",
+                    message=f"Redo failed, nothing changed: {failed}",
+                    level="error"), 409
+            stopped = "error"
+            err_text = str(failed)
+            break   # the frames before it stand; this one is dropped, the burst ends
+        if is_jrn:
+            # Re-staging a discarded journal step re-consumes its unit.
+            ctx["undo_cursor"] = max(int(ctx.get("undo_cursor") or 0) - 1, 0)
+        _redo_mark(ctx, store)
+        _invalidate_engine_cache()
+        all_fents.append(fents)
+    if not all_fents:
+        return _tray_html()
+
+    fents = all_fents[0]
     n = len(fents)
+    total = sum(len(f) for f in all_fents)
     anchor = fents[0]
-    if n > 1:
+    if len(all_fents) > 1:
+        message = f"Redone: {len(all_fents)} actions, {total} changes ({anchor['path']} …)"
+    elif n > 1:
         message = f"Redone: {n} changes ({anchor['path']} …)"
     elif anchor["deleted"]:
         message = f"Redone: {anchor['path']} removed"
@@ -11667,22 +12434,33 @@ def redo():
     # Client flags describe what happened to the CELL now: a re-applied
     # create restored it (deleted=True in undo-speak), a re-applied delete
     # removed it (created=True) — the exact inversion of the frame's flags.
-    return _redo_response(message, [
-        _revert_entry_payload(fe["path"], fe["new"],
-                              created=bool(fe["deleted"]),
-                              deleted=bool(fe["created"]),
-                              source_file=fe.get("source_file", "state"))
-        for fe in reversed(fents)   # newest-first, like /undo's payload
-    ])
+    return _redo_response(
+        (message + f" — stopped: {err_text}") if stopped == "error" else message,
+        [
+            _revert_entry_payload(fe["path"], fe["new"],
+                                  created=bool(fe["deleted"]),
+                                  deleted=bool(fe["created"]),
+                                  source_file=fe.get("source_file", "state"))
+            for group in all_fents
+            for fe in group
+        ],
+        extra={"requested": n_req, "consumed": len(all_fents), "stopped": stopped,
+               "level": "error" if stopped == "error" else "success"})
 
 
-def _redo_response(message: str, entries_payload: list[dict]):
+def _redo_response(message: str, entries_payload: list[dict], extra: dict | None = None):
     """The /undo response shape (tray + cellsReverted HX-Trigger), reused by
     both /redo branches so the client repaint/UndoNav path stays ONE."""
     resp = make_response(_tray_html())
+    payload = {"message": message, "entries": entries_payload}
+    if extra:
+        payload.update(extra)
+    _ctx_ = _active_ctx()
+    _store_ = _ctx_.get("store") if _ctx_ else None
     resp.headers["HX-Trigger"] = json.dumps({
-        "cellsReverted": {"message": message, "entries": entries_payload},
-        "pulses-changed": True,
+        "cellsReverted": payload,
+        **(_pulses_changed_for_entries(_store_, _pulse_index(), entries_payload)
+           if _store_ else {"pulses-changed": True}),
         "diagnostics-changed": True,
     })
     return resp
@@ -13434,6 +14212,23 @@ def _hub_redirect(url: str):
     return redirect(url)
 
 
+def _pane_redirect(url: str):
+    """Navigate the MAIN PANE only (docs/141 4y).
+
+    ``HX-Redirect`` reloads the whole document, which rebuilds the sidebar
+    and loses every ticked run -- the user ticked five, pressed Compare, and
+    found the sidebar cleared. ``HX-Location`` makes htmx GET the url into
+    ``#table-pane`` and push it, so the sidebar DOM (ticks, open groups,
+    scroll) is never touched. Plain browser requests still get a redirect.
+    """
+    if _is_htmx():
+        resp = make_response()
+        resp.headers["HX-Location"] = json.dumps(
+            {"path": url, "target": "#table-pane", "swap": "innerHTML"})
+        return resp
+    return redirect(url)
+
+
 def _legacy_src_token(path: str) -> str:
     """ws:/run: token for a legacy folder path — archive-run layouts get the
     honest ``run:`` origin (RUN badge), everything else ``ws:``."""
@@ -13446,7 +14241,13 @@ def _legacy_src_token(path: str) -> str:
     return f"ws:{path}"
 
 
-_DIFF_TABS = ("state", "wiring", "node", "data", "figures")
+# docs/141 4y (user-directed): figures FIRST and the default for runs -- what
+# a user compares first is what the runs produced, not the chip state.
+_DIFF_TABS = ("figures", "state", "wiring", "node", "data")
+# docs/141 4y: up to FIVE sources side by side (a..e). More stops being readable
+# and the sidebar refuses the sixth tick; the server never truncates silently.
+_DIFF_SLOTS = "abcde"
+_DIFF_MAX_SOURCES = 5
 _DIFF_LIST_PAGE = 300      # ranked rows per list page
 # One diff is one flatten of two documents (20-45 ms measured on real chips).
 # The tab strip and the tree/list toggle re-ask for the same pair, so a small
@@ -13526,19 +14327,155 @@ def _diff_payload(src_a, src_b, tab: str, *, with_rows: bool) -> dict:
     return res if with_rows else {**res, "rows": []}
 
 
-def _diff_payload3(src_a, src_b, src_c, tab: str) -> dict:
-    """The list view with a third source: one row per leaf where any two of
-    the three differ (json_diff.diff_rows_n). Not memoized -- a 3-way ask is
-    rare next to the tab-strip re-asks the 2-way memo exists for."""
+def _diff_row_eq(row: dict) -> list[str]:
+    """The PAIRWISE equality of one N-way row's cells (docs/141 4z, corrected
+    in 4ac).
+
+    ``eq[i][j] == "1"`` exactly when side i and side j hold the same value
+    under json_diff's OWN equality (``_eq`` -> ``differ.compare_equal``, the
+    docs/118 one-rule); two absent cells count as equal to each other and to
+    nothing else. The pane view highlights a cell when it differs from the
+    BASELINE column, and the client reads that answer straight out of this
+    matrix -- so the row verdict and the cell verdict can never use two
+    different rules, and no equality is re-derived in JavaScript.
+
+    **Why a matrix and not equality CLASSES.** ``compare_equal`` compares
+    numbers with a relative tolerance, so ``_eq`` is not transitive and
+    induces no partition: with a = 1.0, b = a*(1+0.9e-9), c = b*(1+0.9e-9),
+    ``_eq(a,b)`` and ``_eq(b,c)`` are true while ``_eq(a,c)`` is false. The
+    first-match group ids this replaces answered [0, 0, 1] for (a,b,c) and
+    [0, 0, 0] for the same three values in the order (b,a,c) -- so with B as
+    the baseline the pane painted C as differing from a value the app's own
+    one rule calls equal, and which slot a run was dropped into changed the
+    picture. N is at most 5 (``_DIFF_MAX_SOURCES``), so the matrix is at most
+    25 characters per row.
+    """
+    n = len(row["vals"])
+    present, vals = row["present"], row["vals"]
+    out = [["0"] * n for _ in range(n)]
+    for i in range(n):
+        out[i][i] = "1"
+        for j in range(i + 1, n):
+            if not present[i] or not present[j]:
+                same = (not present[i]) and (not present[j])
+            else:
+                same = json_diff._eq(vals[i], vals[j])
+            out[i][j] = out[j][i] = "1" if same else "0"
+    return ["".join(r) for r in out]
+
+
+#: the row key of the VALUE row of a key that is also a container on another
+#: side, so the client's collapse map keeps BOTH rows (docs/141 4ac). It rides
+#: `data-path`, so it must be attribute-safe: U+0000 was the first choice and
+#: is exactly wrong -- the HTML tokenizer replaces NUL with U+FFFD and raises a
+#: parse error, and `data-path` is what any future path-addressed feature would
+#: read. A JSON key CAN end in this text; that is why the client keeps its own
+#: rule that a container row always wins the map.
+_DIFF_VALUE_ROW_SUFFIX = "#value"
+
+
+def _diff_tree_rows(rows: list[dict], *, total_rows: list[dict] | None = None) -> list[dict]:
+    """The pane view's KEY column as a tree (docs/141 4ab).
+
+    The differing leaves come in path order; this folds them into the JSON
+    hierarchy the Explorer / the 2-way diff tree show — one ``dir`` row per
+    container on the way down (with the count of differing leaves beneath it)
+    and one ``leaf`` row per differing leaf, in depth-first order, each row
+    naming its parent so the client can collapse a container (hide every
+    descendant) without re-asking the server. Only containers that lead to a
+    differing leaf exist: a subtree that agrees everywhere is never listed,
+    exactly like the pruned 2-way tree.
+
+    docs/141 4ac, two corrections:
+
+    * every row carries a ``key`` that is UNIQUE among the rows. The tree is
+      built by splitting on ``.``, and a key that is a leaf on one side and a
+      container on another produces a ``dir`` row and a ``leaf`` row with the
+      same dot path. The client's collapse map is ``{data-path: row}``, so the
+      duplicate silently overwrote the container with its own value row: the
+      container's toggle then hid nothing, every descendant resolved its
+      ancestor to a row that can never be collapsed, and the value row's
+      parent was itself — a self-loop the ancestor walk only escaped at its
+      64-step guard.
+    * ``count`` is the count over ``total_rows`` (every differing leaf) when
+      the caller passes them, not over the page slice. The tree is rebuilt
+      per page, so a container on page 1 of a 412-row diff read "70" and the
+      same container on page 2 read "182", under a tooltip stating it as the
+      whole truth.
+    """
+    root: dict = {"_kids": {}, "_row": None, "_total": 0}
+    for row in rows:
+        node = root
+        for seg in row["path"].split("."):
+            node = node["_kids"].setdefault(seg, {"_kids": {}, "_row": None, "_total": 0})
+        node["_row"] = row
+    # the TRUE count per container: walk every differing leaf, page or not
+    for row in (total_rows if total_rows is not None else rows):
+        node = root
+        for seg in row["path"].split("."):
+            node = node["_kids"].get(seg) if node else None
+            if node is None:
+                break
+            node["_total"] += 1
+
+    out: list[dict] = []
+
+    def walk(node: dict, path: str, depth: int) -> None:
+        for name, kid in kid_order(node):
+            kid_path = f"{path}.{name}" if path else name
+            if kid["_row"] is not None and not kid["_kids"]:
+                out.append({"kind": "leaf", "path": kid_path, "key": kid_path, "name": name,
+                            "depth": depth, "parent": path, "row": kid["_row"]})
+                continue
+            out.append({"kind": "dir", "path": kid_path, "key": kid_path, "name": name,
+                        "depth": depth, "parent": path, "count": kid["_total"]})
+            if kid["_row"] is not None:
+                # a leaf that is ALSO a container on another side (rare: a
+                # value replaced by a subtree) -- show the value row under it,
+                # under its OWN key so the collapse map keeps both rows
+                out.append({"kind": "leaf", "path": kid_path,
+                            "key": kid_path + _DIFF_VALUE_ROW_SUFFIX, "name": name,
+                            "depth": depth + 1, "parent": kid_path, "row": kid["_row"]})
+            walk(kid, kid_path, depth + 1)
+
+    def kid_order(node: dict):
+        # the flatten's own (string) order for the paths keeps the panes'
+        # row order identical to the plain list; numeric segments sort as
+        # numbers so list elements read 0, 1, 2 … 10, not 0, 1, 10, 2.
+        # `isdigit` is true for unicode digits `int()` refuses (U+00B2 and the
+        # rest of the No/Nd split), so the cast is guarded -- this runs while
+        # the page is being rendered (docs/141 4ac).
+        def key(item):
+            name = item[0]
+            if name.isdigit():
+                try:
+                    return (0, int(name), "")
+                except ValueError:
+                    pass
+            return (1, 0, name)
+        return sorted(node["_kids"].items(), key=key)
+
+    walk(root, "", 0)
+    return out
+
+
+def _diff_payload_n(srcs: list, tab: str) -> dict:
+    """The pane view (docs/141 4z): one row per leaf where any two of the N
+    sources differ (json_diff.diff_rows_n, path order), each row carrying its
+    equality groups. Not memoized -- an N-way ask is rare next to the
+    tab-strip re-asks the 2-way memo exists for."""
     docs, whys = [], []
-    for src in (src_a, src_b, src_c):
+    for src in srcs:
         doc, why = _diff_side_doc(src, tab)
         docs.append(doc)
         whys.append(why)
     if any(d is None for d in docs):
         return {"ok": False, "unavailable": next(w for w in whys if w),
                 "counts": {"changed": 0, "added": 0, "removed": 0, "same": 0, "total": 0}}
-    return json_diff.diff_rows_n(docs)
+    res = json_diff.diff_rows_n(docs)
+    for row in res["rows"]:
+        row["eq"] = _diff_row_eq(row)
+    return res
 
 
 _DIFF_FIG_EXT = (".png", ".jpg", ".jpeg", ".svg", ".webp")
@@ -13575,7 +14512,7 @@ def _diff_figures_payload(srcs: list) -> dict:
     per figure NAME (union, first-seen order), a cell per (figure, source) --
     the image when that run has it, an honest blank when it does not."""
     cols, order = [], []
-    for slot, src in zip("abc", srcs):
+    for slot, src in zip(_DIFF_SLOTS, srcs):
         names, why = _diff_run_figures(src)
         for n in names:
             if n not in order:
@@ -13688,11 +14625,17 @@ def diff_view():
     # Customer (2026-08-27): an OPTIONAL third source. The 2-way page is
     # unchanged when it is absent; when present the list view grows a C
     # column and the figures tab a third column (the tree stays A -> B).
+    # docs/141 4y: d and e as well -- five sources side by side.
     c_ref = (request.args.get("c") or "").strip()
-    tab = (request.args.get("tab") or "state").strip()
+    slot_refs = [a_ref, b_ref, c_ref] + [
+        (request.args.get(k) or "").strip() for k in _DIFF_SLOTS[3:]]
+    tab = (request.args.get("tab") or "").strip()
     if tab not in _DIFF_TABS:
-        tab = "state"
-    view = "list" if (request.args.get("view") or "").strip() == "list" else "tree"
+        tab = ""      # decided below, once the sources are known
+    view = (request.args.get("view") or "").strip()
+    if view not in ("tree", "list", "panes"):
+        view = ""       # decided below: panes for 3+ sources, tree for two
+    base = _int_arg("base", 0, minimum=0)
     # The list is server-rendered, so it pages: 2,257 ranked rows of a real
     # cross-generation diff serialise to 1.2 MB, and the rows a user reads are
     # the first screenful.
@@ -13702,8 +14645,11 @@ def diff_view():
         a_ref, b_ref = _diff_default_refs()
 
     error = ""
-    src_a = src_b = src_c = None
-    for ref, slot in ((a_ref, "a"), (b_ref, "b"), (c_ref, "c")):
+    slot_refs[0], slot_refs[1] = a_ref, b_ref
+    srcs: list = []              # resolved, in slot order, gaps dropped
+    kept_refs: list = []         # the refs of `srcs`, same order
+    slot_srcs: list = [None] * len(_DIFF_SLOTS)
+    for i, ref in enumerate(slot_refs):
         if not ref:
             continue
         try:
@@ -13711,32 +14657,62 @@ def diff_view():
         except compare_sources.SourceError as exc:
             error = str(exc)
             continue
-        if slot == "a":
-            src_a = resolved
-        elif slot == "b":
-            src_b = resolved
-        else:
-            src_c = resolved
+        slot_srcs[i] = resolved
+        srcs.append(resolved)
+        kept_refs.append(ref)
+    # docs/141 4ac: COMPACT the slots. Clearing the A or B select in the
+    # picker (one click, and the form auto-submits) left `src_a`/`src_b` None
+    # while three other slots held sources -- the gate below then blanked a
+    # five-pane comparison to "Pick two sources to compare." while the pickers
+    # above still showed four selected. Compacting also makes the pane letters
+    # and the picker letters the same alphabet: before this, clearing C while
+    # D held a source rendered that source as pane "C" and picker "D", and
+    # `base=` (which indexes the compacted list) silently meant another run.
+    slot_srcs = list(srcs) + [None] * (len(_DIFF_SLOTS) - len(srcs))
+    slot_refs = kept_refs + [""] * (len(_DIFF_SLOTS) - len(kept_refs))
+    a_ref, b_ref, c_ref = slot_refs[0], slot_refs[1], slot_refs[2]
+    src_a, src_b, src_c = slot_srcs[0], slot_srcs[1], slot_srcs[2]
+    if not tab:
+        # figures for runs (they HAVE figures); a snapshot / the working copy
+        # has none, so those open on state rather than on an honest blank.
+        tab = "figures" if srcs and all(
+            getattr(s, "origin", "") not in ("history", "working") for s in srcs) else "state"
+    d_ref, e_ref = slot_refs[3], slot_refs[4]
+    # docs/141 4z: three or more sources are ALWAYS read as panes (the tree
+    # reads A -> B only and the 3-way list is retired); two default to the
+    # tree, with panes one click away.
+    if len(srcs) >= 3:
+        view = "panes"
+    elif not view:
+        view = "tree"
+    base = min(base, max(0, len(srcs) - 1))
 
     payload = None
     rows = []
+    all_rows: list = []
     more = 0
+    tree_rows: list = []
     if src_a is not None and src_b is not None and not error:
         try:
             if tab == "figures":
-                payload = _diff_figures_payload(
-                    [s for s in (src_a, src_b, src_c) if s is not None])
-            elif src_c is not None and view == "list":
-                payload = _diff_payload3(src_a, src_b, src_c, tab)
+                payload = _diff_figures_payload(srcs)
+            elif view == "panes":
+                payload = _diff_payload_n(srcs, tab)
             else:
                 payload = _diff_payload(src_a, src_b, tab, with_rows=(view == "list"))
-            if view == "list" and tab != "figures":
+            if view in ("list", "panes") and tab != "figures":
                 all_rows = payload.get("rows") or []
                 rows = all_rows[:limit]
                 more = max(0, len(all_rows) - len(rows))
+            # docs/141 4ac: inside the guard. The tree walk splits paths and
+            # sorts numeric segments, and a raise there used to escape the
+            # "never 500 the menu" try because it sat after it.
+            if view == "panes" and rows:
+                tree_rows = _diff_tree_rows(rows, total_rows=all_rows)
         except Exception as exc:      # noqa: BLE001 — never 500 the menu
             logger.warning("diff build failed: %s", exc, exc_info=True)
             error = "Could not build this diff."
+            rows, tree_rows, more = [], [], 0
 
     # docs/132: the per-row take renders only when the working: side IS the
     # open chip — a pushed URL survives a chip switch, and the write always
@@ -13753,6 +14729,8 @@ def diff_view():
     return render_template(
         template,
         **_ctx(page="diff", a_ref=a_ref, b_ref=b_ref, c_ref=c_ref, tab=tab, view=view,
+               d_ref=d_ref, e_ref=e_ref, srcs=srcs, slot_refs=slot_refs, base=base,
+               slots=_DIFF_SLOTS, slot_srcs=slot_srcs, tree_rows=tree_rows,
                src_a=src_a, src_b=src_b, src_c=src_c, payload=payload, error=error,
                rows=rows, more=more, next_rows=limit + _DIFF_LIST_PAGE,
                take_active_ok=take_active_ok,
@@ -13886,7 +14864,7 @@ def diff_runs():
     """
     uids = [u for u in (request.args.get("uids") or "").split(",") if u.strip()]
     refs: list[str] = []
-    for uid in uids[:2]:
+    for uid in uids[:_DIFF_MAX_SOURCES]:
         resolved = _resolve_run(uid.strip())
         if not resolved:
             continue
@@ -13895,10 +14873,11 @@ def diff_runs():
         folder = run.get("folder_path")
         if folder:
             refs.append(f"run:{Path(folder) / 'quam_state'}")
-    if len(refs) != 2:
+    if len(refs) < 2:
         return _hub_redirect("/diff")
-    return _hub_redirect(
-        f"/diff?a={quote(refs[0])}&b={quote(refs[1])}&tab=node")
+    # docs/141 4y: 2..5 runs, figures first, and the main pane only.
+    qs = "&".join(f"{slot}={quote(r)}" for slot, r in zip(_DIFF_SLOTS, refs))
+    return _pane_redirect(f"/diff?{qs}&tab=figures")
 
 
 @bp.route("/diff/data")
@@ -14851,13 +15830,27 @@ def compare():
     still POSTs /trend directly; the /compare/* tab fragments stay until
     the redirect soaks."""
     all_paths = [p for p in request.form.getlist("paths") if p]
-    paths = all_paths[:_HUB_MAX_SOURCES]
-    params: list[tuple[str, str]] = [("src", _legacy_src_token(p)) for p in paths]
-    if len(all_paths) > _HUB_MAX_SOURCES:   # never truncate silently
-        params.append(("trunc", str(len(all_paths))))
-    if not params:
-        params.append(("from", "compare"))
-    return _hub_redirect(f"/compare-hub?{urlencode(params)}")
+    n = len(all_paths)
+    # docs/141 4y (user-directed, 2026-08-29): EVERY tick count from 2 to 5
+    # opens the diff workbench -- the Compare hub is retired as a destination.
+    # Runs land on the figures tab (what they produced), anything else on
+    # state.json. Fewer than 2 or more than 5 is refused by name, never
+    # truncated: the sidebar already blocks the sixth tick, so this is the
+    # honest server-side floor for a hand-built request.
+    if n < 2 or n > _DIFF_MAX_SOURCES:
+        msg = ("Tick at least two runs to diff." if n < 2 else
+               f"{n} runs ticked -- the diff reads up to {_DIFF_MAX_SOURCES} "
+               f"side by side; untick {n - _DIFF_MAX_SOURCES}.")
+        if _is_htmx():
+            resp = make_response(render_template("_status.html", message=msg, level="warning"))
+            resp.headers["HX-Reswap"] = "none"      # keep the pane; the sidebar shows the count
+            resp.headers["HX-Trigger"] = json.dumps({"sm:toast": {"message": msg, "level": "warning"}})
+            return resp
+        return redirect("/diff")
+    toks = [_legacy_src_token(p) for p in all_paths]
+    tab = "figures" if all(t.startswith("run:") for t in toks) else "state"
+    qs = "&".join(f"{slot}={quote(t)}" for slot, t in zip(_DIFF_SLOTS, toks))
+    return _pane_redirect(f"/diff?{qs}&tab={tab}")
 
 
 @bp.route("/compare/diff")
@@ -18857,6 +19850,99 @@ def datasets_rescan():
         resp.headers["HX-Redirect"] = "/datasets"
         return resp
     return redirect(url_for("main.datasets"))
+
+
+#: How many `/datasets/wait` long polls may block at once. Sized well under
+#: `cli._SERVE_THREADS` so the pool always keeps workers for ordinary requests;
+#: a lab runs 1-3 windows, so this is never reached in practice (docs/141 4ac).
+_WAIT_SLOTS_N = 4
+#: What a REFUSED wait costs before it answers. Long enough that even a client
+#: that ignores `saturated` cannot spin, short enough to be invisible.
+_WAIT_SATURATED_FLOOR_S = 2.0
+
+
+def _wait_slots():
+    """The per-app semaphore bounding blocked long polls (docs/141 4ac)."""
+    app = current_app._get_current_object()
+    sem = app.config.get("_wait_slots")
+    if sem is None:
+        sem = threading.Semaphore(_WAIT_SLOTS_N)
+        app.config["_wait_slots"] = sem
+    return sem
+
+
+def _run_watcher():
+    """The one RunWatcher per app (docs/141 §4p), started on first use. It
+    watches whatever the active dataset folders are at each /datasets/wait."""
+    from quam_state_manager.core import run_watch
+    app = current_app._get_current_object()
+    w = app.config.get("run_watcher")
+    if w is None:
+        w = run_watch.RunWatcher()
+        app.config["run_watcher"] = w
+    if not w.running:
+        w.start()
+    return w
+
+
+@bp.route("/datasets/wait")
+def datasets_wait():
+    """docs/141 §4p — long-poll: answer when a run folder changed, else after
+    the timeout. ``since`` is the tick the client last saw; ``timeout`` is
+    clamped to 25 s. The watched roots are refreshed from the active dataset
+    folders on every call, so a folder added or removed in the UI is picked
+    up within one wait. Never an error: an unreadable root simply never
+    changes; a watcher failure answers the current tick after the timeout."""
+    w = _run_watcher()
+    try:
+        since = int(request.args.get("since", "0"))
+    except (TypeError, ValueError):
+        since = 0
+    try:
+        timeout = float(request.args.get("timeout", "25"))
+    except (TypeError, ValueError):
+        timeout = 25.0
+    try:
+        active = _active_dataset_stores(fast=True)
+        w.set_roots([f["path"] for f in active if f.get("path")])
+    except Exception:
+        logger.exception("datasets/wait: could not resolve the active data folders")
+    if since < 0:
+        # the handshake: "what is your tick now?" -- answered at once, never
+        # a change (the page has just loaded and polled). Every later wait
+        # carries a real cursor, so the FIRST change on a fresh server (tick
+        # 0 -> 1) is reported as the change it is.
+        tick = w.wait(w.tick, 0.0)
+        resp = jsonify({"tick": tick, "changed": False, "roots": len(w.roots)})
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+    # docs/141 4ac (CRITICAL): bound how many of these can block at once. A
+    # blocked wait owns a WSGI worker, `live-wake.js` is a core script, and
+    # `qsm serve` runs waitress -- four tabs took the whole default pool and
+    # every other request waited out the timeout. The semaphore lives on the
+    # app (never a module global: a test session or an embedded host creates
+    # several apps, and the desktop launcher's pool is unbounded anyway).
+    #
+    # A refused wait sleeps a SHORT floor before answering. That floor is not
+    # politeness: a client that goes straight back to waiting on any success
+    # cannot tell a 0 ms answer from a 25 s one, and an immediate `saturated`
+    # measured ~73 requests/second from a single tab -- strictly worse than
+    # the freeze. The floor bounds a stale client; `saturated` lets a current
+    # one back off properly.
+    slots = _wait_slots()
+    if not slots.acquire(blocking=False):
+        time.sleep(min(_WAIT_SATURATED_FLOOR_S, max(0.0, timeout)))
+        resp = jsonify({"tick": w.tick, "changed": False,
+                        "roots": len(w.roots), "saturated": True})
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+    try:
+        tick = w.wait(since, timeout)
+    finally:
+        slots.release()
+    resp = jsonify({"tick": tick, "changed": tick != since, "roots": len(w.roots)})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @bp.route("/datasets/poll")

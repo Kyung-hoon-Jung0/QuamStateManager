@@ -99,6 +99,74 @@ class TestEvictionNeverLosesEdits:
         assert str(chips[1]) not in routes._quam_cache          # evicted instead
 
 
+class TestContextRegistryBounded:
+    """docs/141 B-5 — ``app.config["contexts"]`` is bounded by the same LRU
+    that owns the stores. It used to be assigned in three places and popped in
+    none, so an LRU-evicted chip's store + both grid memos stayed reachable
+    through the registry for the life of the process (13 chip copies of a real
+    20Q chip: cache 10, registry 13, 62.8 MB deep against the ~40 MB budget)."""
+
+    @staticmethod
+    def _distinct(tmp_path, i):
+        # ctx_name is folder.parent.name, so each chip needs its OWN parent —
+        # the older tests put every chip directly under tmp_path, which
+        # collapses them onto ONE registry entry.
+        return _make_chip(tmp_path / f"p{i}" / "chip")
+
+    def test_registry_never_outgrows_the_cache(self, app, tmp_path):
+        c = app.test_client()
+        for i in range(routes._QUAM_CACHE_MAX + 3):
+            c.post("/load", data={"folder": str(self._distinct(tmp_path, i))})
+        ctxs = app.config["contexts"]
+        assert len(routes._quam_cache) == routes._QUAM_CACHE_MAX
+        assert len(ctxs) == routes._QUAM_CACHE_MAX
+        cached = {id(v) for v in routes._quam_cache.values()}
+        assert all(id(cx) in cached for cx in ctxs.values())
+        # the three evicted chips are gone from the registry, not just the cache
+        assert "p0" not in ctxs and "p1" not in ctxs and "p2" not in ctxs
+        assert app.config["active_context"] in ctxs
+
+    def test_a_dirty_context_survives_the_prune(self, app, tmp_path):
+        # belt-and-braces branch: a context that is dirty but NOT in the cache
+        # (only a non-LRU pop can produce this) must never be dropped — its
+        # change_log lives nowhere on disk (the Bulk-Edit drift root cause).
+        c = app.test_client()
+        a = self._distinct(tmp_path, 99)
+        c.post("/load", data={"folder": str(a)})
+        c.post("/field/edit", data={"dot_path": "qubits.q1.f_01", "value": "9.9e9"})
+        ctx_a = app.config["contexts"]["p99"]
+        assert routes._quam_ctx_dirty(ctx_a)
+        for k in list(routes._quam_cache.keys()):        # simulate a non-LRU pop
+            if routes._quam_cache[k] is ctx_a:
+                routes._quam_cache.pop(k)
+        c.post("/load", data={"folder": str(self._distinct(tmp_path, 98))})
+        assert app.config["contexts"].get("p99") is ctx_a
+        assert ctx_a["store"].merged["qubits"]["q1"]["f_01"] == 9.9e9
+
+    def test_idle_context_drops_its_grid_memos_but_keeps_its_store(self, app, tmp_path):
+        c = app.test_client()
+        a = self._distinct(tmp_path, 1)
+        c.post("/load", data={"folder": str(a)})
+        assert c.get("/bulk", headers={"HX-Request": "true"}).status_code == 200
+        ctx_a = app.config["contexts"]["p1"]
+        assert "bulk_grid_cache" in ctx_a and "pair_grid_cache" in ctx_a
+        c.post("/load", data={"folder": str(self._distinct(tmp_path, 2))})
+        # still cached (only the 2nd chip), so the store stays — the memos go
+        assert ctx_a["store"] is not None
+        assert id(ctx_a) in {id(v) for v in routes._quam_cache.values()}
+        assert "bulk_grid_cache" not in ctx_a and "pair_grid_cache" not in ctx_a
+
+    def test_the_active_chip_keeps_its_memo(self, app, tmp_path):
+        # the prune must never cost the active chip its render memo — that memo
+        # is what makes a /bulk/cells hydration fill from the dicts that rendered.
+        c = app.test_client()
+        c.post("/load", data={"folder": str(self._distinct(tmp_path, 5))})
+        c.get("/bulk", headers={"HX-Request": "true"})
+        c.post("/load", data={"folder": str(self._distinct(tmp_path, 5))})  # re-activate
+        ctx = app.config["contexts"]["p5"]
+        assert "bulk_grid_cache" in ctx and "pair_grid_cache" in ctx
+
+
 class TestArchiveReadOnly:
     def test_workspace_select_on_run_archive_is_readonly(self, app, tmp_path):
         c = app.test_client()

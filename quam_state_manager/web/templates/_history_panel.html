@@ -59,9 +59,9 @@
            above stays verbatim). #}
         {% if hist_chip_key %}
         <button class="outline btn-sm"
-                hx-get="/compare-hub?src=hist:{{ hist_chip_key | urlencode }}/{{ s.timestamp | urlencode }}&src=working:{{ active_path | urlencode }}&hint=1"
+                hx-get="/diff?a=hist:{{ hist_chip_key | urlencode }}/{{ s.timestamp | urlencode }}&b=working:{{ active_path | urlencode }}&tab=state"
                 hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                title="Open in the Compare hub (this snapshot vs the current working state)">&#8644; Compare&#8230;</button>
+                title="Diff this snapshot against the current working state">&#8644; Compare&#8230;</button>
         {% endif %}
     </div>
 </div>

@@ -329,6 +329,11 @@ def _dump_class(path: str) -> dict:
         return entry
     entry["importable"] = True
     entry["canonical"] = f"{cls.__module__}.{cls.__qualname__}"
+    try:
+        import inspect as _inspect
+        entry["abstract"] = bool(_inspect.isabstract(cls))     # listed, badged, never offered as instantiable
+    except Exception:  # noqa: BLE001
+        entry["abstract"] = False
     entry["bases"] = [
         f"{b.__module__}.{b.__qualname__}"
         for b in cls.__mro__[1:]
@@ -341,7 +346,102 @@ def _dump_class(path: str) -> dict:
     except Exception as exc:  # noqa: BLE001
         entry["error"] = f"field dump: {type(exc).__name__}: {exc}"
         entry["fields"] = None
+    # Key manual (2026-08-27): the per-field descriptions the class's own
+    # docstring carries (quam / quam_builder write Google-style Args: /
+    # Attributes: sections), walked up the MRO so an inherited field keeps
+    # the description its defining class wrote. Absent text stays absent —
+    # a field with no docstring line gets no "doc", never a paraphrase.
+    try:
+        summary, field_docs = _class_docs(cls)
+        entry["doc"] = summary
+        if isinstance(entry["fields"], dict):
+            for name, rec in entry["fields"].items():
+                if name in field_docs:
+                    rec["doc"] = field_docs[name]
+    except Exception:  # noqa: BLE001 — docs are an extra, never a failure
+        entry.setdefault("doc", None)
     return entry
+
+
+_DOC_SECTION_RE = re.compile(
+    r"^\s*(Args|Arguments|Attributes|Parameters|Params|Fields)\s*:\s*$")
+_DOC_END_SECTION_RE = re.compile(
+    r"^\s*(Returns|Raises|Yields|Examples?|Notes?|See Also|References|Warnings?)\s*:\s*$")
+_DOC_ENTRY_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(\([^)]*\))?\s*:\s*(.*)$")
+
+
+def _parse_field_docs(doc: str) -> dict[str, str]:
+    """``{field: description}`` from a Google-style docstring's Args /
+    Attributes sections. An entry is ``name (type): text`` or ``name: text``;
+    lines indented deeper than the entry continue it. Other sections and
+    free text are ignored."""
+    out: dict[str, str] = {}
+    lines = (doc or "").splitlines()
+    in_section = False
+    cur: str | None = None
+    cur_indent = 0
+    buf: list[str] = []
+
+    def flush() -> None:
+        nonlocal cur, buf
+        if cur and buf:
+            text = " ".join(s.strip() for s in buf if s.strip())
+            if text and cur not in out:
+                out[cur] = text
+        cur, buf = None, []
+
+    for line in lines:
+        if _DOC_SECTION_RE.match(line):
+            flush()
+            in_section = True
+            continue
+        if not in_section:
+            continue
+        if _DOC_END_SECTION_RE.match(line):
+            flush()
+            in_section = False
+            continue
+        if not line.strip():
+            flush()
+            continue
+        indent = len(line) - len(line.lstrip())
+        m = _DOC_ENTRY_RE.match(line)
+        if m and (cur is None or indent <= cur_indent):
+            flush()
+            cur, cur_indent = m.group(1), indent
+            buf = [m.group(3)]
+        elif cur is not None and indent > cur_indent:
+            buf.append(line)
+        else:
+            flush()
+    flush()
+    return out
+
+
+def _class_docs(cls: type) -> tuple[str | None, dict[str, str]]:
+    """(one-paragraph class summary, per-field docs) — the class's own text
+    first, then each base's, so a subclass can override a description and
+    an inherited field still finds the line its defining class wrote."""
+    import inspect
+    field_docs: dict[str, str] = {}
+    summary: str | None = None
+    for klass in cls.__mro__:
+        if klass is object:
+            continue
+        doc = inspect.getdoc(klass) or ""
+        if not doc:
+            continue
+        # a dataclass with no docstring inherits an auto-generated signature
+        # ("Foo(a: int, ...)") — that is not documentation
+        if doc.startswith(klass.__name__ + "(") and "\n" not in doc.strip():
+            continue
+        if summary is None and klass is cls:
+            head = doc.strip().split("\n\n", 1)[0]
+            if not _DOC_SECTION_RE.match(head.splitlines()[0]):
+                summary = " ".join(s.strip() for s in head.splitlines()).strip() or None
+        for name, text in _parse_field_docs(doc).items():
+            field_docs.setdefault(name, text)
+    return summary, field_docs
 
 
 # --------------------------------------------------------------------------
@@ -397,6 +497,143 @@ def _dump_pulse_roster() -> dict:
 # entry point
 # --------------------------------------------------------------------------
 
+# The catalogue (docs/141 4h, user-directed): EVERY component class the env
+# offers, not only the ones the chip already uses -- what the Config Manual
+# lists so a user populating a state can see what is available. Sourced
+# without walking arbitrary packages (a lab package may talk to instruments
+# at import): quam's own component modules and quam_builder's superconducting
+# architecture are imported by name, the chip's classes are imported as
+# requested, and everything else comes from the subclass closure of
+# QuamComponent -- classes already loaded by those imports, never a blind
+# import of a module we do not know.
+_CATALOG_ROOTS = (
+    "quam.components",
+    "quam_builder.architecture.superconducting",
+    "quam_builder.architecture.superconducting.components",
+    # the modern pulse homes (docs/53): GaussianPulse & co. live here, and a
+    # chip that uses none of them left them out of the "full" catalogue
+    # (docs/141 4l-review); absent on quam_builder 0.2.0, which is tolerated
+    "quam_builder.common",
+)
+
+
+def _import_root_modules(root: str, status: dict | None = None) -> list[str]:
+    """Import *root* and each of its immediate submodules; return the names
+    that imported (errors are per-module, never fatal). *status* records
+    ``ok`` / ``absent`` (the package itself is not installed) / ``error: …``
+    (installed but broken) per root, so a PARTIAL catalogue is never cached
+    as the full one (docs/141 4l-review)."""
+    import importlib
+    import pkgutil
+    done: list[str] = []
+    try:
+        pkg = importlib.import_module(root)
+    except ModuleNotFoundError as exc:
+        top = root.split(".")[0]
+        missing = (getattr(exc, "name", "") or "")
+        if status is not None:
+            status[root] = "absent" if (missing == top or missing.startswith(top + ".")) else f"error: {type(exc).__name__}: {exc}"
+        return done
+    except Exception as exc:  # noqa: BLE001 -- installed but broken
+        if status is not None:
+            status[root] = f"error: {type(exc).__name__}: {exc}"
+        return done
+    if status is not None:
+        status[root] = "ok"
+    done.append(root)
+    path = getattr(pkg, "__path__", None)
+    if not path:
+        return done
+    for m in pkgutil.iter_modules(path):
+        name = f"{root}.{m.name}"
+        if m.name.startswith("_") or m.name in ("tests", "test", "examples", "scripts"):
+            continue
+        try:
+            importlib.import_module(name)
+            done.append(name)
+        except Exception:  # noqa: BLE001 -- one broken module must not empty the catalogue
+            continue
+    return done
+
+
+def enumerate_catalog(class_paths: list[str], roots_status: dict | None = None) -> dict:
+    """``{canonical class path: category}`` for every QuamComponent subclass
+    reachable after importing the known roots and *class_paths*; the per-root
+    import outcome lands in *roots_status* when given."""
+    import importlib
+    for root in _CATALOG_ROOTS:
+        _import_root_modules(root, roots_status)
+    for cp in class_paths:
+        try:
+            _import_class(cp)
+        except Exception:  # noqa: BLE001
+            continue
+    try:
+        core = importlib.import_module("quam.core")
+        bases = [getattr(core, "QuamComponent", None), getattr(core, "QuamRoot", None)]
+        bases = [b for b in bases if isinstance(b, type)]
+    except Exception:  # noqa: BLE001
+        return {}
+    seen: dict[str, str] = {}
+    visited: set = set()
+    stack = list(bases)
+    while stack:
+        cls = stack.pop()
+        for sub in getattr(cls, "__subclasses__", lambda: [])():
+            mod = getattr(sub, "__module__", "") or ""
+            name = getattr(sub, "__qualname__", "") or ""
+            if not mod or not name or "<" in name:
+                continue
+            # a private class (quam's _OutComplexChannel, the parent of every
+            # IQ / MW channel) is not listed, but its subclasses ARE -- the
+            # first cut skipped the whole branch and lost 8 channel classes
+            if name.startswith("_") or mod.startswith("quam.core") or mod.startswith("quam.utils")                     or mod.startswith("quam.serialisation"):
+                if sub not in visited:
+                    visited.add(sub)
+                    stack.append(sub)
+                continue
+            path = f"{mod}.{name}"
+            if path not in seen:
+                seen[path] = _catalog_category(mod, name)
+                stack.append(sub)
+    return dict(sorted(seen.items()))
+
+
+def _catalog_category(mod: str, name: str) -> str:
+    m = mod.lower()
+    n = name.lower()
+    if m.startswith("quam_config") or (not m.startswith("quam.") and not m.startswith("quam_builder")):
+        return "Lab (quam_config)"
+    # a QPU root FIRST: FluxTunableQuam was filed under "Flux & couplers" (4l-review)
+    if "quam" in n and ("root" in m or n.endswith("quam")):
+        return "Roots"
+    if "qubit_pair" in m or "qubitpair" in n or n.endswith("pair"):
+        return "Qubit pairs"
+    if ".qubit" in m or n.endswith("qubit") or "transmon" in n:
+        return "Qubits"
+    if ".ports" in m or n.endswith("port"):
+        return "Ports"
+    if ".pulses" in m or n.endswith("pulse"):
+        return "Pulses"
+    if ".channels" in m or n.endswith("channel"):
+        return "Channels"
+    if "octave" in m or "octave" in n:
+        return "Octave"
+    if "hardware" in m or "mixer" in n or "frequency_converter" in m or "converter" in n or "twpa" in n:
+        return "Hardware"
+    if "drive" in m or n.startswith("xy"):
+        return "Channels"
+    if "readout" in m or "resonator" in n:
+        return "Resonators"
+    if "flux" in m or "flux" in n or "tunable" in n:
+        return "Flux & couplers"
+    if "gate" in m or "macro" in m or "gate" in n:
+        return "Gates & macros"
+    if "quam" in n and ("root" in m or n.endswith("quam")):
+        return "Roots"
+    return "Other components"
+
+
 def dump_schemas(class_paths: list[str], pulse_roster: bool = True) -> dict:
     """Never raises — a broken env still returns a per-class-annotated manifest."""
     classes = {}
@@ -420,16 +657,30 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--classes", required=True, help="input JSON: {classes:[...], pulse_roster:bool}")
     ap.add_argument("--out", required=True, help="write the schema manifest JSON here")
+    ap.add_argument("--catalog", action="store_true",
+                    help="also dump EVERY component class the env offers (the Config Manual's catalogue)")
     args = ap.parse_args()
     result = {"status": "error", "mode": "state_schema", "python": "",
               "versions": {}, "classes": {}, "pulse_roster": {},
               "error": None, "traceback": None}
     try:
         spec = json.loads(Path(args.classes).read_text(encoding="utf-8"))
-        result.update(dump_schemas(
-            [str(c) for c in spec.get("classes", [])],
-            pulse_roster=bool(spec.get("pulse_roster", True)),
-        ))
+        requested = [str(c) for c in spec.get("classes", [])]
+        result.update(dump_schemas(requested, pulse_roster=bool(spec.get("pulse_roster", True))))
+        if args.catalog:
+            roots_status: dict = {}
+            cat = enumerate_catalog(requested, roots_status)
+            result["catalog_roots"] = roots_status
+            entries = {}
+            for path, category in cat.items():
+                try:
+                    e = _dump_class(path)
+                except Exception as exc:  # noqa: BLE001
+                    e = {"importable": False, "canonical": None, "bases": [], "is_dataclass": False,
+                         "fields": None, "error": f"{type(exc).__name__}: {exc}"}
+                e["category"] = category
+                entries[path] = e
+            result["catalog"] = entries
         result["status"] = "ok"
     except Exception as exc:  # noqa: BLE001 — surface as a structured error
         result["error"] = f"{type(exc).__name__}: {exc}"

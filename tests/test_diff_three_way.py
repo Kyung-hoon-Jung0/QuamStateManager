@@ -5,6 +5,7 @@ runs' own images served by ref + name, one row per figure name."""
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from urllib.parse import quote
 
@@ -54,31 +55,57 @@ class TestThirdSource:
     def test_two_way_page_keeps_its_shape_and_offers_c(self, env):
         html = _get(env, _url(env, three=False))
         assert 'name="c"' in html and "optional third" in html
-        assert 'data-diff3="1"' not in html and 'diff-wb-list-3' not in html
-        assert '<th>C</th>' not in html
+        # docs/141 4z: two sources keep the 2-way list; no pane table
+        assert 'diff-panes-table' not in html and 'diff-wb-list-3' not in html
+        assert 'name="d"' not in html, "D appears only once C carries a source... or D does"
 
-    def test_three_way_list_shows_all_three_values(self, env):
+    def test_three_way_is_the_pane_view(self, env):
+        # docs/141 4z: three sources are read as PANES -- one per source,
+        # every value beside each other, Δ against the baseline (A by default)
         html = _get(env, _url(env))
-        assert 'diff-wb-list-3' in html and '<th>C</th>' in html
-        row = html.split('data-diff3="1"', 1)[1].split("</tr>", 1)[0]
-        assert "qubits.qA1.T1" in row
-        # A 1e-5 -> B 2e-5 -> C 5e-5: both deltas rendered, from the house
-        # delta chip, in their own columns (format-agnostic on the values)
-        assert "(+100%)" in row and "(+150%)" in row, row
-        assert row.count('<td class="diff-list-c"><code>') == 1
+        assert 'diff-panes-table' in html and 'diff-wb-list-3' not in html
+        assert html.count('class="dp-pane-head') == 3
+        # docs/141 4ab: the Keys column is a tree -- container rows with the
+        # count of differing keys beneath, leaves indented under them
+        assert '<th class="dp-key-col">Keys</th>' in html
+        assert 'class="dp-row dp-dir" data-path="qubits" data-parent="" data-depth="0"' in html
+        assert 'class="dp-row dp-dir" data-path="qubits.qA1" data-parent="qubits" data-depth="1"' in html
+        assert 'data-path="qubits.qA1.T1" data-parent="qubits.qA1" data-depth="2"' in html
+        assert 'class="dp-key dp-key-leaf">T1</span>' in html
+        row = html.split('data-path="qubits.qA1.T1"', 1)[1].split("</tr>", 1)[0]
+        # A 1e-5 (baseline) -> B 2e-5 (+100%), C 5e-5 (+400%): both from the
+        # house delta chip, against the BASELINE, not the previous column
+        assert "(+100%)" in row and "(+400%)" in row and "(+150%)" not in row, row
+        assert row.count("dp-diff") == 2 and row.count("dp-base") == 1
         # f_01 agrees on all three -> not a row
         assert "qubits.qA1.f_01" not in html
+        assert 'name="d"' in html and 'name="e"' not in html, "the next empty slot is offered, not all of them"
+
+    def test_the_baseline_is_a_url_parameter(self, env):
+        html = _get(env, _url(env) + "&base=2")
+        row = html.split('data-path="qubits.qA1.T1"', 1)[1].split("</tr>", 1)[0]
+        # C 5e-5 is the baseline: A and B carry Δ against it
+        assert ("80%)" in row and "60%)" in row and "+80%" not in row), row
+        assert 'data-base="2"' in html
+        # out of range clamps to the last pane
+        assert 'data-base="2"' in _get(env, _url(env) + "&base=9")
 
     def test_tab_strip_and_view_toggle_carry_c(self, env):
         html = _get(env, _url(env))
         c_q = quote(env["cc"])
-        assert html.count(f"&amp;c={c_q}&amp;tab=") >= 5, "every tab button carries c"
-        assert f"&amp;c={c_q}&amp;tab=state&amp;view=tree" in html
+        assert html.count(f"&amp;c={c_q}&amp;d=&amp;e=&amp;tab=") >= 5, "every tab button carries c (and the empty d/e)"
+        # three sources: no tree/list toggle, the view is fixed at panes
+        assert "3 panes" in html and "view=tree" not in html
 
-    def test_tree_view_says_it_reads_a_to_b(self, env):
+    def test_three_sources_are_panes_whatever_view_is_asked(self, env):
+        # docs/141 4z: the tree reads A -> B only, so it is never offered for 3+
         html = _get(env, _url(env, view="tree"))
-        assert "diff-tree-c-note" in html and 'id="diff-tree"' in html
-        assert "diff-tree-c-note" not in _get(env, _url(env, view="tree", three=False))
+        assert 'diff-panes-table' in html and 'id="diff-tree"' not in html
+        two = _get(env, _url(env, view="tree", three=False))
+        assert 'id="diff-tree"' in two and 'diff-panes-table' not in two
+        # two sources can ASK for panes
+        two_p = _get(env, _url(env, view="panes", three=False))
+        assert 'diff-panes-table' in two_p and two_p.count('class="dp-pane-head') == 2
 
     def test_three_way_never_offers_take(self, env):
         """A per-value take writes into the WORKING side (docs/132); with a
@@ -91,7 +118,7 @@ class TestThirdSource:
         two = _get(env, f"/diff?a={quote(env['a'])}&b={quote(working)}&tab=state&view=list")
         assert "sv-take" in two, "the 2-way page must still offer the take (else this pin is vacuous)"
         three = _get(env, f"/diff?a={quote(env['a'])}&b={quote(working)}&c={quote(env['cc'])}&tab=state&view=list")
-        assert 'diff-wb-list-3' in three and "sv-take" not in three
+        assert 'diff-panes-table' in three and "sv-take" not in three
 
 
 class TestRowsN:
@@ -149,3 +176,187 @@ class TestFiguresTab:
         y = _run(tmp_path, "r5", 2e-5, [])
         html = _get(env, f"/diff?a={quote(x)}&b={quote(y)}&tab=figures")
         assert "No figures on any side" in html
+
+
+class Test4acRegressions:
+    """docs/141 4ac -- the review round over 4m-4ab. Each test here FAILS if
+    its fix is reverted; the mutation is named in the docstring."""
+
+    def test_show_more_keeps_every_slot(self, env):
+        """R5-1 (CRITICAL). `_qs | join('&amp;')` produced a plain string
+        holding `&amp;`, which Jinja escaped AGAIN, so the browser read a
+        literal `&amp;` -- not a query separator. One press of the only paging
+        control replaced a 3-pane comparison with 'Pick two sources'.
+        Mutation: join('&') -> join('&amp;')."""
+        import html as _html
+        import re
+
+        # >300 differing leaves so the Show-more button renders
+        big = env["root"] / "big"
+        for i, name in enumerate(("s1", "s2", "s3")):
+            qs = big / name / "quam_state"
+            qs.mkdir(parents=True)
+            (qs / "state.json").write_text(json.dumps(
+                {"qubits": {f"q{k}": {"T1": k + i} for k in range(400)}}))
+            (qs / "wiring.json").write_text("{}")
+        refs = [f"run:{big / n / 'quam_state'}" for n in ("s1", "s2", "s3")]
+        url = ("/diff?" + "&".join(f"{sl}={quote(r)}" for sl, r in zip("abc", refs))
+               + "&tab=state&view=panes")
+        page = _get(env, url)
+        m = re.search(r'class="btn-sm outline"\s+hx-get="([^"]+)"', page)
+        assert m, "the Show-more button must render for a >300-row diff"
+        more_url = _html.unescape(m.group(1))
+        assert more_url.count("&a=") + more_url.count("?a=") == 1
+        for sl in "bc":
+            assert f"&{sl}=" in more_url, f"slot {sl} lost from {more_url}"
+        page2 = _get(env, more_url)
+        assert 'data-n="3"' in page2, "the second page still compares three sources"
+        assert page2.count("dp-pane-head") == 3
+        assert "Pick two sources" not in page2
+
+    def test_the_cap_never_inflates_the_agree_count(self):
+        """R5-2 (CRITICAL). diff_rows_n stopped emitting rows at ROW_CAP and
+        then computed same = len(paths) - len(rows), so every leaf it never
+        examined was counted as AGREEING -- 5,354 differing leaves reported as
+        identical on a real chip pair. Mutation: `continue` -> `break`, or
+        same-by-subtraction."""
+        from quam_state_manager.core import json_diff
+
+        n = json_diff.ROW_CAP + 500
+        a = {f"k{i:06d}": i for i in range(n)}
+        b = {f"k{i:06d}": i + 1 for i in range(n)}
+        res = json_diff.diff_rows_n([a, b])
+        assert len(res["rows"]) == json_diff.ROW_CAP, "the cap still bounds the ROWS"
+        assert res["truncated"] is True
+        c = res["counts"]
+        assert c["same"] == 0, f"nothing agrees; the page must not say {c['same']}"
+        assert c["changed"] == n, "every differing leaf is counted, past the cap"
+        assert c["shown"] == json_diff.ROW_CAP
+
+        # and the honest case still adds up
+        same_doc = {"x": 1, "y": 2}
+        r2 = json_diff.diff_rows_n([same_doc, dict(same_doc)])
+        assert r2["counts"] == {"changed": 0, "added": 0, "removed": 0,
+                                "same": 2, "total": 0, "shown": 0, "one_sided": 0}
+
+    def test_a_non_transitive_triple_is_still_listed(self):
+        """R6/4ac. diff_rows_n compared every side against the FIRST present
+        value only, and `_eq` carries a relative tolerance, so a triple
+        A~B, A~C, B!~C was called 'all equal' and the row never rendered.
+        Mutation: back to the single `first` representative."""
+        from quam_state_manager.core import json_diff
+        from quam_state_manager.core.differ import CMP_TOLERANCE
+
+        a = 1.0
+        b = a * (1 + 0.9 * CMP_TOLERANCE)
+        c = b * (1 + 0.9 * CMP_TOLERANCE)
+        res = json_diff.diff_rows_n([{"v": a}, {"v": b}, {"v": c}])
+        assert [r["path"] for r in res["rows"]] == ["v"], \
+            "a and c differ under the one rule, so the leaf IS a difference"
+
+    def test_clearing_slot_a_keeps_the_comparison(self, env):
+        """R5-8. The picker's A/B selects offer '- pick a source -' and the
+        form auto-submits, so one click left src_a None while three other
+        slots held sources -- and the page blanked to 'Pick two sources to
+        compare.' while the pickers still showed them. Mutation: remove the
+        slot compaction."""
+        url = (f"/diff?a=&b={quote(env['a'])}&c={quote(env['b'])}"
+               f"&d={quote(env['cc'])}&tab=state&view=panes")
+        html = _get(env, url)
+        assert "Pick two sources to compare." not in html
+        assert 'data-n="3"' in html and html.count("dp-pane-head") == 3
+
+    def test_the_pane_letters_are_the_picker_letters(self, env):
+        """R5-10, fixed by the same compaction: a source rendered as pane 'C'
+        while its picker read 'D', and base= indexes the compacted list, so a
+        bookmarked base silently meant a different run."""
+        url = (f"/diff?a={quote(env['a'])}&b={quote(env['b'])}&c="
+               f"&d={quote(env['cc'])}&tab=state&view=panes")
+        html = _get(env, url)
+        slots = re.findall(r'<span class="dp-slot">([A-E])</span>', html)
+        assert slots == ["A", "B", "C"], slots
+        # the third source now IS slot c in the URL the page carries
+        assert 'name="c"' in html and 'name="d"' in html
+
+    def test_the_note_says_how_many_of_how_many(self, env):
+        """R5-7 / R6-1. The tree is rebuilt per page and its container counts
+        were page-local, under a tooltip stating them as the whole truth; the
+        note said nothing about paging at all. Mutation: drop total_rows."""
+        big = env["root"] / "paged"
+        for i, name in enumerate(("p1", "p2")):
+            qs = big / name / "quam_state"
+            qs.mkdir(parents=True)
+            (qs / "state.json").write_text(json.dumps(
+                {"qubits": {f"q{k}": {"T1": k + i} for k in range(400)}}))
+            (qs / "wiring.json").write_text("{}")
+        refs = [f"run:{big / n / 'quam_state'}" for n in ("p1", "p2")]
+        url = ("/diff?" + "&".join(f"{sl}={quote(r)}" for sl, r in zip("ab", refs))
+               + "&tab=state&view=panes")
+        html = _get(env, url)
+        assert "showing" in html and "of 400 differing keys" in html
+        # the root container's count is the whole diff, not this page
+        m = re.search(r'<span class="dp-count" title="(\d+) differing keys inside', html)
+        assert m and int(m.group(1)) == 400, m.group(0) if m else "no dp-count"
+        # C2-22: and the tooltip says the count is not what this page lists
+        assert "this page lists 300" in html
+
+    def test_an_n_way_diff_never_prints_plus_zero_added(self, env):
+        """R5-6. The N-way payload hard-codes added/removed to 0, so the strip
+        read '+0 added -0 removed' beside thousands of one-sided keys."""
+        one = env["root"] / "one"
+        for name, doc in (("o1", {"qubits": {"q1": {"T1": 1}}}),
+                          ("o2", {"qubits": {"q1": {"T1": 2, "extra": 3}}}),
+                          ("o3", {"qubits": {"q1": {"T1": 3}}})):
+            qs = one / name / "quam_state"
+            qs.mkdir(parents=True)
+            (qs / "state.json").write_text(json.dumps(doc))
+            (qs / "wiring.json").write_text("{}")
+        refs = [f"run:{one / n / 'quam_state'}" for n in ("o1", "o2", "o3")]
+        url = ("/diff?" + "&".join(f"{sl}={quote(r)}" for sl, r in zip("abc", refs))
+               + "&tab=state&view=panes")
+        html = _get(env, url)
+        assert "+0 added" not in html and "0 removed" not in html
+        assert "on some sources only" in html
+
+    def test_the_server_paints_no_delta_on_a_cell_equal_to_the_baseline(self, env):
+        """R5-5. The CLIENT delta gate was pinned; the SERVER one was not, and
+        removing it rendered a `0` chip on every equal cell (708 of them on the
+        real 5-run archive diff) before any script ran. Every existing fixture
+        had three sources that all differed, so no test ever rendered a
+        dp-same cell. Mutation: drop the `r.eq[base][i] != '1'` term from
+        `_show_d` in _diff_panes.html."""
+        eq = env["root"] / "eqcell"
+        for name, t1 in (("e1", 1e-5), ("e2", 2e-5), ("e3", 1e-5)):
+            qs = eq / name / "quam_state"
+            qs.mkdir(parents=True)
+            (qs / "state.json").write_text(json.dumps({"qubits": {"q1": {"T1": t1}}}))
+            (qs / "wiring.json").write_text("{}")
+        refs = [f"run:{eq / n / 'quam_state'}" for n in ("e1", "e2", "e3")]
+        url = ("/diff?" + "&".join(f"{sl}={quote(r)}" for sl, r in zip("abc", refs))
+               + "&tab=state&view=panes&base=0")
+        html = _get(env, url)
+        # C equals A (the baseline): its cell is dp-same and carries no chip
+        same_cells = re.findall(r'<td class="dp-cell dp-same"[^>]*>(.*?)</td>', html, re.S)
+        assert same_cells, "the fixture must render at least one equal cell"
+        for cell in same_cells:
+            assert "val-delta" not in cell, f"a fabricated Δ on an equal cell: {cell[:200]}"
+            assert 'class="dp-delta" hidden' in cell or "<span class=\"dp-delta\" hidden>" in cell
+        # and the cell that really differs DOES carry one (the pin is not vacuous)
+        diff_cells = re.findall(r'<td class="dp-cell dp-diff"[^>]*>(.*?)</td>', html, re.S)
+        assert any("val-delta" in c for c in diff_cells), "a real difference still shows its Δ"
+
+    def test_five_identical_sources_do_not_read_as_two(self, env):
+        """R5-11. `These two are identical` was hard-coded, so five identical
+        runs said 'two' and _diff_panes.html's own N-aware line was dead."""
+        same = env["root"] / "same"
+        for name in ("z1", "z2", "z3"):
+            qs = same / name / "quam_state"
+            qs.mkdir(parents=True)
+            (qs / "state.json").write_text(json.dumps({"qubits": {"q1": {"T1": 1}}}))
+            (qs / "wiring.json").write_text("{}")
+        refs = [f"run:{same / n / 'quam_state'}" for n in ("z1", "z2", "z3")]
+        url = ("/diff?" + "&".join(f"{sl}={quote(r)}" for sl, r in zip("abc", refs))
+               + "&tab=state&view=panes")
+        html = _get(env, url)
+        assert "These 3 sources are identical" in html
+        assert "These two are identical" not in html

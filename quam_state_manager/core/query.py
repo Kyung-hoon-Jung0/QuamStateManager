@@ -10,6 +10,8 @@ from __future__ import annotations
 import ast
 import logging
 import operator
+import math
+
 from typing import Any
 
 from quam_state_manager.core import chip_health, cr_semantics, qdac
@@ -28,6 +30,7 @@ _NODE_METRIC_KEYS = (
     "readout_frequency", "x180_amplitude", "x180_length", "x180_alpha",
     "x90_amplitude", "saturation_amplitude", "readout_amplitude",
     "readout_length", "readout_threshold", "assignment_fidelity",
+    "assignment_fidelity_gef",
     "ro_fidelity_g", "ro_fidelity_e", "gate_fidelity_avg",
     "gate_fidelity_x180", "gate_fidelity_x90",
 )
@@ -642,6 +645,9 @@ class QueryEngine:
                 "readout_length": ro.get("length"),
                 "readout_threshold": ro.get("threshold"),
                 "assignment_fidelity": _assignment_fidelity(rr.get("confusion_matrix")),
+                # docs/141 4o: three-state (g/e/f) readout fidelity, from the
+                # 3x3 matrix the GEF discrimination node stores beside the 2x2
+                "assignment_fidelity_gef": _assignment_fidelity_n(rr.get("gef_confusion_matrix")),
                 "ro_fidelity_g": _cm_diag(rr.get("confusion_matrix"), 0),
                 "ro_fidelity_e": _cm_diag(rr.get("confusion_matrix"), 1),
                 "gate_fidelity_avg": gf.get("averaged") if isinstance(gf, dict) else None,
@@ -1241,6 +1247,12 @@ def _valid_confusion_matrix(cm: Any) -> bool:
         for x in row:
             if isinstance(x, bool) or not isinstance(x, (int, float)) or x < -1e-9:
                 return False
+            # docs/141 4ac: NaN and inf pass every comparison above -- `nan <
+            # -1e-9` is False and `abs(nan - 1.0) > 0.02` is False -- so a
+            # matrix carrying one was accepted as row-stochastic and produced
+            # a confident, green fidelity from a distribution that is not one.
+            if not math.isfinite(x):
+                return False
             s += x
         if abs(s - 1.0) > 0.02:
             return False
@@ -1254,6 +1266,32 @@ def _assignment_fidelity(confusion_matrix: Any) -> float | None:
     try:
         return (confusion_matrix[0][0] + confusion_matrix[1][1]) / 2
     except (IndexError, TypeError):
+        return None
+
+
+#: A three-state readout metric needs three states. docs/141 4ac: a 2x2 stored
+#: under ``gef_confusion_matrix`` averaged to a correct GE number wearing the
+#: GEF label and scored against the GEF thresholds, which are deliberately
+#: lower (warn 0.90 / fail 0.80) because three-state discrimination runs worse.
+_GEF_MIN_STATES = 3
+
+
+def _assignment_fidelity_n(confusion_matrix: Any, *,
+                           n_min: int = _GEF_MIN_STATES) -> float | None:
+    """Assignment fidelity of an n-state confusion matrix: the mean of the
+    diagonal over ALL n states (a 3x3 g/e/f matrix reads all three — the 2x2
+    formula above would silently ignore the f row). Same validator, plus a
+    floor on n: a matrix with fewer than ``n_min`` states is not the thing this
+    metric names, and a blank is what SM already shows for a chip that has no
+    matrix at all."""
+    if not _valid_confusion_matrix(confusion_matrix):
+        return None
+    if len(confusion_matrix) < n_min:
+        return None
+    try:
+        n = len(confusion_matrix)
+        return sum(confusion_matrix[i][i] for i in range(n)) / n
+    except (IndexError, TypeError, ZeroDivisionError):
         return None
 
 

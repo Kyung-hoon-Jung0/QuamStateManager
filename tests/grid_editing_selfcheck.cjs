@@ -13,6 +13,8 @@ try { ({ JSDOM } = require('jsdom')); }
 catch (e) { console.error('jsdom not installed'); process.exit(2); }
 
 const ROOT = path.join(__dirname, '..');
+const GRID_VIRT_JS = fs.readFileSync(
+  path.join(ROOT, 'quam_state_manager', 'web', 'static', 'grid-virt.js'), 'utf8');
 const BULK_JS = fs.readFileSync(
   path.join(ROOT, 'quam_state_manager', 'web', 'static', 'bulk-edit.js'), 'utf8');
 
@@ -66,6 +68,7 @@ function world(nRows, opts) {
   const recs = [];
   win.LiveEditUndo = { record: (label, cells) => recs.push({ label, cells }), clear: () => {} };
   win._leuRecs = recs;
+  new win.Function(GRID_VIRT_JS).call(win);
   new win.Function(BULK_JS).call(win);
   win.BulkEdit.mount([{ key: 'amp', label: 'amp', section: 's', default_on: true },
                       { key: 'len', label: 'len', section: 's', default_on: true }]);

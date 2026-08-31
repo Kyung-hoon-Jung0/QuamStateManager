@@ -39,6 +39,9 @@
     var BANDS = {};                // {"1":[lo,hi], ...} MW-FEM band ranges (from server)
     var DYN = [];                  // FULL dynamic model: {key,label,section,unit,kind}
     var QMETA = { chip: '', qubits: [] };   // ⚏ Qubits payload: {id, grid:"c,r"|null} per qubit
+    // docs/141 4ac: `chip` is the DISPLAY name -- it is also the localStorage
+    // key prefix for the Qubits/Pairs pickers, so it must not change. `chipKey`
+    // folds the chip's PATH in and is what the /bulk/cells gate compares.
     var _dynHintKeys = [];         // dyn keys matching the current search but hidden
     var _colHintKeys = [];         // RENDERED columns matching the search but checkbox-hidden
     var _pairHintKeys = [];        // the pair grid's hidden matches (via BulkPairEdit)
@@ -153,6 +156,12 @@
             var keys = _dynHidden();
             evt.detail.path = _bulkSetQueryParam(p, 'dynhide', keys.length ? keys.join(',') : '');
             if (evt.detail.parameters) delete evt.detail.parameters['dynhide'];
+            // docs/141 4n: the viewport the server plans its cold columns for
+            // (screen.availWidth — no layout read; the server is conservative
+            // with it, never fewer hot columns than _virtInit would keep)
+            var vw = (window.screen && window.screen.availWidth) || 0;
+            evt.detail.path = _bulkSetQueryParam(evt.detail.path, 'vw', vw > 0 ? String(vw) : '');
+            if (evt.detail.parameters) delete evt.detail.parameters['vw'];
         });
     }
     // Re-GET /bulk into the table pane — the same idiom the cross-surface
@@ -754,14 +763,111 @@
         });
         return out.length === 2 ? out : [];
     }
+    // docs/141 4s: the Pairs picker -- its own per-chip hidden set, on top of
+    // the qubit follow rule below (a hidden qubit still takes its pairs with it)
+    function _pKey() { return QHIDE_PREFIX + 'pairs:' + (QMETA.chip || 'chip'); }
+    function _pHidden() {
+        try {
+            var a = JSON.parse(localStorage.getItem(_pKey()) || '[]');
+            return new Set(Array.isArray(a) ? a : []);
+        } catch (e) { return new Set(); }
+    }
+    function _savePHidden(set) {
+        try { localStorage.setItem(_pKey(), JSON.stringify(Array.from(set))); } catch (e) {}
+    }
+    function _pairRows() {
+        var pt = document.getElementById('bulk-pair-table'); if (!pt) return [];
+        return Array.prototype.slice.call(pt.querySelectorAll('tbody tr[data-pair]'));
+    }
+    function _pairIds() { return _pairRows().map(function (r) { return r.getAttribute('data-pair') || ''; }); }
+    function _pDirtyIds() {
+        var d = {};
+        _pairRows().forEach(function (r) { if (_rowDirty(r)) d[r.getAttribute('data-pair') || ''] = true; });
+        return d;
+    }
     function _applyPairFollow(hid) {
-        var pt = document.getElementById('bulk-pair-table'); if (!pt) return;
-        Array.prototype.slice.call(pt.querySelectorAll('tbody tr[data-pair]')).forEach(function (r) {
-            var m = _pairMembers(r.getAttribute('data-pair'));
-            var off = m.length === 2 && (hid.has(m[0]) || hid.has(m[1]));
-            if (off && _rowDirty(r)) off = false;
+        var rows = _pairRows(); if (!rows.length) return;
+        var phid = _pHidden();
+        var shown = 0;
+        rows.forEach(function (r) {
+            var pid = r.getAttribute('data-pair') || '';
+            var m = _pairMembers(pid);
+            var off = (m.length === 2 && (hid.has(m[0]) || hid.has(m[1]))) || phid.has(pid);
+            if (off && _rowDirty(r)) off = false;      // an unsaved edit never vanishes
             r.classList.toggle('bulk-qubit-off', off);
+            if (!off) shown++;
         });
+        var pill = document.getElementById('bulk-pair-pill');
+        if (pill) {
+            pill.hidden = shown === rows.length;
+            pill.textContent = shown + ' of ' + rows.length + ' pairs \u2014 Show all';
+        }
+    }
+    function applyPairVis() {
+        _applyPairFollow(_qHidden());
+        if (window.BulkPairEdit && BulkPairEdit.applySearch) { try { BulkPairEdit.applySearch(); } catch (e) {} }
+    }
+    function _buildPairMenu() {
+        var menu = document.getElementById('bulk-pairvis-menu');
+        if (!menu) return;
+        var hid = _pHidden(), qhid = _qHidden();
+        var dirty = _pDirtyIds();
+        var ids = _pairIds();
+        var html = '<div class="bulk-colvis-actions">' +
+            '<button type="button" class="btn-xs outline" data-psel="all">All</button>' +
+            '<button type="button" class="btn-xs outline" data-psel="none">None</button>' +
+            '<button type="button" class="btn-xs outline" data-psel="invert">Invert</button></div>';
+        ids.forEach(function (pid) {
+            var isDirty = !!dirty[pid];
+            var m = _pairMembers(pid);
+            var followed = m.length === 2 && (qhid.has(m[0]) || qhid.has(m[1]));
+            var checked = !hid.has(pid) || isDirty;
+            html += '<label class="bulk-colvis-item bulk-qubit-item"><span>' +
+                '<input type="checkbox" data-pcb="' + _esc(pid) + '"' +
+                (checked ? ' checked' : '') + (isDirty ? ' disabled' : '') + '> ' + _esc(pid) + '</span>' +
+                (isDirty
+                    ? '<span class="bulk-qdirty" title="This pair has an unsaved edit \u2014 apply or reset it first">unsaved edit</span>'
+                    : (followed
+                        ? '<span class="bulk-qdirty" title="A qubit of this pair is hidden by the Qubits picker">qubit hidden</span>'
+                        : '<button type="button" class="bulk-qonly" data-ponly="' + _esc(pid) + '" title="Show only ' + _esc(pid) + '">only</button>')) +
+                '</label>';
+        });
+        menu.innerHTML = html;
+        if (!menu._pBound) {
+            menu._pBound = true;
+            menu.addEventListener('click', function (ev) {
+                var b = ev.target.closest('[data-psel],[data-ponly]');
+                if (!b) return;
+                ev.preventDefault();
+                var hid2 = _pHidden(), dirty2 = _pDirtyIds(), all = _pairIds();
+                if (b.hasAttribute('data-psel')) {
+                    var mode = b.getAttribute('data-psel');
+                    if (mode === 'all') hid2 = new Set();
+                    else if (mode === 'none') hid2 = new Set(all.filter(function (id) { return !dirty2[id]; }));
+                    else all.forEach(function (id) {
+                        if (dirty2[id]) { hid2.delete(id); return; }
+                        if (hid2.has(id)) hid2.delete(id); else hid2.add(id);
+                    });
+                } else {
+                    var only = b.getAttribute('data-ponly');
+                    hid2 = new Set(all.filter(function (id) { return id !== only && !dirty2[id]; }));
+                }
+                _savePHidden(hid2);
+                applyPairVis();
+                _buildPairMenu();
+            });
+            menu.addEventListener('change', function (ev) {
+                var cb = ev.target.closest('input[data-pcb]');
+                if (!cb) return;
+                var hid2 = _pHidden();
+                var id = cb.getAttribute('data-pcb');
+                if (cb.checked) hid2.delete(id);
+                else if (!_pDirtyIds()[id]) hid2.add(id);
+                _savePHidden(hid2);
+                applyPairVis();
+                _buildPairMenu();
+            });
+        }
     }
 
     function _buildQubitMenu() {
@@ -864,6 +970,7 @@
                 _saveQHidden(hid2);
                 applyQubitVis();
                 _buildQubitMenu();
+                _buildPairMenu();       // docs/141 4s: the 'qubit hidden' badges follow
             });
             menu.addEventListener('change', function (ev) {
                 var cb = ev.target.closest('input[data-qcb]');
@@ -875,6 +982,7 @@
                 _saveQHidden(hid2);
                 applyQubitVis();
                 _buildQubitMenu();
+                _buildPairMenu();       // docs/141 4s: the 'qubit hidden' badges follow
             });
         }
     }
@@ -1041,13 +1149,38 @@
             el.classList.toggle('bulk-search-hidden', !!colSearchHide[k]);
         });
         var _hideSels = [];
+        // Night session 2026-08-28: hide by CLASS (`.ck-<index>`, stamped on every
+        // th/td by the template), not by `td[data-col-key="k"]`. Chrome indexes
+        // rules by class NAME, so a td tests only the rules for its own classes;
+        // an attribute-equals rule is a candidate for EVERY td, and 300 hidden
+        // columns x 8,000 tds was the 250-370 ms style recalc measured behind
+        // each keystroke (real Chrome trace).
+        //
+        // 2026-08-28 (daytime, docs/141 4d): the rules are STATIC and the
+        // keystroke only toggles `sh-<index>` classes on the TABLE for the
+        // columns whose state CHANGED. Replacing the stylesheet's text each
+        // keystroke made Chrome invalidate every element matched by any rule
+        // of the old and the new sheet -- `elementsStyled: 10,673`, the whole
+        // grid, 149 ms -- even when one more letter changed three columns.
+        // A class diff on one element invalidates only the descendants its
+        // changed classes' rules reach (`#bulk-table.sh-N td.ck-N`): the
+        // cost is now proportional to the change, not to the grid.
+        var _idxOf = _colIndexMap(t);
+        _ensureCkSheet(_idxOf);
+        var _want = {};
         Object.keys(colSearchHide).forEach(function (k) {
             if (!colSearchHide[k] || k === '__id__' || hide.has(k)) return;
             _searchHiddenKeys[k] = 1;
-            _hideSels.push('#bulk-table td[data-col-key="' + _cssEsc(k) + '"]');
+            if (_idxOf[k] != null) _want['sh-' + _idxOf[k]] = 1;
+            else _hideSels.push('#bulk-table td[data-col-key="' + _cssEsc(k) + '"]');   // no ck class: the old dynamic rule
         });
-        _searchHideStyleEl().textContent = _hideSels.length
-            ? _hideSels.join(',\n') + ' { display: none !important; }' : '';
+        var _cur = (t.getAttribute('class') || '').split(/\s+/);
+        for (var ci = 0; ci < _cur.length; ci++) {
+            if (_cur[ci].indexOf('sh-') === 0 && !_want[_cur[ci]]) t.classList.remove(_cur[ci]);
+        }
+        Object.keys(_want).forEach(function (c) { if (!t.classList.contains(c)) t.classList.add(c); });
+        var _dyn = _hideSels.length ? _hideSels.join(',\n') + ' { display: none !important; }' : '';
+        if (_searchHideStyleEl().textContent !== _dyn) _searchHideStyleEl().textContent = _dyn;
         // docs/120 item 28 — SEARCHING FOR A COLUMN MUST MAKE IT USABLE, not
         // just visible. Cold columns (docs/105 virtualization) have their cell
         // contents detached, and hydration only ever fired on scroll, nav or a
@@ -1061,13 +1194,22 @@
         // A surviving column is one the user has just asked to look at, so
         // hydrate it. Gated on a non-empty query: with no search every column
         // survives, and hydrating them all would simply undo virtualization.
-        if (_virt && q) {
-            var _due = [];
-            visCols.forEach(function (c) {
-                if (!colSearchHide[c.key] && _virt.cold.has(c.key)) _due.push(c.key);
-            });
-            _virtHydrateCols(_due);   // one batch — never a scan per column
-        }
+        // 2026-08-28 (docs/141 4d): hydrate the surviving cold columns that the
+        // narrowed grid puts ON SCREEN (the scroll pass, run now), not every
+        // survivor. The first letter of any query survives most columns, so
+        // "hydrate every survivor" undid the whole virtualization on the
+        // first keystroke: 632 ms for `a` on the 20Q chip, measured. The
+        // docs/120 #28 case still holds -- `T1` narrows the grid to that
+        // column, which is then at the left edge and hydrated; anything
+        // further right hydrates on scroll, as always.
+        // Any change -- including CLEARING the search, which brings cold
+        // (hidden-at-mount) columns back on screen -- schedules the pass in
+        // a rAF, which runs BEFORE the next style/layout/paint: no frame of
+        // empty tds is painted (the 4e-review note claiming otherwise was
+        // wrong -- docs/141 4l-review), and a synchronous pass forced a
+        // style+layout INSIDE the keystroke (measured). Hidden-at-mount
+        // columns are frozen at their estimate like every other cold one.
+        if (_virt) _virtOnScroll();
         // A new query retires the previous "show them anyway" choice — it was
         // made about those tokens, and silently carrying it forward would make
         // the next search quietly stop filtering rows.
@@ -1161,6 +1303,11 @@
     // ── sort + per-column min/max ────────────────────────────────────────────
     function sort(key) {
         var t = table(); if (!t) return;
+        // a server-cold column has no values to sort by yet: fetch, then sort
+        if (_virt && _virt.remote && _virt.remote.has(key)) {
+            _virtHydrateCols([key]).then(function () { if (!(_virt && _virt.remote && _virt.remote.has(key))) sort(key); });
+            return;
+        }
         var tbody = t.querySelector('tbody');
         if (sortKey === key) sortDir = -sortDir; else { sortKey = key; sortDir = 1; }
         var rows = _rows();
@@ -1193,10 +1340,18 @@
         if (th) th.textContent = sortDir > 0 ? ' ▲' : ' ▼';
     }
 
-    function _recomputeStats() {
+    function _recomputeStats(onlyKeys) {
         var t = table(); if (!t) return;
         var hide = _hiddenSet();
         COLS.forEach(function (c) {
+            if (onlyKeys && !onlyKeys[c.key]) return;
+            // a COLD column has no cells to count: keep the server's numbers
+            // (they were wiped and never came back -- docs/141 4l-review)
+            // docs/141 4ae: a RETIRED column has no cells either -- it left
+            // `cold` but never arrived -- so the same guard must cover it, or
+            // the server's numbers are wiped and never come back.
+            if (_virt && ((_virt.cold && _virt.cold.has(c.key))
+                          || (_virt.dead && _virt.dead.has(c.key)))) return;
             var stat = t.querySelector('[data-col-stats="' + (window.CSS && CSS.escape ? CSS.escape(c.key) : c.key) + '"]');
             if (!stat) return;
             if (hide.has(c.key)) { stat.textContent = ''; return; }
@@ -1278,6 +1433,7 @@
             _lastDirtySig = sig;
             _applyQubitVisCore();
             _buildQubitMenu();
+            _buildPairMenu();
         }
     }
 
@@ -1403,11 +1559,28 @@
     }
 
     // ── before/after hover ───────────────────────────────────────────────────
+    // docs/141 §4m: the before→after chip is CREATED on first hover, not rendered
+    // per cell (4,000+ cells × 4 spans on a 20Q chip). Its "old" text is the
+    // cell's data-baseline, which every path sets BEFORE marking a cell modified
+    // (the server for a tray-pending cell, applyRow / the cross-table sync /
+    // markModified here); the apply sites keep an existing chip in sync.
+    function _ensureBA(td, cell) {
+        if (td.querySelector('.bulk-ba')) return;
+        var ba = document.createElement('span');
+        ba.className = 'bulk-ba'; ba.setAttribute('aria-hidden', 'true');
+        var o = document.createElement('span'); o.className = 'bulk-ba-old';
+        o.textContent = cell.hasAttribute('data-baseline') ? cell.getAttribute('data-baseline') : (cell.getAttribute('data-orig') || '');
+        var n = document.createElement('span'); n.className = 'bulk-ba-new';
+        var d = document.createElement('span'); d.className = 'bulk-ba-delta'; d.hidden = true;
+        ba.appendChild(o); ba.appendChild(document.createTextNode(' → ')); ba.appendChild(n); ba.appendChild(d);
+        td.appendChild(ba);
+    }
     function _hoverBA(e, show) {
         var td = e.target.closest && e.target.closest('.bulk-td');
         if (!td) return;
         var cell = td.querySelector('.bulk-cell');
         if (!cell || !cell.classList.contains('bulk-cell-modified')) return;
+        if (show) _ensureBA(td, cell);
         var newEl = td.querySelector('.bulk-ba-new');
         if (newEl) newEl.textContent = cell.value;
         // docs/76: the hover chip answers "by how much?", not just "from what".
@@ -1427,6 +1600,15 @@
     }
     // Validate one LO cell (a band or a frequency) against its band range + LO peer.
     // Sets/clears a `bulk-band-warn` highlight + an inline message; returns true if warned.
+    // docs/141 §4m: the inline band message is created the first time a cell
+    // actually warns (it sat in every cell before); it goes where the render
+    // used to put it — before the physical-output line.
+    function _ensureBandMsg(td) {
+        var el = document.createElement('span'); el.className = 'bulk-band-msg'; el.hidden = true;
+        var phys = td.querySelector('.bulk-phys');
+        if (phys) td.insertBefore(el, phys); else td.appendChild(el);
+        return el;
+    }
     function _validateBand(cell) {
         var field = cell.getAttribute('data-lo-field');
         var td = cell.closest('.bulk-td');
@@ -1453,6 +1635,7 @@
             }
         }
         cell.classList.toggle('bulk-band-warn', !!msg);
+        if (msg && !msgEl && td) msgEl = _ensureBandMsg(td);
         if (msgEl) { msgEl.textContent = msg; msgEl.hidden = !msg; }
         return !!msg;
     }
@@ -1612,7 +1795,8 @@
         var byResolved = {};
         (results || []).forEach(function (res) { if (res.resolved_path) byResolved[res.resolved_path] = res; });
         if (!Object.keys(byResolved).length) return;
-        _virtHydrateAll();           // docs/105 #1 - path-addressed repaint must see every input
+        _virtHydrateLocal();         // docs/105 #1 - path-addressed repaint must see every input
+                                     // (a server-cold column arrives fresh from the working copy)
         _cells(t).forEach(function (c) {
             if (c.getAttribute('data-linkable') !== '1') return;   // only linked siblings cross-sync
             var res = byResolved[c.getAttribute('data-resolved')];
@@ -1652,14 +1836,45 @@
     // narrow-but-tall chip the way a bare cell count is. `_VIRT_MIN_CELLS`
     // stays as a cheap pre-filter so a genuinely small grid never even walks
     // its headers.
-    var _VIRT_MIN_CELLS = 600;       // pre-filter only — the real gate is below
-    var _VIRT_MIN_COLD = 800;        // cold CELLS that make the detach worth it
-    var _VIRT_BUFFER = 1.5;          // hydrate up to 1.5 viewports ahead
-    var _virt = null;                // { html:Map, vals:Map, cold:Set, wrap }
-    function _virtStyleEl() {
-        var el = document.getElementById('bulk-virt-width-style');
-        if (!el) { el = document.createElement('style'); el.id = 'bulk-virt-width-style'; document.head.appendChild(el); }
-        return el;
+    // docs/141 4ad: the mechanism itself now lives in web/static/grid-virt.js
+    // so the PAIR grid can have it too (§4n said to generalize it before a
+    // second consumer appeared). This file keeps the qubit grid's DOM facts --
+    // its table, its element ids, its hooks -- and `_virt` stays a live
+    // reference to the instance's state because ~20 call sites read
+    // `_virt.cold` / `.remote` / `.byPath` / `.vals` directly.
+    var _gv = null;                  // the GridVirt instance
+    var _virt = null;                // its state, or null
+    // docs/141 4q: the ONE vertical scroller is #table-pane (the wrap is a
+    // frame now) -- hydration listens to, and measures, that element. The
+    // wrap fallback keeps a table mounted outside the pane (a test page)
+    // working; a jsdom harness defines its geometry on the pane.
+    function _scrollerOf(t) {
+        return document.getElementById('table-pane') || t.closest('.bulk-table-wrap') || t.parentElement;
+    }
+    // docs/141 4q: the toolbar rows, the chip bar and the pair divider are as
+    // wide as their containing block, so position:sticky has no room to hold
+    // them while the pane scrolls sideways (real Chrome: the toolbar left at
+    // -2475 px). Move them by the pane's scrollLeft instead, one rAF per
+    // scroll event, so the search box and Apply all stay where the user is.
+    var _BAR_SEL = '.bulk-toolbar, .bulk-chipbar, .bulk-pair-divider, .bulk-dyn-truncated, .bulk-virt-note';
+    function _pinBars(scroller) {
+        var x = scroller.scrollLeft || 0;
+        var tf = x ? 'translateX(' + x + 'px)' : '';
+        (scroller.querySelectorAll ? scroller : document).querySelectorAll(_BAR_SEL).forEach(function (b) { if (b.style.transform !== tf) b.style.transform = tf; });
+    }
+    function _pinBarsToScroll() {
+        var t = table(); if (!t) return;
+        var s = _scrollerOf(t); if (!s) return;
+        if (!s._barsBound) {
+            s._barsBound = true;
+            var pending = false;
+            s.addEventListener('scroll', function () {
+                if (pending) return;
+                pending = true;
+                (window.requestAnimationFrame || function (f) { setTimeout(f, 0); })(function () { pending = false; _pinBars(s); });
+            }, { passive: true });
+        }
+        _pinBars(s);                                   // a re-mount with the pane already scrolled
     }
     // docs/126 ③: search-hidden QUBIT-grid columns, as one stylesheet (tds)
     // + a key set (cell navigation) — see the applySearch note.
@@ -1670,102 +1885,108 @@
         return el;
     }
     function _cssEsc(k) { return (window.CSS && CSS.escape) ? CSS.escape(k) : String(k).replace(/"/g, '\\"'); }
-    function _virtInit() {
-        _virt = null;
-        _virtStyleEl().textContent = '';
-        var t = table(); if (!t) return;
-        var tds = t.querySelectorAll('tbody td[data-col-key]');
-        if (tds.length < _VIRT_MIN_CELLS) return;
-        var wrap = t.closest('.bulk-table-wrap') || t.parentElement;
-        var edge = ((wrap && wrap.clientWidth) || window.innerWidth || 1200) * (1 + _VIRT_BUFFER);
-        var cold = new Set(), widths = [];
+    // The static hide rules: one per column index, written ONCE per column
+    // set and never touched by a keystroke (see applySearch).
+    function _ensureCkSheet(idxOf) {
+        var el = document.getElementById('bulk-search-ck-style');
+        if (!el) { el = document.createElement('style'); el.id = 'bulk-search-ck-style'; document.head.appendChild(el); }
+        var idx = Object.keys(idxOf).map(function (k) { return idxOf[k]; }).sort(function (a, b) { return a - b; });
+        var sig = idx.length ? idx[0] + '-' + idx[idx.length - 1] + '/' + idx.length : '';
+        if (el.getAttribute('data-sig') === sig) return el;
+        var rules = idx.map(function (n) { return '#bulk-table.sh-' + n + ' td.ck-' + n + ' { display: none !important; }'; });
+        el.textContent = rules.join('\n');
+        el.setAttribute('data-sig', sig);
+        return el;
+    }
+    // column key -> the `ck-N` index stamped on its cells (from the header row)
+    function _colIndexMap(t) {
+        var m = {};
         t.querySelectorAll('th.bulk-col-head[data-col-key]').forEach(function (h) {
-            if (h.offsetLeft > edge) {
-                var k = h.getAttribute('data-col-key');
-                cold.add(k);
-                // freeze the value-fit width so pruning can't shift the layout
-                widths.push('#bulk-table th[data-col-key="' + _cssEsc(k) + '"]{min-width:' + h.offsetWidth + 'px}');
-            }
+            var hit = /(?:^|\s)ck-(\d+)(?:\s|$)/.exec(h.className || '');
+            if (hit) m[h.getAttribute('data-col-key')] = hit[1];
         });
-        if (!cold.size) return;
-        // The real gate: enough cells actually go cold to repay detaching them.
-        // (`_rows().length` rather than tds/th, because hidden columns are in
-        // `tds` but contribute no layout worth reclaiming.)
-        if (cold.size * _rows().length < _VIRT_MIN_COLD) return;
-        _virt = { html: new Map(), vals: new Map(), cold: cold, wrap: wrap };
-        _virtStyleEl().textContent = widths.join('\n');
-        Array.prototype.forEach.call(tds, function (td) {
-            if (!_virt.cold.has(td.getAttribute('data-col-key'))) return;
-            var inp = td.querySelector('.bulk-cell');
-            var v = inp ? String(inp.value) : (td.textContent || '');
-            _virt.vals.set(td, v.toLowerCase());
-            _virt.html.set(td, td.innerHTML);
-            td.innerHTML = '';
-            td.classList.add('bulk-td-cold');
+        return m;
+    }
+    /* ── the qubit grid's binding to GridVirt (docs/141 4ad) ───────────────
+       Every name below existed before as a local function; they are wrappers
+       now so no call site in this file changed. The DOM facts the core cannot
+       know are the arguments. */
+    function _virtInstance() {
+        if (_gv) return _gv;
+        if (!window.GridVirt) return null;
+        _gv = window.GridVirt.create({
+            table: table,
+            rows: _rows,
+            scroller: _scrollerOf,
+            styleId: 'bulk-virt-width-style',
+            noteId: 'bulk-virt-note',
+            mapId: 'bulk-cold-map',
+            tableSel: '#bulk-table',
+            rowAttr: 'data-qubit',
+            colWidths: function () { return _colWidths; },
+            urlParams: function () {
+                var q = '';
+                var dh = _dynHidden();
+                if (dh.length) q += '&dynhide=' + encodeURIComponent(dh.join(','));
+                // the path-folded token when the page shipped one, else the
+                // display name (an older page); the route accepts both (4ac)
+                var tok = QMETA && (QMETA.chipKey || QMETA.chip);
+                if (tok) q += '&chip=' + encodeURIComponent(tok);
+                return q;
+            },
+            onLanded: function (t, set) {
+                _hayCache = null;        // hydrated inputs join the DOM haystacks
+                // a cold column's header stats were left alone; now that its
+                // cells are here, compute them -- for these columns only
+                try { _recomputeStats(set); } catch (e) {}
+            },
+            phase: _ph,
+            onState: function (st) { _virt = st; },
         });
-        if (wrap && !wrap._virtScrollBound) {
-            wrap._virtScrollBound = true;
-            wrap.addEventListener('scroll', _virtOnScroll, { passive: true });
+        return _gv;
+    }
+    // onState keeps `_virt` live; this stays as the ONE place that reads the
+    // core's state, so a future caller cannot reintroduce a stale mirror.
+    function _virtSync() { _virt = _gv ? _gv.state() : null; return _virt; }
+    function _virtInit() {
+        var gv = _virtInstance();
+        // docs/141 4ae B-7: no GridVirt means the server-cold half of this
+        // table will never be filled. Say so instead of leaving it blank.
+        if (!gv) {
+            _virt = null;
+            if (window.GridVirtMissingNote) window.GridVirtMissingNote(table(), 'bulk-virt-note');
+            return;
         }
+        gv.init();
+        _virtSync();
+    }
+    function _virtStyleEl() { var gv = _virtInstance(); return gv ? gv.styleEl() : document.createElement('style'); }
+    function _virtNote(msg) { var gv = _virtInstance(); if (gv) gv.note(msg); }
+    function _thHidden(h) { return window.GridVirt ? window.GridVirt.thHidden(h) : false; }
+    function _virtPxPerChar() { return window.GridVirt ? window.GridVirt.pxPerChar() : 8; }
+    var _resolved = { then: function (f) { try { f(); } catch (e) {} return _resolved; },
+                      catch: function () { return _resolved; } };
+    function _virtPatchColdValue(dotPath, disp) {
+        if (!_gv) return false;
+        var hit = _gv.patchColdValue(dotPath, disp);
+        if (hit) _virtPatchColdValue.flushHay = true;
+        return hit;
     }
     function _virtHydrateCols(keys) {
-        if (!_virt || !keys || !keys.length) return;
-        var due = keys.filter(function (k) { return _virt.cold.has(k); });
-        if (!due.length) return;
-        var t = table(); if (!t) { _virt = null; return; }
-        // ONE cold-cell scan + ONE PhysAmp pass for the whole batch. The old
-        // per-column path (a full-table querySelectorAll AND a whole-table
-        // PhysAmp.applyAll per column) is what made a broad patch press cost
-        // 1.2–1.6 s on the real 20Q chip — clicking "Qubit" survives ~100
-        // cold columns, so the table was scanned ~200 times per click
-        // (docs/126 ③, CDP-profiled: 253 ms querySelectorAll + 740 ms style
-        // recalc from the interleaved writes).
-        var set = {};
-        due.forEach(function (k) { set[k] = 1; _virt.cold.delete(k); });
-        t.querySelectorAll('td.bulk-td-cold').forEach(function (td) {
-            var k = td.getAttribute('data-col-key');
-            if (!k || !set[k]) return;
-            var h = _virt.html.get(td);
-            if (h != null) { td.innerHTML = h; _virt.html.delete(td); _virt.vals.delete(td); }
-            td.classList.remove('bulk-td-cold');
-        });
-        if (!_virt.cold.size) { _virt = null; _virtStyleEl().textContent = ''; }
-        _hayCache = null;            // hydrated inputs join the DOM haystacks
-        // docs/109: cold cells were detached with their SERVER-rendered dBm
-        // annotations — if the viewer switched the MW-power unit meanwhile,
-        // the re-inserted text would be stale; reformat on arrival.
-        if (window.PhysAmp) window.PhysAmp.applyAll(t);
+        if (!_gv) return _resolved;
+        var r = _gv.hydrateCols(keys);
+        _virtSync();
+        return r && r.then ? r.then(function () { _virtSync(); }) : (_virtSync(), _resolved);
     }
-    function _virtHydrateCol(key) { _virtHydrateCols([key]); }
-    function _virtEnsureTd(td) {
-        if (_virt && td) {
-            var k = td.getAttribute('data-col-key');
-            if (k && _virt.cold.has(k)) _virtHydrateCol(k);
-        }
+    function _virtHydrateCol(key) { return _virtHydrateCols([key]); }
+    function _virtHydrateAll() { return _gv ? _virtHydrateCols(Array.from((_gv.state() || { cold: [] }).cold)) : _resolved; }
+    function _virtHydrateLocal() {
+        if (!_gv || !_virt) return;
+        _virtHydrateCols(Array.from(_virt.cold).filter(function (k) { return !_virt.remote.has(k); }));
     }
-    function _virtHydrateAll() {
-        if (!_virt) return;
-        _virtHydrateCols(Array.from(_virt.cold));
-    }
-    var _virtScrollPending = false;
-    function _virtOnScroll() {
-        if (!_virt || _virtScrollPending) return;
-        _virtScrollPending = true;
-        window.requestAnimationFrame(function () {
-            _virtScrollPending = false;
-            if (!_virt) return;
-            var t = table(); if (!t) return;
-            var wrap = _virt.wrap;
-            var edge = (wrap ? wrap.scrollLeft + wrap.clientWidth : 0)
-                + ((wrap && wrap.clientWidth) || 1200) * _VIRT_BUFFER;
-            var due = [];
-            t.querySelectorAll('th.bulk-col-head[data-col-key]').forEach(function (h) {
-                var k = h.getAttribute('data-col-key');
-                if (_virt && _virt.cold.has(k) && h.offsetLeft < edge) due.push(k);
-            });
-            _virtHydrateCols(due);
-        });
-    }
+    function _virtEnsureTd(td) { if (_gv) { _gv.ensureTd(td); _virtSync(); } }
+    function _virtOnScroll(immediate) { if (_gv) { _gv.onScroll(immediate); _virtSync(); } }
+    function _virtPass() { if (_gv) { _gv.pass(); _virtSync(); } }
 
     // ── column drag-resize (override the value-fit width per column) ─────────
     // The cells stay size-attr value-fit by default; dragging a header's right
@@ -2135,7 +2356,15 @@
         var missing = _editCarry.list.some(function (it) {
             return !t.querySelector('.bulk-cell[data-dot-path="' + _cssEsc(it.dp) + '"]');
         });
-        if (missing) _virtHydrateAll();
+        if (missing) {
+            var pending = _virtHydrateAll();
+            if (_virt && _virt.remote && _virt.remote.size) {
+                var carry = _editCarry;
+                _editCarry = null; window._dynReloadAt = 0;
+                pending.then(function () { _editCarry = carry; carry.at = Date.now(); _consumeEditCarry(); });
+                return;
+            }
+        }
         var n = 0, lost = 0;
         _editCarry.list.forEach(function (it) {
             var c = t.querySelector('.bulk-cell[data-dot-path="' + _cssEsc(it.dp) + '"]');
@@ -2252,6 +2481,17 @@
     }
 
     window.__bulkRepin = function () { try { _repinAfterLayout(); } catch (e) {} };
+    /* The mount's phase clock (docs/141 4i): window.__bulkMountTimings =
+       [[phase, ms], ...] -- each entry is the time the NAMED phase took.
+       Cheap (performance.now per phase), always on, read by the real-Chrome
+       probe that measures where the seconds between "table on screen" and
+       "grid ready" go. */
+    var _mountT0 = 0;
+    function _ph(label) {
+        var now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+        if (label !== 'start') (window.__bulkMountTimings = window.__bulkMountTimings || []).push([label, Math.round(now - _mountT0)]);
+        _mountT0 = now;
+    }
     var BulkEdit = {
         mount: function (columns, bandMeta, dynModel, qubitMeta) {
             if (Array.isArray(columns)) COLS = columns;
@@ -2263,6 +2503,7 @@
             DYN = Array.isArray(dynModel) ? dynModel : [];
             if (qubitMeta && typeof qubitMeta === 'object') {
                 QMETA = { chip: String(qubitMeta.chip || ''),
+                          chipKey: String(qubitMeta.chipKey || ''),
                           qubits: Array.isArray(qubitMeta.qubits) ? qubitMeta.qubits : [] };
             }
             var t = table();
@@ -2270,9 +2511,13 @@
             // Restore the persisted search/filter before applySearch runs below.
             var sb0 = document.getElementById('bulk-search');
             if (sb0) { try { sb0.value = localStorage.getItem(SEARCH_KEY) || ''; } catch (e) {} }
+            window.__bulkMountTimings = [];
+            _ph('start');
             _loadColWidths();
             _applyColWidthStyle();   // re-apply persisted column widths after each (re)render
+            _ph('col widths');
             _buildColMenu();
+            _ph('col menu');
             // r7: a dyn-column toggle reloads #table-pane wholesale, which would
             // otherwise reset the fresh server-rendered <details> to closed —
             // reopen it right after the rebuilt menu is in the DOM.
@@ -2283,13 +2528,38 @@
                 if (colvisDet) colvisDet.open = true;
             }
             _buildQubitMenu();
+            _buildPairMenu();
+            _ph('qubit menu');
             _applyColumnVisibility();
+            _ph('column visibility + search');
             _applyQubitVisCore();   // restore the persisted ⚏ Qubits selection
+            _ph('qubit visibility');
             _recomputeStats();
+            _ph('stats');
             // docs/109 audit: reformat annotations to the viewer's unit
             // BEFORE virtualization freezes widths + stashes cold HTML.
             if (window.PhysAmp) PhysAmp.applyAll(table());
+            _ph('PhysAmp');
             _virtInit();            // docs/105 #1 - after layout is final
+            _ph('virtualization');
+            // docs/141 4ac (CRITICAL): the mount's first applySearch runs
+            // inside _applyColumnVisibility ABOVE, before _virt exists -- and
+            // the cold cells' contribution to the haystack is behind
+            // `if (_virt)`. A REMEMBERED search (localStorage quam_bulk_search,
+            // restored into the box a few lines up) therefore matched nothing
+            // in any server-cold column: the grid read "0 of 20" and hid every
+            // row, permanently, on the ordinary htmx nav into this page.
+            // _hayCache must be dropped too -- it is keyed on the hidden-column
+            // set alone, so a second applySearch would reuse the column
+            // haystacks built while _virt was still null (measured: without
+            // this line the re-run is a no-op).
+            var _sb0 = document.getElementById('bulk-search');
+            if (_virt && _sb0 && _sb0.value) { _hayCache = null; applySearch(); }
+            // the estimate is conservative, not exact: one rAF pass (real
+            // geometry of the PRUNED table) hydrates anything on screen it
+            // called cold -- a drag-resized or zoomed grid (docs/141 4l-review)
+            if (_virt) _virtOnScroll();
+            _pinBarsToScroll();      // docs/141 4q: the toolbar rows follow the pane's sideways scroll
             // docs/111 (#11): selection/fill/paste/pins + the dyn-reload
             // edit carry. Pins re-apply AFTER virtualization (a pinned cold
             // column is hydrated by _applyColPins itself).
@@ -2298,14 +2568,18 @@
             _injectPinGlyphs();
             _applyRowPins();
             _applyColPins();
+            _ph('editing + pins');
             _consumeEditCarry();
             _setupTopScroll();
             _applyFont();
             _updateTopScroll();
+            _ph('carry + scroll + font');
             // flag any already-out-of-band ports on load
             Array.prototype.slice.call(t.querySelectorAll('.bulk-cell[data-lo-field]')).forEach(_validateBand);
             _updateBandWarnCount();
+            _ph('band validation');
             _markLinkedCells();   // tag shared physical-port cells so edits mirror across the port
+            _ph('linked cells');
             var fsCb = document.getElementById('bulk-freq-sync');
             if (fsCb) fsCb.checked = _freqSyncOn();   // restore the 🔗 toggle across swaps
             if (t._bulkBound) { _refreshGlobal(); return; }
@@ -2333,7 +2607,7 @@
             // never triggers a sort.
             t.addEventListener('click', function (e) {
                 if (e.target.closest && e.target.closest('.bulk-resize-handle')) return;
-                if (e.target.closest && e.target.closest('.bulk-col-hist')) return;
+                if (e.target.closest && e.target.closest('.bulk-col-hist, .key-help-btn')) return;
                 if (_bulkResizeJustEnded) return;
                 var th = e.target.closest && e.target.closest('thead th[data-col-key]');
                 if (th && th.getAttribute('data-col-key')) BulkEdit.sort(th.getAttribute('data-col-key'));
@@ -2448,7 +2722,7 @@
                 // reflow on a multi-MB DOM. One pass shortly after the last
                 // keystroke instead of one per key.
                 if (_searchTimer) clearTimeout(_searchTimer);
-                _searchTimer = setTimeout(applySearch, 120);
+                _searchTimer = setTimeout(applySearch, window.__bulkSearchDebounce || 200);   // 200: user-directed 2026-08-28 (docs/141 4d measured 120 vs 200 equal in cost)
             });
             ChipBar.mount();
 
@@ -2762,7 +3036,15 @@
             _saveQHidden(new Set());
             applyQubitVis();
             _buildQubitMenu();
+            _buildPairMenu();
         },
+        // docs/141 4s: the Pairs pill
+        showAllPairs: function () {
+            _savePHidden(new Set());
+            applyPairVis();
+            _buildPairMenu();
+        },
+        _pairsHidden: function () { return Array.from(_pHidden()); },
         chips: ChipBar,   // docs/120 item 4 — quick-filter chip bar
         setFont: function (scale) { try { localStorage.setItem(FONT_KEY, String(scale)); } catch (e) {} _applyFont(); },
         setLetterSpacing: function (ls) { try { localStorage.setItem(LS_KEY, String(ls)); } catch (e) {} _applyFont(); },
@@ -2923,15 +3205,38 @@
             // cannot arise.
             var q = _cssEsc(p);
             return t.querySelectorAll('.bulk-cell[data-dot-path="' + q + '"]'
-                + ', .bulk-cell[data-resolved="' + q + '"]');
+                + ', .bulk-cell[data-resolved="' + q + '"]'
+                + ', .bulk-cell-list[data-path="' + q + '"]');   // the listedit preview span: found, never value-written
         };
         // A cold column (docs/105) has no .bulk-cell to land in — the same trap
         // _consumeEditCarry hit. Hydrate once if any named path is absent.
         var absent = entries.some(function (e) {
             return e && e.dot_path && !sel(e.dot_path).length;
         });
-        if (absent) _virtHydrateAll();
-        var patched = 0, missing = 0, rows = [], covered = [];
+        _virtPatchColdValue.flushHay = false;
+        // docs/141 4l-review: hydrate only the cold columns the named paths
+        // live in (the byPath map _virtInit built) -- an undo of a pair-grid
+        // or hidden-column path used to un-virtualize the whole grid; a path
+        // in no column is `missing` by definition and costs no hydration
+        if (absent && _virt) {
+            var dueKeys = [];
+            entries.forEach(function (e) {
+                if (!e || !e.dot_path || sel(e.dot_path).length) return;
+                var ck = _virt.byPath && _virt.byPath[e.dot_path];
+                // a server-cold column needs no repaint: it is rendered from
+                // the (already reverted) working copy when it is fetched --
+                // but its SEARCH TEXT is the cold map, which nothing else
+                // updates, so patch that one cell (docs/141 4ac).
+                if (ck && _virt.remote.has(ck)) {
+                    _virtPatchColdValue(e.dot_path,
+                        e.old_value_disp != null ? e.old_value_disp : e.old_value_str);
+                    return;
+                }
+                if (ck && dueKeys.indexOf(ck) < 0) dueKeys.push(ck);
+            });
+            if (dueKeys.length) _virtHydrateCols(dueKeys);
+        }
+        var patched = 0, missing = 0, rows = [], covered = [], uncovered = [];
         entries.forEach(function (e) {
             if (!e || !e.dot_path) return;
             var cs = sel(e.dot_path);
@@ -2954,7 +3259,13 @@
             var wrote = 0;
             var honest = e.old_kind !== 'pointer';
             Array.prototype.forEach.call(cs, function (c) {
-                if (c.readOnly) return;
+                // A readonly cell (a list / runtime column) and the qubit
+                // grid's list-preview span are FOUND but cannot be repainted
+                // by a value write: they stay uncovered (docs/124 M-10) so
+                // the caller's rebuild clears the edited preview + the red
+                // modified marker. Only a path with NO cell at all is
+                // "missing" -- that one is not the grid's to repaint.
+                if (c.readOnly || c.tagName !== 'INPUT') return;
                 var isStr = c.hasAttribute('data-str-numeric')
                     || c.classList.contains('bulk-cell-str');
                 if ((e.old_kind === 'str_numeric') !== isStr) honest = false;
@@ -2975,16 +3286,34 @@
                 wrote++;
             });
             if (wrote && honest) covered.push(e.dot_path);
+            else uncovered.push(e.dot_path);   // found (cs.length > 0) but not honestly repainted
         });
         rows.forEach(_refreshRow);
+        if (_virtPatchColdValue.flushHay) { _hayCache = null; _virtPatchColdValue.flushHay = false; }
         if (patched) _refreshGlobal();
         // `covered` (not a missing COUNT) is what the caller needs: with both
         // grids on screen a qubit leaf is legitimately absent from the pair
         // grid, so summing each surface's misses would demand a full rebuild
         // for every ordinary edit.
-        return { patched: patched, missing: missing, covered: covered };
+        return { patched: patched, missing: missing, covered: covered, uncovered: uncovered };
     }
     BulkEdit.revertPaths = _revertPaths;
+    BulkEdit._virtState = function () {
+        return _virt ? { cold: Array.from(_virt.cold), remote: Array.from(_virt.remote),
+                         inflight: Array.from(_virt.inflight.keys()), failed: _virt.failed || 0 } : null;
+    };
+    // docs/141 4ae A4: Column History -- and anything else addressed from
+    // outside the grid -- needs a way to ask for ONE column. Resolves even when
+    // the column cannot be fetched, so the caller falls through to its honest
+    // message instead of waiting forever.
+    BulkEdit.hydrateColumn = function (key) {
+        var gv = _virtInstance();
+        if (!gv || !_virt || !gv.isCold(key)) return Promise.resolve(false);
+        return gv.hydrateCols([key]).then(function () { return !gv.isCold(key); });
+    };
+    BulkEdit._virtHydrateCols = _virtHydrateCols;
+    BulkEdit._setCarry = function (c) { _editCarry = c; };
+    BulkEdit._syncApplied = _syncAppliedAcrossTable;
 
     // docs/111 test hooks (jsdom selfcheck drives the internals directly)
     BulkEdit._ge = {
@@ -3001,4 +3330,18 @@
     if (document.getElementById('bulk-table') && !window.__bulkAutoMounted) {
         // full-page load path; the partial calls mount(columns) itself with the model
     }
+
+    /* docs/141 4ac (CRITICAL): PaneState's keep-alive (docs/110, extended to
+       /bulk by docs/139) re-attaches the parked DOM WITHOUT re-running mount(),
+       so nothing re-derives the toolbar rows' translateX -- which 4q made a
+       function of #table-pane.scrollLeft. Returning to Live State Edit painted
+       the whole control surface (search box, Properties / Qubits / Pairs, Apply
+       all, the chip bar) outside the pane until the user happened to scroll.
+       PaneState now restores scrollLeft BEFORE this event, so re-deriving from
+       the pane is enough; _pinBarsToScroll's own listener is bind-once
+       (s._barsBound), so re-entering it cannot stack handlers. */
+    document.addEventListener('paneRestored', function (ev) {
+        if (!table()) return;                       // not the grid's pane
+        try { _pinBarsToScroll(); } catch (e) {}
+    });
 })();

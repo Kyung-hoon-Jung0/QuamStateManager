@@ -46,7 +46,12 @@ from quam_state_manager.core.config_generator import (
 logger = logging.getLogger(__name__)
 
 STATE_SCHEMA_SCRIPT = _script_path("probe_state_schema.py")
+# Bumped when the manifest gains fields the cache could not have (2 = per-field
+# "doc" + class "doc" for the key manual, 2026-08-27): an older entry is a MISS,
+# else the docs would stay silently absent for everyone with a warm cache.
+SCHEMA_FORMAT = 2
 _SCHEMA_CACHE_FILENAME = "state_schema_cache.json"
+_CATALOG_CACHE_FILENAME = "state_schema_catalog.json"   # the Config Manual's full class catalogue (docs/141 4h)
 _MAX_CACHED_ENVS = 5          # LRU prune bound for per-env cache entries
 _CLASS_CAP = 200              # harvest armor (corpus max distinct = 36)
 
@@ -169,7 +174,8 @@ def probe_state_schema(python_path: str, class_paths: list[str], instance_path=N
     if instance_path is not None and not force:
         with _cache_lock:
             entry = _load_cache(instance_path).get(python_path)
-        if isinstance(entry, dict) and entry.get("versions") == versions:
+        if (isinstance(entry, dict) and entry.get("versions") == versions
+                and entry.get("format") == SCHEMA_FORMAT):
             cached_classes = entry.get("classes") or {}
             if set(requested) <= set(cached_classes):
                 manifest = _decorate({"classes": cached_classes,
@@ -225,6 +231,7 @@ def probe_state_schema(python_path: str, class_paths: list[str], instance_path=N
             cache = _load_cache(instance_path)
             cache.pop(python_path, None)                # re-insert last = most recent
             cache[python_path] = {
+                "format": SCHEMA_FORMAT,
                 "versions": versions,
                 "signature": _env_signature(python_path),
                 "classes": classes,
@@ -247,6 +254,150 @@ def probe_state_schema(python_path: str, class_paths: list[str], instance_path=N
                 python_path=str(python_path or ""))
         except Exception:  # noqa: BLE001
             logger.warning("recording the schema baseline failed", exc_info=True)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# The catalogue: every component class the env offers (docs/141 4h)
+# ---------------------------------------------------------------------------
+
+def _catalog_cache_path(instance_path) -> Path:
+    return Path(instance_path) / _CATALOG_CACHE_FILENAME
+
+
+_catalog_mem: dict[str, Any] = {"key": None, "data": {}}
+
+
+def _load_catalog_cache(instance_path) -> dict[str, dict]:
+    """The on-disk catalogue cache, memoised on (mtime, size): it is ~1 MB
+    per env and every /api/manual used to re-read and re-parse it (4l-review)."""
+    p = _catalog_cache_path(instance_path)
+    try:
+        st = p.stat()
+        key = (str(p), st.st_mtime_ns, st.st_size)
+    except OSError:
+        _catalog_mem["key"] = None
+        _catalog_mem["data"] = {}
+        return {}
+    if _catalog_mem["key"] == key:
+        return _catalog_mem["data"]
+    try:
+        import json
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    data = data if isinstance(data, dict) else {}
+    _catalog_mem["key"] = key
+    _catalog_mem["data"] = data
+    return data
+
+
+def catalog_for_env(python_path: str | None, instance_path=None,
+                    classes: list[str] | None = None) -> dict | None:
+    """REQUEST-PATH read of the cached catalogue: ``{class path: entry}`` or
+    None when cold / stale (never spawns). With *classes* (the open chip's
+    inventory) a cache that never saw one of them is COLD too: the catalogue
+    is per env, but the lab classes it holds depend on which chip warmed it
+    (docs/141 4l-review) -- the next probe unions the requested sets."""
+    if not python_path or instance_path is None:
+        return None
+    with _cache_lock:
+        entry = _load_catalog_cache(instance_path).get(python_path)
+    if not isinstance(entry, dict) or entry.get("format") != SCHEMA_FORMAT:
+        return None
+    sig = _env_signature(python_path)
+    if sig is None or entry.get("signature") != sig:
+        return None
+    cat = entry.get("catalog")
+    if not (isinstance(cat, dict) and cat):
+        return None
+    if classes:
+        seen = set(entry.get("requested") or [])
+        if any(c not in cat and c not in seen for c in classes if isinstance(c, str)):
+            return None
+    return cat
+
+
+def catalog_requested(python_path: str | None, instance_path=None) -> list[str]:
+    """The class paths every probe of this env was asked for so far."""
+    if not python_path or instance_path is None:
+        return []
+    with _cache_lock:
+        entry = _load_catalog_cache(instance_path).get(python_path)
+    req = (entry or {}).get("requested") if isinstance(entry, dict) else None
+    return [c for c in (req or []) if isinstance(c, str)]
+
+
+def probe_catalog(python_path: str, class_paths: list[str], instance_path=None, *,
+                  force: bool = False, timeout: int = 240) -> dict:
+    """Run (or cache-serve) the full catalogue probe. Never raises; MAY spawn --
+    background threads only. Returns ``{"ok", "cached", "error", "catalog"}``."""
+    result: dict[str, Any] = {"ok": False, "cached": False, "error": None, "catalog": {}}
+    if not python_path or not Path(python_path).is_file():
+        result["error"] = "selected interpreter no longer exists"
+        return result
+    if instance_path is not None and not force:
+        cached = catalog_for_env(python_path, instance_path, list(class_paths or []))
+        if cached:
+            result.update(ok=True, cached=True, catalog=cached)
+            return result
+    if not STATE_SCHEMA_SCRIPT.exists():
+        result["error"] = f"schema probe script not found: {STATE_SCHEMA_SCRIPT}"
+        return result
+    import json
+    # union with what earlier probes of this env asked for, so two chips
+    # taking turns never flip the catalogue between their lab classes
+    prior = catalog_requested(python_path, instance_path) if instance_path is not None else []
+    requested = [c for c in dict.fromkeys(list(class_paths) + prior) if isinstance(c, str) and c][:_CLASS_CAP]
+    outcome = _blank_outcome()
+    work_dir = Path(tempfile.mkdtemp(prefix="quamcatalog_work_"))
+    try:
+        (work_dir / "_classes.json").write_text(
+            json.dumps({"classes": requested, "pulse_roster": False}), encoding="utf-8")
+        _run_script_outcome(
+            [python_path, str(STATE_SCHEMA_SCRIPT),
+             "--classes", str(work_dir / "_classes.json"),
+             "--out", str(work_dir / "_result.json"), "--catalog"],
+            work_dir, timeout, outcome,
+            no_result_label="class-catalogue probe",
+            error_fallback="class-catalogue probe reported an error",
+        )
+    finally:
+        _cleanup_work_dir(work_dir)
+    parsed = outcome.get("result") or {}
+    if not outcome.get("ok"):
+        result["error"] = outcome.get("error") or "class-catalogue probe failed"
+        return result
+    cat = parsed.get("catalog") or {}
+    if not isinstance(cat, dict) or not cat:
+        result["error"] = "the probe returned no classes"
+        return result
+    # a root that is INSTALLED but failed to import makes the catalogue
+    # partial: served for this request, named, never cached as the truth
+    roots = parsed.get("catalog_roots") if isinstance(parsed.get("catalog_roots"), dict) else {}
+    broken = {r: v for r, v in roots.items() if isinstance(v, str) and v.startswith("error")}
+    result.update(ok=True, catalog=cat, roots=roots, partial=bool(broken))
+    if broken:
+        result["error"] = "partial catalogue -- " + "; ".join(f"{r}: {v[7:]}" for r, v in broken.items())
+        return result
+    if instance_path is not None:
+        with _cache_lock:
+            cache = _load_catalog_cache(instance_path)
+            cache.pop(python_path, None)
+            cache[python_path] = {
+                "format": SCHEMA_FORMAT,
+                "versions": parsed.get("versions") or _env_versions(python_path),
+                "signature": _env_signature(python_path),
+                "requested": requested,
+                "roots": roots,
+                "catalog": cat,
+            }
+            while len(cache) > _MAX_CACHED_ENVS:
+                cache.pop(next(iter(cache)))
+            try:
+                safe_io.atomic_write_json(_catalog_cache_path(instance_path), cache)
+            except OSError:
+                logger.warning("Could not persist the class catalogue", exc_info=True)
     return result
 
 
@@ -297,6 +448,8 @@ def manifest_for_store(store, python_path: str | None, instance_path=None, *,
             entry = _load_cache(instance_path).get(python_path)
         if not isinstance(entry, dict):
             return None
+        if entry.get("format") != SCHEMA_FORMAT:
+            return None                                  # older manifest shape: a MISS (re-probe)
         sig = _env_signature(python_path)
         if sig is None or entry.get("signature") != sig:
             return None                                  # pip install / env gone

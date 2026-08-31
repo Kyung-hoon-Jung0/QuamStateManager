@@ -793,6 +793,53 @@ window.enhanceColumnResize = function(tableId, storageKey) {
     function persist() {
         try { localStorage.setItem(storageKey, JSON.stringify(saved)); } catch (e) {}
     }
+    // docs/141 4x: one column moves, the others hold. Under table-layout:fixed
+    // the table keeps Pico's width:100%, so the space a shrunk column gives up
+    // is redistributed to every other column (the user dragged WAVEFORM
+    // narrower and watched OWNER/CHANNEL/OPERATION widen). Once any column is
+    // under manual control the table is exactly as wide as its columns: every
+    // unpinned column is frozen at its current width and the table's width is
+    // their sum, re-derived on every drag step.
+    function fitTableToColumns() {
+        var sum = 0, unmeasured = false;
+        ths.forEach(function(th) {
+            if (!th.style.width) {
+                var w = th.offsetWidth;
+                // docs/141 4ac: a table with no layout box (display:none, a
+                // hidden tab) reports 0 -- freezing that would pin every
+                // unpinned column at 0px and the table at the sum of the
+                // pinned ones alone. Leave it auto and try again later.
+                if (!w) { unmeasured = true; return; }
+                th.style.width = w + 'px';
+            }
+            sum += parseFloat(th.style.width) || 0;
+        });
+        if (unmeasured) return false;
+        table.style.width = sum + 'px';
+        return true;
+    }
+    /* docs/141 4ac: re-derive when the box the widths were measured in changes.
+       Only the ACCIDENTAL freezes are released -- a column the user actually
+       dragged (`saved[i]`) keeps its width, which is the whole point of 4x.
+       Without this, one saved width pinned a /pulses table to the width of the
+       window it first rendered in: widening the browser left the rest of the
+       pane empty for the life of the page. */
+    function refitToBox() {
+        if (!Object.keys(saved).some(function(k) { return saved[k]; })) return;
+        ths.forEach(function(th, i) { if (!saved[i]) th.style.width = ''; });
+        table.style.width = '';
+        fitTableToColumns();
+    }
+    if (typeof ResizeObserver === 'function' && !table._fitRO) {
+        var host = table.parentElement || table;
+        var raf = null;
+        table._fitRO = new ResizeObserver(function() {
+            if (raf) return;                       // one re-fit per frame
+            raf = requestAnimationFrame(function() { raf = null; refitToBox(); });
+        });
+        try { table._fitRO.observe(host); } catch (e) {}
+    }
+    var anySaved = Object.keys(saved).some(function(k) { return saved[k]; });
 
     ths.forEach(function(th, i) {
         if (saved[i]) th.style.width = saved[i] + 'px';
@@ -812,6 +859,7 @@ window.enhanceColumnResize = function(tableId, storageKey) {
                 var w = Math.max(36, startW + (ev.clientX - startX));
                 th.style.width = w + 'px';
                 saved[i] = w;
+                fitTableToColumns();
             }
             function up() {
                 dragging = false;
@@ -827,8 +875,12 @@ window.enhanceColumnResize = function(tableId, storageKey) {
         h.addEventListener('dblclick', function(e) {
             e.preventDefault(); e.stopPropagation();
             th.style.width = ''; delete saved[i]; persist();
+            // the cleared column takes the pane's remaining width (auto-fit to
+            // the space); the next drag re-freezes it and pins the table again
+            table.style.width = '';
         });
     });
+    if (anySaved) fitTableToColumns();   // saved widths only stick when the table is their sum
 };
 
 /* ------------------------------------------------------------------ */
@@ -1150,18 +1202,34 @@ window._toolTrigger = function (selector, preferred) {
 window.toggleSettings = function(trigger) {
     var dd = document.getElementById("settings-dropdown");
     if (!dd) return;
-    var opening = dd.classList.toggle("settings-hidden");
-    if (!opening) {
-        // singleton: never overlap the calculator (mirrors toggleCalc)
-        var cp = document.getElementById("calc-popover");
-        if (cp) cp.classList.add("calc-hidden");
+    var willOpen = dd.classList.contains("settings-hidden");
+    dd.classList.toggle("settings-hidden", !willOpen);
+    if (!willOpen) return;
+    // docs/141 4u (user-directed): Settings is a floating window like the
+    // Calculator and the Config Manual -- it no longer closes the Calculator,
+    // its header drags (float-panel.js), and once dragged it stays open on an
+    // outside click (a dragged window is the user saying "keep it around").
+    // Until dragged it is anchored under its trigger, as before.
+    if (!dd.classList.contains("settings-floating")) {
         window._anchorPopover(dd, window._toolTrigger(".settings-btn", trigger));
-        setTimeout(function() {
-            document.addEventListener("click", function closer(e) {
-                if (!dd.contains(e.target) && !e.target.closest(".settings-btn")) {
-                    dd.classList.add("settings-hidden");
-                }
-                document.removeEventListener("click", closer);
+    }
+    var head = document.getElementById("settings-header");
+    if (head && window.FloatPanel) {
+        window.FloatPanel.drag(dd, { handle: head, tools: ".settings-header-tools", floatClass: "settings-floating" });
+    }
+    if (!dd._closerBound) {
+        dd._closerBound = true;
+        // deferred so the click that opened it is not the click that closes it
+        setTimeout(function () {
+            document.addEventListener("click", function (e) {
+                if (dd.classList.contains("settings-hidden")) return;
+                if (dd.classList.contains("settings-floating")) return;
+                // docs/141 4ac: every tool window, not the literal pair -- the
+                // Config Manual was "outside" and closed Settings.
+                var _tools = (window.FloatPanel && window.FloatPanel.TOOLS_SEL)
+                    || ".settings-btn, .calc-btn, #calc-popover, .manual-btn, #manual-popover";
+                if (dd.contains(e.target) || (e.target.closest && e.target.closest(_tools))) return;
+                dd.classList.add("settings-hidden");
             });
         }, 0);
     }
@@ -1204,18 +1272,105 @@ window.setFontSize = function(size) {
 // document so htmx tree re-renders never lose the behavior.
 (function() {
     var lastIdx = -1;
+    // docs/141 4y: the diff reads up to FIVE runs side by side. The sixth
+    // tick is refused here (with a toast), so the server's floor is never
+    // reached from the UI. One number everywhere: /compare, /diff/runs.
+    var MAX_DIFF = 5;
+    var SEL_KEY = 'quam_sidebar_compare_sel';
 
     function boxes() {
         return Array.prototype.slice.call(
             document.querySelectorAll('#sidebar-tree input[name="paths"]'));
     }
+    function checkedValues() {
+        return boxes().filter(function(b) { return b.checked; })
+                      .map(function(b) { return b.value; });
+    }
+    // docs/141 4y: the ticks survive a tree re-render (workspace add /
+    // remove / filter / rescan) and an F5 -- the set is mirrored into
+    // sessionStorage on every change and re-applied after every swap.
+    function stored() {
+        try {
+            var a = JSON.parse(sessionStorage.getItem(SEL_KEY) || '[]');
+            return Array.isArray(a) ? a : [];
+        } catch (e) { return []; }
+    }
+    function write(list) {
+        try { sessionStorage.setItem(SEL_KEY, JSON.stringify(list)); } catch (e) {}
+    }
+    /* docs/141 4ac: the mirror is the SELECTION MODEL, not a snapshot of the
+       DOM. The sidebar filter is a server re-render that REMOVES the rows it
+       does not match, so writing `checkedValues()` verbatim meant the first
+       click after a filter deleted every tick the filter had hidden -- three
+       runs became one, silently. persist() therefore keeps the stored entries
+       whose checkbox is not on screen and replaces only the on-screen part. */
+    function persist() {
+        var present = {};
+        boxes().forEach(function(b) { present[b.value] = true; });
+        var offscreen = stored().filter(function(v) { return !present[v]; });
+        write(offscreen.concat(checkedValues()));
+    }
+    function restore() {
+        noteSeen();                     // this render's rows are now "known"
+        var want = stored();
+        if (!want.length) return;
+        var set = {};
+        want.forEach(function(v) { set[v] = true; });
+        boxes().forEach(function(b) { if (set[b.value]) b.checked = true; });
+        // deliberately NO prune here: restore() runs on every tree swap,
+        // including the filter re-render, where "not in the DOM" means
+        // "filtered out", not "gone" (docs/141 4ac -- pruning here cancels
+        // the merge above and loses a selection HEAD keeps).
+    }
+    /* The entries the model holds that this tree cannot show. They ride the
+       compare form as hidden inputs, so the count on the button is the count
+       the press actually diffs.
+
+       A stored path only counts as "off screen" if a tree render has SHOWN it
+       at least once this session: that is what tells a filtered-out run (real,
+       still selected) from a stale mirror entry (a deleted run, a mirror
+       carried across a workspace change). Without the distinction a dead path
+       would inflate the button and be submitted to /compare. */
+    var seen = Object.create(null);
+    function noteSeen() { boxes().forEach(function(b) { seen[b.value] = true; }); }
+    function offscreenValues() {
+        var present = {};
+        boxes().forEach(function(b) { present[b.value] = true; });
+        return stored().filter(function(v) { return !present[v] && seen[v]; });
+    }
+    function selectedAll() { return offscreenValues().concat(checkedValues()); }
+    function syncHiddenInputs(off) {
+        var form = document.getElementById('compare-form');
+        if (!form) return;
+        Array.prototype.slice.call(
+            form.querySelectorAll('input.sidebar-sel-offscreen')).forEach(function(el) {
+            el.parentNode.removeChild(el);
+        });
+        off.forEach(function(v) {
+            var el = document.createElement('input');
+            el.type = 'hidden'; el.name = 'paths'; el.value = v;
+            el.className = 'sidebar-sel-offscreen';
+            form.appendChild(el);
+        });
+    }
 
     function syncCompareCount() {
-        var n = document.querySelectorAll(
-            '#sidebar-tree input[name="paths"]:checked').length;
+        noteSeen();
+        var off = offscreenValues();
+        var onScreen = checkedValues().length;
+        var n = onScreen + off.length;
+        syncHiddenInputs(off);
         var cmp = document.querySelector('#compare-form .btn-compare');
-        if (cmp) cmp.textContent = n > 1
-            ? 'Compare Selected (' + n + ')' : 'Compare Selected';
+        if (cmp) {
+            cmp.textContent = n > 1
+                ? 'Compare Selected (' + n + (off.length ? ' \u2014 ' + off.length + ' not in view' : '') + ')'
+                : 'Compare Selected';
+            cmp.disabled = n < 2;
+            cmp.title = n < 2 ? 'Tick 2\u20135 runs to diff them side by side'
+                              : (n > MAX_DIFF
+                                 ? n + ' runs selected \u2014 the diff reads up to ' + MAX_DIFF
+                                 : 'Open the diff of these ' + n + ' runs');
+        }
         var trend = document.querySelector('#compare-form .btn-trend');
         if (trend) trend.textContent = n > 1
             ? 'Trend Tracker (' + n + ')' : 'Trend Tracker';
@@ -1227,6 +1382,16 @@ window.setFontSize = function(size) {
     window.compareClearSelection = function() {
         boxes().forEach(function(b) { b.checked = false; });
         lastIdx = -1;
+        write([]);                    // Clear is the one place the model empties
+        syncCompareCount();
+    };
+    /* A workspace root really going away is the OTHER place a path stops
+       existing (an F5 or a filter is not). Called by the workspace remove
+       handler; harmless when the prefix matches nothing. */
+    window.compareForgetUnder = function(prefix) {
+        if (!prefix) return;
+        var pre = String(prefix);
+        write(stored().filter(function(v) { return String(v).indexOf(pre) !== 0; }));
         syncCompareCount();
     };
 
@@ -1235,22 +1400,60 @@ window.setFontSize = function(size) {
         if (!t || t.name !== 'paths' || !t.closest || !t.closest('#sidebar-tree')) return;
         var all = boxes();
         var idx = all.indexOf(t);
-        if (ev.shiftKey && lastIdx >= 0 && idx >= 0 && lastIdx !== idx) {
-            var lo = Math.min(lastIdx, idx), hi = Math.max(lastIdx, idx);
+        var ranged = ev.shiftKey && lastIdx >= 0 && idx >= 0 && lastIdx !== idx;
+        var lo = ranged ? Math.min(lastIdx, idx) : idx, hi = ranged ? Math.max(lastIdx, idx) : idx;
+        if (ranged) {
             for (var i = lo; i <= hi; i++) all[i].checked = t.checked;
         }
+        var anchor = lastIdx;          // BEFORE it moves -- the cap needs it
         lastIdx = idx;
+        // the cap: untick what this click added beyond MAX_DIFF, walking back
+        // from the end the user dragged TO so the run they ANCHORED on is the
+        // one that survives. docs/141 4ac: this used to walk from `hi`
+        // unconditionally, so a sweep UPWARD from an older run silently kept
+        // "the five newest" and dropped the run the sweep started from.
+        var over = selectedAll().length - MAX_DIFF;
+        if (over > 0 && t.checked) {
+            var draggedUp = ranged && idx > anchor;      // the far end is `hi`
+            var from = draggedUp ? hi : (ranged ? lo : hi);
+            var dir = draggedUp ? -1 : (ranged ? 1 : -1);
+            for (var j = from; over > 0 && j >= lo && j <= hi; j += dir) {
+                if (all[j].checked) { all[j].checked = false; over--; }
+            }
+            if (window.showToast) window.showToast('Up to ' + MAX_DIFF + ' runs can be diffed side by side.', 'warning');
+        }
+        persist();
         syncCompareCount();
     });
 
-    // Tree re-renders (workspace add/remove/filter) rebuild the checkboxes —
-    // re-sync the count (selections inside the swapped region are gone).
+    // Tree re-renders (workspace add/remove/filter/rescan) rebuild the
+    // checkboxes -- re-apply the remembered ticks, then re-sync the count.
     // Listener sits on document (always exists at eval time; the app-wide
     // rule forbids top-level document.body listeners).
     document.addEventListener('htmx:afterSwap', function(ev) {
+        // docs/141 4ac: CONTAINMENT, not identity. The tree caps a group at 50
+        // and offers "Show all N", whose hx-target is `closest ul` -- an
+        // element INSIDE #sidebar-tree. `el.id === 'sidebar-tree'` missed it,
+        // so one press replaced the checkboxes with fresh unticked ones while
+        // the button still read "Compare Selected (3)" and the press then hit
+        // the server's own "Tick at least two runs" refusal.
         var el = ev.target;
-        if (el && el.id === 'sidebar-tree') { lastIdx = -1; syncCompareCount(); }
+        if (!el || !el.closest) return;
+        if (el.id === 'sidebar-tree' || el.closest('#sidebar-tree')) {
+            lastIdx = -1; restore(); syncCompareCount();
+        }
     });
+    // HX-Trigger {"sm:toast": {message, level}} from a route that keeps the
+    // pane (HX-Reswap: none) but has something to say.
+    document.addEventListener('sm:toast', function(ev) {
+        var d = ev.detail || {};
+        if (d.message && window.showToast) window.showToast(d.message, d.level || 'info');
+    });
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function() { restore(); syncCompareCount(); });
+    } else { restore(); syncCompareCount(); }
+    window._sidebarCompareSel = { restore: restore, persist: persist, MAX: MAX_DIFF,
+                                 KEY: SEL_KEY, all: selectedAll, offscreen: offscreenValues };
 })();
 
 // Global UI scale (Settings → "UI scale"): CSS zoom on <html>, 80%–150% in
@@ -3308,8 +3511,23 @@ document.addEventListener("cellsReverted", function(evt) {
     var d = evt.detail || {};
     var entries = d.entries || [];
     entries.forEach(function(e) {
-        _revertCell(e.dot_path, e.old_value_str != null ? e.old_value_str : "");
+        // old_value_disp is the LOSSLESS string (docs/124 M-9); old_value_str
+        // is %.6e. The Pulses inputs render the lossless value, so the
+        // reverted baseline must be lossless too (review of eaa0f05).
+        var v = e.old_value_disp != null ? e.old_value_disp
+              : (e.old_value_str != null ? e.old_value_str : "");
+        _revertCell(e.dot_path, String(v));
     });
+    // A burst that stopped early (docs/141 4e, review of eaa0f05): at a
+    // journal boundary the remaining presses are re-queued one by one (each
+    // walks the journal as a single press does); an error is shown as one
+    // and the grids resync to the store's truth; an exhausted log drops
+    // the rest -- there is nothing left to undo.
+    var _remaining = (d.requested || 0) - (d.consumed || 0);
+    if (d.stopped === "journal" && _remaining > 0 && window.UndoQueue) {
+        var _dir = /^Redone|^Redid/i.test(String(d.message || "")) ? "/redo" : "/undo";
+        for (var _k = 0; _k < _remaining; _k++) window.UndoQueue.push(_dir);
+    }
     // The Live-State-Edit grids render their own cells (not inspector inputs),
     // so _revertCell can't reach them — repaint by path, then decide.
     var structural = entries.some(function (e) { return e && (e.created || e.deleted); });
@@ -3317,25 +3535,27 @@ document.addEventListener("cellsReverted", function(evt) {
                           || document.getElementById('bulk-pair-table'));
     var uncovered = 0;
     try {
-        var covered = {};
+        // Night session 2026-08-28: only a cell a grid FOUND but could not
+        // repaint honestly (kind/decoration mismatch) needs the whole-grid
+        // re-GET. A path with no cell on either grid is not stale here -- it is
+        // simply not a column (a pulse leaf undone from the inspector, a tree
+        // edit) -- and it used to count as uncovered, i.e. the 2.4 s rebuild on
+        // exactly the Ctrl+Z presses that touched nothing on the grid.
         [window.BulkEdit, window.BulkPairEdit].forEach(function (api) {
             if (!api || !api.revertPaths) return;
-            ((api.revertPaths(entries) || {}).covered || []).forEach(function (p) {
-                covered[p] = 1;
-            });
-        });
-        // Per ENTRY, not per surface: a qubit leaf is legitimately absent from
-        // the pair grid, and counting that as a miss would rebuild the pane for
-        // every ordinary edit — i.e. keep the 2.4 s we just removed.
-        entries.forEach(function (e) {
-            if (e && e.dot_path && !covered[e.dot_path]) uncovered++;
+            var res = api.revertPaths(entries) || {};
+            uncovered += (res.uncovered || []).length;
         });
     } catch (err) { uncovered = entries.length; }   // never trust a half repaint
-    if (gridOnScreen && (structural || uncovered > 0)) _scheduleGridResync();
-    if (d.message && window.showToast) window.showToast(d.message, "success");
-    // r16 ⓪-2 (docs/73): flash the reverted item in place, or navigate to
-    // its owning surface with the current page's typing stashed + restored.
-    if (window.UndoNav) window.UndoNav.handle(d.entries || []);
+    if (gridOnScreen && (structural || uncovered > 0 || d.stopped === "error")) _scheduleGridResync();
+    if (d.message && window.showToast) window.showToast(d.message, d.level === "error" ? "error" : "success");
+    // Flash the reverted items that are on screen. NO automatic navigation
+    // (docs/73's "open the owning surface" is retired): on the Pulses page a
+    // redo of a field that was not visible replaced the pulse inspector
+    // with a qubit inspector behind the user's back (real-Chrome check,
+    // 2026-08-28). The Undo trail's "go to field" is the one thing that
+    // navigates, on the user's press (UndoNav.handle).
+    if (window.UndoNav) window.UndoNav.flashVisible(d.entries || []);
 });
 
 /* ------------------------------------------------------------------ */
@@ -4241,10 +4461,23 @@ window.PaneState = (function () {
         if (!p || !p.firstChild) return;
         if (SOFT.indexOf(route) >= 0) soft[route] = _captureSoft(p, route);
         if (KEEP.indexOf(route) < 0) return;
+        // docs/141 4ae (CRITICAL): READ THE OFFSETS BEFORE THE DETACH BELOW.
+        // An emptied element has nothing to overflow, so the browser clamps it
+        // to 0,0 the moment its children leave -- and these two reads used to
+        // sit AFTER the move loop. Measured in real Chrome on the 20Q chip
+        // (247 columns, 53,000 px wide): pane at scrollLeft 3000 / scrollTop
+        // 400 -> captured {0,0} -> restored {0,0}. EVERY keep-route return
+        // landed at the top-left corner, and 4ac's scrollX below was a no-op
+        // from the day it was added because it was added at this broken read.
+        var st0 = p.scrollTop, sx0 = p.scrollLeft;
         var holder = document.createElement('div');
         while (p.firstChild) holder.appendChild(p.firstChild);
+        // docs/141 4ac: scrollX too. 4q made #table-pane the ONE scroller
+        // on /bulk, and the toolbar rows' inline transform is a FUNCTION of
+        // its scrollLeft -- parking the bars without their pane's sideways
+        // position left them translated over a pane reset to 0.
         stash[route] = { holder: holder, seq: seqNow(), chip: chipNow(),
-                         scroll: p.scrollTop, order: ++_order };
+                         scroll: st0, scrollX: sx0, order: ++_order };
         var keys = Object.keys(stash);
         if (keys.length > MAX) {
             keys.sort(function (a, b) { return stash[a].order - stash[b].order; });
@@ -4285,6 +4518,7 @@ window.PaneState = (function () {
         p.innerHTML = '';
         while (e.holder.firstChild) p.appendChild(e.holder.firstChild);
         p.scrollTop = e.scroll || 0;
+        p.scrollLeft = e.scrollX || 0;      // docs/141 4ac -- BEFORE paneRestored
         if (window.PhysAmp) window.PhysAmp.applyAll(p);
         document.dispatchEvent(new CustomEvent('paneRestored',
                                                { detail: { route: route } }));
@@ -4380,6 +4614,19 @@ window.PaneState = (function () {
         for (var k in stash) _purge(stash[k].holder);
         stash = {};
         _cur = location.pathname;
+        // docs/141 4l-review: on a Back into a page whose bundles are still
+        // loading, htmx's restore is DEFERRED by the loader (Bundles chains
+        // onpopstate) -- the mismatch check below would otherwise fire on
+        // the not-yet-restored pane, purge the history cache and re-fetch an
+        // 8.7 MB grid twice. Wait for the hold (set by the wrapper, which
+        // runs after this listener in the same dispatch: hence the 0 ms hop).
+        setTimeout(function () {
+            var pend = (window.Bundles && window.Bundles.pending) ? window.Bundles.pending() : null;
+            if (pend && typeof pend.then === 'function') pend.then(_historyCheck, _historyCheck);
+            else _historyCheck();
+        }, 0);
+    }
+    function _historyCheck() {
         // htmx's history cache may hold a snapshot taken while this pane was
         // PARKED (i.e. empty). Never leave the user on a blank pane: refetch.
         setTimeout(function () {
@@ -4626,6 +4873,148 @@ window.ValueDelta = (function () {
 /* ------------------------------------------------------------------ */
 /* Inline-edit commit plumbing (Pulses detail, Qubit/Pair inspector)    */
 /* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* Bundles (docs/141 4l): page-specific scripts, loaded when a page needs  */
+/* them                                                                   */
+/* ------------------------------------------------------------------ */
+/* base.html ships every page-specific file in a manifest and emits the
+   <script> tags for the page it renders; an htmx navigation to another page
+   loads that page's bundles BEFORE the request is issued (htmx:confirm is
+   the one hook that can hold a request), so the partial's inline script
+   finds its globals at swap time -- the same order a full load has. A
+   global control that reaches into a bundle (the Settings font buttons, the
+   floating Instrument Wiring panel) asks with Bundles.call / Bundles.need. */
+window.Bundles = (function () {
+    var _manifest = null;          // {files: {file: url}, bundles: {name: [files]}, pages: {page: [names]}}
+    var _loaded = {};              // file -> true (present or loaded)
+    var _inflight = {};            // file -> Promise
+    function manifest() {
+        if (_manifest) return _manifest;
+        var el = document.getElementById("bundle-manifest");
+        try { _manifest = el ? JSON.parse(el.textContent) : { files: {}, bundles: {}, pages: {} }; }
+        catch (e) { _manifest = { files: {}, bundles: {}, pages: {} }; }
+        // whatever the page already loaded counts as loaded
+        var tags = document.querySelectorAll("script[data-bundle-file]");
+        for (var i = 0; i < tags.length; i++) _loaded[tags[i].getAttribute("data-bundle-file")] = true;
+        return _manifest;
+    }
+    function loadFile(file) {
+        if (_loaded[file]) return Promise.resolve();
+        if (_inflight[file]) return _inflight[file];
+        // a tag the page carries (or a load that landed since the first scan)
+        // is never fetched and executed a second time
+        if (document.querySelector('script[data-bundle-file="' + file + '"]')) { _loaded[file] = true; return Promise.resolve(); }
+        var m = manifest();
+        var url = m.files[file];
+        if (!url) return Promise.reject(new Error("unknown bundle file " + file));
+        _inflight[file] = new Promise(function (resolve, reject) {
+            var sc = document.createElement("script");
+            sc.src = url;
+            sc.async = false;              // dynamic scripts with async=false run in insertion order
+            sc.setAttribute("data-bundle-file", file);
+            sc.onload = function () { _loaded[file] = true; delete _inflight[file]; resolve(); };
+            sc.onerror = function () {
+                // the failed tag leaves the page, so the next navigation retries with a fresh one
+                if (sc.parentNode) sc.parentNode.removeChild(sc);
+                delete _inflight[file]; reject(new Error("failed to load " + file));
+            };
+            document.head.appendChild(sc);
+        });
+        return _inflight[file];
+    }
+    /* Files of a bundle EXECUTE in order (topo-graph before component-map). */
+    function need(names) {
+        var m = manifest();
+        var list = Array.isArray(names) ? names : [names];
+        var files = [];
+        list.forEach(function (n) { (m.bundles[n] || []).forEach(function (f) { if (files.indexOf(f) < 0) files.push(f); }); });
+        // all tags inserted at once (parallel fetch); async=false keeps execution in order
+        return Promise.all(files.map(loadFile)).then(function () {});
+    }
+    function loaded(names) {
+        var m = manifest();
+        var list = Array.isArray(names) ? names : [names];
+        return list.every(function (n) { return (m.bundles[n] || []).every(function (f) { return !!_loaded[f]; }); });
+    }
+    /* The page a URL belongs to -> its bundles (mirrors the routes). */
+    var PATHS = [
+        [/^\/bulk(\/|$|\?)/, ["grid"]], [/^\/table(\/|$|\?)/, ["grid"]],
+        [/^\/pulses?(\/|$|\?)/, ["pulses"]],
+        [/^\/(generate|regenerate)(\/|$|\?)/, ["generate"]],
+        [/^\/instrument(\/|$|\?)/, ["wiring"]],
+        [/^\/topology(\/|$|\?)/, ["chipstatus", "components"]], [/^\/chip-status(\/|$|\?)/, ["chipstatus", "components"]],
+        [/^\/wiring(\/|$|\?)/, ["chipstatus", "components"]],
+        [/^\/trends?(\/|$|\?)/, ["chipstatus", "datasets"]],
+        [/^\/(qubits|pairs|resonators|flux|couplers|qdac)(\/|$|\?)/, ["components"]],
+        // (the /qubit/<id> and /pair/<id> inspector partials reference no lazy global -- 4l-review audit)
+        [/^\/(datasets?|collections|fit-audit)(\/|$|\?)/, ["datasets"]],
+        [/^\/scheduler(\/|$|\?)/, ["scheduler"]], [/^\/autofit(\/|$|\?)/, ["autofit"]],
+        [/^\/(compare-hub|compare|diff)(\/|$|\?)/, ["compare"]],
+    ];
+    function forPath(path) {
+        var out = [];
+        try { path = String(path || ""); if (path.indexOf("http") === 0) path = new URL(path).pathname + (new URL(path).search || ""); } catch (e) {}
+        PATHS.forEach(function (pr) { if (pr[0].test(path)) pr[1].forEach(function (n) { if (out.indexOf(n) < 0) out.push(n); }); });
+        return out;
+    }
+    /* A global control reaching into a bundle: load, then call. */
+    function call(bundle, dotted) {
+        var args = Array.prototype.slice.call(arguments, 2);
+        return need(bundle).then(function () {
+            var parts = dotted.split("."), obj = window;
+            for (var i = 0; i < parts.length - 1; i++) obj = obj && obj[parts[i]];
+            var fn = obj && obj[parts[parts.length - 1]];
+            if (typeof fn !== "function") throw new Error(dotted + " is not available");
+            return fn.apply(obj, args);
+        }).catch(function (e) { if (window.showToast) window.showToast(String(e.message || e), "error"); });
+    }
+    /* Hold an htmx request whose page needs bundles that are not here yet.
+       docs/141 4l-review: (1) issueRequest() WITHOUT the skip flag -- the
+       flag also skips the element's own hx-confirm dialog (measured with
+       the real htmx 2.0.4; the plain call does not re-fire htmx:confirm);
+       (2) a held request is invisible to hx-sync="replace" until it is
+       issued, so a sequence per target reproduces `replace`: a newer
+       request for the same target that passed meanwhile supersedes it. */
+    var _seqByTarget = (typeof WeakMap === "function") ? new WeakMap() : null;
+    var _pending = Promise.resolve();
+    function pending() { return _pending; }
+    document.addEventListener("htmx:confirm", function (evt) {
+        var d = evt && evt.detail;
+        if (!d || typeof d.issueRequest !== "function") return;
+        var names = forPath(d.path || (d.requestConfig && d.requestConfig.path) || "");
+        var target = d.target || d.elt || null;
+        var seq = 0;
+        if (_seqByTarget && target && typeof target === "object") {
+            seq = (_seqByTarget.get(target) || 0) + 1;
+            _seqByTarget.set(target, seq);
+        }
+        if (!names.length || loaded(names)) return;
+        evt.preventDefault();
+        var go = function () {
+            if (seq && _seqByTarget.get(target) !== seq) return;   // superseded (hx-sync replace)
+            d.issueRequest();                                       // never strand a navigation on a lost script
+        };
+        _pending = need(names).then(go, go);
+    });
+    /* Back/Forward: htmx restores a history entry WITHOUT an htmx:confirm (its
+       localStorage cache, or its own HX-History-Restore-Request xhr), and the
+       restored content's inline scripts expect the page's bundles. htmx chains
+       the previous window.onpopstate; this chains htmx's, installed AFTER it
+       (htmx assigns at DOMContentLoaded; app.js runs before that). */
+    function installPopstate() {
+        var prev = window.onpopstate;
+        window.onpopstate = function (e) {
+            var names = (e && e.state && e.state.htmx) ? forPath(location.pathname + location.search) : [];
+            var go = function () { if (prev) prev.call(window, e); };
+            if (!names.length || loaded(names)) { go(); return; }
+            _pending = need(names).then(go, go);      // PaneState's Back check waits on pending()
+        };
+    }
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", installPopstate);
+    else installPopstate();
+    return { need: need, call: call, loaded: loaded, forPath: forPath, pending: pending, _manifest: manifest };
+})();
+
 /* One commit = POST → the whole #inspector-pane re-renders. Three things
    must hold across that swap or the surface feels broken (docs/75):
      1. the swap REMOVES the focused input, which fires focusout on it —
@@ -4933,7 +5322,11 @@ window.UndoQueue = (function () {
             }
             return;
         }
-        var path = q.shift();
+        var item = q.shift();
+        // docs/141 4e: presses that arrived while a request was in flight were
+        // COALESCED into this item -- one request, ?n=k, the server pops k
+        // actions in one lock and names every reverted path in one response.
+        var path = item.n > 1 ? item.path + "?n=" + item.n : item.path;
         if (!document.getElementById("pending-tray")) { q.length = 0; return; }
         busy = true;
         var done = function () { busy = false; pump(); };
@@ -4965,10 +5358,15 @@ window.UndoQueue = (function () {
         if (r && typeof r.then === "function") r.then(settle, settle);
         else settle();   // no completion signal ⇒ never hold the lock on a guess
     }
+    function pending() {
+        var n = 0;
+        for (var i = 0; i < q.length; i++) n += q[i].n;
+        return n;
+    }
     return {
         push: function (path) {
             if (!window.htmx || !document.getElementById("pending-tray")) return false;
-            if (q.length >= MAX) {
+            if (pending() >= MAX) {
                 // The refusal used to be COMPLETELY invisible — preventDefault
                 // had already fired and the return value was discarded, the
                 // same silence the queue was built to end (docs/124 minor).
@@ -4981,11 +5379,13 @@ window.UndoQueue = (function () {
                 }
                 return false;
             }
-            q.push(path);
+            var last = q[q.length - 1];
+            if (last && last.path === path) last.n += 1;   // same direction: coalesce
+            else q.push({ path: path, n: 1 });
             pump();
             return true;
         },
-        depth: function () { return q.length; },
+        depth: function () { return pending(); },
         busy: function () { return busy; },
     };
 })();
@@ -4996,8 +5396,34 @@ document.addEventListener("keydown", function(evt) {
     var a = document.activeElement;
     var inGridCell = !!(a && a.classList && a.classList.contains("bulk-cell"));
     var inChPanel = !!(a && a.closest && a.closest(".colhist-overlay"));
+    // An inspector / Pulses inline field (docs/141 4e). Enter commits and
+    // InlineCommit puts the focus BACK in the field, so the press a person
+    // actually makes -- edit, Enter, Ctrl+Z -- landed in an INPUT and was
+    // ignored here (real Chrome: no request, no trail, nothing). Same rule
+    // as a grid cell: a DIRTY field undoes the typing (back to the committed
+    // value); a CLEAN one falls through to the server tier.
+    var inInline = !!(a && a.matches && a.matches('form.inline-edit input[name="value"]'));
     if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)
-        && !inGridCell && !inChPanel) return;
+        && !inGridCell && !inChPanel && !inInline) return;
+    // docs/141 4e: one press = one step. A HELD key auto-repeats at ~30/s
+    // and used to fill the queue in under a second, then keep undoing for
+    // seconds after the key was released. The repeats are ignored; the user
+    // presses as many times as they mean. AFTER the "not ours" bail-out
+    // above: an ordinary text field keeps the browser's own held-key undo
+    // (review of eaa0f05).
+    if (evt.repeat) { evt.preventDefault(); return; }
+    if (inInline) {
+        var _base = a.hasAttribute("data-committed") ? a.getAttribute("data-committed") : a.defaultValue;
+        if (a.value !== _base) {
+            // typed, not committed: Ctrl+Z undoes the typing; Ctrl+Shift+Z is
+            // the browser's (a server redo would overwrite the typing)
+            if (evt.shiftKey) return;
+            evt.preventDefault();
+            a.value = _base;
+            a.dispatchEvent(new Event("input", { bubbles: true }));
+            return;
+        }
+    }
     if (evt.shiftKey) {
         // ---- redo chain (docs/107) ----
         // Wizard MOUNTED → swallow (the wizard has no redo; letting the press
@@ -5046,23 +5472,35 @@ document.addEventListener("keydown", function(evt) {
 
 function _revertCell(dotPath, oldValueStr) {
     // Revert inspector cell
-    var hidden = document.querySelector(
+    // every form carrying the path -- an alias section and its target in one
+    // view both show it (docs/141 4l-review)
+    var hiddens = document.querySelectorAll(
         'input[type="hidden"][name="dot_path"][value="' + dotPath + '"]'
     );
-    if (hidden) {
+    Array.prototype.forEach.call(hiddens, function (hidden) {
         var form = hidden.parentElement;
         var input = form.querySelector('input[name="value"]');
         if (input) {
             input.value = oldValueStr;
+            // The reverted value IS the committed value now. Leaving the
+            // baseline (data-committed / defaultValue) at the edited value
+            // made the next click-away see "value != baseline" and RE-COMMIT
+            // the reverted value as a new edit -- which cleared the redo
+            // stack, so Ctrl+Shift+Z on Pulses did nothing (real-Chrome
+            // check, 2026-08-28). 'input' lets the field's own listeners
+            // (the Pulses waveform preview) follow the value.
+            if (input.hasAttribute("data-committed")) input.setAttribute("data-committed", oldValueStr);
+            input.defaultValue = oldValueStr;
             input.classList.remove("edit-input-modified");
             input.removeAttribute("title");
+            try { input.dispatchEvent(new Event("input", { bubbles: true })); } catch (e) {}
         }
         var td = form.closest("td");
         if (td) {
             td.classList.remove("cell-modified");
             td.removeAttribute("title");
         }
-    }
+    });
     // Revert Explorer tree node
     window._revertTreeNode && window._revertTreeNode(dotPath, oldValueStr);
 }
@@ -6072,6 +6510,17 @@ window.clearDetailPanelSearch = function(btnEl) {
                 };
             })(keyEl, path, node);
             row.appendChild(keyEl);
+            // Config Manual (2026-08-27): a ? on every editable state row —
+            // "what is this key, what can it be, what else can this node carry"
+            var helpEl = null;
+            if (_keyHelpOn && valueClick === "edit" && window.openConfigManual) {
+                helpEl = document.createElement("button");
+                helpEl.type = "button"; helpEl.className = "key-help-btn tree-help"; helpEl.tabIndex = -1;
+                helpEl.textContent = "?"; helpEl.title = "Config Manual — this key (F1)";
+                (function (p2) {
+                    helpEl.onclick = function (ev) { ev.stopPropagation(); window.openConfigManual({ path: p2 }); };
+                })(path);
+            }
 
             var colon = document.createElement("span");
             colon.className = "tree-colon";
@@ -6126,6 +6575,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                                depth: depth, refValue: refValue, hasDiff: hasDiff,
                                valueClick: valueClick, union: union };
 
+            if (helpEl) row.appendChild(helpEl);   // last, after the value
             node.appendChild(row);
             node.appendChild(children);
         } else {
@@ -6256,6 +6706,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                 }
             }
 
+            if (helpEl) row.appendChild(helpEl);   // last, after the value
             node.appendChild(row);
         }
 
@@ -6272,6 +6723,8 @@ window.clearDetailPanelSearch = function(btnEl) {
         if (!d) return; // already materialised
         var children = nodeEl.querySelector(":scope > .tree-children");
         if (!children) return;
+        var _kc = nodeEl.closest ? nodeEl.closest(".json-tree") : null;
+        _keyHelpOn = !!(_kc && _kc._keyHelp);
 
         // An absent container renders from the OTHER side, so a whole removed
         // subtree can still be expanded and read.
@@ -6389,12 +6842,37 @@ window.clearDetailPanelSearch = function(btnEl) {
      * node's data-path attribute.
      * Returns { flat: [{path, pathLower, hayLower}] }.
      */
+    /* Write ONE leaf into the tree's data model (container._treeData) and drop
+     * the flat search index. The model is what a collapsed branch is rebuilt
+     * from and what search matches against; an inline edit / undo / redo used
+     * to repaint the DOM only, so the next expand or search showed the value
+     * from BEFORE the edit (real-Chrome check, 2026-08-28). Dot-form numeric
+     * segments index lists, exactly as _buildFlatIndex walks them. */
+    function _treeModelSet(container, dotPath, value) {
+        if (!container || container._treeData == null || !dotPath) return false;
+        var segs = String(dotPath).split(".");
+        var cur = container._treeData;
+        for (var i = 0; i < segs.length - 1; i++) {
+            var seg = segs[i];
+            var nxt = Array.isArray(cur) && /^[0-9]+$/.test(seg) ? cur[Number(seg)] : cur[seg];
+            if (nxt === undefined || nxt === null || typeof nxt !== "object") return false;
+            cur = nxt;
+        }
+        var last = segs[segs.length - 1];
+        if (Array.isArray(cur) && /^[0-9]+$/.test(last)) cur[Number(last)] = value;
+        else if (cur && typeof cur === "object") cur[last] = value;
+        else return false;
+        container._flatIndex = null;
+        return true;
+    }
+    window._treeModelSet = _treeModelSet;
+
     function _buildFlatIndex(data) {
         var flat = [];
 
         function add(path, keyStr, valStr) {
             var hay = ((keyStr == null ? "" : String(keyStr)) + " " + (valStr || "")).toLowerCase();
-            flat.push({ path: path, pathLower: path.toLowerCase(), hayLower: hay });
+            flat.push({ path: path, pathLower: path.toLowerCase(), hayLower: hay, val: valStr || "" });
         }
 
         function walk(key, value, path) {
@@ -6453,13 +6931,56 @@ window.clearDetailPanelSearch = function(btnEl) {
      * flat index (no DOM walk), then materialises + expands ONLY the branches
      * that contain matches \u2014 never the whole tree, and with zero contains() calls.
      */
+    var _TREE_SEARCH_MATERIALIZE_MAX = (window.__treeSearchMaterializeMax || 150);   // matches: above this, list instead of expand
+    // Key-help (?) rows are for the LIVE state trees only (crud renders) --
+    // never a compare view's other chip or an inspector's relative subtree.
+    var _keyHelpOn = false;
+    // The flat result list for a broad tree search (see _searchTreeData).
+    // `res` null removes it. Rows carry the dot path; clicking one expands the
+    // tree to that single row and highlights it (the classic per-row cost, once).
+    function _treeSearchResults(container, res) {
+        // The notice is the container's FIRST CHILD, never a sibling: the state
+        // and wiring trees share one parent and one search box (review of
+        // 4ffee11 -- a sibling list found through the parent was the other
+        // tab's). Inside the container it follows the tab's display, and a
+        // re-render (innerHTML) drops it with the rows.
+        var el = container.firstElementChild && container.firstElementChild.classList.contains("tree-search-results")
+            ? container.firstElementChild : null;
+        if (!res) { if (el) el.parentNode.removeChild(el); return; }
+        if (!el) {
+            el = document.createElement("div");
+            el.className = "tree-search-results";
+            el.setAttribute("data-for", container.id || "");
+            container.insertBefore(el, container.firstChild);
+            el.addEventListener("click", function (ev) {
+                var b = ev.target.closest && ev.target.closest(".tsr-all");
+                if (!b) return;
+                ev.preventDefault();
+                container._searchShowAllQ = b.getAttribute("data-q");   // this query, in full, once asked
+                container._lastSearchQuery = undefined;                  // past the dedup guard
+                _searchTree(container, b.getAttribute("data-q"));
+            });
+        }
+        el.innerHTML = '<div class="tsr-head muted">' + res.total + ' matches for <code>' + _escapeHtml(res.q) + '</code>'
+            + ' — the first ' + res.shown + ' are shown in the tree; type more to narrow, or '
+            + '<button type="button" class="btn-xs tsr-all" data-q="' + _escapeHtml(res.q) + '">show all ' + res.total + '</button>'
+            + ' <span class="muted">(slower)</span></div>';
+    }
+    function _escapeHtml(s) {
+        return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+            return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+        });
+    }
+
     function _searchTreeData(container, q) {
         // Clear stale search classes on whatever is currently materialised.
-        var rendered = container.querySelectorAll(".tree-node");
+        var rendered = container.querySelectorAll(".tree-node");   // the result list is not a .tree-node
         for (var i = 0; i < rendered.length; i++) {
             rendered[i].classList.remove("tree-highlight", "tree-search-hidden");
         }
         if (!q) {
+            _treeSearchResults(container, null);
+            container._searchShowAllQ = undefined;   // clearing the box forgets "show all"
             _expandToDepth(container, 1);
             return;
         }
@@ -6500,7 +7021,35 @@ window.clearDetailPanelSearch = function(btnEl) {
             for (var h = 0; h < rendered.length; h++) {
                 rendered[h].classList.add("tree-search-hidden");
             }
+            _treeSearchResults(container, null);
             return;
+        }
+        // Night session 2026-08-28, revised the same day (user): a broad query
+        // ("amplitude" on a 20Q chip = 1,384 matches) used to MATERIALISE every
+        // matching subtree -- 430 ms of DOM creation + 330 ms of style/layout.
+        // The interim flat result list read as "the tree vanished", so the
+        // tree STAYS a tree: past the cap only the first
+        // _TREE_SEARCH_MATERIALIZE_MAX matches, in tree order, are
+        // materialised and highlighted, under a notice that names the true
+        // count and offers "show all" (the full, slower materialisation, on
+        // the user's press). Below the cap nothing changed.
+        var capped = matchPaths.size > _TREE_SEARCH_MATERIALIZE_MAX && container._searchShowAllQ !== q;
+        if (capped) {
+            var shown = new Set(), cnt = 0;
+            for (var jj = 0; jj < flat.length; jj++) {
+                if (!matchPaths.has(flat[jj].path)) continue;
+                shown.add(flat[jj].path);
+                if (++cnt >= _TREE_SEARCH_MATERIALIZE_MAX) break;
+            }
+            keepPaths = new Set();
+            shown.forEach(function (sp) {
+                var pp = sp;
+                while (!keepPaths.has(pp)) { keepPaths.add(pp); if (pp === "") break; pp = _parentPath(pp); }
+            });
+            _treeSearchResults(container, { total: matchPaths.size, shown: cnt, q: q });
+            matchPaths = shown;
+        } else {
+            _treeSearchResults(container, null);
         }
 
         // Materialise only the kept branches by descending top-down from the
@@ -6773,6 +7322,8 @@ window.clearDetailPanelSearch = function(btnEl) {
                     valEl.textContent = newVal;
                     valEl.dataset.editVal = newVal;
                 }
+                _treeModelSet(valEl.closest ? valEl.closest(".json-tree") : null, dotPath,
+                              data.stored_kind !== undefined ? data.stored : newVal);
                 var row = valEl.closest(".tree-row");
                 if (row) row.classList.add("tree-row-pending");
                 // If this field was part of an incoming live diff, inline-editing it
@@ -6934,6 +7485,12 @@ window.clearDetailPanelSearch = function(btnEl) {
     function _rebuildNode(oldNode, newValue) {
         var m = oldNode._meta;
         if (!m || !oldNode.parentNode) return null;
+        // The ? (key-help) flag is module state set by the LAST render; an
+        // in-place rebuild must read its OWN tree's flag (a non-crud tree
+        // rendered in between would otherwise strip or add the ? rows).
+        var _tree = oldNode.closest ? oldNode.closest(".json-tree") : null;
+        if (_tree) _keyHelpOn = !!_tree._keyHelp;
+        if (_tree && newValue !== _ABSENT) _treeModelSet(_tree, m.path, newValue);
         var fresh = _buildNode(m.key, newValue, m.path, m.depth, m.refValue, m.hasDiff, m.valueClick);
         oldNode.parentNode.replaceChild(fresh, oldNode);
         return fresh;
@@ -7022,14 +7579,21 @@ window.clearDetailPanelSearch = function(btnEl) {
 
     window._revertTreeNode = function(dotPath, oldValueStr) {
         var treeNode = document.querySelector('.tree-node[data-path="' + dotPath + '"]');
-        if (!treeNode) return;
-        var row = treeNode.querySelector(":scope > .tree-row");
-        if (!row) return;
-        row.classList.remove("tree-row-pending");
-        var valEl = row.querySelector(".tree-val");
-        if (!valEl) return;
+        var row = treeNode ? treeNode.querySelector(":scope > .tree-row") : null;
+        var valEl = row ? row.querySelector(".tree-val") : null;
+        if (row) row.classList.remove("tree-row-pending");
 
         function paint(v) {
+            // The MODEL first, whether or not the leaf is on screen: a leaf
+            // inside a never-expanded branch has no node, but the next expand
+            // or search reads container._treeData (review of 3885487). Both
+            // explorer trees are tried; _treeModelSet fails closed on a path
+            // the model does not hold.
+            var _c1 = document.getElementById("explorer-tree-state");
+            var _c2 = document.getElementById("explorer-tree-wiring");
+            if (!(_c1 && _treeModelSet(_c1, dotPath, v)) && _c2) _treeModelSet(_c2, dotPath, v);
+            if (treeNode && !_c1 && !_c2) _treeModelSet(treeNode.closest(".json-tree"), dotPath, v);
+            if (!valEl) return;
             valEl.textContent = _formatValue(v);
             valEl.dataset.editVal = (typeof v === "string") ? v : _formatValue(v);
             valEl.className = valEl.className
@@ -7038,6 +7602,9 @@ window.clearDetailPanelSearch = function(btnEl) {
             valEl.classList.add("tree-val-" + _typeOf(v));
             if (_isPointer(v)) valEl.classList.add("tree-val-pointer");
         }
+        // Nothing on this page holds the model or the node: nothing to do.
+        if (!valEl && !document.getElementById("explorer-tree-state")
+                   && !document.getElementById("explorer-tree-wiring")) return;
 
         // r14 honesty: the old numeric-first guess repainted a reverted STRING
         // "0.13" as bare 0.13 (wrong text AND wrong colour). Ask the server for
@@ -7057,8 +7624,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                 if (oldValueStr !== "" && oldValueStr !== "null" && !isNaN(num)) {
                     paint(num);
                 } else if (oldValueStr === "") {
-                    valEl.textContent = "null";
-                    valEl.dataset.editVal = "";
+                    paint(null);
                 } else {
                     paint(oldValueStr);
                 }
@@ -7171,6 +7737,12 @@ window.clearDetailPanelSearch = function(btnEl) {
             }
         }
         if (span.children.length) row.appendChild(span);
+        // docs/141 4w: the ? (Config Manual) sits RIGHT of the action group, and
+        // like the group it only shows on hover. The group is built lazily on the
+        // first mouseover, after the ? was appended at render time, so re-append
+        // the ? here to keep it last.
+        var help = row.querySelector(":scope > .tree-help");
+        if (help) row.appendChild(help);
     }
 
     function _closeCrudPanels(node) {
@@ -7426,6 +7998,8 @@ window.clearDetailPanelSearch = function(btnEl) {
         container.className = "json-tree";
 
         options = options || {};
+        container._keyHelp = !!options.crud;   // the ? rows follow the live-state (crud) trees
+        _keyHelpOn = container._keyHelp;
         var refData = options.refData || null;
         var defaultDepth = options.defaultDepth !== undefined ? options.defaultDepth : 1;
         var hasDiff = !!refData;
@@ -12048,9 +12622,7 @@ window.updateCompareButton = function() {
     bar.setAttribute('data-state', newState);
     var btn = document.getElementById('ds-compare-btn');
     if (btn) btn.disabled = (newState !== 'ready');
-    // Diff is a TWO-run question (docs/84); the N-run compare covers 3+.
-    var dbtn = document.getElementById('ds-diff-btn');
-    if (dbtn) dbtn.disabled = (count !== 2);
+    // docs/141 4y: one button -- 2..5 runs open the diff workbench.
     var counter = document.getElementById('ds-compare-count');
     if (counter) counter.textContent = String(count);
 };
@@ -12084,9 +12656,9 @@ window.compareSelectedDatasets = function() {
     // the old Figures/Fit-Results/Parameters run comparison instead of the
     // diff view they actually wanted. Two selected now always means diff,
     // whichever button is pressed; the N-run comparison is for 3+ only.
-    if (ids.length === 2) { window.diffSelectedDatasets(); return; }
-    htmx.ajax('GET', '/datasets/compare?ids=' + ids.join(','),
-              {source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML'});
+    // docs/141 4y: EVERY count from 2 to 5 opens the diff workbench (the
+    // N-run comparison page is retired with the Compare hub).
+    window.diffSelectedDatasets();
 };
 
 /* docs/84: exactly two runs is the case an IDE-style diff answers best —
@@ -12094,8 +12666,8 @@ window.compareSelectedDatasets = function() {
    data came out. The N-run comparison above stays for 3+. */
 window.diffSelectedDatasets = function() {
     var uids = _selectedRunIds();   // the virtual table's selection IS uids
-    if (uids.length !== 2) {
-        if (window.showToast) window.showToast('Pick exactly two runs to diff.', 'info');
+    if (uids.length < 2 || uids.length > 5) {
+        if (window.showToast) window.showToast('Pick 2–5 runs to diff.', 'info');
         return;
     }
     var url = '/diff/runs?uids=' + uids.map(encodeURIComponent).join(',');
@@ -12974,7 +13546,12 @@ document.addEventListener('htmx:afterSwap', function(evt) {
         }, delayMs);
     }
 
+    // docs/141 4p: a wake that arrives while a poll is in flight is not lost
+    // and not doubled -- it runs once more when this one lands.
+    var _inFlight = false, _wakeAgain = false;
     function pollForNewRuns() {
+        if (_inFlight) { _wakeAgain = true; return; }
+        _inFlight = true;
         _fetchWithTimeout('/datasets/poll', POLL_FETCH_TIMEOUT_MS)
             .then(function(r) {
                 if (!r.ok) throw new Error("HTTP " + r.status);
@@ -13010,6 +13587,10 @@ document.addEventListener('htmx:afterSwap', function(evt) {
                 var backoff = Math.min(POLL_SECS * 1000 * Math.pow(2, _failures - 1),
                                        POLL_MAX_BACKOFF_MS);
                 _schedule(backoff);
+            })
+            .finally(function() {
+                _inFlight = false;
+                if (_wakeAgain) { _wakeAgain = false; if (_pollTimer) clearTimeout(_pollTimer); pollForNewRuns(); }
             });
     }
 
@@ -13038,6 +13619,27 @@ document.addEventListener('htmx:afterSwap', function(evt) {
             pollForNewRuns();
         }
     });
+    // docs/141 4p: the server's run watcher (live-wake.js) says a run folder
+    // changed -- poll NOW instead of at the next 60 s tick. That is what makes
+    // the new-run popup appear about a second after qualibrate saves.
+    document.addEventListener("sm:runs-changed", function() {
+        if (_pollTimer) clearTimeout(_pollTimer);
+        pollForNewRuns();
+    });
+    window.NewRunPoll = { pollNow: function () { if (_pollTimer) clearTimeout(_pollTimer); pollForNewRuns(); },
+                          _state: function () { return { inFlight: _inFlight, wakeAgain: _wakeAgain }; } };
+    // docs/141 4p: the FIRST poll only records the baseline ("the latest run
+    // is this one") and never pops. It used to happen at the first
+    // visibilitychange, so on a freshly opened page the first WAKE became the
+    // baseline and the run that caused it was never shown (real Chrome, 2026-
+    // 08-29). Baseline shortly after load instead; a run landing inside this
+    // 1.5 s window is the one case the wake cannot announce.
+    // docs/141 4ac: gated on the popup existing. It ships in base.html, so
+    // every page that has this poll has it and the app is unchanged -- but an
+    // unconditional timer put a background request into every jsdom harness
+    // that evaluates app.js, which is what made version_diff_selfcheck.cjs
+    // flake (a failure this range introduced and the handoff called inherited).
+    if (document.getElementById('new-run-popup')) _schedule(1500);
 
     function _showNewRunPopup(data) {
         var popup = document.getElementById('new-run-popup');
@@ -15328,8 +15930,34 @@ document.addEventListener('click', function(evt) {
     // After any table-pane swap (load→/explorer, or sidebar nav): always refresh
     // the sidebar dots; mark Explorer rows when the Explorer is the swapped view;
     // re-apply the persisted diagnostics filter when the list is on screen.
+    // docs/141 4l-review: the self-refresh re-renders <details> with the
+    // server's default open state -- remember what the user folded first
+    var _diagOpenSnap = null;
+    document.addEventListener('htmx:beforeSwap', function(evt) {
+        if (!evt.detail || !evt.detail.target || evt.detail.target.id !== 'diag-findings') return;
+        var snap = {};
+        evt.detail.target.querySelectorAll('details.diag-domain[data-domain]').forEach(function (dt) {
+            snap[dt.getAttribute('data-domain')] = dt.open;
+        });
+        _diagOpenSnap = snap;
+    });
     document.addEventListener('htmx:afterSwap', function(evt) {
-        if (!evt.detail || !evt.detail.target || evt.detail.target.id !== 'table-pane') return;
+        if (!evt.detail || !evt.detail.target) return;
+        // docs/141 4f: the findings list re-fetches itself on diagnostics-changed
+        // (an inner swap of #diag-findings); the persisted bucket filter must be
+        // re-applied to the fresh rows exactly as after a table-pane swap.
+        if (evt.detail.target.id === 'diag-findings') {
+            var snap = _diagOpenSnap; _diagOpenSnap = null;
+            if (snap) {
+                document.querySelectorAll('#diag-findings details.diag-domain[data-domain]').forEach(function (dt) {
+                    var k = dt.getAttribute('data-domain');
+                    if (k in snap) dt.open = snap[k];
+                });
+            }
+            _applyDiagFilter();
+            return;
+        }
+        if (evt.detail.target.id !== 'table-pane') return;
         if (window._refreshSidebarDiagDots) window._refreshSidebarDiagDots();
         if (document.getElementById('explorer-tree-state') && window._applyExplorerSpecMarks) {
             window._applyExplorerSpecMarks();
@@ -15374,6 +16002,71 @@ window.pulseTabActive = function (a) {
  * searched keyword + the pressed All/XY/Z/Resonator/Pair-flux badge. With the state
  * in the URL, the server re-renders the input value={{q}} + the active badge, so it
  * survives every path (the route already reads ?channel= / ?q=). */
+/* docs/141 4j: `pulses-rows-changed` carries the paths a value change
+   touched and re-renders only those rows (GET /pulse/row); `pulses-changed`
+   stays the structural whole-table re-fetch (its own htmx trigger). The
+   checked state of a patched row survives the swap. */
+var _pulseRowGen = {};
+function _pulseRowEl(wrap, p) {
+    return wrap.querySelector('tr[data-pulse-path="' + (window.CSS && CSS.escape ? CSS.escape(p) : p) + '"]');
+}
+function _pulsesActiveFilter() {
+    var inp = document.querySelector('.table-filter input[name="q"]');
+    var tab = document.querySelector("#pulse-channel-tabs a.active");
+    var ch = "";
+    if (tab) { var m = (tab.getAttribute("hx-get") || "").match(/channel=([^&]+)/); if (m) ch = m[1]; }
+    return { q: inp ? inp.value.trim() : "", channel: ch };
+}
+document.addEventListener("pulses-rows-changed", function (evt) {
+    var d = evt && evt.detail;
+    if (!d || !Array.isArray(d.paths)) return;
+    var wrap = document.getElementById("pulses-rows-wrap");
+    if (!wrap) return;
+    var structural = function () { if (window.htmx) window.htmx.trigger(document.body, "pulses-changed"); };
+    var filt = _pulsesActiveFilter();
+    var seen = {}, missing = false;
+    d.paths.forEach(function (p) {
+        if (!p || seen[p]) return;
+        seen[p] = 1;
+        if (!_pulseRowEl(wrap, p)) { missing = true; return; }
+        // docs/141 4l-review: NOT htmx.ajax -- every call on the shared body
+        // source joins htmx's default `last` queue, which DROPS the middle
+        // rows of a burst (measured). A plain fetch per row; the response
+        // re-targets the row at LANDING time (an earlier swap may have
+        // replaced it) and a per-path generation keeps an older response
+        // from overwriting a newer one. The page's filter rides along: a
+        // row that no longer matches it answers 204 and leaves the table.
+        var gen = (_pulseRowGen[p] = (_pulseRowGen[p] || 0) + 1);
+        var url = "/pulse/row?path=" + encodeURIComponent(p)
+                + (filt.channel ? "&channel=" + encodeURIComponent(filt.channel) : "")
+                + (filt.q ? "&q=" + encodeURIComponent(filt.q) : "");
+        fetch(url, { credentials: "same-origin", headers: { "HX-Request": "true" } })
+            .then(function (r) {
+                if (r.status === 204) return "";
+                return r.ok ? r.text() : Promise.reject(new Error("HTTP " + r.status));
+            })
+            .then(function (html) {
+                if (_pulseRowGen[p] !== gen) return;
+                var cur = _pulseRowEl(wrap, p);
+                if (!cur) return;
+                if (html === "") { cur.parentNode.removeChild(cur); return; }
+                var chk = cur.querySelector(".pulse-sel-chk");
+                var wasChecked = !!(chk && chk.checked);
+                var tpl = document.createElement("template");
+                tpl.innerHTML = html.trim();
+                var fresh = tpl.content.querySelector("tr");
+                if (!fresh) { structural(); return; }
+                cur.parentNode.replaceChild(fresh, cur);
+                if (window.htmx) window.htmx.process(fresh);
+                if (wasChecked) { var c2 = fresh.querySelector(".pulse-sel-chk"); if (c2) c2.checked = true; }
+            })
+            .catch(structural);
+    });
+    // a row we cannot find (a pulse the change created, renamed or restored)
+    // means the table itself is stale -- the structural re-fetch
+    if (missing) structural();
+});
+
 function _pulsesSyncUrl() {
     if (location.pathname.indexOf("/pulses") !== 0) return;
     var inp = document.querySelector('.table-filter input[name="q"]');
@@ -15411,22 +16104,27 @@ document.addEventListener("input", function (e) {
 /* ------------------------------------------------------------------ */
 
 var _pulseSelection = [];   // paths of selected pulses (max 5)
-var _PULSE_MAX_COMPARE = 5;
-var _PULSE_COMPARE_COLORS = [
-    "var(--pico-primary)", "#e67e22", "#2ecc71", "#e74c3c", "#9b59b6"
-];
+var _PULSE_MAX_COMPARE = 4;   // docs/141 4k: the view holds up to four sections
 
-window.pulseSelChanged = function () {
+window.pulseSelChanged = function (clicked) {
     _pulseSelection = [];
     document.querySelectorAll(".pulse-sel-chk:checked").forEach(function (cb) {
         _pulseSelection.push(cb.getAttribute("data-path"));
     });
-    // Enforce max by unchecking excess
+    // Enforce the cap by unchecking the box just clicked (not whichever
+    // sits last in DOM order -- docs/141 4l-review)
     if (_pulseSelection.length > _PULSE_MAX_COMPARE) {
-        _pulseSelection = _pulseSelection.slice(0, _PULSE_MAX_COMPARE);
-        document.querySelectorAll(".pulse-sel-chk:checked").forEach(function (cb, i) {
-            if (i >= _PULSE_MAX_COMPARE) cb.checked = false;
+        var extra = clicked && clicked.checked ? clicked : null;
+        if (!extra) {
+            var all = document.querySelectorAll(".pulse-sel-chk:checked");
+            extra = all[all.length - 1];
+        }
+        if (extra) extra.checked = false;
+        _pulseSelection = [];
+        document.querySelectorAll(".pulse-sel-chk:checked").forEach(function (cb) {
+            _pulseSelection.push(cb.getAttribute("data-path"));
         });
+        if (window.showToast) window.showToast("A view holds up to " + _PULSE_MAX_COMPARE + " pulses", "warning");
     }
     var bar = document.getElementById("pulse-compare-bar");
     var countEl = document.getElementById("pulse-compare-count");
@@ -15444,96 +16142,15 @@ window.clearPulseSelection = function () {
 };
 
 window.openPulseCompare = function () {
-    if (_pulseSelection.length < 2) return;
-    // Create or reuse modal
-    var overlay = document.getElementById("pulse-compare-overlay");
-    if (!overlay) {
-        overlay = document.createElement("div");
-        overlay.id = "pulse-compare-overlay";
-        overlay.className = "state-review-overlay";
-        overlay.style.display = "none";
-        overlay.innerHTML =
-            '<div class="state-review-backdrop" onclick="closePulseCompare()"></div>' +
-            '<div class="state-review-card pulse-compare-card">' +
-              '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem">' +
-                '<h3 style="margin:0">Pulse Waveform Comparison</h3>' +
-                '<button type="button" onclick="closePulseCompare()" style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--pico-muted-color)">&times;</button>' +
-              '</div>' +
-              '<div id="pulse-compare-plot" style="width:100%;height:400px"></div>' +
-              '<div id="pulse-compare-legend" style="margin-top:0.5rem"></div>' +
-            '</div>';
-        document.body.appendChild(overlay);
-    }
-    overlay.style.display = "flex";
-
-    // Purge any previous Plotly chart so re-renders work reliably.
-    var plotDiv = document.getElementById("pulse-compare-plot");
-    if (window.Plotly && plotDiv && plotDiv.data) {
-        try { Plotly.purge(plotDiv); } catch (e) {}
-    }
-    plotDiv.innerHTML = '<p class="muted" style="padding:2rem;text-align:center">Synthesizing waveforms…</p>';
-
-    fetch("/api/pulse/compare", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "HX-Request": "true" },
-        body: JSON.stringify({ paths: _pulseSelection })
-    })
-    .then(function (r) { return r.json(); })
-    .then(function (d) {
-        if (!d.ok) {
-            plotDiv.innerHTML = '<p class="muted" style="padding:2rem">' + (d.error || "Comparison failed") + '</p>';
-            return;
-        }
-        var traces = [];
-        var legendHtml = [];
-        d.pulses.forEach(function (p, idx) {
-            if (!p.ok || !p.plot || !p.plot.traces) return;
-            var color = _PULSE_COMPARE_COLORS[idx % _PULSE_COMPARE_COLORS.length];
-            p.plot.traces.forEach(function (t) {
-                traces.push({
-                    x: t.x, y: t.y,
-                    name: p.label + " " + t.name,
-                    mode: "lines",
-                    line: { color: color, width: t.name === "Q" ? 1.5 : 2,
-                            dash: t.name === "Q" ? "dot" : "solid" },
-                    hovertemplate: p.label + " " + t.name + ": %{y:.4g}<extra></extra>"
-                });
-            });
-            legendHtml.push(
-                '<span style="display:inline-flex;align-items:center;gap:0.3rem;margin-right:1rem">' +
-                '<span style="width:12px;height:3px;background:' + color + ';display:inline-block"></span>' +
-                '<span style="font-size:0.82rem">' + (p.label || p.path) + '</span></span>'
-            );
-        });
-
-        var cs = getComputedStyle(document.documentElement);
-        var cardBg = cs.getPropertyValue("--pico-card-background-color").trim() || "#1e2029";
-        var plotBg = cs.getPropertyValue("--pico-background-color").trim() || "#13141a";
-        var layout = {
-            margin: { t: 20, r: 20, b: 40, l: 50 },
-            xaxis: { title: "Time (ns)", gridcolor: "rgba(128,128,128,0.15)" },
-            yaxis: { title: "Amplitude", gridcolor: "rgba(128,128,128,0.15)" },
-            showlegend: false,
-            paper_bgcolor: cardBg,
-            plot_bgcolor: plotBg,
-            font: { color: cs.getPropertyValue("--pico-color").trim() }
-        };
-        if (window._plotlyRender) {
-            window._plotlyRender("pulse-compare-plot", traces, layout, { responsive: true });
-        } else if (window.Plotly) {
-            Plotly.newPlot("pulse-compare-plot", traces, layout, { responsive: true });
-        }
-        var legendEl = document.getElementById("pulse-compare-legend");
-        if (legendEl) legendEl.innerHTML = legendHtml.join("");
-    })
-    .catch(function () {
-        plotDiv.innerHTML = '<p class="muted" style="padding:2rem">Comparison request failed.</p>';
-    });
-};
-
-window.closePulseCompare = function () {
-    var overlay = document.getElementById("pulse-compare-overlay");
-    if (overlay) overlay.style.display = "none";
+    /* docs/141 4k (user): Compare is the pulse INSPECTOR with 2-4 pulses in
+       view -- one plot, one editable parameter section per pulse, each in its
+       trace colour -- not a read-only overlay. Same route the rows use. */
+    if (_pulseSelection.length < 2 || !window.htmx) return;
+    var paths = _pulseSelection.slice(0, _PULSE_MAX_COMPARE);
+    // repeated paths= params: a comma is legal inside a foreign op name
+    htmx.ajax("GET", "/pulse/detail?path=" + encodeURIComponent(paths[0])
+              + paths.map(function (p) { return "&paths=" + encodeURIComponent(p); }).join(""),
+              { target: "#inspector-pane", swap: "innerHTML" });
 };
 
 /* Strip any existing `key=` from a URL's query string and, when value is
@@ -16114,6 +16731,11 @@ window.LiveEditUndo = (function () {
             _updateTrayBtn();
             if (restored) {
                 redo.push(a);   // docs/107: Ctrl+Shift+Z re-applies this action
+                try {
+                    document.dispatchEvent(new CustomEvent("quam:undo-step", { detail: {
+                        kind: "undo", tier: "memory", label: a.label,
+                        entries: a.cells.map(function (c) { return { dot_path: c.dp, value: c.prev, from: c.next }; }) } }));
+                } catch (e) {}
                 if (redo.length > CAP) redo.shift();
                 if (window.showToast) {
                     var extra = [];
@@ -16154,6 +16776,11 @@ window.LiveEditUndo = (function () {
             });
             if (applied) {
                 stack.push(a);   // the redone action is undoable again
+                try {
+                    document.dispatchEvent(new CustomEvent("quam:undo-step", { detail: {
+                        kind: "redo", tier: "memory", label: a.label,
+                        entries: a.cells.map(function (c) { return { dot_path: c.dp, value: c.next, from: c.prev }; }) } }));
+                } catch (e) {}
                 if (stack.length > CAP) stack.shift();
                 _updateTrayBtn();
                 if (window.showToast) window.showToast("Redid " + a.label);
@@ -16348,6 +16975,19 @@ window.UndoNav = (function () {
 
     // Owning surface for a reverted group. Anchor = the OLDEST entry (the
     // action's anchor — same one the server toast names).
+    /* The pulse a parameter path belongs to (the three shapes the Pulses
+       page itself enumerates), or null. */
+    function pulseRootOf(dp) {
+        // docs/141 4l-review: mirrors the server's _PULSE_PATH_RES -- a pair
+        // macro's pulse is its flux_pulse_qubit / coupler_flux_pulse SLOT
+        // (the macro itself is not a pulse and /pulse/detail refuses it), and
+        // only the four qubit channels + the pair drive channels carry pulses
+        var m = /^(qubits\.[^.]+\.(?:xy|z|resonator|xy_detuned)\.operations\.[^.]+)(\.|$)/.exec(dp)
+             || /^(qubit_pairs\.[^.]+\.macros\.[^.]+\.(?:flux_pulse_qubit|coupler_flux_pulse))(\.|$)/.exec(dp)
+             || /^(qubit_pairs\.[^.]+\.(?:cross_resonance|zz_drive|zz|xy_detuned)\.operations\.[^.]+)(\.|$)/.exec(dp);
+        return m ? m[1] : null;
+    }
+
     function ownerSurface(entries) {
         var anchor = entries[entries.length - 1] || entries[0];
         var dp = (anchor && anchor.dot_path) || "";
@@ -16358,6 +16998,15 @@ window.UndoNav = (function () {
             owners[s[0] + (s[1] ? "." + s[1] : "")] = 1;
         });
         var multi = Object.keys(owners).length > 1;
+        // On the Pulses page a pulse parameter's home is the pulse DETAIL
+        // (waveform + parameters), not the qubit inspector: "go to field" on
+        // an undone pulse length used to open /qubit/q1 there, with no graph
+        // (user report, 2026-08-28).
+        var pulseRoot = pulseRootOf(dp);
+        if (!multi && pulseRoot && document.getElementById("pulses-rows-wrap")) {
+            return { kind: "pulse",
+                     url: "/pulse/detail?path=" + encodeURIComponent(pulseRoot) };
+        }
         if (seg[0] === "qubits" && seg[1]) {
             return multi
                 ? { kind: "pane", url: "/bulk" }
@@ -16457,6 +17106,15 @@ window.UndoNav = (function () {
         _pendingHighlight = paths.map(function (dp) { return { dp: dp, ts: ts }; });
     }
 
+    /* Flash + remember the entries that are on screen; never navigates. */
+    function flashVisible(entries) {
+        entries = entries || [];
+        var covered = entries.filter(function (e) { return e && visibleEl(e.dot_path); });
+        covered.forEach(function (e) { flash(visibleEl(e.dot_path)); });
+        if (covered.length) _pend(covered.map(function (e) { return e.dot_path; }));
+        return covered.length;
+    }
+
     function handle(entries) {
         entries = entries || [];
         if (!entries.length) return;
@@ -16473,7 +17131,7 @@ window.UndoNav = (function () {
         }
         var os = ownerSurface(entries);
         _pend(entries.map(function (e) { return e.dot_path; }));
-        if (os.kind === "inspector") {
+        if (os.kind === "inspector" || os.kind === "pulse") {
             // Opens in #inspector-pane — #table-pane (and the user's typing
             // in it) is untouched; ?focus= scrolls + focuses the field.
             if (window.htmx && document.getElementById("inspector-pane")) {
@@ -16508,7 +17166,7 @@ window.UndoNav = (function () {
         _pendingHighlight = [];
     });
 
-    return { handle: handle, visibleEl: visibleEl, ownerSurface: ownerSurface,
+    return { handle: handle, flashVisible: flashVisible, visibleEl: visibleEl, ownerSurface: ownerSurface,
              stashDirtyInputs: stashDirtyInputs, restorePass: restorePass,
              clearStash: clearStash };
 })();
@@ -16567,6 +17225,21 @@ window.ColumnHistory = (function () {
             }
         });
         if (!Object.keys(_paths).length) {
+            // docs/141 4ae A4: a COLD column has no `.bulk-cell` at all, so the
+            // map is empty and this button -- rendered on every header -- used
+            // to answer with a toast on 92 of 111 pair columns and 198 of 224
+            // qubit ones. Hydrate that one column and try again, ONCE.
+            // The flag is set before the call (a double click would otherwise
+            // start two) and lives on the button, not in module scope: a
+            // module-scoped set survives a re-render, which is exactly when the
+            // column may have become hot on its own.
+            var api = grid === "pair" ? window.BulkPairEdit : window.BulkEdit;
+            var hydrate = api && api.hydrateColumn;
+            if (hydrate && !btn._chHydrated) {
+                btn._chHydrated = 1;
+                var p = hydrate.call(api, colKey);
+                if (p && p.then) { p.then(function () { open(btn); }); return; }
+            }
             if (window.showToast) showToast("No history-capable cells in this column");
             return;
         }
@@ -17551,3 +18224,57 @@ window.FloatWiring = (function () {
     document.addEventListener('stateRestored', function () { if (panel()) refresh(); });
     return { toggle: toggle, open: open, refresh: refresh };
 })();
+
+/* docs/141 4ae B-7 -- the one failure this mechanism used to keep entirely to
+   itself. The server renders the columns past the look-ahead window as EMPTY
+   `<td class="bulk-td-cold">` and grid-virt.js fills them; if grid-virt.js
+   itself does not arrive, `window.GridVirt` is undefined, both grids' bindings
+   return null, and the cold half of BOTH tables is permanently blank -- no
+   console error, no note, no recovery. Two mechanisms make it silent: the
+   bundle loader's `need(names).then(go, go)` ("never strand a navigation on a
+   lost script") and `asset_url`'s plain-URL fallback, which yields a live
+   <script> that 404s. Measured before this: 3,960 of 4,480 qubit cells and
+   2,730 of 3,330 pair cells empty, still empty after scrolling.
+   Reachability is low (asset_url fingerprints by mtime, PyInstaller copies
+   web/static wholesale) -- but the project's rule since docs/114 is that a
+   failure explains itself, and this one could not. It lives in app.js because
+   app.js is a CORE script: a helper inside the module that went missing would
+   be missing too.
+   Returns the number of columns it named, so a pin can assert it. */
+/* GRIDVIRT-MISSING-NOTE:BEGIN -- sliced out by tests/bulk_virt_server_selfcheck.cjs
+   (the harness cannot eval the whole of app.js; the sentinels are pinned by
+   tests/test_bulk_virt_server.py so a rename can never make the slice silently
+   empty -- the "truncated declaration read as green" lesson of docs/141). */
+window.GridVirtMissingNote = function (t, noteId) {
+    try {
+        if (!t || window.GridVirt) return 0;
+        var seen = {}, n = 0;
+        Array.prototype.forEach.call(
+            t.querySelectorAll('tbody td.bulk-td-cold[data-col-key]'), function (td) {
+                var k = td.getAttribute('data-col-key');
+                if (k && !seen[k]) { seen[k] = 1; n++; }
+                // the same two states docs/141 4ae B-10 gives a retired column:
+                // these cells are not loading, they are never coming
+                td.classList.add('bulk-td-dead');
+                td.setAttribute('title', 'This column could not be loaded — reload the page');
+            });
+        if (!n) return 0;
+        var wrap = t.closest('.bulk-table-wrap') || t.parentElement;
+        var el = document.getElementById(noteId);
+        if (!el) {
+            el = document.createElement('p');
+            el.id = noteId;
+            el.className = 'muted bulk-virt-note';
+            el.style.cssText = 'margin:.15rem 0 .3rem;font-size:.78em';
+            el.setAttribute('aria-live', 'polite');
+            if (!wrap || !wrap.parentNode) return n;
+            wrap.parentNode.insertBefore(el, wrap);
+        }
+        el.textContent = n + ' column' + (n === 1 ? '' : 's') + ' could not be loaded'
+            + ' — a page script did not arrive; reload the page to see '
+            + (n === 1 ? 'it' : 'them');
+        el.hidden = false;
+        return n;
+    } catch (e) { return 0; }
+};
+/* GRIDVIRT-MISSING-NOTE:END */

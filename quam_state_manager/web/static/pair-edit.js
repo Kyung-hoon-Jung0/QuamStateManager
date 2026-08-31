@@ -31,6 +31,55 @@
     var _colWidths = {};
     var _resize = null, _resizeJustEnded = false;
     var _pairSearchTimer = null;   // debounce for the shared #bulk-search box
+    /* docs/141 4ad: cold-column virtualization, the same mechanism the qubit
+       grid has had since §4n, through the shared core. On the PJ 20Q chip this
+       table was 1.49 MB of a 2.81 MB document -- 53%, the largest single block
+       left once the qubit grid was slimmed. `_pvirt` mirrors the core's state
+       for the call sites that read it directly; the core announces every
+       change (onState) so the mirror cannot go stale. */
+    var _pgv = null, _pvirt = null;
+    function _pairVirt() {
+        if (_pgv) return _pgv;
+        if (!window.GridVirt) return null;
+        _pgv = window.GridVirt.create({
+            table: table,
+            rows: _rows,
+            // docs/141 4q: #table-pane is the ONE scroller for both grids
+            scroller: function (t) {
+                return document.getElementById('table-pane')
+                    || t.closest('.bulk-table-wrap') || t.parentElement;
+            },
+            styleId: 'bulk-pair-virt-width-style',
+            noteId: 'bulk-pair-virt-note',
+            mapId: 'bulk-pair-cold-map',
+            tableSel: '#bulk-pair-table',
+            rowAttr: 'data-pair',
+            colWidths: function () { return _colWidths; },
+            urlParams: function () {
+                var q = '&grid=pair';
+                var tok = window.__bulkChipKey || '';
+                if (tok) q += '&chip=' + encodeURIComponent(tok);
+                return q;
+            },
+            onLanded: function (t, set) {
+                try { _recomputeStats(); } catch (e) {}
+                try { _markLinkedCells(); } catch (e) {}
+            },
+            onState: function (st) { _pvirt = st; },
+        });
+        return _pgv;
+    }
+    function _pairVirtInit() {
+        var gv = _pairVirt();
+        // docs/141 4ae B-7: the qubit twin's line -- no GridVirt means this
+        // table's server-cold columns stay blank forever, so say so.
+        if (!gv) {
+            _pvirt = null;
+            if (window.GridVirtMissingNote) window.GridVirtMissingNote(table(), 'bulk-pair-virt-note');
+            return;
+        }
+        gv.init();
+    }
 
     function table() { return document.getElementById('bulk-pair-table'); }
     function _cells(scope) { return Array.prototype.slice.call(scope.querySelectorAll('.bulk-cell')); }
@@ -213,6 +262,21 @@
                 hs.push(h);
                 if (colHay[k]) colHay[k].push(h);
             });
+            // docs/141 4ad: a cold (unhydrated) cell contributes its STORED
+            // value -- the search must stay whole-chip (docs/85) even for
+            // columns whose inputs are not mounted yet. Same contract the
+            // qubit grid has had since §4n.
+            if (_pvirt) {
+                r.querySelectorAll('td.bulk-td-cold').forEach(function (td) {
+                    var ck = td.getAttribute('data-col-key');
+                    if (hide.has(ck)) return;
+                    var cd = _pgv ? _pgv.valOf(td) : '';
+                    if (!cd) return;
+                    var chh = cd + ' ' + cd.replace(/,/g, '');
+                    hs.push(chh);
+                    if (colHay[ck]) colHay[ck].push(chh);
+                });
+            }
             return hs;
         });
 
@@ -232,12 +296,39 @@
         });
         var cnt = document.getElementById('bulk-pair-search-count');
         if (cnt) cnt.textContent = q ? (shown + ' of ' + rows.length + ' pairs') : '';
+        // docs/141 4ae A2: a narrowed grid puts columns ON SCREEN that were
+        // cold when it was wide -- and a reveal (the Properties menu, the
+        // docs/85 "N hidden columns match — Show" chip, Show all, Reset) does
+        // the same. Without this the surviving column renders as empty cells
+        // until the user happens to scroll: measured at 110 of 111 pair
+        // columns on the real 20Q chip. The pass is rAF-deferred and reads
+        // the core's live state, so running it here is safe even at mount,
+        // where `_pvirt` is still the previous mount's mirror. The qubit
+        // grid has done this since §4n.
+        if (_pvirt && _pgv) _pgv.onScroll();
         _updateGroupHeader();
     }
 
     // ── sort + per-column min/max ────────────────────────────────────────────
     function sort(key) {
         var t = table(); if (!t) return;
+        // docs/141 4ad: sorting by a column whose cells are not here would
+        // read every value as empty. Fetch, then sort (the qubit grid does the
+        // same since §4n).
+        if (_pvirt && _pgv && _pgv.isCold(key)) {
+            // ...and re-enter only if it ARRIVED. `hydrateCols` resolves on a
+            // 409 or a network error too, and those deliberately leave the
+            // column cold, so an unconditional re-entry is an unbounded
+            // request loop -- measured at 401 requests in 4 s from one header
+            // click in real Chrome, and as a frozen tab in jsdom (docs/141
+            // 4ae A1). A retired column (a 400) reports isCold() === false, so
+            // the sort runs once over empty strings: no loop, no reorder, and
+            // the note already says the column could not be loaded.
+            _pgv.hydrateCols([key]).then(function () {
+                if (!(_pgv && _pgv.isCold(key))) sort(key);
+            });
+            return;
+        }
         var tbody = t.querySelector('tbody');
         if (sortKey === key) sortDir = -sortDir; else { sortKey = key; sortDir = 1; }
         var rows = _rows();
@@ -268,10 +359,23 @@
     function _recomputeStats() {
         var t = table(); if (!t) return;
         var hide = _hiddenSet();
+        // docs/141 4ae: a COLD or RETIRED column has no cells to count. Without
+        // this guard the loop below finds nothing and writes '' over the
+        // server's own min/max — computed once at mount, then destroyed by the
+        // next ordinary action, because this runs from `onLanded` too. §4l-review
+        // fixed the identical defect on the qubit grid (bulk-edit.js:1350).
+        var _skipStat = function (k) {
+            return !!(_pvirt && _pgv && (_pgv.isCold(k) || (_pgv.isDead && _pgv.isDead(k))));
+        };
         COLS.forEach(function (c) {
             var stat = t.querySelector('[data-col-stats="' + (window.CSS && CSS.escape ? CSS.escape(c.key) : c.key) + '"]');
             if (!stat) return;
             if (hide.has(c.key)) { stat.textContent = ''; return; }
+            // ...and the guard itself. It was defined and never CALLED for a
+            // while, which is the third dead-code-by-omission this campaign has
+            // found in its own fixes -- the mutation sweep reported the anchor
+            // missing, which is the only reason anyone noticed (docs/141 4af).
+            if (_skipStat(c.key)) return;
             var cells = Array.prototype.slice.call(
                 t.querySelectorAll('[data-col-key="' + (window.CSS && CSS.escape ? CSS.escape(c.key) : c.key) + '"] .bulk-cell'));
             var nums = [];
@@ -413,11 +517,28 @@
     }
 
     // ── before/after hover ───────────────────────────────────────────────────
+    // docs/141 §4m: the before→after chip is CREATED on first hover, not rendered
+    // per cell (4,000+ cells × 4 spans on a 20Q chip). Its "old" text is the
+    // cell's data-baseline, which every path sets BEFORE marking a cell modified
+    // (the server for a tray-pending cell, applyRow / the cross-table sync /
+    // markModified here); the apply sites keep an existing chip in sync.
+    function _ensureBA(td, cell) {
+        if (td.querySelector('.bulk-ba')) return;
+        var ba = document.createElement('span');
+        ba.className = 'bulk-ba'; ba.setAttribute('aria-hidden', 'true');
+        var o = document.createElement('span'); o.className = 'bulk-ba-old';
+        o.textContent = cell.hasAttribute('data-baseline') ? cell.getAttribute('data-baseline') : (cell.getAttribute('data-orig') || '');
+        var n = document.createElement('span'); n.className = 'bulk-ba-new';
+        var d = document.createElement('span'); d.className = 'bulk-ba-delta'; d.hidden = true;
+        ba.appendChild(o); ba.appendChild(document.createTextNode(' → ')); ba.appendChild(n); ba.appendChild(d);
+        td.appendChild(ba);
+    }
     function _hoverBA(e, show) {
         var td = e.target.closest && e.target.closest('.bulk-td');
         if (!td) return;
         var cell = td.querySelector('.bulk-cell');
         if (!cell || !cell.classList.contains('bulk-cell-modified')) return;
+        if (show) _ensureBA(td, cell);
         var newEl = td.querySelector('.bulk-ba-new');
         if (newEl) newEl.textContent = cell.value;
         // docs/76: same Δ chip as the qubit grid.
@@ -477,6 +598,15 @@
         var byResolved = {};
         (results || []).forEach(function (res) { if (res.resolved_path) byResolved[res.resolved_path] = res; });
         if (!Object.keys(byResolved).length) return;
+        // docs/141 4ae C9: a linked twin in a client-detached column keeps the
+        // pre-apply value AND `data-orig`, so revealing it later shows a stale
+        // number that looks clean. The qubit grid hydrates first for exactly
+        // this ("a path-addressed repaint must see every input"). Deliberately
+        // the BROAD form and not a per-path one: `byPath` is single-valued and
+        // last-writer-wins, and 264 real pair paths are claimed by more than
+        // one column, so a narrow fix would skip the detached twin precisely
+        // when the twins are what must agree. Local only — no round trip.
+        if (_pgv) _pgv.hydrateLocal();
         _cells(t).forEach(function (c) {
             if (c.getAttribute('data-linkable') !== '1') return;
             var res = byResolved[c.getAttribute('data-resolved')];
@@ -538,6 +668,24 @@
     function _autoFitColWidth(key) { delete _colWidths[key]; _saveColWidths(); _applyColWidthStyle(); }
 
     var BulkPairEdit = {
+        // docs/141 4af: the same read-only window onto the instance that
+        // `BulkEdit._virtState` has always given the qubit grid. Without it a
+        // harness cannot tell a CLIENT-DETACHED column from a server-cold one,
+        // which is the distinction three of §4ae's fixes turn on.
+        _pairVirtState: function () {
+            return _pvirt ? {
+                cold: Array.from(_pvirt.cold),
+                remote: Array.from(_pvirt.remote),
+                dead: _pvirt.dead ? Array.from(_pvirt.dead) : [],
+                inflight: Array.from(_pvirt.inflight.keys()),
+                failed: _pvirt.failed || 0,
+            } : null;
+        },
+        // docs/141 4ae A4: the pair grid's half of the Column History hook.
+        hydrateColumn: function (key) {
+            if (!_pgv || !_pvirt || !_pgv.isCold(key)) return Promise.resolve(false);
+            return _pgv.hydrateCols([key]).then(function () { return !_pgv.isCold(key); });
+        },
         mount: function (columns) {
             if (Array.isArray(columns)) COLS = columns;
             sortKey = null; sortDir = 1;
@@ -549,6 +697,16 @@
             _applyColumnVisibility();
             _recomputeStats();
             _markLinkedCells();
+            // docs/141 4ad: adopt the server-cold columns (and detach any the
+            // client's own estimate calls cold) AFTER the column visibility and
+            // the persisted widths are settled -- the plan reads both. Then one
+            // pass hydrates whatever the estimate got wrong and is on screen.
+            _pairVirtInit();
+            // DEFERRED, never immediate: the pass reads real geometry, and
+            // reading it during the mount forces the layout of the whole table
+            // -- the ~450 ms §4i removed. One rAF later the table is already a
+            // fraction of its size (docs/141 4ad; the qubit grid does the same).
+            if (_pvirt) _pgv.onScroll();
             if (t._pairBound) { _refreshGlobal(); return; }
             t._pairBound = true;
 
@@ -567,7 +725,7 @@
 
             t.addEventListener('click', function (e) {
                 if (e.target.closest && e.target.closest('.bulk-resize-handle')) return;
-                if (e.target.closest && e.target.closest('.bulk-col-hist')) return;
+                if (e.target.closest && e.target.closest('.bulk-col-hist, .key-help-btn')) return;
                 if (_resizeJustEnded) return;
                 if (e.target.closest && e.target.closest('.bulk-ro-link')) return;
                 var th = e.target.closest && e.target.closest('thead th[data-col-key]');
@@ -643,7 +801,7 @@
                 search._pairBound = true;
                 search.addEventListener('input', function () {
                     if (_pairSearchTimer) clearTimeout(_pairSearchTimer);
-                    _pairSearchTimer = setTimeout(applySearch, 120);
+                    _pairSearchTimer = setTimeout(applySearch, window.__bulkSearchDebounce || 200);   // same pause as the qubit grid (user-directed 200, 2026-08-28)
                 });
             }
             // restore persisted query into our filter on (re)mount
@@ -811,7 +969,14 @@
     // tabindex="-1"; these handlers preventDefault() and focus by hand, which
     // overrode that. The pair grid has always rendered blanks for a column a
     // given pair does not carry, so a single-step move could strand the caret.
+    // docs/141 4ad: Tab/arrow into a cold column starts its fetch; the cell
+    // lands on the next keypress, never wrong.
+    function _pairEnsureTd(td) { if (_pgv) _pgv.ensureTd(td); }
     function _editableIn(td) {
+        // docs/141 4ad: a cold cell has no input at all, so navigation would
+        // step straight over the column. Start its fetch; the cell lands on
+        // the next keypress (never a wrong value, just one press late).
+        if (td && td.classList && td.classList.contains('bulk-td-cold')) _pairEnsureTd(td);
         var c = td && td.querySelector('.bulk-cell');
         return c && !c.classList.contains('bulk-cell-ro') ? c : null;
     }
@@ -874,16 +1039,47 @@
     /* docs/122 item 3 — the pair grid's half of the undo repaint.
        Same contract as BulkEdit.revertPaths: patch every cell the /undo
        response named, report what could not be reached, and leave the decision
-       about an authoritative refetch to the caller. There is no cold-column
-       hydration here because the pair grid is not virtualised. */
+       about an authoritative refetch to the caller. Since docs/141 4ad the pair
+       grid IS virtualised, so a cold column has no cell to repaint -- see the
+       cold-map patch below, which is what keeps the search honest without a
+       round trip. */
     function _revertPaths(entries) {
+        // docs/141 4ad + 4ac: a server-cold column has no cell to repaint --
+        // it is rendered from the (already reverted) working copy when it is
+        // fetched -- but its SEARCH TEXT is the cold map, which nothing else
+        // updates. Patch that one cell, for no round trip.
+        if (_pvirt && entries && entries.length) {
+            // docs/141 4ae A3: a CLIENT-DETACHED column has a stashed fragment
+            // holding the pre-undo value AND the pre-undo `data-orig`, so the
+            // cell reads clean and the path reports `missing` — which by the
+            // §4e contract deliberately schedules no resync. Nothing would ever
+            // repair it. Local hydration is synchronous, so the cells exist by
+            // the time the repaint loop below runs. REMOTE columns are left
+            // alone on purpose: fetching them would put a round trip back into
+            // every Ctrl+Z, which docs/122 ③ bought away.
+            var _due = [];
+            entries.forEach(function (e) {
+                if (!e || !e.dot_path) return;
+                var k = _pgv.colOfPath(e.dot_path);
+                if (k && _pgv.isCold(k) && !_pgv.isRemote(k) && _due.indexOf(k) < 0) _due.push(k);
+            });
+            if (_due.length) _pgv.hydrateCols(_due);
+            entries.forEach(function (e) {
+                if (!e || !e.dot_path) return;
+                var ck = _pgv.colOfPath(e.dot_path);
+                if (ck && _pgv.isRemote(ck)) {
+                    _pgv.patchColdValue(e.dot_path,
+                        e.old_value_disp != null ? e.old_value_disp : e.old_value_str);
+                }
+            });
+        }
         var t = table();
         if (!t || !entries || !entries.length) return { patched: 0, missing: 0 };
         var esc = function (k) {
             return (window.CSS && CSS.escape) ? CSS.escape(k)
                                               : String(k).replace(/"/g, '\\"');
         };
-        var patched = 0, missing = 0, rows = [], covered = [];
+        var patched = 0, missing = 0, rows = [], covered = [], uncovered = [];
         entries.forEach(function (e) {
             if (!e || !e.dot_path) return;
             // BOTH attributes (docs/124 C-2/M-8, same as BulkEdit): the server
@@ -903,7 +1099,13 @@
             var wrote = 0;
             var honest = e.old_kind !== 'pointer';
             Array.prototype.forEach.call(cs, function (c) {
-                if (c.readOnly) return;
+                // A readonly cell (a list / runtime column) and the qubit
+                // grid's list-preview span are FOUND but cannot be repainted
+                // by a value write: they stay uncovered (docs/124 M-10) so
+                // the caller's rebuild clears the edited preview + the red
+                // modified marker. Only a path with NO cell at all is
+                // "missing" -- that one is not the grid's to repaint.
+                if (c.readOnly || c.tagName !== 'INPUT') return;
                 var isStr = c.hasAttribute('data-str-numeric')
                     || c.classList.contains('bulk-cell-str');
                 if ((e.old_kind === 'str_numeric') !== isStr) honest = false;
@@ -918,12 +1120,17 @@
                 wrote++;
             });
             if (wrote && honest) covered.push(e.dot_path);
+            else uncovered.push(e.dot_path);   // found (cs.length > 0) but not honestly repainted
         });
         rows.forEach(_refreshRow);
         if (patched) _refreshGlobal();
-        return { patched: patched, missing: missing, covered: covered };
+        return { patched: patched, missing: missing, covered: covered, uncovered: uncovered };
     }
     BulkPairEdit.revertPaths = _revertPaths;
+    // docs/141 4af: the apply echo's own entry point, so a harness can drive
+    // it without a live /field/edit-batch round trip -- the qubit grid has
+    // had `BulkEdit._syncApplied` since §4n for the same reason.
+    BulkPairEdit._syncApplied = _syncAppliedAcrossTable;
 
     window.BulkPairEdit = BulkPairEdit;
 })();

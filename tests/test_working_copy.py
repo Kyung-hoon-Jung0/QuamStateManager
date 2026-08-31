@@ -230,15 +230,17 @@ def test_apply_to_live_raises_if_post_mtime_read_fails(tmp_path, monkeypatch):
     pre_apply_state_mt = wc.synced_state_mtime
 
     real_mtimes = wc_mod.safe_io.state_wiring_mtimes
-    real_write = wc_mod.safe_io.write_state_wiring
+    # 2026-08-27: apply copies the working files' BYTES (no re-dump), so the
+    # live write is write_state_wiring_bytes now.
+    real_write = wc_mod.safe_io.write_state_wiring_bytes
     # Fail the first LIVE-folder mtime stat that happens AFTER the write — i.e.
     # the post-write read-back — regardless of how many reads precede the write
     # (apply now also content-confirms the live before overwriting).
     live_resolved = live.resolve()
     written = {"done": False}
 
-    def tracking_write(folder, state, wiring):
-        real_write(folder, state, wiring)
+    def tracking_write(folder, state_b, wiring_b):
+        real_write(folder, state_b, wiring_b)
         written["done"] = True
 
     def flaky_mtimes(folder):
@@ -247,7 +249,7 @@ def test_apply_to_live_raises_if_post_mtime_read_fails(tmp_path, monkeypatch):
             raise OSError("simulated post-write stat failure")
         return real_mtimes(folder)
 
-    monkeypatch.setattr(wc_mod.safe_io, "write_state_wiring", tracking_write)
+    monkeypatch.setattr(wc_mod.safe_io, "write_state_wiring_bytes", tracking_write)
     monkeypatch.setattr(wc_mod.safe_io, "state_wiring_mtimes", flaky_mtimes)
 
     edited = {"qubits": {"q1": {"f_01": 7e9}}}
@@ -977,13 +979,13 @@ def test_apply_verification_catches_misdirected_write(tmp_path, monkeypatch):
     edited = {"qubits": {"q1": {"f_01": 7e9}}}
     (wc.working_folder / "state.json").write_text(json.dumps(edited), encoding="utf-8")
 
-    real_write = safe_io.write_state_wiring
+    real_write = safe_io.write_state_wiring_bytes   # apply copies bytes (2026-08-27)
 
-    def misdirected(folder, state, wiring):
+    def misdirected(folder, state_b, wiring_b):
         # simulate the write landing with RACER content instead of ours
-        real_write(folder, {"qubits": {"racer": {}}}, wiring)
+        real_write(folder, json.dumps({"qubits": {"racer": {}}}).encode("utf-8"), wiring_b)
 
-    monkeypatch.setattr(wcmod.safe_io, "write_state_wiring", misdirected)
+    monkeypatch.setattr(wcmod.safe_io, "write_state_wiring_bytes", misdirected)
     before = (wc.synced_state_mtime, wc.synced_wiring_mtime, wc.synced_live_hash)
     with pytest.raises(safe_io.LiveFileError, match="verification FAILED"):
         apply_to_live(wc)

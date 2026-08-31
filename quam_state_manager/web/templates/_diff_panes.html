@@ -1,0 +1,125 @@
+{# The pane view (docs/141 4z, user-directed): N sources side by side, the
+   way an IDE lays out N files — one pane per source under its own title,
+   rows aligned across panes (one scroll), ONLY the leaves where any two
+   sources differ, and every cell that differs from the BASELINE pane
+   highlighted with its Δ. Clicking a pane title makes that source the
+   baseline: the row set does not depend on the baseline (a row is listed
+   when any two sides differ), so the switch is a client-side re-paint of
+   `data-g` equality groups computed server-side by json_diff's own rule
+   (_diff_row_groups) — never a second equality in JavaScript.
+
+   docs/141 4ab (user feedback): the KEYS column is a tree, like the
+   Explorer / the 2-way diff tree — one `dir` row per container on the way
+   down (toggle, name, count of differing leaves beneath), one `leaf` row per
+   differing leaf, indented by depth; a collapsed container hides every
+   descendant row (client, no re-ask). Only containers that lead to a
+   differing leaf exist. Key names are full-size, full-contrast: they are the
+   thing being read.
+
+   Column 0 = the key tree. Each pane column carries data-i (its index);
+   header buttons switch the baseline; the initial baseline (`base`) is
+   painted server-side so the page is right before any script runs. #}
+{% from '_delta_macros.html' import delta_chip %}
+{% set n = srcs | length %}
+<div class="diff-panes-wrap" id="diff-panes" data-base="{{ base }}" data-n="{{ n }}">
+  {# docs/141 4ac: what is SHOWN and what was FOUND are two numbers, and the
+     note used to state only the first. counts.changed is every differing leaf
+     (counted past the row cap), counts.shown is how many came back, and
+     `rows` is this page of them. #}
+  {% set _found = payload.counts.changed %}
+  {% set _shown = payload.counts.get('shown', _found) %}
+  <p class="muted diff-panes-note">
+    {{ n }} sources · only keys whose values differ between at least two of them are listed
+    ({{ '{:,}'.format(payload.counts.same) }} agree)
+    {%- if rows | length < _found %} · showing <b>{{ '{:,}'.format(rows | length) }}</b>
+    of {{ '{:,}'.format(_found) }} differing keys
+    {%- if _shown < _found %} (the diff stops collecting rows at {{ '{:,}'.format(_shown) }}; the rest are counted, not listed){% endif %}
+    {%- endif %} · cells that differ from the
+    <b>baseline</b> are highlighted — click a pane title to make it the baseline.
+  </p>
+  <div class="diff-panes-tools">
+    <span class="tree-depth-label">Depth:</span>
+    <button type="button" class="btn-xs outline dp-depth" data-depth="0" title="Collapse every container">0</button>
+    <button type="button" class="btn-xs outline dp-depth" data-depth="1">1</button>
+    <button type="button" class="btn-xs outline dp-depth" data-depth="2">2</button>
+    <button type="button" class="btn-xs outline dp-depth" data-depth="3">3</button>
+    <button type="button" class="btn-xs outline dp-depth" data-depth="99" title="Expand everything">All</button>
+  </div>
+  <div class="diff-panes-scroll">
+    <table class="diff-panes-table" id="diff-panes-table">
+      <thead>
+        <tr>
+          <th class="dp-key-col">Keys</th>
+          {% for src in srcs %}
+          {% set i = loop.index0 %}
+          <th class="dp-pane-head{% if i == base %} dp-base{% endif %}" data-i="{{ i }}">
+            <button type="button" class="dp-pane-title" data-i="{{ i }}"
+                    title="{{ src.ref }} — click to make this pane the baseline">
+              <span class="dp-slot">{{ slots[i] | upper }}</span>
+              <span class="dp-label">{{ src.label }}</span>
+              <span class="dp-base-tag">baseline</span>
+            </button>
+          </th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in tree_rows %}
+        {% if t.kind == 'dir' %}
+        <tr class="dp-row dp-dir" data-path="{{ t.key }}" data-parent="{{ t.parent }}" data-depth="{{ t.depth }}"
+            style="--dp-depth: {{ t.depth }}">
+          <td class="dp-key-col" title="{{ t.path }}">
+            <button type="button" class="dp-toggle" aria-expanded="true" title="Collapse / expand">&#9662;</button>
+            <span class="dp-key dp-key-dir">{{ t.name }}</span>
+            <span class="dp-count" title="{{ t.count }} differing key{{ '' if t.count == 1 else 's' }} inside{% if payload.truncated %} (of the first {{ '{:,}'.format(_shown) }} the diff collected){% endif %}{% if rows | length < _found %} — this page lists {{ rows | length }}{% endif %}">{{ t.count }}</span>
+          </td>
+          {% for src in srcs %}<td class="dp-cell dp-cell-dir" data-i="{{ loop.index0 }}"></td>{% endfor %}
+        </tr>
+        {% else %}
+        {% set r = t.row %}
+        <tr class="dp-row dp-leaf" data-eq="{{ r.eq | join(',') }}" data-path="{{ t.key }}" data-parent="{{ t.parent }}" data-depth="{{ t.depth }}"
+            style="--dp-depth: {{ t.depth }}">
+          <td class="dp-key-col" title="{{ r.path }}">
+            <span class="dp-toggle-gap"></span>
+            <span class="dp-key dp-key-leaf">{{ t.name }}</span>
+          </td>
+          {% for v in r.vals %}
+          {% set i = loop.index0 %}
+          {% set _num = r.present[i] and (v is number) and (v is not boolean) %}
+          {% set _numlike = _num or (r.present[i] and v is string) %}
+          <td class="dp-cell{% if i == base %} dp-base{% elif r.eq[base][i] != '1' %} dp-diff{% else %} dp-same{% endif %}"
+              data-i="{{ i }}"{% if _numlike %} data-v="{{ v }}"{% endif %}>
+            {% if not r.present[i] %}
+            <span class="muted dp-absent" title="this key does not exist in this source">&ndash;</span>
+            {% elif v is none %}
+            <span class="dp-val dp-null" title="stored null in this source">null</span>
+            {% else %}
+            <span class="dp-val">{{ v | groupdigits }}</span>
+            {% endif %}
+            {# the Δ against the baseline, painted server-side for the initial
+               baseline and re-painted client-side on a switch #}
+            {% set _show_d = i != base and r.eq[base][i] != '1' and r.present[i] and r.present[base] %}
+            <span class="dp-delta"{% if not _show_d %} hidden{% endif %}>{% if _show_d %}{{ delta_chip(r.vals[base], v) }}{% endif %}</span>
+          </td>
+          {% endfor %}
+        </tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if not rows %}
+  <p class="diff-wb-msg muted">These {{ n }} sources hold identical content on every key
+    ({{ '{:,}'.format(payload.counts.same) }} values compared).</p>
+  {% endif %}
+  {% if more %}
+  {% set _qs = [] %}
+  {% for sl in slots %}{% if slot_refs[loop.index0] %}{% set _ = _qs.append(sl ~ '=' ~ (slot_refs[loop.index0] | urlencode)) %}{% endif %}{% endfor %}
+  <div class="ph-changes-more">
+    <button type="button" class="btn-sm outline"
+            hx-get="/diff?{{ _qs | join('&') }}&amp;tab={{ tab }}&amp;view=panes&amp;base={{ base }}&amp;rows={{ next_rows }}"
+            hx-target="#diff-root" hx-swap="outerHTML">
+      Show {{ '{:,}'.format(more) }} more</button>
+  </div>
+  {% endif %}
+</div>

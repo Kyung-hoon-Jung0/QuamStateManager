@@ -8,9 +8,18 @@
 {% if tree %}
 {% from '_sidebar_tree_macros.html' import dir_node %}
 {% for root_path, date_groups in tree.items() %}
+{# docs/141 4aa: the row reads "<folder name>  <parent path…>" -- the name
+   always whole and bold, the parent dimmed and ellipsized, and a reserved
+   right column for × + the chevron (a 35-char server truncation used to
+   spill under the × as soon as the sidebar was narrower than the text). #}
+{% set _rp = root_path | string %}
+{% set _sep = '\\' if '\\' in _rp else '/' %}
+{% set _parts = _rp.rstrip('\\/').rsplit(_sep, 1) %}
+{% set _name = _parts[-1] if _parts[-1] else _rp %}
+{% set _dir = (_parts[0] ~ _sep) if _parts | length == 2 else '' %}
 <details class="tree-root" open>
-    <summary class="tree-root-label">
-        <span title="{{ root_path }}">{{ root_path | truncate(35) }}</span>
+    <summary class="tree-root-label" title="{{ root_path }}">
+        <span class="tree-root-path"><span class="tree-root-name">{{ _name }}</span>{% if _dir %}<span class="tree-root-dir">{{ _dir }}</span>{% endif %}</span>
     </summary>
     {# Button kept out of <summary> (not a valid summary descendant) — CSS
        pins it to the summary row. #}

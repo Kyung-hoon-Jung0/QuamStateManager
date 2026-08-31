@@ -8,7 +8,7 @@
  *  U5. multi-entity elsewhere: typing STASHED + one-shot bypass stamp +
  *      /bulk into #table-pane.
  *  U6. restorePass refills the stashed typing into a re-rendered cell.
- *  U7. the real cellsReverted listener drives UndoNav end-to-end.
+ *  U7. cellsReverted never navigates by itself; UndoNav.handle (go to field) does.
  *  U8. tray tooltip names the next server-undo target path (+group count).
  *  U9. explorer-owned path routes through _navigateToExplorerPath (/explorer).
  *
@@ -175,13 +175,19 @@ function mkCell(dp, value, orig) {
     U.restorePass();
     ok(cell3.value === '5.0e9', 'U6: stash consumed — no phantom refill');
 
-    /* U7 — the real cellsReverted listener drives UndoNav */
+    /* U7 — docs/141 4c: the real cellsReverted listener NEVER navigates on its
+       own any more (it flashes what is visible; the Undo trail's "go to field"
+       is the only thing that navigates, through UndoNav.handle on the user's
+       press). Both halves pinned. */
     ajaxCalls.length = 0;
     window.document.dispatchEvent(new window.CustomEvent('cellsReverted', {
         detail: { entries: [{ dot_path: 'qubits.q7.f_01', old_value_str: '1' }] } }));
     await flush(10);
+    ok(ajaxCalls.length === 0, 'U7: cellsReverted alone navigates nowhere (' + ajaxCalls.length + ' requests)');
+    U.handle([{ dot_path: 'qubits.q7.f_01', old_value_str: '1' }]);
+    await flush(10);
     ok(ajaxCalls.some(function (c) { return c.url.indexOf('/qubit/q7?focus=') === 0; }),
-       'U7: cellsReverted -> UndoNav navigation end-to-end');
+       'U7: the go-to-field press (UndoNav.handle) navigates to the owning surface');
 
     /* U8 — tray tooltip names the next server-undo target */
     const tray = window.document.getElementById('pending-tray');

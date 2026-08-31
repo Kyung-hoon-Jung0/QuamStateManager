@@ -28,7 +28,9 @@ from typing import TYPE_CHECKING, Any
 from quam_state_manager.core import leaf_index, safe_io
 from quam_state_manager.core.differ import DiffEntry, Differ
 from quam_state_manager.core.loader import QuamStore
-from quam_state_manager.core.query import QueryEngine, _assignment_fidelity
+from quam_state_manager.core.query import (
+    QueryEngine, _assignment_fidelity, _assignment_fidelity_n,
+)
 
 if TYPE_CHECKING:
     from quam_state_manager.core.scanner import Workspace
@@ -110,6 +112,7 @@ DEFAULT_TRACKED_PROPERTIES: tuple[str, ...] = (
     "gate_fidelity_x90",
     "f_01",
     "assignment_fidelity",
+    "assignment_fidelity_gef",
     "readout_amplitude",
     "x180_amplitude",
     "x90_amplitude",
@@ -133,10 +136,19 @@ PAIR_TRACKED_PROPERTIES: tuple[str, ...] = (
 
 # Index content generation. v2 = pair rows added; v3 = assignment_fidelity
 # recomputed from the confusion matrix (was unconditionally NULL through v2 —
-# see _VALUE_PATHS). A v1/v2 index self-heals only NEW snapshots, so each
-# one-time upgrade must force-rebuild its own content (stamped via PRAGMA
-# user_version, verified once per process per chip).
-_INDEX_SCHEMA_VERSION = 3
+# see _VALUE_PATHS); v4 = assignment_fidelity_gef rows (docs/141 4o) derived
+# from gef_confusion_matrix for every existing snapshot. A v1/v2 index
+# self-heals only NEW snapshots, so each one-time upgrade must force-rebuild
+# its own content (stamped via PRAGMA user_version, verified once per process
+# per chip).
+_INDEX_SCHEMA_VERSION = 4
+
+# The two derived readout fidelities: property -> (path inside the qubit dict,
+# the formula). ONE table for the live extractor and the content upgrades.
+_DERIVED_FIDELITY_PROPS: dict[str, tuple[tuple[str, ...], Any]] = {
+    "assignment_fidelity": (("resonator", "confusion_matrix"), _assignment_fidelity),
+    "assignment_fidelity_gef": (("resonator", "gef_confusion_matrix"), _assignment_fidelity_n),
+}
 
 # Pointer-aware fields — the source-of-truth path inside a qubit dict.
 # When a value resolves via QueryEngine but the underlying state had a
@@ -164,10 +176,11 @@ _VALUE_PATHS: dict[str, tuple[str, ...]] = {
     "readout_amplitude": ("resonator", "operations", "readout", "amplitude"),
     "x180_amplitude": ("xy", "operations", "x180_DragCosine", "amplitude"),
     "x90_amplitude": ("xy", "operations", "x90_DragCosine", "amplitude"),
-    # ``assignment_fidelity`` (Trends' "IQ Blob (%)" — same metric, same key,
-    # just a friendlier label there) is DERIVED from the confusion matrix, not
-    # a scalar leaf, so it can't be a plain dot-walk path. Handled as a special
-    # case in _extract_index_rows_from_state instead of here.
+    # ``assignment_fidelity`` (Trends' "Readout Fidelity (GE)" — same metric,
+    # same key, just a friendlier label there) and ``assignment_fidelity_gef``
+    # are DERIVED from a confusion matrix, not a scalar leaf, so they can't be
+    # plain dot-walk paths. Handled via _DERIVED_FIDELITY_PROPS in
+    # _extract_index_rows_from_state instead of here.
 }
 
 
@@ -252,13 +265,14 @@ def _extract_index_rows_from_state(
         if not isinstance(qdict, dict):
             continue
         for prop in properties:
-            if prop == "assignment_fidelity":
-                # Derived from the resonator's confusion matrix (avg of the
+            if prop in _DERIVED_FIDELITY_PROPS:
+                # Derived from the resonator's confusion matrix (mean of the
                 # diagonal) via the SAME validator/formula QueryEngine uses,
                 # so a snapshot's indexed value can never drift from what the
                 # live inspector would show for it.
-                cm = _walk_dict(qdict, ("resonator", "confusion_matrix"))
-                num = _to_num(_assignment_fidelity(cm))
+                cm_path, fn = _DERIVED_FIDELITY_PROPS[prop]
+                cm = _walk_dict(qdict, cm_path)
+                num = _to_num(fn(cm))
                 rows.append((
                     meta.timestamp, qname, prop, num, None,
                     meta.trigger, meta.run_id, meta.experiment_name,
@@ -850,6 +864,12 @@ class HistoryManager:
         # In-memory state (protected by _lock)
         self._last_mtime: dict[str, tuple[float, float]] = {}  # key -> (state_mt, wiring_mt)
         self._snapshot_list_cache: dict[str, list[SnapshotMeta]] = {}
+        # In-flight deferred-index threads (check_and_snapshot(defer_index=True)).
+        # The self-heal readers join these first (2026-08-27): a Param History
+        # read landing ~100 ms after an apply used to see the index "behind"
+        # and start a full rebuild while the deferred insert was still running.
+        self._deferred_index_threads: list[threading.Thread] = []
+        self._deferred_index_lock = threading.Lock()
         self._store_cache: OrderedDict[tuple[str, str], QuamStore] = OrderedDict()
         # Hashes of (state+wiring) per chip dir, lazily populated on first access.
         # Used to dedup snapshots whose content matches one already on disk.
@@ -1789,7 +1809,12 @@ class HistoryManager:
             state_src = path / "state.json"
             wiring_src = path / "wiring.json"
             try:
-                snap_state, snap_wiring = safe_io.read_state_wiring(path)
+                # Raw bytes travel with the parse: the snapshot files are then
+                # byte-identical copies of what was hashed, and nothing is
+                # re-serialised (2026-08-27: two dumps per snapshot, two
+                # snapshots per apply).
+                snap_state, snap_wiring, snap_state_b, snap_wiring_b = (
+                    safe_io.read_state_wiring_raw(path))
             except (OSError, ValueError) as exc:
                 logger.warning("Snapshot capture failed for %s: %s", ts, exc)
                 return None
@@ -1803,7 +1828,7 @@ class HistoryManager:
             snap_dir = hist_dir / ts
             snap_dir.mkdir(parents=True, exist_ok=True)
             try:
-                safe_io.write_state_wiring(snap_dir, snap_state, snap_wiring)
+                safe_io.write_state_wiring_bytes(snap_dir, snap_state_b, snap_wiring_b)
             except (OSError, ValueError) as exc:
                 logger.warning("Snapshot capture failed for %s: %s", ts, exc)
                 shutil.rmtree(snap_dir, ignore_errors=True)
@@ -1818,9 +1843,10 @@ class HistoryManager:
             # ``force=True`` bypasses dedup — it's an explicit user
             # override (e.g. "manual" trigger) and should always create
             # a fresh snapshot.
-            content_hash = _canonical_content_hash(
-                snap_dir / "state.json", snap_dir / "wiring.json",
-            )
+            # The dicts just written ARE the snapshot (byte copy), so hash them
+            # in memory instead of re-reading + re-parsing the two files
+            # (review of 264a4e3; _canonical_hash_of is the same canonical form).
+            content_hash = _canonical_hash_of(snap_state, snap_wiring)
             if content_hash is not None and not force:
                 known = self._known_hashes_for_chip(hist_dir)
                 if content_hash in known:
@@ -1914,10 +1940,27 @@ class HistoryManager:
                             "_ensure_index_fresh will heal on the next read",
                             ts, exc_info=True,
                         )
+                def _run_index_tracked() -> None:
+                    try:
+                        _run_index()
+                    finally:
+                        with self._deferred_index_lock:
+                            cur = threading.current_thread()
+                            self._deferred_index_threads = [
+                                t for t in self._deferred_index_threads if t is not cur]
                 try:
-                    threading.Thread(
-                        target=_run_index, name="param-history-index",
-                        daemon=True).start()
+                    _t = threading.Thread(
+                        target=_run_index_tracked, name="param-history-index",
+                        daemon=True)
+                    with self._deferred_index_lock:
+                        self._deferred_index_threads.append(_t)
+                    try:
+                        _t.start()
+                    except Exception:
+                        with self._deferred_index_lock:   # never-started: drop it
+                            self._deferred_index_threads = [
+                                t for t in self._deferred_index_threads if t is not _t]
+                        raise
                 except Exception:   # can't spawn → never skip the index silently
                     _run_index()
             else:
@@ -2892,8 +2935,17 @@ class HistoryManager:
         return appended
 
     def _upgrade_index_assignment_fidelity(self, quam_state_path: Path, conn) -> int:
-        """v2->v3 content upgrade: recompute the ``assignment_fidelity`` row
-        for every existing snapshot from its confusion matrix.
+        """v2->v3 content upgrade (see ``_upgrade_index_derived_fidelity``)."""
+        return self._upgrade_index_derived_fidelity(quam_state_path, conn, "assignment_fidelity")
+
+    def _upgrade_index_assignment_fidelity_gef(self, quam_state_path: Path, conn) -> int:
+        """v3->v4 content upgrade (docs/141 4o): the three-state readout
+        fidelity for every existing snapshot from its gef_confusion_matrix."""
+        return self._upgrade_index_derived_fidelity(quam_state_path, conn, "assignment_fidelity_gef")
+
+    def _upgrade_index_derived_fidelity(self, quam_state_path: Path, conn, prop: str) -> int:
+        """Recompute ONE derived readout-fidelity property (``prop`` in
+        ``_DERIVED_FIDELITY_PROPS``) for every existing snapshot.
 
         Every snapshot ever indexed carries a NULL here (the raw-dict
         extractor never computed it -- see ``_VALUE_PATHS``'s note, fixed in
@@ -2907,6 +2959,7 @@ class HistoryManager:
         if not snapshots:
             return 0
         hist_dir = self._history_dir(quam_state_path)
+        cm_path, fn = _DERIVED_FIDELITY_PROPS[prop]
 
         def _rows(meta) -> list[tuple]:
             snap_dir = hist_dir / meta.timestamp
@@ -2923,11 +2976,11 @@ class HistoryManager:
             for qname, qdict in qubits.items():
                 if not isinstance(qdict, dict):
                     continue
-                cm = _walk_dict(qdict, ("resonator", "confusion_matrix"))
-                num = _to_num(_assignment_fidelity(cm))
+                cm = _walk_dict(qdict, cm_path)
+                num = _to_num(fn(cm))
                 if num is None:
                     continue   # leave the existing NULL row as-is
-                out.append((meta.timestamp, qname, "assignment_fidelity",
+                out.append((meta.timestamp, qname, prop,
                             num, None, meta.trigger, meta.run_id,
                             meta.experiment_name))
             return out
@@ -2952,8 +3005,8 @@ class HistoryManager:
             raise
         if updated:
             self._bump_chip_version(hist_dir)
-        logger.info("Param-history v3 upgrade: recomputed %d assignment_fidelity "
-                    "rows for %s", updated, hist_dir)
+        logger.info("Param-history content upgrade: recomputed %d %s "
+                    "rows for %s", updated, prop, hist_dir)
         return updated
 
     def rebuild_index(
@@ -3142,6 +3195,7 @@ class HistoryManager:
         decides WHETHER to call the rebuild.
         """
         try:
+            self._join_deferred_index()
             snapshots = self.list_snapshots(quam_state_path)
             if not snapshots:
                 return
@@ -3312,6 +3366,26 @@ class HistoryManager:
         finally:
             conn.close()
 
+    def _join_deferred_index(self, timeout: float = 8.0) -> None:
+        """Wait (bounded) for in-flight deferred index threads before a
+        self-heal reads the index — otherwise the read sees the last
+        snapshot as missing and starts a full rebuild that the thread is
+        about to make unnecessary. Never raises; a thread that outlives the
+        budget is simply left to finish (the heal is idempotent)."""
+        with self._deferred_index_lock:
+            pending = list(self._deferred_index_threads)
+        deadline = time.monotonic() + timeout
+        for t in pending:
+            if t is threading.current_thread():
+                continue
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                t.join(remaining)
+            except RuntimeError:
+                pass
+
     def _ensure_index_fresh(self, quam_state_path: Path) -> None:
         """Self-heal: rebuild missing rows if the index is behind disk.
 
@@ -3321,6 +3395,7 @@ class HistoryManager:
         Capture paths bump ``_last_index_check`` via ``_bump_chip_version``
         so a new snapshot forces a re-verification on next read.
         """
+        self._join_deferred_index()
         snapshots = self.list_snapshots(quam_state_path)
         if not snapshots:
             return
@@ -3360,6 +3435,8 @@ class HistoryManager:
                             self._upgrade_index_pair_rows(quam_state_path, conn)
                         if ver < 3:
                             self._upgrade_index_assignment_fidelity(quam_state_path, conn)
+                        if ver < 4:
+                            self._upgrade_index_assignment_fidelity_gef(quam_state_path, conn)
                         conn.execute(
                             f"PRAGMA user_version={_INDEX_SCHEMA_VERSION}")
                 finally:

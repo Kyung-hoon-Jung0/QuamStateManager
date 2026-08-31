@@ -193,6 +193,38 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
         'value=' + JSON.stringify(search.value)
         + ' style=' + JSON.stringify((w.document.getElementById('bulk-search-hide-style') || {}).textContent));
 
+  // Night session 2026-08-28: hidden columns are addressed by CLASS (`td.ck-N`,
+  // stamped on th+td by the template) -- Chrome indexes rules by class name,
+  // so a td tests only its own rules; the old attribute-equals rule was a
+  // candidate for every td (250-370 ms of style recalc per keystroke).
+  w.document.querySelectorAll('th.bulk-col-head[data-col-key]').forEach(function (h, i) {
+    h.classList.add('ck-' + i);
+    w.document.querySelectorAll('td[data-col-key="' + h.getAttribute('data-col-key') + '"]').forEach(function (td) { td.classList.add('ck-' + i); });
+  });
+  type('t1'); await sleep(250);
+  // 2026-08-28 (docs/141 4d): the class rules are STATIC (`#bulk-table.sh-N
+  // td.ck-N`, one sheet written once) and a keystroke only toggles `sh-N` on
+  // the table for the columns whose state changed -- no stylesheet churn.
+  const tbl = w.document.getElementById('bulk-table');
+  const ckSheet = (w.document.getElementById('bulk-search-ck-style') || {}).textContent || '';
+  const dynSheet = (w.document.getElementById('bulk-search-hide-style') || {}).textContent || '';
+  const idxOfKey = (k) => (/ck-(\d+)/.exec(w.document.querySelector('th[data-col-key="' + k + '"]').className) || [])[1];
+  check('ck: the static sheet carries one rule per column, table-class gated',
+        ckSheet.indexOf('#bulk-table.sh-' + idxOfKey('f_01') + ' td.ck-' + idxOfKey('f_01')) >= 0 && dynSheet === '', ckSheet.slice(0, 120));
+  const shSet = () => Array.from(tbl.classList).filter((c) => c.indexOf('sh-') === 0).sort().join(' ');
+  const hiddenSet = () => Array.from(w.document.querySelectorAll('th.bulk-col-head.bulk-search-hidden')).map((h) => 'sh-' + idxOfKey(h.getAttribute('data-col-key'))).sort().join(' ');
+  check('ck: the table carries exactly the sh- classes of the search-hidden columns',
+        shSet() !== '' && shSet() === hiddenSet(), shSet() + ' vs ' + hiddenSet());
+  const sigBefore = w.document.getElementById('bulk-search-ck-style').getAttribute('data-sig');
+  const s1 = shSet();
+  type('t1 f_0'); await sleep(250);          // column set narrows differently
+  check('ck: a new query changes the sh- set (delta), the static sheet is untouched',
+        shSet() !== s1 && shSet() === hiddenSet()
+        && w.document.getElementById('bulk-search-ck-style').getAttribute('data-sig') === sigBefore
+        && (w.document.getElementById('bulk-search-ck-style') || {}).textContent === ckSheet);
+  type(''); await sleep(250);
+  check('ck: clearing the query removes every sh- class', shSet() === '' && hiddenSet() === '');
+  // the gate sits LAST: the ck pins above used to run after it and could not fail the run (docs/141 4l-review)
   if (failures) { console.error(failures + ' check(s) failed'); process.exit(1); }
   console.log('all checks passed');
 })().catch(function (e) { console.error(e && e.stack || e); process.exit(1); });

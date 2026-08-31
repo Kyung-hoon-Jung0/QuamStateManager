@@ -17,9 +17,158 @@ window.PulsesPage = (function () {
     var PREVIEW_DEBOUNCE_MS = 150;
     var _gen = 0;  // fetch-generation counter — stale responses are dropped
 
-    /* ------------------------------------------------------------------ */
-    /* Plot rendering                                                      */
-    /* ------------------------------------------------------------------ */
+    /* ── the VIEW: one to four pulses on one plot, one parameter section each
+       (docs/141 4k, user-directed). root._sections = [{path, actualPath,
+       label, role, color, index, el, committedPlot, previewPlot, gen}]. The
+       main pulse is sections[0]; a CZ macro's companions (qubit flux +
+       coupler flux) and the pulses picked for Compare are the others. Every
+       section is editable; each one's traces and its section share a colour.
+
+       docs/141 4e -- the committed plot follows undo / redo, from RAM when it
+       can: every committed waveform this page has drawn is cached by (pulse
+       path + the committed value of every parameter of that section), bounded
+       to PLOT_CACHE_MAX states (= the undo journal's depth); a press back to a
+       state already drawn costs no synth request, a miss is ONE synth call for
+       the final state of a burst (its own generation token), and the stale
+       committed plot is never drawn while that refresh is pending. */
+    var PLOT_CACHE_MAX = 200;
+    var _previewCache = new Map();       // base key + body -> plot
+    var COMMITTED_REFRESH_MS = 120;
+    var _plotCache = new Map();          // committed key -> plot payload (insertion-ordered)
+
+    function sectionsOf(root) { return (root && root._sections) || []; }
+    function sectionOf(root, el) {
+        var secEl = el && el.closest ? el.closest('.pulse-sec') : null;
+        var p = secEl && secEl.getAttribute('data-pulse-path');
+        return sectionsOf(root).filter(function (sc) { return sc.path === p; })[0] || null;
+    }
+    function committedKey(sec) {
+        var vals = {};
+        sec.el.querySelectorAll('input[data-param]').forEach(function (input) {
+            vals[input.getAttribute('data-param')] = input.getAttribute('data-committed') || '';
+        });
+        return sec.path + '|' + JSON.stringify(vals);
+    }
+    function cacheCommitted(sec, plot) {
+        if (!sec || !sec.el || !plot || !plot.ok) return;
+        var key = committedKey(sec);
+        if (_plotCache.has(key)) _plotCache.delete(key);   // refresh recency
+        _plotCache.set(key, plot);
+        while (_plotCache.size > PLOT_CACHE_MAX) {
+            _plotCache.delete(_plotCache.keys().next().value);
+        }
+    }
+    function refreshCommittedPlot(root, sec) {
+        if (!root || !document.body.contains(root) || !sec) return;
+        var done = function () {
+            // per-section pending flags, the root count derived from them --
+            // two overlapping refreshes never zero each other (docs/141 4l-review)
+            sec._pending = false;
+            root._cpPending = sectionsOf(root).filter(function (sc) { return sc._pending; }).length;
+            schedulePreview(root);
+        };
+        var key = committedKey(sec);
+        var hit = _plotCache.get(key);
+        if (hit) { sec.committedPlot = hit; if (sec.index === 0) root._committedPlot = hit; done(); return; }
+        var gen = (sec.cpGen = (sec.cpGen || 0) + 1);
+        fetch('/api/pulse/synth', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: sec.path, params: {} })
+        }).then(function (r) { return r.json(); }).then(function (data) {
+            if (gen !== sec.cpGen || !document.body.contains(root)) return;
+            if (data && data.ok && data.plot && data.plot.ok) {
+                sec.committedPlot = data.plot;
+                if (sec.index === 0) root._committedPlot = data.plot;
+                cacheCommitted(sec, data.plot);
+            }
+            done();
+        }).catch(function () {
+            if (gen !== sec.cpGen) return;
+            done();                          // keep the last plot; never wedge the preview
+        });
+    }
+    /* Re-render the whole view from the server (the honest path for a change
+       the in-place repaint cannot express: a list row, a re-link, an undo at
+       a pointer target, a structural change). */
+    /* The view bar carries the view as a JSON list; the URL repeats paths=
+       per pulse -- a comma is legal inside a foreign op name (docs/141 4l-review). */
+    function viewPathsOf(bar) {
+        var raw = (bar && bar.getAttribute('data-view-paths')) || '';
+        try { var arr = JSON.parse(raw); if (Array.isArray(arr)) return arr.filter(Boolean); } catch (e) {}
+        return raw.split(',').filter(Boolean);
+    }
+    function viewUrl(main, paths) {
+        return '/pulse/detail?path=' + encodeURIComponent(main)
+             + (paths || []).map(function (p) { return '&paths=' + encodeURIComponent(p); }).join('');
+    }
+    function reloadView(root) {
+        if (!document.body.contains(root) || !window.htmx) return null;
+        var bar = root.querySelector('.pulse-view-bar');
+        var main = (bar && bar.getAttribute('data-view-main')) || root.getAttribute('data-pulse-path');
+        return window.htmx.ajax('GET', viewUrl(main, viewPathsOf(bar)), { target: '#inspector-pane', swap: 'innerHTML' });
+    }
+    document.addEventListener('cellsReverted', function (evt) {
+        var root = detailRoot();
+        if (!root) return;
+        var secs = sectionsOf(root);
+        if (!secs.length) return;
+        var entries = ((evt && evt.detail) || {}).entries || [];
+        var touched = [], inPlace = true;
+        secs.forEach(function (sec) {
+            var fieldPaths = {}, targets = [];
+            sec.el.querySelectorAll('form.pulse-edit-form input[name="dot_path"]').forEach(function (h) { fieldPaths[h.value] = 1; });
+            sec.el.querySelectorAll('input[data-param][data-target-path]').forEach(function (inp) {
+                var t = inp.getAttribute('data-target-path'); if (t) targets.push(t);
+            });
+            // an alias section's inputs live at the TARGET's paths (docs/141 4l-review)
+            var homes = [sec.path];
+            if (sec.actualPath && sec.actualPath !== sec.path) homes.push(sec.actualPath);
+            var mine = false;
+            entries.forEach(function (e) {
+                var dp = (e && e.dot_path) || '';
+                if (!dp) return;
+                if (homes.some(function (h) { return dp === h || dp.indexOf(h + '.') === 0; })) {
+                    mine = true;
+                    if (!fieldPaths[dp] || e.created || e.deleted || e.old_kind === 'pointer') inPlace = false;
+                } else if (targets.some(function (t) { return dp === t || dp.indexOf(t + '.') === 0; })) {
+                    mine = true; inPlace = false;
+                }
+            });
+            if (mine) touched.push(sec);
+        });
+        if (!touched.length) return;
+        // a refresh is due: the stale committed plot must not be drawn
+        // meanwhile (a flag until the debounce fires, then the count of the
+        // sections still fetching -- never accumulated per press, a burst
+        // of five presses is one refresh)
+        root._cpPending = Math.max(root._cpPending || 0, 1);
+        // a reload once due STAYS due: an in-place entry arriving inside the
+        // same debounce window must not replace it (docs/141 4l-review)
+        if (!inPlace) root._reloadDue = true;
+        touched.forEach(function (sec) { sec._refreshDue = true; });
+        _debounce('pulse-committed-refresh', function () {
+            if (root._reloadDue) {
+                root._reloadDue = false;
+                var clear = function () {
+                    // the swap replaced the root on success; a reload that did
+                    // not land must not wedge the preview on the old one
+                    if (!document.body.contains(root)) return;
+                    root._cpPending = 0;
+                    secs.forEach(function (sc) { sc._refreshDue = false; sc._pending = false; });
+                    schedulePreview(root);
+                };
+                var p = reloadView(root);
+                if (p && typeof p.then === 'function') p.then(clear, clear); else clear();
+                return;
+            }
+            var due = secs.filter(function (sc) { return sc._refreshDue; });
+            due.forEach(function (sc) { sc._refreshDue = false; sc._pending = true; });
+            root._cpPending = secs.filter(function (sc) { return sc._pending; }).length;
+            if (!due.length) { schedulePreview(root); return; }
+            due.forEach(function (sc) { refreshCommittedPlot(root, sc); });
+        }, COMMITTED_REFRESH_MS);
+    });
 
     function cssVar(name, fallback) {
         var v = getComputedStyle(document.documentElement)
@@ -29,25 +178,19 @@ window.PulsesPage = (function () {
 
     function traceColors() {
         return {
-            // primary hue for I, a fixed both-theme-safe teal for Q
             i: cssVar('--pico-primary', '#1095c1'),
             q: '#2bb673'
         };
     }
-
-    var OVERLAY_HUES = ['#e67e22', '#9b59b6', '#e74c3c', '#f1c40f', '#1abc9c'];
-
-    // The detail plot's overlays live on the detail root (so every existing
-    // renderPulsePlot call site — commit, preview, Esc, verify, settle —
-    // draws them without threading a new argument through each).
-    function activeOverlays(divId) {
-        if (divId !== 'pulse-detail-plot') return [];
-        var root = detailRoot();
-        return (root && root._overlays) ? root._overlays.filter(function (o) { return o.on; }) : [];
+    /* a section colour as the plot can use it ("var(--pico-primary)" -> the
+       computed value; anything else verbatim) */
+    function plotColor(c) {
+        var m = /^var\((--[\w-]+)\)$/.exec(String(c || '').trim());
+        return m ? cssVar(m[1], '#1095c1') : (c || '#1095c1');
     }
 
-    // Short label for a pulse path: "q1-2 · cz_bipolar.coupler_flux_pulse",
-    // "q1 · xy.x180_DragCosine".
+    var OVERLAY_HUES = ['#e67e22', '#9b59b6', '#2bb673', '#e74c3c', '#f1c40f'];
+
     function overlayLabel(path) {
         var m = /^qubit_pairs\.([^.]+)\.macros\.([^.]+)\.([^.]+)$/.exec(path)
              || /^qubits\.([^.]+)\.([^.]+)\.operations\.([^.]+)$/.exec(path)
@@ -55,55 +198,35 @@ window.PulsesPage = (function () {
         return m ? m[1] + ' · ' + m[2] + '.' + m[3] : path;
     }
 
-    function buildOverlayBar(root) {
-        var bar = root.querySelector('.pulse-overlay-bar');
+    /* The view bar: × drops a pulse from the view, the picker adds one --
+       both re-render the view from the server (one mechanism, one truth). */
+    function navigateView(root, main, paths) {
+        if (!window.htmx) return;
+        window.htmx.ajax('GET', viewUrl(main, paths), { target: '#inspector-pane', swap: 'innerHTML' });
+    }
+    function buildViewBar(root) {
+        var bar = root.querySelector('.pulse-view-bar');
         if (!bar) return;
-        var chips = bar.querySelector('.pulse-overlay-chips');
         var pick = bar.querySelector('.pulse-overlay-pick');
-        var own = root.getAttribute('data-pulse-path');
-        var overlays = root._overlays || [];
-        chips.innerHTML = '';
-        overlays.forEach(function (o, i) {
-            var lab = document.createElement('label');
-            lab.className = 'pulse-overlay-chip' + (o.on ? ' on' : '');
-            lab.style.setProperty('--ov-hue', OVERLAY_HUES[i % OVERLAY_HUES.length]);
-            var cb = document.createElement('input');
-            cb.type = 'checkbox'; cb.checked = !!o.on;
-            cb.setAttribute('data-overlay', o.path);
-            cb.addEventListener('change', function () {
-                o.on = cb.checked;
-                lab.classList.toggle('on', o.on);
-                schedulePreview(root);
+        var view = viewPathsOf(bar);
+        var main = bar.getAttribute('data-view-main') || view[0];
+        bar.querySelectorAll('.pulse-overlay-x[data-drop-path]').forEach(function (x) {
+            if (x._bound) return;
+            x._bound = true;
+            x.addEventListener('click', function () {
+                var drop = x.getAttribute('data-drop-path');
+                var rest = view.filter(function (p) { return p !== drop; });
+                if (!rest.length) return;
+                navigateView(root, rest.indexOf(main) >= 0 ? main : rest[0], rest);
             });
-            lab.appendChild(cb);
-            lab.appendChild(document.createTextNode(' ' + o.label));
-            if (o.plot && !o.plot.ok) {
-                var err = document.createElement('span');
-                err.className = 'muted'; err.textContent = ' (no waveform)';
-                err.title = o.plot.error || '';
-                lab.appendChild(err);
-            }
-            if (o.source === 'picked') {
-                var x = document.createElement('button');
-                x.type = 'button'; x.className = 'pulse-overlay-x';
-                x.title = 'Remove overlay'; x.textContent = '×';
-                x.addEventListener('click', function () {
-                    root._overlays = root._overlays.filter(function (q) { return q !== o; });
-                    buildOverlayBar(root);
-                    schedulePreview(root);
-                });
-                lab.appendChild(x);
-            }
-            chips.appendChild(lab);
         });
-        // The picker offers every OTHER pulse the library table lists (same
-        // page, live DOM) that is not already an overlay.
+        if (!pick) return;
         var have = {};
-        overlays.forEach(function (o) { have[o.path] = 1; });
+        view.forEach(function (p) { have[p] = 1; });
         var opts = [];
         document.querySelectorAll('.pulse-sel-chk[data-path]').forEach(function (cb) {
             var p = cb.getAttribute('data-path');
-            if (!p || p === own || have[p]) return;
+            if (!p || have[p]) return;
             opts.push(p);
         });
         pick.innerHTML = '<option value="">+ add pulse…</option>';
@@ -112,7 +235,7 @@ window.PulsesPage = (function () {
             op.value = p; op.textContent = overlayLabel(p);
             pick.appendChild(op);
         });
-        pick.hidden = opts.length === 0;
+        pick.hidden = opts.length === 0 || view.length >= 4;
         pick.value = '';
         if (!pick._bound) {
             pick._bound = true;
@@ -120,87 +243,57 @@ window.PulsesPage = (function () {
                 var p = pick.value;
                 if (!p) return;
                 pick.value = '';
-                addOverlay(root, p);
+                if (view.length >= 4) return;
+                navigateView(root, main, view.concat([p]));
             });
         }
-        bar.hidden = overlays.length === 0 && opts.length === 0;
     }
 
-    function addOverlay(root, path) {
-        var entry = { path: path, label: overlayLabel(path), plot: null, on: true, source: 'picked' };
-        root._overlays = (root._overlays || []).concat([entry]);
-        buildOverlayBar(root);
-        // A plain fetch, not fetchSynth: the preview's generation counter must
-        // not cancel this, nor this the preview.
-        fetch('/api/pulse/synth', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: path, params: {} })
-        }).then(function (r) { return r.json(); }).then(function (data) {
-            if (!document.body.contains(root)) return;
-            entry.plot = (data && data.plot) ? data.plot : { ok: false, error: (data && data.error) || 'synth failed' };
-            buildOverlayBar(root);
-            schedulePreview(root);
-        }).catch(function () {
-            entry.plot = { ok: false, error: 'network error' };
-            buildOverlayBar(root);
-        });
-    }
-
-    /**
-     * Render the detail/create plot. committed = {traces:[{name,x,y}],...};
-     * preview / verify are optional same-shape overlays.
-     */
+    /* ONE plot for the whole view. Each section's committed traces in its
+       colour (I solid, Q dotted); a dirty section's preview dashed on top;
+       the config ground truth (verify) dotted grey-ish last. Outside the
+       detail view (the create form's plot) the classic single-pulse I/Q
+       colours apply. */
     function renderPulsePlot(divId, committed, preview, verify) {
+        var root = divId === 'pulse-detail-plot' ? detailRoot() : null;
+        var secs = root ? sectionsOf(root) : [];
         var colors = traceColors();
         var data = [];
 
-        function pushTraces(plot, suffix, dash, opacity) {
+        function pushTraces(plot, color, suffix, dash, width, opacity) {
             if (!plot || !plot.ok || !plot.traces) return;
             plot.traces.forEach(function (t) {
+                var isQ = t.name === 'Q';
+                var col = color || (isQ ? colors.q : colors.i);
+                var d = dash;
+                if (color && isQ) d = (dash === 'solid') ? 'dot' : (dash === 'longdash' ? 'longdashdot' : 'dashdot');
                 data.push({
                     x: t.x, y: t.y,
                     name: t.name + suffix,
                     mode: 'lines',
-                    line: {
-                        color: t.name === 'Q' ? colors.q : colors.i,
-                        width: dash ? 1.6 : 2,
-                        dash: dash || 'solid'
-                    },
-                    opacity: opacity || 1,
+                    line: { color: col, width: width, dash: d },
+                    opacity: opacity,
                     hovertemplate: t.name + suffix + ': %{y:.6g} V<br>%{x} ns<extra></extra>'
                 });
             });
         }
 
-        // Customer ask (2026-08-27): overlays — other pulses drawn on the same
-        // time × voltage axes, beneath the committed trace. A CZ macro's
-        // companion (qubit flux ↔ coupler flux) is on by default; picked
-        // pulses join through the overlay bar. Each overlay keeps one hue.
-        activeOverlays(divId).forEach(function (o, idx) {
-            if (!o.plot || !o.plot.ok || !o.plot.traces) return;
-            var hue = OVERLAY_HUES[idx % OVERLAY_HUES.length];
-            var multi = o.plot.traces.length > 1;
-            o.plot.traces.forEach(function (t) {
-                var nm = o.label + (multi ? ' ' + t.name : '');
-                data.push({
-                    x: t.x, y: t.y, name: nm, mode: 'lines',
-                    line: { color: hue, width: 1.8,
-                            dash: (multi && t.name === 'Q') ? 'dot' : 'solid' },
-                    opacity: 0.9,
-                    hovertemplate: nm + ': %{y:.6g} V<br>%{x} ns<extra></extra>'
-                });
+        if (secs.length) {
+            var many = secs.length > 1;
+            secs.forEach(function (sec) {
+                var col = plotColor(sec.color);
+                var suffix = many ? ' ' + sec.label : '';
+                pushTraces(sec.committedPlot, col, suffix, 'solid', 2, 1);
+                if (sec.previewPlot) pushTraces(sec.previewPlot, col, suffix + ' (preview)', 'dash', 1.6, 0.85);
             });
-        });
-        pushTraces(committed, '', null, 1);
-        pushTraces(preview, ' (preview)', 'dash', 0.85);
-        pushTraces(verify, ' (config)', 'dot', 0.9);
+        } else {
+            pushTraces(committed, null, '', 'solid', 2, 1);
+            pushTraces(preview, null, ' (preview)', 'dash', 1.6, 0.85);
+        }
+        // the config ground truth in its own colour + dash: a single pulse's
+        // committed Q (dotted, section colour) must never read as it (docs/141 4l-review)
+        pushTraces(verify, cssVar('--pico-muted-color', '#8a8a8a'), ' (config)', 'longdash', 1.5, 0.9);
 
-        // House Plotly conventions (showWaveformPlot / trend charts): plain
-        // string axis titles, horizontal legend BELOW the plot (y < 0) with
-        // the bottom margin reserving its room. The previous above-plot
-        // legend (y: 1.12 with t: 8) pushed the axes + legend out of the
-        // 260px container — Plotly does not auto-expand margins for legends.
         var layout = {
             margin: { l: 50, r: 10, t: 10, b: 40 },
             xaxis: { title: 'time (ns)', zeroline: false },
@@ -214,32 +307,36 @@ window.PulsesPage = (function () {
             { displayModeBar: false, responsive: true });
     }
 
-    /* ------------------------------------------------------------------ */
-    /* Shared preview engine                                               */
-    /* ------------------------------------------------------------------ */
-
     function showSynthErr(root, msg) {
-        var el = root.querySelector('.pulse-synth-err');
+        var el = root.querySelector('.pulse-plot-bar .pulse-synth-err');
         if (!el) return;
         el.textContent = msg || '';
         el.hidden = !msg;
     }
 
-    function fetchSynth(body, cb) {
-        var gen = ++_gen;
+    function fetchSynth(body, cb, baseKey, holder) {
+        holder = holder || null;
+        var gen = holder ? (holder.gen = (holder.gen || 0) + 1) : ++_gen;
+        var key = (baseKey || '') + '||' + JSON.stringify(body);
+        var hit = _previewCache.get(key);
+        if (hit) {
+            _previewCache.delete(key); _previewCache.set(key, hit);   // recency
+            cb({ ok: true, plot: hit, param_errors: {} });
+            return;
+        }
         fetch('/api/pulse/synth', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
         }).then(function (r) { return r.json(); }).then(function (data) {
-            if (gen !== _gen) return;  // a newer request superseded this one
+            if (data && data.ok && data.plot && data.plot.ok) {
+                _previewCache.set(key, data.plot);
+                while (_previewCache.size > PLOT_CACHE_MAX) _previewCache.delete(_previewCache.keys().next().value);
+            }
+            if (holder ? gen !== holder.gen : gen !== _gen) return;  // a newer request superseded this one
             cb(data);
         }).catch(function () { /* keep the last plot on network errors */ });
     }
-
-    /* ------------------------------------------------------------------ */
-    /* Detail: lifecycle + live preview + interactions                     */
-    /* ------------------------------------------------------------------ */
 
     function detailData() {
         var el = document.getElementById('pulse-detail-data');
@@ -251,13 +348,12 @@ window.PulsesPage = (function () {
         return document.getElementById('pulse-detail-root');
     }
 
-    function collectOverrides(root) {
-        /* All [data-param] inputs whose value differs from data-committed —
-           pointer-row inputs show the resolved value, so a typed change
-           becomes a literal override for the preview only. */
+    /* The uncommitted overrides of ONE section (the scope is the section: a
+       dirty coupler field must not be mistaken for a qubit override). */
+    function collectOverrides(sec) {
         var overrides = {};
         var dirty = false;
-        root.querySelectorAll('input[data-param]').forEach(function (input) {
+        (sec.el || sec).querySelectorAll('input[data-param]').forEach(function (input) {
             var committed = input.getAttribute('data-committed') || '';
             if (input.value === committed) return;
             dirty = true;
@@ -274,32 +370,40 @@ window.PulsesPage = (function () {
 
     function schedulePreview(root) {
         _debounce('pulse-synth-preview', function () {
-            var state = collectOverrides(root);
-            updateDirtyUI(root, state.dirty);
-            if (!state.dirty || Object.keys(state.overrides).length === 0) {
-                // no shape-relevant changes — drop the overlay. Bump the fetch
-                // generation so an ALREADY in-flight synth (fired before an Esc
-                // reset elapsed the debounce) is dropped as stale when it
-                // resolves, instead of re-drawing the discarded value's preview.
-                _gen++;
-                renderPulsePlot('pulse-detail-plot', root._committedPlot);
-                showSynthErr(root, '');
-                return;
-            }
-            fetchSynth({
-                path: root.getAttribute('data-pulse-path'),
-                params: state.overrides
-            }, function (data) {
-                if (!document.body.contains(root)) return;
-                if (data.ok && data.plot && data.plot.ok) {
-                    renderPulsePlot('pulse-detail-plot',
-                        root._committedPlot, data.plot);
-                    showSynthErr(root, '');
-                } else {
-                    showSynthErr(root, data.error
-                        || firstParamError(data.param_errors));
+            var secs = sectionsOf(root);
+            if (!secs.length) return;
+            var anyDirty = false;
+            var pending = 0;
+            secs.forEach(function (sec) {
+                var state = collectOverrides(sec);
+                if (!state.dirty || Object.keys(state.overrides).length === 0) {
+                    sec.gen = (sec.gen || 0) + 1;      // drop an in-flight preview for this section
+                    sec.previewPlot = null;
+                    sec.synthErr = '';
+                    return;
                 }
+                anyDirty = true;
+                pending++;
+                fetchSynth({ path: sec.path, params: state.overrides }, function (data) {
+                    if (!document.body.contains(root)) return;
+                    // one error line per section -- another section's success
+                    // never hides this one's (docs/141 4l-review)
+                    if (data.ok && data.plot && data.plot.ok) {
+                        sec.previewPlot = data.plot;
+                        sec.synthErr = '';
+                    } else {
+                        sec.previewPlot = null;
+                        sec.synthErr = (secs.length > 1 ? sec.label + ': ' : '')
+                            + (data.error || firstParamError(data.param_errors));
+                    }
+                    showSynthErr(root, secs.map(function (sc) { return sc.synthErr || ''; }).filter(Boolean).join(' \u00b7 '));
+                    renderPulsePlot('pulse-detail-plot');
+                }, committedKey(sec), sec);
             });
+            updateDirtyUI(root, anyDirty);
+            if (!anyDirty) showSynthErr(root, '');
+            if (root._cpPending > 0) return;        // a committed refresh is due (docs/141 4e); it renders
+            if (!pending) renderPulsePlot('pulse-detail-plot');
         }, PREVIEW_DEBOUNCE_MS);
     }
 
@@ -316,20 +420,19 @@ window.PulsesPage = (function () {
 
         var data = detailData();
         if (!data) return;
-        root._committedPlot = data.plot;
-        // Same-component companions from the server (a CZ macro's qubit flux
-        // + coupler flux), on by default; the picker adds any other pulse.
-        root._overlays = (data.overlays || []).map(function (o) {
-            return { path: o.path, label: o.label, plot: o.plot,
-                     on: o.default_on !== false, source: 'component' };
+        var pulses = Array.isArray(data.pulses) && data.pulses.length ? data.pulses
+            : [{ path: data.path || root.getAttribute('data-pulse-path'), actual_path: data.actual_path || root.getAttribute('data-actual-path'), label: data.path || root.getAttribute('data-pulse-path'), role: 'pulse', color: 'var(--pico-primary)', index: 0, plot: data.plot }];   // an older detail payload: the root knows its path
+        root._sections = pulses.map(function (pu, idx) {
+            var el = root.querySelector('.pulse-sec[data-pulse-path="' + (window.CSS && window.CSS.escape ? window.CSS.escape(pu.path) : pu.path) + '"]') || root;   // window.CSS: bare CSS is not a global in the jsdom harness
+            return { path: pu.path, actualPath: pu.actual_path, label: pu.label || overlayLabel(pu.path),
+                     role: pu.role || 'pulse', color: pu.color || OVERLAY_HUES[(idx - 1 + OVERLAY_HUES.length) % OVERLAY_HUES.length],
+                     index: idx, el: el, committedPlot: pu.plot, previewPlot: null, gen: 0 };
         });
-        try { buildOverlayBar(root); } catch (e) { console.error('overlay bar failed', e); }
+        root._committedPlot = root._sections[0].committedPlot;
+        root._cpPending = 0;
+        root._sections.forEach(function (sec) { cacheCommitted(sec, sec.committedPlot); });   // docs/141 4e: these states are drawn -- remember them
+        try { buildViewBar(root); } catch (e) { console.error('view bar failed', e); }
 
-        // Attach interaction listeners FIRST, independent of the plot render.
-        // A render throw must NEVER leave the param inputs dead: the previous
-        // version set _pulsesInit before rendering, so a first-render error
-        // both skipped listener binding AND permanently blocked re-init —
-        // the "number inputs become unclickable" symptom (feedback #5).
         root.addEventListener('input', function (evt) {
             if (!evt.target.matches || !evt.target.matches('input[data-param]')) return;
             schedulePreview(root);
@@ -344,32 +447,23 @@ window.PulsesPage = (function () {
         });
         root._pulsesInit = true;   // only after listeners are bound
 
-        if (data.plot && data.plot.ok) {
-            if (data.plot.decimated) {
+        var anyPlot = root._sections.some(function (sec) { return sec.committedPlot && sec.committedPlot.ok; });
+        if (anyPlot) {
+            if (root._sections.some(function (sec) { return sec.committedPlot && sec.committedPlot.decimated; })) {
                 var note = root.querySelector('.pulse-decimated-note');
                 if (note) note.hidden = false;
             }
-            // Fast first paint for responsiveness.
             requestAnimationFrame(function () {
                 if (!document.body.contains(root)) return;
-                try { renderPulsePlot('pulse-detail-plot', root._committedPlot); }
+                try { renderPulsePlot('pulse-detail-plot'); }
                 catch (e) { console.error('pulse plot render failed', e); }
             });
-            // Then ONE clean purge + re-render once the post-swap DOM has fully
-            // settled. Rendering right after the pulse swap (which also triggers
-            // a Split.js pane destroy/recreate) intermittently bound Plotly's
-            // hover/drag layer against a transient geometry, leaving the plot
-            // drawn but with collapsed axes + dead hover/zoom. A manual
-            // purge + newPlot a moment later ALWAYS restored it in the browser
-            // (PROBE5); this replicates exactly that, so it's correct regardless
-            // of the precise mid-reflow cause. The ResizeObserver is attached
-            // only here, after the final render, so it never disturbs it.
             setTimeout(function () {
                 if (!document.body.contains(root)) return;
                 try {
                     var el = document.getElementById('pulse-detail-plot');
                     if (el && window.Plotly) { try { window.Plotly.purge(el); } catch (e) {} }
-                    var p = renderPulsePlot('pulse-detail-plot', root._committedPlot);
+                    var p = renderPulsePlot('pulse-detail-plot');
                     var attach = function () {
                         if (document.body.contains(root)) observePlotResize(root, 'pulse-detail-plot');
                     };
@@ -522,7 +616,7 @@ window.PulsesPage = (function () {
 
         if (root._verifyPlot) {  // second click toggles the overlay off
             root._verifyPlot = null;
-            renderPulsePlot('pulse-detail-plot', root._committedPlot);
+            renderPulsePlot('pulse-detail-plot');
             verifyNote(root, '');
             return;
         }
@@ -551,8 +645,7 @@ window.PulsesPage = (function () {
                     return;
                 }
                 root._verifyPlot = data.plot;
-                renderPulsePlot('pulse-detail-plot', root._committedPlot,
-                    null, data.plot);
+                renderPulsePlot('pulse-detail-plot', null, null, data.plot);
                 var bits = ['config from ' + esc(data.meta.at || '?')];
                 if (data.meta.stale) {
                     bits.push('<strong>stale</strong> — generated before your ' +

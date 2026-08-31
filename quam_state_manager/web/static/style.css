@@ -1018,6 +1018,19 @@ html.topbar-hidden .topbar-reveal { display: block; }
     margin-top: 0.2rem;
 }
 .settings-hidden { display: none; }
+/* docs/141 4u: Settings floats like the Calculator; its header is the handle */
+.settings-dropdown.settings-floating { position: fixed; right: auto; top: auto; margin-top: 0; }
+.settings-dropdown { padding: 0; }
+.settings-dropdown > .settings-group { padding: 0.4rem 0.5rem; }
+.settings-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0.3rem 0.55rem; border-bottom: 1px solid var(--pico-muted-border-color);
+    position: sticky; top: 0; background: var(--pico-background-color); z-index: 1;
+    cursor: grab; user-select: none; touch-action: none;
+}
+.settings-header:active { cursor: grabbing; }
+.settings-title { font-size: 0.85rem; font-weight: 700; }
+.settings-header-tools { display: flex; gap: 0.15rem; cursor: default; }
 
 .settings-label {
     display: block; font-size: 0.75em; font-weight: 600;
@@ -1066,6 +1079,159 @@ html.topbar-hidden .topbar-reveal { display: block; }
     margin-top: 0.2rem; font-size: 13.5px;
 }
 .calc-hidden { display: none; }
+/* Config Manual window (2026-08-27) — the calculator's shell, wider and
+   taller, because it is read while editing: search bar pinned under the
+   header, entries below. Floats at fixed coords once dragged. */
+.manual-popover {
+    /* docs/141 4h (user): an SM-blue edge that reads as a window, slight
+       rounding, and the user can resize it (size persisted by manual.js) */
+    position: absolute; right: 0; top: 100%; z-index: 120;
+    width: 560px; max-width: 94vw; height: min(720px, 85vh); max-height: 92vh;
+    min-width: 380px; min-height: 260px;
+    display: flex; flex-direction: column;
+    background: var(--pico-background-color);
+    border: 1.5px solid color-mix(in srgb, var(--pico-primary) 60%, transparent);
+    border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,0.26), 0 0 0 1px color-mix(in srgb, var(--pico-primary) 12%, transparent);
+    margin-top: 0.2rem; font-size: 13px;
+    resize: both; overflow: hidden;
+}
+.manual-hidden { display: none; }
+/* docs/141 4u (user): ONE frame for the three tool windows -- the Config
+   Manual's SM-blue edge, rounding and shadow, on the Calculator and Settings
+   too (their sizes stay their own) */
+.settings-dropdown, .calc-popover, .manual-popover {
+    border: 1.5px solid color-mix(in srgb, var(--pico-primary) 60%, transparent);
+    border-radius: 10px;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.26), 0 0 0 1px color-mix(in srgb, var(--pico-primary) 12%, transparent);
+}
+/* Undo trail panel (2026-08-28): bottom-right, compact, out of the way of
+   the tray; the latest step is emphasised, older ones fade. */
+.undo-trail {
+    /* above the toast sink (right:1rem; bottom:1rem): every undo fires a
+       success toast in the same instant the panel appears, and a one-step
+       panel was entirely under it (review of 4ffee11) */
+    position: fixed; right: 0.8rem; bottom: 5rem; z-index: 130;
+    width: 380px; max-width: 92vw; max-height: 40vh; overflow-y: auto;
+    background: var(--pico-card-background-color); color: var(--pico-color);
+    border: 1px solid var(--pico-muted-border-color); border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.22); font-size: 12.5px;
+}
+.undo-trail[hidden] { display: none; }
+.undo-trail-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0.25rem 0.5rem; border-bottom: 1px solid var(--pico-muted-border-color);
+    position: sticky; top: 0; background: var(--pico-card-background-color); z-index: 1;
+}
+.undo-trail-head strong { font-size: 0.8rem; }
+.undo-trail-tools { display: flex; gap: 0.25rem; align-items: center; }
+.undo-trail-clear, .undo-trail-close {
+    margin: 0; padding: 0 0.35rem; background: none; border: none; line-height: 1.4;
+    color: var(--pico-muted-color); cursor: pointer; font-size: 0.8rem;
+}
+.undo-trail-close { font-size: 1.05rem; }
+.undo-trail-clear:hover, .undo-trail-close:hover { color: var(--pico-contrast); }
+.undo-trail-body { padding: 0.3rem 0.5rem 0.4rem; }
+.undo-trail-empty { margin: 0; font-size: 0.8em; }
+.undo-trail-step { padding: 0.3rem 0 0.2rem; border-top: 1px solid var(--pico-muted-border-color); opacity: 0.7; }
+.undo-trail-step:first-child { border-top: none; }
+.undo-trail-step.undo-trail-latest { opacity: 1; }
+.undo-trail-kind { font-weight: 700; font-size: 0.78rem; margin-bottom: 0.15rem; }
+.undo-trail-row { display: flex; align-items: center; gap: 0.4rem; margin: 0.1rem 0; }
+.undo-trail-path { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.82em; }
+.undo-trail-vals { flex: 0 1 auto; white-space: nowrap; font-family: var(--font-mono); font-size: 0.82em; }
+.undo-trail-from { color: var(--pico-muted-color); text-decoration: line-through; }
+.undo-trail-to { font-weight: 700; }
+.undo-trail-goto { flex: 0 0 auto; margin: 0; padding: 0 0.4rem; font-size: 0.72rem; line-height: 1.5; white-space: nowrap; }
+.undo-trail-more { font-size: 0.78em; padding-left: 0.2rem; }
+/* broad Json-tree search: the flat result list (see _searchTreeData) */
+.tree-search-results { margin: 0.2rem 0 0.4rem; border: 1px solid var(--pico-muted-border-color); border-radius: 6px; max-height: 60vh; overflow-y: auto; }
+.tsr-head { padding: 0.3rem 0.5rem; font-size: 0.8em; border-bottom: 1px solid var(--pico-muted-border-color); position: sticky; top: 0; background: var(--pico-background-color); }
+.tsr-row { display: flex; gap: 0.6rem; align-items: baseline; padding: 0.15rem 0.5rem; text-decoration: none; color: inherit; font-size: 0.85em; }
+.tsr-row:hover { background: var(--pico-card-background-color); }
+.tsr-path { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tsr-val { flex: 0 1 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); color: var(--pico-muted-color); }
+.manual-popover.manual-floating { position: fixed; right: auto; top: auto; margin-top: 0; }
+.manual-header {
+    display: flex; align-items: center; justify-content: space-between; flex: 0 0 auto;
+    padding: 0.3rem 0.55rem; border-bottom: 1px solid var(--pico-muted-border-color);
+    background: var(--pico-background-color);
+    cursor: grab; user-select: none; touch-action: none;
+}
+.manual-header:active { cursor: grabbing; }
+.manual-title { font-size: 0.85rem; font-weight: 700; }
+.manual-header-tools { display: flex; gap: 0.15rem; cursor: default; }
+.manual-close {
+    width: 1.6rem; height: 1.6rem; margin: 0; padding: 0; line-height: 1;
+    background: none; border: none; color: var(--pico-muted-color); cursor: pointer; font-size: 1.1rem;
+}
+.manual-close:hover { color: var(--pico-contrast); }
+.manual-searchbar { flex: 0 0 auto; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--pico-muted-border-color); }
+.manual-search { margin: 0; height: auto; padding: 0.35rem 0.55rem; font-size: 0.92em; }
+.manual-body { flex: 1 1 auto; overflow-y: auto; padding: 0.3rem 0.6rem 0.8rem; }
+.manual-status { display: flex; flex-wrap: wrap; gap: 0.4rem 0.9rem; align-items: center; font-size: 0.8em; margin: 0.15rem 0 0.45rem; color: var(--pico-muted-color); }
+.manual-status .manual-live { color: var(--pico-primary); }
+.manual-note { font-size: 0.85em; margin: 0.3rem 0; padding: 0.35rem 0.55rem; border-radius: 6px; background: var(--pico-card-background-color); }
+/* category > class > key: two collapsible levels, the key row is the unit */
+.manual-cat { margin: 0.35rem 0 0.2rem; }
+.manual-cat > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 0.5rem; padding: 0.3rem 0.2rem; font-weight: 700; font-size: 0.86em; text-transform: uppercase; letter-spacing: .05em; color: var(--pico-color); border-bottom: 1px solid var(--pico-muted-border-color); }
+.manual-cat > summary::-webkit-details-marker { display: none; }
+.manual-cat > summary::before { content: "▸"; font-size: 0.8em; color: var(--pico-primary); transition: transform .12s; }
+.manual-cat[open] > summary::before { transform: rotate(90deg); }
+.manual-cat .manual-n { font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--pico-muted-color); }
+.manual-class { margin: 0.25rem 0 0.25rem 0.35rem; border-left: 2px solid color-mix(in srgb, var(--pico-primary) 35%, transparent); padding-left: 0.5rem; }
+/* a BLOCK summary (not flex): Chromium draws a second disclosure glyph as a
+   flex item after the wrapped doc line when a summary is a flex container */
+.manual-class > summary { list-style: none; cursor: pointer; display: block; padding: 0.2rem 0; line-height: 1.5; }
+.manual-class > summary > .manual-class-name, .manual-class > summary > .manual-badge { display: inline-block; vertical-align: baseline; margin-right: 0.45rem; }
+.manual-class > summary::-webkit-details-marker { display: none; }
+/* Chromium >= 89 draws the disclosure triangle through ::marker, not the
+   -webkit pseudo -- both must go or a stray chevron lands after the doc line */
+.manual-cat > summary::marker, .manual-class > summary::marker { content: ""; display: none; }
+/* Pico draws its own right-floated chevron through summary::after -- ours is the ::before */
+.manual-cat > summary::after, .manual-class > summary::after { display: none !important; content: none !important; background: none !important; }
+.manual-class > summary::before { content: "▸"; display: inline-block; width: 0.9em; font-size: 0.75em; color: var(--pico-muted-color); transition: transform .12s; }
+.manual-class[open] > summary::before { transform: rotate(90deg); }
+.manual-class-name { font-weight: 700; font-family: var(--font-mono); font-size: 0.95em; color: var(--pico-color); }
+.manual-class-doc { display: block; margin: 0.05rem 0 0.2rem; font-size: 0.9em; color: var(--pico-color); line-height: 1.35; }
+.manual-badge { font-size: 0.72em; padding: 0.02rem 0.42rem; border-radius: 999px; border: 1px solid var(--pico-muted-border-color); color: var(--pico-muted-color); white-space: nowrap; }
+.manual-badge.manual-used { border-color: var(--pico-primary); color: var(--pico-primary); }
+.manual-badge.manual-req { border-color: var(--color-warning-text); color: var(--color-warning-text); }
+.manual-entry { padding: 0.38rem 0.2rem 0.38rem 0.35rem; border-top: 1px solid var(--pico-muted-border-color); }
+.manual-entry:first-of-type { border-top: none; }
+.manual-entry.manual-focus { background: var(--pico-card-background-color); border-left: 3px solid var(--pico-primary); }
+.manual-entry.manual-unset .manual-key { opacity: 0.85; }
+.manual-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4rem; }
+.manual-key { font-weight: 700; font-size: 1em; color: var(--pico-color); }
+.manual-cls { font-size: 0.82em; color: var(--pico-muted-color); }
+.manual-type { font-family: var(--font-mono); font-size: 0.8em; color: var(--pico-muted-color); }
+.manual-mark { font-weight: 700; color: var(--pico-primary); }
+.manual-desc { margin: 0.18rem 0 0; line-height: 1.4; color: var(--pico-color); }
+.manual-desc.manual-nodesc { color: var(--pico-muted-color); font-style: italic; }
+.manual-allowed { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.25rem; }
+.manual-chip { font-size: 0.82em; padding: 0.05rem 0.45rem; border-radius: 999px; border: 1px solid var(--pico-muted-border-color); color: var(--pico-color); }
+.manual-meta, .manual-examples, .manual-source { font-size: 0.8em; margin-top: 0.22rem; color: var(--pico-muted-color); }
+.manual-examples code, .manual-source code { font-size: 0.95em; }
+.manual-goto { text-decoration: none; }
+.manual-goto code { color: var(--pico-primary); }
+.manual-goto:hover code { text-decoration: underline; }
+.manual-section { font-weight: 700; font-size: 0.8em; text-transform: uppercase; letter-spacing: .04em; color: var(--pico-muted-color); margin: 0.6rem 0 0.2rem; }
+.manual-nodehead { display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap; margin-bottom: 0.25rem; }
+.manual-nodehead .manual-cls { font-weight: 700; color: var(--pico-primary); font-size: 1em; }
+.manual-btn.manual-open { color: var(--pico-primary); }
+/* the per-key ? affordance on the state surfaces */
+.key-help-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 1.1rem; height: 1.1rem; margin: 0 0 0 0.2rem; padding: 0; line-height: 1;
+    border: 1px solid var(--pico-muted-border-color); border-radius: 50%;
+    background: none; color: var(--pico-muted-color); font-size: 0.7rem; font-weight: 700;
+    cursor: help; opacity: 0.55; vertical-align: middle;
+}
+.key-help-btn:hover { opacity: 1; color: var(--pico-primary); border-color: var(--pico-primary); }
+/* docs/141 4w: on a Json-tree row the ? is hover-revealed like the row's
+   other tools (a ? on every row read as clutter), and it sits right of them. */
+.key-help-btn.tree-help { opacity: 0; margin-left: 0.45em; transition: opacity 0.12s, color 0.12s; }
+.tree-row:hover .key-help-btn.tree-help { opacity: 0.7; }
+.tree-row .key-help-btn.tree-help:hover { opacity: 1; }
 .calc-header {
     display: flex; align-items: center; justify-content: space-between;
     padding: 0.3rem 0.55rem; border-bottom: 1px solid var(--pico-muted-border-color);
@@ -1521,8 +1687,18 @@ hr.sidebar-section-divider { margin: 0.6rem 0; border-color: var(--pico-muted-bo
 
 /* Tree entries */
 .tree-root { margin-bottom: .1rem; position: relative; }
-.tree-root-label { display: flex; align-items: center; justify-content: space-between; gap: .2rem; font-size: var(--tree-root-label-font); }
-.tree-root-label > span { padding-right: 2.6rem; }   /* room for the × button + the collapse chevron */
+/* docs/141 4aa: the root row never overlaps its controls -- the label is a
+   min-width:0 flex child that ellipsizes, and the summary reserves a right
+   column (2.9rem) for the absolutely-pinned × plus Pico's disclosure chevron.
+   Name first (whole, bold), parent path dimmed and cut with an ellipsis. */
+.tree-root-label { display: flex; align-items: center; gap: .2rem; font-size: var(--tree-root-label-font); min-width: 0; }
+/* the reserve must OUTRANK `#sidebar details > summary { padding: … }` (an id
+   selector, style.css ~1413) -- as a bare class it lost on specificity and
+   the label still ran under the × (measured in real Chrome) */
+#sidebar details.tree-root > summary.tree-root-label { padding-right: 2.9rem; }
+.tree-root-path { flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: .35em; overflow: hidden; }
+.tree-root-name { flex: 0 1 auto; min-width: 3ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.tree-root-dir { flex: 1 1 6ch; min-width: 4ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.62; font-size: 0.86em; direction: rtl; text-align: left; unicode-bidi: plaintext; }
 /* Remove button — pinned to the <summary> row, kept out of <summary> itself.
    Sits to the LEFT of Pico's summary::after disclosure chevron (a 1rem icon at
    the far right of the flex summary) so the two no longer overlap. */
@@ -3670,7 +3846,10 @@ td.col-delta .val-delta { margin-left: 0; }
 /* docs/126 ②: the container owns the overflow on BOTH axes — the map renders
    at zoom × pane width (default 2×) and scrolls inside this box, so a big or
    tall chip never buries the sections below. */
-.topo-hero-scroll { overflow: auto; max-height: 82vh; }
+/* docs/141 4q: no inner vertical scroll -- the hero grows to its map and the
+   page (#table-pane) is the one scroller; a map zoomed wider than the pane
+   still scrolls sideways inside. */
+.topo-hero-scroll { overflow-x: auto; overflow-y: visible; max-height: none; }
 .topo-hero-note {
     position: absolute; top: 6px; left: 6px; z-index: 2; pointer-events: none;
     font-size: .78em; font-weight: 600; padding: .15rem .55rem; border-radius: 4px;
@@ -4078,6 +4257,24 @@ td.col-delta .val-delta { margin-left: 0; }
     --topo-heatmap-cell-min: calc(var(--topo-density-scale) * 140px);
     --topo-card-min-width: calc(var(--topo-density-scale) * 265px);
 }
+/* docs/141 4o: the size is PER PANEL — each metric / 2Q-gate panel's S · M · L
+   writes --topo-density-scale on that .topo-section, and the derived sizes are
+   re-computed at the section (a custom property computed on the dashboard
+   would not see a child's override). */
+.topo-dashboard .topo-section {
+    --topo-panel-cell-size: calc(var(--topo-density-scale) * 132px);
+    --topo-heatmap-cell-min: calc(var(--topo-density-scale) * 140px);
+    --topo-card-min-width: calc(var(--topo-density-scale) * 265px);
+}
+/* right of the title WORD (the user's placement), not at the row's far edge;
+   smaller than the title (user feedback: the letters were too big beside it) */
+.topo-density-ctl-panel { font-size: 0.58em; font-weight: 400; gap: 0.2rem; }
+/* explicit rem sizes: the h4's em and Pico's button rules made the letters
+   20 px beside a 26 px title (measured) -- these win by specificity */
+.topo-density-ctl-panel button.density-preset { font-size: 0.68rem; height: 1.25rem; line-height: 1.1; padding: 0 0.3rem; min-width: 1.4rem; }
+.topo-density-ctl-panel input.topo-density-pslider { width: 4rem; min-width: 0; margin: 0 0 0 0.15rem; padding: 0; height: 0.9rem; vertical-align: middle; }
+/* a jump from the sticky sub-nav lands the section title BELOW the bar */
+.topo-dashboard .topo-section { scroll-margin-top: 3.2rem; }
 .topo-density-ctl { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.82em; }
 .topo-density-ctl .density-label { color: var(--pico-muted-color); }
 .topo-density-ctl .density-preset {
@@ -4329,7 +4526,8 @@ a.topo-health-tile:hover { background: var(--pico-card-sectioning-background-col
 }
 .topo-metric-topo-grid .heatmap-cell-name { font-size: var(--topo-panel-name-size); }
 .topo-metric-topo-grid .heatmap-cell-value { font-size: var(--topo-panel-value-size); }
-.topo-metric-panel-title { font-size: var(--topo-panel-title-size); font-weight: 600; margin: 0 0 0.15rem 0; }
+.topo-metric-panel-title { font-size: var(--topo-panel-title-size); font-weight: 600; margin: 0 0 0.15rem 0;
+    display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }   /* docs/141 4o: title · S M L */
 /* Own block below the title (was an inline span in the <h4> that lapped the grid
    at narrow width). flex-wrap so it never overflows; muted so it reads as caption. */
 .topo-metric-panel-stat {
@@ -8978,16 +9176,39 @@ html.topbar-hidden .chrome-reveal { display: block; }
    can be scrolled left/right without first scrolling down to the bottom bar. */
 .bulk-scroll-top { overflow-x: auto; overflow-y: hidden; }
 .bulk-scroll-top > div { height: 1px; }
-.bulk-table-wrap { overflow: auto; max-height: calc(100vh - 185px); border: 1px solid var(--pico-muted-border-color); border-radius: 6px; }
+/* docs/141 4q (user-directed): ONE vertical scroller. The wrap used to scroll
+   inside itself (overflow:auto + a 100vh cap) while #table-pane scrolled the
+   page -- two bars, and users scrolled the grid to its end only to scroll
+   the page again. The wrap is now a frame around a max-content table and
+   #table-pane (overflow-y:auto => both axes) is the only scroller: its
+   horizontal bar sits at the viewport edge, the sticky header / row head /
+   apply column anchor to it, cold columns hydrate on ITS scroll. */
+.bulk-table-wrap { overflow: visible; max-height: none; width: max-content; max-width: none; border: 1px solid var(--pico-muted-border-color); border-radius: 6px; }
+/* the rows above and between the grids stay put while the pane scrolls
+   sideways: NOT position:sticky (their containing block is exactly as wide as
+   they are, so sticky has no room and they scrolled away -- real Chrome) but a
+   translateX(scrollLeft) written by bulk-edit.js _pinBarsToScroll on the
+   pane's scroll */
+/* NO will-change here: it made every bar its own stacking context, and the
+   chip bar (a later sibling) then painted OVER the Properties / Qubits
+   popovers -- the menus looked cut off at the chip bar's top edge (user
+   screenshot, 2026-08-29). The inline transform still creates a stacking
+   context while scrolled sideways, so the bars are ordered explicitly:
+   the toolbar rows (which own the popovers) above the chip bar, both above
+   the sticky table header (z-index 2 / 4). */
+.bulk-panel .bulk-toolbar { position: relative; z-index: 8; }
+.bulk-panel .bulk-chipbar, .bulk-panel .bulk-dyn-truncated, .bulk-panel .bulk-virt-note { position: relative; z-index: 6; }
+.bulk-panel .bulk-pair-divider { position: relative; z-index: 6; }
+.bulk-scroll-top { display: none; }
 /* max-content (NOT min-width:100%) so the table keeps its natural column widths
    and never stretches the cells to fill when only a few columns are visible. */
 .bulk-table { border-collapse: separate; border-spacing: 0; font-size: 0.86em; width: max-content; }
 .bulk-table th, .bulk-table td { padding: 1px 3px; border-bottom: 1px solid var(--pico-muted-border-color); white-space: nowrap; vertical-align: middle; }
-.bulk-table thead th { position: sticky; top: 0; z-index: 2; background: var(--pico-card-background-color); text-align: left; padding: 5px 7px; border-bottom: 2px solid var(--pico-muted-border-color); }
+.bulk-table thead th { position: sticky; top: calc(-1 * var(--table-pane-pad-v, 0px)); z-index: 2; background: var(--pico-card-background-color); text-align: left; padding: 5px 7px; border-bottom: 2px solid var(--pico-muted-border-color); }
 /* Group-header band: one spanning cell per section, over its columns. The 2nd
    header row (the column heads) sticks BELOW the band — its sticky `top` is offset
    by the band's measured height (--bulk-grouphead-h, set by JS; varies with font). */
-.bulk-table .bulk-head-row th { top: var(--bulk-grouphead-h, 1.7rem); }
+.bulk-table .bulk-head-row th { top: calc(var(--bulk-grouphead-h, 1.7rem) - var(--table-pane-pad-v, 0px)); }
 .bulk-group-row .bulk-group-head {
     text-align: center; font-weight: 700; text-transform: none; letter-spacing: 0;
     color: var(--pico-color); background: var(--pico-card-sectioning-background-color);
@@ -8996,7 +9217,7 @@ html.topbar-hidden .chrome-reveal { display: block; }
 /* Subtle separator between groups, carried from the band down into the body. */
 .bulk-col-group-start { border-left: 2px solid var(--pico-muted-border-color); }
 /* Frozen first column (qubit id) + its sticky-header corner. */
-.bulk-corner, .bulk-rowhead { position: sticky; left: 0; background: var(--pico-card-background-color); font-weight: 600; text-align: left; padding-right: 10px; border-right: 1px solid var(--pico-muted-border-color); }
+.bulk-corner, .bulk-rowhead { position: sticky; left: calc(-1 * var(--table-pane-pad-h, 0px)); background: var(--pico-card-background-color); font-weight: 600; text-align: left; padding-right: 10px; border-right: 1px solid var(--pico-muted-border-color); }
 .bulk-rowhead { font-size: calc(0.92rem * var(--bulk-fs)); }   /* match the cell text size */
 .bulk-corner { z-index: 3; }
 .bulk-rowhead { z-index: 1; }
@@ -9068,7 +9289,7 @@ html.topbar-hidden .chrome-reveal { display: block; }
    its input-driven width. */
 .bulk-phys { display: block; font-size: 0.7em; opacity: 0.65; font-family: var(--font-ui); max-width: 24ch; white-space: normal; }
 .bulk-band-warn-count, #bulk-band-warn { color: var(--color-error-text); font-size: 0.82em; font-weight: 600; }
-.bulk-apply-col { text-align: center; position: sticky; right: 0; background: var(--pico-card-background-color); }
+.bulk-apply-col { text-align: center; position: sticky; right: calc(-1 * var(--table-pane-pad-h, 0px)); background: var(--pico-card-background-color); }
 .btn-xs { padding: 0.05rem 0.5rem; font-size: 0.78em; width: auto; margin: 0; }
 .bulk-row-error { display: block; color: var(--color-error-text); font-size: 0.72em; max-width: 20ch; white-space: normal; }
 /* These two error spans use display:block, which OVERRIDES the HTML `hidden`
@@ -9187,6 +9408,26 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
 }
 .bulk-cell-runtime { text-align: center; }
 .bulk-td-ro { opacity: 0.92; }
+/* docs/141 4ae B-10 -- LOADING, NEVER-COMING and GENUINELY-ABSENT were ONE
+   appearance. A cold cell (`bulk-td-cold`, server-rendered empty or
+   client-detached) is a value ON ITS WAY: grid-virt.js fills it from
+   /bulk/cells the moment it is on screen. A RETIRED one (`bulk-td-dead`,
+   stamped by grid-virt.js when the server refuses the column with a 400/409 or
+   names it in `unknown`) never arrives without a reload. An ordinary empty cell
+   is a value the chip does not carry. Before this rule all three were the same
+   pixels -- same borders, same background, no title, no placeholder.
+   COST: the loading state is a flat background-color plus a cursor and NOTHING
+   else -- no gradient, no pseudo-element, no animation -- because the real 20Q
+   chip renders ~7,200 cold cells and a per-cell skeleton would cost more than
+   the virtualization saves. The heavier treatment (a glyph) is on the DEAD
+   cells only, whose count is bounded by what one refusal names. */
+.bulk-td-cold { background: color-mix(in srgb, var(--pico-muted-color) 8%, transparent); cursor: progress; }
+.bulk-td-dead { background: color-mix(in srgb, var(--color-warning-text) 14%, transparent); cursor: help; }
+.bulk-td-dead::after {
+    content: '\2014'; position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--color-warning-text); opacity: 0.7; pointer-events: none;
+}
 /* ↗ jump-to-inspector link on a list/confusion badge cell. */
 .bulk-ro-link {
     margin-left: 2px; font-size: 0.9em; text-decoration: none;
@@ -9464,6 +9705,19 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
    from — the parameter inputs below it (feedback #5 "inputs unclickable"). */
 .pulse-detail-plot { height: 260px; min-height: 260px; max-height: 260px; overflow: hidden; }
 .pulse-plot-empty { display: none; }
+/* docs/141 4k: one parameter section per pulse in view, carrying the colour
+   its traces have in the plot -- a quiet left rule + swatch, not a fill */
+.pulse-sec { border-left: 3px solid var(--sec-color, var(--pico-primary)); margin: 0.35rem 0 0; padding-left: 0.4rem; }
+.pulse-sec + .pulse-sec { border-top: none; }
+.pulse-sec > summary.pulse-sec-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.45rem; }
+.pulse-sec-swatch { display: inline-block; width: 0.7em; height: 0.7em; border-radius: 2px; background: var(--sec-color, var(--pico-primary)); align-self: center; }
+.pulse-sec-role { font-size: 0.72em; text-transform: uppercase; letter-spacing: .05em; padding: 0.02rem 0.4rem; border-radius: 999px; border: 1px solid var(--sec-color, var(--pico-primary)); color: var(--sec-color, var(--pico-primary)); }
+.pulse-sec-owner { font-weight: 700; }
+.pulse-sec-op code { font-size: 0.9em; }
+.pulse-sec-class { font-size: 0.8em; }
+.pulse-sec-note, .pulse-sec-usedby { font-size: 0.8em; margin: 0.2rem 0 0.3rem; }
+.pulse-view-bar .pulse-overlay-chip { cursor: default; }
+.pulse-view-bar .pulse-overlay-chip .pulse-sec-role { border: none; padding: 0; color: var(--ov-hue); }
 
 /* Overlay bar (customer 2026-08-27): companion / picked pulses drawn on the
    same axes. Each chip carries its trace hue as a left mark. */
@@ -10738,7 +10992,14 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 /* ── Stored-as-text auto-correction dialog (docs/77) ──────────────────────
    Rides the shared .ch-overlay / .ch-card modal chrome; only the plan table
    and its "what SM will not touch" section are specific here. */
-.tfx-host { padding: 0; background: none; box-shadow: none; }
+/* docs/141 4v: the host is the shared .ch-card shell and the dialog's own
+   .tfx-card sits INSIDE it -- this rule strips the shell so only one frame
+   shows. As a single class it lost to `.ch-card` (defined later, same
+   specificity): both frames painted, the inner card 20 px right / 16 px down
+   of the outer and 40 px wider than its content box -- the "odd border" the
+   user saw on Review N schema changes (measured in real Chrome). Two classes
+   win regardless of source order. */
+.ch-card.tfx-host { padding: 0; background: none; box-shadow: none; border-radius: 0; }
 .tfx-card {
     background: var(--pico-card-background-color);
     border-radius: 12px; padding: .8rem 1rem .7rem;
@@ -11622,3 +11883,52 @@ td.vc-cell-takeable:focus-within .vc-take,
     .btn-workspace-refresh.htmx-request:not(.ws-kick)::after {
         animation-duration: 1.4s; }
 }
+
+/* docs/141 4z: the diff workbench's pane view -- N sources side by side, one
+   pane per source under its own title, rows aligned (one scroll), only the
+   differing leaves, cells that differ from the BASELINE pane highlighted. */
+.diff-panes-note { margin: 0.4rem 0 0.3rem; font-size: 0.85em; }
+.diff-panes-scroll { overflow: auto; max-width: 100%; }
+.diff-panes-table { width: auto; margin: 0; font-size: 0.8rem; border-collapse: separate; border-spacing: 0; }
+.diff-panes-table th, .diff-panes-table td { padding: 0.22rem 0.55rem; vertical-align: top; white-space: nowrap; }
+.diff-panes-table thead th { position: sticky; top: 0; z-index: 1; background: var(--pico-background-color);
+    border-bottom: 2px solid var(--pico-muted-border-color); text-align: left; }
+/* docs/141 4ab: the KEYS column is a tree -- full-size, full-contrast names
+   (they are what is being read), indented by depth, a toggle per container,
+   the count of differing keys beneath each container. */
+.dp-key-col { min-width: 16rem; max-width: 30rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    padding-left: calc(0.55rem + var(--dp-depth, 0) * 1.05em) !important; }
+/* user feedback (4ab'): the same face and size as the value cells, only a
+   touch heavier -- a monospace key a size up read as "too big" beside them */
+.dp-key { font-family: inherit; font-size: 1em; color: var(--pico-color); }
+.dp-key-dir { font-weight: 600; }
+.dp-key-leaf { font-weight: 500; }
+.dp-toggle { all: unset; cursor: pointer; display: inline-block; width: 1.1em; text-align: center; color: var(--pico-muted-color); margin-right: 0.15em; }
+.dp-toggle:hover { color: var(--pico-primary); }
+.dp-toggle-gap { display: inline-block; width: 1.1em; margin-right: 0.15em; }
+.dp-count { margin-left: 0.45em; font-size: 0.72em; color: var(--pico-muted-color); vertical-align: middle;
+    padding: 0 0.35em; border: 1px solid var(--pico-muted-border-color); border-radius: 999px; }
+tr.dp-dir > td { background: color-mix(in srgb, var(--pico-muted-border-color) 28%, transparent); }
+tr.dp-dir > td.dp-cell-dir { border-left: 2px solid var(--pico-muted-border-color); }
+tr.dp-row[hidden] { display: none; }
+.diff-panes-tools { display: flex; align-items: center; gap: 0.3rem; margin: 0 0 0.3rem; font-size: 0.85em; }
+/* each pane is its own window: a left rule separates panes, the whole column shares one tint */
+.dp-pane-head, .dp-cell { border-left: 2px solid var(--pico-muted-border-color); min-width: 9rem; }
+.dp-pane-title { all: unset; cursor: pointer; display: flex; flex-direction: column; gap: 0.05rem; padding: 0.15rem 0.3rem; border-radius: 4px; }
+.dp-pane-title:hover { background: var(--pico-card-sectioning-background-color); }
+.dp-pane-title:focus-visible { outline: 2px solid var(--pico-primary); }
+.dp-slot { font-weight: 700; color: var(--pico-primary); font-size: 0.85em; }
+.dp-label { font-weight: 600; }
+.dp-base-tag { display: none; font-size: 0.7em; text-transform: uppercase; letter-spacing: .04em; color: var(--pico-primary); }
+.dp-pane-head.dp-base .dp-base-tag { display: inline; }
+.dp-pane-head.dp-base { border-left-color: var(--pico-primary); }
+.dp-pane-head.dp-base .dp-pane-title { background: var(--diff-cell-bg, rgba(128,128,128,0.12)); cursor: default; }
+.dp-cell.dp-base { border-left-color: var(--pico-primary); background: color-mix(in srgb, var(--pico-primary) 6%, transparent); }
+.dp-cell.dp-diff { background: var(--diff-cell-bg, rgba(255, 196, 0, 0.14)); }
+.dp-cell.dp-diff .dp-val { font-weight: 600; }
+.dp-cell.dp-same .dp-val { color: var(--pico-muted-color); }
+.dp-val { font-variant-numeric: tabular-nums; }
+.dp-null { font-style: italic; color: var(--pico-muted-color); }
+.dp-delta { display: block; font-size: 0.85em; line-height: 1.15; }
+.dp-delta[hidden] { display: none; }
+.diff-view-fixed { font-size: 0.8em; padding: 0 0.4rem; }

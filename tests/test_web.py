@@ -1709,12 +1709,13 @@ class TestSidebarFeatures:
         assert "view=full" not in text, "Full View was removed in the Phase C scroll dashboard"
         assert "view=distributions" not in text, "Distributions was removed (docs/126 ②)"
         assert "view=trends" in text
-        assert text.index("view=topology") < text.index("view=overview") < text.index("view=gate"), (
-            "Topology should lead, then Overview, then Gate."
-        )
-        # Trends reads history rather than the loaded chip, so it sits last —
-        # after the live-state sections, not among them.
-        assert text.index("view=calibration") < text.index("view=trends")
+        # docs/141 4o (user-directed order): Overview leads, Health right below
+        # it, then Topology, then Trends, then Fidelity (which absorbed the old
+        # Gate (2Q) tab), then the rest. No "gate" sub-link any more.
+        assert "view=gate" not in text, "Gate (2Q) was absorbed by Fidelity (docs/141 4o)"
+        order = ["overview", "health", "topology", "trends", "fidelity", "coherence", "frequencies", "calibration"]
+        idx = [text.index(f"view={v}") for v in order]
+        assert idx == sorted(idx), "the sidebar sub-links follow the page order"
 
     def test_core_scripts_not_deferred(self):
         """app.js (UI_CONFIG) and dataset-virtual.js (DatasetVirtual) must load
@@ -1728,9 +1729,17 @@ class TestSidebarFeatures:
         base = (Path(__file__).resolve().parent.parent
                 / "quam_state_manager" / "web" / "templates" / "base.html")
         text = base.read_text(encoding="utf-8")
-        for fname in ("app.js", "dataset-virtual.js"):
-            m = re.search(r'<script\b([^>]*?)\bsrc="[^"]*' + re.escape(fname), text)
-            assert m, f"{fname} <script> tag not found in base.html"
+        # docs/141 4l: dataset-virtual.js is a PAGE bundle now -- it is emitted
+        # only on the dataset pages, but there it must still be an eager <head>
+        # tag (the parse-time inline scripts below have not moved).
+        from quam_state_manager.web.app import create_app
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            datasets_html = create_app(testing=True, instance_path=tmp).test_client().get(
+                "/datasets").get_data(as_text=True)
+        for fname, where in (("app.js", text), ("dataset-virtual.js", datasets_html)):
+            m = re.search(r'<script\b([^>]*?)\bsrc="[^"]*' + re.escape(fname), where)
+            assert m, f"{fname} <script> tag not found"
             assert "defer" not in m.group(1) and "async" not in m.group(1), (
                 f"{fname} must load eagerly (no defer/async): parse-time inline "
                 "scripts depend on its global being defined before <body> parses."
@@ -1966,24 +1975,44 @@ class TestCompareRedirect:
 
     def test_compare_post_translates_paths(self, client, tmp_path):
         folders = []
-        for name in ("ra", "rb"):
+        for name in ("ra", "rb", "rc", "rd", "re"):
             f = tmp_path / name
             f.mkdir()
             (f / "state.json").write_text(json.dumps(_make_state()), encoding="utf-8")
             (f / "wiring.json").write_text(json.dumps(_make_wiring()), encoding="utf-8")
             folders.append(str(f))
-        resp = client.post("/compare", data={"paths": folders},
+        resp = client.post("/compare", data={"paths": folders[:2]},
                            headers={"HX-Request": "true"})
         assert resp.status_code == 200
-        loc = resp.headers["HX-Redirect"]
-        assert loc.startswith("/compare-hub?")
-        assert loc.count("src=") == 2
+        # docs/141 4y: the MAIN PANE navigates (HX-Location into #table-pane),
+        # never the whole document -- an HX-Redirect rebuilt the sidebar and
+        # lost every tick. Plain folders land on state.json.
+        assert "HX-Redirect" not in resp.headers
+        loc_obj = json.loads(resp.headers["HX-Location"])
+        assert loc_obj["target"] == "#table-pane" and loc_obj["swap"] == "innerHTML"
+        loc = loc_obj["path"]
+        assert loc.startswith("/diff?a=ws%3A") and "&b=ws%3A" in loc and loc.endswith("&tab=state")
         assert "hint" not in loc   # manual basket (U1b)
+        # docs/141 4y: three, four, five all open the diff (a..e), never the hub
+        for n in (3, 4, 5):
+            resp = client.post("/compare", data={"paths": folders[:n]},
+                               headers={"HX-Request": "true"})
+            loc = json.loads(resp.headers["HX-Location"])["path"]
+            assert loc.startswith("/diff?a=ws%3A") and "compare-hub" not in loc
+            assert all(f"&{slot}=ws%3A" in loc for slot in "bcde"[:n - 1])
+            assert not any(f"&{slot}=" in loc for slot in "bcde"[n - 1:])
 
-    def test_compare_single_path_still_redirects(self, client):
+    def test_compare_single_path_is_refused_by_name(self, client):
+        # docs/141 4y: fewer than two (or more than five) is refused with the
+        # pane kept and a toast -- never a truncated basket, never the hub
+        resp = client.post("/compare", data={"paths": "only_one"},
+                           headers={"HX-Request": "true"})
+        assert resp.status_code == 200
+        assert resp.headers["HX-Reswap"] == "none"
+        assert "HX-Location" not in resp.headers and "HX-Redirect" not in resp.headers
+        assert "at least two" in json.loads(resp.headers["HX-Trigger"])["sm:toast"]["message"]
         resp = client.post("/compare", data={"paths": "only_one"})
-        assert resp.status_code == 302
-        assert "src=" in resp.headers["Location"]
+        assert resp.status_code == 302 and resp.headers["Location"] == "/diff"
 
 
 class TestStatusToast:
@@ -4963,6 +4992,27 @@ class TestCollectionsAndFavoriteTag:
         assert FAVORITE_TAG in ds.runs[rid].tags and ds.runs[rid].bookmarked is True
         assert ds.toggle_bookmark(rid) is False
         assert FAVORITE_TAG not in ds.runs[rid].tags and ds.runs[rid].bookmarked is False
+
+    def test_collections_without_any_tag_has_no_tag_row(self, tmp_path):
+        """docs/141 4t: with no tagged run the tag-filter row rendered as a
+        lone "All" chip under the Experiments filter that stayed lit whatever
+        experiment was picked (user screenshot). No tags -> no row; a tag ->
+        the row with All + the tag."""
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        data = tmp_path / "data"
+        data.mkdir()
+        _seed_dataset_run(data, 21)
+        _seed_dataset_run(data, 22)
+        c = app.test_client()
+        c.post("/workspace/add", data={"folder": str(data)})
+        headers = {"HX-Request": "true"}
+        coll = c.get("/collections", headers=headers).get_data(as_text=True)
+        assert 'id="tag-filter-grid"' not in coll and 'onclick="toggleTagFilter' not in coll
+        assert 'id="exp-filter-grid"' in coll            # the Experiments row itself stays
+        from quam_state_manager.web import routes as _r
+        c.post(f"/dataset/{_r._dataset_uid(_r._folder_key(data), 21)}/tag", json={"tag": "flagged"})
+        coll = c.get("/collections", headers=headers).get_data(as_text=True)
+        assert 'id="tag-filter-grid"' in coll and 'data-tag="flagged"' in coll and 'data-tag=""' in coll
 
     def test_collections_shows_only_tagged_and_has_tag_grid(self, tmp_path):
         app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))

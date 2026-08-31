@@ -72,7 +72,13 @@
     </ul>
 </nav>
 
-{# On pulses-changed, JS rebuilds the hx-get URL from live DOM state
+{# docs/141 4j: a VALUE change arrives as `pulses-rows-changed` with the
+   touched paths and is handled by app.js, which re-renders only those rows
+   through /pulse/row. `pulses-changed` (below) is the structural / legacy
+   trigger that re-fetches the whole table. Two event NAMES, not an htmx
+   `[filter]`: filters need eval and the app's CSP forbids it, so a filter is
+   silently ignored (measured).
+   On pulses-changed, JS rebuilds the hx-get URL from live DOM state
    (search input + active channel badge) so a mutation refresh never stales
    the search/filter context — see pulsesRefreshUrl() in app.js.
    delay: debounces (htmx restarts the countdown on every new event), so a

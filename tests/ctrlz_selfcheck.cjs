@@ -123,10 +123,84 @@ await settle();
     for (let i = 0; i < 10; i++) pressCtrlZ();
     ok(calls.length === n + 1, 'a burst issues one request immediately, holds the rest');
     for (let i = 0; i < 12; i++) await settle();
-    const issued = calls.slice(n).filter((c) => c.url === '/undo');
-    ok(issued.length === 10, 'all ten presses reach /undo (got ' + issued.length + ')');
+    // docs/141 4e: presses that arrive while a request is in flight are
+    // COALESCED -- fewer requests, but every press counted (?n=k).
+    const issued = calls.slice(n).filter((c) => c.url.indexOf('/undo') === 0);
+    const presses = issued.reduce((s, c) => s + (Number((/[?&]n=(\d+)/.exec(c.url) || [])[1]) || 1), 0);
+    ok(presses === 10 && issued.length < 10,
+       'all ten presses reach the server, coalesced into fewer requests (' + issued.length + ' requests, n-sum ' + presses + ')');
+    ok(issued[0].url === '/undo' && issued.slice(1).every((c) => /\?n=\d+$/.test(c.url)),
+       'the first press goes alone; the burst behind it rides one ?n=k');
     ok(window.UndoQueue.depth() === 0 && !window.UndoQueue.busy(),
        'the queue drains empty');
+}
+
+// ── 1b''. the focus is in an inspector / Pulses inline field ──────────────
+// Enter commits and InlineCommit puts the focus back in the field, so the
+// press a person actually makes (edit, Enter, Ctrl+Z) landed in an INPUT and
+// was ignored. Same rule as a grid cell now: dirty → undo the typing, clean
+// → the server tier.
+{
+    const form = window.document.createElement('form');
+    form.className = 'inline-edit';
+    form.innerHTML = '<input type="hidden" name="dot_path" value="qubits.q1.T1">'
+        + '<input type="text" name="value" data-committed="1" value="1">';
+    window.document.body.appendChild(form);
+    const inp = form.querySelector('input[name="value"]');
+    inp.focus();
+    let inputs = 0; inp.addEventListener('input', () => inputs++);
+    const n = calls.length;
+    pressCtrlZ(inp);
+    await settle();
+    ok(calls.length === n + 1 && calls[n].url === '/undo', 'a CLEAN inline field: Ctrl+Z reaches the server tier');
+    for (let i = 0; i < 4; i++) await settle();
+    inp.value = '2';                                  // typed, not committed
+    const n2 = calls.length;
+    const ev = pressCtrlZ(inp);
+    await settle();
+    ok(calls.length === n2 && inp.value === '1' && inputs === 1 && ev.defaultPrevented,
+       'a DIRTY inline field: Ctrl+Z restores the committed value, no request');
+    form.remove();
+    window.document.body.focus();
+    for (let i = 0; i < 4; i++) await settle();
+}
+
+// ── 1b'. a HELD key (auto-repeat) is not a burst ──────────────────────────
+{
+    const n = calls.length;
+    const ev = new window.KeyboardEvent('keydown', { key: 'z', ctrlKey: true, repeat: true, bubbles: true, cancelable: true });
+    window.document.dispatchEvent(ev);
+    await settle();
+    ok(calls.length === n && ev.defaultPrevented, 'an auto-repeated Ctrl+Z issues nothing (one press = one step)');
+    // ... but an ordinary text field keeps the browser's own held-key undo
+    const ta = window.document.createElement('textarea');
+    window.document.body.appendChild(ta); ta.focus();
+    const ev2 = new window.KeyboardEvent('keydown', { key: 'z', ctrlKey: true, repeat: true, bubbles: true, cancelable: true });
+    ta.dispatchEvent(ev2);
+    await settle();
+    ok(calls.length === n && !ev2.defaultPrevented, 'a held Ctrl+Z inside a textarea is left to the browser (not hijacked)');
+    ta.remove(); window.document.body.focus();
+}
+
+// ── 1b'''. a burst that the server stopped at the journal boundary ─────────
+// /undo?n=k answers requested/consumed/stopped; the presses it could not
+// consume are re-queued one by one (each walks the journal as a single
+// press does) -- never dropped silently (review of eaa0f05).
+{
+    const n = calls.length;
+    window.document.dispatchEvent(new window.CustomEvent('cellsReverted', { detail: {
+        message: 'Undone: qubits.q1.T1 → 1', entries: [{ dot_path: 'qubits.q1.T1', old_value_str: '1', old_value_disp: '1', old_kind: 'num' }],
+        requested: 5, consumed: 1, stopped: 'journal', level: 'success' } }));
+    for (let i = 0; i < 12; i++) await settle();
+    const issued = calls.slice(n).filter((c) => c.url.indexOf('/undo') === 0);
+    const presses = issued.reduce((s, c) => s + (Number((/[?&]n=(\d+)/.exec(c.url) || [])[1]) || 1), 0);
+    ok(presses === 4, 'the 4 presses the burst could not consume are re-queued (' + issued.map((c) => c.url).join(' ') + ')');
+    const n2 = calls.length;
+    window.document.dispatchEvent(new window.CustomEvent('cellsReverted', { detail: {
+        message: 'Undone: qubits.q1.T1 → 1', entries: [{ dot_path: 'qubits.q1.T1', old_value_str: '1', old_value_disp: '1', old_kind: 'num' }],
+        requested: 5, consumed: 1, stopped: 'exhausted', level: 'success' } }));
+    for (let i = 0; i < 6; i++) await settle();
+    ok(calls.length === n2, 'an exhausted log re-queues nothing');
 }
 
 // ── 1c. the bound is a held key, not a rate limit ──────────────────────────
@@ -250,13 +324,24 @@ await settleDebounce();
 ok(stateChanged === 1, 'an undone DELETE still rebuilds the grid');
 
 // A path no surface could reach: we cannot claim the grid is current for it.
+// Night session 2026-08-28: the fallback contract changed. A path with NO
+// cell on the grid is not stale here (it is simply not a column -- a pulse
+// leaf undone from the inspector, a tree edit) and must NOT cost the 2.4 s
+// rebuild; only a cell the grid FOUND but could not repaint honestly does.
 window.BulkEdit.revertPaths = function () {
-    return { patched: 0, missing: 1, covered: [] };
+    return { patched: 0, missing: 1, covered: [], uncovered: [] };
 };
 stateChanged = 0;
 revert([ENTRY]);
 await settleDebounce();
-ok(stateChanged === 1, 'an UNCOVERED path falls back to the rebuild');
+ok(stateChanged === 0, 'a path with NO cell on the grid does not rebuild it');
+window.BulkEdit.revertPaths = function () {
+    return { patched: 1, missing: 0, covered: [], uncovered: [ENTRY.dot_path] };
+};
+stateChanged = 0;
+revert([ENTRY]);
+await settleDebounce();
+ok(stateChanged === 1, 'a cell the grid found but could not repaint honestly falls back to the rebuild');
 
 // A burst of covered reverts must not queue N rebuilds behind it.
 window.BulkEdit.revertPaths = function (entries) {

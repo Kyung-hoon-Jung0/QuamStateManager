@@ -115,7 +115,8 @@ window.eval(fs.readFileSync(path.join(STATIC, 'search-query.js'), 'utf8'));
 // no-grammar fallback — which matters here, because the mode toggle emits
 // exactly the pipe syntax that grammar parses.
 global.SearchQuery = window.SearchQuery;
-window.eval(fs.readFileSync(path.join(STATIC, 'bulk-edit.js'), 'utf8'));
+window.eval(fs.readFileSync(path.join(STATIC, 'grid-virt.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(STATIC, 'bulk-edit.js'), 'utf8'));
 
 const doc = window.document;
 // mount(columns, bandMeta, dynModel, qubitMeta) — POSITIONAL. Handing it an

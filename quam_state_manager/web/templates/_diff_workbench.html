@@ -11,12 +11,12 @@
 
 <div id="diff-root" class="diff-wb"
      data-a="{{ a_ref }}" data-b="{{ b_ref }}" data-tab="{{ tab }}"
-     data-view="{{ view }}">
+     data-view="{{ view }}" data-n="{{ srcs | length }}" data-base="{{ base }}">
 
   <div class="diff-wb-head">
     <h2 style="margin:0">Diff</h2>
     <p class="muted" style="margin:0">
-      What is different between two versions of this chip — and by how much.
+      What is different between versions of this chip — and by how much.
     </p>
   </div>
 
@@ -24,65 +24,52 @@
         hx-swap="outerHTML" hx-push-url="true" hx-trigger="change">
     <input type="hidden" name="tab" value="{{ tab }}">
     <input type="hidden" name="view" value="{{ view }}">
-    <label class="diff-side">
-      <span class="diff-side-tag">A</span>
-      <select name="a">
-        <option value="">— pick a source —</option>
+    <input type="hidden" name="base" value="{{ base }}">
+    {# docs/141 4z: one picker per slot in use (always A, B and the optional
+       C; D and E appear once they carry a source). "vs" sits between A and B
+       as before; every later slot is optional. #}
+    {% set _nslots = [5, [3, (srcs | length) + 1] | max] | min %}
+    {% for i in range(_nslots) %}
+    {% set _ref = slot_refs[i] %}
+    {% set _src = slot_srcs[i] %}
+    {% if i == 1 %}<span class="diff-vs">vs</span>{% endif %}
+    <label class="diff-side{% if i >= 2 %} diff-side-c{% endif %}">
+      <span class="diff-side-tag">{{ slots[i] | upper }}</span>
+      <select name="{{ slots[i] }}">
+        <option value="">{{ '— pick a source —' if i < 2 else ('— optional third —' if i == 2 else '— optional —') }}</option>
         {% for o in options %}
-        <option value="{{ o.ref }}" {% if o.ref == a_ref %}selected{% endif %}>{{ o.label }}</option>
+        <option value="{{ o.ref }}" {% if o.ref == _ref %}selected{% endif %}>{{ o.label }}</option>
         {% endfor %}
-        {% if a_ref and a_ref not in options | map(attribute='ref') | list %}
-        <option value="{{ a_ref }}" selected>{{ src_a.label if src_a else a_ref }}</option>
+        {% if _ref and _ref not in options | map(attribute='ref') | list %}
+        <option value="{{ _ref }}" selected>{{ _src.label if _src else _ref }}</option>
         {% endif %}
       </select>
     </label>
-    <span class="diff-vs">vs</span>
-    <label class="diff-side">
-      <span class="diff-side-tag">B</span>
-      <select name="b">
-        <option value="">— pick a source —</option>
-        {% for o in options %}
-        <option value="{{ o.ref }}" {% if o.ref == b_ref %}selected{% endif %}>{{ o.label }}</option>
-        {% endfor %}
-        {% if b_ref and b_ref not in options | map(attribute='ref') | list %}
-        <option value="{{ b_ref }}" selected>{{ src_b.label if src_b else b_ref }}</option>
-        {% endif %}
-      </select>
-    </label>
-    {# Customer (2026-08-27): an optional THIRD source. Empty = the 2-way page
-       exactly as before; set = the list view and the figures tab grow a C
-       column (the tree keeps reading A -> B). #}
-    <label class="diff-side diff-side-c">
-      <span class="diff-side-tag">C</span>
-      <select name="c">
-        <option value="">— optional third —</option>
-        {% for o in options %}
-        <option value="{{ o.ref }}" {% if o.ref == c_ref %}selected{% endif %}>{{ o.label }}</option>
-        {% endfor %}
-        {% if c_ref and c_ref not in options | map(attribute='ref') | list %}
-        <option value="{{ c_ref }}" selected>{{ src_c.label if src_c else c_ref }}</option>
-        {% endif %}
-      </select>
-    </label>
-    <a class="btn-sm outline" href="/compare-hub?src={{ a_ref | urlencode }}&amp;src={{ b_ref | urlencode }}{% if c_ref %}&amp;src={{ c_ref | urlencode }}{% endif %}"
-       title="The full comparison hub — entity mapping across different devices, tolerance presets, N-way baskets">Advanced…</a>
+    {% endfor %}
+    {# docs/141 4y: the Compare hub is retired as a destination -- no link. #}
   </form>
 
   <div class="ph-tabs diff-wb-tabs">
     {% for t in tabs %}
     <button type="button" class="ph-tab{% if t == tab %} active{% endif %}"
-            hx-get="/diff?a={{ a_ref | urlencode }}&amp;b={{ b_ref | urlencode }}&amp;c={{ c_ref | urlencode }}&amp;tab={{ t }}&amp;view={{ view }}"
+            hx-get="/diff?a={{ a_ref | urlencode }}&amp;b={{ b_ref | urlencode }}&amp;c={{ c_ref | urlencode }}&amp;d={{ d_ref | urlencode }}&amp;e={{ e_ref | urlencode }}&amp;tab={{ t }}&amp;view={{ view }}&amp;base={{ base }}"
             hx-target="#diff-root" hx-swap="outerHTML" hx-push-url="true">
       {{ {'state': 'state.json', 'wiring': 'wiring.json',
           'node': 'node.json', 'data': 'data', 'figures': 'figures'}[t] }}</button>
     {% endfor %}
     <span class="diff-view-toggle">
-      {% for v, label in (('tree', 'Tree'), ('list', 'List')) %}
+      {# docs/141 4z: two sources choose tree / list / panes; three or more
+         are always panes (the tree reads A -> B only). #}
+      {% if srcs | length >= 3 %}
+      <span class="muted diff-view-fixed" title="Three or more sources are read side by side, one pane each">{{ srcs | length }} panes</span>
+      {% else %}
+      {% for v, label in (('tree', 'Tree'), ('list', 'List'), ('panes', 'Panes')) %}
       <button type="button" class="btn-xs{% if v != view %} outline{% endif %}"
-              hx-get="/diff?a={{ a_ref | urlencode }}&amp;b={{ b_ref | urlencode }}&amp;c={{ c_ref | urlencode }}&amp;tab={{ tab }}&amp;view={{ v }}"
+              hx-get="/diff?a={{ a_ref | urlencode }}&amp;b={{ b_ref | urlencode }}&amp;c={{ c_ref | urlencode }}&amp;d={{ d_ref | urlencode }}&amp;e={{ e_ref | urlencode }}&amp;tab={{ tab }}&amp;view={{ v }}&amp;base={{ base }}"
               hx-target="#diff-root" hx-swap="outerHTML" hx-push-url="true"
-              title="{{ 'Nested, with context' if v == 'tree' else 'Flat, biggest change first' }}">{{ label }}</button>
+              title="{{ {'tree': 'Nested, with context', 'list': 'Flat, biggest change first', 'panes': 'Side by side, one pane per source, differences against a baseline you pick'}[v] }}">{{ label }}</button>
       {% endfor %}
+      {% endif %}
     </span>
   </div>
 
@@ -122,12 +109,19 @@
     {% set c = payload.counts %}
     <div class="diff-wb-counts">
       <span class="diff-count diff-count-changed">{{ '{:,}'.format(c.changed) }} changed</span>
+      {# docs/141 4ac: added/removed are a TWO-sided verdict. For N sources
+         "added" names no side, so the N-way payload reports how many keys are
+         one-sided instead of printing +0 / -0 beside thousands of them. #}
+      {% if view == 'panes' %}
+      <span class="diff-count diff-count-added">{{ '{:,}'.format(c.get('one_sided', 0)) }} on some sources only</span>
+      {% else %}
       <span class="diff-count diff-count-added">+{{ '{:,}'.format(c.added) }} added</span>
       <span class="diff-count diff-count-removed">&minus;{{ '{:,}'.format(c.removed) }} removed</span>
+      {% endif %}
       <span class="muted">{{ '{:,}'.format(c.same) }} identical</span>
-      {% if payload.truncated %}<span class="warn">· capped</span>{% endif %}
+      {% if payload.truncated %}<span class="warn" title="the row list stops at the cap; the counts above are the whole diff">· capped</span>{% endif %}
       <span class="diff-wb-labels muted">
-        <b>A</b> {{ src_a.label }} &nbsp; <b>B</b> {{ src_b.label }}{% if src_c %} &nbsp; <b>C</b> {{ src_c.label }}{% endif %}
+        {% for src in srcs %}<b>{{ slots[loop.index0] | upper }}</b> {{ src.label }}{% if not loop.last %} &nbsp; {% endif %}{% endfor %}
       </span>
     </div>
 
@@ -153,34 +147,13 @@
       {% endif %}
     {% endif %}
     {% if c.total == 0 %}
-      <p class="diff-wb-msg muted">These two are identical
+      {# docs/141 4ac: "two" was hard-coded, so five identical runs read as
+         "These two are identical" and _diff_panes.html's own N-aware line
+         could never render. #}
+      <p class="diff-wb-msg muted">{% if srcs | length > 2 %}These {{ srcs | length }} sources are identical{% else %}These two are identical{% endif %}
         ({{ '{:,}'.format(c.same) }} values compared).</p>
-    {% elif view == 'list' and src_c %}
-      {# 3-way list (customer 2026-08-27): the 2-way table below is untouched;
-         this one adds the C column with its own arrow + delta. #}
-      <table class="diff-wb-list diff-wb-list-3">
-        <thead><tr><th>Parameter</th><th>A</th><th></th><th>B</th><th>Δ</th><th></th><th>C</th><th>Δ</th></tr></thead>
-        <tbody>
-        {% for r in rows %}
-          <tr class="diff-row-changed" data-diff3="1">
-            <td class="diff-list-path"><code>{{ r.path }}</code></td>
-            <td class="diff-list-a">{% if r.present[0] %}<code>{{ r.vals[0] | groupdigits }}</code>{% else %}<span class="muted">—</span>{% endif %}</td>
-            <td class="diff-list-arrow">&rarr;</td>
-            <td class="diff-list-b">{% if r.present[1] %}<code>{{ r.vals[1] | groupdigits }}</code>{% else %}<span class="muted">—</span>{% endif %}</td>
-            <td class="diff-list-delta">{% if r.present[0] and r.present[1] %}{{ delta_chip(r.vals[0], r.vals[1]) }}{% endif %}</td>
-            <td class="diff-list-arrow">&rarr;</td>
-            <td class="diff-list-c">{% if r.present[2] %}<code>{{ r.vals[2] | groupdigits }}</code>{% else %}<span class="muted">—</span>{% endif %}</td>
-            <td class="diff-list-delta">{% if r.present[1] and r.present[2] %}{{ delta_chip(r.vals[1], r.vals[2]) }}{% endif %}</td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-      {% if more %}
-      <p class="diff-wb-msg muted">{{ '{:,}'.format(more) }} more rows —
-        <a href="/diff?a={{ a_ref | urlencode }}&amp;b={{ b_ref | urlencode }}&amp;c={{ c_ref | urlencode }}&amp;tab={{ tab }}&amp;view=list&amp;rows={{ next_rows }}"
-           hx-get="/diff?a={{ a_ref | urlencode }}&amp;b={{ b_ref | urlencode }}&amp;c={{ c_ref | urlencode }}&amp;tab={{ tab }}&amp;view=list&amp;rows={{ next_rows }}"
-           hx-target="#diff-root" hx-swap="outerHTML">show more</a></p>
-      {% endif %}
+    {% elif view == 'panes' %}
+      {% include '_diff_panes.html' %}
     {% elif view == 'list' %}
       <table class="diff-wb-list">
         <thead><tr><th>Parameter</th><th>A</th><th></th><th>B</th><th>Δ</th>{% if _take_from %}<th></th>{% endif %}</tr></thead>
@@ -232,7 +205,6 @@
       </div>
       {% endif %}
     {% else %}
-      {% if src_c %}<p class="diff-wb-msg muted diff-tree-c-note">Tree view reads A &rarr; B; switch to List to see C beside them.</p>{% endif %}
       <div class="tree-toolbar diff-tree-toolbar">
         <span class="tree-search-icon">&#128269;</span>
         <input type="text" class="tree-search" id="diff-tree-search"

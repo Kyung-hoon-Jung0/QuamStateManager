@@ -1349,6 +1349,7 @@
             // rather than never.
             if (state.pollStartedAt && (Date.now() - state.pollStartedAt) > POLL_TIMEOUT_MS * 2) {
                 state.pollInFlight = false;
+                if (state.pollWakeAgain) { state.pollWakeAgain = false; setTimeout(function () { if (state.pollTimer) pollDelta(); }, 0); }
             } else {
                 return;                              // don't stack on a slow server
             }
@@ -1421,6 +1422,7 @@
             .then(function() {                                   // finally
                 if (timer) clearTimeout(timer);
                 state.pollInFlight = false;
+                if (state.pollWakeAgain) { state.pollWakeAgain = false; setTimeout(function () { if (state.pollTimer) pollDelta(); }, 0); }
                 state.pollStartedAt = 0;
                 if (state.pollCatchUp) {
                     state.pollCatchUp = false;
@@ -2330,6 +2332,15 @@
 
     window.DatasetVirtual = {
         init: init,
+        // docs/141 4p: live-wake.js says a run folder changed -- run the delta
+        // poll now (a wake during an in-flight poll runs once more after it)
+        pollNow: function () {
+            if (!state.pollTimer) return false;
+            state.pollSkipUntil = 0;
+            if (state.pollInFlight) { state.pollWakeAgain = true; return true; }
+            pollDelta();
+            return true;
+        },
         applyFilters: applyFilters,
         patchRow: patchRow,
         // Used by tag/note handlers in app.js to keep the in-memory store in sync
