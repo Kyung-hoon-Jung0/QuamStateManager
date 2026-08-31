@@ -13,11 +13,14 @@ Every Overview tile gets a stable `id` and a hover-visible **⋮ kebab**
 
 - **Metric-backed tiles** (1Q/RO fidelities, 2Q gate fid., gate length, the
   four SRB/IRB tiles, T1, T2): **Statistic** select — which aggregate the
-  BIG number shows: `median` (the historical default), `avg`, `min`, `max` —
-  plus **Remove**. A non-default stat is tagged next to the number
-  (`24.0 µs AVG`) and the sub line always states the complementary
-  aggregates, so nothing hides. The numbers are the SAME
-  `computeAggregates` outputs the tile always computed — no new math.
+  BIG number shows: `avg` (the default since the same-day r2, user-directed;
+  it was `median`), `median`, `min`, `max` — plus **Remove**. EVERY big
+  number wears its stat tag (`24.0 µs AVG`, `MED`, …) — r2 also made the
+  tag unconditional, an untagged number was ambiguous — and the sub line
+  always states the complementary aggregates, so nothing hides. The EPC/EPG
+  error lines follow the displayed stat (1 minus the number shown). The
+  numbers are the SAME `computeAggregates` outputs the tile always
+  computed — no new math.
 - **Composite tiles** (Chip Size, RB Coverage, Qubits In Spec, Calibration
   Age): **Remove only**, with a note saying why key/statistic can't change
   ("its number is not one metric").

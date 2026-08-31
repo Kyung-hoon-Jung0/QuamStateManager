@@ -54,7 +54,8 @@ function makeWorld() {
   return win;
 }
 
-// Asymmetric T1 so median (20µs) and avg (30µs) are distinct numbers.
+// Asymmetric T1 so avg (30µs, the docs/150b default) and median (20µs)
+// are distinct numbers.
 function topoFixture() {
   function node(id, gl, t1) {
     return {
@@ -102,11 +103,15 @@ function stored(win) { return win.localStorage.getItem('quam_overview_tiles_v1')
     ok(!!win.document.getElementById('ov-add-tile'), 'C1: ghost add tile exists');
     ok(stored(win) === null, 'C1: nothing stored while at defaults');
     ok(win.document.getElementById('ov-custom-note').hidden === true, 'C1: note hidden');
-    const t1v = tileById(win, 't1').querySelector('.topo-card-value').textContent;
-    ok(/20\.0/.test(t1v), 'C1: T1 big number is the median (got "' + t1v + '")');
+    const t1tile = tileById(win, 't1');
+    const t1v = t1tile.querySelector('.topo-card-value').textContent;
+    ok(/30\.0/.test(t1v), 'C1: T1 big number is the AVG by default (got "' + t1v + '")');
+    ok(!!t1tile.querySelector('.ov-stat-tag') && /avg/i.test(t1tile.querySelector('.ov-stat-tag').textContent),
+      'C1: the default big number states its stat too (docs/150b)');
   }
 
-  // C2: stat override — big number becomes avg, tagged, sub shows med.
+  // C2: stat override — big number becomes the median, tagged 'med',
+  // sub shows the avg (docs/150b: avg is the default).
   {
     const win = makeWorld();
     mount(win);
@@ -114,17 +119,17 @@ function stored(win) { return win.localStorage.getItem('quam_overview_tiles_v1')
     ok(!!pop, 'C2: kebab opens the popover');
     ok(!pop.querySelector('#ov-pop-key'), 'C2: a default tile offers NO metric select');
     const sel = pop.querySelector('#ov-pop-stat');
-    ok(!!sel && sel.value === 'median', 'C2: stat select present, median selected');
-    sel.value = 'avg';
+    ok(!!sel && sel.value === 'avg', 'C2: stat select present, avg selected by default');
+    sel.value = 'median';
     sel.dispatchEvent(new win.Event('change', { bubbles: true }));
     const t1 = tileById(win, 't1');
     const v = t1.querySelector('.topo-card-value').textContent;
-    ok(/30\.0/.test(v), 'C2: big number is now the avg (got "' + v + '")');
-    ok(!!t1.querySelector('.ov-stat-tag') && /avg/i.test(t1.querySelector('.ov-stat-tag').textContent),
-      'C2: the non-default stat is tagged');
-    ok(/med 20\.0/.test(t1.querySelector('.topo-card-sub').textContent),
-      'C2: the sub line states the median instead');
-    ok(/"t1":"avg"/.test(stored(win) || ''), 'C2: override persisted');
+    ok(/20\.0/.test(v), 'C2: big number is now the median (got "' + v + '")');
+    ok(!!t1.querySelector('.ov-stat-tag') && /med/i.test(t1.querySelector('.ov-stat-tag').textContent),
+      'C2: the median stat is tagged MED (docs/150b)');
+    ok(/avg 30\.0/.test(t1.querySelector('.topo-card-sub').textContent),
+      'C2: the sub line states the avg instead');
+    ok(/"t1":"median"/.test(stored(win) || ''), 'C2: override persisted');
     ok(win.document.getElementById('ov-custom-note').hidden === false, 'C2: note shown');
   }
 
@@ -166,8 +171,8 @@ function stored(win) { return win.localStorage.getItem('quam_overview_tiles_v1')
     ok(!!pop2.querySelector('#ov-pop-key'), 'C4: a custom tile DOES offer the metric select');
     pop2.querySelector('#ov-pop-key').value = 'T1';
     pop2.querySelector('#ov-pop-key').dispatchEvent(new win.Event('change', { bubbles: true }));
-    ok(/20\.0/.test(tileById(win, 'custom:0').querySelector('.topo-card-value').textContent),
-      'C4: re-keyed custom tile shows the new metric median');
+    ok(/30\.0/.test(tileById(win, 'custom:0').querySelector('.topo-card-value').textContent),
+      'C4: re-keyed custom tile shows the new metric avg (docs/150b default)');
   }
 
   // C5: reset restores defaults + clears storage; prefs survive a re-mount.
@@ -187,8 +192,8 @@ function stored(win) { return win.localStorage.getItem('quam_overview_tiles_v1')
       'C5: stat override survives a re-mount (max = 60.0)');
     win._ovResetTiles();
     ok(!!tileById(win, 'chip_size'), 'C5: reset restores the removed tile');
-    ok(/20\.0/.test(tileById(win, 't1').querySelector('.topo-card-value').textContent),
-      'C5: reset restores the median big number');
+    ok(/30\.0/.test(tileById(win, 't1').querySelector('.topo-card-value').textContent),
+      'C5: reset restores the avg big number (docs/150b default)');
     ok(stored(win) === null, 'C5: reset clears the stored key');
     ok(win.document.getElementById('ov-custom-note').hidden === true, 'C5: note hidden again');
   }

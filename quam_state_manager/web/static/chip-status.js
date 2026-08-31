@@ -610,11 +610,11 @@ window.ChipStatus.mount = function (opts) {
         // metricKey (optional) → the title gets the META good-direction arrow +
         // blurb tooltip; composite tiles (Chip Size, 2Q RB, CZ Coverage) pass none.
         // docs/150: `stat` picks which aggregate the BIG number shows —
-        // 'median' (the historical default), 'avg', 'min' or 'max'. The sub
-        // line always states the complementary aggregates, so nothing hides;
-        // a non-default stat is tagged next to the number.
+        // 'avg' (the default since docs/150b, user-directed), 'median',
+        // 'min' or 'max'. The sub line always states the complementary
+        // aggregates, so nothing hides; every big number wears its stat tag.
         function metricTile(title, agg, fmtFn, range, metricKey, stat) {
-            stat = stat || 'median';
+            stat = stat || 'avg';
             if (!agg || agg.count === 0) {
                 return {title: title, metricKey: metricKey, value: '—', sub: 'no data', muted: true};
             }
@@ -639,7 +639,7 @@ window.ChipStatus.mount = function (opts) {
         // docs/150 helpers: tile identity + the stored display preferences.
         function _tid(id, tile) { if (tile) tile.id = id; return tile; }
         var ovPrefs = _ovLoad();
-        function _ovStat(id) { return (ovPrefs.stats && ovPrefs.stats[id]) || 'median'; }
+        function _ovStat(id) { return (ovPrefs.stats && ovPrefs.stats[id]) || 'avg'; }
 
         // [hi, lo] calibration range for cardColor's magnitude→palette read —
         // hi was the old "good" cutoff, lo the old "bad" cutoff; the middle
@@ -673,7 +673,7 @@ window.ChipStatus.mount = function (opts) {
                 ? computeAggregates(topo.edges.map(function(e) { return e.cz_fidelity; }))
                 : nodeAgg(key);
             var range = _ovRangeFor(key);
-            var t = metricTile(metricLabel(key), agg, _ovFmtFor(key), range || [1, 0], key, stat || 'median');
+            var t = metricTile(metricLabel(key), agg, _ovFmtFor(key), range || [1, 0], key, stat || 'avg');
             if (!range && !t.muted) t.color = '#76b7b2';
             return t;
         }
@@ -713,7 +713,9 @@ window.ChipStatus.mount = function (opts) {
         var divNote = divAgg.count > 0 ? divAgg.median.toFixed(2) : null;
         function withErrLine(tile, agg, label, conv) {
             if (agg.count > 0) {
-                tile.sub += '<br>' + label + ' ' + fmtPct(1 - agg.median, 2) + '%'
+                // docs/150b: the error rate is 1 minus the NUMBER SHOWN --
+                // it follows the tile's displayed stat (default avg).
+                tile.sub += '<br>' + label + ' ' + fmtPct(1 - agg[tile.stat || 'avg'], 2) + '%'
                           + (conv && divNote ? ' (' + conv + divNote + ')' : '');
             }
             return tile;
@@ -846,8 +848,10 @@ window.ChipStatus.mount = function (opts) {
         tiles.forEach(function(c) {
             var border = c.muted ? 'var(--pico-muted-border-color)' : (c.color || 'var(--pico-muted-border-color)');
             var titleHtml = c.metricKey ? labelHtml(c.metricKey, false, c.title, c.noArrow) : _esc(c.title);
-            var statTag = (c.stat && c.stat !== 'median')
-                ? ' <span class="ov-stat-tag">' + _esc(c.stat) + '</span>' : '';
+            // docs/150b: EVERY aggregate big number states which one it is
+            // ('med' included) -- an untagged number was ambiguous.
+            var statTag = c.stat
+                ? ' <span class="ov-stat-tag">' + _esc(c.stat === 'median' ? 'med' : c.stat) + '</span>' : '';
             html += '<div class="topo-card' + (c.muted ? ' topo-card-empty' : '') + '"'
                   + (c.id ? ' data-tile-id="' + _esc(c.id) + '"' : '')
                   + (c.composite ? ' data-tile-composite="1"' : '')
@@ -931,14 +935,14 @@ window.ChipStatus.mount = function (opts) {
         var tileEl = anchor.closest ? anchor.closest('.topo-card') : null;
         var composite = !!(tileEl && tileEl.getAttribute('data-tile-composite'));
         var curKey = isCustom ? ((prefs.added[customIdx] || {}).key || '') : '';
-        var curStat = isAdd ? 'median'
-                    : isCustom ? ((prefs.added[customIdx] || {}).stat || 'median')
-                    : ((prefs.stats || {})[tileId] || 'median');
+        var curStat = isAdd ? 'avg'
+                    : isCustom ? ((prefs.added[customIdx] || {}).stat || 'avg')
+                    : ((prefs.stats || {})[tileId] || 'avg');
         var keyOpts = _ovAvailableKeys().map(function(k) {
             return '<option value="' + _esc(k) + '"' + (k === curKey ? ' selected' : '') + '>'
                  + _esc(metricLabel(k)) + '</option>';
         }).join('');
-        var statOpts = ['median', 'avg', 'min', 'max'].map(function(s) {
+        var statOpts = ['avg', 'median', 'min', 'max'].map(function(s) {
             return '<option value="' + s + '"' + (s === curStat ? ' selected' : '') + '>' + s + '</option>';
         }).join('');
         var body = '';
@@ -970,7 +974,7 @@ window.ChipStatus.mount = function (opts) {
                 var v = statSel.value;
                 apply(function() {
                     if (isCustom) { if (prefs.added[customIdx]) prefs.added[customIdx].stat = v; }
-                    else if (v === 'median') delete prefs.stats[tileId];
+                    else if (v === 'avg') delete prefs.stats[tileId];
                     else prefs.stats[tileId] = v;
                 });
             });
