@@ -15597,6 +15597,15 @@ def browse_directory():
         except RuntimeError:            # "~" with no resolvable home
             p = Path(raw)
 
+    # docs/149: a FILE path (a picked config.toml, a recalled file entry)
+    # lists its PARENT folder -- the file exists, so the ancestor-walk's
+    # "was not found" note would lie about it.
+    try:
+        if p.is_file():
+            p = p.parent
+    except OSError:
+        pass
+
     def _isdir(d: Path) -> bool:
         # Path.is_dir() PROPAGATES PermissionError (only ENOENT-class errnos
         # are swallowed) — a path under a non-traversable dir must classify
@@ -15674,10 +15683,13 @@ def browse_directory():
         missing = None
 
     err = None
+    # docs/149: config mode SHOWS dot-directories -- ~/.qualibrate is the
+    # whole point of that picker and the default filter hid it.
+    show_dot = request.args.get("kind") == "config"
     try:
         children = sorted(
             (str(c) for c in p.iterdir()
-             if c.is_dir() and not c.name.startswith(".")),
+             if c.is_dir() and (show_dot or not c.name.startswith("."))),
             key=str.casefold,   # display order only — paths untouched
         )
     except PermissionError:
@@ -15730,6 +15742,33 @@ def browse_directory():
             )
         except OSError:
             payload["has_dataset"] = False
+
+    # kind=config (the qualibrate config-location picker): list *.toml FILES
+    # as selectable rows (the env var's dir-or-file semantics), mark children
+    # that hold a config.toml, and badge the current folder when it does.
+    if request.args.get("kind") == "config":
+        toml_files: list[str] = []
+        try:
+            toml_files = sorted(
+                (str(c) for c in p.iterdir()
+                 if c.is_file() and c.suffix.lower() == ".toml"),
+                key=str.casefold,
+            )
+        except OSError:
+            pass
+        payload["files"] = toml_files[:cap]
+        cfg_dirs = []
+        for c in payload["dirs"]:
+            try:
+                if (Path(c) / "config.toml").is_file():
+                    cfg_dirs.append(c)
+            except OSError:
+                continue
+        payload["config_dirs"] = cfg_dirs
+        try:
+            payload["has_config"] = (p / "config.toml").is_file()
+        except OSError:
+            payload["has_config"] = False
 
     if err:
         payload["error"] = err

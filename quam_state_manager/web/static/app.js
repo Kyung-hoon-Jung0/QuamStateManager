@@ -5743,9 +5743,11 @@ window.initPathAutocomplete = function(inputEl) {
         // What the caller is hunting decides what the dialog highlights:
         // dataset pickers mark run folders (node.json/data.json), everything
         // else keeps the quam_state highlighting.
-        _browseKind = kind === "dataset" ? "dataset" : "";
+        _browseKind = kind === "dataset" ? "dataset"
+                    : kind === "config" ? "config" : "";
         var dialog = document.getElementById("folder-browser");
         if (!dialog) return;
+        _kbBind();   // lazy -- at app.js eval time the dialog did not exist yet
         var input = document.getElementById(targetInputId);
         // Start-path precedence: the input's current value → the last folder
         // successfully browsed FOR THIS INPUT (localStorage) → server default
@@ -5937,12 +5939,15 @@ window.initPathAutocomplete = function(inputEl) {
             var up = document.createElement("div");
             up.className = "browser-folder browser-up";
             up.textContent = ".. (up)";
+            up.setAttribute("data-path", data.parent || "");
+            up.setAttribute("data-up", "1");
             up.onclick = function() { navigateBrowser(data.parent || ""); };
             container.appendChild(up);
         }
 
         var dirs = data.dirs || [];
-        if (dirs.length === 0 && !data.parent) {
+        var files = data.files || [];
+        if (dirs.length === 0 && files.length === 0 && !data.parent) {
             container.innerHTML = '<div class="browser-empty">No subdirectories</div>';
             return;
         }
@@ -5952,6 +5957,8 @@ window.initPathAutocomplete = function(inputEl) {
         // classic quam_state highlighting. Set-lookup for O(1) per row.
         var dsMarks = {};
         (data.dataset_dirs || []).forEach(function(d) { dsMarks[d] = true; });
+        var cfgMarks = {};
+        (data.config_dirs || []).forEach(function(d) { cfgMarks[d] = true; });
 
         for (var i = 0; i < dirs.length; i++) {
             var row = document.createElement("div");
@@ -5971,6 +5978,11 @@ window.initPathAutocomplete = function(inputEl) {
                     row.classList.add("is-dataset");
                     row.title = "Contains dataset files (node.json / data.json)";
                 }
+            } else if (_browseKind === "config") {
+                if (cfgMarks[dirPath]) {
+                    row.classList.add("is-config");
+                    row.title = "Contains config.toml";
+                }
             } else if (name === "quam_state") {
                 // Highlight a CHILD only when it is itself a quam_state folder.
                 // data.has_quam_state describes the CURRENT (parent) folder, so
@@ -5983,6 +5995,27 @@ window.initPathAutocomplete = function(inputEl) {
                 navigateBrowser(this.getAttribute("data-path"));
             };
             container.appendChild(row);
+        }
+
+        for (var f = 0; f < files.length; f++) {
+            var frow = document.createElement("div");
+            frow.className = "browser-folder browser-file";
+            frow.setAttribute("data-path", files[f]);
+            frow.setAttribute("data-file", "1");
+            var fPath = files[f];
+            var isWinFile = /^[A-Za-z]:/.test(fPath) || /^\\\\/.test(fPath);
+            var fName = (isWinFile ? fPath.split(/[\\/]/) : fPath.split("/"))
+                .filter(function(s) { return s; }).pop() || fPath;
+            frow.textContent = fName;
+            if (fName.toLowerCase() === "config.toml") frow.classList.add("is-config");
+            frow.onclick = function() {
+                var sel = document.getElementById("browser-selected-path");
+                if (sel) sel.value = this.getAttribute("data-path");
+                var prev = container.querySelector(".browser-file-selected");
+                if (prev) prev.classList.remove("browser-file-selected");
+                this.classList.add("browser-file-selected");
+            };
+            container.appendChild(frow);
         }
 
         if (data.truncated) {
@@ -6003,6 +6036,12 @@ window.initPathAutocomplete = function(inputEl) {
                 container.prepend(dsBadge);
             }
         } else {
+            if (data.has_config) {
+                var cbadge = document.createElement("div");
+                cbadge.className = "browser-quam-badge";
+                cbadge.textContent = "This folder contains config.toml";
+                container.prepend(cbadge);
+            }
             if (data.has_quam_state) {
                 var badge = document.createElement("div");
                 badge.className = "browser-quam-badge";
@@ -6089,6 +6128,118 @@ window.initPathAutocomplete = function(inputEl) {
             })
             .finally(function() { _mkdirInFlight = false; });
     };
+
+    // --- keyboard navigation (docs/149): the dialog works without a mouse ---
+    // Arrows move a highlight over the rows (.. included); Enter descends
+    // into a folder / picks a file and confirms; Right descends, Left or
+    // Backspace goes up; Home/End jump; typing jumps to the first matching
+    // row (dot-prefix-insensitive, so "qual" finds ".qualibrate"). Escape
+    // stays native (<dialog> closes itself).
+    var _kbType = "", _kbTypeAt = 0;
+    function _kbRows() {
+        var list = document.getElementById("browser-list");
+        if (!list) return [];
+        return Array.prototype.slice.call(list.querySelectorAll(".browser-folder"));
+    }
+    function _kbActive() {
+        var list = document.getElementById("browser-list");
+        return list ? list.querySelector(".browser-active") : null;
+    }
+    function _kbSetActive(row) {
+        var cur = _kbActive();
+        if (cur) cur.classList.remove("browser-active");
+        if (row) {
+            row.classList.add("browser-active");
+            if (row.scrollIntoView) {
+                try { row.scrollIntoView({ block: "nearest" }); } catch (e) {}
+            }
+        }
+    }
+    function _kbMove(delta) {
+        var rows = _kbRows();
+        if (!rows.length) return;
+        var i = rows.indexOf(_kbActive());
+        var next = i < 0 ? (delta > 0 ? 0 : rows.length - 1)
+                         : Math.max(0, Math.min(rows.length - 1, i + delta));
+        _kbSetActive(rows[next]);
+    }
+    // Bound lazily from openFolderBrowser: app.js evaluates in <head>,
+    // BEFORE base.html's <dialog> exists in the DOM -- a load-time IIFE
+    // registration silently bound nothing (caught in real Chrome; the jsdom
+    // harness builds the dialog before evaluating app.js, which hid it --
+    // its late-dialog world now reproduces the real order).
+    var _kbBound = false;
+    function _kbBind() {
+        var dialog = document.getElementById("folder-browser");
+        if (_kbBound || !dialog) return;
+        _kbBound = true;
+        dialog.addEventListener("keydown", function(ev) {
+            if (!dialog.open) return;
+            var tag = (ev.target && ev.target.tagName) || "";
+            // The new-folder input keeps its own Enter/Escape handling; the
+            // readonly selected-path input is list-transparent (arrows work
+            // from it -- it is where showModal lands the initial focus).
+            if ((tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT")
+                    && ev.target.id !== "browser-selected-path") {
+                return;
+            }
+            var rows, active;
+            switch (ev.key) {
+                case "ArrowDown": ev.preventDefault(); _kbMove(1); break;
+                case "ArrowUp":   ev.preventDefault(); _kbMove(-1); break;
+                case "Home":
+                    ev.preventDefault();
+                    rows = _kbRows(); if (rows.length) _kbSetActive(rows[0]);
+                    break;
+                case "End":
+                    ev.preventDefault();
+                    rows = _kbRows(); if (rows.length) _kbSetActive(rows[rows.length - 1]);
+                    break;
+                case "ArrowRight":
+                    active = _kbActive();
+                    if (active && !active.hasAttribute("data-file")) {
+                        ev.preventDefault();
+                        navigateBrowser(active.getAttribute("data-path") || "");
+                    }
+                    break;
+                case "ArrowLeft":
+                case "Backspace":
+                    ev.preventDefault();
+                    rows = _kbRows();
+                    if (rows.length && rows[0].hasAttribute("data-up")) {
+                        navigateBrowser(rows[0].getAttribute("data-path") || "");
+                    }
+                    break;
+                case "Enter":
+                    ev.preventDefault();
+                    active = _kbActive();
+                    if (!active) { selectBrowserFolder(); break; }
+                    if (active.hasAttribute("data-file")) {
+                        active.click();          // fills the selected path
+                        selectBrowserFolder();   // and confirms the pick
+                    } else {
+                        navigateBrowser(active.getAttribute("data-path") || "");
+                    }
+                    break;
+                default:
+                    if (ev.key.length === 1 && !ev.ctrlKey && !ev.altKey && !ev.metaKey) {
+                        var now = Date.now();
+                        _kbType = (now - _kbTypeAt < 800 ? _kbType : "") + ev.key.toLowerCase();
+                        _kbTypeAt = now;
+                        rows = _kbRows();
+                        for (var i = 0; i < rows.length; i++) {
+                            if (rows[i].hasAttribute("data-up")) continue;
+                            var nm = (rows[i].textContent || "").toLowerCase();
+                            if (nm.indexOf(_kbType) === 0
+                                    || nm.replace(/^\./, "").indexOf(_kbType) === 0) {
+                                _kbSetActive(rows[i]);
+                                break;
+                            }
+                        }
+                    }
+            }
+        });
+    }
 })();
 
 /* ------------------------------------------------------------------ */

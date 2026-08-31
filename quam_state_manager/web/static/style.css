@@ -1642,6 +1642,15 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
 /* Dataset-mode highlight: run folders carrying node.json / data.json (the
    Dataset Load picker hunts these, not quam_state folders). */
 .browser-folder.is-dataset { font-weight: 600; color: var(--color-success-text, #2e7d32); }
+/* docs/149 config mode: folders holding config.toml + selectable *.toml
+   file rows (a file is a pick, not a place -- click fills the path). */
+.browser-folder.is-config { font-weight: 600; color: var(--pico-primary); }
+.browser-folder.browser-file { color: var(--pico-muted-color); }
+.browser-folder.browser-file::before { content: "\1F4C4\00A0"; }
+.browser-folder.browser-file.is-config { color: var(--pico-primary); }
+.browser-folder.browser-file-selected { background: var(--pico-primary-focus); font-weight: 600; }
+/* docs/149 keyboard navigation: the arrow-key highlight. */
+.browser-folder.browser-active { outline: 2px solid var(--pico-primary); outline-offset: -2px; }
 /* Sidebar multi-select: tint checked run rows so the selection reads at a
    glance; the Clear chip appears only while something is selected. */
 .tree-entry-label:has(input[name="paths"]:checked) {
@@ -2360,7 +2369,10 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
     font-family: var(--sm-mono, monospace); font-size: 0.85rem;
     padding: 0.3rem 0.5rem; height: auto;
 }
-.locate-form .btn-sm { white-space: nowrap; margin: 0; }
+/* docs/149: Pico gives [type=submit] width:100% -- Check ballooned into a
+   full-width bar next to the auto-width Scan button. All three buttons
+   (Browse / Check / Scan) share one auto width now. */
+.locate-form .btn-sm { white-space: nowrap; margin: 0; width: auto; }
 .locate-result { margin: 0.5rem 0 0; padding: 0.4rem 0.6rem; border-radius: 6px; font-size: 0.9rem; }
 .locate-result.locate-ok { border: 1px solid var(--sm-good-border, #2e7d3255); background: var(--sm-good-bg, #2e7d3211); }
 .locate-result.locate-warn { border: 1px solid var(--pico-muted-border-color); color: var(--pico-muted-color); }

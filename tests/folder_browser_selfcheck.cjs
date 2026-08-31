@@ -46,8 +46,12 @@ let fails = 0;
 function ok(c, m) { if (!c) { console.error('FAIL: ' + m); fails++; } }
 function tick(ms) { return new Promise(function (r) { setTimeout(r, ms || 5); }); }
 
-function makeWorld() {
-  const dom = new JSDOM('<!DOCTYPE html><html><body>' + DIALOG + '</body></html>',
+function makeWorld(opts) {
+  // opts.lateDialog reproduces the REAL load order: app.js evaluates in
+  // <head> before the dialog markup exists (docs/149 -- the default world
+  // hid a load-time registration that silently bound nothing).
+  const late = !!(opts && opts.lateDialog);
+  const dom = new JSDOM('<!DOCTYPE html><html><body>' + (late ? '' : DIALOG) + '</body></html>',
     { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/' });
   const win = dom.window;
   win.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
@@ -65,6 +69,7 @@ function makeWorld() {
   };
   // app.js is the whole bundle — evaluate it; only the browser IIFE matters.
   new win.Function(APP_JS).call(win);
+  if (late) win.document.body.innerHTML = DIALOG;
   return win;
 }
 
@@ -379,6 +384,139 @@ function selectedPath(win) { return win.document.getElementById('browser-selecte
     win.navigateBrowser('/home/u');
     await tick();
     ok(selBtn.disabled === false, 'G11: Select re-enabled after a good listing');
+  }
+
+  // G12 (docs/149): config mode -- *.toml files render as selectable rows
+  // (click fills the selected path WITHOUT navigating), config-holding dirs
+  // highlight, the current folder badges its own config.toml.
+  {
+    const win = makeWorld();
+    win._fetchImpl = function (url) {
+      const p = decodeURIComponent((url.split('path=')[1] || '').split('&')[0]);
+      return jsonResponse({
+        path: p || '/home/u', parent: '/',
+        dirs: ['/home/u/.qualibrate', '/home/u/plain'],
+        config_dirs: ['/home/u/.qualibrate'],
+        files: ['/home/u/a.toml', '/home/u/config.toml'],
+        has_config: true, has_quam_state: false,
+      });
+    };
+    win.openFolderBrowser('target-a', 'config');
+    await tick();
+    ok(win._fetchLog[0] && win._fetchLog[0].indexOf('kind=config') >= 0,
+      'G12: the request carries kind=config (got "' + win._fetchLog[0] + '")');
+    const cfgDir = win.document.querySelector('#browser-list .browser-folder.is-config:not(.browser-file)');
+    ok(!!cfgDir && cfgDir.textContent === '.qualibrate',
+      'G12: the config-holding dir highlights');
+    const fileRows = win.document.querySelectorAll('#browser-list .browser-file');
+    ok(fileRows.length === 2 && fileRows[0].textContent === 'a.toml',
+      'G12: toml files render as rows (got ' + fileRows.length + ')');
+    ok(listText(win).indexOf('contains config.toml') >= 0, 'G12: badge rendered');
+    const before = win._fetchLog.length;
+    fileRows[1].click();
+    await tick();
+    ok(selectedPath(win) === '/home/u/config.toml',
+      'G12: clicking a file fills the selected path (got "' + selectedPath(win) + '")');
+    ok(win._fetchLog.length === before, 'G12: a file click never navigates');
+    ok(fileRows[1].classList.contains('browser-file-selected'),
+      'G12: the picked file row highlights');
+    // Select confirms the FILE into the target input.
+    win.selectBrowserFolder();
+    ok(win.document.getElementById('target-a').value === '/home/u/config.toml',
+      'G12: Select hands the file path to the target input');
+  }
+
+  // G13 (docs/149): keyboard navigation -- arrows move the highlight, Enter
+  // descends into a folder / confirms a file, Backspace goes up, type-ahead
+  // finds dot-dirs without the dot.
+  {
+    const win = makeWorld();
+    win._fetchImpl = function (url) {
+      const p = decodeURIComponent((url.split('path=')[1] || '').split('&')[0]);
+      if (p === '/home/u/.qualibrate') {
+        return jsonResponse({ path: p, parent: '/home/u', dirs: [],
+                              files: [p + '/config.toml'], config_dirs: [],
+                              has_config: true, has_quam_state: false });
+      }
+      return jsonResponse({
+        path: p || '/home/u', parent: '/',
+        dirs: ['/home/u/.qualibrate', '/home/u/plain'],
+        config_dirs: ['/home/u/.qualibrate'], files: [],
+        has_config: false, has_quam_state: false,
+      });
+    };
+    win.openFolderBrowser('target-b', 'config');
+    await tick();
+    const list = win.document.getElementById('browser-list');
+    function key(k) {
+      list.dispatchEvent(new win.KeyboardEvent('keydown', { key: k, bubbles: true }));
+    }
+    key('ArrowDown');
+    let act = win.document.querySelector('#browser-list .browser-active');
+    ok(!!act && act.classList.contains('browser-up'),
+      'G13: first ArrowDown lands on the up row');
+    key('ArrowDown'); key('ArrowDown');
+    act = win.document.querySelector('#browser-list .browser-active');
+    ok(!!act && act.textContent === 'plain',
+      'G13: repeated ArrowDown walks the rows (got "' + (act && act.textContent) + '")');
+    key('ArrowUp');
+    act = win.document.querySelector('#browser-list .browser-active');
+    ok(!!act && act.textContent === '.qualibrate', 'G13: ArrowUp walks back');
+    key('Enter');
+    await tick();
+    ok(selectedPath(win) === '/home/u/.qualibrate',
+      'G13: Enter descends into the highlighted folder (got "' + selectedPath(win) + '")');
+    // Inside .qualibrate: highlight the file, Enter must pick + confirm.
+    key('ArrowDown'); key('ArrowDown');
+    act = win.document.querySelector('#browser-list .browser-active');
+    ok(!!act && act.hasAttribute('data-file'), 'G13: file row highlighted');
+    key('Enter');
+    await tick();
+    ok(win.document.getElementById('target-b').value === '/home/u/.qualibrate/config.toml',
+      'G13: Enter on a file confirms it into the target (got "'
+        + win.document.getElementById('target-b').value + '")');
+    ok(win.document.getElementById('folder-browser').open === false,
+      'G13: the dialog closed on confirm');
+    // Reopen: Backspace walks up; type-ahead finds ".qualibrate" from "qual".
+    win.openFolderBrowser('target-b', 'config');
+    await tick();
+    win.navigateBrowser('/home/u/.qualibrate');
+    await tick();
+    key('Backspace');
+    await tick();
+    ok(selectedPath(win) === '/home/u',
+      'G13: Backspace goes up one level (got "' + selectedPath(win) + '")');
+    key('q'); key('u'); key('a'); key('l');
+    act = win.document.querySelector('#browser-list .browser-active');
+    ok(!!act && act.textContent === '.qualibrate',
+      'G13: type-ahead "qual" finds .qualibrate without the dot');
+  }
+
+  // G14 (docs/149): the load-order trap. app.js is evaluated BEFORE the
+  // dialog markup exists (exactly how base.html loads it); the keyboard
+  // binding must still work on the first open.
+  {
+    const win = makeWorld({ lateDialog: true });
+    win._fetchImpl = function (url) {
+      const p = decodeURIComponent((url.split('path=')[1] || '').split('&')[0]);
+      return jsonResponse({
+        path: p || '/home/u', parent: '/',
+        dirs: ['/home/u/.qualibrate', '/home/u/plain'],
+        config_dirs: [], files: [], has_config: false, has_quam_state: false,
+      });
+    };
+    win.openFolderBrowser('target-a', 'config');
+    await tick();
+    const list = win.document.getElementById('browser-list');
+    list.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    const act = win.document.querySelector('#browser-list .browser-active');
+    ok(!!act, 'G14: keyboard works when the dialog arrives AFTER app.js (late binding)');
+    const before = win._fetchLog.length;
+    list.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    list.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await tick();
+    ok(win._fetchLog.length === before + 1,
+      'G14: Enter navigates in the late-dialog world');
   }
 
   if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }

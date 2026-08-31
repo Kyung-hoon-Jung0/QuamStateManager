@@ -151,13 +151,16 @@ class TestAncestorWalkAndCompletion:
         assert body["missing"] == str(dead)
         assert "error" not in body
 
-    def test_file_path_lands_at_parent_with_marker(self, client, tmp_path):
+    def test_file_path_lands_at_parent(self, client, tmp_path):
+        # docs/149 amends the marker half of this pin: an EXISTING file still
+        # lands at its parent, but no longer carries the "was not found"
+        # missing note -- the file exists, so that note lied about it.
         f = tmp_path / "state.json"
         f.write_text("{}")
         r = client.get("/browse", query_string={"path": str(f)})
         body = r.get_json()
         assert body["path"] == str(tmp_path)
-        assert body["missing"] == str(f)
+        assert "missing" not in body
 
     def test_existing_dir_has_no_missing_marker(self, client, tmp_path):
         r = client.get("/browse", query_string={"path": str(tmp_path)})
@@ -412,3 +415,45 @@ class TestMkdirHardening:
         r = client.post("/mkdir", data={"path": str(tmp_path), "name": good})
         assert r.get_json()["ok"] is True, r.data
         assert (tmp_path / good).is_dir()
+
+
+class TestConfigKind:
+    """docs/149 — kind=config: the qualibrate config picker's needs."""
+
+    def _tree(self, tmp_path):
+        work = tmp_path / "cfg_work"
+        (work / ".qualibrate").mkdir(parents=True)
+        (work / ".qualibrate" / "config.toml").write_text("[qualibrate]\n")
+        (work / "plain").mkdir()
+        (work / "a.toml").write_text("x = 1\n")
+        (work / "b.txt").write_text("not toml")
+        return work
+
+    def test_config_kind_lists_toml_files_and_dot_dirs(self, client, tmp_path):
+        work = self._tree(tmp_path)
+        body = client.get("/browse", query_string={"path": str(work), "kind": "config"}).get_json()
+        assert str(work / ".qualibrate") in body["dirs"]          # dot-dir SHOWN
+        assert str(work / "plain") in body["dirs"]
+        assert body["files"] == [str(work / "a.toml")]            # toml only
+        assert body["config_dirs"] == [str(work / ".qualibrate")]
+        assert body["has_config"] is False
+
+    def test_default_kind_unchanged(self, client, tmp_path):
+        work = self._tree(tmp_path)
+        body = client.get("/browse", query_string={"path": str(work)}).get_json()
+        assert str(work / ".qualibrate") not in body["dirs"]      # dot-dir hidden
+        assert "files" not in body and "config_dirs" not in body
+
+    def test_config_dir_badges_itself(self, client, tmp_path):
+        work = self._tree(tmp_path)
+        body = client.get("/browse", query_string={
+            "path": str(work / ".qualibrate"), "kind": "config"}).get_json()
+        assert body["has_config"] is True
+        assert body["files"] == [str(work / ".qualibrate" / "config.toml")]
+
+    def test_a_file_path_lists_its_parent_without_a_missing_note(self, client, tmp_path):
+        work = self._tree(tmp_path)
+        body = client.get("/browse", query_string={
+            "path": str(work / "a.toml"), "kind": "config"}).get_json()
+        assert body["path"] == str(work)
+        assert "missing" not in body                              # the file EXISTS

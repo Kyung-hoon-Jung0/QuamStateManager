@@ -3,9 +3,15 @@
    itself persists in instance/qualibrate_location.json (SM-side). #}
 <form hx-post="/qualibrate/locate" hx-target="#qualibrate-locate-result"
       hx-swap="innerHTML" class="locate-form">
-    <input type="text" name="path" class="locate-input"
+    <input type="text" name="path" id="qualibrate-locate-path" class="locate-input"
            placeholder="\\wsl.localhost\Ubuntu\home\youruser\.qualibrate &nbsp;or&nbsp; /home/youruser/.qualibrate"
-           aria-label="QUAlibrate config folder path">
+           aria-label="QUAlibrate config folder or config.toml path">
+    {# docs/149: same shared explorer as the state pickers, in config mode --
+       dot-dirs shown, *.toml files selectable, keyboard navigation. Select
+       auto-submits this form, so a pick runs Check immediately. #}
+    <button type="button" class="btn-sm outline locate-browse-btn"
+            onclick="if (window.openFolderBrowser) openFolderBrowser('qualibrate-locate-path', 'config')"
+            title="Browse for a .qualibrate folder or a config.toml file">Browse&hellip;</button>
     <button type="submit" class="btn-sm">Check</button>
     <button type="button" class="btn-sm locate-scan-btn"
             hx-get="/qualibrate/locate-candidates"
