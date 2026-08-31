@@ -2748,3 +2748,49 @@ including the two the first version of the pins MISSED: a warning whose guard is
 disabled, and one that stops naming the coupler-less route. A message in the
 source proves nothing if nothing reaches it.
 
+---
+
+## 4am. The capped tree search spends its budget shallowest-first (2026-08-31, customer report)
+
+> "json tree view에서 검색창에 예컨데, analog라고 치면, analog 아래의 slot 번호
+> **하나만** 나오고 나머지는 짤린다. 반면에 그냥 스크롤 내려서 확인해보면, 다른
+> slot도 다 정상으로 보인다."
+
+Reproduced on the PJ 20Q chip: "analog" is **868 matches**, because once an
+ancestor KEY matches, every descendant matches by path — and §4b's cap took
+the first 150 in FLAT (depth-first) order. 150 depth-first matches from
+`ports.analog_outputs` never leave the first slot: the whole budget went to
+`con1.4.1`'s leaves, down into `exponential_filter.2.1`. The notice was present
+and honest ("868 matches — the first 150 are shown … show all") — the
+budget was simply spent on 150 leaves of one branch instead of the levels the
+user was looking for. (First suspicion was a missing notice; a direct probe
+showed it rendered and painted. Two real problems remained.)
+
+**① The order.** The capped selection is now **shallowest-first**, stable by
+tree order within a depth. Measured on the same chip, same query, same budget:
+
+| | flat order (before) | shallowest-first |
+|---|---|---|
+| slots shown | **1 of 5** | **5 of 5** |
+| ports shown | 20 of 39 (one slot's) | **39 of 39** |
+| depth histogram of the 150 | all inside `con1.4.1` | 2 + 1 + 5 + 39 + 103 |
+
+On a flat result set (every §4b pin's fixture — matches all at one depth) the
+ordering is byte-identical to before, which is why the §4b pins hold
+unchanged.
+
+**② The notice's position.** It is the tree's FIRST child — off screen
+exactly when the user has scrolled down to the subtree they are searching
+about, which is the one moment it fires. `position: sticky` now keeps the one
+honest line in view inside the scroll pane.
+
+Not changed, deliberately: the budget itself (150 — §4b's measured DOM cost
+stands), the show-all button, and the below-cap behaviour.
+
+Pinned by `tests/tree_cap_depth_selfcheck.cjs` (7 asserts: every mid-level node
+present before any leaf takes a slot; the budget exact; the notice intact; a
+below-cap query untouched) — **mutation-verified**: reverting the sort to flat
+order fails 3 asserts with "1 of 4 devices", the reported symptom in miniature.
+A fixture lesson repeated from §4af: 'chan' cannot serve as the narrow
+control query, because every chan's own subtree matches BY PATH (96 matches)
+and the cap fires — the control must be a LEAF key.

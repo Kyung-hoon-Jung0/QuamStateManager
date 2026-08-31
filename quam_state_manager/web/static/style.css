@@ -1164,7 +1164,11 @@ html.topbar-hidden .topbar-reveal { display: block; }
 .undo-trail-goto { flex: 0 0 auto; margin: 0; padding: 0 0.4rem; font-size: 0.72rem; line-height: 1.5; white-space: nowrap; }
 .undo-trail-more { font-size: 0.78em; padding-left: 0.2rem; }
 /* broad Json-tree search: the flat result list (see _searchTreeData) */
-.tree-search-results { margin: 0.2rem 0 0.4rem; border: 1px solid var(--pico-muted-border-color); border-radius: 6px; max-height: 60vh; overflow-y: auto; }
+.tree-search-results { margin: 0.2rem 0 0.4rem; border: 1px solid var(--pico-muted-border-color); border-radius: 6px; max-height: 60vh; overflow-y: auto;
+  /* docs/141 4am: the notice is the tree's FIRST child, i.e. off screen
+     exactly when the user has scrolled down to the subtree they are
+     searching about. Sticky keeps the one honest line in view. */
+  position: sticky; top: 0; z-index: 3; background: var(--pico-background-color, #fff); }
 .tsr-head { padding: 0.3rem 0.5rem; font-size: 0.8em; border-bottom: 1px solid var(--pico-muted-border-color); position: sticky; top: 0; background: var(--pico-background-color); }
 .tsr-row { display: flex; gap: 0.6rem; align-items: baseline; padding: 0.15rem 0.5rem; text-decoration: none; color: inherit; font-size: 0.85em; }
 .tsr-row:hover { background: var(--pico-card-background-color); }

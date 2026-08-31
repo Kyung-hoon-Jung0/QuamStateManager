@@ -7050,10 +7050,27 @@ window.clearDetailPanelSearch = function(btnEl) {
         // the user's press). Below the cap nothing changed.
         var capped = matchPaths.size > _TREE_SEARCH_MATERIALIZE_MAX && container._searchShowAllQ !== q;
         if (capped) {
-            var shown = new Set(), cnt = 0;
+            // docs/141 4am: SHALLOWEST-FIRST, not flat order. When the query
+            // matches an ancestor KEY, every descendant matches by path, and
+            // 150 depth-first matches never leave the first branch -- measured
+            // as "one slot under analog, the rest cut off" on a real chip
+            // (868 matches, all 150 inside ports.analog_outputs.con1.4.1).
+            // Taken by depth, the same budget shows the container, every
+            // controller, every slot and every port before any leaf. Within a
+            // depth the flat (tree) order is kept, so a flat result set --
+            // every 4b pin's fixture -- orders exactly as before.
+            var matched = [];
             for (var jj = 0; jj < flat.length; jj++) {
                 if (!matchPaths.has(flat[jj].path)) continue;
-                shown.add(flat[jj].path);
+                var pth = flat[jj].path;
+                var depth = 1, di = -1;
+                while ((di = pth.indexOf('.', di + 1)) >= 0) depth++;
+                matched.push({ path: pth, depth: depth, idx: jj });
+            }
+            matched.sort(function (a, b) { return a.depth - b.depth || a.idx - b.idx; });
+            var shown = new Set(), cnt = 0;
+            for (var mi = 0; mi < matched.length; mi++) {
+                shown.add(matched[mi].path);
                 if (++cnt >= _TREE_SEARCH_MATERIALIZE_MAX) break;
             }
             keepPaths = new Set();
