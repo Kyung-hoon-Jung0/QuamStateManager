@@ -4934,7 +4934,15 @@ table code { font-size: 0.88em; }
 .livediff-bar[hidden] { display: none; }
 .livediff-bar b { font-weight: 700; }
 
-.tree-val-editing { padding: 0; }
+/* docs/145: while editing, the value box lays out as inline-flex so the
+   ASYNC type chip (appended after /field/peek returns) widens it instead of
+   overflowing under the hover icons -- measured: chip x695-792 painted over
+   the copy/type/delete buttons at x706-782 and the ? at 788. The hover
+   actions + help are hidden for the editing row outright: they are dead
+   weight mid-edit and were the other half of the collision. */
+.tree-val-editing { padding: 0; display: inline-flex; align-items: center; gap: 0.3em; }
+.tree-row:has(.tree-val-editing) .tree-row-actions,
+.tree-row:has(.tree-val-editing) .key-help-btn.tree-help { display: none; }
 input.tree-edit-input {
     font-family: var(--font-mono);
     font-size: inherit;

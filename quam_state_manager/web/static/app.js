@@ -7268,11 +7268,21 @@ window.clearDetailPanelSearch = function(btnEl) {
         var currentDisplay = valEl.textContent;
         var editVal = valEl.dataset.editVal !== undefined ? valEl.dataset.editVal : currentDisplay;
 
+        // docs/145 (customer): a string edits AS ITS JSON LITERAL -- the file
+        // says "direct", so the editor shows "direct", quotes included
+        // (escapes too: JSON.stringify is the file's own spelling). Pointers
+        // are file-strings as well. On commit a valid JSON string literal is
+        // unwrapped back to the raw value; text without quotes degrades to
+        // the old behavior (sent raw, server type policy decides).
+        var isStringKind = valEl.classList.contains("tree-val-string")
+                        || valEl.classList.contains("tree-val-pointer");
+        var shownVal = isStringKind ? JSON.stringify(String(editVal)) : editVal;
+
         var input = document.createElement("input");
         input.type = "text";
         input.className = "tree-edit-input";
-        input.value = editVal;
-        input.size = Math.max(10, editVal.length + 2);
+        input.value = shownVal;
+        input.size = Math.max(10, shownVal.length + 2);
 
         valEl.textContent = "";
         valEl.appendChild(input);
@@ -7303,6 +7313,17 @@ window.clearDetailPanelSearch = function(btnEl) {
             // No-op guard: an unchanged value must NOT POST (the server never
             // no-ops set_value → it would spam the change log / pending tray).
             // This makes commit-on-blur/Tab safe to fire unconditionally.
+            if (newVal === shownVal) { cancel(); return; }
+            // docs/145: unwrap a JSON string literal typed into the editor
+            // ("direct" -> direct). Only for a full, valid literal -- anything
+            // else goes through unchanged, exactly as before.
+            if (newVal.length >= 2 && newVal.charAt(0) === '"'
+                    && newVal.charAt(newVal.length - 1) === '"') {
+                try {
+                    var parsed = JSON.parse(newVal);
+                    if (typeof parsed === "string") newVal = parsed;
+                } catch (e) { /* not a valid literal -- send as typed */ }
+            }
             if (newVal === editVal) { cancel(); return; }
             committed = true;
             valEl.textContent = currentDisplay;
