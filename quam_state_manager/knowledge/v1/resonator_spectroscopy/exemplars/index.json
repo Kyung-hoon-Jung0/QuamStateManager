@@ -1,0 +1,3253 @@
+{
+ "schema": "smknowex/v1",
+ "family": "resonator_spectroscopy",
+ "note": "Axes are NORMALISED and UNLABELLED: no absolute frequency, power or flux leaves this pack, and a picture without numbers cannot teach an absolute scale (Clause B). Orientation follows the labs' own convention: frequency rightwards, the swept quantity upwards. Overlays: orange = the tracked feature, cyan dashed and magenta dotted = the record's own frequency claims, red = the sweep value it chose. Markers are the RECORD's claims, drawn even when they contradict the map \u2014 that contradiction is the lesson in the mislabelled and off-feature cases. Whether the feature is a dip or a peak is MEASURED per run, because the readout rotation decides it and it differs between labs.",
+ "rendered": [
+  {
+   "case": "S1",
+   "exemplar": "lab-A/#305/q7",
+   "file": "exemplars/S1/lab-A_305_q7.png",
+   "chip": "lab-A",
+   "run": "#305",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 89.9,
+   "secondaries": 0
+  },
+  {
+   "case": "S1",
+   "exemplar": "lab-C/#71/qA1",
+   "file": "exemplars/S1/lab-C_71_qA1.png",
+   "chip": "lab-C",
+   "run": "#71",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 59.2,
+   "secondaries": 0
+  },
+  {
+   "case": "S1",
+   "exemplar": "lab-D/#150/qA2",
+   "file": "exemplars/S1/lab-D_150_qA2.png",
+   "chip": "lab-D",
+   "run": "#150",
+   "qubit": "qA2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 7000,
+   "depth_z": 437.2,
+   "secondaries": 2
+  },
+  {
+   "case": "S1",
+   "exemplar": "lab-E/#2/q9",
+   "file": "exemplars/S1/lab-E_2_q9.png",
+   "chip": "lab-E",
+   "run": "#2",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 143.1,
+   "secondaries": 0
+  },
+  {
+   "case": "S1",
+   "exemplar": "lab-C_gilboa/#3/qA1",
+   "file": "exemplars/S1/lab-C_gilboa_3_qA1.png",
+   "chip": "lab-C_gilboa",
+   "run": "#3",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 61.3,
+   "secondaries": 0
+  },
+  {
+   "case": "S1",
+   "exemplar": "lab-B/#151/q7",
+   "file": "exemplars/S1/lab-B_151_q7.png",
+   "chip": "lab-B",
+   "run": "#151",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 116.9,
+   "secondaries": 0
+  },
+  {
+   "case": "S2",
+   "exemplar": "lab-A/#338/q6",
+   "file": "exemplars/S2/lab-A_338_q6.png",
+   "chip": "lab-A",
+   "run": "#338",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 47.4,
+   "secondaries": 0
+  },
+  {
+   "case": "S2",
+   "exemplar": "lab-C/#298/qB4",
+   "file": "exemplars/S2/lab-C_298_qB4.png",
+   "chip": "lab-C",
+   "run": "#298",
+   "qubit": "qB4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 55.3,
+   "secondaries": 0
+  },
+  {
+   "case": "S2",
+   "exemplar": "lab-B/#93/q2",
+   "file": "exemplars/S2/lab-B_93_q2.png",
+   "chip": "lab-B",
+   "run": "#93",
+   "qubit": "q2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1000,
+   "depth_z": 41.7,
+   "secondaries": 0
+  },
+  {
+   "case": "S2",
+   "exemplar": "lab-D/#146/qA3",
+   "file": "exemplars/S2/lab-D_146_qA3.png",
+   "chip": "lab-D",
+   "run": "#146",
+   "qubit": "qA3",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 6000,
+   "depth_z": 98.9,
+   "secondaries": 0
+  },
+  {
+   "case": "S2",
+   "exemplar": "lab-E/#17/q6",
+   "file": "exemplars/S2/lab-E_17_q6.png",
+   "chip": "lab-E",
+   "run": "#17",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 21.6,
+   "secondaries": 0
+  },
+  {
+   "case": "S2b",
+   "exemplar": "lab-B/#151/q3",
+   "file": "exemplars/S2b/lab-B_151_q3.png",
+   "chip": "lab-B",
+   "run": "#151",
+   "qubit": "q3",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 400,
+   "depth_z": 62.1,
+   "secondaries": 0
+  },
+  {
+   "case": "S2b",
+   "exemplar": "lab-C/#298/qD4",
+   "file": "exemplars/S2b/lab-C_298_qD4.png",
+   "chip": "lab-C",
+   "run": "#298",
+   "qubit": "qD4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 59.3,
+   "secondaries": 0
+  },
+  {
+   "case": "S2b",
+   "exemplar": "lab-A/#21/q7",
+   "file": "exemplars/S2b/lab-A_21_q7.png",
+   "chip": "lab-A",
+   "run": "#21",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 95.0,
+   "secondaries": 0
+  },
+  {
+   "case": "S2b",
+   "exemplar": "lab-E/#17/q4",
+   "file": "exemplars/S2b/lab-E_17_q4.png",
+   "chip": "lab-E",
+   "run": "#17",
+   "qubit": "q4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 13.3,
+   "secondaries": 1
+  },
+  {
+   "case": "S2b",
+   "exemplar": "lab-D/#146/qD5",
+   "file": "exemplars/S2b/lab-D_146_qD5.png",
+   "chip": "lab-D",
+   "run": "#146",
+   "qubit": "qD5",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 6000,
+   "depth_z": 240.5,
+   "secondaries": 1
+  },
+  {
+   "case": "S2c",
+   "exemplar": "lab-A/#227/q5",
+   "file": "exemplars/S2c/lab-A_227_q5.png",
+   "chip": "lab-A",
+   "run": "#227",
+   "qubit": "q5",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 117.9,
+   "secondaries": 0
+  },
+  {
+   "case": "S2c",
+   "exemplar": "lab-A/#234/q5",
+   "file": "exemplars/S2c/lab-A_234_q5.png",
+   "chip": "lab-A",
+   "run": "#234",
+   "qubit": "q5",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 400,
+   "depth_z": 185.1,
+   "secondaries": 0
+  },
+  {
+   "case": "S2c",
+   "exemplar": "lab-D/#146/qC2",
+   "file": "exemplars/S2c/lab-D_146_qC2.png",
+   "chip": "lab-D",
+   "run": "#146",
+   "qubit": "qC2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 6000,
+   "depth_z": 326.6,
+   "secondaries": 1
+  },
+  {
+   "case": "S2d",
+   "exemplar": "lab-A/#329/q6",
+   "file": "exemplars/S2d/lab-A_329_q6.png",
+   "chip": "lab-A",
+   "run": "#329",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 500,
+   "depth_z": 93.4,
+   "secondaries": 1
+  },
+  {
+   "case": "S3",
+   "exemplar": "lab-C/#298/qB3",
+   "file": "exemplars/S3/lab-C_298_qB3.png",
+   "chip": "lab-C",
+   "run": "#298",
+   "qubit": "qB3",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 300,
+   "depth_z": 91.4,
+   "secondaries": 0
+  },
+  {
+   "case": "S3",
+   "exemplar": "lab-D/#147/qA4",
+   "file": "exemplars/S3/lab-D_147_qA4.png",
+   "chip": "lab-D",
+   "run": "#147",
+   "qubit": "qA4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 3999,
+   "depth_z": 123.6,
+   "secondaries": 2
+  },
+  {
+   "case": "S3",
+   "exemplar": "lab-D/#146/qB2",
+   "file": "exemplars/S3/lab-D_146_qB2.png",
+   "chip": "lab-D",
+   "run": "#146",
+   "qubit": "qB2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 6000,
+   "depth_z": 211.8,
+   "secondaries": 2
+  },
+  {
+   "case": "S3",
+   "exemplar": "lab-D/#139/qA2",
+   "file": "exemplars/S3/lab-D_139_qA2.png",
+   "chip": "lab-D",
+   "run": "#139",
+   "qubit": "qA2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 6000,
+   "depth_z": 144.9,
+   "secondaries": 0
+  },
+  {
+   "case": "S3b",
+   "exemplar": "lab-D/#141/qA3",
+   "file": "exemplars/S3b/lab-D_141_qA3.png",
+   "chip": "lab-D",
+   "run": "#141",
+   "qubit": "qA3",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 3999,
+   "depth_z": 256.0,
+   "secondaries": 1
+  },
+  {
+   "case": "S3b",
+   "exemplar": "lab-D/#153/qA4",
+   "file": "exemplars/S3b/lab-D_153_qA4.png",
+   "chip": "lab-D",
+   "run": "#153",
+   "qubit": "qA4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 7000,
+   "depth_z": 348.8,
+   "secondaries": 2
+  },
+  {
+   "case": "S3c",
+   "exemplar": "lab-D/#139/qA2",
+   "file": "exemplars/S3c/lab-D_139_qA2.png",
+   "chip": "lab-D",
+   "run": "#139",
+   "qubit": "qA2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 6000,
+   "depth_z": 144.9,
+   "secondaries": 0
+  },
+  {
+   "case": "S3c",
+   "exemplar": "lab-D/#144/qA5",
+   "file": "exemplars/S3c/lab-D_144_qA5.png",
+   "chip": "lab-D",
+   "run": "#144",
+   "qubit": "qA5",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 5200,
+   "depth_z": 149.2,
+   "secondaries": 1
+  },
+  {
+   "case": "S3c",
+   "exemplar": "lab-D/#146/qB4",
+   "file": "exemplars/S3c/lab-D_146_qB4.png",
+   "chip": "lab-D",
+   "run": "#146",
+   "qubit": "qB4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 6000,
+   "depth_z": 216.4,
+   "secondaries": 2
+  },
+  {
+   "case": "S3d",
+   "exemplar": "lab-B/#134/q6",
+   "file": "exemplars/S3d/lab-B_134_q6.png",
+   "chip": "lab-B",
+   "run": "#134",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 2000,
+   "depth_z": 325.4,
+   "secondaries": 0
+  },
+  {
+   "case": "S3d",
+   "exemplar": "lab-D/#154/qA4",
+   "file": "exemplars/S3d/lab-D_154_qA4.png",
+   "chip": "lab-D",
+   "run": "#154",
+   "qubit": "qA4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 7000,
+   "depth_z": 370.8,
+   "secondaries": 2
+  },
+  {
+   "case": "S3e",
+   "exemplar": "lab-D/#154/qA4",
+   "file": "exemplars/S3e/lab-D_154_qA4.png",
+   "chip": "lab-D",
+   "run": "#154",
+   "qubit": "qA4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 7000,
+   "depth_z": 370.8,
+   "secondaries": 2
+  },
+  {
+   "case": "S3e",
+   "exemplar": "lab-D/#154/qA2",
+   "file": "exemplars/S3e/lab-D_154_qA2.png",
+   "chip": "lab-D",
+   "run": "#154",
+   "qubit": "qA2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 7000,
+   "depth_z": 370.8,
+   "secondaries": 2
+  },
+  {
+   "case": "S3f",
+   "exemplar": "lab-D/#147/qB1",
+   "file": "exemplars/S3f/lab-D_147_qB1.png",
+   "chip": "lab-D",
+   "run": "#147",
+   "qubit": "qB1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 3999,
+   "depth_z": 257.8,
+   "secondaries": 2
+  },
+  {
+   "case": "S3f",
+   "exemplar": "lab-D/#147/qD3",
+   "file": "exemplars/S3f/lab-D_147_qD3.png",
+   "chip": "lab-D",
+   "run": "#147",
+   "qubit": "qD3",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 3999,
+   "depth_z": 160.2,
+   "secondaries": 1
+  },
+  {
+   "case": "S4",
+   "exemplar": "lab-E/#27/q11",
+   "file": "exemplars/S4/lab-E_27_q11.png",
+   "chip": "lab-E",
+   "run": "#27",
+   "qubit": "q11",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 1000,
+   "depth_z": 99.0,
+   "secondaries": 0
+  },
+  {
+   "case": "S4",
+   "exemplar": "lab-E/#27/q15",
+   "file": "exemplars/S4/lab-E_27_q15.png",
+   "chip": "lab-E",
+   "run": "#27",
+   "qubit": "q15",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1000,
+   "depth_z": 62.1,
+   "secondaries": 1
+  },
+  {
+   "case": "S4",
+   "exemplar": "lab-B/#133/q2",
+   "file": "exemplars/S4/lab-B_133_q2.png",
+   "chip": "lab-B",
+   "run": "#133",
+   "qubit": "q2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 2000,
+   "depth_z": 114.4,
+   "secondaries": 0
+  },
+  {
+   "case": "S4",
+   "exemplar": "lab-D/#150/qA1",
+   "file": "exemplars/S4/lab-D_150_qA1.png",
+   "chip": "lab-D",
+   "run": "#150",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 7000,
+   "depth_z": 437.2,
+   "secondaries": 2
+  },
+  {
+   "case": "S4",
+   "exemplar": "lab-B/#134/q5",
+   "file": "exemplars/S4/lab-B_134_q5.png",
+   "chip": "lab-B",
+   "run": "#134",
+   "qubit": "q5",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 2000,
+   "depth_z": 6.0,
+   "secondaries": 2
+  },
+  {
+   "case": "S4b",
+   "exemplar": "lab-D/#150/qA1",
+   "file": "exemplars/S4b/lab-D_150_qA1.png",
+   "chip": "lab-D",
+   "run": "#150",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 7000,
+   "depth_z": 437.2,
+   "secondaries": 2
+  },
+  {
+   "case": "S4b",
+   "exemplar": "lab-D/#155/qA4",
+   "file": "exemplars/S4b/lab-D_155_qA4.png",
+   "chip": "lab-D",
+   "run": "#155",
+   "qubit": "qA4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 7000,
+   "depth_z": 614.7,
+   "secondaries": 0
+  },
+  {
+   "case": "S4b",
+   "exemplar": "lab-C/#112/qA1",
+   "file": "exemplars/S4b/lab-C_112_qA1.png",
+   "chip": "lab-C",
+   "run": "#112",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 3333,
+   "depth_z": 565.7,
+   "secondaries": 2
+  },
+  {
+   "case": "S4b",
+   "exemplar": "lab-D/#146/qC1",
+   "file": "exemplars/S4b/lab-D_146_qC1.png",
+   "chip": "lab-D",
+   "run": "#146",
+   "qubit": "qC1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 6000,
+   "depth_z": 326.8,
+   "secondaries": 1
+  },
+  {
+   "case": "S4c",
+   "exemplar": "lab-D/#139/qA1",
+   "file": "exemplars/S4c/lab-D_139_qA1.png",
+   "chip": "lab-D",
+   "run": "#139",
+   "qubit": "qA1",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 6000,
+   "depth_z": 482.9,
+   "secondaries": 2
+  },
+  {
+   "case": "S4c",
+   "exemplar": "lab-D/#144/qA1",
+   "file": "exemplars/S4c/lab-D_144_qA1.png",
+   "chip": "lab-D",
+   "run": "#144",
+   "qubit": "qA1",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 5200,
+   "depth_z": 101.3,
+   "secondaries": 1
+  },
+  {
+   "case": "S4c",
+   "exemplar": "lab-D/#153/qA3",
+   "file": "exemplars/S4c/lab-D_153_qA3.png",
+   "chip": "lab-D",
+   "run": "#153",
+   "qubit": "qA3",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 7000,
+   "depth_z": 348.8,
+   "secondaries": 2
+  },
+  {
+   "case": "S4d",
+   "exemplar": "lab-D/#152/qA5",
+   "file": "exemplars/S4d/lab-D_152_qA5.png",
+   "chip": "lab-D",
+   "run": "#152",
+   "qubit": "qA5",
+   "markers_drawn": [],
+   "feature": "dip",
+   "n_points": 7000,
+   "depth_z": 202.6,
+   "secondaries": 2
+  },
+  {
+   "case": "S4d",
+   "exemplar": "lab-D/#153/qA6",
+   "file": "exemplars/S4d/lab-D_153_qA6.png",
+   "chip": "lab-D",
+   "run": "#153",
+   "qubit": "qA6",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 7000,
+   "depth_z": 348.8,
+   "secondaries": 2
+  },
+  {
+   "case": "S4d",
+   "exemplar": "lab-E/#1/q7",
+   "file": "exemplars/S4d/lab-E_1_q7.png",
+   "chip": "lab-E",
+   "run": "#1",
+   "qubit": "q7",
+   "markers_drawn": [],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 9.1,
+   "secondaries": 2
+  },
+  {
+   "case": "S4d",
+   "exemplar": "lab-D/#154/qA6",
+   "file": "exemplars/S4d/lab-D_154_qA6.png",
+   "chip": "lab-D",
+   "run": "#154",
+   "qubit": "qA6",
+   "markers_drawn": [],
+   "feature": "dip",
+   "n_points": 7000,
+   "depth_z": 370.8,
+   "secondaries": 2
+  },
+  {
+   "case": "S5",
+   "exemplar": "lab-E/#2/q5",
+   "file": "exemplars/S5/lab-E_2_q5.png",
+   "chip": "lab-E",
+   "run": "#2",
+   "qubit": "q5",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 300,
+   "depth_z": 19.2,
+   "secondaries": 0
+  },
+  {
+   "case": "S5",
+   "exemplar": "lab-E/#2/q6",
+   "file": "exemplars/S5/lab-E_2_q6.png",
+   "chip": "lab-E",
+   "run": "#2",
+   "qubit": "q6",
+   "markers_drawn": [],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 5.1,
+   "secondaries": 1
+  },
+  {
+   "case": "S5",
+   "exemplar": "lab-B/#162/q20",
+   "file": "exemplars/S5/lab-B_162_q20.png",
+   "chip": "lab-B",
+   "run": "#162",
+   "qubit": "q20",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 300,
+   "depth_z": 3.3,
+   "secondaries": 0
+  },
+  {
+   "case": "S5",
+   "exemplar": "lab-D/#145/qB1",
+   "file": "exemplars/S5/lab-D_145_qB1.png",
+   "chip": "lab-D",
+   "run": "#145",
+   "qubit": "qB1",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 5000,
+   "depth_z": 1514.5,
+   "secondaries": 0
+  },
+  {
+   "case": "S5",
+   "exemplar": "lab-E/#23/q17",
+   "file": "exemplars/S5/lab-E_23_q17.png",
+   "chip": "lab-E",
+   "run": "#23",
+   "qubit": "q17",
+   "markers_drawn": [],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 4.1,
+   "secondaries": 0
+  },
+  {
+   "case": "S5b",
+   "exemplar": "lab-C/#518/qC1",
+   "file": "exemplars/S5b/lab-C_518_qC1.png",
+   "chip": "lab-C",
+   "run": "#518",
+   "qubit": "qC1",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 300,
+   "depth_z": 3.9,
+   "secondaries": 0
+  },
+  {
+   "case": "S5b",
+   "exemplar": "lab-B/#162/q20",
+   "file": "exemplars/S5b/lab-B_162_q20.png",
+   "chip": "lab-B",
+   "run": "#162",
+   "qubit": "q20",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 300,
+   "depth_z": 3.3,
+   "secondaries": 0
+  },
+  {
+   "case": "S5b",
+   "exemplar": "lab-B/#163/q20",
+   "file": "exemplars/S5b/lab-B_163_q20.png",
+   "chip": "lab-B",
+   "run": "#163",
+   "qubit": "q20",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 300,
+   "depth_z": 4.1,
+   "secondaries": 0
+  },
+  {
+   "case": "S5c",
+   "exemplar": "lab-B/#165/q10",
+   "file": "exemplars/S5c/lab-B_165_q10.png",
+   "chip": "lab-B",
+   "run": "#165",
+   "qubit": "q10",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 300,
+   "depth_z": 26.4,
+   "secondaries": 0
+  },
+  {
+   "case": "S5c",
+   "exemplar": "lab-D/#145/qA1",
+   "file": "exemplars/S5c/lab-D_145_qA1.png",
+   "chip": "lab-D",
+   "run": "#145",
+   "qubit": "qA1",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 5000,
+   "depth_z": 155.4,
+   "secondaries": 2
+  },
+  {
+   "case": "S5c",
+   "exemplar": "lab-D/#145/qB2",
+   "file": "exemplars/S5c/lab-D_145_qB2.png",
+   "chip": "lab-D",
+   "run": "#145",
+   "qubit": "qB2",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 5000,
+   "depth_z": 1696.9,
+   "secondaries": 0
+  },
+  {
+   "case": "S5d",
+   "exemplar": "lab-D/#143/qA1",
+   "file": "exemplars/S5d/lab-D_143_qA1.png",
+   "chip": "lab-D",
+   "run": "#143",
+   "qubit": "qA1",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 5200,
+   "depth_z": 629.7,
+   "secondaries": 2
+  },
+  {
+   "case": "S5d",
+   "exemplar": "lab-D/#145/qA6",
+   "file": "exemplars/S5d/lab-D_145_qA6.png",
+   "chip": "lab-D",
+   "run": "#145",
+   "qubit": "qA6",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 5000,
+   "depth_z": 195.7,
+   "secondaries": 2
+  },
+  {
+   "case": "S5d",
+   "exemplar": "lab-D/#146/qB4",
+   "file": "exemplars/S5d/lab-D_146_qB4.png",
+   "chip": "lab-D",
+   "run": "#146",
+   "qubit": "qB4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 6000,
+   "depth_z": 216.4,
+   "secondaries": 2
+  },
+  {
+   "case": "S6",
+   "exemplar": "lab-B/#151/q6",
+   "file": "exemplars/S6/lab-B_151_q6.png",
+   "chip": "lab-B",
+   "run": "#151",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 100.8,
+   "secondaries": 0
+  },
+  {
+   "case": "S6",
+   "exemplar": "lab-B/#151/q4",
+   "file": "exemplars/S6/lab-B_151_q4.png",
+   "chip": "lab-B",
+   "run": "#151",
+   "qubit": "q4",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 7.6,
+   "secondaries": 0
+  },
+  {
+   "case": "S6",
+   "exemplar": "lab-E/#31/q11",
+   "file": "exemplars/S6/lab-E_31_q11.png",
+   "chip": "lab-E",
+   "run": "#31",
+   "qubit": "q11",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 1000,
+   "depth_z": 78.6,
+   "secondaries": 0
+  },
+  {
+   "case": "S6",
+   "exemplar": "lab-E/#1/q3",
+   "file": "exemplars/S6/lab-E_1_q3.png",
+   "chip": "lab-E",
+   "run": "#1",
+   "qubit": "q3",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 300,
+   "depth_z": 74.6,
+   "secondaries": 0
+  },
+  {
+   "case": "S6b",
+   "exemplar": "lab-A/#312/q6",
+   "file": "exemplars/S6b/lab-A_312_q6.png",
+   "chip": "lab-A",
+   "run": "#312",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 500,
+   "depth_z": 63.5,
+   "secondaries": 0
+  },
+  {
+   "case": "S6b",
+   "exemplar": "lab-A/#328/q6",
+   "file": "exemplars/S6b/lab-A_328_q6.png",
+   "chip": "lab-A",
+   "run": "#328",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 500,
+   "depth_z": 36.2,
+   "secondaries": 0
+  },
+  {
+   "case": "S6b",
+   "exemplar": "lab-E/#27/q11",
+   "file": "exemplars/S6b/lab-E_27_q11.png",
+   "chip": "lab-E",
+   "run": "#27",
+   "qubit": "q11",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 1000,
+   "depth_z": 99.0,
+   "secondaries": 0
+  },
+  {
+   "case": "S6b",
+   "exemplar": "lab-C/#223/qA2",
+   "file": "exemplars/S6b/lab-C_223_qA2.png",
+   "chip": "lab-C",
+   "run": "#223",
+   "qubit": "qA2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 140.9,
+   "secondaries": 0
+  },
+  {
+   "case": "S6c",
+   "exemplar": "lab-B/#163/q2",
+   "file": "exemplars/S6c/lab-B_163_q2.png",
+   "chip": "lab-B",
+   "run": "#163",
+   "qubit": "q2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 15.3,
+   "secondaries": 2
+  },
+  {
+   "case": "S6c",
+   "exemplar": "lab-E/#13/q11",
+   "file": "exemplars/S6c/lab-E_13_q11.png",
+   "chip": "lab-E",
+   "run": "#13",
+   "qubit": "q11",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 8.1,
+   "secondaries": 1
+  },
+  {
+   "case": "S7",
+   "exemplar": "lab-D/#146/qC4",
+   "file": "exemplars/S7/lab-D_146_qC4.png",
+   "chip": "lab-D",
+   "run": "#146",
+   "qubit": "qC4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 6000,
+   "depth_z": 326.4,
+   "secondaries": 0
+  },
+  {
+   "case": "S7",
+   "exemplar": "lab-D/#146/qB1",
+   "file": "exemplars/S7/lab-D_146_qB1.png",
+   "chip": "lab-D",
+   "run": "#146",
+   "qubit": "qB1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 6000,
+   "depth_z": 203.6,
+   "secondaries": 2
+  },
+  {
+   "case": "S7",
+   "exemplar": "lab-B/#151/q5",
+   "file": "exemplars/S7/lab-B_151_q5.png",
+   "chip": "lab-B",
+   "run": "#151",
+   "qubit": "q5",
+   "markers_drawn": [],
+   "feature": "dip",
+   "n_points": 400,
+   "depth_z": 5.1,
+   "secondaries": 2
+  },
+  {
+   "case": "S7",
+   "exemplar": "lab-D/#146/qD3",
+   "file": "exemplars/S7/lab-D_146_qD3.png",
+   "chip": "lab-D",
+   "run": "#146",
+   "qubit": "qD3",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 6000,
+   "depth_z": 266.7,
+   "secondaries": 1
+  },
+  {
+   "case": "S7b",
+   "exemplar": "lab-A/#328/q7",
+   "file": "exemplars/S7b/lab-A_328_q7.png",
+   "chip": "lab-A",
+   "run": "#328",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 500,
+   "depth_z": 8.8,
+   "secondaries": 0
+  },
+  {
+   "case": "S7b",
+   "exemplar": "lab-A/#338/q7",
+   "file": "exemplars/S7b/lab-A_338_q7.png",
+   "chip": "lab-A",
+   "run": "#338",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 36.5,
+   "secondaries": 0
+  },
+  {
+   "case": "S7b",
+   "exemplar": "lab-E/#17/q9",
+   "file": "exemplars/S7b/lab-E_17_q9.png",
+   "chip": "lab-E",
+   "run": "#17",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 18.2,
+   "secondaries": 0
+  },
+  {
+   "case": "S7b",
+   "exemplar": "lab-E/#20/q9",
+   "file": "exemplars/S7b/lab-E_20_q9.png",
+   "chip": "lab-E",
+   "run": "#20",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 8.5,
+   "secondaries": 0
+  },
+  {
+   "case": "S7c",
+   "exemplar": "lab-D/#146/qA2",
+   "file": "exemplars/S7c/lab-D_146_qA2.png",
+   "chip": "lab-D",
+   "run": "#146",
+   "qubit": "qA2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 6000,
+   "depth_z": 93.3,
+   "secondaries": 1
+  },
+  {
+   "case": "S7c",
+   "exemplar": "lab-D/#146/qA6",
+   "file": "exemplars/S7c/lab-D_146_qA6.png",
+   "chip": "lab-D",
+   "run": "#146",
+   "qubit": "qA6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 6000,
+   "depth_z": 103.2,
+   "secondaries": 2
+  },
+  {
+   "case": "S7c",
+   "exemplar": "lab-D/#147/qA2",
+   "file": "exemplars/S7c/lab-D_147_qA2.png",
+   "chip": "lab-D",
+   "run": "#147",
+   "qubit": "qA2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 3999,
+   "depth_z": 130.1,
+   "secondaries": 2
+  },
+  {
+   "case": "S7d",
+   "exemplar": "lab-D/#146/qA1",
+   "file": "exemplars/S7d/lab-D_146_qA1.png",
+   "chip": "lab-D",
+   "run": "#146",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 6000,
+   "depth_z": 100.3,
+   "secondaries": 2
+  },
+  {
+   "case": "S7d",
+   "exemplar": "lab-D/#144/qA5",
+   "file": "exemplars/S7d/lab-D_144_qA5.png",
+   "chip": "lab-D",
+   "run": "#144",
+   "qubit": "qA5",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 5200,
+   "depth_z": 149.2,
+   "secondaries": 1
+  },
+  {
+   "case": "S7d",
+   "exemplar": "lab-D/#147/qA1",
+   "file": "exemplars/S7d/lab-D_147_qA1.png",
+   "chip": "lab-D",
+   "run": "#147",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 3999,
+   "depth_z": 94.5,
+   "secondaries": 2
+  },
+  {
+   "case": "S7e",
+   "exemplar": "lab-B/#151/q5",
+   "file": "exemplars/S7e/lab-B_151_q5.png",
+   "chip": "lab-B",
+   "run": "#151",
+   "qubit": "q5",
+   "markers_drawn": [],
+   "feature": "dip",
+   "n_points": 400,
+   "depth_z": 5.1,
+   "secondaries": 2
+  },
+  {
+   "case": "S7e",
+   "exemplar": "lab-B/#157/q8",
+   "file": "exemplars/S7e/lab-B_157_q8.png",
+   "chip": "lab-B",
+   "run": "#157",
+   "qubit": "q8",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 300,
+   "depth_z": 7.4,
+   "secondaries": 0
+  },
+  {
+   "case": "S7e",
+   "exemplar": "lab-D/#155/qB2",
+   "file": "exemplars/S7e/lab-D_155_qB2.png",
+   "chip": "lab-D",
+   "run": "#155",
+   "qubit": "qB2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 7000,
+   "depth_z": 252.4,
+   "secondaries": 2
+  },
+  {
+   "case": "S7e",
+   "exemplar": "lab-D/#147/qA5",
+   "file": "exemplars/S7e/lab-D_147_qA5.png",
+   "chip": "lab-D",
+   "run": "#147",
+   "qubit": "qA5",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 3999,
+   "depth_z": 126.0,
+   "secondaries": 2
+  },
+  {
+   "case": "S7f",
+   "exemplar": "lab-C/#70/qA1",
+   "file": "exemplars/S7f/lab-C_70_qA1.png",
+   "chip": "lab-C",
+   "run": "#70",
+   "qubit": "qA1",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 300,
+   "depth_z": 60.8,
+   "secondaries": 0
+  },
+  {
+   "case": "S7g",
+   "exemplar": "lab-B/#160/q8",
+   "file": "exemplars/S7g/lab-B_160_q8.png",
+   "chip": "lab-B",
+   "run": "#160",
+   "qubit": "q8",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 500,
+   "depth_z": 19.3,
+   "secondaries": 0
+  },
+  {
+   "case": "S7g",
+   "exemplar": "lab-B/#169/q18",
+   "file": "exemplars/S7g/lab-B_169_q18.png",
+   "chip": "lab-B",
+   "run": "#169",
+   "qubit": "q18",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 100,
+   "depth_z": 13.0,
+   "secondaries": 1
+  },
+  {
+   "case": "S7g",
+   "exemplar": "lab-B/#170/q18",
+   "file": "exemplars/S7g/lab-B_170_q18.png",
+   "chip": "lab-B",
+   "run": "#170",
+   "qubit": "q18",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 500,
+   "depth_z": 18.8,
+   "secondaries": 2
+  },
+  {
+   "case": "S7g",
+   "exemplar": "lab-B/#164/q18",
+   "file": "exemplars/S7g/lab-B_164_q18.png",
+   "chip": "lab-B",
+   "run": "#164",
+   "qubit": "q18",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 300,
+   "depth_z": 6.1,
+   "secondaries": 1
+  },
+  {
+   "case": "S8",
+   "exemplar": "lab-E/#17/q9",
+   "file": "exemplars/S8/lab-E_17_q9.png",
+   "chip": "lab-E",
+   "run": "#17",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 18.2,
+   "secondaries": 0
+  },
+  {
+   "case": "S8",
+   "exemplar": "lab-E/#5/q3",
+   "file": "exemplars/S8/lab-E_5_q3.png",
+   "chip": "lab-E",
+   "run": "#5",
+   "qubit": "q3",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 13.2,
+   "secondaries": 1
+  },
+  {
+   "case": "S8",
+   "exemplar": "lab-B/#92/q2",
+   "file": "exemplars/S8/lab-B_92_q2.png",
+   "chip": "lab-B",
+   "run": "#92",
+   "qubit": "q2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 600,
+   "depth_z": 31.2,
+   "secondaries": 0
+  },
+  {
+   "case": "S8",
+   "exemplar": "lab-E/#13/q17",
+   "file": "exemplars/S8/lab-E_13_q17.png",
+   "chip": "lab-E",
+   "run": "#13",
+   "qubit": "q17",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 15.5,
+   "secondaries": 0
+  },
+  {
+   "case": "S8",
+   "exemplar": "lab-B/#133/q1",
+   "file": "exemplars/S8/lab-B_133_q1.png",
+   "chip": "lab-B",
+   "run": "#133",
+   "qubit": "q1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 2000,
+   "depth_z": 44.5,
+   "secondaries": 0
+  },
+  {
+   "case": "S8b",
+   "exemplar": "lab-A/#6/q8",
+   "file": "exemplars/S8b/lab-A_6_q8.png",
+   "chip": "lab-A",
+   "run": "#6",
+   "qubit": "q8",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 157.1,
+   "secondaries": 0
+  },
+  {
+   "case": "S8b",
+   "exemplar": "lab-A/#234/q5",
+   "file": "exemplars/S8b/lab-A_234_q5.png",
+   "chip": "lab-A",
+   "run": "#234",
+   "qubit": "q5",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 400,
+   "depth_z": 185.1,
+   "secondaries": 0
+  },
+  {
+   "case": "S8b",
+   "exemplar": "lab-C/#111/qA2",
+   "file": "exemplars/S8b/lab-C_111_qA2.png",
+   "chip": "lab-C",
+   "run": "#111",
+   "qubit": "qA2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 133.4,
+   "secondaries": 0
+  },
+  {
+   "case": "S8b",
+   "exemplar": "lab-E/#12/q17",
+   "file": "exemplars/S8b/lab-E_12_q17.png",
+   "chip": "lab-E",
+   "run": "#12",
+   "qubit": "q17",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 30.1,
+   "secondaries": 0
+  },
+  {
+   "case": "S9",
+   "exemplar": "lab-E/#1/q8",
+   "file": "exemplars/S9/lab-E_1_q8.png",
+   "chip": "lab-E",
+   "run": "#1",
+   "qubit": "q8",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 25.9,
+   "secondaries": 2
+  },
+  {
+   "case": "S9",
+   "exemplar": "lab-E/#2/q4",
+   "file": "exemplars/S9/lab-E_2_q4.png",
+   "chip": "lab-E",
+   "run": "#2",
+   "qubit": "q4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 37.8,
+   "secondaries": 0
+  },
+  {
+   "case": "S9",
+   "exemplar": "lab-E/#27/q5",
+   "file": "exemplars/S9/lab-E_27_q5.png",
+   "chip": "lab-E",
+   "run": "#27",
+   "qubit": "q5",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1000,
+   "depth_z": 38.2,
+   "secondaries": 2
+  },
+  {
+   "case": "S9",
+   "exemplar": "lab-B/#134/q6",
+   "file": "exemplars/S9/lab-B_134_q6.png",
+   "chip": "lab-B",
+   "run": "#134",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 2000,
+   "depth_z": 325.4,
+   "secondaries": 0
+  },
+  {
+   "case": "S9b",
+   "exemplar": "lab-E/#23/q9",
+   "file": "exemplars/S9b/lab-E_23_q9.png",
+   "chip": "lab-E",
+   "run": "#23",
+   "qubit": "q9",
+   "markers_drawn": [],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 9.8,
+   "secondaries": 0
+  },
+  {
+   "case": "S9b",
+   "exemplar": "lab-E/#23/q15",
+   "file": "exemplars/S9b/lab-E_23_q15.png",
+   "chip": "lab-E",
+   "run": "#23",
+   "qubit": "q15",
+   "markers_drawn": [],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 9.4,
+   "secondaries": 2
+  },
+  {
+   "case": "S9b",
+   "exemplar": "lab-B/#94/q2",
+   "file": "exemplars/S9b/lab-B_94_q2.png",
+   "chip": "lab-B",
+   "run": "#94",
+   "qubit": "q2",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 1000,
+   "depth_z": 17.8,
+   "secondaries": 0
+  },
+  {
+   "case": "S9b",
+   "exemplar": "lab-B/#134/q5",
+   "file": "exemplars/S9b/lab-B_134_q5.png",
+   "chip": "lab-B",
+   "run": "#134",
+   "qubit": "q5",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 2000,
+   "depth_z": 6.0,
+   "secondaries": 2
+  },
+  {
+   "case": "S9b",
+   "exemplar": "lab-B/#160/q8",
+   "file": "exemplars/S9b/lab-B_160_q8.png",
+   "chip": "lab-B",
+   "run": "#160",
+   "qubit": "q8",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 500,
+   "depth_z": 19.3,
+   "secondaries": 0
+  },
+  {
+   "case": "S9b",
+   "exemplar": "lab-B/#151/q4",
+   "file": "exemplars/S9b/lab-B_151_q4.png",
+   "chip": "lab-B",
+   "run": "#151",
+   "qubit": "q4",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 7.6,
+   "secondaries": 0
+  },
+  {
+   "case": "S9c",
+   "exemplar": "lab-E/#13/q15",
+   "file": "exemplars/S9c/lab-E_13_q15.png",
+   "chip": "lab-E",
+   "run": "#13",
+   "qubit": "q15",
+   "markers_drawn": [],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 8.1,
+   "secondaries": 1
+  },
+  {
+   "case": "S9c",
+   "exemplar": "lab-B/#161/q8",
+   "file": "exemplars/S9c/lab-B_161_q8.png",
+   "chip": "lab-B",
+   "run": "#161",
+   "qubit": "q8",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 150,
+   "depth_z": 7.9,
+   "secondaries": 0
+  },
+  {
+   "case": "X1",
+   "exemplar": "lab-E/#12/q10",
+   "file": "exemplars/X1/lab-E_12_q10.png",
+   "chip": "lab-E",
+   "run": "#12",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 24.7,
+   "secondaries": 0
+  },
+  {
+   "case": "X1",
+   "exemplar": "lab-E/#13/q10",
+   "file": "exemplars/X1/lab-E_13_q10.png",
+   "chip": "lab-E",
+   "run": "#13",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 13.0,
+   "secondaries": 1
+  },
+  {
+   "case": "X1",
+   "exemplar": "lab-D/#140/qA3",
+   "file": "exemplars/X1/lab-D_140_qA3.png",
+   "chip": "lab-D",
+   "run": "#140",
+   "qubit": "qA3",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 6000,
+   "depth_z": 235.0,
+   "secondaries": 2
+  },
+  {
+   "case": "X1",
+   "exemplar": "lab-D/#146/qA3",
+   "file": "exemplars/X1/lab-D_146_qA3.png",
+   "chip": "lab-D",
+   "run": "#146",
+   "qubit": "qA3",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 6000,
+   "depth_z": 98.9,
+   "secondaries": 0
+  },
+  {
+   "case": "X1",
+   "exemplar": "lab-B/#134/q6",
+   "file": "exemplars/X1/lab-B_134_q6.png",
+   "chip": "lab-B",
+   "run": "#134",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 2000,
+   "depth_z": 325.4,
+   "secondaries": 0
+  },
+  {
+   "case": "X1",
+   "exemplar": "lab-B/#151/q6",
+   "file": "exemplars/X1/lab-B_151_q6.png",
+   "chip": "lab-B",
+   "run": "#151",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 100.8,
+   "secondaries": 0
+  },
+  {
+   "case": "X2",
+   "exemplar": "lab-A/#338/q6",
+   "file": "exemplars/X2/lab-A_338_q6.png",
+   "chip": "lab-A",
+   "run": "#338",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 47.4,
+   "secondaries": 0
+  },
+  {
+   "case": "X2",
+   "exemplar": "lab-A/#339/q7",
+   "file": "exemplars/X2/lab-A_339_q7.png",
+   "chip": "lab-A",
+   "run": "#339",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 33.0,
+   "secondaries": 0
+  },
+  {
+   "case": "X2",
+   "exemplar": "lab-A/#340/q6",
+   "file": "exemplars/X2/lab-A_340_q6.png",
+   "chip": "lab-A",
+   "run": "#340",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 46.8,
+   "secondaries": 0
+  },
+  {
+   "case": "X3",
+   "exemplar": "lab-A/#328/q7",
+   "file": "exemplars/X3/lab-A_328_q7.png",
+   "chip": "lab-A",
+   "run": "#328",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 500,
+   "depth_z": 8.8,
+   "secondaries": 0
+  },
+  {
+   "case": "X3",
+   "exemplar": "lab-A/#338/q7",
+   "file": "exemplars/X3/lab-A_338_q7.png",
+   "chip": "lab-A",
+   "run": "#338",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 36.5,
+   "secondaries": 0
+  },
+  {
+   "case": "X3",
+   "exemplar": "lab-E/#13/q11",
+   "file": "exemplars/X3/lab-E_13_q11.png",
+   "chip": "lab-E",
+   "run": "#13",
+   "qubit": "q11",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 8.1,
+   "secondaries": 1
+  },
+  {
+   "case": "F1",
+   "exemplar": "lab-A/#6/q8",
+   "file": "exemplars/F1/lab-A_6_q8.png",
+   "chip": "lab-A",
+   "run": "#6",
+   "qubit": "q8",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 157.1,
+   "secondaries": 0
+  },
+  {
+   "case": "F1",
+   "exemplar": "lab-C/#231/qA2",
+   "file": "exemplars/F1/lab-C_231_qA2.png",
+   "chip": "lab-C",
+   "run": "#231",
+   "qubit": "qA2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 123.4,
+   "secondaries": 0
+  },
+  {
+   "case": "F1",
+   "exemplar": "lab-E/#27/q6",
+   "file": "exemplars/F1/lab-E_27_q6.png",
+   "chip": "lab-E",
+   "run": "#27",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 1000,
+   "depth_z": 49.9,
+   "secondaries": 0
+  },
+  {
+   "case": "F1",
+   "exemplar": "lab-D/#146/qC5",
+   "file": "exemplars/F1/lab-D_146_qC5.png",
+   "chip": "lab-D",
+   "run": "#146",
+   "qubit": "qC5",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 6000,
+   "depth_z": 327.2,
+   "secondaries": 1
+  },
+  {
+   "case": "F2",
+   "exemplar": "lab-E/#17/q4",
+   "file": "exemplars/F2/lab-E_17_q4.png",
+   "chip": "lab-E",
+   "run": "#17",
+   "qubit": "q4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 13.3,
+   "secondaries": 1
+  },
+  {
+   "case": "F2",
+   "exemplar": "lab-E/#5/q8",
+   "file": "exemplars/F2/lab-E_5_q8.png",
+   "chip": "lab-E",
+   "run": "#5",
+   "qubit": "q8",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 13.2,
+   "secondaries": 0
+  },
+  {
+   "case": "F2",
+   "exemplar": "lab-B/#92/q2",
+   "file": "exemplars/F2/lab-B_92_q2.png",
+   "chip": "lab-B",
+   "run": "#92",
+   "qubit": "q2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 600,
+   "depth_z": 31.2,
+   "secondaries": 0
+  },
+  {
+   "case": "F2",
+   "exemplar": "lab-C/#298/qB3",
+   "file": "exemplars/F2/lab-C_298_qB3.png",
+   "chip": "lab-C",
+   "run": "#298",
+   "qubit": "qB3",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 300,
+   "depth_z": 91.4,
+   "secondaries": 0
+  },
+  {
+   "case": "F3",
+   "exemplar": "lab-A/#6/q9",
+   "file": "exemplars/F3/lab-A_6_q9.png",
+   "chip": "lab-A",
+   "run": "#6",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 219.9,
+   "secondaries": 0
+  },
+  {
+   "case": "F3",
+   "exemplar": "lab-A/#234/q5",
+   "file": "exemplars/F3/lab-A_234_q5.png",
+   "chip": "lab-A",
+   "run": "#234",
+   "qubit": "q5",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 400,
+   "depth_z": 185.1,
+   "secondaries": 0
+  },
+  {
+   "case": "F3",
+   "exemplar": "lab-C/#233/qA2",
+   "file": "exemplars/F3/lab-C_233_qA2.png",
+   "chip": "lab-C",
+   "run": "#233",
+   "qubit": "qA2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 138.9,
+   "secondaries": 0
+  },
+  {
+   "case": "F4",
+   "exemplar": "lab-B/#92/q2",
+   "file": "exemplars/F4/lab-B_92_q2.png",
+   "chip": "lab-B",
+   "run": "#92",
+   "qubit": "q2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 600,
+   "depth_z": 31.2,
+   "secondaries": 0
+  },
+  {
+   "case": "F4",
+   "exemplar": "lab-B/#133/q1",
+   "file": "exemplars/F4/lab-B_133_q1.png",
+   "chip": "lab-B",
+   "run": "#133",
+   "qubit": "q1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 2000,
+   "depth_z": 44.5,
+   "secondaries": 0
+  },
+  {
+   "case": "F4",
+   "exemplar": "lab-E/#5/q3",
+   "file": "exemplars/F4/lab-E_5_q3.png",
+   "chip": "lab-E",
+   "run": "#5",
+   "qubit": "q3",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 13.2,
+   "secondaries": 1
+  },
+  {
+   "case": "F4",
+   "exemplar": "lab-D/#147/qB1",
+   "file": "exemplars/F4/lab-D_147_qB1.png",
+   "chip": "lab-D",
+   "run": "#147",
+   "qubit": "qB1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 3999,
+   "depth_z": 257.8,
+   "secondaries": 2
+  },
+  {
+   "case": "F5",
+   "exemplar": "lab-D/#146/qA2",
+   "file": "exemplars/F5/lab-D_146_qA2.png",
+   "chip": "lab-D",
+   "run": "#146",
+   "qubit": "qA2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 6000,
+   "depth_z": 93.3,
+   "secondaries": 1
+  },
+  {
+   "case": "F5",
+   "exemplar": "lab-D/#147/qA2",
+   "file": "exemplars/F5/lab-D_147_qA2.png",
+   "chip": "lab-D",
+   "run": "#147",
+   "qubit": "qA2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 3999,
+   "depth_z": 130.1,
+   "secondaries": 2
+  },
+  {
+   "case": "F6",
+   "exemplar": "lab-E/#1/q3",
+   "file": "exemplars/F6/lab-E_1_q3.png",
+   "chip": "lab-E",
+   "run": "#1",
+   "qubit": "q3",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 300,
+   "depth_z": 74.6,
+   "secondaries": 0
+  },
+  {
+   "case": "F6",
+   "exemplar": "lab-C/#298/qB3",
+   "file": "exemplars/F6/lab-C_298_qB3.png",
+   "chip": "lab-C",
+   "run": "#298",
+   "qubit": "qB3",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 300,
+   "depth_z": 91.4,
+   "secondaries": 0
+  },
+  {
+   "case": "F6",
+   "exemplar": "lab-C/#298/qD3",
+   "file": "exemplars/F6/lab-C_298_qD3.png",
+   "chip": "lab-C",
+   "run": "#298",
+   "qubit": "qD3",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 300,
+   "depth_z": 49.4,
+   "secondaries": 0
+  },
+  {
+   "case": "F7",
+   "exemplar": "lab-C/#298/qB3",
+   "file": "exemplars/F7/lab-C_298_qB3.png",
+   "chip": "lab-C",
+   "run": "#298",
+   "qubit": "qB3",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 300,
+   "depth_z": 91.4,
+   "secondaries": 0
+  },
+  {
+   "case": "F7",
+   "exemplar": "lab-D/#147/qA1",
+   "file": "exemplars/F7/lab-D_147_qA1.png",
+   "chip": "lab-D",
+   "run": "#147",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 3999,
+   "depth_z": 94.5,
+   "secondaries": 2
+  },
+  {
+   "case": "F8",
+   "exemplar": "lab-A/#338/q6",
+   "file": "exemplars/F8/lab-A_338_q6.png",
+   "chip": "lab-A",
+   "run": "#338",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 47.4,
+   "secondaries": 0
+  },
+  {
+   "case": "F8",
+   "exemplar": "lab-A/#340/q7",
+   "file": "exemplars/F8/lab-A_340_q7.png",
+   "chip": "lab-A",
+   "run": "#340",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 32.4,
+   "secondaries": 0
+  },
+  {
+   "case": "F8",
+   "exemplar": "lab-B/#151/q7",
+   "file": "exemplars/F8/lab-B_151_q7.png",
+   "chip": "lab-B",
+   "run": "#151",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 116.9,
+   "secondaries": 0
+  },
+  {
+   "case": "F8",
+   "exemplar": "lab-B/#157/q8",
+   "file": "exemplars/F8/lab-B_157_q8.png",
+   "chip": "lab-B",
+   "run": "#157",
+   "qubit": "q8",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 300,
+   "depth_z": 7.4,
+   "secondaries": 0
+  },
+  {
+   "case": "F9",
+   "exemplar": "lab-A/#328/q6",
+   "file": "exemplars/F9/lab-A_328_q6.png",
+   "chip": "lab-A",
+   "run": "#328",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 500,
+   "depth_z": 36.2,
+   "secondaries": 0
+  },
+  {
+   "case": "F9",
+   "exemplar": "lab-A/#340/q7",
+   "file": "exemplars/F9/lab-A_340_q7.png",
+   "chip": "lab-A",
+   "run": "#340",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 32.4,
+   "secondaries": 0
+  },
+  {
+   "case": "F10",
+   "exemplar": "lab-E/#17/q9",
+   "file": "exemplars/F10/lab-E_17_q9.png",
+   "chip": "lab-E",
+   "run": "#17",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 18.2,
+   "secondaries": 0
+  },
+  {
+   "case": "F10",
+   "exemplar": "lab-E/#19/q5",
+   "file": "exemplars/F10/lab-E_19_q5.png",
+   "chip": "lab-E",
+   "run": "#19",
+   "qubit": "q5",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 19.0,
+   "secondaries": 0
+  },
+  {
+   "case": "F10",
+   "exemplar": "lab-E/#20/q4",
+   "file": "exemplars/F10/lab-E_20_q4.png",
+   "chip": "lab-E",
+   "run": "#20",
+   "qubit": "q4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 9.4,
+   "secondaries": 0
+  },
+  {
+   "case": "F11",
+   "exemplar": "lab-E/#23/q4",
+   "file": "exemplars/F11/lab-E_23_q4.png",
+   "chip": "lab-E",
+   "run": "#23",
+   "qubit": "q4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 11.2,
+   "secondaries": 1
+  },
+  {
+   "case": "F11",
+   "exemplar": "lab-E/#24/q11",
+   "file": "exemplars/F11/lab-E_24_q11.png",
+   "chip": "lab-E",
+   "run": "#24",
+   "qubit": "q11",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 34.3,
+   "secondaries": 0
+  },
+  {
+   "case": "F12",
+   "exemplar": "lab-E/#19/q10",
+   "file": "exemplars/F12/lab-E_19_q10.png",
+   "chip": "lab-E",
+   "run": "#19",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 16.7,
+   "secondaries": 0
+  },
+  {
+   "case": "F12",
+   "exemplar": "lab-E/#5/q3",
+   "file": "exemplars/F12/lab-E_5_q3.png",
+   "chip": "lab-E",
+   "run": "#5",
+   "qubit": "q3",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 13.2,
+   "secondaries": 1
+  },
+  {
+   "case": "F12",
+   "exemplar": "lab-E/#12/q15",
+   "file": "exemplars/F12/lab-E_12_q15.png",
+   "chip": "lab-E",
+   "run": "#12",
+   "qubit": "q15",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 17.9,
+   "secondaries": 2
+  },
+  {
+   "case": "F13",
+   "exemplar": "lab-E/#1/q1",
+   "file": "exemplars/F13/lab-E_1_q1.png",
+   "chip": "lab-E",
+   "run": "#1",
+   "qubit": "q1",
+   "markers_drawn": [],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 5.5,
+   "secondaries": 0
+  },
+  {
+   "case": "F13",
+   "exemplar": "lab-B/#94/q2",
+   "file": "exemplars/F13/lab-B_94_q2.png",
+   "chip": "lab-B",
+   "run": "#94",
+   "qubit": "q2",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 1000,
+   "depth_z": 17.8,
+   "secondaries": 0
+  },
+  {
+   "case": "F13",
+   "exemplar": "lab-C/#518/qC1",
+   "file": "exemplars/F13/lab-C_518_qC1.png",
+   "chip": "lab-C",
+   "run": "#518",
+   "qubit": "qC1",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 300,
+   "depth_z": 3.9,
+   "secondaries": 0
+  },
+  {
+   "case": "F13",
+   "exemplar": "lab-B/#170/q18",
+   "file": "exemplars/F13/lab-B_170_q18.png",
+   "chip": "lab-B",
+   "run": "#170",
+   "qubit": "q18",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 500,
+   "depth_z": 18.8,
+   "secondaries": 2
+  },
+  {
+   "case": "F14",
+   "exemplar": "lab-B/#92/q2",
+   "file": "exemplars/F14/lab-B_92_q2.png",
+   "chip": "lab-B",
+   "run": "#92",
+   "qubit": "q2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 600,
+   "depth_z": 31.2,
+   "secondaries": 0
+  },
+  {
+   "case": "F14",
+   "exemplar": "lab-B/#96/q2",
+   "file": "exemplars/F14/lab-B_96_q2.png",
+   "chip": "lab-B",
+   "run": "#96",
+   "qubit": "q2",
+   "markers_drawn": [],
+   "feature": "dip",
+   "n_points": 2000,
+   "depth_z": 9.3,
+   "secondaries": 0
+  },
+  {
+   "case": "F14",
+   "exemplar": "lab-E/#27/q17",
+   "file": "exemplars/F14/lab-E_27_q17.png",
+   "chip": "lab-E",
+   "run": "#27",
+   "qubit": "q17",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 1000,
+   "depth_z": 39.1,
+   "secondaries": 0
+  },
+  {
+   "case": "F14",
+   "exemplar": "lab-B/#169/q18",
+   "file": "exemplars/F14/lab-B_169_q18.png",
+   "chip": "lab-B",
+   "run": "#169",
+   "qubit": "q18",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 100,
+   "depth_z": 13.0,
+   "secondaries": 1
+  },
+  {
+   "case": "F15",
+   "exemplar": "lab-B/#95/q2",
+   "file": "exemplars/F15/lab-B_95_q2.png",
+   "chip": "lab-B",
+   "run": "#95",
+   "qubit": "q2",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 1000,
+   "depth_z": 10.3,
+   "secondaries": 0
+  },
+  {
+   "case": "F15",
+   "exemplar": "lab-B/#163/q20",
+   "file": "exemplars/F15/lab-B_163_q20.png",
+   "chip": "lab-B",
+   "run": "#163",
+   "qubit": "q20",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 300,
+   "depth_z": 4.1,
+   "secondaries": 0
+  },
+  {
+   "case": "F15",
+   "exemplar": "lab-E/#24/q17",
+   "file": "exemplars/F15/lab-E_24_q17.png",
+   "chip": "lab-E",
+   "run": "#24",
+   "qubit": "q17",
+   "markers_drawn": [],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 4.0,
+   "secondaries": 0
+  },
+  {
+   "case": "F16",
+   "exemplar": "lab-E/#13/q10",
+   "file": "exemplars/F16/lab-E_13_q10.png",
+   "chip": "lab-E",
+   "run": "#13",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 13.0,
+   "secondaries": 1
+  },
+  {
+   "case": "F16",
+   "exemplar": "lab-E/#17/q10",
+   "file": "exemplars/F16/lab-E_17_q10.png",
+   "chip": "lab-E",
+   "run": "#17",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 16.9,
+   "secondaries": 0
+  },
+  {
+   "case": "F16",
+   "exemplar": "lab-E/#1/q3",
+   "file": "exemplars/F16/lab-E_1_q3.png",
+   "chip": "lab-E",
+   "run": "#1",
+   "qubit": "q3",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 300,
+   "depth_z": 74.6,
+   "secondaries": 0
+  },
+  {
+   "case": "F17",
+   "exemplar": "lab-B/#94/q2",
+   "file": "exemplars/F17/lab-B_94_q2.png",
+   "chip": "lab-B",
+   "run": "#94",
+   "qubit": "q2",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 1000,
+   "depth_z": 17.8,
+   "secondaries": 0
+  },
+  {
+   "case": "F17",
+   "exemplar": "lab-B/#158/q8",
+   "file": "exemplars/F17/lab-B_158_q8.png",
+   "chip": "lab-B",
+   "run": "#158",
+   "qubit": "q8",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 100,
+   "depth_z": 14.1,
+   "secondaries": 0
+  },
+  {
+   "case": "F17",
+   "exemplar": "lab-E/#2/q2",
+   "file": "exemplars/F17/lab-E_2_q2.png",
+   "chip": "lab-E",
+   "run": "#2",
+   "qubit": "q2",
+   "markers_drawn": [],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 2.9,
+   "secondaries": 0
+  },
+  {
+   "case": "F18",
+   "exemplar": "lab-A/#227/q5",
+   "file": "exemplars/F18/lab-A_227_q5.png",
+   "chip": "lab-A",
+   "run": "#227",
+   "qubit": "q5",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 117.9,
+   "secondaries": 0
+  },
+  {
+   "case": "F18",
+   "exemplar": "lab-A/#234/q5",
+   "file": "exemplars/F18/lab-A_234_q5.png",
+   "chip": "lab-A",
+   "run": "#234",
+   "qubit": "q5",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 400,
+   "depth_z": 185.1,
+   "secondaries": 0
+  },
+  {
+   "case": "F19",
+   "exemplar": "lab-B/#165/q10",
+   "file": "exemplars/F19/lab-B_165_q10.png",
+   "chip": "lab-B",
+   "run": "#165",
+   "qubit": "q10",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 300,
+   "depth_z": 26.4,
+   "secondaries": 0
+  },
+  {
+   "case": "F19",
+   "exemplar": "lab-D/#145/qB1",
+   "file": "exemplars/F19/lab-D_145_qB1.png",
+   "chip": "lab-D",
+   "run": "#145",
+   "qubit": "qB1",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 5000,
+   "depth_z": 1514.5,
+   "secondaries": 0
+  },
+  {
+   "case": "F19",
+   "exemplar": "lab-D/#146/qA6",
+   "file": "exemplars/F19/lab-D_146_qA6.png",
+   "chip": "lab-D",
+   "run": "#146",
+   "qubit": "qA6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 6000,
+   "depth_z": 103.2,
+   "secondaries": 2
+  },
+  {
+   "case": "F20",
+   "exemplar": "lab-D/#141/qA3",
+   "file": "exemplars/F20/lab-D_141_qA3.png",
+   "chip": "lab-D",
+   "run": "#141",
+   "qubit": "qA3",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 3999,
+   "depth_z": 256.0,
+   "secondaries": 1
+  },
+  {
+   "case": "F20",
+   "exemplar": "lab-D/#154/qA1",
+   "file": "exemplars/F20/lab-D_154_qA1.png",
+   "chip": "lab-D",
+   "run": "#154",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 7000,
+   "depth_z": 370.8,
+   "secondaries": 2
+  },
+  {
+   "case": "F20",
+   "exemplar": "lab-D/#143/qA1",
+   "file": "exemplars/F20/lab-D_143_qA1.png",
+   "chip": "lab-D",
+   "run": "#143",
+   "qubit": "qA1",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 5200,
+   "depth_z": 629.7,
+   "secondaries": 2
+  },
+  {
+   "case": "F21",
+   "exemplar": "lab-D/#150/qA4",
+   "file": "exemplars/F21/lab-D_150_qA4.png",
+   "chip": "lab-D",
+   "run": "#150",
+   "qubit": "qA4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 7000,
+   "depth_z": 437.2,
+   "secondaries": 2
+  },
+  {
+   "case": "F21",
+   "exemplar": "lab-D/#153/qA4",
+   "file": "exemplars/F21/lab-D_153_qA4.png",
+   "chip": "lab-D",
+   "run": "#153",
+   "qubit": "qA4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 7000,
+   "depth_z": 348.8,
+   "secondaries": 2
+  },
+  {
+   "case": "F21",
+   "exemplar": "lab-D/#155/qA4",
+   "file": "exemplars/F21/lab-D_155_qA4.png",
+   "chip": "lab-D",
+   "run": "#155",
+   "qubit": "qA4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 7000,
+   "depth_z": 614.7,
+   "secondaries": 0
+  },
+  {
+   "case": "F22",
+   "exemplar": "lab-D/#139/qA2",
+   "file": "exemplars/F22/lab-D_139_qA2.png",
+   "chip": "lab-D",
+   "run": "#139",
+   "qubit": "qA2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 6000,
+   "depth_z": 144.9,
+   "secondaries": 0
+  },
+  {
+   "case": "F22",
+   "exemplar": "lab-D/#146/qB4",
+   "file": "exemplars/F22/lab-D_146_qB4.png",
+   "chip": "lab-D",
+   "run": "#146",
+   "qubit": "qB4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 6000,
+   "depth_z": 216.4,
+   "secondaries": 2
+  },
+  {
+   "case": "F22",
+   "exemplar": "lab-D/#155/qB1",
+   "file": "exemplars/F22/lab-D_155_qB1.png",
+   "chip": "lab-D",
+   "run": "#155",
+   "qubit": "qB1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 7000,
+   "depth_z": 252.4,
+   "secondaries": 2
+  },
+  {
+   "case": "F23",
+   "exemplar": "lab-B/#134/q6",
+   "file": "exemplars/F23/lab-B_134_q6.png",
+   "chip": "lab-B",
+   "run": "#134",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 2000,
+   "depth_z": 325.4,
+   "secondaries": 0
+  },
+  {
+   "case": "F23",
+   "exemplar": "lab-E/#1/q8",
+   "file": "exemplars/F23/lab-E_1_q8.png",
+   "chip": "lab-E",
+   "run": "#1",
+   "qubit": "q8",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 25.9,
+   "secondaries": 2
+  },
+  {
+   "case": "F23",
+   "exemplar": "lab-E/#27/q15",
+   "file": "exemplars/F23/lab-E_27_q15.png",
+   "chip": "lab-E",
+   "run": "#27",
+   "qubit": "q15",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1000,
+   "depth_z": 62.1,
+   "secondaries": 1
+  },
+  {
+   "case": "F24",
+   "exemplar": "lab-E/#27/q11",
+   "file": "exemplars/F24/lab-E_27_q11.png",
+   "chip": "lab-E",
+   "run": "#27",
+   "qubit": "q11",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 1000,
+   "depth_z": 99.0,
+   "secondaries": 0
+  },
+  {
+   "case": "F24",
+   "exemplar": "lab-E/#31/q11",
+   "file": "exemplars/F24/lab-E_31_q11.png",
+   "chip": "lab-E",
+   "run": "#31",
+   "qubit": "q11",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 1000,
+   "depth_z": 78.6,
+   "secondaries": 0
+  },
+  {
+   "case": "F24",
+   "exemplar": "lab-E/#35/q11",
+   "file": "exemplars/F24/lab-E_35_q11.png",
+   "chip": "lab-E",
+   "run": "#35",
+   "qubit": "q11",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 1000,
+   "depth_z": 61.6,
+   "secondaries": 0
+  },
+  {
+   "case": "F24",
+   "exemplar": "lab-C/#223/qA2",
+   "file": "exemplars/F24/lab-C_223_qA2.png",
+   "chip": "lab-C",
+   "run": "#223",
+   "qubit": "qA2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 140.9,
+   "secondaries": 0
+  },
+  {
+   "case": "F25",
+   "exemplar": "lab-E/#23/q9",
+   "file": "exemplars/F25/lab-E_23_q9.png",
+   "chip": "lab-E",
+   "run": "#23",
+   "qubit": "q9",
+   "markers_drawn": [],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 9.8,
+   "secondaries": 0
+  },
+  {
+   "case": "F25",
+   "exemplar": "lab-E/#24/q9",
+   "file": "exemplars/F25/lab-E_24_q9.png",
+   "chip": "lab-E",
+   "run": "#24",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 11.0,
+   "secondaries": 0
+  },
+  {
+   "case": "F25",
+   "exemplar": "lab-E/#23/q15",
+   "file": "exemplars/F25/lab-E_23_q15.png",
+   "chip": "lab-E",
+   "run": "#23",
+   "qubit": "q15",
+   "markers_drawn": [],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 9.4,
+   "secondaries": 2
+  },
+  {
+   "case": "F26",
+   "exemplar": "lab-A/#328/q7",
+   "file": "exemplars/F26/lab-A_328_q7.png",
+   "chip": "lab-A",
+   "run": "#328",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 500,
+   "depth_z": 8.8,
+   "secondaries": 0
+  },
+  {
+   "case": "F26",
+   "exemplar": "lab-A/#338/q7",
+   "file": "exemplars/F26/lab-A_338_q7.png",
+   "chip": "lab-A",
+   "run": "#338",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 36.5,
+   "secondaries": 0
+  },
+  {
+   "case": "F26",
+   "exemplar": "lab-E/#13/q11",
+   "file": "exemplars/F26/lab-E_13_q11.png",
+   "chip": "lab-E",
+   "run": "#13",
+   "qubit": "q11",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 8.1,
+   "secondaries": 1
+  },
+  {
+   "case": "F27",
+   "exemplar": "lab-E/#13/q10",
+   "file": "exemplars/F27/lab-E_13_q10.png",
+   "chip": "lab-E",
+   "run": "#13",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 13.0,
+   "secondaries": 1
+  },
+  {
+   "case": "F27",
+   "exemplar": "lab-E/#13/q11",
+   "file": "exemplars/F27/lab-E_13_q11.png",
+   "chip": "lab-E",
+   "run": "#13",
+   "qubit": "q11",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 8.1,
+   "secondaries": 1
+  },
+  {
+   "case": "F27",
+   "exemplar": "lab-E/#13/q17",
+   "file": "exemplars/F27/lab-E_13_q17.png",
+   "chip": "lab-E",
+   "run": "#13",
+   "qubit": "q17",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 15.5,
+   "secondaries": 0
+  },
+  {
+   "case": "F28",
+   "exemplar": "lab-D/#153/qA4",
+   "file": "exemplars/F28/lab-D_153_qA4.png",
+   "chip": "lab-D",
+   "run": "#153",
+   "qubit": "qA4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 7000,
+   "depth_z": 348.8,
+   "secondaries": 2
+  },
+  {
+   "case": "F29",
+   "exemplar": "lab-E/#12/q17",
+   "file": "exemplars/F29/lab-E_12_q17.png",
+   "chip": "lab-E",
+   "run": "#12",
+   "qubit": "q17",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 30.1,
+   "secondaries": 0
+  },
+  {
+   "case": "F29",
+   "exemplar": "lab-E/#23/q6",
+   "file": "exemplars/F29/lab-E_23_q6.png",
+   "chip": "lab-E",
+   "run": "#23",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 300,
+   "depth_z": 19.0,
+   "secondaries": 0
+  },
+  {
+   "case": "F30",
+   "exemplar": "lab-B/#158/q8",
+   "file": "exemplars/F30/lab-B_158_q8.png",
+   "chip": "lab-B",
+   "run": "#158",
+   "qubit": "q8",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 100,
+   "depth_z": 14.1,
+   "secondaries": 0
+  },
+  {
+   "case": "F30",
+   "exemplar": "lab-B/#169/q18",
+   "file": "exemplars/F30/lab-B_169_q18.png",
+   "chip": "lab-B",
+   "run": "#169",
+   "qubit": "q18",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 100,
+   "depth_z": 13.0,
+   "secondaries": 1
+  },
+  {
+   "case": "F31",
+   "exemplar": "lab-D/#147/qA3",
+   "file": "exemplars/F31/lab-D_147_qA3.png",
+   "chip": "lab-D",
+   "run": "#147",
+   "qubit": "qA3",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 3999,
+   "depth_z": 123.9,
+   "secondaries": 2
+  },
+  {
+   "case": "F31",
+   "exemplar": "lab-D/#146/qB1",
+   "file": "exemplars/F31/lab-D_146_qB1.png",
+   "chip": "lab-D",
+   "run": "#146",
+   "qubit": "qB1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 6000,
+   "depth_z": 203.6,
+   "secondaries": 2
+  }
+ ],
+ "missing": [
+  {
+   "exemplar": "lab-C/#163/q2",
+   "case": "S8b",
+   "why": "run folder not found on this machine"
+  },
+  {
+   "exemplar": "lab-C/#110/qA1",
+   "case": "X4",
+   "why": "cube unreadable or target absent"
+  },
+  {
+   "exemplar": "lab-C/#110/qA2",
+   "case": "X4",
+   "why": "cube unreadable or target absent"
+  },
+  {
+   "exemplar": "lab-D/#112/qA1",
+   "case": "F5",
+   "why": "run folder not found on this machine"
+  },
+  {
+   "exemplar": "lab-C/#163/q2",
+   "case": "F6",
+   "why": "run folder not found on this machine"
+  },
+  {
+   "exemplar": "lab-C/#351/qA1",
+   "case": "F9",
+   "why": "run folder not found on this machine"
+  },
+  {
+   "exemplar": "lab-A/#17/q5",
+   "case": "F16",
+   "why": "run folder not found on this machine"
+  },
+  {
+   "exemplar": "lab-C/#163/q2",
+   "case": "F17",
+   "why": "run folder not found on this machine"
+  },
+  {
+   "exemplar": "lab-C/#163/q2",
+   "case": "F29",
+   "why": "run folder not found on this machine"
+  }
+ ]
+}

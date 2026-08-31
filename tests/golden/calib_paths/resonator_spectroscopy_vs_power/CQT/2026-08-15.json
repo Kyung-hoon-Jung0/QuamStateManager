@@ -1,0 +1,108 @@
+{
+ "schema": "smgolden/v2",
+ "family": "resonator_spectroscopy_vs_power",
+ "chip": "CQT",
+ "session": "2026-08-15",
+ "session_id": "CQT_2026-08-15",
+ "authored": "2026-08-21",
+ "status": "expert-round-1 + adversarial audit",
+ "provenance": "hindsight-authored answer key: the author saw the whole session and was free to judge the operator wrong. The system under test never sees past its cursor.",
+ "session_notes": "Three runs, two qubits, zero successes, zero state writes. The one thing that went right is structural: the node's own SNR gate refused every fit, so no F2 fallback poisoning occurred and poisoned_writes is legitimately empty for both qubits. That is worth scoring explicitly - a system that TRUSTED these records would have poisoned state in three places: q9 f_01/frequency_bare/RF_frequency from #624 (dressed ~3 MHz above the converged value, bare contradicted by every other run), q12 from #727 (dressed ~9 MHz off, on the bright side of the map) or #728 (bare null, shift sign flipped versus #727 ninety seconds earlier), plus three optimal powers that all land in speckle - one of them (-40.436 dBm in #728) below its own swept floor. All three runs are single-qubit (multiplexed=false), so the batch/re-confirmation-only rule does not bite here. Every fit in this session is also internally inconsistent: the reported frequency_shift never equals dressed minus bare (2.5 vs 3.2 MHz for q9; 7.8 vs 9.8 MHz for q12). THE IDEAL SESSION IS TWO RUNS, BOTH SUCCESSFUL, not three failures: q9 at min_power_dbm -40 / max_power_dbm 0 / max_amp 0.1 (proved first-try on 08-17 #1351-#1352, fit_agrees=yes and power_ok=yes) and q12 at -35..+14 / max_amp 0.5 / num_shots 150 / span 25 MHz (proved first-try on 08-16 #1033). Both recipes were derivable BEFORE 08-15: q9's two successes on 08-14 used -50..+10 with 100 power points and max_amp 0.1, not the -60..0 / 40-point / max_amp 0.25 default reused here, and the 08-13 q12 annotation had already named the cure ('needs more averaging or a higher full-scale power at low amplitudes'). The session's recurring error is treating an SNR deficit as a window problem - widening the frequency span (q12: 30 -> 100 MHz at a 4x coarser step) or sliding the power window without ever raising max_amp or num_shots. Two further hindsight facts a correct system should surface: (1) the q9 state standing at the start of this session came from 08-14 #342, an off-feature (F4) fit whose written RF_frequency 5.2475 GHz sits ~4 MHz from the converged 5.2512 GHz - never corrected in this session, and it should have been flagged; (2) q12's true dressed-bare separation is only ~1.5-2.5 MHz, at or under the feature width, so its 'C3 stationary line' is as much N3 (unresolved shift) as a hidden branch - under the expert sub-linewidth rule the defensible long-run outcome for q12 is to adopt the single line position and never require a bare value, which is effectively where the archive ends up, though no run ever wrote it.",
+ "adversarial_audit": "Checked the key against every run record in the input file and the sibling session files it cites (08-13/14/16/17). It is not sound. Concrete defects:\n\n1. q9 / #624 \u2014 WRONG CLAIM. The key says the record's bare label 5.251107 GHz \"is contradicted by every other estimate of this resonator.\" It is not: it equals the key's own converged dressed cluster (5.25112 GHz) to ~10 kHz. The record is label-swapped, not worthless. Correction: flag #624 as dressed/bare mislabeled and credit a system that extracts the line position ~5.2511 GHz from it; that is the one real datum in the run.\n\n2. q9 / #624 \u2014 MISSED, and it is the only fully future-blind flag. The node centres the span on the standing RF_frequency (5.2475 GHz, written by 08-14 #342). With span 15 MHz that window is [5.240, 5.255], so the reported 5.254307 GHz sits ~0.7 MHz from the upper edge \u2014 an edge-pinned fit on a window mis-centred by the bad #342 write the key itself flags. Correction: add the edge-pinned-fit flag and require re-centring on #347's 5.2508 GHz; drop \"Do NOT widen the span.\"\n\n3. q9 \u2014 \"the line position is already known to ~1 MHz\" is hindsight. At 08-15 the two prior q9 successes disagree by 3.3 MHz (#342 5.2475 vs #347 5.2508). The 1 MHz figure needs 08-17.\n\n4. q9 \u2014 the prescribed knobs (-40..0, span 15/step 0.1) are the 08-17 recipe. Every run cited as proof used a WIDE span (08-14: 60 MHz/0.3; 08-17: 50 MHz/0.5), and 08-17's own annotation warns the neighbouring band is \"a wrong-line hazard for narrower windows.\" Correction: the achievable-at-08-15 target is the 08-14 success template (-50..+10, 100 points, max_amp 0.1, span 60).\n\n5. q9 \u2014 \"a configuration already shown to fail q9 in the 08-14 #335 batch\" is a false equivalence: #335 was 8-tone multiplexed, 200 shots, max_amp 0.3, span 30. #624 is single-qubit \u2014 a different drive condition. Soften operator blame accordingly.\n\n6. q9 \u2014 \"four later runs\"/\"four independent fits\": #346 and #347 are EARLIER, and #346 FAILED with fit_agrees=uncertain. Laundered corroboration.\n\n7. q9 \u2014 \"Adopt nothing \u2026 no readout amplitude, no full_scale_power_dbm\" and session_notes' \"three optimal powers\" poisoning: all three records carry target_amplitude=null and target_full_scale_power_dbm=null, and no archived patch ever writes optimal_power. Strawman risk.\n\n8. Scoring contradiction \u2014 session_notes' \"THE IDEAL SESSION IS TWO RUNS, BOTH SUCCESSFUL\" is unreachable in replay and contradicts the per-qubit ideal_paths (3 recorded failing runs). Commit to one target.\n\n9. wasted_runs is empty while caveats invite the opposite verdict for #624 and #728. Unscoreable; commit.\n\n10. q12 / #727 \u2014 the key corroborates the \"bare\" label 5.839745 against the later DRESSED cluster (5.8393\u20135.8418) while later bare values are 5.8373/5.8388. At ~2 MHz separation the label is unresolvable; do not grade it.\n\n11. q12 \u2014 the \"N3-flavoured ~1.5\u20132.5 MHz separation\" in expected_case is derivable only from 08-16/08-17. Grade C3+SNR only; likewise grade the retune DIRECTION (raise max_amp/num_shots, don't widen span, per 08-13 #90) rather than the exact 08-16 numbers.\n\n12. q9 path confidence \"high\" \u2192 med, given 2\u20134.\n\nCorrect as written: no run is wrongly marked wasted (#728 genuinely rules out window placement), both terminations are justified, and the q12 \"never written to state\" claim verifies exactly.",
+ "qubits": [
+  {
+   "qubit": "q9",
+   "runs_in_scope": [
+    "#624_05_resonator_spectroscopy_vs_power_140248"
+   ],
+   "ideal_length": 1,
+   "actual_length": 1,
+   "confidence": "high",
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#624_05_resonator_spectroscopy_vs_power_140248",
+     "expected_case": "C1 map crippled by N1 (snr-floor). A deep narrow dressed dip plus a punch-out bend toward the bare position ARE present, but only in the mid/upper-power rows; the lower half of the -60..0 dBm window is pure speckle with the minimum-trace wandering. The structure is C1 while the defect that kills the fit is N1 - the node's failure verdict is correct, and the cure is a power-floor change, not a frequency-window change.",
+     "expected_flags": [
+      "F4 off-feature fit on the right line - the record's resonator_frequency 5.254307 GHz sits to the HIGH-frequency side of the dip the figure actually shows, and is ~3 MHz above the value four later runs converge on",
+      "record-internal inconsistency - frequency_shift 2.5 MHz does not equal dressed minus bare (5.254307 - 5.251107 = 3.2 MHz)",
+      "optimum-incoherent (refuse like F1) - optimal_power -43.0 dBm sits ~40 dB below the punch-out the figure shows near the top of the window, i.e. deep in the speckle-only band; not F1 by the letter (the swept floor is -60) but it must be refused on the same rule",
+      "bare label is geometry-consistent (it matches the high-power branch position) but its absolute value 5.251107 GHz is contradicted by every other estimate of this resonator, so it is not adoptable either"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Adopt nothing from this record (no frequency_bare, no f_01, no readout amplitude, no full_scale_power_dbm). Re-run q9 once with the sweep lifted off the dead rows: min_power_dbm -60 -> -40, max_power_dbm 0 -> 0..+10, num_power_points 40 -> 60..100, max_amp 0.25 -> 0.1, keep frequency_span_in_mhz 15 at frequency_step_in_mhz 0.1. Do NOT widen the span - the line position is already known to ~1 MHz. This is the same family of settings that produced two q9 successes on 08-14 (-50..+10, 100 points, max_amp 0.1) and the clean fit_agrees=yes / power_ok=yes success on 08-17 (-40..0, max_amp 0.1).",
+     "operator_did": "Ran the lab-default wide window (-60..0 dBm, 40 power points, max_amp 0.25, span 15 MHz) - a configuration already shown to fail q9 on dressed-dip SNR in the 08-14 #335 batch. Accepted the node's failure, wrote nothing, then abandoned q9 for the rest of the day and moved to q12 three hours later; the next q9 measurement was two days later.",
+     "operator_was_right": "partly"
+    }
+   ],
+   "termination": {
+    "at_run": "#624_05_resonator_spectroscopy_vs_power_140248",
+    "reason": "Stop for q9 after the single run - but stop by ESCALATING with a named retune, not by walking away. The map licenses exactly one conclusion: q9's dressed branch exists and is resolvable above the noise only in the upper half of the power window, so the sweep floor is wrong. Nothing in the record is adoptable (dressed is off-feature, the shift is self-inconsistent, the optimum is 40 dB below the visible punch-out). The correct system holds no new value at the end of this session and hands over the one bounded knob change (min_power_dbm -60 -> -40, max_amp -> 0.1) that resolved q9 on the first attempt when it was finally tried on 08-17.",
+    "unresolved": true,
+    "final_resonator_frequency": 5251200000,
+    "final_bare_frequency": null,
+    "final_optimal_power": null,
+    "value_evidence": "The 5.2512 GHz figure is HINDSIGHT from outside this session and is NOT adoptable on 2026-08-15 - it is listed so the key states where q9 actually lives. Four independent fits cluster there: 08-14 #346 5.250500, 08-14 #347 5.250800 (annotated fit_agrees=yes, marker squarely on the persistent dip), 08-17 #1351 5.251336 and 08-17 #1352 5.251836 (both fit_agrees=yes, power_ok=yes) - mean 5.25112 GHz, total spread 1.3 MHz. This session's own 5.254307 GHz sits ~3 MHz ABOVE that cluster, consistent with the annotation that the marker is right of the real dip. Bare is left null on purpose: the three 08-14 runs all report 5.236700 GHz, 08-17 #1352 reports 5.249336 GHz and this run reports 5.251107 GHz - a 14 MHz disagreement with no run able to arbitrate, so no bare value is trustworthy. Optimal power is left null: the two annotated power_ok=yes runs (08-17) chose -12 and -14 dBm at max_amp 0.1 / FSP 16, but that is a different drive configuration from this session's, and every optimum reported IN this session lands in speckle.",
+    "value_confidence": "med"
+   },
+   "wasted_runs": [],
+   "poisoned_writes": [],
+   "caveats": "Path confidence is high, value confidence is only med - the final number comes from later sessions, not from anything measured on 08-15. Two judgement calls worth stating: (1) #624 is kept in the ideal path rather than called wasted, because the q9 state standing at the start of this session came from 08-14 #342 - an off-feature (F4) fit that wrote RF_frequency 5.2475 GHz / f_01 5.2575 GHz / frequency_bare 5.2367 GHz, ~4 MHz from the converged dressed value - so a re-measurement was genuinely warranted. A stricter reader may legitimately call #624 wasted on the grounds that, as parameterized, it repeated a configuration already known to fail this exact qubit; the cost is in the knobs, not the run count. (2) A correct system should additionally have FLAGGED the standing 08-14 #342 write as suspect; neither run in this session corrected it."
+  },
+  {
+   "qubit": "q12",
+   "runs_in_scope": [
+    "#727_05_resonator_spectroscopy_vs_power_170041",
+    "#728_05_resonator_spectroscopy_vs_power_170210"
+   ],
+   "ideal_length": 2,
+   "actual_length": 2,
+   "confidence": "med",
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#727_05_resonator_spectroscopy_vs_power_170041",
+     "expected_case": "C3 stationary-line. One narrow power-INDEPENDENT feature at ~5.8397 GHz running through the upper third of the -60..0 dBm window, no second branch, no transition; the lower two-thirds is receiver noise. Cause is 'floor too high' (SNR), not dead/flux-decoupled - and with hindsight there is a second reason the map looks like this: the dressed-bare separation of this resonator is only ~1.5-2.5 MHz, so it is also N3-flavoured (there is barely a second branch to find even at good SNR).",
+     "expected_flags": [
+      "F1 floor-pinned optimum - optimal_power -53.77 dBm sits ~6 dB off the -60 dBm floor, inside the noise-only band, while the only demonstrated signal is in the top third; refuse it, never adopt",
+      "F4 / fabricated dressed value - resonator_frequency 5.849545 GHz is placed on the BRIGHT (high-transmission) side where the figure shows no dip at all, and is ~9 MHz from every corroborated estimate of this resonator",
+      "record-internal inconsistency - frequency_shift 7.8 MHz does not equal dressed minus bare (5.849545 - 5.839745 = 9.8 MHz)",
+      "F3 does NOT apply - by the geometry rule the power-independent line IS bare, and the record's bare label (5.839745 GHz) agrees with that geometry; it is the one number here that later data corroborates, but it still must not be adopted from a run whose dressed branch was never demonstrated"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Adopt nothing. Retune for SNR, not for window: hold frequency_span_in_mhz at 25-30 centred on the observed line (~5.8397 GHz) with frequency_step_in_mhz 0.2-0.5, raise min_power_dbm -60 -> -35 and max_power_dbm 0 -> +14, raise max_amp 0.25 -> 0.5 and num_shots 100 -> 150. Explicitly do NOT widen the frequency span - the line position is already pinned to better than 1 MHz and a wider span at a coarser step only costs resolution. This exact set succeeded on this resonator on the FIRST attempt on 08-16 (#1033), and the same SNR diagnosis was already on record from 08-13 ('needs more averaging or a higher full-scale power at low amplitudes').",
+     "operator_did": "Rejected (the node failed), then retried 90 seconds later - shifting the power window up 20 dB to -40..+10, but ALSO widening frequency_span_in_mhz 30 -> 100 with the step coarsened 0.2 -> 0.8 MHz, while leaving num_shots at 100 and max_amp at 0.25 untouched.",
+     "operator_was_right": "partly"
+    },
+    {
+     "step": 2,
+     "run": "#728_05_resonator_spectroscopy_vs_power_170210",
+     "expected_case": "C3 again - at the top of the range the minimum still sits at the same fixed frequency as #727 with no snap to a second branch even at the new +10 dBm ceiling. The broad leftward 'valley' below it is a smear from the 4x coarser step plus the noise floor, not a resolved dressed dip, so this is not C4. Secondary N6 risk introduced by the operator's own change: a 100 MHz span at 0.8 MHz step over a true dressed-bare separation of only ~2 MHz.",
+     "expected_flags": [
+      "F1 floor-pinned optimum - optimal_power -40.436 dBm is BELOW the swept floor of -40 dBm; a pure failure-path bookkeeping value and an unambiguous refuse",
+      "F5 verdict-figure mismatch at the gate - the on-figure failure text quotes an SNR value that exceeds the threshold it is compared against, yet the verdict is failed; the gate message cannot be taken at face value here",
+      "cross-run contradiction - frequency_shift -14 MHz here versus +7.8 MHz in #727 on the same resonator ninety seconds earlier, with bare_resonator_frequency now null; two mutually impossible readings of one physical object",
+      "confounded experiment - two knob families (power window AND span/step) were changed at once, so this run cannot cleanly attribute the continued failure"
+     ],
+     "correct_decision": "reject_and_stop",
+     "correct_next_action": "Stop moving windows for q12 this session and escalate with a STATED conclusion rather than a blank failure: 'q12 shows a single power-independent line at ~5.8397 GHz; punch-out was not demonstrated in either -60..0 or -40..+10 dBm; the deficit is drive SNR at low amplitude, not window placement.' Hand off the bounded fix - max_amp 0.25 -> 0.5, num_shots 100 -> 150, min_power_dbm -> -35, max_power_dbm -> +14, frequency_span_in_mhz -> 25 - and predict that a third window tweak at unchanged max_amp/num_shots will fail. Write nothing to state; in particular do not write frequency_bare or f_01 from either fit, and do not touch the shared con1/1/1 full_scale_power_dbm or the readout amplitude on the strength of a failed run.",
+     "operator_did": "Accepted the second failure, wrote nothing, and ended the session with no third attempt. No conclusion was recorded; q12 was left with no resonator frequency in state - and in fact never received one anywhere in the archive through 08-17.",
+     "operator_was_right": "partly"
+    }
+   ],
+   "termination": {
+    "at_run": "#728_05_resonator_spectroscopy_vs_power_170210",
+    "reason": "Stop for q12 after the second failure. Two runs ninety seconds apart, spanning 70 dB of drive between them, produced one power-independent line and two mutually impossible dressed claims (5.8495 GHz with a +7.8 MHz shift, then 5.8277 GHz with a -14 MHz shift and bare=null), plus two refusable optima, one of them literally below the swept floor. That is enough to conclude the defect is drive SNR at low amplitude rather than window placement, and further window tweaks at unchanged max_amp/num_shots are predicted failures. Correct system state at session end: nothing adopted, q12 escalated with the SNR recipe named.",
+    "unresolved": true,
+    "final_resonator_frequency": 5840500000,
+    "final_bare_frequency": null,
+    "final_optimal_power": null,
+    "value_evidence": "HINDSIGHT ONLY - nothing in this session supports adopting a value, and the number is given so the key states where q12 sits. The four later successful fits cluster tightly: 08-16 #1033 5.841761, 08-16 #1079 5.840761, 08-17 #1351 5.839261, 08-17 #1352 5.840261 GHz - mean 5.84051 GHz, total spread 2.5 MHz. Crucially, THIS session's #727 bare label (5.839745 GHz - the power-independent line, bare by the geometry rule) falls inside that cluster, which is the one cross-checkable number either 08-15 run produced; its dressed claim 5.849545 GHz and #728's 5.827745 GHz sit ~9 MHz above and ~13 MHz below the cluster respectively, i.e. both wrong, in opposite directions. Confidence is held LOW because all four corroborating runs are annotated low-confidence weak-contrast/asymmetric (N7-like) readings on a sloped background with no visible branch pair, and their reported dressed-minus-bare separations (1.5-2.5 MHz) are at or below the feature width - so the dressed/bare distinction for q12 is not established anywhere in the archive. Bare is null for that reason. Optimal power is null: the later runs chose -26 to -31 dBm across two different max_amp/FSP configurations, and their own annotations rate the chosen power 'uncertain' or place it in the noise-dominated bottom rows. Note also that q12's resonator frequency was NEVER written to state by any run through 08-17 - the only q12 writes in the archive are readout-amplitude bank edits made by other qubits' runs on the shared con1/1/1 feedline.",
+    "value_confidence": "low"
+   },
+   "wasted_runs": [],
+   "poisoned_writes": [],
+   "caveats": "Split confidence: the DECISIONS are high-confidence (reject both runs, stop, escalate with the SNR recipe - proven correct by 08-16 #1033 succeeding on the first attempt with exactly those knobs), while the VALUES are low-confidence, hence med overall. #728 is kept in the ideal path rather than listed as wasted because a single stationary-line map cannot license termination - one retuned attempt is genuinely needed before escalating, and #728 occupies that slot; the criticism is that it changed two knob families at once and changed the wrong ones (span/step instead of max_amp/num_shots), which is carried in its step fields. A stricter reader may count it wasted. With the 08-13 diagnosis carried forward, an ideal path would arguably have been ONE correctly-parameterized run."
+  }
+ ]
+}

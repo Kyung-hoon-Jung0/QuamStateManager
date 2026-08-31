@@ -341,9 +341,12 @@ def _spec_family(chip: SimChip, targets: list[str], params: dict, corrupt_for,
             amp = drive_v * readout_v
         if corrupt != "no_signal" and in_window:
             sig += amp * _lorentzian(freqs, truth, fwhm)
-        # resonator G3 tolerance is deliberately wide (rotated-S21 channel) —
-        # its sidelobe must sit beyond even that to be a meaningful wrong-peak
-        side_pos = truth + (12.0 if is_dip else _SIDELOBE_OFFSET_FWHM) * fwhm
+        # resonator G3 tolerance is deliberately wide (rotated-S21 channel,
+        # 13 FWHM since docs/134) — its sidelobe must sit beyond even that to
+        # be a meaningful wrong-peak. 16 FWHM matches the measured geometry of
+        # the real failure class: the nearest rival-resonator capture in the
+        # adjudicated corpus sits 15.6 FWHM out.
+        side_pos = truth + (16.0 if is_dip else _SIDELOBE_OFFSET_FWHM) * fwhm
         if corrupt == "wrong_peak" and freqs.min() <= side_pos <= freqs.max():
             sig += amp * _SIDELOBE_FRAC * _lorentzian(freqs, side_pos, fwhm)
         base = 0.55 - 0.35 * sig if is_dip else 0.1 + 0.6 * sig
@@ -379,8 +382,9 @@ def _spec_family(chip: SimChip, targets: list[str], params: dict, corrupt_for,
             claimed, r2, success = truth + 2.5e9, 0.91, True
         elif corrupt == "drift":
             # the resonator family's G3 tolerance is deliberately wide (rotated
-            # S21 channel, docs/47) — its drift must clear even that
-            claimed = truth + (12.0 if is_dip else 3.5) * fwhm
+            # S21 channel, docs/47; 13 FWHM since docs/134) — its drift must
+            # clear even that
+            claimed = truth + (16.0 if is_dip else 3.5) * fwhm
             r2, success = 0.88, True
         else:
             claimed = truth + float(rng.normal(0, fwhm / 40))

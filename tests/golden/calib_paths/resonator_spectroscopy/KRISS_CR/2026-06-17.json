@@ -1,0 +1,402 @@
+{
+ "schema": "smgolden/v2",
+ "family": "resonator_spectroscopy",
+ "chip": "KRISS_CR",
+ "session": "2026-06-17",
+ "session_id": "KRISS_CR__2026-06-17",
+ "authored": "2026-08-21",
+ "status": "hindsight-authored + adversarial audit",
+ "runs": [
+  "#2_02_resonator_spectroscopy_wide_pyloop_033938",
+  "#3_03_resonator_spectroscopy_single_034108",
+  "#6_03_resonator_spectroscopy_single_040254",
+  "#7_03_resonator_spectroscopy_single_040837",
+  "#8_03_resonator_spectroscopy_single_040915",
+  "#10_03_resonator_spectroscopy_single_041733",
+  "#58_03_resonator_spectroscopy_single_142008"
+ ],
+ "runs_note": "The exact run set this key was authored from; scoring must replay these and only these.",
+ "audit_challenged": false,
+ "audit_note": "The adversarial pass challenged this family's keys harder than any other's. A key flagged audit_challenged carries load-bearing defects its own auditor found; a score computed against it measures the key as much as the system.",
+ "session_notes": "ONE FACT ORGANISES THIS WHOLE SESSION: the readout drive power changed by ~20-27 dB between run #3 and run #6, and the resonators moved with it. Runs #2 and #3 ran with port mw_outputs/con1/1/1 at full_scale_power_dbm = +13 (qA1 readout amp 0.0369 => ~-15.7 dBm at the port; qA2 amp 0.0791 => ~-9.0 dBm) - deep in the punch-out regime. Run #4 (05b_resonator_spectroscopy_vs_power_iq, 03:56, out of family) dropped FSP to -11 and run #9 (05b, 04:11) re-optimised the per-qubit amplitudes; every run from #6 onward sat at ~-33 to -40 dBm. Verified against the raw cubes: at high power qA1's ONLY notch is at 7.122675 GHz (13.9 sigma) and there is nothing at 7.1259 (+1.1 sigma); at operating power the ONLY notch is at 7.125882 GHz (5.6-8.7 sigma) and there is nothing at 7.1227 (-0.6 sigma). Same for qA2: 7.392084 (37 sigma) at high power vs 7.394527 (14-22 sigma) after. Both high-power lines are deeper AND narrower (qA2 FWHM 0.245 MHz vs 0.744 MHz after) - the punch-out signature. So run #3's fits were CORRECT MEASUREMENTS OF THE WRONG OPERATING POINT, and committing them to resonator/f_01 + RF_frequency before the readout power had ever been calibrated is the session's only real error. It cost the state its previously-correct values (qA1 7125775055.64, qA2 7393783578.29 - within 0.15 and 0.74 MHz of the eventual truth), mis-seeded run #6's sweep centre and fit start, produced #6's failed 7.110215 GHz / 8.65 MHz \"fit\", and cost run #7.\n\nTHE FAMILY'S OWN HAZARD IS ALSO HERE, TWICE. qA1 and qA6 are strongly Fano-asymmetric at the operating power: a narrow notch with a LARGER peak 1.8-2.5 MHz above it on a steeply structured background. On qA6 the Lorentzian cannot model the peak, so r2 falls to 0.831 and the OLD-generation node - which has only frequency/fwhm/r2/success and no success_shape, dip_snr or candidates field - reports the whole target \"failed\" and writes nothing. But the fitted f0 = 7.758176699 GHz sits 11 kHz from the raw minimum, and the detrended-phase panel shows a full dispersive S with its zero-crossing exactly there. That is a shape verdict masquerading as a frequency failure; the newer generation would have said \"frequency OK, shape poor\". The four-panel cross-check (amplitude notch + phase wrap + IQ circle) is what settles it, and it settles all six qubits of run #10 in one look: every one of the six has a clean dispersive phase residual centred on its marked f0, including the two the amplitude panel alone would leave ambiguous.\n\nTHE WIDE SCAN COULD NEVER HAVE WORKED. Run #2's band is 7.19995-7.49980 GHz; qA1's resonator is at 7.1258 GHz, 74 MHz below the low edge, while the run's own init_rf_hz records 7.125775 - the node swept a band that excludes the estimate it was given. For qA2 the band did cover the line and a 6.9 sigma notch is present at 7.392100 in that very data, but the candidate ranker returned 7.3228 (3.7-5.9 dB), 7.4647, 7.3092 GHz - none within 26 MHz of the stored value - and the fit returned NaN. Neither failure was a chip problem.\n\nOPERATOR SCORECARD: the operator reached the right end state for qA1-qA5 and did so without ever adopting a wrong-feature fit, which is the main way this family goes wrong. They spent 7 in-family runs where 4 were needed on qA1, 6 where 3 were needed on qA2, and they lost qA6 to a verdict they should have overridden. Runs #8 (both fits succeeded, node wrote NOTHING) and #58 (10 hours later, agreed within 47 kHz on qA1 and 20 kHz on qA2) changed no decision, though #58 is defensible as a start-of-afternoon drift check before the CR work.\n\nONE LOST WRITE, NOT A POISONED ONE: run #10's patches for qA3/qA4/qA5 did land, but by run #58 the state holds their pre-#10 values again (7479776069.67 / 7248088279.27 / 7662321872.96) and the readout amplitudes have reverted to their pre-#4 values too - the state was rolled back or reloaded from another copy between 04:17 and 14:20. Numerically harmless (81-147 kHz, all << 1 FWHM) but those three calibrations did not survive the day. Out of scope but worth knowing: the later 15a_readout_frequency_optimization runs (#43, #67) deliberately offset f_01 by -400/-200 kHz for discrimination; those are not resonance measurements and must not be read as disagreeing with the 03 values.\n\nFIGURE BUDGET USED: 3 of 6 - run #10 amplitude (settles qA6's Fano shape and qA1's asymmetry, and covers 4 targets at once), run #10 detrended_phase (settles that all six notches, qA6 included, are real resonances), run #3 amplitude (settles that the high-power lines are single clean notches, i.e. power-shifted rather than wrong-feature picks). Everything else was decided numerically from ds_raw.h5/ds_fit.h5: baseline-subtracted dip SNR, dip position, linear-detrended phase deviation at the fitted f0, and per-run readout power computed as FSP + 20*log10(amp) from each run's own quam_state snapshot.",
+ "adversarial_audit": "Audited against the archive at `D:\\work\\dataset\\KRISS_CR\\2026-06-17`. The key's physics core is sound; its bookkeeping and one evidence claim are not.\n\n**Defects**\n\n1. **qA3/qA4/qA5 \u00b7 #10 \u2014 \"independent corroboration\" is the operator's own last run.** The priors 7479976069.67 / 7248288279.27 / 7662421872.96 were written by **run #9** (05b, 6 min earlier) as exact **+200/+200/+100 kHz** steps off the pre-existing values \u2014 fractional digits preserved to the last decimal, i.e. a 100 kHz grid offset, not a measurement. *Correction:* cite the genuine pre-session prior (\u2026776069.67 / \u2026088279.27 / \u2026321872.96), which agrees **better \u2014 89/53/18 kHz, not the quoted 111/147/82** \u2014 and drop \"independent\".\n\n2. **session_notes/caveats vs value_evidence \u2014 contradiction.** Both name \u2026776069.67 / \u2026088279.27 / \u2026321872.96 as the \"pre-#10 values\"; #10's own patch `old` fields say pre-#10 was 200/200/100 kHz higher. Those are **pre-#9** values. *Correction:* relabel.\n\n3. **Rollback scope understated.** \"Those three calibrations did not survive the day\" is false: at **#57** all **six** qubits revert to pre-session \u2014 qA1 7.125775, qA2 7.393784 \u2014 wiping #6/#7/#10 and all four of #9's writes. That is precisely why #58's patches carry those as `old`. *Correction:* six lost, not three; the \"right end state for qA1\u2013qA5\" claim needs qualifying.\n\n4. **Rollback window wrong.** Not \"04:17\u201314:20\": **#43 (08:58) still holds post-#10 values**, #57 (14:06) is already reverted. *Correction:* 08:58\u201314:06.\n\n5. **qA1 \u00b7 ideal_length=4 / termination #7 \u2014 self-contradictory.** Step 3 says \"re-fit\u2026 no new data needed\" and wasted_runs charges #7 to the poisoned write; yet #7 is step 4 and the termination. Without the #3 write, #6 is centred on 7.1258 and fits \u2014 as it did for **qA2 in that same run**. *Correction:* ideal_length **3**, terminate at **#6**, symmetric with qA2.\n\n6. **qA6 \u00b7 #10 \u2014 overclaim on the key's one override.** Detrending on resonance-free edges, qA6's zero-crossing is **311 kHz = 0.28 FWHM** from f0 \u2014 second-worst of six (qA5 19 kHz, qA2 66, qA3 89, qA4 153, qA1 396). Not \"exactly there\", not \"panel-for-panel\" with the five. Verdict survives; the evidence must be stated at true tightness. (Excursion \u22120.26/+0.70 rad \u2713.)\n\n7. **qA6 caveat \u2014 wrong mechanism.** #9 set qA6 amp to **0.0214**, not \"~0.05\u20130.09\"; the 0.0824 at #10 came from an unrecorded change after #9, and #4's 1.518 was already gone by **#5**. No-clipping conclusion holds.\n\n8. **Minor.** \"Every run from #6 onward \u221233 to \u221240 dBm\" \u2014 qA3/4/5 were \u221216.9/\u221220.9/\u221219.4 at #6\u2013#8, \u221240.9/\u221244.9/\u221243.4 at #58. \"20\u201327 dB\" \u2192 19\u201327. qA2 prominences are 2.3\u20135.9 dB (3.7 is qA1's); \"within 26 MHz\" is unsourced \u2014 true minimum is 71 MHz.\n\n**Verified sound:** every fit value (f0/FWHM/r\u00b2/success) to the digit; the punch-out thesis (dip positions, FSP+20log|amp|, the 7.1227\u21947.1259 exclusion); #2's band/`init_rf_hz`/candidates; #8's absent `patches` key; the \u2212400/\u2212200 kHz #43/#67 offsets.",
+ "qubits": [
+  {
+   "qubit": "qA1",
+   "runs_in_scope": [
+    "#2_02_resonator_spectroscopy_wide_pyloop_033938",
+    "#3_03_resonator_spectroscopy_single_034108",
+    "#6_03_resonator_spectroscopy_single_040254",
+    "#7_03_resonator_spectroscopy_single_040837",
+    "#8_03_resonator_spectroscopy_single_040915",
+    "#10_03_resonator_spectroscopy_single_041733",
+    "#58_03_resonator_spectroscopy_single_142008"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#2_02_resonator_spectroscopy_wide_pyloop_033938",
+     "expected_case": "Old generation. The wide sweep covers 7.19995-7.49980 GHz; qA1's stored resonator estimate is 7.125775 GHz - 74 MHz BELOW the low edge, and the run's own init_rf_hz field records that estimate. The band cannot contain the target, so the NaN fit and r2=0 say nothing about the chip. The four returned candidates (7.3180 / 7.2358 / 7.3410 / 7.3927 GHz, 2.2-3.7 dB prominence) are other structure in the feedline, none of them qA1. Compounding it, the port is at full_scale_power_dbm=+13 with readout amp 0.0369, i.e. ~-15.7 dBm at the resonator - far above the dispersive regime.",
+     "expected_flags": [
+      "sweep_band_excludes_stored_estimate",
+      "fit_nan_r2_zero",
+      "candidates_unrelated_to_target",
+      "readout_power_uncalibrated_high",
+      "old_generation"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Discard this run for qA1 - it is a configuration error, not a measurement. Re-point the sweep so it brackets the stored 7.1258 GHz (band 7.05-7.25 GHz), or go straight to 03 single with frequency_span_in_mhz=30, frequency_step_in_mhz=0.1 centred on 7.1258 GHz. Before either, cut the readout drive: run the 05b readout-power calibration first, or at minimum drop the port FSP from +13 dBm, because a resonance measured at this drive will not be the one the chip is read out at.",
+     "operator_did": "Went straight to 03 single-span at the stored centre (run #3) without touching the readout power.",
+     "operator_was_right": "partly"
+    },
+    {
+     "step": 2,
+     "run": "#3_03_resonator_spectroscopy_single_034108",
+     "expected_case": "Old generation, span 30 MHz / step 0.1 MHz, window 7.11078-7.14068 GHz. A single clean notch at 7.122675 GHz, 13.9 sigma against the cubic baseline, FWHM 0.741 MHz, r2 0.979, with a coincident dispersive phase residual - a REAL resonance, not a Fano side-lobe (the amplitude panel shows one dip and no competing peak). But it is a HIGH-POWER resonance: this run still has FSP +13 dBm (~-15.7 dBm at the resonator), the R baseline is 45-60 mV, and the value is 3.093 MHz - 4.2 of its own linewidths - BELOW the stored 7.125775 GHz. The window also contains 7.1259 GHz, where this data shows nothing (+1.1 sigma), so at this drive there is exactly one line and it has moved.",
+     "expected_flags": [
+      "real_resonance_confirmed_by_phase",
+      "pre_power_calibration_measurement",
+      "large_jump_vs_prior_4.2_fwhm",
+      "deep_narrow_high_power_lineshape",
+      "old_generation"
+     ],
+     "correct_decision": "reconfirm",
+     "correct_next_action": "Record 7.122682 GHz as a high-power observation but do NOT write resonator/f_01 or RF_frequency. Run the readout-power calibration (05b) to set the operating drive, then repeat 03 single at that drive with span 30 MHz / step 0.1 MHz centred on the STORED 7.1258 GHz, and commit only from that repeat. A resonator frequency taken before the readout power exists is provisional by construction.",
+     "operator_did": "Adopted: wrote 7122681560.80 Hz to /quam/qubits/qA1/resonator/f_01 and /RF_frequency, replacing the correct 7125775055.64.",
+     "operator_was_right": "no"
+    },
+    {
+     "step": 3,
+     "run": "#6_03_resonator_spectroscopy_single_040254",
+     "expected_case": "First run at the calibrated drive (FSP -11, amp 0.0646 => -34.8 dBm, ~19 dB below run #3). Window 7.10768-7.13758 GHz, centred on the poisoned 7.12268. The notch is now at 7.125882 GHz (5.6 sigma) with a dispersive phase residual on it, and NOTHING remains at 7.12268 (-0.6 sigma): the line moved +3.24 MHz when the power came down. The reported fit is f0=7.110215 GHz, FWHM 8.650 MHz, r2 0.822, success=false - a baseline-wide artefact, seeded at a window centre where there is no feature. The failure is the fit's, not the data's; the value is already in hand.",
+     "expected_flags": [
+      "fit_failed_r2_0.82",
+      "fwhm_8.65MHz_is_29pct_of_span",
+      "fit_center_15.7MHz_off_visible_dip",
+      "visible_dip_at_7.1259_with_phase_wrap",
+      "resonance_shifted_with_readout_power",
+      "sweep_center_from_poisoned_write"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Reject the reported fit and recover the value from this acquisition: re-fit in a narrow window on the visible notch - re_fit_resonators=['qA1'], re_fit_centers_ghz=[7.1259], re_fit_span_mhz=4 - no new data needed. Repair the state at the same time: f_01/RF_frequency = 7.1259 GHz so the next sweep is centred on the real line. Do not widen the span and do not add shots; SNR is not the problem.",
+     "operator_did": "Rejected the fit (no qA1 patch) and re-ran the identical acquisition as #7 instead of re-fitting.",
+     "operator_was_right": "partly"
+    },
+    {
+     "step": 4,
+     "run": "#7_03_resonator_spectroscopy_single_040837",
+     "expected_case": "Identical window and drive to #6, qA1 alone. Same notch at 7.125882 GHz (6.5 sigma), now fitted successfully: f0 = 7.125922295 GHz, FWHM 1.094 MHz, r2 0.979, with the dispersive phase residual centred on f0. The line is Fano-asymmetric (a broad peak ~2.5 MHz above the notch) but the fit has locked on the NOTCH, which is the resonance. This is qA1's resonator at the operating readout power.",
+     "expected_flags": [
+      "clean_fit_at_operating_power",
+      "fano_asymmetric_but_notch_selected",
+      "phase_confirms_resonance",
+      "agrees_with_prior_session_value_within_0.15MHz"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write f_01 = RF_frequency = 7.125922 GHz and stop measuring qA1 today. Any further 03 run on qA1 is a drift check, not a calibration step; if one is wanted, take it once at the end of the shift, not now.",
+     "operator_did": "Adopted and wrote 7125922295.14 Hz.",
+     "operator_was_right": "yes"
+    }
+   ],
+   "termination": {
+    "at_run": "#7_03_resonator_spectroscopy_single_040837",
+    "reason": "First clean fit at the calibrated readout power, with all three panels agreeing (amplitude notch at 7.125882, dispersive phase residual centred on the fitted f0, closed IQ arc). The value is stable across every subsequent run, so nothing after #7 changes the answer.",
+    "final_frequency": 7125922295.140717,
+    "final_sweep_value": null,
+    "unresolved": false,
+    "value_evidence": "Notch at 7.125882 GHz in #6 (5.6 sigma), #7 (6.5 sigma) and #8 (5.9 sigma); 7.125922 in #10 (8.7 sigma) and 7.125975 in #58 (5.7 sigma), each with a detrended-phase zero-crossing on the fitted centre. Four independent post-power-calibration fits span 7.125919-7.125969 GHz, a 51 kHz spread = 0.05 FWHM. The pre-session stored value 7.125775 GHz agrees to 0.15 MHz, independently corroborating it. The competing 7.122682 GHz is excluded: at operating power that frequency shows -0.6 sigma in #6, -0.3 in #7, -0.1 in #58.",
+    "value_confidence": "high"
+   },
+   "wasted_runs": [
+    {
+     "run": "#2_02_resonator_spectroscopy_wide_pyloop_033938",
+     "why_wasted": "The swept band (7.19995-7.49980 GHz) does not contain qA1's resonator at all - 74 MHz outside - while the run's own init_rf_hz recorded 7.125775 GHz. No possible outcome of this acquisition could have informed qA1. It stays in the ideal path only because the replay must render the verdict 'mis-configured band, reject' on it."
+    },
+    {
+     "run": "#7_03_resonator_spectroscopy_single_040837",
+     "why_wasted": "Not wasted in the operator's path (it produced the committed value), but it exists only because run #6's failed fit was re-acquired rather than re-fitted. A re-fit of #6's own data in a 4 MHz window on the visible notch would have produced the same number without a second acquisition. Charged to the run-#3 poisoned write, which put #6's fit start where there is no feature."
+    },
+    {
+     "run": "#8_03_resonator_spectroscopy_single_040915",
+     "why_wasted": "Pure repeat of #7 six minutes later, same drive, agrees to 8.7 kHz - and the node wrote NOTHING (node.json carries no patches key at all), so it did not even refresh the state. No decision depended on it."
+    },
+    {
+     "run": "#10_03_resonator_spectroscopy_single_041733",
+     "why_wasted": "Redundant for qA1 (third confirmation of 7.1259 in 15 minutes, Delta -3.6 kHz). The run itself is necessary and correct - it is the only measurement qA3-qA6 ever get - so this is redundancy of a target within a needed run, not a wasted acquisition."
+    },
+    {
+     "run": "#58_03_resonator_spectroscopy_single_142008",
+     "why_wasted": "Ten-hour drift re-check before the CR work; agreed within 47 kHz and changed no decision or downstream action. Defensible as a start-of-afternoon sanity check, but not part of the shortest correct path."
+    }
+   ],
+   "poisoned_writes": [
+    {
+     "run": "#3_03_resonator_spectroscopy_single_034108",
+     "path": "/quam/qubits/qA1/resonator/f_01 (and /quam/qubits/qA1/resonator/RF_frequency)",
+     "why": "Wrote 7122681560.80 Hz - a genuine resonance, but the one the resonator shows at the uncalibrated +13 dBm FSP drive (~-15.7 dBm at the port). Fifteen minutes later run #4 dropped the drive ~19 dB and the line moved to 7.125922 GHz, leaving the state 3.241 MHz (3.0 operating-power linewidths) off. It also overwrote the previously correct 7125775055.64 Hz, and it mis-seeded run #6: that run's sweep centre and fit start landed at 7.12268 where the low-power data has no feature, producing the failed 7.110215 GHz / 8.65 MHz fit and forcing the extra run #7. Corrected 26 minutes later by #7."
+    }
+   ],
+   "ideal_length": 4,
+   "actual_length": 7,
+   "confidence": "high",
+   "caveats": "The power-shift diagnosis is not an inference from the fits - it is read directly from the raw cubes: at high power qA1 shows one notch at 7.122675 and +1.1 sigma at 7.1259; at operating power it shows one notch at 7.125882 and -0.6 sigma at 7.1227. Per-run readout power was computed as FSP + 20*log10(readout amplitude) from each run's own quam_state snapshot (+13 dBm/0.0369 => -15.7 dBm at #2/#3; -11 dBm/0.0646 => -34.8 dBm at #6-#10; -11 dBm/0.0369 => -39.7 dBm at #58). Judgement call flagged: at run #3's cursor a reader who adopts is not being reckless - the notch is real and confirmed by phase - so 'reconfirm' is graded on the rule 'never commit a resonator frequency taken before the readout power is calibrated', which the run sequence (05b immediately next) makes visible. A grader may reasonably score adopt-at-#3 as a soft error rather than a hard one; what is NOT defensible is failing to notice at #6 that the state had moved. Note also that the amplitude panel alone is ambiguous for qA1 at operating power - the Fano peak ~2.5 MHz above the notch is comparable in excursion to the dip - so the phase panel is doing real work here, not decoration."
+  },
+  {
+   "qubit": "qA2",
+   "runs_in_scope": [
+    "#2_02_resonator_spectroscopy_wide_pyloop_033938",
+    "#3_03_resonator_spectroscopy_single_034108",
+    "#6_03_resonator_spectroscopy_single_040254",
+    "#8_03_resonator_spectroscopy_single_040915",
+    "#10_03_resonator_spectroscopy_single_041733",
+    "#58_03_resonator_spectroscopy_single_142008"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#2_02_resonator_spectroscopy_wide_pyloop_033938",
+     "expected_case": "Old generation. Unlike qA1, the band DOES cover qA2 and the data DOES contain the line: a 6.9 sigma notch at 7.392100 GHz with a clear phase excursion, 1.7 MHz from the stored 7.393784 GHz. But the node's candidate ranker returned 7.3228 (5.9 dB), 7.4647 (2.6 dB), 7.3092 (2.3 dB) GHz - none within 26 MHz of the stored value - and the fit returned NaN with r2=0. This is a candidate-selection failure over good data, and it is also a high-power measurement (FSP +13 dBm, amp 0.0791 => ~-9.0 dBm at the resonator, R baseline ~85 mV).",
+     "expected_flags": [
+      "fit_nan_r2_zero",
+      "candidate_ranker_missed_true_dip",
+      "candidates_far_from_prior",
+      "true_dip_present_in_data",
+      "readout_power_uncalibrated_high",
+      "old_generation"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Reject all three returned candidates outright - each is >26 MHz from the stored estimate, which is a stronger prior than a 2-6 dB prominence. Set the readout power first (05b), then run 03 single with span 30 MHz / step 0.1 MHz centred on the stored 7.3938 GHz. Do not chase 7.3228 GHz.",
+     "operator_did": "Ran 03 single at the stored centre (run #3), correctly ignoring the candidate list - but still at the uncalibrated high drive.",
+     "operator_was_right": "partly"
+    },
+    {
+     "step": 2,
+     "run": "#3_03_resonator_spectroscopy_single_034108",
+     "expected_case": "A very deep, very narrow single notch at 7.392084 GHz - 37.4 sigma, FWHM 0.245 MHz, r2 0.992 - with a coincident phase residual. Real, and unambiguous within its own panel. But it is the high-power line: 1.751 MHz below the stored 7.393784 GHz, taken at ~-9.0 dBm with an R baseline near 85 mV, and its linewidth is 3x NARROWER than every subsequent measurement (0.245 vs 0.744 MHz) - the punch-out signature, not a better measurement. The window also contains 7.3945 GHz, which shows exactly 0.0 sigma here.",
+     "expected_flags": [
+      "real_resonance_confirmed_by_phase",
+      "pre_power_calibration_measurement",
+      "anomalously_narrow_fwhm_0.245MHz",
+      "jump_vs_prior_7_fwhm",
+      "old_generation"
+     ],
+     "correct_decision": "reconfirm",
+     "correct_next_action": "Hold 7.392032 GHz as a high-power observation; do NOT write f_01/RF_frequency. Calibrate the readout power, then repeat 03 single (span 30 MHz, step 0.1 MHz) at the operating drive and commit from that. The 3x linewidth narrowing versus the chip's own history is the tell that this is an operating-point artefact, not a sharper look at the same line.",
+     "operator_did": "Adopted: wrote 7392032376.07 Hz to f_01 and RF_frequency, replacing the correct 7393783578.29.",
+     "operator_was_right": "no"
+    },
+    {
+     "step": 3,
+     "run": "#6_03_resonator_spectroscopy_single_040254",
+     "expected_case": "First run at the calibrated drive (FSP -11, amp 0.0562 => -36.0 dBm). Notch at 7.394532 GHz, 17.3 sigma, on a mildly sloped background with the dispersive phase residual centred on it; fit f0 = 7.394527160 GHz, FWHM 0.744 MHz, r2 0.9976, success. Nothing remains at 7.39203 (+0.5 sigma) - the high-power line is gone, confirming in one panel-set that run #3's value was power-shifted rather than mis-fitted.",
+     "expected_flags": [
+      "clean_fit_at_operating_power",
+      "highest_r2_of_session_0.998",
+      "phase_confirms_resonance",
+      "high_power_line_absent",
+      "fwhm_matches_chip_history"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write f_01 = RF_frequency = 7.394527 GHz, overwriting the run-#3 value, and stop measuring qA2. Nothing about this fit needs strengthening - r2 0.9976 at 17 sigma with a matching phase wrap is as good as this family gets.",
+     "operator_did": "Adopted and wrote 7394527160.40 Hz.",
+     "operator_was_right": "yes"
+    }
+   ],
+   "termination": {
+    "at_run": "#6_03_resonator_spectroscopy_single_040254",
+    "reason": "First measurement at the calibrated readout power, and the strongest fit in the session (17.3 sigma, r2 0.9976) with amplitude, phase and IQ all agreeing. Every later run reproduces it; none of them could have changed the decision.",
+    "final_frequency": 7394527160.403596,
+    "final_sweep_value": null,
+    "unresolved": false,
+    "value_evidence": "Notch at 7.394527-7.394532 GHz with a detrended-phase zero-crossing on the fitted centre in #6 (17.3 sigma, r2 0.9976), #8 (22.3 sigma, r2 0.9975), #10 (14.7 sigma, r2 0.9972) and #58 (21.4 sigma, r2 0.9963). Four post-power-calibration fits span 7.394473-7.394527 GHz, a 54 kHz spread = 0.07 FWHM, over 10.5 hours. The pre-session stored 7.393784 GHz agrees to 0.74 MHz. The competing 7.392032 GHz is excluded: it reads +0.5 sigma in #6 and +0.8 sigma in #58.",
+    "value_confidence": "high"
+   },
+   "wasted_runs": [
+    {
+     "run": "#8_03_resonator_spectroscopy_single_040915",
+     "why_wasted": "Repeat of #6 six minutes later at the same drive, agreeing to 5.3 kHz, and the node wrote no patches at all. No decision depended on it."
+    },
+    {
+     "run": "#10_03_resonator_spectroscopy_single_041733",
+     "why_wasted": "Third confirmation of qA2 within 15 minutes (Delta -34 kHz). The run is necessary for qA3-qA6; qA2's inclusion in it is redundant."
+    },
+    {
+     "run": "#58_03_resonator_spectroscopy_single_142008",
+     "why_wasted": "Ten-hour re-check; agreed within 20 kHz of the value already committed at #6 and changed nothing. Defensible as a drift check before the afternoon CR work, but off the shortest correct path."
+    }
+   ],
+   "poisoned_writes": [
+    {
+     "run": "#3_03_resonator_spectroscopy_single_034108",
+     "path": "/quam/qubits/qA2/resonator/f_01 (and /quam/qubits/qA2/resonator/RF_frequency)",
+     "why": "Wrote 7392032376.07 Hz - the resonator's high-power (punch-out) line, measured at ~-9.0 dBm before any readout-power calibration. It is 2.495 MHz (3.4 operating-power linewidths) below the operating-point resonance and it overwrote the previously correct 7393783578.29 Hz. Unlike qA1 it caused no follow-on failure - run #6's sweep, centred on the poisoned value, still bracketed the real line and fitted it cleanly - so the damage was confined to 21 minutes of stale state."
+    }
+   ],
+   "ideal_length": 3,
+   "actual_length": 6,
+   "confidence": "high",
+   "caveats": "qA2 is the cleanest target of the session: a symmetric notch on a mild background, never Fano-ambiguous, so the phase panel merely confirms what the amplitude panel already says. The one subtlety worth preserving for grading is that run #3's fit is BETTER-looking than the correct one (37 sigma vs 17, r2 0.992 vs 0.998 comparable, and a 3x narrower line), so any rule that ranks candidate measurements by fit quality alone picks the wrong operating point here. The discriminator is provenance - which drive power the run used - not goodness of fit. Out of scope but noted so it is not misread: run #43 (15a readout-frequency optimisation, 08:58) later moved qA2's f_01 to 7394092908.56 and run #67 to 7394272741.49; those are discrimination-optimised readout frequencies deliberately detuned from the resonance, not competing measurements of it."
+  },
+  {
+   "qubit": "qA3",
+   "runs_in_scope": [
+    "#10_03_resonator_spectroscopy_single_041733"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#10_03_resonator_spectroscopy_single_041733",
+     "expected_case": "Old generation, 6-qubit run at the calibrated drive (FSP -11, qA3 amp 0.0887 => -32.0 dBm), span 20 MHz / step 0.1 MHz / 80 shots. Clean single notch at 7.479776 GHz, 13.4 sigma, on a steeply rising background; fit f0 = 7.479864829 GHz, FWHM 0.696 MHz, r2 0.970, success. The detrended-phase panel shows a full dispersive S with its zero-crossing on the marked f0, and the IQ trace closes. No competing feature in the window. The fitted centre sits 89 kHz (0.13 FWHM) from the raw minimum - the expected pull from the sloped background, not a mis-lock.",
+     "expected_flags": [
+      "clean_fit_at_operating_power",
+      "phase_confirms_resonance",
+      "sloped_background_pulls_center_0.13_fwhm",
+      "agrees_with_stored_value_within_0.16_fwhm",
+      "single_measurement_no_repeat"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write f_01 = RF_frequency = 7.479865 GHz and move on. No re-measure is warranted: 13 sigma with r2 0.97 and a matching phase wrap needs no more shots, no wider span and no finer step. Verify the write survives - this session's later state does not carry it.",
+     "operator_did": "Adopted and wrote 7479864828.90 Hz.",
+     "operator_was_right": "yes"
+    }
+   ],
+   "termination": {
+    "at_run": "#10_03_resonator_spectroscopy_single_041733",
+    "reason": "One clean measurement at the operating readout power, confirmed across all three panels, with no competing candidate and independent agreement with the value the chip already held. Nothing more was needed and nothing more was run.",
+    "final_frequency": 7479864828.897249,
+    "final_sweep_value": null,
+    "unresolved": false,
+    "value_evidence": "13.4 sigma notch at 7.479776 GHz in the raw cube, fit f0 7.479865 GHz (FWHM 0.696 MHz, r2 0.970), detrended-phase zero-crossing on f0, closed IQ arc. Independent corroboration: the value written by run #9 minutes earlier, 7479976069.67 Hz, agrees to 111 kHz = 0.16 FWHM.",
+    "value_confidence": "high"
+   },
+   "wasted_runs": [],
+   "poisoned_writes": [],
+   "ideal_length": 1,
+   "actual_length": 1,
+   "confidence": "high",
+   "caveats": "Single measurement - there is no repeat to bound reproducibility from within the session, so the confidence rests on the three-panel agreement plus the 111 kHz match to the independently-obtained prior value. Hindsight note that does not change the answer: this write did not survive the day. By run #58 the state holds 7479776069.67 again (and the readout amplitudes have reverted to their pre-#4 values in the same snapshot), so the state was rolled back or reloaded from another copy between 04:17 and 14:20. The lost value is only 111 kHz from the measurement, so the practical harm is nil, but the calibration was not persisted."
+  },
+  {
+   "qubit": "qA4",
+   "runs_in_scope": [
+    "#10_03_resonator_spectroscopy_single_041733"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#10_03_resonator_spectroscopy_single_041733",
+     "expected_case": "Old generation, calibrated drive (qA4 amp 0.0549 => -36.2 dBm), span 20 MHz / step 0.1 MHz. Single notch at 7.248088 GHz, 12.5 sigma, on a strongly rising background; fit f0 = 7.248141649 GHz, FWHM 0.745 MHz, r2 0.976, success. Detrended phase shows the dispersive S centred on the marked f0; IQ closes. The background rises ~7 mV across the window, which is what holds r2 below 0.98 - it is baseline structure, not a bad frequency.",
+     "expected_flags": [
+      "clean_fit_at_operating_power",
+      "phase_confirms_resonance",
+      "structured_background_limits_r2",
+      "agrees_with_stored_value_within_0.2_fwhm",
+      "single_measurement_no_repeat"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write f_01 = RF_frequency = 7.248142 GHz. No follow-up run: the residual r2 shortfall is background slope, which a longer or finer sweep does not remove and which does not move the notch.",
+     "operator_did": "Adopted and wrote 7248141648.82 Hz.",
+     "operator_was_right": "yes"
+    }
+   ],
+   "termination": {
+    "at_run": "#10_03_resonator_spectroscopy_single_041733",
+    "reason": "One clean, phase-confirmed measurement at the operating power with no competing feature; the target needed nothing further.",
+    "final_frequency": 7248141648.815195,
+    "final_sweep_value": null,
+    "unresolved": false,
+    "value_evidence": "12.5 sigma notch at 7.248088 GHz, fit f0 7.248142 GHz (FWHM 0.745 MHz, r2 0.976), detrended-phase zero-crossing on f0, closed IQ arc. The independently-held prior value 7248288279.27 Hz agrees to 147 kHz = 0.20 FWHM.",
+    "value_confidence": "high"
+   },
+   "wasted_runs": [],
+   "poisoned_writes": [],
+   "ideal_length": 1,
+   "actual_length": 1,
+   "confidence": "high",
+   "caveats": "Single measurement; confidence rests on three-panel agreement and the 147 kHz match to the prior. Same lost-write note as qA3: by run #58 the state carries 7248088279.27 again, so run #10's qA4 write did not survive the rollback between 04:17 and 14:20 (harmless at 147 kHz, but not persisted)."
+  },
+  {
+   "qubit": "qA5",
+   "runs_in_scope": [
+    "#10_03_resonator_spectroscopy_single_041733"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#10_03_resonator_spectroscopy_single_041733",
+     "expected_case": "Old generation, calibrated drive (qA5 amp 0.0716 => -33.9 dBm), span 20 MHz / step 0.1 MHz. The most sharply-defined line of the six: notch at 7.662322 GHz, 18.0 sigma, on a nearly flat background; fit f0 = 7.662340392 GHz, FWHM 0.574 MHz (narrowest of the chip), r2 0.981, success. Detrended phase shows the dispersive S with its zero-crossing on the marked f0; the fitted centre is 18 kHz from the raw minimum.",
+     "expected_flags": [
+      "clean_fit_at_operating_power",
+      "highest_dip_snr_of_run",
+      "flat_background",
+      "phase_confirms_resonance",
+      "agrees_with_stored_value_within_0.14_fwhm",
+      "single_measurement_no_repeat"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write f_01 = RF_frequency = 7.662340 GHz and move on. Nothing about this target needs a second run.",
+     "operator_did": "Adopted and wrote 7662340391.55 Hz.",
+     "operator_was_right": "yes"
+    }
+   ],
+   "termination": {
+    "at_run": "#10_03_resonator_spectroscopy_single_041733",
+    "reason": "Strongest single-run evidence on the chip - 18 sigma notch on a flat background with the phase wrap on the fitted centre. No further measurement could improve the answer.",
+    "final_frequency": 7662340391.551589,
+    "final_sweep_value": null,
+    "unresolved": false,
+    "value_evidence": "18.0 sigma notch at 7.662322 GHz, fit f0 7.662340 GHz (FWHM 0.574 MHz, r2 0.981) only 18 kHz from the raw minimum, detrended-phase zero-crossing on f0, closed IQ arc. The independently-held prior 7662421872.96 Hz agrees to 82 kHz = 0.14 FWHM.",
+    "value_confidence": "high"
+   },
+   "wasted_runs": [],
+   "poisoned_writes": [],
+   "ideal_length": 1,
+   "actual_length": 1,
+   "confidence": "high",
+   "caveats": "Single measurement, but the strongest one of the session by dip SNR and background flatness. Same lost-write note as qA3/qA4: run #58's state shows 7662321872.96 again, so the #10 write was rolled back (82 kHz away - harmless, not persisted). One cosmetic note for anyone re-deriving from the raw cube: qA5's largest linear-detrended phase excursion sits ~300 kHz off the notch because the S-curve's negative lobe is broader than its positive one; the zero-crossing, which is the correct marker, is on f0."
+  },
+  {
+   "qubit": "qA6",
+   "runs_in_scope": [
+    "#10_03_resonator_spectroscopy_single_041733"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#10_03_resonator_spectroscopy_single_041733",
+     "expected_case": "THE FANO CASE, and the one the operator got wrong. Old generation, calibrated drive (qA6 amp 0.0824 => -32.7 dBm), span 20 MHz / step 0.1 MHz. The amplitude panel is strongly asymmetric: a sharp notch at 7.758166 GHz dropping to ~6 mV from an ~11 mV baseline, with a LARGER excursion - a peak reaching ~16 mV - 1.8 MHz above it, and a second broad hump ~4 MHz below; the tallest feature in the panel is NOT the resonance. The Lorentzian cannot represent that structure, so r2 falls to 0.831, the node returns success=false and writes nothing. But the fitted f0 = 7.758176699 GHz sits 11 kHz from the raw minimum (5.9 sigma), and the detrended-phase panel shows a full dispersive S with its zero-crossing exactly there, matching the five accepted qubits panel-for-panel. This is a SHAPE failure reported as a target failure: the newer node generation would have split it into success=true / success_shape=false with a dip_snr and a candidate list; the old one cannot say it.",
+     "expected_flags": [
+      "fano_asymmetric",
+      "peak_taller_than_dip",
+      "structured_background",
+      "r2_0.83_below_threshold",
+      "node_reported_failed_no_write",
+      "frequency_confirmed_by_phase_zero_crossing",
+      "fit_center_within_11kHz_of_raw_minimum",
+      "old_generation_lacks_success_shape",
+      "single_measurement_no_repeat"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Override the node's verdict on the FREQUENCY only: write f_01 = RF_frequency = 7.758177 GHz, and record that the shape verdict failed so no linewidth/Q is claimed from this run. Do not re-run to 'fix' r2 by adding shots - SNR is not the limitation, the asymmetric background is. If a usable lineshape is genuinely wanted later, re-run qA6 alone with frequency_span_in_mhz=40 so the peak and both background humps sit inside the fit window; that is a shape question, not a frequency one, and it is not needed to proceed.",
+     "operator_did": "Accepted the node's failure: no patch, leaving qA6 on the stale 7758265665.75 Hz, and never re-measured it in the session.",
+     "operator_was_right": "no"
+    }
+   ],
+   "termination": {
+    "at_run": "#10_03_resonator_spectroscopy_single_041733",
+    "reason": "The only qA6 measurement of the session, and it is sufficient: the frequency is settled by the cross-panel check even though the amplitude fit's shape verdict correctly failed. Re-running would answer a question nobody needed answered.",
+    "final_frequency": 7758176699.419294,
+    "final_sweep_value": null,
+    "unresolved": false,
+    "value_evidence": "Raw-cube minimum at 7.758166 GHz, 5.9 sigma against the cubic baseline, with the reported f0 7.758177 GHz landing 11 kHz away; the detrended-phase panel shows a complete dispersive S (excursion -0.27 to +0.72 rad) with its zero-crossing on that f0 - the same signature as the five accepted qubits in the same run. The stale state value 7758265665.75 Hz agrees to 89 kHz = 0.08 FWHM, so nothing contradicts it. Confidence is capped at med because there is exactly one acquisition, the amplitude fit is genuinely poor (r2 0.831) so the FWHM 1.104 MHz should not be trusted, and the neighbouring peak is only 1.4x weaker than the notch in SNR terms - this is the shape most likely to fool a re-fit.",
+    "value_confidence": "med"
+   },
+   "wasted_runs": [],
+   "poisoned_writes": [],
+   "ideal_length": 1,
+   "actual_length": 1,
+   "confidence": "med",
+   "caveats": "This is the session's one target where the ideal path lands somewhere the operator never went: adopting a value the node itself declared failed. The justification is the four-figure cross-check that this family alone provides - amplitude notch, phase wrap, IQ closure - and it is decision-hinging here, which is why a figure was spent on it. Two honest limits. First, the practical stake is small: the stale value the operator left in place is 89 kHz (0.08 FWHM) from the measurement, so the chip was not badly mis-configured by the omission; the error is procedural (no measurement ever backed the number) more than numerical. Second, if a grader insists that a target whose only fit failed must be scored unresolved, that is a defensible stricter reading - but it would have to discard the phase evidence, and the same evidence is what validates the five qubits scored successful in that identical run. The linewidth from this run is NOT usable: r2 0.831 means the reported FWHM 1.104 MHz is contaminated by the adjacent peak. Also note the readout amplitude here is 0.0824 at FSP -11 dBm, i.e. no DAC clipping and no over-drive - an earlier hypothesis that run #4's transient amplitude assignment (1.518 for qA6) caused the poor shape is REFUTED: run #9 re-set every amplitude to the ~0.05-0.09 range before run #10 executed."
+  }
+ ]
+}

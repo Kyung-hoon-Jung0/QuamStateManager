@@ -540,3 +540,45 @@ fixed:
 - **replay_score proven on real retry chains**: 105 sessions, 195 decision
   points; the deterministic ladder's baseline is 4 runs saved / 52%
   agreement — the number the model-driven proposer has to beat.
+
+**Domain knowledge as versioned data, and a future-blind benchmark over it
+(docs/129–133).** The auto-calibration loop's weakest point is that every run
+is seeded by the previous one, so a wrong fit does not stay local — it
+ratchets. The answer built here is a per-family case manual (pictures, cases,
+prescriptions) that a reader or a vision judge consults, plus a replay harness
+that walks a real archived session from the start and is structurally forbidden
+from seeing the future (`Session.reveal(k)` raises past `k`, so cheating is a
+crash rather than a better score).
+
+- **Eight families across six labs** now carry a manual with rendered,
+  unlabelled exemplars: resonator-vs-power, resonator 1-D, resonator-vs-flux,
+  resonator-vs-coupler-flux, qubit 1-D, qubit-vs-flux, and — read as one
+  session — qubit spectroscopy with qubit-spectroscopy-vs-power.
+- **Clause B is enforced at load, not in review**: a case that names an
+  absolute frequency, power, or a size as a fraction of the window is DROPPED
+  when the pack loads. It has refused real cases twice in this campaign.
+- **The manual never supplies a number.** Offsets are written against values
+  the run itself reports (its own anharmonicity, its own `target_peak_width`,
+  its own `intrinsic_fwhm`), so a pack written on one chip stays true on
+  another.
+- **`08b_qubit_spectroscopy_vs_power` is the hardest case and the first read
+  as a PAIR** (docs/133). Its node reports `success` on 182 of 182 targets and
+  its frequency is right on 52 of 103 with an independently derived truth. The
+  shipped reader answers 56 of those 103 and is right on 41 — fewer answers,
+  better answers, which is the correct trade for a loop that ratchets.
+- **The two-photon trap, measured honestly**: the 0→2 line sits half an
+  anharmonicity below the fundamental and grows faster with drive, so a 1-D
+  fit can land on it and look perfect. Expert reading of 1,150 annotated
+  targets finds it implicated on 107 of them; the obvious statistic (two
+  accepted values one rung apart in the same session) finds 6, and is not
+  enriched over placebo offsets. When the trap bites the session usually never
+  records the right value at all, so there is no pair for a statistic to find
+  — the failure is only visible in the picture.
+- **Reading a drive amplitude without its port gets the SIGN wrong**
+  (`P = FSP + 20*log10|amp|`), demonstrated on a real run whose amplitude rose
+  while its power fell. The replay now computes the physical drive power from
+  each run's own snapshot.
+- **What the benchmark does not show** is written into every doc: over-adoption
+  where a key says nothing trustworthy existed, sessions poisoned before the
+  first run in scope, blind re-classification as low as 7/12 on one family, and
+  two answer keys challenged by their own adversarial auditor.

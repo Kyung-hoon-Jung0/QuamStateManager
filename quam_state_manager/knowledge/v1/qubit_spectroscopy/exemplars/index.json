@@ -1,0 +1,2699 @@
+{
+ "schema": "smknowex/v1",
+ "family": "qubit_spectroscopy",
+ "note": "Axes are NORMALISED and UNLABELLED: no absolute frequency, power or flux leaves this pack, and a picture without numbers cannot teach an absolute scale (Clause B). Orientation follows the labs' own convention: frequency rightwards, the swept quantity upwards. Overlays: orange = the tracked feature, cyan dashed and magenta dotted = the record's own frequency claims, red = the sweep value it chose. Markers are the RECORD's claims, drawn even when they contradict the map \u2014 that contradiction is the lesson in the mislabelled and off-feature cases. Whether the feature is a dip or a peak is MEASURED per run, because the readout rotation decides it and it differs between labs.",
+ "rendered": [
+  {
+   "case": "Q1",
+   "exemplar": "lab-A/#45_08_qubit_spectroscopy_061005/q6",
+   "file": "exemplars/Q1/lab-A_45_q6.png",
+   "chip": "lab-A",
+   "run": "#45_08_qubit_spectroscopy_061005",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 400,
+   "depth_z": 20.9,
+   "secondaries": 0
+  },
+  {
+   "case": "Q1",
+   "exemplar": "lab-B/#1253_08_qubit_spectroscopy_033636/q7",
+   "file": "exemplars/Q1/lab-B_1253_q7.png",
+   "chip": "lab-B",
+   "run": "#1253_08_qubit_spectroscopy_033636",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 46.3,
+   "secondaries": 0
+  },
+  {
+   "case": "Q1",
+   "exemplar": "lab-C/#418_08_qubit_spectroscopy_195956/qD4",
+   "file": "exemplars/Q1/lab-C_418_qD4.png",
+   "chip": "lab-C",
+   "run": "#418_08_qubit_spectroscopy_195956",
+   "qubit": "qD4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 20.0,
+   "secondaries": 0
+  },
+  {
+   "case": "Q1",
+   "exemplar": "lab-D/#11_08_qubit_spectroscopy_041945/qA1",
+   "file": "exemplars/Q1/lab-D_11_qA1.png",
+   "chip": "lab-D",
+   "run": "#11_08_qubit_spectroscopy_041945",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 24.6,
+   "secondaries": 0
+  },
+  {
+   "case": "Q1",
+   "exemplar": "lab-E/#52_08_qubit_spectroscopy_222641/q10",
+   "file": "exemplars/Q1/lab-E_52_q10.png",
+   "chip": "lab-E",
+   "run": "#52_08_qubit_spectroscopy_222641",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 29.8,
+   "secondaries": 0
+  },
+  {
+   "case": "Q2",
+   "exemplar": "lab-D/#5_08_qubit_spectroscopy_040123/qA1",
+   "file": "exemplars/Q2/lab-D_5_qA1.png",
+   "chip": "lab-D",
+   "run": "#5_08_qubit_spectroscopy_040123",
+   "qubit": "qA1",
+   "markers_drawn": [],
+   "feature": "dip",
+   "n_points": 400,
+   "depth_z": 2.7,
+   "secondaries": 0
+  },
+  {
+   "case": "Q2",
+   "exemplar": "lab-C/#427_08_qubit_spectroscopy_205244/qC4",
+   "file": "exemplars/Q2/lab-C_427_qC4.png",
+   "chip": "lab-C",
+   "run": "#427_08_qubit_spectroscopy_205244",
+   "qubit": "qC4",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 3.5,
+   "secondaries": 0
+  },
+  {
+   "case": "Q2",
+   "exemplar": "lab-B/#1253_08_qubit_spectroscopy_033636/q16",
+   "file": "exemplars/Q2/lab-B_1253_q16.png",
+   "chip": "lab-B",
+   "run": "#1253_08_qubit_spectroscopy_033636",
+   "qubit": "q16",
+   "markers_drawn": [],
+   "feature": "dip",
+   "n_points": 800,
+   "depth_z": 2.9,
+   "secondaries": 0
+  },
+  {
+   "case": "Q2",
+   "exemplar": "lab-E/#49_08_qubit_spectroscopy_222345/q10",
+   "file": "exemplars/Q2/lab-E_49_q10.png",
+   "chip": "lab-E",
+   "run": "#49_08_qubit_spectroscopy_222345",
+   "qubit": "q10",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 3.4,
+   "secondaries": 0
+  },
+  {
+   "case": "Q2",
+   "exemplar": "lab-E/#67_08_qubit_spectroscopy_231355/q9",
+   "file": "exemplars/Q2/lab-E_67_q9.png",
+   "chip": "lab-E",
+   "run": "#67_08_qubit_spectroscopy_231355",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 4000,
+   "depth_z": 3.8,
+   "secondaries": 0
+  },
+  {
+   "case": "Q3",
+   "exemplar": "lab-A/#352_08_qubit_spectroscopy_102706/q6",
+   "file": "exemplars/Q3/lab-A_352_q6.png",
+   "chip": "lab-A",
+   "run": "#352_08_qubit_spectroscopy_102706",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 10.3,
+   "secondaries": 1
+  },
+  {
+   "case": "Q3",
+   "exemplar": "lab-C/#417_08_qubit_spectroscopy_194728/qC1",
+   "file": "exemplars/Q3/lab-C_417_qC1.png",
+   "chip": "lab-C",
+   "run": "#417_08_qubit_spectroscopy_194728",
+   "qubit": "qC1",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 17.8,
+   "secondaries": 0
+  },
+  {
+   "case": "Q3",
+   "exemplar": "lab-B/#1253_08_qubit_spectroscopy_033636/q6",
+   "file": "exemplars/Q3/lab-B_1253_q6.png",
+   "chip": "lab-B",
+   "run": "#1253_08_qubit_spectroscopy_033636",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 6.3,
+   "secondaries": 2
+  },
+  {
+   "case": "Q3",
+   "exemplar": "lab-B/#1254_08_qubit_spectroscopy_035232/q17",
+   "file": "exemplars/Q3/lab-B_1254_q17.png",
+   "chip": "lab-B",
+   "run": "#1254_08_qubit_spectroscopy_035232",
+   "qubit": "q17",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 5.3,
+   "secondaries": 2
+  },
+  {
+   "case": "Q3",
+   "exemplar": "lab-E/#68_08_qubit_spectroscopy_231823/q10",
+   "file": "exemplars/Q3/lab-E_68_q10.png",
+   "chip": "lab-E",
+   "run": "#68_08_qubit_spectroscopy_231823",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 4000,
+   "depth_z": 24.6,
+   "secondaries": 2
+  },
+  {
+   "case": "Q4",
+   "exemplar": "lab-A/#23_08_qubit_spectroscopy_044954/q6",
+   "file": "exemplars/Q4/lab-A_23_q6.png",
+   "chip": "lab-A",
+   "run": "#23_08_qubit_spectroscopy_044954",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 2000,
+   "depth_z": 8.2,
+   "secondaries": 1
+  },
+  {
+   "case": "Q4",
+   "exemplar": "lab-B/#1250_08_qubit_spectroscopy_031805/q9",
+   "file": "exemplars/Q4/lab-B_1250_q9.png",
+   "chip": "lab-B",
+   "run": "#1250_08_qubit_spectroscopy_031805",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1200,
+   "depth_z": 23.6,
+   "secondaries": 0
+  },
+  {
+   "case": "Q4",
+   "exemplar": "lab-B/#1254_08_qubit_spectroscopy_035232/q11",
+   "file": "exemplars/Q4/lab-B_1254_q11.png",
+   "chip": "lab-B",
+   "run": "#1254_08_qubit_spectroscopy_035232",
+   "qubit": "q11",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 800,
+   "depth_z": 9.9,
+   "secondaries": 0
+  },
+  {
+   "case": "Q4",
+   "exemplar": "lab-E/#47_08_qubit_spectroscopy_222205/q9",
+   "file": "exemplars/Q4/lab-E_47_q9.png",
+   "chip": "lab-E",
+   "run": "#47_08_qubit_spectroscopy_222205",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 14.9,
+   "secondaries": 2
+  },
+  {
+   "case": "Q4",
+   "exemplar": "lab-A/#32_08_qubit_spectroscopy_050601/q7",
+   "file": "exemplars/Q4/lab-A_32_q7.png",
+   "chip": "lab-A",
+   "run": "#32_08_qubit_spectroscopy_050601",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 500,
+   "depth_z": 22.4,
+   "secondaries": 0
+  },
+  {
+   "case": "Q5",
+   "exemplar": "lab-A/#27_08_qubit_spectroscopy_045740/q7",
+   "file": "exemplars/Q5/lab-A_27_q7.png",
+   "chip": "lab-A",
+   "run": "#27_08_qubit_spectroscopy_045740",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 300,
+   "depth_z": 4.2,
+   "secondaries": 0
+  },
+  {
+   "case": "Q5",
+   "exemplar": "lab-C/#417_08_qubit_spectroscopy_194728/qC4",
+   "file": "exemplars/Q5/lab-C_417_qC4.png",
+   "chip": "lab-C",
+   "run": "#417_08_qubit_spectroscopy_194728",
+   "qubit": "qC4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 400,
+   "depth_z": 3.9,
+   "secondaries": 0
+  },
+  {
+   "case": "Q5",
+   "exemplar": "lab-E/#72_08_qubit_spectroscopy_235240/q9",
+   "file": "exemplars/Q5/lab-E_72_q9.png",
+   "chip": "lab-E",
+   "run": "#72_08_qubit_spectroscopy_235240",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 4.8,
+   "secondaries": 0
+  },
+  {
+   "case": "Q5",
+   "exemplar": "lab-B/#1254_08_qubit_spectroscopy_035232/q19",
+   "file": "exemplars/Q5/lab-B_1254_q19.png",
+   "chip": "lab-B",
+   "run": "#1254_08_qubit_spectroscopy_035232",
+   "qubit": "q19",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 800,
+   "depth_z": 5.7,
+   "secondaries": 2
+  },
+  {
+   "case": "Q5",
+   "exemplar": "lab-C/#436_08_qubit_spectroscopy_223724/qC4",
+   "file": "exemplars/Q5/lab-C_436_qC4.png",
+   "chip": "lab-C",
+   "run": "#436_08_qubit_spectroscopy_223724",
+   "qubit": "qC4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 3.1,
+   "secondaries": 0
+  },
+  {
+   "case": "Q6",
+   "exemplar": "lab-D/#158_08_qubit_spectroscopy_115018/qA1",
+   "file": "exemplars/Q6/lab-D_158_qA1.png",
+   "chip": "lab-D",
+   "run": "#158_08_qubit_spectroscopy_115018",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 24.2,
+   "secondaries": 0
+  },
+  {
+   "case": "Q6",
+   "exemplar": "lab-D/#118_08_qubit_spectroscopy_090012/qA1",
+   "file": "exemplars/Q6/lab-D_118_qA1.png",
+   "chip": "lab-D",
+   "run": "#118_08_qubit_spectroscopy_090012",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 13.9,
+   "secondaries": 0
+  },
+  {
+   "case": "Q6",
+   "exemplar": "lab-B/#1254_08_qubit_spectroscopy_035232/q14",
+   "file": "exemplars/Q6/lab-B_1254_q14.png",
+   "chip": "lab-B",
+   "run": "#1254_08_qubit_spectroscopy_035232",
+   "qubit": "q14",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 45.3,
+   "secondaries": 0
+  },
+  {
+   "case": "Q6",
+   "exemplar": "lab-E/#52_08_qubit_spectroscopy_222641/q9",
+   "file": "exemplars/Q6/lab-E_52_q9.png",
+   "chip": "lab-E",
+   "run": "#52_08_qubit_spectroscopy_222641",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 12.4,
+   "secondaries": 2
+  },
+  {
+   "case": "Q6",
+   "exemplar": "lab-B/#1254_08_qubit_spectroscopy_035232/q7",
+   "file": "exemplars/Q6/lab-B_1254_q7.png",
+   "chip": "lab-B",
+   "run": "#1254_08_qubit_spectroscopy_035232",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 60.4,
+   "secondaries": 0
+  },
+  {
+   "case": "Q7",
+   "exemplar": "lab-B/#1239_08_qubit_spectroscopy_030349/q10",
+   "file": "exemplars/Q7/lab-B_1239_q10.png",
+   "chip": "lab-B",
+   "run": "#1239_08_qubit_spectroscopy_030349",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 20.2,
+   "secondaries": 2
+  },
+  {
+   "case": "Q7",
+   "exemplar": "lab-B/#1240_08_qubit_spectroscopy_030414/q10",
+   "file": "exemplars/Q7/lab-B_1240_q10.png",
+   "chip": "lab-B",
+   "run": "#1240_08_qubit_spectroscopy_030414",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 26.8,
+   "secondaries": 2
+  },
+  {
+   "case": "Q7",
+   "exemplar": "lab-E/#51_08_qubit_spectroscopy_222512/q9",
+   "file": "exemplars/Q7/lab-E_51_q9.png",
+   "chip": "lab-E",
+   "run": "#51_08_qubit_spectroscopy_222512",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 11.2,
+   "secondaries": 2
+  },
+  {
+   "case": "Q7",
+   "exemplar": "lab-B/#1272_08_qubit_spectroscopy_041553/q18",
+   "file": "exemplars/Q7/lab-B_1272_q18.png",
+   "chip": "lab-B",
+   "run": "#1272_08_qubit_spectroscopy_041553",
+   "qubit": "q18",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 29.2,
+   "secondaries": 0
+  },
+  {
+   "case": "Q7",
+   "exemplar": "lab-B/#1279_08_qubit_spectroscopy_042132/q18",
+   "file": "exemplars/Q7/lab-B_1279_q18.png",
+   "chip": "lab-B",
+   "run": "#1279_08_qubit_spectroscopy_042132",
+   "qubit": "q18",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 23.5,
+   "secondaries": 2
+  },
+  {
+   "case": "Q8",
+   "exemplar": "lab-B/#1247_08_qubit_spectroscopy_031321/q10",
+   "file": "exemplars/Q8/lab-B_1247_q10.png",
+   "chip": "lab-B",
+   "run": "#1247_08_qubit_spectroscopy_031321",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1200,
+   "depth_z": 29.2,
+   "secondaries": 1
+  },
+  {
+   "case": "Q8",
+   "exemplar": "lab-B/#1249_08_qubit_spectroscopy_031652/q10",
+   "file": "exemplars/Q8/lab-B_1249_q10.png",
+   "chip": "lab-B",
+   "run": "#1249_08_qubit_spectroscopy_031652",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1200,
+   "depth_z": 28.6,
+   "secondaries": 1
+  },
+  {
+   "case": "Q8",
+   "exemplar": "lab-B/#1244_08_qubit_spectroscopy_030719/q10",
+   "file": "exemplars/Q8/lab-B_1244_q10.png",
+   "chip": "lab-B",
+   "run": "#1244_08_qubit_spectroscopy_030719",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1200,
+   "depth_z": 35.7,
+   "secondaries": 2
+  },
+  {
+   "case": "Q9",
+   "exemplar": "lab-B/#1244_08_qubit_spectroscopy_030719/q10",
+   "file": "exemplars/Q9/lab-B_1244_q10.png",
+   "chip": "lab-B",
+   "run": "#1244_08_qubit_spectroscopy_030719",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1200,
+   "depth_z": 35.7,
+   "secondaries": 2
+  },
+  {
+   "case": "Q9",
+   "exemplar": "lab-B/#1243_08_qubit_spectroscopy_030617/q10",
+   "file": "exemplars/Q9/lab-B_1243_q10.png",
+   "chip": "lab-B",
+   "run": "#1243_08_qubit_spectroscopy_030617",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 35.2,
+   "secondaries": 1
+  },
+  {
+   "case": "Q9",
+   "exemplar": "lab-B/#1254_08_qubit_spectroscopy_035232/q6",
+   "file": "exemplars/Q9/lab-B_1254_q6.png",
+   "chip": "lab-B",
+   "run": "#1254_08_qubit_spectroscopy_035232",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 27.4,
+   "secondaries": 0
+  },
+  {
+   "case": "Q9",
+   "exemplar": "lab-B/#1253_08_qubit_spectroscopy_033636/q11",
+   "file": "exemplars/Q9/lab-B_1253_q11.png",
+   "chip": "lab-B",
+   "run": "#1253_08_qubit_spectroscopy_033636",
+   "qubit": "q11",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 10.1,
+   "secondaries": 2
+  },
+  {
+   "case": "Q10",
+   "exemplar": "lab-C/#412_08_qubit_spectroscopy_193052/qC4",
+   "file": "exemplars/Q10/lab-C_412_qC4.png",
+   "chip": "lab-C",
+   "run": "#412_08_qubit_spectroscopy_193052",
+   "qubit": "qC4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 4.2,
+   "secondaries": 0
+  },
+  {
+   "case": "Q10",
+   "exemplar": "lab-C/#414_08_qubit_spectroscopy_193414/qC5",
+   "file": "exemplars/Q10/lab-C_414_qC5.png",
+   "chip": "lab-C",
+   "run": "#414_08_qubit_spectroscopy_193414",
+   "qubit": "qC5",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 400,
+   "depth_z": 5.0,
+   "secondaries": 1
+  },
+  {
+   "case": "Q10",
+   "exemplar": "lab-C/#417_08_qubit_spectroscopy_194728/qD1",
+   "file": "exemplars/Q10/lab-C_417_qD1.png",
+   "chip": "lab-C",
+   "run": "#417_08_qubit_spectroscopy_194728",
+   "qubit": "qD1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 10.5,
+   "secondaries": 2
+  },
+  {
+   "case": "Q10",
+   "exemplar": "lab-E/#54_08_qubit_spectroscopy_222719/q10",
+   "file": "exemplars/Q10/lab-E_54_q10.png",
+   "chip": "lab-E",
+   "run": "#54_08_qubit_spectroscopy_222719",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 17.7,
+   "secondaries": 0
+  },
+  {
+   "case": "Q10",
+   "exemplar": "lab-E/#71_08_qubit_spectroscopy_235157/q10",
+   "file": "exemplars/Q10/lab-E_71_q10.png",
+   "chip": "lab-E",
+   "run": "#71_08_qubit_spectroscopy_235157",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 19.8,
+   "secondaries": 0
+  },
+  {
+   "case": "Q10",
+   "exemplar": "lab-A/#356_08_qubit_spectroscopy_103223/q6",
+   "file": "exemplars/Q10/lab-A_356_q6.png",
+   "chip": "lab-A",
+   "run": "#356_08_qubit_spectroscopy_103223",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 200,
+   "depth_z": 21.5,
+   "secondaries": 0
+  },
+  {
+   "case": "Q11",
+   "exemplar": "lab-C/#53_08_qubit_spectroscopy_214302/qA1",
+   "file": "exemplars/Q11/lab-C_53_qA1.png",
+   "chip": "lab-C",
+   "run": "#53_08_qubit_spectroscopy_214302",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 18.6,
+   "secondaries": 0
+  },
+  {
+   "case": "Q11",
+   "exemplar": "lab-C/#54_08_qubit_spectroscopy_214347/qA2",
+   "file": "exemplars/Q11/lab-C_54_qA2.png",
+   "chip": "lab-C",
+   "run": "#54_08_qubit_spectroscopy_214347",
+   "qubit": "qA2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 80.7,
+   "secondaries": 0
+  },
+  {
+   "case": "Q11",
+   "exemplar": "lab-C/#56_08_qubit_spectroscopy_214554/qA1",
+   "file": "exemplars/Q11/lab-C_56_qA1.png",
+   "chip": "lab-C",
+   "run": "#56_08_qubit_spectroscopy_214554",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 125,
+   "depth_z": 20.2,
+   "secondaries": 0
+  },
+  {
+   "case": "Q12",
+   "exemplar": "lab-A/#33_08_qubit_spectroscopy_050627/q6",
+   "file": "exemplars/Q12/lab-A_33_q6.png",
+   "chip": "lab-A",
+   "run": "#33_08_qubit_spectroscopy_050627",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 200,
+   "depth_z": 8.5,
+   "secondaries": 1
+  },
+  {
+   "case": "Q12",
+   "exemplar": "lab-A/#33_08_qubit_spectroscopy_050627/q7",
+   "file": "exemplars/Q12/lab-A_33_q7.png",
+   "chip": "lab-A",
+   "run": "#33_08_qubit_spectroscopy_050627",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 200,
+   "depth_z": 9.0,
+   "secondaries": 2
+  },
+  {
+   "case": "Q12",
+   "exemplar": "lab-A/#28_08_qubit_spectroscopy_045932/q7",
+   "file": "exemplars/Q12/lab-A_28_q7.png",
+   "chip": "lab-A",
+   "run": "#28_08_qubit_spectroscopy_045932",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 250,
+   "depth_z": 7.0,
+   "secondaries": 1
+  },
+  {
+   "case": "Q13",
+   "exemplar": "lab-B/#1255_08_qubit_spectroscopy_035402/q18",
+   "file": "exemplars/Q13/lab-B_1255_q18.png",
+   "chip": "lab-B",
+   "run": "#1255_08_qubit_spectroscopy_035402",
+   "qubit": "q18",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 26.6,
+   "secondaries": 0
+  },
+  {
+   "case": "Q13",
+   "exemplar": "lab-B/#1254_08_qubit_spectroscopy_035232/q18",
+   "file": "exemplars/Q13/lab-B_1254_q18.png",
+   "chip": "lab-B",
+   "run": "#1254_08_qubit_spectroscopy_035232",
+   "qubit": "q18",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 26.7,
+   "secondaries": 0
+  },
+  {
+   "case": "Q13",
+   "exemplar": "lab-B/#1253_08_qubit_spectroscopy_033636/q18",
+   "file": "exemplars/Q13/lab-B_1253_q18.png",
+   "chip": "lab-B",
+   "run": "#1253_08_qubit_spectroscopy_033636",
+   "qubit": "q18",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 39.5,
+   "secondaries": 1
+  },
+  {
+   "case": "Q14",
+   "exemplar": "lab-A/#26_08_qubit_spectroscopy_045721/q6",
+   "file": "exemplars/Q14/lab-A_26_q6.png",
+   "chip": "lab-A",
+   "run": "#26_08_qubit_spectroscopy_045721",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 500,
+   "depth_z": 5.4,
+   "secondaries": 0
+  },
+  {
+   "case": "Q15",
+   "exemplar": "lab-B/#1253_08_qubit_spectroscopy_033636/q11",
+   "file": "exemplars/Q15/lab-B_1253_q11.png",
+   "chip": "lab-B",
+   "run": "#1253_08_qubit_spectroscopy_033636",
+   "qubit": "q11",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 10.1,
+   "secondaries": 2
+  },
+  {
+   "case": "Q15",
+   "exemplar": "lab-B/#1253_08_qubit_spectroscopy_033636/q12",
+   "file": "exemplars/Q15/lab-B_1253_q12.png",
+   "chip": "lab-B",
+   "run": "#1253_08_qubit_spectroscopy_033636",
+   "qubit": "q12",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 800,
+   "depth_z": 13.5,
+   "secondaries": 2
+  },
+  {
+   "case": "Q15",
+   "exemplar": "lab-E/#64_08_qubit_spectroscopy_230131/q10",
+   "file": "exemplars/Q15/lab-E_64_q10.png",
+   "chip": "lab-E",
+   "run": "#64_08_qubit_spectroscopy_230131",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 4000,
+   "depth_z": 19.5,
+   "secondaries": 2
+  },
+  {
+   "case": "Q15",
+   "exemplar": "lab-E/#67_08_qubit_spectroscopy_231355/q10",
+   "file": "exemplars/Q15/lab-E_67_q10.png",
+   "chip": "lab-E",
+   "run": "#67_08_qubit_spectroscopy_231355",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 4000,
+   "depth_z": 22.0,
+   "secondaries": 2
+  },
+  {
+   "case": "F01",
+   "exemplar": "lab-A/#23_08_qubit_spectroscopy_044954/q6",
+   "file": "exemplars/F01/lab-A_23_q6.png",
+   "chip": "lab-A",
+   "run": "#23_08_qubit_spectroscopy_044954",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 2000,
+   "depth_z": 8.2,
+   "secondaries": 1
+  },
+  {
+   "case": "F01",
+   "exemplar": "lab-B/#1253_08_qubit_spectroscopy_033636/q10",
+   "file": "exemplars/F01/lab-B_1253_q10.png",
+   "chip": "lab-B",
+   "run": "#1253_08_qubit_spectroscopy_033636",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 22.2,
+   "secondaries": 2
+  },
+  {
+   "case": "F01",
+   "exemplar": "lab-E/#68_08_qubit_spectroscopy_231823/q10",
+   "file": "exemplars/F01/lab-E_68_q10.png",
+   "chip": "lab-E",
+   "run": "#68_08_qubit_spectroscopy_231823",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 4000,
+   "depth_z": 24.6,
+   "secondaries": 2
+  },
+  {
+   "case": "F01",
+   "exemplar": "lab-E/#47_08_qubit_spectroscopy_222205/q9",
+   "file": "exemplars/F01/lab-E_47_q9.png",
+   "chip": "lab-E",
+   "run": "#47_08_qubit_spectroscopy_222205",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 14.9,
+   "secondaries": 2
+  },
+  {
+   "case": "F02",
+   "exemplar": "lab-B/#1239_08_qubit_spectroscopy_030349/q10",
+   "file": "exemplars/F02/lab-B_1239_q10.png",
+   "chip": "lab-B",
+   "run": "#1239_08_qubit_spectroscopy_030349",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 20.2,
+   "secondaries": 2
+  },
+  {
+   "case": "F02",
+   "exemplar": "lab-B/#1240_08_qubit_spectroscopy_030414/q10",
+   "file": "exemplars/F02/lab-B_1240_q10.png",
+   "chip": "lab-B",
+   "run": "#1240_08_qubit_spectroscopy_030414",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 26.8,
+   "secondaries": 2
+  },
+  {
+   "case": "F02",
+   "exemplar": "lab-B/#1241_08_qubit_spectroscopy_030532/q10",
+   "file": "exemplars/F02/lab-B_1241_q10.png",
+   "chip": "lab-B",
+   "run": "#1241_08_qubit_spectroscopy_030532",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 19.7,
+   "secondaries": 2
+  },
+  {
+   "case": "F02",
+   "exemplar": "lab-B/#1247_08_qubit_spectroscopy_031321/q10",
+   "file": "exemplars/F02/lab-B_1247_q10.png",
+   "chip": "lab-B",
+   "run": "#1247_08_qubit_spectroscopy_031321",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1200,
+   "depth_z": 29.2,
+   "secondaries": 1
+  },
+  {
+   "case": "F02",
+   "exemplar": "lab-B/#1272_08_qubit_spectroscopy_041553/q18",
+   "file": "exemplars/F02/lab-B_1272_q18.png",
+   "chip": "lab-B",
+   "run": "#1272_08_qubit_spectroscopy_041553",
+   "qubit": "q18",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 29.2,
+   "secondaries": 0
+  },
+  {
+   "case": "F03",
+   "exemplar": "lab-A/#25_08_qubit_spectroscopy_045653/q7",
+   "file": "exemplars/F03/lab-A_25_q7.png",
+   "chip": "lab-A",
+   "run": "#25_08_qubit_spectroscopy_045653",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 250,
+   "depth_z": 3.8,
+   "secondaries": 0
+  },
+  {
+   "case": "F03",
+   "exemplar": "lab-D/#5_08_qubit_spectroscopy_040123/qA2",
+   "file": "exemplars/F03/lab-D_5_qA2.png",
+   "chip": "lab-D",
+   "run": "#5_08_qubit_spectroscopy_040123",
+   "qubit": "qA2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 400,
+   "depth_z": 3.4,
+   "secondaries": 0
+  },
+  {
+   "case": "F03",
+   "exemplar": "lab-E/#64_08_qubit_spectroscopy_230131/q9",
+   "file": "exemplars/F03/lab-E_64_q9.png",
+   "chip": "lab-E",
+   "run": "#64_08_qubit_spectroscopy_230131",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 4000,
+   "depth_z": 4.3,
+   "secondaries": 0
+  },
+  {
+   "case": "F03",
+   "exemplar": "lab-E/#67_08_qubit_spectroscopy_231355/q9",
+   "file": "exemplars/F03/lab-E_67_q9.png",
+   "chip": "lab-E",
+   "run": "#67_08_qubit_spectroscopy_231355",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 4000,
+   "depth_z": 3.8,
+   "secondaries": 0
+  },
+  {
+   "case": "F04",
+   "exemplar": "lab-E/#47_08_qubit_spectroscopy_222205/q9",
+   "file": "exemplars/F04/lab-E_47_q9.png",
+   "chip": "lab-E",
+   "run": "#47_08_qubit_spectroscopy_222205",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 14.9,
+   "secondaries": 2
+  },
+  {
+   "case": "F04",
+   "exemplar": "lab-E/#50_08_qubit_spectroscopy_222449/q9",
+   "file": "exemplars/F04/lab-E_50_q9.png",
+   "chip": "lab-E",
+   "run": "#50_08_qubit_spectroscopy_222449",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 12.1,
+   "secondaries": 2
+  },
+  {
+   "case": "F04",
+   "exemplar": "lab-A/#23_08_qubit_spectroscopy_044954/q7",
+   "file": "exemplars/F04/lab-A_23_q7.png",
+   "chip": "lab-A",
+   "run": "#23_08_qubit_spectroscopy_044954",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 2000,
+   "depth_z": 9.9,
+   "secondaries": 2
+  },
+  {
+   "case": "F05",
+   "exemplar": "lab-A/#27_08_qubit_spectroscopy_045740/q6",
+   "file": "exemplars/F05/lab-A_27_q6.png",
+   "chip": "lab-A",
+   "run": "#27_08_qubit_spectroscopy_045740",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 300,
+   "depth_z": 22.3,
+   "secondaries": 0
+  },
+  {
+   "case": "F05",
+   "exemplar": "lab-B/#1254_08_qubit_spectroscopy_035232/q3",
+   "file": "exemplars/F05/lab-B_1254_q3.png",
+   "chip": "lab-B",
+   "run": "#1254_08_qubit_spectroscopy_035232",
+   "qubit": "q3",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 800,
+   "depth_z": 33.3,
+   "secondaries": 0
+  },
+  {
+   "case": "F05",
+   "exemplar": "lab-C/#414_08_qubit_spectroscopy_193414/qD1",
+   "file": "exemplars/F05/lab-C_414_qD1.png",
+   "chip": "lab-C",
+   "run": "#414_08_qubit_spectroscopy_193414",
+   "qubit": "qD1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 10.7,
+   "secondaries": 1
+  },
+  {
+   "case": "F05",
+   "exemplar": "lab-E/#53_08_qubit_spectroscopy_222659/q9",
+   "file": "exemplars/F05/lab-E_53_q9.png",
+   "chip": "lab-E",
+   "run": "#53_08_qubit_spectroscopy_222659",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 14.4,
+   "secondaries": 0
+  },
+  {
+   "case": "F05",
+   "exemplar": "lab-A/#356_08_qubit_spectroscopy_103223/q6",
+   "file": "exemplars/F05/lab-A_356_q6.png",
+   "chip": "lab-A",
+   "run": "#356_08_qubit_spectroscopy_103223",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 200,
+   "depth_z": 21.5,
+   "secondaries": 0
+  },
+  {
+   "case": "F06",
+   "exemplar": "lab-E/#54_08_qubit_spectroscopy_222719/q10",
+   "file": "exemplars/F06/lab-E_54_q10.png",
+   "chip": "lab-E",
+   "run": "#54_08_qubit_spectroscopy_222719",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 17.7,
+   "secondaries": 0
+  },
+  {
+   "case": "F06",
+   "exemplar": "lab-E/#71_08_qubit_spectroscopy_235157/q10",
+   "file": "exemplars/F06/lab-E_71_q10.png",
+   "chip": "lab-E",
+   "run": "#71_08_qubit_spectroscopy_235157",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 19.8,
+   "secondaries": 0
+  },
+  {
+   "case": "F06",
+   "exemplar": "lab-C/#414_08_qubit_spectroscopy_193414/qC4",
+   "file": "exemplars/F06/lab-C_414_qC4.png",
+   "chip": "lab-C",
+   "run": "#414_08_qubit_spectroscopy_193414",
+   "qubit": "qC4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 3.2,
+   "secondaries": 0
+  },
+  {
+   "case": "F06",
+   "exemplar": "lab-C/#436_08_qubit_spectroscopy_223724/qD2",
+   "file": "exemplars/F06/lab-C_436_qD2.png",
+   "chip": "lab-C",
+   "run": "#436_08_qubit_spectroscopy_223724",
+   "qubit": "qD2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 24.9,
+   "secondaries": 0
+  },
+  {
+   "case": "F07",
+   "exemplar": "lab-C/#429_08_qubit_spectroscopy_212349/qD3",
+   "file": "exemplars/F07/lab-C_429_qD3.png",
+   "chip": "lab-C",
+   "run": "#429_08_qubit_spectroscopy_212349",
+   "qubit": "qD3",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 14.1,
+   "secondaries": 0
+  },
+  {
+   "case": "F07",
+   "exemplar": "lab-B/#1250_08_qubit_spectroscopy_031805/q9",
+   "file": "exemplars/F07/lab-B_1250_q9.png",
+   "chip": "lab-B",
+   "run": "#1250_08_qubit_spectroscopy_031805",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1200,
+   "depth_z": 23.6,
+   "secondaries": 0
+  },
+  {
+   "case": "F07",
+   "exemplar": "lab-E/#50_08_qubit_spectroscopy_222449/q9",
+   "file": "exemplars/F07/lab-E_50_q9.png",
+   "chip": "lab-E",
+   "run": "#50_08_qubit_spectroscopy_222449",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 12.1,
+   "secondaries": 2
+  },
+  {
+   "case": "F07",
+   "exemplar": "lab-B/#1256_08_qubit_spectroscopy_035427/q18",
+   "file": "exemplars/F07/lab-B_1256_q18.png",
+   "chip": "lab-B",
+   "run": "#1256_08_qubit_spectroscopy_035427",
+   "qubit": "q18",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 53.9,
+   "secondaries": 2
+  },
+  {
+   "case": "F08",
+   "exemplar": "lab-B/#1242_08_qubit_spectroscopy_030553/q10",
+   "file": "exemplars/F08/lab-B_1242_q10.png",
+   "chip": "lab-B",
+   "run": "#1242_08_qubit_spectroscopy_030553",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 400,
+   "depth_z": 22.1,
+   "secondaries": 1
+  },
+  {
+   "case": "F09",
+   "exemplar": "lab-C/#53_08_qubit_spectroscopy_214302/qA1",
+   "file": "exemplars/F09/lab-C_53_qA1.png",
+   "chip": "lab-C",
+   "run": "#53_08_qubit_spectroscopy_214302",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 18.6,
+   "secondaries": 0
+  },
+  {
+   "case": "F09",
+   "exemplar": "lab-C/#56_08_qubit_spectroscopy_214554/qA2",
+   "file": "exemplars/F09/lab-C_56_qA2.png",
+   "chip": "lab-C",
+   "run": "#56_08_qubit_spectroscopy_214554",
+   "qubit": "qA2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 125,
+   "depth_z": 28.4,
+   "secondaries": 0
+  },
+  {
+   "case": "F09",
+   "exemplar": "lab-B/#1244_08_qubit_spectroscopy_030719/q10",
+   "file": "exemplars/F09/lab-B_1244_q10.png",
+   "chip": "lab-B",
+   "run": "#1244_08_qubit_spectroscopy_030719",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1200,
+   "depth_z": 35.7,
+   "secondaries": 2
+  },
+  {
+   "case": "F10",
+   "exemplar": "lab-C/#428_08_qubit_spectroscopy_210353/qC1",
+   "file": "exemplars/F10/lab-C_428_qC1.png",
+   "chip": "lab-C",
+   "run": "#428_08_qubit_spectroscopy_210353",
+   "qubit": "qC1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 22.4,
+   "secondaries": 0
+  },
+  {
+   "case": "F10",
+   "exemplar": "lab-C/#429_08_qubit_spectroscopy_212349/qC1",
+   "file": "exemplars/F10/lab-C_429_qC1.png",
+   "chip": "lab-C",
+   "run": "#429_08_qubit_spectroscopy_212349",
+   "qubit": "qC1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 20.2,
+   "secondaries": 0
+  },
+  {
+   "case": "F10",
+   "exemplar": "lab-C/#55_08_qubit_spectroscopy_214427/qA1",
+   "file": "exemplars/F10/lab-C_55_qA1.png",
+   "chip": "lab-C",
+   "run": "#55_08_qubit_spectroscopy_214427",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 250,
+   "depth_z": 32.7,
+   "secondaries": 0
+  },
+  {
+   "case": "F10",
+   "exemplar": "lab-C/#53_08_qubit_spectroscopy_214302/qA2",
+   "file": "exemplars/F10/lab-C_53_qA2.png",
+   "chip": "lab-C",
+   "run": "#53_08_qubit_spectroscopy_214302",
+   "qubit": "qA2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 24.6,
+   "secondaries": 0
+  },
+  {
+   "case": "F11",
+   "exemplar": "lab-A/#25_08_qubit_spectroscopy_045653/q7",
+   "file": "exemplars/F11/lab-A_25_q7.png",
+   "chip": "lab-A",
+   "run": "#25_08_qubit_spectroscopy_045653",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 250,
+   "depth_z": 3.8,
+   "secondaries": 0
+  },
+  {
+   "case": "F11",
+   "exemplar": "lab-C/#436_08_qubit_spectroscopy_223724/qC1",
+   "file": "exemplars/F11/lab-C_436_qC1.png",
+   "chip": "lab-C",
+   "run": "#436_08_qubit_spectroscopy_223724",
+   "qubit": "qC1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 16.2,
+   "secondaries": 0
+  },
+  {
+   "case": "F11",
+   "exemplar": "lab-E/#64_08_qubit_spectroscopy_230131/q10",
+   "file": "exemplars/F11/lab-E_64_q10.png",
+   "chip": "lab-E",
+   "run": "#64_08_qubit_spectroscopy_230131",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 4000,
+   "depth_z": 19.5,
+   "secondaries": 2
+  },
+  {
+   "case": "F11",
+   "exemplar": "lab-E/#55_08_qubit_spectroscopy_222913/q10",
+   "file": "exemplars/F11/lab-E_55_q10.png",
+   "chip": "lab-E",
+   "run": "#55_08_qubit_spectroscopy_222913",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 41.3,
+   "secondaries": 0
+  },
+  {
+   "case": "F11",
+   "exemplar": "lab-A/#26_08_qubit_spectroscopy_045721/q6",
+   "file": "exemplars/F11/lab-A_26_q6.png",
+   "chip": "lab-A",
+   "run": "#26_08_qubit_spectroscopy_045721",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 500,
+   "depth_z": 5.4,
+   "secondaries": 0
+  },
+  {
+   "case": "F12",
+   "exemplar": "lab-A/#28_08_qubit_spectroscopy_045932/q7",
+   "file": "exemplars/F12/lab-A_28_q7.png",
+   "chip": "lab-A",
+   "run": "#28_08_qubit_spectroscopy_045932",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 250,
+   "depth_z": 7.0,
+   "secondaries": 1
+  },
+  {
+   "case": "F12",
+   "exemplar": "lab-B/#1253_08_qubit_spectroscopy_033636/q2",
+   "file": "exemplars/F12/lab-B_1253_q2.png",
+   "chip": "lab-B",
+   "run": "#1253_08_qubit_spectroscopy_033636",
+   "qubit": "q2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 40.1,
+   "secondaries": 0
+  },
+  {
+   "case": "F12",
+   "exemplar": "lab-B/#1253_08_qubit_spectroscopy_033636/q14",
+   "file": "exemplars/F12/lab-B_1253_q14.png",
+   "chip": "lab-B",
+   "run": "#1253_08_qubit_spectroscopy_033636",
+   "qubit": "q14",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 22.8,
+   "secondaries": 0
+  },
+  {
+   "case": "F12",
+   "exemplar": "lab-A/#236_08_qubit_spectroscopy_201850/q7",
+   "file": "exemplars/F12/lab-A_236_q7.png",
+   "chip": "lab-A",
+   "run": "#236_08_qubit_spectroscopy_201850",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 20.5,
+   "secondaries": 0
+  },
+  {
+   "case": "F13",
+   "exemplar": "lab-B/#1243_08_qubit_spectroscopy_030617/q10",
+   "file": "exemplars/F13/lab-B_1243_q10.png",
+   "chip": "lab-B",
+   "run": "#1243_08_qubit_spectroscopy_030617",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 35.2,
+   "secondaries": 1
+  },
+  {
+   "case": "F13",
+   "exemplar": "lab-B/#1254_08_qubit_spectroscopy_035232/q7",
+   "file": "exemplars/F13/lab-B_1254_q7.png",
+   "chip": "lab-B",
+   "run": "#1254_08_qubit_spectroscopy_035232",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 60.4,
+   "secondaries": 0
+  },
+  {
+   "case": "F13",
+   "exemplar": "lab-B/#1254_08_qubit_spectroscopy_035232/q3",
+   "file": "exemplars/F13/lab-B_1254_q3.png",
+   "chip": "lab-B",
+   "run": "#1254_08_qubit_spectroscopy_035232",
+   "qubit": "q3",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 800,
+   "depth_z": 33.3,
+   "secondaries": 0
+  },
+  {
+   "case": "F13",
+   "exemplar": "lab-E/#49_08_qubit_spectroscopy_222345/q9",
+   "file": "exemplars/F13/lab-E_49_q9.png",
+   "chip": "lab-E",
+   "run": "#49_08_qubit_spectroscopy_222345",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 12.4,
+   "secondaries": 0
+  },
+  {
+   "case": "F13",
+   "exemplar": "lab-E/#53_08_qubit_spectroscopy_222659/q9",
+   "file": "exemplars/F13/lab-E_53_q9.png",
+   "chip": "lab-E",
+   "run": "#53_08_qubit_spectroscopy_222659",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 14.4,
+   "secondaries": 0
+  },
+  {
+   "case": "F14",
+   "exemplar": "lab-A/#26_08_qubit_spectroscopy_045721/q6",
+   "file": "exemplars/F14/lab-A_26_q6.png",
+   "chip": "lab-A",
+   "run": "#26_08_qubit_spectroscopy_045721",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 500,
+   "depth_z": 5.4,
+   "secondaries": 0
+  },
+  {
+   "case": "F14",
+   "exemplar": "lab-B/#1239_08_qubit_spectroscopy_030349/q10",
+   "file": "exemplars/F14/lab-B_1239_q10.png",
+   "chip": "lab-B",
+   "run": "#1239_08_qubit_spectroscopy_030349",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 20.2,
+   "secondaries": 2
+  },
+  {
+   "case": "F14",
+   "exemplar": "lab-C/#429_08_qubit_spectroscopy_212349/qD3",
+   "file": "exemplars/F14/lab-C_429_qD3.png",
+   "chip": "lab-C",
+   "run": "#429_08_qubit_spectroscopy_212349",
+   "qubit": "qD3",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 14.1,
+   "secondaries": 0
+  },
+  {
+   "case": "F14",
+   "exemplar": "lab-B/#1247_08_qubit_spectroscopy_031321/q10",
+   "file": "exemplars/F14/lab-B_1247_q10.png",
+   "chip": "lab-B",
+   "run": "#1247_08_qubit_spectroscopy_031321",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1200,
+   "depth_z": 29.2,
+   "secondaries": 1
+  },
+  {
+   "case": "F15",
+   "exemplar": "lab-C/#57_08_qubit_spectroscopy_214703/qA1",
+   "file": "exemplars/F15/lab-C_57_qA1.png",
+   "chip": "lab-C",
+   "run": "#57_08_qubit_spectroscopy_214703",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 250,
+   "depth_z": 30.6,
+   "secondaries": 0
+  },
+  {
+   "case": "F15",
+   "exemplar": "lab-E/#49_08_qubit_spectroscopy_222345/q9",
+   "file": "exemplars/F15/lab-E_49_q9.png",
+   "chip": "lab-E",
+   "run": "#49_08_qubit_spectroscopy_222345",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 12.4,
+   "secondaries": 0
+  },
+  {
+   "case": "F15",
+   "exemplar": "lab-E/#73_08_qubit_spectroscopy_235753/q9",
+   "file": "exemplars/F15/lab-E_73_q9.png",
+   "chip": "lab-E",
+   "run": "#73_08_qubit_spectroscopy_235753",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1334,
+   "depth_z": 5.7,
+   "secondaries": 1
+  },
+  {
+   "case": "F15",
+   "exemplar": "lab-E/#74_08_qubit_spectroscopy_235908/q9",
+   "file": "exemplars/F15/lab-E_74_q9.png",
+   "chip": "lab-E",
+   "run": "#74_08_qubit_spectroscopy_235908",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 500,
+   "depth_z": 5.1,
+   "secondaries": 0
+  },
+  {
+   "case": "F16",
+   "exemplar": "lab-D/#30_08_qubit_spectroscopy_072905/qA2",
+   "file": "exemplars/F16/lab-D_30_qA2.png",
+   "chip": "lab-D",
+   "run": "#30_08_qubit_spectroscopy_072905",
+   "qubit": "qA2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 320,
+   "depth_z": 41.5,
+   "secondaries": 0
+  },
+  {
+   "case": "F16",
+   "exemplar": "lab-D/#118_08_qubit_spectroscopy_090012/qA1",
+   "file": "exemplars/F16/lab-D_118_qA1.png",
+   "chip": "lab-D",
+   "run": "#118_08_qubit_spectroscopy_090012",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 13.9,
+   "secondaries": 0
+  },
+  {
+   "case": "F16",
+   "exemplar": "lab-E/#50_08_qubit_spectroscopy_222449/q10",
+   "file": "exemplars/F16/lab-E_50_q10.png",
+   "chip": "lab-E",
+   "run": "#50_08_qubit_spectroscopy_222449",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 14.1,
+   "secondaries": 0
+  },
+  {
+   "case": "F16",
+   "exemplar": "lab-C/#428_08_qubit_spectroscopy_210353/qD4",
+   "file": "exemplars/F16/lab-C_428_qD4.png",
+   "chip": "lab-C",
+   "run": "#428_08_qubit_spectroscopy_210353",
+   "qubit": "qD4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 23.3,
+   "secondaries": 0
+  },
+  {
+   "case": "F16",
+   "exemplar": "lab-A/#236_08_qubit_spectroscopy_201850/q8",
+   "file": "exemplars/F16/lab-A_236_q8.png",
+   "chip": "lab-A",
+   "run": "#236_08_qubit_spectroscopy_201850",
+   "qubit": "q8",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 400,
+   "depth_z": 27.1,
+   "secondaries": 0
+  },
+  {
+   "case": "F17",
+   "exemplar": "lab-B/#1256_08_qubit_spectroscopy_035427/q18",
+   "file": "exemplars/F17/lab-B_1256_q18.png",
+   "chip": "lab-B",
+   "run": "#1256_08_qubit_spectroscopy_035427",
+   "qubit": "q18",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 53.9,
+   "secondaries": 2
+  },
+  {
+   "case": "F18",
+   "exemplar": "lab-A/#30_08_qubit_spectroscopy_050108/q6",
+   "file": "exemplars/F18/lab-A_30_q6.png",
+   "chip": "lab-A",
+   "run": "#30_08_qubit_spectroscopy_050108",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 250,
+   "depth_z": 17.0,
+   "secondaries": 0
+  },
+  {
+   "case": "F18",
+   "exemplar": "lab-A/#31_08_qubit_spectroscopy_050147/q6",
+   "file": "exemplars/F18/lab-A_31_q6.png",
+   "chip": "lab-A",
+   "run": "#31_08_qubit_spectroscopy_050147",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 250,
+   "depth_z": 16.1,
+   "secondaries": 0
+  },
+  {
+   "case": "F18",
+   "exemplar": "lab-A/#30_08_qubit_spectroscopy_050108/q7",
+   "file": "exemplars/F18/lab-A_30_q7.png",
+   "chip": "lab-A",
+   "run": "#30_08_qubit_spectroscopy_050108",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 250,
+   "depth_z": 12.3,
+   "secondaries": 2
+  },
+  {
+   "case": "F19",
+   "exemplar": "lab-A/#32_08_qubit_spectroscopy_050601/q6",
+   "file": "exemplars/F19/lab-A_32_q6.png",
+   "chip": "lab-A",
+   "run": "#32_08_qubit_spectroscopy_050601",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 500,
+   "depth_z": 21.3,
+   "secondaries": 0
+  },
+  {
+   "case": "F19",
+   "exemplar": "lab-A/#32_08_qubit_spectroscopy_050601/q7",
+   "file": "exemplars/F19/lab-A_32_q7.png",
+   "chip": "lab-A",
+   "run": "#32_08_qubit_spectroscopy_050601",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 500,
+   "depth_z": 22.4,
+   "secondaries": 0
+  },
+  {
+   "case": "F20",
+   "exemplar": "lab-C/#427_08_qubit_spectroscopy_205244/qC4",
+   "file": "exemplars/F20/lab-C_427_qC4.png",
+   "chip": "lab-C",
+   "run": "#427_08_qubit_spectroscopy_205244",
+   "qubit": "qC4",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 3.5,
+   "secondaries": 0
+  },
+  {
+   "case": "F20",
+   "exemplar": "lab-C/#428_08_qubit_spectroscopy_210353/qC4",
+   "file": "exemplars/F20/lab-C_428_qC4.png",
+   "chip": "lab-C",
+   "run": "#428_08_qubit_spectroscopy_210353",
+   "qubit": "qC4",
+   "markers_drawn": [],
+   "feature": "dip",
+   "n_points": 400,
+   "depth_z": 3.1,
+   "secondaries": 0
+  },
+  {
+   "case": "F20",
+   "exemplar": "lab-C/#429_08_qubit_spectroscopy_212349/qC4",
+   "file": "exemplars/F20/lab-C_429_qC4.png",
+   "chip": "lab-C",
+   "run": "#429_08_qubit_spectroscopy_212349",
+   "qubit": "qC4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 400,
+   "depth_z": 4.7,
+   "secondaries": 0
+  },
+  {
+   "case": "F20",
+   "exemplar": "lab-C/#436_08_qubit_spectroscopy_223724/qC4",
+   "file": "exemplars/F20/lab-C_436_qC4.png",
+   "chip": "lab-C",
+   "run": "#436_08_qubit_spectroscopy_223724",
+   "qubit": "qC4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 3.1,
+   "secondaries": 0
+  },
+  {
+   "case": "F21",
+   "exemplar": "lab-C/#417_08_qubit_spectroscopy_194728/qD4",
+   "file": "exemplars/F21/lab-C_417_qD4.png",
+   "chip": "lab-C",
+   "run": "#417_08_qubit_spectroscopy_194728",
+   "qubit": "qD4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 23.5,
+   "secondaries": 0
+  },
+  {
+   "case": "F21",
+   "exemplar": "lab-C/#429_08_qubit_spectroscopy_212349/qC5",
+   "file": "exemplars/F21/lab-C_429_qC5.png",
+   "chip": "lab-C",
+   "run": "#429_08_qubit_spectroscopy_212349",
+   "qubit": "qC5",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 400,
+   "depth_z": 5.0,
+   "secondaries": 0
+  },
+  {
+   "case": "F21",
+   "exemplar": "lab-C/#415_08_qubit_spectroscopy_193532/qC4",
+   "file": "exemplars/F21/lab-C_415_qC4.png",
+   "chip": "lab-C",
+   "run": "#415_08_qubit_spectroscopy_193532",
+   "qubit": "qC4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 400,
+   "depth_z": 3.1,
+   "secondaries": 0
+  },
+  {
+   "case": "F21",
+   "exemplar": "lab-C/#59_08_qubit_spectroscopy_215031/qA1",
+   "file": "exemplars/F21/lab-C_59_qA1.png",
+   "chip": "lab-C",
+   "run": "#59_08_qubit_spectroscopy_215031",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 350,
+   "depth_z": 28.7,
+   "secondaries": 0
+  },
+  {
+   "case": "F22",
+   "exemplar": "lab-C/#429_08_qubit_spectroscopy_212349/qD2",
+   "file": "exemplars/F22/lab-C_429_qD2.png",
+   "chip": "lab-C",
+   "run": "#429_08_qubit_spectroscopy_212349",
+   "qubit": "qD2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 22.5,
+   "secondaries": 0
+  },
+  {
+   "case": "F22",
+   "exemplar": "lab-C/#428_08_qubit_spectroscopy_210353/qC2",
+   "file": "exemplars/F22/lab-C_428_qC2.png",
+   "chip": "lab-C",
+   "run": "#428_08_qubit_spectroscopy_210353",
+   "qubit": "qC2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 22.6,
+   "secondaries": 1
+  },
+  {
+   "case": "F22",
+   "exemplar": "lab-E/#54_08_qubit_spectroscopy_222719/q9",
+   "file": "exemplars/F22/lab-E_54_q9.png",
+   "chip": "lab-E",
+   "run": "#54_08_qubit_spectroscopy_222719",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 10.6,
+   "secondaries": 0
+  },
+  {
+   "case": "F22",
+   "exemplar": "lab-E/#48_08_qubit_spectroscopy_222234/q9",
+   "file": "exemplars/F22/lab-E_48_q9.png",
+   "chip": "lab-E",
+   "run": "#48_08_qubit_spectroscopy_222234",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 11.8,
+   "secondaries": 0
+  },
+  {
+   "case": "F22",
+   "exemplar": "lab-D/#158_08_qubit_spectroscopy_115018/qA2",
+   "file": "exemplars/F22/lab-D_158_qA2.png",
+   "chip": "lab-D",
+   "run": "#158_08_qubit_spectroscopy_115018",
+   "qubit": "qA2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 32.5,
+   "secondaries": 0
+  },
+  {
+   "case": "F23",
+   "exemplar": "lab-C/#427_08_qubit_spectroscopy_205244/qC1",
+   "file": "exemplars/F23/lab-C_427_qC1.png",
+   "chip": "lab-C",
+   "run": "#427_08_qubit_spectroscopy_205244",
+   "qubit": "qC1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 14.1,
+   "secondaries": 0
+  },
+  {
+   "case": "F23",
+   "exemplar": "lab-C/#428_08_qubit_spectroscopy_210353/qC1",
+   "file": "exemplars/F23/lab-C_428_qC1.png",
+   "chip": "lab-C",
+   "run": "#428_08_qubit_spectroscopy_210353",
+   "qubit": "qC1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 22.4,
+   "secondaries": 0
+  },
+  {
+   "case": "F23",
+   "exemplar": "lab-C/#415_08_qubit_spectroscopy_193532/qC1",
+   "file": "exemplars/F23/lab-C_415_qC1.png",
+   "chip": "lab-C",
+   "run": "#415_08_qubit_spectroscopy_193532",
+   "qubit": "qC1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 19.4,
+   "secondaries": 0
+  },
+  {
+   "case": "F23",
+   "exemplar": "lab-B/#1253_08_qubit_spectroscopy_033636/q12",
+   "file": "exemplars/F23/lab-B_1253_q12.png",
+   "chip": "lab-B",
+   "run": "#1253_08_qubit_spectroscopy_033636",
+   "qubit": "q12",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 800,
+   "depth_z": 13.5,
+   "secondaries": 2
+  },
+  {
+   "case": "F24",
+   "exemplar": "lab-A/#22_08_qubit_spectroscopy_044933/q6",
+   "file": "exemplars/F24/lab-A_22_q6.png",
+   "chip": "lab-A",
+   "run": "#22_08_qubit_spectroscopy_044933",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 400,
+   "depth_z": 4.5,
+   "secondaries": 0
+  },
+  {
+   "case": "F24",
+   "exemplar": "lab-A/#27_08_qubit_spectroscopy_045740/q6",
+   "file": "exemplars/F24/lab-A_27_q6.png",
+   "chip": "lab-A",
+   "run": "#27_08_qubit_spectroscopy_045740",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 300,
+   "depth_z": 22.3,
+   "secondaries": 0
+  },
+  {
+   "case": "F24",
+   "exemplar": "lab-A/#353_08_qubit_spectroscopy_102744/q7",
+   "file": "exemplars/F24/lab-A_353_q7.png",
+   "chip": "lab-A",
+   "run": "#353_08_qubit_spectroscopy_102744",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 640,
+   "depth_z": 10.2,
+   "secondaries": 2
+  },
+  {
+   "case": "F24",
+   "exemplar": "lab-B/#1249_08_qubit_spectroscopy_031652/q10",
+   "file": "exemplars/F24/lab-B_1249_q10.png",
+   "chip": "lab-B",
+   "run": "#1249_08_qubit_spectroscopy_031652",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1200,
+   "depth_z": 28.6,
+   "secondaries": 1
+  },
+  {
+   "case": "F25",
+   "exemplar": "lab-A/#26_08_qubit_spectroscopy_045721/q6",
+   "file": "exemplars/F25/lab-A_26_q6.png",
+   "chip": "lab-A",
+   "run": "#26_08_qubit_spectroscopy_045721",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 500,
+   "depth_z": 5.4,
+   "secondaries": 0
+  },
+  {
+   "case": "F26",
+   "exemplar": "lab-A/#28_08_qubit_spectroscopy_045932/q6",
+   "file": "exemplars/F26/lab-A_28_q6.png",
+   "chip": "lab-A",
+   "run": "#28_08_qubit_spectroscopy_045932",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 250,
+   "depth_z": 18.2,
+   "secondaries": 0
+  },
+  {
+   "case": "F26",
+   "exemplar": "lab-A/#29_08_qubit_spectroscopy_050005/q7",
+   "file": "exemplars/F26/lab-A_29_q7.png",
+   "chip": "lab-A",
+   "run": "#29_08_qubit_spectroscopy_050005",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 250,
+   "depth_z": 10.2,
+   "secondaries": 1
+  },
+  {
+   "case": "F26",
+   "exemplar": "lab-A/#31_08_qubit_spectroscopy_050147/q7",
+   "file": "exemplars/F26/lab-A_31_q7.png",
+   "chip": "lab-A",
+   "run": "#31_08_qubit_spectroscopy_050147",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 250,
+   "depth_z": 8.4,
+   "secondaries": 1
+  },
+  {
+   "case": "F27",
+   "exemplar": "lab-B/#1253_08_qubit_spectroscopy_033636/q18",
+   "file": "exemplars/F27/lab-B_1253_q18.png",
+   "chip": "lab-B",
+   "run": "#1253_08_qubit_spectroscopy_033636",
+   "qubit": "q18",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 39.5,
+   "secondaries": 1
+  },
+  {
+   "case": "F27",
+   "exemplar": "lab-B/#1254_08_qubit_spectroscopy_035232/q15",
+   "file": "exemplars/F27/lab-B_1254_q15.png",
+   "chip": "lab-B",
+   "run": "#1254_08_qubit_spectroscopy_035232",
+   "qubit": "q15",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 9.8,
+   "secondaries": 2
+  },
+  {
+   "case": "F27",
+   "exemplar": "lab-B/#1239_08_qubit_spectroscopy_030349/q10",
+   "file": "exemplars/F27/lab-B_1239_q10.png",
+   "chip": "lab-B",
+   "run": "#1239_08_qubit_spectroscopy_030349",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 20.2,
+   "secondaries": 2
+  },
+  {
+   "case": "F27",
+   "exemplar": "lab-B/#1254_08_qubit_spectroscopy_035232/q9",
+   "file": "exemplars/F27/lab-B_1254_q9.png",
+   "chip": "lab-B",
+   "run": "#1254_08_qubit_spectroscopy_035232",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 25.9,
+   "secondaries": 0
+  },
+  {
+   "case": "F28",
+   "exemplar": "lab-A/#32_08_qubit_spectroscopy_050601/q7",
+   "file": "exemplars/F28/lab-A_32_q7.png",
+   "chip": "lab-A",
+   "run": "#32_08_qubit_spectroscopy_050601",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 500,
+   "depth_z": 22.4,
+   "secondaries": 0
+  },
+  {
+   "case": "F28",
+   "exemplar": "lab-B/#1253_08_qubit_spectroscopy_033636/q4",
+   "file": "exemplars/F28/lab-B_1253_q4.png",
+   "chip": "lab-B",
+   "run": "#1253_08_qubit_spectroscopy_033636",
+   "qubit": "q4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 17.2,
+   "secondaries": 0
+  },
+  {
+   "case": "F28",
+   "exemplar": "lab-A/#356_08_qubit_spectroscopy_103223/q7",
+   "file": "exemplars/F28/lab-A_356_q7.png",
+   "chip": "lab-A",
+   "run": "#356_08_qubit_spectroscopy_103223",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 200,
+   "depth_z": 9.7,
+   "secondaries": 0
+  },
+  {
+   "case": "F28",
+   "exemplar": "lab-B/#1254_08_qubit_spectroscopy_035232/q1",
+   "file": "exemplars/F28/lab-B_1254_q1.png",
+   "chip": "lab-B",
+   "run": "#1254_08_qubit_spectroscopy_035232",
+   "qubit": "q1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 29.5,
+   "secondaries": 0
+  },
+  {
+   "case": "F29",
+   "exemplar": "lab-B/#1257_08_qubit_spectroscopy_035514/q18",
+   "file": "exemplars/F29/lab-B_1257_q18.png",
+   "chip": "lab-B",
+   "run": "#1257_08_qubit_spectroscopy_035514",
+   "qubit": "q18",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 59.7,
+   "secondaries": 1
+  },
+  {
+   "case": "F29",
+   "exemplar": "lab-B/#1256_08_qubit_spectroscopy_035427/q18",
+   "file": "exemplars/F29/lab-B_1256_q18.png",
+   "chip": "lab-B",
+   "run": "#1256_08_qubit_spectroscopy_035427",
+   "qubit": "q18",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 53.9,
+   "secondaries": 2
+  },
+  {
+   "case": "F29",
+   "exemplar": "lab-A/#30_08_qubit_spectroscopy_050108/q6",
+   "file": "exemplars/F29/lab-A_30_q6.png",
+   "chip": "lab-A",
+   "run": "#30_08_qubit_spectroscopy_050108",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 250,
+   "depth_z": 17.0,
+   "secondaries": 0
+  },
+  {
+   "case": "F30",
+   "exemplar": "lab-E/#49_08_qubit_spectroscopy_222345/q10",
+   "file": "exemplars/F30/lab-E_49_q10.png",
+   "chip": "lab-E",
+   "run": "#49_08_qubit_spectroscopy_222345",
+   "qubit": "q10",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 3.4,
+   "secondaries": 0
+  },
+  {
+   "case": "F30",
+   "exemplar": "lab-E/#48_08_qubit_spectroscopy_222234/q9",
+   "file": "exemplars/F30/lab-E_48_q9.png",
+   "chip": "lab-E",
+   "run": "#48_08_qubit_spectroscopy_222234",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 11.8,
+   "secondaries": 0
+  },
+  {
+   "case": "F30",
+   "exemplar": "lab-B/#1243_08_qubit_spectroscopy_030617/q10",
+   "file": "exemplars/F30/lab-B_1243_q10.png",
+   "chip": "lab-B",
+   "run": "#1243_08_qubit_spectroscopy_030617",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 35.2,
+   "secondaries": 1
+  },
+  {
+   "case": "F30",
+   "exemplar": "lab-B/#1254_08_qubit_spectroscopy_035232/q15",
+   "file": "exemplars/F30/lab-B_1254_q15.png",
+   "chip": "lab-B",
+   "run": "#1254_08_qubit_spectroscopy_035232",
+   "qubit": "q15",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 9.8,
+   "secondaries": 2
+  },
+  {
+   "case": "F31",
+   "exemplar": "lab-B/#1253_08_qubit_spectroscopy_033636/q16",
+   "file": "exemplars/F31/lab-B_1253_q16.png",
+   "chip": "lab-B",
+   "run": "#1253_08_qubit_spectroscopy_033636",
+   "qubit": "q16",
+   "markers_drawn": [],
+   "feature": "dip",
+   "n_points": 800,
+   "depth_z": 2.9,
+   "secondaries": 0
+  },
+  {
+   "case": "F31",
+   "exemplar": "lab-C/#417_08_qubit_spectroscopy_194728/qC1",
+   "file": "exemplars/F31/lab-C_417_qC1.png",
+   "chip": "lab-C",
+   "run": "#417_08_qubit_spectroscopy_194728",
+   "qubit": "qC1",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 17.8,
+   "secondaries": 0
+  },
+  {
+   "case": "F31",
+   "exemplar": "lab-D/#5_08_qubit_spectroscopy_040123/qA1",
+   "file": "exemplars/F31/lab-D_5_qA1.png",
+   "chip": "lab-D",
+   "run": "#5_08_qubit_spectroscopy_040123",
+   "qubit": "qA1",
+   "markers_drawn": [],
+   "feature": "dip",
+   "n_points": 400,
+   "depth_z": 2.7,
+   "secondaries": 0
+  },
+  {
+   "case": "F31",
+   "exemplar": "lab-C/#53_08_qubit_spectroscopy_214302/qA1",
+   "file": "exemplars/F31/lab-C_53_qA1.png",
+   "chip": "lab-C",
+   "run": "#53_08_qubit_spectroscopy_214302",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 18.6,
+   "secondaries": 0
+  },
+  {
+   "case": "F31",
+   "exemplar": "lab-A/#23_08_qubit_spectroscopy_044954/q7",
+   "file": "exemplars/F31/lab-A_23_q7.png",
+   "chip": "lab-A",
+   "run": "#23_08_qubit_spectroscopy_044954",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 2000,
+   "depth_z": 9.9,
+   "secondaries": 2
+  },
+  {
+   "case": "F32",
+   "exemplar": "lab-C/#415_08_qubit_spectroscopy_193532/qD2",
+   "file": "exemplars/F32/lab-C_415_qD2.png",
+   "chip": "lab-C",
+   "run": "#415_08_qubit_spectroscopy_193532",
+   "qubit": "qD2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 24.9,
+   "secondaries": 0
+  },
+  {
+   "case": "F32",
+   "exemplar": "lab-C/#415_08_qubit_spectroscopy_193532/qC5",
+   "file": "exemplars/F32/lab-C_415_qC5.png",
+   "chip": "lab-C",
+   "run": "#415_08_qubit_spectroscopy_193532",
+   "qubit": "qC5",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 400,
+   "depth_z": 6.1,
+   "secondaries": 0
+  },
+  {
+   "case": "F32",
+   "exemplar": "lab-C/#417_08_qubit_spectroscopy_194728/qC2",
+   "file": "exemplars/F32/lab-C_417_qC2.png",
+   "chip": "lab-C",
+   "run": "#417_08_qubit_spectroscopy_194728",
+   "qubit": "qC2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 20.3,
+   "secondaries": 0
+  },
+  {
+   "case": "F32",
+   "exemplar": "lab-C/#415_08_qubit_spectroscopy_193532/qC2",
+   "file": "exemplars/F32/lab-C_415_qC2.png",
+   "chip": "lab-C",
+   "run": "#415_08_qubit_spectroscopy_193532",
+   "qubit": "qC2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 24.3,
+   "secondaries": 0
+  }
+ ],
+ "missing": []
+}

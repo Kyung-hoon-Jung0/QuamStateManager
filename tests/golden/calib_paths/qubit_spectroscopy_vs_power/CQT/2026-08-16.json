@@ -1,0 +1,584 @@
+{
+ "schema": "smgolden/v2",
+ "family": "qubit_spectroscopy_vs_power+qubit_spectroscopy",
+ "chip": "CQT",
+ "session": "2026-08-16",
+ "session_id": "CQT__2026-08-16",
+ "authored": "2026-08-21",
+ "status": "hindsight-authored + adversarial audit",
+ "joint": true,
+ "joint_note": "This key covers a session that interleaves both qubit-spectroscopy node types; scoring replays them together, which is the only way the two-photon identification is available at all.",
+ "runs": [
+  888,
+  889,
+  891,
+  892,
+  893,
+  900,
+  907,
+  908,
+  913,
+  915,
+  916,
+  917,
+  918,
+  919,
+  922,
+  923,
+  932,
+  933,
+  944,
+  945,
+  956,
+  957,
+  958,
+  967,
+  968,
+  969,
+  970,
+  971,
+  983,
+  984,
+  998,
+  999,
+  1000,
+  1001,
+  1009,
+  1026,
+  1027,
+  1035,
+  1036,
+  1037,
+  1038,
+  1050,
+  1056,
+  1066,
+  1070,
+  1071,
+  1084,
+  1085,
+  1086,
+  1088,
+  1090,
+  1091,
+  1104,
+  1106,
+  1109,
+  1110,
+  1111,
+  1112,
+  1113,
+  1114,
+  1119,
+  1120,
+  1121,
+  1122,
+  1123,
+  1125,
+  1126,
+  1127,
+  1128,
+  1129,
+  1130,
+  1131,
+  1132,
+  1133,
+  1134,
+  1135,
+  1136,
+  1137,
+  1138,
+  1139,
+  1140,
+  1141,
+  1142,
+  1143,
+  1148,
+  1149,
+  1150,
+  1151,
+  1152,
+  1153,
+  1154,
+  1155,
+  1156,
+  1157,
+  1158,
+  1159,
+  1160,
+  1161,
+  1162,
+  1163,
+  1164,
+  1165
+ ],
+ "runs_note": "The exact run set this key was authored from; scoring must replay these and only these.",
+ "audit_verdict": "**The key is not sound as it stands.** Its physics narrative is mostly right \u2014 I re-derived it from the raw cubes and confirmed the two-photon story on q7 and q18, the noise verdicts on 967/969/1113/1120/1165, the q15 artefact maps, the q14 doublet and the recurring ~30 MHz satellite \u2014 but three of its four *discriminating* answers rest on evidence that is either misstated, contradicted by the raw",
+ "audit_values_challenged": true,
+ "audit_reasoning_challenged": true,
+ "audit_note": "Two different things get called challenged. A key whose VALUES the auditor confirms is still a usable scoring target even when its narrative is torn apart; a key whose values are challenged measures the key as much as the system.",
+ "session_notes": "102 runs (15 vs_power + 87 1-D), 20 qubits, on the CQT 20Q chip. Read the whole session plus 08-15 (seed history) and 08-17 (independent corroboration); flux clearly moved between days, so 08-17 is used only as weak corroboration, never as the answer.\n\nGlobal facts measured on this session:\n- success=True carries no information. Three vs_power runs (967 q19, 1113/1120 q6, 1165 q6/q16/q19) have maps that are PURE NOISE end-to-end, yet every target reports success=True, a frequency, an optimal power, and in two cases a fitted two-photon line and anharmonicity. Every number from 967, 1113, 1120 and 1165 is fabricated. 1088's q6 panel is the same (verified numerically from ds_raw.h5: |signal| never exceeds 3 sigma at any power, at any of the three claimed frequencies).\n- The 20-qubit sweeps 1125 and 1128 (14:23 / 14:31) are the ONLY runs that cover the whole chip with real signal, but they are hot: FWHM 7-17 MHz for nearly every qubit and x180_amp down at 10-50 mV. Their centres are power-broadened and, where a map exists to check, shifted. They are the last word for several qubits only because nothing cleaner exists.\n- Two-photon 0->2 dominance is the single biggest error source in this session. It is confirmed with the node's own numbers on q7 (|alpha| 141 MHz, node fitted it correctly) and by geometry on q18 (~107 MHz below), q6 (~84 MHz), q11 (~88 MHz), q10 (~81 MHz on 08-17). q18 is the textbook case: four 1-D runs in a row (918, 919, 922, 933) landed on the line half an anharmonicity below the fundamental, three of them with success=True and r-squared 0.88-0.95, and the seed then locked onto it for the rest of the day.\n- A recurring narrow satellite sits roughly a couple of dozen MHz BELOW the main line in the hot run 1125 for q5, q6, q7, q9, q10, q11 and q14. It is far too close to be a two-photon line and it is present on nearly every qubit at once, so it is instrumental (mixer-image-like), not physics. It is the thing runs 1036 (q7) and 958 (q14) fit.\n- Three qubits (q15, q17, and to a lesser degree q19) never produced a defensible line all day. q15's three vs_power maps show only readout artefacts: horizontal banding in 908, a diagonal interference pattern in 968, vertical stripes in 1112 - and every one of its 1-D runs returned no fit. q17 was never above noise in any run.\n\nVerdict: 16 of 20 qubits are answerable. Two (q15, q17) are genuinely unresolved. Two of the answerable ones (q14, q18) ended the session on the WRONG feature: q18 on its two-photon line ~111 MHz low, q14 on the upper member of an 18.5 MHz doublet whose lower member is the one both its vs_power maps track and the one that turns on ~14 dB earlier in run 888's raw cube.",
+ "adversarial_audit": "## Verdict\n\n**The key is not sound as it stands.** Its physics narrative is mostly right \u2014 I re-derived it from the raw cubes and confirmed the two-photon story on q7 and q18, the noise verdicts on 967/969/1113/1120/1165, the q15 artefact maps, the q14 doublet and the recurring ~30 MHz satellite \u2014 but three of its four *discriminating* answers rest on evidence that is either misstated, contradicted by the raw data, or applied inconsistently, and the key contains one flat falsehood about a cube it claims to have read numerically. Separately, as a benchmark it barely tests anything: 15 of the 18 answered qubits can be scored correct by echoing the value the chip already had.\n\nAll numbers below were re-derived from `ds_raw.h5` / `ds_fit.h5` under `D:\\work\\Customer_Codes\\CQT\\data\\2026-08-16` (and `\\2026-08-15`, `\\2026-08-17`). \"z\" is a per-power-column robust MAD z-score unless I say \"smoothed\".\n\n---\n\n## 1. Claims that are false against the raw data\n\n**1.1 The 1088/q6 three-sigma claim is wrong, and it deletes the key's own supporting evidence.** The session note says: \"1088's q6 panel is the same (verified numerically from ds_raw.h5: |signal| never exceeds 3 sigma at any power, at any of the three claimed frequencies).\" At 4.559177 \u2014 the node's *fitted* two-photon for q6 in run 1088 \u2014 the exact-pixel |z| reaches **4.90 in I_rot and 5.35 in IQ_abs at P = -2 / 0 dBm** (6.5 with a \u00b11-pixel window). At 4.645677 the Q channel reaches 3.60. So the claim is false as written. It matters more than a rounding slip: that 5-sigma excursion sits within 1.6 MHz of 4.560807, the feature run 1119 fitted and the feature 08-15's runs 688-692 hit four times \u2014 i.e. it is *corroboration* for the key's own q6 two-photon argument, and the key wrote it out of existence. The rest of the 1088/q6 panel is genuinely noise (global max |z| 6.7, ridge mean|z| 1.46 vs baseline 0.84), so the verdict survives; the stated evidence does not.\n\n**1.2 q15's seed never moved. The claimed seed walk did not happen.** The key: \"each one then became the next run's seed, so the seed walked 4.405 -> 4.4197 -> 4.3665 -> 4.34625 purely on noise.\" Computing centre = frequency - relative_freq for every q15 run gives **4.405000 in run 907, 908, 968, 1112 and 1125 \u2014 identical to six decimals throughout the day**. Not one of the three fabricated vs_power frequencies was ever adopted. The narrative is invented, and the `stale_seed` trap tag for q15 rests on it.\n\n**1.3 The q14 turn-on gap is inflated about 3x, and the \"at -55 dBm\" figure is wrong.** The key's ground (i): \"In run 888's raw cube the lower line already has snr 4-9 at -55 dBm and rises steadily, while the upper line stays at noise until about -41 dBm \u2014 the lower turns on ~14 dB earlier.\" Measured in 888's cube (lower 4.4399, upper 4.4604, \u00b13-pixel window, 5-power boxcar): at -55 dBm the lower is at z = 1.8 smoothed (3.5 raw), not 4-9. First power at which the smoothed track holds above threshold: **lower -51.1 / upper -46.9 at z>5; -50.4 / -46.5 at z>6; -48.6 / -43.7 at z>8** \u2014 a gap of **4-6 dB, never 14**, and the upper is already at z \u2248 7 by -47 dBm, so \"stays at noise until about -41\" is wrong. In the two *later* maps the gap vanishes entirely: run 1070 gives lower/upper = 9/6 at -38 and 7/13 at -36 dBm; run 1088 gives 5/4 at -38 and 8/2 at -36, then 6/10 at -34. The two branches turn on together. This is the primary evidence for the key's most confident \"the session ended on the WRONG line\" verdict.\n\n**1.4 The q14 seed history is misattributed.** \"once run 956's wide sweep put the seed on the upper branch it stayed there.\" It did not: after 956 the centre stayed at 4.439970 for runs 957 and 958, then moved to 4.446414 (the *lower* branch) for 970/971, and only after run **971** did it become 4.464714 \u2014 which is exactly 971's fitted value. Run 956 (success=False) never set anything.\n\n**1.5 q8's onset.** \"re-reading ds_raw.h5 confirms real signal at 4.5856 from about -38 dBm upward (snr 5-12), so the sweep_too_hot flag it raised is over-cautious \u2014 the sweep did reach the onset.\" Measured at 4.5855 in 1088, z by power from the sweep floor: -40:3.7, -36:4.4, -32:6.0, -28:6.1, -24:6.8, -21:**8.1** (max), -20:5.7, -16:6.6, -12:4.6. So (a) \"snr 5-12\" is wrong at both ends \u2014 it never exceeds 8.1 \u2014 and (b) the line is *already responding at the sweep floor of -40 dBm* with no zero-response plateau below it, which is precisely what `sweep_too_hot` means. The data supports the node's flag, not the key's dismissal of it.\n\n**1.6 q6's vs_power runs are not centre returns.** \"all report a frequency within a few MHz of their own sweep centre.\" The relative_freq values are **-15.0 (969), -13.0 (1088), -10.5 (1120), -8.75 (1113), -4.2 (1165) MHz**. With 0.25-1.0 MHz pixels these are 9-60 pixels off centre; only 1165 is arguably \"a few MHz\". The `centre_returned` tag in q6's `traps_present` is unsupported. The same applies to q19, whose vs_power runs are at -16.75 (967) and +5.0 (1165).\n\n**1.7 q17's spread and clustering.** \"Reported values wander over 80 MHz across runs (4.447275, 4.328600, 4.403150, 4.394200, 4.401650) while clustering near whatever the current sweep centre was.\" The list omits 1085's 4.407300, the six values actually span **118.7 MHz**, and the sweep centre was **4.403400 for every single q17 run** \u2014 it never changed, so \"whatever the current sweep centre was\" misdescribes the mechanism, and two of the six (1109 at +43.9, 1110 at -74.8 MHz) are nowhere near it.\n\n**1.8 q20's plateau.** \"stationary from about -30 dBm up to -12 dBm.\" The 4.2800 line is present and stationary from **-38.4 dBm** (z 4.1 rising to 7.9 by -25). Understating the plateau by 8 dB undercuts the key's own criticism that -17.14 dBm was a poor choice \u2014 the honest plateau extended much further down than the key says.\n\n---\n\n## 2. Internal contradictions\n\n**2.1 The satellite rule contradicts the q14 answer.** The session note says a satellite \"sits roughly a couple of dozen MHz BELOW the main line in the hot run 1125 for q5, q6, q7, q9, q10, q11 and q14 ... it is instrumental (mixer-image-like), not physics. It is the thing runs 1036 (q7) and 958 (q14) fit.\" I located the satellite in 1125's I_rot traces: it is at **-28 to -33 MHz** for every one of those qubits (q5 4.294-4.296, q6 4.613-4.617, q7 4.320-4.324, q9 4.286-4.288, q10 4.661-4.667, q11 4.435-4.439, q14 4.430-4.434). Run 1036's 4.327605 (-25.6 MHz) plausibly is it. Run **958's 4.446270 is -18.6 MHz \u2014 that is the lower doublet member, which the q14 entry declares the fundamental and makes the final answer (4.4463)**. So the note asserts that q14's answer is an instrumental artefact. One of the two statements must be withdrawn.\n\n**2.2 The satellite rule also contradicts the q10 answer \u2014 see 3.1.**\n\n**2.3 \"Absurd x180_amp\" is applied selectively.** q17's fits are rejected partly because \"x180_amp 1985 mV and 1789 mV, both absurd.\" The three runs the key adopts as q10's answer carry x180_amp of **3107 mV (1071), 3934 mV (1085) and 2629 mV (1106)** \u2014 larger than the ones called absurd \u2014 and 1085 was marked success=False by the node. If 1.8-2.0 V disqualifies a fit, 2.6-3.9 V cannot qualify one.\n\n**2.4 The power-broadening criterion is applied selectively.** Run 999 is criticised for a fwhm/intrinsic ratio of 1.9 (\"well above the onset ... -25 dBm would have been the honest plateau\"). Run 1035, in the entry that calls q7 \"the one qubit where the node got the whole workflow right,\" has **2.695 / 0.645 = 4.18**, above the corpus p90 of 2.50 quoted in the family manual and close to the corpus max of 5.20. The key's own preferred q7 number (4.353250) sits nearer 1035's broadened value than 1037's cooler one (4.352705, ratio 1.25).\n\n**2.5 08-17 is declared non-authoritative and then used as the deciding vote.** Session note: \"flux clearly moved between days, so 08-17 is used only as weak corroboration, never as the answer.\" The q10 entry then calls 08-17 \"**Decisive** corroboration\" and uses it to overrule the only in-session map. Compounding this, the tolerance excludes that decisive run: |4.685478 - 4.682820| = 2.66 MHz > 2.5 MHz.\n\n**2.6 The q11 \"confirmation\" is circular.** \"Confirmed on 08-17 by vs_power 1344 at 4.467930 (-32.3 dBm, power_warning empty).\" Run 1344's q11 has **relative_freq = 0.00 exactly** \u2014 the reported value *is* its own sweep centre, which is *is* the 08-16 stored seed (4.467930, the centre of runs 1085 through 1128). It is the seed echoed back, which is the exact failure mode the family manual tells you to watch for. It is not independent confirmation of anything. (The 08-16 evidence for q11 is fine on its own; only the corroboration is void.)\n\n**2.7 The anharmonicity ladder is not internally consistent.** The key's own two-photon inferences imply |alpha| = 141 (node-measured twice on q7), 168 (q6), 177 (q11) and **213 MHz (q18)** \u2014 a 51 percent spread on one chip. Meanwhile the fitted anharmonicities it calls \"fabricated\" are 147, 144.5, 163, 226 and 121.6 MHz, i.e. the same range. If 226 (run 1120) is prima facie evidence of a fabricated fit, 213 cannot be the key's own answer without argument. The q18 cross-day check makes it worse, not better: 08-17's offsets are 117.6 and 109.1 MHz (\"the same offset, the next day\") against 08-16's 106.6 \u2014 an 11 MHz spread \u2014 and the key quotes only the low end to get \"|alpha| ~ 218\".\n\n---\n\n## 3. Answers I think are wrong or under-determined\n\n**3.1 q10 = 4.682820 is decided against the only in-session map, and the key's own satellite rule points the other way.** In run 1088's cube the peak |z| at each candidate is: **4.6657 \u2192 10.4, 4.6952 \u2192 9.0, 4.6050 \u2192 9.9, and 4.6827 \u2192 5.4** (IQ_abs; I_rot gives 8.4 / 7.0 / 8.5 / 4.5). The key reports this honestly (\"at 4.6827 the map shows nothing at all\") and then answers 4.6827 anyway. But 4.6952 - 4.6657 = **29.5 MHz**, which is exactly the instrumental satellite spacing the key established on seven other qubits \u2014 so the natural reading of that map is main = 4.6952, satellite = 4.6657. The cool 20-qubit runs say the same thing: 1125's q10 trace peaks at 4.6947 with its satellite bump at 4.661-4.667, and shows nothing at 4.6827. The pro-4.6827 evidence is three warmer 1-D runs (two of them success=False, all with the x180 amplitudes of 2.4 above) plus 08-17. Note also that 08-17's own maps do not agree with each other about which line it is: run 1245's ridge is at 4.6855 with its 30 MHz satellite at 4.6552, while 1344/1346 report 4.682228 with relative_freq = -14.00 exactly, twice. A solver that reads the 08-16 map correctly and answers 4.695 is scored **wrong** by this key. At minimum this target should be marked contested, or the tolerance widened to cover both lines with the reasoning recorded.\n\n**3.2 q15 = unresolved applies a stricter standard than q16 and q19 get on identical evidence.** The key's reason is that only one 1-D run ever fitted anything. But the fitter's failure is not the data. Smoothing the I_rot traces of runs 1125 and 1128 (2.5 MHz boxcar, baseline from the outer quartiles) gives peak significances of:\n\n```\nq19  +13.2 / +12.3  at 4.5747 / 4.5750   -> key: answered (4.5744)\nq16  +14.1 /  +9.9  at 4.4995 / 4.5000   -> key: answered (4.49947)\nq15  +10.8 /  +8.2  at 4.4052 / 4.4046   -> key: UNRESOLVED\nq17   +4.5 /  +4.0                       -> key: unresolved (correct)\n```\n\nThe ordering is stable at 15-, 25- and 40-point smoothing (q15 never drops below +6.3, q17 never rises above +6.8). q15 shows the same reproducible-in-two-runs bump, at the same position to 0.6 MHz, that the key accepts as sufficient for q16 and q19. It is true that none of q15's three vs_power maps shows anything at 4.4052 (mean|z| 0.66-1.39 against a map median of 0.67 \u2014 I checked all three), and that is a real argument for abstaining. But the same argument applies verbatim to q16 (1165's map is noise) and q19 (967's and 1165's maps are noise), and there the key answers anyway from 1125/1128 alone. Either q15 becomes answerable at roughly 4.405, or q16 and q19 become unresolved. As shipped, a solver applying the key's own q16/q19 logic to q15 is marked wrong.\n\n**3.3 q14's verdict is stated far more confidently than the evidence allows.** The doublet itself is solid \u2014 I see two peaks in 889 (4.4379/4.4600), 956 (4.4450/4.4650), 1066 (4.4459/4.4653) and 1106 (4.4459/4.4653), and the branches do swap which is taller. But both stated \"independent grounds\" are weak: ground (i) is off by 3x and reverses in the later maps (1.3 above), and ground (ii) \u2014 that the maps \"chose the lower branch from the map ridge\" \u2014 describes only what the node *reported*; the maps themselves are close to a tie (1070 per-power maxima alternate between the two branches: 4.4462 at -38/-32/-30/-28/-24, 4.4647 at -36/-34/-26). The answer may well be right; the confidence (\"on two independent grounds\") is not earned, and there is no physical account offered of what the upper branch is.\n\n---\n\n## 4. Tolerance and benchmark-design defects\n\n**4.1 The key is almost entirely a seed-echo test.** Comparing each `final_frequency_hz` against the sweep centre in force at the end of the session:\n\n```\nwithin tolerance of the last sweep centre : 15 of 18   (all but q10, q14, q18)\nnaive policy \"report run 1128's fit\"      : 15 of 18 correct (misses q10, q14, q18)\nnaive policy \"report run 1125's fit\"      : 14 of 18\nnaive policy \"last success=True 1-D\"      : 14 of 18\n```\n\nRun 1128 also returns no fit for q15, so \"report 1128\" scores 16 of 20 overall including one correct abstention, failing only q10, q14, q18 and q17. The key discriminates on four targets out of twenty \u2014 and two of those four (q10, q15) are the ones I dispute above. Whatever the intended difficulty of this round, it is not being measured.\n\n**4.2 Two tolerances admit the exact centre-return answer the family manual warns about.** q16: answer 4.499470 \u00b1 4.0 MHz admits **4.500000**, which is the q16 sweep centre for every run from 1111 to 1128. q19: answer 4.574400 \u00b1 4.0 MHz admits **4.575000**, the q19 centre for 967 through 1128. In both cases the key's own text argues carefully that these are not centre returns (0.5 MHz and 0.08 MHz off centre respectively) \u2014 and then sets a tolerance eight times larger than the distinction it just drew. q9 (\u00b12.0 MHz around a centre at 4.318715, 1.23 MHz away) has the same problem more mildly. The q19 tolerance was tuned to exclude one specific wrong number (1165's 4.578850, excluded by 0.45 MHz) while silently admitting a worse one.\n\n**4.3 One tolerance excludes evidence the key calls decisive** \u2014 q10, see 2.5.\n\n**4.4 `ideal_runs` for q7 is a sequence that could not have produced its own result.** `[1035, 1038]`. The key's own text says \"1037 re-ran at -17 dBm and 1038 then returned 4.353349 cleanly\" \u2014 run 1038's drive amplitude (sat 27.2 mV) came from 1037, not from 1035's -14 dBm (run 1036, the run that actually followed 1035, used 75.0 mV and landed on the satellite). The corrective run is omitted from the ideal path.\n\n**4.5 `ideal_runs` conflicts with the round's own thesis in ten cases.** The premise is that the 1-D is only as good as the power the vs_power run chose. Yet q1, q2, q3, q4, q5, q9, q11, q12, q13 (and q10) name only 1-D runs as ideal, for qubits that got no vs_power run at all \u2014 the key flags this in prose for q1 and q13 but still ships a bare 1-D as \"ideal\". And q6, q16, q19 name 1125/1128, which the key itself describes as power-broadened to 8-16 MHz. Either the field means something different from \"the run that did the workflow right,\" or these entries need a note.\n\n---\n\n## 5. Counting and arithmetic errors (each independently verified)\n\n- \"Verdict: **16 of 20** qubits are answerable. Two (q15, q17) are genuinely unresolved.\" \u2014 20 - 2 = 18, and the key ships **18** entries with a frequency.\n- \"**Three** vs_power runs (967 q19, 1113/1120 q6, 1165 q6/q16/q19) have maps that are PURE NOISE\" \u2014 **four** runs are then named, and run 969 (also pure noise; the q6 entry says so) is missing from the list.\n- q15: \"Every one of q15's **eleven** 1-D runs returned no fit at all ... except 1125\" \u2014 q15 has **13** 1-D runs; 11 returned null; run **907** returned 4.347316 at snr 3.6 and is omitted entirely.\n- q16: \"**eleven** runs returned no fit\" \u2014 **17** did.\n- q19: \"**Fourteen** of q19's 1-D runs returned no fit or snr ~3-5 junk\" \u2014 **20** did (10 null + 10 junk). The junk range is 4.4403-4.6030, quoted as \"4.44-4.61\".\n- q17: \"**Nine** runs touched q17\" \u2014 **10** did.\n- q20: \"**fourteen** subsequent 1-D runs land between 4.278963 and 4.280058\" \u2014 14 ran, but 1084 returned no fit, so **13** landed.\n- q7: \"**Ten** 1-D runs then cluster at 4.352205-4.353605\" \u2014 **nine** runs fall in that window, and its lower bound is run 1027's value, which *preceded* run 1035, so \"then\" is wrong.\n- q1: \"a line whose measured FWHM is 0.6-1.5 MHz\" \u2014 run 1084's is **2.82 MHz**. \"every other qubit in that same run is 3-17 MHz wide\" \u2014 q17's is **0.63 MHz** in run 1125.\n- q11: \"Best is 1085 (snr 18.5, r2 0.912)\" \u2014 run **1071** is better on both (snr 19.8, r2 0.923).\n- q2: \"08-17 independently lands at 4.6120-4.6127\" \u2014 08-17's ten q2 values span **4.610293 to 4.612553**; the quoted upper bound never occurs and four values fall below the quoted lower bound.\n- q3: \"08-17 gives 4.3286-4.3289 from three separate runs\" \u2014 true but selective; four other 08-17 runs give 4.32787-4.32847.\n- q4: \"Confirmed at 4.5714-4.5720 on 08-17 by four runs\" \u2014 five runs fall in that window.\n- Session note: \"1125 and 1128 are the **ONLY** runs that cover the whole chip with real signal\" \u2014 1084, 1085 and 1106 are also 20-qubit runs, and 1128 returns no fit at all for q15 and snr-3.2 junk for q17, so it does not cover the whole chip either.\n- Session note: \"FWHM 7-17 MHz for **nearly every** qubit and x180_amp **down at 10-50 mV**\" \u2014 in run 1125, six of twenty are below 7 MHz (q1 0.60, q2 3.34, q3 3.65, q4 4.82, q15 6.60, q17 0.63) and x180_amp spans 10 mV to 1985 mV.\n- q14: \"upper 4.4595->4.4649\" \u2014 run 888's cube puts the early upper branch at **4.4601-4.4606**, not 4.4595.\n\n---\n\n## 6. What I checked and found correct (so the rework does not re-litigate it)\n\nThe pure-noise verdicts are right: 967 global max|z| 5.1 / ridge mean|z| 1.03 vs 0.80 baseline; 969 6.8 / 1.46; 1113 4.5 / 1.04; 1120 4.5 / 0.97; 1165 4.3-4.6 / ~1.0 on all three targets. The q15 map descriptions are accurate \u2014 908 has persistent power-independent stripes whose strongest is at 4.4197 (exactly the frequency it reported), 968 is a textbook diagonal fringe pattern, 1112 is vertical striping. The q7 workflow story is exactly right and visible in the cube: run 1035's per-power maximum sits at 4.3532 from -30 to -12 dBm and then **jumps to 4.2827 at -10/-8/-6 dBm** (z 9.4-11.7) \u2014 a clean demonstration of the family's central trap \u2014 and both maps fit |alpha| = 141 MHz with ef_success. Run 933's figure is as described (4.2476 at 0.85 mV, 4.3545 at 0.53 mV). Run 932's map does show a stationary line at 4.3542 from about -45 dBm up. Run 999's map does show the 4.2800 line. The 08-15 q6 corroboration (688-692 at 4.5624-4.5627) and the 08-17 q6 (1655 at 4.643784, snr 48.6), q10 (1243/1244/1245, 1344/1346), q11, q16 (1643/1655/1346) and q18 (4.330834 from 1344/1346) values are all exact. The q6, q11, q18 arithmetic (84.2, 88.4, 106.6 MHz and their doublings) is exact, and q18's 111.374 MHz final error is exact. The q1/q2/q3/q4/q5/q8/q9/q12/q13/q20 spreads, best-run identifications and tolerances are all reproducible and defensible.",
+ "qubits": [
+  {
+   "qubit": "q1",
+   "ideal_runs": [
+    1085
+   ],
+   "final_frequency_hz": 4321180000,
+   "frequency_tolerance_hz": 900000,
+   "unresolved": false,
+   "reasoning": "Seven 1-D detections (1084, 1085, 1106, 1125, 1128, 1130, 1131) spanning 4.320798-4.321250 GHz, i.e. a 0.45 MHz spread on a line whose measured FWHM is 0.6-1.5 MHz. Best single measurement is 1085 (snr 22.8, r2 0.932, FWHM 1.246 MHz) at 4.321176. The peak sits a consistent 0.5-0.9 MHz below an unchanging sweep centre in every run, so it is a real offset and not a centre return. Caveat worth recording: q1 never got a vs_power run in this session, so its drive power was never validated - in run 1125 the fit has FWHM 0.601 MHz while every other qubit in that same run is 3-17 MHz wide, which means q1's fit there rode a narrow spike, not the power-broadened line. Tolerance set from the measured linewidth, not from the run-to-run scatter.",
+   "traps_present": [],
+   "termination": {
+    "at_run": "#1085",
+    "reason": "Seven 1-D detections (1084, 1085, 1106, 1125, 1128, 1130, 1131) spanning 4.320798-4.321250 GHz, i.e. a 0.45 MHz spread on a line whose measured FWHM is 0.6-1.5 MHz. Best single measurement is 1085 (snr 22.8, r2 0.932, FWHM 1.246 MHz) at 4.321176. The peak sits a consistent 0.5-0.9 MHz below an unchanging sweep centre in every run, so it is a real offset and not a centre return. Caveat worth recording: q1 never got a vs_power run in this session, so its drive power was never validated - in run 1125 the fit has FWHM 0.601 MHz while every other qubit in that same run is 3-17 MHz wide, which means q1's fit there rode a narrow spike, not the power-broadened line. Tolerance set from the measured linewidth, not from the run-to-run scatter.",
+    "final_frequency": 4321180000,
+    "final_sweep_value": null,
+    "unresolved": false
+   },
+   "ideal_length": 1,
+   "confidence": "med"
+  },
+  {
+   "qubit": "q2",
+   "ideal_runs": [
+    1085
+   ],
+   "final_frequency_hz": 4612900000,
+   "frequency_tolerance_hz": 1500000,
+   "unresolved": false,
+   "reasoning": "Five consistent 1-D detections: 4.611732 (1084), 4.613153 (1085, snr 27.2, r2 0.962), 4.612994 (1106), 4.612697 (1125), 4.612666 (1128). Spread 1.4 MHz against a measured FWHM of 2.2-7.2 MHz, so the scatter is entirely inside the linewidth. No vs_power run, so no independent power check; the 1125/1128 values are the hot ones and sit at the low end, consistent with mild power broadening rather than a different feature. 08-17 independently lands at 4.6120-4.6127.",
+   "traps_present": [],
+   "termination": {
+    "at_run": "#1085",
+    "reason": "Five consistent 1-D detections: 4.611732 (1084), 4.613153 (1085, snr 27.2, r2 0.962), 4.612994 (1106), 4.612697 (1125), 4.612666 (1128). Spread 1.4 MHz against a measured FWHM of 2.2-7.2 MHz, so the scatter is entirely inside the linewidth. No vs_power run, so no independent power check; the 1125/1128 values are the hot ones and sit at the low end, consistent with mild power broadening rather than a different feature. 08-17 independently lands at 4.6120-4.6127.",
+    "final_frequency": 4612900000,
+    "final_sweep_value": null,
+    "unresolved": false
+   },
+   "ideal_length": 1,
+   "confidence": "med"
+  },
+  {
+   "qubit": "q3",
+   "ideal_runs": [
+    1085
+   ],
+   "final_frequency_hz": 4328750000,
+   "frequency_tolerance_hz": 800000,
+   "unresolved": false,
+   "reasoning": "The cleanest qubit on the chip. Five detections inside 240 kHz: 4.328608, 4.328845 (1085, snr 38.5, r2 0.976, FWHM 5.2 MHz), 4.328799, 4.328766, 4.328727. 08-17 gives 4.3286-4.3289 from three separate runs. No vs_power run in this session, but none is needed - the line is unambiguous and the hot and cool runs agree to within 240 kHz, which itself is evidence there is no meaningful Stark shift at these powers.",
+   "traps_present": [],
+   "termination": {
+    "at_run": "#1085",
+    "reason": "The cleanest qubit on the chip. Five detections inside 240 kHz: 4.328608, 4.328845 (1085, snr 38.5, r2 0.976, FWHM 5.2 MHz), 4.328799, 4.328766, 4.328727. 08-17 gives 4.3286-4.3289 from three separate runs. No vs_power run in this session, but none is needed - the line is unambiguous and the hot and cool runs agree to within 240 kHz, which itself is evidence there is no meaningful Stark shift at these powers.",
+    "final_frequency": 4328750000,
+    "final_sweep_value": null,
+    "unresolved": false
+   },
+   "ideal_length": 1,
+   "confidence": "med"
+  },
+  {
+   "qubit": "q4",
+   "ideal_runs": [
+    1085
+   ],
+   "final_frequency_hz": 4571450000,
+   "frequency_tolerance_hz": 1200000,
+   "unresolved": false,
+   "reasoning": "Five detections: 4.571262, 4.571590 (1085, snr 31.9, r2 0.973), 4.571897, 4.571292, 4.571322. Spread 640 kHz against FWHM 4.8-8.4 MHz. Confirmed at 4.5714-4.5720 on 08-17 by four runs. No vs_power run, no trap in evidence.",
+   "traps_present": [],
+   "termination": {
+    "at_run": "#1085",
+    "reason": "Five detections: 4.571262, 4.571590 (1085, snr 31.9, r2 0.973), 4.571897, 4.571292, 4.571322. Spread 640 kHz against FWHM 4.8-8.4 MHz. Confirmed at 4.5714-4.5720 on 08-17 by four runs. No vs_power run, no trap in evidence.",
+    "final_frequency": 4571450000,
+    "final_sweep_value": null,
+    "unresolved": false
+   },
+   "ideal_length": 1,
+   "confidence": "med"
+  },
+  {
+   "qubit": "q5",
+   "ideal_runs": [
+    1122
+   ],
+   "final_frequency_hz": 4326300000,
+   "frequency_tolerance_hz": 1500000,
+   "unresolved": false,
+   "reasoning": "Six detections between 4.325721 and 4.326911, a 1.2 MHz spread on lines 2.4-13.9 MHz wide. Best is 1122 (snr 34.4, r2 0.955, FWHM 2.386 MHz) at 4.326597. Run 1121's 400 MHz-wide sweep shows the line clean and isolated with only narrow instrumental spikes at 4.263 and 4.19 GHz - no competing broad feature, so no two-photon confusion ever arose here even though the sweep was wide enough to contain one. Tolerance covers the full run-to-run spread because the hot runs (1125/1128) sit at the high end.",
+   "traps_present": [],
+   "termination": {
+    "at_run": "#1122",
+    "reason": "Six detections between 4.325721 and 4.326911, a 1.2 MHz spread on lines 2.4-13.9 MHz wide. Best is 1122 (snr 34.4, r2 0.955, FWHM 2.386 MHz) at 4.326597. Run 1121's 400 MHz-wide sweep shows the line clean and isolated with only narrow instrumental spikes at 4.263 and 4.19 GHz - no competing broad feature, so no two-photon confusion ever arose here even though the sweep was wide enough to contain one. Tolerance covers the full run-to-run spread because the hot runs (1125/1128) sit at the high end.",
+    "final_frequency": 4326300000,
+    "final_sweep_value": null,
+    "unresolved": false
+   },
+   "ideal_length": 1,
+   "confidence": "med"
+  },
+  {
+   "qubit": "q6",
+   "ideal_runs": [
+    1125,
+    1128
+   ],
+   "final_frequency_hz": 4644800000,
+   "frequency_tolerance_hz": 4000000,
+   "unresolved": false,
+   "reasoning": "28 runs, and every single one of the five vs_power maps is worthless: 969, 1113, 1120, 1088 and 1165 all show pure noise (I re-read 1088's ds_raw.h5 - at 4.6450, 4.6327 and 4.5592 the signal never exceeds 3 sigma at any of the 41 powers), yet all five report success=True, three of them invent an anharmonicity (147, 226, 144.5 MHz) and all report a frequency within a few MHz of their own sweep centre. The real answer comes only from the two hot 20-qubit 1-D runs: 1125 gives 4.644959 (snr 16.2, r2 0.893) and 1128 gives 4.644983 (snr 15.9, r2 0.925), agreeing to 24 kHz. 1141 and 1143 give 4.6430/4.6415 more weakly. Independently confirmed on 08-17 run 1655 at 4.643784 with snr 48.6. The two-photon trap is present and identifiable: run 1119's 800 MHz sweep shows exactly ONE feature, at 4.560807, and nothing at 4.645 - that run used sat_amp 19.0 mV against 1125's 9.6 mV, i.e. it was hotter, which is precisely when the 0->2 line wins. 4.644983 - 4.560807 = 84.2 MHz, so |alpha| ~ 168 MHz, and the same feature was hit four times on 08-15 (runs 688-692 at 4.5624-4.5627). Tolerance is wide because every surviving measurement is power-broadened to 12-15 MHz.",
+   "traps_present": [
+    "two_photon",
+    "sweep_too_hot",
+    "centre_returned",
+    "fringing",
+    "stark_shifted"
+   ],
+   "termination": {
+    "at_run": "#1128",
+    "reason": "28 runs, and every single one of the five vs_power maps is worthless: 969, 1113, 1120, 1088 and 1165 all show pure noise (I re-read 1088's ds_raw.h5 - at 4.6450, 4.6327 and 4.5592 the signal never exceeds 3 sigma at any of the 41 powers), yet all five report success=True, three of them invent an anharmonicity (147, 226, 144.5 MHz) and all report a frequency within a few MHz of their own sweep centre. The real answer comes only from the two hot 20-qubit 1-D runs: 1125 gives 4.644959 (snr 16.2, r2 0.893) and 1128 gives 4.644983 (snr 15.9, r2 0.925), agreeing to 24 kHz. 1141 and 1143 give 4.6430/4.6415 more weakly. Independently confirmed on 08-17 run 1655 at 4.643784 with snr 48.6. The two-photon trap is present and identifiable: run 1119's 800 MHz sweep shows exactly ONE feature, at 4.560807, and nothing at 4.645 - that run used sat_amp 19.0 mV against 1125's 9.6 mV, i.e. it was hotter, which is precisely when the 0->2 line wins. 4.644983 - 4.560807 = 84.2 MHz, so |alpha| ~ 168 MHz, and the same feature was hit four times on 08-15 (runs 688-692 at 4.5624-4.5627). Tolerance is wide because every surviving measurement is power-broadened to 12-15 MHz.",
+    "final_frequency": 4644800000,
+    "final_sweep_value": null,
+    "unresolved": false
+   },
+   "ideal_length": 2,
+   "confidence": "med"
+  },
+  {
+   "qubit": "q7",
+   "ideal_runs": [
+    1035,
+    1038
+   ],
+   "final_frequency_hz": 4353250000,
+   "frequency_tolerance_hz": 1200000,
+   "unresolved": false,
+   "reasoning": "The one qubit where the node got the whole workflow right. Both vs_power runs found the fundamental AND fitted the two-photon line: 1035 gives f=4.353205 at -14 dBm with 2ph=4.282705, and 1037 gives f=4.352705 at -17 dBm with 2ph=4.282205, both reporting |alpha|=141 MHz, both with ef_success=True and ef_in_span=True. Ten 1-D runs then cluster at 4.352205-4.353605. The trap is visibly present even so: run 1121's wide sweep shows the two-photon peak at ~4.2827 TALLER than the fundamental (0.58 vs 0.33 mV), and run 1036 - taken right after 1035 at the -14 dBm the map had just chosen - fitted 4.327605, 25.6 MHz below the line, which is the instrumental satellite, with snr 34.6 and success=True. 1037 re-ran at -17 dBm and 1038 then returned 4.353349 cleanly (snr 32.2, r2 0.934).",
+   "traps_present": [
+    "two_photon",
+    "fringing"
+   ],
+   "termination": {
+    "at_run": "#1038",
+    "reason": "The one qubit where the node got the whole workflow right. Both vs_power runs found the fundamental AND fitted the two-photon line: 1035 gives f=4.353205 at -14 dBm with 2ph=4.282705, and 1037 gives f=4.352705 at -17 dBm with 2ph=4.282205, both reporting |alpha|=141 MHz, both with ef_success=True and ef_in_span=True. Ten 1-D runs then cluster at 4.352205-4.353605. The trap is visibly present even so: run 1121's wide sweep shows the two-photon peak at ~4.2827 TALLER than the fundamental (0.58 vs 0.33 mV), and run 1036 - taken right after 1035 at the -14 dBm the map had just chosen - fitted 4.327605, 25.6 MHz below the line, which is the instrumental satellite, with snr 34.6 and success=True. 1037 re-ran at -17 dBm and 1038 then returned 4.353349 cleanly (snr 32.2, r2 0.934).",
+    "final_frequency": 4353250000,
+    "final_sweep_value": null,
+    "unresolved": false
+   },
+   "ideal_length": 2,
+   "confidence": "med"
+  },
+  {
+   "qubit": "q8",
+   "ideal_runs": [
+    1088,
+    1091
+   ],
+   "final_frequency_hz": 4585400000,
+   "frequency_tolerance_hz": 1200000,
+   "unresolved": false,
+   "reasoning": "Run 1088's q8 panel is one of only two panels in that four-qubit map with a genuine stationary line; re-reading ds_raw.h5 confirms real signal at 4.5856 from about -38 dBm upward (snr 5-12), so the sweep_too_hot flag it raised is over-cautious - the sweep did reach the onset. The node chose -25 dBm, which gives FWHM 3.017 against intrinsic 0.800, so the reported 4.585509 is measured in the broadened regime. Run 1091 immediately after gives 4.585583 with snr 31.7, r2 0.962, FWHM 2.293, and 1106 reproduces it at 4.585582. The hot runs give 4.584949/4.584986, about 600 kHz lower. Run 1085's q8 entry (4.563802, r2 -0.066, x180_amp 27.5 V) is nonsense that was nevertheless marked success=True.",
+   "traps_present": [
+    "sweep_too_hot",
+    "fringing"
+   ],
+   "termination": {
+    "at_run": "#1091",
+    "reason": "Run 1088's q8 panel is one of only two panels in that four-qubit map with a genuine stationary line; re-reading ds_raw.h5 confirms real signal at 4.5856 from about -38 dBm upward (snr 5-12), so the sweep_too_hot flag it raised is over-cautious - the sweep did reach the onset. The node chose -25 dBm, which gives FWHM 3.017 against intrinsic 0.800, so the reported 4.585509 is measured in the broadened regime. Run 1091 immediately after gives 4.585583 with snr 31.7, r2 0.962, FWHM 2.293, and 1106 reproduces it at 4.585582. The hot runs give 4.584949/4.584986, about 600 kHz lower. Run 1085's q8 entry (4.563802, r2 -0.066, x180_amp 27.5 V) is nonsense that was nevertheless marked success=True.",
+    "final_frequency": 4585400000,
+    "final_sweep_value": null,
+    "unresolved": false
+   },
+   "ideal_length": 2,
+   "confidence": "med"
+  },
+  {
+   "qubit": "q9",
+   "ideal_runs": [
+    900,
+    1085
+   ],
+   "final_frequency_hz": 4319950000,
+   "frequency_tolerance_hz": 2000000,
+   "unresolved": false,
+   "reasoning": "Run 900 corrects a 23 MHz stale seed (sweep centred at 4.295849, line found at 4.318866, snr 17.0). The best measurements are 1085 at 4.319991 (snr 44.9, r2 0.977, FWHM 3.446 MHz - the highest snr of any target in that run) and 1106 at 4.319962. The hot runs 1125/1128 give 4.318212/4.318178, i.e. 1.8 MHz lower with FWHM 12.6/9.1 MHz - a clean example of the low-power value being the right one and the broadened value pulling down. I take the moderate-power value as the answer and set tolerance wide enough to still admit the hot-run value, since nothing in this session resolves the last 1.8 MHz. No vs_power run for q9 all day.",
+   "traps_present": [
+    "stale_seed",
+    "stark_shifted"
+   ],
+   "termination": {
+    "at_run": "#1085",
+    "reason": "Run 900 corrects a 23 MHz stale seed (sweep centred at 4.295849, line found at 4.318866, snr 17.0). The best measurements are 1085 at 4.319991 (snr 44.9, r2 0.977, FWHM 3.446 MHz - the highest snr of any target in that run) and 1106 at 4.319962. The hot runs 1125/1128 give 4.318212/4.318178, i.e. 1.8 MHz lower with FWHM 12.6/9.1 MHz - a clean example of the low-power value being the right one and the broadened value pulling down. I take the moderate-power value as the answer and set tolerance wide enough to still admit the hot-run value, since nothing in this session resolves the last 1.8 MHz. No vs_power run for q9 all day.",
+    "final_frequency": 4319950000,
+    "final_sweep_value": null,
+    "unresolved": false
+   },
+   "ideal_length": 2,
+   "confidence": "med"
+  },
+  {
+   "qubit": "q10",
+   "ideal_runs": [
+    1071,
+    1085
+   ],
+   "final_frequency_hz": 4682820000,
+   "frequency_tolerance_hz": 2500000,
+   "unresolved": false,
+   "reasoning": "The one vs_power run (1088) returned 4.695228, which is rel=-1.0 MHz from its own sweep centre of 4.696228 - a centre return. I checked the cube: at 4.6952 there is only marginal signal, the actual ridge in that map sits at 4.6657 and Stark-shifts steadily down to 4.605 by -12 dBm, and at 4.6827 the map shows nothing at all. The 4.6952 feature is real (1125 shows a clean 16 MHz-wide Lorentzian there) but it is not the fundamental: it always coincides with the stale stored value, and the node's derived two-photon at 4.6137 is just the top of the high-power blob. The fundamental is the narrow line at 4.6827: 1071 gives 4.683030 (snr 21.8), 1085 gives 4.682692 (snr 20.6, FWHM 1.813), 1106 gives 4.682728 (snr 19.5, FWHM 2.713, visibly a sharp resolved peak with the 4.6952 bump separately visible to its right). Decisive corroboration on 08-17: vs_power run 1245 puts q10 at 4.685478 at -34.4 dBm with power_warning empty and FWHM 0.461/0.304 - a textbook stationary low-power line - and runs 1243/1244 give 4.685045/4.685228 at snr 36-40, with 1344/1346 later giving 4.682228. The 4.682-4.685 family is the qubit; 4.6952 is not.",
+   "traps_present": [
+    "centre_returned",
+    "stale_seed",
+    "stark_shifted",
+    "two_photon"
+   ],
+   "termination": {
+    "at_run": "#1085",
+    "reason": "The one vs_power run (1088) returned 4.695228, which is rel=-1.0 MHz from its own sweep centre of 4.696228 - a centre return. I checked the cube: at 4.6952 there is only marginal signal, the actual ridge in that map sits at 4.6657 and Stark-shifts steadily down to 4.605 by -12 dBm, and at 4.6827 the map shows nothing at all. The 4.6952 feature is real (1125 shows a clean 16 MHz-wide Lorentzian there) but it is not the fundamental: it always coincides with the stale stored value, and the node's derived two-photon at 4.6137 is just the top of the high-power blob. The fundamental is the narrow line at 4.6827: 1071 gives 4.683030 (snr 21.8), 1085 gives 4.682692 (snr 20.6, FWHM 1.813), 1106 gives 4.682728 (snr 19.5, FWHM 2.713, visibly a sharp resolved peak with the 4.6952 bump separately visible to its right). Decisive corroboration on 08-17: vs_power run 1245 puts q10 at 4.685478 at -34.4 dBm with power_warning empty and FWHM 0.461/0.304 - a textbook stationary low-power line - and runs 1243/1244 give 4.685045/4.685228 at snr 36-40, with 1344/1346 later giving 4.682228. The 4.682-4.685 family is the qubit; 4.6952 is not.",
+    "final_frequency": 4682820000,
+    "final_sweep_value": null,
+    "unresolved": false
+   },
+   "ideal_length": 2,
+   "confidence": "med"
+  },
+  {
+   "qubit": "q11",
+   "ideal_runs": [
+    1085
+   ],
+   "final_frequency_hz": 4467890000,
+   "frequency_tolerance_hz": 1000000,
+   "unresolved": false,
+   "reasoning": "Six detections inside 330 kHz: 4.467718, 4.467778, 4.467900, 4.467930, 4.467948, 4.468051. Best is 1085 (snr 18.5, r2 0.912, FWHM 1.521). The peaks sit at the sweep centre, but they are genuine - 1106's panel shows a resolved Lorentzian plus a separate narrow instrumental spike at 4.4835 - so this is the legitimate case of a correct answer landing at centre. The two-photon trap did fire: run 1121's 400 MHz sweep at very low sat_amp (2.31 mV, x180 48 mV) fitted a 51.7 MHz-wide blob centred at 4.379556, and the panel plainly shows two blobs with the LOWER one taken; 4.467930 - 4.379556 = 88.4 MHz, so |alpha| ~ 177 MHz. 1122 then landed at 4.394803, still on that structure, before 1123 recovered 4.467778. Confirmed on 08-17 by vs_power 1344 at 4.467930 (-32.3 dBm, power_warning empty).",
+   "traps_present": [
+    "two_photon",
+    "stark_shifted"
+   ],
+   "termination": {
+    "at_run": "#1085",
+    "reason": "Six detections inside 330 kHz: 4.467718, 4.467778, 4.467900, 4.467930, 4.467948, 4.468051. Best is 1085 (snr 18.5, r2 0.912, FWHM 1.521). The peaks sit at the sweep centre, but they are genuine - 1106's panel shows a resolved Lorentzian plus a separate narrow instrumental spike at 4.4835 - so this is the legitimate case of a correct answer landing at centre. The two-photon trap did fire: run 1121's 400 MHz sweep at very low sat_amp (2.31 mV, x180 48 mV) fitted a 51.7 MHz-wide blob centred at 4.379556, and the panel plainly shows two blobs with the LOWER one taken; 4.467930 - 4.379556 = 88.4 MHz, so |alpha| ~ 177 MHz. 1122 then landed at 4.394803, still on that structure, before 1123 recovered 4.467778. Confirmed on 08-17 by vs_power 1344 at 4.467930 (-32.3 dBm, power_warning empty).",
+    "final_frequency": 4467890000,
+    "final_sweep_value": null,
+    "unresolved": false
+   },
+   "ideal_length": 1,
+   "confidence": "med"
+  },
+  {
+   "qubit": "q12",
+   "ideal_runs": [
+    1085
+   ],
+   "final_frequency_hz": 4485360000,
+   "frequency_tolerance_hz": 1200000,
+   "unresolved": false,
+   "reasoning": "Six detections from 4.484608 to 4.485604, spread 1.0 MHz against FWHM 2.6-17.6 MHz. Best is 1085 at 4.485345 (snr 24.8, r2 0.957). Run 1026's r2 of 0.275 despite snr 25.7 reflects a poor baseline, not a wrong line - it gives 4.485604, consistent with everything else. No vs_power run, no trap in evidence beyond the usual power broadening in 1125/1128.",
+   "traps_present": [],
+   "termination": {
+    "at_run": "#1085",
+    "reason": "Six detections from 4.484608 to 4.485604, spread 1.0 MHz against FWHM 2.6-17.6 MHz. Best is 1085 at 4.485345 (snr 24.8, r2 0.957). Run 1026's r2 of 0.275 despite snr 25.7 reflects a poor baseline, not a wrong line - it gives 4.485604, consistent with everything else. No vs_power run, no trap in evidence beyond the usual power broadening in 1125/1128.",
+    "final_frequency": 4485360000,
+    "final_sweep_value": null,
+    "unresolved": false
+   },
+   "ideal_length": 1,
+   "confidence": "med"
+  },
+  {
+   "qubit": "q13",
+   "ideal_runs": [
+    1085
+   ],
+   "final_frequency_hz": 4356200000,
+   "frequency_tolerance_hz": 1500000,
+   "unresolved": false,
+   "reasoning": "Four detections: 4.355877, 4.355955 (1085, snr 21.0, r2 0.855), 4.356432, 4.356567. Spread 690 kHz on a line that is 8-13 MHz wide in every run - q13 was never measured anywhere near its low-power limit, so the centre is only good to about 1.5 MHz. No vs_power run for q13 at any point in the session, which is the real gap here: nobody ever established what drive power q13 should be using.",
+   "traps_present": [
+    "stark_shifted"
+   ],
+   "termination": {
+    "at_run": "#1085",
+    "reason": "Four detections: 4.355877, 4.355955 (1085, snr 21.0, r2 0.855), 4.356432, 4.356567. Spread 690 kHz on a line that is 8-13 MHz wide in every run - q13 was never measured anywhere near its low-power limit, so the centre is only good to about 1.5 MHz. No vs_power run for q13 at any point in the session, which is the real gap here: nobody ever established what drive power q13 should be using.",
+    "final_frequency": 4356200000,
+    "final_sweep_value": null,
+    "unresolved": false
+   },
+   "ideal_length": 1,
+   "confidence": "med"
+  },
+  {
+   "qubit": "q14",
+   "ideal_runs": [
+    1070,
+    1085
+   ],
+   "final_frequency_hz": 4446300000,
+   "frequency_tolerance_hz": 1000000,
+   "unresolved": false,
+   "reasoning": "The session ends on the WRONG member of a doublet. q14 shows two narrow (~1 MHz) lines split by 18.5 MHz - clearly visible as two peaks in the single-qubit runs 889, 956 and 1066, so it is not multiplex crosstalk. The split is too small to be a two-photon line; both branches are real and both moved up by ~5-6 MHz partway through the night (lower 4.4399->4.4462, upper 4.4595->4.4649), which is what let the fitter change branch. The lower branch is the fundamental, on two independent grounds. (i) In run 888's raw cube the lower line already has snr 4-9 at -55 dBm and rises steadily, while the upper line stays at noise until about -41 dBm - the lower turns on ~14 dB earlier, i.e. the upper is the one that grows faster with power. (ii) Both vs_power maps that saw the later configuration chose the lower branch from the map ridge: 1070 gives 4.446214 at -25 dBm and 1088 gives 4.446214 at -22 dBm, both with power_warning empty. The 1-D runs simply fit whichever peak is momentarily taller - 1066 (sat 37 mV) took the lower, 1106 (sat 19 mV) took the upper - and once run 956's wide sweep put the seed on the upper branch it stayed there, so the last accepted values (1125: 4.463621, 1128: 4.464875, both success=True at FWHM 12-13 MHz) are the wrong line. Right answer 4.4463 GHz; run 1085's 4.446383 (snr 28.8, r2 0.979 - the best fit q14 got all day) is the confirming 1-D.",
+   "traps_present": [
+    "stale_seed",
+    "stark_shifted",
+    "fringing"
+   ],
+   "termination": {
+    "at_run": "#1085",
+    "reason": "The session ends on the WRONG member of a doublet. q14 shows two narrow (~1 MHz) lines split by 18.5 MHz - clearly visible as two peaks in the single-qubit runs 889, 956 and 1066, so it is not multiplex crosstalk. The split is too small to be a two-photon line; both branches are real and both moved up by ~5-6 MHz partway through the night (lower 4.4399->4.4462, upper 4.4595->4.4649), which is what let the fitter change branch. The lower branch is the fundamental, on two independent grounds. (i) In run 888's raw cube the lower line already has snr 4-9 at -55 dBm and rises steadily, while the upper line stays at noise until about -41 dBm - the lower turns on ~14 dB earlier, i.e. the upper is the one that grows faster with power. (ii) Both vs_power maps that saw the later configuration chose the lower branch from the map ridge: 1070 gives 4.446214 at -25 dBm and 1088 gives 4.446214 at -22 dBm, both with power_warning empty. The 1-D runs simply fit whichever peak is momentarily taller - 1066 (sat 37 mV) took the lower, 1106 (sat 19 mV) took the upper - and once run 956's wide sweep put the seed on the upper branch it stayed there, so the last accepted values (1125: 4.463621, 1128: 4.464875, both success=True at FWHM 12-13 MHz) are the wrong line. Right answer 4.4463 GHz; run 1085's 4.446383 (snr 28.8, r2 0.979 - the best fit q14 got all day) is the confirming 1-D.",
+    "final_frequency": 4446300000,
+    "final_sweep_value": null,
+    "unresolved": false
+   },
+   "ideal_length": 2,
+   "confidence": "med"
+  },
+  {
+   "qubit": "q15",
+   "ideal_runs": [],
+   "final_frequency_hz": null,
+   "frequency_tolerance_hz": 0,
+   "unresolved": true,
+   "reasoning": "Genuinely unresolved, and the correct action was to abstain from run 908 onward. Every one of q15's eleven 1-D runs returned no fit at all (frequency null, snr 0) except 1125, which fitted a 6.6 MHz bump at 4.405850 with snr 4.5 and r2 0.377 and was marked success=False. All three vs_power maps show only readout artefacts and no power-dependent feature whatsoever: 908 is horizontal banding crossed by broad vertical bands at 4.362/4.408/4.4195/4.428 that persist unchanged down to -55 dBm; 968 is a pure diagonal interference pattern; 1112 is dense vertical striping. All three nevertheless report success=True, all three raise sweep_too_hot, and each reported frequency (4.419750, 4.366500, 4.346250) simply sits on whichever stripe the tracker latched onto - and each one then became the next run's seed, so the seed walked 4.405 -> 4.4197 -> 4.3665 -> 4.34625 purely on noise. No frequency in this session is defensible.",
+   "traps_present": [
+    "sweep_too_hot",
+    "stale_seed",
+    "fringing"
+   ],
+   "termination": {
+    "at_run": null,
+    "reason": "Genuinely unresolved, and the correct action was to abstain from run 908 onward. Every one of q15's eleven 1-D runs returned no fit at all (frequency null, snr 0) except 1125, which fitted a 6.6 MHz bump at 4.405850 with snr 4.5 and r2 0.377 and was marked success=False. All three vs_power maps show only readout artefacts and no power-dependent feature whatsoever: 908 is horizontal banding crossed by broad vertical bands at 4.362/4.408/4.4195/4.428 that persist unchanged down to -55 dBm; 968 is a pure diagonal interference pattern; 1112 is dense vertical striping. All three nevertheless report success=True, all three raise sweep_too_hot, and each reported frequency (4.419750, 4.366500, 4.346250) simply sits on whichever stripe the tracker latched onto - and each one then became the next run's seed, so the seed walked 4.405 -> 4.4197 -> 4.3665 -> 4.34625 purely on noise. No frequency in this session is defensible.",
+    "final_frequency": null,
+    "final_sweep_value": null,
+    "unresolved": true
+   },
+   "ideal_length": 0,
+   "confidence": "med"
+  },
+  {
+   "qubit": "q16",
+   "ideal_runs": [
+    1125,
+    1128
+   ],
+   "final_frequency_hz": 4499470000,
+   "frequency_tolerance_hz": 4000000,
+   "unresolved": false,
+   "reasoning": "Detected exactly twice, both times honestly: 1125 gives 4.499445 (snr 6.6, r2 0.609, FWHM 16.0) and 1128 gives 4.499500 (snr 6.0, r2 0.541, FWHM 7.9). Both panels show a real, if broad, Lorentzian rising well clear of the noise band, so despite sitting ~0.5 MHz from the sweep centre these are not centre returns. Everything else is noise: eleven runs returned no fit, 1111 fitted 4.301508 at snr 4.0, 1158 fitted 4.522861 at snr 3.1, and the final vs_power run 1165 - whose q16 panel is a solid saturated noise field - reported 4.511300 with success=True plus a fabricated two-photon at 4.450500 and |alpha| 121.6 MHz. Corroborated on 08-17 (4.4956 and 4.4967 from clean runs, 4.4935 from vs_power 1346). Tolerance is 4 MHz because both surviving measurements are heavily power-broadened.",
+   "traps_present": [
+    "centre_returned",
+    "sweep_too_hot",
+    "stark_shifted",
+    "fringing"
+   ],
+   "termination": {
+    "at_run": "#1128",
+    "reason": "Detected exactly twice, both times honestly: 1125 gives 4.499445 (snr 6.6, r2 0.609, FWHM 16.0) and 1128 gives 4.499500 (snr 6.0, r2 0.541, FWHM 7.9). Both panels show a real, if broad, Lorentzian rising well clear of the noise band, so despite sitting ~0.5 MHz from the sweep centre these are not centre returns. Everything else is noise: eleven runs returned no fit, 1111 fitted 4.301508 at snr 4.0, 1158 fitted 4.522861 at snr 3.1, and the final vs_power run 1165 - whose q16 panel is a solid saturated noise field - reported 4.511300 with success=True plus a fabricated two-photon at 4.450500 and |alpha| 121.6 MHz. Corroborated on 08-17 (4.4956 and 4.4967 from clean runs, 4.4935 from vs_power 1346). Tolerance is 4 MHz because both surviving measurements are heavily power-broadened.",
+    "final_frequency": 4499470000,
+    "final_sweep_value": null,
+    "unresolved": false
+   },
+   "ideal_length": 2,
+   "confidence": "med"
+  },
+  {
+   "qubit": "q17",
+   "ideal_runs": [],
+   "final_frequency_hz": null,
+   "frequency_tolerance_hz": 0,
+   "unresolved": true,
+   "reasoning": "Never detected. Nine runs touched q17 and every single fit has snr between 3.0 and 3.5, and every one was correctly marked success=False - this is the one qubit where the node's honesty flags worked. The panels in 1125 and 1128 are flat noise with the fit sitting on a single-sample spike (FWHM 0.630 and 0.699 MHz, x180_amp 1985 mV and 1789 mV, both absurd). Reported values wander over 80 MHz across runs (4.447275, 4.328600, 4.403150, 4.394200, 4.401650) while clustering near whatever the current sweep centre was, which is the centre-return signature. q17 also got no vs_power run at all. 08-17 shows the same story until a much later re-tune. Correct answer: abstain.",
+   "traps_present": [
+    "centre_returned"
+   ],
+   "termination": {
+    "at_run": null,
+    "reason": "Never detected. Nine runs touched q17 and every single fit has snr between 3.0 and 3.5, and every one was correctly marked success=False - this is the one qubit where the node's honesty flags worked. The panels in 1125 and 1128 are flat noise with the fit sitting on a single-sample spike (FWHM 0.630 and 0.699 MHz, x180_amp 1985 mV and 1789 mV, both absurd). Reported values wander over 80 MHz across runs (4.447275, 4.328600, 4.403150, 4.394200, 4.401650) while clustering near whatever the current sweep centre was, which is the centre-return signature. q17 also got no vs_power run at all. 08-17 shows the same story until a much later re-tune. Correct answer: abstain.",
+    "final_frequency": null,
+    "final_sweep_value": null,
+    "unresolved": true
+   },
+   "ideal_length": 0,
+   "confidence": "med"
+  },
+  {
+   "qubit": "q18",
+   "ideal_runs": [
+    923,
+    932
+   ],
+   "final_frequency_hz": 4354300000,
+   "frequency_tolerance_hz": 1000000,
+   "unresolved": false,
+   "reasoning": "This is the archetypal two-photon failure of the session, and the operator's final value is wrong by about 111 MHz. Run 932's vs_power map is excellent: a narrow, perfectly stationary line at 4.354200 visible from about -40 dBm up, chosen at -38.38 dBm with FWHM 0.461 against intrinsic 0.256 and power_warning empty. Run 923 independently fits 4.354467 with the 1-D. But runs 918, 919, 922 and 933 all landed instead on a feature ~107 MHz below - 4.247845, 4.247750, 4.247652, 4.247603 - three of them with success=True and r2 0.88-0.95. Run 933's own figure settles it: a 400 MHz-wide sweep showing the two-photon peak at 4.2476 at 0.85 mV and the fundamental at 4.3545 at 0.53 mV, i.e. the wrong line is the taller one at that drive. 4.354200 - 4.247603 = 106.6 MHz, so |alpha| ~ 213 MHz. After 933 the seed locked onto the two-photon branch and every subsequent run (944, 945, 983, 1085, 1106, 1125, 1128) tracked it, ending at 4.242926 with success=True. Independent confirmation of the anharmonicity on 08-17, where the same trap fires again: with the fundamental at 4.330834 (vs_power 1344/1346, power_warning empty), runs 1253/1256 land at 4.213222/4.221703, i.e. 109-118 MHz below, giving |alpha| ~ 218 MHz - the same qubit, the same offset, the next day.",
+   "traps_present": [
+    "two_photon",
+    "stale_seed",
+    "stark_shifted",
+    "fringing"
+   ],
+   "termination": {
+    "at_run": "#932",
+    "reason": "This is the archetypal two-photon failure of the session, and the operator's final value is wrong by about 111 MHz. Run 932's vs_power map is excellent: a narrow, perfectly stationary line at 4.354200 visible from about -40 dBm up, chosen at -38.38 dBm with FWHM 0.461 against intrinsic 0.256 and power_warning empty. Run 923 independently fits 4.354467 with the 1-D. But runs 918, 919, 922 and 933 all landed instead on a feature ~107 MHz below - 4.247845, 4.247750, 4.247652, 4.247603 - three of them with success=True and r2 0.88-0.95. Run 933's own figure settles it: a 400 MHz-wide sweep showing the two-photon peak at 4.2476 at 0.85 mV and the fundamental at 4.3545 at 0.53 mV, i.e. the wrong line is the taller one at that drive. 4.354200 - 4.247603 = 106.6 MHz, so |alpha| ~ 213 MHz. After 933 the seed locked onto the two-photon branch and every subsequent run (944, 945, 983, 1085, 1106, 1125, 1128) tracked it, ending at 4.242926 with success=True. Independent confirmation of the anharmonicity on 08-17, where the same trap fires again: with the fundamental at 4.330834 (vs_power 1344/1346, power_warning empty), runs 1253/1256 land at 4.213222/4.221703, i.e. 109-118 MHz below, giving |alpha| ~ 218 MHz - the same qubit, the same offset, the next day.",
+    "final_frequency": 4354300000,
+    "final_sweep_value": null,
+    "unresolved": false
+   },
+   "ideal_length": 2,
+   "confidence": "med"
+  },
+  {
+   "qubit": "q19",
+   "ideal_runs": [
+    1125,
+    1128
+   ],
+   "final_frequency_hz": 4574400000,
+   "frequency_tolerance_hz": 4000000,
+   "unresolved": false,
+   "reasoning": "Barely resolved, and the session's own last accepted values are not the reason. Both vs_power runs are pure noise: 967's map has no feature anywhere yet reports 4.558250 with success=True and sweep_too_hot, and 1165's q19 panel is a solid noise field yet reports 4.578850 with success=True. Fourteen of q19's 1-D runs returned no fit or snr ~3-5 junk scattered over 4.44-4.61 GHz. The only credible evidence is the pair of hot 20-qubit runs, which agree: 1125 gives 4.574922 (snr 7.2, r2 0.583, FWHM 9.76) and 1128 gives 4.573850 (snr 6.4, r2 0.489, FWHM 9.49), and 1128's panel does show a coherent ~10 MHz-wide rise clearly above the noise band. Two independent runs agreeing to 1.1 MHz, plus 08-17's much cleaner 4.572090 (snr 15.5, r2 0.872), make ~4.574 GHz the right answer. I set tolerance at 4 MHz deliberately so that run 1165's noise-derived 4.578850 does not count as correct - it is not evidence, it is a coincidence.",
+   "traps_present": [
+    "sweep_too_hot",
+    "centre_returned",
+    "fringing",
+    "stark_shifted"
+   ],
+   "termination": {
+    "at_run": "#1128",
+    "reason": "Barely resolved, and the session's own last accepted values are not the reason. Both vs_power runs are pure noise: 967's map has no feature anywhere yet reports 4.558250 with success=True and sweep_too_hot, and 1165's q19 panel is a solid noise field yet reports 4.578850 with success=True. Fourteen of q19's 1-D runs returned no fit or snr ~3-5 junk scattered over 4.44-4.61 GHz. The only credible evidence is the pair of hot 20-qubit runs, which agree: 1125 gives 4.574922 (snr 7.2, r2 0.583, FWHM 9.76) and 1128 gives 4.573850 (snr 6.4, r2 0.489, FWHM 9.49), and 1128's panel does show a coherent ~10 MHz-wide rise clearly above the noise band. Two independent runs agreeing to 1.1 MHz, plus 08-17's much cleaner 4.572090 (snr 15.5, r2 0.872), make ~4.574 GHz the right answer. I set tolerance at 4 MHz deliberately so that run 1165's noise-derived 4.578850 does not count as correct - it is not evidence, it is a coincidence.",
+    "final_frequency": 4574400000,
+    "final_sweep_value": null,
+    "unresolved": false
+   },
+   "ideal_length": 2,
+   "confidence": "med"
+  },
+  {
+   "qubit": "q20",
+   "ideal_runs": [
+    999,
+    1001
+   ],
+   "final_frequency_hz": 4279850000,
+   "frequency_tolerance_hz": 800000,
+   "unresolved": false,
+   "reasoning": "A clean recovery from a badly stale seed, and the best-behaved workflow in the session after q7. Run 998 was centred 69 MHz off (4.349) and returned snr 3.1 junk. Run 999's vs_power map then shows an unmistakable narrow vertical line at 4.2800, stationary from about -30 dBm up to -12 dBm where it starts to bend, and reports 4.280000 with power_warning empty. The one criticism is that it picked -17.14 dBm, well above the onset, giving FWHM 1.065 against intrinsic 0.553 - a ratio of 1.9, so the reported centre is measured in the broadened regime; -25 dBm would have been the honest plateau. It made no practical difference: fourteen subsequent 1-D runs land between 4.278963 and 4.280058, with 1104 the best at 4.279928 (snr 19.8, r2 0.951). Tolerance from the measured 1.0-1.4 MHz linewidth.",
+   "traps_present": [
+    "stale_seed",
+    "fringing",
+    "stark_shifted"
+   ],
+   "termination": {
+    "at_run": "#1001",
+    "reason": "A clean recovery from a badly stale seed, and the best-behaved workflow in the session after q7. Run 998 was centred 69 MHz off (4.349) and returned snr 3.1 junk. Run 999's vs_power map then shows an unmistakable narrow vertical line at 4.2800, stationary from about -30 dBm up to -12 dBm where it starts to bend, and reports 4.280000 with power_warning empty. The one criticism is that it picked -17.14 dBm, well above the onset, giving FWHM 1.065 against intrinsic 0.553 - a ratio of 1.9, so the reported centre is measured in the broadened regime; -25 dBm would have been the honest plateau. It made no practical difference: fourteen subsequent 1-D runs land between 4.278963 and 4.280058, with 1104 the best at 4.279928 (snr 19.8, r2 0.951). Tolerance from the measured 1.0-1.4 MHz linewidth.",
+    "final_frequency": 4279850000,
+    "final_sweep_value": null,
+    "unresolved": false
+   },
+   "ideal_length": 2,
+   "confidence": "med"
+  }
+ ]
+}

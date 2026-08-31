@@ -1,0 +1,2535 @@
+{
+ "schema": "smknowex/v1",
+ "family": "resonator_spectroscopy_vs_flux",
+ "note": "Axes are NORMALISED and UNLABELLED: no absolute frequency, power or flux leaves this pack, and a picture without numbers cannot teach an absolute scale (Clause B). Orientation follows the labs' own convention: frequency rightwards, the swept quantity upwards. Overlays: orange = the tracked feature, cyan dashed and magenta dotted = the record's own frequency claims, red = the sweep value it chose. Markers are the RECORD's claims, drawn even when they contradict the map \u2014 that contradiction is the lesson in the mislabelled and off-feature cases. Whether the feature is a dip or a peak is MEASURED per run, because the readout rotation decides it and it differs between labs.",
+ "rendered": [
+  {
+   "case": "C1",
+   "exemplar": "lab-C/#435_06_resonator_spectroscopy_vs_flux_223530/qC5",
+   "file": "exemplars/C1/lab-C_435_qC5.png",
+   "chip": "lab-C",
+   "run": "#435_06_resonator_spectroscopy_vs_flux_223530",
+   "qubit": "qC5",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C1",
+   "exemplar": "lab-C/#297_06_resonator_spectroscopy_vs_flux_050441/qD4",
+   "file": "exemplars/C1/lab-C_297_qD4.png",
+   "chip": "lab-C",
+   "run": "#297_06_resonator_spectroscopy_vs_flux_050441",
+   "qubit": "qD4",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    51
+   ],
+   "traceable": 51,
+   "slices": 51,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C1",
+   "exemplar": "lab-B/#328_02e_resonator_spectroscopy_vs_flux_qdac_114336/q3",
+   "file": "exemplars/C1/lab-B_328_q3.png",
+   "chip": "lab-B",
+   "run": "#328_02e_resonator_spectroscopy_vs_flux_qdac_114336",
+   "qubit": "q3",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    800,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C1",
+   "exemplar": "lab-B/#257_06_resonator_spectroscopy_vs_flux_092518/q4",
+   "file": "exemplars/C1/lab-B_257_q4.png",
+   "chip": "lab-B",
+   "run": "#257_06_resonator_spectroscopy_vs_flux_092518",
+   "qubit": "q4",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C1",
+   "exemplar": "lab-C/#12_06_resonator_spectroscopy_vs_flux_000728/qA2",
+   "file": "exemplars/C1/lab-C_12_qA2.png",
+   "chip": "lab-C",
+   "run": "#12_06_resonator_spectroscopy_vs_flux_000728",
+   "qubit": "qA2",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C2",
+   "exemplar": "lab-A/#308_06_resonator_spectroscopy_vs_flux_082351/q6",
+   "file": "exemplars/C2/lab-A_308_q6.png",
+   "chip": "lab-A",
+   "run": "#308_06_resonator_spectroscopy_vs_flux_082351",
+   "qubit": "q6",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    54,
+    61
+   ],
+   "traceable": 61,
+   "slices": 61,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C2",
+   "exemplar": "lab-A/#228_06_resonator_spectroscopy_vs_flux_195719/q5",
+   "file": "exemplars/C2/lab-A_228_q5.png",
+   "chip": "lab-A",
+   "run": "#228_06_resonator_spectroscopy_vs_flux_195719",
+   "qubit": "q5",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    54,
+    61
+   ],
+   "traceable": 61,
+   "slices": 61,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C2",
+   "exemplar": "lab-C/#435_06_resonator_spectroscopy_vs_flux_223530/qD2",
+   "file": "exemplars/C2/lab-C_435_qD2.png",
+   "chip": "lab-C",
+   "run": "#435_06_resonator_spectroscopy_vs_flux_223530",
+   "qubit": "qD2",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C2",
+   "exemplar": "lab-E/#18_06_resonator_spectroscopy_vs_flux_181825/q17",
+   "file": "exemplars/C2/lab-E_18_q17.png",
+   "chip": "lab-E",
+   "run": "#18_06_resonator_spectroscopy_vs_flux_181825",
+   "qubit": "q17",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    750,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C2",
+   "exemplar": "lab-A/#13_06_resonator_spectroscopy_vs_flux_042601/q6",
+   "file": "exemplars/C2/lab-A_13_q6.png",
+   "chip": "lab-A",
+   "run": "#13_06_resonator_spectroscopy_vs_flux_042601",
+   "qubit": "q6",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    51
+   ],
+   "traceable": 51,
+   "slices": 51,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C3",
+   "exemplar": "lab-E/#109_06_resonator_spectroscopy_vs_flux_012344/q17",
+   "file": "exemplars/C3/lab-E_109_q17.png",
+   "chip": "lab-E",
+   "run": "#109_06_resonator_spectroscopy_vs_flux_012344",
+   "qubit": "q17",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    1200,
+    81
+   ],
+   "traceable": 81,
+   "slices": 81,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C3",
+   "exemplar": "lab-E/#9_06_resonator_spectroscopy_vs_flux_173425/q17",
+   "file": "exemplars/C3/lab-E_9_q17.png",
+   "chip": "lab-E",
+   "run": "#9_06_resonator_spectroscopy_vs_flux_173425",
+   "qubit": "q17",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    750,
+    81
+   ],
+   "traceable": 81,
+   "slices": 81,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C3",
+   "exemplar": "lab-E/#9_06_resonator_spectroscopy_vs_flux_173425/q10",
+   "file": "exemplars/C3/lab-E_9_q10.png",
+   "chip": "lab-E",
+   "run": "#9_06_resonator_spectroscopy_vs_flux_173425",
+   "qubit": "q10",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    750,
+    81
+   ],
+   "traceable": 81,
+   "slices": 81,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C3",
+   "exemplar": "lab-E/#7_06_resonator_spectroscopy_vs_flux_162458/q3",
+   "file": "exemplars/C3/lab-E_7_q3.png",
+   "chip": "lab-E",
+   "run": "#7_06_resonator_spectroscopy_vs_flux_162458",
+   "qubit": "q3",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 29,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C5",
+   "exemplar": "lab-C/#523_06_resonator_spectroscopy_vs_flux_133555/qC2",
+   "file": "exemplars/C5/lab-C_523_qC2.png",
+   "chip": "lab-C",
+   "run": "#523_06_resonator_spectroscopy_vs_flux_133555",
+   "qubit": "qC2",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    100,
+    41
+   ],
+   "traceable": 41,
+   "slices": 41,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C5",
+   "exemplar": "lab-C/#537_06_resonator_spectroscopy_vs_flux_002252/qC1",
+   "file": "exemplars/C5/lab-C_537_qC1.png",
+   "chip": "lab-C",
+   "run": "#537_06_resonator_spectroscopy_vs_flux_002252",
+   "qubit": "qC1",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    100,
+    41
+   ],
+   "traceable": 40,
+   "slices": 41,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C5",
+   "exemplar": "lab-C/#524_06_resonator_spectroscopy_vs_flux_140428/qC1",
+   "file": "exemplars/C5/lab-C_524_qC1.png",
+   "chip": "lab-C",
+   "run": "#524_06_resonator_spectroscopy_vs_flux_140428",
+   "qubit": "qC1",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    81
+   ],
+   "traceable": 81,
+   "slices": 81,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C5",
+   "exemplar": "lab-B/#239_02e_resonator_spectroscopy_vs_flux_qdac_083002/q1",
+   "file": "exemplars/C5/lab-B_239_q1.png",
+   "chip": "lab-B",
+   "run": "#239_02e_resonator_spectroscopy_vs_flux_qdac_083002",
+   "qubit": "q1",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 83,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "C5",
+   "exemplar": "lab-E/#18_06_resonator_spectroscopy_vs_flux_181825/q6",
+   "file": "exemplars/C5/lab-E_18_q6.png",
+   "chip": "lab-E",
+   "run": "#18_06_resonator_spectroscopy_vs_flux_181825",
+   "qubit": "q6",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    750,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "C6",
+   "exemplar": "lab-A/#330_06_resonator_spectroscopy_vs_flux_093400/q8",
+   "file": "exemplars/C6/lab-A_330_q8.png",
+   "chip": "lab-A",
+   "run": "#330_06_resonator_spectroscopy_vs_flux_093400",
+   "qubit": "q8",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    48,
+    61
+   ],
+   "traceable": 44,
+   "slices": 61,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "C6",
+   "exemplar": "lab-A/#331_06_resonator_spectroscopy_vs_flux_093544/q8",
+   "file": "exemplars/C6/lab-A_331_q8.png",
+   "chip": "lab-A",
+   "run": "#331_06_resonator_spectroscopy_vs_flux_093544",
+   "qubit": "q8",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    48,
+    61
+   ],
+   "traceable": 60,
+   "slices": 61,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "C6",
+   "exemplar": "lab-A/#332_06_resonator_spectroscopy_vs_flux_093652/q8",
+   "file": "exemplars/C6/lab-A_332_q8.png",
+   "chip": "lab-A",
+   "run": "#332_06_resonator_spectroscopy_vs_flux_093652",
+   "qubit": "q8",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    48,
+    61
+   ],
+   "traceable": 60,
+   "slices": 61,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "C7",
+   "exemplar": "lab-B/#324_02e_resonator_spectroscopy_vs_flux_qdac_113514/q3",
+   "file": "exemplars/C7/lab-B_324_q3.png",
+   "chip": "lab-B",
+   "run": "#324_02e_resonator_spectroscopy_vs_flux_qdac_113514",
+   "qubit": "q3",
+   "markers_drawn": [],
+   "feature": "peak",
+   "grid": [
+    800,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C7",
+   "exemplar": "lab-B/#238_02e_resonator_spectroscopy_vs_flux_qdac_082551/q1",
+   "file": "exemplars/C7/lab-B_238_q1.png",
+   "chip": "lab-B",
+   "run": "#238_02e_resonator_spectroscopy_vs_flux_qdac_082551",
+   "qubit": "q1",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 47,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "C8",
+   "exemplar": "lab-B/#241_02e_resonator_spectroscopy_vs_flux_qdac_083427/q3",
+   "file": "exemplars/C8/lab-B_241_q3.png",
+   "chip": "lab-B",
+   "run": "#241_02e_resonator_spectroscopy_vs_flux_qdac_083427",
+   "qubit": "q3",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "C8",
+   "exemplar": "lab-B/#275_02e_resonator_spectroscopy_vs_flux_qdac_094428/q3",
+   "file": "exemplars/C8/lab-B_275_q3.png",
+   "chip": "lab-B",
+   "run": "#275_02e_resonator_spectroscopy_vs_flux_qdac_094428",
+   "qubit": "q3",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "C8",
+   "exemplar": "lab-B/#245_02e_resonator_spectroscopy_vs_flux_qdac_084043/q3",
+   "file": "exemplars/C8/lab-B_245_q3.png",
+   "chip": "lab-B",
+   "run": "#245_02e_resonator_spectroscopy_vs_flux_qdac_084043",
+   "qubit": "q3",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    150,
+    51
+   ],
+   "traceable": 51,
+   "slices": 51,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "C8",
+   "exemplar": "lab-B/#274_02e_resonator_spectroscopy_vs_flux_qdac_094338/q3",
+   "file": "exemplars/C8/lab-B_274_q3.png",
+   "chip": "lab-B",
+   "run": "#274_02e_resonator_spectroscopy_vs_flux_qdac_094338",
+   "qubit": "q3",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "C9",
+   "exemplar": "lab-E/#9_06_resonator_spectroscopy_vs_flux_173425/q11",
+   "file": "exemplars/C9/lab-E_9_q11.png",
+   "chip": "lab-E",
+   "run": "#9_06_resonator_spectroscopy_vs_flux_173425",
+   "qubit": "q11",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    750,
+    81
+   ],
+   "traceable": 81,
+   "slices": 81,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C9",
+   "exemplar": "lab-E/#18_06_resonator_spectroscopy_vs_flux_181825/q5",
+   "file": "exemplars/C9/lab-E_18_q5.png",
+   "chip": "lab-E",
+   "run": "#18_06_resonator_spectroscopy_vs_flux_181825",
+   "qubit": "q5",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    750,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C9",
+   "exemplar": "lab-E/#25_06_resonator_spectroscopy_vs_flux_184132/q6",
+   "file": "exemplars/C9/lab-E_25_q6.png",
+   "chip": "lab-E",
+   "run": "#25_06_resonator_spectroscopy_vs_flux_184132",
+   "qubit": "q6",
+   "markers_drawn": [],
+   "feature": "peak",
+   "grid": [
+    750,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "C9",
+   "exemplar": "lab-E/#26_06_resonator_spectroscopy_vs_flux_185020/q15",
+   "file": "exemplars/C9/lab-E_26_q15.png",
+   "chip": "lab-E",
+   "run": "#26_06_resonator_spectroscopy_vs_flux_185020",
+   "qubit": "q15",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    750,
+    101
+   ],
+   "traceable": 94,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "C10",
+   "exemplar": "lab-B/#325_02e_resonator_spectroscopy_vs_flux_qdac_113737/q5",
+   "file": "exemplars/C10/lab-B_325_q5.png",
+   "chip": "lab-B",
+   "run": "#325_02e_resonator_spectroscopy_vs_flux_qdac_113737",
+   "qubit": "q5",
+   "markers_drawn": [],
+   "feature": "peak",
+   "grid": [
+    800,
+    101
+   ],
+   "traceable": 8,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C11",
+   "exemplar": "lab-E/#7_06_resonator_spectroscopy_vs_flux_162458/q7",
+   "file": "exemplars/C11/lab-E_7_q7.png",
+   "chip": "lab-E",
+   "run": "#7_06_resonator_spectroscopy_vs_flux_162458",
+   "qubit": "q7",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 25,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C11",
+   "exemplar": "lab-E/#7_06_resonator_spectroscopy_vs_flux_162458/q1",
+   "file": "exemplars/C11/lab-E_7_q1.png",
+   "chip": "lab-E",
+   "run": "#7_06_resonator_spectroscopy_vs_flux_162458",
+   "qubit": "q1",
+   "markers_drawn": [
+    "idle_offset"
+   ],
+   "feature": "dip",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 28,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "C11",
+   "exemplar": "lab-E/#7_06_resonator_spectroscopy_vs_flux_162458/q8",
+   "file": "exemplars/C11/lab-E_7_q8.png",
+   "chip": "lab-E",
+   "run": "#7_06_resonator_spectroscopy_vs_flux_162458",
+   "qubit": "q8",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 33,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C12",
+   "exemplar": "lab-B/#331_02e_resonator_spectroscopy_vs_flux_qdac_115446/q5",
+   "file": "exemplars/C12/lab-B_331_q5.png",
+   "chip": "lab-B",
+   "run": "#331_02e_resonator_spectroscopy_vs_flux_qdac_115446",
+   "qubit": "q5",
+   "markers_drawn": [],
+   "feature": "peak",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 13,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C12",
+   "exemplar": "lab-B/#242_02e_resonator_spectroscopy_vs_flux_qdac_083524/q5",
+   "file": "exemplars/C12/lab-B_242_q5.png",
+   "chip": "lab-B",
+   "run": "#242_02e_resonator_spectroscopy_vs_flux_qdac_083524",
+   "qubit": "q5",
+   "markers_drawn": [],
+   "feature": "peak",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 1,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C13",
+   "exemplar": "lab-B/#246_02e_resonator_spectroscopy_vs_flux_qdac_084220/q9",
+   "file": "exemplars/C13/lab-B_246_q9.png",
+   "chip": "lab-B",
+   "run": "#246_02e_resonator_spectroscopy_vs_flux_qdac_084220",
+   "qubit": "q9",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    150,
+    51
+   ],
+   "traceable": 1,
+   "slices": 51,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C14",
+   "exemplar": "lab-E/#6_06_resonator_spectroscopy_vs_flux_162317/q1",
+   "file": "exemplars/C14/lab-E_6_q1.png",
+   "chip": "lab-E",
+   "run": "#6_06_resonator_spectroscopy_vs_flux_162317",
+   "qubit": "q1",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    80,
+    41
+   ],
+   "traceable": 17,
+   "slices": 41,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C14",
+   "exemplar": "lab-E/#6_06_resonator_spectroscopy_vs_flux_162317/q3",
+   "file": "exemplars/C14/lab-E_6_q3.png",
+   "chip": "lab-E",
+   "run": "#6_06_resonator_spectroscopy_vs_flux_162317",
+   "qubit": "q3",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    80,
+    41
+   ],
+   "traceable": 4,
+   "slices": 41,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C14",
+   "exemplar": "lab-E/#6_06_resonator_spectroscopy_vs_flux_162317/q7",
+   "file": "exemplars/C14/lab-E_6_q7.png",
+   "chip": "lab-E",
+   "run": "#6_06_resonator_spectroscopy_vs_flux_162317",
+   "qubit": "q7",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    80,
+    41
+   ],
+   "traceable": 4,
+   "slices": 41,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C15",
+   "exemplar": "lab-B/#235_02e_resonator_spectroscopy_vs_flux_qdac_080732/q1",
+   "file": "exemplars/C15/lab-B_235_q1.png",
+   "chip": "lab-B",
+   "run": "#235_02e_resonator_spectroscopy_vs_flux_qdac_080732",
+   "qubit": "q1",
+   "markers_drawn": [],
+   "feature": "peak",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 3,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C15",
+   "exemplar": "lab-B/#236_02e_resonator_spectroscopy_vs_flux_qdac_080819/q1",
+   "file": "exemplars/C15/lab-B_236_q1.png",
+   "chip": "lab-B",
+   "run": "#236_02e_resonator_spectroscopy_vs_flux_qdac_080819",
+   "qubit": "q1",
+   "markers_drawn": [],
+   "feature": "peak",
+   "grid": [
+    150,
+    61
+   ],
+   "traceable": 1,
+   "slices": 61,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C15",
+   "exemplar": "lab-B/#275_02e_resonator_spectroscopy_vs_flux_qdac_094428/q7",
+   "file": "exemplars/C15/lab-B_275_q7.png",
+   "chip": "lab-B",
+   "run": "#275_02e_resonator_spectroscopy_vs_flux_qdac_094428",
+   "qubit": "q7",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "C15",
+   "exemplar": "lab-B/#242_02e_resonator_spectroscopy_vs_flux_qdac_083524/q5",
+   "file": "exemplars/C15/lab-B_242_q5.png",
+   "chip": "lab-B",
+   "run": "#242_02e_resonator_spectroscopy_vs_flux_qdac_083524",
+   "qubit": "q5",
+   "markers_drawn": [],
+   "feature": "peak",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 1,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C16",
+   "exemplar": "lab-C/#537_06_resonator_spectroscopy_vs_flux_002252/qD3",
+   "file": "exemplars/C16/lab-C_537_qD3.png",
+   "chip": "lab-C",
+   "run": "#537_06_resonator_spectroscopy_vs_flux_002252",
+   "qubit": "qD3",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    41
+   ],
+   "traceable": 41,
+   "slices": 41,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C16",
+   "exemplar": "lab-C/#537_06_resonator_spectroscopy_vs_flux_002252/qD1",
+   "file": "exemplars/C16/lab-C_537_qD1.png",
+   "chip": "lab-C",
+   "run": "#537_06_resonator_spectroscopy_vs_flux_002252",
+   "qubit": "qD1",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    100,
+    41
+   ],
+   "traceable": 16,
+   "slices": 41,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C16",
+   "exemplar": "lab-E/#10_06_resonator_spectroscopy_vs_flux_173913/q17",
+   "file": "exemplars/C16/lab-E_10_q17.png",
+   "chip": "lab-E",
+   "run": "#10_06_resonator_spectroscopy_vs_flux_173913",
+   "qubit": "q17",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    1500,
+    121
+   ],
+   "traceable": 7,
+   "slices": 121,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "C16",
+   "exemplar": "lab-A/#332_06_resonator_spectroscopy_vs_flux_093652/q7",
+   "file": "exemplars/C16/lab-A_332_q7.png",
+   "chip": "lab-A",
+   "run": "#332_06_resonator_spectroscopy_vs_flux_093652",
+   "qubit": "q7",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    48,
+    61
+   ],
+   "traceable": 61,
+   "slices": 61,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "F1",
+   "exemplar": "lab-B/#240_02e_resonator_spectroscopy_vs_flux_qdac_083306/q1",
+   "file": "exemplars/F1/lab-B_240_q1.png",
+   "chip": "lab-B",
+   "run": "#240_02e_resonator_spectroscopy_vs_flux_qdac_083306",
+   "qubit": "q1",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 84,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "F1",
+   "exemplar": "lab-B/#244_02e_resonator_spectroscopy_vs_flux_qdac_084012/q1",
+   "file": "exemplars/F1/lab-B_244_q1.png",
+   "chip": "lab-B",
+   "run": "#244_02e_resonator_spectroscopy_vs_flux_qdac_084012",
+   "qubit": "q1",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    150,
+    51
+   ],
+   "traceable": 41,
+   "slices": 51,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "F1",
+   "exemplar": "lab-C/#297_06_resonator_spectroscopy_vs_flux_050441/qB3",
+   "file": "exemplars/F1/lab-C_297_qB3.png",
+   "chip": "lab-C",
+   "run": "#297_06_resonator_spectroscopy_vs_flux_050441",
+   "qubit": "qB3",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    100,
+    51
+   ],
+   "traceable": 51,
+   "slices": 51,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F1",
+   "exemplar": "lab-C/#523_06_resonator_spectroscopy_vs_flux_133555/qC3",
+   "file": "exemplars/F1/lab-C_523_qC3.png",
+   "chip": "lab-C",
+   "run": "#523_06_resonator_spectroscopy_vs_flux_133555",
+   "qubit": "qC3",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    100,
+    41
+   ],
+   "traceable": 39,
+   "slices": 41,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F2",
+   "exemplar": "lab-E/#9_06_resonator_spectroscopy_vs_flux_173425/q11",
+   "file": "exemplars/F2/lab-E_9_q11.png",
+   "chip": "lab-E",
+   "run": "#9_06_resonator_spectroscopy_vs_flux_173425",
+   "qubit": "q11",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    750,
+    81
+   ],
+   "traceable": 81,
+   "slices": 81,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F2",
+   "exemplar": "lab-E/#18_06_resonator_spectroscopy_vs_flux_181825/q5",
+   "file": "exemplars/F2/lab-E_18_q5.png",
+   "chip": "lab-E",
+   "run": "#18_06_resonator_spectroscopy_vs_flux_181825",
+   "qubit": "q5",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    750,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F2",
+   "exemplar": "lab-B/#323_02e_resonator_spectroscopy_vs_flux_qdac_113200/q1",
+   "file": "exemplars/F2/lab-B_323_q1.png",
+   "chip": "lab-B",
+   "run": "#323_02e_resonator_spectroscopy_vs_flux_qdac_113200",
+   "qubit": "q1",
+   "markers_drawn": [],
+   "feature": "peak",
+   "grid": [
+    800,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "F2",
+   "exemplar": "lab-E/#26_06_resonator_spectroscopy_vs_flux_185020/q6",
+   "file": "exemplars/F2/lab-E_26_q6.png",
+   "chip": "lab-E",
+   "run": "#26_06_resonator_spectroscopy_vs_flux_185020",
+   "qubit": "q6",
+   "markers_drawn": [],
+   "feature": "peak",
+   "grid": [
+    750,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "F3",
+   "exemplar": "lab-E/#6_06_resonator_spectroscopy_vs_flux_162317/q1",
+   "file": "exemplars/F3/lab-E_6_q1.png",
+   "chip": "lab-E",
+   "run": "#6_06_resonator_spectroscopy_vs_flux_162317",
+   "qubit": "q1",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    80,
+    41
+   ],
+   "traceable": 17,
+   "slices": 41,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F3",
+   "exemplar": "lab-E/#6_06_resonator_spectroscopy_vs_flux_162317/q3",
+   "file": "exemplars/F3/lab-E_6_q3.png",
+   "chip": "lab-E",
+   "run": "#6_06_resonator_spectroscopy_vs_flux_162317",
+   "qubit": "q3",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    80,
+    41
+   ],
+   "traceable": 4,
+   "slices": 41,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F3",
+   "exemplar": "lab-B/#331_02e_resonator_spectroscopy_vs_flux_qdac_115446/q5",
+   "file": "exemplars/F3/lab-B_331_q5.png",
+   "chip": "lab-B",
+   "run": "#331_02e_resonator_spectroscopy_vs_flux_qdac_115446",
+   "qubit": "q5",
+   "markers_drawn": [],
+   "feature": "peak",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 13,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F4",
+   "exemplar": "lab-C/#523_06_resonator_spectroscopy_vs_flux_133555/qD2",
+   "file": "exemplars/F4/lab-C_523_qD2.png",
+   "chip": "lab-C",
+   "run": "#523_06_resonator_spectroscopy_vs_flux_133555",
+   "qubit": "qD2",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    41
+   ],
+   "traceable": 41,
+   "slices": 41,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F4",
+   "exemplar": "lab-C/#435_06_resonator_spectroscopy_vs_flux_223530/qD1",
+   "file": "exemplars/F4/lab-C_435_qD1.png",
+   "chip": "lab-C",
+   "run": "#435_06_resonator_spectroscopy_vs_flux_223530",
+   "qubit": "qD1",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F4",
+   "exemplar": "lab-A/#332_06_resonator_spectroscopy_vs_flux_093652/q5",
+   "file": "exemplars/F4/lab-A_332_q5.png",
+   "chip": "lab-A",
+   "run": "#332_06_resonator_spectroscopy_vs_flux_093652",
+   "qubit": "q5",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    48,
+    61
+   ],
+   "traceable": 57,
+   "slices": 61,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F4",
+   "exemplar": "lab-C/#537_06_resonator_spectroscopy_vs_flux_002252/qD5",
+   "file": "exemplars/F4/lab-C_537_qD5.png",
+   "chip": "lab-C",
+   "run": "#537_06_resonator_spectroscopy_vs_flux_002252",
+   "qubit": "qD5",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    41
+   ],
+   "traceable": 41,
+   "slices": 41,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F5",
+   "exemplar": "lab-C/#523_06_resonator_spectroscopy_vs_flux_133555/qD2",
+   "file": "exemplars/F5/lab-C_523_qD2.png",
+   "chip": "lab-C",
+   "run": "#523_06_resonator_spectroscopy_vs_flux_133555",
+   "qubit": "qD2",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    41
+   ],
+   "traceable": 41,
+   "slices": 41,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F5",
+   "exemplar": "lab-C/#523_06_resonator_spectroscopy_vs_flux_133555/qD4",
+   "file": "exemplars/F5/lab-C_523_qD4.png",
+   "chip": "lab-C",
+   "run": "#523_06_resonator_spectroscopy_vs_flux_133555",
+   "qubit": "qD4",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    41
+   ],
+   "traceable": 41,
+   "slices": 41,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F6",
+   "exemplar": "lab-A/#311_06_resonator_spectroscopy_vs_flux_083211/q5",
+   "file": "exemplars/F6/lab-A_311_q5.png",
+   "chip": "lab-A",
+   "run": "#311_06_resonator_spectroscopy_vs_flux_083211",
+   "qubit": "q5",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    48,
+    61
+   ],
+   "traceable": 58,
+   "slices": 61,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F6",
+   "exemplar": "lab-A/#332_06_resonator_spectroscopy_vs_flux_093652/q5",
+   "file": "exemplars/F6/lab-A_332_q5.png",
+   "chip": "lab-A",
+   "run": "#332_06_resonator_spectroscopy_vs_flux_093652",
+   "qubit": "q5",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    48,
+    61
+   ],
+   "traceable": 57,
+   "slices": 61,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F7",
+   "exemplar": "lab-A/#330_06_resonator_spectroscopy_vs_flux_093400/q6",
+   "file": "exemplars/F7/lab-A_330_q6.png",
+   "chip": "lab-A",
+   "run": "#330_06_resonator_spectroscopy_vs_flux_093400",
+   "qubit": "q6",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    48,
+    61
+   ],
+   "traceable": 58,
+   "slices": 61,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F7",
+   "exemplar": "lab-A/#332_06_resonator_spectroscopy_vs_flux_093652/q6",
+   "file": "exemplars/F7/lab-A_332_q6.png",
+   "chip": "lab-A",
+   "run": "#332_06_resonator_spectroscopy_vs_flux_093652",
+   "qubit": "q6",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    48,
+    61
+   ],
+   "traceable": 61,
+   "slices": 61,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "F7",
+   "exemplar": "lab-C/#52_06_resonator_spectroscopy_vs_flux_213237/qA2",
+   "file": "exemplars/F7/lab-C_52_qA2.png",
+   "chip": "lab-C",
+   "run": "#52_06_resonator_spectroscopy_vs_flux_213237",
+   "qubit": "qA2",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F7",
+   "exemplar": "lab-C/#567_06_resonator_spectroscopy_vs_flux_181215/qC2",
+   "file": "exemplars/F7/lab-C_567_qC2.png",
+   "chip": "lab-C",
+   "run": "#567_06_resonator_spectroscopy_vs_flux_181215",
+   "qubit": "qC2",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    41
+   ],
+   "traceable": 41,
+   "slices": 41,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "F8",
+   "exemplar": "lab-A/#231_06_resonator_spectroscopy_vs_flux_200400/q5",
+   "file": "exemplars/F8/lab-A_231_q5.png",
+   "chip": "lab-A",
+   "run": "#231_06_resonator_spectroscopy_vs_flux_200400",
+   "qubit": "q5",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    54,
+    61
+   ],
+   "traceable": 61,
+   "slices": 61,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F8",
+   "exemplar": "lab-A/#231_06_resonator_spectroscopy_vs_flux_200400/q6",
+   "file": "exemplars/F8/lab-A_231_q6.png",
+   "chip": "lab-A",
+   "run": "#231_06_resonator_spectroscopy_vs_flux_200400",
+   "qubit": "q6",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    54,
+    61
+   ],
+   "traceable": 61,
+   "slices": 61,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F9",
+   "exemplar": "lab-A/#334_06_resonator_spectroscopy_vs_flux_094025/q6",
+   "file": "exemplars/F9/lab-A_334_q6.png",
+   "chip": "lab-A",
+   "run": "#334_06_resonator_spectroscopy_vs_flux_094025",
+   "qubit": "q6",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    48,
+    61
+   ],
+   "traceable": 61,
+   "slices": 61,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F9",
+   "exemplar": "lab-C/#523_06_resonator_spectroscopy_vs_flux_133555/qD1",
+   "file": "exemplars/F9/lab-C_523_qD1.png",
+   "chip": "lab-C",
+   "run": "#523_06_resonator_spectroscopy_vs_flux_133555",
+   "qubit": "qD1",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    41
+   ],
+   "traceable": 41,
+   "slices": 41,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F9",
+   "exemplar": "lab-E/#25_06_resonator_spectroscopy_vs_flux_184132/q17",
+   "file": "exemplars/F9/lab-E_25_q17.png",
+   "chip": "lab-E",
+   "run": "#25_06_resonator_spectroscopy_vs_flux_184132",
+   "qubit": "q17",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    750,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F9",
+   "exemplar": "lab-B/#239_02e_resonator_spectroscopy_vs_flux_qdac_083002/q1",
+   "file": "exemplars/F9/lab-B_239_q1.png",
+   "chip": "lab-B",
+   "run": "#239_02e_resonator_spectroscopy_vs_flux_qdac_083002",
+   "qubit": "q1",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 83,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "F10",
+   "exemplar": "lab-A/#311_06_resonator_spectroscopy_vs_flux_083211/q7",
+   "file": "exemplars/F10/lab-A_311_q7.png",
+   "chip": "lab-A",
+   "run": "#311_06_resonator_spectroscopy_vs_flux_083211",
+   "qubit": "q7",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    48,
+    61
+   ],
+   "traceable": 59,
+   "slices": 61,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "F10",
+   "exemplar": "lab-A/#334_06_resonator_spectroscopy_vs_flux_094025/q7",
+   "file": "exemplars/F10/lab-A_334_q7.png",
+   "chip": "lab-A",
+   "run": "#334_06_resonator_spectroscopy_vs_flux_094025",
+   "qubit": "q7",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    48,
+    61
+   ],
+   "traceable": 54,
+   "slices": 61,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F10",
+   "exemplar": "lab-C/#524_06_resonator_spectroscopy_vs_flux_140428/qD1",
+   "file": "exemplars/F10/lab-C_524_qD1.png",
+   "chip": "lab-C",
+   "run": "#524_06_resonator_spectroscopy_vs_flux_140428",
+   "qubit": "qD1",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    81
+   ],
+   "traceable": 81,
+   "slices": 81,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F11",
+   "exemplar": "lab-A/#330_06_resonator_spectroscopy_vs_flux_093400/q8",
+   "file": "exemplars/F11/lab-A_330_q8.png",
+   "chip": "lab-A",
+   "run": "#330_06_resonator_spectroscopy_vs_flux_093400",
+   "qubit": "q8",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    48,
+    61
+   ],
+   "traceable": 44,
+   "slices": 61,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "F11",
+   "exemplar": "lab-B/#235_02e_resonator_spectroscopy_vs_flux_qdac_080732/q1",
+   "file": "exemplars/F11/lab-B_235_q1.png",
+   "chip": "lab-B",
+   "run": "#235_02e_resonator_spectroscopy_vs_flux_qdac_080732",
+   "qubit": "q1",
+   "markers_drawn": [],
+   "feature": "peak",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 3,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F11",
+   "exemplar": "lab-E/#9_06_resonator_spectroscopy_vs_flux_173425/q11",
+   "file": "exemplars/F11/lab-E_9_q11.png",
+   "chip": "lab-E",
+   "run": "#9_06_resonator_spectroscopy_vs_flux_173425",
+   "qubit": "q11",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    750,
+    81
+   ],
+   "traceable": 81,
+   "slices": 81,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F11",
+   "exemplar": "lab-B/#241_02e_resonator_spectroscopy_vs_flux_qdac_083427/q3",
+   "file": "exemplars/F11/lab-B_241_q3.png",
+   "chip": "lab-B",
+   "run": "#241_02e_resonator_spectroscopy_vs_flux_qdac_083427",
+   "qubit": "q3",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "F12",
+   "exemplar": "lab-A/#331_06_resonator_spectroscopy_vs_flux_093544/q6",
+   "file": "exemplars/F12/lab-A_331_q6.png",
+   "chip": "lab-A",
+   "run": "#331_06_resonator_spectroscopy_vs_flux_093544",
+   "qubit": "q6",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    48,
+    61
+   ],
+   "traceable": 59,
+   "slices": 61,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "F12",
+   "exemplar": "lab-C/#524_06_resonator_spectroscopy_vs_flux_140428/qC1",
+   "file": "exemplars/F12/lab-C_524_qC1.png",
+   "chip": "lab-C",
+   "run": "#524_06_resonator_spectroscopy_vs_flux_140428",
+   "qubit": "qC1",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    81
+   ],
+   "traceable": 81,
+   "slices": 81,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F12",
+   "exemplar": "lab-C/#567_06_resonator_spectroscopy_vs_flux_181215/qC1",
+   "file": "exemplars/F12/lab-C_567_qC1.png",
+   "chip": "lab-C",
+   "run": "#567_06_resonator_spectroscopy_vs_flux_181215",
+   "qubit": "qC1",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    41
+   ],
+   "traceable": 41,
+   "slices": 41,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "F13",
+   "exemplar": "lab-B/#235_02e_resonator_spectroscopy_vs_flux_qdac_080732/q1",
+   "file": "exemplars/F13/lab-B_235_q1.png",
+   "chip": "lab-B",
+   "run": "#235_02e_resonator_spectroscopy_vs_flux_qdac_080732",
+   "qubit": "q1",
+   "markers_drawn": [],
+   "feature": "peak",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 3,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F13",
+   "exemplar": "lab-E/#10_06_resonator_spectroscopy_vs_flux_173913/q17",
+   "file": "exemplars/F13/lab-E_10_q17.png",
+   "chip": "lab-E",
+   "run": "#10_06_resonator_spectroscopy_vs_flux_173913",
+   "qubit": "q17",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    1500,
+    121
+   ],
+   "traceable": 7,
+   "slices": 121,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F13",
+   "exemplar": "lab-B/#325_02e_resonator_spectroscopy_vs_flux_qdac_113737/q5",
+   "file": "exemplars/F13/lab-B_325_q5.png",
+   "chip": "lab-B",
+   "run": "#325_02e_resonator_spectroscopy_vs_flux_qdac_113737",
+   "qubit": "q5",
+   "markers_drawn": [],
+   "feature": "peak",
+   "grid": [
+    800,
+    101
+   ],
+   "traceable": 8,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F14",
+   "exemplar": "lab-A/#330_06_resonator_spectroscopy_vs_flux_093400/q8",
+   "file": "exemplars/F14/lab-A_330_q8.png",
+   "chip": "lab-A",
+   "run": "#330_06_resonator_spectroscopy_vs_flux_093400",
+   "qubit": "q8",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    48,
+    61
+   ],
+   "traceable": 44,
+   "slices": 61,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "F14",
+   "exemplar": "lab-A/#331_06_resonator_spectroscopy_vs_flux_093544/q8",
+   "file": "exemplars/F14/lab-A_331_q8.png",
+   "chip": "lab-A",
+   "run": "#331_06_resonator_spectroscopy_vs_flux_093544",
+   "qubit": "q8",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    48,
+    61
+   ],
+   "traceable": 60,
+   "slices": 61,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "F14",
+   "exemplar": "lab-A/#332_06_resonator_spectroscopy_vs_flux_093652/q8",
+   "file": "exemplars/F14/lab-A_332_q8.png",
+   "chip": "lab-A",
+   "run": "#332_06_resonator_spectroscopy_vs_flux_093652",
+   "qubit": "q8",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    48,
+    61
+   ],
+   "traceable": 60,
+   "slices": 61,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "F15",
+   "exemplar": "lab-C/#537_06_resonator_spectroscopy_vs_flux_002252/qC4",
+   "file": "exemplars/F15/lab-C_537_qC4.png",
+   "chip": "lab-C",
+   "run": "#537_06_resonator_spectroscopy_vs_flux_002252",
+   "qubit": "qC4",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    41
+   ],
+   "traceable": 39,
+   "slices": 41,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F15",
+   "exemplar": "lab-C/#537_06_resonator_spectroscopy_vs_flux_002252/qC3",
+   "file": "exemplars/F15/lab-C_537_qC3.png",
+   "chip": "lab-C",
+   "run": "#537_06_resonator_spectroscopy_vs_flux_002252",
+   "qubit": "qC3",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    41
+   ],
+   "traceable": 39,
+   "slices": 41,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F15",
+   "exemplar": "lab-C/#114_06_resonator_spectroscopy_vs_flux_234122/qA1",
+   "file": "exemplars/F15/lab-C_114_qA1.png",
+   "chip": "lab-C",
+   "run": "#114_06_resonator_spectroscopy_vs_flux_234122",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F16",
+   "exemplar": "lab-E/#18_06_resonator_spectroscopy_vs_flux_181825/q4",
+   "file": "exemplars/F16/lab-E_18_q4.png",
+   "chip": "lab-E",
+   "run": "#18_06_resonator_spectroscopy_vs_flux_181825",
+   "qubit": "q4",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    750,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F16",
+   "exemplar": "lab-E/#18_06_resonator_spectroscopy_vs_flux_181825/q17",
+   "file": "exemplars/F16/lab-E_18_q17.png",
+   "chip": "lab-E",
+   "run": "#18_06_resonator_spectroscopy_vs_flux_181825",
+   "qubit": "q17",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    750,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F16",
+   "exemplar": "lab-B/#328_02e_resonator_spectroscopy_vs_flux_qdac_114336/q3",
+   "file": "exemplars/F16/lab-B_328_q3.png",
+   "chip": "lab-B",
+   "run": "#328_02e_resonator_spectroscopy_vs_flux_qdac_114336",
+   "qubit": "q3",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    800,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F17",
+   "exemplar": "lab-B/#323_02e_resonator_spectroscopy_vs_flux_qdac_113200/q1",
+   "file": "exemplars/F17/lab-B_323_q1.png",
+   "chip": "lab-B",
+   "run": "#323_02e_resonator_spectroscopy_vs_flux_qdac_113200",
+   "qubit": "q1",
+   "markers_drawn": [],
+   "feature": "peak",
+   "grid": [
+    800,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "F17",
+   "exemplar": "lab-E/#9_06_resonator_spectroscopy_vs_flux_173425/q10",
+   "file": "exemplars/F17/lab-E_9_q10.png",
+   "chip": "lab-E",
+   "run": "#9_06_resonator_spectroscopy_vs_flux_173425",
+   "qubit": "q10",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    750,
+    81
+   ],
+   "traceable": 81,
+   "slices": 81,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F17",
+   "exemplar": "lab-E/#18_06_resonator_spectroscopy_vs_flux_181825/q10",
+   "file": "exemplars/F17/lab-E_18_q10.png",
+   "chip": "lab-E",
+   "run": "#18_06_resonator_spectroscopy_vs_flux_181825",
+   "qubit": "q10",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    750,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F18",
+   "exemplar": "lab-E/#7_06_resonator_spectroscopy_vs_flux_162458/q1",
+   "file": "exemplars/F18/lab-E_7_q1.png",
+   "chip": "lab-E",
+   "run": "#7_06_resonator_spectroscopy_vs_flux_162458",
+   "qubit": "q1",
+   "markers_drawn": [
+    "idle_offset"
+   ],
+   "feature": "dip",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 28,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "F19",
+   "exemplar": "lab-E/#25_06_resonator_spectroscopy_vs_flux_184132/q6",
+   "file": "exemplars/F19/lab-E_25_q6.png",
+   "chip": "lab-E",
+   "run": "#25_06_resonator_spectroscopy_vs_flux_184132",
+   "qubit": "q6",
+   "markers_drawn": [],
+   "feature": "peak",
+   "grid": [
+    750,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "F19",
+   "exemplar": "lab-E/#26_06_resonator_spectroscopy_vs_flux_185020/q6",
+   "file": "exemplars/F19/lab-E_26_q6.png",
+   "chip": "lab-E",
+   "run": "#26_06_resonator_spectroscopy_vs_flux_185020",
+   "qubit": "q6",
+   "markers_drawn": [],
+   "feature": "peak",
+   "grid": [
+    750,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "F19",
+   "exemplar": "lab-B/#328_02e_resonator_spectroscopy_vs_flux_qdac_114336/q3",
+   "file": "exemplars/F19/lab-B_328_q3.png",
+   "chip": "lab-B",
+   "run": "#328_02e_resonator_spectroscopy_vs_flux_qdac_114336",
+   "qubit": "q3",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    800,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F20",
+   "exemplar": "lab-C/#537_06_resonator_spectroscopy_vs_flux_002252/qC1",
+   "file": "exemplars/F20/lab-C_537_qC1.png",
+   "chip": "lab-C",
+   "run": "#537_06_resonator_spectroscopy_vs_flux_002252",
+   "qubit": "qC1",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    100,
+    41
+   ],
+   "traceable": 40,
+   "slices": 41,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F20",
+   "exemplar": "lab-C/#523_06_resonator_spectroscopy_vs_flux_133555/qC1",
+   "file": "exemplars/F20/lab-C_523_qC1.png",
+   "chip": "lab-C",
+   "run": "#523_06_resonator_spectroscopy_vs_flux_133555",
+   "qubit": "qC1",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    100,
+    41
+   ],
+   "traceable": 41,
+   "slices": 41,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F21",
+   "exemplar": "lab-B/#235_02e_resonator_spectroscopy_vs_flux_qdac_080732/q1",
+   "file": "exemplars/F21/lab-B_235_q1.png",
+   "chip": "lab-B",
+   "run": "#235_02e_resonator_spectroscopy_vs_flux_qdac_080732",
+   "qubit": "q1",
+   "markers_drawn": [],
+   "feature": "peak",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 3,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F21",
+   "exemplar": "lab-B/#236_02e_resonator_spectroscopy_vs_flux_qdac_080819/q1",
+   "file": "exemplars/F21/lab-B_236_q1.png",
+   "chip": "lab-B",
+   "run": "#236_02e_resonator_spectroscopy_vs_flux_qdac_080819",
+   "qubit": "q1",
+   "markers_drawn": [],
+   "feature": "peak",
+   "grid": [
+    150,
+    61
+   ],
+   "traceable": 1,
+   "slices": 61,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F22",
+   "exemplar": "lab-B/#275_02e_resonator_spectroscopy_vs_flux_qdac_094428/q7",
+   "file": "exemplars/F22/lab-B_275_q7.png",
+   "chip": "lab-B",
+   "run": "#275_02e_resonator_spectroscopy_vs_flux_qdac_094428",
+   "qubit": "q7",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "F22",
+   "exemplar": "lab-A/#308_06_resonator_spectroscopy_vs_flux_082351/q5",
+   "file": "exemplars/F22/lab-A_308_q5.png",
+   "chip": "lab-A",
+   "run": "#308_06_resonator_spectroscopy_vs_flux_082351",
+   "qubit": "q5",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    54,
+    61
+   ],
+   "traceable": 61,
+   "slices": 61,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F23",
+   "exemplar": "lab-A/#308_06_resonator_spectroscopy_vs_flux_082351/q6",
+   "file": "exemplars/F23/lab-A_308_q6.png",
+   "chip": "lab-A",
+   "run": "#308_06_resonator_spectroscopy_vs_flux_082351",
+   "qubit": "q6",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    54,
+    61
+   ],
+   "traceable": 61,
+   "slices": 61,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F23",
+   "exemplar": "lab-A/#228_06_resonator_spectroscopy_vs_flux_195719/q5",
+   "file": "exemplars/F23/lab-A_228_q5.png",
+   "chip": "lab-A",
+   "run": "#228_06_resonator_spectroscopy_vs_flux_195719",
+   "qubit": "q5",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    54,
+    61
+   ],
+   "traceable": 61,
+   "slices": 61,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F24",
+   "exemplar": "lab-C/#297_06_resonator_spectroscopy_vs_flux_050441/qB3",
+   "file": "exemplars/F24/lab-C_297_qB3.png",
+   "chip": "lab-C",
+   "run": "#297_06_resonator_spectroscopy_vs_flux_050441",
+   "qubit": "qB3",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    100,
+    51
+   ],
+   "traceable": 51,
+   "slices": 51,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F25",
+   "exemplar": "lab-B/#238_02e_resonator_spectroscopy_vs_flux_qdac_082551/q1",
+   "file": "exemplars/F25/lab-B_238_q1.png",
+   "chip": "lab-B",
+   "run": "#238_02e_resonator_spectroscopy_vs_flux_qdac_082551",
+   "qubit": "q1",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 47,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "F25",
+   "exemplar": "lab-B/#239_02e_resonator_spectroscopy_vs_flux_qdac_083002/q1",
+   "file": "exemplars/F25/lab-B_239_q1.png",
+   "chip": "lab-B",
+   "run": "#239_02e_resonator_spectroscopy_vs_flux_qdac_083002",
+   "qubit": "q1",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 83,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "F25",
+   "exemplar": "lab-B/#240_02e_resonator_spectroscopy_vs_flux_qdac_083306/q1",
+   "file": "exemplars/F25/lab-B_240_q1.png",
+   "chip": "lab-B",
+   "run": "#240_02e_resonator_spectroscopy_vs_flux_qdac_083306",
+   "qubit": "q1",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 84,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "F26",
+   "exemplar": "lab-B/#323_02e_resonator_spectroscopy_vs_flux_qdac_113200/q1",
+   "file": "exemplars/F26/lab-B_323_q1.png",
+   "chip": "lab-B",
+   "run": "#323_02e_resonator_spectroscopy_vs_flux_qdac_113200",
+   "qubit": "q1",
+   "markers_drawn": [],
+   "feature": "peak",
+   "grid": [
+    800,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "F27",
+   "exemplar": "lab-B/#257_06_resonator_spectroscopy_vs_flux_092518/q4",
+   "file": "exemplars/F27/lab-B_257_q4.png",
+   "chip": "lab-B",
+   "run": "#257_06_resonator_spectroscopy_vs_flux_092518",
+   "qubit": "q4",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F28",
+   "exemplar": "lab-B/#239_02e_resonator_spectroscopy_vs_flux_qdac_083002/q1",
+   "file": "exemplars/F28/lab-B_239_q1.png",
+   "chip": "lab-B",
+   "run": "#239_02e_resonator_spectroscopy_vs_flux_qdac_083002",
+   "qubit": "q1",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 83,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "F28",
+   "exemplar": "lab-C/#523_06_resonator_spectroscopy_vs_flux_133555/qC2",
+   "file": "exemplars/F28/lab-C_523_qC2.png",
+   "chip": "lab-C",
+   "run": "#523_06_resonator_spectroscopy_vs_flux_133555",
+   "qubit": "qC2",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    100,
+    41
+   ],
+   "traceable": 41,
+   "slices": 41,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F28",
+   "exemplar": "lab-C/#567_06_resonator_spectroscopy_vs_flux_181215/qC2",
+   "file": "exemplars/F28/lab-C_567_qC2.png",
+   "chip": "lab-C",
+   "run": "#567_06_resonator_spectroscopy_vs_flux_181215",
+   "qubit": "qC2",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    41
+   ],
+   "traceable": 41,
+   "slices": 41,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "F29",
+   "exemplar": "lab-B/#275_02e_resonator_spectroscopy_vs_flux_qdac_094428/q7",
+   "file": "exemplars/F29/lab-B_275_q7.png",
+   "chip": "lab-B",
+   "run": "#275_02e_resonator_spectroscopy_vs_flux_qdac_094428",
+   "qubit": "q7",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "static"
+  },
+  {
+   "case": "F30",
+   "exemplar": "lab-C/#12_06_resonator_spectroscopy_vs_flux_000728/qA1",
+   "file": "exemplars/F30/lab-C_12_qA1.png",
+   "chip": "lab-C",
+   "run": "#12_06_resonator_spectroscopy_vs_flux_000728",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    150,
+    101
+   ],
+   "traceable": 101,
+   "slices": 101,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F30",
+   "exemplar": "lab-E/#109_06_resonator_spectroscopy_vs_flux_012344/q17",
+   "file": "exemplars/F30/lab-E_109_q17.png",
+   "chip": "lab-E",
+   "run": "#109_06_resonator_spectroscopy_vs_flux_012344",
+   "qubit": "q17",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    1200,
+    81
+   ],
+   "traceable": 81,
+   "slices": 81,
+   "sweep_on_x": true,
+   "background": "moving"
+  },
+  {
+   "case": "F30",
+   "exemplar": "lab-C/#567_06_resonator_spectroscopy_vs_flux_181215/qC2",
+   "file": "exemplars/F30/lab-C_567_qC2.png",
+   "chip": "lab-C",
+   "run": "#567_06_resonator_spectroscopy_vs_flux_181215",
+   "qubit": "qC2",
+   "markers_drawn": [
+    "idle_offset",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    41
+   ],
+   "traceable": 41,
+   "slices": 41,
+   "sweep_on_x": true,
+   "background": "static"
+  }
+ ],
+ "missing": []
+}

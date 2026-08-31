@@ -1,0 +1,291 @@
+{
+ "schema": "smgolden/v2",
+ "family": "resonator_spectroscopy_vs_power",
+ "chip": "CQT",
+ "session": "2026-08-16",
+ "session_id": "CQT_2026-08-16",
+ "authored": "2026-08-21",
+ "status": "expert-round-1 + adversarial audit",
+ "provenance": "hindsight-authored answer key: the author saw the whole session and was free to judge the operator wrong. The system under test never sees past its cursor.",
+ "session_notes": "TEN runs, six qubits. Correct path length is 9 against an actual 10, but the run count understates the gap: four of the ten runs were decision-relevant only because the operator either wrote from an undemonstrated map or repeated a template unchanged.\n\nTHE SESSION'S ONE THEME IS WINDOW PLACEMENT, and the operator's reflex was right three times out of four. q15 (#910 -> #914), q20 (#995 -> #996) and q6 (#1116 -> #1117) are the same story told three times: a first map placed too low, refused or clipped, then the whole power window raised 15-20 dB and an immediate success, each correction issued within 1-6 minutes. That reflex is the single most valuable behaviour to reward. The fourth case, q19, is the counterexample: after the ambiguous #985 the operator moved the window DOWN, and got nothing.\n\nWHAT THE OPERATOR GOT WRONG, in order of cost.\n(1) Two correct measurements were never adopted. q15 #914 is a textbook C1 and q6 #1117 is a usable (if power-flawed) map; neither produced a state write. q15's value then had to be re-earned on 2026-08-17 with two more maps, and the value finally adopted there carries a bare frequency (13.8 MHz below dressed) that four other runs contradict \u2014 so the failure to adopt at #914 propagated into a worse number a day later.\n(2) Two false accepts. #985 (q19) and #1033's q12 panel both return success=true / punchout=true on maps whose only structure is a monotone gradient running off one frequency edge, with the reported optimum sitting in the speckle. This is the characteristic false-accept SHAPE for this node and appears twice in ten runs.\n(3) One genuinely poisoned write, and only one: #910 knocked the SHARED con1/3/1 port FSP from 16 to 14 out of a C2 map, without matching its own fit's target of 10 and without rescaling any of the six qubits on that feedline. It is at least suggestive that q19, also on con1/3/1, then failed twice on this date having succeeded on 08-14 and 08-17.\n(4) One knob-free repeat: #1079 re-ran q12 with every parameter identical to #1033.\n\nTHREE TRAPS FOR THE SYSTEM UNDER TEST, all of which look like defects and are not. (a) Three runs patch a port full_scale_power_dbm to 14, but node.json shows #996 and #1033 record old=14/new=14 \u2014 no-ops. Only #910's is a real change. A system that flags all three has two false positives. (b) #985 and #995 report optimal_power identical to fifteen decimal places; both used the same 50-point power grid and both landed on index 12. Grid coincidence, not a shared fallback constant. (c) frequency_shift NEVER equals resonator_frequency minus bare_resonator_frequency anywhere in this corpus, so #996's frequency_shift=0.0 alongside a 4 MHz gap is not an inconsistency to act on; likewise a target_amplitude at 94% of max_amp is the allocator's normal behaviour, not an amplitude-cap artifact.\n\nONE DEPARTURE FROM THE EARLIER ANNOTATION PASS, made on the figures. q6 #1117 is annotated C1 with power_ok=yes; it is C4a. The pull from ~5422.2 MHz to ~5419.5 MHz is continuous across the whole window, bare_resonator_frequency comes back null, and the chosen -11.79 dBm sits at the bend onset with effectively zero margin despite power_below_punchout_db=3. The frequency is adoptable, the power is not.\n\nFOUR OF SIX QUBITS REACH A TRUSTWORTHY VALUE (q7 high confidence, q15 and q20 medium, q6 low and frequency-only). q19 and q12 do not, and the honest answer key for both is to stop after ONE run rather than the two each got: q19 should have restored the 2026-08-14 #378 acquisition template (#985 had halved the shots, coarsened the step 2.7x, halved the power points and quadrupled max_amp relative to the settings that had worked on that exact qubit two days earlier) and q12 needed a contrast retune, not a repeat. Both should have been escalated, q12 especially \u2014 it has now failed to show a dip column on 08-13, 08-15 and 08-16.",
+ "adversarial_audit": "Nine concrete defects, most severe first.\n\n1. UNGRADEABLE TRAP \u2014 all FSP no-op claims. The input's patches are 2-element [path, value]; no old value exists anywhere in the corpus. The key's single poisoned write (#910 \"old 16 -> new 14\") and its headline trap (\"#996 and #1033 record old=14/new=14\") both cite node.json fields the benchmark does not supply. A system given this file sees three identical [FSP, 14] patches. Fix: ship old values in the input, or drop no-op discrimination from scoring.\n\n2. q20 / #996 \u2014 the trap is backwards on the evidence available. The last recorded con1/2/1 FSP write is 08-14 #386 = **10**; so #996's 14 reads as a real +4 dB change on a 7-qubit shared line (#386 rescaled q3,q4,q9,q10,q11,q16,q20) with no sibling rescale \u2014 the exact sin charged to #910. Likewise con1/3/1's last recorded value is 10 (08-14 #481), not 16, so \"lost 2 dB\" is unsupported and mis-signed. Fix: re-derive both from real old values; do not penalize a system that flags #996.\n\n3. q15 / #914 \u2014 the prescribed ideal action is itself a shared-port write. \"FSP 11 dBm with readout amplitude 0.0959\" moves con1/3/1, which the key says serves q8/q13/q14/q15/q18/q19, with no sibling rescale (08-17 #1213 did the same move and rescaled all six). Fix: prescribe amplitude-only at the existing FSP, as the key correctly does for q20/q7.\n\n4. q15 bare = 5693.9 MHz is the weaker branch. 08-14 #368 bare 5682.604 and 08-17 #1213 bare 5682.487 agree to **117 kHz across different anchors** \u2014 the strongest cross-anchor agreement in the corpus. The \"~2 MHz\" set is two anchor families, not \"FOUR independently-anchored runs\", and #914/#1350/#1352 all share anchor .74122. Fix: mark q15 bare unresolved/contested, not \"1-of-5 outlier\".\n\n5. Amplitude-cap caveat is false. \"The same pattern appears in every healthy run of the corpus\" \u2014 measured: 12 of 125 successful fits (9.6%) exceed 0.9\u00b7max_amp; median ratio 0.15. Fix: delete the justification or restate as a minority pattern.\n\n6. Margin claims contradict power_below_punchout_db. optimal_power is exactly grid\u22123.0 in every run (verified for #910/#914/#996/#1033/#1117/#985/#995). So #996's punch-out was detected at \u22123.5 dBm, not \"+3\", and q7's at \u221213.0, not \"\u22128\". The key applies the 3 dB rule only to condemn q6. Fix: one standard; margins from the node's grid.\n\n7. q12 final value 5840.76 MHz is #1079's number, from the run the key calls wasted; terminating at #1033 yields 5841.76. Also \"Every q12 number shares .162616\" is false (08-13 #89/#90 round; 08-15 .708799).\n\n8. q19 / #1089 mislabeled wasted. It ran at *better* settings than #985 on every knob (100 shots, 0.1 MHz, 100 points, max_amp 0.1), so it discriminates \"degraded settings\" from \"invisible in this power range\" \u2014 the key's own #985 dismissal (\"minimum tracking the prior marker\") is #1089's annotation. Downgrade to informative-but-mis-windowed. Same for q19's 08-17 corroboration: all .301561, one anchor, and #1351 failed.\n\n9. Bookkeeping. \"9 against 10\" double-counts #1033 (ideal distinct = 8). ideal_length is inconsistent: q19/q12 prescribe a retune yet count 1; q6 prescribes a confirmation run yet counts 2 with unresolved=false while nulling power and bare. Expected_case \"C4a\" and the N*/F* flags exist nowhere in the input taxonomy (only C1/C2/C4/C6). \"ONE DEPARTURE\" is wrong \u2014 the key also departs on #985 (C4\u2192C6) and #1033/q12 (C4\u2192C6). Retune prescriptions for q15/q20/q6 transcribe the operator's next-run parameters exactly; state direction plus tolerance instead.",
+ "qubits": [
+  {
+   "qubit": "q15",
+   "runs_in_scope": [
+    "#910_05_resonator_spectroscopy_vs_power_005834",
+    "#914_05_resonator_spectroscopy_vs_power_010340"
+   ],
+   "ideal_length": 2,
+   "actual_length": 2,
+   "confidence": "high",
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#910_05_resonator_spectroscopy_vs_power_005834",
+     "expected_case": "C2",
+     "expected_flags": [
+      "N1",
+      "F5"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Do not adopt and do not write anything. The dressed branch is the only branch in the window and the transition is clipped at the ceiling, so raise max_power_dbm 0 -> +10 and raise min_power_dbm -50 -> -35 (the bottom half of this sweep is below the noise floor and is only producing per-row normalization spikes). Keep frequency_span_in_mhz=30, frequency_step_in_mhz=0.1, num_shots=100.",
+     "operator_did": "Accepted the node's success=true/punchout=true, wrote a shared-port FSP change (con1/3/1: 16 -> 14) and 6 minutes later re-ran with exactly the corrected window.",
+     "operator_was_right": "partly"
+    },
+    {
+     "step": 2,
+     "run": "#914_05_resonator_spectroscopy_vs_power_010340",
+     "expected_case": "C1",
+     "expected_flags": [],
+     "correct_decision": "adopt",
+     "correct_next_action": "Adopt and stop: write resonator_frequency 5696387176.74 Hz, frequency_bare 5693887176.74 Hz, and set the readout operating point to optimal_power -9.36 dBm (e.g. FSP 11 dBm with readout amplitude 0.0959). No further q15 punch-out run is needed this session.",
+     "operator_did": "Ran the correct window, got a textbook C1 map \u2014 and wrote NOTHING. q15 was left uncalibrated and had to be re-earned on 2026-08-17 with two more maps (#1212, #1213).",
+     "operator_was_right": "partly"
+    }
+   ],
+   "termination": {
+    "at_run": "#914_05_resonator_spectroscopy_vs_power_010340",
+    "reason": "#914 is a clean C1: both branches and the transition are inside the window, the marked frequency sits on the stable dressed branch, and the chosen power sits below the transition on that branch. Nothing further is learnable about q15 from another map at these settings, so a correct system adopts here and stops.",
+    "final_resonator_frequency": 5696387176.74122,
+    "final_bare_frequency": 5693887176.74122,
+    "final_optimal_power": -9.363636363636363,
+    "unresolved": false,
+    "value_confidence": "med",
+    "value_evidence": "Dressed frequency: #914's 5696.387 MHz agrees with #910's independently-anchored 5696.772 MHz to 385 kHz, and with the value the operator finally ADOPTED the next day (2026-08-17 #1213, 5696.287 MHz) to 100 kHz; the 08-17 batch re-confirmations land at 5696.29 / 5696.79 MHz. The 08-14 #368 value 5699.10 MHz is the lone outlier and came from a different window anchor. Optimal power: -9.36 dBm here vs -7.55 dBm at 08-17 #1213 (adopted) and -9.0 dBm at 08-17 #1352 \u2014 good agreement; the -32 to -38 dBm values from #368/#1212 come from low-window maps that never reached the punch-out. Bare: FOUR independently-anchored runs (#910 1.8 MHz, #914 2.5 MHz, 08-17 #1350 2.0 MHz, #1352 2.0 MHz below dressed) agree on a ~2 MHz dressed-bare separation; the 13.8 MHz separation the operator adopted on 08-17 (#1213, bare 5682.487 MHz) is a 1-of-5 outlier and physically large for a readout chi shift, so the answer key holds ~5693.9 MHz and deliberately does NOT follow the operator's adopted bare."
+   },
+   "wasted_runs": [],
+   "poisoned_writes": [
+    {
+     "run": "#910_05_resonator_spectroscopy_vs_power_005834",
+     "path": "/quam/ports/mw_outputs/con1/3/1/full_scale_power_dbm",
+     "why": "A real change (old 16 -> new 14), written out of a C2 map in which the punch-out was never demonstrated, and it does not even match that run's own fit output (target_full_scale_power_dbm = 10). con1/3/1 is the SHARED feedline port for q8/q13/q14/q15/q18/q19; the FSP was moved 2 dB with no compensating rescale of any sibling readout amplitude, so every qubit on that line silently lost 2 dB of readout power. Should have been reverted with the rest of #910."
+    }
+   ],
+   "caveats": "#910's fit legend reports a 1.8 MHz dressed-bare gap while its frequency_shift field says 1.2 MHz; frequency_shift never equals resonator_frequency - bare_resonator_frequency anywhere in this corpus, so that field must not be used as a consistency check. #914's target_amplitude 0.0959 sits at 96% of max_amp=0.1, which looks like an amplitude-cap artifact but is not \u2014 the allocator deliberately picks the FSP that puts the amplitude just under the cap, and the same pattern appears in every healthy run of the corpus."
+  },
+  {
+   "qubit": "q20",
+   "runs_in_scope": [
+    "#995_05_resonator_spectroscopy_vs_power_045830",
+    "#996_05_resonator_spectroscopy_vs_power_045938"
+   ],
+   "ideal_length": 2,
+   "actual_length": 2,
+   "confidence": "high",
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#995_05_resonator_spectroscopy_vs_power_045830",
+     "expected_case": "C2",
+     "expected_flags": [
+      "N1",
+      "F1"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Agree with the node's refusal \u2014 a strong stable dip column is visible but the bottom third of the sweep is pure speckle and the transition onset is right at the ceiling. Raise min_power_dbm -40 -> -25 to lift the dressed-defining rows out of the noise, raise max_power_dbm +10 -> +14 to bring the punch-out inside, and raise num_shots 50 -> 150. Narrow frequency_span 30 -> 25 MHz. Write nothing.",
+     "operator_did": "Re-ran one minute later with min -25 / max +14 / 150 shots / span 25 MHz \u2014 precisely this correction.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 2,
+     "run": "#996_05_resonator_spectroscopy_vs_power_045938",
+     "expected_case": "C1",
+     "expected_flags": [],
+     "correct_decision": "adopt",
+     "correct_next_action": "Adopt and stop: the dip column at 5762.04 MHz is stable from -25 dBm up to about +2 dBm and the on-resonance response bleaches above roughly +3 dBm, so the chosen -6.51 dBm sits ~9 dB below the bleach onset \u2014 a safe operating point. Write resonator_frequency / RF, frequency_bare, and the readout amplitude that expresses -6.5 dBm at the port's existing FSP.",
+     "operator_did": "Adopted: wrote frequency_bare 5758041228.27 (from 5759586677.15) and readout amplitude 0.09 (from 0.0577, i.e. -10.8 dBm -> -6.9 dBm at the unchanged FSP=14).",
+     "operator_was_right": "yes"
+    }
+   ],
+   "termination": {
+    "at_run": "#996_05_resonator_spectroscopy_vs_power_045938",
+    "reason": "Textbook C1 with a wide, unambiguous margin between the operating power and the punch-out. Both #995's refusal and #996's success are fully explained by window placement; nothing further is learnable and a third map would be pure repetition.",
+    "final_resonator_frequency": 5762041228.265989,
+    "final_bare_frequency": 5758041228.265989,
+    "final_optimal_power": -6.510204081632654,
+    "unresolved": false,
+    "value_confidence": "med",
+    "value_evidence": "Dressed: 5762.04 MHz here, 5763.19 MHz at 08-14 #386 (independent anchor, adopted), 5761.5 / 5762.5 / 5765.0 MHz across the three 08-17 batch runs \u2014 a ~1.2 MHz cluster around 5762.5 MHz, and #996 sits inside it with a geometrically unambiguous dip column. Optimal power: -6.51 dBm here vs -10.78 dBm at 08-14 #386; both are far below the visible bleach onset, so the operating point is safe either way, and the ~4 dB spread is the honest uncertainty. Bare: LOW confidence. The 5758.04 MHz write is only 1.5 MHz from 08-14's 5759.59 MHz and the node reports bare ~3.5 MHz below dressed for q20 in every session, but no second branch is actually resolvable in #996's map \u2014 above punch-out the low-frequency side bleaches bright rather than showing a bare column, so the bare number is the node's inference, not demonstrated geometry."
+   },
+   "wasted_runs": [],
+   "poisoned_writes": [],
+   "caveats": "TRAP for the system under test: #996's patch list contains /quam/ports/mw_outputs/con1/2/1/full_scale_power_dbm = 14, which LOOKS like the same unjustified shared-port write as #910's \u2014 but node.json records old=14, new=14. It is a no-op and must NOT be scored as a poisoned write. Second trap: #996's target_amplitude is 0.4726 against max_amp=0.5 (94.5% of cap) and its frequency_shift field reads 0.0 while bare and dressed differ by 4 MHz; neither is evidence of a fallback here \u2014 the amplitude-near-cap is the allocator's normal behaviour and frequency_shift is not the dressed-bare difference anywhere in this corpus. Third: #995 and #985 (q19) report optimal_power identical to 15 decimal places (-30.755102040816325); this is a shared 50-point power grid landing on the same index, not a shared fallback constant."
+  },
+  {
+   "qubit": "q7",
+   "runs_in_scope": [
+    "#1033_05_resonator_spectroscopy_vs_power_092803"
+   ],
+   "ideal_length": 1,
+   "actual_length": 1,
+   "confidence": "high",
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#1033_05_resonator_spectroscopy_vs_power_092803",
+     "expected_case": "C1",
+     "expected_flags": [],
+     "correct_decision": "adopt",
+     "correct_next_action": "Adopt on the first map and stop. The dressed dip is the deepest, cleanest column in the whole session: stable at 5552.28 MHz from -35 dBm to about -8 dBm, then the dip washes out and the response goes bright above it. The chosen -16 dBm sits ~8 dB below the wash-out. Write RF/resonator_frequency 5552281610.47, frequency_bare 5550781610.47 and the readout amplitude expressing -16 dBm. Do not schedule a second q7 map.",
+     "operator_did": "Adopted exactly this (RF 5552281610.47, f_01 5552481610.47, frequency_bare 5550781610.47, amplitude 0.0354813) and ran no further q7 map.",
+     "operator_was_right": "yes"
+    }
+   ],
+   "termination": {
+    "at_run": "#1033_05_resonator_spectroscopy_vs_power_092803",
+    "reason": "One run, C1, unambiguous geometry, and the value reproduces an independent measurement from two days earlier. Nothing more to learn.",
+    "final_resonator_frequency": 5552281610.471313,
+    "final_bare_frequency": 5550781610.471313,
+    "final_optimal_power": -16,
+    "unresolved": false,
+    "value_confidence": "high",
+    "value_evidence": "Dressed: 5552.282 MHz here against 5552.635 MHz (08-14 #330) and 5552.435 MHz (08-14 #335) \u2014 DIFFERENT frequency anchors (fractional parts .471313 vs .231277), so this is genuine independent agreement to 160-350 kHz, not window-centering echo. Optimal power: -16.0 dBm here, -16.85 dBm at #335, -13.6 dBm at #330. Bare: 5550.78 MHz here vs 5550.835 MHz at #335 \u2014 agreement to 54 kHz across independent anchors; #330's 5534.6 MHz is the outlier and this run's write correctly replaced it."
+   },
+   "wasted_runs": [],
+   "poisoned_writes": [],
+   "caveats": "Two near-miss findings that are NOT defects. (1) The amplitude written to q7 (0.0354813) is numerically the same as q12's target_amplitude in the same run \u2014 that is a 1 dB amplitude grid coincidence (10^(-29/20)), not a cross-qubit write: at the port's FSP=14 it delivers -15.0 dBm against a fitted optimum of -16.0 dBm, i.e. one grid step hot. (2) f_01 is written 200 kHz above RF_frequency, but the OLD stored pair had exactly the same 200 kHz offset, so that is this chip's convention, not drift. The con1/1/1 FSP patch is old=14/new=14, a no-op. One genuine weakness: the bare branch is a smear rather than a second column in the map, so the bare number leans on the 08-14 #335 agreement rather than on this run's geometry."
+  },
+  {
+   "qubit": "q6",
+   "runs_in_scope": [
+    "#1116_05_resonator_spectroscopy_vs_power_140633",
+    "#1117_05_resonator_spectroscopy_vs_power_140725"
+   ],
+   "ideal_length": 2,
+   "actual_length": 2,
+   "confidence": "med",
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#1116_05_resonator_spectroscopy_vs_power_140633",
+     "expected_case": "C6",
+     "expected_flags": [
+      "N1"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Agree with the refusal \u2014 the whole map is speckle and the per-row minimum scatters across the full span at every power; the only structure is a dark hint hugging the TOP edge on the high-frequency side, which says the feature is at or above the ceiling. Move the whole window up ~20 dB: min_power_dbm -50 -> -30, max_power_dbm -25 -> 0. Keep span 15 MHz / step 0.1 MHz / 100 shots. Write nothing.",
+     "operator_did": "Re-ran 52 seconds later with exactly -30..0 \u2014 the same raise-the-window correction that had already fixed q15 and q20 earlier in the session.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 2,
+     "run": "#1117_05_resonator_spectroscopy_vs_power_140725",
+     "expected_case": "C4a",
+     "expected_flags": [
+      "F4"
+     ],
+     "correct_decision": "reconfirm",
+     "correct_next_action": "Adopt the DRESSED frequency provisionally (~5421.8-5422.2 MHz) but refuse the power. The feature is a broad band that pulls CONTINUOUSLY from ~5422.2 MHz at -30 dBm to ~5419.5 MHz at 0 dBm; the bend begins around -12 dBm and the fit's chosen -11.79 dBm sits AT the bend onset, not 3 dB below it (bare_resonator_frequency comes back null, confirming the bare asymptote is never reached in-window). One confirmation run: raise power_below_punchout_db 3 -> 8 so the readout lands near -20 dBm on the flat part of the plateau, and raise max_power_dbm 0 -> +10 so the bare branch completes and the knee is genuinely located. Same span/step/shots.",
+     "operator_did": "Ran the map, the node returned success=true with optimal -11.79 dBm \u2014 and the operator wrote NOTHING and never revisited q6 in this or any later session in the corpus.",
+     "operator_was_right": "partly"
+    }
+   ],
+   "termination": {
+    "at_run": "#1117_05_resonator_spectroscopy_vs_power_140725",
+    "reason": "The session ends here for q6. A correct system holds the dressed frequency provisionally, explicitly does NOT write an optimal power (the fitted -11.79 dBm sits on the knee), and schedules exactly one confirmation run with a raised ceiling and a larger below-punch-out margin. Not writing anything, as the operator did, is safer than writing the power but loses the frequency.",
+    "final_resonator_frequency": 5421771423.58395,
+    "final_bare_frequency": null,
+    "final_optimal_power": null,
+    "unresolved": false,
+    "value_confidence": "low",
+    "value_evidence": "The dressed frequency rests on a SINGLE map with no independent corroboration anywhere in the corpus \u2014 q6 appears only here and on 08-13 (#75/#76), where it was measured 21 MHz away at 5400.8 MHz on a different window anchor and never adopted, so that is not usable as confirmation. Within #1117 itself the low-power plateau reads about 5422.2 MHz while the fit reports 5421.77 MHz, i.e. the fit sits ~0.4 MHz to the transition side of the plateau centre (F4), so the true dressed value is more likely 5422.0-5422.3 MHz than the fitted number. Bare is null in the record and no bare asymptote is reached in the window, so no bare value is asserted. Optimal power is deliberately null: the fitted -11.79 dBm is at the visible knee, and the safe operating point is roughly -18 to -20 dBm, but this map did not establish it. Confidence is low by construction, not by hedging."
+   },
+   "wasted_runs": [],
+   "poisoned_writes": [],
+   "caveats": "The expert annotation calls #1117 C1 with power_ok=yes; the figure does not support that. The crossover is a continuous S-bend that never reaches a bare asymptote, bare_resonator_frequency is null, and the chosen power sits at the bend onset with effectively zero margin despite power_below_punchout_db=3. This is the case where the answer key deliberately departs from the earlier annotation pass. Separately: #1117's allocator picked full_scale_power_dbm=16 for con1/1/1, but #1033 had already fixed that shared port at 14 for q7 four hours earlier \u2014 had q6 been adopted as reported, the two qubits on con1/1/1 would have made incompatible demands on one port. Nothing landed, so no conflict occurred."
+  },
+  {
+   "qubit": "q19",
+   "runs_in_scope": [
+    "#985_05_resonator_spectroscopy_vs_power_041418",
+    "#1089_05_resonator_spectroscopy_vs_power_112159"
+   ],
+   "ideal_length": 1,
+   "actual_length": 2,
+   "confidence": "med",
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#985_05_resonator_spectroscopy_vs_power_041418",
+     "expected_case": "C6",
+     "expected_flags": [
+      "N5",
+      "N1",
+      "N6",
+      "F1",
+      "F5"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Refuse the node's success=true/punchout=true outright \u2014 there is no narrow feature anywhere in this map. The only structure is a monotone left-dark to right-bright gradient running off the high-frequency edge (N5), the bottom rows are pure speckle (N1), and the chosen -30.8 dBm line sits exactly at the speckle boundary (F1). Do NOT re-window; RESTORE the acquisition template that measured this exact qubit successfully two days earlier (2026-08-14 #378): num_shots 50 -> 100, frequency_step 0.8 -> 0.3 MHz, frequency_span 30 -> 50 MHz, num_power_points 50 -> 100, max_amp 0.4 -> 0.1, window -40..+15. Write nothing.",
+     "operator_did": "Accepted the node's success (no state write, fortunately) and 7 hours later re-ran #1089 with the window moved DOWN to -50..0 instead of restoring the working template.",
+     "operator_was_right": "no"
+    }
+   ],
+   "termination": {
+    "at_run": "#985_05_resonator_spectroscopy_vs_power_041418",
+    "reason": "A correct system stops q19 here for this session and escalates. #985 demonstrates nothing about q19 and every one of its acquisition knobs was set worse than the settings that had succeeded on this same qubit two days earlier \u2014 halved shots, 2.7x coarser frequency step, halved power points, 4x the max amplitude. Rather than burn a second map, restore the known-good template or hand q19 to a human; the session's actual second attempt confirms the cost of guessing instead.",
+    "final_resonator_frequency": 5909200000,
+    "final_bare_frequency": 5905600000,
+    "final_optimal_power": -39.111111111111114,
+    "unresolved": true,
+    "value_confidence": "low",
+    "value_evidence": "unresolved=true: this session produced NO trustworthy q19 value, so the values given are the ones a correct system should CONTINUE TO HOLD, carried over from 2026-08-14 #378 (the last run that both succeeded and was adopted). They are corroborated by the 08-17 batch re-confirmations (5908.18 MHz / 5910.18 MHz dressed, bare 5906.18 / 5906.68 MHz, optimal -34 to -36 dBm) \u2014 a ~2 MHz cluster around 5909.2 MHz across independent anchors. #985's own 5909.64 MHz happens to fall inside that cluster, but that is coincidence: the figure shows the per-row minimum tracking the prior marker through featureless noise, so the number is not evidence. Confidence is low because q19 behaved intermittently across the corpus (succeeded 08-14 and 08-17, failed both attempts on 08-16 \u2014 flag F6 at the session level), and the optimal power in particular ranges -34 to -39 dBm across the successful runs."
+   },
+   "wasted_runs": [
+    {
+     "run": "#1089_05_resonator_spectroscopy_vs_power_112159",
+     "why_wasted": "Produced nothing the correct path needed. The operator did restore num_shots (50->100), frequency_step (0.8->0.1) and num_power_points (50->100), which was the right instinct, but moved the power window DOWN to -50..0 and left the span at 30 MHz \u2014 the opposite of the raise-the-window correction that had just rescued q20 and would rescue q6 hours later, and not the restoration of the 08-14 #378 template (-40..+15, 50 MHz span) that had actually worked on this qubit. Result: C6, a smooth background gradient with no resonant feature at all, the node correctly refused, nothing written, nothing learned. A third data point on 'q19 is invisible at degraded settings' was not needed."
+    }
+   ],
+   "poisoned_writes": [],
+   "caveats": "#985 is the clearest FALSE ACCEPT in the session: success=true and punchout=true on a map containing no resonant feature. Note also that #985 ran on con1/3/1 AFTER #910 had knocked that shared port's FSP from 16 to 14 without rescaling anyone's amplitude, so part of q19's missing contrast on 2026-08-16 may be downstream of #910's poisoned write \u2014 suggestive, not proven, since the run overrides FSP for its own sweep. The identical optimal_power shared with #995 (-30.755102040816325) is a power-grid coincidence, not a shared fallback."
+  },
+  {
+   "qubit": "q12",
+   "runs_in_scope": [
+    "#1033_05_resonator_spectroscopy_vs_power_092803",
+    "#1079_05_resonator_spectroscopy_vs_power_110124"
+   ],
+   "ideal_length": 1,
+   "actual_length": 2,
+   "confidence": "med",
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#1033_05_resonator_spectroscopy_vs_power_092803",
+     "expected_case": "C6",
+     "expected_flags": [
+      "N5",
+      "N7",
+      "N1",
+      "F1",
+      "F5"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Refuse. The q12 panel shows a monotone dark-left to bright-right gradient with a speckled middle and no dip column at any power; the tracked minimum wobbles by several MHz row to row, everything below about -22 dBm is speckle, and the chosen -27 dBm line sits inside that speckle (F1). Retune for contrast, not for window: num_shots 150 -> 600, frequency_span 25 -> 8 MHz centred on 5840.5 MHz, frequency_step 0.5 -> 0.05 MHz, and raise min_power_dbm -35 -> -22 so the optimum cannot be floor-pinned. If that still shows no dip column, stop and escalate \u2014 q12 has now failed to produce one on 08-13, 08-15 and 08-16.",
+     "operator_did": "Did not write q12 (correct), but 1.5 h later re-ran #1079 with the IDENTICAL window, identical span, identical step and identical shot count \u2014 no knob changed.",
+     "operator_was_right": "partly"
+    }
+   ],
+   "termination": {
+    "at_run": "#1033_05_resonator_spectroscopy_vs_power_092803",
+    "reason": "A correct system stops q12 here and escalates. The map does not identify the feature, the reported optimum is inside the noise floor, and \u2014 with hindsight from the four failed attempts on 08-13 and 08-15 \u2014 q12 is a chronically low-contrast line that will not be fixed by re-running the same template. It needs a contrast retune or a hardware look, not another map.",
+    "final_resonator_frequency": 5840760849.16,
+    "final_bare_frequency": null,
+    "final_optimal_power": null,
+    "unresolved": true,
+    "value_confidence": "low",
+    "value_evidence": "unresolved=true and the frequency is offered only as a best estimate. Every q12 number in the corpus shares the fractional part .162616, i.e. they are all offsets from ONE stored window anchor \u2014 08-17 #1351's 'dressed' 5839260849.162616 is bit-identical to #1033's 'bare'. So the apparent cross-session convergence on ~5839-5842 MHz is largely window-centring echo, not independent agreement, and it must not be laundered into confidence. What can honestly be said: five runs place the tracked minimum inside a ~2.5 MHz band around 5840.5 MHz (5839.26, 5839.80, 5840.26, 5840.76, 5841.76), and #1079's 5840.76 MHz sits mid-band, so 5840.76 MHz is the least-bad single number. Bare is null: #1079 returns null and #1033's 5839.26 MHz is not a resolvable second branch. Optimal power is null: -27 dBm (#1033) and -29 dBm (#1079) are both floor-pinned inside the speckle and, per the expert rule, a floor-pinned optimum is refused, never adopted."
+   },
+   "wasted_runs": [
+    {
+     "run": "#1079_05_resonator_spectroscopy_vs_power_110124",
+     "why_wasted": "A pure repeat \u2014 every parameter identical to #1033 (span 25 MHz, step 0.5 MHz, 150 shots, 50 power points, -35..+14). It changed no bounded knob, so it could not address the actual problem, which is contrast, not window placement. It reproduced the same low-contrast morphology, returned bare_resonator_frequency = null, and produced an optimum (-29 dBm) even deeper inside the noise-dominated rows than #1033's. Its one incidental contribution \u2014 showing the tracked minimum repeats to within ~1 MHz \u2014 is not worth a run and does not distinguish a real weak resonance from the fitter re-locking to the same prior marker."
+    }
+   ],
+   "poisoned_writes": [],
+   "caveats": "q12 shares run #1033 with q7, which is why the same run appears as a clean C1 adopt for q7 and a refusal for q12 \u2014 the correct reader must judge the two panels independently and must NOT let q7's excellent geometry license q12's. The run is multiplexed=false (sequential), so it is a legitimate first calibration for both, not a batch re-confirmation. The earlier annotation pass read q12 as C4 (a shallow Fano-like minimum on a sloped background); the figure supports at most a marginal local minimum, and since the decision (refuse, retune for contrast) is the same under C4-low-contrast, C6 or N7, the disagreement does not change the answer key."
+  }
+ ]
+}

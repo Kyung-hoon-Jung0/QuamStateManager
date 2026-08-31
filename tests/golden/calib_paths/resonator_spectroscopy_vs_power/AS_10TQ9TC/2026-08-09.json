@@ -1,0 +1,450 @@
+{
+ "schema": "smgolden/v2",
+ "family": "resonator_spectroscopy_vs_power",
+ "chip": "AS_10TQ9TC",
+ "session": "2026-08-09",
+ "session_id": "AS_2026-08-09",
+ "authored": "2026-08-21",
+ "status": "expert-round-1 + adversarial audit",
+ "provenance": "hindsight-authored answer key: the author saw the whole session and was free to judge the operator wrong. The system under test never sees past its cursor.",
+ "session_notes": "Session AS_2026-08-09 on chip AS_10TQ9TC: 8 runs of 05_resonator_spectroscopy_vs_power, split into a morning block (#7-#12, 03:58-04:25) and an evening re-calibration (#232-#233, 20:05-20:06). Seven qubits appear: q3-q9. Five figures were read to settle ambiguities: #7, #10, #11, #12, #233 (all power_dbm.png).\n\nSTRUCTURE OF THE SESSION. #7-#11 are a five-run window hunt on the q8/q9 pair that converges on the recipe span 8 MHz / step 0.075 MHz / -45..-15 dBm; #12 then applies that recipe to q3-q7 and gets all five clean on the first try - the hunt was expensive but its output was correct and reusable. The evening pair re-measures q5-q8 after the day's flux tuning moved the resonators (q5 +3.7, q6 +7.5, q8 +5.7 MHz), with #232's floor at -60 dBm pinning two optima to the scan edge and #233 curing it by raising the floor to -45. Totals: ideal 18 run-slots against 23 actually flown, with 5 wasted run-slots, all of them in the q8/q9 hunt (#8 and #9 for both qubits, #10 for q9).\n\nTHREE HINDSIGHT CORRECTIONS THE RECORD DOES NOT MAKE ON ITS OWN.\n(1) Run #8's q8 'success' is a false accept on a power-independent spur: it reports a dressed line 22 MHz below the bare, while #10 measures 2.0 MHz and the evening pair 2.6-2.8 MHz. Nothing was written, but a system that trusted node success flags would have moved q8's readout 22 MHz off resonance.\n(2) Run #10's q8 optimal_power of -61.7 dBm is ~30 dB below a knee that is plainly visible at -30 dBm in its own figure - the power-choice rule hit the scan's bottom edge. The same pathology recurs on q5 and q6 in #232. Floor-pinned optima appear four times in eight runs and are the single most common defect in this session; the correct response is always to refuse the power, keep the frequencies, and raise min_power_dbm.\n(3) q9's 'bare' in #10 and #11 (6168.242 MHz) is not a bare cavity: in the figures its marker and the dressed marker sit on opposite shoulders of one unbroken dip, and #7 - the only run whose ceiling clears q9's ~-9 dBm knee - shows the true high-power feature ~1.7 MHz on the OTHER side, near 6.1702 GHz. Both runs report punchout=true for a window that contains no punch-out. No fitted bare for q9 exists anywhere in the session, so the answer key holds it null.\n\nBATCH RUNS AND COLLATERAL WRITES. Every run in this session is multiplexed, so under the rule that batch runs are re-confirmation only, no qubit here received an admissible first calibration. q5-q8 are rescued by having two agreeing evening runs; q3, q4 and q9 rest on a single batch measurement each and are recorded at med confidence for that reason. The batch structure also caused three state writes that no measurement supports: #12 wrote readout amplitudes for q8 and q9 (not in that run, and the values match neither their own calibration nor an FSP-preserving rescale), and #233 wrote one for q9 again. Outside the session's qubit list, #12 also wrote q1 and q2 the amplitude value 0.0446683592150963 - q6's calibrated amplitude, verbatim - and amplitudes for q10 in both #12 and #233; the same objection applies. A related structural hazard: con1/8/1's full_scale_power_dbm was proposed as 14, -11 and -1 by three consecutive runs (#7 q9, #10 q8, #11 q9) - one physical port, three incompatible requests, which is what multiplexed punch-out does to a shared FSP.\n\nWHAT SHOULD HAVE BEEN OPEN AT SESSION END. q3, q4 and q9 were never re-measured after the day's tuning, although every resonator that WAS re-measured had moved by 0.5-8 MHz; q9 in particular shares con1/8/1 with q6, q7 and q8, all three of which moved. Adding q3, q4 and q9 to the evening batch is the one run this session needed and never took. q7's bare is left unset on purpose: the two evening runs disagree about it by 400 kHz, which is the entire size of the effect they claim.",
+ "adversarial_audit": "**Not sound \u2014 10 concrete defects.** Checked hardest: (i) every \"bit-identical\" agreement claim against the runs' shared sweep centre + frequency grid, (ii) every knee/power claim against the node's own rule `optimal = punchout \u2212 power_below_punchout_db (3 dB)`.\n\n1. **q7, #232/#233 \u2014 \"bit-identical dressed = the strongest agreement\" is inverted.** Both runs record `frequency_shift = 0.0`, i.e. the fit returned the sweep centre unchanged; both share one prior (6100350131.172346) and one 0.2 MHz grid, so identity is the same pixel, not precision. Same objection to q6/q8 \"bit-identical\". Fix: agreement resolution is \u00b10.2 MHz; drop bit-identity as evidence, quote finals to ~0.1 MHz (not 1e-6 Hz), demote q7's dressed to med.\n2. **q9 \u2014 the \"~-9 dBm knee\" has no evidence and contradicts the key itself.** Node-implied punchout is \u221231.8/\u221229.1/\u221226.5 dBm in #7/#10/#11. If the knee were \u22129, the adopted \u221229.5 dBm sits 20 dB below it \u2014 the exact defect the key refuses for q5/q6 (25 dB) and q8 #10 (30 dB). Either refuse q9's power too, or delete the \u22129 dBm figure and the C2 relabel of #11 (annotation says sub-linewidth-shift).\n3. **q9 \u2014 \"no fitted bare exists anywhere in the session\" contradicts the record**: #10 and #11 both record 6168242305.263463. Rewrite as \"no *trustworthy* fitted bare\".\n4. **q9 \u2014 the disqualifying \"true bare ~6.1702 GHz\" is a figure read-off**, which the key's own q4 step forbids from entering state. Same standard both ways.\n5. **q3, #12 \u2014 knee stated \"near \u221233 dBm\"; node-implied is \u221238.85** (\u221241.85+3). Consequently the prescribed knob \"min_power \u221245 \u2192 \u221242\" would put the adopted optimum at/below the new floor, manufacturing the floor-pinned pathology the key condemns. Correct: keep \u221245 (or deepen), never \u221242.\n6. **q4, #12 \u2014 \"the map plainly shows a branch near 6.0975 GHz (~2.5 MHz below)\" contradicts the annotation** (\"in the 2-D map the shift is easy to miss; the line cuts are decisive\"). Both numbers are unevidenced. The `max_power \u221215 \u2192 \u221210` knob is also unmotivated: rows above the \u221236.5 dBm knee already exist.\n7. **q8, #11 \u2014 \"figures #10 and #11 both put the dressed branch ~2.0 MHz above bare\"**: #11's record says 1.125 MHz and its annotation says the failed fit sat on the *bare* line. Also \"gate verdict and figure disagree\" contradicts the annotation (branch genuinely too weak in the shallow window). And #11 is informationless by the key's own step 3 \u2014 its prescribed action is what step 2 should have done at #10 \u2192 **ideal_length 4, not 5**.\n8. **\"Floor-pinned/hit the scan edge\" is not the detectable signature**: #10 q8 sits 5.9 rows above its floor, #232 q5/q6 2.1/3.1 rows. State the testable rule: chosen power \u226b3 dB below the *visible* knee.\n9. **Terminations `unresolved:false` for q3/q4/q9 while the same entries say a post-tuning re-measure is owed and never taken.** Set `unresolved:true`, or delete the owed-run text.\n10. **Minor/e**: q6 \"~4 power steps above \u221260\" is 3.1; q6/q7's identical `target_amplitude` is a deterministic function of identical `optimal_power` (adds zero evidence); q1/q2's amplitude differs from q6's by 1 ULP, so \"verbatim\" is false; \"con1/8/1 FSP was \u221211 before #12\" is unsupported (#12 patches it, no prior recorded); q5 drift \"by 20:06\" is +3.68 MHz, not +3.3.\n\n**Fairness**: the stated rule \"batch runs are re-confirmation only, never first calibration\" is then violated by every `adopt` \u2014 a system obeying it is scored wrong. Drop the rule or mark q3/q4/q9 provisional.\n\n---\n\n**\ud55c\uad6d\uc5b4 \uc694\uc57d**\n- \uc815\ub2f5 \ud0a4\ub294 \uacac\uace0\ud558\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4. \uad6c\uccb4\uc801 \uacb0\ud568 10\uac74\uc744 \ucc3e\uc558\uc2b5\ub2c8\ub2e4.\n- \uac00\uc7a5 \uc911\uc694\ud55c \ub450 \uac00\uc9c0: \u2460 q7\u00b7q6\u00b7q8\uc758 \"\ube44\ud2b8 \ub2e8\uc704 \uc77c\uce58\"\ub294 \ub450 \ub7f0\uc774 \uac19\uc740 \uc2a4\uc715 \uc911\uc2ec\uacfc 0.2 MHz \uaca9\uc790\ub97c \uacf5\uc720\ud574\uc11c \uc0dd\uae34 \uac19\uc740 \ud53d\uc140\uc77c \ubfd0\uc774\uba70(q7\uc740 `frequency_shift=0.0`, \uc989 \uc911\uc2ec\uac12 \uadf8\ub300\ub85c \ubc18\ud658), \uc815\ubc00\ub3c4 \uadfc\uac70\uac00 \ub420 \uc218 \uc5c6\uc2b5\ub2c8\ub2e4. \u2461 q9\uc758 \"\ubb34\ub98e ~-9 dBm\"\uc740 \uadfc\uac70\uac00 \uc5c6\uace0, \ub178\ub4dc \uc790\uccb4 \uaddc\uce59(optimal = punchout \u2212 3 dB)\uc774 \uc8fc\ub294 \u221232~\u221227 dBm\uacfc \ucda9\ub3cc\ud558\uba70, \uadf8\ub300\ub85c \ub450\uba74 q5/q6/q8\uc5d0\uc11c \uac70\ubd80\ud55c \"\ubb34\ub98e \ub300\ube44 \uacfc\ub3c4\ud558\uac8c \ub0ae\uc740 \uc804\ub825\"\uc744 q9\uc5d0\uc11c\ub9cc \uc2b9\uc778\ud558\ub294 \uc790\uae30\ubaa8\uc21c\uc774 \ub429\ub2c8\ub2e4.\n- \uadf8 \ubc16\uc5d0: q3 \ubb34\ub98e \uc218\uce58 \uc624\ub958\uc640 \uadf8\ub85c \uc778\ud55c \uc798\ubabb\ub41c knob \uad8c\uace0(\u221242 dBm \ubc14\ub2e5), q4\uc758 \uadfc\uac70 \uc5c6\ub294 6.0975 GHz \uc77d\uae30, q8 #11\uc758 \uae30\ub85d \ubaa8\uc21c(1.125 MHz vs 2.0 MHz \uc8fc\uc7a5) \ubc0f ideal_length 5\u21924, \"scan edge\" \ud45c\ud604\uc758 \ubd80\uc815\ud655\uc131, q3/q4/q9\uc758 `unresolved:false` \ubaa8\uc21c.\n- \uacf5\uc815\uc131 \ubb38\uc81c: \"\ubc30\uce58 \ub7f0\uc740 \ucd5c\ucd08 \uce98\ub9ac\ube0c\ub808\uc774\uc158\uc774 \ub420 \uc218 \uc5c6\ub2e4\"\ub294 \uaddc\uce59\uc744 \uba85\uc2dc\ud574 \ub193\uace0 \ubaa8\ub4e0 adopt\uac00 \uc774\ub97c \uc704\ubc18\ud558\ubbc0\ub85c, \uaddc\uce59\uc744 \uc9c0\ud0a4\ub294 \uc2dc\uc2a4\ud15c\uc774 \uc624\ud788\ub824 \uac10\uc810\ub429\ub2c8\ub2e4. \uaddc\uce59\uc744 \uc0ad\uc81c\ud558\uac70\ub098 q3/q4/q9\ub97c \uc7a0\uc815\uac12\uc73c\ub85c \ud45c\uc2dc\ud574\uc57c \ud569\ub2c8\ub2e4.",
+ "qubits": [
+  {
+   "qubit": "q3",
+   "runs_in_scope": [
+    "#12_05_resonator_spectroscopy_vs_power_042512"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#12_05_resonator_spectroscopy_vs_power_042512",
+     "expected_case": "C1",
+     "expected_flags": [],
+     "correct_decision": "adopt",
+     "correct_next_action": "Adopt resonator_frequency 5.948468312 GHz, frequency_bare 5.946143312 GHz, optimal_power -41.85 dBm at FSP -11 dBm on con1/7/1. Window was correct as flown (span 8 MHz / step 0.075 MHz, -45..-15 dBm); no knob change is indicated. Note the optimum sits only 3.2 dB (4 power steps) above the -45 dBm floor, so if a confirmation run is taken, raise min_power_dbm -45 -> -42 rather than deepening it. Owed but never taken: one corroborating run (ideally single-qubit, not multiplexed) and a re-measurement after the day's flux tuning, since feedline-mate q5 moved +3.3 MHz by 20:06.",
+     "operator_did": "Ran the five-qubit sweep with the window settled by the q8/q9 hunt, took the fit and wrote frequency_bare, f_01, RF_frequency and the readout amplitude for q3.",
+     "operator_was_right": "yes"
+    }
+   ],
+   "termination": {
+    "at_run": "#12_05_resonator_spectroscopy_vs_power_042512",
+    "reason": "One clean C1 map with both branches, a visible knee near -33 dBm, fit agreeing with the geometry and a chosen power on the strong part of the dressed branch. Nothing further was measurable or needed at that bias point; q3 was never re-run.",
+    "final_resonator_frequency": 5948468312,
+    "final_bare_frequency": 5946143312,
+    "final_optimal_power": -41.84615384615385,
+    "unresolved": false,
+    "value_evidence": "Figure #12 power_dbm confirms a two-branch punch-out: the dip trace holds ~5.9461 GHz over the top rows and steps to ~5.9485 GHz below ~-33 dBm, matching the recorded bare/dressed pair to the pixel; separation 2.325 MHz is several linewidths, so the branch labels are geometry-consistent (the power-independent high-power line is the one labelled bare). The chosen-power line sits on the dressed branch. Weakness: this rests on ONE multiplexed run with no corroborating measurement anywhere in the session, and the chip's other resonators drifted 0.5-8 MHz over the following 16 hours, so the number is bias-point-scoped and stale by session end.",
+    "value_confidence": "med"
+   },
+   "wasted_runs": [],
+   "poisoned_writes": [],
+   "ideal_length": 1,
+   "actual_length": 1,
+   "confidence": "med",
+   "caveats": "Every run in this session is multiplexed, so by the expert rule ('batch runs are re-confirmation only, never first calibration') q3 never received an admissible first calibration - it received one batch run and no confirmation. The values are adopted here because the figure is unambiguous C1, not because the run type was right. #12 also changed con1/7/1 full_scale_power_dbm to -11 for the whole feedline, which is a shared-port decision taken from a five-qubit budget."
+  },
+  {
+   "qubit": "q4",
+   "runs_in_scope": [
+    "#12_05_resonator_spectroscopy_vs_power_042512"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#12_05_resonator_spectroscopy_vs_power_042512",
+     "expected_case": "C1",
+     "expected_flags": [],
+     "correct_decision": "adopt",
+     "correct_next_action": "Adopt resonator_frequency 6.100153165 GHz and optimal_power -39.54 dBm at FSP -11 dBm on con1/7/1. Do NOT write frequency_bare: the map plainly shows a high-power branch near 6.0975 GHz (~2.5 MHz below the dressed line) but the node recorded bare=null, and an eyeballed number must not enter state. If the bare is wanted, re-run the same window with max_power_dbm -15 -> -10 to put more rows above the knee; for readout calibration it is not required. Also owed: a corroborating run and a re-measure after the day's tuning.",
+     "operator_did": "Took the fit and wrote f_01, RF_frequency and the readout amplitude (correctly wrote no frequency_bare).",
+     "operator_was_right": "yes"
+    }
+   ],
+   "termination": {
+    "at_run": "#12_05_resonator_spectroscopy_vs_power_042512",
+    "reason": "Single clean C1 map; the dressed frequency and the readout power are both well determined and the only missing quantity (bare) is not required for readout. No further run for q4 exists in the session.",
+    "final_resonator_frequency": 6100153165,
+    "final_bare_frequency": null,
+    "final_optimal_power": -39.53846153846154,
+    "unresolved": false,
+    "value_evidence": "Figure #12 power_dbm, q4 panel: the automatic dip trace sits near 6.0975 GHz in the top rows and jumps to ~6.1002 GHz below ~-35 dBm - two distinct branches a few linewidths apart, exactly as the expert annotation's line-cut reading says. The chosen-power line lies on the low-power (dressed) branch. The fit's frequency_shift of -25 kHz is a delta versus the previously stored value, not the dressed-bare separation, so it is not evidence against punch-out. Bare is left null because no fitted value exists; the ~6.0975 GHz figure position is a read-off, not a measurement. Single multiplexed run, no corroboration, stale after the day's tuning.",
+    "value_confidence": "med"
+   },
+   "wasted_runs": [],
+   "poisoned_writes": [],
+   "ideal_length": 1,
+   "actual_length": 1,
+   "confidence": "med",
+   "caveats": "punchout=true with bare_resonator_frequency=null is an incomplete record, not a contradiction - the transition is in the window but the bare branch was not fitted. Same batch-only caveat as q3: one multiplexed run, no confirmation, never re-measured after the resonators moved."
+  },
+  {
+   "qubit": "q5",
+   "runs_in_scope": [
+    "#12_05_resonator_spectroscopy_vs_power_042512",
+    "#232_05_resonator_spectroscopy_vs_power_200543",
+    "#233_05_resonator_spectroscopy_vs_power_200644"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#12_05_resonator_spectroscopy_vs_power_042512",
+     "expected_case": "C1",
+     "expected_flags": [],
+     "correct_decision": "adopt",
+     "correct_next_action": "Adopt resonator_frequency 5.999027353 GHz, frequency_bare 5.996402353 GHz, optimal_power -40.31 dBm. Window correct as flown; hold and re-confirm only if the chip bias is changed.",
+     "operator_did": "Took the fit and wrote frequency_bare, f_01, RF_frequency and amplitude.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 2,
+     "run": "#232_05_resonator_spectroscopy_vs_power_200543",
+     "expected_case": "C1",
+     "expected_flags": [
+      "F1"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Take the FREQUENCIES (the resonator has moved +3.3 MHz during the day: dressed ~6.0023 GHz, bare 6.000104 GHz) but refuse optimal_power -57.87 dBm - it sits 2 power steps above the -60 dBm floor and ~25 dB below the knee, i.e. the power-choice rule hit the scan edge, not a physics optimum. Re-run the identical 6 MHz / 0.2 MHz window with min_power_dbm -60 -> -45 (the morning recipe that worked for all five qubits) and max_power_dbm left at -20. Do not write state from this run.",
+     "operator_did": "Wrote nothing and immediately re-ran with the floor raised -60 -> -45.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 3,
+     "run": "#233_05_resonator_spectroscopy_vs_power_200644",
+     "expected_case": "C1",
+     "expected_flags": [],
+     "correct_decision": "adopt",
+     "correct_next_action": "Adopt resonator_frequency 6.00270379 GHz, frequency_bare 6.00010379 GHz, optimal_power -37.10 dBm at FSP -11 dBm. Stop: two runs at the new bias point agree on the geometry and the optimum is now mid-window, several steps below the knee.",
+     "operator_did": "Took the fit and wrote f_01, frequency_bare, RF_frequency and amplitude. Session ended here.",
+     "operator_was_right": "yes"
+    }
+   ],
+   "termination": {
+    "at_run": "#233_05_resonator_spectroscopy_vs_power_200644",
+    "reason": "Two evening runs at the same bias point return the same two-branch geometry, and the second one - flown with the floor raised specifically to cure #232's edge-pinned optimum - returns a mid-window power. Nothing further is indicated.",
+    "final_resonator_frequency": 6002703790.080619,
+    "final_bare_frequency": 6000103790.080619,
+    "final_optimal_power": -37.1025641025641,
+    "unresolved": false,
+    "value_evidence": "#232 and #233 agree: bare is bit-identical (6000103790.080619 in both) and dressed differs by 400 kHz (6002.304 vs 6002.704 MHz), well inside one linewidth; separation 2.6 MHz is several linewidths and therefore a real, resolved punch-out. Figure #233 power_dbm, q5 panel: the trace holds ~6.0001 GHz in the top rows and steps to ~6.0027 GHz below ~-33 dBm, with the chosen-power line at -37.1 dBm on the strong part of the dressed branch and the noise onset well below it. The morning value (5.999027 GHz) is superseded, not contradicted - the resonator moved +3.7 MHz during the day's flux tuning, consistent with q6 (+7.5 MHz) and q8 (+5.7 MHz) on the same chip.",
+    "value_confidence": "high"
+   },
+   "wasted_runs": [],
+   "poisoned_writes": [],
+   "ideal_length": 3,
+   "actual_length": 3,
+   "confidence": "high",
+   "caveats": "#232 is kept in the ideal path even though its power is refused: it is what discovers the drift, and because every run here is multiplexed it is also the only corroboration #233's frequencies have. An ideal system that re-used the known-good -45..-15 recipe for the evening re-cal would have needed only #233, but would then be adopting from a single batch run."
+  },
+  {
+   "qubit": "q6",
+   "runs_in_scope": [
+    "#12_05_resonator_spectroscopy_vs_power_042512",
+    "#232_05_resonator_spectroscopy_vs_power_200543",
+    "#233_05_resonator_spectroscopy_vs_power_200644"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#12_05_resonator_spectroscopy_vs_power_042512",
+     "expected_case": "C1",
+     "expected_flags": [],
+     "correct_decision": "adopt",
+     "correct_next_action": "Adopt resonator_frequency 6.000847353 GHz, frequency_bare 5.997172353 GHz, optimal_power -38.0 dBm at FSP -11 dBm on con1/8/1. Window correct as flown; hold.",
+     "operator_did": "Took the fit and wrote frequency_bare, f_01, RF_frequency and amplitude.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 2,
+     "run": "#232_05_resonator_spectroscopy_vs_power_200543",
+     "expected_case": "C1",
+     "expected_flags": [
+      "F1",
+      "N8"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Take the new frequencies (dressed 6.008323 GHz, bare 6.005523 GHz - the resonator moved +7.5 MHz during the day) but refuse optimal_power -56.85 dBm: it sits ~4 power steps above the -60 dBm floor and next to the bright horizontal artifact band crossing the lowest rows. Re-run the same 6 MHz / 0.2 MHz window with min_power_dbm -60 -> -45. Write nothing from this run.",
+     "operator_did": "Wrote nothing and re-ran with the floor raised -60 -> -45.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 3,
+     "run": "#233_05_resonator_spectroscopy_vs_power_200644",
+     "expected_case": "C1",
+     "expected_flags": [],
+     "correct_decision": "adopt",
+     "correct_next_action": "Adopt resonator_frequency 6.00832304 GHz and optimal_power -36.46 dBm at FSP -11 dBm. Carry frequency_bare 6.00552304 GHz from #232 or leave it unwritten - this run recorded bare=null, so writing it from this run is not possible and writing an eyeballed value is not permitted. Stop.",
+     "operator_did": "Took the fit and wrote f_01, RF_frequency and amplitude; correctly wrote no frequency_bare (the fit had none).",
+     "operator_was_right": "yes"
+    }
+   ],
+   "termination": {
+    "at_run": "#233_05_resonator_spectroscopy_vs_power_200644",
+    "reason": "Two evening runs at the new bias point return a bit-identical dressed frequency and the floor-raised re-run gives a mid-window optimum. The only loose end (bare recorded in one run only) does not affect readout.",
+    "final_resonator_frequency": 6008323040.484242,
+    "final_bare_frequency": 6005523040.484242,
+    "final_optimal_power": -36.46153846153846,
+    "unresolved": false,
+    "value_evidence": "Dressed frequency is bit-identical across #232 and #233 (6008323040.484242) - the strongest agreement available in this session. Figure #233 power_dbm, q6 panel: a dark dressed region at ~6.0083 GHz spanning roughly -30 to -40 dBm with the trace to the left near 6.005 GHz in the top rows, and the chosen-power line at -36.5 dBm on the dressed branch. The bare value rests on #232 ALONE (#233 returned null); its 2.8 MHz separation is consistent with the morning's 3.675 MHz at the old bias point, so it is plausible but singly-sourced - that is the reason for med rather than high overall confidence. Morning value 6.000847 GHz is superseded by +7.5 MHz of drift, not contradicted.",
+    "value_confidence": "med"
+   },
+   "wasted_runs": [],
+   "poisoned_writes": [],
+   "ideal_length": 3,
+   "actual_length": 3,
+   "confidence": "med",
+   "caveats": "final_bare_frequency comes from #232 only and was (correctly) never written to state by #233. #233's q6 and q7 share an identical optimal_power and identical target_amplitude to 16 digits - they are on the same port con1/8/1 and landed on the same power-grid point, which is possible but is also the shape a shared-port batch allocation takes; treat the per-qubit power as ~1 dB-resolved, not exact."
+  },
+  {
+   "qubit": "q7",
+   "runs_in_scope": [
+    "#12_05_resonator_spectroscopy_vs_power_042512",
+    "#232_05_resonator_spectroscopy_vs_power_200543",
+    "#233_05_resonator_spectroscopy_vs_power_200644"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#12_05_resonator_spectroscopy_vs_power_042512",
+     "expected_case": "C1",
+     "expected_flags": [],
+     "correct_decision": "adopt",
+     "correct_next_action": "Adopt resonator_frequency 6.100837764 GHz, frequency_bare 6.098137764 GHz (2.7 MHz separation, well resolved), optimal_power -38.77 dBm at FSP -11 dBm on con1/8/1. Window correct as flown; hold.",
+     "operator_did": "Took the fit and wrote frequency_bare, f_01, RF_frequency and amplitude.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 2,
+     "run": "#232_05_resonator_spectroscopy_vs_power_200543",
+     "expected_case": "N3",
+     "expected_flags": [],
+     "correct_decision": "adopt",
+     "correct_next_action": "Adopt resonator_frequency 6.100350131 GHz and optimal_power -32.23 dBm. Do NOT adopt bare 6.099550131 GHz: the claimed separation has collapsed from the morning's 2.7 MHz to 800 kHz, under one linewidth, so by the sub-linewidth rule take the dressed frequency only. Keep the window; no knob change is indicated for q7 (the floor raise that follows is for q5/q6).",
+     "operator_did": "Wrote nothing from this run and re-ran the same four qubits with the floor raised for q5/q6's benefit.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 3,
+     "run": "#233_05_resonator_spectroscopy_vs_power_200644",
+     "expected_case": "N3",
+     "expected_flags": [
+      "F4"
+     ],
+     "correct_decision": "reconfirm",
+     "correct_next_action": "Confirm and hold resonator_frequency 6.100350131 GHz (bit-identical to #232) and adopt optimal_power -36.46 dBm. REFUSE the frequency_bare write: 6.099950131 GHz sits 400 kHz below the dressed line - under a linewidth - and disagrees with #232's bare by 400 kHz, i.e. by the entire size of the claimed effect, so the two runs do not agree on anything about the bare branch. If a bare is genuinely wanted, raise max_power_dbm -20 -> -10 to put more rows above the knee; it is not needed for readout. Stop.",
+     "operator_did": "Took the fit and wrote frequency_bare 6.099950131 GHz plus amplitude (no f_01/RF_frequency write for q7).",
+     "operator_was_right": "partly"
+    }
+   ],
+   "termination": {
+    "at_run": "#233_05_resonator_spectroscopy_vs_power_200644",
+    "reason": "Two evening runs return a bit-identical dressed frequency and a mid-window power; the only quantity still in dispute (bare) is sub-linewidth and inconsistent between the two runs, so it should be left unset rather than resolved with more runs.",
+    "final_resonator_frequency": 6100350131.172346,
+    "final_bare_frequency": null,
+    "final_optimal_power": -36.46153846153846,
+    "unresolved": false,
+    "value_evidence": "Dressed frequency is bit-identical in #232 and #233 (6100350131.172346) and figure #233 power_dbm, q7 panel shows the dip centred there with the chosen-power line at -36.5 dBm on it - high confidence. Bare is set to null deliberately: #232 says 6099550131 and #233 says 6099950131, a 400 kHz disagreement equal to the whole claimed dressed-bare separation, and both separations are under a linewidth (the figure shows the bare and dressed markers on opposite shoulders of one dip, not on two branches). The morning bare, 6.098138 GHz with a 2.7 MHz separation, was real but belongs to the pre-drift bias point and cannot be carried across. Power is med-strength evidence only: #232 gave -32.23 dBm and #233 -36.46 dBm, 4 dB apart, both on the dressed branch.",
+    "value_confidence": "med"
+   },
+   "wasted_runs": [],
+   "poisoned_writes": [
+    {
+     "run": "#233_05_resonator_spectroscopy_vs_power_200644",
+     "path": "/quam/qubits/q7/resonator/frequency_bare",
+     "why": "Sub-linewidth 'bare': 400 kHz below the dressed line, with the two evening runs disagreeing on it by that same 400 kHz. By the expert rule for sub-linewidth shifts only the dressed frequency should be adopted; this write replaces a real, resolved morning bare (2.7 MHz separation) with a fit artifact from the shoulder of the dressed dip."
+    }
+   ],
+   "ideal_length": 3,
+   "actual_length": 3,
+   "confidence": "med",
+   "caveats": "q7's dispersive shift genuinely changed across the day (2.7 MHz separation in the morning, under a linewidth in the evening), so the morning and evening bare values are not comparable and neither can validate the other. The dressed frequency being bit-identical across #232/#233 while their bares differ is itself the tell that only the dressed fit is trustworthy."
+  },
+  {
+   "qubit": "q8",
+   "runs_in_scope": [
+    "#7_05_resonator_spectroscopy_vs_power_035841",
+    "#8_05_resonator_spectroscopy_vs_power_035956",
+    "#9_05_resonator_spectroscopy_vs_power_040451",
+    "#10_05_resonator_spectroscopy_vs_power_040948",
+    "#11_05_resonator_spectroscopy_vs_power_041037",
+    "#12_05_resonator_spectroscopy_vs_power_042512",
+    "#232_05_resonator_spectroscopy_vs_power_200543",
+    "#233_05_resonator_spectroscopy_vs_power_200644"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#7_05_resonator_spectroscopy_vs_power_035841",
+     "expected_case": "C3",
+     "expected_flags": [
+      "F1"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "One dip at a single fixed frequency from 0 dBm down to -40 dBm and no second branch anywhere: stationary-line, and the reported optimal_power -40.95 dBm lies BELOW the -40 dBm floor, which names the cause - the floor is too high, the dressed branch is below it. Correct knob: lower min_power_dbm -40 -> -70 and max_power_dbm 0 -> -15, KEEP frequency_span_in_mhz at 8-10 with a 0.075-0.1 MHz step. Do not widen the span: the dip is already centred, and a wide span at fixed step only shrinks the branch step toward one pixel. Write nothing (node correctly failed).",
+     "operator_did": "Accepted the failure, then widened frequency_span_in_mhz 10 -> 80 and lowered min_power_dbm -40 -> -55 while leaving the ceiling at 0 dBm.",
+     "operator_was_right": "partly"
+    },
+    {
+     "step": 2,
+     "run": "#10_05_resonator_spectroscopy_vs_power_040948",
+     "expected_case": "C1",
+     "expected_flags": [
+      "F1"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Textbook punch-out: adopt resonator_frequency 5.952279376 GHz and frequency_bare 5.950254376 GHz (2.0 MHz separation, both branches and a sharp knee visible). REFUSE optimal_power -61.72 dBm - the knee is at ~-30 dBm in this very figure, so with power_below_punchout_db=3 the answer should be ~-33 dBm; -61.7 dBm is ~30 dB below the knee, sitting where the dressed branch fades into speckle, and is an artifact of the power-choice rule hitting the scan's bottom edge. Correct knob: min_power_dbm -70 -> -45, keep max_power_dbm -15 and the 8 MHz / 0.075 MHz span, and take the power from the knee. Write nothing yet.",
+     "operator_did": "Wrote nothing and immediately re-ran with min_power_dbm raised -70 -> -45 - the right knob, on an evident distrust of the edge-pinned optimum.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 3,
+     "run": "#11_05_resonator_spectroscopy_vs_power_041037",
+     "expected_case": "C4a",
+     "expected_flags": [
+      "F5",
+      "F6"
+     ],
+     "correct_decision": "reject_and_stop",
+     "correct_next_action": "The figure shows both branches - a strong bare blob at 5.9503 GHz in the top rows and a weak, diffuse dressed region near 5.9525 GHz below the ~-30 dBm knee - yet the node failed on its dressed-dip SNR gate, so the gate verdict and the figure disagree; and the SAME branch passed the gate one run earlier at the identical span/step/ceiling with only the floor changed. Stop the morning chain for q8: hold #10's frequencies, set the readout power from the knee (~-33 dBm), and escalate the floor-sensitivity of the SNR gate rather than sweeping the floor a fourth time.",
+     "operator_did": "Moved on to the q3-q7 sweep, leaving q8 uncalibrated for the morning.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 4,
+     "run": "#232_05_resonator_spectroscopy_vs_power_200543",
+     "expected_case": "C1",
+     "expected_flags": [],
+     "correct_decision": "adopt",
+     "correct_next_action": "The resonator has moved +5.7 MHz during the day. Two well-separated branches with a sharp knee, the chosen frequency on the dressed branch and the chosen power a few steps below the knee: adopt dressed 5.957956 GHz, bare 5.955156 GHz, optimal_power -36.33 dBm. No knob change is indicated for q8 (the floor raise that follows is for q5/q6, and q8 rides along).",
+     "operator_did": "Ran it inside the evening four-qubit re-cal; wrote nothing.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 5,
+     "run": "#233_05_resonator_spectroscopy_vs_power_200644",
+     "expected_case": "C1",
+     "expected_flags": [],
+     "correct_decision": "reconfirm",
+     "correct_next_action": "Confirms the sibling run within 200 kHz on the dressed line and bit-identically on the bare. Adopt and write resonator_frequency 5.957755999 GHz, frequency_bare 5.955155999 GHz, optimal_power -35.18 dBm at FSP -11 dBm. Stop for q8.",
+     "operator_did": "Took the fit and wrote frequency_bare, f_01, RF_frequency and amplitude. Session ended here.",
+     "operator_was_right": "yes"
+    }
+   ],
+   "termination": {
+    "at_run": "#233_05_resonator_spectroscopy_vs_power_200644",
+    "reason": "Two evening runs at the post-drift bias point agree on both branches and on the knee, and the floor-raised run returns a mid-window optimum a few steps below it. The morning chain should have terminated separately at #11 with the frequency held and the power escalated; the evening pair supersedes it.",
+    "final_resonator_frequency": 5957755999.493921,
+    "final_bare_frequency": 5955155999.493921,
+    "final_optimal_power": -35.17948717948718,
+    "unresolved": false,
+    "value_evidence": "#232 and #233 agree: dressed 5957.956 vs 5957.756 MHz (200 kHz, well inside a linewidth) and bare bit-identical at 5955155999.493921 in both; separation 2.8/2.6 MHz. Figure #233 power_dbm, q8 panel shows two branches with a sharp knee near -30 dBm and the chosen-power line at -35.2 dBm on the strong dressed region. Independently corroborated by the morning geometry: figures #10 and #11 both put q8's dressed branch ~2.0 MHz above its bare line with the knee also near -30 dBm, so the device's dispersive shift and knee power are stable and only the absolute position moved (+5.7 MHz) with the day's flux tuning. This same cross-check REFUTES run #8's 'successful' 22 MHz shift, which is a power-independent spur.",
+    "value_confidence": "high"
+   },
+   "wasted_runs": [
+    {
+     "run": "#8_05_resonator_spectroscopy_vs_power_035956",
+     "why_wasted": "Wrong knob (span widened 10 -> 80 MHz) and it produced a false accept: the node reported success with a dressed line 22 MHz below the bare, on a narrow power-independent spike that the line cuts show as an upward spike rather than a resonance dip. Refuted by #10 (2.0 MHz) and by #232/#233 (2.6-2.8 MHz). Nothing a correct path needed; had a patch fired, it would have poisoned q8's frequency by 22 MHz."
+    },
+    {
+     "run": "#9_05_resonator_spectroscopy_vs_power_040451",
+     "why_wasted": "Compounded #8's error: kept the 80 MHz span (at which the real ~2 MHz branch step is about one pixel) and added a floor decade at -70 dBm that is pure speckle. The dip trace oscillated between the main line and the same spur; the node failed. Two knobs moved in the wrong direction at once, and no q8 quantity survives from it."
+    }
+   ],
+   "poisoned_writes": [
+    {
+     "run": "#12_05_resonator_spectroscopy_vs_power_042512",
+     "path": "/quam/qubits/q8/resonator/operations/readout/amplitude",
+     "why": "q8 was NOT measured in #12 (that run swept q3-q7). The written 0.0312534544720249 is neither q8's own calibrated value from #10 (0.0029114046 at FSP -11) nor an FSP-compensating rescale of it - con1/8/1's full_scale_power_dbm was -11 before and after, so a power-preserving rescale would have left the amplitude unchanged; 0.03125 is +20.6 dB on q8's own calibration. It is a feedline-budget allocation computed from a different qubit set, silently overwriting a just-calibrated readout amplitude."
+    }
+   ],
+   "ideal_length": 5,
+   "actual_length": 7,
+   "confidence": "high",
+   "caveats": "actual_length counts the 7 runs that measured q8; #12 touched q8 only by writing to its state. The morning ended with q8's frequency known but its power unresolved (the correct held value being ~-33 dBm read off #10's knee, never confirmed by a passing fit) - a correct system should have recorded that as an open item rather than a calibrated power. Note also the shared-port hazard: con1/8/1's full_scale_power_dbm was proposed as 14 (for q9 in #7), -11 (for q8 in #10) and -1 (for q9 in #11) by three consecutive multiplexed runs; one physical port cannot hold all three."
+  },
+  {
+   "qubit": "q9",
+   "runs_in_scope": [
+    "#7_05_resonator_spectroscopy_vs_power_035841",
+    "#8_05_resonator_spectroscopy_vs_power_035956",
+    "#9_05_resonator_spectroscopy_vs_power_040451",
+    "#10_05_resonator_spectroscopy_vs_power_040948",
+    "#11_05_resonator_spectroscopy_vs_power_041037",
+    "#12_05_resonator_spectroscopy_vs_power_042512",
+    "#233_05_resonator_spectroscopy_vs_power_200644"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#7_05_resonator_spectroscopy_vs_power_035841",
+     "expected_case": "C1",
+     "expected_flags": [],
+     "correct_decision": "reconfirm",
+     "correct_next_action": "This is the ONLY run in the session whose ceiling reaches q9's punch-out: the dip holds ~6.1685 GHz from -40 dBm up to about -9 dBm, then the response broadens and jumps to ~6.1702 GHz in the top rows - a real ~1.7 MHz dressed-to-bare step. Hold resonator_frequency 6.168592305 GHz and optimal_power -34.8 dBm provisionally. The record is incomplete (punchout=true with bare=null) and the rows above the knee are broad/bistable rather than a clean snap, so re-confirm with max_power_dbm 0 -> -5 and min_power_dbm -40 -> -45 and frequency_span_in_mhz 10 -> 8 if the bare is wanted; if only the readout power is wanted, drop the ceiling to -15 dBm and accept that punchout must then be reported false. Do NOT leave the ceiling at 0 dBm: the top rows there are the chaotic regime.",
+     "operator_did": "Kept the fit (no write) and re-flew the window for q8's benefit - span 10 -> 80 MHz, floor -40 -> -55 - leaving the ceiling at 0 dBm.",
+     "operator_was_right": "partly"
+    },
+    {
+     "step": 2,
+     "run": "#11_05_resonator_spectroscopy_vs_power_041037",
+     "expected_case": "C2",
+     "expected_flags": [
+      "F4",
+      "F5"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "The -15 dBm ceiling sits below q9's ~-9 dBm knee, so no punch-out is in this window: this is ceiling-below-punch-out, and the node's punchout=true is a verdict the figure does not support. Adopt resonator_frequency 6.168617305 GHz and optimal_power -29.54 dBm - the dip is strong and the chosen-power line sits mid-branch. REFUSE frequency_bare 6.168242305 GHz: the bare and dressed markers sit on opposite shoulders of ONE dip, 375 kHz apart, far under the linewidth, and the true bare is the ~6.1702 GHz feature seen in #7 above this ceiling. Stop: for readout, q9 needs no further punch-out run. Note the proposed full_scale_power_dbm of -1 conflicts with the -11 that q8 needs on the same port con1/8/1 - resolve the shared port before writing either.",
+     "operator_did": "Kept the fit and wrote nothing for q9; q9's readout amplitude was then overwritten collaterally by #12 and again by #233 without q9 ever being re-measured.",
+     "operator_was_right": "partly"
+    }
+   ],
+   "termination": {
+    "at_run": "#11_05_resonator_spectroscopy_vs_power_041037",
+    "reason": "The dressed frequency and a safe readout power are both established and corroborated by #7; the only remaining quantity (the bare cavity) requires a ceiling above -9 dBm, is not needed for readout, and the one run that reached it recorded no bare. Continuing would burn runs on a quantity nothing needs. A correct system should ALSO have added q9 to the evening #232/#233 batch - it shares con1/8/1 with q6, q7 and q8, all three of which moved 0.5-8 MHz during the day - which is a run the operator never made.",
+    "final_resonator_frequency": 6168617305.263463,
+    "final_bare_frequency": null,
+    "final_optimal_power": -29.538461538461537,
+    "unresolved": false,
+    "value_evidence": "Dressed: #7 gives 6168.592 MHz and #11 gives 6168.617 MHz - 25 kHz apart, both with the marker on the visible dip in their figures (#10's 6168.767 MHz is the 150 kHz outlier of the three and is not used). Bare is deliberately null: figure #11 shows the recorded bare 6168.242 MHz and the dressed 6168.617 MHz as two markers on opposite shoulders of a single dip that runs unbroken from -45 to -15 dBm, i.e. no second branch exists in that window at all; figure #7, whose 0 dBm ceiling does clear the knee, puts the real high-power feature near 6.1702 GHz - ~1.7 MHz ABOVE the dressed line, on the opposite side from the recorded 'bare'. So the recorded bare is not merely sub-linewidth, it is on the wrong side of the dressed line, and no fitted bare exists anywhere in the session. Power: -34.8 / -32.1 / -29.5 dBm across #7 / #10 / #11, a 5 dB spread, all far below the ~-9 dBm knee, hence safe but only ~dB-resolved.",
+    "value_confidence": "med"
+   },
+   "wasted_runs": [
+    {
+     "run": "#8_05_resonator_spectroscopy_vs_power_035956",
+     "why_wasted": "Flown for q8's benefit: the span was widened to 80 MHz and the ceiling left at 0 dBm, so q9's top rows stayed in the bistable/chaotic regime - large asymmetric swings and multiple crossings rather than a snap. The node failed and its provisional optimum landed at -10 dBm inside that chaos. Nothing usable for q9."
+    },
+    {
+     "run": "#9_05_resonator_spectroscopy_vs_power_040451",
+     "why_wasted": "The ceiling was dropped 0 -> -15 dBm, i.e. below q9's ~-9 dBm knee, while the 80 MHz span was kept. The node honestly reported punchout=false and failed. It correctly diagnoses ceiling-below-punch-out but produces no q9 value, and the diagnosis was already available from #7."
+    },
+    {
+     "run": "#10_05_resonator_spectroscopy_vs_power_040948",
+     "why_wasted": "A near-duplicate of #11 (same span/step/ceiling, floor -70 instead of -45) whose extra floor decade is speckle for q9. Its unique output is the spurious 6168.242 MHz 'bare', and its dressed value is the 150 kHz outlier of the three measurements. Either #10 or #11 suffices and #11 is the better-floored of the pair, so #10 is the one a correct path drops."
+    }
+   ],
+   "poisoned_writes": [
+    {
+     "run": "#12_05_resonator_spectroscopy_vs_power_042512",
+     "path": "/quam/qubits/q9/resonator/operations/readout/amplitude",
+     "why": "q9 was not measured in #12 (that run swept q3-q7). The written 0.06839463561568215 is not q9's calibrated amplitude from #11 (0.03741768573302463 at FSP -1), nor its power-preserving rescale to the port's new FSP of -11 dBm, which would be 0.1183. It is a feedline-budget number from a run that never looked at q9."
+    },
+    {
+     "run": "#233_05_resonator_spectroscopy_vs_power_200644",
+     "path": "/quam/qubits/q9/resonator/operations/readout/amplitude",
+     "why": "q9 was not in #233's qubit list either; its last measurement was 16 hours earlier. The value 0.10839819238815307 is a third, again unmeasured, readout amplitude for q9 (con1/8/1 full_scale_power_dbm was already -11 before this run, so no compensation was owed - a power-preserving write would have left 0.0684 alone). By session end q9's readout amplitude has been set twice by runs that never measured it."
+    }
+   ],
+   "ideal_length": 2,
+   "actual_length": 5,
+   "confidence": "med",
+   "caveats": "actual_length counts the 5 runs that measured q9; #12 and #233 touched q9 only by writing to its state. The published annotation for #11 calls q9 a sub-linewidth-shift case; with the whole session in view that reading is wrong - the shift is a real ~1.7 MHz (visible in #7), and what is sub-linewidth is the artifact that #10/#11 mislabelled as bare. q9 is also the one qubit on con1/8/1 that was never re-measured in the evening despite q6, q7 and q8 all having moved, so its stored frequency is very likely stale at session end even though it was trustworthy when taken."
+  }
+ ],
+ "exclusions": [
+  {
+   "run": "#8",
+   "qubit": "q8",
+   "reason": "spur-lock false accept \u2014 excluded from the verification round by expert decision (manual ER-0)"
+  }
+ ]
+}

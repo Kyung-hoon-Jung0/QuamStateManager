@@ -37,6 +37,13 @@ a = Analysis(
         # strips every exemplar the judge reasons from.  Ship the packs.
         (os.path.join(_pkg, "core", "autofit", "judge_packs"),
          os.path.join("quam_state_manager", "core", "autofit", "judge_packs")),
+        # Same trap as judge_packs: the docs/129 domain-knowledge manuals are
+        # data read off disk by core/autofit/knowledge.py (Path(__file__)
+        # relative) — load_family() answers None for a missing pack, so a
+        # frozen build without this line doesn't crash, it silently ships an
+        # app that knows nothing.
+        (os.path.join(_pkg, "knowledge"),
+         os.path.join("quam_state_manager", "knowledge")),
     ],
     hiddenimports=[
         "quam_state_manager",

@@ -1,0 +1,381 @@
+{
+ "schema": "smgolden/v2",
+ "family": "resonator_spectroscopy",
+ "chip": "AS_10TQ9TC",
+ "session": "2026-08-09",
+ "session_id": "AS_10TQ9TC__2026-08-09",
+ "authored": "2026-08-21",
+ "status": "hindsight-authored + adversarial audit",
+ "runs": [
+  "#6_03_resonator_spectroscopy_single_035754",
+  "#21_03_resonator_spectroscopy_single_043655",
+  "#227_03_resonator_spectroscopy_single_195543",
+  "#234_03_resonator_spectroscopy_single_200846"
+ ],
+ "runs_note": "The exact run set this key was authored from; scoring must replay these and only these.",
+ "audit_challenged": false,
+ "audit_note": "The adversarial pass challenged this family's keys harder than any other's. A key flagged audit_challenged carries load-bearing defects its own auditor found; a score computed against it measures the key as much as the system.",
+ "session_notes": "FAMILY: 03_resonator_spectroscopy_single, all four runs NEW generation (dip_snr / ambiguous / candidates / success_shape present, escalation ladder min_dip_snr=6.0, dip_dominance=2.0, escalate_on_no_dip=false, max_escalation_span_in_mhz=1000). Runs: #6 (q8,q9, non-mux), #21 (q6,q7, non-mux), #227 (q5-q8, mux, span 30), #234 (q5-q8, mux, span 40, 200 shots).\n\nSURFACE READING: every target in every run is a textbook success \u2014 one Fano-asymmetric notch, dip_snr 99-355, r2 0.969-0.999, ambiguous=false, exactly one candidate, success_shape=true, 1.5-3.0 rad phase wrap through the dip, closed IQ circle. I confirmed independently from ds_raw.h5 that each panel contains exactly ONE dip above 3 sigma (the only secondary anywhere is a 5.7-sigma, 4.7%-depth ripple in #234/q8 at 5940.96 MHz). There is no Fano trap here, no ambiguity, no dip/peak confusion, and no multiplexed q5/q6 cross-contamination despite their windows overlapping. Nothing inside any single run's own report can be faulted.\n\nTHE ACTUAL FAULT (invisible per-run, provable across runs): the values ratchet. Every 03 run reports its dip at a FIXED detuning from the sweep centre, writes that back, and the next node re-centres there and reports the same fixed detuning again. Over 2026-08-09 q8's state RF_frequency climbed 5,950.000 -> 5,951.554 (#6) -> 5,953.155 (#227) -> 5,954.757 (#228) -> 5,956.356 (#231) -> 5,957.756 (#233) -> 5,959.199 MHz (#234) monotonically, while the physical resonance never moved.\n\nROOT CAUSE, confirmed from the run folders themselves: the readout element's probe tone is LO + resonator.intermediate_frequency, and intermediate_frequency is byte-identical in every quam_state of the day (q5 -24,322,647 / q6 -25,102,647 / q7 +75,937,764 / q8 -76,581,688 / q9 +146,937,219 Hz; LO 6.023 GHz for q5, 6.025 GHz for the rest). No node patches it \u2014 03, 06_vs_flux and 05_vs_power all patch only f_01 and RF_frequency. So the swept band is FIXED while the plotted x-axis (RF_frequency + detuning) drifts. Two independent confirmations: (1) trace-shape correlation between #227 and #234 is 0.97-0.996 when aligned by DETUNING and 0.04-0.42 when aligned by ABSOLUTE frequency for q5/q6/q8 (q7 is 0.999 both ways only because its centre barely moved); (2) reconstructing f_true = LO + IF + (f0 - sweep_centre) gives a value stable to 42-486 kHz across runs spanning 3-8 MHz of state drift.\n\nTRUE RESONANCES vs WHAT THE SESSION LEFT IN STATE (Hz): q5 5,999,504,200 vs 6,003,287,410 (+3.783 MHz error); q6 6,001,281,633 vs 6,009,643,299 (+8.362); q7 6,101,044,867 vs 6,100,475,053 (-0.570); q8 5,949,951,067 vs 5,959,199,084 (+9.248); q9 6,170,829,524 vs 6,169,692,305 (-1.137).\n\nDETECTION MOMENT: run #227. q8 is swept with its centre set exactly to #6's own written value and the dip returns at +1.601 MHz, reproducing #6's +1.554 MHz to 47 kHz. A re-centred sweep whose offset does not collapse toward zero is proof the previous write never moved the probe. That single fact condemns the whole chip (one code path, one frozen field), so #227 is where every target should have stopped. The operator instead adopted all four and let #228-#233 (06 vs_flux x2, 07 vs_coupler_flux x2, 05 vs_power x2 \u2014 outside this family but the same mechanism) add four more rungs before re-running 03 as #234.\n\nNOT A HARDWARE FAILURE: because intermediate_frequency never moved, the physical readout kept probing the right band all day and downstream nodes (iq_blobs, power_rabi) kept working. The damage is entirely in the recorded numbers and detonates the moment anything re-derives IF from RF_frequency (config regeneration, a rebuilt machine, or SM's generate_config).\n\nFigures viewed: 2 of 6 budget (#227 and #234 amplitude sheets) \u2014 they show the same notch sitting at +1.5 MHz detuning in both runs, i.e. the fault is legible on the panel itself as \"the dip never returns to zero detuning after the last run wrote it\". Phase/IQ panels were not needed: the phase excursion through each dip was measured numerically from ds_raw.h5 (1.5-3.0 rad) and every feature is a genuine resonance. The lineshapes are genuinely Fano (shoulder 70-90% of the dip prominence for q5/q6/q8) but the notch is the deepest excursion in all 13 target-runs, so the classic trap never fires in this session.",
+ "adversarial_audit": "Verified against the run folders (`state.json`, `ds_raw.h5`) at `D:\\work\\dataset\\AS_10TQ9TC\\2026-08-09`. The ratchet mechanism is real \u2014 dip detunings are locked (q8 +1.6/+1.6/+1.4 MHz; q7 +0.1 in all three), sweep centres equal the stale `RF_frequency`, `intermediate_frequency` never moves. Nine defects:\n\n1. **The prescribed repair is destructive** (q5/q6/q8/q9, every `correct_next_action`): \"set `intermediate_frequency = RF_frequency - LO`\". `RF_frequency` is the corrupted field; this retunes q8's probe by +9.25 MHz \u2014 exactly the catastrophe the key's own q8 `poisoned_writes` warns about. Correct: `RF_frequency := LO + IF` (in `#6` q5/q6/q7 it is still the pointer `#./inferred_RF_frequency` the node clobbers \u2014 the key never notes this), or `IF := f_true - LO`.\n2. **The acceptance test cannot detect the fault.** `|f0 - sweep_centre| < 0.3 MHz` is passed by q7 at all three runs (+0.083/+0.113/+0.125) while q7 is mislabelled. Correct test: `RF_frequency == LO + IF`, or displace the centre and check absolute dip position.\n3. **\"Exactly ONE dip above 3\u03c3 per panel; only one 5.7\u03c3/4.7% secondary\" is false.** Every panel has secondaries at 12\u201348\u03c3: #234/q6 at det +13.4 MHz (56% relative depth), #234/q8 at +14.4 (27%), #21/q6 at +11.3 (24%), #6/q9 at +9.5 (12%).\n4. **#6 step 1 self-contradicts.** Its `correct_next_action` demands the IF-vs-patch-set check, while `poisoned_writes` says \"nothing in or before this run could reveal it.\" At #6, `RF 5,950.000` vs `LO+IF 5,948.418` is a 1.582 MHz mismatch in that run's own state. Either detection is #6, or delete the instruction.\n5. **\"the physical resonance never moved\" is contradicted.** In the fixed band q5 moves +1.10\u2192+0.60 MHz, q8 +1.60\u2192+1.40, q6 +1.50\u2192+1.30 between #227 and #234, tracking port FSP \u221211\u21920 dBm. So `final_frequency` averages runs at different readout powers; not a valid estimator (q8 spans \u221241.1 to \u221235.2 dBm).\n6. **q5 amplitude claim false:** record is 0.034246 \u2192 **0.013960** with FSP \u221211\u21920; not \"0.03425 \u2192 0.04953\". Net +3.2 dB is right; the amplitude is invented.\n7. **q9 inversion:** RF 6,170.800 sits 1.137 MHz *below* the probe tone 6,171.937, not \"ABOVE\". Offset sign is set by f_true vs probe tone.\n8. **#227/q8 `dip_snr` quoted 85.1**; record 117.84 (below the key's own stated 99\u2013355 range).\n9. **q9 step 2 is unscoreable** \u2014 grades a nonexistent run on a target absent from #227, making ideal(2) > actual(1); `termination.at_run=#6` while the path continues past it.\n\nMinor: #227 is both q7's ideal step and `wasted`; q7 marked `unresolved` while instructed to hold #21's value; \"monotonic ratchet\" \u2014 q6/q7 were moved *down* (\u2212380,000 / \u2212900,004 Hz) by intervening nodes.\n\n**\ud55c\uad6d\uc5b4 \uc694\uc57d:** \ub798\uce6b \uba54\ucee4\ub2c8\uc998 \uc790\uccb4\ub294 \uc2e4\uce21\uc73c\ub85c \ud655\uc778\ub428. \uadf8\ub7ec\ub098 \ub2f5\uc548\uc9c0\uc758 \uc218\ub9ac \uc9c0\uc2dc(`IF = RF - LO`)\ub294 \uadf8\ub300\ub85c \ub530\ub974\uba74 \ud310\ub3c5\uc744 9.2 MHz \uc5b4\uae0b\ub098\uac8c \ud558\ub294 \ud30c\uad34\uc801 \ucc98\ubc29\uc774\uace0, \uc81c\uc2dc\ub41c \ud569\uaca9 \uae30\uc900(0.3 MHz)\uc740 q7\uc774 \ub9e4\ubc88 \ud1b5\uacfc\ud558\ubbc0\ub85c \uacb0\ud568\uc744 \ubabb \uc7a1\uc74c. \"\ud328\ub110\ub2f9 3\u03c3 \ucd08\uacfc \ub525 1\uac1c\"\u00b7\"\uacf5\uc9c4\uc774 \uc6c0\uc9c1\uc778 \uc801 \uc5c6\uc74c\"\u00b7q5 \uc9c4\ud3ed\u00b7q9 \ubd80\ud638\u00b7#227 q8 SNR\uc740 \uae30\ub85d\uacfc \ubd88\uc77c\uce58. q9 step 2\ub294 \uc874\uc7ac\ud558\uc9c0 \uc54a\ub294 \ub7f0\uc744 \ucc44\uc810\ud568.",
+ "qubits": [
+  {
+   "qubit": "q8",
+   "runs_in_scope": [
+    "#6_03_resonator_spectroscopy_single_035754",
+    "#227_03_resonator_spectroscopy_single_195543",
+    "#234_03_resonator_spectroscopy_single_200846"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#6_03_resonator_spectroscopy_single_035754",
+     "expected_case": "New generation. One clean Fano-asymmetric notch: dip_snr 237.7, r2 0.985, fwhm 2.264 MHz, ambiguous=false, single candidate, success_shape=true. Independently verified from ds_raw: exactly one dip above 3 sigma (140 sigma prominence, 1.48x median |A|), a 2.2 rad phase wrap concentrated on the dip, closed IQ circle. Genuine resonance. It sits +1.554 MHz above the sweep centre, but that centre was the round design value 5,950.000000 MHz, so a 1.5 MHz offset on a first sweep is unremarkable.",
+     "expected_flags": [
+      "new_generation",
+      "single_unambiguous_dip",
+      "resonance_confirmed_in_phase_and_iq",
+      "fano_shoulder_present_but_dip_dominant",
+      "fit_offset_from_sweep_centre_plus_1.554MHz",
+      "sweep_centred_on_design_value_not_a_measurement"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Adopt 5,951,554,376.62 Hz provisionally and arm the one check that matters: the next 03 on q8 (frequency_span_in_mhz 30, frequency_step_in_mhz 0.1, unchanged) must come back with |f0 - sweep_centre| < ~0.3 MHz. Also verify that the write reaches the probe tone \u2014 resonator.intermediate_frequency (-76,581,688 Hz, LO 6.025 GHz) is the field that actually sets the played frequency, and the patch set touches only f_01 and RF_frequency.",
+     "operator_did": "Adopted; wrote 5,951,554,376.62 Hz to /quam/qubits/q8/resonator/f_01 and RF_frequency.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 2,
+     "run": "#227_03_resonator_spectroscopy_single_195543",
+     "expected_case": "q8 re-swept 16 h later with the centre now exactly at #6's own written value (5,951.554 MHz). The dip comes back at +1.601 MHz \u2014 reproducing #6's +1.554 MHz to within 47 kHz. A re-centred sweep whose offset does not collapse to zero proves the previous write never moved the probe tone. Corroboration inside the same two files: the entire trace (notch, both Fano shoulders, background) correlates 0.996 when #6 and #227 are aligned by DETUNING and only 0.50 when aligned by ABSOLUTE frequency \u2014 the swept band never moved. Root cause is in the run's own quam_state: resonator.intermediate_frequency = -76,581,688 Hz is identical in #6, #21, #227, #228, #231, #233, #234 while RF_frequency ratchets, so the probe tone is fixed at LO + IF = 5,948.418312 MHz and the true resonance is 5,948.418 + 1.601 = 5,950.019 MHz, not the 5,953.155 MHz the node reports. The report itself is flawless (dip_snr 85.1, r2 0.992, ambiguous=false) \u2014 the escalation ladder cannot see this because there is always a dominant dip in the window.",
+     "expected_flags": [
+      "offset_reproduced_after_recentring",
+      "trace_locked_to_detuning_not_absolute_frequency",
+      "intermediate_frequency_never_patched",
+      "write_does_not_reach_probe_tone",
+      "ratchet_in_progress",
+      "node_reports_success_regardless",
+      "chip_wide_defect_same_code_path"
+     ],
+     "correct_decision": "reject_and_stop",
+     "correct_next_action": "Write nothing. Stop the resonator chain for q8 and for every readout element on this chip \u2014 this is a state/hardware coupling bug, not a sweep-knob problem, so no span/step/dominance retune can fix it. Repair first: set resonator.intermediate_frequency = RF_frequency - LO for each readout element (or make the node patch IF alongside RF_frequency), then re-run 03 once per qubit at frequency_span_in_mhz 30, frequency_step_in_mhz 0.1 and require |f0 - sweep_centre| < 0.3 MHz before adopting anything. If a hardware-side confirmation is wanted first, one bounded probe suffices: re-run 03 on q8 with the sweep centre displaced by -10 MHz and check whether the dip stays at the same ABSOLUTE frequency (it will).",
+     "operator_did": "Adopted; wrote 5,953,155,181.80 Hz \u2014 the second rung of the ratchet \u2014 and then let #228/#231/#233 add three more before re-running 03.",
+     "operator_was_right": "no"
+    }
+   ],
+   "termination": {
+    "at_run": "#227_03_resonator_spectroscopy_single_195543",
+    "reason": "The run that first PROVES the fault: q8 re-swept on its own previously-written centre reproduces the +1.6 MHz offset instead of collapsing to zero. Everything after this only advances a ratchet that no further 03 run can resolve. #234 was not needed for q8 and cost +6.044 MHz of additional state error.",
+    "final_frequency": 5949951067,
+    "final_sweep_value": null,
+    "unresolved": true,
+    "value_evidence": "5,949,951,067 Hz is a RECONSTRUCTION, not a number any run reported, and it is not what the session left in state. f_true = LO + resonator.intermediate_frequency + (f0 - sweep_centre): 6,025,000,000 - 76,581,688 = 5,948,418,312 Hz probe centre, plus the fitted detuning +1,554,377 (#6) / +1,600,805 (#227) / +1,443,085 (#234) gives 5,949.9727 / 5,950.0191 / 5,949.8614 MHz \u2014 three independent runs, state centres spanning 7.76 MHz, agreeing to 158 kHz (7% of the 2.25 MHz FWHM). The state was left at 5,959,199,084 Hz, +9.248 MHz wrong. Marked unresolved because the calibration chain itself never produced an adoptable value: every 03 output was a mislabelled axis and the correct terminal action is repair-then-remeasure, not adopt.",
+    "value_confidence": "high"
+   },
+   "wasted_runs": [
+    {
+     "run": "#234_03_resonator_spectroscopy_single_200846",
+     "why_wasted": "Third measurement of q8. The defect was already provable at #227, and this run could not resolve it either \u2014 it re-swept the same fixed physical band (5,928.4-5,968.3 MHz played) with a centre label 6.20 MHz higher, reported the same +1.443 MHz offset, and wrote 5,959,199,084 Hz. Its only value in hindsight is as confirming evidence the ideal path did not need."
+    }
+   ],
+   "poisoned_writes": [
+    {
+     "run": "#6_03_resonator_spectroscopy_single_035754",
+     "path": "/quam/qubits/q8/resonator/{f_01, RF_frequency} = 5,951,554,376.62",
+     "why": "Off by +1.58 MHz from the true 5,949.97 MHz because the plotted axis was anchored to a stale RF_frequency while the probe sat at LO+IF. Not a culpable decision \u2014 nothing in or before this run could reveal it \u2014 but it is the first rung of the ratchet and the value must not be trusted."
+    },
+    {
+     "run": "#227_03_resonator_spectroscopy_single_195543",
+     "path": "/quam/qubits/q8/resonator/{f_01, RF_frequency} = 5,953,155,181.80",
+     "why": "+3.14 MHz above the true 5,950.02 MHz. Culpable: this run contained the proof that the previous write never moved the probe, and the write was made anyway."
+    },
+    {
+     "run": "#234_03_resonator_spectroscopy_single_200846",
+     "path": "/quam/qubits/q8/resonator/{f_01, RF_frequency} = 5,959,199,084.32",
+     "why": "+9.25 MHz above the true 5,949.86 MHz \u2014 the terminal state of the day. Any later regeneration of the machine config that derives intermediate_frequency from RF_frequency will retune the readout 9.2 MHz off a 2.8 MHz-wide resonance and destroy readout contrast."
+    }
+   ],
+   "ideal_length": 2,
+   "actual_length": 3,
+   "confidence": "high",
+   "caveats": "The per-run reports are genuinely faultless and the resonance is genuinely real \u2014 a reader confined to one run cannot be blamed. The whole finding rests on cross-run comparison plus the quam_state sidecar, both of which the system under test has at #227. The reconstruction's residual 158 kHz spread is consistent with the real readout-amplitude change written by #233, not with reconstruction error."
+  },
+  {
+   "qubit": "q6",
+   "runs_in_scope": [
+    "#21_03_resonator_spectroscopy_single_043655",
+    "#227_03_resonator_spectroscopy_single_195543",
+    "#234_03_resonator_spectroscopy_single_200846"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#21_03_resonator_spectroscopy_single_043655",
+     "expected_case": "New generation, non-multiplexed. One Fano-asymmetric notch: dip_snr 354.8 (the highest in the session), r2 0.995, fwhm 2.500 MHz, ambiguous=false, one candidate. Verified from ds_raw: single dip at 149 sigma, 1.62x median |A|, with a 114-sigma shoulder 2.1 MHz below it \u2014 the classic Fano pair, and the dip is the deeper excursion, so the fit picked correctly. 1.98 rad phase wrap through it. Offset from sweep centre +1.335 MHz; nothing yet distinguishes that from real drift since #21's centre came from an earlier, unaudited value.",
+     "expected_flags": [
+      "new_generation",
+      "single_unambiguous_dip",
+      "fano_pair_dip_deeper_than_shoulder",
+      "fit_offset_from_sweep_centre_plus_1.335MHz",
+      "no_prior_03_in_session_to_compare"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Adopt 6,003,479,245.91 Hz provisionally and require the same confirmation as every other target: the next 03 on q6 must return |f0 - sweep_centre| < ~0.3 MHz once the centre is the value just written. Keep frequency_span_in_mhz 30 / frequency_step_in_mhz 0.1.",
+     "operator_did": "Adopted; wrote 6,003,479,245.91 Hz.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 2,
+     "run": "#227_03_resonator_spectroscopy_single_195543",
+     "expected_case": "q6 re-swept with a centre of 6,003.099 MHz and the dip returns at +1.498 MHz \u2014 the offset did not shrink by the 0.955 MHz the centre had moved, it grew. On its own that is only suspicious; in this same file q8 reproduces its own offset to 47 kHz on a centre set exactly to its previous fit, which is proof, and q6 shares the identical code path and the identical frozen field (resonator.intermediate_frequency = -25,102,647 Hz, unchanged all day; LO 6.025 GHz, probe tone fixed at 5,999.897353 MHz). Trace correlation #227 vs #234 for q6 is 0.975 by detuning and 0.185 by absolute frequency. True resonance = 5,999.897 + 1.498 = 6,001.395 MHz, not the reported 6,004.597 MHz.",
+     "expected_flags": [
+      "offset_failed_to_shrink_after_centre_moved",
+      "sibling_q8_proves_mechanism_in_same_run",
+      "trace_locked_to_detuning_not_absolute_frequency",
+      "intermediate_frequency_never_patched",
+      "ratchet_in_progress"
+     ],
+     "correct_decision": "reject_and_stop",
+     "correct_next_action": "Write nothing for q6. Same repair as q8 and every other readout element: re-derive resonator.intermediate_frequency from RF_frequency - LO, then a single confirming 03 (span 30 MHz, step 0.1 MHz) with the acceptance test |f0 - sweep_centre| < 0.3 MHz. Do not run 06_resonator_spectroscopy_vs_flux or 05_resonator_spectroscopy_vs_power before the repair \u2014 they patch RF_frequency the same way and each adds a rung.",
+     "operator_did": "Adopted; wrote 6,004,596,936.61 Hz, then ran #228/#231/#233 which pushed q6 to 6,005.951 -> 6,007.323 -> 6,008.323 MHz before the next 03.",
+     "operator_was_right": "no"
+    }
+   ],
+   "termination": {
+    "at_run": "#227_03_resonator_spectroscopy_single_195543",
+    "reason": "Same detection moment as q8 \u2014 the proof lives in this run and applies chip-wide. Continuing past it produced the worst single-target damage of the day short of q8.",
+    "final_frequency": 6001281633,
+    "final_sweep_value": null,
+    "unresolved": true,
+    "value_evidence": "Reconstruction f_true = LO + intermediate_frequency + (f0 - sweep_centre) = 6,025,000,000 - 25,102,647 = 5,999,897,353 Hz probe centre, plus +1,334,946 (#21) / +1,497,691 (#227) / +1,320,257 (#234) gives 6,001.2323 / 6,001.3950 / 6,001.2176 MHz \u2014 three runs, state centres spanning 6.18 MHz, agreeing to 177 kHz (9% of the 1.93 MHz FWHM). The state was left at 6,009,643,299 Hz, +8.362 MHz wrong. Unresolved because no run of the family produced an adoptable number.",
+    "value_confidence": "high"
+   },
+   "wasted_runs": [
+    {
+     "run": "#234_03_resonator_spectroscopy_single_200846",
+     "why_wasted": "Third measurement. Re-swept the same fixed physical band with a centre label 5.22 MHz higher, returned the same +1.320 MHz offset, and wrote 6,009,643,299 Hz. Resolved nothing and added +5.05 MHz of state error."
+    }
+   ],
+   "poisoned_writes": [
+    {
+     "run": "#21_03_resonator_spectroscopy_single_043655",
+     "path": "/quam/qubits/q6/resonator/{f_01, RF_frequency} = 6,003,479,245.91",
+     "why": "+2.25 MHz above the true 6,001.23 MHz. Not culpable at the time, but the value is a mislabelled axis position, not a measurement of an absolute frequency."
+    },
+    {
+     "run": "#227_03_resonator_spectroscopy_single_195543",
+     "path": "/quam/qubits/q6/resonator/{f_01, RF_frequency} = 6,004,596,936.61",
+     "why": "+3.20 MHz above the true 6,001.40 MHz, written in the very run that proved the mechanism."
+    },
+    {
+     "run": "#234_03_resonator_spectroscopy_single_200846",
+     "path": "/quam/qubits/q6/resonator/{f_01, RF_frequency} = 6,009,643,299.09",
+     "why": "+8.36 MHz above the true 6,001.22 MHz \u2014 4.3 linewidths off. Terminal state of the day."
+    }
+   ],
+   "ideal_length": 2,
+   "actual_length": 3,
+   "confidence": "high",
+   "caveats": "q6's own history is a weaker signal than q8's because its centre was moved by other nodes between #21 and #227, so the offset never had a clean zero to fail against. The condemnation at #227 leans on the sibling proof in the same file plus the frozen intermediate_frequency, both of which are in the run folder. The independent #227-vs-#234 detuning/absolute correlation split (0.975 vs 0.185) is q6-specific and confirms it."
+  },
+  {
+   "qubit": "q5",
+   "runs_in_scope": [
+    "#227_03_resonator_spectroscopy_single_195543",
+    "#234_03_resonator_spectroscopy_single_200846"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#227_03_resonator_spectroscopy_single_195543",
+     "expected_case": "First 03 on q5 in this session, multiplexed with q6/q7/q8, span 30 MHz. Report is clean: dip_snr 121.2, r2 0.991, fwhm 2.374 MHz, ambiguous=false, one candidate. Verified from ds_raw: one dip at 132 sigma, 0.92x median |A|, 2.25 rad phase wrap, only a 20-sigma shoulder beside it. Note the multiplexing does NOT contaminate: q6's resonance lies inside q5's window and produces no second dip above 3 sigma. Offset from centre +1.070 MHz. On q5's own history there is nothing to detect \u2014 but the same file contains q8 re-swept on its own previous fit and reproducing its offset to 47 kHz, and q5 shares that code path and the same frozen field (resonator.intermediate_frequency = -24,322,647 Hz, LO 6.023 GHz, probe tone pinned at 5,998.677353 MHz). True resonance = 5,998.677 + 1.070 = 5,999.747 MHz, not the reported 6,000.097 MHz.",
+     "expected_flags": [
+      "new_generation",
+      "single_unambiguous_dip",
+      "multiplexed_but_no_neighbour_contamination",
+      "no_prior_03_on_this_target",
+      "sibling_q8_proves_mechanism_in_same_run",
+      "intermediate_frequency_never_patched"
+     ],
+     "correct_decision": "reject_and_stop",
+     "correct_next_action": "Write nothing for q5 despite a flawless-looking fit \u2014 the defect proved on q8 in this same run is a property of the node's patch set, not of the target. Repair resonator.intermediate_frequency = RF_frequency - LO across all readout elements, then take q5's first real measurement with one 03 (span 30 MHz, step 0.1 MHz) and the acceptance test |f0 - sweep_centre| < 0.3 MHz. Because q5 is the only target with no prior 03 in the session, run it non-multiplexed once after the repair so its own re-centred confirmation is unambiguous.",
+     "operator_did": "Adopted; wrote 6,000,097,369.88 Hz, then ran #228/#231/#233 which pushed q5 to 6,001.214 -> 6,002.304 -> 6,002.704 MHz.",
+     "operator_was_right": "no"
+    }
+   ],
+   "termination": {
+    "at_run": "#227_03_resonator_spectroscopy_single_195543",
+    "reason": "The only run q5 needed, and the run where the chip-wide defect is proved. The write should have been withheld here; nothing later could resolve q5 without the repair.",
+    "final_frequency": 5999504200,
+    "final_sweep_value": null,
+    "unresolved": true,
+    "value_evidence": "Reconstruction: probe centre LO + IF = 6,023,000,000 - 24,322,647 = 5,998,677,353 Hz, plus the fitted detuning +1,069,993 (#227) / +583,684 (#234) gives 5,999.7474 / 5,999.2610 MHz \u2014 mean 5,999,504,200 Hz. The 486 kHz spread is the largest of the session and is itself explained: #233 raised q5's readout amplitude 0.03425 -> 0.04953 (+3.2 dB) between the two runs, so part of that gap is a real power shift, not reconstruction error. State was left at 6,003,287,410 Hz, +3.783 MHz wrong.",
+    "value_confidence": "med"
+   },
+   "wasted_runs": [
+    {
+     "run": "#234_03_resonator_spectroscopy_single_200846",
+     "why_wasted": "Second measurement. Its only contribution is confirming the mechanism on q5's own history (centre moved +3.677 MHz, offset fell only 0.486 MHz instead of 3.677) \u2014 evidence the ideal path already had from the sibling proof at #227. It wrote 6,003,287,410 Hz, adding +3.19 MHz of error."
+    }
+   ],
+   "poisoned_writes": [
+    {
+     "run": "#227_03_resonator_spectroscopy_single_195543",
+     "path": "/quam/qubits/q5/resonator/{f_01, RF_frequency} = 6,000,097,369.88",
+     "why": "+0.35 MHz above the true 5,999.75 MHz. Small in itself, but it is the rung that #228/#231/#233 and #234 then built on."
+    },
+    {
+     "run": "#234_03_resonator_spectroscopy_single_200846",
+     "path": "/quam/qubits/q5/resonator/{f_01, RF_frequency} = 6,003,287,410.18",
+     "why": "+3.78 MHz above the true 5,999.26 MHz \u2014 1.24 linewidths off a 3.05 MHz-wide resonance. Terminal state of the day."
+    }
+   ],
+   "ideal_length": 1,
+   "actual_length": 2,
+   "confidence": "med",
+   "caveats": "q5 is the one target whose condemnation at its FIRST run rests entirely on sibling evidence \u2014 a reader that refuses cross-target inference would legitimately adopt at #227 and only catch it at #234, giving an ideal_length of 2. I score the sibling inference as correct because the mechanism is a frozen field in the shared state schema, verified present for q5 itself. The reconstructed value carries only med confidence: two runs, 486 kHz spread, with a genuine readout-power change between them."
+  },
+  {
+   "qubit": "q7",
+   "runs_in_scope": [
+    "#21_03_resonator_spectroscopy_single_043655",
+    "#227_03_resonator_spectroscopy_single_195543",
+    "#234_03_resonator_spectroscopy_single_200846"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#21_03_resonator_spectroscopy_single_043655",
+     "expected_case": "New generation, non-multiplexed. The best-behaved target in the session: dip_snr 101.6, r2 0.997, fwhm 2.577 MHz, ambiguous=false, one candidate, and \u2014 unlike q5/q6/q8 \u2014 a symmetric notch on a flat background with NO Fano shoulder above 3 sigma and a fit baseline that actually tracks the data. Offset from sweep centre only +0.083 MHz. 1.97 rad phase wrap. Nothing to question.",
+     "expected_flags": [
+      "new_generation",
+      "single_unambiguous_dip",
+      "no_fano_shoulder_flat_background",
+      "fit_essentially_at_sweep_centre",
+      "best_conditioned_target_of_session"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Adopt 6,101,076,060.18 Hz. Because the offset is already sub-0.1 MHz, q7 needs no further 03 this session \u2014 it is converged. Apply the same standing check to the next run that touches it (|f0 - sweep_centre| < 0.3 MHz), and note that q7's small offset makes it the CONTROL that later isolates the chip-wide labelling fault rather than a hardware drift.",
+     "operator_did": "Adopted; wrote 6,101,076,060.18 Hz.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 2,
+     "run": "#227_03_resonator_spectroscopy_single_195543",
+     "expected_case": "q7 re-measured after its centre was moved to 6,100.176 MHz by an intervening node. The dip follows the centre almost exactly: the centre moved -0.817 MHz and the reported dip moved -0.787 MHz, leaving the offset at +0.113 MHz instead of shifting by the full 0.817. The #227-vs-#234 trace correlation for q7 is 0.999 by detuning AND 0.999 by absolute frequency \u2014 but only because q7's centre barely moved (0.174 MHz), which is precisely why q7 is the control: its offset is small and stable while q5/q6/q8 hold offsets of +0.6 to +1.6 MHz on the same code path. q7's probe tone is pinned at LO + IF = 6,025,000,000 + 75,937,764 = 6,100.937764 MHz, unchanged all day, so the true resonance is 6,100.938 + 0.113 = 6,101.051 MHz and the reported 6,100.289 MHz is a mislabel like the others \u2014 just a small one.",
+     "expected_flags": [
+      "dip_tracks_sweep_centre",
+      "small_offset_low_practical_damage",
+      "intermediate_frequency_never_patched",
+      "control_target_isolates_labelling_fault",
+      "sibling_q8_proves_mechanism_in_same_run"
+     ],
+     "correct_decision": "reject_and_stop",
+     "correct_next_action": "Write nothing. q7 is already correct to within 0.03 MHz of truth from the #21 value (6,101.076 vs 6,101.045 MHz), so the only effect of adopting here is to move it AWAY from truth. Hold q7 at its #21 value, repair resonator.intermediate_frequency chip-wide, and confirm once afterwards at span 30 MHz / step 0.1 MHz.",
+     "operator_did": "Adopted; wrote 6,100,289,379.09 Hz, replacing a value that was accurate to 31 kHz with one 0.76 MHz low.",
+     "operator_was_right": "no"
+    }
+   ],
+   "termination": {
+    "at_run": "#227_03_resonator_spectroscopy_single_195543",
+    "reason": "q7 was already converged at #21 \u2014 offset +0.083 MHz, flat background, r2 0.997 \u2014 and every subsequent 03 could only re-label it. #227 is where the chip-wide fault becomes provable and where q7's writes should have stopped.",
+    "final_frequency": 6101044867,
+    "final_sweep_value": null,
+    "unresolved": true,
+    "value_evidence": "Reconstruction: probe centre LO + IF = 6,025,000,000 + 75,937,764 = 6,100,937,764 Hz, plus +83,044 (#21) / +113,323 (#227) / +124,935 (#234) gives 6,101.0208 / 6,101.0511 / 6,101.0627 MHz \u2014 three runs agreeing to 41.9 kHz, the tightest reconstruction of the session (1.5% of the 2.88 MHz FWHM). The state was left at 6,100,475,053 Hz, -0.570 MHz low, about 0.2 linewidths \u2014 a real but modest readout-contrast penalty, unlike q5/q6/q8. Marked unresolved on the same rule as the rest: the family never delivered an adoptable number, and the number it did deliver moved away from truth.",
+    "value_confidence": "high"
+   },
+   "wasted_runs": [
+    {
+     "run": "#227_03_resonator_spectroscopy_single_195543",
+     "why_wasted": "For q7 specifically, this re-measurement was unnecessary \u2014 q7 was converged at #21 to within 31 kHz of truth \u2014 and it actively degraded the stored value by 0.79 MHz. It is in the ideal path only as the point where the write must be refused; q7 was carried along because #227 was multiplexed for q5/q6/q8."
+    },
+    {
+     "run": "#234_03_resonator_spectroscopy_single_200846",
+     "why_wasted": "Third measurement of an already-converged target. Reported the same +0.125 MHz offset and wrote 6,100,475,053 Hz. Resolved nothing."
+    }
+   ],
+   "poisoned_writes": [
+    {
+     "run": "#21_03_resonator_spectroscopy_single_043655",
+     "path": "/quam/qubits/q7/resonator/{f_01, RF_frequency} = 6,101,076,060.18",
+     "why": "Technically the same mislabel mechanism, but only +0.031 MHz from the true 6,101.045 MHz \u2014 harmless, and the most accurate value q7 ever held. Listed for completeness, not as damage."
+    },
+    {
+     "run": "#227_03_resonator_spectroscopy_single_195543",
+     "path": "/quam/qubits/q7/resonator/{f_01, RF_frequency} = 6,100,289,379.09",
+     "why": "-0.76 MHz below the true 6,101.05 MHz. This write replaced an essentially exact value with a worse one."
+    },
+    {
+     "run": "#234_03_resonator_spectroscopy_single_200846",
+     "path": "/quam/qubits/q7/resonator/{f_01, RF_frequency} = 6,100,475,053.04",
+     "why": "-0.57 MHz below the true 6,101.06 MHz \u2014 roughly 0.2 linewidths of readout detuning. Terminal state of the day."
+    }
+   ],
+   "ideal_length": 2,
+   "actual_length": 3,
+   "confidence": "high",
+   "caveats": "q7's damage is an order of magnitude smaller than q5/q6/q8's, so a system that adopts q7 throughout ends the session only 0.57 MHz off and would look nearly correct. The key still scores those adoptions wrong: they are the same defect, and the #21 value they overwrote was better. q7's near-zero offset is the strongest single argument that q5/q6/q8's persistent +1.5 MHz offsets are instrumental rather than physical drift \u2014 a flux campaign that moved three resonators by 3-9 MHz would not leave the fourth on the same feedline within 0.04 MHz all day."
+  },
+  {
+   "qubit": "q9",
+   "runs_in_scope": [
+    "#6_03_resonator_spectroscopy_single_035754"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#6_03_resonator_spectroscopy_single_035754",
+     "expected_case": "New generation, non-multiplexed, measured once at 03:57 alongside q8. Strongest report of the session: dip_snr 333.7, r2 0.994, fwhm 1.902 MHz, ambiguous=false, one candidate. Verified from ds_raw: one dip at 160 sigma, 0.94x median |A|, a 97-sigma Fano shoulder 3.8 MHz above it (the dip is still the deeper excursion, so the notch/peak trap does not fire), 1.82 rad phase wrap. Offset from sweep centre -1.108 MHz \u2014 note the sign, the only NEGATIVE offset in the session, which is expected under the labelling fault since q9's stale RF_frequency (6,170.800 MHz) happened to sit ABOVE its probe tone LO + IF = 6,025,000,000 + 146,937,219 = 6,171.937219 MHz... reported below it. Nothing in this single run can reveal that.",
+     "expected_flags": [
+      "new_generation",
+      "single_unambiguous_dip",
+      "fano_shoulder_present_but_dip_dominant",
+      "resonance_confirmed_in_phase_and_iq",
+      "negative_offset_from_sweep_centre_minus_1.108MHz",
+      "only_one_run_no_cross_check_possible"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Adopt 6,169,692,305.26 Hz provisionally and schedule the confirmation q9 never got: one more 03 on q9 (frequency_span_in_mhz 30, frequency_step_in_mhz 0.1) with the centre now at the written value, requiring |f0 - sweep_centre| < 0.3 MHz. q9 is the only target measured exactly once, so it is the only one whose value nothing in the session ever tested.",
+     "operator_did": "Adopted; wrote 6,169,692,305.26 Hz. Never re-measured q9 for the rest of the day \u2014 the value was still in state at #246.",
+     "operator_was_right": "yes"
+    },
+    {
+     "step": 2,
+     "run": "(never run) re-centred 03 on q9 \u2014 the operator dropped q9 after #6; the ideal path re-measures it once #227 proves the fault on q8",
+     "expected_case": "By #227 the chip-wide defect is proved on q8 and the shared cause is a state field q9 also carries (resonator.intermediate_frequency = +146,937,219 Hz, identical in every quam_state of the day). q9's #6 write is therefore retroactively suspect on exactly the same grounds, even though q9 itself was never re-swept. Reconstruction puts the true resonance at 6,171.937 - 1.108 = 6,170.830 MHz, meaning the state value 6,169.692 MHz is 1.137 MHz LOW \u2014 the pre-run value of 6,170.800 MHz was closer to truth than the number the calibration wrote.",
+     "expected_flags": [
+      "retroactively_invalidated_by_sibling_proof",
+      "single_run_target_never_confirmed",
+      "write_moved_value_away_from_truth",
+      "no_run_exists_to_close_this"
+     ],
+     "correct_decision": "reconfirm",
+     "correct_next_action": "Repair resonator.intermediate_frequency = RF_frequency - LO for q9 along with the rest of the chip, then run 03 on q9 once (span 30 MHz, step 0.1 MHz, non-multiplexed) and accept only if |f0 - sweep_centre| < 0.3 MHz. Until that run exists, q9's stored frequency has no confirmation of any kind.",
+     "operator_did": "Nothing \u2014 q9 was measured once and never revisited; the 1.137 MHz-low value survived the whole session.",
+     "operator_was_right": "no"
+    }
+   ],
+   "termination": {
+    "at_run": "#6_03_resonator_spectroscopy_single_035754",
+    "reason": "q9 has exactly one run in the family. The session ends for q9 with a single unconfirmed value, and the fault proved on its siblings at #227 says that value is wrong \u2014 but no run exists that could close it.",
+    "final_frequency": 6170829524,
+    "final_sweep_value": null,
+    "unresolved": true,
+    "value_evidence": "Single reconstruction: probe centre LO + IF = 6,025,000,000 + 146,937,219 = 6,171,937,219 Hz, plus the fitted detuning -1,107,695 gives 6,170,829,524 Hz. It falls inside the actually-played window (6,156.9-6,186.8 MHz), and the method is validated to 42-177 kHz on q6/q7/q8 where three runs exist. But q9 has no repeat, so there is no within-target check and no way to separate a power/flux shift from reconstruction error. The state was left at 6,169,692,305 Hz, -1.137 MHz off.",
+    "value_confidence": "med"
+   },
+   "wasted_runs": [],
+   "poisoned_writes": [
+    {
+     "run": "#6_03_resonator_spectroscopy_single_035754",
+     "path": "/quam/qubits/q9/resonator/{f_01, RF_frequency} = 6,169,692,305.26",
+     "why": "-1.14 MHz below the true 6,170.83 MHz, about 0.6 of the 1.90 MHz linewidth. Notably the pre-run value 6,170,800,000 Hz was within 0.03 MHz of truth, so this single calibration write made q9 worse, and because q9 was never revisited it stayed that way all day."
+    }
+   ],
+   "ideal_length": 2,
+   "actual_length": 1,
+   "confidence": "med",
+   "caveats": "This is the target where the ideal path goes somewhere the operator never went: it needs a run that does not exist. Everything about q9's own run is impeccable and the adoption at #6 was correct; the condemnation is entirely inherited from the mechanism proved on q8/q6/q5 plus q9's own frozen intermediate_frequency. Confidence is med rather than high only because a single reconstruction cannot be cross-checked \u2014 the reconstruction METHOD is high-confidence, its application to q9 is not independently confirmed."
+  }
+ ]
+}

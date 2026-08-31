@@ -1,0 +1,1941 @@
+{
+ "schema": "smknowex/v1",
+ "family": "resonator_spectroscopy_vs_power",
+ "note": "Axes are NORMALISED and UNLABELLED: no absolute frequency, power or flux leaves this pack, and a picture without numbers cannot teach an absolute scale (Clause B). Orientation follows the labs' own convention: frequency rightwards, the swept quantity upwards. Overlays: orange = the tracked feature, cyan dashed and magenta dotted = the record's own frequency claims, red = the sweep value it chose. Markers are the RECORD's claims, drawn even when they contradict the map \u2014 that contradiction is the lesson in the mislabelled and off-feature cases. Whether the feature is a dip or a peak is MEASURED per run, because the readout rotation decides it and it differs between labs.",
+ "rendered": [
+  {
+   "case": "C1",
+   "exemplar": "lab-A/#314/q6",
+   "file": "exemplars/C1/lab-A_314_q6.png",
+   "chip": "lab-A",
+   "run": "#314",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    32,
+    30
+   ],
+   "traceable": 23,
+   "slices": 30,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "C1",
+   "exemplar": "lab-A/#12/q3",
+   "file": "exemplars/C1/lab-A_12_q3.png",
+   "chip": "lab-A",
+   "run": "#12",
+   "qubit": "q3",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    107,
+    40
+   ],
+   "traceable": 29,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "C1",
+   "exemplar": "lab-A/#348/q6",
+   "file": "exemplars/C1/lab-A_348_q6.png",
+   "chip": "lab-A",
+   "run": "#348",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    60,
+    40
+   ],
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "C1",
+   "exemplar": "lab-B/#135/q2",
+   "file": "exemplars/C1/lab-B_135_q2.png",
+   "chip": "lab-B",
+   "run": "#135",
+   "qubit": "q2",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    150,
+    100
+   ],
+   "traceable": 44,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "C1",
+   "exemplar": "lab-B/#192/q14",
+   "file": "exemplars/C1/lab-B_192_q14.png",
+   "chip": "lab-B",
+   "run": "#192",
+   "qubit": "q14",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    150,
+    100
+   ],
+   "traceable": 89,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "C1",
+   "exemplar": "lab-B/#352/q10",
+   "file": "exemplars/C1/lab-B_352_q10.png",
+   "chip": "lab-B",
+   "run": "#352",
+   "qubit": "q10",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    167,
+    100
+   ],
+   "traceable": 68,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "C1",
+   "exemplar": "lab-B/#996/q20",
+   "file": "exemplars/C1/lab-B_996_q20.png",
+   "chip": "lab-B",
+   "run": "#996",
+   "qubit": "q20",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    50,
+    50
+   ],
+   "traceable": 25,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "C2",
+   "exemplar": "lab-B/#41/q1",
+   "file": "exemplars/C2/lab-B_41_q1.png",
+   "chip": "lab-B",
+   "run": "#41",
+   "qubit": "q1",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    200,
+    100
+   ],
+   "traceable": 100,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "C2",
+   "exemplar": "lab-B/#995/q20",
+   "file": "exemplars/C2/lab-B_995_q20.png",
+   "chip": "lab-B",
+   "run": "#995",
+   "qubit": "q20",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    38,
+    50
+   ],
+   "traceable": 33,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "C2",
+   "exemplar": "lab-B/#255/q4",
+   "file": "exemplars/C2/lab-B_255_q4.png",
+   "chip": "lab-B",
+   "run": "#255",
+   "qubit": "q4",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    150,
+    100
+   ],
+   "traceable": 70,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "C2",
+   "exemplar": "lab-A/#9/q9",
+   "file": "exemplars/C2/lab-A_9_q9.png",
+   "chip": "lab-A",
+   "run": "#9",
+   "qubit": "q9",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    800,
+    40
+   ],
+   "traceable": 39,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "C2",
+   "exemplar": "lab-B/#1350/q15",
+   "file": "exemplars/C2/lab-B_1350_q15.png",
+   "chip": "lab-B",
+   "run": "#1350",
+   "qubit": "q15",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    41
+   ],
+   "traceable": 38,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "C3",
+   "exemplar": "lab-A/#321/q6",
+   "file": "exemplars/C3/lab-A_321_q6.png",
+   "chip": "lab-A",
+   "run": "#321",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    40
+   ],
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "C3",
+   "exemplar": "lab-A/#341/q7",
+   "file": "exemplars/C3/lab-A_341_q7.png",
+   "chip": "lab-A",
+   "run": "#341",
+   "qubit": "q7",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    40
+   ],
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "C3",
+   "exemplar": "lab-B/#727/q12",
+   "file": "exemplars/C3/lab-B_727_q12.png",
+   "chip": "lab-B",
+   "run": "#727",
+   "qubit": "q12",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    150,
+    40
+   ],
+   "traceable": 20,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "C3",
+   "exemplar": "lab-B/#1351/q20",
+   "file": "exemplars/C3/lab-B_1351_q20.png",
+   "chip": "lab-B",
+   "run": "#1351",
+   "qubit": "q20",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    41
+   ],
+   "traceable": 27,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "C3",
+   "exemplar": "lab-A/#7/q8",
+   "file": "exemplars/C3/lab-A_7_q8.png",
+   "chip": "lab-A",
+   "run": "#7",
+   "qubit": "q8",
+   "markers_drawn": [
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    40
+   ],
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "C4a",
+   "exemplar": "lab-B/#76/q6",
+   "file": "exemplars/C4a/lab-B_76_q6.png",
+   "chip": "lab-B",
+   "run": "#76",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    150,
+    100
+   ],
+   "traceable": 72,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "C4a",
+   "exemplar": "lab-B/#391/q1",
+   "file": "exemplars/C4a/lab-B_391_q1.png",
+   "chip": "lab-B",
+   "run": "#391",
+   "qubit": "q1",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    167,
+    100
+   ],
+   "traceable": 84,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "C4a",
+   "exemplar": "lab-B/#1117/q6",
+   "file": "exemplars/C4a/lab-B_1117_q6.png",
+   "chip": "lab-B",
+   "run": "#1117",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    150,
+    100
+   ],
+   "traceable": 48,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "C4a",
+   "exemplar": "lab-B/#481/q8",
+   "file": "exemplars/C4a/lab-B_481_q8.png",
+   "chip": "lab-B",
+   "run": "#481",
+   "qubit": "q8",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 91,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "C4a",
+   "exemplar": "lab-A/#307/q6",
+   "file": "exemplars/C4a/lab-A_307_q6.png",
+   "chip": "lab-A",
+   "run": "#307",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    32,
+    30
+   ],
+   "traceable": 15,
+   "slices": 30,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "C4b",
+   "exemplar": "lab-A/#335/q6",
+   "file": "exemplars/C4b/lab-A_335_q6.png",
+   "chip": "lab-A",
+   "run": "#335",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    40
+   ],
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "C4b",
+   "exemplar": "lab-A/#345/q6",
+   "file": "exemplars/C4b/lab-A_345_q6.png",
+   "chip": "lab-A",
+   "run": "#345",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    40
+   ],
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "C4b",
+   "exemplar": "lab-B/#176/q18",
+   "file": "exemplars/C4b/lab-B_176_q18.png",
+   "chip": "lab-B",
+   "run": "#176",
+   "qubit": "q18",
+   "markers_drawn": [
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    150,
+    100
+   ],
+   "traceable": 50,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "C4b",
+   "exemplar": "lab-A/#8/q9",
+   "file": "exemplars/C4b/lab-A_8_q9.png",
+   "chip": "lab-A",
+   "run": "#8",
+   "qubit": "q9",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    800,
+    40
+   ],
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "C4b",
+   "exemplar": "lab-B/#349/q10",
+   "file": "exemplars/C4b/lab-B_349_q10.png",
+   "chip": "lab-B",
+   "run": "#349",
+   "qubit": "q10",
+   "markers_drawn": [
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    200,
+    100
+   ],
+   "traceable": 83,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "C5",
+   "exemplar": "lab-B/#382/q18",
+   "file": "exemplars/C5/lab-B_382_q18.png",
+   "chip": "lab-B",
+   "run": "#382",
+   "qubit": "q18",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    167,
+    100
+   ],
+   "traceable": 100,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "C5",
+   "exemplar": "lab-B/#394/q5",
+   "file": "exemplars/C5/lab-B_394_q5.png",
+   "chip": "lab-B",
+   "run": "#394",
+   "qubit": "q5",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    167,
+    100
+   ],
+   "traceable": 92,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "C5",
+   "exemplar": "lab-B/#1352/q9",
+   "file": "exemplars/C5/lab-B_1352_q9.png",
+   "chip": "lab-B",
+   "run": "#1352",
+   "qubit": "q9",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    41
+   ],
+   "traceable": 40,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "C5",
+   "exemplar": "lab-B/#347/q9",
+   "file": "exemplars/C5/lab-B_347_q9.png",
+   "chip": "lab-B",
+   "run": "#347",
+   "qubit": "q9",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    200,
+    100
+   ],
+   "traceable": 87,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "C6",
+   "exemplar": "lab-B/#1089/q19",
+   "file": "exemplars/C6/lab-B_1089_q19.png",
+   "chip": "lab-B",
+   "run": "#1089",
+   "qubit": "q19",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    300,
+    100
+   ],
+   "traceable": 49,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "C6",
+   "exemplar": "lab-B/#1116/q6",
+   "file": "exemplars/C6/lab-B_1116_q6.png",
+   "chip": "lab-B",
+   "run": "#1116",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    150,
+    100
+   ],
+   "traceable": 34,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "C6",
+   "exemplar": "lab-B/#175/q18",
+   "file": "exemplars/C6/lab-B_175_q18.png",
+   "chip": "lab-B",
+   "run": "#175",
+   "qubit": "q18",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    150,
+    100
+   ],
+   "traceable": 47,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "N1",
+   "exemplar": "lab-B/#624/q9",
+   "file": "exemplars/N1/lab-B_624_q9.png",
+   "chip": "lab-B",
+   "run": "#624",
+   "qubit": "q9",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    150,
+    40
+   ],
+   "traceable": 20,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "N1",
+   "exemplar": "lab-B/#179/q16",
+   "file": "exemplars/N1/lab-B_179_q16.png",
+   "chip": "lab-B",
+   "run": "#179",
+   "qubit": "q16",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    150,
+    100
+   ],
+   "traceable": 43,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "N1",
+   "exemplar": "lab-B/#335/q9",
+   "file": "exemplars/N1/lab-B_335_q9.png",
+   "chip": "lab-B",
+   "run": "#335",
+   "qubit": "q9",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    150,
+    40
+   ],
+   "traceable": 25,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "N1",
+   "exemplar": "lab-B/#357/q16",
+   "file": "exemplars/N1/lab-B_357_q16.png",
+   "chip": "lab-B",
+   "run": "#357",
+   "qubit": "q16",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    167,
+    100
+   ],
+   "traceable": 60,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "N1",
+   "exemplar": "lab-A/#9/q8",
+   "file": "exemplars/N1/lab-A_9_q8.png",
+   "chip": "lab-A",
+   "run": "#9",
+   "qubit": "q8",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    800,
+    40
+   ],
+   "traceable": 36,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "N2",
+   "exemplar": "lab-A/#8/q8",
+   "file": "exemplars/N2/lab-A_8_q8.png",
+   "chip": "lab-A",
+   "run": "#8",
+   "qubit": "q8",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    800,
+    40
+   ],
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "N3",
+   "exemplar": "lab-A/#315/q6",
+   "file": "exemplars/N3/lab-A_315_q6.png",
+   "chip": "lab-A",
+   "run": "#315",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    32,
+    30
+   ],
+   "traceable": 26,
+   "slices": 30,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "N3",
+   "exemplar": "lab-A/#315/q7",
+   "file": "exemplars/N3/lab-A_315_q7.png",
+   "chip": "lab-A",
+   "run": "#315",
+   "qubit": "q7",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    32,
+    30
+   ],
+   "traceable": 29,
+   "slices": 30,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "N3",
+   "exemplar": "lab-A/#347/q7",
+   "file": "exemplars/N3/lab-A_347_q7.png",
+   "chip": "lab-A",
+   "run": "#347",
+   "qubit": "q7",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    40
+   ],
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "N3",
+   "exemplar": "lab-A/#11/q9",
+   "file": "exemplars/N3/lab-A_11_q9.png",
+   "chip": "lab-A",
+   "run": "#11",
+   "qubit": "q9",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    107,
+    40
+   ],
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "N4",
+   "exemplar": "lab-B/#350/q10",
+   "file": "exemplars/N4/lab-B_350_q10.png",
+   "chip": "lab-B",
+   "run": "#350",
+   "qubit": "q10",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    167,
+    100
+   ],
+   "traceable": 72,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "N4",
+   "exemplar": "lab-B/#351/q10",
+   "file": "exemplars/N4/lab-B_351_q10.png",
+   "chip": "lab-B",
+   "run": "#351",
+   "qubit": "q10",
+   "markers_drawn": [
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    167,
+    100
+   ],
+   "traceable": 76,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "N4",
+   "exemplar": "lab-A/#306/q7",
+   "file": "exemplars/N4/lab-A_306_q7.png",
+   "chip": "lab-A",
+   "run": "#306",
+   "qubit": "q7",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    24,
+    30
+   ],
+   "traceable": 15,
+   "slices": 30,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "N5",
+   "exemplar": "lab-B/#40/q1",
+   "file": "exemplars/N5/lab-B_40_q1.png",
+   "chip": "lab-B",
+   "run": "#40",
+   "qubit": "q1",
+   "markers_drawn": [
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    150,
+    100
+   ],
+   "traceable": 49,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "N6",
+   "exemplar": "lab-A/#9/q8",
+   "file": "exemplars/N6/lab-A_9_q8.png",
+   "chip": "lab-A",
+   "run": "#9",
+   "qubit": "q8",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    800,
+    40
+   ],
+   "traceable": 36,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "N6",
+   "exemplar": "lab-A/#318/q7",
+   "file": "exemplars/N6/lab-A_318_q7.png",
+   "chip": "lab-A",
+   "run": "#318",
+   "qubit": "q7",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    40
+   ],
+   "traceable": 38,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "N6",
+   "exemplar": "lab-A/#320/q6",
+   "file": "exemplars/N6/lab-A_320_q6.png",
+   "chip": "lab-A",
+   "run": "#320",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    40
+   ],
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "N7",
+   "exemplar": "lab-B/#377/q19",
+   "file": "exemplars/N7/lab-B_377_q19.png",
+   "chip": "lab-B",
+   "run": "#377",
+   "qubit": "q19",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    167,
+    100
+   ],
+   "traceable": 49,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "N7",
+   "exemplar": "lab-B/#378/q19",
+   "file": "exemplars/N7/lab-B_378_q19.png",
+   "chip": "lab-B",
+   "run": "#378",
+   "qubit": "q19",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    167,
+    100
+   ],
+   "traceable": 71,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "N7",
+   "exemplar": "lab-B/#1033/q12",
+   "file": "exemplars/N7/lab-B_1033_q12.png",
+   "chip": "lab-B",
+   "run": "#1033",
+   "qubit": "q12",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    50,
+    50
+   ],
+   "traceable": 41,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "N7",
+   "exemplar": "lab-B/#1079/q12",
+   "file": "exemplars/N7/lab-B_1079_q12.png",
+   "chip": "lab-B",
+   "run": "#1079",
+   "qubit": "q12",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    50,
+    50
+   ],
+   "traceable": 38,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "N7",
+   "exemplar": "lab-B/#1352/q17",
+   "file": "exemplars/N7/lab-B_1352_q17.png",
+   "chip": "lab-B",
+   "run": "#1352",
+   "qubit": "q17",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    100,
+    41
+   ],
+   "traceable": 38,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "N8",
+   "exemplar": "lab-A/#342/q6",
+   "file": "exemplars/N8/lab-A_342_q6.png",
+   "chip": "lab-A",
+   "run": "#342",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    40
+   ],
+   "traceable": 37,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "N8",
+   "exemplar": "lab-A/#342/q7",
+   "file": "exemplars/N8/lab-A_342_q7.png",
+   "chip": "lab-A",
+   "run": "#342",
+   "qubit": "q7",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    40
+   ],
+   "traceable": 35,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "N8",
+   "exemplar": "lab-B/#135/q1",
+   "file": "exemplars/N8/lab-B_135_q1.png",
+   "chip": "lab-B",
+   "run": "#135",
+   "qubit": "q1",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    150,
+    100
+   ],
+   "traceable": 47,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "N8",
+   "exemplar": "lab-B/#76/q6",
+   "file": "exemplars/N8/lab-B_76_q6.png",
+   "chip": "lab-B",
+   "run": "#76",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    150,
+    100
+   ],
+   "traceable": 72,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "F1",
+   "exemplar": "lab-A/#318/q6",
+   "file": "exemplars/F1/lab-A_318_q6.png",
+   "chip": "lab-A",
+   "run": "#318",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    40
+   ],
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "F1",
+   "exemplar": "lab-A/#10/q8",
+   "file": "exemplars/F1/lab-A_10_q8.png",
+   "chip": "lab-A",
+   "run": "#10",
+   "qubit": "q8",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    107,
+    40
+   ],
+   "traceable": 30,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "F1",
+   "exemplar": "lab-A/#232/q5",
+   "file": "exemplars/F1/lab-A_232_q5.png",
+   "chip": "lab-A",
+   "run": "#232",
+   "qubit": "q5",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    30,
+    40
+   ],
+   "traceable": 24,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "F1",
+   "exemplar": "lab-B/#347/q9",
+   "file": "exemplars/F1/lab-B_347_q9.png",
+   "chip": "lab-B",
+   "run": "#347",
+   "qubit": "q9",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    200,
+    100
+   ],
+   "traceable": 87,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "F1",
+   "exemplar": "lab-B/#1352/q17",
+   "file": "exemplars/F1/lab-B_1352_q17.png",
+   "chip": "lab-B",
+   "run": "#1352",
+   "qubit": "q17",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    100,
+    41
+   ],
+   "traceable": 38,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "F1",
+   "exemplar": "lab-B/#378/q19",
+   "file": "exemplars/F1/lab-B_378_q19.png",
+   "chip": "lab-B",
+   "run": "#378",
+   "qubit": "q19",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    167,
+    100
+   ],
+   "traceable": 71,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "F2",
+   "exemplar": "lab-A/#320/q7",
+   "file": "exemplars/F2/lab-A_320_q7.png",
+   "chip": "lab-A",
+   "run": "#320",
+   "qubit": "q7",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    40
+   ],
+   "traceable": 38,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "F2",
+   "exemplar": "lab-A/#321/q6",
+   "file": "exemplars/F2/lab-A_321_q6.png",
+   "chip": "lab-A",
+   "run": "#321",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    40
+   ],
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "F2",
+   "exemplar": "lab-A/#327/q6",
+   "file": "exemplars/F2/lab-A_327_q6.png",
+   "chip": "lab-A",
+   "run": "#327",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    40
+   ],
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "F2",
+   "exemplar": "lab-A/#347/q6",
+   "file": "exemplars/F2/lab-A_347_q6.png",
+   "chip": "lab-A",
+   "run": "#347",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    40
+   ],
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "F2",
+   "exemplar": "lab-B/#41/q1",
+   "file": "exemplars/F2/lab-B_41_q1.png",
+   "chip": "lab-B",
+   "run": "#41",
+   "qubit": "q1",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    200,
+    100
+   ],
+   "traceable": 100,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "F3",
+   "exemplar": "lab-A/#326/q6",
+   "file": "exemplars/F3/lab-A_326_q6.png",
+   "chip": "lab-A",
+   "run": "#326",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    40
+   ],
+   "traceable": 39,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "F3",
+   "exemplar": "lab-A/#319/q6",
+   "file": "exemplars/F3/lab-A_319_q6.png",
+   "chip": "lab-A",
+   "run": "#319",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    40
+   ],
+   "traceable": 37,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "F3",
+   "exemplar": "lab-A/#346/q6",
+   "file": "exemplars/F3/lab-A_346_q6.png",
+   "chip": "lab-A",
+   "run": "#346",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    40
+   ],
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "F3",
+   "exemplar": "lab-B/#1351/q14",
+   "file": "exemplars/F3/lab-B_1351_q14.png",
+   "chip": "lab-B",
+   "run": "#1351",
+   "qubit": "q14",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    41
+   ],
+   "traceable": 41,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "F3",
+   "exemplar": "lab-B/#1213/q15",
+   "file": "exemplars/F3/lab-B_1213_q15.png",
+   "chip": "lab-B",
+   "run": "#1213",
+   "qubit": "q15",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 50,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "F4",
+   "exemplar": "lab-B/#342/q9",
+   "file": "exemplars/F4/lab-B_342_q9.png",
+   "chip": "lab-B",
+   "run": "#342",
+   "qubit": "q9",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    200,
+    100
+   ],
+   "traceable": 86,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "F4",
+   "exemplar": "lab-B/#1212/q15",
+   "file": "exemplars/F4/lab-B_1212_q15.png",
+   "chip": "lab-B",
+   "run": "#1212",
+   "qubit": "q15",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 71,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "F4",
+   "exemplar": "lab-B/#1352/q19",
+   "file": "exemplars/F4/lab-B_1352_q19.png",
+   "chip": "lab-B",
+   "run": "#1352",
+   "qubit": "q19",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    41
+   ],
+   "traceable": 20,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "F4",
+   "exemplar": "lab-A/#323/q6",
+   "file": "exemplars/F4/lab-A_323_q6.png",
+   "chip": "lab-A",
+   "run": "#323",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    40
+   ],
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "F5",
+   "exemplar": "lab-B/#346/q9",
+   "file": "exemplars/F5/lab-B_346_q9.png",
+   "chip": "lab-B",
+   "run": "#346",
+   "qubit": "q9",
+   "markers_drawn": [
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    200,
+    100
+   ],
+   "traceable": 89,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "F5",
+   "exemplar": "lab-B/#348/q10",
+   "file": "exemplars/F5/lab-B_348_q10.png",
+   "chip": "lab-B",
+   "run": "#348",
+   "qubit": "q10",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    200,
+    100
+   ],
+   "traceable": 84,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "F5",
+   "exemplar": "lab-B/#624/q9",
+   "file": "exemplars/F5/lab-B_624_q9.png",
+   "chip": "lab-B",
+   "run": "#624",
+   "qubit": "q9",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    150,
+    40
+   ],
+   "traceable": 20,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "F5",
+   "exemplar": "lab-B/#995/q20",
+   "file": "exemplars/F5/lab-B_995_q20.png",
+   "chip": "lab-B",
+   "run": "#995",
+   "qubit": "q20",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    38,
+    50
+   ],
+   "traceable": 33,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "F5",
+   "exemplar": "lab-A/#326/q6",
+   "file": "exemplars/F5/lab-A_326_q6.png",
+   "chip": "lab-A",
+   "run": "#326",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    40
+   ],
+   "traceable": 39,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "F6",
+   "exemplar": "lab-A/#315/q6",
+   "file": "exemplars/F6/lab-A_315_q6.png",
+   "chip": "lab-A",
+   "run": "#315",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    32,
+    30
+   ],
+   "traceable": 26,
+   "slices": 30,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "F6",
+   "exemplar": "lab-A/#321/q6",
+   "file": "exemplars/F6/lab-A_321_q6.png",
+   "chip": "lab-A",
+   "run": "#321",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    40
+   ],
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "F6",
+   "exemplar": "lab-B/#1352/q16",
+   "file": "exemplars/F6/lab-B_1352_q16.png",
+   "chip": "lab-B",
+   "run": "#1352",
+   "qubit": "q16",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency",
+    "bare_resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    41
+   ],
+   "traceable": 27,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "F6",
+   "exemplar": "lab-B/#1351/q17",
+   "file": "exemplars/F6/lab-B_1351_q17.png",
+   "chip": "lab-B",
+   "run": "#1351",
+   "qubit": "q17",
+   "markers_drawn": [
+    "optimal_power",
+    "resonator_frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    100,
+    41
+   ],
+   "traceable": 34,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "static"
+  }
+ ],
+ "missing": []
+}

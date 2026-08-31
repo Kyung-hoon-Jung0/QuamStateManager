@@ -77,6 +77,10 @@ class VerificationContext:
     analysis_rev: str | None = None     # SM-side gates+families bytes
     run_generation: str | None = None
     figure_source: str | None = None
+    # docs/135: the chip-profile answer set the judgment branched on.
+    # None = no profile consulted — the SAME context as before profiles
+    # existed, so every old verdict stays comparable.
+    profile_hash: str | None = None
 
     def as_dict(self) -> dict:
         return {"analysis": self.analysis, "env": self.env,
@@ -85,7 +89,8 @@ class VerificationContext:
                 "root_rev": self.root_rev, "root_dirty": self.root_dirty,
                 "gate_hash": self.gate_hash, "analysis_rev": self.analysis_rev,
                 "run_generation": self.run_generation,
-                "figure_source": self.figure_source}
+                "figure_source": self.figure_source,
+                "profile_hash": self.profile_hash}
 
     # -- identity ---------------------------------------------------------
     def key(self) -> tuple:
@@ -98,8 +103,9 @@ class VerificationContext:
         """
         if self.analysis == LAB_REPLAY:
             return (self.analysis, self.env, self.root_rev or self.source_root,
-                    self.gate_hash, self.run_generation)
-        return (self.analysis, self.analysis_rev, self.run_generation)
+                    self.gate_hash, self.run_generation, self.profile_hash)
+        return (self.analysis, self.analysis_rev, self.run_generation,
+                self.profile_hash)
 
     def missing(self) -> list[str]:
         """Which axes of the triple could not be established.

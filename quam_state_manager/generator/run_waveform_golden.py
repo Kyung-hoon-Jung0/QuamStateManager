@@ -123,8 +123,8 @@ def run(out_dir: Path, *, only_keys: set[str] | None = None,
 
     # Generation filters (docs/126 ⑦a): classes that postdate one stack
     # generation live in their own golden file, generated from the env that
-    # HAS them (CosineBipolarPulse → waveform_golden_qb04.json from the cqt
-    # env), while the legacy file stays byte-untouched — so --only-keys
+    # HAS them (CosineBipolarPulse → waveform_golden_qb04.json from the lab-B
+    # customer env), while the legacy file stays byte-untouched — so --only-keys
     # selects the new classes here and --skip-keys excludes them from a
     # legacy-env regeneration.
     if only_keys:

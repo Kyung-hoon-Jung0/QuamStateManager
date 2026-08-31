@@ -1,0 +1,89 @@
+{
+ "rows": [
+  {
+   "run": "#8_05_resonator_spectroscopy_vs_power_035956",
+   "qubit": "q9",
+   "my_case": "C4",
+   "agree": true,
+   "note": "Narrow dip fixed at ~6.168 GHz from -55 up to ~-10 dBm, then a chaotic/bistable band at -8..0 dBm (fit failed, dressed SNR 3.0). Transition region is broad and noisy; bare branch barely established above it. Not C3 since the high-power chaos shows the feature does respond to power."
+  },
+  {
+   "run": "#12_05_resonator_spectroscopy_vs_power_042512",
+   "qubit": "q4",
+   "my_case": "C1",
+   "agree": true,
+   "note": "Dressed dip at ~6.1005 GHz at low power, bare branch at ~6.0975 above ~-30 dBm, transition visible ~-30..-35; optimal -39.5 dBm sits below it. Clean punch-out."
+  },
+  {
+   "run": "#233_05_resonator_spectroscopy_vs_power_200644",
+   "qubit": "q5",
+   "my_case": "C1",
+   "agree": true,
+   "note": "Dressed ~6.0027, bare ~6.0001, transition ~-30..-35 dBm, optimal -37.1 below it. Somewhat noisy but both branches and crossover clear."
+  },
+  {
+   "run": "#313_05_resonator_spectroscopy_vs_power_083344",
+   "qubit": "q6",
+   "my_case": "C1",
+   "agree": true,
+   "note": "Bare 6.0120 at high power, dressed ~6.0148 below ~-35; crossover is a gradual diagonal (-27..-35) but continuous and both branches distinct; optimal -48.2 well below. Borderline toward C4 on crossover width, but I read it clean."
+  },
+  {
+   "run": "#317_05_resonator_spectroscopy_vs_power_084003",
+   "qubit": "q6",
+   "my_case": "C1",
+   "agree": true,
+   "note": "Dressed band 6.0143 terminates at ~-31 dBm inside the window; bare landing (6.0120) partly hidden behind the annotation box but the punch-out itself is evidenced. Optimal -35.3 below the transition. Transition is near the top edge \u2014 borderline but C1."
+  },
+  {
+   "run": "#321_05_resonator_spectroscopy_vs_power_084719",
+   "qubit": "q6",
+   "my_case": "C3",
+   "agree": true,
+   "note": "Single dip fixed at ~6.0125 GHz (= the bare freq from #313/#317) over the full -70..-20 dBm span; no dressed branch anywhere even at the lowest power. Feature does not shift with power."
+  },
+  {
+   "run": "#325_05_resonator_spectroscopy_vs_power_091257",
+   "qubit": "q6",
+   "my_case": "C1",
+   "agree": true,
+   "note": "Figure shows a clean punch-out: dressed ~6.0163 below ~-33, bare ~6.0125 above ~-30, fairly sharp jump \u2014 even though the node's own fit failed on dressed-dip SNR (1.9). Taxonomy applied to the figure, not the fit outcome."
+  },
+  {
+   "run": "#335_05_resonator_spectroscopy_vs_power_094100",
+   "qubit": "q6",
+   "my_case": "C4",
+   "agree": true,
+   "note": "Dip shifts ~6.014 (low power) to ~6.010 (high power) through a broad smeared crossover at -28..-33 dBm; trace spikes wildly at the boundaries. Branches visible, crossover not sharp."
+  },
+  {
+   "run": "#343_05_resonator_spectroscopy_vs_power_100154",
+   "qubit": "q6",
+   "my_case": "C4",
+   "agree": true,
+   "note": "Crisp bare band 6.010 at 0..-27 dBm; weak, wider dressed region ~6.013 at -32..-50 with a noisy non-sharp crossover (fit failed, SNR 2.9). A small shift IS discernible, so C4 rather than C3."
+  },
+  {
+   "run": "#347_05_resonator_spectroscopy_vs_power_101626",
+   "qubit": "q6",
+   "my_case": "C3",
+   "agree": true,
+   "note": "Dip fixed at ~5.9975 GHz across the whole -20..-40 dBm window (which spans where sibling runs punched out); no dressed branch at the floor. Feature does not shift \u2014 bare-only / power floor too high."
+  },
+  {
+   "run": "#43_05_resonator_spectroscopy_vs_power_120136",
+   "qubit": "q1",
+   "my_case": "C2",
+   "agree": true,
+   "note": "Narrow well-defined dip at ~4.9825 GHz constant from -50 to the -25 dBm ceiling \u2014 no transition in window, so bare freq/optimal power undetermined (node itself says 'no punch-out: widen sweep'). Secondary observation: a broad dark band ~4.953 + bright band ~4.967 look like background ripple, not a second resonator line, so I did not headline C5."
+  },
+  {
+   "run": "#175_05_resonator_spectroscopy_vs_power_203920",
+   "qubit": "q18",
+   "my_case": "C6",
+   "agree": true,
+   "note": "Smooth dark-to-bright gradient plus noise; no dip anywhere; the trace just tracks noise (fit failed, SNR 2.8). Empty window."
+  }
+ ],
+ "overall": "12/12 agree. All twelve figures were located via the rvp_batch JSONs and classified blind from figures.power_dbm.png before comparing with the claimed case. Most rows were clear-cut; the genuinely borderline ones were #8/q9 (C4 vs C3 \u2014 resolved C4 because the high-power chaotic band shows the feature responds to power), #313 and #317 (C1 vs C4 on crossover width/edge-of-window transition \u2014 both read clean), #343 (C4 vs C3 \u2014 a small dressed shift is discernible), and CQT #43 (C2 vs C5 \u2014 the extra broad bands read as background ripple, not a second resonator line). No disagreements with the claimed classification."
+}

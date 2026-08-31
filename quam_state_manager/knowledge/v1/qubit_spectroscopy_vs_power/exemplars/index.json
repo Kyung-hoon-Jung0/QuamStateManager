@@ -1,0 +1,6070 @@
+{
+ "schema": "smknowex/v1",
+ "family": "qubit_spectroscopy_vs_power",
+ "note": "Axes are NORMALISED and UNLABELLED: no absolute frequency, power or flux leaves this pack, and a picture without numbers cannot teach an absolute scale (Clause B). Orientation follows the labs' own convention: frequency rightwards, the swept quantity upwards. Overlays: orange = the tracked feature, cyan dashed and magenta dotted = the record's own frequency claims, red = the sweep value it chose. Markers are the RECORD's claims, drawn even when they contradict the map \u2014 that contradiction is the lesson in the mislabelled and off-feature cases. Whether the feature is a dip or a peak is MEASURED per run, because the readout rotation decides it and it differs between labs.",
+ "rendered": [
+  {
+   "case": "P1",
+   "exemplar": "lab-B/#527/q9",
+   "file": "exemplars/P1/lab-B_527_q9.png",
+   "chip": "lab-B",
+   "run": "#527",
+   "qubit": "q9",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    750,
+    50
+   ],
+   "traceable": 18,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P1",
+   "exemplar": "lab-B/#708/q7",
+   "file": "exemplars/P1/lab-B_708_q7.png",
+   "chip": "lab-B",
+   "run": "#708",
+   "qubit": "q7",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    600,
+    50
+   ],
+   "traceable": 9,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P1",
+   "exemplar": "lab-B/#774/q14",
+   "file": "exemplars/P1/lab-B_774_q14.png",
+   "chip": "lab-B",
+   "run": "#774",
+   "qubit": "q14",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 97,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P1",
+   "exemplar": "lab-B/#850/q14",
+   "file": "exemplars/P1/lab-B_850_q14.png",
+   "chip": "lab-B",
+   "run": "#850",
+   "qubit": "q14",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 100,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P1",
+   "exemplar": "lab-B/#804/q13",
+   "file": "exemplars/P1/lab-B_804_q13.png",
+   "chip": "lab-B",
+   "run": "#804",
+   "qubit": "q13",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 99,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P1",
+   "exemplar": "lab-B/#999/q20",
+   "file": "exemplars/P1/lab-B_999_q20.png",
+   "chip": "lab-B",
+   "run": "#999",
+   "qubit": "q20",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    400,
+    50
+   ],
+   "traceable": 43,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P1",
+   "exemplar": "lab-B/#1088/q14",
+   "file": "exemplars/P1/lab-B_1088_q14.png",
+   "chip": "lab-B",
+   "run": "#1088",
+   "qubit": "q14",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    400,
+    41
+   ],
+   "traceable": 32,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P1",
+   "exemplar": "lab-B/#1344/q5",
+   "file": "exemplars/P1/lab-B_1344_q5.png",
+   "chip": "lab-B",
+   "run": "#1344",
+   "qubit": "q5",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    500,
+    40
+   ],
+   "traceable": 16,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P1",
+   "exemplar": "lab-B/#1346/q5",
+   "file": "exemplars/P1/lab-B_1346_q5.png",
+   "chip": "lab-B",
+   "run": "#1346",
+   "qubit": "q5",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    500,
+    40
+   ],
+   "traceable": 40,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P1",
+   "exemplar": "lab-B/#52/q1",
+   "file": "exemplars/P1/lab-B_52_q1.png",
+   "chip": "lab-B",
+   "run": "#52",
+   "qubit": "q1",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 91,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P1",
+   "exemplar": "lab-E/#106/q10",
+   "file": "exemplars/P1/lab-E_106_q10.png",
+   "chip": "lab-E",
+   "run": "#106",
+   "qubit": "q10",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    2400,
+    41
+   ],
+   "traceable": 18,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P1",
+   "exemplar": "lab-E/#70/q10",
+   "file": "exemplars/P1/lab-E_70_q10.png",
+   "chip": "lab-E",
+   "run": "#70",
+   "qubit": "q10",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    2667,
+    21
+   ],
+   "traceable": 17,
+   "slices": 21,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P1",
+   "exemplar": "lab-C/#240/qB1",
+   "file": "exemplars/P1/lab-C_240_qB1.png",
+   "chip": "lab-C",
+   "run": "#240",
+   "qubit": "qB1",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    2500,
+    30
+   ],
+   "traceable": 30,
+   "slices": 30,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P1",
+   "exemplar": "lab-C/#416/qD4",
+   "file": "exemplars/P1/lab-C_416_qD4.png",
+   "chip": "lab-C",
+   "run": "#416",
+   "qubit": "qD4",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    616,
+    20
+   ],
+   "traceable": 20,
+   "slices": 20,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P1",
+   "exemplar": "lab-C/#255/qD3",
+   "file": "exemplars/P1/lab-C_255_qD3.png",
+   "chip": "lab-C",
+   "run": "#255",
+   "qubit": "qD3",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    320,
+    30
+   ],
+   "traceable": 30,
+   "slices": 30,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P2",
+   "exemplar": "lab-B/#527/q9",
+   "file": "exemplars/P2/lab-B_527_q9.png",
+   "chip": "lab-B",
+   "run": "#527",
+   "qubit": "q9",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    750,
+    50
+   ],
+   "traceable": 18,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P2",
+   "exemplar": "lab-B/#708/q7",
+   "file": "exemplars/P2/lab-B_708_q7.png",
+   "chip": "lab-B",
+   "run": "#708",
+   "qubit": "q7",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    600,
+    50
+   ],
+   "traceable": 9,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P2",
+   "exemplar": "lab-B/#1035/q7",
+   "file": "exemplars/P2/lab-B_1035_q7.png",
+   "chip": "lab-B",
+   "run": "#1035",
+   "qubit": "q7",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    41
+   ],
+   "traceable": 18,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P2",
+   "exemplar": "lab-B/#1088/q10",
+   "file": "exemplars/P2/lab-B_1088_q10.png",
+   "chip": "lab-B",
+   "run": "#1088",
+   "qubit": "q10",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    41
+   ],
+   "traceable": 27,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P2",
+   "exemplar": "lab-B/#614/q9",
+   "file": "exemplars/P2/lab-B_614_q9.png",
+   "chip": "lab-B",
+   "run": "#614",
+   "qubit": "q9",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    600,
+    50
+   ],
+   "traceable": 17,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P2",
+   "exemplar": "lab-B/#38/q2",
+   "file": "exemplars/P2/lab-B_38_q2.png",
+   "chip": "lab-B",
+   "run": "#38",
+   "qubit": "q2",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    1200,
+    40
+   ],
+   "traceable": 7,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P2",
+   "exemplar": "lab-E/#70/q10",
+   "file": "exemplars/P2/lab-E_70_q10.png",
+   "chip": "lab-E",
+   "run": "#70",
+   "qubit": "q10",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    2667,
+    21
+   ],
+   "traceable": 17,
+   "slices": 21,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P2",
+   "exemplar": "lab-E/#106/q10",
+   "file": "exemplars/P2/lab-E_106_q10.png",
+   "chip": "lab-E",
+   "run": "#106",
+   "qubit": "q10",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    2400,
+    41
+   ],
+   "traceable": 18,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P2",
+   "exemplar": "lab-C/#116/qA2",
+   "file": "exemplars/P2/lab-C_116_qA2.png",
+   "chip": "lab-C",
+   "run": "#116",
+   "qubit": "qA2",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    5000,
+    50
+   ],
+   "traceable": 50,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P2",
+   "exemplar": "lab-C/#240/qD1",
+   "file": "exemplars/P2/lab-C_240_qD1.png",
+   "chip": "lab-C",
+   "run": "#240",
+   "qubit": "qD1",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    2500,
+    30
+   ],
+   "traceable": 13,
+   "slices": 30,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P2",
+   "exemplar": "lab-C/#61/qA1",
+   "file": "exemplars/P2/lab-C_61_qA1.png",
+   "chip": "lab-C",
+   "run": "#61",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    334,
+    100
+   ],
+   "traceable": 83,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P2",
+   "exemplar": "lab-C/#256/qD3",
+   "file": "exemplars/P2/lab-C_256_qD3.png",
+   "chip": "lab-C",
+   "run": "#256",
+   "qubit": "qD3",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    1667,
+    30
+   ],
+   "traceable": 30,
+   "slices": 30,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P3",
+   "exemplar": "lab-B/#579/q10",
+   "file": "exemplars/P3/lab-B_579_q10.png",
+   "chip": "lab-B",
+   "run": "#579",
+   "qubit": "q10",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    600,
+    50
+   ],
+   "traceable": 20,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P3",
+   "exemplar": "lab-E/#61/q9",
+   "file": "exemplars/P3/lab-E_61_q9.png",
+   "chip": "lab-E",
+   "run": "#61",
+   "qubit": "q9",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    7600,
+    21
+   ],
+   "traceable": 4,
+   "slices": 21,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P3",
+   "exemplar": "lab-E/#30/q6",
+   "file": "exemplars/P3/lab-E_30_q6.png",
+   "chip": "lab-E",
+   "run": "#30",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    7600,
+    21
+   ],
+   "traceable": 12,
+   "slices": 21,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P3",
+   "exemplar": "lab-E/#30/q4",
+   "file": "exemplars/P3/lab-E_30_q4.png",
+   "chip": "lab-E",
+   "run": "#30",
+   "qubit": "q4",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    7600,
+    21
+   ],
+   "traceable": 11,
+   "slices": 21,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P3",
+   "exemplar": "lab-E/#107/q15",
+   "file": "exemplars/P3/lab-E_107_q15.png",
+   "chip": "lab-E",
+   "run": "#107",
+   "qubit": "q15",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    2400,
+    41
+   ],
+   "traceable": 22,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P3",
+   "exemplar": "lab-E/#124/q15",
+   "file": "exemplars/P3/lab-E_124_q15.png",
+   "chip": "lab-E",
+   "run": "#124",
+   "qubit": "q15",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    2000,
+    21
+   ],
+   "traceable": 11,
+   "slices": 21,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P3",
+   "exemplar": "lab-E/#123/q15",
+   "file": "exemplars/P3/lab-E_123_q15.png",
+   "chip": "lab-E",
+   "run": "#123",
+   "qubit": "q15",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    2000,
+    21
+   ],
+   "traceable": 2,
+   "slices": 21,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P4",
+   "exemplar": "lab-E/#30/q10",
+   "file": "exemplars/P4/lab-E_30_q10.png",
+   "chip": "lab-E",
+   "run": "#30",
+   "qubit": "q10",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    7600,
+    21
+   ],
+   "traceable": 10,
+   "slices": 21,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P4",
+   "exemplar": "lab-B/#544/q5",
+   "file": "exemplars/P4/lab-B_544_q5.png",
+   "chip": "lab-B",
+   "run": "#544",
+   "qubit": "q5",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    600,
+    50
+   ],
+   "traceable": 47,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P4",
+   "exemplar": "lab-B/#648/q8",
+   "file": "exemplars/P4/lab-B_648_q8.png",
+   "chip": "lab-B",
+   "run": "#648",
+   "qubit": "q8",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    600,
+    50
+   ],
+   "traceable": 5,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P4",
+   "exemplar": "lab-B/#1344/q9",
+   "file": "exemplars/P4/lab-B_1344_q9.png",
+   "chip": "lab-B",
+   "run": "#1344",
+   "qubit": "q9",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    500,
+    40
+   ],
+   "traceable": 14,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P4",
+   "exemplar": "lab-B/#1346/q9",
+   "file": "exemplars/P4/lab-B_1346_q9.png",
+   "chip": "lab-B",
+   "run": "#1346",
+   "qubit": "q9",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    500,
+    40
+   ],
+   "traceable": 17,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P4",
+   "exemplar": "lab-B/#1344/q5",
+   "file": "exemplars/P4/lab-B_1344_q5.png",
+   "chip": "lab-B",
+   "run": "#1344",
+   "qubit": "q5",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    500,
+    40
+   ],
+   "traceable": 16,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P4",
+   "exemplar": "lab-B/#1245/q10",
+   "file": "exemplars/P4/lab-B_1245_q10.png",
+   "chip": "lab-B",
+   "run": "#1245",
+   "qubit": "q10",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 67,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P4",
+   "exemplar": "lab-E/#22/q17",
+   "file": "exemplars/P4/lab-E_22_q17.png",
+   "chip": "lab-E",
+   "run": "#22",
+   "qubit": "q17",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    3800,
+    26
+   ],
+   "traceable": 11,
+   "slices": 26,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P5",
+   "exemplar": "lab-B/#725/q12",
+   "file": "exemplars/P5/lab-B_725_q12.png",
+   "chip": "lab-B",
+   "run": "#725",
+   "qubit": "q12",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    600,
+    50
+   ],
+   "traceable": 1,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P5",
+   "exemplar": "lab-B/#734/q12",
+   "file": "exemplars/P5/lab-B_734_q12.png",
+   "chip": "lab-B",
+   "run": "#734",
+   "qubit": "q12",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    600,
+    50
+   ],
+   "traceable": 7,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P5",
+   "exemplar": "lab-B/#967/q19",
+   "file": "exemplars/P5/lab-B_967_q19.png",
+   "chip": "lab-B",
+   "run": "#967",
+   "qubit": "q19",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 2,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P5",
+   "exemplar": "lab-B/#1113/q6",
+   "file": "exemplars/P5/lab-B_1113_q6.png",
+   "chip": "lab-B",
+   "run": "#1113",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    800,
+    100
+   ],
+   "traceable": 1,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P5",
+   "exemplar": "lab-B/#1120/q6",
+   "file": "exemplars/P5/lab-B_1120_q6.png",
+   "chip": "lab-B",
+   "run": "#1120",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    800,
+    100
+   ],
+   "traceable": 0,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P5",
+   "exemplar": "lab-B/#1165/q16",
+   "file": "exemplars/P5/lab-B_1165_q16.png",
+   "chip": "lab-B",
+   "run": "#1165",
+   "qubit": "q16",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    500,
+    100
+   ],
+   "traceable": 0,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P5",
+   "exemplar": "lab-B/#1344/q17",
+   "file": "exemplars/P5/lab-B_1344_q17.png",
+   "chip": "lab-B",
+   "run": "#1344",
+   "qubit": "q17",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    500,
+    40
+   ],
+   "traceable": 12,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P5",
+   "exemplar": "lab-B/#1346/q17",
+   "file": "exemplars/P5/lab-B_1346_q17.png",
+   "chip": "lab-B",
+   "run": "#1346",
+   "qubit": "q17",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    500,
+    40
+   ],
+   "traceable": 4,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P5",
+   "exemplar": "lab-B/#249/q3",
+   "file": "exemplars/P5/lab-B_249_q3.png",
+   "chip": "lab-B",
+   "run": "#249",
+   "qubit": "q3",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    1000,
+    40
+   ],
+   "traceable": 1,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P5",
+   "exemplar": "lab-B/#250/q3",
+   "file": "exemplars/P5/lab-B_250_q3.png",
+   "chip": "lab-B",
+   "run": "#250",
+   "qubit": "q3",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    6000,
+    40
+   ],
+   "traceable": 1,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P5",
+   "exemplar": "lab-E/#32/q11",
+   "file": "exemplars/P5/lab-E_32_q11.png",
+   "chip": "lab-E",
+   "run": "#32",
+   "qubit": "q11",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    7600,
+    21
+   ],
+   "traceable": 3,
+   "slices": 21,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P5",
+   "exemplar": "lab-E/#34/q11",
+   "file": "exemplars/P5/lab-E_34_q11.png",
+   "chip": "lab-E",
+   "run": "#34",
+   "qubit": "q11",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    7600,
+    21
+   ],
+   "traceable": 1,
+   "slices": 21,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P5",
+   "exemplar": "lab-E/#36/q11",
+   "file": "exemplars/P5/lab-E_36_q11.png",
+   "chip": "lab-E",
+   "run": "#36",
+   "qubit": "q11",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    7600,
+    21
+   ],
+   "traceable": 1,
+   "slices": 21,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P5",
+   "exemplar": "lab-E/#44/q11",
+   "file": "exemplars/P5/lab-E_44_q11.png",
+   "chip": "lab-E",
+   "run": "#44",
+   "qubit": "q11",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    7600,
+    21
+   ],
+   "traceable": 8,
+   "slices": 21,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P5",
+   "exemplar": "lab-E/#108/q17",
+   "file": "exemplars/P5/lab-E_108_q17.png",
+   "chip": "lab-E",
+   "run": "#108",
+   "qubit": "q17",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    2400,
+    41
+   ],
+   "traceable": 1,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P5",
+   "exemplar": "lab-E/#116/q17",
+   "file": "exemplars/P5/lab-E_116_q17.png",
+   "chip": "lab-E",
+   "run": "#116",
+   "qubit": "q17",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    2000,
+    41
+   ],
+   "traceable": 2,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P6",
+   "exemplar": "lab-B/#614/q9",
+   "file": "exemplars/P6/lab-B_614_q9.png",
+   "chip": "lab-B",
+   "run": "#614",
+   "qubit": "q9",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    600,
+    50
+   ],
+   "traceable": 17,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P6",
+   "exemplar": "lab-B/#671/q11",
+   "file": "exemplars/P6/lab-B_671_q11.png",
+   "chip": "lab-B",
+   "run": "#671",
+   "qubit": "q11",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    600,
+    50
+   ],
+   "traceable": 9,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P6",
+   "exemplar": "lab-B/#141/q2",
+   "file": "exemplars/P6/lab-B_141_q2.png",
+   "chip": "lab-B",
+   "run": "#141",
+   "qubit": "q2",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 66,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P6",
+   "exemplar": "lab-E/#107/q15",
+   "file": "exemplars/P6/lab-E_107_q15.png",
+   "chip": "lab-E",
+   "run": "#107",
+   "qubit": "q15",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    2400,
+    41
+   ],
+   "traceable": 22,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P6",
+   "exemplar": "lab-C/#17/qA1",
+   "file": "exemplars/P6/lab-C_17_qA1.png",
+   "chip": "lab-C",
+   "run": "#17",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 100,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P6",
+   "exemplar": "lab-C/#116/qA2",
+   "file": "exemplars/P6/lab-C_116_qA2.png",
+   "chip": "lab-C",
+   "run": "#116",
+   "qubit": "qA2",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    5000,
+    50
+   ],
+   "traceable": 50,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P6",
+   "exemplar": "lab-C/#240/qB1",
+   "file": "exemplars/P6/lab-C_240_qB1.png",
+   "chip": "lab-C",
+   "run": "#240",
+   "qubit": "qB1",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    2500,
+    30
+   ],
+   "traceable": 30,
+   "slices": 30,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P6",
+   "exemplar": "lab-C/#240/qB2",
+   "file": "exemplars/P6/lab-C_240_qB2.png",
+   "chip": "lab-C",
+   "run": "#240",
+   "qubit": "qB2",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    2500,
+    30
+   ],
+   "traceable": 9,
+   "slices": 30,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P7",
+   "exemplar": "lab-B/#872/q14",
+   "file": "exemplars/P7/lab-B_872_q14.png",
+   "chip": "lab-B",
+   "run": "#872",
+   "qubit": "q14",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 1,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P7",
+   "exemplar": "lab-B/#691/q6",
+   "file": "exemplars/P7/lab-B_691_q6.png",
+   "chip": "lab-B",
+   "run": "#691",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    600,
+    50
+   ],
+   "traceable": 13,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P7",
+   "exemplar": "lab-B/#12/q2",
+   "file": "exemplars/P7/lab-B_12_q2.png",
+   "chip": "lab-B",
+   "run": "#12",
+   "qubit": "q2",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 24,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P7",
+   "exemplar": "lab-B/#1344/q12",
+   "file": "exemplars/P7/lab-B_1344_q12.png",
+   "chip": "lab-B",
+   "run": "#1344",
+   "qubit": "q12",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    500,
+    40
+   ],
+   "traceable": 11,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P7",
+   "exemplar": "lab-B/#1344/q15",
+   "file": "exemplars/P7/lab-B_1344_q15.png",
+   "chip": "lab-B",
+   "run": "#1344",
+   "qubit": "q15",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    500,
+    40
+   ],
+   "traceable": 4,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P7",
+   "exemplar": "lab-B/#1344/q19",
+   "file": "exemplars/P7/lab-B_1344_q19.png",
+   "chip": "lab-B",
+   "run": "#1344",
+   "qubit": "q19",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    500,
+    40
+   ],
+   "traceable": 17,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P7",
+   "exemplar": "lab-B/#969/q6",
+   "file": "exemplars/P7/lab-B_969_q6.png",
+   "chip": "lab-B",
+   "run": "#969",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 16,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P7",
+   "exemplar": "lab-E/#45/q10",
+   "file": "exemplars/P7/lab-E_45_q10.png",
+   "chip": "lab-E",
+   "run": "#45",
+   "qubit": "q10",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    7600,
+    21
+   ],
+   "traceable": 21,
+   "slices": 21,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P7",
+   "exemplar": "lab-E/#62/q10",
+   "file": "exemplars/P7/lab-E_62_q10.png",
+   "chip": "lab-E",
+   "run": "#62",
+   "qubit": "q10",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    7600,
+    21
+   ],
+   "traceable": 21,
+   "slices": 21,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P7",
+   "exemplar": "lab-E/#66/q10",
+   "file": "exemplars/P7/lab-E_66_q10.png",
+   "chip": "lab-E",
+   "run": "#66",
+   "qubit": "q10",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    7600,
+    21
+   ],
+   "traceable": 21,
+   "slices": 21,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P7",
+   "exemplar": "lab-E/#123/q15",
+   "file": "exemplars/P7/lab-E_123_q15.png",
+   "chip": "lab-E",
+   "run": "#123",
+   "qubit": "q15",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    2000,
+    21
+   ],
+   "traceable": 2,
+   "slices": 21,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P8",
+   "exemplar": "lab-B/#526/q8",
+   "file": "exemplars/P8/lab-B_526_q8.png",
+   "chip": "lab-B",
+   "run": "#526",
+   "qubit": "q8",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    750,
+    50
+   ],
+   "traceable": 7,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P8",
+   "exemplar": "lab-B/#648/q8",
+   "file": "exemplars/P8/lab-B_648_q8.png",
+   "chip": "lab-B",
+   "run": "#648",
+   "qubit": "q8",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    600,
+    50
+   ],
+   "traceable": 5,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P8",
+   "exemplar": "lab-B/#1346/q15",
+   "file": "exemplars/P8/lab-B_1346_q15.png",
+   "chip": "lab-B",
+   "run": "#1346",
+   "qubit": "q15",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    500,
+    40
+   ],
+   "traceable": 6,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P8",
+   "exemplar": "lab-B/#1346/q19",
+   "file": "exemplars/P8/lab-B_1346_q19.png",
+   "chip": "lab-B",
+   "run": "#1346",
+   "qubit": "q19",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    500,
+    40
+   ],
+   "traceable": 5,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P8",
+   "exemplar": "lab-B/#1070/q14",
+   "file": "exemplars/P8/lab-B_1070_q14.png",
+   "chip": "lab-B",
+   "run": "#1070",
+   "qubit": "q14",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    400,
+    41
+   ],
+   "traceable": 32,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P8",
+   "exemplar": "lab-E/#21/q17",
+   "file": "exemplars/P8/lab-E_21_q17.png",
+   "chip": "lab-E",
+   "run": "#21",
+   "qubit": "q17",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    2500,
+    16
+   ],
+   "traceable": 7,
+   "slices": 16,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P8",
+   "exemplar": "lab-E/#22/q15",
+   "file": "exemplars/P8/lab-E_22_q15.png",
+   "chip": "lab-E",
+   "run": "#22",
+   "qubit": "q15",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    3800,
+    26
+   ],
+   "traceable": 7,
+   "slices": 26,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P8",
+   "exemplar": "lab-C/#237/qA1",
+   "file": "exemplars/P8/lab-C_237_qA1.png",
+   "chip": "lab-C",
+   "run": "#237",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 100,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P9",
+   "exemplar": "lab-B/#760/q17",
+   "file": "exemplars/P9/lab-B_760_q17.png",
+   "chip": "lab-B",
+   "run": "#760",
+   "qubit": "q17",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 1,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P9",
+   "exemplar": "lab-B/#762/q17",
+   "file": "exemplars/P9/lab-B_762_q17.png",
+   "chip": "lab-B",
+   "run": "#762",
+   "qubit": "q17",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 0,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P9",
+   "exemplar": "lab-B/#773/q17",
+   "file": "exemplars/P9/lab-B_773_q17.png",
+   "chip": "lab-B",
+   "run": "#773",
+   "qubit": "q17",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 1,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P9",
+   "exemplar": "lab-B/#833/q8",
+   "file": "exemplars/P9/lab-B_833_q8.png",
+   "chip": "lab-B",
+   "run": "#833",
+   "qubit": "q8",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 4,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P9",
+   "exemplar": "lab-B/#724/q6",
+   "file": "exemplars/P9/lab-B_724_q6.png",
+   "chip": "lab-B",
+   "run": "#724",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    600,
+    50
+   ],
+   "traceable": 16,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P9",
+   "exemplar": "lab-B/#1165/q6",
+   "file": "exemplars/P9/lab-B_1165_q6.png",
+   "chip": "lab-B",
+   "run": "#1165",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    500,
+    100
+   ],
+   "traceable": 0,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P10",
+   "exemplar": "lab-E/#11/q10",
+   "file": "exemplars/P10/lab-E_11_q10.png",
+   "chip": "lab-E",
+   "run": "#11",
+   "qubit": "q10",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    5000,
+    101
+   ],
+   "traceable": 46,
+   "slices": 101,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P10",
+   "exemplar": "lab-E/#21/q10",
+   "file": "exemplars/P10/lab-E_21_q10.png",
+   "chip": "lab-E",
+   "run": "#21",
+   "qubit": "q10",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    2500,
+    16
+   ],
+   "traceable": 11,
+   "slices": 16,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P10",
+   "exemplar": "lab-E/#11/q17",
+   "file": "exemplars/P10/lab-E_11_q17.png",
+   "chip": "lab-E",
+   "run": "#11",
+   "qubit": "q17",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    5000,
+    101
+   ],
+   "traceable": 49,
+   "slices": 101,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P10",
+   "exemplar": "lab-E/#28/q17",
+   "file": "exemplars/P10/lab-E_28_q17.png",
+   "chip": "lab-E",
+   "run": "#28",
+   "qubit": "q17",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    3800,
+    31
+   ],
+   "traceable": 12,
+   "slices": 31,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P10",
+   "exemplar": "lab-C/#237/qA3",
+   "file": "exemplars/P10/lab-C_237_qA3.png",
+   "chip": "lab-C",
+   "run": "#237",
+   "qubit": "qA3",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 100,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P10",
+   "exemplar": "lab-C/#240/qD2",
+   "file": "exemplars/P10/lab-C_240_qD2.png",
+   "chip": "lab-C",
+   "run": "#240",
+   "qubit": "qD2",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    2500,
+    30
+   ],
+   "traceable": 30,
+   "slices": 30,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P10",
+   "exemplar": "lab-C/#416/qC5",
+   "file": "exemplars/P10/lab-C_416_qC5.png",
+   "chip": "lab-C",
+   "run": "#416",
+   "qubit": "qC5",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    616,
+    20
+   ],
+   "traceable": 20,
+   "slices": 20,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P10",
+   "exemplar": "lab-B/#649/q11",
+   "file": "exemplars/P10/lab-B_649_q11.png",
+   "chip": "lab-B",
+   "run": "#649",
+   "qubit": "q11",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    600,
+    50
+   ],
+   "traceable": 8,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P11",
+   "exemplar": "lab-B/#888/q14",
+   "file": "exemplars/P11/lab-B_888_q14.png",
+   "chip": "lab-B",
+   "run": "#888",
+   "qubit": "q14",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    800,
+    100
+   ],
+   "traceable": 95,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P11",
+   "exemplar": "lab-B/#1088/q14",
+   "file": "exemplars/P11/lab-B_1088_q14.png",
+   "chip": "lab-B",
+   "run": "#1088",
+   "qubit": "q14",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    400,
+    41
+   ],
+   "traceable": 32,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P11",
+   "exemplar": "lab-B/#876/q14",
+   "file": "exemplars/P11/lab-B_876_q14.png",
+   "chip": "lab-B",
+   "run": "#876",
+   "qubit": "q14",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    620,
+    100
+   ],
+   "traceable": 100,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P11",
+   "exemplar": "lab-B/#1070/q14",
+   "file": "exemplars/P11/lab-B_1070_q14.png",
+   "chip": "lab-B",
+   "run": "#1070",
+   "qubit": "q14",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    400,
+    41
+   ],
+   "traceable": 32,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P11",
+   "exemplar": "lab-B/#649/q11",
+   "file": "exemplars/P11/lab-B_649_q11.png",
+   "chip": "lab-B",
+   "run": "#649",
+   "qubit": "q11",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    600,
+    50
+   ],
+   "traceable": 8,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P11",
+   "exemplar": "lab-C/#416/qD1",
+   "file": "exemplars/P11/lab-C_416_qD1.png",
+   "chip": "lab-C",
+   "run": "#416",
+   "qubit": "qD1",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    616,
+    20
+   ],
+   "traceable": 20,
+   "slices": 20,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P12",
+   "exemplar": "lab-B/#908/q15",
+   "file": "exemplars/P12/lab-B_908_q15.png",
+   "chip": "lab-B",
+   "run": "#908",
+   "qubit": "q15",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    800,
+    100
+   ],
+   "traceable": 99,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P12",
+   "exemplar": "lab-B/#1112/q15",
+   "file": "exemplars/P12/lab-B_1112_q15.png",
+   "chip": "lab-B",
+   "run": "#1112",
+   "qubit": "q15",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    800,
+    100
+   ],
+   "traceable": 0,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P12",
+   "exemplar": "lab-B/#968/q15",
+   "file": "exemplars/P12/lab-B_968_q15.png",
+   "chip": "lab-B",
+   "run": "#968",
+   "qubit": "q15",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 0,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P13",
+   "exemplar": "lab-E/#22/q9",
+   "file": "exemplars/P13/lab-E_22_q9.png",
+   "chip": "lab-E",
+   "run": "#22",
+   "qubit": "q9",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    3800,
+    26
+   ],
+   "traceable": 8,
+   "slices": 26,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "P13",
+   "exemplar": "lab-E/#69/q9",
+   "file": "exemplars/P13/lab-E_69_q9.png",
+   "chip": "lab-E",
+   "run": "#69",
+   "qubit": "q9",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    2667,
+    21
+   ],
+   "traceable": 0,
+   "slices": 21,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P14",
+   "exemplar": "lab-C/#116/qA1",
+   "file": "exemplars/P14/lab-C_116_qA1.png",
+   "chip": "lab-C",
+   "run": "#116",
+   "qubit": "qA1",
+   "markers_drawn": [],
+   "feature": "dip",
+   "grid": [
+    5000,
+    50
+   ],
+   "traceable": 0,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P14",
+   "exemplar": "lab-E/#63/q10",
+   "file": "exemplars/P14/lab-E_63_q10.png",
+   "chip": "lab-E",
+   "run": "#63",
+   "qubit": "q10",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    7600,
+    21
+   ],
+   "traceable": 11,
+   "slices": 21,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P15",
+   "exemplar": "lab-B/#932/q18",
+   "file": "exemplars/P15/lab-B_932_q18.png",
+   "chip": "lab-B",
+   "run": "#932",
+   "qubit": "q18",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 97,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P15",
+   "exemplar": "lab-C/#17/qA1",
+   "file": "exemplars/P15/lab-C_17_qA1.png",
+   "chip": "lab-C",
+   "run": "#17",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 100,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P15",
+   "exemplar": "lab-C/#17/qA2",
+   "file": "exemplars/P15/lab-C_17_qA2.png",
+   "chip": "lab-C",
+   "run": "#17",
+   "qubit": "qA2",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 100,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P15",
+   "exemplar": "lab-C/#237/qA1",
+   "file": "exemplars/P15/lab-C_237_qA1.png",
+   "chip": "lab-C",
+   "run": "#237",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 100,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "P15",
+   "exemplar": "lab-C/#255/qD3",
+   "file": "exemplars/P15/lab-C_255_qD3.png",
+   "chip": "lab-C",
+   "run": "#255",
+   "qubit": "qD3",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    320,
+    30
+   ],
+   "traceable": 30,
+   "slices": 30,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF1",
+   "exemplar": "lab-B/#574/q6",
+   "file": "exemplars/PF1/lab-B_574_q6.png",
+   "chip": "lab-B",
+   "run": "#574",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    600,
+    50
+   ],
+   "traceable": 3,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "PF1",
+   "exemplar": "lab-B/#725/q12",
+   "file": "exemplars/PF1/lab-B_725_q12.png",
+   "chip": "lab-B",
+   "run": "#725",
+   "qubit": "q12",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    600,
+    50
+   ],
+   "traceable": 1,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "PF1",
+   "exemplar": "lab-B/#1085/q8",
+   "file": "exemplars/PF1/lab-B_1085_q8.png",
+   "chip": "lab-B",
+   "run": "#1085",
+   "qubit": "q8",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 300,
+   "depth_z": 6.5,
+   "secondaries": 0
+  },
+  {
+   "case": "PF1",
+   "exemplar": "lab-B/#603/q10",
+   "file": "exemplars/PF1/lab-B_603_q10.png",
+   "chip": "lab-B",
+   "run": "#603",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 14.8,
+   "secondaries": 1
+  },
+  {
+   "case": "PF1",
+   "exemplar": "lab-C/#236/qA3",
+   "file": "exemplars/PF1/lab-C_236_qA3.png",
+   "chip": "lab-C",
+   "run": "#236",
+   "qubit": "qA3",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 22.6,
+   "secondaries": 1
+  },
+  {
+   "case": "PF1",
+   "exemplar": "lab-C/#238/qA3",
+   "file": "exemplars/PF1/lab-C_238_qA3.png",
+   "chip": "lab-C",
+   "run": "#238",
+   "qubit": "qA3",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 28.3,
+   "secondaries": 1
+  },
+  {
+   "case": "PF1",
+   "exemplar": "lab-E/#74/q9",
+   "file": "exemplars/PF1/lab-E_74_q9.png",
+   "chip": "lab-E",
+   "run": "#74",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 500,
+   "depth_z": 5.1,
+   "secondaries": 0
+  },
+  {
+   "case": "PF1",
+   "exemplar": "lab-E/#68/q9",
+   "file": "exemplars/PF1/lab-E_68_q9.png",
+   "chip": "lab-E",
+   "run": "#68",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 4000,
+   "depth_z": 9.5,
+   "secondaries": 0
+  },
+  {
+   "case": "PF2",
+   "exemplar": "lab-B/#527/q9",
+   "file": "exemplars/PF2/lab-B_527_q9.png",
+   "chip": "lab-B",
+   "run": "#527",
+   "qubit": "q9",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    750,
+    50
+   ],
+   "traceable": 18,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF2",
+   "exemplar": "lab-B/#141/q2",
+   "file": "exemplars/PF2/lab-B_141_q2.png",
+   "chip": "lab-B",
+   "run": "#141",
+   "qubit": "q2",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 66,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF2",
+   "exemplar": "lab-B/#1088/q8",
+   "file": "exemplars/PF2/lab-B_1088_q8.png",
+   "chip": "lab-B",
+   "run": "#1088",
+   "qubit": "q8",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    41
+   ],
+   "traceable": 39,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF2",
+   "exemplar": "lab-B/#969/q6",
+   "file": "exemplars/PF2/lab-B_969_q6.png",
+   "chip": "lab-B",
+   "run": "#969",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 16,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF2",
+   "exemplar": "lab-B/#1165/q6",
+   "file": "exemplars/PF2/lab-B_1165_q6.png",
+   "chip": "lab-B",
+   "run": "#1165",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    500,
+    100
+   ],
+   "traceable": 0,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF2",
+   "exemplar": "lab-B/#1245/q10",
+   "file": "exemplars/PF2/lab-B_1245_q10.png",
+   "chip": "lab-B",
+   "run": "#1245",
+   "qubit": "q10",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 67,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF2",
+   "exemplar": "lab-E/#21/q10",
+   "file": "exemplars/PF2/lab-E_21_q10.png",
+   "chip": "lab-E",
+   "run": "#21",
+   "qubit": "q10",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    2500,
+    16
+   ],
+   "traceable": 11,
+   "slices": 16,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "PF2",
+   "exemplar": "lab-C/#416/qC4",
+   "file": "exemplars/PF2/lab-C_416_qC4.png",
+   "chip": "lab-C",
+   "run": "#416",
+   "qubit": "qC4",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    616,
+    20
+   ],
+   "traceable": 20,
+   "slices": 20,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF3",
+   "exemplar": "lab-B/#850/q14",
+   "file": "exemplars/PF3/lab-B_850_q14.png",
+   "chip": "lab-B",
+   "run": "#850",
+   "qubit": "q14",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 100,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF3",
+   "exemplar": "lab-B/#999/q20",
+   "file": "exemplars/PF3/lab-B_999_q20.png",
+   "chip": "lab-B",
+   "run": "#999",
+   "qubit": "q20",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    400,
+    50
+   ],
+   "traceable": 43,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF3",
+   "exemplar": "lab-B/#1035/q7",
+   "file": "exemplars/PF3/lab-B_1035_q7.png",
+   "chip": "lab-B",
+   "run": "#1035",
+   "qubit": "q7",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    41
+   ],
+   "traceable": 18,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF3",
+   "exemplar": "lab-B/#968/q15",
+   "file": "exemplars/PF3/lab-B_968_q15.png",
+   "chip": "lab-B",
+   "run": "#968",
+   "qubit": "q15",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 0,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF3",
+   "exemplar": "lab-B/#52/q1",
+   "file": "exemplars/PF3/lab-B_52_q1.png",
+   "chip": "lab-B",
+   "run": "#52",
+   "qubit": "q1",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 91,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF3",
+   "exemplar": "lab-C/#17/qA2",
+   "file": "exemplars/PF3/lab-C_17_qA2.png",
+   "chip": "lab-C",
+   "run": "#17",
+   "qubit": "qA2",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 100,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF3",
+   "exemplar": "lab-C/#240/qB1",
+   "file": "exemplars/PF3/lab-C_240_qB1.png",
+   "chip": "lab-C",
+   "run": "#240",
+   "qubit": "qB1",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    2500,
+    30
+   ],
+   "traceable": 30,
+   "slices": 30,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF3",
+   "exemplar": "lab-C/#61/qA1",
+   "file": "exemplars/PF3/lab-C_61_qA1.png",
+   "chip": "lab-C",
+   "run": "#61",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    334,
+    100
+   ],
+   "traceable": 83,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF4",
+   "exemplar": "lab-B/#708/q7",
+   "file": "exemplars/PF4/lab-B_708_q7.png",
+   "chip": "lab-B",
+   "run": "#708",
+   "qubit": "q7",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    600,
+    50
+   ],
+   "traceable": 9,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "PF4",
+   "exemplar": "lab-B/#526/q8",
+   "file": "exemplars/PF4/lab-B_526_q8.png",
+   "chip": "lab-B",
+   "run": "#526",
+   "qubit": "q8",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    750,
+    50
+   ],
+   "traceable": 7,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF4",
+   "exemplar": "lab-B/#249/q3",
+   "file": "exemplars/PF4/lab-B_249_q3.png",
+   "chip": "lab-B",
+   "run": "#249",
+   "qubit": "q3",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    1000,
+    40
+   ],
+   "traceable": 1,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "PF4",
+   "exemplar": "lab-B/#250/q3",
+   "file": "exemplars/PF4/lab-B_250_q3.png",
+   "chip": "lab-B",
+   "run": "#250",
+   "qubit": "q3",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    6000,
+    40
+   ],
+   "traceable": 1,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "PF4",
+   "exemplar": "lab-B/#671/q11",
+   "file": "exemplars/PF4/lab-B_671_q11.png",
+   "chip": "lab-B",
+   "run": "#671",
+   "qubit": "q11",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    600,
+    50
+   ],
+   "traceable": 9,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "PF4",
+   "exemplar": "lab-E/#11/q10",
+   "file": "exemplars/PF4/lab-E_11_q10.png",
+   "chip": "lab-E",
+   "run": "#11",
+   "qubit": "q10",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    5000,
+    101
+   ],
+   "traceable": 46,
+   "slices": 101,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "PF4",
+   "exemplar": "lab-E/#22/q15",
+   "file": "exemplars/PF4/lab-E_22_q15.png",
+   "chip": "lab-E",
+   "run": "#22",
+   "qubit": "q15",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    3800,
+    26
+   ],
+   "traceable": 7,
+   "slices": 26,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "PF4",
+   "exemplar": "lab-C/#256/qD3",
+   "file": "exemplars/PF4/lab-C_256_qD3.png",
+   "chip": "lab-C",
+   "run": "#256",
+   "qubit": "qD3",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    1667,
+    30
+   ],
+   "traceable": 30,
+   "slices": 30,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF5",
+   "exemplar": "lab-B/#250/q3",
+   "file": "exemplars/PF5/lab-B_250_q3.png",
+   "chip": "lab-B",
+   "run": "#250",
+   "qubit": "q3",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    6000,
+    40
+   ],
+   "traceable": 1,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "PF5",
+   "exemplar": "lab-B/#1113/q6",
+   "file": "exemplars/PF5/lab-B_1113_q6.png",
+   "chip": "lab-B",
+   "run": "#1113",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    800,
+    100
+   ],
+   "traceable": 1,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "PF5",
+   "exemplar": "lab-B/#1120/q6",
+   "file": "exemplars/PF5/lab-B_1120_q6.png",
+   "chip": "lab-B",
+   "run": "#1120",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    800,
+    100
+   ],
+   "traceable": 0,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF5",
+   "exemplar": "lab-B/#1088/q6",
+   "file": "exemplars/PF5/lab-B_1088_q6.png",
+   "chip": "lab-B",
+   "run": "#1088",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    400,
+    41
+   ],
+   "traceable": 1,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "PF5",
+   "exemplar": "lab-E/#21/q5",
+   "file": "exemplars/PF5/lab-E_21_q5.png",
+   "chip": "lab-E",
+   "run": "#21",
+   "qubit": "q5",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    2500,
+    16
+   ],
+   "traceable": 1,
+   "slices": 16,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "PF5",
+   "exemplar": "lab-B/#41/q2",
+   "file": "exemplars/PF5/lab-B_41_q2.png",
+   "chip": "lab-B",
+   "run": "#41",
+   "qubit": "q2",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    1200,
+    40
+   ],
+   "traceable": 7,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "PF5",
+   "exemplar": "lab-B/#500/q3",
+   "file": "exemplars/PF5/lab-B_500_q3.png",
+   "chip": "lab-B",
+   "run": "#500",
+   "qubit": "q3",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    600,
+    40
+   ],
+   "traceable": 23,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF6",
+   "exemplar": "lab-C/#61/qA2",
+   "file": "exemplars/PF6/lab-C_61_qA2.png",
+   "chip": "lab-C",
+   "run": "#61",
+   "qubit": "qA2",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    334,
+    100
+   ],
+   "traceable": 92,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF6",
+   "exemplar": "lab-C/#17/qA1",
+   "file": "exemplars/PF6/lab-C_17_qA1.png",
+   "chip": "lab-C",
+   "run": "#17",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 100,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF6",
+   "exemplar": "lab-C/#237/qA1",
+   "file": "exemplars/PF6/lab-C_237_qA1.png",
+   "chip": "lab-C",
+   "run": "#237",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 100,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF6",
+   "exemplar": "lab-B/#52/q1",
+   "file": "exemplars/PF6/lab-B_52_q1.png",
+   "chip": "lab-B",
+   "run": "#52",
+   "qubit": "q1",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 91,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF6",
+   "exemplar": "lab-B/#932/q18",
+   "file": "exemplars/PF6/lab-B_932_q18.png",
+   "chip": "lab-B",
+   "run": "#932",
+   "qubit": "q18",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 97,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF6",
+   "exemplar": "lab-B/#649/q11",
+   "file": "exemplars/PF6/lab-B_649_q11.png",
+   "chip": "lab-B",
+   "run": "#649",
+   "qubit": "q11",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    600,
+    50
+   ],
+   "traceable": 8,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "PF7",
+   "exemplar": "lab-B/#760/q17",
+   "file": "exemplars/PF7/lab-B_760_q17.png",
+   "chip": "lab-B",
+   "run": "#760",
+   "qubit": "q17",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 1,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "PF7",
+   "exemplar": "lab-B/#724/q6",
+   "file": "exemplars/PF7/lab-B_724_q6.png",
+   "chip": "lab-B",
+   "run": "#724",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    600,
+    50
+   ],
+   "traceable": 16,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "PF7",
+   "exemplar": "lab-B/#833/q8",
+   "file": "exemplars/PF7/lab-B_833_q8.png",
+   "chip": "lab-B",
+   "run": "#833",
+   "qubit": "q8",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 4,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "PF7",
+   "exemplar": "lab-B/#544/q5",
+   "file": "exemplars/PF7/lab-B_544_q5.png",
+   "chip": "lab-B",
+   "run": "#544",
+   "qubit": "q5",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    600,
+    50
+   ],
+   "traceable": 47,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF7",
+   "exemplar": "lab-B/#500/q3",
+   "file": "exemplars/PF7/lab-B_500_q3.png",
+   "chip": "lab-B",
+   "run": "#500",
+   "qubit": "q3",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    600,
+    40
+   ],
+   "traceable": 23,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF7",
+   "exemplar": "lab-C/#416/qC4",
+   "file": "exemplars/PF7/lab-C_416_qC4.png",
+   "chip": "lab-C",
+   "run": "#416",
+   "qubit": "qC4",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    616,
+    20
+   ],
+   "traceable": 20,
+   "slices": 20,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF7",
+   "exemplar": "lab-E/#117/q17",
+   "file": "exemplars/PF7/lab-E_117_q17.png",
+   "chip": "lab-E",
+   "run": "#117",
+   "qubit": "q17",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    2000,
+    21
+   ],
+   "traceable": 0,
+   "slices": 21,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF8",
+   "exemplar": "lab-C/#255/qD3",
+   "file": "exemplars/PF8/lab-C_255_qD3.png",
+   "chip": "lab-C",
+   "run": "#255",
+   "qubit": "qD3",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    320,
+    30
+   ],
+   "traceable": 30,
+   "slices": 30,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF8",
+   "exemplar": "lab-C/#256/qD3",
+   "file": "exemplars/PF8/lab-C_256_qD3.png",
+   "chip": "lab-C",
+   "run": "#256",
+   "qubit": "qD3",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    1667,
+    30
+   ],
+   "traceable": 30,
+   "slices": 30,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF8",
+   "exemplar": "lab-C/#17/qA1",
+   "file": "exemplars/PF8/lab-C_17_qA1.png",
+   "chip": "lab-C",
+   "run": "#17",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 100,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF8",
+   "exemplar": "lab-C/#61/qA1",
+   "file": "exemplars/PF8/lab-C_61_qA1.png",
+   "chip": "lab-C",
+   "run": "#61",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    334,
+    100
+   ],
+   "traceable": 83,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF8",
+   "exemplar": "lab-C/#237/qA1",
+   "file": "exemplars/PF8/lab-C_237_qA1.png",
+   "chip": "lab-C",
+   "run": "#237",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 100,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF8",
+   "exemplar": "lab-C/#240/qA1",
+   "file": "exemplars/PF8/lab-C_240_qA1.png",
+   "chip": "lab-C",
+   "run": "#240",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    2500,
+    30
+   ],
+   "traceable": 30,
+   "slices": 30,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF8",
+   "exemplar": "lab-C/#116/qA2",
+   "file": "exemplars/PF8/lab-C_116_qA2.png",
+   "chip": "lab-C",
+   "run": "#116",
+   "qubit": "qA2",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    5000,
+    50
+   ],
+   "traceable": 50,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF8",
+   "exemplar": "lab-C/#118/qA2",
+   "file": "exemplars/PF8/lab-C_118_qA2.png",
+   "chip": "lab-C",
+   "run": "#118",
+   "qubit": "qA2",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    5000,
+    50
+   ],
+   "traceable": 49,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "PF9",
+   "exemplar": "lab-B/#574/q6",
+   "file": "exemplars/PF9/lab-B_574_q6.png",
+   "chip": "lab-B",
+   "run": "#574",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    600,
+    50
+   ],
+   "traceable": 3,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "PF9",
+   "exemplar": "lab-B/#967/q19",
+   "file": "exemplars/PF9/lab-B_967_q19.png",
+   "chip": "lab-B",
+   "run": "#967",
+   "qubit": "q19",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 2,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "PF9",
+   "exemplar": "lab-B/#12/q2",
+   "file": "exemplars/PF9/lab-B_12_q2.png",
+   "chip": "lab-B",
+   "run": "#12",
+   "qubit": "q2",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 24,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF9",
+   "exemplar": "lab-B/#872/q14",
+   "file": "exemplars/PF9/lab-B_872_q14.png",
+   "chip": "lab-B",
+   "run": "#872",
+   "qubit": "q14",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 1,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "PF9",
+   "exemplar": "lab-E/#32/q11",
+   "file": "exemplars/PF9/lab-E_32_q11.png",
+   "chip": "lab-E",
+   "run": "#32",
+   "qubit": "q11",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    7600,
+    21
+   ],
+   "traceable": 3,
+   "slices": 21,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "PF9",
+   "exemplar": "lab-E/#45/q10",
+   "file": "exemplars/PF9/lab-E_45_q10.png",
+   "chip": "lab-E",
+   "run": "#45",
+   "qubit": "q10",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    7600,
+    21
+   ],
+   "traceable": 21,
+   "slices": 21,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF9",
+   "exemplar": "lab-B/#1245/q10",
+   "file": "exemplars/PF9/lab-B_1245_q10.png",
+   "chip": "lab-B",
+   "run": "#1245",
+   "qubit": "q10",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 67,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF9",
+   "exemplar": "lab-B/#888/q14",
+   "file": "exemplars/PF9/lab-B_888_q14.png",
+   "chip": "lab-B",
+   "run": "#888",
+   "qubit": "q14",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    800,
+    100
+   ],
+   "traceable": 95,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF10",
+   "exemplar": "lab-B/#581/q10",
+   "file": "exemplars/PF10/lab-B_581_q10.png",
+   "chip": "lab-B",
+   "run": "#581",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 15.1,
+   "secondaries": 0
+  },
+  {
+   "case": "PF10",
+   "exemplar": "lab-B/#1477/q15",
+   "file": "exemplars/PF10/lab-B_1477_q15.png",
+   "chip": "lab-B",
+   "run": "#1477",
+   "qubit": "q15",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1200,
+   "depth_z": 9.6,
+   "secondaries": 2
+  },
+  {
+   "case": "PF10",
+   "exemplar": "lab-B/#733/q12",
+   "file": "exemplars/PF10/lab-B_733_q12.png",
+   "chip": "lab-B",
+   "run": "#733",
+   "qubit": "q12",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 2500,
+   "depth_z": 3.6,
+   "secondaries": 0
+  },
+  {
+   "case": "PF10",
+   "exemplar": "lab-B/#826/q8",
+   "file": "exemplars/PF10/lab-B_826_q8.png",
+   "chip": "lab-B",
+   "run": "#826",
+   "qubit": "q8",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1200,
+   "depth_z": 4.4,
+   "secondaries": 0
+  },
+  {
+   "case": "PF10",
+   "exemplar": "lab-B/#874/q14",
+   "file": "exemplars/PF10/lab-B_874_q14.png",
+   "chip": "lab-B",
+   "run": "#874",
+   "qubit": "q14",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 3200,
+   "depth_z": 4.7,
+   "secondaries": 0
+  },
+  {
+   "case": "PF10",
+   "exemplar": "lab-E/#64/q9",
+   "file": "exemplars/PF10/lab-E_64_q9.png",
+   "chip": "lab-E",
+   "run": "#64",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 4000,
+   "depth_z": 4.3,
+   "secondaries": 0
+  },
+  {
+   "case": "PF10",
+   "exemplar": "lab-E/#104/q15",
+   "file": "exemplars/PF10/lab-E_104_q15.png",
+   "chip": "lab-E",
+   "run": "#104",
+   "qubit": "q15",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 4.2,
+   "secondaries": 0
+  },
+  {
+   "case": "PF10",
+   "exemplar": "lab-E/#115/q17",
+   "file": "exemplars/PF10/lab-E_115_q17.png",
+   "chip": "lab-E",
+   "run": "#115",
+   "qubit": "q17",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 2000,
+   "depth_z": 8.6,
+   "secondaries": 2
+  },
+  {
+   "case": "PF10",
+   "exemplar": "lab-C/#241/qC1",
+   "file": "exemplars/PF10/lab-C_241_qC1.png",
+   "chip": "lab-C",
+   "run": "#241",
+   "qubit": "qC1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 7.8,
+   "secondaries": 0
+  },
+  {
+   "case": "PF11",
+   "exemplar": "lab-B/#141/q2",
+   "file": "exemplars/PF11/lab-B_141_q2.png",
+   "chip": "lab-B",
+   "run": "#141",
+   "qubit": "q2",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 66,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF11",
+   "exemplar": "lab-E/#30/q9",
+   "file": "exemplars/PF11/lab-E_30_q9.png",
+   "chip": "lab-E",
+   "run": "#30",
+   "qubit": "q9",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    7600,
+    21
+   ],
+   "traceable": 10,
+   "slices": 21,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF11",
+   "exemplar": "lab-E/#45/q9",
+   "file": "exemplars/PF11/lab-E_45_q9.png",
+   "chip": "lab-E",
+   "run": "#45",
+   "qubit": "q9",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    7600,
+    21
+   ],
+   "traceable": 8,
+   "slices": 21,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "PF11",
+   "exemplar": "lab-E/#61/q9",
+   "file": "exemplars/PF11/lab-E_61_q9.png",
+   "chip": "lab-E",
+   "run": "#61",
+   "qubit": "q9",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    7600,
+    21
+   ],
+   "traceable": 4,
+   "slices": 21,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "J1",
+   "exemplar": "lab-B/#497/q3",
+   "file": "exemplars/J1/lab-B_497_q3.png",
+   "chip": "lab-B",
+   "run": "#497",
+   "qubit": "q3",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 1200,
+   "depth_z": 72.4,
+   "secondaries": 0
+  },
+  {
+   "case": "J1",
+   "exemplar": "lab-B/#498/q3",
+   "file": "exemplars/J1/lab-B_498_q3.png",
+   "chip": "lab-B",
+   "run": "#498",
+   "qubit": "q3",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 1200,
+   "depth_z": 66.4,
+   "secondaries": 1
+  },
+  {
+   "case": "J1",
+   "exemplar": "lab-B/#1121/q7",
+   "file": "exemplars/J1/lab-B_1121_q7.png",
+   "chip": "lab-B",
+   "run": "#1121",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1600,
+   "depth_z": 39.0,
+   "secondaries": 2
+  },
+  {
+   "case": "J1",
+   "exemplar": "lab-E/#47/q9",
+   "file": "exemplars/J1/lab-E_47_q9.png",
+   "chip": "lab-E",
+   "run": "#47",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 14.9,
+   "secondaries": 2
+  },
+  {
+   "case": "J1",
+   "exemplar": "lab-E/#50/q9",
+   "file": "exemplars/J1/lab-E_50_q9.png",
+   "chip": "lab-E",
+   "run": "#50",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 12.1,
+   "secondaries": 2
+  },
+  {
+   "case": "J1",
+   "exemplar": "lab-B/#692/q6",
+   "file": "exemplars/J1/lab-B_692_q6.png",
+   "chip": "lab-B",
+   "run": "#692",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 2000,
+   "depth_z": 9.0,
+   "secondaries": 2
+  },
+  {
+   "case": "J1",
+   "exemplar": "lab-B/#1219/q15",
+   "file": "exemplars/J1/lab-B_1219_q15.png",
+   "chip": "lab-B",
+   "run": "#1219",
+   "qubit": "q15",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 19.2,
+   "secondaries": 1
+  },
+  {
+   "case": "J1",
+   "exemplar": "lab-B/#1254/q20",
+   "file": "exemplars/J1/lab-B_1254_q20.png",
+   "chip": "lab-B",
+   "run": "#1254",
+   "qubit": "q20",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 800,
+   "depth_z": 13.0,
+   "secondaries": 1
+  },
+  {
+   "case": "J1",
+   "exemplar": "lab-B/#1431/q20",
+   "file": "exemplars/J1/lab-B_1431_q20.png",
+   "chip": "lab-B",
+   "run": "#1431",
+   "qubit": "q20",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 13.0,
+   "secondaries": 0
+  },
+  {
+   "case": "J1",
+   "exemplar": "lab-B/#732/q12",
+   "file": "exemplars/J1/lab-B_732_q12.png",
+   "chip": "lab-B",
+   "run": "#732",
+   "qubit": "q12",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 2500,
+   "depth_z": 3.2,
+   "secondaries": 0
+  },
+  {
+   "case": "J1",
+   "exemplar": "lab-B/#1253/q11",
+   "file": "exemplars/J1/lab-B_1253_q11.png",
+   "chip": "lab-B",
+   "run": "#1253",
+   "qubit": "q11",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 10.1,
+   "secondaries": 2
+  },
+  {
+   "case": "J1",
+   "exemplar": "lab-E/#114/q17",
+   "file": "exemplars/J1/lab-E_114_q17.png",
+   "chip": "lab-E",
+   "run": "#114",
+   "qubit": "q17",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 4000,
+   "depth_z": 6.8,
+   "secondaries": 2
+  },
+  {
+   "case": "J2",
+   "exemplar": "lab-E/#48/q9",
+   "file": "exemplars/J2/lab-E_48_q9.png",
+   "chip": "lab-E",
+   "run": "#48",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 11.8,
+   "secondaries": 0
+  },
+  {
+   "case": "J2",
+   "exemplar": "lab-B/#1122/q7",
+   "file": "exemplars/J2/lab-B_1122_q7.png",
+   "chip": "lab-B",
+   "run": "#1122",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1600,
+   "depth_z": 15.8,
+   "secondaries": 0
+  },
+  {
+   "case": "J2",
+   "exemplar": "lab-B/#958/q14",
+   "file": "exemplars/J2/lab-B_958_q14.png",
+   "chip": "lab-B",
+   "run": "#958",
+   "qubit": "q14",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1000,
+   "depth_z": 23.9,
+   "secondaries": 0
+  },
+  {
+   "case": "J2",
+   "exemplar": "lab-B/#919/q18",
+   "file": "exemplars/J2/lab-B_919_q18.png",
+   "chip": "lab-B",
+   "run": "#919",
+   "qubit": "q18",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 3200,
+   "depth_z": 29.0,
+   "secondaries": 0
+  },
+  {
+   "case": "J2",
+   "exemplar": "lab-B/#693/q6",
+   "file": "exemplars/J2/lab-B_693_q6.png",
+   "chip": "lab-B",
+   "run": "#693",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 500,
+   "depth_z": 7.5,
+   "secondaries": 0
+  },
+  {
+   "case": "J2",
+   "exemplar": "lab-B/#1581/q11",
+   "file": "exemplars/J2/lab-B_1581_q11.png",
+   "chip": "lab-B",
+   "run": "#1581",
+   "qubit": "q11",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 13.8,
+   "secondaries": 1
+  },
+  {
+   "case": "J3",
+   "exemplar": "lab-B/#956/q14",
+   "file": "exemplars/J3/lab-B_956_q14.png",
+   "chip": "lab-B",
+   "run": "#956",
+   "qubit": "q14",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 2000,
+   "depth_z": 42.7,
+   "secondaries": 1
+  },
+  {
+   "case": "J3",
+   "exemplar": "lab-B/#971/q14",
+   "file": "exemplars/J3/lab-B_971_q14.png",
+   "chip": "lab-B",
+   "run": "#971",
+   "qubit": "q14",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1000,
+   "depth_z": 41.1,
+   "secondaries": 1
+  },
+  {
+   "case": "J3",
+   "exemplar": "lab-B/#1106/q14",
+   "file": "exemplars/J3/lab-B_1106_q14.png",
+   "chip": "lab-B",
+   "run": "#1106",
+   "qubit": "q14",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 300,
+   "depth_z": 46.9,
+   "secondaries": 1
+  },
+  {
+   "case": "J3",
+   "exemplar": "lab-B/#1088/q14",
+   "file": "exemplars/J3/lab-B_1088_q14.png",
+   "chip": "lab-B",
+   "run": "#1088",
+   "qubit": "q14",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    400,
+    41
+   ],
+   "traceable": 32,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "J3",
+   "exemplar": "lab-B/#1071/q10",
+   "file": "exemplars/J3/lab-B_1071_q10.png",
+   "chip": "lab-B",
+   "run": "#1071",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 300,
+   "depth_z": 27.0,
+   "secondaries": 2
+  },
+  {
+   "case": "J3",
+   "exemplar": "lab-B/#1085/q10",
+   "file": "exemplars/J3/lab-B_1085_q10.png",
+   "chip": "lab-B",
+   "run": "#1085",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 300,
+   "depth_z": 20.0,
+   "secondaries": 2
+  },
+  {
+   "case": "J3",
+   "exemplar": "lab-B/#1088/q10",
+   "file": "exemplars/J3/lab-B_1088_q10.png",
+   "chip": "lab-B",
+   "run": "#1088",
+   "qubit": "q10",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    41
+   ],
+   "traceable": 27,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "J3",
+   "exemplar": "lab-C/#239/qC2",
+   "file": "exemplars/J3/lab-C_239_qC2.png",
+   "chip": "lab-C",
+   "run": "#239",
+   "qubit": "qC2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 9.1,
+   "secondaries": 0
+  },
+  {
+   "case": "J3",
+   "exemplar": "lab-C/#240/qC2",
+   "file": "exemplars/J3/lab-C_240_qC2.png",
+   "chip": "lab-C",
+   "run": "#240",
+   "qubit": "qC2",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    2500,
+    30
+   ],
+   "traceable": 6,
+   "slices": 30,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "J3",
+   "exemplar": "lab-C/#241/qC2",
+   "file": "exemplars/J3/lab-C_241_qC2.png",
+   "chip": "lab-C",
+   "run": "#241",
+   "qubit": "qC2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 5.9,
+   "secondaries": 0
+  },
+  {
+   "case": "J4",
+   "exemplar": "lab-B/#858/q9",
+   "file": "exemplars/J4/lab-B_858_q9.png",
+   "chip": "lab-B",
+   "run": "#858",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 11.5,
+   "secondaries": 1
+  },
+  {
+   "case": "J4",
+   "exemplar": "lab-B/#859/q9",
+   "file": "exemplars/J4/lab-B_859_q9.png",
+   "chip": "lab-B",
+   "run": "#859",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 12.5,
+   "secondaries": 1
+  },
+  {
+   "case": "J4",
+   "exemplar": "lab-B/#870/q9",
+   "file": "exemplars/J4/lab-B_870_q9.png",
+   "chip": "lab-B",
+   "run": "#870",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1600,
+   "depth_z": 9.4,
+   "secondaries": 1
+  },
+  {
+   "case": "J4",
+   "exemplar": "lab-C/#237/qA3",
+   "file": "exemplars/J4/lab-C_237_qA3.png",
+   "chip": "lab-C",
+   "run": "#237",
+   "qubit": "qA3",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 100,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "J4",
+   "exemplar": "lab-C/#241/qB1",
+   "file": "exemplars/J4/lab-C_241_qB1.png",
+   "chip": "lab-C",
+   "run": "#241",
+   "qubit": "qB1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 10.0,
+   "secondaries": 0
+  },
+  {
+   "case": "J4",
+   "exemplar": "lab-B/#649/q11",
+   "file": "exemplars/J4/lab-B_649_q11.png",
+   "chip": "lab-B",
+   "run": "#649",
+   "qubit": "q11",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    600,
+    50
+   ],
+   "traceable": 8,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "J4",
+   "exemplar": "lab-B/#652/q11",
+   "file": "exemplars/J4/lab-B_652_q11.png",
+   "chip": "lab-B",
+   "run": "#652",
+   "qubit": "q11",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 2400,
+   "depth_z": 9.6,
+   "secondaries": 2
+  },
+  {
+   "case": "J4",
+   "exemplar": "lab-B/#68/q2",
+   "file": "exemplars/J4/lab-B_68_q2.png",
+   "chip": "lab-B",
+   "run": "#68",
+   "qubit": "q2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 31.6,
+   "secondaries": 1
+  },
+  {
+   "case": "J4",
+   "exemplar": "lab-B/#261/q4",
+   "file": "exemplars/J4/lab-B_261_q4.png",
+   "chip": "lab-B",
+   "run": "#261",
+   "qubit": "q4",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1200,
+   "depth_z": 11.0,
+   "secondaries": 1
+  },
+  {
+   "case": "J4",
+   "exemplar": "lab-B/#1106/q11",
+   "file": "exemplars/J4/lab-B_1106_q11.png",
+   "chip": "lab-B",
+   "run": "#1106",
+   "qubit": "q11",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 300,
+   "depth_z": 12.3,
+   "secondaries": 1
+  },
+  {
+   "case": "J5",
+   "exemplar": "lab-B/#1344/q14",
+   "file": "exemplars/J5/lab-B_1344_q14.png",
+   "chip": "lab-B",
+   "run": "#1344",
+   "qubit": "q14",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    500,
+    40
+   ],
+   "traceable": 28,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "J5",
+   "exemplar": "lab-B/#1345/q14",
+   "file": "exemplars/J5/lab-B_1345_q14.png",
+   "chip": "lab-B",
+   "run": "#1345",
+   "qubit": "q14",
+   "markers_drawn": [],
+   "feature": "dip",
+   "n_points": 1000,
+   "depth_z": 3.5,
+   "secondaries": 0
+  },
+  {
+   "case": "J5",
+   "exemplar": "lab-B/#1345/q5",
+   "file": "exemplars/J5/lab-B_1345_q5.png",
+   "chip": "lab-B",
+   "run": "#1345",
+   "qubit": "q5",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 1000,
+   "depth_z": 3.5,
+   "secondaries": 0
+  },
+  {
+   "case": "J5",
+   "exemplar": "lab-B/#1245/q10",
+   "file": "exemplars/J5/lab-B_1245_q10.png",
+   "chip": "lab-B",
+   "run": "#1245",
+   "qubit": "q10",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 67,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "J5",
+   "exemplar": "lab-B/#1247/q10",
+   "file": "exemplars/J5/lab-B_1247_q10.png",
+   "chip": "lab-B",
+   "run": "#1247",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1200,
+   "depth_z": 29.2,
+   "secondaries": 1
+  },
+  {
+   "case": "J5",
+   "exemplar": "lab-B/#500/q3",
+   "file": "exemplars/J5/lab-B_500_q3.png",
+   "chip": "lab-B",
+   "run": "#500",
+   "qubit": "q3",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    600,
+    40
+   ],
+   "traceable": 23,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "J5",
+   "exemplar": "lab-B/#42/q2",
+   "file": "exemplars/J5/lab-B_42_q2.png",
+   "chip": "lab-B",
+   "run": "#42",
+   "qubit": "q2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 3.2,
+   "secondaries": 0
+  },
+  {
+   "case": "J5",
+   "exemplar": "lab-C/#238/qA1",
+   "file": "exemplars/J5/lab-C_238_qA1.png",
+   "chip": "lab-C",
+   "run": "#238",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 15.9,
+   "secondaries": 2
+  },
+  {
+   "case": "J5",
+   "exemplar": "lab-C/#416/qC4",
+   "file": "exemplars/J5/lab-C_416_qC4.png",
+   "chip": "lab-C",
+   "run": "#416",
+   "qubit": "qC4",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    616,
+    20
+   ],
+   "traceable": 20,
+   "slices": 20,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "J6",
+   "exemplar": "lab-B/#998/q20",
+   "file": "exemplars/J6/lab-B_998_q20.png",
+   "chip": "lab-B",
+   "run": "#998",
+   "qubit": "q20",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 3.3,
+   "secondaries": 0
+  },
+  {
+   "case": "J6",
+   "exemplar": "lab-B/#999/q20",
+   "file": "exemplars/J6/lab-B_999_q20.png",
+   "chip": "lab-B",
+   "run": "#999",
+   "qubit": "q20",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    400,
+    50
+   ],
+   "traceable": 43,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "J6",
+   "exemplar": "lab-B/#803/q13",
+   "file": "exemplars/J6/lab-B_803_q13.png",
+   "chip": "lab-B",
+   "run": "#803",
+   "qubit": "q13",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 500,
+   "depth_z": 19.0,
+   "secondaries": 1
+  },
+  {
+   "case": "J6",
+   "exemplar": "lab-B/#804/q13",
+   "file": "exemplars/J6/lab-B_804_q13.png",
+   "chip": "lab-B",
+   "run": "#804",
+   "qubit": "q13",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 99,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "J6",
+   "exemplar": "lab-B/#543/q5",
+   "file": "exemplars/J6/lab-B_543_q5.png",
+   "chip": "lab-B",
+   "run": "#543",
+   "qubit": "q5",
+   "markers_drawn": [],
+   "feature": "dip",
+   "n_points": 400,
+   "depth_z": 3.0,
+   "secondaries": 0
+  },
+  {
+   "case": "J6",
+   "exemplar": "lab-B/#544/q5",
+   "file": "exemplars/J6/lab-B_544_q5.png",
+   "chip": "lab-B",
+   "run": "#544",
+   "qubit": "q5",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    600,
+    50
+   ],
+   "traceable": 47,
+   "slices": 50,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "J6",
+   "exemplar": "lab-B/#400/q13",
+   "file": "exemplars/J6/lab-B_400_q13.png",
+   "chip": "lab-B",
+   "run": "#400",
+   "qubit": "q13",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 16.5,
+   "secondaries": 0
+  },
+  {
+   "case": "J7",
+   "exemplar": "lab-B/#1224/q15",
+   "file": "exemplars/J7/lab-B_1224_q15.png",
+   "chip": "lab-B",
+   "run": "#1224",
+   "qubit": "q15",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 37,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "J7",
+   "exemplar": "lab-B/#1219/q15",
+   "file": "exemplars/J7/lab-B_1219_q15.png",
+   "chip": "lab-B",
+   "run": "#1219",
+   "qubit": "q15",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 19.2,
+   "secondaries": 1
+  },
+  {
+   "case": "J7",
+   "exemplar": "lab-B/#1215/q15",
+   "file": "exemplars/J7/lab-B_1215_q15.png",
+   "chip": "lab-B",
+   "run": "#1215",
+   "qubit": "q15",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 8.2,
+   "secondaries": 0
+  },
+  {
+   "case": "J8",
+   "exemplar": "lab-B/#1125/q14",
+   "file": "exemplars/J8/lab-B_1125_q14.png",
+   "chip": "lab-B",
+   "run": "#1125",
+   "qubit": "q14",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1000,
+   "depth_z": 25.4,
+   "secondaries": 0
+  },
+  {
+   "case": "J8",
+   "exemplar": "lab-B/#1128/q14",
+   "file": "exemplars/J8/lab-B_1128_q14.png",
+   "chip": "lab-B",
+   "run": "#1128",
+   "qubit": "q14",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1000,
+   "depth_z": 22.9,
+   "secondaries": 0
+  },
+  {
+   "case": "J8",
+   "exemplar": "lab-B/#1421/q18",
+   "file": "exemplars/J8/lab-B_1421_q18.png",
+   "chip": "lab-B",
+   "run": "#1421",
+   "qubit": "q18",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 20.7,
+   "secondaries": 1
+  },
+  {
+   "case": "J8",
+   "exemplar": "lab-B/#1239/q10",
+   "file": "exemplars/J8/lab-B_1239_q10.png",
+   "chip": "lab-B",
+   "run": "#1239",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 20.2,
+   "secondaries": 2
+  },
+  {
+   "case": "J8",
+   "exemplar": "lab-B/#1247/q10",
+   "file": "exemplars/J8/lab-B_1247_q10.png",
+   "chip": "lab-B",
+   "run": "#1247",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1200,
+   "depth_z": 29.2,
+   "secondaries": 1
+  },
+  {
+   "case": "J8",
+   "exemplar": "lab-B/#1125/q10",
+   "file": "exemplars/J8/lab-B_1125_q10.png",
+   "chip": "lab-B",
+   "run": "#1125",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1000,
+   "depth_z": 15.0,
+   "secondaries": 0
+  },
+  {
+   "case": "J8",
+   "exemplar": "lab-B/#1128/q10",
+   "file": "exemplars/J8/lab-B_1128_q10.png",
+   "chip": "lab-B",
+   "run": "#1128",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1000,
+   "depth_z": 16.2,
+   "secondaries": 0
+  },
+  {
+   "case": "J9",
+   "exemplar": "lab-B/#923/q18",
+   "file": "exemplars/J9/lab-B_923_q18.png",
+   "chip": "lab-B",
+   "run": "#923",
+   "qubit": "q18",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1000,
+   "depth_z": 12.5,
+   "secondaries": 0
+  },
+  {
+   "case": "J9",
+   "exemplar": "lab-B/#1106/q14",
+   "file": "exemplars/J9/lab-B_1106_q14.png",
+   "chip": "lab-B",
+   "run": "#1106",
+   "qubit": "q14",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 300,
+   "depth_z": 46.9,
+   "secondaries": 1
+  },
+  {
+   "case": "J9",
+   "exemplar": "lab-B/#932/q18",
+   "file": "exemplars/J9/lab-B_932_q18.png",
+   "chip": "lab-B",
+   "run": "#932",
+   "qubit": "q18",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 97,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "J9",
+   "exemplar": "lab-B/#642/q10",
+   "file": "exemplars/J9/lab-B_642_q10.png",
+   "chip": "lab-B",
+   "run": "#642",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 14.4,
+   "secondaries": 0
+  },
+  {
+   "case": "J9",
+   "exemplar": "lab-B/#602/q10",
+   "file": "exemplars/J9/lab-B_602_q10.png",
+   "chip": "lab-B",
+   "run": "#602",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 15.5,
+   "secondaries": 2
+  },
+  {
+   "case": "J9",
+   "exemplar": "lab-B/#641/q10",
+   "file": "exemplars/J9/lab-B_641_q10.png",
+   "chip": "lab-B",
+   "run": "#641",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 16.2,
+   "secondaries": 2
+  },
+  {
+   "case": "J9",
+   "exemplar": "lab-B/#682/q10",
+   "file": "exemplars/J9/lab-B_682_q10.png",
+   "chip": "lab-B",
+   "run": "#682",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1000,
+   "depth_z": 22.9,
+   "secondaries": 2
+  },
+  {
+   "case": "J10",
+   "exemplar": "lab-B/#1165/q6",
+   "file": "exemplars/J10/lab-B_1165_q6.png",
+   "chip": "lab-B",
+   "run": "#1165",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    500,
+    100
+   ],
+   "traceable": 0,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "J10",
+   "exemplar": "lab-B/#1141/q6",
+   "file": "exemplars/J10/lab-B_1141_q6.png",
+   "chip": "lab-B",
+   "run": "#1141",
+   "qubit": "q6",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 500,
+   "depth_z": 5.8,
+   "secondaries": 0
+  },
+  {
+   "case": "J10",
+   "exemplar": "lab-B/#1113/q6",
+   "file": "exemplars/J10/lab-B_1113_q6.png",
+   "chip": "lab-B",
+   "run": "#1113",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "dip",
+   "grid": [
+    800,
+    100
+   ],
+   "traceable": 1,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "J10",
+   "exemplar": "lab-B/#1120/q6",
+   "file": "exemplars/J10/lab-B_1120_q6.png",
+   "chip": "lab-B",
+   "run": "#1120",
+   "qubit": "q6",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    800,
+    100
+   ],
+   "traceable": 0,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "J10",
+   "exemplar": "lab-E/#116/q17",
+   "file": "exemplars/J10/lab-E_116_q17.png",
+   "chip": "lab-E",
+   "run": "#116",
+   "qubit": "q17",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    2000,
+    41
+   ],
+   "traceable": 2,
+   "slices": 41,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "J10",
+   "exemplar": "lab-E/#117/q17",
+   "file": "exemplars/J10/lab-E_117_q17.png",
+   "chip": "lab-E",
+   "run": "#117",
+   "qubit": "q17",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    2000,
+    21
+   ],
+   "traceable": 0,
+   "slices": 21,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "J10",
+   "exemplar": "lab-E/#115/q17",
+   "file": "exemplars/J10/lab-E_115_q17.png",
+   "chip": "lab-E",
+   "run": "#115",
+   "qubit": "q17",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 2000,
+   "depth_z": 8.6,
+   "secondaries": 2
+  },
+  {
+   "case": "J11",
+   "exemplar": "lab-B/#37/q2",
+   "file": "exemplars/J11/lab-B_37_q2.png",
+   "chip": "lab-B",
+   "run": "#37",
+   "qubit": "q2",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    1200,
+    40
+   ],
+   "traceable": 7,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "J11",
+   "exemplar": "lab-B/#38/q2",
+   "file": "exemplars/J11/lab-B_38_q2.png",
+   "chip": "lab-B",
+   "run": "#38",
+   "qubit": "q2",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    1200,
+    40
+   ],
+   "traceable": 7,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "J11",
+   "exemplar": "lab-E/#28/q10",
+   "file": "exemplars/J11/lab-E_28_q10.png",
+   "chip": "lab-E",
+   "run": "#28",
+   "qubit": "q10",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    3800,
+    31
+   ],
+   "traceable": 10,
+   "slices": 31,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "J11",
+   "exemplar": "lab-E/#22/q10",
+   "file": "exemplars/J11/lab-E_22_q10.png",
+   "chip": "lab-E",
+   "run": "#22",
+   "qubit": "q10",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    3800,
+    26
+   ],
+   "traceable": 12,
+   "slices": 26,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "J11",
+   "exemplar": "lab-E/#29/q10",
+   "file": "exemplars/J11/lab-E_29_q10.png",
+   "chip": "lab-E",
+   "run": "#29",
+   "qubit": "q10",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    3800,
+    31
+   ],
+   "traceable": 13,
+   "slices": 31,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "J11",
+   "exemplar": "lab-C/#255/qD3",
+   "file": "exemplars/J11/lab-C_255_qD3.png",
+   "chip": "lab-C",
+   "run": "#255",
+   "qubit": "qD3",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    320,
+    30
+   ],
+   "traceable": 30,
+   "slices": 30,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "J11",
+   "exemplar": "lab-C/#256/qD3",
+   "file": "exemplars/J11/lab-C_256_qD3.png",
+   "chip": "lab-C",
+   "run": "#256",
+   "qubit": "qD3",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "peak",
+   "grid": [
+    1667,
+    30
+   ],
+   "traceable": 30,
+   "slices": 30,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "J11",
+   "exemplar": "lab-B/#1344/q9",
+   "file": "exemplars/J11/lab-B_1344_q9.png",
+   "chip": "lab-B",
+   "run": "#1344",
+   "qubit": "q9",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    500,
+    40
+   ],
+   "traceable": 14,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "moving"
+  },
+  {
+   "case": "J11",
+   "exemplar": "lab-B/#1346/q9",
+   "file": "exemplars/J11/lab-B_1346_q9.png",
+   "chip": "lab-B",
+   "run": "#1346",
+   "qubit": "q9",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency",
+    "twophoton_freq"
+   ],
+   "feature": "dip",
+   "grid": [
+    500,
+    40
+   ],
+   "traceable": 17,
+   "slices": 40,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "J12",
+   "exemplar": "lab-C/#414/qC1",
+   "file": "exemplars/J12/lab-C_414_qC1.png",
+   "chip": "lab-C",
+   "run": "#414",
+   "qubit": "qC1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 17.7,
+   "secondaries": 0
+  },
+  {
+   "case": "J12",
+   "exemplar": "lab-C/#17/qA1",
+   "file": "exemplars/J12/lab-C_17_qA1.png",
+   "chip": "lab-C",
+   "run": "#17",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "optimal_power",
+    "frequency"
+   ],
+   "feature": "peak",
+   "grid": [
+    400,
+    100
+   ],
+   "traceable": 100,
+   "slices": 100,
+   "sweep_on_x": false,
+   "background": "static"
+  },
+  {
+   "case": "J12",
+   "exemplar": "lab-B/#1215/q15",
+   "file": "exemplars/J12/lab-B_1215_q15.png",
+   "chip": "lab-B",
+   "run": "#1215",
+   "qubit": "q15",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 8.2,
+   "secondaries": 0
+  },
+  {
+   "case": "J12",
+   "exemplar": "lab-B/#1216/q15",
+   "file": "exemplars/J12/lab-B_1216_q15.png",
+   "chip": "lab-B",
+   "run": "#1216",
+   "qubit": "q15",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 4.6,
+   "secondaries": 0
+  },
+  {
+   "case": "J12",
+   "exemplar": "lab-B/#923/q18",
+   "file": "exemplars/J12/lab-B_923_q18.png",
+   "chip": "lab-B",
+   "run": "#923",
+   "qubit": "q18",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1000,
+   "depth_z": 12.5,
+   "secondaries": 0
+  },
+  {
+   "case": "J12",
+   "exemplar": "lab-B/#1220/q15",
+   "file": "exemplars/J12/lab-B_1220_q15.png",
+   "chip": "lab-B",
+   "run": "#1220",
+   "qubit": "q15",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 12.1,
+   "secondaries": 1
+  },
+  {
+   "case": "J13",
+   "exemplar": "lab-C/#115/qA1",
+   "file": "exemplars/J13/lab-C_115_qA1.png",
+   "chip": "lab-C",
+   "run": "#115",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 400,
+   "depth_z": 12.1,
+   "secondaries": 2
+  },
+  {
+   "case": "J13",
+   "exemplar": "lab-C/#236/qA1",
+   "file": "exemplars/J13/lab-C_236_qA1.png",
+   "chip": "lab-C",
+   "run": "#236",
+   "qubit": "qA1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 15.9,
+   "secondaries": 0
+  },
+  {
+   "case": "J13",
+   "exemplar": "lab-C/#239/qB2",
+   "file": "exemplars/J13/lab-C_239_qB2.png",
+   "chip": "lab-C",
+   "run": "#239",
+   "qubit": "qB2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 17.6,
+   "secondaries": 1
+  },
+  {
+   "case": "J13",
+   "exemplar": "lab-C/#241/qB2",
+   "file": "exemplars/J13/lab-C_241_qB2.png",
+   "chip": "lab-C",
+   "run": "#241",
+   "qubit": "qB2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 11.2,
+   "secondaries": 0
+  },
+  {
+   "case": "J13",
+   "exemplar": "lab-B/#1181/q13",
+   "file": "exemplars/J13/lab-B_1181_q13.png",
+   "chip": "lab-B",
+   "run": "#1181",
+   "qubit": "q13",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 400,
+   "depth_z": 7.8,
+   "secondaries": 0
+  },
+  {
+   "case": "J13",
+   "exemplar": "lab-B/#1125/q20",
+   "file": "exemplars/J13/lab-B_1125_q20.png",
+   "chip": "lab-B",
+   "run": "#1125",
+   "qubit": "q20",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 1000,
+   "depth_z": 16.7,
+   "secondaries": 0
+  },
+  {
+   "case": "J13",
+   "exemplar": "lab-B/#1128/q20",
+   "file": "exemplars/J13/lab-B_1128_q20.png",
+   "chip": "lab-B",
+   "run": "#1128",
+   "qubit": "q20",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 1000,
+   "depth_z": 15.6,
+   "secondaries": 0
+  },
+  {
+   "case": "J13",
+   "exemplar": "lab-B/#718/q7",
+   "file": "exemplars/J13/lab-B_718_q7.png",
+   "chip": "lab-B",
+   "run": "#718",
+   "qubit": "q7",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1000,
+   "depth_z": 16.3,
+   "secondaries": 0
+  },
+  {
+   "case": "J13",
+   "exemplar": "lab-B/#401/q2",
+   "file": "exemplars/J13/lab-B_401_q2.png",
+   "chip": "lab-B",
+   "run": "#401",
+   "qubit": "q2",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 12.2,
+   "secondaries": 0
+  },
+  {
+   "case": "J14",
+   "exemplar": "lab-B/#581/q10",
+   "file": "exemplars/J14/lab-B_581_q10.png",
+   "chip": "lab-B",
+   "run": "#581",
+   "qubit": "q10",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 15.1,
+   "secondaries": 0
+  },
+  {
+   "case": "J14",
+   "exemplar": "lab-B/#1477/q15",
+   "file": "exemplars/J14/lab-B_1477_q15.png",
+   "chip": "lab-B",
+   "run": "#1477",
+   "qubit": "q15",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1200,
+   "depth_z": 9.6,
+   "secondaries": 2
+  },
+  {
+   "case": "J14",
+   "exemplar": "lab-B/#1620/q15",
+   "file": "exemplars/J14/lab-B_1620_q15.png",
+   "chip": "lab-B",
+   "run": "#1620",
+   "qubit": "q15",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1600,
+   "depth_z": 21.4,
+   "secondaries": 2
+  },
+  {
+   "case": "J14",
+   "exemplar": "lab-B/#733/q12",
+   "file": "exemplars/J14/lab-B_733_q12.png",
+   "chip": "lab-B",
+   "run": "#733",
+   "qubit": "q12",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 2500,
+   "depth_z": 3.6,
+   "secondaries": 0
+  },
+  {
+   "case": "J14",
+   "exemplar": "lab-B/#826/q8",
+   "file": "exemplars/J14/lab-B_826_q8.png",
+   "chip": "lab-B",
+   "run": "#826",
+   "qubit": "q8",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 1200,
+   "depth_z": 4.4,
+   "secondaries": 0
+  },
+  {
+   "case": "J14",
+   "exemplar": "lab-E/#64/q9",
+   "file": "exemplars/J14/lab-E_64_q9.png",
+   "chip": "lab-E",
+   "run": "#64",
+   "qubit": "q9",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 4000,
+   "depth_z": 4.3,
+   "secondaries": 0
+  },
+  {
+   "case": "J14",
+   "exemplar": "lab-E/#104/q15",
+   "file": "exemplars/J14/lab-E_104_q15.png",
+   "chip": "lab-E",
+   "run": "#104",
+   "qubit": "q15",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 4.2,
+   "secondaries": 0
+  },
+  {
+   "case": "J14",
+   "exemplar": "lab-C/#241/qC1",
+   "file": "exemplars/J14/lab-C_241_qC1.png",
+   "chip": "lab-C",
+   "run": "#241",
+   "qubit": "qC1",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 400,
+   "depth_z": 7.8,
+   "secondaries": 0
+  },
+  {
+   "case": "J15",
+   "exemplar": "lab-B/#468/q8",
+   "file": "exemplars/J15/lab-B_468_q8.png",
+   "chip": "lab-B",
+   "run": "#468",
+   "qubit": "q8",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 5.5,
+   "secondaries": 0
+  },
+  {
+   "case": "J15",
+   "exemplar": "lab-B/#469/q8",
+   "file": "exemplars/J15/lab-B_469_q8.png",
+   "chip": "lab-B",
+   "run": "#469",
+   "qubit": "q8",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 800,
+   "depth_z": 4.5,
+   "secondaries": 0
+  },
+  {
+   "case": "J15",
+   "exemplar": "lab-E/#122/q15",
+   "file": "exemplars/J15/lab-E_122_q15.png",
+   "chip": "lab-E",
+   "run": "#122",
+   "qubit": "q15",
+   "markers_drawn": [
+    "frequency"
+   ],
+   "feature": "dip",
+   "n_points": 1000,
+   "depth_z": 3.7,
+   "secondaries": 0
+  },
+  {
+   "case": "J15",
+   "exemplar": "lab-B/#1084/q20",
+   "file": "exemplars/J15/lab-B_1084_q20.png",
+   "chip": "lab-B",
+   "run": "#1084",
+   "qubit": "q20",
+   "markers_drawn": [],
+   "feature": "peak",
+   "n_points": 300,
+   "depth_z": 3.7,
+   "secondaries": 0
+  }
+ ],
+ "missing": []
+}

@@ -1,0 +1,399 @@
+{
+ "schema": "smgolden/v2",
+ "family": "qubit_spectroscopy",
+ "chip": "SNU_1Q",
+ "session": "2026-08-02",
+ "runs": [
+  "#47_08_qubit_spectroscopy_222205",
+  "#48_08_qubit_spectroscopy_222234",
+  "#49_08_qubit_spectroscopy_222345",
+  "#50_08_qubit_spectroscopy_222449",
+  "#51_08_qubit_spectroscopy_222512",
+  "#52_08_qubit_spectroscopy_222641",
+  "#53_08_qubit_spectroscopy_222659",
+  "#54_08_qubit_spectroscopy_222719",
+  "#55_08_qubit_spectroscopy_222913",
+  "#64_08_qubit_spectroscopy_230131",
+  "#67_08_qubit_spectroscopy_231355",
+  "#68_08_qubit_spectroscopy_231823",
+  "#71_08_qubit_spectroscopy_235157",
+  "#72_08_qubit_spectroscopy_235240",
+  "#73_08_qubit_spectroscopy_235753",
+  "#74_08_qubit_spectroscopy_235908"
+ ],
+ "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: a key has no opinion about a run its author never examined, and judging against those was worth 12 points.",
+ "session_id": "qubit_spectroscopy__SNU_1Q__2026-08-02",
+ "authored": "2026-08-21",
+ "status": "hindsight-authored + adversarial audit",
+ "provenance": "the author saw the whole session and was free to judge the operator wrong; the system under test never sees past its cursor",
+ "session_notes": "One 08_qubit_spectroscopy session on a 2-qubit SNU chip (q9, q10), 16 runs of this family spread over two distinct operating regimes.\n\nREGIME BREAK (the single most important fact for grading): between #55 and #64 the lab ran 09_qubit_spectroscopy_vs_flux (#56-#59) and 08b_qubit_spectroscopy_vs_power (#61-#63, #66, #69-#70) - visible in the archive folder listing, not in this record - which moved both qubits' operating points by hundreds of MHz. q9 goes 5.8627 -> 5.0153 GHz, q10 goes 6.3305 -> 5.4483 GHz. Every unexplained prior jump in the record (q9: 5.7290, 5.0290, 4.99475, 5.01537; q10: 6.0574, 5.4574, 5.44805) is a write by one of those neighbouring nodes. A correct reader detects this from the prior itself: at #64 the prior is a value no run in this family ever wrote, so the earlier converged value is void and must be re-measured. Any system that reports a single converged frequency per qubit for the whole session is wrong.\n\nTWO REPEATED OPERATOR FAILURE MODES.\n(1) Amplitude escalation after convergence: #50-#53 raised operation_amplitude_factor to 1.0/1.0/0.5 immediately after q9's centre had been confirmed twice at 0.1, producing saturated 6.7-26.8 MHz lines and, at #50, a relapse onto the same spurious tone that ruined #47. Four runs, zero information.\n(2) Repeating an identical no-signal scan: #64/#67/#68 are the same 1000 MHz, full-drive hunt run three times. #67 returned r2 = -0.083 (worse than a flat line) for q9 and three mutually inconsistent 'strong' candidates spanning ~670 MHz for q10. The correct verdict after #64 - and certainly after #67 - is to stop 08 and re-locate via the 08b power sweep, which is in fact what eventually rescued both qubits.\n\nA FIXED SPUR AT 5.78242 GHz captures q9's fitter whenever the drive is hard (#47 at amp 0.65, #50 at amp 1.0). Confirmed by eye in #47's figure, where the narrow spur and the broad, saturated real line appear in the same panel - the fitter picked the sharp wrong one. This is the cleanest 'the record's own success/failure flag is not the physics' example in the session.\n\nTHE NODE'S VERDICT IS UNRELIABLE IN BOTH DIRECTIONS and should never be treated as ground truth: #49 and #74 were flagged failed while carrying correct centres (rejected on r2 / a peak_snr = 5.9998 gate), and #68 was flagged successful with a centre 87 MHz from where the target actually converged. The operator's judgement was better than the flag in all three cases - they did not write #68 - which is worth crediting.\n\nWHAT SHOULD HAVE HAPPENED: q9 in 9 runs instead of 16, q10 in 3 instead of 12. Final state: q9 f_01 = 5,015,336,006 Hz (+/- ~0.2 MHz, two low-drive runs agreeing to 184 kHz, but contrast only ~0.5% - medium confidence); q10 f_01 = 5,448,252,754 Hz (one decisive run, no confirm - medium confidence). Three state writes should not have happened (q10 f_01 at #54 and #55, q9 f_01 at #55); all three are small in magnitude but each replaced good evidence with weaker evidence for a value that was already settled.\n\nFigures consulted (4): #47, #71, #73, #74 - used to settle the spur-vs-line question at #47, and to judge whether the weak regime-2 lines were real (they are).",
+ "adversarial_audit": "**Verdict: not sound — 10 concrete defects.** (All checked against the run records in `b4_qubit_spectroscopy__5.json` / `__6.json`, SNU_1Q rows.)\n\n1. **q9 #49 — invented gate (e).** Key: \"failed\" is \"a quality gate (r2 0.86, FWHM 4.0 MHz > 3.0 target)\". Refuted twice in the same record: #48, the key's own *accept*, has FWHM 3.93 MHz (also >3.0) and r2 0.899; #68 q9 was **accepted** at r2 0.781 / FWHM 13.66 MHz. Correction: state that the node's criterion is not derivable from the record; keep \"centre reproduced to 94 kHz\" and drop the mechanism.\n\n2. **q9 #64 / q10 #64 — refuted gate (e,b).** \"Derived x180_amp 7.5 V — physically impossible, which is why the node rejected.\" #71 q10 was **accepted** at x180_amp 1.649 V and #55 q10 at 1.101 V. A future-blind agent at #64 sees r2 0.92 / snr 27 / contrast 7.1 inside the swept window; the only offered ground for rejecting is refuted. Ground it on the stale prior instead (which *is* future-blind detectable).\n\n3. **q9 #54 — false attribution (e,a).** \"FWHM narrowed to 1.90 MHz after the readout angle update.\" No patch was written between #49 and #54 (#50–#53 wrote nothing), so #49 (FWHM 4.00) and #54 (1.90) are *identical settings, identical angle*. That 2.1× is run-to-run scatter. Consequently \"settled to ~10 kHz\" cherry-picks #48/#54 and drops #49's 94 kHz — the honest regime-1 scatter is ~100 kHz.\n\n4. **q9 termination — evidence claim fails (d,e).** \"Linewidth shrinks monotonically with drive (18.4→5.37→4.36→2.00)\": 5.37 and 4.36 are both at amp **0.25**, so it is 3 drives, not 4. Regime 1 inverts it (#55 amp 1.0 → 2.78 MHz vs #49 amp 0.1 → 4.00 MHz). Same defect voids the \"real_line_confirmed_by_trend\" flag at #72.\n\n5. **q9 #52/#53 wrongly wasted (c).** The 1.0/1.0/0.5/0.1 ladder (14.8→6.75→1.90 MHz) is exactly the drive-response evidence the key calls decisive at #71→#72. Grade consistently.\n\n6. **q9 #51 wrongly wasted (c).** \"A hypothesis no evidence supported\" — #49's q10 returned NaN in that same multiplexed run, and #51 is the one hard-drive run that did *not* lock the spur.\n\n7. **Spur claim overstated (e).** \"Captures the fitter whenever the drive is hard\": 2 of 5 hard-drive q9 runs (#51/#52/#53 landed near the real line).\n\n8. **session_notes attribution contradicts step 7 (e).** \"Every unexplained prior jump is a write by a neighbouring node\" lists 5.01537 GHz — but #73's prior is the operator re-centring on #72's own fit (#72 and #71 share prior 4.99475).\n\n9. **#67 (c).** Marked wasted for both qubits, yet the key says the irreproducibility verdict \"was already available after #67\" — n=2 is what supplies it.\n\n10. **q10 termination premature (d).** Endorsed at #71 (single amp-1.0 run) while the key itself says a low-drive confirm is missing; #72–#74 were low-drive runs q10 could have ridden free.\n\nAlso: #55 q9 \"weaker evidence\" is contradicted (r2 0.867 vs 0.823, contrast 18.8 vs 9.5); \"#72 brackets them\" — it lies *between*; and \"9 + 3 ideal runs\" double-counts #47/#64/#71 (union = 9).\n\n한국어 요약\n- 정답키는 부적합. 10개 결함 확인, 특히 노드의 accept/reject 근거를 지어낸 부분(#49의 r2/FWHM 게이트, #64의 x180_amp 범위 초과)이 같은 기록의 #48·#68·#71로 반박됨.\n- #54의 선폭 감소를 readout angle 업데이트 탓으로 돌렸으나 #49~#54 사이에 기록된 patch가 없음 → 동일 조건 산포(4.00 vs 1.90 MHz)이며, 이는 \"drive에 따른 단조 감소\"라는 종료 근거도 무너뜨림.\n- #51~#53, #67을 낭비로 표기한 것은 regime 2에서 같은 실험을 결정적 증거로 인정한 기준과 모순. q10은 저구동 확인 없이 #71에서 종료를 인정한 점이 (d) 유형 결함.",
+ "qubits": [
+  {
+   "qubit": "q9",
+   "runs_in_scope": [
+    "#47_08_qubit_spectroscopy_222205",
+    "#48_08_qubit_spectroscopy_222234",
+    "#49_08_qubit_spectroscopy_222345",
+    "#50_08_qubit_spectroscopy_222449",
+    "#51_08_qubit_spectroscopy_222512",
+    "#52_08_qubit_spectroscopy_222641",
+    "#53_08_qubit_spectroscopy_222659",
+    "#54_08_qubit_spectroscopy_222719",
+    "#55_08_qubit_spectroscopy_222913",
+    "#64_08_qubit_spectroscopy_230131",
+    "#67_08_qubit_spectroscopy_231355",
+    "#68_08_qubit_spectroscopy_231823",
+    "#71_08_qubit_spectroscopy_235157",
+    "#72_08_qubit_spectroscopy_235240",
+    "#73_08_qubit_spectroscopy_235753",
+    "#74_08_qubit_spectroscopy_235908"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#47_08_qubit_spectroscopy_222205",
+     "expected_case": "Wrong-peak fit. The fitter locked a narrow spur at 5.78242 GHz (-73.4 MHz from the 5.8558 GHz prior, FWHM 1.58 MHz) while the real q9 line is the broad, saturated bump near 5.860-5.866 GHz visible in the same panel at operation_amplitude_factor 0.65. Node rejected.",
+     "expected_flags": [
+      "wrong_peak_selected",
+      "narrow_spur_5.7824GHz",
+      "true_line_power_broadened",
+      "off_center_73MHz",
+      "near_span_edge",
+      "node_reject"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Do not write. Re-run 08 on q9 with operation_amplitude_factor 0.65 -> 0.10, span 200 MHz and step 0.25 MHz unchanged, so the real line de-saturates and outweighs the spur.",
+     "operator_did": "Re-ran q9 alone at operation_amplitude_factor 0.1 (#48).",
+     "operator_was_right": "yes",
+     "step_class": "B"
+    },
+    {
+     "step": 2,
+     "run": "#48_08_qubit_spectroscopy_222234",
+     "expected_case": "Clean low-drive fit: single on-scale line at 5,862,671,222 Hz (+6.87 MHz from prior), peak_snr 13.9, r2 0.90, contrast 7.6. FWHM 3.93 MHz is still above the 3.0 MHz target_peak_width, so mild residual power broadening remains.",
+     "expected_flags": [
+      "clean_single_peak",
+      "node_accept",
+      "fwhm_above_target",
+      "adopt_candidate"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write f_01 = 5,862,671,222 Hz (with the node's readout integration_weights_angle), then run exactly ONE confirm at operation_amplitude_factor 0.10 or lower. Do not raise the amplitude.",
+     "operator_did": "Adopted; wrote f_01, xy/RF_frequency and integration_weights_angle.",
+     "operator_was_right": "yes",
+     "step_class": "C"
+    },
+    {
+     "step": 3,
+     "run": "#49_08_qubit_spectroscopy_222345",
+     "expected_case": "Confirm at the same low drive reproduces the centre within 94 kHz (5,862,765,271 Hz, ~2% of the linewidth). The node's 'failed' verdict is a quality gate (r2 0.86, FWHM 4.0 MHz > 3.0 MHz target), not a disagreement about the centre. q10 returned NaN in the same run - a q10 problem, never evidence against q9.",
+     "expected_flags": [
+      "centre_reproduced_94kHz",
+      "node_reject_on_quality_not_centre",
+      "fwhm_above_target",
+      "partner_fit_nan"
+     ],
+     "correct_decision": "reconfirm",
+     "correct_next_action": "Hold 5.86267 GHz. Run one more scan at operation_amplitude_factor 0.10 (or 0.05) to clear the quality gate; do NOT escalate amplitude and do not change span/step.",
+     "operator_did": "Escalated to operation_amplitude_factor 1.0 (#50), then 1.0 non-multiplexed (#51), 1.0 (#52) and 0.5 (#53).",
+     "operator_was_right": "no",
+     "step_class": "B"
+    },
+    {
+     "step": 4,
+     "run": "#54_08_qubit_spectroscopy_222719",
+     "expected_case": "Low-drive scan (amp 0.1) after the readout angle update: 5,862,664,721 Hz, -6.5 kHz from the adopted value, FWHM narrowed to 1.90 MHz, node accepted. The centre is now settled to ~10 kHz and the 08 family has nothing left to give on q9 at this flux point.",
+     "expected_flags": [
+      "centre_confirmed_6.5kHz",
+      "narrowest_linewidth_of_regime",
+      "node_accept",
+      "settled"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write f_01 = 5,862,664,721 Hz and STOP the 08 family for q9; hand off to the flux (09) / power (08b) nodes.",
+     "operator_did": "Adopted (wrote q9 and q10), then ran one more at operation_amplitude_factor 1.0 (#55) and re-wrote f_01 from that broadened measurement.",
+     "operator_was_right": "partly",
+     "step_class": "C"
+    },
+    {
+     "step": 5,
+     "run": "#64_08_qubit_spectroscopy_230131",
+     "expected_case": "Regime break. The prior has jumped to 5.7290 GHz - a value no 08 run in this session wrote (the 09 flux sweeps #56-#59 and the 08b power sweeps #61-#63 moved the operating point), so the regime-1 value is void and must be re-measured. The 1000 MHz / full-drive scan returns noise: peak_snr 3.96, r2 0.13, contrast 0.99, centre -152 MHz, derived x180_amp 20.3 V (physically impossible).",
+     "expected_flags": [
+      "state_changed_out_of_band",
+      "stale_prior",
+      "no_signal",
+      "r2_collapse",
+      "span_1000MHz",
+      "amp_factor_1.0",
+      "derived_amp_out_of_range",
+      "node_reject"
+     ],
+     "correct_decision": "reject_and_stop",
+     "correct_next_action": "Do not write and do not repeat the wide full-drive scan. Re-locate the line with the 08b power sweep, then return to 08 with span 200 MHz centred on the 08b-derived prior and operation_amplitude_factor <= 0.25.",
+     "operator_did": "Repeated the identical 1000 MHz / amp 1.0 scan (#67), then ran it a third time on a new prior (#68).",
+     "operator_was_right": "no",
+     "step_class": "C"
+    },
+    {
+     "step": 6,
+     "run": "#71_08_qubit_spectroscopy_235157",
+     "expected_case": "First 08 run on an 08b-derived prior (4.99475 GHz) with span narrowed to 200 MHz but drive still at factor 1.0: a broad bump 18.4 MHz wide at 5,014,125,000 Hz, contrast 0.80, r2 0.59, node rejected. A real feature is present but the centre is unusable at this saturation.",
+     "expected_flags": [
+      "power_broadened_18.4MHz",
+      "low_contrast",
+      "real_feature_present",
+      "centre_untrustworthy",
+      "node_reject"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Do not write. Repeat with operation_amplitude_factor 1.0 -> 0.25, span 200 MHz, step 0.25 MHz.",
+     "operator_did": "Ran q9 alone at operation_amplitude_factor 0.25 (#72).",
+     "operator_was_right": "yes",
+     "step_class": "B"
+    },
+    {
+     "step": 7,
+     "run": "#72_08_qubit_spectroscopy_235240",
+     "expected_case": "At amp 0.25 the line narrows 18.4 -> 5.37 MHz and the centre lands at 5,015,375,000 Hz - the narrowing with reduced drive is the signature of a real, power-broadened line near 5.0154 GHz. peak_snr 5.77 sits just under the node's ~6 gate, so it was rejected on quality.",
+     "expected_flags": [
+      "linewidth_shrinks_with_drive",
+      "real_line_confirmed_by_trend",
+      "marginal_snr",
+      "centre_candidate_5.0154GHz",
+      "node_reject"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Do not write yet. Re-centre the 200 MHz span on 5.0154 GHz and buy resolution/averaging: frequency_step 0.25 -> 0.15 MHz at operation_amplitude_factor 0.25, num_shots 120 or higher.",
+     "operator_did": "Re-centred the prior on ~5.01537 GHz and ran step 0.15 MHz at amp 0.25 (#73).",
+     "operator_was_right": "yes",
+     "step_class": "B"
+    },
+    {
+     "step": 8,
+     "run": "#73_08_qubit_spectroscopy_235753",
+     "expected_case": "Sharp, unambiguous peak (verified in figures.amplitude.png) at 5,015,336,006 Hz, -34 kHz from the re-centred prior, FWHM 4.36 MHz, peak_snr 6.68, contrast 0.50, node accepted. The low r2 (0.44) is driven by broadband noise across the 200 MHz window, not by a bad centre.",
+     "expected_flags": [
+      "clean_peak_in_figure",
+      "node_accept",
+      "low_r2_from_wide_window",
+      "weak_contrast_0.5pct",
+      "adopt_candidate"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write f_01 = 5,015,336,006 Hz (plus readout angle), then ONE confirm at operation_amplitude_factor <= 0.15 to bound any power shift.",
+     "operator_did": "Adopted; wrote f_01, xy/RF_frequency and integration_weights_angle.",
+     "operator_was_right": "yes",
+     "step_class": "C"
+    },
+    {
+     "step": 9,
+     "run": "#74_08_qubit_spectroscopy_235908",
+     "expected_case": "Confirm at amp 0.15 / span 100 MHz: peak at 5,015,520,108 Hz, +184 kHz from the written value (under a tenth of the linewidth), FWHM narrows again 4.36 -> 2.00 MHz. Power broadening is confirmed and the centre reproduces. The node's 'failed' is the peak_snr = 5.9998 gate landing a hair under threshold, not a disagreement - the figure shows a clear narrow line.",
+     "expected_flags": [
+      "centre_reproduced_184kHz",
+      "fwhm_narrows_again",
+      "node_reject_on_snr_gate",
+      "weak_line_contrast_0.5pct",
+      "converged"
+     ],
+     "correct_decision": "reconfirm",
+     "correct_next_action": "Stop the 08 family for q9. Hold f_01 = 5,015,336,006 Hz with an honest uncertainty of about +/-0.2 MHz. If a tighter centre is needed, raise num_shots 120 -> 500+ at operation_amplitude_factor 0.15 rather than widening the span or raising drive.",
+     "operator_did": "Did not write the confirm value; session ended here.",
+     "operator_was_right": "yes",
+     "step_class": "B"
+    }
+   ],
+   "termination": {
+    "at_run": "#74_08_qubit_spectroscopy_235908",
+    "reason": "Two independent low-drive measurements (#73 at amp 0.25, #74 at amp 0.15) place the line within 184 kHz of each other, and the linewidth shrinks monotonically with drive (18.4 -> 5.37 -> 4.36 -> 2.00 MHz), which is what a real, power-broadened qubit line does. Nothing further in the 08 family can improve the centre; the remaining limitation is contrast (~0.5%), which needs more averaging or a better readout, not another frequency scan.",
+    "final_frequency": 5015336005.553107,
+    "final_sweep_value": null,
+    "unresolved": false,
+    "value_evidence": "#73 fit 5,015,336,005.55 Hz (adopted and written by the node) confirmed by #74 at 5,015,520,107.69 Hz, a 184 kHz agreement well inside the 2.0-4.4 MHz linewidth; both peaks visually unambiguous in the run figures, and #72 at 5,015,375,000 Hz brackets them. The regime-1 value 5,862,664,721 Hz was correct for runs #47-#55 but was voided by the 09 flux sweeps (#56-#59) that moved the operating point.",
+    "value_confidence": "med"
+   },
+   "wasted_runs": [
+    {
+     "run": "#50_08_qubit_spectroscopy_222449",
+     "why_wasted": "Amplitude escalated 0.1 -> 1.0 after the centre had already been confirmed twice; the fitter fell straight back onto the 5.78242 GHz spur (r2 0.22, contrast 2.15). It re-created the #47 failure mode and answered a settled question."
+    },
+    {
+     "run": "#51_08_qubit_spectroscopy_222512",
+     "why_wasted": "Same full-drive settings with multiplexing off; produced a 26.8 MHz-wide saturated line 1.5 MHz off centre. Turning off multiplexing tested a hypothesis that no evidence supported."
+    },
+    {
+     "run": "#52_08_qubit_spectroscopy_222641",
+     "why_wasted": "Third full-drive repeat; 14.8 MHz-wide saturated line, contrast 2.6, rejected. No new information."
+    },
+    {
+     "run": "#53_08_qubit_spectroscopy_222659",
+     "why_wasted": "Half-drive repeat; 6.75 MHz-wide line, r2 0.23, rejected. The whole 1.0/1.0/0.5 ladder only re-derived what #48 had already shown about power broadening."
+    },
+    {
+     "run": "#55_08_qubit_spectroscopy_222913",
+     "why_wasted": "Re-measured a value settled to 10 kHz one run earlier, at operation_amplitude_factor 1.0 where the line is broadened (FWHM 2.78 vs 1.90 MHz), and then re-wrote f_01 from it."
+    },
+    {
+     "run": "#67_08_qubit_spectroscopy_231355",
+     "why_wasted": "Byte-identical repeat of #64's 1000 MHz / amp 1.0 scan after that scan returned noise; this one returned r2 = -0.083, i.e. a fit worse than a flat line. Repeating identical settings after a no-signal result cannot change the outcome."
+    },
+    {
+     "run": "#68_08_qubit_spectroscopy_231823",
+     "why_wasted": "Third wide/full-power scan. Its 'successful' verdict (4,928,125,000 Hz, FWHM 13.7 MHz, contrast 1.10) sits 87 MHz from where the target actually converged - a near-miss adoption of a wrong centre that only luck (the operator not writing) kept out of the state."
+    }
+   ],
+   "poisoned_writes": [
+    {
+     "run": "#55_08_qubit_spectroscopy_222913",
+     "path": "/quam/qubits/q9/f_01",
+     "why": "Superseded the clean low-drive #54 centre (5,862,664,721 Hz, FWHM 1.90 MHz, amp factor 0.1) with a full-drive, power-broadened measurement (5,862,689,916 Hz, FWHM 2.78 MHz, amp factor 1.0). The numeric harm is small (+25 kHz, under 2% of the linewidth) but the write moved the state onto weaker evidence for no reason; the accompanying integration_weights_angle write carries the same objection."
+    }
+   ],
+   "ideal_length": 9,
+   "actual_length": 16,
+   "confidence": "med",
+   "caveats": "The session contains two distinct operating regimes for q9 (~5.8627 GHz for #47-#55, ~5.0153 GHz for #64-#74). The break is caused by nodes outside this record: the folder listing shows 09_qubit_spectroscopy_vs_flux #56-#59 and 08b_qubit_spectroscopy_vs_power #61-#63, #66, #69-#70 between them, and every unexplained prior jump (5.8627 -> 5.7290 -> 5.0290 -> 4.99475 -> 5.01537 GHz) lands on a run boundary next to one of those. That attribution is inferred from run ordering, not read from those runs' records. A fixed spurious tone at 5.78242 GHz captured the fitter twice (#47, #50) whenever q9 was driven hard - confirmed by eye in #47's figure, where the narrow spur and the broad real line appear in the same panel. Regime-2 fits all have contrast around 0.5% and r2 <= 0.45, so the final centre is good to about +/-0.2 MHz and no better; the node's own accept/reject verdict is unreliable in both directions here (#49 and #74 rejected with correct centres, #68 accepted with a centre 87 MHz off)."
+  },
+  {
+   "qubit": "q10",
+   "runs_in_scope": [
+    "#47_08_qubit_spectroscopy_222205",
+    "#49_08_qubit_spectroscopy_222345",
+    "#50_08_qubit_spectroscopy_222449",
+    "#51_08_qubit_spectroscopy_222512",
+    "#52_08_qubit_spectroscopy_222641",
+    "#53_08_qubit_spectroscopy_222659",
+    "#54_08_qubit_spectroscopy_222719",
+    "#55_08_qubit_spectroscopy_222913",
+    "#64_08_qubit_spectroscopy_230131",
+    "#67_08_qubit_spectroscopy_231355",
+    "#68_08_qubit_spectroscopy_231823",
+    "#71_08_qubit_spectroscopy_235157"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#47_08_qubit_spectroscopy_222205",
+     "expected_case": "Textbook first-run accept: a single sharp, high-contrast line at 6,330,440,175 Hz (+440 kHz from prior), peak_snr 28.4, r2 0.92, contrast 15.4, FWHM 1.90 MHz - below the 3.0 MHz target_peak_width. Nothing about this fit is ambiguous.",
+     "expected_flags": [
+      "clean_single_peak",
+      "high_snr",
+      "on_center",
+      "fwhm_below_target",
+      "node_accept"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write f_01 = 6,330,440,175 Hz (with the node's readout integration_weights_angle) and stop the 08 family for q10; further scans at this flux point cannot improve on snr 28 / r2 0.92.",
+     "operator_did": "Adopted; wrote f_01, xy/RF_frequency and integration_weights_angle.",
+     "operator_was_right": "yes",
+     "step_class": "A"
+    },
+    {
+     "step": 2,
+     "run": "#64_08_qubit_spectroscopy_230131",
+     "expected_case": "Regime break. The prior has jumped to 6.0574 GHz - a value no 08 run wrote (the 09 flux sweeps #56-#59 and the 08b power sweeps #61-#63 moved the operating point), so the adopted value is void. The 1000 MHz full-drive scan returns a strong-looking but out-of-band candidate at 6,444,201,367 Hz (+387 MHz) whose derived x180_amp is 7.5 V - physically impossible, which is why the node rejected despite r2 0.92 / snr 27.",
+     "expected_flags": [
+      "state_changed_out_of_band",
+      "stale_prior",
+      "candidate_out_of_band_387MHz",
+      "derived_amp_out_of_range",
+      "high_r2_but_wrong_feature",
+      "node_reject"
+     ],
+     "correct_decision": "reject_and_stop",
+     "correct_next_action": "Do not write; do not repeat the wide full-drive scan. Re-locate the line with the 08b power sweep, then return to 08 with span 200 MHz centred on the 08b-derived prior at operation_amplitude_factor <= 0.5.",
+     "operator_did": "Repeated the identical wide scan (#67, candidate 5.7767 GHz) and again on a new prior (#68, candidate 5.8766 GHz); both rejected.",
+     "operator_was_right": "no",
+     "step_class": "C"
+    },
+    {
+     "step": 3,
+     "run": "#71_08_qubit_spectroscopy_235157",
+     "expected_case": "On the 08b-derived prior (5.44805 GHz) the 200 MHz scan shows an unmistakable, very high-contrast peak at 5,448,252,754 Hz, only +203 kHz from the prior, peak_snr 19.0, contrast 4.48, FWHM 2.74 MHz. The r2 of 0.66 comes from the Lorentzian under-shooting a very sharp apex, not from an uncertain centre - the figure is decisive.",
+     "expected_flags": [
+      "clean_single_peak",
+      "on_center_203kHz",
+      "node_accept",
+      "r2_understates_fit_quality",
+      "derived_x180_amp_1.65V_out_of_range"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write f_01 = 5,448,252,754 Hz and stop the 08 family for q10. Flag the derived x180_amp of 1.65 V as out of DAC range for the downstream power-Rabi node. If a tighter centre is wanted, one confirm at operation_amplitude_factor 0.25 would bound the power-broadening shift.",
+     "operator_did": "Adopted; wrote f_01, xy/RF_frequency and integration_weights_angle. No confirm run followed.",
+     "operator_was_right": "yes",
+     "step_class": "C"
+    }
+   ],
+   "termination": {
+    "at_run": "#71_08_qubit_spectroscopy_235157",
+    "reason": "The line is located unambiguously at the new flux point with high contrast and it agrees to 203 kHz with an independently derived (08b) prior. No further 08 run in this session could improve it, and the operator correctly stopped scanning q10 after this run.",
+    "final_frequency": 5448252753.539579,
+    "final_sweep_value": null,
+    "unresolved": false,
+    "value_evidence": "Single measurement, run #71: fitted centre 5,448,252,753.54 Hz, peak_snr 19.0, contrast 4.48, FWHM 2.74 MHz; the run figure shows a peak roughly six times the noise band with an unmistakable centre, and it lands 203 kHz from the independently derived 08b prior of 5.44805 GHz. This is the only evidence for the value - no lower-drive confirm exists, so a power-broadening shift of order 0.1-0.3 MHz cannot be excluded, and confidence is capped accordingly.",
+    "value_confidence": "med"
+   },
+   "wasted_runs": [
+    {
+     "run": "#49_08_qubit_spectroscopy_222345",
+     "why_wasted": "Re-measured an already-adopted value at amp 0.1 and returned NaN with peak_snr 0 - zero information. It existed only because q9 needed a low-drive confirm."
+    },
+    {
+     "run": "#50_08_qubit_spectroscopy_222449",
+     "why_wasted": "Multiplexed passenger on q9's amplitude ladder; landed exactly on the adopted value (relative_freq 0.0) and changed nothing. Costs no extra beam time but should not have influenced any decision."
+    },
+    {
+     "run": "#51_08_qubit_spectroscopy_222512",
+     "why_wasted": "Passenger run; +125 kHz from the adopted value (10% of the 1.2 MHz linewidth). Re-confirmation of a settled value."
+    },
+    {
+     "run": "#52_08_qubit_spectroscopy_222641",
+     "why_wasted": "Passenger run; +76 kHz from the adopted value. Re-confirmation of a settled value."
+    },
+    {
+     "run": "#53_08_qubit_spectroscopy_222659",
+     "why_wasted": "Passenger run; +125 kHz, identical to #51 to the Hz. No new information."
+    },
+    {
+     "run": "#54_08_qubit_spectroscopy_222719",
+     "why_wasted": "Re-measured the settled value at amp 0.1 and produced the WEAKEST q10 fit of the whole regime (peak_snr 6.5, r2 0.35, contrast 4.1) - and that fit was written to state over a snr-28 measurement."
+    },
+    {
+     "run": "#55_08_qubit_spectroscopy_222913",
+     "why_wasted": "Third re-adoption of a settled value, from a full-drive scan. Minutes later the 09 flux sweeps voided the whole regime-1 value anyway."
+    },
+    {
+     "run": "#67_08_qubit_spectroscopy_231355",
+     "why_wasted": "Identical repeat of #64's 1000 MHz full-drive hunt; returned a different strong candidate (5.7767 GHz, -281 MHz) from the same prior."
+    },
+    {
+     "run": "#68_08_qubit_spectroscopy_231823",
+     "why_wasted": "Third wide/full-drive hunt; a third strong candidate (5.8766 GHz, +419 MHz). Three mutually inconsistent 'good-looking' answers spanning ~670 MHz under the same settings are proof the scan is not finding the qubit, and that verdict was already available after #67."
+    }
+   ],
+   "poisoned_writes": [
+    {
+     "run": "#54_08_qubit_spectroscopy_222719",
+     "path": "/quam/qubits/q10/f_01",
+     "why": "Adopted 6,330,565,175 Hz from the weakest q10 fit of the session (peak_snr 6.5, r2 0.35, contrast 4.1) and overwrote a value measured at peak_snr 28.4 / r2 0.92 seven runs earlier. The shift is only +125 kHz (about 10% of the linewidth), so the harm is quality of evidence rather than magnitude - but a state write should never move to weaker evidence. The paired integration_weights_angle write inherits the same objection."
+    },
+    {
+     "run": "#55_08_qubit_spectroscopy_222913",
+     "path": "/quam/qubits/q10/f_01",
+     "why": "Third write of a value that had been settled since #47, this time from a full-drive (amp factor 1.0) scan; net motion across the three writes is 70 kHz. The measurement itself is good (snr 25, r2 0.92) so the write is benign numerically, but it should not have happened - the run existed only to re-answer a settled question."
+    }
+   ],
+   "ideal_length": 3,
+   "actual_length": 12,
+   "confidence": "high",
+   "caveats": "q10's story is simple in both regimes - one decisive run each (#47 and #71), both verified by eye in the run figures - so the ideal path is short and well evidenced. Two reservations: (1) the final value rests on a single run with no lower-drive confirm, at operation_amplitude_factor 1.0 where FWHM 2.74 MHz is close to the 3.0 MHz target, so I hold value_confidence at med rather than high; (2) runs #49-#55 were multiplexed passengers driven by q9's troubles, so calling them 'wasted' for q10 means 'should not have influenced q10's held value', not 'cost extra beam time'. The origin of the priors at #64 (6.0574 GHz), #68 (5.4574 GHz) and #71 (5.44805 GHz) is inferred from the interleaved 09/08b runs visible in the folder listing, not read from those runs' records. The strong high-r2 candidates in #64/#67/#68 are real spectral features of something, but hindsight (convergence at 5.4483 GHz) plus their mutual inconsistency rules them out as q10's f_01."
+  }
+ ],
+ "abc_tagging": {
+  "rule": "smabc/v1",
+  "date": "2026-08-24",
+  "derivation": "step_class derived from correct_decision: reject_and_retune/reconfirm=B, reject_and_stop=C, adopt=A at step index 0 else C. No step was re-adjudicated."
+ }
+}

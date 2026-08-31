@@ -1,0 +1,278 @@
+{
+ "schema": "smgolden/v2",
+ "family": "qubit_spectroscopy_vs_flux",
+ "chip": "CQT",
+ "session": "2026-08-13",
+ "runs": [
+  "#13_09_qubit_spectroscopy_vs_flux_171423",
+  "#14_09_qubit_spectroscopy_vs_flux_171503",
+  "#15_09_qubit_spectroscopy_vs_flux_171600",
+  "#16_09_qubit_spectroscopy_vs_flux_171639",
+  "#35_09_qubit_spectroscopy_vs_flux_172900",
+  "#36_09_qubit_spectroscopy_vs_flux_173001",
+  "#43_09_qubit_spectroscopy_vs_flux_174003",
+  "#44_09_qubit_spectroscopy_vs_flux_174107",
+  "#148_09_qubit_spectroscopy_vs_flux_134900",
+  "#149_09_qubit_spectroscopy_vs_flux_135030",
+  "#150_09_qubit_spectroscopy_vs_flux_135149",
+  "#186_09_qubit_spectroscopy_vs_flux_205520",
+  "#187_09_qubit_spectroscopy_vs_flux_205746",
+  "#201_09_qubit_spectroscopy_vs_flux_212613"
+ ],
+ "runs_note": "The exact run set this key was authored from. Scoring MUST replay these and only these: a key has no opinion about a run its author never examined, and judging against those was worth 12 points.",
+ "session_id": "qubit_spectroscopy_vs_flux__CQT__2026-08-13",
+ "authored": "2026-08-21",
+ "status": "hindsight-authored + adversarial audit",
+ "provenance": "the author saw the whole session and was free to judge the operator wrong; the system under test never sees past its cursor",
+ "session_notes": "Three targets, 14 runs, and only one of them (q2 #150) actually resolved anything. Two structural lessons dominate. (1) The node's own outcome field is not a trust signal: q16 #187 and q14 #201 are both marked \"successful\" with clean-looking fit records, and both figures are pure noise with a parabola drawn through it - in both cases operation_amplitude_factor was 0.1, a tenth of the drive at which q2's line is plainly visible, and q14 additionally ran at num_shots=10. A correct reader of this family must cross-check the fit against physical plausibility (quad_term -4.17e10 and +5.6e8 Hz/V^2 imply GHz-scale modulation on lines that move ~10 MHz) and, where available, against the map itself. (2) q2's real limitation was never SNR - it is that the arch is extremely flat (~10 MHz of modulation over +/-0.25 V), so the parabola vertex is only localisable to about +/-0.05 V. Eleven runs produced absolute vertex estimates spanning -0.029 V to +0.222 V while the plateau frequency stayed inside a 2.4 MHz band (4696.77-4699.14 MHz across all six upper-orientation fits). Because the node INCREMENTS z/joint_offset, repeated running walked the bias rightwards (0 -> 0.0466 -> 0.0771, with #44 proposing 0.1247) for under 1 MHz of benefit - a chase, whose tell is that after moving onto a claimed vertex the next run should report an idle_offset near zero and never did. The honest stop is \"adopt the plateau, hand f_01 to 08 qubit spectroscopy\", which #150 already permitted: 3 runs instead of 11. Two record hazards for any consumer of this file: the run array is NOT in clock order for q2 (#148-#150 at 13:49-13:51 precede #13-#16 at 17:14-17:16, provable from the joint_offset increment arithmetic and from the f_01 baseline implied by qubit_frequency minus frequency_shift), and the flux sweep RANGE - the one knob that actually changed the outcome, between #149 (+/-0.05 V) and #150 (+/-0.25 V) - is absent from the recorded parameter block, visible only in arch_flux_min/max and the figure axes. dv_phi0 and m_pH are NaN in all 14 runs, so no flux period was ever established and no reported sweet spot could be validated against one.",
+ "adversarial_audit": "**Not sound — 8 concrete defects.**\n\n**1. q2 / #150 — amplitude claim is backwards (contradicts records).** Key asserts \"q2 saw its line at 1.0 and a weaker one at 0.5\". Both amp=1.0 runs (#148, #149) are the ones it calls noise-fits; the only resolved arch is #150 at **amp 0.5**. Worse, step-2's prescribed action says \"do NOT reduce the drive\" yet grades the operator \"yes\" for reducing it. *Fix:* attribute #150 to the flux-range widening alone, mark the amplitude change confounded/unattributed, and drop the amp-1.0 premise.\n\n**2. q16 #186/#187 + q14 #201 recommendations rest on defect 1.** \"Raise 0.1 → 1.0\" inherits an unsupported premise; no run in this session tests drive at fixed flux range. *Fix:* label it a hypothesis, not the ideal action.\n\n**3. q2 #13 wrongly marked wasted (carried necessary information).** #13 is the session's only 41-point, ±0.25 V, amp-1.0 run: vertex 0.0656 V absolute (27 mV from the adopted 0.04663) and 4698.89 MHz — an independent reproduction at a different bias *and* drive, exactly the check #148/#149 failed to give. *Fix:* ideal_length 3 → 4; remove from wasted_runs.\n\n**4. \"after moving onto a vertex the next run should report idle_offset near zero and never did\" — false.** #13 = +0.0190 V, #15 = −0.0191 V, both inside the ±0.05 V localisation the key itself claims. The \"chase tell\" is self-refuting.\n\n**5. Circular corroboration.** final_frequency is \"corroborated\" by five fits (#149 #13 #16 #43 #44) that the key classifies as noise/wasted — including #43, whose quad_term it calls degenerate. Adopted value is also the cluster's extreme low end.\n\n**6. quad_term arithmetic uses three conventions.** #148 1.47e10 → \"3.7 GHz\" (Δ=0.5 V); #43 1.2e10 → \"750 MHz\" (Δ=0.25 V); #187 4.17e10 → \"4.6 GHz\" matches neither (2.6 or 10.4). session_notes calls q14's **+5.6e8** GHz-scale — it is 35 MHz over ±0.25 V, ~4× the adopted −1.44e8, not degenerate; q14's rejection must rest on the figure, shots=10 and amp 0.1.\n\n**7. #16 poisoned_writes incomplete + quad range mis-signed.** #16 wrote 6 patches; `extras/upper_sweet_spot_flux` (0.0305) and `..._frequency` are omitted. \"quad_terms from −6.9e7 to −1.2e10\" silently drops four **positive** quad terms (#14 +6.6e8, #15 +1.1e8, #35 +3.1e8, #36 +1.4e8) — the sign flip is the stronger inconsistency.\n\n**8. The −10 MHz write is unexplained evidence against final_frequency.** Baselines move by exactly 10.000000 MHz (#150→#13) and 3.000000 MHz (#36→#43) — round to the Hz, so almost certainly manual edits, not the \"presumably 08-family node\" the key asserts. Either way the chip ends at 4695.282 MHz, 1.5 MHz from the adopted value; the key never confronts it.\n\nAlso: q16/q14 grade \"partly\" while ideal_path == actual_path — the operator did precisely what the key prescribes; penalise diagnosis separately.\n\n한국어 요약\n- 이 answer key는 건전하지 않음. 핵심 오류: q2의 성공(#150)을 진폭 1.0 덕분이라 서술했으나 실제로는 **진폭 0.5**에서만 라인이 보였고, 이 잘못된 전제가 q16·q14 권고안 전체를 떠받치고 있음.\n- #13은 \"낭비\"가 아니라 유일한 독립 재현 근거(41점·±0.25V·amp 1.0)이므로 ideal 경로는 3단계가 아니라 4단계여야 함.\n- 그 외: 순환 논증식 corroboration, quad_term 산술 3중 관용(및 q14 +5.6e8을 GHz급이라 과장), #16 poisoned write 2건 누락, 부호 뒤집힌 quad 범위, 정확히 −10.000 MHz/−3.000 MHz(수동 편집 정황)를 08 노드로 단정한 점.",
+ "qubits": [
+  {
+   "qubit": "q2",
+   "runs_in_scope": [
+    "#148_09_qubit_spectroscopy_vs_flux_134900",
+    "#149_09_qubit_spectroscopy_vs_flux_135030",
+    "#150_09_qubit_spectroscopy_vs_flux_135149",
+    "#13_09_qubit_spectroscopy_vs_flux_171423",
+    "#14_09_qubit_spectroscopy_vs_flux_171503",
+    "#15_09_qubit_spectroscopy_vs_flux_171600",
+    "#16_09_qubit_spectroscopy_vs_flux_171639",
+    "#35_09_qubit_spectroscopy_vs_flux_172900",
+    "#36_09_qubit_spectroscopy_vs_flux_173001",
+    "#43_09_qubit_spectroscopy_vs_flux_174003",
+    "#44_09_qubit_spectroscopy_vs_flux_174107"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#148_09_qubit_spectroscopy_vs_flux_134900",
+     "expected_case": "First q2 run of the session, taken at joint_offset = 0.0 (derivable: #16 later writes 0.04663073 + 0.03050 = 0.07713073, so the bias before #150 was 0). The flux window is only about +/-0.05 V (figure axis; fitted arch window [-0.025, +0.0325]) and the 2-D map is noise-dominated - no spectroscopy line is visible anywhere in the 100 MHz frequency window. The parabola is fitted to noise: quad_term = +1.47e10 Hz/V^2, which over a +/-0.25 V flux range would imply ~3.7 GHz of modulation, impossible for this qubit; orientation is reported 'lower' (a minimum) although a transmon arch away from half-flux should show a maximum; dv_phi0 and m_pH are NaN so no flux period was determined.",
+     "expected_flags": [
+      "no_visible_line_in_map",
+      "fit_on_noise",
+      "degenerate_quad_term",
+      "narrow_flux_window",
+      "orientation_lower_implausible",
+      "no_flux_period_dv_phi0_nan"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Do not write state. Widen the flux sweep from ~+/-0.05 V to the full ~+/-0.25 V range used later in #150 (that range knob is not in the recorded parameter block but is visible in arch_flux_min/max and in the figure axis), keeping num_flux_points=41, operation_amplitude_factor=1.0, num_shots=50, frequency_span_in_mhz=100, frequency_step_in_mhz=0.5.",
+     "operator_did": "Re-ran #149 with byte-identical recorded parameters and the same narrow flux window.",
+     "operator_was_right": "partly",
+     "step_class": "B"
+    },
+    {
+     "step": 2,
+     "run": "#149_09_qubit_spectroscopy_vs_flux_135030",
+     "expected_case": "Identical recorded settings to #148 and still the narrow flux window (fitted arch [-0.05, +0.05]). The fit flips to 'upper', moves the vertex from +0.0054 to +0.0183 V and moves the frequency by +7.4 MHz (4691.73 -> 4699.14 MHz) with quad_term = -8.8e8 Hz/V^2, 4-6x larger in magnitude than the -1.4e8..-2.2e8 the wide-window runs later converge on. Two back-to-back runs at the same bias with the same settings disagreeing on orientation and vertex is a reproducibility failure, not new information.",
+     "expected_flags": [
+      "irreproducible_repeat",
+      "orientation_flip",
+      "narrow_flux_window",
+      "quad_term_inconsistent",
+      "no_flux_period_dv_phi0_nan"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Still do not write. Apply the retune skipped at step 1: widen the flux sweep to ~+/-0.25 V, keep num_flux_points=41 and operation_amplitude_factor=1.0 (do NOT reduce the drive - it is what makes the line visible), optionally num_shots 50 -> 200 to stabilise the vertex on what is about to prove a very flat arch.",
+     "operator_did": "Ran #150 with the flux range widened to ~+/-0.25 V (arch window [-0.2, +0.0875], figure axis +/-0.25) but also dropped operation_amplitude_factor 1.0 -> 0.5.",
+     "operator_was_right": "yes",
+     "step_class": "B"
+    },
+    {
+     "step": 3,
+     "run": "#150_09_qubit_spectroscopy_vs_flux_135149",
+     "expected_case": "First run where the physics is actually on screen: the figure shows a continuous qubit line rising from ~4.687 GHz at flux -0.20 V to a broad plateau at ~4.697 GHz from about 0.0 V out to +0.2 V, turning over again near +0.2..+0.25 V. Orientation 'upper', vertex_extrapolated false, vertex (+0.0466 V) inside the swept range, quad_term = -1.44e8 Hz/V^2 - physically sane and consistent with the ~10 MHz of modulation the map shows over +/-0.25 V. The honest caveat is that the plateau is broad, so the vertex is localised only to roughly +/-0.05 V while the plateau FREQUENCY is solid.",
+     "expected_flags": [
+      "real_arch_resolved",
+      "upper_orientation_confirmed",
+      "vertex_inside_swept_range",
+      "quad_term_physical",
+      "flat_arch_vertex_only_coarsely_localised",
+      "frequency_shift_below_linewidth"
+     ],
+     "correct_decision": "adopt",
+     "correct_next_action": "Write f_01 = 4.696773912 GHz, xy/RF_frequency to match, freq_vs_flux_01_quad_term = -1.442e8 Hz/V^2 and z/joint_offset = +0.04663 V, then STOP this node for q2 and hand off to 08/08b qubit spectroscopy at the new bias to pin f_01 to better than the saturation linewidth. Record explicitly that the arch is flat (<1 MHz penalty anywhere in +0.02..+0.10 V) so no further 09 run will sharpen the flux point.",
+     "operator_did": "Adopted exactly these six patches (extras upper_sweet_spot_flux/frequency, f_01, freq_vs_flux_01_quad_term, xy/RF_frequency, z/joint_offset = 0.04663073494304199).",
+     "operator_was_right": "yes",
+     "step_class": "C"
+    }
+   ],
+   "termination": {
+    "at_run": "#150_09_qubit_spectroscopy_vs_flux_135149",
+    "reason": "#150 is the first and only run that produced a resolved, physically sane arch: visible line, upper orientation, vertex inside the swept range, vertex_extrapolated false, quad_term -1.44e8 Hz/V^2. Everything after it re-measures the same flat plateau: the eight later q2 runs produce vertices spanning -0.029 V to +0.222 V in absolute bias and quad_terms from -6.9e7 to -1.2e10 Hz/V^2, i.e. the vertex is limited by the flatness of the arch, not by any knob this node exposes. Because the update INCREMENTS joint_offset, continuing only walks the bias rightwards (0 -> 0.0466 -> 0.0771, with #44 proposing 0.1247) for under 1 MHz of benefit. The correct stop is 'adopt, then hand off to 08 qubit spectroscopy'.",
+    "final_frequency": 4696773911.796139,
+    "final_sweep_value": 0.04663073494304199,
+    "value_evidence": "final_frequency is #150's own fitted plateau frequency, corroborated by the five other upper-orientation fits in the session (4698.89, 4698.28, 4697.75, 4698.14, 4699.14 MHz) - the whole upper cluster spans 4696.77-4699.14 MHz, a 2.4 MHz spread - and both the #150 and #16 figures show the plateau top at ~4.697-4.699 GHz. final_sweep_value is the absolute z/joint_offset after #150; the pre-#150 bias is provably 0.0 because #16 writes 0.07713073494304198 = 0.04663073494304199 + 0.030499999999999996, i.e. it incremented from #150's write. The arch's flatness (~10 MHz over +/-0.25 V) means any bias in +0.02..+0.10 V is equivalent to under 1 MHz.",
+    "value_confidence": "med",
+    "unresolved": false
+   },
+   "wasted_runs": [
+    {
+     "run": "#13_09_qubit_spectroscopy_vs_flux_171423",
+     "why_wasted": "Re-measures the already-adopted flat arch at the new bias. Its fit is self-refuting: it reports an upper sweet spot (0.0190 V / 4698.89 MHz) AND a lower sweet spot (0.2125 V / 4690.27 MHz) only 8.6 MHz apart - a real lower sweet spot sits hundreds of MHz to GHz below the upper one, so the 'lower' point is just the right-hand edge of the swept window. No write, and no information."
+    },
+    {
+     "run": "#14_09_qubit_spectroscopy_vs_flux_171503",
+     "why_wasted": "operation_amplitude_factor doubled to 2.0 on a line already clearly visible at 1.0, and num_flux_points halved 41 -> 21. Result is the session's worst outlier: orientation 'lower', 4656.21 MHz (42 MHz below the plateau cluster), frequency_shift -30.6 MHz - a power-broadened / wrong-feature fit."
+    },
+    {
+     "run": "#15_09_qubit_spectroscopy_vs_flux_171600",
+     "why_wasted": "Back to amp 1.0 but only 21 flux points; returns yet another mutually inconsistent answer (orientation 'lower', vertex -0.0191 V, 4691.55 MHz). A third contradictory vertex without touching any knob that could resolve the flatness."
+    },
+    {
+     "run": "#16_09_qubit_spectroscopy_vs_flux_171639",
+     "why_wasted": "Byte-identical parameters to #15 and disagrees with it (orientation flips to 'upper', +6.7 MHz, vertex +0.0305 vs -0.0191 V). Choosing it over #15 is a preference, not evidence - and unlike #15 it was WRITTEN, incrementing the bias a further +30.5 mV across the same plateau."
+    },
+    {
+     "run": "#35_09_qubit_spectroscopy_vs_flux_172900",
+     "why_wasted": "Run at the freshly incremented bias; returns 'lower' orientation with vertex +0.145 V (absolute +0.222 V) and 4662.94 MHz, 35 MHz off the plateau. Pure chase: after moving the bias onto a real vertex, the next run should report an idle_offset near zero."
+    },
+    {
+     "run": "#36_09_qubit_spectroscopy_vs_flux_173001",
+     "why_wasted": "frequency_span doubled to 200 MHz and amplitude halved to 0.5; still 'lower' orientation, 4665.87 MHz, vertex +0.0655 V. Fifth mutually inconsistent vertex; neither knob addresses the flat-arch limitation."
+    },
+    {
+     "run": "#43_09_qubit_spectroscopy_vs_flux_174003",
+     "why_wasted": "Degenerate fit: quad_term -1.2e10 Hz/V^2 over an arch window only 0.125 V wide ([-0.175, -0.05]) would imply ~750 MHz of modulation on a line the figures show moving ~10 MHz. Vertex -0.1064 V contradicts every other run."
+    },
+    {
+     "run": "#44_09_qubit_spectroscopy_vs_flux_174107",
+     "why_wasted": "Returns to the plateau consensus (upper, 4698.14 MHz, quad -6.9e7) but proposes yet another +47.6 mV increment (absolute +0.1247 V). Correctly not written, and it adds nothing that was not known after #150."
+    }
+   ],
+   "poisoned_writes": [
+    {
+     "run": "#16_09_qubit_spectroscopy_vs_flux_171639",
+     "path": "/quam/qubits/q2/z/joint_offset",
+     "why": "Increment of +0.0305 V on top of the already-adopted vertex, taken from a fit that its byte-identical predecessor (#15) contradicts in both orientation and sign. It moves the operating point 30.5 mV along a plateau for no measurable frequency gain and compounds the increment chase (0 -> 0.0466 -> 0.0771, with #44 proposing 0.1247)."
+    },
+    {
+     "run": "#16_09_qubit_spectroscopy_vs_flux_171639",
+     "path": "/quam/qubits/q2/freq_vs_flux_01_quad_term",
+     "why": "Overwrites the -1.442e8 Hz/V^2 adopted at #150 with -2.166e8 Hz/V^2, a 50% change in the flux-sensitivity constant on evidence no stronger than the value it replaced. quad_term across this session ranges -6.9e7 to -1.2e10 Hz/V^2; nothing here justifies revising it."
+    },
+    {
+     "run": "#16_09_qubit_spectroscopy_vs_flux_171639",
+     "path": "/quam/qubits/q2/f_01",
+     "why": "Re-adoption of the plateau frequency (4698.282 MHz) from an unreproducible run. The harm is small (~1.5 MHz, inside the saturation linewidth) but this write should come from a follow-up 08 qubit spectroscopy at the adopted bias, not from a second flat-arch parabola."
+    },
+    {
+     "run": "#16_09_qubit_spectroscopy_vs_flux_171639",
+     "path": "/quam/qubits/q2/xy/RF_frequency",
+     "why": "Same value and same objection as f_01 - the drive frequency was retuned on the strength of a fit that its identical-settings sibling contradicts."
+    }
+   ],
+   "ideal_length": 3,
+   "actual_length": 11,
+   "confidence": "high",
+   "caveats": "The file's run order is NOT chronological for q2: #148/#149/#150 (13:49-13:51) precede #13-#16 (17:14-17:16). Provable twice - #16's joint_offset write equals #150's write plus #16's own idle_offset (0.04663073494304199 + 0.0305 = 0.07713073494304198), and the stored f_01 implied by qubit_frequency minus frequency_shift is 4696316876.15 Hz at #148/#149 (before #150's write) but 4686773911.796139 at #13-#16 (= #150's write minus exactly 10 MHz). My step numbering follows clock time, not array order. The same arithmetic shows non-09 writes between runs (f_01 baseline moves -10 MHz between #150 and #13 and -3 MHz between #36 and #43), presumably an 08-family node not in this file. The flux sweep RANGE - the knob that actually mattered between #149 and #150 - is not in the recorded params; I infer it from arch_flux_min/max and the figure axes (+/-0.05 V at #148, +/-0.25 V at #150/#16), so that inference is medium-confidence. Figures inspected: #148, #150, #16. dv_phi0 and m_pH are NaN in every run, so the flux period was never measured and no reported sweet spot could be validated against one."
+  },
+  {
+   "qubit": "q16",
+   "runs_in_scope": [
+    "#186_09_qubit_spectroscopy_vs_flux_205520",
+    "#187_09_qubit_spectroscopy_vs_flux_205746"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#186_09_qubit_spectroscopy_vs_flux_205520",
+     "expected_case": "The node itself reports failure and every honest flag agrees: vertex_extrapolated = true, idle_offset +0.5105 V sits 34x outside the fitted arch window ([-0.015, +0.015]), and |frequency_shift| = 169.2 MHz exceeds the entire 100 MHz swept frequency span. The configuration is thin on every axis: num_flux_points 11, num_shots 50, operation_amplitude_factor 0.1 - a tenth of the drive that made q2's line visible.",
+     "expected_flags": [
+      "node_reported_failure",
+      "vertex_extrapolated",
+      "shift_exceeds_frequency_span",
+      "idle_offset_outside_arch_window",
+      "low_drive_amplitude",
+      "too_few_flux_points"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Do not write. Raise operation_amplitude_factor 0.1 -> 1.0 first (that knob decides whether a line exists at all - q2 saw its line at 1.0 and a weaker one at 0.5), together with num_flux_points 11 -> 31 and num_shots 50 -> 200.",
+     "operator_did": "Ran #187 with num_shots 50 -> 200 and num_flux_points 11 -> 31, but left operation_amplitude_factor at 0.1.",
+     "operator_was_right": "partly",
+     "step_class": "B"
+    },
+    {
+     "step": 2,
+     "run": "#187_09_qubit_spectroscopy_vs_flux_205746",
+     "expected_case": "The node reports success and the fit looks superficially clean (upper orientation, vertex_extrapolated false, vertex -0.0064 V inside range), but the figure is decisive: the amplitude map is pure noise across the whole +/-0.1 V x 100 MHz window - there is no qubit line anywhere - and the parabola is drawn through noise. The numbers confirm it: quad_term = -4.17e10 Hz/V^2 would mean ~4.6 GHz of modulation over +/-0.25 V, and the fitted arch spans only 47 mV of the 200 mV swept. A false accept by the node; 'successful' must not be treated as evidence.",
+     "expected_flags": [
+      "no_visible_line_in_map",
+      "fit_on_noise",
+      "false_accept_by_node",
+      "degenerate_quad_term",
+      "low_drive_amplitude",
+      "arch_window_tiny_vs_sweep"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Write nothing for q16. Raise operation_amplitude_factor 0.1 -> 1.0 (then 2.0 if still invisible) keeping num_shots=200 and num_flux_points=31; if no line appears, widen frequency_span_in_mhz 100 -> 200-400 or re-establish the zero-flux frequency with 08 qubit spectroscopy before running a flux arch at all, since the 100 MHz window is centred on a stored f_01 of 4.500 GHz this session never confirmed.",
+     "operator_did": "Wrote nothing and moved on to q14; never raised the amplitude and never returned to q16.",
+     "operator_was_right": "partly",
+     "step_class": "B"
+    }
+   ],
+   "termination": {
+    "at_run": "#187_09_qubit_spectroscopy_vs_flux_205746",
+    "reason": "No further q16 run exists and neither of the two that do contains a qubit line. A correct system stops here, marks q16 unmeasured, leaves the stored values untouched and requests one more run with operation_amplitude_factor raised to 1.0. Stopping is right precisely because the node's 'successful' verdict on #187 is a false accept on noise.",
+    "final_frequency": 4500000000,
+    "final_sweep_value": null,
+    "value_evidence": "NOT a measurement from this session - it is the pre-existing stored f_01, derived twice as qubit_frequency minus frequency_shift (#186: 4669185653.186206 - 169185653.18620616 = 4.5e9; #187: 4516277478.316081 - 16277478.316081263 = 4.5e9). q16 should end the session holding exactly what it held before it, because the #187 figure shows no line and both fits are on noise. No idle_offset / joint_offset value is supportable at all, hence null.",
+    "value_confidence": "low",
+    "unresolved": true
+   },
+   "wasted_runs": [],
+   "poisoned_writes": [],
+   "ideal_length": 2,
+   "actual_length": 2,
+   "confidence": "high",
+   "caveats": "The reject verdict on #187 rests on the figure (figures.amplitude.png, inspected): from the record alone it reads as a clean success, and only the noise map plus the impossible quad_term expose it. Resolving q16 needs at least one run that does not exist in this file, so the ideal path cannot be shorter than the actual one here - the operator's error is under-diagnosis, not over-running. That 0.1 amplitude is specifically too low for q16 is inferred from q2's runs on the same chip and evening; a q16 power sweep would settle it."
+  },
+  {
+   "qubit": "q14",
+   "runs_in_scope": [
+    "#201_09_qubit_spectroscopy_vs_flux_212613"
+   ],
+   "ideal_path": [
+    {
+     "step": 1,
+     "run": "#201_09_qubit_spectroscopy_vs_flux_212613",
+     "expected_case": "Node reports success; the figure shows pure noise over the whole +/-0.11 V x 100 MHz window with no spectroscopy line, and the parabola is fitted to noise. The configuration cannot have worked: num_shots = 10 (the lowest in the session by 5x), num_flux_points = 11, operation_amplitude_factor = 0.1. The fit also reports 'lower' orientation with quad_term +5.6e8 Hz/V^2 - the wrong sign of curvature for a flux point away from half-flux - and dv_phi0/m_pH are NaN, so nothing cross-checks it.",
+     "expected_flags": [
+      "no_visible_line_in_map",
+      "fit_on_noise",
+      "false_accept_by_node",
+      "very_low_shots",
+      "low_drive_amplitude",
+      "too_few_flux_points",
+      "orientation_lower_implausible"
+     ],
+     "correct_decision": "reject_and_retune",
+     "correct_next_action": "Write nothing. Re-run with num_shots 10 -> 200, operation_amplitude_factor 0.1 -> 1.0 and num_flux_points 11 -> 31-41, widening the flux sweep towards +/-0.25 V as was done for q2 at #150; keep frequency_span_in_mhz=100 / step=0.5 for the first attempt.",
+     "operator_did": "Wrote nothing and ended the session; never re-ran q14.",
+     "operator_was_right": "partly",
+     "step_class": "B"
+    }
+   ],
+   "termination": {
+    "at_run": "#201_09_qubit_spectroscopy_vs_flux_212613",
+    "reason": "Only one q14 run exists and it contains no signal. The correct system stops after one look, keeps the stored values and asks for a re-run with shots and drive amplitude raised. The operator was right not to write; the target simply was never measured.",
+    "final_frequency": 4418272349.901945,
+    "final_sweep_value": null,
+    "value_evidence": "Pre-existing stored f_01, derived as qubit_frequency minus frequency_shift: 4397655388.502002 - (-20616961.399943262) = 4418272349.901945. It is the value q14 held before the run and should still hold after it - nothing in this session measured q14. No flux point is supportable, hence null.",
+    "value_confidence": "low",
+    "unresolved": true
+   },
+   "wasted_runs": [],
+   "poisoned_writes": [],
+   "ideal_length": 1,
+   "actual_length": 1,
+   "confidence": "high",
+   "caveats": "The verdict rests on the inspected figure; from the record alone the run reads as a success. Only one run exists, so no cross-run corroboration is possible and the derived pre-existing f_01 is arithmetic on this single record, not an independent measurement. Resolving q14 requires runs that do not exist in this session."
+  }
+ ],
+ "abc_tagging": {
+  "rule": "smabc/v1",
+  "date": "2026-08-24",
+  "derivation": "step_class derived from correct_decision: reject_and_retune/reconfirm=B, reject_and_stop=C, adopt=A at step index 0 else C. No step was re-adjudicated."
+ }
+}

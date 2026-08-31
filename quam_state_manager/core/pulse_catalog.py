@@ -156,7 +156,7 @@ _SPECS: tuple[PulseSpec, ...] = (
         # The bare quam Pulse is a DIGITAL-MARKER-ONLY pulse: quam's own
         # waveform_function returns None for it (verified in the customer
         # env), and real chips use it for e.g. the QDAC trigger lines
-        # (docs/119 — `z.opx_trigger_out.operations.trigger`, 11 on the CQT
+        # (docs/119 — `z.opx_trigger_out.operations.trigger`, 11 on the lab-B
         # chip). Recognizing it stops the "Unrecognized pulse class" banner
         # from branding a legitimate marker pulse; there is no analog preview
         # because there is no analog waveform (docs/126 follow-up).

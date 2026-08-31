@@ -1,0 +1,1208 @@
+{
+  "schema": "smknow/v1",
+  "family": "resonator_spectroscopy",
+  "authored": "2026-08-21",
+  "physics": "A 1-D sweep of the readout drive across the readout resonator, plotted as the magnitude R = sqrt(I^2+Q^2), so the resonance is a transmission NOTCH. The lineshape is routinely Fano-asymmetric — a companion peak beside the notch, often the TALLER excursion in the panel — and the runs ship phase and IQ-circle panels that settle whether an amplitude feature is a real resonance.",
+  "source": "docs/132: 75 runs / 257 targets across 6 labs (lab-A, lab-B, lab-C, lab-C_gilboa, lab-D, lab-E) and two node generations, every amplitude figure viewed; blind re-classification 7/12",
+  "labs": [
+    "lab-A",
+    "lab-B",
+    "lab-C",
+    "lab-C_gilboa",
+    "lab-D",
+    "lab-E"
+  ],
+  "cases": [
+    {
+      "id": "S1",
+      "name": "clean_notch",
+      "geometry": "One resolved downward excursion that is the deepest thing in the window, spanned by several frequency points, with shoulders of comparable height on both sides or a smooth monotone background and NO sharp flanking peak. Detrended phase makes exactly one dispersive turn centred on the minimum; the IQ radius collapses toward the origin there and nowhere else.",
+      "prescription": "Adopt the centre. If the reported FWHM is within ~3 frequency steps, halve the step (or halve the span at fixed point count) once before adopting the width. Otherwise no knob move; re-run only for repeatability.",
+      "exemplars": [
+        "lab-A/#305/q7",
+        "lab-C/#71/qA1",
+        "lab-D/#150/qA2",
+        "lab-E/#2/q9",
+        "lab-C_gilboa/#3/qA1",
+        "lab-B/#151/q7"
+      ],
+      "seen_count": 62,
+      "kind": "map_case"
+    },
+    {
+      "id": "S2",
+      "name": "fano_asymmetric",
+      "geometry": "A narrow notch with a rebound peak immediately beside it (usually on the high side, sometimes on both) whose height above the local trend is comparable to or greater than the notch depth. The tallest excursion in the panel is the peak, not the resonance. Phase turns once, at the notch, and is flat across the peak.",
+      "prescription": "Keep the window. Adopt the centre if the fit sits on the notch; expect the symmetric-Lorentzian shape verdict to fail and do not adopt the width. If the width matters, narrow the span to ~3-5 fitted linewidths so the rebound peak leaves the window, or refit with an asymmetric model. If a detector refuses on dominance, relax the dominance requirement or exclude the rebound peak from the prominence reference — do not widen.",
+      "exemplars": [
+        "lab-A/#338/q6",
+        "lab-C/#298/qB4",
+        "lab-B/#93/q2",
+        "lab-D/#146/qA3",
+        "lab-E/#17/q6"
+      ],
+      "seen_count": 48,
+      "kind": "map_case"
+    },
+    {
+      "id": "S2b",
+      "name": "notch_on_structured_background",
+      "geometry": "A notch riding a smoothly but strongly structured background — a broad hump or bowl immediately beside it, or a steep monotone slope — with NO sharp flanking peak. The broad feature may still be the panel's tallest excursion; it is many notch-widths wide, which is what separates it from a Fano peak.",
+      "prescription": "Centre adoptable. Refit with a curved (quadratic or higher) baseline, or crop to ±3-5 linewidths and refit. Do not widen — widening adds background, not information.",
+      "exemplars": [
+        "lab-B/#151/q3",
+        "lab-C/#298/qD4",
+        "lab-A/#21/q7",
+        "lab-E/#17/q4",
+        "lab-D/#146/qD5"
+      ],
+      "seen_count": 30,
+      "kind": "map_case"
+    },
+    {
+      "id": "S2c",
+      "name": "notch_on_stepped_baseline",
+      "geometry": "The baseline sits at two different LEVELS either side of the notch (a step, not a slope), so one symmetric background arm cannot match both wings and the model touches the data only near the notch.",
+      "prescription": "Centre adoptable. Fit the two wings' baselines independently (step baseline) or crop to the wing with the longer clean stretch. Check whether the sweep is segmented; if the width matters, re-acquire the region in one unsegmented sweep at the same span/step.",
+      "exemplars": [
+        "lab-A/#227/q5",
+        "lab-A/#234/q5",
+        "lab-D/#146/qC2"
+      ],
+      "seen_count": 4,
+      "kind": "map_case"
+    },
+    {
+      "id": "S2d",
+      "name": "split_bottom_notch",
+      "geometry": "The notch FLOOR carries two minima separated by a small interior maximum; the fitted centre lands on that interior maximum and the width band spans the whole doubled floor, inflating the width. Phase turns only ONCE across the complex — that is what distinguishes it from two resonances.",
+      "prescription": "Treat the centre as coarse only. Halve the frequency step over ±2 fitted widths and refit; if two minima persist with one phase turn, report the width as an upper bound. Do not widen the span.",
+      "exemplars": [
+        "lab-A/#329/q6"
+      ],
+      "seen_count": 1,
+      "kind": "map_case"
+    },
+    {
+      "id": "S3",
+      "name": "wrong_feature_fit",
+      "geometry": "The marked centre / width band does not coincide with the panel's notch: it sits on a neighbouring peak, a broad background hump, featureless plateau, or offset onto the recovery flank of the true feature. Tells: centre many notch-widths from the strongest candidate; fitted width far larger (or far smaller) than that candidate's width; drawn model may go below zero magnitude; no phase turn at the marked centre while there is one elsewhere.",
+      "prescription": "Do not adopt, and do not re-measure first — refit with the centre seeded at the strongest phase turn / listed candidate, bounding the centre to a few candidate widths and the width to within an order of the candidate width. Re-measure only if no candidate survives those bounds.",
+      "exemplars": [
+        "lab-C/#298/qB3",
+        "lab-D/#147/qA4",
+        "lab-D/#146/qB2",
+        "lab-D/#139/qA2"
+      ],
+      "seen_count": 14,
+      "kind": "map_case"
+    },
+    {
+      "id": "S3b",
+      "name": "step_edge_fit",
+      "geometry": "The trace is flat-low, jumps in one or two samples to a flat-high level and stays there; the fit sits on that step and is drawn as a monotone rising line rather than a bowl with recovering flanks. No dip with two flanks anywhere near the centre — and genuine comb notches often sit unchosen on either side.",
+      "prescription": "Reject the value outright; a step is not a resonance. Exclude the segment boundary from the fit window, or re-acquire the region in a single unsegmented sweep, then refit.",
+      "exemplars": [
+        "lab-D/#141/qA3",
+        "lab-D/#153/qA4"
+      ],
+      "seen_count": 2,
+      "kind": "map_case"
+    },
+    {
+      "id": "S3c",
+      "name": "ripple_trough_fit",
+      "geometry": "A quasi-periodic ripple with several troughs of comparable depth and regular spacing; the fit sits on one of them and is drawn as a broad shallow bowl whose flanks are contradicted by the neighbouring crests. A deeper trough often sits adjacent to the chosen one.",
+      "prescription": "Reject. Re-run with the span changed by a non-integer factor (x0.5 or x1.5) about the same centre: a real resonance keeps its frequency, a ripple minimum does not. Require a phase turn / IQ radius collapse before any adoption.",
+      "exemplars": [
+        "lab-D/#139/qA2",
+        "lab-D/#144/qA5",
+        "lab-D/#146/qB4"
+      ],
+      "seen_count": 4,
+      "kind": "map_case"
+    },
+    {
+      "id": "S3d",
+      "name": "wrong_resonator_fit",
+      "geometry": "The fit sits on a genuine, phase-confirmed notch that belongs to a DIFFERENT target. Invisible in one panel; the tells are cross-target/cross-run — two targets carrying the same or near-same centre, or a later narrower run assigning this target the other notch while a neighbour's window independently confirms the first.",
+      "prescription": "Do not adopt from a wide window. Run a narrow confirmation (span x1/5, re-centred) for BOTH targets separately; break candidate ties by which target's window the notch sits nearest the centre of, never by prominence rank alone.",
+      "exemplars": [
+        "lab-B/#134/q6",
+        "lab-D/#154/qA4"
+      ],
+      "seen_count": 3,
+      "kind": "map_case"
+    },
+    {
+      "id": "S3e",
+      "name": "duplicate_assignment",
+      "geometry": "Two targets in one multiplexed run carry the same fitted frequency and width to many significant figures and both are reported successful; one of the two panels leaves that target's own notch unmarked.",
+      "prescription": "Reject both values. Re-run the two targets non-multiplexed (or in separate groups) at the same span/step and adopt only if the centres differ by more than a few linewidths. Add a same-run duplicate-frequency check to the loop.",
+      "exemplars": [
+        "lab-D/#154/qA4",
+        "lab-D/#154/qA2"
+      ],
+      "seen_count": 2,
+      "kind": "map_case"
+    },
+    {
+      "id": "S3f",
+      "name": "seed_reported_as_fit",
+      "geometry": "Reported frequency and width are round grid/seed numbers (exactly 7157000000 Hz, exactly 6250000 Hz), the panel shows no feature at the marked position and the goodness of fit is near zero — an unconverged seed written into the fields a fit would use.",
+      "prescription": "Reject the record; no re-measurement needed. Refit with the seed taken from the strongest phase turn and require the optimiser to report convergence — a non-converged fit must return failure, never the seed.",
+      "exemplars": [
+        "lab-D/#147/qB1",
+        "lab-D/#147/qD3"
+      ],
+      "seen_count": 2,
+      "kind": "map_case"
+    },
+    {
+      "id": "S4",
+      "name": "multi_resonator_window",
+      "geometry": "Two or more genuine notches in the span, each with its own phase turn and its own IQ radius collapse. They need not be equally deep, and the chosen one is often not the deepest; at a narrow span each of them looks like a lone unambiguous notch.",
+      "prescription": "Adopt only after a confirmation run per candidate at span x1/5 re-centred on that candidate. If candidates sit within a few linewidths, disambiguate physically (power sweep, or which one moves with this qubit's flux) rather than by depth.",
+      "exemplars": [
+        "lab-E/#27/q11",
+        "lab-E/#27/q15",
+        "lab-B/#133/q2",
+        "lab-D/#150/qA1",
+        "lab-B/#134/q5"
+      ],
+      "seen_count": 22,
+      "kind": "map_case"
+    },
+    {
+      "id": "S4b",
+      "name": "shared_feedline_comb",
+      "geometry": "A wide multiplexed sweep of a whole readout band: every target's panel shows the SAME comb of narrow notches, one per resonator on the line. The deepest excursion is normally another target's resonator. By construction the question is ASSIGNMENT, not detection.",
+      "prescription": "Never adopt from the wide panel. Take the assigned centre as a seed, re-run each target non-multiplexed with the span cut to a few percent of the band, and enforce that no two targets were assigned the same notch.",
+      "exemplars": [
+        "lab-D/#150/qA1",
+        "lab-D/#155/qA4",
+        "lab-C/#112/qA1",
+        "lab-D/#146/qC1"
+      ],
+      "seen_count": 45,
+      "kind": "map_case"
+    },
+    {
+      "id": "S4c",
+      "name": "unassigned_target",
+      "geometry": "The node produces no centre for this target while producing centres for its siblings from the same trace: the local panel is stamped UNASSIGNED (old) or NO DIP with an empty candidate list (new), although the window plainly carries notches.",
+      "prescription": "First separate 'target outside the window' from 'inside but unassigned'. If inside, re-run the target alone at the same span and step; if it repeats, seed the fit from the nearest unclaimed comb notch and refit rather than re-acquiring.",
+      "exemplars": [
+        "lab-D/#139/qA1",
+        "lab-D/#144/qA1",
+        "lab-D/#153/qA3"
+      ],
+      "seen_count": 9,
+      "kind": "map_case"
+    },
+    {
+      "id": "S4d",
+      "name": "target_outside_window",
+      "geometry": "The panel is full of OTHER targets' features but contains nothing belonging to this target; the trace simply ends before (or after) where this target's resonance lies. No fit line; phase panel unassigned. Not an empty window and not an edge case — the resonance is not in the panel at all.",
+      "prescription": "Extend the span on the side the target is known or expected to lie, by roughly the missing offset plus a margin, or re-centre on the last known value. Do not raise shots — the acquisition is fine, the window is wrong.",
+      "exemplars": [
+        "lab-D/#152/qA5",
+        "lab-D/#153/qA6",
+        "lab-E/#1/q7",
+        "lab-D/#154/qA6"
+      ],
+      "seen_count": 8,
+      "kind": "map_case"
+    },
+    {
+      "id": "S5",
+      "name": "empty_window",
+      "geometry": "A smooth, coherent baseline (slope, hump, plateau) with NO localized excursion anywhere and no phase turn; the IQ trace winds at a smoothly varying radius that never collapses. The trace is well formed — it simply carries no resonance.",
+      "prescription": "Widen the span x3-4 about the same centre, or step the centre by about one span into territory not yet covered. Keep shots unchanged for the first widening.",
+      "exemplars": [
+        "lab-E/#2/q5",
+        "lab-E/#2/q6",
+        "lab-B/#162/q20",
+        "lab-D/#145/qB1",
+        "lab-E/#23/q17"
+      ],
+      "seen_count": 16,
+      "kind": "map_case"
+    },
+    {
+      "id": "S5b",
+      "name": "no_signal_noise_floor",
+      "geometry": "Amplitude is sample-to-sample hash with no slope, curvature or envelope; up and down excursions are the same size everywhere; IQ is an unordered cloud about the origin with no arc and no ordered sweep progression. The overall level is far below sibling targets.",
+      "prescription": "Stop sweeping — no span or step change can help. Diagnose the readout chain for this line (drive, LO, switch, cabling) and re-run at the SAME span only after the level is restored.",
+      "exemplars": [
+        "lab-C/#518/qC1",
+        "lab-B/#162/q20",
+        "lab-B/#163/q20"
+      ],
+      "seen_count": 3,
+      "kind": "map_case"
+    },
+    {
+      "id": "S5c",
+      "name": "structured_background_no_notch",
+      "geometry": "Strong background structure — broad plateaus, level steps, isolated one-sample spikes — but no smooth symmetric excursion and no phase/IQ coherence. The structure invites a forced refit; the cross-check panels say there is nothing to fit.",
+      "prescription": "Refuse and move the window: shift the centre by about one span or widen x2-3. Median-filter one sample before computing any prominence statistic so a single-sample spike cannot set the panel maximum.",
+      "exemplars": [
+        "lab-B/#165/q10",
+        "lab-D/#145/qA1",
+        "lab-D/#145/qB2"
+      ],
+      "seen_count": 11,
+      "kind": "map_case"
+    },
+    {
+      "id": "S5d",
+      "name": "ripple_dominated_window",
+      "geometry": "A large quasi-periodic oscillation whose troughs go as far below the mean as its crests go above it, all of comparable depth and regular spacing, sometimes confined to part of the panel behind a hard regime boundary. No single localized excursion its neighbours do not match.",
+      "prescription": "Refuse. Change the span by a non-integer factor (x0.5 or x1.5) and re-run — ripple minima move with the window, a resonance does not. If ripple persists everywhere, remove it (reference trace / background subtraction) before any dip statistic is trusted.",
+      "exemplars": [
+        "lab-D/#143/qA1",
+        "lab-D/#145/qA6",
+        "lab-D/#146/qB4"
+      ],
+      "seen_count": 13,
+      "kind": "map_case"
+    },
+    {
+      "id": "S6",
+      "name": "edge_clipped_notch",
+      "geometry": "The notch hugs or crosses a window edge: one wing complete, the other cut off, or only the leading flank inside with the trace still falling at the last point. A centre may still be marked but is unconstrained on one side, and any width is fitted from half a lineshape.",
+      "prescription": "Re-centre the window on the marked minimum keeping the span (or halving it). Do not merely widen — a width fitted from one wing is not a measurement.",
+      "exemplars": [
+        "lab-B/#151/q6",
+        "lab-B/#151/q4",
+        "lab-E/#31/q11",
+        "lab-E/#1/q3"
+      ],
+      "seen_count": 9,
+      "kind": "map_case"
+    },
+    {
+      "id": "S6b",
+      "name": "feature_entering_at_far_edge",
+      "geometry": "The FITTED notch sits comfortably inside the window while a separate downward excursion begins at the far edge and is cut off while still falling; the phase may show a separate disturbance out there. Only a leading flank is inside, so the extra feature can be neither confirmed nor dismissed.",
+      "prescription": "Adopt the fitted centre and record 'something just outside this window'. To resolve it, take ONE extra sweep re-centred beyond that edge at the same span; do not widen the fitting window in place, which only adds unmodelled background to a good fit.",
+      "exemplars": [
+        "lab-A/#312/q6",
+        "lab-A/#328/q6",
+        "lab-E/#27/q11",
+        "lab-C/#223/qA2"
+      ],
+      "seen_count": 7,
+      "kind": "map_case"
+    },
+    {
+      "id": "S6c",
+      "name": "notch_wider_than_window",
+      "geometry": "The trace is still descending at BOTH window edges and never reaches an off-resonant level; the fitted width and baseline are extrapolations, not measurements, and the reported width is typically several times the detected candidate's width.",
+      "prescription": "Adopt the centre only. Widen the span x3-5 about the same centre and refit before recording any width or Q; more shots will not help.",
+      "exemplars": [
+        "lab-B/#163/q2",
+        "lab-E/#13/q11"
+      ],
+      "seen_count": 3,
+      "kind": "map_case"
+    },
+    {
+      "id": "S7",
+      "name": "shallow_low_contrast_notch",
+      "geometry": "A notch is present and is the deepest point in the window, but its depth relative to its OWN local background is small — a few times the local jitter — with smooth walls. Neither noise-dominated nor unresolved by the step: the contrast is what is small.",
+      "prescription": "Raise readout drive a few dB at the same span and step. If drive is already at its useful limit, increase shots x2-4. Widening is the wrong move here.",
+      "exemplars": [
+        "lab-D/#146/qC4",
+        "lab-D/#146/qB1",
+        "lab-B/#151/q5",
+        "lab-D/#146/qD3"
+      ],
+      "seen_count": 11,
+      "kind": "map_case"
+    },
+    {
+      "id": "S7b",
+      "name": "noise_limited_notch",
+      "geometry": "The notch is neither shallow against its background nor too broad for the step — the TRACE is noisy: ragged walls, point-to-point scatter a sizeable fraction of the notch depth, hash across the panel. Phase still shows one clean dispersive swing at the marked centre, far above the phase noise.",
+      "prescription": "Increase shots x2-4 (or restore drive if the panel's overall level has collapsed since the previous run) at the SAME span and step. Do not change the sweep geometry.",
+      "exemplars": [
+        "lab-A/#328/q7",
+        "lab-A/#338/q7",
+        "lab-E/#17/q9",
+        "lab-E/#20/q9"
+      ],
+      "seen_count": 8,
+      "kind": "map_case"
+    },
+    {
+      "id": "S7c",
+      "name": "sub_step_width_fit",
+      "geometry": "Reported FWHM is at or below one frequency step — the model describes one or two samples. The drawn curve is a needle with no flanks the data follow, usually sitting on a single-sample excursion inside a cluster of up-and-down needles.",
+      "prescription": "Reject the width unconditionally and the centre unless a phase turn confirms it. Re-run with the step reduced x4-10 over a span narrowed to a few of the previously reported widths, and enforce a fitted-width floor of about 2 steps in the fitter.",
+      "exemplars": [
+        "lab-D/#146/qA2",
+        "lab-D/#146/qA6",
+        "lab-D/#147/qA2"
+      ],
+      "seen_count": 9,
+      "kind": "map_case"
+    },
+    {
+      "id": "S7d",
+      "name": "overbroad_fit_no_feature",
+      "geometry": "The FITTED width far exceeds any excursion present — a broad shallow bowl drawn across a jagged, rippled or plateau region. A property of the model, not of the data; several minima of comparable depth usually lie under the bowl.",
+      "prescription": "Reject. Bound the fitted width to within about an order of the detected candidate width and refit; if nothing survives the bound, return failure rather than a bowl.",
+      "exemplars": [
+        "lab-D/#146/qA1",
+        "lab-D/#144/qA5",
+        "lab-D/#147/qA1"
+      ],
+      "seen_count": 7,
+      "kind": "map_case"
+    },
+    {
+      "id": "S7e",
+      "name": "phase_only_resonance",
+      "geometry": "The magnitude panel carries no resolvable dip — flat noise, or a broad shallow bowl — while the detrended phase carries exactly one localized turn (or the IQ radius collapses) at one frequency. The resonance exists and is simply not in the plotted quantity.",
+      "prescription": "Do not widen and do not coarsen the step: both make it worse. Raise drive several dB and/or increase shots x4 at the same window; if the loop can, fit the complex response rather than |S21|.",
+      "exemplars": [
+        "lab-B/#151/q5",
+        "lab-B/#157/q8",
+        "lab-D/#155/qB2",
+        "lab-D/#147/qA5"
+      ],
+      "seen_count": 9,
+      "kind": "map_case"
+    },
+    {
+      "id": "S7f",
+      "name": "inverted_peak_response",
+      "geometry": "The off-resonant level sits at the noise floor and the resonance appears as a narrow, near-symmetric magnitude PEAK with no dip anywhere in the panel; the IQ trace spirals out to a large closed loop over exactly the peak's frequencies.",
+      "prescription": "Do not accept a dip-only refusal. Restore the off-resonant carrier (raise readout drive) and re-run at identical span and step — the same window then shows a notch; or fit with a sign-agnostic model. Widening is useless, the feature is already centred.",
+      "exemplars": [
+        "lab-C/#70/qA1"
+      ],
+      "seen_count": 1,
+      "kind": "map_case"
+    },
+    {
+      "id": "S7g",
+      "name": "peak_flanked_by_nulls",
+      "geometry": "One broad tall peak, several times the background, with a broad floor-reaching null on EACH side (only one null visible when the span truncates the peak). Phase is flat across the peak and jumps/winds at the nulls. The crest is guaranteed to be the tallest excursion and is not the resonance.",
+      "prescription": "Widen x2-3 to expose both nulls and check which excursions carry the phase winding, then narrow onto one null (span x1/5) before fitting. Treat the envelope as a readout-chain interference to be removed, not a lineshape to fit.",
+      "exemplars": [
+        "lab-B/#160/q8",
+        "lab-B/#169/q18",
+        "lab-B/#170/q18",
+        "lab-B/#164/q18"
+      ],
+      "seen_count": 7,
+      "kind": "map_case"
+    },
+    {
+      "id": "S8",
+      "name": "shape_poor_freq_ok",
+      "geometry": "The node itself splits the verdict: centre accepted, lineshape rejected. The fit is centred on the true notch while the drawn model misses the background — typically a straight baseline crossing a curved or stepped background, with the fitted floor below the lowest data point.",
+      "prescription": "Adopt the centre; do NOT adopt the width or the goodness of fit. Refit with a curved baseline, or narrow the span x1/2 to x1/5, if the width is needed. No re-acquisition is required.",
+      "exemplars": [
+        "lab-E/#17/q9",
+        "lab-E/#5/q3",
+        "lab-B/#92/q2",
+        "lab-E/#13/q17",
+        "lab-B/#133/q1"
+      ],
+      "seen_count": 32,
+      "kind": "map_case"
+    },
+    {
+      "id": "S8b",
+      "name": "unphysical_fit_shape_accepted",
+      "geometry": "The same drawn defects as shape_poor — baseline leaving the data at one or both window ends, model running below zero magnitude, width inflated against the detected candidate — but the node reports the shape GOOD with a high r2. The goodness number is evidently computed on a sub-window, not the panel.",
+      "prescription": "Adopt the centre; treat width and r2 as unreported. Recompute a residual over the window actually displayed before writing any width, and gate on that residual rather than on the node's r2.",
+      "exemplars": [
+        "lab-A/#6/q8",
+        "lab-A/#234/q5",
+        "lab-C/#111/qA2",
+        "lab-E/#12/q17",
+        "lab-C/#163/q2"
+      ],
+      "seen_count": 50,
+      "kind": "map_case"
+    },
+    {
+      "id": "S9",
+      "name": "ambiguous_candidates",
+      "geometry": "Several candidate dips listed with the top-to-second prominence ratio near the dominance threshold; the node either refuses or picks one and flags ambiguity. Panels typically show two or three depressions of similar depth.",
+      "prescription": "Do not adopt on prominence alone. Run one narrow confirmation per top candidate (span x1/5, re-centred); adopt only the candidate that keeps its frequency AND shows a phase turn / IQ radius collapse.",
+      "exemplars": [
+        "lab-E/#1/q8",
+        "lab-E/#2/q4",
+        "lab-E/#27/q5",
+        "lab-B/#134/q6"
+      ],
+      "seen_count": 9,
+      "kind": "map_case"
+    },
+    {
+      "id": "S9b",
+      "name": "false_no_dip",
+      "geometry": "success=false, dip_snr 0 and an EMPTY candidate list over a window that plainly carries a resolvable notch — often dominant, symmetric and phase/IQ confirmed. Two distinct producers: a threshold-fragile detector (the same feature accepted in the runs immediately before/after) and a dominance failure (a much larger neighbouring peak, or a far-side plateau as low as the notch floor, kills the prominence).",
+      "prescription": "Re-run ONCE at identical settings to separate flaky from deterministic. If it repeats, lower the dip-SNR / dominance requirement or score prominence against a LOCAL baseline window instead of the panel extremes. Never widen — widening usually worsens dominance.",
+      "exemplars": [
+        "lab-E/#23/q9",
+        "lab-E/#23/q15",
+        "lab-B/#94/q2",
+        "lab-B/#134/q5",
+        "lab-B/#160/q8",
+        "lab-B/#151/q4"
+      ],
+      "seen_count": 17,
+      "kind": "map_case"
+    },
+    {
+      "id": "S9c",
+      "name": "steep_background_notch",
+      "geometry": "A notch reaching the panel floor riding a steeply monotone background: a flat baseline on one side only, never returning to a baseline on the other. Phase turns sharply at the minimum. Prominence tests that need a two-sided baseline fail here even though the contrast is large.",
+      "prescription": "Adopt only after a phase/IQ confirmation. Re-centre so the notch has comparable background on both sides (shift the centre by roughly the current offset, keep the span) and refit with a sloped or curved baseline.",
+      "exemplars": [
+        "lab-E/#13/q15",
+        "lab-B/#161/q8"
+      ],
+      "seen_count": 3,
+      "kind": "map_case"
+    },
+    {
+      "id": "X1",
+      "name": "cross_run_centre_conflict",
+      "geometry": "Per-panel evidence is clean in every run, yet two runs of the same target return centres separated by many linewidths — sometimes with a local MAXIMUM in one run exactly where the other put the notch, or with the swept window moved by the same amount as the value so drift and re-aiming cannot be separated.",
+      "prescription": "Write neither value. Re-run both windows back-to-back at identical settings, then take one wide sweep covering both centres; adopt only a centre that reproduces twice and is unique in the wide sweep.",
+      "exemplars": [
+        "lab-E/#12/q10",
+        "lab-E/#13/q10",
+        "lab-D/#140/qA3",
+        "lab-D/#146/qA3",
+        "lab-B/#134/q6",
+        "lab-B/#151/q6"
+      ],
+      "seen_count": 12,
+      "kind": "map_case"
+    },
+    {
+      "id": "X2",
+      "name": "tracking_drift_window_trailing",
+      "geometry": "Across consecutive runs the notch marches monotonically in one direction by about a linewidth or more per run, and a window re-centred on the PREVIOUS answer keeps trailing it: the notch sits progressively further off window centre, always on the same side, without reaching an edge. Every per-run verdict is clean.",
+      "prescription": "Extrapolate the next centre from the last two runs instead of re-using the last one, and widen the span x1.5-2 on the trailing side. Re-estimate the drift rate every few runs.",
+      "exemplars": [
+        "lab-A/#338/q6",
+        "lab-A/#339/q7",
+        "lab-A/#340/q6"
+      ],
+      "seen_count": 9,
+      "kind": "map_case"
+    },
+    {
+      "id": "X3",
+      "name": "contrast_collapse_session",
+      "geometry": "Sequence-level, not panel-level: the panel's whole vertical range shrinks by up to an order of magnitude between runs of the SAME resonator while the lineshape survives unchanged. It converts clean notches into noise-limited ones and is invisible in any single figure.",
+      "prescription": "Compare the off-resonant level against the previous run of the same target; if it has fallen more than ~3x, restore drive (or diagnose the readout chain) before drawing any conclusion from dip statistics, and re-run at unchanged span and step.",
+      "exemplars": [
+        "lab-A/#328/q7",
+        "lab-A/#338/q7",
+        "lab-E/#13/q11"
+      ],
+      "seen_count": 7,
+      "kind": "map_case"
+    },
+    {
+      "id": "X4",
+      "name": "foreign_payload_no_fit_record",
+      "geometry": "The run is filed under this family but ships neither the family's four figures nor any fitted numbers — e.g. a ground/excited two-trace readout-optimisation panel with an applied-frequency marker — while still reporting success. There is no fit to agree or disagree with, and no frequency, width, r2, dip_snr or candidate list.",
+      "prescription": "Do not consume the outcome flag: a success with no frequency field is a failure at the loop level. Re-run the intended node explicitly and verify the figure set before ingesting anything.",
+      "exemplars": [
+        "lab-C/#110/qA1",
+        "lab-C/#110/qA2"
+      ],
+      "seen_count": 2,
+      "kind": "map_case"
+    },
+    {
+      "id": "F1",
+      "name": "background_model_leaves_data_at_window_ends",
+      "geometry": "The fitted baseline is a straight line running far above the data at one window end and far below it at the other while matching near the notch; departures reach many multiples of the notch depth.",
+      "prescription": "Never adopt width or goodness of fit from such a fit. Refit with a curved or two-sided baseline, or crop to ±3-5 linewidths.",
+      "exemplars": [
+        "lab-A/#6/q8",
+        "lab-C/#231/qA2",
+        "lab-E/#27/q6",
+        "lab-D/#146/qC5"
+      ],
+      "seen_count": 120,
+      "kind": "flag"
+    },
+    {
+      "id": "F2",
+      "name": "fitted_floor_below_zero_magnitude",
+      "geometry": "The drawn Lorentzian's minimum lies below the lowest measured point, often below zero — impossible for a magnitude R=sqrt(I^2+Q^2).",
+      "prescription": "Refuse the width regardless of r2 and flag the fit; constrain the model floor to be non-negative and refit.",
+      "exemplars": [
+        "lab-E/#17/q4",
+        "lab-E/#5/q8",
+        "lab-B/#92/q2",
+        "lab-C/#298/qB3"
+      ],
+      "seen_count": 45,
+      "kind": "flag"
+    },
+    {
+      "id": "F3",
+      "name": "goodness_of_fit_is_windowed_not_whole_panel",
+      "geometry": "r2 reported at 0.97-0.99 while the drawn curve departs from the data by many notch depths across one or both window ends.",
+      "prescription": "Recompute the residual over the displayed window before gating on it; treat the node's r2 as a local core-fit number only.",
+      "exemplars": [
+        "lab-A/#6/q9",
+        "lab-A/#234/q5",
+        "lab-C/#233/qA2"
+      ],
+      "seen_count": 90,
+      "kind": "flag"
+    },
+    {
+      "id": "F4",
+      "name": "fwhm_grid_quantized_or_seed_value",
+      "geometry": "Reported width is an exact multiple of the frequency step or a round seed number (5.70 MHz, 4.90 MHz, 6.25 MHz); frequency may be round too.",
+      "prescription": "Treat the width as unmeasured. If the frequency is also round and no feature sits there, reject the whole record as an unconverged seed.",
+      "exemplars": [
+        "lab-B/#92/q2",
+        "lab-B/#133/q1",
+        "lab-E/#5/q3",
+        "lab-D/#147/qB1"
+      ],
+      "seen_count": 14,
+      "kind": "flag"
+    },
+    {
+      "id": "F5",
+      "name": "fwhm_at_or_below_one_frequency_step",
+      "geometry": "Reported FWHM is smaller than or comparable to the sweep step, so the model describes one or two samples.",
+      "prescription": "Reject the width unconditionally; accept the centre only with a phase confirmation. Enforce a ~2-step fitted-width floor.",
+      "exemplars": [
+        "lab-D/#146/qA2",
+        "lab-D/#147/qA2",
+        "lab-D/#112/qA1"
+      ],
+      "seen_count": 14,
+      "kind": "flag"
+    },
+    {
+      "id": "F6",
+      "name": "fwhm_far_exceeds_detected_candidate_width",
+      "geometry": "Reported FWHM is many times (up to an order or more) the width of the node's own winning candidate.",
+      "prescription": "A cheap machine-readable reject: refit bounded to within an order of the candidate width, or return failure.",
+      "exemplars": [
+        "lab-E/#1/q3",
+        "lab-C/#298/qB3",
+        "lab-C/#163/q2",
+        "lab-C/#298/qD3"
+      ],
+      "seen_count": 12,
+      "kind": "flag"
+    },
+    {
+      "id": "F7",
+      "name": "centre_far_from_winning_candidate",
+      "geometry": "The reported frequency sits many notch-widths from the strongest listed candidate, on featureless background.",
+      "prescription": "Reject and refit from the candidate; this is repairable from the record alone with no re-measurement.",
+      "exemplars": [
+        "lab-C/#298/qB3",
+        "lab-D/#147/qA1"
+      ],
+      "seen_count": 6,
+      "kind": "flag"
+    },
+    {
+      "id": "F8",
+      "name": "notch_biased_off_window_centre",
+      "geometry": "The notch sits well off window centre, and several targets in the same session are all off-centre on the SAME side — a biased stored start frequency rather than an edge problem.",
+      "prescription": "Re-centre stored values on the measured centres before the next pass; no span change needed while the notch stays well inside.",
+      "exemplars": [
+        "lab-A/#338/q6",
+        "lab-A/#340/q7",
+        "lab-B/#151/q7",
+        "lab-B/#157/q8"
+      ],
+      "seen_count": 15,
+      "kind": "flag"
+    },
+    {
+      "id": "F9",
+      "name": "node_reported_success_but_no_state_patch",
+      "geometry": "All targets successful, fits sound, and the run's patch list is empty — an outcome-level fact with no figure signature at all.",
+      "prescription": "Reconcile per-target verdicts against the patch list every run; treat an unwritten success as not-yet-calibrated, not as done.",
+      "exemplars": [
+        "lab-A/#328/q6",
+        "lab-A/#340/q7",
+        "lab-C/#351/qA1"
+      ],
+      "seen_count": 8,
+      "kind": "flag"
+    },
+    {
+      "id": "F10",
+      "name": "partial_write_back_tail_of_target_list",
+      "geometry": "Only the last N entries of a multiplexed target list are patched; earlier confirmed-successful fits are silently never written.",
+      "prescription": "Assert patch count equals success count per run; investigate the write-back scope before trusting any session's stored values.",
+      "exemplars": [
+        "lab-E/#17/q9",
+        "lab-E/#19/q5",
+        "lab-E/#20/q4"
+      ],
+      "seen_count": 16,
+      "kind": "flag"
+    },
+    {
+      "id": "F11",
+      "name": "sibling_failure_suppresses_all_patches",
+      "geometry": "One failed target in a multiplexed group discards the whole run's writes, including several good fits.",
+      "prescription": "Make write-back per-target; until then, re-run the good targets separately to get their values recorded.",
+      "exemplars": [
+        "lab-E/#23/q4",
+        "lab-E/#24/q11"
+      ],
+      "seen_count": 13,
+      "kind": "flag"
+    },
+    {
+      "id": "F12",
+      "name": "written_despite_shape_verdict_false",
+      "geometry": "A target with success_shape=false is patched to state anyway — the write path does not consult the shape verdict.",
+      "prescription": "Acceptable for the frequency, dangerous for anything downstream that reads the width; write frequency and width through separate gates.",
+      "exemplars": [
+        "lab-E/#19/q10",
+        "lab-E/#5/q3",
+        "lab-E/#12/q15"
+      ],
+      "seen_count": 20,
+      "kind": "flag"
+    },
+    {
+      "id": "F13",
+      "name": "escalation_ladder_configured_but_disabled",
+      "geometry": "min_dip_snr, dip_dominance and max_escalation_span_in_mhz are all set while escalate_on_no_dip is false — in every new-generation run of this corpus.",
+      "prescription": "Either enable the ladder or record that escalation is manual; never assume a NO DIP verdict means the node tried and failed to widen.",
+      "exemplars": [
+        "lab-E/#1/q1",
+        "lab-B/#94/q2",
+        "lab-C/#518/qC1",
+        "lab-B/#170/q18"
+      ],
+      "seen_count": 60,
+      "kind": "flag"
+    },
+    {
+      "id": "F14",
+      "name": "manual_escalation_substituted_for_ladder",
+      "geometry": "The operator widens the span and/or doubles shots by hand across consecutive runs after a refusal — the ladder's own behaviour performed externally.",
+      "prescription": "Read such chains as ONE escalation, not as independent runs; the last run of the chain is the only adoptable one.",
+      "exemplars": [
+        "lab-B/#92/q2",
+        "lab-B/#96/q2",
+        "lab-E/#27/q17",
+        "lab-B/#169/q18"
+      ],
+      "seen_count": 20,
+      "kind": "flag"
+    },
+    {
+      "id": "F15",
+      "name": "identical_repeat_after_a_failure",
+      "geometry": "A failing run is repeated with byte-identical parameters, so nothing in the acquisition could change.",
+      "prescription": "Legitimate exactly once as a flake test; a second identical repeat is wasted time — change drive, shots, span or centre.",
+      "exemplars": [
+        "lab-B/#95/q2",
+        "lab-B/#163/q20",
+        "lab-E/#24/q17"
+      ],
+      "seen_count": 8,
+      "kind": "flag"
+    },
+    {
+      "id": "F16",
+      "name": "phase_panel_unusable_runaway",
+      "geometry": "The detrended-phase panel is a smooth monotonic or parabolic runaway, sometimes orders of magnitude off the few-radian scale of its siblings, with no feature at the marked centre.",
+      "prescription": "Record 'cross-check unavailable', which is NOT the same as failing the cross-check; fall back to the IQ panel and mark the conclusion as amplitude-only.",
+      "exemplars": [
+        "lab-E/#13/q10",
+        "lab-A/#17/q5",
+        "lab-E/#17/q10",
+        "lab-E/#1/q3"
+      ],
+      "seen_count": 10,
+      "kind": "flag"
+    },
+    {
+      "id": "F17",
+      "name": "iq_panel_delay_dominated_or_undersampled",
+      "geometry": "The IQ trace is a many-turn spiral from uncompensated electrical delay, or at a coarse step degrades into a star of jumps with no ordered progression.",
+      "prescription": "Do not apply the 'closed circle' test; use the RADIUS COLLAPSE at resonance instead, and if the step is too coarse for that, record the cross-check as unavailable.",
+      "exemplars": [
+        "lab-B/#94/q2",
+        "lab-B/#158/q8",
+        "lab-E/#2/q2",
+        "lab-C/#163/q2"
+      ],
+      "seen_count": 18,
+      "kind": "flag"
+    },
+    {
+      "id": "F18",
+      "name": "multiplexed_figure_layout_illegible_panel",
+      "geometry": "A multi-qubit figure lays panels out at unequal sizes with an empty cell, leaving one panel too small to read fine structure.",
+      "prescription": "Cap annotation/verdict confidence at medium for that panel and re-plot the target alone if the fine structure matters.",
+      "exemplars": [
+        "lab-A/#227/q5",
+        "lab-A/#234/q5"
+      ],
+      "seen_count": 8,
+      "kind": "flag"
+    },
+    {
+      "id": "F19",
+      "name": "single_sample_spike_dominates_panel",
+      "geometry": "An isolated one-sample excursion, up or down, is the tallest thing in the panel and will set any prominence/dominance statistic computed against the panel extreme.",
+      "prescription": "Median-filter one sample before scoring prominence; never let a one-sample feature be a candidate.",
+      "exemplars": [
+        "lab-B/#165/q10",
+        "lab-D/#145/qB1",
+        "lab-D/#146/qA6"
+      ],
+      "seen_count": 12,
+      "kind": "flag"
+    },
+    {
+      "id": "F20",
+      "name": "segment_stitching_step_present",
+      "geometry": "A hard flat-to-flat level change with no dip, and often an abrupt background-regime boundary, produced by a segmented sweep whose segments are separately levelled.",
+      "prescription": "Exclude segment boundaries from fit windows; a fit centred on a step is always rejectable without further evidence.",
+      "exemplars": [
+        "lab-D/#141/qA3",
+        "lab-D/#154/qA1",
+        "lab-D/#143/qA1"
+      ],
+      "seen_count": 9,
+      "kind": "flag"
+    },
+    {
+      "id": "F21",
+      "name": "phase_unwrap_sawtooth_present",
+      "geometry": "A straight ramp ending in a vertical drop in the phase panel, with no corresponding amplitude notch — a display artefact that mimics a sharp feature in exactly the panel used for confirmation.",
+      "prescription": "Require a co-located amplitude excursion before treating any sharp phase feature as a resonance; ignore ramp-then-drop shapes.",
+      "exemplars": [
+        "lab-D/#150/qA4",
+        "lab-D/#153/qA4",
+        "lab-D/#155/qA4"
+      ],
+      "seen_count": 6,
+      "kind": "flag"
+    },
+    {
+      "id": "F22",
+      "name": "standing_wave_ripple_background",
+      "geometry": "Quasi-periodic background oscillation with troughs as deep as its crests are tall, of regular spacing, over part or all of the panel.",
+      "prescription": "Test by changing the span a non-integer factor; remove the ripple (reference trace) before trusting any dip statistic on that line.",
+      "exemplars": [
+        "lab-D/#139/qA2",
+        "lab-D/#146/qB4",
+        "lab-D/#155/qB1"
+      ],
+      "seen_count": 15,
+      "kind": "flag"
+    },
+    {
+      "id": "F23",
+      "name": "ambiguity_flag_overridden_by_writing_a_value",
+      "geometry": "ambiguous=true with several candidates and the node still returns success and a single centre, which is then patched.",
+      "prescription": "Gate the write on the ambiguity flag; require a per-candidate narrow confirmation before any value is stored.",
+      "exemplars": [
+        "lab-B/#134/q6",
+        "lab-E/#1/q8",
+        "lab-E/#27/q15"
+      ],
+      "seen_count": 6,
+      "kind": "flag"
+    },
+    {
+      "id": "F24",
+      "name": "unlisted_second_genuine_candidate",
+      "geometry": "ambiguous=false with a single candidate while a second, phase/IQ-confirmed notch is plainly in the window — sometimes the DEEPEST excursion, clipped at the edge.",
+      "prescription": "Never read an empty or short candidate list as proof of uniqueness; scan the panel independently for a second radius collapse before adopting.",
+      "exemplars": [
+        "lab-E/#27/q11",
+        "lab-E/#31/q11",
+        "lab-E/#35/q11",
+        "lab-C/#223/qA2"
+      ],
+      "seen_count": 8,
+      "kind": "flag"
+    },
+    {
+      "id": "F25",
+      "name": "refusal_not_reproducible",
+      "geometry": "The same feature at the same settings is refused in one run and accepted with a comfortable dip_snr in the runs immediately before and after.",
+      "prescription": "One identical repeat distinguishes flaky from deterministic; a flaky refusal is a threshold defect, not evidence about the chip.",
+      "exemplars": [
+        "lab-E/#23/q9",
+        "lab-E/#24/q9",
+        "lab-E/#23/q15"
+      ],
+      "seen_count": 5,
+      "kind": "flag"
+    },
+    {
+      "id": "F26",
+      "name": "low_contrast_vs_session_baseline",
+      "geometry": "The panel's overall vertical range is a fraction of what the same target showed minutes or hours earlier, with the lineshape otherwise unchanged.",
+      "prescription": "Compare against the previous run of the same target before interpreting any depth/SNR number; restore drive rather than changing the sweep.",
+      "exemplars": [
+        "lab-A/#328/q7",
+        "lab-A/#338/q7",
+        "lab-E/#13/q11"
+      ],
+      "seen_count": 10,
+      "kind": "flag"
+    },
+    {
+      "id": "F27",
+      "name": "window_moved_with_the_value",
+      "geometry": "Between consecutive runs both the reported centre and the swept window shift by about the same amount, so a genuine chip drift cannot be separated from a deliberate re-aim.",
+      "prescription": "Record window centre alongside the value; to attribute, repeat the OLD window once before adopting the new value.",
+      "exemplars": [
+        "lab-E/#13/q10",
+        "lab-E/#13/q11",
+        "lab-E/#13/q17"
+      ],
+      "seen_count": 8,
+      "kind": "flag"
+    },
+    {
+      "id": "F28",
+      "name": "fit_drawn_as_peak_not_notch",
+      "geometry": "The drawn model is an upward Lorentzian rather than a dip, usually offset from the panel's real downward spike.",
+      "prescription": "Reject immediately — in a notch family a peak-shaped model is a sign-of-fit failure, independent of r2.",
+      "exemplars": [
+        "lab-D/#153/qA4"
+      ],
+      "seen_count": 1,
+      "kind": "flag"
+    },
+    {
+      "id": "F29",
+      "name": "shape_verdict_permissive",
+      "geometry": "success_shape=true on a fit whose wing visibly misses the data or whose floor drops below zero — the split verdict is not a strict lineshape test and errs generous.",
+      "prescription": "Do not use success_shape as a width gate; compute your own residual and non-negativity check.",
+      "exemplars": [
+        "lab-E/#12/q17",
+        "lab-C/#163/q2",
+        "lab-E/#23/q6"
+      ],
+      "seen_count": 25,
+      "kind": "flag"
+    },
+    {
+      "id": "F30",
+      "name": "coarse_step_destroys_the_cross_check",
+      "geometry": "A step chosen for survey speed makes the per-sample phase advance exceed what the IQ/phase panels can render, so the corroborating panels carry no usable information.",
+      "prescription": "When escalating by span, do not also coarsen the step past the point where phase advance per sample stays small; re-run the chosen candidate at a fine step before adopting.",
+      "exemplars": [
+        "lab-B/#158/q8",
+        "lab-B/#169/q18"
+      ],
+      "seen_count": 5,
+      "kind": "flag"
+    },
+    {
+      "id": "F31",
+      "name": "multi_dip_cluster_unflagged_old_generation",
+      "geometry": "Two or three sharp candidate dips packed side by side with the fitted centre on the cluster's flank; the old node has no ambiguity flag, so nothing in the record says the choice was contested.",
+      "prescription": "On old-generation records, derive your own candidate list from the trace before adopting a centre near a cluster.",
+      "exemplars": [
+        "lab-D/#147/qA3",
+        "lab-D/#146/qB1"
+      ],
+      "seen_count": 5,
+      "kind": "flag"
+    }
+  ],
+  "rules": [
+    {
+      "id": "R1",
+      "name": "The notch is the resonance; the tallest excursion is not",
+      "text": "In this family the plotted quantity is |S21| and the resonance is a downward excursion. Across all six labs the panel's tallest excursion is routinely a Fano rebound peak, a broad background hump, a window-edge climb, an interference crest or a one-sample spike. No detector, fitter or reader may use 'largest excursion', 'panel maximum' or 'panel extreme' as the reference for the resonance or for its prominence."
+    },
+    {
+      "id": "R2",
+      "name": "What makes a frequency ADOPTABLE",
+      "text": "Adopt a centre only when ALL hold: (a) the marked position coincides with a downward excursion that is the deepest point of a LOCAL window of a few fitted widths; (b) a localized phase turn or an IQ radius collapse sits at the same frequency (see R4/R5), or the value reproduces a previously confirmed centre; (c) the centre lies within a few candidate widths of the strongest detected candidate; (d) the notch is not clipped by a window edge and the trace reaches an off-resonant level on at least one side; (e) no other target in the same run was assigned the same notch. Width, Q and goodness-of-fit are adopted SEPARATELY and under stricter tests (R6, R7) — a frequency may be adoptable while everything else in the record is not."
+    },
+    {
+      "id": "R3",
+      "name": "When the phase/IQ cross-check is mandatory",
+      "text": "Consult the phase and IQ panels BEFORE believing any amplitude feature when any of these is true: the depth-to-local-scatter is small; the tallest excursion sits within a few widths of the marked centre; the background is stepped, rippled, or steeply monotone; the fit landed on a step, plateau or ripple trough; a second minimum of comparable depth exists in the window; the panel is being read at survey (wide/coarse) zoom; or the value is a FIRST determination rather than a reproduction. Amplitude alone may be trusted only for a dominant, symmetric, well-sampled notch that reproduces a known value."
+    },
+    {
+      "id": "R4",
+      "name": "The IQ test is the radius collapse, not a closed circle",
+      "text": "On delay-uncompensated chips the IQ trace is a many-turn spiral by construction and no single closed circle exists; the usable signature is the spiral RADIUS collapsing toward the origin at the resonance (an inner cluster / collapse point). Conversely a magnitude PEAK whose frequencies trace a large closed loop is still a resonance (see the inverted-response case). Never read 'no closed circle' as 'no resonance'."
+    },
+    {
+      "id": "R5",
+      "name": "A cross-check can be unavailable, which is not the same as negative",
+      "text": "Detrended phase can render as a monotone or parabolic runaway orders of magnitude off scale, and a coarse step can make the IQ panel uninterpretable. Record 'cross-check unavailable' explicitly and mark the resulting verdict as amplitude-only; a loop must never convert an unavailable cross-check into a refutation, nor into an implicit pass."
+    },
+    {
+      "id": "R6",
+      "name": "Width gates are independent of the frequency gate",
+      "text": "Reject a reported FWHM if it is at or below ~1 frequency step; if it is an exact multiple of the step or a round seed value; if it exceeds the detected candidate's width by more than about an order; if the trace has not reached an off-resonant level on both sides (notch wider than the window); or if the notch is edge-clipped. Enforce a fitted-width floor of about two steps and an upper bound of about a quarter span in the fitter."
+    },
+    {
+      "id": "R7",
+      "name": "r2 here is not a whole-window goodness of fit",
+      "text": "Across every lab and both generations, r2 of 0.97-0.99 coexists with a drawn baseline that leaves the data by many notch depths at the window ends, sometimes below zero magnitude. Recompute the residual over the window that is actually displayed before gating on it, and add a hard non-negativity check on the model — a magnitude model dipping below zero is unphysical regardless of r2."
+    },
+    {
+      "id": "R8",
+      "name": "A refusal is a claim about the data and must be checked against the figure",
+      "text": "NO DIP / UNASSIGNED with an empty candidate list occurred repeatedly over dominant, phase-confirmed notches. Treat every refusal as a hypothesis: check the panel and the cross-checks before accepting 'no resonance'. Absence of a candidate is never evidence of absence of a resonance."
+    },
+    {
+      "id": "R9",
+      "name": "Repeat identically at most once, and only as a flake test",
+      "text": "A byte-identical repeat cannot change a deterministic verdict. Use one identical repeat to separate a threshold flake from a systematic refusal; after that, change exactly one thing (drive, shots, span, centre or step) chosen by the diagnosis."
+    },
+    {
+      "id": "R10",
+      "name": "Escalate on the right axis",
+      "text": "Span for placement failures (target outside window, edge-clipped, notch wider than window); step for resolution failures (sub-step widths, under-sampled narrow features); drive/shots for contrast failures (shallow, noise-limited, phase-only, inverted response, no signal). Widening never fixes a contrast or dominance problem and often worsens dominance; coarsening the step to survey faster destroys marginal narrow features and the cross-check panels with them."
+    },
+    {
+      "id": "R11",
+      "name": "Score prominence locally and de-spike first",
+      "text": "Prominence and dominance must be computed against a LOCAL baseline window around the candidate, not against the panel's extremes: a Fano peak, a far-side plateau as low as the notch floor, a steep monotone ramp, or a single-sample spike each defeat a global statistic while the notch is unmistakable. Median-filter one sample before any extremum statistic, and never let a one- or two-sample excursion be a candidate."
+    },
+    {
+      "id": "R12",
+      "name": "On a shared feedline, assignment is a separate step from fitting",
+      "text": "A wide multiplexed sweep puts every resonator of the line into every target's panel. Enforce uniqueness (no two targets may take the same notch, checked by comparing reported frequencies within the run), prefer the candidate nearest the target's own window centre over the most prominent one, and confirm every assignment with a narrow, non-multiplexed re-run before writing."
+    },
+    {
+      "id": "R13",
+      "name": "A survey produces seeds; only a narrow confirmation produces values",
+      "text": "Never write a value straight out of a wide or exploratory sweep. Wide runs are for locating candidates; the adoptable value comes from a re-centred run at a span of a few fitted linewidths with a step fine enough to keep the cross-check panels readable."
+    },
+    {
+      "id": "R14",
+      "name": "Success is not a write, and a write is not a validation",
+      "text": "Successful, well-fitted runs left empty patch lists; write-back covered only the tail of a target list; one sibling failure suppressed every patch in a run; and values were written despite success_shape=false. Reconcile per-target verdicts against the patch list on every run, gate frequency and width through separate write paths, and treat an unwritten success as not-yet-calibrated."
+    },
+    {
+      "id": "R15",
+      "name": "Drift is a cross-run fact and must be tracked as one",
+      "text": "When a resonance moves monotonically run to run, a window re-centred on the previous answer trails it. Extrapolate from the last two centres rather than re-using the last one, record the window centre with the value, and if both the value and the window moved by the same amount, repeat the OLD window once before attributing the change to the chip."
+    },
+    {
+      "id": "R16",
+      "name": "Two consistent measurements before a write; never flip",
+      "text": "Where a window can hold two genuine resonators, consecutive runs wrote first one then the other and each write landed. Require a value to reproduce (within a fraction of a linewidth) in two runs, and refuse any write whose centre differs from the stored one by more than a few linewidths until the conflict is resolved by a wide sweep covering both."
+    },
+    {
+      "id": "R17",
+      "name": "Report frequency and lineshape separately, even when the node cannot",
+      "text": "The identical physical situation — centre usable, symmetric-Lorentzian shape unusable on a Fano or structured background — is 'success with success_shape=false' on the newer node and a plain FAILURE on the older one, which discards a perfectly good frequency. A loop consuming old-generation records must re-derive a shape-independent frequency verdict rather than trusting the single success flag."
+    },
+    {
+      "id": "R18",
+      "name": "The response can be inverted; a dip-only detector must not conclude absence",
+      "text": "When the off-resonant carrier sits at the noise floor, the resonance can appear as a magnitude PEAK with no dip in the panel, confirmed by the IQ loop; the same window at raised drive shows a textbook notch. Before reporting no-dip, check the off-resonant level against the noise floor and check the IQ/phase panels."
+    },
+    {
+      "id": "R19",
+      "name": "Prefer repairing the record over re-measuring",
+      "text": "Several of the worst outcomes here (fit far from its own winning candidate, width orders off the candidate width, a seed reported as a fit, a fit on a step or ripple trough) are fully diagnosable and correctable from data already on disk. Refit from the recorded candidates under bounds before spending instrument time; re-acquire only for contrast, placement or resolution failures."
+    },
+    {
+      "id": "R20",
+      "name": "Record the context a verdict is only valid inside",
+      "text": "Half the diagnostic power in this family is relational. Store with every result: span, step, shots, drive level, window centre, the previous centre for that target, the panel's off-resonant level, the full candidate list, the patch list, and whether the run was multiplexed. Without these, contrast collapse, drift, trailing windows, duplicate assignments and manual escalation chains are all invisible."
+    }
+  ],
+  "signal_map": {
+    "line_clean": "S1",
+    "line_fano_asymmetric": "S2",
+    "line_multi_feature": "S4",
+    "line_empty": "S5",
+    "line_edge_clipped": "S6",
+    "line_weak_broad": "S7",
+    "line_split_flat_top": "S7"
+  },
+  "signal_map_note": "The reader reports the SHAPE it measured; whether the record found the notch is carried separately by the fit_on_the_companion flag, because on this family the two questions come apart more often than anywhere else.",
+  "cross_lab_notes": "SIX LABS, TWO GENERATIONS. lab-A (11 runs, all new gen, one chip over two days): a per-resonator shape split that stayed stable for ten hours — q6/q8 always Fano-bracketed, q5/q7 always a clean V or stepped baseline — plus session-scale contrast collapse and monotonic drift. lab-B (many runs, new gen): peak-dominant panels, a chip-wide peak-flanked-by-nulls interference envelope, and the corpus's densest cluster of refusals over readable notches. lab-C (new gen for singles, old-gen wide node too): the cleanest reference notches AND the only inverted (peak) response, plus the only foreign-payload runs. lab-C_gilboa: one run only, one textbook notch — too thin to generalise from. lab-D (all old-gen wide `02_resonator_spectroscopy_wide_pyloop`): whole-band shared-feedline sweeps where the job is assignment, and the home of stitching steps, unwrap sawtooths, ripple-dominated windows, sub-step needle fits, UNASSIGNED stamps and a duplicate assignment. lab-E (new gen): honest per-panel titles (NO DIP / freq OK, shape poor / AMBIG), shaded accept bands, two-resonator qubits, and the write-back defects. INVARIANT ACROSS ALL LABS AND BOTH GENERATIONS (the chip-independence evidence): the resonance is the notch and the tallest excursion is routinely not it; Fano asymmetry is a per-RESONATOR property, not a per-chip or per-node one, and it survives an order-of-magnitude change in contrast, which is why shape and not depth is the reliable identifier; a straight-line background arm on a curved, stepped or sloped background leaves the data at one or both window ends in essentially every accepted fit everywhere, while r2 stays 0.97-0.99 — so the reported goodness number is not a whole-window figure of merit anywhere; a genuine resonance turns the phase exactly once at the notch and is flat across the flanking peak, on every lab's chip; and depth alone never separates a resonance from a ripple trough, a step or a spike. LOOKED UNIVERSAL BUT IS ONE LAB'S (OR ONE NODE'S) CONVENTION: (1) the promised four-figure set — only some labs/runs ship amplitude+phase+detrended_phase+iq_circle; lab-D's wide node ships a wide panel plus a local phase zoom with UNASSIGNED stamps, lab-E ships amplitude+IQ, and some lab-C runs ship a completely different (ground/excited) figure set, so 'the cross-check is available to this family and no other' is true only where the node actually emitted it. (2) The 'closed circle in the IQ plane' test — every delay-uncompensated chip here shows a many-turn spiral instead; the transferable signature is the radius collapse. (3) The segment-stitching step and the phase-unwrap sawtooth are artefacts of the lab-D/lab-C wide node's plotting and levelling, not chip physics. (4) The unequal-panel multiplexed layout that caps annotation confidence is lab-A's plotting. (5) min_dip_snr=6.0 / dip_dominance=2.0 are a shared configuration convention (lab-E, lab-B), not a node property. (6) escalate_on_no_dip=false in EVERY new-generation run of all six labs is a deployment convention — it looked like the node lacking escalation, and it is the ladder being switched off. (7) Node naming: `03_resonator_spectroscopy_single` vs the older `02_resonator_spectroscopy` / `02_resonator_spectroscopy_wide_pyloop` — the wide variant is a different experiment (band survey, assignment) wearing the same family name.",
+  "generation_notes": "WHAT THE NEWER NODE GIVES A READER. `dip_snr` plus `candidates` (each with its own prominence and width) turns a bad fit into a repairable record: the two most powerful machine-checkable tells in this whole corpus are distance(reported centre, winning candidate) and ratio(reported FWHM, candidate width), both of which stay near unity on every healthy target and blow up on every runaway — and both are computable with no re-measurement and no figure. `ambiguous` exposes the dominance tie the old node cannot express (an old-gen fit on the flank of a three-dip cluster looks identical in the record to a clean fit). `success_shape` splits 'centre usable' from 'lineshape usable', which is exactly the split this family needs, since the recurring failure is a symmetric Lorentzian on a Fano or structured background — under the old node the same situation is a plain FAILURE and a perfectly good frequency is discarded (lab-D #152 refused four A-group centres that agree with the accepted #150 values to tens of kHz). The escalation parameters (`min_dip_snr`, `dip_dominance`, `escalate_on_no_dip`, `max_escalation_span_in_mhz`) let a reader reconstruct WHY a refusal happened and whether widening was attempted. The old node offers only frequency / fwhm / r2 / success, plus NaN + an UNASSIGNED stamp as its single refusal channel. WHAT A RULE MUST NOT ASSUME. (1) That candidates or success_shape exist at all — every rule must degrade to frequency/fwhm/r2/success. (2) That success_shape=true means the lineshape is good: it is permissive, and passes fits whose floor is below zero magnitude and whose wing misses the data. (3) That success_shape=false means the frequency is bad: in this corpus the centre was on the correct notch in essentially every shape-poor target. (4) That success=false or dip_snr=0 means the window is empty: NO DIP with an empty candidate list was returned over dominant, symmetric, phase- and IQ-confirmed notches, both from threshold fragility (accepted in the runs either side at identical settings) and from dominance failure (a larger neighbouring peak, or a far-side plateau as low as the notch floor). (5) That the candidate list is complete or that ambiguous=false means uniqueness: genuine second notches — sometimes the deepest excursion in the panel, clipped at the edge — went unlisted with ambiguous=false. (6) That the escalation ladder ran: `escalate_on_no_dip` was false in every new-generation run here even where `max_escalation_span_in_mhz` was configured, and the widening was performed by hand across subsequent runs instead — so a chain of runs at growing span is ONE escalation, and only its last run is adoptable. (7) That r2 is comparable across generations or backgrounds: the old wide node's r2 is scored against strongly structured, segment-levelled backgrounds and a smooth broad bowl over a ripple scores well; the new node's r2 is windowed. (8) That a success flag implies a write — patch lists were empty, partial, or suppressed by a sibling's failure in both generations. (9) That the node's identity guarantees the payload: one run filed under this family shipped a different analysis entirely, with success=true and no frequency at all.",
+  "open_questions": [
+    "lab-A #328 and #340 report every target successful with sound fits and write NOTHING (empty patch list) while the neighbouring identical runs write. Is this a write-back rule (e.g. change below a threshold) or a defect? There is no figure signature at all.",
+    "lab-D #153 qA3 is stamped UNASSIGNED although the target IS inside the swept window (#152 and #154 fit it) — was the notch genuinely absent in that acquisition, or did the assignment step drop it? The panels cannot separate the two.",
+    "lab-E q17 was refused NO DIP twice in a row (#23, #24) over a span that the later wide run #27 shows DOES contain a deep notch. Readout dropout for those two runs, or a windowing/threshold effect? Unresolved.",
+    "lab-E #27's wide run returns centres several linewidths from the narrow runs for q4, q6 and q10, with a broad local MAXIMUM where the narrow runs put the notch. Did the resonators move, or were the narrow windows reading something else? At most one description can be true of the same chip state.",
+    "lab-B q8/q18's peak-flanked-by-two-nulls geometry: readout-chain interference envelope (nulls are the resonance) or an over-coupled/inverted response? Never tested by re-measuring at raised drive, which is the one experiment that would settle it.",
+    "lab-A #329 q6's split notch floor (two minima, one phase turn): two coupled modes, a TLS, or a power-induced bistability? One instance only, never repeated.",
+    "What changed between lab-C #70 (peak, refused) and #71 (notch, accepted) ninety seconds later? The off-resonant level rose by a large factor, so drive is the obvious inference — but no field in the record names it.",
+    "The narrow, recurring second candidate near the high-frequency edge on lab-C qA2: a real neighbouring resonator or a spur? It is far narrower than any lineshape in the same panel and crosses the detection floor in some repeats and not others.",
+    "lab-D #154's duplicate assignment (two targets carrying the same fit to eleven significant figures, both successful) — a fit-object reuse bug or a genuine mis-assignment of one notch to two targets? No figure evidence can distinguish them.",
+    "lab-E write-back consistently covers only the last four entries of an eight-target list. Configuration (a shortened patch scope) or defect? Four confirmed successes per run are silently lost either way.",
+    "The definitive ripple test — change the span by a non-integer factor and see whether the minima move — was never run at lab-D, so 'ripple trough' versus 'broad over-coupled resonance riding a ripple' remains an inference for #144 qA5 and #146 qB4.",
+    "lab-E q11 and q15 each carry two genuine resonances in one span. Two readout resonators on the same line, or a resonator plus a mode/spur? Which one is the qubit's readout was never established independently (e.g. by flux dependence).",
+    "Whether the reported r2 is computed on a fitting sub-window in all implementations, or only in some: it is inferred from the drawn curve versus the number everywhere, never confirmed from the analysis code."
+  ],
+  "fit_disagreements": [
+    "lab-B/#94/q2 — no fit drawn; a narrow floor-reaching V with a rounded peak beside it is the sharpest, narrowest feature in the panel and was accepted in the two immediately preceding runs.",
+    "lab-B/#95/q2 — byte-identical repeat: the same readable notch, again no fit and an empty candidate list, so the refusal is deterministic rather than noise-driven.",
+    "lab-B/#96/q2 — at the widest span the notch is MORE distinctive relative to its surroundings and the verdict is unchanged; no fit drawn.",
+    "lab-B/#134/q5 — two full-depth notches, each carrying its own sharp phase step, and the node drew no fit with an empty candidate list; the neighbouring target's analysis listed both.",
+    "lab-B/#151/q4 — the only localized phase step in the whole window sits on a near-edge shallow minimum; no fit was drawn.",
+    "lab-B/#151/q5 — magnitude is a noisy band with no dip, while the phase carries one sharp narrow spike left of centre; refused, so an amplitude-only test can never pass here.",
+    "lab-B/#157/q8 — a broad shallow bowl in magnitude with a large (ragged) phase turn over exactly that bowl; refused, and the later escalation coarsened the step, which cannot help.",
+    "lab-B/#160/q8 — both floor-reaching nulls carry the phase winding and the tall peak between them carries none; dip_snr 0, no candidates, no fit.",
+    "lab-B/#161/q8 — the phase wraps a full turn inside the broad depression, so a coherent feature is present; still refused with dip_snr 0 and no candidates.",
+    "lab-B/#164/q18 — phase is dead flat across the tallest excursion (the peak) and violently disturbed only at the floor-reaching depression; refused with no candidates.",
+    "lab-B/#169/q18 — the widened span exposes a peak flanked by two floor-reaching nulls; neither null was offered as a candidate and no fit was drawn.",
+    "lab-B/#170/q18 — finer step and heavier averaging reproduce the same geometry exactly; still dip_snr 0, no candidates, no fit, so the refusal is not a sampling or noise problem.",
+    "lab-C/#70/qA1 — a tall narrow magnitude PEAK on a noise-floor background whose sweep points trace a large closed IQ loop; the dip-only model drew nothing, and the same window succeeded as a notch in the next run.",
+    "lab-C/#298/qB3 — the fit band sits far out on featureless plateau, the drawn model plunges below zero magnitude, the phase is on a smooth ramp at the marked centre, and the node's own candidate list holds the shallow mid-span notch where a phase kink sits.",
+    "lab-D/#139/qA2 — the marker is centred on one trough of a regular ripple whose neighbours are of comparable depth and spacing; the drawn curve is a wide shallow bowl and a very tall narrow spike sits immediately beside it.",
+    "lab-D/#141/qA3 — the fit sits on a flat-to-flat segment-stitching STEP and is drawn as a rising line, not a bowl; the band's genuine comb notches on either side were not chosen, and the value was reported successful.",
+    "lab-D/#144/qA5 — the marked minimum is one trough of a ripple with a visibly DEEPER trough adjacent, a tall narrow spike on its high side, and a fitted width far broader than any comb notch this chip shows.",
+    "lab-D/#146/qA2 — the fit is locked to a single deepest sample inside a cluster of one- and two-sample needles; the reported width is smaller than one sweep step and the curve is drawn as a vertical line with no flanks.",
+    "lab-D/#146/qA6 — same single-sample needle geometry between two plateaus, reported width about one sweep step, with the flanking data following nothing.",
+    "lab-D/#146/qB2 — a broad shallow bowl whose own minimum does not coincide with the panel's sharp one-or-two-sample drop; the fit follows the rising background rather than the feature, at essentially zero r2.",
+    "lab-D/#147/qA1 — the one sharp deep phase spike lies immediately LEFT of the line and the line sits on the recovery; the fitted width is orders wider than that feature and the value is ~4 MHz from the session's converged answer.",
+    "lab-D/#147/qA3 — two or three sharp phase spikes are packed just left of the line, which sits at the right-hand edge of the cluster on the recovery rather than on any of them.",
+    "lab-D/#147/qA4 — a deep phase dip and a sharp positive spike both sit LEFT of the line; at the line the trace has already returned toward baseline and shows no turn.",
+    "lab-D/#147/qA6 — a tall sharp POSITIVE phase peak sits well left of the line and the line rests on a small step on its falling side, with no vertical turn anywhere.",
+    "lab-D/#147/qB1 — the only sharp phase excursion is far to the left near the panel edge while the line sits on a flat stretch; frequency and width are exact round seed values (7157000000 Hz / 6250000 Hz).",
+    "lab-D/#147/qB5 — the line sits on a smooth rising phase slope and the only broad minimum in the window lies well to its left; no turn at the line.",
+    "lab-D/#147/qD3 — the line sits on a rising edge with the window's one sharp spike just to its left; frequency and width are again round seed values reported as a fit.",
+    "lab-D/#147/qD4 — the line sits at the top of a broad positive phase hump; the excursion there is smooth and no vertical turn exists in the local window.",
+    "lab-D/#153/qA4 — the drawn fit is an UPWARD Lorentzian peak centred just right of the panel's deep narrow downward spike, on a phase-unwrap ramp; the value is ~10 MHz from the same target's answer in the runs either side and the width is an order too large.",
+    "lab-E/#1/q3 — the shaded accept band is the strip at the extreme LEFT window edge, the drawn fit is a rising curve rather than a notch, the phase is a single monotone decay with no turn inside the panel, and the reported width is ~14x the single candidate's own width.",
+    "lab-E/#23/q9 — a dominant, symmetric, high-contrast notch whose IQ radius collapses onto the origin at zero detuning was reported NO DIP with dip_snr 0 and an empty candidate list; the runs immediately before and after accept the identical feature.",
+    "lab-E/#23/q15 — a genuine notch (IQ radius collapse at its detuning) refused as NO DIP because a Fano peak several times the notch depth sits immediately beside it; fitted successfully in the runs before and after."
+  ],
+  "blind_verification": {
+    "n": 12,
+    "agreed": 7,
+    "overall": "Independent pass over all 12: 7 agree, 5 disagree. Method: for each row I read the amplitude panel, cross-checked phase / detrended-phase / IQ-circle where the verdict was in doubt (the cross-check this family uniquely allows), pulled the raw cube (netCDF-classic for the AS/lab-B runs, real HDF5 for lab-C/lab-D) to measure dip depth, left/right half-widths and the baseline step, and read the node's own fit block for generation and split verdicts.\n\nThe five disagreements fall into three groups.\n\n(1) A case that fires on the median panel. Row 1 (#227 q5) was given NEW:notch_on_stepped_baseline. The step is real, but I measured (base_right - base_left)/dip_depth across all 128 successfully-fitted targets in the b03 res1d corpus and that panel sits at the 52nd percentile — the family median (median 0.33, p75 1.04, p90 1.80). Meanwhile row 7 (#72 qA1) has a step of 1.14 (77th pct, nearly 3x larger) and is labelled S1, and row 9 (#233 qA3) sits at 0.32 and is labelled S1. The family brief itself says the background is routinely strongly structured. A baseline step is not a discriminator in this family; the notch in row 1 is symmetric (half-widths 1.1/1.3 MHz), correctly centred, phase-confirmed at 2.25 rad, dip_snr 121 — S1. If a stepped-baseline case is wanted it must be defined on a threshold in the tail and would then have to claim row 7 first.\n\n(2) Two identical panels, two different names. Rows 6 and 10 (#162 q20, #518 qC1) are both pure noise floor — Rayleigh std/mean 0.533 and 0.488 against the theoretical 0.523, no structure, NO DIP, zero candidates. They were labelled S5 and NEW:no_signal_noise_floor respectively. I give both the NEW name, because it separates cleanly from row 5 (#151 q4), which has a genuine transmission background 10x above its noise and no notch in it — that is the honest S5, and it was labelled S6. I could find no notch hugging or crossing an edge there: the only candidate minimum recovers 2.6 MHz before the boundary, the IQ is a bare spiral, and the detrended phase has no localized wrap. The one true 'edge' fact is invisible in the figure — the window is centred on q4's uncalibrated design value 5.095 GHz (state.json still holds the round number) and the nearest real resonator on that feedline, q2's at 5.1154, lies 0.5 MHz past the right edge.\n\n(3) S2 applied where the peak is 12 linewidths out, and S8 never applied at all. Row 8 (#223 qA2) has its 44.7 mV hump 9.0 MHz = 11.8 fitted-FWHM from a 0.76 MHz notch, smooth, with no phase feature — a structured background, not a Fano partner; the notch itself is symmetric and cleanly fitted (S1). Compare row 3, the genuine S2, where the larger peak is 3.0 FWHM out and is the wing of the same asymmetric feature (half-widths 0.9/2.8). Row 4 (#93 q2) was also called S2, but its figure title literally prints the node's split verdict in orange — 'freq OK, shape poor', success true / success_shape false, r2 0.738, snr 8.76 — which is S8 verbatim, and S8 is a state only the newer generation can express. That is the only S8 instance in the set and the only slot in the draft taxonomy left completely unused; labelling it S2 throws the split away. (S2 is a fair secondary reading there, so it is a near-miss, not a misread.)\n\nTwo taxonomy notes beyond the rows. First, the old wide_pyloop generation (rows 11-12) is a different presentation, not just a different node: a 1.5 GHz survey panel with 18-88 genuine notches plus a local zoom. S4 as drafted fires trivially on every target of every such run, so that generation probably needs its own pair of cases (wide-survey-assigned / wide-survey-unassigned) rather than S1 vs a NEW name for the same underlying situation — the current labels split the pair asymmetrically. Second, NEW:unassigned_target (row 12) is well-founded and I would keep it: 78 candidates, none assigned, and the metadata shows why — the four unassigned qubits are exactly the four whose expected frequencies fall below the swept range.",
+    "note": "the weakest agreement of any family in this study; the disputes are the clean-notch / Fano boundary, which is a real judgement call rather than a reading error"
+  },
+  "closure_rules": [
+    {
+      "id": "CL-RIVAL",
+      "name": "the second dip that belongs to a neighbour",
+      "requires_profile": {
+        "two_dip_identity": [
+          "rival_neighbor"
+        ]
+      },
+      "trigger": "two resolved dips, and the adopted one disagrees with this target's own temporal neighbours",
+      "try_set": [
+        "compare each candidate dip against the OTHER qubits' stored resonator values",
+        "re-window around the target's own prior and re-run"
+      ],
+      "max_rounds": 2,
+      "conclusion": "retract",
+      "text": "On this profile a wide multiplexed window can catch a neighbouring qubit's resonator. Identity is relative, never absolute: the candidate that matches another qubit's stored resonator is the rival -- re-window around the target's own prior; adopting the rival is never licensed even when it is the deeper dip.",
+      "source": "docs/134 adjudication: rival-resonator capture was the dominant confirmed failure mechanism"
+    },
+    {
+      "id": "CL-COMPANION",
+      "name": "the wider companion is the filter, not the resonance",
+      "requires_profile": {
+        "two_dip_identity": [
+          "purcell_companion"
+        ]
+      },
+      "trigger": "two resolved dips where the WIDER one sits at a consistent offset from this target's own resonance across sessions",
+      "try_set": [
+        "check the width ordering",
+        "check the offset consistency against this target's own history"
+      ],
+      "max_rounds": 1,
+      "conclusion": "adopt",
+      "text": "On this profile every readout resonator carries a filter companion: generally the WIDER (lower-quality) dip at a chip-consistent offset. Adopt the NARROWER dip; the companion is never the readout resonance, and its presence is expected rather than a defect.",
+      "source": "docs/134 section 3 field two_dip_identity, user-declared, data-verified on a single-qubit-lab archive"
+    },
+    {
+      "id": "CL-NOCAND",
+      "name": "no candidate in the window ends in escalation, never a write",
+      "trigger": "no candidate feature inside the window after the manual's window moves are exhausted",
+      "try_set": [
+        "widen the window once",
+        "shift once toward the edge hint if one exists"
+      ],
+      "max_rounds": 2,
+      "conclusion": "escalate",
+      "text": "An empty window is a statement about the window, not the qubit. After the bounded moves are spent, the licensed conclusion is escalate-with-a-window-report; inventing a value from the least-flat sample is never licensed.",
+      "source": "docs/134 adjudication, recurring draft"
+    },
+    {
+      "id": "CL-CLUSTER",
+      "name": "a same-session cluster is one observation",
+      "trigger": "a contested value is supported only by repeats from the same session at the same sweep center and settings",
+      "try_set": [
+        "one run with a changed window or changed power",
+        "or wait for a later session"
+      ],
+      "max_rounds": 1,
+      "conclusion": "abstain",
+      "text": "Repeats that share a sweep center and settings inherit each other's blind spots -- they are ONE observation, not corroboration. Corroboration requires a run whose window or power differs, or a later session. Until one exists, a contested value licenses no adoption.",
+      "source": "docs/134 adjudication, recurring draft"
+    },
+    {
+      "id": "CL-R2",
+      "name": "a collapsed fit is unrescuable by re-reading",
+      "trigger": "the fit's own goodness statistic collapses toward zero while the node still reports a value",
+      "try_set": [
+        "re-measure with more shots",
+        "or re-measure with a changed window"
+      ],
+      "max_rounds": 2,
+      "conclusion": "abstain",
+      "text": "When the fit's own goodness is ~zero the reported value is an artifact of the fitter, and no amount of re-reading the same trace rescues it. The licensed moves are re-measurement; adoption and judge-escalation are both unlicensed.",
+      "source": "docs/134 adjudication, recurring draft"
+    },
+    {
+      "id": "CL-EDGE",
+      "name": "an edge-pinned claim is decided by the follow-up, never by agreement at the same center",
+      "trigger": "the claimed optimum sits at the sweep boundary of a trace that rises into that boundary without turning over",
+      "try_set": [
+        "shift the window past that edge",
+        "or widen it once"
+      ],
+      "max_rounds": 2,
+      "conclusion": "defer_to_followup",
+      "text": "A boundary maximum is not a bracketed optimum. The only corroboration an edge claim accepts is a SHIFTED or WIDENED window landing back within about one feature width of it; a same-center repeat agreeing with it is not corroboration, and a follow-up that moves by many feature widths refutes the original claim.",
+      "source": "docs/134 adjudication, edge-claim c_rule drafts (both true catches and the hindsight false alarm state this rule themselves)"
+    },
+    {
+      "id": "CL-MAXPROM",
+      "name": "maximum prominence does not identify the target",
+      "trigger": "the fit locked onto the most prominent excursion in a window holding more than one candidate",
+      "try_set": [
+        "rank candidates by agreement with the target's own prior and neighbours, not by prominence"
+      ],
+      "max_rounds": 1,
+      "conclusion": "abstain",
+      "text": "The tallest excursion answers 'what is strongest', not 'which one is mine'. When a window holds several candidates, identity comes from agreement with the target's own history and stored neighbours; prominence alone never licenses adoption.",
+      "source": "docs/134 adjudication, recurring draft (also the docs/132 Fano lesson)"
+    }
+  ]
+}

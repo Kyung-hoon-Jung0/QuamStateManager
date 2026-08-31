@@ -51,7 +51,7 @@ def main() -> int:
     util = args.util or RFA._derive_util(node_name)
     # THE single unwrap (run_fit_audit.run_params) — the raw _deep_find hands
     # back {"model": ..., "schema": ...}, every getattr(params, knob) misses,
-    # and the replay silently runs under TODAY'S defaults: measured on the CQT
+    # and the replay silently runs under TODAY'S defaults: measured on the lab-B
     # corpus, a use_state_discrimination=True run then re-processed its
     # state-only ds_raw through convert_IQ_to_V and died on KeyError 'I'.
     params = RFA.run_params(node)

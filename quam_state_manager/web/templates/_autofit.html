@@ -23,6 +23,11 @@
 </div>
 
 {# ---- plan bar: THE button ---- #}
+<details class="autofit-profile" style="margin:0.4rem 0">
+  <summary>Chip profile <small class="muted">the design facts a human knows before calibrating — rules branch on these; unanswered fields keep asking</small></summary>
+  <div hx-get="/chip-profile" hx-trigger="intersect once" hx-swap="innerHTML">Loading…</div>
+</details>
+
 <div class="autofit-planbar">
     <label>Plan
         <select id="autofit-preset">
