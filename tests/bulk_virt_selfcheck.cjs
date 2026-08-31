@@ -95,6 +95,13 @@ function bigWorld(nCols, nRows, presearch) {
   win.htmx = { ajax: function () {} };
   if (presearch) win.localStorage.setItem('quam_bulk_search', presearch);   // a remembered search, applied at mount
   new win.Function(GRID_VIRT_JS).call(win);
+  // docs/141 4ae B-8: grid-virt.js primes its root-font memo at SCRIPT
+  // EVALUATION -- one getComputedStyle(root), which jsdom answers by
+  // evaluating media queries and so charges one innerWidth read (real Chrome
+  // forces 0 layouts and 0 style recalcs for it, measured with
+  // Performance.getMetrics). That is not the mount, and this counter exists
+  // to pin what the MOUNT reads, so bank it and start the mount from zero.
+  win.__evalReads = win.__geomReads; win.__geomReads = 0;
   new win.Function(BULK_JS).call(win);
   win.BulkEdit.mount(colsModel, { bands: {} }, []);
   return { win: win, doc: win.document, wrap: wrap, cols: colsModel };
@@ -114,6 +121,7 @@ async function main() {
   ok(c3td && !c3td.classList.contains('bulk-td-cold')
      && !!c3td.querySelector('.bulk-cell'), 'a near column keeps its input');
   ok(W.win.__geomReads === 0, 'the mount read NO geometry (offsetLeft/offsetWidth) -- coldness is estimated, the first layout is of the pruned table (reads: ' + W.win.__geomReads + ')');
+  ok(W.win.__evalReads <= 1, 'loading grid-virt.js costs at most the ONE root-font computed style (reads: ' + W.win.__evalReads + ')');
   // the width freeze: exactly the COLD columns carry a min-width rule by class (4l-review)
   const st = doc.getElementById('bulk-virt-width-style');
   const sheet = (st && st.textContent) || '';

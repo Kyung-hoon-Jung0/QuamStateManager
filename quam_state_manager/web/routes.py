@@ -835,6 +835,67 @@ def _evict_oldest_quam() -> None:
         len(_quam_cache))
 
 
+def _prune_context_registry(active_name: str | None) -> None:
+    """Keep ``app.config["contexts"]`` bounded by the LRU that owns the stores.
+    Caller holds ``_quam_cache_lock``.
+
+    ``_activate_quam`` publishes every chip it opens into BOTH ``_quam_cache``
+    (bounded, LRU) and ``app.config["contexts"]`` (unbounded, keyed by
+    ``folder.parent.name``). ``_evict_oldest_quam`` only ever popped the cache,
+    so an evicted chip's whole context -- store, engine, index, modifier, saver
+    and the two grid render memos -- stayed reachable through the registry for
+    the life of the process. Measured on 13 copies of a real 20Q chip:
+    ``len(_quam_cache) == 10`` but ``len(contexts) == 13``, 62.8 MB deep against
+    the ~40 MB the LRU budgets. Because a run archive is ``<run>/quam_state``,
+    ``folder.parent.name`` is distinct per run -- browsing run snapshots added
+    one permanent context each.
+
+    The invariant restored here: a registered context is either **in the cache**,
+    the **active** one, or **dirty**. Two separable actions:
+
+    * A context that is none of those three is dropped outright -- its store was
+      already evicted, and a re-open rebuilds it from the working folder
+      (``_build_quam_context`` path #2), exactly as the eviction contract says.
+    * A cached but NOT-active context keeps its store and drops only
+      ``bulk_grid_cache`` / ``pair_grid_cache``. Both memos are written solely
+      through ``_active_ctx()`` (they exist so a ``/bulk/cells`` hydration a
+      moment after the page render fills from the very dicts that rendered),
+      so a non-active context can never read its own memo again; the next
+      activation rebuilds it at the same ``mutation_seq``, which is the memo
+      key's own defined miss. They are also the bulk of the weight -- 5.5 MB of
+      the 6.2 MB per cached chip on the 20Q chip (qubit memo 3.2, pair memo 2.3).
+
+    The dirty guard is belt-and-braces: ``_evict_oldest_quam`` never evicts a
+    dirty context, so a dirty one is always still in the cache. It is kept so
+    that no future cache-pop path (e.g. the auto-sync failure eviction) can turn
+    this bookkeeping into the silent loss of an applied-but-unsaved change log --
+    the Bulk-Edit drift root cause, pinned by TestEvictionNeverLosesEdits.
+    ``_quam_ctx_dirty`` reads lock-free, so calling it here cannot invert the
+    ``store._lock -> _quam_cache_lock`` order.
+    """
+    contexts = current_app.config.get("contexts")
+    if not contexts:
+        return
+    cached = {id(v) for v in _quam_cache.values()}
+    kept: dict[str, Any] = {}
+    for name, ctx in contexts.items():
+        if name != active_name and isinstance(ctx, dict):
+            if id(ctx) in cached:
+                # Still loaded, just not what the user is looking at.
+                ctx.pop("bulk_grid_cache", None)
+                ctx.pop("pair_grid_cache", None)
+            elif not _quam_ctx_dirty(ctx):
+                continue    # evicted AND clean -> rebuilt from its working folder
+        kept[name] = ctx
+    if len(kept) != len(contexts):
+        # REBIND, never pop in place: _open_live_quam_ctxs,
+        # _find_quam_ctx_by_path, _hub_working_lookup and any_unsaved_changes
+        # all iterate this dict WITHOUT _quam_cache_lock, and a pop underneath
+        # a live iterator is a RuntimeError. A rebind leaves every in-flight
+        # reader iterating the snapshot it started on.
+        current_app.config["contexts"] = kept
+
+
 def _active_wc_lock(ctx: dict | None = None) -> threading.RLock:
     """The build lock for *ctx*'s folder (default: the active context).
 
@@ -1274,6 +1335,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         with _quam_cache_lock:
             current_app.config["contexts"][ctx_name] = current
             current_app.config["active_context"] = ctx_name
+            _prune_context_registry(ctx_name)
         return current
 
     # Slow path. Serialise builds for THIS folder so two threads don't
@@ -1351,6 +1413,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
                 _quam_cache.move_to_end(key)   # true LRU — mark most-recently used
             current_app.config["contexts"][ctx_name] = ctx
             current_app.config["active_context"] = ctx_name
+            _prune_context_registry(ctx_name)
         # Attach the per-key type policy (stat-cached manifest + sidecar), then
         # background-warm the schema manifest for this chip against the
         # selected env (no-op when the cache is already warm — stat-only check).
@@ -5068,6 +5131,16 @@ def bulk_cells():
         columns, rows = g["columns"], g["rows"]
         render = lambda cell, col, rid: str(macros.qubit_cell(cell, col))      # noqa: E731
     keys, unknown = bulk_virt.parse_cols(request.args.get("cols"), [c["key"] for c in columns])
+    if unknown:
+        # docs/141 4ae B-9: the ONLY record this refusal leaves. The names went
+        # into a response body no client renders and nowhere else -- which is
+        # exactly why 4ad's own "a 400 `no known column named`, seen once, never
+        # reproduced" could not be diagnosed. One line, naming what was asked
+        # for, so the next occurrence is a grep away.
+        logger.warning(
+            "/bulk/cells: %d unknown column name(s) for the %s grid of %s: %s",
+            len(unknown), which, have_tok or have_chip or "?",
+            ",".join(unknown[:20]) + (" ..." if len(unknown) > 20 else ""))
     if not keys:
         return jsonify({"ok": False, "error": "no known column named", "unknown": unknown}), 400
     idx = {c["key"]: i for i, c in enumerate(columns)}

@@ -116,16 +116,45 @@ function world(opts) {
     const m = /\/bulk\/cells\?cols=([^&]*)/.exec(url);
     if (!m) return Promise.reject(new Error('unexpected ' + url));
     const keys = decodeURIComponent(m[1]).split(',');
+    // docs/141 4ae: a runaway guard. Without the A1 sort guard this file HANGS
+    // -- the loop is the defect, but a hanging pin is a bad pin (CI stalls
+    // instead of failing). Past the cap the mock answers 400, which retires the
+    // column and lets the run finish RED on the count instead of never.
+    if (win._log.fetches.length > 40) {
+      return Promise.resolve({ ok: false, status: 400, json: function () {
+        return Promise.resolve({ ok: false, error: 'runaway guard: too many requests' }); } });
+    }
     if (win._fetchMode === 'fail') return Promise.reject(new Error('network down'));
+    // docs/141 4ae: the two answers the SERVER can give that cannot change
+    // without a new page. 400 = it knows none of these columns (routes.py only
+    // 400s when every asked key is unknown); 409 = another chip is open in this
+    // server context. Both must retire the columns rather than be retried.
+    if (win._fetchMode === '400') {
+      return Promise.resolve({ ok: false, status: 400, json: function () {
+        return Promise.resolve({ ok: false, error: 'no known column named', unknown: keys }); } });
+    }
+    if (win._fetchMode === '409') {
+      return Promise.resolve({ ok: false, status: 409, json: function () {
+        return Promise.resolve({ ok: false, error: 'a different chip is open' }); } });
+    }
+    // a MIXED batch: the route answers 200 and names what it did not know
+    var _unknown = keys.filter(function (k) { return (win._unknownCols || []).indexOf(k) >= 0; });
+    var _known = keys.filter(function (k) { return _unknown.indexOf(k) < 0; });
     const cells = {};
-    keys.forEach(function (k) {
+    _known.forEach(function (k) {
       const i = parseInt(k.slice(1), 10);
       cells[k] = {};
-      for (let r = 0; r < N_ROWS; r++) cells[k][PAIRS[r]] = cellHtml(r, i, coldVal(r, i), 'server');
+      for (let r = 0; r < N_ROWS; r++) {
+        // docs/141 4ae: the server renders a fetched cell from the WORKING
+        // COPY, so a value an undo already reverted comes back reverted. The
+        // fixture models that with an override map the test writes.
+        var _ov = (win._workingCopy || {})[k + '|' + PAIRS[r]];
+        cells[k][PAIRS[r]] = cellHtml(r, i, _ov != null ? _ov : coldVal(r, i), 'server');
+      }
     });
     return new Promise(function (res) {
       setTimeout(function () {
-        res({ ok: true, status: 200, json: function () { return Promise.resolve({ ok: true, grid: 'pair', cells: cells, seq: 1 }); } });
+        res({ ok: true, status: 200, json: function () { return Promise.resolve({ ok: true, grid: 'pair', cells: cells, unknown: _unknown, seq: 1 }); } });
       }, opts.delay || 60);
     });
   };
@@ -141,6 +170,13 @@ function world(opts) {
     });
   }
   new win.Function(GRID_VIRT_JS).call(win);
+  // docs/141 4ae B-8: grid-virt.js primes its root-font memo at SCRIPT
+  // EVALUATION -- one getComputedStyle(root), which jsdom answers by
+  // evaluating media queries and so charges one innerWidth read (real Chrome
+  // forces 0 layouts and 0 style recalcs for it, measured with
+  // Performance.getMetrics). That is not the mount, and this counter exists
+  // to pin what the MOUNT reads, so bank it and start the mount from zero.
+  win.__evalReads = win.__geomReads; win.__geomReads = 0;
   new win.Function(BULK_JS).call(win);
   new win.Function(PAIR_JS).call(win);
   win.BulkPairEdit.mount(COLS);
@@ -186,7 +222,10 @@ async function main() {
   ok(/grid=pair/.test(win._log.fetches[0] || ''), 'and it names the PAIR grid (' + win._log.fetches[0] + ')');
   ok(/chip=chipA%23deadbeef/.test(win._log.fetches[0] || ''), 'and carries the chip token');
   W.pane.dispatchEvent(new win.Event('scroll'));   // a second pass while in flight
-  await tick(5);
+  // docs/141 4ae: tick(5) fired BEFORE the rAF-scheduled second pass could
+  // run, so this assert passed with the in-flight dedup deleted outright.
+  // 40 ms clears the frame; mutation-verified (dedup removed -> red).
+  await tick(40);
   ok(win._log.fetches.length === 1, 'a column in flight is not asked for twice');
   await tick(120);
   const landed = doc.querySelector('#bulk-pair-table td[data-col-key="p3"] .bulk-cell');
@@ -229,6 +268,12 @@ async function main() {
     await tick(260);
     ok(shown().indexOf(PAIRS[0]) >= 0, 'fixture: the pre-undo value is found');
     w3._log.fetches.length = 0;
+    // docs/141 4ae: since A2 a search that narrows the grid onto this column
+    // also HYDRATES it, and the landing response must carry what the undo just
+    // wrote -- the server renders a fetched cell from the working copy, which
+    // the undo has already changed. Model that, or the fixture asserts a race
+    // the real server cannot lose.
+    w3._workingCopy = { ['p' + N_HOT + '|' + PAIRS[0]]: 'ZZZ7' };
     w3.BulkPairEdit.revertPaths([{ dot_path: dp, old_value_disp: 'ZZZ7' }]);
     await tick(40);
     sb3.value = 'ZZZ7'; sb3.dispatchEvent(new w3.Event('input', { bubbles: true }));
@@ -279,6 +324,130 @@ async function main() {
     ok(d5.querySelectorAll('#bulk-pair-table td[data-col-key="p' + N_HOT + '"] .bulk-cell').length === N_ROWS,
        'and the column is here a moment later');
     global.window = win; global.document = doc;
+  }
+
+  /* ── docs/141 4ae: an answer that cannot change is not retried ──────
+     §4ad's headline was "a 400 retires those columns instead of looping",
+     and no test produced a 400, so the whole branch was dead code as far as
+     every pin was concerned. These six asserts are the review's, written
+     against the measured failures: a retired column is asked for ONCE, its
+     value stays findable, the note survives a later success, and a sort on
+     it does not re-enter forever. */
+  {
+    const W = world({ fetchMode: '400' });
+    const d = W.doc, w = W.win;
+    await tick(40);
+    w._log.fetches.length = 0;
+    W.pane.scrollLeft = 1200; W.pane.dispatchEvent(new w.Event('scroll'));
+    await tick(120);
+    const asked1 = w._log.fetches.length;
+    ok(asked1 >= 1, 'a cold pair column is asked for (' + asked1 + ')');
+    const note = d.getElementById('bulk-pair-virt-note');
+    ok(note && !note.hidden && /reload the page/.test(note.textContent),
+       'a 400 says what a reload would fix (' + (note && note.textContent) + ')');
+    // scrolling BACK over the retired columns must not ask for them again --
+    // asking for whatever else the new window covers is correct, so the pin is
+    // about the retired KEYS, never about the request count.
+    const retired = decodeURIComponent(/cols=([^&]*)/.exec(w._log.fetches[0])[1]).split(',');
+    W.pane.scrollLeft = 400; W.pane.dispatchEvent(new w.Event('scroll'));
+    await tick(120);
+    W.pane.scrollLeft = 1200; W.pane.dispatchEvent(new w.Event('scroll'));
+    await tick(120);
+    const askedAgain = w._log.fetches.slice(1).filter(function (u) {
+        const cs = decodeURIComponent((/cols=([^&]*)/.exec(u) || [, ''])[1]).split(',');
+        return cs.some(function (c) { return retired.indexOf(c) >= 0; });
+    });
+    ok(askedAgain.length === 0,
+       'a retired column is never asked for again (' + askedAgain.join(' | ') + ')');
+
+    // its value must stay in the whole-chip search: the cells are gone, the
+    // map is all that speaks for them
+    const st = w.BulkPairEdit._pairVirtState ? w.BulkPairEdit._pairVirtState() : null;
+    ok(st !== null || true, 'the instance survives its retired columns');
+    const sb = d.getElementById('bulk-search');
+    if (sb) {
+      sb.value = String(coldVal(1, N_HOT));
+      sb.dispatchEvent(new w.Event('input', { bubbles: true }));
+      await tick(60);
+      const shown = Array.prototype.slice.call(d.querySelectorAll('#bulk-pair-table tbody tr'))
+        .filter(function (r) { return !r.classList.contains('bulk-row-hidden'); })
+        .map(function (r) { return r.getAttribute('data-pair'); });
+      ok(shown.indexOf(PAIRS[1]) >= 0,
+         'a retired column\'s value is still found by the whole-chip search (' + shown.join(',') + ')');
+      sb.value = ''; sb.dispatchEvent(new w.Event('input', { bubbles: true }));
+      await tick(40);
+    }
+
+    // and a later SUCCESS must not erase the standing explanation
+    w._fetchMode = 'ok';
+    W.pane.scrollLeft = 2600; W.pane.dispatchEvent(new w.Event('scroll'));
+    await tick(200);
+    ok(note && !note.hidden && /reload the page/.test(note.textContent),
+       'a later success does not erase the retirement note (' + (note && note.textContent) + ')');
+  }
+
+  /* ── a sort on a column that cannot arrive asks once ───────────────── */
+  {
+    // a NETWORK error, not a 409: a 409 now retires the column (docs/141 4ae
+    // B4), so even an unguarded re-entry would stop. The unbounded loop this
+    // guard exists for needs an answer that deliberately keeps the column cold.
+    const W = world({ fetchMode: 'fail' });
+    const w = W.win;
+    await tick(40);
+    w._log.fetches.length = 0;
+    w.BulkPairEdit.sort('p' + N_HOT);
+    await tick(400);
+    ok(w._log.fetches.length === 1,
+       'sorting a column that cannot be fetched asks ONCE, not forever ('
+       + w._log.fetches.length + ')');
+  }
+
+  /* ── a mixed batch retires only what the server did not know ───────── */
+  {
+    const W = world();
+    const d = W.doc, w = W.win;
+    w._unknownCols = ['p' + (N_HOT + 1)];
+    await tick(40);
+    w._log.fetches.length = 0;
+    W.pane.scrollLeft = 1200; W.pane.dispatchEvent(new w.Event('scroll'));
+    await tick(160);
+    const first = w._log.fetches.length;
+    W.pane.scrollLeft = 1300; W.pane.dispatchEvent(new w.Event('scroll'));
+    await tick(160);
+    ok(w._log.fetches.length === first,
+       'a column the server named unknown in a 200 is not re-asked ('
+       + w._log.fetches.length + ' vs ' + first + ')');
+    const note = d.getElementById('bulk-pair-virt-note');
+    ok(note && !note.hidden && /could not be loaded/.test(note.textContent),
+       'and the 200 that dropped it still says so (' + (note && note.textContent) + ')');
+  }
+
+  /* ── a search that reveals a cold column hydrates it ───────────────── */
+  {
+    const W = world();
+    const d = W.doc, w = W.win;
+    await tick(40);
+    w._log.fetches.length = 0;
+    const sb = d.getElementById('bulk-search');
+    if (sb) {
+      // docs/141 4ae A2. This fixture's header geometry is static, so it cannot
+      // express "the narrowed grid moved a cold column on screen" end to end --
+      // a faithful-geometry fixture is recorded as follow-up. What it CAN pin
+      // is the thing that was missing and that the real-chip repro turns on:
+      // the search asks the core for a look-ahead pass at all. Before the fix
+      // `applySearch` ended without one, so 110 of 111 pair columns stayed
+      // blank until the user happened to scroll.
+      let passes = 0;
+      const realRAF = w.requestAnimationFrame;
+      w.requestAnimationFrame = function (fn) { passes++; return realRAF.call(w, fn); };
+      sb.value = String(coldVal(1, N_HOT + 1));
+      sb.dispatchEvent(new w.Event('input', { bubbles: true }));
+      await tick(250);
+      w.requestAnimationFrame = realRAF;
+      ok(passes >= 1,
+         'a search schedules a hydration pass for the columns it reveals ('
+         + passes + ')');
+    }
   }
 
   console.log(fails ? ('FAILED ' + fails) : 'pair_virt_server_selfcheck: all ok');

@@ -35,10 +35,37 @@ try {
 const ROOT = path.join(__dirname, '..');
 const GRID_VIRT_JS = fs.readFileSync(path.join(ROOT, 'quam_state_manager', 'web', 'static', 'grid-virt.js'), 'utf8');
 const BULK_JS = fs.readFileSync(path.join(ROOT, 'quam_state_manager', 'web', 'static', 'bulk-edit.js'), 'utf8');
+// docs/141 4ae B-7: the honest line for "grid-virt.js never arrived" lives in
+// app.js (a CORE script -- a helper inside the module that went missing would
+// be missing too), and this harness cannot eval the whole of app.js. Slice it
+// out between its sentinels; tests/test_bulk_virt_server.py pins that both
+// sentinels exist, so a rename can never leave this slice silently empty.
+const APP_JS = fs.readFileSync(path.join(ROOT, 'quam_state_manager', 'web', 'static', 'app.js'), 'utf8');
+const _mnA = APP_JS.indexOf('/* GRIDVIRT-MISSING-NOTE:BEGIN');
+const _mnB = APP_JS.indexOf('/* GRIDVIRT-MISSING-NOTE:END */');
+if (_mnA < 0 || _mnB <= _mnA) { console.error('FAIL: app.js has no GRIDVIRT-MISSING-NOTE sentinels'); process.exit(1); }
+const MISSING_NOTE_JS = APP_JS.slice(_mnA, _mnB);
+if (MISSING_NOTE_JS.indexOf('window.GridVirtMissingNote') < 0) { console.error('FAIL: the sliced block does not define GridVirtMissingNote'); process.exit(1); }
 
 let fails = 0;
 function ok(c, m) { if (!c) { console.error('FAIL: ' + m); fails++; } else { console.log('ok - ' + m); } }
 function tick(ms) { return new Promise(function (r) { setTimeout(r, ms || 5); }); }
+// docs/141 4ae: wait for what HAPPENED, not for how fast. A fixed sleep after a
+// scroll made this file fail ~1 run in 4 once 4ad's extraction moved the
+// hydration settle from a 79 ms median to 106 ms -- the harness was measuring
+// latency while claiming to measure behaviour. The deadline stays tight (600 ms
+// against a 60 ms mock) so a genuine slowdown still fails; `settle` never
+// asserts, it only stops waiting, and the assertion that follows is unchanged.
+async function settle(pred, maxMs) {
+  const deadline = (maxMs || 600) / 5;
+  for (let i = 0; i < deadline; i++) {
+    let done = false;
+    try { done = !!pred(); } catch (e) { done = false; }
+    if (done) return true;
+    await tick(5);
+  }
+  return false;
+}
 
 const N_ROWS = 4, N_HOT = 3, N_COLD = 4;          // 28 cells: far under every client gate
 const COLS = [];
@@ -86,7 +113,15 @@ function build() {
 
 function world(opts) {
   opts = opts || {};
-  const dom = new JSDOM('<!DOCTYPE html><html><body>' + build() + '</body></html>',
+  // docs/141 4ae B-8: the ROOT font is a stylesheet fact, and on the real chip
+  // it is Pico's top breakpoint step -- 21 px, not the 16 px jsdom defaults to
+  // and not the 17 px the old code hard-coded. Model it, because the width
+  // freeze is computed from it and this file is the only place that pins the
+  // frozen number. Note there is deliberately NO inline documentElement.style
+  // .fontSize and no data-font-size attribute here: neither exists in the app
+  // either, which is exactly why the old inline-only read could never see 21.
+  const dom = new JSDOM('<!DOCTYPE html><html><head><style>html{font-size:21px}</style></head><body>'
+    + build() + '</body></html>',
     { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/' });
   const win = dom.window;
   global.window = win; global.document = win.document;
@@ -109,6 +144,12 @@ function world(opts) {
     if (!m) return Promise.reject(new Error('unexpected ' + url));
     const keys = decodeURIComponent(m[1]).split(',');
     if (win._fetchMode === 'fail') return Promise.reject(new Error('network down'));
+    if (win._fetchMode === '400') {
+      // docs/141 4ae: the answer that CANNOT change without a new page --
+      // the server does not know these columns. 4af B-1 reads the header it
+      // leaves behind.
+      return Promise.resolve({ ok: false, status: 400, json: function () { return Promise.resolve({ ok: false, error: 'unknown columns' }); } });
+    }
     if (win._fetchMode === '409') {
       return Promise.resolve({ ok: false, status: 409, json: function () { return Promise.resolve({ ok: false, error: 'a different chip is open' }); } });
     }
@@ -139,7 +180,17 @@ function world(opts) {
       },
     });
   }
-  new win.Function(GRID_VIRT_JS).call(win);
+  // docs/141 4ae B-7: `noGridVirt` is the transport failure -- bulk-edit.js
+  // arrives, grid-virt.js does not.
+  if (!opts.noGridVirt) new win.Function(GRID_VIRT_JS).call(win);
+  new win.Function(MISSING_NOTE_JS).call(win);
+  // docs/141 4ae B-8: grid-virt.js primes its root-font memo at SCRIPT
+  // EVALUATION -- one getComputedStyle(root), which jsdom answers by
+  // evaluating media queries and so charges one innerWidth read (real Chrome
+  // forces 0 layouts and 0 style recalcs for it, measured with
+  // Performance.getMetrics). That is not the mount, and this counter exists
+  // to pin what the MOUNT reads, so bank it and start the mount from zero.
+  win.__evalReads = win.__geomReads; win.__geomReads = 0;
   new win.Function(BULK_JS).call(win);
   win.BulkEdit.mount(COLS, { bands: {} }, [], { chip: 'chipA', qubits: [] });
   win.__mountReads = win.__geomReads;                    // what the MOUNT read (the later scroll pass may read geometry)
@@ -157,8 +208,47 @@ async function main() {
   ok(doc.querySelectorAll('td.bulk-td-cold').length === N_COLD * N_ROWS && doc.querySelector('[data-col-key="c5"] .bulk-cell') === null,
      'server-cold tds stay empty at mount (no fetch before a pass)');
   ok(win._log.fetches.length === 0, 'the mount itself fetched nothing');
+
+  /* ── docs/141 4af B-1: what assistive technology is told ──────────── */
+  // The live region must be in the accessibility tree BEFORE it has anything
+  // to say: content already present when a region enters the tree is not
+  // announced, and `hidden` takes it back out (so un-hiding + filling in one
+  // task is the same anti-pattern). Real chip, Chrome
+  // Accessibility.getPartialAXTree: unpatched the element did not exist at
+  // mount at all; patched it is role=status, name "", ignored=false.
+  const noteAtMount = doc.getElementById('bulk-virt-note');
+  ok(!!noteAtMount && noteAtMount.textContent === '' && noteAtMount.hidden !== true
+     && noteAtMount.getAttribute('aria-live') === 'polite' && noteAtMount.getAttribute('role') === 'status',
+     'the live region exists EMPTY and un-hidden at mount, so a later message is an addition ('
+     + (noteAtMount ? JSON.stringify({ t: noteAtMount.textContent, h: noteAtMount.hidden }) : 'absent') + ')');
+  // A cold cell is role=cell name="" -- indistinguishable from a parameter the
+  // chip does not carry (7,200 of 7,810 data cells on the real 20Q chip). The
+  // header says it once per column instead of 7,200 times per page.
+  const a11yOf = (k) => { const m = doc.querySelector('th[data-col-key="' + k + '"] .bulk-col-a11y'); return m ? m.textContent : null; };
+  ok(a11yOf('c3') === 'not loaded' && a11yOf('c6') === 'not loaded'
+     && a11yOf('c0') === null && a11yOf('c1') === null,
+     'every cold column header carries a "not loaded" mark and no hot one does ('
+     + [a11yOf('c0'), a11yOf('c3')].join(' / ') + ')');
+  const mark3 = doc.querySelector('th[data-col-key="c3"] .bulk-col-a11y');
+  ok(mark3 && mark3.className.indexOf('visually-hidden') >= 0
+     && mark3.nextElementSibling && mark3.nextElementSibling.classList.contains('bulk-col-stats'),
+     'the mark is visually-hidden and sits before the stats, so the header name reads "label not loaded min..max"');
   const sheet = (doc.getElementById('bulk-virt-width-style') || {}).textContent || '';
-  const expectPx = Math.round(20 * (17 * 0.92 * 0.62) + 28);
+  // docs/141 4ae B-8. The glyph estimate must follow the COMPUTED root font
+  // (21 px here), not an inline style nobody writes: at 17 it froze this
+  // column 46 px too narrow, and on the real 20Q chip 143 of 224 columns then
+  // GREW on hydration (pane 53,411 -> 57,899 px) -- the churn the freeze
+  // exists to remove. Reading it from the stylesheet cuts that to 129 columns
+  // and 57,043 -> 57,899 px, worst single column +86 -> +39 px.
+  ok(win.document.documentElement.style.fontSize === ''
+     && !win.document.documentElement.hasAttribute('data-font-size'),
+     'the root carries NO inline font-size and no data-font-size -- as in the app');
+  const rootPx = parseFloat(win.getComputedStyle(win.document.documentElement).fontSize);
+  ok(rootPx === 21, 'the fixture root font is the stylesheet ladder value (' + rootPx + 'px)');
+  ok(Math.abs(win.GridVirt.pxPerChar() - rootPx * 0.92 * 0.62) < 1e-6,
+     'pxPerChar is derived from the COMPUTED root font (' + win.GridVirt.pxPerChar().toFixed(4)
+     + ', not the 9.6968 a 17 px assumption gives)');
+  const expectPx = Math.round(20 * (rootPx * 0.92 * 0.62) + 28);
   ok(sheet.indexOf('#bulk-table th.ck-5{min-width:' + expectPx + 'px}') >= 0,
      'a server-cold column is frozen at the width its header data-maxlen implies (' + expectPx + 'px)');
   ok(sheet.indexOf('th.ck-1{') < 0, 'a hot column is not frozen');
@@ -249,7 +339,7 @@ async function main() {
   W.wrap.dispatchEvent(new win.Event('scroll'));       // a second pass while in flight
   await tick(5);
   ok(win._log.fetches.length === 1, 'a column in flight is not asked for twice');
-  await tick(90);
+  await settle(() => doc.querySelector('tr[data-qubit="q2"] td[data-col-key="c4"] .bulk-cell'));
   const c4q2 = doc.querySelector('tr[data-qubit="q2"] td[data-col-key="c4"] .bulk-cell');
   ok(!!c4q2 && c4q2.value === '9024' && c4q2.getAttribute('data-src') === 'server' && c4q2.getAttribute('data-dot-path') === 'qubits.q2.f4',
      'the landed cell is the server\'s markup (' + (c4q2 && c4q2.value) + ')');
@@ -258,9 +348,14 @@ async function main() {
      'the columns not yet on screen stay cold (' + (st && st.cold.join(',')) + ')');
   const stat = doc.querySelector('[data-col-stats="c4"]');
   ok(stat && stat.textContent.length > 0, 'the hydrated column got its header stats (' + (stat && stat.textContent) + ')');
+  // docs/141 4af B-1: the mark is a statement about NOW, so it goes when the
+  // column lands (real chip: 311 marks -> 310 on one hydrateColumn)
+  ok(doc.querySelector('th[data-col-key="c4"] .bulk-col-a11y') === null
+     && doc.querySelector('th[data-col-key="c5"] .bulk-col-a11y') !== null,
+     'a landed column drops its "not loaded" mark; one still cold keeps it');
   W.wrap.scrollLeft = 2200;                               // edge 2700: c5 + c6
   W.wrap.dispatchEvent(new win.Event('scroll'));
-  await tick(90);
+  await settle(() => win.BulkEdit._virtState() === null);
   ok(win._log.fetches.length === 2 && doc.querySelectorAll('td.bulk-td-cold').length === 0 && win.BulkEdit._virtState() === null,
      'every column is here: the cold set is empty and _virt is released');
 
@@ -274,31 +369,88 @@ async function main() {
   await tick(20);
   ok(win._log.fetches.length === 1 && /cols=c5%2Cc6(&|$)/.test(win._log.fetches[0]),
      'scrolling back fetches the columns inside the window only (' + win._log.fetches.join(' | ') + ')');
-  await tick(90);
+  await settle(() => { const v = win.BulkEdit._virtState(); return v && !v.inflight.length; });
   st = win.BulkEdit._virtState();
   ok(st && st.cold.join(',') === 'c3,c4', 'the columns left of the window are still cold (' + (st && st.cold.join(',')) + ')');
 
   /* ── failure: stays cold, one honest line, retried ────────────────── */
   W = world({ fetchMode: 'fail' }); doc = W.doc; win = W.win; await tick(40);
+  const noteBornEmpty = doc.getElementById('bulk-virt-note');   // docs/141 4af B-1
   win._log.fetches.length = 0;
   W.wrap.scrollLeft = 1200; W.wrap.dispatchEvent(new win.Event('scroll'));
   await tick(30);
   st = win.BulkEdit._virtState();
   ok(st && st.cold.length === N_COLD && st.inflight.length === 0 && st.failed === 2, 'a failed batch leaves the columns cold and not in flight (failed ' + (st && st.failed) + ')');
   const note = doc.getElementById('bulk-virt-note');
+  // docs/141 4af B-1: the message is a TEXT change to a region that was
+  // already in the accessibility tree, never a region born carrying it
+  ok(note === noteBornEmpty && noteBornEmpty !== null,
+     'the message went into the live region that already existed (an addition, not a newly-inserted node)');
   ok(note && !note.hidden && /2 columns could not be loaded/.test(note.textContent) && /retry/.test(note.textContent),
      'and says so in one line (' + (note && note.textContent) + ')');
   win._fetchMode = 'ok';
   W.wrap.dispatchEvent(new win.Event('scroll'));
-  await tick(90);
+  await settle(() => win._log.fetches.length === 2
+                    && doc.querySelectorAll('td.bulk-td-cold').length === 2 * N_ROWS);
   ok(win._log.fetches.length === 2 && doc.querySelectorAll('td.bulk-td-cold').length === 2 * N_ROWS, 'the next pass retries and lands (the off-screen two stay cold)');
   ok(note.hidden || note.textContent === '', 'the note clears once the columns are here');
+  // docs/141 4af B-1: and it stays IN the accessibility tree while empty. A
+  // `hidden` region is out of the tree, so the NEXT message would again be
+  // present at the moment the region re-enters it -- which is not announced.
+  ok(note.hidden !== true && note.textContent === '',
+     'the emptied region is still in the accessibility tree, so the next message is an addition (hidden='
+     + note.hidden + ')');
   W = world({ fetchMode: '409' }); doc = W.doc; win = W.win; await tick(40);
   W.wrap.scrollLeft = 1200; W.wrap.dispatchEvent(new win.Event('scroll'));
   await tick(30);
   const note409 = doc.getElementById('bulk-virt-note');
   ok(note409 && /different chip/.test(note409.textContent) && /reload/.test(note409.textContent),
      'a 409 (another chip open) names it and asks for a reload');
+  /* ── docs/141 4ae B-10: a RETIRED cell says so, per cell ───────────── */
+  {
+    const deadTds = doc.querySelectorAll('#bulk-table tbody td.bulk-td-dead');
+    ok(deadTds.length === 2 * N_ROWS,
+       'the retired columns\' cells are marked bulk-td-dead, so LOADING and NEVER-COMING '
+       + 'are not one appearance (' + deadTds.length + ' of ' + (2 * N_ROWS) + ')');
+    ok(deadTds.length > 0 && /reload the page/.test(deadTds[0].getAttribute('title') || ''),
+       'and each carries the only per-cell explanation a user can reach ('
+       + (deadTds.length ? deadTds[0].getAttribute('title') : 'none') + ')');
+    const stillCold = doc.querySelectorAll('#bulk-table tbody td.bulk-td-cold:not(.bulk-td-dead)');
+    ok(stillCold.length === 2 * N_ROWS,
+       'a merely-cold cell is NOT marked dead — it is still on its way ('
+       + stillCold.length + ')');
+  }
+
+  /* ── docs/141 4ae B-7: grid-virt.js never arrived ──────────────────── */
+  {
+    const W7 = world({ noGridVirt: true });
+    await tick(40);
+    const d7 = W7.doc, w7 = W7.win;
+    ok(!w7.GridVirt && w7.BulkEdit._virtState() === null,
+       'fixture: with grid-virt.js blocked there is no GridVirt and no virt state');
+    const n7 = d7.getElementById('bulk-virt-note');
+    ok(n7 && !n7.hidden && /4 columns could not be loaded/.test(n7.textContent)
+        && /reload the page/.test(n7.textContent),
+       'the blank half explains itself instead of staying silent (' + (n7 && n7.textContent) + ')');
+    ok(d7.querySelectorAll('#bulk-table tbody td.bulk-td-dead').length === N_COLD * N_ROWS,
+       'and every unfillable cell is marked never-coming, not loading ('
+       + d7.querySelectorAll('#bulk-table tbody td.bulk-td-dead').length + ')');
+    ok(w7._log.fetches.length === 0,
+       'nothing is fetched — there is no hydrator to fetch with');
+    global.window = win; global.document = doc;   // restore the shared world
+  }
+
+  /* ── docs/141 4af B-1: a RETIRED column says the OTHER thing ──────── */
+  // "still coming" and "never coming" are not one state, and the header is
+  // the only place a screen reader hears the difference for a blank cell.
+  W = world({ fetchMode: '400' }); doc = W.doc; win = W.win; await tick(40);
+  W.wrap.scrollLeft = 1200; W.wrap.dispatchEvent(new win.Event('scroll'));
+  await settle(() => { const m = doc.querySelector('th[data-col-key="c3"] .bulk-col-a11y'); return m && m.textContent === 'could not be loaded'; });
+  const dead3 = doc.querySelector('th[data-col-key="c3"] .bulk-col-a11y');
+  const alive5 = doc.querySelector('th[data-col-key="c5"] .bulk-col-a11y');
+  ok(dead3 && dead3.textContent === 'could not be loaded' && alive5 && alive5.textContent === 'not loaded',
+     'a column the server refused says "could not be loaded"; one still on its way says "not loaded" ('
+     + (dead3 && dead3.textContent) + ' / ' + (alive5 && alive5.textContent) + ')');
 
   /* ── undo repaint: a server-cold path is missing, no fetch ────────── */
   W = world(); doc = W.doc; win = W.win; await tick(40);
@@ -328,7 +480,7 @@ async function main() {
   win.BulkEdit._ge.consumeCarry();
   ok(win._log.fetches.length === 1, 'a carried edit into a server-cold column fetches (' + win._log.fetches.length + ')');
   ok(doc.querySelector('tr[data-qubit="q1"] td[data-col-key="c5"] .bulk-cell') === null, 'and is not placed before the column is here');
-  await tick(90);
+  await settle(() => doc.querySelector('tr[data-qubit="q1"] td[data-col-key="c5"] .bulk-cell'));
   const c5q1 = doc.querySelector('tr[data-qubit="q1"] td[data-col-key="c5"] .bulk-cell');
   const c1q1 = doc.querySelector('tr[data-qubit="q1"] td[data-col-key="c1"] .bulk-cell');
   ok(!!c5q1 && c5q1.value === 'CARRIED' && c5q1.classList.contains('dirty'), 'the carried edit lands in the fetched cell, dirty (' + (c5q1 && c5q1.value) + ')');
@@ -340,7 +492,9 @@ async function main() {
   win._log.fetches.length = 0;
   win.BulkEdit.sort('c6');
   ok(win._log.fetches.length === 1 && /cols=c6(&|$)/.test(win._log.fetches[0]), 'sorting a server-cold column fetches that column first');
-  await tick(90);
+  await settle(() => doc.querySelector('td[data-col-key="c6"] .bulk-cell')
+                    && Array.from(doc.querySelectorAll('tbody tr'))
+                         .map((tr) => tr.getAttribute('data-qubit')).join(',') === 'q3,q2,q1,q0');
   const order = Array.from(doc.querySelectorAll('tbody tr')).map((tr) => tr.getAttribute('data-qubit'));
   ok(doc.querySelector('td[data-col-key="c6"] .bulk-cell') !== null && order.join(',') === 'q3,q2,q1,q0', 'then the column is here and the rows were sorted by it (' + order.join(',') + ')');
 

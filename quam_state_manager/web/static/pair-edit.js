@@ -71,7 +71,13 @@
     }
     function _pairVirtInit() {
         var gv = _pairVirt();
-        if (!gv) { _pvirt = null; return; }
+        // docs/141 4ae B-7: the qubit twin's line -- no GridVirt means this
+        // table's server-cold columns stay blank forever, so say so.
+        if (!gv) {
+            _pvirt = null;
+            if (window.GridVirtMissingNote) window.GridVirtMissingNote(table(), 'bulk-pair-virt-note');
+            return;
+        }
         gv.init();
     }
 
@@ -290,6 +296,16 @@
         });
         var cnt = document.getElementById('bulk-pair-search-count');
         if (cnt) cnt.textContent = q ? (shown + ' of ' + rows.length + ' pairs') : '';
+        // docs/141 4ae A2: a narrowed grid puts columns ON SCREEN that were
+        // cold when it was wide -- and a reveal (the Properties menu, the
+        // docs/85 "N hidden columns match — Show" chip, Show all, Reset) does
+        // the same. Without this the surviving column renders as empty cells
+        // until the user happens to scroll: measured at 110 of 111 pair
+        // columns on the real 20Q chip. The pass is rAF-deferred and reads
+        // the core's live state, so running it here is safe even at mount,
+        // where `_pvirt` is still the previous mount's mirror. The qubit
+        // grid has done this since §4n.
+        if (_pvirt && _pgv) _pgv.onScroll();
         _updateGroupHeader();
     }
 
@@ -300,7 +316,17 @@
         // read every value as empty. Fetch, then sort (the qubit grid does the
         // same since §4n).
         if (_pvirt && _pgv && _pgv.isCold(key)) {
-            _pgv.hydrateCols([key]).then(function () { sort(key); });
+            // ...and re-enter only if it ARRIVED. `hydrateCols` resolves on a
+            // 409 or a network error too, and those deliberately leave the
+            // column cold, so an unconditional re-entry is an unbounded
+            // request loop -- measured at 401 requests in 4 s from one header
+            // click in real Chrome, and as a frozen tab in jsdom (docs/141
+            // 4ae A1). A retired column (a 400) reports isCold() === false, so
+            // the sort runs once over empty strings: no loop, no reorder, and
+            // the note already says the column could not be loaded.
+            _pgv.hydrateCols([key]).then(function () {
+                if (!(_pgv && _pgv.isCold(key))) sort(key);
+            });
             return;
         }
         var tbody = t.querySelector('tbody');
@@ -333,10 +359,19 @@
     function _recomputeStats() {
         var t = table(); if (!t) return;
         var hide = _hiddenSet();
+        // docs/141 4ae: a COLD or RETIRED column has no cells to count. Without
+        // this guard the loop below finds nothing and writes '' over the
+        // server's own min/max — computed once at mount, then destroyed by the
+        // next ordinary action, because this runs from `onLanded` too. §4l-review
+        // fixed the identical defect on the qubit grid (bulk-edit.js:1350).
+        var _skipStat = function (k) {
+            return !!(_pvirt && _pgv && (_pgv.isCold(k) || (_pgv.isDead && _pgv.isDead(k))));
+        };
         COLS.forEach(function (c) {
             var stat = t.querySelector('[data-col-stats="' + (window.CSS && CSS.escape ? CSS.escape(c.key) : c.key) + '"]');
             if (!stat) return;
             if (hide.has(c.key)) { stat.textContent = ''; return; }
+            if (_skipStat(c.key)) return;
             var cells = Array.prototype.slice.call(
                 t.querySelectorAll('[data-col-key="' + (window.CSS && CSS.escape ? CSS.escape(c.key) : c.key) + '"] .bulk-cell'));
             var nums = [];
@@ -559,6 +594,15 @@
         var byResolved = {};
         (results || []).forEach(function (res) { if (res.resolved_path) byResolved[res.resolved_path] = res; });
         if (!Object.keys(byResolved).length) return;
+        // docs/141 4ae C9: a linked twin in a client-detached column keeps the
+        // pre-apply value AND `data-orig`, so revealing it later shows a stale
+        // number that looks clean. The qubit grid hydrates first for exactly
+        // this ("a path-addressed repaint must see every input"). Deliberately
+        // the BROAD form and not a per-path one: `byPath` is single-valued and
+        // last-writer-wins, and 264 real pair paths are claimed by more than
+        // one column, so a narrow fix would skip the detached twin precisely
+        // when the twins are what must agree. Local only — no round trip.
+        if (_pgv) _pgv.hydrateLocal();
         _cells(t).forEach(function (c) {
             if (c.getAttribute('data-linkable') !== '1') return;
             var res = byResolved[c.getAttribute('data-resolved')];
@@ -620,6 +664,11 @@
     function _autoFitColWidth(key) { delete _colWidths[key]; _saveColWidths(); _applyColWidthStyle(); }
 
     var BulkPairEdit = {
+        // docs/141 4ae A4: the pair grid's half of the Column History hook.
+        hydrateColumn: function (key) {
+            if (!_pgv || !_pvirt || !_pgv.isCold(key)) return Promise.resolve(false);
+            return _pgv.hydrateCols([key]).then(function () { return !_pgv.isCold(key); });
+        },
         mount: function (columns) {
             if (Array.isArray(columns)) COLS = columns;
             sortKey = null; sortDir = 1;
@@ -983,6 +1032,21 @@
         // fetched -- but its SEARCH TEXT is the cold map, which nothing else
         // updates. Patch that one cell, for no round trip.
         if (_pvirt && entries && entries.length) {
+            // docs/141 4ae A3: a CLIENT-DETACHED column has a stashed fragment
+            // holding the pre-undo value AND the pre-undo `data-orig`, so the
+            // cell reads clean and the path reports `missing` — which by the
+            // §4e contract deliberately schedules no resync. Nothing would ever
+            // repair it. Local hydration is synchronous, so the cells exist by
+            // the time the repaint loop below runs. REMOTE columns are left
+            // alone on purpose: fetching them would put a round trip back into
+            // every Ctrl+Z, which docs/122 ③ bought away.
+            var _due = [];
+            entries.forEach(function (e) {
+                if (!e || !e.dot_path) return;
+                var k = _pgv.colOfPath(e.dot_path);
+                if (k && _pgv.isCold(k) && !_pgv.isRemote(k) && _due.indexOf(k) < 0) _due.push(k);
+            });
+            if (_due.length) _pgv.hydrateCols(_due);
             entries.forEach(function (e) {
                 if (!e || !e.dot_path) return;
                 var ck = _pgv.colOfPath(e.dot_path);

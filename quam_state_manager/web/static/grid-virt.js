@@ -60,16 +60,56 @@
        so every hydration widened the column -- the layout churn the freeze
        exists to remove (docs/141 4l-review). A computed style of the root is
        a STYLE read, never a layout; a mono glyph is ~0.62em wide. */
+    /* The root font is PICO'S OWN breakpoint ladder (16 -> 21 px at the widest
+       step) and it lives in a STYLESHEET: nothing in this app ever writes
+       documentElement.style.fontSize, and the S/M/L control writes a
+       `data-font-size` ATTRIBUTE feeding --font-size-base, which `body`
+       consumes and `html` never does -- so it moves neither the root nor the
+       cell's own 0.92rem. Both inline reads the old code did were therefore
+       dead, and its 17 fallback undershot the one case the comment above says
+       this exists for: measured on the real 20Q chip at a 21 px root, 9.697
+       px/char against a true 11.32 advance (-14.3%), 143 of 224 columns
+       GROWING on hydration, the pane 53,411 -> 57,899 px (docs/141 4ae B-8;
+       with this fix 129 grow, 57,043 -> 57,899, worst column +86 -> +39 px).
+       Only a computed style of the root can see 21 px.
+
+       It is a STYLE read, never a LAYOUT one -- the docs/141 4i rule is about
+       not forcing LAYOUT. Measured in real Chrome on this grid with
+       Performance.getMetrics: 50 reads of getComputedStyle(root).fontSize,
+       each after a DOM mutation, forced 0 layouts and 0 style recalcs, against
+       50 of each for one `offsetWidth`. (jsdom answers it by evaluating media
+       queries, which reads window.innerWidth -- the harness's geometry counter
+       sees that ONE script-eval read and nothing at mount.)
+
+       Memoised, and primed at script evaluation: the stylesheets are applied
+       by then (render-blocking CSS precedes every script here) but the grid's
+       DOM is not yet dirty, and a computed style flushes pending style --
+       taking the first read inside the mount instead charged `virt: plan`
+       5 -> 14 ms median (48 ms worst) on the 224-column chip, against 8 ms
+       primed. The ladder moves only on a resize, which drops the memo. */
+    var _rootPxCache = 0;
+    function _rootPx() {
+        if (!_rootPxCache) {
+            try {
+                if (window.getComputedStyle) {
+                    _rootPxCache = parseFloat(getComputedStyle(document.documentElement).fontSize) || 0;
+                }
+            } catch (e) {}
+        }
+        return _rootPxCache;
+    }
+    try {
+        _rootPx();                                   // prime it while style is cheap
+        window.addEventListener('resize', function () { _rootPxCache = 0; }, { passive: true });
+    } catch (e) {}
+
     function pxPerChar() {
-        // INLINE root styles only: the UI scale writes documentElement.style
-        // .fontSize and _applyGlobalScale writes --bulk-fs / --bulk-ls there,
-        // so no computed style is needed (getComputedStyle would evaluate the
-        // media queries -- a viewport read; measured in the harness)
+        // rootPx: see _rootPx above -- a stylesheet fact, not an inline one.
+        // --bulk-fs / --bulk-ls ARE inline (bulk-edit.js _applyGlobalScale).
         var rootPx = 17, fs = 1, ls = 0;
         try {
             var st = document.documentElement.style;
-            var uiSize = document.documentElement.getAttribute('data-font-size') || '';
-            rootPx = parseFloat(st.fontSize) || ({ small: 15, large: 19 })[uiSize] || 17;
+            rootPx = _rootPx() || parseFloat(st.fontSize) || 17;
             fs = parseFloat(st.getPropertyValue('--bulk-fs')) || 1;
             var lsRaw = (st.getPropertyValue('--bulk-ls') || '').trim();
             ls = lsRaw.slice(-2) === 'em' ? (parseFloat(lsRaw) || 0) * rootPx * 0.92 * fs : (parseFloat(lsRaw) || 0);
@@ -118,20 +158,112 @@
             return el;
         }
 
+        // docs/141 4ae: columns the server has told us it cannot serve. They are
+        // out of `cold` (never asked for again) but their tds are still on the
+        // page, still empty -- so the instance must stay alive to keep their
+        // values in the whole-chip search, and the note must keep saying so.
+        function deadNote(mine) {
+            var n = mine && mine.dead ? mine.dead.size : 0;
+            if (!n) return '';
+            return n + ' column' + (n === 1 ? '' : 's') + ' could not be loaded'
+                + ' — reload the page to see ' + (n === 1 ? 'it' : 'them');
+        }
+
+        // docs/141 4af B-1: the note is an aria-live region, and content that is
+        // ALREADY THERE when a live region enters the accessibility tree is not
+        // announced. The shipped code created the <p> and filled it in the SAME
+        // task -- a MutationObserver on the real page saw `inserted` and
+        // `text-added` in one callback batch -- so the one message whose whole
+        // job is to be heard once probably never was. It is created EMPTY at
+        // mount now, and it is never `hidden`: hidden takes the region back out
+        // of the tree, so un-hiding and filling in one task is the same
+        // anti-pattern. `_fit_audit.html`'s `#fa-live` is the app's own
+        // precedent for the empty-at-render form. An empty <p> lays out at
+        // height 0 and its margins are zeroed while empty, so the page is
+        // pixel-identical to before it existed.
+        function noteEl(create) {
+            var el = document.getElementById(noteId);
+            if (el || !create) return el;
+            var t = table(); if (!t) return null;
+            var wrap = t.closest('.bulk-table-wrap') || t.parentElement;
+            if (!wrap || !wrap.parentNode) return null;
+            el = document.createElement('p');
+            el.id = noteId; el.className = 'muted bulk-virt-note';
+            el.style.cssText = 'margin:0;font-size:.78em';
+            el.setAttribute('role', 'status');
+            el.setAttribute('aria-live', 'polite');
+            wrap.parentNode.insertBefore(el, wrap);
+            return el;
+        }
+
+        // docs/141 4af B-1: a cold cell is `role=cell name=""` -- to assistive
+        // technology indistinguishable from a parameter the chip genuinely does
+        // not carry. Measured on the real 20Q chip with
+        // Accessibility.getPartialAXTree: 7,200 of 7,810 data cells, and pair
+        // row q1-2 read as 113 cells of which 100 were blank. The honest place
+        // to say so once is the COLUMN HEADER -- the name a reader announces
+        // when it crosses into a column -- so this is ~100 marks and not 7,200:
+        // a per-cell label would make that one row say "not loaded" a hundred
+        // times, which is worse than silence. The mark is `visually-hidden`
+        // (clip-rect 1px: still in the accessibility tree, unlike display:none)
+        // and is position:absolute, so it contributes no layout and `pass()`'s
+        // offsetLeft/offsetWidth window is unchanged. It is removed the moment
+        // the column lands; a RETIRED column (4ae) says the other, permanent
+        // thing, because "still coming" and "never coming" are not one state.
+        function markHeads(t) {
+            if (!t) return;
+            t.querySelectorAll('th.bulk-col-head[data-col-key]').forEach(function (h) {
+                var k = h.getAttribute('data-col-key');
+                var msg = !v ? '' : (v.dead && v.dead.has(k)) ? 'could not be loaded'
+                        : v.cold.has(k) ? 'not loaded' : '';
+                var s = h.querySelector('.bulk-col-a11y');
+                if (!msg) { if (s && s.parentNode) s.parentNode.removeChild(s); return; }
+                if (!s) {
+                    s = document.createElement('span');
+                    s.className = 'visually-hidden bulk-col-a11y';
+                    // before the stats, so the name reads "length not loaded
+                    // min .. max", not after the two header buttons
+                    h.insertBefore(s, h.querySelector('.bulk-col-stats'));
+                }
+                if (s.textContent !== msg) s.textContent = msg;
+            });
+        }
+
+        /* docs/141 4ae B-10: the class style.css hangs the "never coming"
+           look on, and the title that is the only per-cell explanation the user
+           can reach. Written HERE, on the bounded set one refusal names --
+           never on the thousands of merely-cold tds, whose only treatment is a
+           flat background rule that costs no DOM writes at all. */
+        function markDead(keys) {
+            if (!keys || !keys.length) return;
+            var t = table(); if (!t) return;
+            var set = {};
+            keys.forEach(function (k) { set[k] = 1; });
+            t.querySelectorAll('tbody td.bulk-td-cold[data-col-key]').forEach(function (td) {
+                if (!set[td.getAttribute('data-col-key')]) return;
+                td.classList.add('bulk-td-dead');
+                td.setAttribute('title', 'This column could not be loaded — reload the page');
+            });
+        }
+
         function note(msg) {
             var t = table(); if (!t) return;
-            var wrap = t.closest('.bulk-table-wrap') || t.parentElement;
-            var el = document.getElementById(noteId);
-            if (!el) {
-                if (!msg) return;
-                el = document.createElement('p');
-                el.id = noteId; el.className = 'muted bulk-virt-note';
-                el.style.cssText = 'margin:.15rem 0 .3rem;font-size:.78em';
-                el.setAttribute('aria-live', 'polite');
-                if (wrap && wrap.parentNode) wrap.parentNode.insertBefore(el, wrap); else return;
-            }
+            var el = noteEl(true);
+            if (!el) return;
             el.textContent = msg || '';
-            el.hidden = !msg;
+            el.style.margin = msg ? '.15rem 0 .3rem' : '0';
+            // docs/141 4ae B-3: `#table-pane` is the ONE scroller (§4q) and the
+            // toolbar rows follow a sideways scroll by transform. A note born
+            // on a FAILED fetch never reached that code, so it was created at
+            // the pane's left edge -- measured 23,676 px off screen, invisible
+            // at exactly the moment it fired, because the user had scrolled
+            // right and that is WHY hydration ran.
+            if (msg) {
+                try {
+                    var sc = scroller(t);
+                    if (sc && sc.scrollLeft) el.style.transform = 'translateX(' + sc.scrollLeft + 'px)';
+                } catch (e) { /* a note that cannot be pinned is still a note */ }
+            }
         }
 
         /* docs/141 4n: the SERVER renders the columns past the look-ahead
@@ -272,6 +404,11 @@
             });
             phase('virt: detach ' + v.html.size + ' cells'
                   + (v.remote.size ? ', ' + v.remote.size + ' server-cold columns' : ''));
+            // docs/141 4af B-1: both a11y surfaces, at mount -- the live region
+            // empty (so a later message is an ADDITION, which is what gets
+            // announced) and every cold column's header saying it is not loaded.
+            noteEl(true);
+            markHeads(t);
             if (wrap && !wrap['_virtScrollBound_' + styleId]) {
                 wrap['_virtScrollBound_' + styleId] = true;
                 wrap.addEventListener('scroll', function () { onScroll(); }, { passive: true });
@@ -329,8 +466,16 @@
 
         // the common tail of a hydration, local or remote
         function landed(t, set) {
-            if (v && !v.cold.size) { v = null; styleEl().textContent = ''; }
+            // docs/141 4ae C3: release only when there is nothing left to
+            // speak for. A retired column's td is still on the page and still
+            // empty, and its value lives in `vals` -- dropping the instance
+            // would take that value out of the whole-chip search and leave the
+            // cell unexplained.
+            if (v && !v.cold.size && !(v.dead && v.dead.size)) {
+                v = null; styleEl().textContent = '';
+            }
             onState(v);
+            markHeads(t);                       // docs/141 4af B-1
             // docs/109: cold cells were detached with their SERVER-rendered
             // dBm annotations — if the viewer switched the MW-power unit
             // meanwhile, the re-inserted text would be stale; reformat.
@@ -364,28 +509,41 @@
                     .then(function (d) {
                         fresh.forEach(function (k) { mine.inflight.delete(k); });
                         if (v !== mine) return;                 // a re-mount happened meanwhile
-                        applyCells(d.cells || {}, fresh);
-                        if (mine.failed) { mine.failed = 0; note(''); }
+                        applyCells(d.cells || {}, fresh, d.unknown);
+                        // docs/141 4ae C4: a success clears a RETRYABLE failure,
+                        // never a retirement. Keyed on `failed` alone, one
+                        // unrelated column landing erased the only signal that
+                        // N cells are permanently blank.
+                        if (mine.failed) { mine.failed = 0; note(deadNote(mine)); }
                     })
                     .catch(function (e) {
                         fresh.forEach(function (k) { mine.inflight.delete(k); });
                         if (v !== mine) return;
-                        mine.failed = (mine.failed || 0) + fresh.length;
-                        // A 400 means the server does not KNOW these columns, and
-                        // it will not know them a second later: retrying on every
-                        // scroll pass is a loop with no end (docs/141 4ad). Retire
-                        // them instead -- their values stay in `vals`, so the
-                        // whole-chip search still finds them -- and say what a
-                        // reload would fix. A network error or a 409 keeps the
-                        // columns cold, because those answers CAN change.
-                        var dead = e && e.status === 400;
+                        // docs/141 4ad/4ae: retire on an answer that CANNOT change
+                        // without a new page. A 400 means the server does not know
+                        // these columns and will not know them a second later; a
+                        // 409 means another chip is open in this server context,
+                        // which is why the note already said "reload the page" --
+                        // yet it was retried on every scroll pass anyway, measured
+                        // at 72.7 requests/second on one drag. A network error or a
+                        // 5xx keeps the columns cold: those answers CAN change.
+                        var dead = e && (e.status === 400 || e.status === 409);
                         if (dead) {
-                            fresh.forEach(function (k) { mine.cold.delete(k); mine.remote.delete(k); });
+                            if (!mine.dead) mine.dead = new Set();
+                            fresh.forEach(function (k) {
+                                mine.cold.delete(k); mine.remote.delete(k); mine.dead.add(k);
+                            });
+                            if (v === mine) markDead(fresh);
                             onState(v);
+                            markHeads(table());     // docs/141 4af B-1
+                            note(deadNote(mine) + (e && e.message ? ' — ' + e.message : ''));
+                            return;
                         }
-                        note(fresh.length + ' column' + (fresh.length === 1 ? '' : 's') + ' could not be loaded'
-                            + (e && (e.status === 409 || dead) ? ' — ' + e.message + '; reload the page' : ' — scroll again to retry')
-                            + (e && e.message && e.status !== 409 && !dead ? ' (' + e.message + ')' : ''));
+                        mine.failed = (mine.failed || 0) + fresh.length;
+                        note(fresh.length + ' column' + (fresh.length === 1 ? '' : 's')
+                            + ' could not be loaded — scroll again to retry'
+                            + (e && e.message ? ' (' + e.message + ')' : '')
+                            + (mine.dead && mine.dead.size ? '. ' + deadNote(mine) : ''));
                     });
                 fresh.forEach(function (k) { mine.inflight.set(k, req); });
                 waits.push(req);
@@ -395,8 +553,27 @@
 
         // land fetched cells: the td's contents become the server's markup
         // (the same macro the page rendered with), the column leaves the cold set
-        function applyCells(cells, keys) {
+        function applyCells(cells, keys, unknown) {
             var t = table(); if (!t || !v) return;
+            // docs/141 4ae C1: the route 400s only when EVERY asked column is
+            // unknown; a mixed batch is a 200 carrying `unknown: [...]`, which
+            // nothing read. Those keys stayed cold, so a scroll sweep re-asked
+            // for them on every pass and never reached the all-unknown batch
+            // that would have retired them. Keyed on `unknown`, never on a
+            // missing `cells[k]` -- absence is also what a legitimately empty
+            // answer looks like.
+            if (unknown && unknown.length) {
+                if (!v.dead) v.dead = new Set();
+                var retired = [];
+                unknown.forEach(function (k) {
+                    if (!v.cold.has(k) && !v.remote.has(k)) return;
+                    v.cold.delete(k); v.remote.delete(k); v.dead.add(k);
+                    retired.push(k);
+                });
+                markDead(retired);
+                note(deadNote(v));
+                markHeads(t);                   // docs/141 4af B-1
+            }
             var set = {};
             keys.forEach(function (k) {
                 if (!cells[k]) return;              // not answered: stays cold, retried
@@ -409,7 +586,14 @@
                 var tr = td.parentNode;
                 var id = tr && tr.getAttribute ? tr.getAttribute(rowAttr) : '';
                 var html = cells[k][id];
-                td.innerHTML = html != null ? html : '';
+                // docs/141 4ae C2-minimal: a row the answer does not carry (it
+                // disappeared server-side between the render and the fetch) used
+                // to be emptied AND un-marked, so the cell went permanently blank,
+                // left the whole-chip search, and looked exactly like a value the
+                // chip does not carry. Leave it cold instead: still explained,
+                // still searchable, still re-fetchable.
+                if (html == null) return;
+                td.innerHTML = html;
                 v.vals.delete(td);
                 td.classList.remove('bulk-td-cold');
             });
@@ -489,6 +673,10 @@
             // the owner's search needs the stored display text of a cold cell
             valOf: function (td) { return v ? (v.vals.get(td) || '') : ''; },
             isCold: function (k) { return !!v && v.cold.has(k); },
+            // docs/141 4ae: a column the server REFUSED. Not cold (never asked
+            // for again) and not hot (no cells) -- a caller that must tell
+            // "still coming" from "never coming" asks this.
+            isDead: function (k) { return !!v && !!v.dead && v.dead.has(k); },
             isRemote: function (k) { return !!v && v.remote.has(k); },
             colOfPath: function (p) { return v && v.byPath ? v.byPath[p] : undefined; },
         };

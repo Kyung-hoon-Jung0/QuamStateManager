@@ -276,6 +276,35 @@ class TestCellsRoute:
         r = wide.get("/bulk/cells")
         assert r.status_code == 400
 
+    def test_an_unknown_column_is_LOGGED_not_only_answered(self, wide, caplog):
+        """docs/141 4ae B-9. The unknown names went into a response body no
+        client renders and NOWHERE else -- which is why 4ad's own "a 400 `no
+        known column named`, seen once, never reproduced" could not be
+        diagnosed, and why the next occurrence would have been equally
+        undiagnosable. The route logs one warning naming them."""
+        import logging
+
+        wide.get("/bulk?vw=800")
+        with caplog.at_level(logging.WARNING, logger="quam_state_manager.web.routes"):
+            r = wide.get("/bulk/cells?cols=nope,f_01")
+        assert r.status_code == 200
+        hits = [rec for rec in caplog.records if "/bulk/cells" in rec.getMessage()]
+        assert hits, "a partially-unknown ask logged nothing"
+        assert "nope" in hits[-1].getMessage() and "unknown" in hits[-1].getMessage()
+        # the all-unknown ask -- the 400 that was seen once and never reproduced
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="quam_state_manager.web.routes"):
+            r = wide.get("/bulk/cells?cols=nope&grid=pair")
+        assert r.status_code == 400
+        hits = [rec for rec in caplog.records if "/bulk/cells" in rec.getMessage()]
+        assert hits and "nope" in hits[-1].getMessage() and "pair" in hits[-1].getMessage()
+        # a fully-known ask stays quiet: a log line every hydration would be
+        # noise, and noise is how the one that matters gets missed
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="quam_state_manager.web.routes"):
+            wide.get("/bulk/cells?cols=f_01")
+        assert not [rec for rec in caplog.records if "/bulk/cells" in rec.getMessage()]
+
     def test_the_chip_guard(self, wide):
         wide.get("/bulk?vw=800")
         r = wide.get("/bulk/cells?cols=f_01&chip=someone-else")
@@ -527,6 +556,58 @@ class TestGridVirtBinding:
         assert "tableSel: '#bulk-table'" in block
         assert "rowAttr: 'data-qubit'" in block
 
+    def test_the_missing_module_explains_itself(self):
+        """docs/141 4ae B-7. `need(names).then(go, go)` never strands a
+        navigation on a lost script and `asset_url` falls back to a plain URL,
+        so a grid-virt.js that does not arrive left BOTH grids with a
+        permanently blank cold half -- no console error, no note, no recovery
+        (measured on the 20Q chip: 3,960 of 4,480 qubit cells and 2,730 of
+        3,330 pair cells empty, still empty after scrolling to 8,000 px).
+        The helper lives in app.js because app.js is a CORE script."""
+        app = self._read("app.js")
+        assert "/* GRIDVIRT-MISSING-NOTE:BEGIN" in app and "/* GRIDVIRT-MISSING-NOTE:END */" in app, (
+            "the sentinels bulk_virt_server_selfcheck.cjs slices between are gone -- "
+            "the harness would eval an empty string and pass vacuously")
+        assert "window.GridVirtMissingNote" in app
+        for name, note_id in (("bulk-edit.js", "bulk-virt-note"),
+                              ("pair-edit.js", "bulk-pair-virt-note")):
+            js = self._code(self._read(name))
+            assert f"window.GridVirtMissingNote(table(), '{note_id}')" in js, (
+                f"{name} does not say anything when GridVirt is absent")
+
+    def test_the_three_blank_states_do_not_look_alike(self):
+        """docs/141 4ae B-10. LOADING (`bulk-td-cold`), NEVER-COMING
+        (`bulk-td-dead`) and GENUINELY-ABSENT (an ordinary empty cell) were
+        pixel-identical: same borders, same background, no skeleton, no
+        placeholder, no title, no aria. The loading treatment is deliberately a
+        FLAT background plus a cursor and nothing else -- measured on the real
+        20Q chip's 7,200 cold cells, 20 style-recalc toggles cost 569 ms and
+        ZERO layout, while a per-cell shimmer skeleton (::after + gradient +
+        animation) cost 3,886 ms and 814 ms of layout, i.e. 6.8x, on top of a
+        permanent compositor animation. The heavier treatment is on the DEAD
+        cells only, whose count is bounded by what one refusal names."""
+        css = (Path(__file__).resolve().parent.parent
+               / "quam_state_manager/web/static/style.css").read_text(encoding="utf-8")
+        import re
+
+        cold = re.search(r"^\.bulk-td-cold \{([^}]*)\}", css, re.M)
+        assert cold, "no .bulk-td-cold rule: a loading cell looks like an empty one"
+        assert "background" in cold.group(1) and "cursor" in cold.group(1)
+        # the cost claim, as a rule: nothing per-cell beyond a paint
+        assert "animation" not in cold.group(1) and "content" not in cold.group(1)
+        assert not re.search(r"^\.bulk-td-cold::(after|before)", css, re.M), (
+            "a pseudo-element on every cold cell is the 6.8x design that was measured and rejected")
+        dead = re.search(r"^\.bulk-td-dead \{([^}]*)\}", css, re.M)
+        assert dead and "background" in dead.group(1), "no .bulk-td-dead rule"
+        assert cold.group(1).strip() != dead.group(1).strip(), (
+            "loading and never-coming must not render alike")
+        assert re.search(r"^\.bulk-td-dead::after", css, re.M), (
+            "the dead cells carry the glyph -- their count is bounded")
+        # and the class is actually stamped, by the two places a column retires
+        core = self._code(self._read("grid-virt.js"))
+        assert core.count("markDead(") >= 3, "markDead is not called from both retire paths"
+        assert "bulk-td-dead" in core and "title" in core
+
     def test_the_two_grids_share_no_element_id(self):
         """One <style> for both would let each grid erase the other's frozen
         widths; one note element would make one grid's failure line appear
@@ -599,12 +680,68 @@ class TestPairGridVirt:
             {"wiring": {}, "network": {"host": "1.1.1.1"}}), encoding="utf-8")
         return d
 
+    @staticmethod
+    def _mixed_chip(tmp_path, n_pairs=30, n_macros=14):
+        """The same chip plus an ``extras`` band carrying one column of EVERY
+        pair-cell kind ``pair_cell`` branches on: a list, a ``#./`` runtime
+        self-ref, a leaf only half the pairs have (-> the blank ``missing``
+        cell) and a plain scalar.
+
+        ``extras`` sorts LAST (``pair_columns._order_key``: base 900), so all
+        four land COLD -- which is the whole point. A plain scalar renders
+        byte-identically through ``qubit_cell`` and ``pair_cell`` (their
+        scalar branches differ only in the LO-peer glyph, which needs wired
+        ports), so a scalar-only fixture would let a swapped macro pass every
+        assert below and the two pins would be weaker than they read.
+        """
+        d = TestPairGridVirt._chip(tmp_path, n_pairs=n_pairs, n_macros=n_macros)
+        f = d / "state.json"
+        st = json.loads(f.read_text(encoding="utf-8"))
+        for i, p in enumerate(st["qubit_pairs"].values()):
+            ex = {"zz_scalar": 0.5 + i * 1e-3,
+                  "zz_matrix": [[0.9, 0.1], [0.1, 0.9]],
+                  "zz_runtime": "#./gate_fidelity"}
+            if i % 2 == 0:                      # -> a `missing` cell on the odd pairs
+                ex["zz_sometimes"] = 1.0 + i
+            p["extras"] = ex
+        f.write_text(json.dumps(st), encoding="utf-8")
+        return d
+
+    @staticmethod
+    def _pair_grid_cells(html):
+        """(pair id, column key) -> (td class, inner html) for the PAIR grid.
+
+        The pair <tr> carries data-qubit AND data-pair (both the row id), so
+        the qubit grid's own `<tr data-qubit="...">` reader cannot see these
+        rows and this one cannot see its.
+        """
+        out = {}
+        tbl = html[html.index('id="bulk-pair-table"'):]
+        tbl = tbl[:tbl.index("</table>")]
+        for row in re.finditer(r'<tr [^>]*data-pair="([^"]*)"[^>]*>(.*?)</tr>', tbl, re.S):
+            rid = row.group(1)
+            for m in _TD.finditer(row.group(2)):
+                out[(rid, m.group(2))] = (m.group(1), m.group(3))
+        return out
+
     def _client(self, tmp_path):
         d = self._chip(tmp_path)
         app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
         c = app.test_client()
         assert c.post("/load", data={"folder": str(d)}).status_code in (200, 302)
         return c
+
+    def _mixed_client(self, tmp_path):
+        d = self._mixed_chip(tmp_path)
+        app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
+        c = app.test_client()
+        assert c.post("/load", data={"folder": str(d)}).status_code in (200, 302)
+        return c
+
+    @staticmethod
+    def _pair_cold_map(html):
+        m = re.search(r'id="bulk-pair-cold-map">(.*?)</script>', html, re.S)
+        return json.loads(m.group(1)) if m else None
 
     def test_the_planner_reads_pair_columns_unchanged(self, tmp_path):
         """The reason this was a lift and not a rebuild."""
@@ -673,6 +810,84 @@ class TestPairGridVirt:
         # the pair macro's own marks, which the qubit macro never emits
         joined = " ".join(d["cells"][key].values())
         assert "bulk-cell" in joined
+
+    def test_pair_hydration_is_byte_identical_to_the_hot_render(self, tmp_path):
+        """docs/141 4ae (C5) -- the pair analogue of
+        ``TestCellsRoute::test_hydration_is_byte_identical_to_the_hot_render``,
+        the one property the whole design rests on.
+
+        Nothing caught serving the pair branch through the QUBIT macro: the
+        route's own pin asserted only that "bulk-cell" appears in the joined
+        markup, a string ``qubit_cell`` emits too, and swapping the branch to
+        ``macros.qubit_cell(cell, col)`` left 1,660 of 3,000 hydrated pair
+        cells wrong on the real 20Q chip with the suite green (by kind:
+        1,653 `missing` + 7 `list`; ZERO scalars -- hence _mixed_chip).
+        """
+        c = self._mixed_client(tmp_path)
+        cold_html = c.get("/bulk?vw=800", headers={"HX-Request": "true"}).get_data(as_text=True)
+        pm = self._pair_cold_map(cold_html)
+        assert pm, "fixture: the narrow render must ship a pair cold map"
+        cold_keys = sorted(pm["cols"])
+
+        hot_html = c.get(f"/bulk?vw={bulk_virt.MAX_VIEWPORT_PX}",
+                         headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert 'id="bulk-pair-cold-map"' not in hot_html, \
+            "fixture: at the widest viewport the pair grid must render whole"
+        hot = self._pair_grid_cells(hot_html)
+
+        r = c.get("/bulk/cells?grid=pair&cols=" + quote(",".join(cold_keys)))
+        assert r.status_code == 200, r.data[:200]
+        d = r.get_json()
+        assert d["ok"] and d["grid"] == "pair" and set(d["cells"]) == set(cold_keys)
+
+        compared = 0
+        for k in cold_keys:
+            assert set(d["cells"][k]) == set(pm["rows"]), k
+            for rid, inner in d["cells"][k].items():
+                cls, hot_inner = hot[(rid, k)]
+                assert "bulk-td-cold" not in cls, (rid, k)
+                assert inner == hot_inner, (rid, k, inner[:160], hot_inner[:160])
+                compared += 1
+        assert compared > 1000, compared
+
+        # ...and the fixture really did carry a cold cell of each kind, so the
+        # comparison above was able to see the branches that differ. Without
+        # this block the test is a scalar-only test wearing a stronger name.
+        joined = "\n".join(inner for k in cold_keys for inner in d["cells"][k].values())
+        assert "BulkPairEdit.openPair(" in joined, "fixture: no cold LIST cell"
+        assert "bulk-cell-runtime" in joined, "fixture: no cold RUNTIME cell"
+        assert 'placeholder="—"' in joined, "fixture: no cold MISSING cell"
+        assert re.search(r'<input type="text" class="bulk-cell" ', joined), \
+            "fixture: no cold plain SCALAR cell"
+
+    def test_every_hydrated_pair_cell_names_its_own_row(self, tmp_path):
+        """docs/141 4ae (C5), the absolute half. ``pair_cell``'s ``row_id`` is
+        load-bearing on ``kind == 'list'``: the cell is read-only and the arrow
+        beside it is the only way to edit that list, via
+        ``BulkPairEdit.openPair(<row>)``. Byte-identity against the hot render
+        cannot see a ``row_id`` that is wrong in BOTH halves (one shared
+        ``row.id`` typo, or a render lambda closing over the wrong row) -- this
+        can, because it names no other render as its authority.
+        """
+        c = self._mixed_client(tmp_path)
+        cold_html = c.get("/bulk?vw=800", headers={"HX-Request": "true"}).get_data(as_text=True)
+        pm = self._pair_cold_map(cold_html)
+        assert pm
+        d = c.get("/bulk/cells?grid=pair&cols="
+                  + quote(",".join(sorted(pm["cols"])))).get_json()
+        opened = 0
+        for k, per_row in d["cells"].items():
+            for rid, inner in per_row.items():
+                for arg in re.findall(r"BulkPairEdit\.openPair\('([^']*)'\)", inner):
+                    assert arg == rid, ("the arrow opens the WRONG pair", k, rid, arg)
+                    opened += 1
+                # every path the cell carries is that pair's own, never a neighbour's
+                for dp in re.findall(r'data-dot-path="([^"]*)"', inner):
+                    if dp:
+                        assert dp.split(".")[:2] == ["qubit_pairs", rid], (k, rid, dp)
+        assert opened >= len(pm["rows"]), (
+            "not one hydrated cell offered the inspector arrow -- a LIST pair "
+            "cell served through a macro that does not emit it", opened)
 
     def test_an_unknown_grid_is_refused_by_name(self, tmp_path):
         c = self._client(tmp_path)
@@ -751,3 +966,125 @@ class TestPairGridVirt:
             assert len(calls) > before, "an edit must invalidate the memo"
         finally:
             R._pair_bulk_grid = real
+
+
+class TestPairChipToken:
+    """docs/141 4ae (C13). 4ac fixed a CRITICAL -- ``/bulk/cells`` compared the
+    folder BASENAME, so a chip and its backup hydrated each other -- by giving
+    the page a token (``<name>#<8 hex of the path>``). The QUBIT grid's token
+    rides ``QMETA.chipKey`` and ``TestChipGateIdentity`` pins it. The PAIR
+    grid's rides a SECOND publication, ``window.__bulkChipKey``, which
+    ``pair-edit.js``'s ``urlParams`` reads -- and nothing pinned that one:
+    changing it to the display name was green across the whole suite.
+
+    The server still accepts the bare display name on purpose (an older page
+    must be able to hydrate itself -- ``test_the_display_name_is_still_accepted``
+    above), so the CLIENT is the only thing standing between the fix and the
+    CRITICAL's return.
+    """
+
+    @staticmethod
+    def _chip(root, name, bump):
+        """A pair-carrying chip at ``<root>/<name>/CHIP`` -- the display name
+        is "CHIP" for every value of ``name``, which is the whole trap."""
+        d = root / name / "CHIP"
+        d.mkdir(parents=True)
+        (d / "state.json").write_text(json.dumps({
+            "qubits": {"q0": {"T1": 1e-5 + bump}, "q1": {"T1": 2e-5 + bump}},
+            "qubit_pairs": {"q0-q1": {"qubit_control": "#/qubits/q0",
+                                      "qubit_target": "#/qubits/q1",
+                                      "gate_fidelity": {"averaged": 0.99 + bump}}},
+            "active_qubit_names": ["q0", "q1"],
+            "active_qubit_pair_names": ["q0-q1"]}), encoding="utf-8")
+        (d / "wiring.json").write_text(json.dumps(
+            {"wiring": {}, "network": {"host": "1.1.1.1"}}), encoding="utf-8")
+        return d
+
+    @staticmethod
+    def _pair_token(html):
+        """What ``pair-edit.js`` will read, parsed the way the browser does."""
+        m = re.search(r"window\.__bulkChipKey\s*=\s*(.+?);", html)
+        if not m:
+            return None
+        try:
+            return json.loads(m.group(1))
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _pair_col_key(html):
+        """A real derived pair column, from the pair table's own headers
+        (`__id__` is the row-label column, not one `/bulk/cells` serves)."""
+        i = html.index('id="bulk-pair-table"')
+        for k in re.findall(r'data-col-key="([^"]+)"', html[i:]):
+            if not k.startswith("__"):
+                return k
+        raise AssertionError("fixture: the pair grid derived no columns")
+
+    def test_the_pair_grid_publishes_the_token_not_the_display_name(self, tmp_path):
+        a = self._chip(tmp_path, "labA", 0.0)
+        b = self._chip(tmp_path, "backup", 7.0)
+        assert a.name == b.name, "fixture: one basename, two parents"
+
+        app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
+        c = app.test_client()
+        assert c.post("/load", data={"folder": str(a)}).status_code in (200, 302)
+        html = c.get("/bulk", headers={"HX-Request": "true"}).get_data(as_text=True)
+        tok_a = self._pair_token(html)
+        assert tok_a, "pair-edit.js reads window.__bulkChipKey -- the page must set it"
+        assert tok_a != a.name, (
+            "the pair grid published the DISPLAY NAME %r: a chip and its backup "
+            "share it, which is exactly the identity the 4ac gate cannot tell "
+            "apart" % (tok_a,))
+        key = self._pair_col_key(html)
+        assert c.get(f"/bulk/cells?grid=pair&cols={quote(key)}&chip={quote(tok_a)}"
+                     ).status_code == 200, "A's own token must hydrate A"
+
+        # the SAME context now holds the other chip
+        assert c.post("/load", data={"folder": str(b)}).status_code in (200, 302)
+        r = c.get(f"/bulk/cells?grid=pair&cols={quote(key)}&chip={quote(tok_a)}")
+        assert r.status_code == 409, (
+            "chip B served pair cells to a page rendered from A: "
+            f"{r.status_code} {r.get_data(as_text=True)[:200]}")
+
+        html_b = c.get("/bulk", headers={"HX-Request": "true"}).get_data(as_text=True)
+        tok_b = self._pair_token(html_b)
+        assert tok_b and tok_b != tok_a, "the two tokens differ"
+        assert c.get(f"/bulk/cells?grid=pair&cols={quote(key)}&chip={quote(tok_b)}"
+                     ).status_code == 200, "the gate is not simply always-on"
+
+    def test_the_pair_binding_sends_that_token_as_chip(self):
+        """The two halves of the publication are only useful together: the
+        template sets ``window.__bulkChipKey``, ``pair-edit.js`` puts it on the
+        wire. Either half alone leaves the pair grid ungated."""
+        js = (Path(__file__).resolve().parent.parent
+              / "quam_state_manager/web/static/pair-edit.js").read_text(encoding="utf-8")
+        i = js.index("urlParams: function ()")
+        block = js[i:i + 400]
+        assert "window.__bulkChipKey" in block, block[:200]
+        assert "&chip=' + encodeURIComponent(tok)" in block, block[:200]
+        assert "&grid=pair" in block, block[:200]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_pair_virt_server_selfcheck():
+    """docs/141 4ae (C12). The PAIR half of the client, against the REAL
+    pair-edit.js + grid-virt.js under jsdom.
+
+    ``tests/pair_virt_server_selfcheck.cjs`` shipped with no pytest driver, so
+    ``pytest tests/`` never executed one of its 39 asserts -- the harness was
+    green only because nothing ran it. Same shape as
+    ``test_bulk_virt_server_selfcheck`` above.
+    """
+    node = shutil.which("node")
+    root = Path(__file__).resolve().parent.parent
+    try:
+        subprocess.run([node, "-e", "require('jsdom')"], check=True, capture_output=True, timeout=30)
+    except Exception:
+        pytest.skip("jsdom not installed")
+    r = subprocess.run([node, str(root / "tests" / "pair_virt_server_selfcheck.cjs")],
+                       capture_output=True, text=True, encoding="utf-8", timeout=180, cwd=str(root))
+    if r.returncode == 2:
+        pytest.skip("jsdom not installed")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.count("ok - ") >= 36, r.stdout

@@ -93,8 +93,18 @@ class TestOneScroller:
         user happened to scroll sideways.
         """
         app = (ROOT / "quam_state_manager/web/static/app.js").read_text(encoding="utf-8")
-        assert "scrollX: p.scrollLeft" in app, "the parked pane remembers its sideways position"
+        assert "scrollX: sx0" in app, "the parked pane remembers its sideways position"
         assert "p.scrollLeft = e.scrollX || 0;" in app, "and gets it back before paneRestored fires"
+        # docs/141 4ae (CRITICAL): the offsets are READ BEFORE the detach loop.
+        # Read after it they are both 0 -- an emptied element has nothing to
+        # overflow -- so 4ac's scrollX was a measured no-op until this order
+        # was fixed (real Chrome, 20Q chip: parked {3000,400} -> captured
+        # {0,0} -> restored {0,0}). The behavioural pin is section 8b of
+        # tests/pane_state_selfcheck.cjs; this one guards the ORDER.
+        read = app.index("var st0 = p.scrollTop, sx0 = p.scrollLeft;")
+        detach = app.index("while (p.firstChild) holder.appendChild(p.firstChild);")
+        assert read < detach, \
+            "the pane's scroll offsets must be read while it still has children"
         i = app.index("p.scrollLeft = e.scrollX || 0;")
         j = app.index("paneRestored")
         assert i < j, "scrollLeft must be restored BEFORE the event the grid listens to"
@@ -118,8 +128,10 @@ class TestOneScroller:
         j = core.index("function init() {")
         assert "var wrap = scrollerOf(t);" in core[j:j + 3000]
         # the visual frame is still what the note is inserted before (the note
-        # moved into the shared core with the rest of the mechanism, 4ad)
-        j = core.index("function note(msg) {")
+        # moved into the shared core with the rest of the mechanism, 4ad; 4af
+        # B-1 split the CREATION into noteEl so the live region can be born
+        # empty at mount, which is where the insertion point now lives)
+        j = core.index("function noteEl(create) {")
         assert "t.closest('.bulk-table-wrap')" in core[j:j + 400]
 
 

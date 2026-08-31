@@ -4461,6 +4461,15 @@ window.PaneState = (function () {
         if (!p || !p.firstChild) return;
         if (SOFT.indexOf(route) >= 0) soft[route] = _captureSoft(p, route);
         if (KEEP.indexOf(route) < 0) return;
+        // docs/141 4ae (CRITICAL): READ THE OFFSETS BEFORE THE DETACH BELOW.
+        // An emptied element has nothing to overflow, so the browser clamps it
+        // to 0,0 the moment its children leave -- and these two reads used to
+        // sit AFTER the move loop. Measured in real Chrome on the 20Q chip
+        // (247 columns, 53,000 px wide): pane at scrollLeft 3000 / scrollTop
+        // 400 -> captured {0,0} -> restored {0,0}. EVERY keep-route return
+        // landed at the top-left corner, and 4ac's scrollX below was a no-op
+        // from the day it was added because it was added at this broken read.
+        var st0 = p.scrollTop, sx0 = p.scrollLeft;
         var holder = document.createElement('div');
         while (p.firstChild) holder.appendChild(p.firstChild);
         // docs/141 4ac: scrollX too. 4q made #table-pane the ONE scroller
@@ -4468,7 +4477,7 @@ window.PaneState = (function () {
         // its scrollLeft -- parking the bars without their pane's sideways
         // position left them translated over a pane reset to 0.
         stash[route] = { holder: holder, seq: seqNow(), chip: chipNow(),
-                         scroll: p.scrollTop, scrollX: p.scrollLeft, order: ++_order };
+                         scroll: st0, scrollX: sx0, order: ++_order };
         var keys = Object.keys(stash);
         if (keys.length > MAX) {
             keys.sort(function (a, b) { return stash[a].order - stash[b].order; });
@@ -17216,6 +17225,21 @@ window.ColumnHistory = (function () {
             }
         });
         if (!Object.keys(_paths).length) {
+            // docs/141 4ae A4: a COLD column has no `.bulk-cell` at all, so the
+            // map is empty and this button -- rendered on every header -- used
+            // to answer with a toast on 92 of 111 pair columns and 198 of 224
+            // qubit ones. Hydrate that one column and try again, ONCE.
+            // The flag is set before the call (a double click would otherwise
+            // start two) and lives on the button, not in module scope: a
+            // module-scoped set survives a re-render, which is exactly when the
+            // column may have become hot on its own.
+            var api = grid === "pair" ? window.BulkPairEdit : window.BulkEdit;
+            var hydrate = api && api.hydrateColumn;
+            if (hydrate && !btn._chHydrated) {
+                btn._chHydrated = 1;
+                var p = hydrate.call(api, colKey);
+                if (p && p.then) { p.then(function () { open(btn); }); return; }
+            }
             if (window.showToast) showToast("No history-capable cells in this column");
             return;
         }
@@ -18200,3 +18224,57 @@ window.FloatWiring = (function () {
     document.addEventListener('stateRestored', function () { if (panel()) refresh(); });
     return { toggle: toggle, open: open, refresh: refresh };
 })();
+
+/* docs/141 4ae B-7 -- the one failure this mechanism used to keep entirely to
+   itself. The server renders the columns past the look-ahead window as EMPTY
+   `<td class="bulk-td-cold">` and grid-virt.js fills them; if grid-virt.js
+   itself does not arrive, `window.GridVirt` is undefined, both grids' bindings
+   return null, and the cold half of BOTH tables is permanently blank -- no
+   console error, no note, no recovery. Two mechanisms make it silent: the
+   bundle loader's `need(names).then(go, go)` ("never strand a navigation on a
+   lost script") and `asset_url`'s plain-URL fallback, which yields a live
+   <script> that 404s. Measured before this: 3,960 of 4,480 qubit cells and
+   2,730 of 3,330 pair cells empty, still empty after scrolling.
+   Reachability is low (asset_url fingerprints by mtime, PyInstaller copies
+   web/static wholesale) -- but the project's rule since docs/114 is that a
+   failure explains itself, and this one could not. It lives in app.js because
+   app.js is a CORE script: a helper inside the module that went missing would
+   be missing too.
+   Returns the number of columns it named, so a pin can assert it. */
+/* GRIDVIRT-MISSING-NOTE:BEGIN -- sliced out by tests/bulk_virt_server_selfcheck.cjs
+   (the harness cannot eval the whole of app.js; the sentinels are pinned by
+   tests/test_bulk_virt_server.py so a rename can never make the slice silently
+   empty -- the "truncated declaration read as green" lesson of docs/141). */
+window.GridVirtMissingNote = function (t, noteId) {
+    try {
+        if (!t || window.GridVirt) return 0;
+        var seen = {}, n = 0;
+        Array.prototype.forEach.call(
+            t.querySelectorAll('tbody td.bulk-td-cold[data-col-key]'), function (td) {
+                var k = td.getAttribute('data-col-key');
+                if (k && !seen[k]) { seen[k] = 1; n++; }
+                // the same two states docs/141 4ae B-10 gives a retired column:
+                // these cells are not loading, they are never coming
+                td.classList.add('bulk-td-dead');
+                td.setAttribute('title', 'This column could not be loaded — reload the page');
+            });
+        if (!n) return 0;
+        var wrap = t.closest('.bulk-table-wrap') || t.parentElement;
+        var el = document.getElementById(noteId);
+        if (!el) {
+            el = document.createElement('p');
+            el.id = noteId;
+            el.className = 'muted bulk-virt-note';
+            el.style.cssText = 'margin:.15rem 0 .3rem;font-size:.78em';
+            el.setAttribute('aria-live', 'polite');
+            if (!wrap || !wrap.parentNode) return n;
+            wrap.parentNode.insertBefore(el, wrap);
+        }
+        el.textContent = n + ' column' + (n === 1 ? '' : 's') + ' could not be loaded'
+            + ' — a page script did not arrive; reload the page to see '
+            + (n === 1 ? 'it' : 'them');
+        el.hidden = false;
+        return n;
+    } catch (e) { return 0; }
+};
+/* GRIDVIRT-MISSING-NOTE:END */

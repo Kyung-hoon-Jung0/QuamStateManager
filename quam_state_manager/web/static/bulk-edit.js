@@ -1347,7 +1347,11 @@
             if (onlyKeys && !onlyKeys[c.key]) return;
             // a COLD column has no cells to count: keep the server's numbers
             // (they were wiped and never came back -- docs/141 4l-review)
-            if (_virt && _virt.cold && _virt.cold.has(c.key)) return;
+            // docs/141 4ae: a RETIRED column has no cells either -- it left
+            // `cold` but never arrived -- so the same guard must cover it, or
+            // the server's numbers are wiped and never come back.
+            if (_virt && ((_virt.cold && _virt.cold.has(c.key))
+                          || (_virt.dead && _virt.dead.has(c.key)))) return;
             var stat = t.querySelector('[data-col-stats="' + (window.CSS && CSS.escape ? CSS.escape(c.key) : c.key) + '"]');
             if (!stat) return;
             if (hide.has(c.key)) { stat.textContent = ''; return; }
@@ -1946,7 +1950,13 @@
     function _virtSync() { _virt = _gv ? _gv.state() : null; return _virt; }
     function _virtInit() {
         var gv = _virtInstance();
-        if (!gv) { _virt = null; return; }
+        // docs/141 4ae B-7: no GridVirt means the server-cold half of this
+        // table will never be filled. Say so instead of leaving it blank.
+        if (!gv) {
+            _virt = null;
+            if (window.GridVirtMissingNote) window.GridVirtMissingNote(table(), 'bulk-virt-note');
+            return;
+        }
         gv.init();
         _virtSync();
     }
@@ -3291,6 +3301,15 @@
     BulkEdit._virtState = function () {
         return _virt ? { cold: Array.from(_virt.cold), remote: Array.from(_virt.remote),
                          inflight: Array.from(_virt.inflight.keys()), failed: _virt.failed || 0 } : null;
+    };
+    // docs/141 4ae A4: Column History -- and anything else addressed from
+    // outside the grid -- needs a way to ask for ONE column. Resolves even when
+    // the column cannot be fetched, so the caller falls through to its honest
+    // message instead of waiting forever.
+    BulkEdit.hydrateColumn = function (key) {
+        var gv = _virtInstance();
+        if (!gv || !_virt || !gv.isCold(key)) return Promise.resolve(false);
+        return gv.hydrateCols([key]).then(function () { return !gv.isCold(key); });
     };
     BulkEdit._virtHydrateCols = _virtHydrateCols;
     BulkEdit._setCarry = function (c) { _editCarry = c; };

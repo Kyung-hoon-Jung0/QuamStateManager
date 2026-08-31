@@ -9408,6 +9408,26 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
 }
 .bulk-cell-runtime { text-align: center; }
 .bulk-td-ro { opacity: 0.92; }
+/* docs/141 4ae B-10 -- LOADING, NEVER-COMING and GENUINELY-ABSENT were ONE
+   appearance. A cold cell (`bulk-td-cold`, server-rendered empty or
+   client-detached) is a value ON ITS WAY: grid-virt.js fills it from
+   /bulk/cells the moment it is on screen. A RETIRED one (`bulk-td-dead`,
+   stamped by grid-virt.js when the server refuses the column with a 400/409 or
+   names it in `unknown`) never arrives without a reload. An ordinary empty cell
+   is a value the chip does not carry. Before this rule all three were the same
+   pixels -- same borders, same background, no title, no placeholder.
+   COST: the loading state is a flat background-color plus a cursor and NOTHING
+   else -- no gradient, no pseudo-element, no animation -- because the real 20Q
+   chip renders ~7,200 cold cells and a per-cell skeleton would cost more than
+   the virtualization saves. The heavier treatment (a glyph) is on the DEAD
+   cells only, whose count is bounded by what one refusal names. */
+.bulk-td-cold { background: color-mix(in srgb, var(--pico-muted-color) 8%, transparent); cursor: progress; }
+.bulk-td-dead { background: color-mix(in srgb, var(--color-warning-text) 14%, transparent); cursor: help; }
+.bulk-td-dead::after {
+    content: '\2014'; position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--color-warning-text); opacity: 0.7; pointer-events: none;
+}
 /* ↗ jump-to-inspector link on a list/confusion badge cell. */
 .bulk-ro-link {
     margin-left: 2px; font-size: 0.9em; text-decoration: none;

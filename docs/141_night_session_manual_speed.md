@@ -872,7 +872,7 @@ cold until scrolled back to (keyboard navigation still hydrates through
 `_virtEnsureTd`).
 
 **Not in this cut, on purpose.** The PAIR grid renders whole (§4ac, measured:
-3,330 cells / ~1.5 MB on this chip — **51% of the remaining document**, i.e. the
+3,330 cells / ~1.5 MB on this chip — **53% of the remaining document**, i.e. the
 largest single block left, not the small leftover this paragraph's ordering
 implied): `pair-edit.js` has no virtualization at all and the
 qubit grid's mechanism is the one worth generalizing into a shared module
@@ -1580,7 +1580,8 @@ actually swept, rather than the code being changed to fit the sentence.
 **Corrections to the doc's own numbers**, from the doc auditor: the pair grid is
 **3,330 cells / ~1.5 MB**, not "1,530 cells / ~0.6 MB" — it does not reconcile
 with the 7,810 in the same sentence, and after §4n it is the LARGEST remaining
-block of `/bulk` (51%), not a small leftover. "never fewer hot columns than
+block of `/bulk` (53% — §4ae re-measured it at both candidate revisions; the 51%
+first published here and in §4n was wrong), not a small leftover. "never fewer hot columns than
 before" is false in two measurable configurations (the table-size slider below
 its S preset, and the `vw` hint that a full page load never sends), and the
 constant the whole conservatism argument rests on was unpinned. §4n's
@@ -1691,10 +1692,19 @@ extraction is built on, each of which a mutation now guards:
    state inside the core's own scroll listener and the owner's mirror went
    stale — caught by an existing §4n pin, which is what pins are for.
 
-`bulk-edit.js` is 3,641 → 3,328 lines (205,432 → 190,407 bytes); `pair-edit.js`
-953 → 1,049; `grid-virt.js` is 28,171 new bytes. Script total **+19 KB**, which
-is the honest price of the extraction — set against **−511 KB** of document
-below, per page load, on every visit.
+`bulk-edit.js` is 3,641 → 3,328 lines (209,073 → 190,407 bytes on disk);
+`pair-edit.js` 953 → 1,051; `grid-virt.js` is 28,171 new bytes. Script total
+**+14.3 KiB (+14,595 B)** raw — the honest price of the extraction. Weighed
+against the document it removes it is smaller than it looks and it is paid
+differently: the script is fetched once and then cached for a year, the
+document is fetched on every visit. §4 gives both, gzipped, which is the
+only comparison that means anything.
+
+(The first version of this paragraph said +19 KB. That figure came from
+subtracting the old sizes as git stores them, LF, from the new sizes as they
+sit on disk, CRLF — two different measures of the same files. Every byte
+figure in this section is now a real byte count, `len(f.read())` in binary
+mode, and the document figures below are too.)
 
 ### 2. The server half
 
@@ -1760,16 +1770,100 @@ new harness caught four geometry reads; the pass is deferred now.
 
 ### 4. Measured
 
-Same harness, same chip (PJ_10082026, 20Q, 452 qubit columns × 111 pair columns):
+Same harness, same chip (PJ_10082026, 20Q, 452 qubit columns × 111 pair columns).
+**Every document figure is given twice — raw, and gzipped, which is what
+actually crosses the wire.** `/bulk` is compressed whenever the client
+advertises it (`routes.py`, `compresslevel=5`) and every browser does, so a
+raw-byte saving on this document is not the saving a user gets.
+
+| | before §4ad | after | Δ |
+|---|---|---|---|
+| `/bulk` document, raw | 2,820,554 B | 2,304,399 B | −516,155 (−18.3%) |
+| `/bulk` document, **gzipped — the wire** | **171,492 B** | **114,466 B** | **−57,026 (−33.3%)** |
+| pair table block, raw | 1,497,500 B (53.1%) | 867,787 B (37.7%) | −629,713 |
+| pair table block, gzipped | 94,497 B | 29,983 B | −64,514 |
+| pair cold columns | — | 91 of 111 (2,730 of 3,330 cells) | |
+| pair cold map, as served | — | 113,440 B raw / 7,233 B gzipped | |
+| script bundle on disk | 261,720 B | 276,315 B | +14,595 (+5,128 compressed) |
+
+**The script is paid once; the document is paid every visit.** SM serves
+`/static` UNcompressed under `Cache-Control: public, max-age=31536000`
+(verified against the running server — `grid-virt.js` comes back with no
+`Content-Encoding`), so the +14,595 B is a one-time raw cost that a second
+visit does not pay, against −57,026 B of wire on every `/bulk`. And the
+worst case is still a saving: a user who scrolls the pair grid all the way
+across pulls all 91 cold columns back — 762,627 B raw, **30,615 B gzipped**
+— which leaves that visit **−26,411 B** net; a user who never scrolls past
+the first screen pays none of it.
+
+(The first version of this table gave the document saving raw only, and set
+it against the raw script cost as if the two were the same kind of number:
+−516 KB against +14.6 KB, per page load. On the wire the saving is ≈ 9×
+smaller than that, and the script cost is not per-load at all. The trade was
+never in doubt; the magnitude was out by an order of magnitude, in the
+direction that flattered the change.)
+
+Cumulative for the `/bulk` **htmx document** across §4m → §4n → §4ad:
+**8.88 MB → 2.30 MB** raw (the same three points measured as a FULL PAGE
+render: 8.98 → 2.40 MB).
+
+**What the change is actually for — measured in a real browser.** Bytes were
+never the point; DOM was. Headless Chrome 152 over CDP, one session, the two
+servers side by side (parent `624a07a^` materialised read-only with
+`git archive`), **14 interleaved full-page navigations to `/bulk` per side**,
+the first run of each dropped as the server's cold cache. Median
+[p25–p75] (min–max), ms:
 
 | | before §4ad | after |
 |---|---|---|
-| `/bulk` document | 2,809,432 B | **2,297,984 B** (−18.2%) |
-| pair table block | ~1.5 MB (53%) | **865,210 B (37.7%)** |
-| pair cold columns | — | 91 of 111 (2,730 of 3,330 cells) |
-| pair cold map | — | 122,095 B |
+| first byte | 359 [316–420] (271–581) | **178** [170–188] (124–345) |
+| DOM interactive | 1,716 [1,496–2,000] (864–2,398) | **1,231** [1,080–1,420] (605–1,729) |
+| load | 1,955 [1,703–2,278] (1,109–2,706) | **1,405** [1,224–1,633] (766–2,039) |
+| longest long task | 286 [216–439] (203–756) | **217** [178–276] (138–644) |
+| long-task total | 792 [656–975] (477–1,412) | **541** [497–678] (390–1,203) |
+| transferred (gzip) | 192,431 B | **135,054 B** |
 
-Cumulative for the `/bulk` document across §4m → §4n → §4ad: **8.98 MB → 2.30 MB.**
+The spread is wide — the slowest "after" navigation is slower than the
+fastest "before" one, and a single number would hide that — but every
+quartile moves the same way, and the two sides were measured alternately in
+one browser so a drifting machine hits both equally.
+
+And the DOM itself, read from the loaded page:
+
+| | before §4ad | after |
+|---|---|---|
+| elements in the document | 17,276 | **13,964** (−19.2%) |
+| `<input>` elements | 3,999 | **1,059** (−73.5%) |
+| `<td>` elements | 7,875 | 7,875 (identity kept — §3) |
+| empty `<td>` after mount | 4,260 | 7,200 |
+
+That last pair is the mechanism stated honestly: the cells stay, their
+*contents* do not, and the client's own virtualization then detaches more of
+them than the server left cold. Three thousand fewer elements and 2,940
+fewer live form controls is what the first-byte and long-task numbers above
+are made of.
+
+(Figures re-measured 2026-08-31 against the tree as it stands — which
+carries the §4ae fixes as well, so its script bundle is 285,253 B, +23,533
+raw / +8,149 compressed over the parent rather than the commit's +14,595 /
++5,128. The document and timing figures are unaffected: §4ae changed no
+server-side rendering.)
+
+Three corrections live in that table, all found by re-measuring rather than by
+reading. The first figures published here were `len(html_str)` — characters,
+labelled bytes; on this chip the two differ by ~11 kB. The cold map was
+measured by re-serialising the Python object with `json.dumps`' default
+separators and `ensure_ascii=True`, while the template emits compact,
+non-escaped JSON — 122,095 claimed against 113,440 shipped, an 7.8% overstate
+in a table whose whole point is bytes on the wire. And the cumulative line
+compared §4m's FULL-PAGE 8.98 MB against §4ad's htmx FRAGMENT, which is not a
+comparison; both forms are now given.
+
+**A contradiction with §4n, resolved:** §4n's own paragraph said the pair grid
+was "51% of the remaining document" while this section said 53%. Measured at
+both candidate revisions (`5d7bbef` and `624a07a^`), the pair block is
+**53.04%** of the document. §4n was the wrong one; it is corrected in place, in
+both the §4n paragraph and §4ac's restatement of it.
 
 **Three goldens, all at the cell-token level on the real chip:**
 
@@ -1821,13 +1915,38 @@ answers **can** change.
   memoized and invalidated). `TestWidthMetricsMirror` follows the width metrics
   into `grid-virt.js`.
 
-**Mutation-checked: 18 of 19 caught; the 19th is a no-op, not a gap.** Seven
-server/template mutations (pair never planned, no map emitted, `grid=` ignored,
-pair served by the qubit macro, grid not memoized, cold `<td>` still rendered,
-shared map id), nine client mutations (pair never adopts, cold values leave the
-search, sort does not wait, nav skips cold, undo leaves a stale map, pair uses
-the qubit style id / the qubit map / forgets `grid=`, the mount pass runs
-immediately), and two on the shared core (a shared scroll flag, no `onState`).
+**Mutation-checked — and the figure first published here, "18 of 19 caught",
+was not evidence of anything.** The sweep ran ONE trial per mutation against a
+pytest set that included `test_bulk_virt_server_selfcheck`, which this same
+commit made fail about one run in four (§4ae B1). So every sweep line that read
+`pytest[1 failed, 116 passed]` is indistinguishable from that flake firing, and
+at least one of them WAS the flake.
+
+Re-run on a copy with the flaky test deselected, the honest figure is **9 of 11
+re-verifiable mutations caught, and two caught by nothing**:
+
+- **Serving the pair branch through the QUBIT macro is caught by no test at
+  all** — the very failure the commit message calls "the one failure this
+  mechanism must never have". `test_the_route_serves_the_pair_grid_through_the_pair_macro`
+  asserts only that `"bulk-cell"` appears in the joined markup, a string the
+  qubit macro emits too. On the real 20Q chip the mutation makes **1,660 of
+  2,910 hydrated pair cells differ**; three reviewers reproduced it
+  independently, one of them through the sharper form: `pair_cell`'s `row_id` is
+  load-bearing on a `kind == 'list'` cell
+  (`onclick="return BulkPairEdit.openPair('{{ row_id }}')"`), and a CONSTANT
+  `rid` is green everywhere while putting seven wrong pair targets on the page.
+- **Removing the `onState(v)` announcement in the 400-retire branch is caught by
+  nothing.** (The other four announcement sites are pinned.)
+
+Both are fixed in §4ae. The nine that are genuinely caught: pair never planned,
+no map emitted, `grid=` ignored, grid not memoized, cold `<td>` still rendered,
+shared map id, undo leaves a stale map, pair uses the qubit style id, pair uses
+the qubit map.
+
+The lesson is not about these two pins. It is that **a mutation sweep run
+against a flaky suite measures the flake, not the pins** — a single-trial
+"1 failed" is a coin toss reported as a verdict. A sweep must either exclude
+the known-flaky tests or repeat each trial until the answer is stable.
 
 The nineteenth — make `pair-edit.js` pass `rowAttr: 'data-qubit'` — **stayed
 green, and should have.** A real pair row is
@@ -1863,3 +1982,361 @@ files, leaving them syntactically dead. **The loop I was checking them with used
 `Node.js v24.18.0` — so two of the four read as green.** The canonical loop in
 CLAUDE.md uses the **exit code**; this is why. All four are repaired and 95/95
 harnesses are green over two consecutive full runs.
+
+---
+
+## 4ae. The review round over §4ad — and what it cost the section that invited it
+
+**2026-08-31, user-directed.** The same method as §4ac: several reviewers, each
+claim actually re-executed, then a verifier per dimension whose brief is to
+REFUTE, then a completeness critic and a **fix-risk critic**. Nine agents over
+one commit (`624a07a`, 20 files) — a much smaller target than §4ac's eighteen,
+and it returned proportionally more, because a small commit gets read closely.
+
+**Raised: 6 CRITICAL / 19 MAJOR / 13 MINOR.** Two conflicts between reviewers,
+both adjudicated by measurement. **Five proposed fixes were wrong** — the same
+count as §4ac, found by the same brief. And the round's sharpest finding was
+about §4ad's own verification: the mutation figure it published was not
+evidence of anything.
+
+### 1. The dimensions, and what each returned
+
+Six reviewers: the shared core (`grid-virt.js`) and whether extracting it
+changed the QUBIT grid; the pair client's call sites; the server half; **the
+pins themselves** (46 mutations); every claimed number; and the seams with
+§4q / PaneState / bundles / undo / auto-apply / the chip gate / the Pairs
+picker / Tab focus / two windows. Then a fix-risk critic over the proposed
+fixes, and a completeness critic over what nobody had run.
+
+Three of the four behaviour CRITICALs were found **independently by two
+reviewers**, each with its own harness, each measured on the real 20Q chip.
+That is what the verifier stage exists to produce, and it arrived for free.
+
+### 2. Four CRITICALs, all the same shape
+
+Every one is *the pair grid lacking a guard the qubit grid has had since §4n*.
+§4ad's own §1 says the extraction's whole point was that the mechanism became
+shared — but the mechanism moved and the **call sites** did not.
+
+**① `sort()` on a cold column is an unbounded request loop.**
+`pair-edit.js` re-entered `sort(key)` unconditionally when the hydration
+promise settled. `fetchCells` always resolves, and a network error or a 409
+deliberately leaves the column cold, so the chain never ends. Real Chrome, one
+header click: **401 requests in 4 s** (the reviewer's own cap, not an end).
+jsdom, uncapped: no output and **148 s of CPU** — a frozen tab, not a busy one.
+The qubit twin has had `if (!(_virt && _virt.remote.has(key))) sort(key)` since
+§4n.
+
+**② A search or a column reveal never hydrates.**
+`applySearch` ends without the qubit grid's `if (_virt) _virtOnScroll();`
+(whose own comment says "hydrate the surviving cold columns that the narrowed
+grid puts ON SCREEN"). Real chip: open `/bulk` with a remembered search, clear
+the box, and **110 of 111 pair columns are visible-but-blank** until you happen
+to scroll. Five realistic queries, all blank, zero fetches. Also reached by the
+Properties menu, the docs/85 "N hidden columns match — Show" chip, Show all and
+Reset.
+
+**③ An undo into a client-detached column leaves the pre-undo value, marked
+clean.** `_revertPaths` patched the cold map for a `remote` column only. A
+client-detached column's stashed fragment holds the old value AND the old
+`data-orig`, so the cell reads clean; the path is reported `missing`, not
+`uncovered`, and only `uncovered` schedules a resync. Nothing ever repairs it.
+**Severity corrected by the fix-risk critic**: the first report said
+client-detached is "the norm — 92 of 111", and the measurement is **1 column of
+111** at the default table size (0 at the smallest, 6 at the narrowest
+viewport). The kind of defect — a wrong number on screen, unmarked — is why it
+is still fixed.
+
+**④ 🕘 Column History is dead on 92 of 111 pair columns** (and 198 of 224 qubit
+ones). `ColumnHistory.open` builds its path map from `td[...] .bulk-cell`; a
+cold cell has no input, so the map is empty and the button — rendered on every
+header — answers with a toast. A §4n gap that §4ad widened to 82% of a grid,
+and that neither section named.
+
+### 3. Two CRITICALs about verification, and one of them is about §4ad's own
+
+**⑤ The extraction made a shipped pin ~25% flaky, and the cause is a bug that
+was never there.** The parent bound `wrap.addEventListener('scroll',
+_virtOnScroll, …)` — so the DOM passed the **Event object** as the function's
+`immediate` argument, which is truthy, and every pass ran **synchronously**.
+The `requestAnimationFrame` throttle sitting right beside it was dead code for
+the whole of §4n. §4ad wrapped the listener (`function () { onScroll(); }`),
+`immediate` became `undefined`, and the throttle came alive. Hydration settle
+moved from a **79 ms median to 106 ms**, past `bulk_virt_server_selfcheck.cjs`'s
+`await tick(90)`.
+
+Four reviewers measured the failure rate independently (8/30, 2-3/25, 15/75,
+7/10) against a parent that is 0/67. The new behaviour is the better one — a
+forced layout inside a scroll handler on a 452-column grid is exactly what §4i
+removed — but it was unintended, unstated, and it left a pin racing a clock.
+
+**⑥ §4ad's "18 of 19 mutations caught" was not evidence.** The sweep ran ONE
+trial per mutation against a pytest set containing the test ⑤ had just made
+flaky. Every line that read `pytest[1 failed, 116 passed]` is a coin toss
+reported as a verdict. Re-run with that test deselected, on a copy:
+
+- **Serving the pair branch through the QUBIT macro is caught by nothing** —
+  the very failure §4ad's commit message calls "the one failure this mechanism
+  must never have". `test_the_route_serves_the_pair_grid_through_the_pair_macro`
+  asserts only that `"bulk-cell"` appears in the joined markup, a string the
+  qubit macro emits too. On the real chip the mutation makes **1,660 of 2,910**
+  hydrated pair cells differ. The pins reviewer found the sharper form: a
+  `kind == 'list'` pair cell carries
+  `onclick="return BulkPairEdit.openPair('{{ row_id }}')"`, so a CONSTANT `rid`
+  is green everywhere while putting seven wrong pair targets on the page.
+- **Removing the `onState(v)` in the 400-retire branch is caught by nothing.**
+
+**The honest figure is 9 of 11 re-verifiable, not 18 of 19.** A mutation sweep
+run against a flaky suite measures the flake.
+
+### 4. The two conflicts, adjudicated by measurement
+
+**Does a partially-unknown batch retry forever?** The route 400s only when
+*every* asked column is unknown; a mixed batch is a 200 carrying
+`unknown: [...]`, which no client read. The server reviewer said forever; the
+seams reviewer measured it self-healing in two requests. Both critics then
+measured the real client, and the answer is *both, depending on the gesture*:
+
+| gesture | requests | retired? | note |
+|---|---|---|---|
+| parked at one position | 2 | yes | present |
+| coarse sweep (scrollbar drag) | 7, all 200 | not during | absent |
+| fine sweep (wheel) | 25 | at #6 | **erased by #7** |
+
+Convergence is guaranteed — a column never re-enters `cold` once hydrated — so
+"forever" is refuted. What is real is bounded waste and, worse, **silence**:
+during a sweep the column is blank with no explanation, and the note that does
+fire is wiped by the next success. The more serious half of that finding turned
+out to be a different finding.
+
+**Reachability is not theoretical.** On the real chip **57 of the 111 cold pair
+columns carry exactly one non-null value**, and `pair_columns` drops a column
+the moment its last value goes null — while `type_policy` makes `null` always
+writable. One ordinary cell edit removes a whole column server-side while the
+page that rendered it cold is still on screen.
+
+**Is `rowAttr` a pin gap?** No — §4ad said it was a no-op and two reviewers
+re-derived that independently. A real pair row is
+`<tr data-qubit="{{ row.id }}" data-pair="{{ row.id }}">`, both attributes
+identical on all 30 rows of the real render, so the mutation changes nothing.
+The design rule it was meant to test is guarded by a design pin.
+
+### 5. Five wrong fixes, caught before they shipped
+
+The fix-risk critic's brief is to read the proposed fixes against each other,
+not to find new bugs. It paid for itself again:
+
+- **The `unknown`-retirement fix, applied literally, is a measured partial
+  no-op**: it bumps `failed`, and the very next statement in the same callback
+  resets `failed` to 0 and calls `note('')`. Note empty in all four scenarios —
+  the user left strictly worse off than before.
+- **The generation-gate fix** (a structural hash of row ids + column keys) has
+  the same false-positive its own author rejected for `seq`: the pair grid's
+  columns are derived from real leaves, so **creating** a leaf adds a column,
+  the hash mismatches, and every later hydration 409s until reload — punishing a
+  benign act. The shipped fix is one line instead (`if (html == null) return;`).
+- **Loading `grid-virt.js` into five more harnesses is a measured no-op**:
+  those fixtures hold 2–9 tds against a `MIN_CELLS` floor of 600, so `init()`
+  bails three orders of magnitude early. Zero coverage gained.
+- **The "tighter" apply-echo fix is worse than the broad one**: `byPath` is
+  single-valued and last-writer-wins, and **264 real pair paths are claimed by
+  more than one column** (every `coupler__coupler_operations_cz_*` aliased with
+  its `gate_cz_*__macros_*` twin), so a per-path fix skips the detached twin
+  exactly when the twins are what must agree.
+- **One severity was overstated by two orders of magnitude** (③ above).
+
+### 6. What the completeness critic found that nobody had run
+
+Seven modalities, none of them covered by any reviewer:
+
+- **The headline byte numbers are uncompressed.** `/bulk` is gzipped to every
+  browser: **171,492 → 114,466 B on the wire (−57 KB)**, script **+5,128 B
+  gzipped**, one-time and cached. §4ad's "+19 KB against −511 KB per page load"
+  is right in direction and **~9× off in magnitude**. And §4ad reports no load
+  timing at all, unlike §4n — so the metric that overstates was the only one
+  given.
+- **The failure note is off screen at the moment it fires.** §4q moves the
+  toolbar rows by `translateX(scrollLeft)`, and that code only ever runs from
+  the scroller's listener — which the failure path never reaches. Measured at
+  `scrollLeft = 23,697`: every other bar transformed, the note at **−23,410 px**.
+  Invisible exactly when it fires, because the user had scrolled right and that
+  is *why* hydration ran.
+- **Retirement keyed on one status where its principle covers a class.**
+  Offline: **118 requests/second**. A 304 from an intermediary: **72.7/s**. A
+  **409 was retried forever while its own note said "reload the page"** —
+  message and behaviour disagreeing. And there is no `AbortController`, against
+  a rule docs/37 §4.1 established and five other call sites follow; a hung
+  request leaves those columns blank forever, because the in-flight dedup that
+  correctly suppresses a duplicate is what makes a never-settling request
+  permanent.
+- **`app.config["contexts"]` is never popped** — three assignments, zero
+  removals — so the LRU frees nothing: 13 contexts, 65.8 MB, against a
+  documented ~40 MB budget. §4ad adds 1.69 MB per context on top.
+- **`grid-virt.js` is a silent single point of failure.** Blocked: **6,690 of
+  7,810 cells permanently blank, no console error, no note, no recovery.**
+  Before the extraction the same code lived in `bulk-edit.js`, where losing it
+  broke the grid visibly and entirely.
+- **`pxPerChar` can never see the real root font.** It reads
+  `documentElement.style.fontSize`, which nothing writes; the real root is
+  Pico's breakpoint ladder (21 px at ≥1536 px — exactly the case the function's
+  comment says it exists for). Measured −14.3% at the default and −24.4% at the
+  "small" table size, and on a full sweep **206 of 289 cold columns grew on
+  hydration**, pane width +9.1%. That is the layout churn the freeze exists to
+  remove.
+- **Accessibility has zero pins anywhere in this project**, and §4ad raised
+  cells that read as blank to assistive tech by 69%: **7,200 of 7,810 (92%)**
+  are `role=cell name=""` under fully-named column headers.
+- **`bulk_cells` logs nothing**, so §4ad's own unreproduced 400 was
+  structurally undiagnosable — and the next one will be too.
+
+**And a CRITICAL in a neighbour**: PaneState's `_park` moves every child out of
+the pane **before** reading `scrollTop`/`scrollLeft`, and an emptied element
+reports 0,0. So every keep-route restore lands at the top-left, and §4ac's
+`scrollX` addition — added at that same already-broken read — is a **measured
+no-op**.
+
+### 7. What the round REFUTED, which is worth as much
+
+Measured and found fine: printing (`/bulk` never printed its value columns —
+2 of 335 fit the page, and Chrome does not shrink-to-fit); every export path is
+model-derived, not DOM-derived, so no export can ship a blank cell; **Ctrl+F
+loses nothing to §4ad** (values live in `<input value>`, which browser find
+never saw — the real loss was §4n's, and is stated nowhere); copy/paste (no
+copy handler exists; native selection yields zero values, hot or cold, and the
+feared wrong-cell-write does not exist); a wide monitor does not defer a
+megabyte (3840 px, no `vw` hint: 2 requests, 7.6 KB gzipped); a pair-heavy chip
+does NOT silently disable virtualization (`len(pair_rows)` is passed correctly
+— 3,330 cold cells where the hypothesis predicted 222); degenerate chips (zero
+pairs, one pair, 2×302, 300×5) all behave; twelve hostile pair ids round-trip.
+
+And the central safety property holds structurally: **pair∩qubit column-key
+intersection = 0 and row-id overlap = 0**, so a mis-routed response can only
+blank a cell, never put a wrong number on screen.
+
+### 8. The fixes, in the order the fix-risk critic set
+
+Nothing could be trusted until the harness was, so that went first.
+
+1. **Harness integrity.** `bulk_virt_server_selfcheck.cjs`'s six post-scroll
+   waits became **settle conditions** rather than a wall clock — the pin
+   measures what happened, not how fast, with a 600 ms deadline against a 60 ms
+   mock so a genuine slowdown still fails. **3/10 → 35/35 green.** And the pair
+   harness's in-flight-dedup assert waited `tick(5)` while `onScroll` schedules
+   through a ~16 ms rAF, so it passed with the dedup deleted outright:
+   `tick(40)`, mutation-verified red.
+2. **Every number corrected** (§9 below), and the mutation claim replaced with
+   the honest one and the reason it was wrong.
+3. **A1 + A4.** The sort re-enters only if the column arrived. Column History
+   hydrates a cold column once and retries — on **both** grids, with the
+   one-shot flag set *before* the call (a double click would otherwise start
+   two) and stored as an expando on the button rather than in module scope (a
+   module-scoped set survives a re-render, which is exactly when the column may
+   have become hot on its own).
+4. **The retirement chain, as one commit** — C1, C3, C4 and the 409 are one
+   mechanism and the critic ruled they ship together or not at all. A `v.dead`
+   set; the instance stays alive while anything is in it (so a retired column's
+   value stays in the whole-chip search); a success clears a *retryable*
+   failure and never a retirement; the 200's `unknown` list is read and retires
+   those keys — **keyed on `unknown`, never on a missing `cells[k]`, because
+   absence is also what a legitimately empty answer looks like**; a 409 retires
+   like a 400; and the note is pinned to `scrollLeft` when it is written.
+5. **A row the answer omits stays cold** instead of being blanked and un-marked.
+6. **A2, A3, C9-broad**, and a cold guard on the pair grid's `_recomputeStats`
+   — the identical defect §4l-review fixed on the qubit grid, which the pair
+   grid never got.
+
+### 9. The numbers, corrected
+
+Every one re-measured by two parties independently.
+
+| claimed in §4ad | true |
+|---|---|
+| `/bulk` 2,809,432 → 2,297,984 **B** | those are **characters**; bytes are 2,820,554 → 2,304,399 (−18.3%) |
+| pair cold map 122,095 B | **113,440 B** as served (the claim re-serialised the object with different JSON separators) |
+| script total +19 KB | **+14,595 B (+14.3 KiB)** — the claim subtracted git's LF sizes from disk's CRLF sizes |
+| `pair-edit.js` 953 → 1,049 | 953 → **1,051** |
+| cumulative 8.98 MB → 2.30 MB | mixes a full page with an htmx fragment: **8.88 → 2.30** (fragment) or 8.98 → 2.40 (full page) |
+| §4n: the pair grid is 51% of the document | **53.04%**, measured at both candidate revisions; §4n was wrong and is corrected in place |
+| mutation-checked 18 of 19 | **9 of 11**, and two mutations are caught by nothing |
+
+Confirmed unchanged: 91 of 111 columns cold, 2,730 of 3,330 cells, every `vw`
+planning figure, `grid-virt.js` 507 lines / 28,171 B, `core/bulk_virt.py`
+untouched, and the qubit table block **MD5-identical across the commit** —
+stronger evidence than the "0 diffs" §4ad claimed. The unreproduced-400
+passage is honestly hedged in all four places it appears.
+
+### 10. The follow-up round: seven of the eight open items, closed
+
+§4ae's first pass fixed the behaviour CRITICALs and left eight things
+recorded-not-dropped. Eight agents then took one each, on their own copies,
+each required to return a patch, a pin, and a **mutation that fails without
+it**. Seven came back `PATCH` with the mutation verified; the eighth ran out of
+session before its sweep finished, and is the one thing still open.
+
+**The silent failures now speak (B-7 / B-9 / B-10).** Blocking `grid-virt.js`
+left 6,690 of 7,810 cells blank with no console error and no note — the
+extraction's own cost, since before it the same code lived in `bulk-edit.js`
+where losing it broke the grid visibly. Both grids now detect a missing core
+and say so through one shared `window.GridVirtMissingNote`. `bulk_cells` logs
+its `unknown` columns through the house idiom (`logger.warning("...%s", ...)`),
+which is what §4ad's own unreproduced 400 needed and did not have. And
+`.bulk-td-cold` finally has a rule, so *loading*, *retired* and *genuinely
+absent* stop being one appearance.
+
+**PaneState's park order (B-6)** — the CRITICAL in a neighbour. `_park` moved
+every child out **before** reading `scrollTop`/`scrollLeft`, and an emptied
+element reports 0,0; so every keep-route restore landed at the top-left and
+§4ac's `scrollX` addition was a measured no-op. Reordered and pinned.
+
+**`pxPerChar` sees the real root font (B-8).** It read
+`documentElement.style.fontSize`, which nothing writes; the true root is Pico's
+breakpoint ladder — 21 px at ≥1536 px, exactly the case the function's own
+comment cited. The memo is primed once at script evaluation, so the
+no-geometry-at-mount rule (§4i) still holds, and the harness's own
+`__geomReads` counter is what proves it.
+
+**The context leak (B-5).** `app.config["contexts"]` was assigned in three
+places and popped in none, so the LRU freed nothing: 13 contexts, 65.8 MB
+against a documented ~40 MB budget, of which §4ad's pair memo was 1.69 MB per
+chip. Fixed with the dirty-context invariant (`test_state_coherence.py`'s
+`TestEvictionNeverLosesEdits`) kept intact.
+
+**Accessibility (B-1)** — the project's first a11y pins, on a page where 7,200
+of 7,810 cells read as `role=cell name=""`. The live region is created empty at
+mount so its message can actually be announced (content present when a live
+region enters the DOM is not).
+
+**The three pins that were missing (C5 / C12 / C13).** The C5 work found what
+the fix-risk critic predicted and one better: rendering the same 3,000 cold
+pair cells through both macros differs on 1,660 — **1,653 `missing` + 7 `list`,
+and ZERO scalars**. A scalar-only fixture measures no difference at all, so
+*both* proposed pins would have been vacuous on the fixture they were written
+against. Hence `_mixed_chip`, which hangs an `extras` band (it sorts last, so
+it lands cold) carrying one column of every kind `pair_cell` branches on. Both
+pins ship, because they catch different things: the byte-identity golden reds
+on the macro swap, but a `row_id` wrong in BOTH renders reds only the absolute
+`openPair` identity assert. C12 gives the pair harness the pytest driver it
+never had (`pytest tests/` was running none of its 39 asserts). C13 pins that
+`window.__bulkChipKey` publishes the chip TOKEN — a second publication that
+only `pair-edit.js` reads, so the existing chip-gate test never touched it and
+changing it to the display name was green everywhere.
+
+**Corrected numbers, again (B-2).** §4ad's byte figures were uncompressed:
+the wire truth is **171,492 → 114,466 B (−33.3%)** with **+5,128 B of gzipped
+script**, one-time and cached. The §4ad table is now labelled for what it
+measures, and the load timing §4ad omitted is recorded with its spread rather
+than as a single flattering number.
+
+**Still open, honestly: the faithful pair fixture.** The agent rebuilding it
+hit its session limit mid-sweep. It remains the reason most of §4ae's own
+first-draft pins stayed green under mutation — static header geometry, zero
+client-detached columns, one cold-td class shape, `search-query.js` not loaded.
+`_mixed_chip` closes the *server-side* half of that gap (all four cell kinds
+now render cold in a pytest fixture); the jsdom half is untouched. A first
+attempt was reverted for a real reason worth recording: once a search hydrates
+the column it narrows onto, the fixture's fetch mock has to render from a
+working copy the way the server does, or the test asserts a race the real
+server cannot lose.
+
+Also still deferred, deliberately: one Tab press firing one request per cold
+column (§4n's own pattern, capped by in-flight dedup, not a §4ad regression).
