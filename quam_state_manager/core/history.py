@@ -2017,6 +2017,9 @@ class HistoryManager:
         """Scan disk for snapshot folders and parse meta.json files."""
         return self._list_snapshots_in_dir(self._history_dir(quam_state_path))
 
+    _MANIFEST_NAME = "snapshots_manifest.json"
+    _MANIFEST_V = 1
+
     def _list_snapshots_in_dir(self, hist_dir: Path) -> list[SnapshotMeta]:
         """Scan a SPECIFIC chip history dir for snapshot folders + meta.json.
 
@@ -2024,21 +2027,56 @@ class HistoryManager:
         list priors from the fingerprint-ROUTED dir (which may differ from the
         path-derived one on a chip swap) — otherwise the diff joins a prior
         timestamp from one chip's dir onto another chip's dir, the path doesn't
-        exist, and the diff is silently recorded as zero."""
+        exist, and the diff is silently recorded as zero.
+
+        docs/142b — manifest-accelerated. A months-old chip holds thousands of
+        snapshot dirs, and this scan (one meta.json open per dir) ran at every
+        process-cold read AND after every capture/ingest invalidation:
+        measured 6.5-9.5 s at 10,000 snapshots, per run. A sidecar manifest
+        (`snapshots_manifest.json`, maintained by THIS READER, no writer
+        coupled to it) records every parsed meta keyed by dir name with the
+        meta.json (size, mtime_ns) stat; a scan stats each meta.json (cheap)
+        and re-parses ONLY dirs that are new or whose meta.json moved (label /
+        pin edits rewrite it in place). Any manifest doubt reads as a miss for
+        that entry — the meta.json files stay the single source of truth."""
         if not hist_dir.is_dir():
             return []
 
+        manifest: dict = {}
+        mpath = hist_dir / self._MANIFEST_NAME
+        try:
+            raw = json.loads(mpath.read_text(encoding="utf-8"))
+            if raw.get("v") == self._MANIFEST_V:
+                manifest = raw.get("entries") or {}
+        except Exception:
+            manifest = {}
+
         snapshots: list[SnapshotMeta] = []
+        fresh_entries: dict = {}
+        parsed_new = 0
         for child in sorted(hist_dir.iterdir(), reverse=True):
             if not child.is_dir():
                 continue
             meta_path = child / "meta.json"
-            if not meta_path.exists():
+            try:
+                st = meta_path.stat()
+                sig = [st.st_size, st.st_mtime_ns]
+            except OSError:
                 logger.warning("Skipping snapshot dir without meta.json: %s", child)
                 continue
+            cached = manifest.get(child.name)
+            if cached is not None and cached.get("sig") == sig                     and isinstance(cached.get("meta"), dict):
+                data = cached["meta"]
+            else:
+                try:
+                    with open(meta_path, encoding="utf-8") as f:
+                        data = json.load(f)
+                    parsed_new += 1
+                except Exception:
+                    logger.warning("Corrupted meta.json in %s, skipping", child,
+                                   exc_info=True)
+                    continue
             try:
-                with open(meta_path, encoding="utf-8") as f:
-                    data = json.load(f)
                 # Filter to known fields so a forward/foreign meta key degrades to
                 # "ignored" rather than dropping the snapshot from the timeline (audit P2).
                 snapshots.append(SnapshotMeta(
@@ -2046,7 +2084,17 @@ class HistoryManager:
             except Exception:
                 logger.warning("Corrupted meta.json in %s, skipping", child, exc_info=True)
                 continue
+            fresh_entries[child.name] = {"sig": sig, "meta": data}
 
+        # Rewrite only when something actually changed (new/edited/removed
+        # entries) — a pure cache-hit scan must not churn the disk.
+        if parsed_new or set(fresh_entries) != set(manifest):
+            try:
+                safe_io.atomic_write_json(
+                    mpath, {"v": self._MANIFEST_V, "entries": fresh_entries})
+            except OSError:
+                logger.warning("snapshot manifest write failed for %s",
+                               hist_dir, exc_info=True)
         return snapshots
 
     def load_snapshot(self, quam_state_path: str | Path, timestamp: str) -> QuamStore:
@@ -3056,6 +3104,7 @@ class HistoryManager:
             conn = self._open_index(path)
             try:
                 conn.execute("DELETE FROM param_history")
+                _cp_invalidate(conn)          # docs/142b: rows gone -> cp rebuilt
             finally:
                 conn.close()
 
@@ -3711,6 +3760,38 @@ class HistoryManager:
         # Python-side LTTB to still pick visual extrema. When the caller
         # disables downsampling (downsample is None or 0), the WHERE
         # below degenerates to "keep everything".
+        # docs/142b fast path: with no time/trigger filter, a compress read
+        # comes straight from the change-point companion (plus each series'
+        # rolling last point) -- O(changes), not a window scan of the whole
+        # accumulated table (measured 10-50 s at a 10,000-snapshot chip; the
+        # scan itself was the cost, so LAG-in-SQL saved nothing). Both
+        # compress consumers (ChipTrends' curated tier, the topo sparkline
+        # popup) have exactly this shape. Any filtered call falls through to
+        # the windowed SQL unchanged, as does a busy index.
+        cp_rows = None
+        if compress == "changes" and not since and not until and not triggers:
+            conn0 = self._open_index(path)
+            try:
+                if _ensure_cp_fresh(conn0):
+                    q = ("SELECT timestamp, qubit, property, value, raw_pointer, "
+                         "trigger, run_id, experiment FROM {} WHERE property IN (%s)"
+                         % ",".join("?" * len(properties)))
+                    ps: list[Any] = list(properties)
+                    if qubit_filter:
+                        q += " AND qubit IN (%s)" % ",".join("?" * len(qubit_filter))
+                        ps.extend(qubit_filter)
+                    merged: dict = {}
+                    for table in ("param_history_cp", "param_history_cp_last"):
+                        for r in conn0.execute(q.format(table), ps):
+                            merged[(r[1], r[2], r[0])] = tuple(r)
+                    cp_rows = [merged[k] for k in sorted(merged)]
+            except sqlite3.Error:
+                logger.warning("cp fast path failed; using windowed SQL",
+                               exc_info=True)
+                cp_rows = None
+            finally:
+                conn0.close()
+
         pull_max = max((downsample or 0) * _SQL_PULL_MULTIPLIER, 1)
 
         sql = (
@@ -3746,7 +3827,7 @@ class HistoryManager:
 
         conn = self._open_index(path)
         try:
-            cur = conn.execute(sql_named, bind)
+            cur = cp_rows if cp_rows is not None else conn.execute(sql_named, bind)
             grouped: dict[tuple[str, str], dict[str, Any]] = {}
             for ts, qubit, prop, value, ptr, trig, run_id, exp in cur:
                 key = (qubit, prop)
@@ -4886,9 +4967,207 @@ def _ensure_param_history_schema(idx_path: Path) -> None:
             "CREATE INDEX IF NOT EXISTS idx_trigger_ts "
             "ON param_history (trigger, timestamp)"
         )
+        # docs/142b: the change-point COMPANION of param_history. At a
+        # months-old chip (10,000 snapshots = 2.4M rows at 20Q) the trend
+        # CTE's window functions scan every matching row per render --
+        # measured 10-50 s, and returning only the changed rows via LAG is
+        # just as slow because the SCAN is the cost. The companion holds each
+        # (qubit, property) series' first point + both edges of every value
+        # transition, maintained INCREMENTALLY by rowid watermark at read
+        # time (_ensure_cp_fresh) -- old rows are never scanned again.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS param_history_cp (
+                qubit         TEXT NOT NULL,
+                property      TEXT NOT NULL,
+                timestamp     TEXT NOT NULL,
+                value         REAL,
+                raw_pointer   TEXT,
+                trigger       TEXT NOT NULL,
+                run_id        INTEGER,
+                experiment    TEXT,
+                PRIMARY KEY (qubit, property, timestamp)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS param_history_cp_last (
+                qubit         TEXT NOT NULL,
+                property      TEXT NOT NULL,
+                timestamp     TEXT NOT NULL,
+                value         REAL,
+                raw_pointer   TEXT,
+                trigger       TEXT NOT NULL,
+                run_id        INTEGER,
+                experiment    TEXT,
+                PRIMARY KEY (qubit, property)
+            )
+        """)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS param_history_cp_meta (k TEXT PRIMARY KEY, v TEXT)")
         leaf_index.ensure_schema(conn)      # docs/83 — same file, own version
     finally:
         conn.close()
+
+
+_CP_COLS = "qubit, property, timestamp, value, raw_pointer, trigger, run_id, experiment"
+
+
+def _cp_invalidate(conn) -> None:
+    """docs/142b: drop the change-point companion so the next read rebuilds.
+    Called wherever param_history rows are DELETED (a rowid watermark can
+    see inserts, never deletions)."""
+    conn.execute("DELETE FROM param_history_cp")
+    conn.execute("DELETE FROM param_history_cp_last")
+    conn.execute("DELETE FROM param_history_cp_meta")
+
+
+def _cp_val_key(v):
+    """Exact equality with NaN normalised (the field_history rule)."""
+    return "\x00nan" if isinstance(v, float) and v != v else v
+
+
+def _cp_apply_rows(conn, ordered_rows) -> None:
+    """Apply (qubit,property,timestamp,...) rows -- ordered by partition then
+    timestamp, each strictly newer than the partition's cp_last -- to the
+    companion: first point + both edges of every transition; cp_last tracks
+    the rolling newest point. Batched: the first implementation upserted
+    cp_last PER ROW, which turned the one-time full build of a 2.4M-row
+    table into 47 s of round trips; kept rows and the final last-per-
+    partition go through two executemany calls instead."""
+    ins_cp = ("INSERT OR REPLACE INTO param_history_cp (" + _CP_COLS +
+              ") VALUES (?,?,?,?,?,?,?,?)")
+    ins_last = ("INSERT OR REPLACE INTO param_history_cp_last (" + _CP_COLS +
+                ") VALUES (?,?,?,?,?,?,?,?)")
+    last_cache: dict = {}
+    keep: list = []
+    missing: set = {(r[0], r[1]) for r in ordered_rows}
+    if missing:
+        for part in list(missing):
+            got = conn.execute(
+                "SELECT " + _CP_COLS + " FROM param_history_cp_last "
+                "WHERE qubit=? AND property=?", part).fetchone()
+            if got is not None:
+                last_cache[part] = tuple(got)
+    for row in ordered_rows:
+        part = (row[0], row[1])
+        last = last_cache.get(part)
+        if last is None:
+            keep.append(row)                          # the series' first point
+        elif _cp_val_key(row[3]) != _cp_val_key(last[3]):
+            keep.append(last)                         # the step's flat edge
+            keep.append(row)                          # ...and its changed edge
+        last_cache[part] = row
+    if keep:
+        conn.executemany(ins_cp, keep)
+    if last_cache:
+        conn.executemany(ins_last, list(last_cache.values()))
+
+
+def _cp_rebuild_partition(conn, qubit: str, prop: str) -> None:
+    conn.execute("DELETE FROM param_history_cp WHERE qubit=? AND property=?",
+                 (qubit, prop))
+    conn.execute("DELETE FROM param_history_cp_last WHERE qubit=? AND property=?",
+                 (qubit, prop))
+    rows = conn.execute(
+        "SELECT " + _CP_COLS + " FROM param_history "
+        "WHERE qubit=? AND property=? ORDER BY timestamp",
+        (qubit, prop)).fetchall()
+    _cp_apply_rows(conn, [tuple(r) for r in rows])
+
+
+def _ensure_cp_fresh(conn) -> bool:
+    """Bring param_history_cp up to date with param_history; True = usable.
+
+    Watermark = MAX(rowid): every INSERT (REPLACE included) grows it, so the
+    delta since the stored watermark is exactly the new rows -- O(new), never
+    a rescan of the accumulated table. A delta row whose timestamp is not
+    strictly newer than its partition's cp_last means out-of-order arrival or
+    an in-place REPLACE (a replaced key's timestamp can never exceed the
+    partition max): that PARTITION is rebuilt from its own index-ordered
+    slice. Deletions can't move the watermark -- the two DELETE sites call
+    _cp_invalidate in the same transaction instead. A locked database reads
+    as "not usable" and the caller falls back to the windowed SQL unchanged.
+    """
+    try:
+        # self-contained migration: a months-old index predates these tables
+        # (CREATE IF NOT EXISTS is a no-op when they exist)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS param_history_cp ("
+            "qubit TEXT NOT NULL, property TEXT NOT NULL, timestamp TEXT NOT NULL,"
+            "value REAL, raw_pointer TEXT, trigger TEXT NOT NULL,"
+            "run_id INTEGER, experiment TEXT,"
+            "PRIMARY KEY (qubit, property, timestamp))")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS param_history_cp_last ("
+            "qubit TEXT NOT NULL, property TEXT NOT NULL, timestamp TEXT NOT NULL,"
+            "value REAL, raw_pointer TEXT, trigger TEXT NOT NULL,"
+            "run_id INTEGER, experiment TEXT,"
+            "PRIMARY KEY (qubit, property))")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS param_history_cp_meta (k TEXT PRIMARY KEY, v TEXT)")
+        max_rowid = conn.execute(
+            "SELECT COALESCE(MAX(rowid), 0) FROM param_history").fetchone()[0]
+        got = conn.execute(
+            "SELECT v FROM param_history_cp_meta WHERE k='rowid'").fetchone()
+        seen = int(got[0]) if got else None
+        if seen == max_rowid:
+            return True
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            # re-read inside the write txn (another writer may have advanced it)
+            max_rowid = conn.execute(
+                "SELECT COALESCE(MAX(rowid), 0) FROM param_history").fetchone()[0]
+            got = conn.execute(
+                "SELECT v FROM param_history_cp_meta WHERE k='rowid'").fetchone()
+            seen = int(got[0]) if got else None
+            if seen == max_rowid:
+                conn.execute("COMMIT")
+                return True
+            if seen is None:
+                delta = conn.execute(
+                    "SELECT " + _CP_COLS + " FROM param_history "
+                    "ORDER BY qubit, property, timestamp").fetchall()
+            else:
+                delta = conn.execute(
+                    "SELECT " + _CP_COLS + " FROM param_history WHERE rowid > ? "
+                    "ORDER BY qubit, property, timestamp", (seen,)).fetchall()
+            # split: in-order rows apply incrementally; disordered partitions rebuild
+            rebuild: set = set()
+            apply_rows: list = []
+            last_ts: dict = {}
+            for r in delta:
+                part = (r[0], r[1])
+                if part in rebuild:
+                    continue
+                lt = last_ts.get(part)
+                if lt is None:
+                    got_l = conn.execute(
+                        "SELECT timestamp FROM param_history_cp_last "
+                        "WHERE qubit=? AND property=?", part).fetchone()
+                    lt = got_l[0] if got_l else ""
+                if r[2] <= lt and lt:
+                    rebuild.add(part)
+                else:
+                    apply_rows.append(tuple(r))
+                    last_ts[part] = r[2]
+            if rebuild:
+                apply_rows = [r for r in apply_rows if (r[0], r[1]) not in rebuild]
+            _cp_apply_rows(conn, apply_rows)
+            for qubit, prop in rebuild:
+                _cp_rebuild_partition(conn, qubit, prop)
+            conn.execute(
+                "INSERT OR REPLACE INTO param_history_cp_meta (k, v) VALUES ('rowid', ?)",
+                (str(max_rowid),))
+            conn.execute("COMMIT")
+            return True
+        except BaseException:
+            try:
+                conn.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
+            raise
+    except sqlite3.OperationalError as exc:
+        logger.warning("cp freshness skipped (busy index): %s", exc)
+        return False
 
 
 def _merge_index_for_timestamps(
@@ -5366,6 +5645,7 @@ def migrate_index_attribution_v3(instance_path: str | Path) -> dict[str, Any]:
                         conn.execute(
                             "DELETE FROM param_history WHERE timestamp IN (%s)"
                             % ",".join("?" * len(chunk)), chunk)
+                    _cp_invalidate(conn)      # docs/142b: deletes -> cp rebuilt
                     conn.execute("COMMIT")
                 finally:
                     conn.close()
