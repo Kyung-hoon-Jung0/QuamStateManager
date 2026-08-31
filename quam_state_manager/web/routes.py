@@ -14620,6 +14620,17 @@ def diff_fig():
     return send_from_directory(str(folder), name)
 
 
+def _diff_short_label(label: str) -> str:
+    """docs/147b: the direction badge's compact spelling of a source --
+    the run id when the label carries one ("data #256 · 2026-09-01 ..." →
+    "#256"), else the label front-truncated to stay badge-sized."""
+    m = re.search(r"#\d+", label or "")
+    if m:
+        return m.group(0)
+    lab = (label or "").strip()
+    return lab if len(lab) <= 18 else lab[:17] + "…"
+
+
 def _diff_default_refs() -> tuple[str, str]:
     """The pair a bare /diff opens on: the newest snapshot vs what is loaded.
 
@@ -14815,6 +14826,8 @@ def diff_view():
                rows=rows, more=more, next_rows=limit + _DIFF_LIST_PAGE,
                q=q, all_rows=limit + more,
                take_active_ok=take_active_ok,
+               short_labels=[_diff_short_label(getattr(s, "label", "") or "")
+                             for s in srcs],
                tabs=_DIFF_TABS, options=_diff_source_options()))
 
 

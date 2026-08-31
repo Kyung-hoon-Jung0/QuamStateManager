@@ -112,6 +112,14 @@
   {% elif payload %}
     {% set c = payload.counts %}
     <div class="diff-wb-counts">
+      {# docs/147b: the 2-way page never said which way the arrows read --
+         the badge names it in the verdict row itself, in the identity blue,
+         so "old → new" below has an owner. 3+ sources are panes with their
+         own loud BASELINE marker. #}
+      {% if srcs | length == 2 and short_labels %}
+      <span class="diff-dir-badge" title="every value below reads A → B: {{ src_a.label }} → {{ src_b.label }}">
+        <b>A</b>&nbsp;{{ short_labels[0] }} <span class="diff-dir-arrow">→</span> <b>B</b>&nbsp;{{ short_labels[1] }}</span>
+      {% endif %}
       <span class="diff-count diff-count-changed">{{ '{:,}'.format(c.changed) }} changed</span>
       {# docs/141 4ac: added/removed are a TWO-sided verdict. For N sources
          "added" names no side, so the N-way payload reports how many keys are
@@ -239,6 +247,23 @@
 </div>
 
 <script>
+(function () {
+    // docs/147b: the pane keeps its scrollTop across the #diff-root swap, so
+    // a longer tab could open mid- or bottom-scrolled. A TAB or SOURCE
+    // change starts at the top; a base-only / view-only change keeps the
+    // scroll (the user is mid-table when re-basing).
+    var root = document.getElementById('diff-root');
+    var key = root ? (root.getAttribute('data-tab') + '|' + root.getAttribute('data-a')
+                      + '|' + root.getAttribute('data-b') + '|' + root.getAttribute('data-n')) : '';
+    if (key && window.__diffScrollKey !== undefined && window.__diffScrollKey !== key) {
+        var pane = document.getElementById('table-pane');
+        var sc = pane;
+        while (sc && sc !== document.body && sc.scrollHeight <= sc.clientHeight) sc = sc.parentElement;
+        (sc || pane || document.documentElement).scrollTop = 0;
+        try { window.scrollTo(0, 0); } catch (e) {}
+    }
+    window.__diffScrollKey = key;
+})();
 (function () {
     var el = document.getElementById('diff-tree');
     var data = document.getElementById('diff-tree-payload');

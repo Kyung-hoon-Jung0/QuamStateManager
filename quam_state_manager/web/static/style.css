@@ -11400,6 +11400,17 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
     margin: 0.5rem 0; font-size: 0.85em;
 }
 .diff-count { font-weight: 600; }
+/* docs/147b: the 2-way direction badge -- identity blue, sized with (a hair
+   above) the counts so the "old → new" arrows below have a visible owner. */
+.diff-dir-badge {
+    font-size: 1.05em; font-weight: 600;
+    color: var(--pico-primary);
+    background: color-mix(in srgb, var(--pico-primary) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--pico-primary) 45%, transparent);
+    border-radius: 5px; padding: 0.08em 0.55em;
+    white-space: nowrap;
+}
+.diff-dir-badge .diff-dir-arrow { font-weight: 700; margin: 0 0.15em; }
 .diff-count-changed { color: var(--color-warning-text); }
 .diff-count-added   { color: var(--color-success-text); }
 .diff-count-removed { color: var(--color-error-text); }

@@ -121,6 +121,41 @@ class TestThirdSource:
         assert 'diff-panes-table' in three and "sv-take" not in three
 
 
+class TestDirectionBadgeAndScroll:
+    def test_two_way_verdict_row_names_the_direction(self, env):
+        """docs/147b: the 2-way page must say which way the arrows read --
+        A #id → B #id in the identity badge, right in the counts row."""
+        html = _get(env, _url(env, tab="node", three=False))
+        assert 'diff-dir-badge' in html
+        badge = html.split('diff-dir-badge')[1][:220]
+        assert '<b>A</b>' in badge and '<b>B</b>' in badge and '→' in badge
+
+    def test_three_way_panes_keep_their_baseline_marker_instead(self, env):
+        # 3+ sources: no A→B badge (its meaning is 2-sided); the pane view's
+        # clickable pane heads carry the baseline semantics (the BASELINE tag
+        # itself is painted client-side by diff-panes.js)
+        html = _get(env, _url(env, tab="state"))
+        assert 'diff-dir-badge' not in html
+        assert html.count('class="dp-pane-head') == 3
+
+    def test_short_label_prefers_the_run_id(self):
+        from quam_state_manager.web.routes import _diff_short_label
+        assert _diff_short_label("data #256 · 2026-09-01 00:30:09") == "#256"
+        assert _diff_short_label("a-very-long-history-label-without-ids")             == "a-very-long-histo…"
+        assert _diff_short_label("short") == "short"
+
+    def test_tab_change_starts_at_the_top(self, env):
+        """docs/147b: the swap keeps the pane's scrollTop, so a longer tab
+        opened mid-scroll. The inline script resets on a tab/source change
+        and keeps scroll on a base-only change (key omits `base`)."""
+        html = _get(env, _url(env, tab="data", three=False))
+        assert "__diffScrollKey" in html
+        assert "scrollTop = 0" in html
+        i = html.index("__diffScrollKey")
+        keysrc = html[html.rindex("var key", 0, i):i]
+        assert "data-tab" in keysrc and "data-a" in keysrc and "data-base" not in keysrc
+
+
 class TestRowsN:
     def test_a_leaf_past_the_row_cap_is_still_compared(self):
         """Caught on the real chip (8,822 leaves): the walk was capped at the
