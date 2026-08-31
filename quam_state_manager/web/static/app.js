@@ -153,13 +153,20 @@ var UI_CONFIG = {
         twpa_ro:   '#a93226',   /* TWPA readout        — dark red */
         twpa_in:   '#d63384',   /* TWPA input          — magenta  */
         digital:   '#54617a',   /* Digital output / trigger — slate */
-        z_qdac:    '#f1c40f',   /* Bias-tee flux port (z + QDAC-II) — amber.
+        z_qdac:    '#a9791c',   /* Bias-tee flux port (z + QDAC-II) — dark amber.
                                    Its own colour on purpose (docs/136 r2):
                                    the dashed-ring mark was invisible at port
                                    size. Amber is the widest free hue gap in
                                    this palette — gold rr_in is orange-family
                                    and lives on MW-FEM input columns, never
-                                   beside an LF-FEM z output. */
+                                   beside an LF-FEM z output.
+                                   docs/141 4ah (user): darkened from #f1c40f so
+                                   the label can be WHITE like every other port
+                                   — the bright fill forced a black label, and
+                                   one port lettered differently from the rest
+                                   read as a rendering fault rather than as a
+                                   role. Contrast on white at this darkness is
+                                   4.6:1 (WCAG AA for the bold 700 label). */
         fallback:  '#999999',   /* any unrecognised role — gray   */
     },
 
@@ -6109,6 +6116,10 @@ document.addEventListener('keydown', function(e) {
 window.filterTable = function(inputEl, tableId) {
     var raw = (inputEl.value || "").toLowerCase().trim();
     _debounce('filter-' + tableId, function() {
+        // docs/141 4aj: the app's ONE grammar (SearchQuery -- space = AND,
+        // a standalone `|` = OR) instead of a private AND split, so the shared
+        // placeholder names something this box really does.
+        var grps = (raw && window.SearchQuery) ? window.SearchQuery.groups(raw) : null;
         var terms = raw ? raw.split(/\s+/) : [];
         var table = document.getElementById(tableId);
         if (!table) return;
@@ -6128,7 +6139,8 @@ window.filterTable = function(inputEl, tableId) {
         // Batch: compute matches, then write display in one pass
         for (var i = 0; i < rows.length; i++) {
             var match = true;
-            for (var j = 0; j < terms.length; j++) {
+            if (grps) match = window.SearchQuery.matchesHay(texts[i], grps);
+            else for (var j = 0; j < terms.length; j++) {
                 if (texts[i].indexOf(terms[j]) === -1) { match = false; break; }
             }
             rows[i].style.display = match ? "" : "none";
@@ -6167,6 +6179,8 @@ window.filterDetailPanel = function(inputEl) {
         var article = _detailPanelArticle();
         if (!article) return;
         var terms = raw ? raw.split(/\s+/) : [];
+        // docs/141 4aj: same one grammar -- AND as before, plus a standalone `|`
+        var dGrps = (raw && window.SearchQuery) ? window.SearchQuery.groups(raw) : null;
 
         var sections = article.querySelectorAll("details.detail-section");
         var totalRows = 0;
@@ -6196,7 +6210,8 @@ window.filterDetailPanel = function(inputEl) {
                     hay += " " + (inputs[k].value || "").toLowerCase();
                 }
                 var matched = true;
-                for (var j = 0; j < terms.length; j++) {
+                if (dGrps) matched = window.SearchQuery.matchesHay(hay, dGrps);
+                else for (var j = 0; j < terms.length; j++) {
                     if (hay.indexOf(terms[j]) === -1) { matched = false; break; }
                 }
                 rows[i].style.display = matched ? "" : "none";
@@ -6997,7 +7012,7 @@ window.clearDetailPanelSearch = function(btnEl) {
         // in the node's key+value haystack OR its dot-path; joining the two
         // with a space is exact because tokens cannot contain one. Strictly
         // additive: a phrase match implies every token matches.
-        var grps = window.SearchQuery ? SearchQuery.groups(q) : [[q]];
+        var grps = window.SearchQuery ? window.SearchQuery.groups(q) : [[q]];
 
         // O(N) scan over pre-lowercased fields. keepPaths = matches + ancestors.
         var matchPaths = new Set();
@@ -7005,7 +7020,7 @@ window.clearDetailPanelSearch = function(btnEl) {
         for (var j = 0; j < flat.length; j++) {
             var e = flat[j];
             if (window.SearchQuery
-                    ? SearchQuery.matchesHay(e.hayLower + ' ' + e.pathLower, grps)
+                    ? window.SearchQuery.matchesHay(e.hayLower + ' ' + e.pathLower, grps)
                     : (e.hayLower.indexOf(q) >= 0 || e.pathLower.indexOf(q) >= 0)) {
                 matchPaths.add(e.path);
                 var p = e.path;
@@ -7124,7 +7139,7 @@ window.clearDetailPanelSearch = function(btnEl) {
 
         // Same grammar as _searchTreeData — this DOM path serves the unified
         // compare tree, which must not answer differently from the data path.
-        var grpsD = window.SearchQuery ? SearchQuery.groups(q) : [[q]];
+        var grpsD = window.SearchQuery ? window.SearchQuery.groups(q) : [[q]];
 
         var matches = [];
         for (var j = 0; j < nodes.length; j++) {
@@ -7137,7 +7152,7 @@ window.clearDetailPanelSearch = function(btnEl) {
             }
             var pathAttr = (nd.getAttribute("data-path") || "").toLowerCase();
             if (window.SearchQuery
-                    ? SearchQuery.matchesHay(hay + ' ' + pathAttr, grpsD)
+                    ? window.SearchQuery.matchesHay(hay + ' ' + pathAttr, grpsD)
                     : (hay.indexOf(q) >= 0 || pathAttr.indexOf(q) >= 0)) {
                 nd.classList.add("tree-highlight");
                 matches.push(nd);
@@ -9176,9 +9191,12 @@ function _appendPortCircle(svg, cx, cy, r, roleColors, assignment, rawWiring, ed
     } else {
         fontSize = 7;  // multi-member feedline sub-circles
     }
-    // White text fails on the amber bias-tee fill — dark label there instead.
+    // docs/141 4ah (user): ONE label colour for every port. The bias-tee fill is
+    // dark enough for white now, so the black label that the bright amber
+    // needed is gone — a port whose lettering differs from its neighbours reads
+    // as a glitch, not as a role, and the fill already carries the role.
     var txt = _svgText(cx, cy + Math.round(fontSize * 0.36), display, fontSize, '700',
-        qdacShared ? '#1f2430' : UI_CONFIG.instrumentWiring.portLabelColor, 'middle');
+        UI_CONFIG.instrumentWiring.portLabelColor, 'middle');
     txt.setAttribute('font-family', 'monospace');
     g.appendChild(txt);
 

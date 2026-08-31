@@ -253,6 +253,46 @@
         else if (navigator.clipboard) navigator.clipboard.writeText(raw);
     }
 
+    /* ── size (docs/141 4aj, user: "calculator는 크기 조절이 안되고 있어") ──
+       The window is `resize: both` in CSS; this is the memory. Same contract
+       as the Config Manual's (manual.js): only a size the USER set is stored,
+       so opening on a smaller screen — where restore clamps to the viewport —
+       never shrinks the remembered size. */
+    var SIZE_KEY = 'quam_calc_size';
+    function calcOpen() {
+        var p = document.getElementById('calc-popover');
+        return !!(p && !p.classList.contains('calc-hidden'));
+    }
+    function restoreSize(p) {
+        p._calcApplied = null;
+        try {
+            var s = JSON.parse(window.localStorage.getItem(SIZE_KEY) || 'null');
+            if (s && s.w > 200 && s.h > 150) {
+                var vw = window.innerWidth || 0, vh = window.innerHeight || 0;
+                var w = (vw > 240 ? Math.min(s.w, vw - 16) : s.w);
+                var h = (vh > 190 ? Math.min(s.h, vh - 16) : s.h);
+                p.style.width = w + 'px';
+                p.style.height = h + 'px';
+                p._calcApplied = { w: Math.round(w), h: Math.round(h) };
+            }
+        } catch (e) {}
+    }
+    function watchSize(p) {
+        if (p._calcSized || !window.ResizeObserver) return;
+        p._calcSized = true;
+        var t = null;
+        new ResizeObserver(function () {
+            if (!calcOpen()) return;
+            clearTimeout(t);
+            t = setTimeout(function () {
+                var w = p.offsetWidth, h = p.offsetHeight, a = p._calcApplied;
+                if (a && Math.abs(a.w - w) < 2 && Math.abs(a.h - h) < 2) return;
+                try { window.localStorage.setItem(SIZE_KEY, JSON.stringify({ w: w, h: h })); } catch (e) {}
+            }, 250);
+        }).observe(p);
+    }
+    window.CalcWindow = { restoreSize: restoreSize, watchSize: watchSize, SIZE_KEY: SIZE_KEY };
+
     // ── open / close / pin ──────────────────────────────────────────────────────
     var _calcWired = false, _calcInit = false;
     window.toggleCalc = function (trigger) {
@@ -272,6 +312,10 @@
             b.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
         });
         if (willOpen) {
+            // the remembered size is applied BEFORE anchoring, so the anchor
+            // math sees the real box (4aj)
+            restoreSize(pop);
+            watchSize(pop);
             // A popover the user DRAGGED keeps where they put it; otherwise
             // re-anchor to the trigger (which side it opens from can change
             // when the sidebar collapses).

@@ -155,16 +155,18 @@ ok(plain && plain.getAttribute('data-qdac-shared') === null,
 // docs/136 r2 — a RECOLOUR now, by customer direction: the first pass marked
 // the port with a dashed slate ring over the z blue, and the verdict from the
 // real screen was that it is invisible at port size. The port gets its own
-// amber fill (roleColors.z_qdac), a solid slate outline tying it to the
-// trigger, and a dark label (white fails on amber).
+// amber fill (roleColors.z_qdac) and a solid slate outline tying it to the
+// trigger. docs/141 4ah (user): the fill is DARK amber now and the label is
+// white like every other port's -- a port lettered differently from its
+// neighbours reads as a rendering fault, not as a role.
 const teeCircles = tee ? tee.querySelectorAll('circle') : [];
 const plainCircles = plain ? plain.querySelectorAll('circle') : [];
 ok(teeCircles.length === plainCircles.length,
    'Q2 no extra ring any more — the mark is the fill itself');
 ok(teeCircles[0].getAttribute('fill') !== plainCircles[0].getAttribute('fill'),
    'Q2 the bias-tee fill DIFFERS from a plain z port');
-ok(/f1c40f/i.test(teeCircles[0].getAttribute('fill') || ''),
-   'Q2 ...and is the amber the palette reserves for it ('
+ok(/a9791c/i.test(teeCircles[0].getAttribute('fill') || ''),
+   'Q2 ...and is the DARK amber the palette reserves for it ('
    + teeCircles[0].getAttribute('fill') + ')');
 ok(teeCircles[0].getAttribute('stroke') === '#54617a'
    && teeCircles[0].getAttribute('stroke-width') === '2',
@@ -173,10 +175,12 @@ ok(!teeCircles[0].getAttribute('stroke-dasharray'),
    'Q2 no dash — that was the invisible idiom being replaced');
 const teeLabel = tee.querySelector('text');
 const plainLabel = plain.querySelector('text');
-ok(teeLabel && teeLabel.getAttribute('fill') === '#1f2430',
-   'Q2 dark label on the amber fill (white would fail contrast)');
+ok(teeLabel && plainLabel
+   && teeLabel.getAttribute('fill') === plainLabel.getAttribute('fill'),
+   'Q2 ONE label colour app-wide: the bias-tee label matches every other port ('
+   + (teeLabel && teeLabel.getAttribute('fill')) + ')');
 ok(plainLabel && plainLabel.getAttribute('fill') === '#ffffff',
-   'Q2 ...while a plain port keeps the white label');
+   'Q2 ...and that colour is white');
 
 /* -- Q3 / Q4: one hover answers for both instruments ------------------ */
 function popupText(g) {

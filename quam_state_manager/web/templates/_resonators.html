@@ -1,7 +1,8 @@
 <div class="table-header-row">
     <h2>Resonators <small class="muted">({{ total }}{% if active_chain %} &mdash; Chain {{ active_chain }}{% endif %})</small></h2>
     <div class="table-filter">
-        <input type="search" placeholder="Filter resonators..." autocomplete="off"
+        <input type="search" placeholder="{{ search_hint() }}" title="{{ search_title() }}"
+               aria-label="Filter resonators" autocomplete="off"
                oninput="filterTable(this, 'resonators-table')">
         <small id="resonators-table-filter-count" class="muted"></small>
     </div>

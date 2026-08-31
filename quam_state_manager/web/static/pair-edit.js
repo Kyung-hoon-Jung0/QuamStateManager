@@ -210,7 +210,7 @@
         // the old every-token AND, unchanged. Neutral tokens pass their
         // off-axis group exactly as they used to be skipped.
         var tokGroups = window.SearchQuery
-            ? SearchQuery.groupBy(tokInfo, function (ti) { return ti.tok; })
+            ? window.SearchQuery.groupBy(tokInfo, function (ti) { return ti.tok; })
             : tokInfo.map(function (ti) { return [ti]; });
 
         function colVisible(key, colCells) {
@@ -917,12 +917,12 @@
             var hide = _hiddenSet(), out = [];
             // Same grammar as the search itself — the hint must not claim a
             // hidden column matches under different rules than showing would.
-            var grps = window.SearchQuery ? SearchQuery.groupBy(tokens)
+            var grps = window.SearchQuery ? window.SearchQuery.groupBy(tokens)
                 : tokens.map(function (t) { return [t]; });
             COLS.forEach(function (c) {
                 if (!hide.has(c.key)) return;
                 var hay = (c.label + ' ' + c.key + ' ' + (c.section || '')).toLowerCase();
-                var ok = window.SearchQuery ? SearchQuery.matchesHay(hay, grps)
+                var ok = window.SearchQuery ? window.SearchQuery.matchesHay(hay, grps)
                     : tokens.every(function (tok) { return hay.indexOf(tok) >= 0; });
                 if (ok) out.push(c.key);
             });

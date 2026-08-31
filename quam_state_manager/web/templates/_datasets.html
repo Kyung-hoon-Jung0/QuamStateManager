@@ -42,7 +42,8 @@
     <div style="display:flex;gap:.5rem;align-items:center;flex:1;min-width:0">
         <div class="table-filter ds-search-wrap" style="flex:1;position:relative">
             <input type="search" id="dataset-search"
-                   placeholder="Search: q2, q5, time · rabi · tag:flagged · is:bookmarked"
+                   placeholder="{{ search_hint('tag:', 'is:') }}"
+                   title="{{ search_title('tag:flagged', 'is:bookmarked', 'run:', 'q:') }}"
                    autocomplete="off" style="width:100%">
             <button type="button" id="ds-search-help-toggle" class="ds-search-help-btn"
                     aria-label="Show search syntax help"

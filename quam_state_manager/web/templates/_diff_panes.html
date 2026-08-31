@@ -21,7 +21,8 @@
    painted server-side so the page is right before any script runs. #}
 {% from '_delta_macros.html' import delta_chip %}
 {% set n = srcs | length %}
-<div class="diff-panes-wrap" id="diff-panes" data-base="{{ base }}" data-n="{{ n }}">
+<div class="diff-panes-wrap" id="diff-panes" data-base="{{ base }}" data-n="{{ n }}"
+     data-more="{{ more }}">
   {# docs/141 4ac: what is SHOWN and what was FOUND are two numbers, and the
      note used to state only the first. counts.changed is every differing leaf
      (counted past the row cap), counts.shown is how many came back, and
@@ -38,6 +39,8 @@
     <b>baseline</b> are highlighted — click a pane title to make it the baseline.
   </p>
   <div class="diff-panes-tools">
+    {% include '_diff_search.html' %}
+    <span class="dp-tools-sep"></span>
     <span class="tree-depth-label">Depth:</span>
     <button type="button" class="btn-xs outline dp-depth" data-depth="0" title="Collapse every container">0</button>
     <button type="button" class="btn-xs outline dp-depth" data-depth="1">1</button>
@@ -71,7 +74,7 @@
           <td class="dp-key-col" title="{{ t.path }}">
             <button type="button" class="dp-toggle" aria-expanded="true" title="Collapse / expand">&#9662;</button>
             <span class="dp-key dp-key-dir">{{ t.name }}</span>
-            <span class="dp-count" title="{{ t.count }} differing key{{ '' if t.count == 1 else 's' }} inside{% if payload.truncated %} (of the first {{ '{:,}'.format(_shown) }} the diff collected){% endif %}{% if rows | length < _found %} — this page lists {{ rows | length }}{% endif %}">{{ t.count }}</span>
+            <span class="dp-count" data-count="{{ t.count }}" title="{{ t.count }} differing key{{ '' if t.count == 1 else 's' }} inside{% if payload.truncated %} (of the first {{ '{:,}'.format(_shown) }} the diff collected){% endif %}{% if rows | length < _found %} — this page lists {{ rows | length }}{% endif %}">{{ t.count }}</span>
           </td>
           {% for src in srcs %}<td class="dp-cell dp-cell-dir" data-i="{{ loop.index0 }}"></td>{% endfor %}
         </tr>

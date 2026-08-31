@@ -224,7 +224,7 @@
             <ul class="topbar-right">
                 <li class="search-box">
                     <input type="search" id="global-search" name="q"
-                           placeholder="Search: qA1, T1, amplitude, readout..."
+                           placeholder="{{ search_hint() }}" title="{{ search_title() }}"
                            hx-get="/search" hx-trigger="keyup changed delay:150ms"
                            hx-target="#inspector-pane" hx-sync="#inspector-pane:replace"
                            hx-indicator="#search-spinner"
@@ -654,7 +654,8 @@
                            refetch joins THIS sync group (source: this element), so a
                            version-bump refetch can never land after a newer keystroke
                            and freeze the tree on a stale query. #}
-                        <textarea rows="1" placeholder="Filter experiments…"
+                        <textarea rows="1" placeholder="{{ search_hint() }}"
+                                  title="{{ search_title('name:', 'date:', 'status:', 'run:', '-' ~ 'negate') }}"
                                   id="sidebar-filter-input" aria-label="Filter experiments"
                                   class="search-help-input" data-search-help="sidebar-search-help"
                                   hx-get="/workspace/tree" hx-trigger="input changed delay:250ms"
@@ -966,7 +967,7 @@
         </span>
         </div>
         <div class="manual-searchbar">
-        <input type="search" class="manual-search" placeholder="Search keys: joint_offset, band, lo_mode … (space = AND, | = OR)"
+        <input type="search" class="manual-search" placeholder="{{ search_hint() }}" title="{{ search_title() }}"
                aria-label="Search the config manual" autocomplete="off">
         </div>
         <div class="manual-body"><p class="muted manual-note">Loading…</p></div>

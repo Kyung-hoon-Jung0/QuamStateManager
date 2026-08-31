@@ -521,9 +521,9 @@
             var c = tok.indexOf(':');
             if (c > 0) {
                 var k = tok.slice(0, c), v = tok.slice(c + 1);
-                if (k === 'path' || k === 'kind' || k === 'is') return { k: k, v: v };
+                if (k === 'path' || k === 'kind' || k === 'is') return { k: k, v: v, raw: tok };
             }
-            return { k: 'bare', v: tok };
+            return { k: 'bare', v: tok, raw: tok };
         });
     }
     function matchToken(r, tk) {
@@ -557,13 +557,27 @@
         var q = raw.toLowerCase();
         if (!q) { clearFilter(); return; }
         var tokens = parseTokens(q);
+        // docs/141 4aj: the app's ONE grammar reaches this box too -- space is
+        // AND (as it always was here), a standalone `|` ORs its neighbours
+        // (SearchQuery.groupBy, the same composition the bulk grid uses for its
+        // own scoped tokens). Without it the shared placeholder would promise
+        // an OR this surface did not have.
+        var tokGroups = window.SearchQuery
+            ? window.SearchQuery.groupBy(tokens, function (t) { return t.raw; })
+            : tokens.map(function (t) { return [t]; });
         state.filterActive = true;
         state.pass = new Array(state.rows.length);
         for (var gi = 0; gi < state.groups.length; gi++) state.groups[gi].matchCount = 0;
         var shown = 0;
         for (var r = 0; r < state.rows.length; r++) {
             var ok = true;
-            for (var ti = 0; ti < tokens.length; ti++) { if (!matchToken(r, tokens[ti])) { ok = false; break; } }
+            for (var gk = 0; gk < tokGroups.length; gk++) {
+                var any = false;
+                for (var ti = 0; ti < tokGroups[gk].length; ti++) {
+                    if (matchToken(r, tokGroups[gk][ti])) { any = true; break; }
+                }
+                if (!any) { ok = false; break; }
+            }
             state.pass[r] = ok;
             if (ok) { state.groups[state.rowGroup[r]].matchCount++; shown++; }
         }

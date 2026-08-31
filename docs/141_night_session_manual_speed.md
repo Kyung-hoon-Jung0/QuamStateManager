@@ -1595,6 +1595,11 @@ a cache read, so the documented "second tick" never fires there.
 
 ## 5. Tooling that came out of the night
 
+`scratchpad/cdp_dsearch.js` (the diff search box end to end, §4ad),
+`cdp_ui4.js` (the three tool windows + the search box in one pass) and
+`cdp_corner.js` (an A/B of ONE CSS rule inside a single page load, captured at
+6x — the way to show a 1-pixel geometry fix) joined the set in §4ad/§4ae.
+
 `scratchpad/cdp_measure.js` / `cdp_act.js` / `cdp_shot.js` (+ daytime: `cdp_profile.js` function-level CPU profile, `cdp_trace.js` per-phase trace of one keystroke, `cdp_type.js` char-by-char typing with a gap + debounce override, `cdp_undo.js` trusted Ctrl+Z/Ctrl+Shift+Z through the page's own UI, `cdp_virt.js` virtualization sampler): Chrome headless with the
 DevTools protocol over Node's built-in WebSocket — real long-task + trace splits and
 screenshots without the browser extension (which cannot reach this machine's
@@ -1607,7 +1612,10 @@ localhost). Used for every number above and for four visual checks.
 `config_manual_selfcheck.cjs`, `test_undo_trail.py` + `undo_trail_selfcheck.cjs` +
 `tree_search_list_selfcheck.cjs`, `bulk_search_selfcheck.cjs` (class-selector hide),
 `ctrlz_selfcheck.cjs` (new fallback contract), `test_bulk_markup.py` +
-`bulk_markup_selfcheck.cjs` (§4m). Every new pin mutation-checked
+`bulk_markup_selfcheck.cjs` (§4m), `diff_panes_selfcheck.cjs` +
+`test_diff_panes.py` + `test_diff_three_way.py::TestSearchBox` (§4ad),
+`test_search_hint.py` + `search_hint_selfcheck.cjs` (§4ae).
+Every new pin mutation-checked
 (3/3, 6/6, 7/7, 5/5); a wrong mutation and two vacuous pins were found and rewritten.
 
 **§4n–§4ab** (this list stopped at §4m until §4ac):
@@ -2467,3 +2475,276 @@ missing anchor, one from a mutation on a pin that had just been written. A green
 suite says nothing about the states a fixture cannot enter — and the cheapest
 way to find those is to mutate the code the fixture is supposed to be guarding
 and watch what does not move.
+
+---
+
+> **Numbering note (merge, 2026-08-31):** two concurrent sessions both
+> allocated §4ad–§4af. The pair-grid virtualization line (above) keeps
+> those numbers — it carries ~106 in-code references against this line's 23.
+> The diff-search session's §4ad/§4ae/§4af are §4ai/§4aj/§4ak here (its
+> §4ag/§4ah were never in conflict and keep their numbers). That branch's
+> COMMIT MESSAGES still use the old spellings for those three; every
+> in-tree reference is remapped.
+
+## 4ag. A QDAC-II has four trigger sockets, so a chip cannot have twelve (2026-08-31, user-directed)
+
+> "qdac2는 external trigger를 총 4개만 받아 … 즉, 우리는 digital port 4개만 쓰고,
+> 각각의 digital port에 중복해서 qubit을 할당해야해. qdac이 1대만 있거든."
+
+`_allocate_qdac_triggers` gave every QDAC-biased qubit its OWN dedicated digital
+output — a docs/119 decision recorded in its own docstring as "simpler, and
+correct per the 'no port sharing' UI decision". It is not correct: a QDAC-II has
+exactly four external trigger inputs, and an ext input is a physical socket, so
+every qubit armed on the same ext is BY DEFINITION on the same cable. Measured on
+the 17Q reproduction: **12 biased qubits produced 12 digital output ports** for
+four sockets — a chip that cannot be built. (The pinned path already shared
+correctly, from docs/135 ⑤; only the auto path invented ports.)
+
+The auto pass now allocates **one port per distinct ext** and maps that ext's
+other qubits onto it, and says so: `ext1 -> 4 qubits, ext2 -> 3 qubits, …` plus
+the reason (qubits on one cable arm together — the operational limit of owning a
+single QDAC). Re-measured on the same chip with all 13 qubits biased: **4 digital
+ports, port N ↔ extN**, 3–4 qubits each, `generate_config()` declaring digital
+outputs 1–4 on one FEM. A qubit that declares no ext still allocates its own port
+— there is nothing to group it with, and guessing a socket is worse than a port.
+
+## 4ah. One label colour for every port (2026-08-31, user feedback)
+
+> "노란색에 검은색 폰트로 q2, q3 이렇게 써있는데, 이거 좀 더 진한 dark yellow 색상으로
+> 하고, font color는 다른 port와 동일하게 white로 통일해줄수 있어?"
+
+docs/136 r2 gave the bias-tee port an amber fill (`#f1c40f`) bright enough that a
+white label failed contrast, so that one port was lettered black while every
+other port in the rack is white. On the real rack that reads as a rendering
+fault, not as a role — the fill is already carrying the role. The fill is
+`#a9791c` now (4.6:1 against white, AA for the bold 700 label) and the label
+colour branch is gone: `UI_CONFIG.instrumentWiring.portLabelColor` for every
+port, no exceptions. `/flux`'s `.flux-src-tee` chip follows the same value, since
+its whole point is that "bias tee" is ONE colour app-wide. Verified in real
+Chrome on the 17Q chip: 12 tee ports at `#a9791c` with `#ffffff` labels, a plain
+z port at `#3498db` with the same `#ffffff`. Pinned by
+`instrument_qdac_selfcheck.cjs`, whose label assertion now compares the two ports
+to each other rather than pinning two different literals.
+## 4ai. The diff had no search (2026-08-30, user-directed)
+
+> "잘 되었는데, 검색 feature가 전혀 없네? live edit이나 json tree view에 있는 검색말이야."
+
+Correct, and it was the one surface with hundreds of rows and no way to reach
+one: the pane view (§4z/§4ab) and the list view had no search box at all. The
+2-way TREE view has had one since docs/84 (`jsonTreeSearch`), which is exactly
+why the gap read as an inconsistency rather than as a missing feature.
+
+**One box, one grammar, both views.** `_diff_search.html` is a single partial
+included by `_diff_panes.html` and by the list branch of `_diff_workbench.html`
+— two copies would drift the way the five search boxes docs/96 unified did. It
+is `input[type=search]`, so `/` (docs/113's focus-search) reaches it with no new
+wiring, and matching is `window.SearchQuery` (space = AND, a standalone `|` =
+OR, tight-binding — docs/96), never a private tokenizer.
+
+**Client-side, because the rows are already here.** Every row the page holds is
+in the DOM, so a keystroke costs no round trip and no re-render. A leaf shows
+when the AND-of-OR groups all match its haystack — its dot path plus every
+pane's value in BOTH forms, the raw one (`data-v`) and the grouped one on
+screen, so `7003542323` and `7,003,542,323` find the same row. A container shows
+when a matching leaf is beneath it (an ancestor walk over `data-parent`, the
+same map the collapse walk uses), and its count chip re-counts to the matches
+(`3` → `1 of 3 differing keys match`), restoring `data-count` when the box
+clears.
+
+**A hit you cannot see is not a hit.** A search expands the containers on the
+way to a match, and restores the collapse state it found when the box is cleared
+— unless the user collapsed something themselves during the search, in which
+case their state wins and nothing is restored. Measured on the real chip: Depth
+0 (80 containers collapsed, 1 row visible) → typing `q11` opens exactly the 13
+rows of that subtree and leaves 73 containers collapsed → clearing puts all 80
+back.
+
+**The query rides the URL, and the server still does not filter.** `?q=` is
+echoed into the box (escaped, capped at 200 chars) and carried onto every /diff
+request the workbench issues, as a PARAMETER only (no button's URL holds one, so
+htmx appends it exactly once) — the same `htmx:configRequest` channel §4z uses
+for the baseline. So a tab switch, a source change or a "Show more" comes back
+with the box still filled and the filter re-applied. What the server must NOT do
+is filter by it: the counts above the table (`28 changed · 3,816 identical`)
+describe the whole diff, and a server-side filter would silently make them
+describe what someone typed instead. Pinned by an equality test over the two
+rendered pages.
+
+**Honest about what it could not see.** The row set is paged
+(`_DIFF_LIST_PAGE = 300`), so with rows still unloaded the count reads
+`21 of 91 keys · 1,957 more not loaded` — the "Show N more" button below is
+still the way to load them, and it now carries the query too. And a
+filtered-to-nothing table is a header over blank space, which reads as broken:
+`.dp-empty-note` says `No key matches "zzzz" — the search reads key paths and
+the values on screen` under the table, where the user is looking.
+
+**One §4ab defect fell out of writing this.** The collapse walk keyed its
+path → row map last-wins, so for a leaf that is ALSO a container on another side
+(both rows carry the same `data-path`, and the leaf's parent IS its own path) the
+walk found the leaf, read its parent as itself, and spun to the 64-guard —
+collapsing that container hid its children but not its own value row. The map now
+prefers the `dp-dir` row, which is the only row that can be collapsed.
+
+**Real Chrome, the PJ_10082026 chip against 3 runs of the 2025-06-24 archive**
+(171 rows / 91 differing keys): `/` focuses the box; typing through Chrome's own
+input pipeline gives `q11` → `6 of 91 keys`, `RF_frequency` → 21,
+`q11 resonator` → none (AND), `RF_frequency | T1` → 21 (OR), a pasted value
+`1.6717958988072346e-05` → the one row that holds it; Escape clears from inside
+the box; switching to node.json keeps `&q=resonator` in the URL and re-applies it
+(`1 of 107 keys`); a baseline switch leaves the filter alone; zero console
+errors. Two sources, List view: `q11` → `3 of 45 rows`, and the query carried
+across the view switch.
+
+Pinned by `diff_panes_selfcheck.cjs` (32 → 60 assertions), `TestSearchBox` in
+`test_diff_three_way.py` and the partial/grammar pins in `test_diff_panes.py`.
+Mutation-checked 13/13 client (filter ignored, no auto-expand, no restore, a
+manual toggle no longer winning, the map regression above, the unloaded rest
+unnamed, the query not riding the request, chips keeping the full count, Escape
+dead, the list filter hiding nothing, no empty note, the note never leaving, AND
+silently becoming OR) and 8/8 server (query not echoed, unbounded, the server
+filtering, either view dropping the box, the chips losing `data-count`, the
+paging truth unpublished, and `data-more` decorative rather than the real
+remainder — the number the search reports as unsearchable).
+
+## 4aj. Four window-and-search reports (2026-08-30, user-directed)
+
+> "1. settings의 저 메뉴의 양쪽 위에 있는 모서리가 끊겨있어 · 2. calculator는 크기
+> 조절이 안되고 있어 · 3. calculator 내부의 각 섹션 … 너무 밋밋해서 전혀 구분이
+> 안가 … gray 색상은 주석이나 쓰일 곳이지 … 4. 돋보기가 내부 글자랑 겹친다 …
+> 이제는 내부 SM 전체에 걸쳐서 문구를 이렇게 바꾸자. Search: space = AND, | = OR"
+
+Each was reproduced in real headless Chrome first, and the first three all had a
+cause other than the obvious one.
+
+**① The corner was a child painting over its parent.** The three tool windows
+(§4u) share one 10 px radius + 1.5 px SM-blue border, and each has a sticky
+header with its own opaque background. A rounded corner clips its children only
+where the box has an `overflow` — the Calculator has `overflow-y: auto` and the
+Config Manual `overflow: hidden`, but Settings is `overflow: visible`, so its
+square header simply painted over both top corners. Measured: panel radius
+10 px, header radius 0, panel overflow `visible`. Rounding the HEADER instead
+(8.5 px = 10 − 1.5, so the curves stay concentric) fixes it independently of any
+overflow, and is applied to all three so the next window to lose its clip does
+not re-open the bug. A/B at 6× on the real page: a hard right angle with the
+border broken, versus one continuous curve.
+
+**② The Calculator was the one tool window that could not be resized.**
+`resize: none`, `display: block`, one scroll for the whole popover. It is now
+the Config Manual's shape: a flex column with `resize: both` on a clipped box
+(CSS `resize` is inert while `overflow: visible` — the trap worth naming), the
+BODY scrolling so the header and the expression footer stay put, and the size
+remembered in `quam_calc_size` under the same contract manual.js uses — only a
+size the USER set is stored, so opening on a small screen (where the restore
+clamps to the viewport) never shrinks what was remembered.
+
+**③ The section titles were grey because the rule that says otherwise never
+won.** `.calc-sec-label { color: var(--pico-contrast) }` is specificity (0,1,0);
+Pico paints `details summary:not([role])` at (0,1,1) and
+`details[open] > summary:not([role]):not(:focus)` at (0,3,1), both from its
+ACCORDION variables. So every section header rendered in the muted grey
+(measured `#98a1b3` against the page's `#d0d5de`) that a 2026-era comment in the
+stylesheet claimed it had escaped — the fourth time this project has been bitten
+by "the rule I can see is not the rule that wins". Fixed through Pico's own
+mechanism rather than a specificity war: the two accordion variables are set on
+`.calc-popover`, so every summary inside inherits the right colour and nothing
+has to out-specify anything. Sections became CARDS (border, 8 px radius, their
+own surface) with the open one's header tinted SM-blue 10%, which is what makes
+"which section am I in" visible at a glance. Grey was then put back where grey
+belongs: the row labels (`.calc-field`) and result labels (`.calc-rlabel`) are
+what the row IS, so they read in the page colour; the help lines, the units and
+the "or" connector are annotations and stay muted; result VALUES got weight 600
+and full contrast. The before-shot also showed TWO disclosure marks per header —
+Pico draws its own chevron as `summary::after` beside the app's caret — so the
+Pico one is hidden and the left caret (the same one the Json tree and the Config
+Manual use) stands alone.
+
+**④ There were two magnifiers, and one of them was Pico's.** Pico gives every
+`input[type=search]` a background magnifier plus a `padding-inline-start` that
+reserves room for it. §4ai's box carries the app's own 🔍 span AND is
+`type="search"`, and its compact padding shorthand overrode the reserve — so
+Pico's icon landed on the first letter of the placeholder while ours sat
+correctly outside. The fix is stated as a selector so the pairing cannot come
+back: `.tree-search-icon + input[type="search"]` draws no background image.
+(Worth recording: the first measurement said "no overlap", because it compared
+the two ELEMENTS' boxes. The second icon was not an element.)
+
+**The placeholder, everywhere.** Every search box carried its own
+hand-written string — "Search keys or values...", "Search all pulses…",
+"Filter qubits..." — and only two of them mentioned the AND/OR grammar the whole
+app shares (docs/96). Examples are guessable; operators are not. `search_hint()`
+/ `search_title()` in `core/search_query.py` (Jinja globals) are now the ONE
+source: **`Search: space = AND, | = OR`**, with a surface's own scopes appended
+after the grammar and never instead of it (`…, tag:, is:`), and the full
+sentence in the `title` so nothing is lost to the compaction. Twenty-three
+call sites across twenty templates use it. A template that hand-writes a search placeholder is now a test failure.
+
+**Three of those boxes could not keep the promise, so they were fixed too.**
+`filterTable` (every component table: Qubits, Pairs, Flux, Couplers,
+Resonators, QDAC), `filterDetailPanel` (the inspector's in-panel search) and the
+all-values grid were AND-only private splits. They now compose through
+`SearchQuery` — the plain surfaces via `groups`/`matchesHay`, the scoped grid via
+`groupBy` at the group level exactly as the bulk grid does. Three boxes stay
+exempt BY ID and are pinned as exactly three: `sort-key-filter`,
+`sort-param-filter`, `sched-lib-filter` are pickers over a short list of names,
+not document search.
+
+**And a standing-rule sweep fell out of it.** Eleven sites across app.js,
+bulk-edit.js, pair-edit.js and dataset-virtual.js read `window.SearchQuery` in
+the guard and a BARE `SearchQuery` in the call. In a browser those are the same
+binding; in a Node realm the call throws instead of degrading — the docs/125
+`CSS`-global trap. All eleven now name `window.` on both sides, and the pin
+fails on any `window.SearchQuery ? SearchQuery.…` that comes back.
+
+Verified in real Chrome on the PJ_10082026 chip: settings corner A/B at 6×, the
+Calculator resizable with its body scrolling and its size surviving a close,
+section titles at `#d0d5de` on a tinted card header, one magnifier, the house
+placeholder rendering on every page, zero console errors. Pinned by
+`tests/test_search_hint.py` (19) + `tests/search_hint_selfcheck.cjs` (17),
+mutation-checked **22/22** (each of the four fixes reverted one way at a time:
+the header radius, `resize`, the overflow that makes it work, the scrolling
+body, the size store / apply / clamp-guard, the accordion variables, the card,
+the open marker, the duplicate chevron, the muted labels, Pico's magnifier, a
+hand-written placeholder on two surfaces, dropped scopes, a hint that stops
+naming the OR, scopes replacing the grammar, each AND-only regression, and a
+bare global creeping back). One thing to record for the next person: writing
+`.calc-sec-label { color: … }` inside a CSS *comment* broke an existing grep pin
+in `test_calc.py`, which slices from the first occurrence of that literal — the
+comment was rephrased, not the pin.
+
+## 4ak. A declared pair that built nothing, and said nothing (2026-08-31, user-directed)
+
+Found while reproducing the customer's SNU_17Q chip for KH_20260824. That chip's
+16 `FluxTunableTransmonPair`s all carry `coupler: None` — their CZ moves one
+qubit's own flux — so the spec was written with the 16 pairs declared and no
+coupler line. The build reported **`ok: True`, no warnings**, and produced a chip
+with **zero pairs**.
+
+**I first told the user SM's line vocabulary could not express this. That was
+wrong, and worth recording as the actual lesson.** A pair materialises from a
+pair LINE (`coupler` / `cross_resonance` / `zz_drive`, each of which allocates a
+DC channel) **or** from the `pair_gate: "cz_fixed"` gate, which
+`_finalize_pair_gates` creates with `coupler: None` and seeds the CZ macros on
+the moving qubit's z. That is exactly the coupler-less pair. Setting it produced
+all 16 pairs with the same five macros the real 17Q pairs carry
+(`cz_unipolar`, `cz_flattop`, `cz_bipolar`, `cz_SNZ`, `cz_flattop_erf`),
+`coupler: None`, `moving_qubit: control` — from SM's own generator, with no
+post-step.
+
+So the gap was never the vocabulary; it was the **silence**. Declaring pairs and
+giving neither a line nor the gate is a spec that cannot do what it says, and
+nothing said so — the chip looked built, and the absence only surfaces when
+someone runs a two-qubit node on it. `_declared_pairs_not_built(spec, machine)`
+now reports those ids in the build result (`pairs_declared_not_built`) and raises
+a warning naming BOTH ways out, including that the gate's pair has no coupler —
+because sending a chip that has no couplers down the line route costs a DC
+channel per pair it does not have. On the 17Q spec the LF budget makes that fatal
+rather than merely wasteful: 3 LF-FEMs are 24 channels, 13 go to flux, and 16
+couplers do not fit in the remaining 11 (the original attempt died as
+`NotEnoughChannelsException`, which named a channel shortage rather than the
+design mistake behind it).
+
+Pinned by `tests/test_pairs_declared_not_built.py` (11), mutation-checked 7/7 —
+including the two the first version of the pins MISSED: a warning whose guard is
+disabled, and one that stops naming the coupler-less route. A message in the
+source proves nothing if nothing reaches it.
+

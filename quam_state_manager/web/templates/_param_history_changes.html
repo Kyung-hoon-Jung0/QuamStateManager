@@ -28,7 +28,7 @@
         hx-trigger="submit, keyup changed delay:400ms from:find input[name=prefix]">
     <span class="tree-search-icon">&#128269;</span>
     <input type="text" name="prefix" class="tree-search" value="{{ prefix }}"
-           placeholder="Filter by path — e.g. qubits.qA1 or ports"
+           placeholder="{{ search_hint() }}" title="{{ search_title() }} Matches the parameter path."
            autocomplete="off" list="ph-param-paths">
     <datalist id="ph-param-paths"></datalist>
     {% if prefix %}

@@ -155,6 +155,10 @@
     {% elif view == 'panes' %}
       {% include '_diff_panes.html' %}
     {% elif view == 'list' %}
+      {# docs/141 4ai: the list had no search either -- same box, same
+         grammar, flat rows (there is no tree to keep open here). #}
+      <div id="diff-list" class="diff-list-wrap" data-more="{{ more }}">
+      <div class="diff-panes-tools">{% include '_diff_search.html' %}</div>
       <table class="diff-wb-list">
         <thead><tr><th>Parameter</th><th>A</th><th></th><th>B</th><th>Δ</th>{% if _take_from %}<th></th>{% endif %}</tr></thead>
         <tbody>
@@ -196,6 +200,7 @@
         {% endfor %}
         </tbody>
       </table>
+      </div>
       {% if more %}
       <div class="ph-changes-more">
         <button type="button" class="btn-sm outline"
@@ -208,7 +213,7 @@
       <div class="tree-toolbar diff-tree-toolbar">
         <span class="tree-search-icon">&#128269;</span>
         <input type="text" class="tree-search" id="diff-tree-search"
-               placeholder="Search the differences…" autocomplete="off"
+               placeholder="{{ search_hint() }}" title="{{ search_title() }}" autocomplete="off"
                oninput="jsonTreeSearch('diff-tree', this.value)">
         <div class="tree-depth-group">
           <span class="tree-depth-label">Depth:</span>

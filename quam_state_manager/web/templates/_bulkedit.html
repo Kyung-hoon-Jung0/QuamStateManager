@@ -66,7 +66,7 @@
         {% endif %}
         <span class="bulk-search-wrap">
             <input type="search" id="bulk-search" class="bulk-search"
-                   placeholder="Search columns, qubits, numbers…" autocomplete="off"
+                   placeholder="{{ search_hint() }}" title="{{ search_title() }}" autocomplete="off"
                    aria-label="Filter by column name, qubit id, or value">
             <span class="bulk-search-count muted" id="bulk-search-count" aria-live="polite"></span>
             {# r6 item 4: searching a property that exists on the chip but isn't a
@@ -295,7 +295,8 @@
         <div class="av-toolbar">
             <div class="av-toolbar-left">
                 <input type="search" id="av-search" class="av-search" autocomplete="off"
-                       placeholder="Search any value — path, number, kind:xref, is:editable…"
+                       placeholder="{{ search_hint('path:', 'kind:', 'is:') }}"
+                       title="{{ search_title('path:', 'kind:xref', 'is:editable', 'is:modified') }}"
                        aria-label="Search all values">
                 <span class="av-coverage muted" id="av-coverage" aria-live="polite"></span>
                 <span class="av-showing muted" id="av-showing" aria-live="polite"></span>

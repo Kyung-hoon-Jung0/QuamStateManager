@@ -9,6 +9,10 @@
  *    (htmx:configRequest rewrite), the picker's hidden input follows, the URL
  *    is replaced with base=
  *  - re-arming is idempotent
+ * docs/141 4ai: the search box -- SearchQuery grammar over path + values,
+ *    containers kept and re-counted, auto-expand on a hit, the collapse state
+ *    restored on clear (unless the user changed it), Escape clears, the query
+ *    rides htmx:configRequest, and the same box over the LIST view.
  * Run: node tests/diff_panes_selfcheck.cjs   (driven by tests/test_diff_panes.py)
  */
 const fs = require('fs');
@@ -25,10 +29,11 @@ function cell(i, v, hasV) {
 }
 function dirRow(path, depth, count) {
   const parent = path.indexOf('.') >= 0 ? path.slice(0, path.lastIndexOf('.')) : '';
-  return '<tr class="dp-row dp-dir" data-path="' + path + '" data-parent="' + parent + '" data-depth="' + depth + '"><td class="dp-key-col"><button type="button" class="dp-toggle" aria-expanded="true">▾</button><span class="dp-key dp-key-dir">' + path.split('.').pop() + '</span><span class="dp-count">' + count + '</span></td>' +
+  return '<tr class="dp-row dp-dir" data-path="' + path + '" data-parent="' + parent + '" data-depth="' + depth + '"><td class="dp-key-col"><button type="button" class="dp-toggle" aria-expanded="true">▾</button><span class="dp-key dp-key-dir">' + path.split('.').pop() + '</span><span class="dp-count" data-count="' + count + '">' + count + '</span></td>' +
     '<td class="dp-cell dp-cell-dir" data-i="0"></td><td class="dp-cell dp-cell-dir" data-i="1"></td><td class="dp-cell dp-cell-dir" data-i="2"></td></tr>';
 }
-const TOOLS = '<div class="diff-panes-tools"><button type="button" class="btn-xs outline dp-depth" data-depth="0">0</button><button type="button" class="btn-xs outline dp-depth" data-depth="1">1</button><button type="button" class="btn-xs dp-depth" data-depth="99">All</button></div>';
+const SEARCH = '<span class="tree-search-icon"></span><input type="search" class="dp-search" value=""><span class="dp-search-count muted"></span>';
+const TOOLS = '<div class="diff-panes-tools">' + SEARCH + '<button type="button" class="btn-xs outline dp-depth" data-depth="0">0</button><button type="button" class="btn-xs outline dp-depth" data-depth="1">1</button><button type="button" class="btn-xs dp-depth" data-depth="99">All</button></div>';
 const ROWS = dirRow('qubits', 0, 3) + dirRow('qubits.q1', 1, 3) +
   '<tr class="dp-row dp-leaf" data-eq="101,010,101" data-path="qubits.q1.T1" data-parent="qubits.q1" data-depth="2"><td class="dp-key-col"><code class="dot-path">qubits.q1.T1</code></td>' + cell(0, '1e-05', true) + cell(1, '2e-05', true) + cell(2, '1e-05', true) + '</tr>' +
   '<tr class="dp-row dp-leaf" data-eq="101,010,101" data-path="qubits.q1.name" data-parent="qubits.q1" data-depth="2"><td class="dp-key-col"><code class="dot-path">qubits.q1.name</code></td>' + cell(0, 'a', true) + cell(1, null, false) + cell(2, 'a', true) + '</tr>' +
@@ -37,8 +42,12 @@ const HEAD = ['A', 'B', 'C'].map((s, i) => '<th class="dp-pane-head' + (i === 0 
 const DOM = '<div id="diff-root" data-base="0" data-n="3">' +
   '<form class="diff-wb-pickers"><input type="hidden" name="base" value="0"></form>' +
   '<div class="ph-tabs diff-wb-tabs"><button type="button" class="ph-tab" id="tab-node" hx-get="/diff?a=x&amp;b=y&amp;c=z&amp;d=&amp;e=&amp;tab=node&amp;view=panes&amp;base=0">node.json</button></div>' +
-  '<div id="diff-panes" data-base="0" data-n="3">' + TOOLS + '<table id="diff-panes-table"><thead><tr><th class="dp-path-col">Leaf</th>' + HEAD + '</tr></thead><tbody>' + ROWS + '</tbody></table></div></div>' +
-  '<button type="button" id="outside" hx-get="/diff?a=q&amp;b=r&amp;base=0">outside</button>';
+  '<div id="diff-panes" data-base="0" data-n="3" data-more="0">' + TOOLS + '<table id="diff-panes-table"><thead><tr><th class="dp-path-col">Leaf</th>' + HEAD + '</tr></thead><tbody>' + ROWS + '</tbody></table></div></div>' +
+  '<button type="button" id="outside" hx-get="/diff?a=q&amp;b=r&amp;base=0">outside</button>' +
+  '<div id="diff-list" data-more="4"><div class="diff-panes-tools">' + SEARCH + '</div><table class="diff-wb-list"><tbody>' +
+  '<tr class="diff-row-changed"><td class="diff-list-path"><code>qubits.q1.T1</code></td><td class="diff-list-a"><code>1e-05</code></td><td class="diff-list-arrow"></td><td class="diff-list-b"><code>2e-05</code></td><td class="diff-list-delta">x</td></tr>' +
+  '<tr class="diff-row-added"><td class="diff-list-path"><code>qubits.q2.f_01</code></td><td class="diff-list-a"><code>-</code></td><td class="diff-list-arrow"></td><td class="diff-list-b"><code>5000000000.0</code></td><td class="diff-list-delta">x</td></tr>' +
+  '</tbody></table></div>';
 
 const dom = new JSDOM('<!doctype html><html><body>' + DOM + '</body></html>', { url: 'http://localhost/diff?a=x&b=y&c=z&tab=state&base=0', pretendToBeVisual: true });
 const { window } = dom;
@@ -230,11 +239,116 @@ ok(Array.from(root.querySelectorAll('tr.dp-dir td.dp-cell')).every((td) => !td.c
   window.DiffPanes.arm(root);
 }
 
+// 4ai: search
+{
+  const box = root.querySelector('.dp-search');
+  const cnt = () => root.querySelector('.dp-search-count').textContent;
+  const dirs = () => allRows().filter((r) => r.classList.contains('dp-dir'));
+  const visible = () => allRows().filter((r) => !r.hidden).map((r) => r.getAttribute('data-path'));
+  const chip = (i) => dirs()[i].querySelector('.dp-count').textContent;
+  const type = (v) => { box.value = v; box.dispatchEvent(new window.Event('input', { bubbles: true })); };
+
+  ok(!!box && cnt() === '', 'the pane view carries a search box, silent until asked');
+  type('t1');
+  ok(visible().join(',') === 'qubits,qubits.q1,qubits.q1.T1', 'a key search keeps the match and its containers, hides the rest: ' + visible().join(','));
+  ok(cnt() === '1 of 3 keys', 'the count names what matched of what is loaded: ' + cnt());
+  ok(chip(0) === '1' && chip(1) === '1', 'the container chips re-count to the matches (1, 1)');
+  type('qubits');
+  ok(visible().length === 5 && chip(0) === '3', 'a container-path term matches every leaf beneath it');
+  type('2e-05');
+  ok(visible().join(',') === 'qubits,qubits.q1,qubits.q1.T1', 'a VALUE in any pane matches its row');
+  type('q1 name');
+  ok(visible().join(',') === 'qubits,qubits.q1,qubits.q1.name', 'two words are AND (SearchQuery)');
+  type('t1 | name');
+  ok(visible().length === 4 && cnt() === '2 of 3 keys', 'a standalone pipe is OR: ' + cnt());
+  type('zzz');
+  ok(allRows().every((r) => r.hidden) && cnt() === 'no key matches', 'nothing matching says so, and shows nothing');
+  ok(root.querySelector('.dp-search-count').classList.contains('dp-search-none'), 'the empty verdict is marked');
+  const note = () => root.querySelector('.dp-empty-note');
+  ok(note() && !note().hidden && note().textContent.indexOf('zzz') > 0, 'and a filtered-to-nothing table says so UNDER the table, not only beside the box: ' + (note() || {}).textContent);
+  type('');
+  ok(allRows().every((r) => !r.hidden) && cnt() === '' && chip(0) === '3' && chip(1) === '3', 'clearing restores every row and every full count');
+  ok(note().hidden, 'and takes the empty note away');
+  type('t1'); ok(note().hidden, 'a search that DOES match shows no empty note');
+  type('');
+
+  // auto-expand + restore of the collapse state
+  dirs()[1].querySelector('.dp-toggle').click();
+  ok(dirs()[1].hasAttribute('data-collapsed') && rows().every((r) => r.hidden), 'given a collapsed container');
+  type('t1');
+  ok(!dirs()[1].hasAttribute('data-collapsed') && visible().indexOf('qubits.q1.T1') >= 0, 'a search expands the containers on the way to a hit');
+  type('');
+  ok(dirs()[1].hasAttribute('data-collapsed') && rows().every((r) => r.hidden), 'clearing puts the collapse back exactly as it was');
+  // ... unless the user changed it themselves while searching
+  type('t1');
+  dirs()[0].querySelector('.dp-toggle').click();
+  dirs()[0].querySelector('.dp-toggle').click();
+  type('');
+  ok(!dirs()[1].hasAttribute('data-collapsed'), 'a collapse the USER changed during the search is not undone by clearing');
+
+  // the unloaded rest is never silently ignored
+  root.setAttribute('data-more', '1200');
+  type('t1');
+  ok(cnt() === '1 of 3 keys · 1,200 more not loaded', 'a paged table says how many rows the search could not see: ' + cnt());
+  type('');
+  root.setAttribute('data-more', '0');
+
+  // Escape clears from inside the box
+  type('t1');
+  box.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  ok(box.value === '' && allRows().every((r) => !r.hidden), 'Escape in the box clears the search');
+
+  // the query rides every /diff request the workbench issues
+  type('q1 name');
+  const ev = new window.CustomEvent('htmx:configRequest', { bubbles: true, detail: { path: '/diff?a=x&b=y&tab=node&base=0', elt: tab, parameters: {}, verb: 'get' } });
+  tab.dispatchEvent(ev);
+  ok(ev.detail.parameters.q === 'q1 name' && ev.detail.path.indexOf('q=') < 0, 'the query travels as a PARAMETER (exactly once), the path keeps only base');
+  type('');
+}
+
+// 4ai: the LIST view got the same box
+{
+  const lroot = d.getElementById('diff-list');
+  const lbox = lroot.querySelector('.dp-search');
+  const lrows = () => Array.from(lroot.querySelectorAll('tbody > tr'));
+  const ltype = (v) => { lbox.value = v; lbox.dispatchEvent(new window.Event('input', { bubbles: true })); };
+  ok(lroot._dpArmed === true && !!lbox, 'the list view is armed with its own box');
+  ltype('q2');
+  ok(lrows().filter((r) => !r.hidden).length === 1 && lrows()[0].hidden, 'a path term filters the flat list');
+  ok(lroot.querySelector('.dp-search-count').textContent === '1 of 2 rows · 4 more not loaded', 'with the same honest count: ' + lroot.querySelector('.dp-search-count').textContent);
+  ltype('nothing here');
+  ok(lroot.querySelector('.dp-empty-note') && !lroot.querySelector('.dp-empty-note').hidden, 'the list says so too');
+  ok(lrows().length === 2, 'and the note is NOT a row (it would be counted, hidden and filtered)');
+  ltype('5000000000');
+  ok(lrows().filter((r) => !r.hidden).length === 1, 'and values match too');
+  ltype('');
+  ok(lrows().every((r) => !r.hidden), 'clearing restores the list');
+}
+
+// 4ai: a leaf that is ALSO a container shares its path with its own dir row;
+// the collapse walk must find the DIR (the leaf's parent is its own path)
+{
+  const mini = d.createElement('div');
+  mini.innerHTML = '<table><tbody>' +
+    '<tr class="dp-row dp-dir" data-path="a" data-parent="" data-depth="0"><td><button class="dp-toggle"></button><span class="dp-count" data-count="2">2</span></td></tr>' +
+    '<tr class="dp-row dp-dir" data-path="a.b" data-parent="a" data-depth="1"><td><button class="dp-toggle"></button><span class="dp-count" data-count="2">2</span></td></tr>' +
+    '<tr class="dp-row dp-leaf" data-groups="0,1" data-path="a.b" data-parent="a.b" data-depth="2"><td></td></tr>' +
+    '<tr class="dp-row dp-leaf" data-groups="0,1" data-path="a.b.c" data-parent="a.b" data-depth="2"><td></td></tr>' +
+    '</tbody></table>';
+  d.body.appendChild(mini);
+  window.DiffPanes.arm(mini);
+  const trs = () => Array.from(mini.querySelectorAll('tr.dp-row'));
+  trs()[1].querySelector('.dp-toggle').click();
+  ok(trs()[2].hidden && trs()[3].hidden && !trs()[1].hidden, 'collapsing a container hides BOTH its same-path value row and its children');
+  trs()[1].querySelector('.dp-toggle').click();
+  ok(trs().every((r) => !r.hidden), 'and expanding brings them back');
+}
+
 // idempotent re-arm (an htmx swap fires afterSwap)
 d.dispatchEvent(new window.CustomEvent('htmx:afterSwap', { bubbles: true }));
 d.querySelectorAll('.dp-pane-title')[2].click();
 ok(heads() === '001', 'after a swap event one click still means one switch (no double handlers)');
 
-console.log(fails ? ('FAILED: ' + fails) : 'ALL OK (44 assertions)');
+console.log(fails ? ('FAILED: ' + fails) : 'ALL OK (73 assertions)');
 process.exit(fails ? 1 : 0);
 })();

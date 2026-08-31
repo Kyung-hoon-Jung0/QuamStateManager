@@ -13,7 +13,7 @@
 
 <div class="tree-toolbar">
     <span class="tree-search-icon">&#128269;</span>
-    <input type="text" class="tree-search" id="explorer-search" placeholder="Search keys or values…  space = AND, | = OR"
+    <input type="text" class="tree-search" id="explorer-search" placeholder="{{ search_hint() }}" title="{{ search_title() }}"
            oninput="explorerSearch(this.value)" autocomplete="off">
     <div class="tree-depth-group">
         <span class="tree-depth-label">Depth:</span>

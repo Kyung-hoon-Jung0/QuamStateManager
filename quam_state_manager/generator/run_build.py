@@ -1138,7 +1138,26 @@ def _allocate_qdac_triggers(spec: dict, instruments) -> tuple[dict, list, dict]:
                 f"{ext_port[ext][2]}) — one OPX digital output arms every "
                 f"qubit on that ext input.")
 
+    # docs/141 4ag (user, hardware): a QDAC-II has exactly FOUR external
+    # trigger inputs, and one QDAC means at most four cables. An ext input is a
+    # physical socket, so every qubit armed on the same ext is BY DEFINITION on
+    # the same cable — the old "one dedicated digital output per biased qubit"
+    # default produced a chip that cannot be built (12 biased qubits -> 12
+    # digital ports for 4 sockets, measured on the 17Q reproduction). Allocate
+    # ONE port per distinct ext and let its qubits share it; that costs the
+    # operational limitation the lab already lives with (qubits on one cable
+    # arm together) and is the only wiring that exists.
     unpinned = [q for q in qids if q not in pinned]
+    ext_of = {q: (qdac_qubits.get(q) or {}).get("trigger_port") for q in unpinned}
+    # one representative per ext; a qubit that declares no ext cannot be grouped
+    reps: dict = {}
+    for q in unpinned:
+        ext = ext_of.get(q)
+        if ext:
+            reps.setdefault(ext, q)
+    followers = {q: reps[ext_of[q]] for q in unpinned
+                 if ext_of.get(q) and reps[ext_of[q]] != q}
+    unpinned = [q for q in unpinned if q not in followers]
     if not unpinned:
         return dict(pinned), warnings, _pinned_allocation()
     try:
@@ -1230,6 +1249,29 @@ def _allocate_qdac_triggers(spec: dict, instruments) -> tuple[dict, list, dict]:
             ch["con"], ch["slot"], ch["port"] = triple
         taken.add(triple)
         pins[qid] = triple
+
+    # 4ag: every qubit that shares an ext joins the port its representative got.
+    # One cable, one socket -- the sharing is the hardware, not a saving.
+    for qid, rep in followers.items():
+        if rep in pins:
+            pins[qid] = pins[rep]
+            allocation[qid] = {"qt": [{
+                "instrument_id": _fem_kind_at(spec, *pins[rep][:2]),
+                "con": pins[rep][0], "slot": pins[rep][1], "port": pins[rep][2],
+                "io_type": "digital", "signal_type": "digital",
+            }]}
+    if followers:
+        by_ext: dict = {}
+        for qid in list(followers) + list(reps.values()):
+            by_ext.setdefault(ext_of.get(qid), []).append(qid)
+        shared = ", ".join(
+            f"{ext} -> {len(qs)} qubits" for ext, qs in sorted(by_ext.items())
+            if len(qs) > 1)
+        if shared:
+            warnings.append(
+                "QDAC trigger cabling shares one OPX digital output per ext "
+                f"input ({shared}). A QDAC-II has four ext sockets, so qubits "
+                "on the same ext are on the same cable and arm together.")
 
     missing = sorted(set(qids) - set(pins))
     if missing:
@@ -2469,6 +2511,25 @@ def _cz_order_warning(quam_id, pair, vals):
     return None
 
 
+def _declared_pairs_not_built(spec: dict, machine) -> list[str]:
+    """Declared ``qubit_pairs`` that ended up with no pair on the machine.
+
+    A pair is created by a pair LINE (which allocates a channel) or by the
+    ``cz_fixed`` pair gate (which creates it with ``coupler: None`` and seeds
+    the CZ macros on the moving qubit's own flux). A spec that declares pairs
+    but gives neither builds none, and used to say nothing about it.
+    """
+    built = {str(k) for k in (getattr(machine, "qubit_pairs", None) or {})}
+    missing = []
+    for spec_pair in spec.get("qubit_pairs") or []:
+        parsed = _norm_pair_qubits(spec_pair)
+        if not parsed:
+            continue
+        if parsed[2] not in built:
+            missing.append(parsed[2])
+    return sorted(missing)
+
+
 def _finalize_pair_gates(machine, spec, pair_gate):
     """Add the wizard's chosen 2Q-gate macros (CR / CZ fixed / CZ tunable).
 
@@ -2730,6 +2791,19 @@ def run_build(spec: dict, out_dir: Path) -> dict:
             warnings.extend(_finalize_pair_gates(machine, spec, pair_gate))
         if ((spec.get("populate") or {}).get("options") or {}).get("pin_cores"):
             _pin_cores(machine)
+        # docs/141 4ak: say it when a declared pair produced nothing. Silence
+        # here reads as success, and the chip that comes out has no pairs at
+        # all -- which is only discovered much later, by whoever tries to run a
+        # two-qubit node on it.
+        _unbuilt = _declared_pairs_not_built(spec, machine)
+        if _unbuilt:
+            _shown = ", ".join(_unbuilt[:6]) + ("..." if len(_unbuilt) > 6 else "")
+            warnings.append(
+                f"{len(_unbuilt)} declared qubit pair(s) were not built ({_shown}). "
+                "A pair needs either a pair line (coupler / cross_resonance / "
+                "zz_drive, each of which allocates a channel) or the 'cz_fixed' "
+                "pair gate, which creates it with no coupler and seeds the CZ "
+                "macros on the moving qubit's own flux.")
         machine.save()
 
         # 4. Copy ONLY the two artefacts into the user's destination. Anything
@@ -2779,6 +2853,14 @@ def run_build(spec: dict, out_dir: Path) -> dict:
         "quam_class": quam_cls.__name__,
         "qubits": sorted(str(q) for q in getattr(machine, "qubits", {}) or {}),
         "qubit_pairs": sorted(str(p) for p in getattr(machine, "qubit_pairs", {}) or {}),
+        # docs/141 4ak: a pair the spec DECLARED that no pair exists for. A pair
+        # only materialises from a pair LINE (coupler / cross_resonance /
+        # zz_drive) or from the cz_fixed gate, so declaring `qubit_pairs` and
+        # nothing else silently built a chip with zero pairs -- 16 of them, on a
+        # real 17Q reproduction, reported as a clean success. Naming them is the
+        # whole fix: the vocabulary could always express this (pair_gate =
+        # "cz_fixed" is exactly the coupler-less pair), it just never said so.
+        "pairs_declared_not_built": _declared_pairs_not_built(spec, machine),
         # What was WIRED, never what was asked for. The old fallback reported
         # the spec's intent whenever nothing got wired — i.e. it read as a full
         # success exactly when the QDAC path had failed completely. `requested`

@@ -1,7 +1,8 @@
 <div class="table-header-row">
     <h2>Qubit Pairs <small class="muted">({{ total }})</small></h2>
     <div class="table-filter">
-        <input type="search" placeholder="Filter pairs..." autocomplete="off"
+        <input type="search" placeholder="{{ search_hint() }}" title="{{ search_title() }}"
+               aria-label="Filter pairs" autocomplete="off"
                oninput="filterTable(this, 'pairs-table')">
         <small id="pairs-table-filter-count" class="muted"></small>
     </div>

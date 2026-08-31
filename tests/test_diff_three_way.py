@@ -295,7 +295,7 @@ class Test4acRegressions:
         html = _get(env, url)
         assert "showing" in html and "of 400 differing keys" in html
         # the root container's count is the whole diff, not this page
-        m = re.search(r'<span class="dp-count" title="(\d+) differing keys inside', html)
+        m = re.search(r'<span class="dp-count" data-count="\d+" title="(\d+) differing keys inside', html)
         assert m and int(m.group(1)) == 400, m.group(0) if m else "no dp-count"
         # C2-22: and the tooltip says the count is not what this page lists
         assert "this page lists 300" in html
@@ -360,3 +360,66 @@ class Test4acRegressions:
         html = _get(env, url)
         assert "These 3 sources are identical" in html
         assert "These two are identical" not in html
+
+class TestSearchBox:
+    """docs/141 4ai: the diff had no search at all. The box is rendered by
+    BOTH row surfaces, the query survives in the URL, and the server keeps
+    filtering out of it -- the counts above the table must go on describing
+    the whole diff, not what someone typed."""
+
+    def test_the_pane_view_carries_the_box_and_what_it_needs(self, env):
+        html = _get(env, _url(env, view="panes"))
+        assert 'class="dp-search"' in html and 'class="dp-search-count' in html
+        # the client needs the page's own paging truth to be honest about it
+        assert 'data-more="0"' in html
+        # and each container's full count, to restore it when the box clears
+        assert 'class="dp-count" data-count=' in html
+
+    def test_the_list_view_carries_it_too(self, env):
+        html = _get(env, _url(env, view="list", three=False))
+        assert 'id="diff-list"' in html and 'class="dp-search"' in html
+
+    def test_the_query_comes_back_in_the_box_escaped(self, env):
+        html = _get(env, _url(env, view="panes") + "&q=" + quote('T1 <b>&"x"'))
+        assert 'value="T1 &lt;b&gt;&amp;&#34;x&#34;"' in html or \
+               'value="T1 &lt;b&gt;&amp;&quot;x&quot;"' in html, \
+            "the echoed query must be escaped, not reflected"
+        assert "<b>&" not in html.split('class="dp-search"')[1][:200]
+
+    def test_the_server_does_not_filter_by_it(self, env):
+        """A query that matches nothing must not change a single row: the
+        counts, the row set and the tree are the whole diff either way."""
+        plain = _get(env, _url(env, view="panes"))
+        typed = _get(env, _url(env, view="panes") + "&q=" + quote("nothing matches this"))
+        strip = lambda h: h.replace('value="nothing matches this"', 'value=""')   # noqa: E731
+        assert strip(typed) == plain
+
+    @staticmethod
+    def _wide(root: Path, name: str, base: float) -> str:
+        """A run whose state differs on many leaves, so the page can page."""
+        qs = root / name / "quam_state"
+        qs.mkdir(parents=True)
+        (qs / "state.json").write_text(json.dumps({
+            "qubits": {f"q{i}": {"T1": base + i, "f_01": 4.8e9 + base} for i in range(12)},
+            "active_qubit_names": [f"q{i}" for i in range(12)]}))
+        (qs / "wiring.json").write_text("{}")
+        return f"run:{qs}"
+
+    def test_the_paging_truth_is_the_real_remainder(self, env):
+        """data-more is what the search reports as unsearchable, so it has to
+        be the actual count of rows this page did not render."""
+        a = self._wide(env["root"], "w1", 1.0)
+        b = self._wide(env["root"], "w2", 2.0)
+        url = f"/diff?a={quote(a)}&b={quote(b)}&c={quote(env['cc'])}&tab=state&view=panes"
+        whole = _get(env, url)
+        n = whole.count('class="dp-row dp-leaf"')
+        assert n > 2, n
+        paged = _get(env, url + "&rows=2")
+        assert paged.count('class="dp-row dp-leaf"') == 2
+        assert 'data-more="%d"' % (n - 2) in paged
+        assert "Show %s more" % f"{n - 2:,}" in paged     # and the button agrees
+
+    def test_a_long_query_is_bounded(self, env):
+        html = _get(env, _url(env, view="panes") + "&q=" + "z" * 500)
+        assert 'value="' + "z" * 200 + '"' in html, "the echoed query is capped at 200 chars"
+

@@ -12,18 +12,25 @@
  * numeric cell is window.ValueDelta (docs/76), the one Δ implementation the
  * whole app shares.
  *
+ * docs/141 4ai (user): the search box the page never had. Same grammar as
+ * every other search in the app (window.SearchQuery — space = AND,
+ * standalone | = OR, docs/96), filtering the rows the page already holds.
+ * It serves the LIST view too, which had no search either.
+ *
  * Bundled with the /diff page ('compare' bundle, base.html). Idempotent per
  * #diff-panes element; re-armed on every htmx swap of the workbench.
  */
 (function () {
     'use strict';
 
+    function each(list, fn) { Array.prototype.forEach.call(list, fn); }
+
     function paint(root, base) {
         var n = parseInt(root.getAttribute('data-n') || '0', 10) || 0;
         if (base < 0 || base >= n) base = 0;
         root.setAttribute('data-base', String(base));
         var heads = root.querySelectorAll('.dp-pane-head');
-        Array.prototype.forEach.call(heads, function (th) {
+        each(heads, function (th) {
             th.classList.toggle('dp-base', parseInt(th.getAttribute('data-i'), 10) === base);
         });
         var rows = root.querySelectorAll('tr.dp-row');
@@ -84,21 +91,28 @@
 
     /* docs/141 4ab: the key tree. A container row (tr.dp-dir) toggles
        data-collapsed; a row is hidden exactly when ANY ancestor container is
-       collapsed (walk data-parent up through a path -> row map). Depth
-       buttons collapse every container at depth >= d. */
-    function applyVisibility(root) {
+       collapsed (walk data-parent up through a path -> row map) -- or, 4ai,
+       when the search filtered it out. Depth buttons collapse every container
+       at depth >= d. */
+    function rowMap(root) {
+        // A leaf that is ALSO a container on another side shares its path with
+        // its own dir row, and that dir row is the one that can be collapsed:
+        // keyed the other way round the walk would find the leaf, whose parent
+        // is its own path, and spin until the guard (4ab, fixed in 4ai).
         var byPath = {};
-        var rows = root.querySelectorAll('tr.dp-row');
-        // docs/141 4ac: a CONTAINER row always wins the map. The server gives
-        // every row a unique data-path now, but keep the rule: a duplicate key
-        // must never let a leaf shadow the container whose toggle owns it.
-        Array.prototype.forEach.call(rows, function (tr) {
-            var k = tr.getAttribute('data-path');
-            if (!byPath[k] || tr.classList.contains('dp-dir')) byPath[k] = tr;
+        each(root.querySelectorAll('tr.dp-row'), function (tr) {
+            var p = tr.getAttribute('data-path');
+            if (!byPath[p] || tr.classList.contains('dp-dir')) byPath[p] = tr;
         });
-        Array.prototype.forEach.call(rows, function (tr) {
-            var p = tr.getAttribute('data-parent'), hidden = false, guard = 0;
-            while (p && guard++ < 64) {
+        return byPath;
+    }
+    function applyVisibility(root) {
+        var byPath = rowMap(root);
+        var rows = root.querySelectorAll('tr.dp-row');
+        each(rows, function (tr) {
+            var hidden = tr.hasAttribute('data-nomatch');
+            var p = tr.getAttribute('data-parent'), guard = 0;
+            while (!hidden && p && guard++ < 64) {
                 var anc = byPath[p];
                 if (!anc || anc === tr) break;          // no such ancestor, or a self-loop
                 if (anc.hasAttribute('data-collapsed')) { hidden = true; break; }
@@ -106,21 +120,216 @@
             }
             tr.hidden = hidden;
         });
-        Array.prototype.forEach.call(root.querySelectorAll('tr.dp-dir'), function (tr) {
+        each(root.querySelectorAll('tr.dp-dir'), function (tr) {
             var t = tr.querySelector('.dp-toggle');
             var collapsed = tr.hasAttribute('data-collapsed');
             if (t) { t.setAttribute('aria-expanded', collapsed ? 'false' : 'true'); t.textContent = collapsed ? '▸' : '▾'; }
         });
     }
     function setDepth(root, depth) {
-        Array.prototype.forEach.call(root.querySelectorAll('tr.dp-dir'), function (tr) {
+        each(root.querySelectorAll('tr.dp-dir'), function (tr) {
             var d = parseInt(tr.getAttribute('data-depth'), 10) || 0;
             if (d >= depth) tr.setAttribute('data-collapsed', '1'); else tr.removeAttribute('data-collapsed');
         });
         applyVisibility(root);
-        Array.prototype.forEach.call(root.querySelectorAll('.dp-depth'), function (b) {
+        each(root.querySelectorAll('.dp-depth'), function (b) {
             b.classList.toggle('outline', parseInt(b.getAttribute('data-depth'), 10) !== depth);
         });
+    }
+
+    /* ------------------------------------------------------------------
+       docs/141 4ai — search.
+
+       Every row the page holds is already in the DOM, so the filter is
+       client-side and a keystroke costs no round trip. A leaf shows when
+       SearchQuery's AND-of-OR groups all match its haystack; a container
+       shows when a matching leaf is beneath it, and its count chip reports
+       how many of its differing keys matched. The haystack is the leaf's dot
+       path plus every pane's value in BOTH forms — the raw one (data-v) and
+       the grouped one on screen — so 7003542323 and 7,003,542,323 find the
+       same row. Values in panes are read whole: a row must never match on
+       evidence that is not on screen, and here every pane is.
+
+       A search auto-expands the containers on the way to a hit (a hit you
+       cannot see is not a hit) and restores the collapse state it found when
+       the box is cleared — unless the user collapsed something themselves
+       meanwhile, in which case their state wins and nothing is restored.
+
+       The query rides the URL (?q=) purely so a tab switch / picker change /
+       "Show more" comes back with the box still filled; the server never
+       filters by it (see routes.diff_view).
+       ------------------------------------------------------------------ */
+
+    function groupsOf(q) {
+        if (!q) return [];
+        return window.SearchQuery ? window.SearchQuery.groups(q) : [[q]];
+    }
+    function matchesHay(hay, grps) {
+        if (!grps.length) return true;
+        if (window.SearchQuery) return window.SearchQuery.matchesHay(hay, grps);
+        for (var i = 0; i < grps.length; i++) {
+            if (hay.indexOf(grps[i][0]) < 0) return false;
+        }
+        return true;
+    }
+    /** path + every value cell, raw and as rendered. Cached per row. */
+    function hayOf(tr, cellSel) {
+        if (tr._dpHay != null) return tr._dpHay;
+        var parts = [tr.getAttribute('data-path') || ''];
+        each(tr.querySelectorAll(cellSel), function (td) {
+            var raw = td.getAttribute('data-v');
+            if (raw != null) parts.push(raw);
+            parts.push(td.textContent || '');
+        });
+        tr._dpHay = parts.join(' ').toLowerCase().replace(/\s+/g, ' ');
+        return tr._dpHay;
+    }
+    function collapsedNow(root) {
+        var out = [];
+        each(root.querySelectorAll('tr.dp-dir[data-collapsed]'), function (tr) {
+            out.push(tr.getAttribute('data-path'));
+        });
+        return out;
+    }
+    function restoreCollapsed(root, paths) {
+        var want = {};
+        for (var i = 0; i < paths.length; i++) want[paths[i]] = true;
+        each(root.querySelectorAll('tr.dp-dir'), function (tr) {
+            if (want[tr.getAttribute('data-path')]) tr.setAttribute('data-collapsed', '1');
+            else tr.removeAttribute('data-collapsed');
+        });
+    }
+    function setCount(root, text, none, title) {
+        var el = root.querySelector('.dp-search-count');
+        if (!el) return;
+        el.textContent = text;
+        if (title) el.setAttribute('title', title); else el.removeAttribute('title');
+        el.classList.toggle('dp-search-none', !!none);
+    }
+    /** A filtered-to-nothing table is a header and blank space, which reads as
+        broken. Say it where the user is looking — under the table, not only
+        beside the box. */
+    function emptyNote(root, q, kind) {
+        var el = root._dpEmptyNote;
+        if (!el && !q) return;
+        if (!el) {
+            el = document.createElement('p');
+            el.className = 'muted dp-empty-note';
+            var anchor = root.querySelector('.diff-panes-scroll') || root.querySelector('table');
+            if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(el, anchor.nextSibling);
+            else root.appendChild(el);
+            root._dpEmptyNote = el;
+        }
+        el.hidden = !q;
+        el.textContent = q ? ('No ' + kind + ' matches "' + q + '" — the search reads key paths and the values on screen.') : '';
+    }
+    /** "· N more rows are not loaded" — the page is paged, and a search that
+        silently ignored the rest would be a lie. */
+    function moreNote(root) {
+        var more = parseInt(root.getAttribute('data-more') || '0', 10) || 0;
+        return more > 0 ? ' · ' + more.toLocaleString() + ' more not loaded' : '';
+    }
+
+    function filterPanes(root, q) {
+        q = (q == null ? '' : String(q)).trim();
+        var prev = root._dpQ || '';
+        root._dpQ = q;
+        var leaves = root.querySelectorAll('tr.dp-row.dp-leaf');
+        var dirs = root.querySelectorAll('tr.dp-row.dp-dir');
+        if (!q) {
+            each(leaves, function (tr) { tr.removeAttribute('data-nomatch'); });
+            each(dirs, function (tr) {
+                tr.removeAttribute('data-nomatch');
+                var c = tr.querySelector('.dp-count');
+                if (c && c.hasAttribute('data-count')) {
+                    var full = c.getAttribute('data-count');
+                    c.textContent = full;
+                    c.setAttribute('title', full + ' differing key' + (full === '1' ? '' : 's') + ' inside');
+                }
+            });
+            if (prev && root._dpRestore) restoreCollapsed(root, root._dpRestore);
+            root._dpRestore = null;
+            applyVisibility(root);
+            setCount(root, '', false);
+            emptyNote(root, '', 'key');
+            return;
+        }
+        if (!prev) root._dpRestore = collapsedNow(root);
+        var grps = groupsOf(q.toLowerCase());
+        var byPath = rowMap(root);
+        var hits = {}, shown = 0;
+        each(leaves, function (tr) {
+            if (!matchesHay(hayOf(tr, 'td.dp-cell'), grps)) {
+                tr.setAttribute('data-nomatch', '1');
+                return;
+            }
+            tr.removeAttribute('data-nomatch');
+            shown++;
+            var p = tr.getAttribute('data-parent'), guard = 0;
+            while (p && guard++ < 64) {
+                hits[p] = (hits[p] || 0) + 1;
+                var anc = byPath[p];
+                p = anc ? anc.getAttribute('data-parent') : '';
+            }
+        });
+        each(dirs, function (tr) {
+            var path = tr.getAttribute('data-path');
+            var n = hits[path] || 0;
+            if (n) {
+                tr.removeAttribute('data-nomatch');
+                tr.removeAttribute('data-collapsed');     // a hit you cannot see is not a hit
+            } else {
+                tr.setAttribute('data-nomatch', '1');
+            }
+            var c = tr.querySelector('.dp-count');
+            if (c && c.hasAttribute('data-count')) {
+                c.textContent = String(n);
+                c.setAttribute('title', n + ' of ' + c.getAttribute('data-count') + ' differing keys match');
+            }
+        });
+        applyVisibility(root);
+        setCount(root,
+            shown ? (shown.toLocaleString() + ' of ' + leaves.length.toLocaleString() + ' keys' + moreNote(root))
+                  : ('no key matches' + moreNote(root)),
+            !shown,
+            shown ? '' : 'Nothing on this tab matches — the search reads key paths and the values in every pane.');
+        emptyNote(root, shown ? '' : q, 'key');
+    }
+
+    /** The LIST view: flat rows, same grammar, no tree to keep. */
+    function filterList(root, q) {
+        q = (q == null ? '' : String(q)).trim();
+        root._dpQ = q;
+        var rows = root.querySelectorAll('table.diff-wb-list tbody > tr');
+        var grps = groupsOf(q.toLowerCase());
+        var shown = 0;
+        each(rows, function (tr) {
+            var ok = !q || matchesHay(hayOf(tr, 'td.diff-list-path, td.diff-list-a, td.diff-list-b'), grps);
+            tr.hidden = !ok;
+            if (ok) shown++;
+        });
+        setCount(root, q
+            ? (shown ? shown.toLocaleString() + ' of ' + rows.length.toLocaleString() + ' rows' + moreNote(root)
+                     : 'no row matches' + moreNote(root))
+            : '', !!q && !shown);
+        emptyNote(root, (q && !shown) ? q : '', 'row');
+    }
+
+    function armSearch(root, filter) {
+        var box = root.querySelector('.dp-search');
+        if (!box) return;
+        root.addEventListener('input', function (ev) {
+            if (!ev.target || !ev.target.classList || !ev.target.classList.contains('dp-search')) return;
+            filter(root, ev.target.value);
+        });
+        root.addEventListener('keydown', function (ev) {
+            if (ev.key !== 'Escape' || !ev.target.classList || !ev.target.classList.contains('dp-search')) return;
+            if (!ev.target.value) return;         // an empty box: let Escape be the app's
+            ev.stopPropagation();
+            ev.target.value = '';
+            filter(root, '');
+        });
+        if (box.value) filter(root, box.value);   // a query carried in on the URL
     }
 
     function arm(root) {
@@ -134,6 +343,7 @@
                 if (tr) {
                     if (tr.hasAttribute('data-collapsed')) tr.removeAttribute('data-collapsed');
                     else tr.setAttribute('data-collapsed', '1');
+                    root._dpRestore = null;        // the user's own state wins over the search's
                     applyVisibility(root);
                 }
                 return;
@@ -141,6 +351,7 @@
             var dep = ev.target && ev.target.closest ? ev.target.closest('.dp-depth') : null;
             if (dep && root.contains(dep)) {
                 ev.preventDefault();
+                root._dpRestore = null;
                 setDepth(root, parseInt(dep.getAttribute('data-depth'), 10) || 0);
                 return;
             }
@@ -152,27 +363,40 @@
             paint(root, i);
             syncUrl(i);
         });
+        armSearch(root, filterPanes);
+    }
+
+    function armList(root) {
+        if (!root || root._dpArmed) return;
+        root._dpArmed = true;
+        armSearch(root, filterList);
     }
 
     function armAll() {
-        var roots = document.querySelectorAll('#diff-panes');
-        Array.prototype.forEach.call(roots, arm);
+        each(document.querySelectorAll('#diff-panes'), arm);
+        each(document.querySelectorAll('#diff-list'), armList);
     }
 
-    window.DiffPanes = { arm: arm, armAll: armAll, paint: paint, applyVisibility: applyVisibility, setDepth: setDepth };
+    window.DiffPanes = { arm: arm, armAll: armAll, paint: paint, applyVisibility: applyVisibility,
+                         setDepth: setDepth, filter: filterPanes, filterList: filterList };
 
     // Every /diff request issued from inside the workbench (tab strip, view
-    // toggle, show-more) carries the CURRENT baseline, whatever its button
-    // was rendered with.
+    // toggle, show-more) carries the CURRENT baseline and search, whatever
+    // its button was rendered with.
     document.addEventListener('htmx:configRequest', function (ev) {
         var d = ev.detail || {};
         if (!d.path || d.path.indexOf('/diff') !== 0 || !d.elt) return;
         var root = document.getElementById('diff-root');
         if (!root || !root.contains(d.elt)) return;
         var base = root.getAttribute('data-base');
-        if (base == null || base === '') return;
-        if (/[?&]base=\d+/.test(d.path)) d.path = d.path.replace(/([?&])base=\d+/, '$1base=' + base);
-        if (d.parameters && d.parameters.base != null) d.parameters.base = base;
+        if (base != null && base !== '') {
+            if (/[?&]base=\d+/.test(d.path)) d.path = d.path.replace(/([?&])base=\d+/, '$1base=' + base);
+            if (d.parameters && d.parameters.base != null) d.parameters.base = base;
+        }
+        // q travels as a PARAMETER only (no button's URL carries one), so
+        // htmx appends it exactly once.
+        var box = root.querySelector('.dp-search');
+        if (box && d.parameters) d.parameters.q = box.value || '';
     });
 
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', armAll);
