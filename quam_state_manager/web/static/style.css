@@ -5114,6 +5114,9 @@ input.tree-edit-input {
     margin-left: 0.6em; padding: 0.04rem 0.45rem; font-size: 0.76rem; line-height: 1.5;
     --pico-font-weight: 600;
 }
+/* docs/147: caption for a positionally-paired figure cell (mixed rows). */
+.diff-fig-cellname { font-size: 0.72em; color: var(--pico-muted-color); margin-bottom: 2px; font-family: var(--font-mono); }
+
 .tree-copy-pill {
     position: fixed; bottom: 1.1rem; left: 50%; transform: translateX(-50%);
     z-index: 1200; display: flex; align-items: center; gap: 0.6rem;

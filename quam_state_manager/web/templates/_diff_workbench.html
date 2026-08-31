@@ -91,13 +91,17 @@
       {% for col in payload.cols %}
       <div class="compare-figure-run-label" title="{{ col.ref }}">{{ col.slot | upper }} · {{ col.label }}{% if col.why %} <span class="muted">({{ col.why }})</span>{% endif %}</div>
       {% endfor %}
-      {% for name in payload.names %}
-      <div class="diff-fig-name"><code>{{ name }}</code></div>
+      {% for row in payload.rows %}
+      <div class="diff-fig-name">{% if row.label %}<code>{{ row.label }}</code>{% endif %}</div>
       {% for col in payload.cols %}
+      {% set cn = row.cells[col.slot] %}
       <div class="compare-figure-cell">
-        {% if col.has[name] %}
-        <img src="/diff/fig?ref={{ col.ref | urlencode }}&amp;name={{ name | urlencode }}"
-             alt="{{ col.slot | upper }} · {{ name }}" loading="lazy" onclick="toggleFigureZoom(this)">
+        {% if cn %}
+        {# docs/147: a positionally-paired row holds DIFFERENT figures --
+           each cell names its own file so nothing pretends to match #}
+        {% if row.mixed %}<div class="diff-fig-cellname"><code>{{ cn }}</code></div>{% endif %}
+        <img src="/diff/fig?ref={{ col.ref | urlencode }}&amp;name={{ cn | urlencode }}"
+             alt="{{ col.slot | upper }} · {{ cn }}" loading="lazy" onclick="toggleFigureZoom(this)">
         {% else %}
         <div class="compare-figure-na">—</div>
         {% endif %}

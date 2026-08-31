@@ -14551,22 +14551,51 @@ def _diff_run_figures(src) -> tuple[list[str], str]:
 
 
 def _diff_figures_payload(srcs: list) -> dict:
-    """The figures tab (customer 2026-08-27): one column per source, one row
-    per figure NAME (union, first-seen order), a cell per (figure, source) --
-    the image when that run has it, an honest blank when it does not."""
-    cols, order = [], []
+    """The figures tab (customer 2026-08-27, re-paired 2026-09-01): one
+    column per source, one ROW per figure PAIRING, a cell per (row, source).
+
+    docs/147 pairing: a name shared by >=2 sources pairs BY NAME (the
+    same-experiment case -- an absent figure stays an honest blank, never a
+    substitute); every remaining figure then pairs POSITIONALLY, i-th
+    leftover beside i-th leftover. The customer compared two DIFFERENT
+    experiments and got A's column of figures followed by B's column below
+    it -- disjoint name sets never shared a row. Side by side is the entire
+    point of pressing Compare, so a mixed row shows both images with each
+    cell captioned by its own file name (``mixed`` drives the caption)."""
+    cols = []
     for slot, src in zip(_DIFF_SLOTS, srcs):
         names, why = _diff_run_figures(src)
-        for n in names:
+        cols.append({"slot": slot, "ref": src.ref, "label": src.label,
+                     "names": names, "why": why})
+    seen: dict = {}
+    order: list = []
+    for c in cols:
+        for n in c["names"]:
+            seen[n] = seen.get(n, 0) + 1
             if n not in order:
                 order.append(n)
-        cols.append({"slot": slot, "ref": src.ref, "label": src.label,
-                     "has": {n: True for n in names}, "why": why})
     if not order:
         return {"ok": False, "unavailable": "No figures on any side -- "
                 + "; ".join(f"{c['slot'].upper()}: {c['why']}" for c in cols),
                 "counts": {"changed": 0, "added": 0, "removed": 0, "same": 0, "total": 0}}
-    return {"ok": True, "figures": True, "names": order, "cols": cols,
+    matched = [n for n in order if seen[n] >= 2] if len(cols) >= 2 else []
+    rows = []
+    for n in matched:
+        rows.append({"label": n, "mixed": False,
+                     "cells": {c["slot"]: (n if n in c["names"] else None)
+                               for c in cols}})
+    leftovers = {c["slot"]: [n for n in c["names"] if n not in matched]
+                 for c in cols}
+    for i in range(max((len(v) for v in leftovers.values()), default=0)):
+        cells = {c["slot"]: (leftovers[c["slot"]][i]
+                             if i < len(leftovers[c["slot"]]) else None)
+                 for c in cols}
+        present = sorted({v for v in cells.values() if v})
+        rows.append({"label": present[0] if len(present) == 1 else "",
+                     "mixed": len(present) > 1, "cells": cells})
+    return {"ok": True, "figures": True, "rows": rows,
+            "cols": [{"slot": c["slot"], "ref": c["ref"], "label": c["label"],
+                      "why": c["why"]} for c in cols],
             "counts": {"changed": 0, "added": 0, "removed": 0, "same": 0, "total": 0}}
 
 

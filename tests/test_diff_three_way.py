@@ -143,21 +143,46 @@ class TestRowsN:
 
 
 class TestFiguresTab:
-    def test_one_column_per_run_one_row_per_figure(self, env):
+    def test_shared_names_pair_by_name_leftovers_pair_positionally(self, env):
+        """docs/147: fig_a (all three runs) pairs BY NAME; fig_b (A only) and
+        fig_c (C only) share ONE positional row, each cell captioned with its
+        own file name -- never a column of A's figures followed by B's."""
         html = _get(env, _url(env, tab="figures"))
         assert "diff-wb-figs" in html
         assert "repeat(3, 1fr)" in html
-        # union of names, first-seen order: A's two, then C's extra
-        i_a, i_b, i_c = (html.index("<code>fig_a.png</code>"), html.index("<code>fig_b.png</code>"),
-                         html.index("<code>fig_c.png</code>"))
-        assert i_a < i_b < i_c
-        # a run that lacks the figure gets a blank cell, never a substitute
+        # every image still renders exactly once
         assert html.count('src="/diff/fig?') == 2 + 1 + 2
-        assert html.count('class="compare-figure-na"') == (3 * 3) - 5
+        # 2 rows: the name-matched fig_a + ONE mixed positional row
+        assert html.count('class="diff-fig-name"') == 2
+        # the mixed row's cells carry their own captions
+        assert html.count('class="diff-fig-cellname"') == 2
+        assert '<code>fig_b.png</code>' in html and '<code>fig_c.png</code>' in html
+        # honest blank only where a row truly has no figure for that source
+        assert html.count('class="compare-figure-na"') == 1
 
     def test_two_way_figures(self, env):
         html = _get(env, _url(env, tab="figures", three=False))
         assert "repeat(2, 1fr)" in html and html.count('src="/diff/fig?') == 3
+
+    def test_disjoint_experiments_still_sit_side_by_side(self, env, tmp_path):
+        """The customer's exact case: two DIFFERENT experiments -- zero shared
+        figure names -- must still render pairwise rows, not two stacked
+        columns."""
+        d1 = _run(tmp_path, "dx1", 1e-5, ["alpha.png", "beta.png"])
+        d2 = _run(tmp_path, "dx2", 2e-5, ["gamma.png", "delta.png", "eps.png"])
+        html = _get(env, f"/diff?a={quote(d1)}&b={quote(d2)}&tab=figures&view=list")
+        # 3 rows (max of the two counts), every one positional/mixed
+        assert html.count('class="diff-fig-name"') == 3
+        assert html.count('src="/diff/fig?') == 5
+        assert html.count('class="compare-figure-na"') == 1   # B's 3rd vs A's absent
+        # side-by-side: A's first figure and B's first figure share the SAME
+        # row (names are folder-sorted, so B's first is delta) -- the exact
+        # opposite of the reported stacked-columns rendering
+        first_row = html.split('class="diff-fig-name"')[1]
+        assert "alpha.png" in first_row and "delta.png" in first_row
+        # the two MIXED rows caption each cell; the last row holds only B's
+        # third figure, so it names itself in the row label instead
+        assert html.count('class="diff-fig-cellname"') == 4
 
     def test_figures_are_the_runs_own_files(self, env):
         r = env["c"].get(f"/diff/fig?ref={quote(env['a'])}&name=fig_a.png")
