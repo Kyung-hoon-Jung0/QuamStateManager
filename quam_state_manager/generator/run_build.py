@@ -1076,7 +1076,7 @@ def _allocate_qdac_triggers(spec: dict, instruments) -> tuple[dict, list, dict]:
     # docs/135 ⑤ — a PINNED trigger port wins over allocation. The auto pass
     # below gives every biased qubit its own dedicated port; a real bench
     # drives one OPX digital output into one QDAC ext trigger INPUT and shares
-    # it across every qubit armed on that input (the CQT 20Q chip: 11 qubits
+    # it across every qubit armed on that input (the reference 20Q chip: 11 qubits
     # on 4 ports, port N ↔ extN). Re-allocating that from scratch on a
     # re-generate would hand the lab a chip expecting 11 cables where 4 are
     # plugged in — so regen_spec carries the existing pins and they are used
