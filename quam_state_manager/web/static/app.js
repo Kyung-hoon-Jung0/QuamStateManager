@@ -11968,6 +11968,10 @@ function _swapPendingTray(html) {
     // drawer state + clear stale sidebar pending markers here too (audit P1) — all 7
     // JS edit callers funnel through this one place.
     if (window._restoreTrayState) window._restoreTrayState();
+    // docs/146b: a tray that just went CLEAN retires every pending-edit
+    // marker (red boxes, tree tints) — the patch-first rounds removed the
+    // full re-render that used to do this implicitly.
+    if (window.PendingMarkers) window.PendingMarkers.clearIfTrayClean();
     // audit-r10: same reason — re-evaluate the LiveEditUndo ↶ visibility
     // (the fresh tray arrives with the button display:none).
     if (window.LiveEditUndo) window.LiveEditUndo._updateTrayBtn();
@@ -14463,6 +14467,60 @@ if (document.readyState === 'loading') {
  * justify a loading indicator. Add prefixes to SLOW_PREFIXES if
  * other routes warrant the same treatment.
  * ────────────────────────────────────────────────────────────────── */
+/* ──────────────────────────────────────────────────────────────────
+ * docs/146b — pending-edit markers follow the tray, not the render.
+ *
+ * `bulk-cell-modified` (red box, both grids), `tree-row-pending` and
+ * `av-row-dirty` all mean ONE thing: an unapplied change-log entry.
+ * They used to be cleared by the full re-render after a sync/apply —
+ * which the patch-first rounds removed, so a clean apply left the red
+ * boxes standing under a "No differences" verdict (customer report).
+ * The server-rendered tray is the single truth: when #pending-tray
+ * lands showing data-change-count="0", no marker can legitimately
+ * remain. Typed-but-uncommitted text (`dirty`) is NOT touched — it
+ * never entered the change log.
+ * ────────────────────────────────────────────────────────────────── */
+window.PendingMarkers = (function () {
+    function clearAll() {
+        document.querySelectorAll('.bulk-cell-modified').forEach(function (c) {
+            c.classList.remove('bulk-cell-modified');
+            c.removeAttribute('data-baseline');
+            var td = c.closest('.bulk-td');
+            var old = td && td.querySelector('.bulk-ba-old');
+            if (old) old.textContent = '';
+        });
+        document.querySelectorAll('.tree-row-pending').forEach(function (r) {
+            r.classList.remove('tree-row-pending');
+        });
+        document.querySelectorAll('.av-row-dirty').forEach(function (r) {
+            r.classList.remove('av-row-dirty');
+        });
+    }
+    function clearIfTrayClean() {
+        var t = document.getElementById('pending-tray');
+        if (!t) return false;
+        var n = parseInt(t.getAttribute('data-change-count') || '', 10);
+        if (n !== 0) return false;          // NaN (conflict tray) or pending → keep
+        clearAll();
+        return true;
+    }
+    // Every way a fresh tray reaches the DOM: declarative hx-post (the tray
+    // Apply button, auto-apply), OOB swaps (stage / apply-to-chip responses),
+    // and the JS _swapPendingTray path (which calls this explicitly).
+    document.addEventListener('htmx:afterSwap', function (evt) {
+        var el = evt.detail && evt.detail.target;
+        if (!el) return;
+        if (el.id === 'pending-tray' || (el.querySelector && el.querySelector('#pending-tray'))) {
+            clearIfTrayClean();
+        }
+    });
+    document.addEventListener('htmx:oobAfterSwap', function (evt) {
+        var el = evt.detail && evt.detail.target;
+        if (el && el.id === 'pending-tray') clearIfTrayClean();
+    });
+    return { clearAll: clearAll, clearIfTrayClean: clearIfTrayClean };
+})();
+
 (function setupSlowRouteLoader() {
     var SLOW_PREFIXES = ['/param-history', '/datasets',
         // docs/103: measured slow-on-big-chips surfaces — /bulk is the
