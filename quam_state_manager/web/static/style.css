@@ -4579,6 +4579,32 @@ a.topo-health-tile:hover { background: var(--pico-card-sectioning-background-col
 #ov-tile-popover .ov-pop-actions .btn-sm { width: auto; margin: 0; }
 #ov-tile-popover .ov-pop-note { margin: 0 0 0.5rem; }
 
+/* docs/151: the per-entity hover popup — every qubit/pair beside its value,
+   heat dot from the tile's own range. pointer-events none: it never blocks
+   the kebab, never flickers. */
+#ov-hover-pop {
+    position: fixed; z-index: 290; pointer-events: none;
+    max-width: 400px; padding: 0.5rem 0.65rem;
+    background: var(--pico-card-background-color, var(--pico-background-color));
+    border: 1px solid var(--pico-muted-border-color); border-radius: 8px;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.28); font-size: 0.78em;
+}
+#ov-hover-pop.ov-hover-wide { width: 380px; }
+.ov-hover-title {
+    font-weight: 600; color: var(--pico-muted-color); margin-bottom: 0.35rem;
+    text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.85em;
+}
+.ov-hover-grid { column-width: 9.5rem; column-gap: 1.1rem; }
+.ov-hover-item {
+    display: flex; align-items: baseline; gap: 0.35rem;
+    white-space: nowrap; break-inside: avoid; line-height: 1.5;
+}
+.ov-hover-id { color: var(--pico-muted-color); min-width: 2.4rem; }
+.ov-hover-val { font-family: monospace; font-weight: 600; margin-left: auto; }
+.ov-hover-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; align-self: center; }
+.ov-hover-dot-na { background: var(--pico-muted-border-color); }
+.ov-hover-more { margin-top: 0.3rem; color: var(--pico-muted-color); }
+
 /* ── Qubit heatmap grid ───────────────────────────────────────────── */
 .topo-heatmap-grid {
     display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--topo-heatmap-cell-min), 1fr));

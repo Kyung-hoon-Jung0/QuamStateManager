@@ -572,7 +572,11 @@ window.ChipStatus.mount = function (opts) {
 
         // Per-pair best value for a 2Q metric, scanning each edge's gate_fidelities.
         // value is set server-side; average_gate_fidelity is the fallback.
-        function collect2Q(match) {
+        function _pairId(e) { return e.pair_id || (e.source + '-' + e.target); }
+        // docs/151: the E-variants carry WHO each best value belongs to (the
+        // hover list); the value-only forms are derived from them, so the
+        // aggregates cannot drift from the listed entries.
+        function collect2QE(match) {
             var out = [];
             topo.edges.forEach(function(e) {
                 if (!e.gate_fidelities) return;
@@ -583,13 +587,14 @@ window.ChipStatus.mount = function (opts) {
                           : typeof gf.average_gate_fidelity === 'number' ? gf.average_gate_fidelity : null;
                     if (v != null && (best == null || v > best)) best = v;
                 });
-                if (best != null) out.push(best);
+                if (best != null) out.push({ id: _pairId(e), v: best });
             });
             return out;
         }
+        function collect2Q(match) { return collect2QE(match).map(function(x) { return x.v; }); }
         // Per-pair best of an arbitrary numeric FIELD on matching rows (used for
         // the docs/138 run-derived values: derived_gate_fidelity + the divisor).
-        function collect2QField(match, field) {
+        function collect2QFieldE(match, field) {
             var out = [];
             topo.edges.forEach(function(e) {
                 if (!e.gate_fidelities) return;
@@ -599,9 +604,12 @@ window.ChipStatus.mount = function (opts) {
                     var v = typeof gf[field] === 'number' ? gf[field] : null;
                     if (v != null && (best == null || v > best)) best = v;
                 });
-                if (best != null) out.push(best);
+                if (best != null) out.push({ id: _pairId(e), v: best });
             });
             return out;
+        }
+        function collect2QField(match, field) {
+            return collect2QFieldE(match, field).map(function(x) { return x.v; });
         }
         function nodeAgg(key) { return computeAggregates(topo.nodes.map(function(n) { return _mv(n, key); })); }
         function pct(v) { return fmtPct(v, 2) + '%'; }
@@ -690,7 +698,7 @@ window.ChipStatus.mount = function (opts) {
         var irbAgg = computeAggregates(collect2Q(isIRB));
         // Per-edge Clifford-equivalent of the IRB gate error: epc = epg x divisor
         // (the same identity fidelity.py uses in the other direction).
-        var irbEpcF = [];
+        var irbEpcE = [];
         topo.edges.forEach(function(e) {
             if (!e.gate_fidelities) return;
             var bestF = null, div = null;
@@ -702,9 +710,9 @@ window.ChipStatus.mount = function (opts) {
                 }
                 if (typeof gf.average_gates_per_clifford === 'number') div = gf.average_gates_per_clifford;
             });
-            if (bestF != null && div) irbEpcF.push(1 - (1 - bestF) * div);
+            if (bestF != null && div) irbEpcE.push({ id: _pairId(e), v: 1 - (1 - bestF) * div });
         });
-        var irbEpcAgg = computeAggregates(irbEpcF);
+        var irbEpcAgg = computeAggregates(irbEpcE.map(function(x) { return x.v; }));
 
         // Four RB tiles (user-directed, docs/139 follow-up): each protocol
         // shows BOTH its measured number and the one converted through the
@@ -728,7 +736,7 @@ window.ChipStatus.mount = function (opts) {
         }).length;
         // 2Q gate length (ns): the edge's best gate's flux-pulse length,
         // falling back to the first gate that states one.
-        var gateLens = [];
+        var gateLenE = [];
         topo.edges.forEach(function(e) {
             var gd = e.gate_details || [], pick = null;
             gd.forEach(function(g) {
@@ -736,9 +744,9 @@ window.ChipStatus.mount = function (opts) {
                 if (e.best_gate && g.name === e.best_gate) pick = g.length;
                 else if (pick == null) pick = g.length;
             });
-            if (pick != null) gateLens.push(pick);
+            if (pick != null) gateLenE.push({ id: _pairId(e), v: pick });
         });
-        var lenAgg = computeAggregates(gateLens);
+        var lenAgg = computeAggregates(gateLenE.map(function(x) { return x.v; }));
         function nsF(v) { return (Math.round(v * 10) / 10) + ' ns'; }
         // Calibration freshness: node last_calibrated + edge cz timestamps.
         var stamps = [];
@@ -834,6 +842,28 @@ window.ChipStatus.mount = function (opts) {
             _tid('t2ramsey', metricTile('T2 Ramsey', nodeAgg('T2ramsey'), us, tRange, 'T2ramsey', _ovStat('t2ramsey')))
         ];
 
+        // docs/151: the hover popup's per-entity lists -- the same entries
+        // the aggregates were computed FROM, keyed by tile id. Composite
+        // tiles (Chip Size, coverage, spec, age) have no per-entity value
+        // and register nothing, so they show no popup.
+        function nodeEntries(key) {
+            return topo.nodes.map(function(n) { return { id: n.id, v: _mv(n, key) }; });
+        }
+        _ovEntries = {
+            gate1q:   { kind: 'qubit', fmt: pct, range: fidRange, entries: nodeEntries('gate_fidelity_avg') },
+            ro_ge:    { kind: 'qubit', fmt: pct, range: roRange,  entries: nodeEntries('assignment_fidelity') },
+            ro_gef:   { kind: 'qubit', fmt: pct, range: roRange,  entries: nodeEntries('assignment_fidelity_gef') },
+            srb:      { kind: 'pair',  fmt: pct, range: fidRange, entries: collect2QE(isSRB) },
+            srb_gate: { kind: 'pair',  fmt: pct, range: fidRange, entries: collect2QFieldE(isSRB, 'derived_gate_fidelity') },
+            irb:      { kind: 'pair',  fmt: pct, range: fidRange, entries: collect2QE(isIRB) },
+            irb_cliff:{ kind: 'pair',  fmt: pct, range: fidRange, entries: irbEpcE },
+            gate2q:   { kind: 'pair',  fmt: pct, range: [0.95, 0],
+                        entries: topo.edges.map(function(e) { return { id: _pairId(e), v: e.cz_fidelity }; }) },
+            gate2q_len: { kind: 'pair', fmt: nsF, range: null, entries: gateLenE },
+            t1:       { kind: 'qubit', fmt: us, range: tRange, entries: nodeEntries('T1') },
+            t2ramsey: { kind: 'qubit', fmt: us, range: tRange, entries: nodeEntries('T2ramsey') }
+        };
+
         // docs/150: apply the stored preferences -- drop removed tiles, then
         // append user-added ones. With nothing stored this is a no-op.
         tiles = tiles.filter(Boolean).filter(function(t) {
@@ -841,7 +871,16 @@ window.ChipStatus.mount = function (opts) {
         });
         ovPrefs.added.forEach(function(a, i) {
             var t = _ovCustomTile(a.key, a.stat);
-            if (t) { t.id = 'custom:' + i; t.custom = true; tiles.push(t); }
+            if (t) {
+                t.id = 'custom:' + i; t.custom = true; tiles.push(t);
+                _ovEntries[t.id] = {
+                    kind: a.key === 'cz_fidelity' ? 'pair' : 'qubit',
+                    fmt: _ovFmtFor(a.key), range: _ovRangeFor(a.key),
+                    entries: a.key === 'cz_fidelity'
+                        ? topo.edges.map(function(e) { return { id: _pairId(e), v: e.cz_fidelity }; })
+                        : nodeEntries(a.key)
+                };
+            }
         });
 
         var html = '';
@@ -864,6 +903,7 @@ window.ChipStatus.mount = function (opts) {
         });
         html += '<div class="topo-card ov-add-tile" id="ov-add-tile" role="button" tabindex="0" title="Add a panel over any metric">+ Add panel</div>';
         container.innerHTML = html;
+        _ovHideHover();
         _ovRefreshNote(ovPrefs);
         _ovWire(container);
     }
@@ -902,6 +942,7 @@ window.ChipStatus.mount = function (opts) {
         if ((topo.edges || []).length) seen['cz_fidelity'] = 1;
         return Object.keys(seen).sort();
     }
+    var _ovScrollBound = false;
     function _ovWire(container) {
         if (container.dataset.ovWired) return;
         container.dataset.ovWired = '1';
@@ -911,6 +952,66 @@ window.ChipStatus.mount = function (opts) {
             var add = ev.target.closest ? ev.target.closest('#ov-add-tile') : null;
             if (add) { ev.stopPropagation(); _ovOpenPopover(add, null); }
         });
+        // docs/151: hovering a tile lists its entities; leaving hides.
+        container.addEventListener('mouseover', function(ev) {
+            var tile = ev.target.closest ? ev.target.closest('.topo-card[data-tile-id]') : null;
+            if (tile) _ovShowHover(tile, tile.getAttribute('data-tile-id'));
+            else _ovHideHover();
+        });
+        container.addEventListener('mouseleave', function() { _ovHideHover(); });
+        if (!_ovScrollBound) {
+            _ovScrollBound = true;
+            window.addEventListener('scroll', _ovHideHover, true);
+        }
+    }
+
+    // ── docs/151: the per-entity hover popup ───────────────────────────────
+    var _ovEntries = {};
+    var _ovHoverId = null;
+    function _ovHideHover() {
+        _ovHoverId = null;
+        var p = document.getElementById('ov-hover-pop');
+        if (p) p.remove();
+    }
+    function _ovShowHover(tileEl, tileId) {
+        if (_ovHoverId === tileId) return;
+        _ovHideHover();
+        var d = _ovEntries[tileId];
+        if (!d || !d.entries || !d.entries.length) return;
+        if (!d.entries.some(function(x) { return typeof x.v === 'number'; })) return;
+        _ovHoverId = tileId;
+        var list = d.entries.slice().sort(function(a, b) {
+            var av = typeof a.v === 'number' ? a.v : -Infinity;
+            var bv = typeof b.v === 'number' ? b.v : -Infinity;
+            return bv - av;
+        });
+        var CAP = 48;
+        var more = list.length > CAP ? list.length - CAP : 0;
+        var title = ((tileEl.querySelector('.topo-card-title') || {}).textContent || '')
+            .replace(/[\u2191\u2193]/g, '').trim();
+        var rows = list.slice(0, CAP).map(function(x) {
+            var num = typeof x.v === 'number';
+            var dot = (num && d.range)
+                ? '<span class="ov-hover-dot" style="background:' + cardColor(x.v, d.range) + '"></span>'
+                : '<span class="ov-hover-dot ov-hover-dot-na"></span>';
+            return '<span class="ov-hover-item">' + dot
+                 + '<span class="ov-hover-id">' + _esc(x.id) + '</span>'
+                 + '<span class="ov-hover-val">' + (num ? d.fmt(x.v) : '\u2014') + '</span></span>';
+        }).join('');
+        var pop = document.createElement('div');
+        pop.id = 'ov-hover-pop';
+        if (list.length > 10) pop.className = 'ov-hover-wide';
+        pop.innerHTML = '<div class="ov-hover-title">' + _esc(title) + ' \u00b7 per ' + d.kind + '</div>'
+            + '<div class="ov-hover-grid">' + rows + '</div>'
+            + (more ? '<div class="ov-hover-more">\u2026and ' + more + ' more</div>' : '');
+        document.body.appendChild(pop);
+        var r = tileEl.getBoundingClientRect ? tileEl.getBoundingClientRect() : { top: 0, bottom: 0, left: 0 };
+        var vh = window.innerHeight || 800, vw = window.innerWidth || 1200;
+        var h = pop.offsetHeight || 160, w = pop.offsetWidth || 260;
+        var top = r.bottom + 6;
+        if (top + h > vh - 8) top = Math.max(8, r.top - h - 6);
+        pop.style.top = top + 'px';
+        pop.style.left = Math.max(8, Math.min(r.left, vw - w - 8)) + 'px';
     }
     function _ovDocClose(ev) {
         var p = document.getElementById('ov-tile-popover');
@@ -928,6 +1029,7 @@ window.ChipStatus.mount = function (opts) {
     };
     function _ovOpenPopover(anchor, tileId) {
         _ovClosePopover();
+        _ovHideHover();
         var prefs = _ovLoad();
         var isAdd = tileId == null;
         var isCustom = !!tileId && tileId.indexOf('custom:') === 0;

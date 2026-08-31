@@ -198,6 +198,37 @@ function stored(win) { return win.localStorage.getItem('quam_overview_tiles_v1')
     ok(win.document.getElementById('ov-custom-note').hidden === true, 'C5: note hidden again');
   }
 
+  // C6 (docs/151): hovering a metric tile lists every entity with its value
+  // (desc), a pair tile lists pairs, a composite tile shows nothing, and
+  // leaving the tile strip hides the popup.
+  {
+    const win = makeWorld();
+    mount(win);
+    const cont = win.document.getElementById('topo-overview-tiles');
+    tileById(win, 't1').dispatchEvent(new win.MouseEvent('mouseover', { bubbles: true }));
+    const pop = win.document.getElementById('ov-hover-pop');
+    ok(!!pop, 'C6: hover opens the per-entity popup');
+    ok(/per qubit/.test(pop.textContent), 'C6: titled per qubit');
+    const ids = Array.prototype.map.call(pop.querySelectorAll('.ov-hover-id'),
+      function (x) { return x.textContent; });
+    ok(JSON.stringify(ids) === JSON.stringify(['q3', 'q2', 'q1']),
+      'C6: qubits sorted by value desc (got ' + JSON.stringify(ids) + ')');
+    const vals = Array.prototype.map.call(pop.querySelectorAll('.ov-hover-val'),
+      function (x) { return x.textContent; });
+    ok(/60\.0/.test(vals[0]) && /10\.0/.test(vals[2]), 'C6: values listed beside ids');
+    tileById(win, 'gate2q').dispatchEvent(new win.MouseEvent('mouseover', { bubbles: true }));
+    const pop2 = win.document.getElementById('ov-hover-pop');
+    ok(!!pop2 && /per pair/.test(pop2.textContent) && /q1-q2/.test(pop2.textContent)
+       && /97\.00/.test(pop2.textContent),
+      'C6: a pair tile lists pairs with values');
+    tileById(win, 'chip_size').dispatchEvent(new win.MouseEvent('mouseover', { bubbles: true }));
+    ok(!win.document.getElementById('ov-hover-pop'),
+      'C6: a composite tile shows no popup (and hides the previous one)');
+    tileById(win, 't1').dispatchEvent(new win.MouseEvent('mouseover', { bubbles: true }));
+    cont.dispatchEvent(new win.MouseEvent('mouseleave'));
+    ok(!win.document.getElementById('ov-hover-pop'), 'C6: leaving the strip hides the popup');
+  }
+
   if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
   console.log('overview_custom_selfcheck: all checks passed');
   process.exit(0);
