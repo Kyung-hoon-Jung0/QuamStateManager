@@ -371,6 +371,10 @@
             var stat = t.querySelector('[data-col-stats="' + (window.CSS && CSS.escape ? CSS.escape(c.key) : c.key) + '"]');
             if (!stat) return;
             if (hide.has(c.key)) { stat.textContent = ''; return; }
+            // ...and the guard itself. It was defined and never CALLED for a
+            // while, which is the third dead-code-by-omission this campaign has
+            // found in its own fixes -- the mutation sweep reported the anchor
+            // missing, which is the only reason anyone noticed (docs/141 4af).
             if (_skipStat(c.key)) return;
             var cells = Array.prototype.slice.call(
                 t.querySelectorAll('[data-col-key="' + (window.CSS && CSS.escape ? CSS.escape(c.key) : c.key) + '"] .bulk-cell'));
@@ -664,6 +668,19 @@
     function _autoFitColWidth(key) { delete _colWidths[key]; _saveColWidths(); _applyColWidthStyle(); }
 
     var BulkPairEdit = {
+        // docs/141 4af: the same read-only window onto the instance that
+        // `BulkEdit._virtState` has always given the qubit grid. Without it a
+        // harness cannot tell a CLIENT-DETACHED column from a server-cold one,
+        // which is the distinction three of §4ae's fixes turn on.
+        _pairVirtState: function () {
+            return _pvirt ? {
+                cold: Array.from(_pvirt.cold),
+                remote: Array.from(_pvirt.remote),
+                dead: _pvirt.dead ? Array.from(_pvirt.dead) : [],
+                inflight: Array.from(_pvirt.inflight.keys()),
+                failed: _pvirt.failed || 0,
+            } : null;
+        },
         // docs/141 4ae A4: the pair grid's half of the Column History hook.
         hydrateColumn: function (key) {
             if (!_pgv || !_pvirt || !_pgv.isCold(key)) return Promise.resolve(false);
@@ -1110,6 +1127,10 @@
         return { patched: patched, missing: missing, covered: covered, uncovered: uncovered };
     }
     BulkPairEdit.revertPaths = _revertPaths;
+    // docs/141 4af: the apply echo's own entry point, so a harness can drive
+    // it without a live /field/edit-batch round trip -- the qubit grid has
+    // had `BulkEdit._syncApplied` since §4n for the same reason.
+    BulkPairEdit._syncApplied = _syncAppliedAcrossTable;
 
     window.BulkPairEdit = BulkPairEdit;
 })();

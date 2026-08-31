@@ -2327,8 +2327,11 @@ script**, one-time and cached. The §4ad table is now labelled for what it
 measures, and the load timing §4ad omitted is recorded with its spread rather
 than as a single flattering number.
 
-**Still open, honestly: the faithful pair fixture.** The agent rebuilding it
-hit its session limit mid-sweep. It remains the reason most of §4ae's own
+**Still open at the time of writing: the faithful pair fixture.** The agent
+rebuilding it hit its session limit mid-sweep. (§4af below does it, and the
+rebuild immediately found two dead-code defects in §4ae's own fixes plus one
+vacuous pin of its own — which is the argument for rebuilding it, made by the
+rebuild.) The rest of this paragraph describes the state §4af inherited. It remains the reason most of §4ae's own
 first-draft pins stayed green under mutation — static header geometry, zero
 client-detached columns, one cold-td class shape, `search-query.js` not loaded.
 `_mixed_chip` closes the *server-side* half of that gap (all four cell kinds
@@ -2340,3 +2343,127 @@ server cannot lose.
 
 Also still deferred, deliberately: one Tab press firing one request per cold
 column (§4n's own pattern, capped by in-flight dedup, not a §4ad regression).
+
+---
+
+## 4af. The fixture was the finding
+
+**2026-08-31, user-directed** ("나머지 진행해"). §4ae's own closing section left
+one thing open, and it was the structural one: **11 of its 16 mutations stayed
+green**, not because the pins were badly worded but because
+`tests/pair_virt_server_selfcheck.cjs`'s fixture could not reach the states the
+fixes were about. This section rebuilds it and measures what that buys.
+
+### 1. What the fixture could not express
+
+Measured against the real PJ_10082026 render:
+
+| | real page | fixture |
+|---|---|---|
+| CLIENT-DETACHED ("local") cold columns | always present | **zero** |
+| `bulk-col-hidden` column | reachable | none |
+| cold-td class shapes | 5 (`bulk-td-ro` ×1700, `bulk-td-pointer` ×331, `bulk-col-group-start` ×150) | 1 |
+| cell kinds | 4 (`missing` 1653 / scalar 1152 / runtime 98 / list 7) | scalar only |
+| the fetch mock | — | always answers with the value it was born with |
+
+The first line is the one that mattered. `hydrateLocal`, the fragment
+stash/restore and the local `byPath` are the three places §4ae's A3 and C9 fixes
+live, and **none of them ran in this harness even once.**
+
+### 2. Why the first attempt failed, and what it taught
+
+§4ae tried to make the header geometry answer to the hidden state — a hidden
+`th` is `display:none`, so it has no width and every column right of it moves
+left. That is faithful, and it broke two existing undo asserts **for a real
+reason**: once a search narrows onto a column, §4ae's own A2 fix hydrates it, so
+the mock has to render from a working copy the way the server does or the test
+asserts a race the real server cannot lose. The attempt was reverted.
+
+This round takes the shorter road. `init()` calls a hidden column cold
+(`thHidden(h) → cold.add(k)`) and a server cold map bypasses the `MIN_CELLS` /
+`MIN_COLD` floors entirely, so **one hidden column reaches the local path with
+no geometry change at all.** Geometry stays static; the working copy is modelled
+anyway, because the C2 pin needs it.
+
+**The hidden set is STORAGE, not markup.** Writing `bulk-col-hidden` into the
+fixture's html achieved nothing: `_applyColumnVisibility` recomputes that class
+from `quam_bulk_hidden_cols_pair_v2` on every pass and erased it at mount. That
+cost a probe to find, and it is the kind of thing a fixture built from markup
+alone will always get wrong.
+
+### 3. What it caught immediately
+
+**Two dead-code defects in §4ae's own fixes, and one vacuous pin of this
+section's own.**
+
+**`grid-virt.js`'s note-pinning fix had never run.** §4ae B-3 pinned the failure
+note to `scrollLeft` so it would not be created off screen — and it called
+`scroller(t)`, which is not a binding; the function is `scrollerOf`. The
+`try/catch` around it swallowed the `ReferenceError`, so the fix was dead from
+the moment it was written, shipped that way in `eb29645`, and no pin could
+notice because no fixture could show the note's position. The rebuilt one can.
+
+That prompted an audit of the same class across the whole committed module —
+every identifier CALLED inside a `try/catch` that the file does not define. It
+returned two real candidates: `scroller` (the above) and `getComputedStyle`,
+which the docs/123–125 standing rule flags as exactly the shape that dies in a
+Node realm. **The second one is fine, and it was proved rather than assumed**: a
+probe loading the committed blob through `new win.Function(...)` — which
+compiles in the jsdom *window* realm — reports `typeof getComputedStyle ===
+"function"` and `pxPerChar() === 9.1264`, the computed path, not the ladder
+fallback. One suspect confirmed, one cleared, neither guessed.
+
+**The pair grid's stats guard was defined and never called.** `_skipStat` sat in
+`_recomputeStats` as a function expression with no call site — so a cold
+column's server-rendered min/max were still being wiped, which is the defect
+§4l-review had already fixed once on the qubit grid. The mutation sweep is what
+found it, by reporting its anchor MISSING rather than by any assert failing.
+
+**And this section's own first STATS pin was vacuous.** It seeded the stat on
+the *hidden* column, and `_recomputeStats` blanks a hidden column and returns
+**before** it reaches the cold guard — so the pin passed with the guard deleted.
+A server-cold column is cold and not hidden, which is the state the guard is
+actually for; the pin uses one now and reds on the mutation.
+
+### 4. Measured
+
+The same 16 mutations, before and after the rebuild:
+
+| | caught |
+|---|---|
+| §4ae's fixture | **5 of 16** |
+| rebuilt | **10 of 16** |
+
+Newly caught, all five on the client-detached path the harness could not reach:
+the sort re-entry loop (A1), an undo into a local cold column (A3), the apply
+echo's stale twin (C9), a row the answer omits (C2), and the note's scroll
+pinning (B3) — plus the stats guard, whose pin is mutation-verified separately
+after the vacuous first draft was replaced.
+
+Asserts: **29 → 39 → 53.**
+
+### 5. What is still not caught, and why
+
+Honestly enumerated rather than rounded away:
+
+- **`C3` (the instance stays alive while columns are dead) and `C4` (a success
+  does not erase the retirement note)** need a 400 *and* a later success *and* a
+  search, in one world. The fixture can now produce all three; the assert
+  chaining them is not written.
+- **`A4` (Column History hydrate-and-retry) ×2** lives in `app.js`, which this
+  harness does not load. It belongs in an app.js harness, not here.
+- **The qubit-side stats guard's `dead` half** needs the qubit harness to reach a
+  retired column, which is the same gap this section closed on the pair side.
+- **`B1`** (the settle-vs-clock mutation) went from caught to green, because §4ae
+  B-8 primed the root-font memo at script evaluation and the harness got fast
+  enough that `tick(90)` suffices again at that one site. The other five settle
+  sites still protect; the mutation simply stopped expressing the flake.
+
+### 6. The lesson worth keeping
+
+Three defects this round, and **none of them was found by a pin failing.** One
+came from an audit for a syntactic shape, one from a mutation sweep reporting a
+missing anchor, one from a mutation on a pin that had just been written. A green
+suite says nothing about the states a fixture cannot enter — and the cheapest
+way to find those is to mutate the code the fixture is supposed to be guarding
+and watch what does not move.

@@ -260,7 +260,7 @@
             // right and that is WHY hydration ran.
             if (msg) {
                 try {
-                    var sc = scroller(t);
+                    var sc = scrollerOf(t);
                     if (sc && sc.scrollLeft) el.style.transform = 'translateX(' + sc.scrollLeft + 'px)';
                 } catch (e) { /* a note that cannot be pinned is still a note */ }
             }

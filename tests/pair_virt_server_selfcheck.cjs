@@ -40,27 +40,78 @@ function ok(c, m) { if (!c) { console.error('FAIL: ' + m); fails++; } else { con
 function tick(ms) { return new Promise(function (r) { setTimeout(r, ms || 5); }); }
 
 const N_ROWS = 4, N_HOT = 3, N_COLD = 4;      // 28 cells: far under every client gate
+// docs/141 4af: one column rendered HOT in the markup and hidden by class. It
+// is not in the server's cold map, so `init()` calls it cold on its own and
+// DETACHES its cells -- the client-detached ("local") state the fixture could
+// not reach before, and the one `hydrateLocal`, the fragment stash and the
+// local `byPath` all live in. A server cold map bypasses MIN_CELLS/MIN_COLD,
+// so this needs no extra rows.
+const I_HIDDEN = N_HOT + N_COLD;             // the hidden column's index
 const COLS = [];
-for (let i = 0; i < N_HOT + N_COLD; i++) {
+for (let i = 0; i <= I_HIDDEN; i++) {
   COLS.push({ key: 'p' + i, label: 'pair col ' + i, section: 'S', unit: '', default_on: true, maxlen: i < N_HOT ? 12 : 20 });
 }
+// docs/141 4af: the real page's cold tds carry five class shapes, not one --
+// 1,700 of 2,730 are `bulk-td-ro` on the 20Q chip, 331 `bulk-td-pointer`, 150
+// `bulk-col-group-start`. A cold td keeps every flag a hot one has; only its
+// CONTENTS are withheld, and consumers key on those flags.
+const COLD_FLAGS = ['', ' bulk-td-ro', ' bulk-td-pointer', ' bulk-col-group-start'];
+// ...and four cell KINDS. The C5 work measured that a scalar renders
+// byte-identically through `qubit_cell` and `pair_cell`, so a scalar-only
+// fixture cannot tell the two macros apart at all.
+const KINDS = ['scalar', 'ro', 'pointer', 'missing'];
 const PAIRS = [];
 for (let r = 0; r < N_ROWS; r++) PAIRS.push('q' + r + '-' + (r + 1));
 
 function coldVal(r, i) { return String(7000 + r * 10 + i); }
+// The hidden column is deliberately a plain scalar: it is the fixture's ONE
+// client-detached column, so the local stash/restore assertions must not also
+// be arguing with a `missing` cell that legitimately renders no input.
+function kindOf(i) { return i === I_HIDDEN ? 'scalar' : KINDS[i % KINDS.length]; }
 function cellHtml(r, i, v, src) {
   const dp = 'qubit_pairs.' + PAIRS[r] + '.f' + i;
+  const k = kindOf(i);
+  const srcAttr = src ? ' data-src="' + src + '"' : '';
+  // docs/141 4af: the four shapes `pair_cell` really branches on. A `missing`
+  // cell has NO input at all -- which is exactly what a cold cell looks like,
+  // so anything that cannot tell them apart is a defect the fixture must be
+  // able to show.
+  if (k === 'missing' && r % 2 === 1) {
+    return '<span class="bulk-cell-missing" data-missing="1" data-dot-path="' + dp + '"></span>';
+  }
+  // docs/141 4af: the client-detached column is LINKABLE, because the apply echo
+  // is addressed by resolved path and only crosses linkable cells -- 242 of them
+  // on the real chip share a resolved path with a cold column, which is exactly
+  // the stale-twin exposure C9 is about.
+  if (i === I_HIDDEN) {
+    return '<input type="text" class="bulk-cell" value="' + v + '" size="12" data-dot-path="' + dp
+      + '" data-resolved="' + dp + '" data-orig="' + v + '" data-linkable="1"' + srcAttr
+      + ' title="' + dp + '">';
+  }
+  if (k === 'pointer') {
+    return '<input type="text" class="bulk-cell" value="' + v + '" size="12" data-dot-path="' + dp
+      + '" data-resolved="qubit_pairs.' + PAIRS[r] + '.shared" data-orig="' + v + '"'
+      + ' data-linkable="1"' + srcAttr + ' title="' + dp + '">';
+  }
+  if (k === 'ro') {
+    return '<input type="text" class="bulk-cell bulk-cell-ro" value="' + v + '" size="12" readonly'
+      + ' tabindex="-1" data-dot-path="' + dp + '" data-resolved="' + dp + '" data-orig="' + v + '"'
+      + srcAttr + ' title="' + dp + '">';
+  }
   return '<input type="text" class="bulk-cell" value="' + v + '" size="12" data-dot-path="' + dp
-    + '" data-resolved="' + dp + '" data-orig="' + v + '"' + (src ? ' data-src="' + src + '"' : '')
+    + '" data-resolved="' + dp + '" data-orig="' + v + '"' + srcAttr
     + ' title="' + dp + '">';
 }
 
 function build() {
   let head = '';
   for (let i = 0; i < COLS.length; i++) {
-    head += '<th scope="col" class="bulk-col-head ck-' + i + '" data-col-key="p' + i + '" data-section="S" data-maxlen="'
+    const hid = (i === I_HIDDEN) ? ' bulk-col-hidden' : '';
+    head += '<th scope="col" class="bulk-col-head ck-' + i + hid + '" data-col-key="p' + i + '" data-section="S" data-maxlen="'
       + COLS[i].maxlen + '"><span class="bulk-col-label">' + COLS[i].label + '</span>'
-      + '<span class="bulk-col-stats" data-col-stats="p' + i + '"></span></th>';
+      + '<span class="bulk-col-stats" data-col-stats="p' + i + '"></span>'
+      + '<button class="bulk-col-hist" data-grid="pair" data-label="' + COLS[i].label + '"></button>'
+      + '<span class="bulk-sort-caret"></span></th>';
   }
   let body = '';
   const map = { rows: [], cols: {} };
@@ -68,10 +119,15 @@ function build() {
     map.rows.push(PAIRS[r]);
     let tds = '';
     for (let i = 0; i < COLS.length; i++) {
-      if (i < N_HOT) {
-        tds += '<td class="bulk-td ck-' + i + '" data-col-key="p' + i + '">' + cellHtml(r, i, String((r + 1) * 100 + i)) + '</td>';
+      const flags = COLD_FLAGS[i % COLD_FLAGS.length];
+      if (i < N_HOT || i === I_HIDDEN) {
+        // rendered HOT. The hidden one is detached by the client at mount --
+        // that is the local path (docs/141 4af).
+        tds += '<td class="bulk-td ck-' + i + flags + '" data-col-key="p' + i + '">'
+          + cellHtml(r, i, String((r + 1) * 100 + i)) + '</td>';
       } else {
-        tds += '<td class="bulk-td ck-' + i + ' bulk-td-cold" data-col-key="p' + i + '"></td>';
+        // server-cold: empty, but keeping every flag the hot one carries
+        tds += '<td class="bulk-td ck-' + i + flags + ' bulk-td-cold" data-col-key="p' + i + '"></td>';
         (map.cols['p' + i] = map.cols['p' + i] || []).push([coldVal(r, i), 'qubit_pairs.' + PAIRS[r] + '.f' + i, 0]);
       }
     }
@@ -138,6 +194,7 @@ function world(opts) {
         return Promise.resolve({ ok: false, error: 'a different chip is open' }); } });
     }
     // a MIXED batch: the route answers 200 and names what it did not know
+    var _dropRow = opts.dropRow || null;      // docs/141 4af: a row that vanished server-side
     var _unknown = keys.filter(function (k) { return (win._unknownCols || []).indexOf(k) >= 0; });
     var _known = keys.filter(function (k) { return _unknown.indexOf(k) < 0; });
     const cells = {};
@@ -148,6 +205,7 @@ function world(opts) {
         // docs/141 4ae: the server renders a fetched cell from the WORKING
         // COPY, so a value an undo already reverted comes back reverted. The
         // fixture models that with an override map the test writes.
+        if (_dropRow && PAIRS[r] === _dropRow) continue;   // the row is gone server-side
         var _ov = (win._workingCopy || {})[k + '|' + PAIRS[r]];
         cells[k][PAIRS[r]] = cellHtml(r, i, _ov != null ? _ov : coldVal(r, i), 'server');
       }
@@ -158,7 +216,26 @@ function world(opts) {
       }, opts.delay || 60);
     });
   };
-  if (opts.search) {
+  // docs/141 4af: the hidden set is STORAGE, not markup -- `_applyColumnVisibility`
+  // recomputes `bulk-col-hidden` from `quam_bulk_hidden_cols_pair_v2` on every
+  // pass, so a class written into the fixture's html is erased at mount and the
+  // column is never cold. Seeding the key is what makes the client-detached
+  // path reachable at all; `opts.showHidden` un-hides it, which is the reveal
+  // gesture §4ae A2 is about.
+  {
+    const store = {};
+    if (opts.search) store.quam_bulk_search = opts.search;
+    if (!opts.showHidden) store.quam_bulk_hidden_cols_pair_v2 = JSON.stringify(['p' + I_HIDDEN]);
+    Object.defineProperty(win, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: function (k) { return Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null; },
+        setItem: function (k, v) { store[k] = String(v); },
+        removeItem: function (k) { delete store[k]; },
+      },
+    });
+  }
+  if (false) {
     const store = { quam_bulk_search: opts.search };
     Object.defineProperty(win, 'localStorage', {
       configurable: true,
@@ -188,7 +265,11 @@ async function main() {
   /* ── adoption ─────────────────────────────────────────────────────── */
   let W = world(); await tick(40);
   let doc = W.doc, win = W.win;
-  const coldTds = () => doc.querySelectorAll('#bulk-pair-table td.bulk-td-cold');
+  // docs/141 4af: since the fixture carries a client-detached column too, "cold"
+  // is no longer the same set as "server-cold". These asserts are about the
+  // server's, so they exclude the hidden one by name rather than by count.
+  const coldTds = () => doc.querySelectorAll(
+    '#bulk-pair-table td.bulk-td-cold:not([data-col-key="p' + I_HIDDEN + '"])');
   ok(coldTds().length === N_COLD * N_ROWS,
      'the server-cold pair tds stay empty at mount (' + coldTds().length + ')');
   ok(win._log.fetches.length === 0, 'the mount itself fetched nothing');
@@ -296,7 +377,8 @@ async function main() {
     const note = d4.getElementById('bulk-pair-virt-note');
     ok(note && /could not be loaded/.test(note.textContent || ''),
        'a failed pair batch says so in one line (' + (note && note.textContent) + ')');
-    ok(d4.querySelectorAll('#bulk-pair-table td.bulk-td-cold').length === N_COLD * N_ROWS,
+    ok(d4.querySelectorAll('#bulk-pair-table td.bulk-td-cold:not([data-col-key="p'
+        + I_HIDDEN + '"])').length === N_COLD * N_ROWS,
        'and the columns stay cold, to be retried');
     ok(!d4.getElementById('bulk-virt-note'), 'the note is the PAIR grid\'s own element');
     global.window = win; global.document = doc;
@@ -321,7 +403,12 @@ async function main() {
        'Tab into a cold pair column starts its fetch (' + w5._log.fetches.join(' | ') + ')');
     ok(/grid=pair/.test(w5._log.fetches[0] || ''), 'and it asks for the PAIR grid');
     await tick(140);
-    ok(d5.querySelectorAll('#bulk-pair-table td[data-col-key="p' + N_HOT + '"] .bulk-cell').length === N_ROWS,
+    // docs/141 4af: "here" means the tds stopped being cold, NOT that every one
+    // holds an input -- since the fixture carries the four kinds the real page
+    // has, a `missing` cell legitimately renders no `.bulk-cell` at all, which
+    // is precisely the shape a cold cell also has.
+    ok(d5.querySelectorAll('#bulk-pair-table td[data-col-key="p' + N_HOT + '"].bulk-td-cold').length === 0
+       && d5.querySelectorAll('#bulk-pair-table td[data-col-key="p' + N_HOT + '"]').length === N_ROWS,
        'and the column is here a moment later');
     global.window = win; global.document = doc;
   }
@@ -448,6 +535,126 @@ async function main() {
          'a search schedules a hydration pass for the columns it reveals ('
          + passes + ')');
     }
+  }
+
+  /* ── docs/141 4af: the CLIENT-DETACHED column ──────────────────────
+     Everything below needs a column the CLIENT detached rather than one the
+     server shipped cold, and until this fixture grew one, nothing in this file
+     could tell the two apart. Three §4ae fixes live only on this path, and
+     all three stayed green through two mutation sweeps for that reason. */
+  {
+    const W = world();
+    const w = W.win, d = W.doc;
+    await tick(60);
+    const hid = 'p' + I_HIDDEN;
+    const st = w.BulkPairEdit._pairVirtState();
+    ok(st && st.cold.indexOf(hid) >= 0 && st.remote.indexOf(hid) < 0,
+       'fixture: the hidden column is CLIENT-detached, not server-cold ('
+       + JSON.stringify(st && { cold: st.cold, remote: st.remote }) + ')');
+    ok(d.querySelectorAll('#bulk-pair-table td[data-col-key="' + hid + '"] .bulk-cell').length === 0,
+       'fixture: and its cells really were taken out of the DOM');
+
+    // A3 -- an undo naming a path in that column. Without the fix the stashed
+    // fragment keeps the PRE-undo value and its `data-orig`, so the cell reads
+    // CLEAN, and the path is reported `missing` (never `uncovered`), which by
+    // the §4e contract deliberately schedules no resync: nothing would ever
+    // repair it.
+    w._log.fetches.length = 0;
+    const dp = 'qubit_pairs.' + PAIRS[0] + '.f' + I_HIDDEN;
+    const rp = w.BulkPairEdit.revertPaths([{ dot_path: dp, old_value_disp: 'UNDONE9' }]);
+    ok(rp && rp.patched === 1 && rp.missing === 0,
+       'an undo into a client-detached column is PATCHED, not reported missing ('
+       + JSON.stringify(rp) + ')');
+    ok(w._log.fetches.length === 0,
+       'and it costs no /bulk/cells round trip (local hydration is synchronous)');
+    const cell = d.querySelector(
+      '#bulk-pair-table tr[data-pair="' + PAIRS[0] + '"] td[data-col-key="' + hid + '"] .bulk-cell');
+    ok(!!cell && cell.value === 'UNDONE9',
+       'the cell shows the value the undo restored (' + (cell && cell.value) + ')');
+    ok(!!cell && cell.getAttribute('data-orig') === 'UNDONE9',
+       'and its baseline moved with it, so the row does not read dirty');
+    global.window = win; global.document = doc;
+  }
+
+  /* ── the apply echo reaches a client-detached twin (C9) ────────────── */
+  {
+    const W = world();
+    const w = W.win, d = W.doc;
+    await tick(60);
+    const hid = 'p' + I_HIDDEN;
+    w._log.fetches.length = 0;
+    // the echo is addressed by RESOLVED path; a detached twin keeps the
+    // pre-apply value AND `data-orig`, so revealing it later shows a stale
+    // number that looks clean.
+    const res = { dot_path: 'qubit_pairs.' + PAIRS[1] + '.f' + I_HIDDEN,
+                  resolved_path: 'qubit_pairs.' + PAIRS[1] + '.f' + I_HIDDEN,
+                  applied: true, display: 'ECHOED7' };
+    w.BulkPairEdit._syncApplied([res]);
+    await tick(20);
+    const c = d.querySelector(
+      '#bulk-pair-table tr[data-pair="' + PAIRS[1] + '"] td[data-col-key="' + hid + '"] .bulk-cell');
+    ok(!!c, 'the apply echo hydrated the detached column so it could be repainted');
+    ok(!!c && c.value === 'ECHOED7',
+       'and the twin carries the applied value (' + (c && c.value) + ')');
+    ok(w._log.fetches.length === 0, 'still with no round trip');
+    global.window = win; global.document = doc;
+  }
+
+  /* ── a cold column keeps the server's header numbers (the stats guard) ── */
+  {
+    const W = world();
+    const w = W.win, d = W.doc;
+    await tick(60);
+    // the server renders min/max into the header; a cold column has no cells to
+    // recount, so the recompute must LEAVE them. Without the guard the loop
+    // finds nothing and writes '' over them -- and it runs from `onLanded`, so
+    // any ordinary action destroys them. §4l-review fixed exactly this on the
+    // qubit grid; the pair grid never got it.
+    // a SERVER-COLD column, deliberately NOT the hidden one: the recompute
+    // blanks a hidden column's stat and returns before it reaches the cold
+    // guard, so a hidden column cannot express this at all -- the first draft
+    // of this pin used one and passed with the guard deleted (docs/141 4af).
+    const stat = d.querySelector('[data-col-stats="p' + N_HOT + '"]');
+    stat.textContent = 'min 1 . max 2';
+    w.BulkPairEdit.showAllColumns();      // recomputes every column's stats
+    await tick(20);
+    ok(stat.textContent === 'min 1 . max 2',
+       'a cold column keeps the server\'s header numbers (' + stat.textContent + ')');
+    global.window = win; global.document = doc;
+  }
+
+  /* ── a row the answer omits stays cold, not permanently blank (C2) ─── */
+  {
+    const W = world({ dropRow: PAIRS[0] });
+    const w = W.win, d = W.doc;
+    await tick(40);
+    W.pane.scrollLeft = 1200; W.pane.dispatchEvent(new w.Event('scroll'));
+    await tick(200);
+    const td = d.querySelector(
+      '#bulk-pair-table tr[data-pair="' + PAIRS[0] + '"] td[data-col-key="p' + N_HOT + '"]');
+    ok(td && td.classList.contains('bulk-td-cold'),
+       'a row the answer omits stays COLD, not blanked and un-marked ('
+       + (td && td.className) + ')');
+    const other = d.querySelector(
+      '#bulk-pair-table tr[data-pair="' + PAIRS[1] + '"] td[data-col-key="p' + N_HOT + '"]');
+    ok(other && !other.classList.contains('bulk-td-cold'),
+       'while the rows the answer DID carry landed');
+    global.window = win; global.document = doc;
+  }
+
+  /* ── the failure note follows the sideways scroll (B-3) ────────────── */
+  {
+    const W = world({ fetchMode: 'fail' });
+    const w = W.win, d = W.doc;
+    await tick(40);
+    W.pane.scrollLeft = 1200; W.pane.dispatchEvent(new w.Event('scroll'));
+    await tick(200);
+    const note = d.getElementById('bulk-pair-virt-note');
+    ok(note && !note.hidden, 'fixture: the failure note is up');
+    ok(note && /translateX\(1200px\)/.test(note.style.transform || ''),
+       'and it follows the pane sideways, so it is on screen where the user is ('
+       + (note && note.style.transform) + ')');
+    global.window = win; global.document = doc;
   }
 
   console.log(fails ? ('FAILED ' + fails) : 'pair_virt_server_selfcheck: all ok');
