@@ -273,9 +273,9 @@ window.ChipStatus.mount = function (opts) {
     // <span class=metric-label data-metric=k title=BLURB>TEXT <span class=metric-dir>↑</span></span>
     // useAbbr → terse card label; else the long label. Direction arrow appended
     // (empty for neutral). Both text + blurb are escaped.
-    function labelHtml(k, useAbbr, overrideText) {
+    function labelHtml(k, useAbbr, overrideText, noArrow) {
         var txt = overrideText != null ? overrideText : (useAbbr ? metricAbbr(k) : metricLabel(k));
-        var ar = arrow(k);
+        var ar = noArrow ? '' : arrow(k);
         var blurb = metricBlurb(k);
         return '<span class="metric-label" data-metric="' + _esc(k) + '"' +
                (blurb ? ' title="' + _esc(blurb) + '"' : '') + '>' + _esc(txt) +
@@ -815,7 +815,10 @@ window.ChipStatus.mount = function (opts) {
             // named for what it measures, not for one of the three ways it can
             // be measured. Calling it "2Q Bell" was already wrong on a CR chip
             // and became wrong on an RB chip too (docs/138).
-            _tid('gate2q', metricTile('2Q gate fidelity', computeAggregates(topo.edges.map(function(e) { return e.cz_fidelity; })), pct, [0.95, 0], 'cz_fidelity', _ovStat('gate2q'))),
+            // user 2026-09-01: "(Best)" instead of the direction arrow -- the
+            // per-edge number IS the best of the pair's candidate gates.
+            (function() { var t = metricTile('2Q gate fidelity (Best)', computeAggregates(topo.edges.map(function(e) { return e.cz_fidelity; })), pct, [0.95, 0], 'cz_fidelity', _ovStat('gate2q'));
+                          t.noArrow = true; return _tid('gate2q', t); })(),
             // Length has no good/bad direction - neutral colour, not a verdict.
             (function() { var t = metricTile('2Q Gate Length', lenAgg, nsF, [1, 0], null, _ovStat('gate2q_len'));
                           if (lenAgg.count > 0) t.color = '#b07aa1'; return _tid('gate2q_len', t); })(),
@@ -842,7 +845,7 @@ window.ChipStatus.mount = function (opts) {
         var html = '';
         tiles.forEach(function(c) {
             var border = c.muted ? 'var(--pico-muted-border-color)' : (c.color || 'var(--pico-muted-border-color)');
-            var titleHtml = c.metricKey ? labelHtml(c.metricKey, false, c.title) : _esc(c.title);
+            var titleHtml = c.metricKey ? labelHtml(c.metricKey, false, c.title, c.noArrow) : _esc(c.title);
             var statTag = (c.stat && c.stat !== 'median')
                 ? ' <span class="ov-stat-tag">' + _esc(c.stat) + '</span>' : '';
             html += '<div class="topo-card' + (c.muted ? ' topo-card-empty' : '') + '"'
