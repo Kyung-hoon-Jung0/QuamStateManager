@@ -2298,7 +2298,21 @@ window.closeInspector = function() {
      immutable run archive (never stale), and it's exactly where the user just
      pressed "Load State" — closing it would erase the confirmation they're
      reading. */
-document.addEventListener("stateRestored", function() {
+document.addEventListener("stateRestored", function(evt) {
+    // docs/144: a bracketed route (stage, restore-live, dataset load-state,
+    // auto-sync pull) ships its leaf patch in the trigger detail -- patch the
+    // visible pane IN PLACE and keep the view: search, expansion, scroll and
+    // the inspector are the user's, and a pull/push has no business clearing
+    // them. No detail (a bare-string trigger) or structural => the wholesale
+    // path below, exactly as before.
+    var d = (evt && evt.detail) || {};
+    if (d.structural === false && d.changes && window.LiveSurfacePatch) {
+        window._stateRestoredRefresh = Date.now();
+        try {
+            window.LiveSurfacePatch.apply(d.changes);
+            return;
+        } catch (e) { console.error("stateRestored patch failed", e); }
+    }
     var dsDetail = document.querySelector("#inspector-pane #ds-detail-root");
     if (!dsDetail && window.closeInspector) window.closeInspector();
     // audit-r10: the stage already force-gated any pending edits; typed-but-
@@ -2722,7 +2736,7 @@ window.doStateSync = function(mode, forced, ackUnseen) {
             // audit-r10 boundary: a completed sync (pull OR apply) resolves
             // every un-staged in-memory edit — reverting them afterwards
             // would cross the apply/pull boundary.
-            if (window.LiveEditUndo) LiveEditUndo.clear();
+            if (window.LiveEditUndo) window.LiveEditUndo.clear();
             // A sync pull/apply replaces the working copy wholesale (store.reload()
             // bumps mutation_seq), so the linter must re-run — fire unconditionally,
             // never relying on a tray_html being present in the response.
@@ -2744,11 +2758,12 @@ window.doStateSync = function(mode, forced, ackUnseen) {
             // screen are stale). Otherwise skip it — the values shown are exactly
             // what was applied, and the blanket refresh was the blink/freeze.
             var replayFailed = !!(data.replay && data.replay.failed && data.replay.failed.length);
+            var patchResult = null;
             if (!cleanApply || replayFailed || data.pulled_other_changes) {
                 // Customer (2026-08-27): patch the changed leaves in place —
                 // the page stays where it is; only a shape change still
                 // refreshes wholesale (scroll kept).
-                _patchOrRefreshLiveSurface(data);
+                patchResult = _patchOrRefreshLiveSurface(data);
             }
             // The user's own pull/apply just moved the baseline — re-poll drift NOW so
             // the "N parameters changed on the live chip" banner reconciles immediately
@@ -2773,7 +2788,12 @@ window.doStateSync = function(mode, forced, ackUnseen) {
             // page-local gentle refresher (e.g. the Pulses rows, which listen for
             // pulses-changed and re-render in place without touching #inspector-pane)
             // clear its pending markers. The trigger is a no-op off those pages.
-            if (!cleanApply) {
+            // docs/144: a pull whose every change was PATCHED in place has
+            // nothing stale on screen — the inspector inputs were patched
+            // too, so keep it open. Only the wholesale fallback still closes
+            // it. The gentle pulses-changed refresher now also fires after a
+            // patched pull (the Pulses rows re-render in place).
+            if (!cleanApply && patchResult !== "patched") {
                 if (window.closeInspector) window.closeInspector();
             } else if (window.htmx) {
                 try { window.htmx.trigger(document.body, "pulses-changed"); } catch (e) {}
@@ -2821,7 +2841,13 @@ window.doStateSync = function(mode, forced, ackUnseen) {
                 window.showToast("Pulled the live state into the working state.", "success");
             }
         })
-        .catch(function() { window.showToast("Sync failed (network error).", "error"); })
+        .catch(function(err) {
+            // docs/144: this catch used to swallow EVERY in-chain error as
+            // "network error" -- a real bug in the response handling was
+            // indistinguishable from a dead server. Name it in the console.
+            console.error("doStateSync failed:", err);
+            window.showToast("Sync failed (network error).", "error");
+        })
         .finally(function() { window._applyInFlight = false; });
 };
 
@@ -3282,6 +3308,15 @@ window.LiveSurfacePatch = (function () {
     function _patchTree(e) {
         var node = document.querySelector('.tree-node[data-path="' + _esc(e.dot_path) + '"]');
         var n = 0;
+        // docs/144: patch the MODEL too, not just the DOM -- _treeData feeds
+        // _flatIndex, so a search typed after a pull would otherwise judge
+        // (and show) the pre-pull value. Fails closed on unknown paths; the
+        // flat index is nulled inside so the next search rebuilds it.
+        document.querySelectorAll(".json-tree").forEach(function (tree) {
+            if (tree._treeData && window._treeModelSet) {
+                try { window._treeModelSet(tree, e.dot_path, e.value); } catch (err) {}
+            }
+        });
         if (node) {
             var valEl = node.querySelector(".tree-val");
             if (valEl) {
@@ -17944,11 +17979,11 @@ window.TopbarHeight = (function () {
             if (box) box.remove();
         },
         clearUndo: function () {
-            if (window.LiveEditUndo) LiveEditUndo.clear();
+            if (window.LiveEditUndo) window.LiveEditUndo.clear();
         },
         closeReviewAndClearUndo: function () {
             if (window.closeReview) window.closeReview();
-            if (window.LiveEditUndo) LiveEditUndo.clear();
+            if (window.LiveEditUndo) window.LiveEditUndo.clear();
         }
     };
     document.addEventListener('htmx:afterRequest', function (ev) {

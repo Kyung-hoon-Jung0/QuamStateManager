@@ -5666,6 +5666,35 @@ def _revert_entry_payload(dot_path, value, *, created=False, deleted=False,
 
 _SYNC_PATCH_CAP = 4000
 
+# docs/144: patch payloads that ride an HX-Trigger HEADER (the stateRestored
+# emitters) cap far lower than the JSON-body cap -- a response header is the
+# wrong place for megabytes. Beyond this the client takes the wholesale path
+# (scroll kept + PaneState soft restore), exactly the pre-144 behavior.
+_HEADER_PATCH_CAP = 150
+
+
+def _state_restored_trigger(ctx, pre_leaves, extra: dict | None = None) -> str:
+    """docs/144: HX-Trigger JSON for the wholesale-replace routes (State
+    History stage / restore-live, dataset load-state, auto-sync pull).
+    ``stateRestored`` now carries ``{changes, structural}`` so the client can
+    patch the visible pane in place instead of resetting it -- the view
+    (search, expansion, scroll, inspector) is the user's, and a pull/push has
+    no business clearing it. A route not yet bracketed still sends the bare
+    header string and reaches the same listener with an empty detail, which
+    keeps the old wholesale behavior."""
+    patch = _sync_patch(ctx, pre_leaves)
+    changes = patch.get("changes") or []
+    structural = bool(patch.get("structural"))
+    if len(changes) > _HEADER_PATCH_CAP:
+        changes, structural = [], True
+    trig = {"pulses-changed": True,
+            "stateRestored": {"structural": structural,
+                              "changes": [] if structural else changes},
+            "diagnostics-changed": True}
+    if extra:
+        trig.update(extra)
+    return json.dumps(trig)
+
 
 def _leaf_snapshot(ctx) -> dict | None:
     """Every leaf of the working state BEFORE a pull, so the pull can report
@@ -8918,6 +8947,7 @@ def state_history_stage(timestamp: str):
     wc = ctx["working_copy"]
     hm = _history()
     path = ctx["path"]   # snapshot source = the captured folder, not the live-active one
+    _pre_leaves = _leaf_snapshot(ctx)   # docs/144: name what the stage changes
 
     # Don't silently drop pending edits the user hasn't reviewed. Includes
     # working_dirty (saved-but-unapplied edits), which after an LRU eviction or
@@ -8976,7 +9006,7 @@ def state_history_stage(timestamp: str):
     # stateRestored so an inspector/pulse pane open on another menu re-reads
     # the staged values too (the working copy changed wholesale).
     resp = make_response(msg + "\n" + _tray_oob())
-    resp.headers["HX-Trigger"] = "pulses-changed, stateRestored, diagnostics-changed"
+    resp.headers["HX-Trigger"] = _state_restored_trigger(ctx, _pre_leaves)
     return resp
 
 
@@ -9008,6 +9038,7 @@ def state_history_restore_live(timestamp: str):
     # wiring with a mismatched topology. A bare ?force=1 is a master override
     # (tests / "I confirmed everything").
     force_all = request.values.get("force") == "1"
+    _pre_leaves = _leaf_snapshot(ctx)   # docs/144: name what the restore changes
     force_pending = force_all or request.values.get("force_pending") == "1"
     force_align = force_all or request.values.get("force_align") == "1"
 
@@ -9134,7 +9165,7 @@ def state_history_restore_live(timestamp: str):
                  "was snapshotted first, so this is reversible."),
         level="success")
     resp = make_response(msg + "\n" + _tray_oob())
-    resp.headers["HX-Trigger"] = "pulses-changed, stateRestored, diagnostics-changed"
+    resp.headers["HX-Trigger"] = _state_restored_trigger(ctx, _pre_leaves)
     return resp
 
 
@@ -12763,6 +12794,7 @@ def auto_sync_pull():
             # stack self-invalidates. Snapshot first so "the live chip wins" is
             # still recoverable from State History -- the manual /state/sync
             # already does this, and the popup promises revertibility.
+            _pre_leaves = _leaf_snapshot(ctx)   # docs/144
             discarding = _quam_ctx_dirty(ctx) or dom_dirty
             if discarding:
                 try:
@@ -12841,10 +12873,10 @@ def auto_sync_pull():
         return _auto_disarm_response(ctx, "", "error", status=204)
 
     resp = make_response(_tray_html())
-    resp.headers["HX-Trigger"] = json.dumps({
-        "liveDriftChanged": True, "stateRestored": True,
-        "autoSyncPulled": {"replaced": bool(discarding)},
-    })
+    resp.headers["HX-Trigger"] = _state_restored_trigger(
+        ctx, _pre_leaves,
+        extra={"liveDriftChanged": True,
+               "autoSyncPulled": {"replaced": bool(discarding)}})
     return resp
 
 
@@ -20652,6 +20684,7 @@ def dataset_load_state(uid):
         return resp
 
     # ---- stage into the ACTIVE chip's working copy ----
+    _pre_leaves = _leaf_snapshot(ctx)   # docs/144: name what the load changes
     base_url = f"/dataset/{uid}/load-state"
     chip_label = _chip_display_name(Path(ctx["path"]))
     apply_req = request.values.get("apply") == "1"   # docs/108 one-click
@@ -20766,7 +20799,7 @@ def dataset_load_state(uid):
                            "restores the pre-apply state."),
                 level="success")
             resp = make_response(msg + "\n" + _tray_oob())
-            resp.headers["HX-Trigger"] = "pulses-changed, stateRestored, diagnostics-changed"
+            resp.headers["HX-Trigger"] = _state_restored_trigger(ctx, _pre_leaves)
             return resp
         # error — the staging succeeded; say exactly how far things got.
         return render_template(
@@ -20782,10 +20815,11 @@ def dataset_load_state(uid):
                  f"{chip_label} — review it, then Sync / Apply to live from "
                  "the top bar (the live chip is untouched until then)."),
         level="success")
-    # detail-area message + OOB tray refresh; stateRestored closes stale
-    # inspector panes open on another menu (the working copy changed wholesale).
+    # detail-area message + OOB tray refresh; stateRestored patches the pane
+    # in place when it can (docs/144) and closes stale inspector panes only
+    # on the structural fallback.
     resp = make_response(msg + "\n" + _tray_oob())
-    resp.headers["HX-Trigger"] = "pulses-changed, stateRestored, diagnostics-changed"
+    resp.headers["HX-Trigger"] = _state_restored_trigger(ctx, _pre_leaves)
     return resp
 
 

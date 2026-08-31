@@ -93,6 +93,67 @@ def test_apply_mode_carries_the_patch_too(live):
     assert "qubits.qA1.T1" in paths
 
 
+def _snapshot_now(folder):
+    """A real on-disk snapshot of the CURRENT live content, via the app's own
+    storage layout (a separate HistoryManager instance over the same
+    instance dir -- routes read from disk, so this is what they see)."""
+    from quam_state_manager.core.history import HistoryManager
+    hm = HistoryManager(folder / "_app_instance")
+    hm.check_and_snapshot(folder, "manual", force=True)
+    return hm.list_snapshots(folder)[0].timestamp
+
+
+def test_state_restored_trigger_names_what_a_stage_changes(live):
+    """docs/144: the wholesale-replace routes (State History stage here) ship
+    their leaf patch in the stateRestored HX-Trigger detail, so the client
+    patches the visible pane instead of resetting it."""
+    import json as _json
+    c, folder = live
+    ts = _snapshot_now(folder)
+    r = c.post("/field/edit", data={"dot_path": "qubits.qA1.T1", "value": "9e-5"})
+    assert r.status_code == 200, r.data[:200]
+    r = c.post(f"/state-history/{ts}/stage?force=1")
+    assert r.status_code == 200, r.data[:300]
+    trig = _json.loads(r.headers["HX-Trigger"])
+    sr = trig["stateRestored"]
+    assert sr["structural"] is False
+    changed = {e["dot_path"]: e["value"] for e in sr["changes"]}
+    assert changed.get("qubits.qA1.T1") == 1e-5      # back to the snapshot
+    assert "pulses-changed" in trig and "diagnostics-changed" in trig
+
+
+def test_state_restored_header_cap_falls_back_to_structural(live, monkeypatch):
+    """A patch too big for a response header degrades to the wholesale path
+    (structural), never a megabyte HX-Trigger."""
+    import json as _json
+    from quam_state_manager.web import routes as routes_mod
+    c, folder = live
+    ts = _snapshot_now(folder)
+    r = c.post("/field/edit", data={"dot_path": "qubits.qA1.T1", "value": "9e-5"})
+    assert r.status_code == 200
+    monkeypatch.setattr(routes_mod, "_HEADER_PATCH_CAP", 0)
+    r = c.post(f"/state-history/{ts}/stage?force=1")
+    assert r.status_code == 200
+    sr = _json.loads(r.headers["HX-Trigger"])["stateRestored"]
+    assert sr["structural"] is True and sr["changes"] == []
+
+
+def test_dataset_apply_to_chip_and_auto_sync_share_the_trigger(live):
+    """The other bracketed emitters go through the same helper -- pin the
+    helper's shape directly (extra keys merge, bare routes unaffected)."""
+    import json as _json
+    from quam_state_manager.web import routes as routes_mod
+    c, folder = live
+    with c.application.app_context(), c.application.test_request_context():
+        ctx = c.application.config["contexts"][
+            c.application.config["active_context"]]
+        pre = routes_mod._leaf_snapshot(ctx)
+        trig = _json.loads(routes_mod._state_restored_trigger(
+            ctx, pre, extra={"autoSyncPulled": {"replaced": True}}))
+    assert trig["stateRestored"] == {"structural": False, "changes": []}
+    assert trig["autoSyncPulled"] == {"replaced": True}
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
 def test_live_patch_selfcheck():
     node = shutil.which("node")

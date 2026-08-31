@@ -84,4 +84,56 @@ ok(window._patchOrRefreshLiveSurface({ changes: changes, structural: false }) ==
 ok(window._patchOrRefreshLiveSurface({ changes: [], structural: true }) === 'refreshed' && ajax.length === 1 && /explorer/.test(ajax[0]),
    'structural sync falls back to the wholesale refresh (' + ajax.join(',') + ')');
 ok(window._patchOrRefreshLiveSurface({}) === 'refreshed', 'a response without a patch (older server) refreshes as before');
-process.exit(fails ? 1 : 0);
+
+// 6. docs/144: LiveSurfacePatch writes the client MODEL too, so a search
+//    typed after a pull judges the pulled value, not the pre-pull one
+const treeC = d.getElementById('explorer-tree-state');
+treeC.classList.add('json-tree');
+treeC._treeData = { qubits: { q1: { T1: 1e-5 } } };
+treeC._flatIndex = [{ path: 'stale' }];
+window.LiveSurfacePatch.apply([{ dot_path: 'qubits.q1.T1', old_value_disp: '0.000012',
+    old_value_str: '1.2e-05', old_kind: 'num', value: 1.2e-5 }]);
+ok(treeC._treeData.qubits.q1.T1 === 1.2e-5, 'the tree MODEL is patched (search truth)');
+ok(treeC._flatIndex === null, 'the search flat index is invalidated for rebuild');
+
+// 7. docs/144: stateRestored with a patch detail patches in place -- no
+//    re-GET, inspector kept; bare/structural detail keeps the old wholesale
+let closed = 0;
+window.closeInspector = function () { closed++; };
+ajax.length = 0;
+d.dispatchEvent(new window.CustomEvent('stateRestored', {
+    detail: { structural: false, changes: [{ dot_path: 'qubits.q1.T1',
+        old_value_disp: '0.000013', old_value_str: '1.3e-05', old_kind: 'num', value: 1.3e-5 }] } }));
+ok(ajax.length === 0 && closed === 0, 'stateRestored WITH a patch: no re-GET, inspector kept');
+ok(d.querySelector('.tree-node[data-path="qubits.q1.T1"] .tree-val').textContent
+       === window._treeFormatValue(1.3e-5), 'and the visible leaf shows the restored value');
+d.dispatchEvent(new window.CustomEvent('stateRestored', { detail: { structural: true, changes: [] } }));
+ok(ajax.length === 1 && closed === 1, 'structural stateRestored still refreshes wholesale + closes the inspector');
+ajax.length = 0; closed = 0;
+d.dispatchEvent(new window.CustomEvent('stateRestored', {}));   // bare-string trigger shape
+ok(ajax.length === 1 && closed === 1, 'a bare stateRestored (unbracketed route) keeps the old wholesale behavior');
+
+// 8. docs/144: a pull whose changes were all patched keeps the inspector
+(async function () {
+    process.on('unhandledRejection', (e) => console.error('REJECTION:', e && e.message, e && e.stack && e.stack.split('\n')[1]));
+    window._diagChanged = window._diagChanged || function () {};
+    window.closeReview = window.closeReview || function () {};
+    ajax.length = 0; closed = 0;
+    window._applyInFlight = false;
+    // docs/125 realm rule (its dual): reassigning window.fetch from the NODE
+    // realm never reaches the jsdom realm's bare `fetch` -- install the mock
+    // INSIDE the realm, with the response data bridged as a window property.
+    window.__syncMockData = { status: 'ok', mode: 'discard', structural: false,
+        changes: [{ dot_path: 'qubits.q1.T1', old_value_disp: '0.000014',
+                    old_value_str: '1.4e-05', old_kind: 'num', value: 1.4e-5 }] };
+    window.eval("fetch = window.fetch = function () { return Promise.resolve(" +
+        "{ json: function () { return Promise.resolve(window.__syncMockData); } }); };");
+    window.doStateSync('discard');
+    await new Promise((r) => setTimeout(r, 50));
+    ok(closed === 0, 'a fully-patched pull keeps the inspector open');
+    ok(ajax.length === 0, 'and issues no pane re-GET');
+    const leaf2 = d.querySelector('.tree-node[data-path="qubits.q1.T1"] .tree-val');
+    ok(leaf2.textContent === window._treeFormatValue(1.4e-5), 'pull values landed in place');
+    console.log(fails ? ('FAILED: ' + fails) : 'ALL OK');
+    process.exit(fails ? 1 : 0);
+})();

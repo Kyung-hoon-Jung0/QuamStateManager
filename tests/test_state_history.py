@@ -117,8 +117,16 @@ class TestRestoreMode1Stage:
         r = client.post(f"/state-history/{ts}/stage", data={"force": "1"})
         assert r.status_code == 200
         # staging replaces the working copy wholesale → refresh open pulse
-        # tables (pulses-changed) AND any open inspector (stateRestored).
-        assert r.headers.get("HX-Trigger") == "pulses-changed, stateRestored, diagnostics-changed"
+        # tables (pulses-changed) AND notify any open inspector. docs/144:
+        # stateRestored now carries the leaf patch so the client updates the
+        # visible pane IN PLACE instead of resetting it.
+        import json as _json
+        trig = _json.loads(r.headers["HX-Trigger"])
+        assert trig["pulses-changed"] is True and trig["diagnostics-changed"] is True
+        sr = trig["stateRestored"]
+        assert sr["structural"] is False
+        assert any(e["dot_path"] == "qubits.q1.f_01" and e["value"] == 6.0e9
+                   for e in sr["changes"])
         # working copy now reflects the snapshot (f_01 back to 6.0e9), but live
         # is untouched until the user applies
         peek = client.get("/field/peek?dot_path=qubits.q1.f_01").get_json()

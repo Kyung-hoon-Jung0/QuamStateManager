@@ -38,19 +38,29 @@ class TestCleanApplyPreservesSurface:
                 in _do_state_sync_body())
 
     def test_surface_refresh_gated_on_clean_apply(self):
-        # _softRefreshLiveSurface (the page reset) must stay gated: a clean apply
-        # skips it UNLESS the screen provably no longer matches the working copy —
-        # the replay dropped edits, or the pull absorbed other live changes
-        # (pulled_other_changes). A blanket refresh on every apply is the
-        # blink/freeze regression; an unconditional skip is the stale-grid one.
+        # The page reset must stay gated: a clean apply skips it UNLESS the
+        # screen provably no longer matches the working copy — the replay
+        # dropped edits, or the pull absorbed other live changes. Since the
+        # 2026-08-27 patch-first round the refresh path is
+        # _patchOrRefreshLiveSurface (patch in place when the response names
+        # the changed leaves; _softRefreshLiveSurface only as its structural
+        # fallback) — this pin was still asserting the pre-patch literal and
+        # had been red since that merge (docs/144 corrected it).
         b = _do_state_sync_body()
         assert "if (!cleanApply || replayFailed || data.pulled_other_changes)" in b
-        assert "_softRefreshLiveSurface();" in b
+        assert "_patchOrRefreshLiveSurface(data)" in b
+        # ...and the wholesale fallback still exists inside the dispatcher
+        i = _APP_JS.index("function _patchOrRefreshLiveSurface")
+        j = _APP_JS.index("function _softRefreshLiveSurface", i)
+        assert "_softRefreshLiveSurface();" in _APP_JS[i:j]
 
     def test_inspector_close_gated_on_clean_apply(self):
         b = _do_state_sync_body()
-        # closeInspector (the edit-screen blank) only runs when NOT a clean apply.
-        assert "if (!cleanApply) {" in b
+        # docs/144: closeInspector (the edit-screen blank) runs only when NOT
+        # a clean apply AND the patch did not already cover every change in
+        # place — a fully-patched pull keeps the inspector open (its inputs
+        # were patched too).
+        assert 'if (!cleanApply && patchResult !== "patched") {' in b
         assert "window.closeInspector()" in b
 
     def test_clean_apply_fires_gentle_pulses_refresh(self):
