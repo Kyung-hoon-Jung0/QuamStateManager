@@ -4540,6 +4540,45 @@ a.topo-health-tile:hover { background: var(--pico-card-sectioning-background-col
 .topo-card-value { font-size: var(--topo-card-value-size); font-weight: 700; font-family: monospace; line-height: 1.2; }
 .topo-card-sub { font-size: var(--topo-card-sub-size); color: var(--pico-muted-color); margin-top: 0.15rem; font-family: monospace; }
 
+/* docs/150: Overview per-panel customization (v1 — display preferences only).
+   The kebab appears on hover; the ghost tile adds a panel; the stat tag marks
+   a big number that is not the default median. */
+.topo-card { position: relative; }
+.ov-tile-menu {
+    position: absolute; top: 2px; right: 4px; padding: 0 5px; margin: 0;
+    background: none; border: none; cursor: pointer; line-height: 1.3;
+    color: var(--pico-muted-color); font-size: 0.95em; width: auto;
+    opacity: 0; transition: opacity 0.12s;
+}
+.topo-card:hover .ov-tile-menu, .ov-tile-menu:focus { opacity: 1; }
+.ov-tile-menu:hover { color: var(--pico-primary); }
+.ov-add-tile {
+    border: 1px dashed var(--pico-muted-border-color); border-top-width: 1px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--pico-muted-color); cursor: pointer; min-height: 72px; font-size: 0.9em;
+}
+.ov-add-tile:hover { color: var(--pico-primary); border-color: var(--pico-primary); }
+.ov-stat-tag {
+    font-size: 0.48em; font-weight: 400; color: var(--pico-muted-color);
+    vertical-align: middle; letter-spacing: 0.06em; text-transform: uppercase;
+}
+.ov-custom-note {
+    font-size: 0.62em; text-transform: none; letter-spacing: 0;
+    color: var(--pico-muted-color); margin-left: 0.6rem; font-weight: 400;
+}
+#ov-tile-popover {
+    position: fixed; z-index: 300; min-width: 230px; max-width: 300px;
+    padding: 0.6rem 0.7rem;
+    background: var(--pico-card-background-color, var(--pico-background-color));
+    border: 1px solid var(--pico-muted-border-color); border-radius: 8px;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.25); font-size: 0.85em;
+}
+#ov-tile-popover label { display: block; margin: 0 0 0.45rem; font-size: 0.9em; color: var(--pico-muted-color); }
+#ov-tile-popover select { width: 100%; margin: 0.15rem 0 0; padding: 0.2rem 0.4rem; font-size: 1em; }
+#ov-tile-popover .ov-pop-actions { display: flex; gap: 0.4rem; margin-top: 0.35rem; }
+#ov-tile-popover .ov-pop-actions .btn-sm { width: auto; margin: 0; }
+#ov-tile-popover .ov-pop-note { margin: 0 0 0.5rem; }
+
 /* ── Qubit heatmap grid ───────────────────────────────────────────── */
 .topo-heatmap-grid {
     display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--topo-heatmap-cell-min), 1fr));

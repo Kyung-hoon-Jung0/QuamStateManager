@@ -7,7 +7,12 @@
      below (Section 3, data-topo-section="overview"). -->
 
 <div class="topo-section" data-topo-section="overview">
-    <h3 class="topo-section-title">Overview</h3>
+    <h3 class="topo-section-title">Overview
+        {# docs/150: honest indicator that this Overview deviates from the
+           defaults, with the one-click way back. Toggled by _ovRefreshNote. #}
+        <span id="ov-custom-note" class="ov-custom-note" hidden>customized &middot;
+            <a href="#" onclick="if (window._ovResetTiles) window._ovResetTiles(); return false;">reset</a></span>
+    </h3>
     <div class="topo-summary-cards" id="topo-overview-tiles"></div>
 </div>
 

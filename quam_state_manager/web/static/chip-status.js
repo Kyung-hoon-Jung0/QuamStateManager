@@ -609,18 +609,37 @@ window.ChipStatus.mount = function (opts) {
 
         // metricKey (optional) → the title gets the META good-direction arrow +
         // blurb tooltip; composite tiles (Chip Size, 2Q RB, CZ Coverage) pass none.
-        function metricTile(title, agg, fmtFn, range, metricKey) {
+        // docs/150: `stat` picks which aggregate the BIG number shows —
+        // 'median' (the historical default), 'avg', 'min' or 'max'. The sub
+        // line always states the complementary aggregates, so nothing hides;
+        // a non-default stat is tagged next to the number.
+        function metricTile(title, agg, fmtFn, range, metricKey, stat) {
+            stat = stat || 'median';
             if (!agg || agg.count === 0) {
                 return {title: title, metricKey: metricKey, value: '—', sub: 'no data', muted: true};
+            }
+            var sub;
+            if (stat === 'avg') {
+                sub = 'med ' + fmtFn(agg.median) + '  ·  ' + fmtFn(agg.min) + '–' + fmtFn(agg.max) + '  ·  (' + agg.count + ')';
+            } else if (stat === 'min' || stat === 'max') {
+                sub = 'med ' + fmtFn(agg.median) + '  ·  avg ' + fmtFn(agg.avg) + '  ·  (' + agg.count + ')';
+            } else {
+                sub = 'avg ' + fmtFn(agg.avg) + '  ·  ' + fmtFn(agg.min) + '–' + fmtFn(agg.max) + '  ·  (' + agg.count + ')';
             }
             return {
                 title: title,
                 metricKey: metricKey,
-                value: fmtFn(agg.median),
-                sub: 'avg ' + fmtFn(agg.avg) + '  ·  ' + fmtFn(agg.min) + '–' + fmtFn(agg.max) + '  ·  (' + agg.count + ')',
-                color: cardColor(agg.median, range)
+                stat: stat,
+                value: fmtFn(agg[stat]),
+                sub: sub,
+                color: cardColor(agg[stat], range)
             };
         }
+
+        // docs/150 helpers: tile identity + the stored display preferences.
+        function _tid(id, tile) { if (tile) tile.id = id; return tile; }
+        var ovPrefs = _ovLoad();
+        function _ovStat(id) { return (ovPrefs.stats && ovPrefs.stats[id]) || 'median'; }
 
         // [hi, lo] calibration range for cardColor's magnitude→palette read —
         // hi was the old "good" cutoff, lo the old "bad" cutoff; the middle
@@ -629,6 +648,35 @@ window.ChipStatus.mount = function (opts) {
         var fidRange = [0.99, 0];
         var roRange  = [0.97, 0];
         var tRange   = [30e-6, 0];
+        // docs/150: a user-ADDED tile over any real metric key. Aggregation is
+        // the same computeAggregates as every default tile; a key with no
+        // known calibration range gets a neutral accent (never an invented
+        // verdict), and no values renders the honest muted "no data" tile.
+        function _ovFmtFor(key) {
+            if (/fidelity|^ro_/.test(key)) return pct;
+            var p = null;
+            for (var i = 0; i < ALL_CARD_PROPS.length; i++) {
+                if (ALL_CARD_PROPS[i].key === key) { p = ALL_CARD_PROPS[i]; break; }
+            }
+            return p ? p.fmtFn : function(v) { return fmtNum(v, 4); };
+        }
+        function _ovRangeFor(key) {
+            if (key === 'cz_fidelity') return [0.95, 0];
+            if (/^gate_fidelity/.test(key)) return fidRange;
+            if (/fidelity|^ro_/.test(key)) return roRange;
+            if (key === 'T1' || key === 'T2ramsey' || key === 'T2echo') return tRange;
+            return null;
+        }
+        function _ovCustomTile(key, stat) {
+            if (!key) return null;
+            var agg = key === 'cz_fidelity'
+                ? computeAggregates(topo.edges.map(function(e) { return e.cz_fidelity; }))
+                : nodeAgg(key);
+            var range = _ovRangeFor(key);
+            var t = metricTile(metricLabel(key), agg, _ovFmtFor(key), range || [1, 0], key, stat || 'median');
+            if (!range && !t.muted) t.color = '#76b7b2';
+            return t;
+        }
         // Both RB tiles state their error rates in BOTH units (user-directed,
         // docs/139 follow-up): EPC = 1 - Clifford fidelity, EPG = 1 - gate
         // fidelity. The bridge is the node's own average_gates_per_clifford,
@@ -699,11 +747,11 @@ window.ChipStatus.mount = function (opts) {
         var freshTile;
         if (stamps.length) {
             var newest = Math.max.apply(null, stamps), oldest = Math.min.apply(null, stamps);
-            freshTile = { title: 'Calibration Age', value: _ageLabel(newest),
+            freshTile = { id: 'cal_age', composite: true, title: 'Calibration Age', value: _ageLabel(newest),
                 sub: 'oldest ' + _ageLabel(oldest) + '  ·  (' + stamps.length + ' stamped)',
                 color: '#76b7b2' };
         } else {
-            freshTile = { title: 'Calibration Age', value: '—', sub: 'no timestamps', muted: true };
+            freshTile = { id: 'cal_age', composite: true, title: 'Calibration Age', value: '—', sub: 'no timestamps', muted: true };
         }
         // In-spec count: the SAME verdict walk buildHealthSummary does (a
         // qubit with no data is UNJUDGED, never "in spec"; a null-valued
@@ -728,34 +776,34 @@ window.ChipStatus.mount = function (opts) {
         var unjudged = topo.nodes.length - specMeasured;
         var specTile;
         if (specMeasured > 0) {
-            specTile = { title: 'Qubits In Spec',
+            specTile = { id: 'in_spec', composite: true, title: 'Qubits In Spec',
                 value: (specMeasured - belowN) + '/' + specMeasured,
                 sub: warnN + ' warn  ·  ' + failN + ' fail'
                    + (unjudged ? '  ·  ' + unjudged + ' unjudged' : ''),
                 color: failN ? '#e15759' : (warnN ? '#f28e2b' : '#59a14f') };
         } else {
-            specTile = { title: 'Qubits In Spec', value: '—', sub: 'no data', muted: true };
+            specTile = { id: 'in_spec', composite: true, title: 'Qubits In Spec', value: '—', sub: 'no data', muted: true };
         }
 
-        var srbTile = withErrLine(
-            metricTile('2Q Clifford fid. (SRB)', srbAgg, pct, fidRange), srbAgg, 'EPC', null);
-        var srbGateTile = withErrLine(
-            metricTile('2Q gate fid. (SRB÷)', srbDer, pct, fidRange), srbDer, 'EPG', '÷');
-        var irbTile = withErrLine(
-            metricTile('2Q gate fid. (IRB)', irbAgg, pct, fidRange), irbAgg, 'EPG', null);
-        var irbCliffTile = withErrLine(
-            metricTile('2Q Clifford fid. (IRB×)', irbEpcAgg, pct, fidRange), irbEpcAgg, 'EPC', '×');
+        var srbTile = _tid('srb', withErrLine(
+            metricTile('2Q Clifford fid. (SRB)', srbAgg, pct, fidRange, null, _ovStat('srb')), srbAgg, 'EPC', null));
+        var srbGateTile = _tid('srb_gate', withErrLine(
+            metricTile('2Q gate fid. (SRB÷)', srbDer, pct, fidRange, null, _ovStat('srb_gate')), srbDer, 'EPG', '÷'));
+        var irbTile = _tid('irb', withErrLine(
+            metricTile('2Q gate fid. (IRB)', irbAgg, pct, fidRange, null, _ovStat('irb')), irbAgg, 'EPG', null));
+        var irbCliffTile = _tid('irb_cliff', withErrLine(
+            metricTile('2Q Clifford fid. (IRB×)', irbEpcAgg, pct, fidRange, null, _ovStat('irb_cliff')), irbEpcAgg, 'EPC', '×'));
 
         var tiles = [
-            {title: 'Chip Size', value: topo.nodes.length + ' qubits, ' + topo.edges.length + ' pairs', color: '#4e79a7'},
+            {id: 'chip_size', composite: true, title: 'Chip Size', value: topo.nodes.length + ' qubits, ' + topo.edges.length + ' pairs', color: '#4e79a7'},
             // gate_fidelity.averaged IS per-gate: the lab's 1Q RB node stores
             // 1 - error_per_gate (27_single_qubit_randomized_benchmarking.py).
-            withErrLine(metricTile('1Q Gate Fidelity', nodeAgg('gate_fidelity_avg'), pct, fidRange, 'gate_fidelity_avg'),
-                        nodeAgg('gate_fidelity_avg'), 'EPG', null),
-            metricTile('Readout Fidelity (GE)', nodeAgg('assignment_fidelity'), pct, roRange, 'assignment_fidelity'),
+            _tid('gate1q', withErrLine(metricTile('1Q Gate Fidelity', nodeAgg('gate_fidelity_avg'), pct, fidRange, 'gate_fidelity_avg', _ovStat('gate1q')),
+                        nodeAgg('gate_fidelity_avg'), 'EPG', null)),
+            _tid('ro_ge', metricTile('Readout Fidelity (GE)', nodeAgg('assignment_fidelity'), pct, roRange, 'assignment_fidelity', _ovStat('ro_ge'))),
             // three-state readout, only on a chip that measured it (no permanent "no data" tile)
             (nodeAgg('assignment_fidelity_gef').count > 0
-                ? metricTile('Readout Fidelity (GEF)', nodeAgg('assignment_fidelity_gef'), pct, roRange, 'assignment_fidelity_gef')
+                ? _tid('ro_gef', metricTile('Readout Fidelity (GEF)', nodeAgg('assignment_fidelity_gef'), pct, roRange, 'assignment_fidelity_gef', _ovStat('ro_gef')))
                 : null),
             // Standard RB fits the CLIFFORD fidelity (1-EPC); interleaved RB
             // fits the GATE fidelity (1-EPG). A Clifford is ~5.4 two-qubit
@@ -767,32 +815,192 @@ window.ChipStatus.mount = function (opts) {
             // named for what it measures, not for one of the three ways it can
             // be measured. Calling it "2Q Bell" was already wrong on a CR chip
             // and became wrong on an RB chip too (docs/138).
-            metricTile('2Q gate fidelity', computeAggregates(topo.edges.map(function(e) { return e.cz_fidelity; })), pct, [0.95, 0], 'cz_fidelity'),
+            _tid('gate2q', metricTile('2Q gate fidelity', computeAggregates(topo.edges.map(function(e) { return e.cz_fidelity; })), pct, [0.95, 0], 'cz_fidelity', _ovStat('gate2q'))),
             // Length has no good/bad direction - neutral colour, not a verdict.
-            (function() { var t = metricTile('2Q Gate Length', lenAgg, nsF, [1, 0]);
-                          if (lenAgg.count > 0) t.color = '#b07aa1'; return t; })(),
-            {title: 'RB Coverage',
+            (function() { var t = metricTile('2Q Gate Length', lenAgg, nsF, [1, 0], null, _ovStat('gate2q_len'));
+                          if (lenAgg.count > 0) t.color = '#b07aa1'; return _tid('gate2q_len', t); })(),
+            {id: 'rb_cov', composite: true, title: 'RB Coverage',
              value: rbPairs + '/' + topo.edges.length,
              sub: 'pairs with an RB measurement', color: '#4e79a7',
              muted: topo.edges.length === 0},
             specTile,
             freshTile,
-            metricTile('T1', nodeAgg('T1'), us, tRange, 'T1'),
-            metricTile('T2 Ramsey', nodeAgg('T2ramsey'), us, tRange, 'T2ramsey')
+            _tid('t1', metricTile('T1', nodeAgg('T1'), us, tRange, 'T1', _ovStat('t1'))),
+            _tid('t2ramsey', metricTile('T2 Ramsey', nodeAgg('T2ramsey'), us, tRange, 'T2ramsey', _ovStat('t2ramsey')))
         ];
 
+        // docs/150: apply the stored preferences -- drop removed tiles, then
+        // append user-added ones. With nothing stored this is a no-op.
+        tiles = tiles.filter(Boolean).filter(function(t) {
+            return !(t.id && ovPrefs.removed.indexOf(t.id) >= 0);
+        });
+        ovPrefs.added.forEach(function(a, i) {
+            var t = _ovCustomTile(a.key, a.stat);
+            if (t) { t.id = 'custom:' + i; t.custom = true; tiles.push(t); }
+        });
+
         var html = '';
-        tiles = tiles.filter(Boolean);
         tiles.forEach(function(c) {
             var border = c.muted ? 'var(--pico-muted-border-color)' : (c.color || 'var(--pico-muted-border-color)');
             var titleHtml = c.metricKey ? labelHtml(c.metricKey, false, c.title) : _esc(c.title);
-            html += '<div class="topo-card' + (c.muted ? ' topo-card-empty' : '') + '" style="border-top-color:' + border + '">'
+            var statTag = (c.stat && c.stat !== 'median')
+                ? ' <span class="ov-stat-tag">' + _esc(c.stat) + '</span>' : '';
+            html += '<div class="topo-card' + (c.muted ? ' topo-card-empty' : '') + '"'
+                  + (c.id ? ' data-tile-id="' + _esc(c.id) + '"' : '')
+                  + (c.composite ? ' data-tile-composite="1"' : '')
+                  + ' style="border-top-color:' + border + '">'
+                  + (c.id ? '<button type="button" class="ov-tile-menu" data-tile-id="' + _esc(c.id) + '" title="Customize this panel" aria-label="Customize this panel">\u22ee</button>' : '')
                   + '<div class="topo-card-title">' + titleHtml + '</div>'
-                  + '<div class="topo-card-value">' + c.value + '</div>'
+                  + '<div class="topo-card-value">' + c.value + statTag + '</div>'
                   + (c.sub ? '<div class="topo-card-sub">' + c.sub + '</div>' : '')
                   + '</div>';
         });
+        html += '<div class="topo-card ov-add-tile" id="ov-add-tile" role="button" tabindex="0" title="Add a panel over any metric">+ Add panel</div>';
         container.innerHTML = html;
+        _ovRefreshNote(ovPrefs);
+        _ovWire(container);
+    }
+
+    // ── docs/150: Overview customization plumbing (storage + popover) ──────
+    // Display preferences ONLY: which tiles show, and which aggregate each
+    // big number states. The statistics themselves are the untouched
+    // computeAggregates outputs. v2 follow-ups (custom expressions,
+    // server-side save/share, drag reorder) are documented in docs/150.
+    var OV_PREFS_KEY = 'quam_overview_tiles_v1';
+    function _ovLoad() {
+        try {
+            var p = JSON.parse(localStorage.getItem(OV_PREFS_KEY) || '{}') || {};
+            return { removed: p.removed || [], stats: p.stats || {}, added: p.added || [] };
+        } catch (e) { return { removed: [], stats: {}, added: [] }; }
+    }
+    function _ovSave(p) {
+        try {
+            if (!_ovCustomized(p)) localStorage.removeItem(OV_PREFS_KEY);
+            else localStorage.setItem(OV_PREFS_KEY, JSON.stringify(p));
+        } catch (e) {}
+    }
+    function _ovCustomized(p) {
+        return !!((p.removed && p.removed.length) || (p.stats && Object.keys(p.stats).length)
+                  || (p.added && p.added.length));
+    }
+    function _ovRefreshNote(prefs) {
+        var n = document.getElementById('ov-custom-note');
+        if (n) n.hidden = !_ovCustomized(prefs);
+    }
+    function _ovAvailableKeys() {
+        var seen = {};
+        (topo.nodes || []).forEach(function(n) {
+            Object.keys(n.metrics || {}).forEach(function(k) { seen[k] = 1; });
+        });
+        if ((topo.edges || []).length) seen['cz_fidelity'] = 1;
+        return Object.keys(seen).sort();
+    }
+    function _ovWire(container) {
+        if (container.dataset.ovWired) return;
+        container.dataset.ovWired = '1';
+        container.addEventListener('click', function(ev) {
+            var btn = ev.target.closest ? ev.target.closest('.ov-tile-menu') : null;
+            if (btn) { ev.stopPropagation(); _ovOpenPopover(btn, btn.getAttribute('data-tile-id')); return; }
+            var add = ev.target.closest ? ev.target.closest('#ov-add-tile') : null;
+            if (add) { ev.stopPropagation(); _ovOpenPopover(add, null); }
+        });
+    }
+    function _ovDocClose(ev) {
+        var p = document.getElementById('ov-tile-popover');
+        if (p && !p.contains(ev.target)) _ovClosePopover();
+    }
+    function _ovClosePopover() {
+        var p = document.getElementById('ov-tile-popover');
+        if (p) p.remove();
+        document.removeEventListener('mousedown', _ovDocClose, true);
+    }
+    window._ovResetTiles = function() {
+        _ovSave({ removed: [], stats: {}, added: [] });
+        _ovClosePopover();
+        buildOverviewTiles();
+    };
+    function _ovOpenPopover(anchor, tileId) {
+        _ovClosePopover();
+        var prefs = _ovLoad();
+        var isAdd = tileId == null;
+        var isCustom = !!tileId && tileId.indexOf('custom:') === 0;
+        var customIdx = isCustom ? parseInt(tileId.slice(7), 10) : -1;
+        var tileEl = anchor.closest ? anchor.closest('.topo-card') : null;
+        var composite = !!(tileEl && tileEl.getAttribute('data-tile-composite'));
+        var curKey = isCustom ? ((prefs.added[customIdx] || {}).key || '') : '';
+        var curStat = isAdd ? 'median'
+                    : isCustom ? ((prefs.added[customIdx] || {}).stat || 'median')
+                    : ((prefs.stats || {})[tileId] || 'median');
+        var keyOpts = _ovAvailableKeys().map(function(k) {
+            return '<option value="' + _esc(k) + '"' + (k === curKey ? ' selected' : '') + '>'
+                 + _esc(metricLabel(k)) + '</option>';
+        }).join('');
+        var statOpts = ['median', 'avg', 'min', 'max'].map(function(s) {
+            return '<option value="' + s + '"' + (s === curStat ? ' selected' : '') + '>' + s + '</option>';
+        }).join('');
+        var body = '';
+        if (composite) {
+            body += '<p class="muted ov-pop-note">Computed tile \u2014 its number is not one metric, so key/statistic cannot change here.</p>';
+        } else {
+            if (isAdd || isCustom) {
+                body += '<label>Metric<select id="ov-pop-key">' + keyOpts + '</select></label>';
+            }
+            body += '<label>Statistic<select id="ov-pop-stat">' + statOpts + '</select></label>';
+        }
+        body += '<div class="ov-pop-actions">'
+             + (isAdd ? '<button type="button" class="btn-sm" id="ov-pop-add">Add panel</button>'
+                      : '<button type="button" class="btn-sm outline" id="ov-pop-remove">Remove panel</button>')
+             + '<button type="button" class="btn-sm outline" id="ov-pop-reset"' + (_ovCustomized(prefs) ? '' : ' hidden') + '>Reset all</button>'
+             + '</div>';
+        var pop = document.createElement('div');
+        pop.id = 'ov-tile-popover';
+        pop.innerHTML = body;
+        document.body.appendChild(pop);
+        var r = anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : { bottom: 0, left: 0 };
+        pop.style.top = Math.max(4, Math.min(r.bottom + 4, (window.innerHeight || 800) - (pop.offsetHeight || 120) - 8)) + 'px';
+        pop.style.left = Math.max(8, Math.min(r.left, (window.innerWidth || 1200) - (pop.offsetWidth || 240) - 8)) + 'px';
+
+        function apply(fn) { fn(); _ovSave(prefs); _ovClosePopover(); buildOverviewTiles(); }
+        var statSel = pop.querySelector('#ov-pop-stat');
+        if (statSel && !isAdd) {
+            statSel.addEventListener('change', function() {
+                var v = statSel.value;
+                apply(function() {
+                    if (isCustom) { if (prefs.added[customIdx]) prefs.added[customIdx].stat = v; }
+                    else if (v === 'median') delete prefs.stats[tileId];
+                    else prefs.stats[tileId] = v;
+                });
+            });
+        }
+        var keySel = pop.querySelector('#ov-pop-key');
+        if (keySel && isCustom) {
+            keySel.addEventListener('change', function() {
+                var v = keySel.value;
+                apply(function() { if (prefs.added[customIdx]) prefs.added[customIdx].key = v; });
+            });
+        }
+        var addBtn = pop.querySelector('#ov-pop-add');
+        if (addBtn) {
+            addBtn.addEventListener('click', function() {
+                var k = keySel ? keySel.value : '';
+                var s = statSel ? statSel.value : 'median';
+                if (!k) { _ovClosePopover(); return; }
+                apply(function() { prefs.added.push({ key: k, stat: s }); });
+            });
+        }
+        var rmBtn = pop.querySelector('#ov-pop-remove');
+        if (rmBtn) {
+            rmBtn.addEventListener('click', function() {
+                apply(function() {
+                    if (isCustom) prefs.added.splice(customIdx, 1);
+                    else if (prefs.removed.indexOf(tileId) < 0) prefs.removed.push(tileId);
+                    if (!isCustom) delete prefs.stats[tileId];
+                });
+            });
+        }
+        var rsBtn = pop.querySelector('#ov-pop-reset');
+        if (rsBtn) rsBtn.addEventListener('click', function() { window._ovResetTiles(); });
+        document.addEventListener('mousedown', _ovDocClose, true);
     }
 
     // ══════════════════════════════════════════════════════════════════
