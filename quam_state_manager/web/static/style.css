@@ -815,8 +815,30 @@ html[data-font-size="large"] { --font-size-base: 19px; }
 .quam-loader-text span:nth-child(17) { animation-delay: 0.80s; }
 .quam-loader-text span:nth-child(18) { animation-delay: 0.85s; }
 
+/* docs/146: compositor-driven ring — transform animations keep running on
+ * the compositor while the main thread is blocked by the 10 MB /bulk swap,
+ * which is exactly when the letter-fill (a background-position animation)
+ * freezes. The ring is the "still alive" signal through that block. */
+.quam-loader { text-align: center; }
+.quam-loader-spinner {
+    width: 26px; height: 26px; margin: 0 auto 0.65rem;
+    border: 3px solid var(--pico-muted-border-color);
+    border-top-color: var(--pico-primary, #4a9eff);
+    border-radius: 50%;
+    animation: quam-loader-spin 0.8s linear infinite;
+    will-change: transform;
+}
+@keyframes quam-loader-spin { to { transform: rotate(360deg); } }
+.quam-loader-sub {
+    margin-top: 0.55rem;
+    font-size: 0.82rem;
+    color: var(--pico-muted-color);
+    letter-spacing: 0.02em;
+}
+
 /* Honour reduced-motion users — fall back to a static dim text. */
 @media (prefers-reduced-motion: reduce) {
+    .quam-loader-spinner { animation: none; }
     .quam-loader-text span {
         animation: none;
         color: var(--pico-muted-color);

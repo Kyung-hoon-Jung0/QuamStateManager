@@ -14468,7 +14468,12 @@ if (document.readyState === 'loading') {
         // docs/103: measured slow-on-big-chips surfaces — /bulk is the
         // app's largest render (10 MB HTML on 21Q) and had NO indicator.
         '/bulk', '/diff', '/topology', '/autofit', '/compare-hub'];
-    var SHOW_AFTER_MS = 200;
+    // docs/146: 200 ms hid the loader from the exact user it exists for —
+    // on a big chip the RESPONSE can be fast while the swap+render that
+    // follows blocks for seconds, and the timer cannot fire inside that
+    // block. 80 ms still keeps genuinely fast loads flicker-free.
+    var SHOW_AFTER_MS = 80;
+    var SAFETY_HIDE_MS = 45000;
 
     function getLoader() { return document.getElementById('quam-loader'); }
 
@@ -14480,28 +14485,55 @@ if (document.readyState === 'loading') {
         return false;
     }
 
-    var timer = null;
+    var timer = null, safety = null, pending = 0;
     function show() {
         var el = getLoader();
         if (el) el.classList.add('visible');
     }
     function hide() {
         if (timer) { clearTimeout(timer); timer = null; }
+        if (safety) { clearTimeout(safety); safety = null; }
+        pending = 0;
         var el = getLoader();
         if (el) el.classList.remove('visible');
     }
+    window._slowLoaderHide = hide;   // selfcheck seam
 
     document.addEventListener('htmx:beforeRequest', function(evt) {
         if (!isSlow(evt.detail)) return;
+        pending++;
         if (timer) clearTimeout(timer);
         timer = setTimeout(show, SHOW_AFTER_MS);
+        if (safety) clearTimeout(safety);
+        safety = setTimeout(hide, SAFETY_HIDE_MS);
     });
-    // afterRequest fires on success AND error, so it's the only listener
-    // we strictly need. The error-specific events are belt-and-suspenders
-    // in case a future HTMX version changes the contract.
-    document.addEventListener('htmx:afterRequest', hide);
+    // docs/146: hide AFTER the work the user is actually waiting for.
+    // afterRequest is only the response's ARRIVAL — the expensive part of
+    // /bulk is the swap + grid render that follows — so a slow request's
+    // completion moves us to afterSettle, and the loader drops one double-
+    // rAF later (the first frame the new pane has actually painted).
+    // And only a SLOW request's own completion may douse the loader: the
+    // old global hide let any concurrent poll response (datasets 5 s, tray)
+    // turn it off mid-wait, which is why the customer never saw it.
+    document.addEventListener('htmx:afterRequest', function(evt) {
+        if (!isSlow(evt.detail) || pending === 0) return;
+        pending--;
+        if (pending > 0) return;
+        var settled = false;
+        function finish() {
+            if (settled) return;
+            settled = true;
+            document.removeEventListener('htmx:afterSettle', onSettle);
+            requestAnimationFrame(function () { requestAnimationFrame(hide); });
+        }
+        function onSettle() { finish(); }
+        document.addEventListener('htmx:afterSettle', onSettle);
+        // an aborted/failed swap never settles — don't strand the loader
+        setTimeout(finish, 4000);
+    });
     document.addEventListener('htmx:responseError', hide);
     document.addEventListener('htmx:sendError', hide);
+    document.addEventListener('htmx:swapError', hide);
 })();
 
 

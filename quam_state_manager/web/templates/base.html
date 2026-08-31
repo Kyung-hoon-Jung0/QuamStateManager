@@ -1710,11 +1710,16 @@
     {# preserve layout.                                                       #}
     {# ───────────────────────────────────────────────────────────────────── #}
     <div id="quam-loader" class="quam-loader" aria-hidden="true">
+      {# docs/146: the ring spins via a compositor transform animation, so it #}
+      {# keeps moving even while the main thread is blocked by the big swap  #}
+      {# (the letter-fill below runs on the main thread and freezes there).  #}
+      <div class="quam-loader-spinner" aria-hidden="true"></div>
       <div class="quam-loader-text">
         <span>Q</span><span>U</span><span>A</span><span>M</span><span>&nbsp;</span><span>S</span><span>T</span><span>A</span><span>T</span><span>E</span><span>&nbsp;</span><span>M</span><span>A</span><span>N</span><span>A</span><span>G</span><span>E</span><span>R</span>
       </div>
       {# Optional progress line — populated by JS during workspace backfill #}
       {# (Param History import). Hidden by default via CSS :empty rule.    #}
+      <div class="quam-loader-sub">Please wait a moment&hellip; a first open can take a while.</div>
       <div id="quam-loader-progress" class="quam-loader-progress"></div>
     </div>
 </body>
