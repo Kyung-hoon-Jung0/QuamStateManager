@@ -657,6 +657,35 @@ async function main() {
     global.window = win; global.document = doc;
   }
 
+  /* -- docs/141 4al: a search that hides every pair row explains itself ----
+     A remembered query (quam_bulk_search survives a chip change by design)
+     matched nothing in a real chip's pair grid and the grid read as "not
+     rendering" -- the only signal was a small toolbar counter. The note names
+     the query and clears it in one click. */
+  {
+    const W = world();
+    const w = W.win, d = W.doc;
+    await tick(40);
+    w.__bulkSearchDebounce = 10;        // the page's own knob: deterministic, no clock race
+    const sb = d.getElementById('bulk-search');
+    sb.value = 'zzz-matches-nothing';
+    sb.dispatchEvent(new w.Event('input', { bubbles: true }));
+    await tick(80);
+    const note = d.getElementById('bulk-pair-empty-search');
+    ok(!!note && !note.hidden && note.textContent.indexOf('zzz-matches-nothing') >= 0,
+       'an all-hiding search renders the note, naming the query ('
+       + (note && note.textContent.trim().slice(0, 60)) + ')');
+    note.querySelector('button').click();
+    await tick(400);
+    ok(sb.value === '' && note.hidden,
+       'one click clears the search and the note');
+    const shown = Array.prototype.filter.call(
+      d.querySelectorAll('#bulk-pair-table tbody tr[data-pair]'),
+      function (r) { return !r.classList.contains('bulk-row-hidden'); }).length;
+    ok(shown === N_ROWS, 'and every pair row is back (' + shown + ')');
+    global.window = win; global.document = doc;
+  }
+
   console.log(fails ? ('FAILED ' + fails) : 'pair_virt_server_selfcheck: all ok');
   process.exit(fails ? 1 : 0);
 }

@@ -187,6 +187,42 @@
     }
 
     // ── search (pair-scoped: columns by label, rows by pair id, cells by value) ─
+
+    // docs/141 4al: when the SEARCH hides every row, say so where the rows
+    // were, with one click out. The remembered query (quam_bulk_search)
+    // survives a chip change by design, so on a new chip it can match nothing
+    // in this grid while the toolbar counter shrinks to an easily-missed
+    // "0 of N" -- measured as "pairs do not render" on a real chip. The
+    // picker's pill already explains ITS hiding; this is the search's half.
+    function _emptySearchNote(t, noteId, shown, total, q) {
+        var wrap = t && t.closest('.bulk-table-wrap');
+        if (!wrap) return;
+        var el = document.getElementById(noteId);
+        var want = !!q && total > 0 && shown === 0;
+        if (!want) { if (el) el.hidden = true; return; }
+        if (!el) {
+            el = document.createElement('p');
+            el.id = noteId;
+            el.className = 'bulk-empty-search-note';
+            var msg = document.createElement('span');
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn-xs outline';
+            btn.textContent = 'Clear search';
+            btn.addEventListener('click', function () {
+                var sb = document.getElementById('bulk-search');
+                if (!sb) return;
+                sb.value = '';
+                sb.dispatchEvent(new Event('input', { bubbles: true }));
+            });
+            el.appendChild(msg); el.appendChild(btn);
+            wrap.parentNode.insertBefore(el, wrap.nextSibling);
+        }
+        el.firstChild.textContent = '0 of ' + total + ' rows here match \u201c' + q
+            + '\u201d \u2014 the search box above is filtering this grid. ';
+        el.hidden = false;
+    }
+
     function applySearch() {
         var t = table(); if (!t) return;
         var inp = document.getElementById('bulk-search');
@@ -296,6 +332,7 @@
         });
         var cnt = document.getElementById('bulk-pair-search-count');
         if (cnt) cnt.textContent = q ? (shown + ' of ' + rows.length + ' pairs') : '';
+        _emptySearchNote(t, 'bulk-pair-empty-search', shown, rows.length, q);
         // docs/141 4ae A2: a narrowed grid puts columns ON SCREEN that were
         // cold when it was wide -- and a reveal (the Properties menu, the
         // docs/85 "N hidden columns match — Show" chip, Show all, Reset) does
