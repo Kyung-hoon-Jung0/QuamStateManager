@@ -6,7 +6,7 @@
    between the root and its runs, date-like levels newest-first, entries
    newest-first with a newest-50 cap per group. #}
 {% if tree %}
-{% from '_sidebar_tree_macros.html' import dir_node %}
+{% from '_sidebar_tree_macros.html' import dir_node with context %}
 {% for root_path, date_groups in tree.items() %}
 {# docs/141 4aa: the row reads "<folder name>  <parent path…>" -- the name
    always whole and bold, the parent dimmed and ellipsized, and a reserved
@@ -27,6 +27,15 @@
             hx-vals='{"folder": {{ root_path | string | tojson }}}' class="btn-remove" title="Remove">&times;</button>
     {# docs/105 #9: the discovery walk's 50k-dir bound used to be a log line
        only — runs silently missing from this tree with no UI trace. #}
+    {% if (tree_hydrating or ()) and root_path in tree_hydrating %}
+    {# docs/142: listing-first scan -- names/ids are real, statuses and qubit
+       search fill in when the background parse lands. The div refetches the
+       tree after a short delay until the note stops rendering. #}
+    <p class="muted tree-hydrating-note" hx-get="/workspace/tree"
+       hx-trigger="load delay:2s" hx-target="#sidebar-tree" hx-swap="innerHTML"
+       hx-include="#sidebar-filter-input"><small>&#8987; indexing runs&hellip;
+      statuses and qubit search fill in shortly</small></p>
+    {% endif %}
     {% if (tree_truncated or {}).get(root_path) %}
     <p class="muted tree-truncated-note"><small>&#9888; scan stopped at the
       50,000-directory bound &mdash; some runs may be missing (a symlink may

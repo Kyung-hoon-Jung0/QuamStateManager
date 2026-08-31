@@ -39,6 +39,10 @@ _DATA_JSON_CACHE_MAX = 200
 # ThreadPoolExecutor turns a 10⁴-run cold scan from a ~30 s freeze into
 # a few seconds. Workers cap is generous: I/O scales with parallelism
 # even past CPU count.
+# docs/142: wall-clock budget for the SYNCHRONOUS first scan of a folder
+# (DatasetStore.__init__). Rescans/polls keep their own budgets.
+_COLD_SCAN_BUDGET_S = 3.0
+
 _SCAN_PARSE_WORKERS = min(32, (os.cpu_count() or 4) * 4)
 
 # Phase 4 §4 — whitelist for the HDF5 ``which`` query parameter. Without
@@ -373,7 +377,14 @@ class DatasetStore:
         # retention window are discarded on every scan to bound memory.
         self._vanished: list[tuple[int, float]] = []
         self._VANISHED_RETENTION_S = 30 * 60  # 30 min
-        self._scan()
+        # docs/142: the cold build is BOUNDED. A 5,000-run folder cost ~7 s
+        # of node.json+data.json parsing synchronously inside the first
+        # /datasets render; a truncated cold scan already has correct
+        # continuation semantics (staleness gate stays open, fingerprints
+        # merge, vanish pass skipped) and the client's delta poll finishes
+        # the job within a few ticks. Newest dates are walked first (see
+        # _scan), so the visible top of the table is what lands in-budget.
+        self._scan(deadline=_time.monotonic() + _COLD_SCAN_BUDGET_S)
         self._load_tags()
 
     def _cache_data_json(self, run_id: int, data: dict) -> None:
@@ -656,7 +667,10 @@ class DatasetStore:
         # 10⁴-run workspace at O(date dirs) stats instead of O(runs).
         to_parse: list[tuple[Path, str, int, str, str, tuple, tuple, tuple]] = []
         fresh_date_fp: dict[Path, tuple[float, frozenset[Path]]] = {}
-        for date_entry in sorted(root.iterdir()):
+        # docs/142: newest-first. Under a deadline the walk must spend its
+        # budget on the dates the table actually shows first; ascending order
+        # spent it on the oldest month and truncated before today.
+        for date_entry in sorted(root.iterdir(), reverse=True):
             if deadline is not None and _time.monotonic() >= deadline:
                 truncated = True
                 break
@@ -755,8 +769,27 @@ class DatasetStore:
                     run_entry, date_str, run_id, time_str, experiment_name,
                 )
 
+            # docs/142: the deadline used to bound only the WALK -- on a cold
+            # build the walk finished inside the budget and the parse pass
+            # then ran unbounded (~7 s at 5,000 runs). Parse in chunks and
+            # stop at the deadline; unparsed runs never get a fingerprint,
+            # so the next scan's date-dir check falls through and re-offers
+            # exactly them (the standard truncation-continuation semantics).
+            results = []
             with ThreadPoolExecutor(max_workers=workers) as ex:
-                results = list(ex.map(_parse_one, to_parse))
+                if deadline is None:
+                    results = list(ex.map(_parse_one, to_parse))
+                else:
+                    CHUNK = 256
+                    done = 0
+                    for i in range(0, len(to_parse), CHUNK):
+                        if _time.monotonic() >= deadline and done:
+                            truncated = True
+                            break
+                        chunk = to_parse[i:i + CHUNK]
+                        results.extend(ex.map(_parse_one, chunk))
+                        done += len(chunk)
+                    to_parse = to_parse[:len(results)]
 
             # Serialise writebacks so we don't race on self.runs /
             # self._data_json_cache / self._folder_fp.

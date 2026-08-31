@@ -118,6 +118,15 @@ DEFAULT_TRACKED_PROPERTIES: tuple[str, ...] = (
     "x90_amplitude",
 )
 
+# docs/142: what the dashboard RENDERS by default -- T1 + the two T2s.
+# Indexing is untouched (DEFAULT_TRACKED_PROPERTIES above still writes every
+# snapshot row for all twelve), so opting a property in via the picker shows
+# its full history instantly. At a customer's 5,000-run archive the default
+# 12-property x 20-qubit grid was 240 server-rendered sparklines per page
+# load; 3 x 20 is the same page in a fraction of the work, and matches what
+# users actually watch daily.
+DEFAULT_VISIBLE_PROPERTIES: tuple[str, ...] = ("T1", "T2ramsey", "T2echo")
+
 # PAIR-scope trend properties (docs/54): the entity column holds the pair id
 # (e.g. "q0-1") — a disjoint name+property space from qubits, so the existing
 # (timestamp, qubit, property) PK carries both without schema change. Rows are
@@ -3612,8 +3621,21 @@ class HistoryManager:
         until: str | None = None,
         triggers: list[str] | None = None,
         downsample: int | None = 500,
+        compress: str | None = None,
     ) -> list[dict[str, Any]]:
         """Read trend rows from the SQLite index, downsampled for display.
+
+        docs/142 ``compress="changes"``: collapse each (qubit, property)
+        series to its CHANGE POINTS before any LTTB -- keep the first point,
+        the last point, and both edges of every value transition (the edge
+        pair preserves the true flat-then-step shape; a lone changed point
+        would draw a long slope that never happened). A series whose value
+        never changed end-to-end becomes exactly [first, last]. Equality is
+        the repo's exact rule with NaN normalised (field_history's collapse,
+        NOT differ.compare_equal -- a tolerance would hide real sub-tolerance
+        drift on surfaces whose whole job is showing drift). A customer's
+        Chip Status Trends plotted one point per run for values that never
+        moved; this is the seam every history-tier consumer shares.
 
         Returns one dict per (qubit, property) with a list of points::
 
@@ -3659,6 +3681,7 @@ class HistoryManager:
             _ts_minute_bucket(until),   # actually repeats across renders (see helper)
             tuple(triggers or ()),
             downsample,
+            compress,
         )
         with self._lock:
             current_version = self._chip_dir_version.get(chip_dir_str, 0)
@@ -3746,7 +3769,21 @@ class HistoryManager:
             conn.close()
 
         results: list[dict[str, Any]] = []
+
+        def _cpk(v):
+            # NaN never equals itself -- normalise so a NaN stretch collapses
+            return "\x00nan" if isinstance(v, float) and v != v else v
+
         for bucket in grouped.values():
+            if compress == "changes" and len(bucket["values"]) > 2:
+                vals = bucket["values"]
+                n = len(vals)
+                keep = {0, n - 1}
+                for i in range(1, n):
+                    if _cpk(vals[i]["value"]) != _cpk(vals[i - 1]["value"]):
+                        keep.add(i - 1)      # the step's flat edge...
+                        keep.add(i)          # ...and its changed edge
+                bucket["values"] = [vals[i] for i in sorted(keep)]
             if downsample and len(bucket["values"]) > downsample:
                 pairs = [(p["timestamp"], p["value"]) for p in bucket["values"]]
                 kept_ts = {ts for ts, _ in self._lttb_downsample(pairs, downsample)}

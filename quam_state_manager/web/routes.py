@@ -19,6 +19,7 @@ from __future__ import annotations
 import copy
 import csv
 import gzip
+import functools
 import hashlib
 import io
 import contextlib
@@ -2265,7 +2266,7 @@ def _adopt_extras_data_folders(ctx: dict | None) -> None:
             if root in existing:
                 continue
             try:
-                ws.add_root(root)
+                ws.add_root(root, defer_parse=True)   # docs/142 listing-first
                 added += 1
             except (OSError, ValueError):
                 continue
@@ -2360,9 +2361,11 @@ def _data_folder_candidates(ctx: dict | None) -> list[dict]:
         except Exception:  # noqa: BLE001
             pass
     try:
-        for entry in _active_dataset_stores(fast=True):
-            _add(str(entry["path"]), str(entry.get("label") or entry["path"]),
-                 "workspace")
+        # docs/142: candidate folders only need paths/labels -- building a
+        # DatasetStore here cold-scanned every run folder (node.json AND
+        # data.json x N) synchronously inside chip activation.
+        for cand in _dataset_candidate_folders(fast=True):
+            _add(str(cand), cand.name or str(cand), "workspace")
     except Exception:  # noqa: BLE001
         pass
     return out
@@ -4516,7 +4519,7 @@ def qualibrate_open_project():
         for root in found:
             if root not in existing:
                 try:
-                    ws.add_root(root)
+                    ws.add_root(root, defer_parse=True)   # docs/142 listing-first
                     added += 1
                 except (OSError, ValueError):
                     continue
@@ -9256,7 +9259,11 @@ def _trend_unit(metric: str) -> str:
 def _trend_series_curated(hm, path: Path, props: list[str]) -> list[dict]:
     """The SQLite property index — one call returns EVERY qubit for a metric."""
     try:
-        rows = hm.extract_property_history(path, props, downsample=400)
+        # docs/142: change points only -- an unchanged value across 400
+        # runs used to plot 400 identical markers; end-to-end unchanged is
+        # now exactly first+last.
+        rows = hm.extract_property_history(path, props, downsample=400,
+                                           compress="changes")
     except Exception:  # noqa: BLE001
         return []
     out = []
@@ -14111,8 +14118,12 @@ def topology_sparklines(qubit: str):
         qd = {}
     hm = _history()
     rows = []
+    # docs/142 compress: the popup's delta arrow now reads "since the last
+    # CHANGE", not "since the previous identical sample" -- which is what a
+    # trend arrow was always meant to say.
     for r in hm.extract_property_history(path, list(DEFAULT_TRACKED_PROPERTIES),
-                                         qubit_filter=[qubit], downsample=40):
+                                         qubit_filter=[qubit], downsample=40,
+                                         compress="changes"):
         prop = r["property"]
         cur = qd.get(prop)
         cur_num = float(cur) if isinstance(cur, (int, float)) and not isinstance(cur, bool) else None
@@ -15120,7 +15131,42 @@ def _tree_render_ctx(tree: dict, ws=None) -> dict:
             if memo is not None:
                 memo[root_path] = nested[root_path]
         truncated[root_path] = root_scan_truncated(root_path)
-    return {"tree": tree or {}, "nested": nested, "tree_truncated": truncated}
+    # docs/142 listing-first: while a root's node.json hydration is still
+    # running, entries carry placeholder status/qubits and qubit:/status:
+    # filters are incomplete -- the tree must say so, and refresh itself
+    # (the note carries a short-delay self-refetch; the 60 s version poll
+    # would otherwise leave placeholders visible for up to a minute).
+    hydrating = ws.hydrating_roots() if ws is not None else set()
+    # docs/142 B4: collapsed DATE groups ship an empty <ul> and fetch their
+    # rows on first open -- 5,000 runs was ~4 MB / ~45k DOM nodes of markup
+    # nobody had expanded. Only the unfiltered tree (a filtered tree must
+    # show its matches), and never the group chain holding the ACTIVE run
+    # (.tree-branch-active needs that entry present at paint).
+    lazy_groups = ws is not None
+    eager_tpaths: set[str] = set()
+    if lazy_groups:
+        try:
+            active = _active_path()
+            if active:
+                ar = str(Path(active).resolve())
+                for root_path, nodes in nested.items():
+                    def _walk(ns, chain):
+                        for nd in ns:
+                            chain2 = chain + [nd["tpath"]]
+                            for e in nd.get("entries", ()):
+                                if str(e.quam_state_path) == ar or str(
+                                        getattr(e, "qs_resolved", "") or "") == ar:
+                                    eager_tpaths.update(chain2)
+                                    return True
+                            if _walk(nd.get("children", ()), chain2):
+                                return True
+                        return False
+                    _walk(nodes, [])
+        except Exception:  # noqa: BLE001 -- eagerness is best-effort
+            pass
+    return {"tree": tree or {}, "nested": nested, "tree_truncated": truncated,
+            "tree_hydrating": hydrating, "lazy_groups": lazy_groups,
+            "eager_tpaths": eager_tpaths}
 
 
 @bp.route("/workspace/add", methods=["POST"])
@@ -15131,7 +15177,7 @@ def workspace_add():
 
     ws = _ws()
     try:
-        entries = ws.add_root(folder)
+        entries = ws.add_root(folder, defer_parse=True)   # docs/142 listing-first
     except Exception as e:
         return render_template("_status.html", message=str(e), level="error"), 400
 
@@ -15196,6 +15242,10 @@ def workspace_remove():
 # the workspace actually changes.
 _TREE_HTML_MEMO: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
+# docs/142: filtered-tree HTML, small LRU per workspace keyed
+# (ws.version, query) -- see workspace_tree.
+_FILTERED_TREE_MEMO: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
 
 @bp.route("/workspace/tree")
 def workspace_tree():
@@ -15205,9 +15255,24 @@ def workspace_tree():
     name_filter = request.args.get("name", "").strip()
 
     if name_filter:
-        return render_template("_sidebar_tree.html",
+        # docs/142: every debounced keystroke used to pay the full
+        # match + build_nested_tree + Jinja price (~0.5 s at 5,000 runs)
+        # even for a query rendered seconds earlier (backspace, retype).
+        # Small LRU keyed on (workspace version, query); any tree change
+        # invalidates by key.
+        fmemo = _FILTERED_TREE_MEMO.setdefault(ws, {})
+        fkey = (ws.version, name_filter)
+        hit = fmemo.get(fkey)
+        if hit is not None:
+            fmemo.pop(fkey); fmemo[fkey] = hit    # LRU touch
+            return hit
+        html = render_template("_sidebar_tree.html",
                                **_tree_render_ctx(_filter_tree(ws.tree, name_filter)),
                                name_filter=name_filter)
+        fmemo[fkey] = html
+        while len(fmemo) > 32:
+            fmemo.pop(next(iter(fmemo)))
+        return html
 
     memo = _TREE_HTML_MEMO.get(ws) if ws else None
     if memo and memo[0] == ws.version:
@@ -15235,10 +15300,18 @@ def workspace_tree_group():
     root = request.args.get("root", "")
     tpath = request.args.get("tpath", "") or request.args.get("date", "")
     name_filter = request.args.get("name", "").strip()
-    tree = _filter_tree(ws.tree, name_filter) if (name_filter and ws) else (ws.tree if ws else {})
-    from quam_state_manager.core.scanner import build_nested_tree
-    all_entries = [e for g in tree.get(root, []) for e in g.entries]
-    nodes = build_nested_tree(Path(root), all_entries)
+    # docs/142 B4: ``capped=1`` is the lazy-open fetch -- newest-50 rows plus
+    # the Show-all button, exactly what an eager group renders inline.
+    capped = request.args.get("capped", "") == "1"
+    if name_filter and ws:
+        from quam_state_manager.core.scanner import build_nested_tree
+        tree = _filter_tree(ws.tree, name_filter)
+        all_entries = [e for g in tree.get(root, []) for e in g.entries]
+        nodes = build_nested_tree(Path(root), all_entries)
+    else:
+        # docs/142: the memoized render model -- this endpoint used to
+        # rebuild the whole nested tree (O(N)) to look up ONE group.
+        nodes = _tree_render_ctx(ws.tree if ws else {}, ws=ws)["nested"].get(root, [])
 
     def _find(nodes_: list) -> dict | None:
         for n in nodes_:
@@ -15251,7 +15324,9 @@ def workspace_tree_group():
 
     node = _find(nodes)
     entries = node["entries"] if node else []
-    return render_template("_sidebar_tree_entries.html", entries=entries)
+    return render_template("_sidebar_tree_entries.html", entries=entries,
+                           cap=50 if capped else None, root_path=root,
+                           tpath=tpath, name_filter=name_filter)
 
 
 @bp.route("/workspace/tree/poll")
@@ -17475,7 +17550,10 @@ def param_history():
     is_loaded_chip = (active_chip_key == loaded_key)
     target_path = loaded_path if is_loaded_chip else _path_for_chip_key(active_chip_key)
 
-    props = raw_props or list(DEFAULT_TRACKED_PROPERTIES)
+    # docs/142: default-visible = T1/T2 only; the picker still offers all
+    # tracked properties and ?props= opt-in renders any of them.
+    from quam_state_manager.core.history import DEFAULT_VISIBLE_PROPERTIES
+    props = raw_props or list(DEFAULT_VISIBLE_PROPERTIES)
     qubits_selected = raw_qubits
     qubit_filter = qubits_selected or None
     triggers = raw_triggers or None
@@ -17620,40 +17698,16 @@ def param_history():
     archived_chips = [c for c in all_disk_chips if c["key"] not in active_keys]
     archived_chips.sort(key=lambda c: c.get("latest_timestamp", ""), reverse=True)
 
-    # Alignment scan only meaningful for the currently-loaded chip; it
-    # answers "which workspace experiments belong to my loaded chip?".
+    # docs/142: the alignment scan is O(N over run folders) -- ~10,000 JSON
+    # parses cold at a customer's 5,000-run archive, synchronous on this GET
+    # (measured 16.9 s first paint). Deferred to GET /param-history/alignment,
+    # fetched by an htmx load-fragment: the grid itself renders from SQLite
+    # alone. The fragment also re-arms the auto-backfill gate (its counts
+    # arrive after page-load JS ran).
     alignment = None
-    if is_loaded_chip:
-        try:
-            alignment = hm.scan_workspace_alignment(loaded_path, ws) if ws else None
-        except Exception:
-            logger.warning("Alignment scan failed", exc_info=True)
-            alignment = None
-
-    # Importable workspace count for the empty-state CTA + auto-incremental
-    # check (see docs/23_param_history_performance.md, "What Phase 1 actually
-    # shipped" → empty-state CTA discussion). ``aligned`` matches both
-    # network and qubit labels, so it's the conservative count of "things
-    # we'd ingest right now without prompting". ``renamed`` would also be
-    # ingested only with force_renamed=True, so it's not added here.
     importable_count = 0
     pending_import_count = 0
-    if alignment is not None:
-        importable_count = int(alignment.get("counts", {}).get("aligned", 0) or 0)
-        # RESIDUAL (auto-backfill gate): aligned workspace experiments whose run_id
-        # isn't in this chip's index yet. Replaces the old aligned-vs-indexed count
-        # diff + threshold-of-5 that silently skipped a small batch (1-4 new experiments).
-        # A false-positive is harmless (the backfill content-hash-dedups), so run_id-None
-        # entries are NOT counted, to avoid re-firing the scan every session.
-        try:
-            aligned_entries = alignment.get("aligned") or []
-            indexed = hm.indexed_run_ids(loaded_path)
-            pending_import_count = sum(
-                1 for e in aligned_entries
-                if getattr(e, "run_id", None) is not None and e.run_id not in indexed)
-        except Exception:  # noqa: BLE001
-            logger.warning("pending-import residual failed", exc_info=True)
-            pending_import_count = 0
+    alignment_deferred = bool(is_loaded_chip and ws)
 
     last_failures, last_attempted = _last_backfill_failures(loaded_path)
 
@@ -17689,6 +17743,7 @@ def param_history():
             # old combined name. New UI uses active_chips + archived_chips.
             chip_histories=active_chips + archived_chips,
             alignment=alignment,
+            alignment_deferred=alignment_deferred,
             # How many workspace experiments are ready to import (empty-state
             # CTA + auto-incremental on revisit). Only meaningful on the
             # loaded chip; 0 otherwise.
@@ -17707,6 +17762,54 @@ def param_history():
             last_backfill_failures=last_failures,
             last_backfill_attempted=last_attempted,
         ),
+    )
+
+
+@bp.route("/param-history/alignment")
+def param_history_alignment():
+    """docs/142: the deferred half of /param-history -- the O(N) workspace
+    alignment scan, as an htmx load-fragment. Renders the alignment banner
+    (+ the first-visit import CTA when the grid was empty) and stamps the
+    importable/pending counts back onto #param-history-root so the
+    auto-backfill gate fires exactly as it did when the scan was inline."""
+    store = _store()
+    if not store:
+        return ""
+    hm = _history()
+    ws = _ws()
+    loaded_path = Path(_active_path())
+    loaded_key = hm._key_for(loaded_path)
+    summary_total = request.args.get("summary_total", type=int) or 0
+    alignment = None
+    try:
+        alignment = hm.scan_workspace_alignment(loaded_path, ws) if ws else None
+    except Exception:
+        logger.warning("Alignment scan failed", exc_info=True)
+    importable_count = 0
+    pending_import_count = 0
+    if alignment is not None:
+        importable_count = int(alignment.get("counts", {}).get("aligned", 0) or 0)
+        # RESIDUAL (auto-backfill gate): aligned workspace experiments whose
+        # run_id isn't in this chip's index yet (docs/23 feedback P1 --
+        # run_id-None entries are NOT counted so a scan can't re-fire every
+        # session; the backfill content-hash-dedups, so false positives are
+        # harmless).
+        try:
+            aligned_entries = alignment.get("aligned") or []
+            indexed = hm.indexed_run_ids(loaded_path)
+            pending_import_count = sum(
+                1 for e in aligned_entries
+                if getattr(e, "run_id", None) is not None and e.run_id not in indexed)
+        except Exception:  # noqa: BLE001
+            logger.warning("pending-import residual failed", exc_info=True)
+            pending_import_count = 0
+    return render_template(
+        "_param_history_alignment.html",
+        alignment=alignment,
+        loaded_chip_key=loaded_key,
+        importable_count=importable_count,
+        pending_import_count=pending_import_count,
+        summary_total=summary_total,
     )
 
 
@@ -18267,7 +18370,7 @@ def _load_workspace_roots() -> None:
         existing = {str(r) for r in ws.root_folders}
         for root in roots:
             if Path(root).is_dir() and root not in existing:
-                ws.add_root(root)
+                ws.add_root(root, defer_parse=True)   # docs/142 listing-first
     except Exception as exc:
         logging.getLogger(__name__).warning("Could not restore workspace roots: %s", exc)
 
@@ -18619,7 +18722,7 @@ def _maybe_auto_add_workspace_root(quam_state_path: str | Path) -> None:
     if chip_key in excluded:
         return
     try:
-        ws.add_root(chip_str)
+        ws.add_root(chip_str, defer_parse=True)   # docs/142 listing-first
         _save_workspace_roots()
         # Invalidate dataset store so it rebuilds with the new root
         current_app.config.pop("dataset_store", None)
@@ -18657,7 +18760,7 @@ def _rehydrate_workspace_from_recents() -> None:
             chip_key = path_match.fs_key(chip_folder)
             if chip_key in existing or chip_key in excluded:
                 continue
-            ws.add_root(chip_str)
+            ws.add_root(chip_str, defer_parse=True)   # docs/142 listing-first
             existing.add(chip_key)
             added.append(chip_str)
         except Exception:
@@ -18862,11 +18965,23 @@ def _dataset_store() -> DatasetStore | None:
 # ──────────────────────────────────────────────────────────────────────
 
 
+@functools.lru_cache(maxsize=4096)
+def _folder_key_cached(raw: str) -> str:
+    resolved = str(Path(raw).resolve())
+    return hashlib.sha1(resolved.encode("utf-8")).hexdigest()[:8]
+
+
 def _folder_key(path: str | Path) -> str:
     """Stable short identity for a registered data folder (hash of its
-    resolved path). Used as the ``folder_key`` half of a dataset uid."""
-    resolved = str(Path(path).resolve())
-    return hashlib.sha1(resolved.encode("utf-8")).hexdigest()[:8]
+    resolved path). Used as the ``folder_key`` half of a dataset uid.
+
+    docs/142: memoized on the RAW spelling -- ``resolve()`` is a filesystem
+    walk on Windows and the sidebar render called this once per entry
+    (measured 2.3 s of a 4.1 s tree render at 5,000 runs, all resolving the
+    same handful of grandparent folders). A folder replaced by a link to a
+    different physical dir mid-session would serve the old key until
+    restart -- keys only need to be stable and unique, so that is harmless."""
+    return _folder_key_cached(str(path))
 
 
 def _dataset_uid(folder_key: str, run_id: int) -> str:
@@ -22989,7 +23104,7 @@ def scheduler_register_storage():
         return jsonify({"ok": False, "error": "No folder given."}), 400
     ws = _ws()
     try:
-        entries = ws.add_root(folder)
+        entries = ws.add_root(folder, defer_parse=True)   # docs/142 listing-first
     except Exception as exc:  # noqa: BLE001
         return jsonify({"ok": False, "error": str(exc)}), 400
     current_app.config.pop("dataset_store", None)

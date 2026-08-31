@@ -582,6 +582,10 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
         )
 
     app.config["workspace"] = Workspace()
+    # docs/142: persistent per-root listing cache -- a session re-opening a
+    # 5,000-run archive paints the sidebar from this instead of re-walking
+    # and re-parsing everything (a background staleness verify still runs).
+    app.config["workspace"].cache_dir = Path(app.instance_path) / "workspace_cache"
     app.config["history_manager"] = HistoryManager(app.instance_path)
     app.config["contexts"] = {}
     app.config["active_context"] = None

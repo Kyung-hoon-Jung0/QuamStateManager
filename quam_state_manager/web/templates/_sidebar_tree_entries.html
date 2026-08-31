@@ -2,6 +2,25 @@
    /workspace/tree/group ("Show all N" swaps the complete list into the
    group's <ul>); the row markup itself lives in the entry_rows macro so the
    recursive tree (_sidebar_tree_macros.html) and this fragment can never
-   drift apart. Expects `entries` in context. #}
+   drift apart. Expects `entries` in context.
+
+   docs/142 B4: with `cap` set (the lazy-open fetch, ?capped=1) only the
+   newest `cap` rows render plus the same Show-all button an eager group
+   carries inline. Without `cap`, unchanged: the complete list. #}
 {% from '_sidebar_tree_macros.html' import entry_rows %}
+{% if cap %}
+{{ entry_rows(entries[:cap]) }}
+{% if entries | length > cap %}
+<li class="tree-entry tree-show-more">
+    <button type="button" class="tree-show-more-btn"
+            hx-get="/workspace/tree/group"
+            hx-vals='{"root": {{ (root_path or "") | string | tojson }}, "tpath": {{ (tpath or "") | string | tojson }}, "name": {{ (name_filter or "") | string | tojson }}}'
+            hx-target="closest ul" hx-swap="innerHTML"
+            title="Load the remaining {{ entries | length - cap }} older entries in this group">
+        Show all {{ entries | length }}
+    </button>
+</li>
+{% endif %}
+{% else %}
 {{ entry_rows(entries) }}
+{% endif %}

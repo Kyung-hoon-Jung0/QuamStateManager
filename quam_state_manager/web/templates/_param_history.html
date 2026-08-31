@@ -210,7 +210,15 @@
   {% endif %}
 
   {# ── Alignment banner ──────────────────────────────────────────── #}
-  {% if is_loaded_chip and alignment %}
+  {% if alignment_deferred %}
+  {# docs/142: the O(N) workspace alignment scan no longer runs on this GET --
+     this slot fetches it after first paint. The fragment carries the banner,
+     the first-visit import CTA, and a script that stamps the counts back on
+     #param-history-root and re-arms the auto-backfill gate. #}
+  <div id="ph-alignment-slot" class="ph-alignment-slot"
+       hx-get="/param-history/alignment?summary_total={{ summary.total }}"
+       hx-trigger="load" hx-swap="outerHTML"></div>
+  {% elif is_loaded_chip and alignment %}
     {% set c = alignment.counts %}
     {% if c.total == 0 %}
       {# no workspace experiments yet — no banner #}

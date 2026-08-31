@@ -604,26 +604,29 @@ class TestScannerSafeIO:
         return quam
 
     def test_node_json_parse_routes_through_safe_io(self, tmp_path, monkeypatch):
-        """``_parse_experiment_folder`` must call ``safe_io.read_json`` for
-        node.json — never raw ``open()`` — so we keep FILE_SHARE_DELETE on
-        Windows for files an experiment may also be writing.
+        """``_parse_experiment_folder`` must route the node.json read through
+        ``safe_io`` — never raw ``open()`` — so we keep FILE_SHARE_DELETE on
+        Windows for files an experiment may also be writing. docs/142 moved
+        the bulk parse from ``read_json`` (retry ladder: 0.9 s worst-case
+        sleep per mid-write file) to ``scan_json`` (single attempt — the
+        docs/80 DatasetStore rule), so the pin now spies scan_json.
         """
         from quam_state_manager.core import safe_io, scanner
 
         self._seed_run(tmp_path, 7)
         calls: list[Path] = []
-        real_fn = safe_io.read_json
+        real_fn = safe_io.scan_json
 
         def spy(path):
             calls.append(Path(path))
             return real_fn(path)
 
-        monkeypatch.setattr(scanner.safe_io, "read_json", spy)
+        monkeypatch.setattr(scanner.safe_io, "scan_json", spy)
         ws = Workspace()
         ws.add_root(tmp_path)
         assert any(p.name == "node.json" for p in calls), (
             "scanner._parse_experiment_folder did not route the node.json "
-            "read through safe_io.read_json"
+            "read through safe_io.scan_json"
         )
 
 

@@ -52,11 +52,25 @@
 
 {% macro dir_node(root_path, node, name_filter) %}
 {% set _cap = 50 %}
+{# docs/142 B4: a closed date group ships an EMPTY list and fetches its rows
+   on first open (native <details> fires `toggle` on any open change,
+   programmatic restores included, so app.js's open-state restore triggers
+   the fetch too). Lazy only when the render says so (unfiltered tree), and
+   never on the active run's group chain. #}
+{% set _lazy = (lazy_groups | default(false)) and node.is_date and node.entries
+               and node.tpath not in (eager_tpaths | default(())) %}
 <details class="tree-dir{% if node.is_date %} tree-date{% endif %}"
-         data-tpath="{{ node.tpath }}"{% if not node.is_date %} open{% endif %}>
+         data-tpath="{{ node.tpath }}"{% if not node.is_date %} open{% endif %}
+         {% if _lazy %}data-lazy-group="1"
+         hx-get="/workspace/tree/group?capped=1"
+         hx-vals='{"root": {{ root_path | string | tojson }}, "tpath": {{ node.tpath | string | tojson }}}'
+         hx-trigger="toggle[this.open] once" hx-target="find ul.tree-entries"
+         hx-swap="innerHTML"{% endif %}>
     <summary class="tree-date-label{% if not node.is_date %} tree-dirname{% endif %}">{{ node.name }} <small class="muted">({{ node.n_total }})</small></summary>
     {% for child in node.children %}{{ dir_node(root_path, child, name_filter) }}{% endfor %}
-    {% if node.entries %}
+    {% if _lazy %}
+    <ul class="tree-entries" data-lazy="1"><li class="tree-entry muted tree-lazy-hint"><small>loading&hellip;</small></li></ul>
+    {% elif node.entries %}
     <ul class="tree-entries">
     {{ entry_rows(node.entries[:_cap]) }}
     {% if node.entries | length > _cap %}

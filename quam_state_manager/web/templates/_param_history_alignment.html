@@ -1,0 +1,80 @@
+{# docs/142: deferred alignment fragment -- see GET /param-history/alignment.
+   Banner markup mirrors the pre-142 inline block of _param_history.html
+   byte-for-byte (classes and switch links are pinned by tests). #}
+<div id="ph-alignment-slot" class="ph-alignment-slot"
+     data-importable-count="{{ importable_count }}"
+     data-pending-import-count="{{ pending_import_count }}">
+  {% if alignment %}
+    {% set c = alignment.counts %}
+    {% if c.total == 0 %}
+      {# no workspace experiments yet -- no banner #}
+    {% elif c.aligned == c.total %}
+      <div class="alignment-banner alignment-green">
+        ✓ All {{ c.total }} workspace experiments are for chip <code>{{ loaded_chip_key }}</code>.
+      </div>
+    {% elif c.aligned == 0 and c.different_chip > 0 %}
+      <div class="alignment-banner alignment-red">
+        ✗ <strong>No experiments in this workspace match chip <code>{{ loaded_chip_key }}</code>.</strong>
+        Workspace contains:
+        {% for other_chip, entries in alignment.different_chip.items() %}
+          <a href="/param-history?chip_key={{ other_chip|replace(' ', '_') }}"
+             hx-get="/param-history?chip_key={{ other_chip|replace(' ', '_') }}"
+             hx-target="#param-history-root" hx-swap="outerHTML" hx-push-url="true"
+             class="alignment-switch-link">{{ other_chip }} ({{ entries|length }})</a>{% if not loop.last %}, {% endif %}
+        {% endfor %}
+      </div>
+    {% else %}
+      {% if c.renamed > 0 %}
+        <div class="alignment-banner alignment-orange">
+          ⚠ <strong>{{ c.renamed }} experiments use the same hardware but qubits are renamed.</strong>
+          They aren't merged by default.
+          <button type="button" class="alignment-action outline btn-sm"
+                  onclick="paramHistoryBackfill(true)">Merge them anyway</button>
+        </div>
+      {% endif %}
+      {% if c.different_chip > 0 %}
+        <div class="alignment-banner alignment-yellow">
+          {{ c.aligned }} of {{ c.total }} experiments are for <code>{{ loaded_chip_key }}</code>.
+          {{ c.different_chip }} are for other chips:
+          {% for other_chip, entries in alignment.different_chip.items() %}
+            <a href="/param-history?chip_key={{ other_chip|replace(' ', '_') }}"
+               hx-get="/param-history?chip_key={{ other_chip|replace(' ', '_') }}"
+               hx-target="#param-history-root" hx-swap="outerHTML" hx-push-url="true"
+               class="alignment-switch-link">{{ other_chip }} ({{ entries|length }})</a>{% if not loop.last %}, {% endif %}
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endif %}
+  {% endif %}
+  {% if summary_total == 0 and importable_count > 0 %}
+    {# First-visit CTA (moved here with the deferred scan): nothing in the
+       index yet, but N workspace experiments match this chip. #}
+    <div class="param-history-cta" data-chip-key="{{ loaded_chip_key }}"
+         data-importable="{{ importable_count }}">
+      <div class="phc-title">No history imported yet for this chip.</div>
+      <div class="phc-subtitle">
+        <strong>{{ importable_count }}</strong>
+        experiment{{ '' if importable_count == 1 else 's' }}
+        in workspace match this chip and are ready to ingest.
+      </div>
+      <button type="button" class="phc-primary"
+              onclick="paramHistoryImportFromCta(this)">
+        Import {{ importable_count }} experiment{{ '' if importable_count == 1 else 's' }}
+      </button>
+      <div class="phc-hint muted">
+        One-time setup. After this, new experiments will be picked up
+        automatically.
+      </div>
+    </div>
+  {% endif %}
+  <script>
+    (function () {
+      var root = document.getElementById('param-history-root');
+      if (!root) return;
+      root.setAttribute('data-importable-count', '{{ importable_count }}');
+      root.setAttribute('data-pending-import-count', '{{ pending_import_count }}');
+      // the page-load auto-backfill check ran before these counts existed
+      if (typeof paramHistoryMaybeAutoBackfill === 'function') paramHistoryMaybeAutoBackfill();
+    })();
+  </script>
+</div>
