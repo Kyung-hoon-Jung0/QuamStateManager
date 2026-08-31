@@ -50,6 +50,40 @@ Remaining `test_web` reds — `TestPhase4QuamCacheConcurrency` +
 `TestDatasetSelectionFix` — fail identically at pre-142 `c4d09cf`
 (pre-existing, recorded, un-adjudicated).
 
+## r2 (docs/148b) — the readout order, and the diagonals that never existed
+
+Customer follow-up: *"순서가 이상해 — GE, g, e, GEF, g, e, f 이렇게 되야
+정상 아니니?"*. Right, and the ask exposed more than an ordering bug: the
+GEF per-state diagonals were **never derived at all** — only the GEF average
+existed anywhere in SM. `query.py` now derives `ro_fidelity_gef_g/e/f` from
+the same 3×3 matrix's diagonal (`_cm_diag`, which already validated n×n),
+they join `_NODE_METRIC_KEYS` / `METRIC_META` / `_FIDELITY_KEYS` (physicality
+0..1) / the card props, and PANEL_DEFS reads in physical order — the GE block
+(GE, |g⟩, |e⟩, each tagged "(GE)") then the GEF block (GEF, |g⟩, |e⟩, |f⟩).
+All seven panels carry `source:` so an absent block renders the honest-empty
+line from the r1 fix.
+
+Also fixed here: **five `test_chip_status_layout.py` pins d76125e left red**
+(that file was never run in the r1 round — the same class as the docs/142
+test_web debt; the pins described the pre-split layout and were updated
+intent-preserved to the three-section reality).
+
+The mutation run produced its own finding: deleting `ro_fidelity_gef_f` hit
+the **card-prop list** first (same `{key:'…'}` shape earlier in the file),
+and every pin stayed green while the panel silently vanished at runtime —
+`buildMetricPanels` gates each panel on `findProp(key)`, which searches
+`ALL_CARD_PROPS`. That is precisely the docs/94 silent-skip class the GEF
+question came from. New selfcheck pin: every PANEL_DEFS key must exist in
+the card-prop lists (orphans named in the failure message); the order pin
+searches inside the PANEL_DEFS slice for the same reason.
+
+Verified: CDP on a GEF-bearing chip (7 titles in exact order, no empties)
+AND a GEF-less chip (GE block filled, GEF block = 4 honest-empty panels
+naming `gef_confusion_matrix`); layout+health 49 passed; the wider net
+(test_web/chip_trends/report_card/misc_ui) 583 passed with only the two
+documented pre-existing reds; mutations red ×3 (PANEL_DEFS entry removed,
+card prop removed, |f⟩ reading diagonal [0][0]).
+
 Pinned by: `test_web.py` submenu pin (10 links, split order, the three
 labels, no `view=fidelity` link), `chip_density_selfcheck.cjs` (TAB_SPEC
 views, fid1q/fidro→metrics build, the honest-empty GUARD-feeds-push regex,

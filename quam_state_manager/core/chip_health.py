@@ -153,10 +153,18 @@ METRIC_META: dict[str, dict[str, Any]] = {
                     "blurb": "Single-shot fidelity of assigning |g⟩ / |e⟩ from the IQ blobs (mean diagonal of the 2×2 confusion matrix). Higher is better."},
     "assignment_fidelity_gef": {"label": "Readout fidelity (GEF)", "abbr": "Read. Fid. (GEF)", "direction": "higher",
                     "blurb": "Single-shot fidelity of assigning |g⟩ / |e⟩ / |f⟩ (mean diagonal of the 3×3 g/e/f confusion matrix). Higher is better."},
-    "ro_fidelity_g": {"label": "Readout fidelity |g⟩", "abbr": "RO_fg", "direction": "higher",
-                    "blurb": "Probability of correctly reading |g⟩ when the qubit is in |g⟩. Higher is better."},
-    "ro_fidelity_e": {"label": "Readout fidelity |e⟩", "abbr": "RO_fe", "direction": "higher",
-                    "blurb": "Probability of correctly reading |e⟩ when the qubit is in |e⟩. Higher is better."},
+    "ro_fidelity_g": {"label": "Readout fidelity |g⟩ (GE)", "abbr": "RO_fg", "direction": "higher",
+                    "blurb": "Probability of correctly reading |g⟩ when the qubit is in |g⟩ (two-state discrimination). Higher is better."},
+    "ro_fidelity_e": {"label": "Readout fidelity |e⟩ (GE)", "abbr": "RO_fe", "direction": "higher",
+                    "blurb": "Probability of correctly reading |e⟩ when the qubit is in |e⟩ (two-state discrimination). Higher is better."},
+    # docs/148b: per-state diagonals of the 3x3 g/e/f matrix, so the readout
+    # section reads GE (g, e) then GEF (g, e, f)
+    "ro_fidelity_gef_g": {"label": "Readout fidelity |g⟩ (GEF)", "abbr": "RO_fg (GEF)", "direction": "higher",
+                    "blurb": "Probability of correctly reading |g⟩ in three-state (g/e/f) discrimination — diagonal [0][0] of the 3×3 confusion matrix. Higher is better."},
+    "ro_fidelity_gef_e": {"label": "Readout fidelity |e⟩ (GEF)", "abbr": "RO_fe (GEF)", "direction": "higher",
+                    "blurb": "Probability of correctly reading |e⟩ in three-state (g/e/f) discrimination — diagonal [1][1] of the 3×3 confusion matrix. Higher is better."},
+    "ro_fidelity_gef_f": {"label": "Readout fidelity |f⟩ (GEF)", "abbr": "RO_ff (GEF)", "direction": "higher",
+                    "blurb": "Probability of correctly reading |f⟩ in three-state (g/e/f) discrimination — diagonal [2][2] of the 3×3 confusion matrix. Higher is better."},
     "gate_fidelity_avg": {"label": "1Q gate fidelity", "abbr": "Gate F", "direction": "higher",
                     "blurb": "Average single-qubit gate fidelity from randomized benchmarking. Higher is better."},
     "gate_fidelity_x180": {"label": "1Q gate fidelity x180", "abbr": "GF x180", "direction": "higher",
@@ -236,7 +244,8 @@ def verdict(value: Any, thresh: dict[str, Any] | None) -> str | None:
 # finite-number check (e.g. anharmonicity is legitimately negative).
 _FIDELITY_KEYS = frozenset({
     "assignment_fidelity", "assignment_fidelity_gef", "gate_fidelity_avg", "gate_fidelity_x180",
-    "gate_fidelity_x90", "ro_fidelity_g", "ro_fidelity_e", "cz_fidelity",
+    "gate_fidelity_x90", "ro_fidelity_g", "ro_fidelity_e",
+    "ro_fidelity_gef_g", "ro_fidelity_gef_e", "ro_fidelity_gef_f", "cz_fidelity",
 })
 _POSITIVE_KEYS = frozenset({"T1", "T2ramsey", "T2echo"})
 _FIDELITY_EPS = 1e-6  # tolerate float overshoot of an exact 1.0

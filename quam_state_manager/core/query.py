@@ -31,7 +31,9 @@ _NODE_METRIC_KEYS = (
     "x90_amplitude", "saturation_amplitude", "readout_amplitude",
     "readout_length", "readout_threshold", "assignment_fidelity",
     "assignment_fidelity_gef",
-    "ro_fidelity_g", "ro_fidelity_e", "gate_fidelity_avg",
+    "ro_fidelity_g", "ro_fidelity_e",
+    "ro_fidelity_gef_g", "ro_fidelity_gef_e", "ro_fidelity_gef_f",
+    "gate_fidelity_avg",
     "gate_fidelity_x180", "gate_fidelity_x90",
 )
 _EDGE_METRIC_KEYS = ("cz_fidelity", "detuning", "coupler_decouple_offset", "mutual_flux_bias")
@@ -650,6 +652,12 @@ class QueryEngine:
                 "assignment_fidelity_gef": _assignment_fidelity_n(rr.get("gef_confusion_matrix")),
                 "ro_fidelity_g": _cm_diag(rr.get("confusion_matrix"), 0),
                 "ro_fidelity_e": _cm_diag(rr.get("confusion_matrix"), 1),
+                # docs/148b (customer): the readout section reads GE (g, e)
+                # then GEF (g, e, f) -- these are the per-state diagonals of
+                # the same 3x3 matrix the GEF assignment fidelity averages
+                "ro_fidelity_gef_g": _cm_diag(rr.get("gef_confusion_matrix"), 0),
+                "ro_fidelity_gef_e": _cm_diag(rr.get("gef_confusion_matrix"), 1),
+                "ro_fidelity_gef_f": _cm_diag(rr.get("gef_confusion_matrix"), 2),
                 "gate_fidelity_avg": gf.get("averaged") if isinstance(gf, dict) else None,
                 "gate_fidelity_x180": gf.get("x180") if isinstance(gf, dict) else None,
                 "gate_fidelity_x90": gf.get("x90") if isinstance(gf, dict) else None,

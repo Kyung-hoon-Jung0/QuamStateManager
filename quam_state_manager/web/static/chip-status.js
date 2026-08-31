@@ -516,6 +516,9 @@ window.ChipStatus.mount = function (opts) {
         {key:'gate_fidelity_x90', fmtFn:function(v){return fmtPct(v,2);}},
         {key:'assignment_fidelity',fmtFn:function(v){return fmtPct(v,2);}},
         {key:'assignment_fidelity_gef',fmtFn:function(v){return fmtPct(v,2);}},
+        {key:'ro_fidelity_gef_g', fmtFn:function(v){return fmtPct(v,2);}},
+        {key:'ro_fidelity_gef_e', fmtFn:function(v){return fmtPct(v,2);}},
+        {key:'ro_fidelity_gef_f', fmtFn:function(v){return fmtPct(v,2);}},
         {key:'x180_amplitude',    fmtFn:function(v){return fmtNum(v,4);}},
         {key:'x180_length',       fmtFn:function(v){return fmt(v,'ns');}},
         {key:'x180_alpha',        fmtFn:function(v){return fmtNum(v,4);}},
@@ -2085,11 +2088,23 @@ window.ChipStatus.mount = function (opts) {
             // docs/141 4o (user-directed): the IQ-blob metric is named for what
             // it IS everywhere in SM — readout fidelity, two-state (GE) from the
             // confusion matrix, three-state (GEF) from gef_confusion_matrix.
-            {key:'assignment_fidelity',title:'Readout Fidelity (GE) (%)', group:'fidro'},
+            // docs/148b (customer): the readout block reads GE then its
+            // per-state diagonals, THEN the GEF block with its own g/e/f --
+            // two matrices, two blocks, in physical reading order.
+            {key:'assignment_fidelity',title:'Readout Fidelity (GE) (%)', group:'fidro',
+             source:'confusion_matrix'},
+            {key:'ro_fidelity_g',     title:'Readout Fidelity |g\u27E9 (GE) (%)',group:'fidro',
+             source:'confusion_matrix'},
+            {key:'ro_fidelity_e',     title:'Readout Fidelity |e\u27E9 (GE) (%)',group:'fidro',
+             source:'confusion_matrix'},
             {key:'assignment_fidelity_gef',title:'Readout Fidelity (GEF) (%)', group:'fidro',
              source:'gef_confusion_matrix'},
-            {key:'ro_fidelity_g',     title:'Readout Fidelity |g\u27E9 (%)',group:'fidro'},
-            {key:'ro_fidelity_e',     title:'Readout Fidelity |e\u27E9 (%)',group:'fidro'},
+            {key:'ro_fidelity_gef_g', title:'Readout Fidelity |g\u27E9 (GEF) (%)',group:'fidro',
+             source:'gef_confusion_matrix'},
+            {key:'ro_fidelity_gef_e', title:'Readout Fidelity |e\u27E9 (GEF) (%)',group:'fidro',
+             source:'gef_confusion_matrix'},
+            {key:'ro_fidelity_gef_f', title:'Readout Fidelity |f\u27E9 (GEF) (%)',group:'fidro',
+             source:'gef_confusion_matrix'},
             {key:'T1',                title:'T1 (\u00b5s)',             group:'coherence'},
             {key:'T2ramsey',          title:'T2 Ramsey (\u00b5s)',      group:'coherence'},
             {key:'T2echo',            title:'T2 Echo (\u00b5s)',        group:'coherence'},

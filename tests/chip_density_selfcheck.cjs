@@ -186,6 +186,33 @@ win.Date.now = _realNow;
      'the 1Q/readout sections trigger the metrics build');
   ok(new RegExp("if \\(def\\.group === 'fid1q' \\|\\| def\\.group === 'fidro'\\) \\{[\\s\\S]{0,800}no values on this chip yet").test(src) && /gef_confusion_matrix/.test(src),
      'an absent fidelity metric renders an HONEST empty panel (the GUARD feeds the push) naming its source leaf');
+
+  /* docs/148b -- the readout panels read GE (g, e) then GEF (g, e, f), and
+     the per-state GEF diagonals exist at all (the customer's order ask
+     exposed that only the GEF average was ever derived). Searched inside
+     the PANEL_DEFS slice: the card-prop lists reuse the same key shape. */
+  var defsSlice = src.slice(src.indexOf('var PANEL_DEFS'), src.indexOf('function findProp'));
+  var roOrder = ['assignment_fidelity', 'ro_fidelity_g', 'ro_fidelity_e',
+                 'assignment_fidelity_gef', 'ro_fidelity_gef_g',
+                 'ro_fidelity_gef_e', 'ro_fidelity_gef_f'];
+  var roIdx = roOrder.map(function (k) { return defsSlice.indexOf("{key:'" + k + "'"); });
+  ok(roIdx.every(function (i, n) { return i > -1 && (n === 0 || i > roIdx[n - 1]); }),
+     'readout PANEL_DEFS order is GE, g, e, GEF, g, e, f (docs/148b): ' + JSON.stringify(roIdx));
+  ok((defsSlice.match(/source:'gef_confusion_matrix'/g) || []).length === 4
+     && (defsSlice.match(/source:'confusion_matrix'/g) || []).length === 3,
+     'every readout panel names the leaf its honest-empty line fills from');
+
+  /* docs/148b -- buildMetricPanels gates every panel on findProp(key), which
+     searches ALL_CARD_PROPS: a key present in PANEL_DEFS but missing from
+     the card-prop lists VANISHES silently at runtime (the docs/94 class,
+     and exactly how this round's first mutation run slipped past the order
+     pin). Every PANEL_DEFS key must exist in the card props too. */
+  var cardSlice = src.slice(src.indexOf('var PRIMARY_CARD_PROPS'), src.indexOf('var ALL_CARD_PROPS'));
+  var defKeys = (defsSlice.match(/\{key:'(\w+)'/g) || []).map(function (m) { return m.slice(6, -1); });
+  var orphans = defKeys.filter(function (k) { return cardSlice.indexOf("{key:'" + k + "'") === -1; });
+  ok(defKeys.length >= 17 && orphans.length === 0,
+     'every PANEL_DEFS key has a card prop, so findProp cannot silently drop a panel: '
+     + (orphans.length ? 'ORPHANS ' + JSON.stringify(orphans) : defKeys.length + ' keys'));
   ok(/'fidelity2q', 'fidelity1q', 'readout',/.test(src),
      'the jump guard knows all three sit below Trends');
 

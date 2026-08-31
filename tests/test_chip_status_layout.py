@@ -67,14 +67,18 @@ class TestSectionOrder:
     def test_the_page_order_is_overview_health_topology_trends_fidelity(self):
         marks = [m.group(1) or m.group(2) for m in re.finditer(
             r'<div class="topo-section[^"]*" (?:data-topo-section="(\w+)"|id="(sec-\w+)")', WIRING)]
-        assert marks[:5] == ["overview", "health", "sec-topology", "trends", "fidelity"], marks
-        # the Fidelity section holds the 2Q RB host FIRST, then the 1Q/readout host
+        # docs/148: fidelity split into 2Q (keeps the historical "fidelity"
+        # anchor) then 1Q then readout, each its own section
+        assert marks[:7] == ["overview", "health", "sec-topology", "trends",
+                             "fidelity", "fid1q", "fidro"], marks
         fid = WIRING[WIRING.index('data-topo-section="fidelity"'):]
         fid = fid[:fid.index("<!--")]
-        assert fid.index('id="topo-2q-rb-panels"') < fid.index('id="topo-fidelity-panels"')
-        assert '<h3 class="topo-section-title">Fidelity</h3>' in fid
-        # the remaining metric groups come after
-        assert WIRING.index('data-topo-section="fidelity"') < WIRING.index('id="topo-metric-panels"')
+        assert 'id="topo-2q-rb-panels"' in fid
+        assert '<h3 class="topo-section-title">2Q Gate Fidelity</h3>' in fid
+        # 1Q then readout hosts, then the remaining metric groups
+        assert (WIRING.index('id="topo-fidelity-1q-panels"')
+                < WIRING.index('id="topo-fidelity-ro-panels"')
+                < WIRING.index('id="topo-metric-panels"'))
 
     def test_the_browser_sees_the_sections_in_order(self, client):
         """Parsed the way a browser parses it — the raw-text pin above cannot
@@ -93,7 +97,8 @@ class TestSectionOrder:
                 a = dict(attrs)
                 if a.get("data-topo-section"):
                     self.seen.append(a["data-topo-section"])
-                elif a.get("id") in ("sec-topology", "topo-fidelity-panels", "topo-metric-panels"):
+                elif a.get("id") in ("sec-topology", "topo-fidelity-1q-panels",
+                                     "topo-fidelity-ro-panels", "topo-metric-panels"):
                     self.seen.append(a["id"])
 
             def handle_comment(self, data):
@@ -104,18 +109,21 @@ class TestSectionOrder:
         p = P()
         p.feed(body)
         assert p.seen == ["overview", "health", "sec-topology", "trends", "fidelity", "2qrb",
-                          "topo-fidelity-panels", "metrics"], p.seen
+                          "fid1q", "topo-fidelity-1q-panels",
+                          "fidro", "topo-fidelity-ro-panels", "metrics"], p.seen
         assert p.comments >= 8
 
     def test_the_subnav_follows_the_page_and_has_no_gate_tab(self):
         views = re.findall(r'class="topo-subnav-btn" role="tab" data-view="(\w+)"', WIRING)
-        assert views == ["overview", "health", "topology", "trends", "fidelity", "coherence", "frequencies", "calibration"]
+        assert views == ["overview", "health", "topology", "trends", "fidelity2q", "fidelity1q",
+                         "readout", "coherence", "frequencies", "calibration"]
         assert "Gate (2Q)" not in WIRING
 
     def test_the_sidebar_sublinks_follow_the_same_order(self):
         ul = BASE[BASE.index('id="chip-status-subnav"'):]
         ul = ul[:ul.index("</ul>")]
-        assert re.findall(r'data-view="(\w+)"', ul) == ["overview", "health", "topology", "trends", "fidelity",
+        assert re.findall(r'data-view="(\w+)"', ul) == ["overview", "health", "topology", "trends",
+                                                         "fidelity2q", "fidelity1q", "readout",
                                                          "coherence", "frequencies", "calibration"]
         assert ">Health<" in ul and "Gate (2Q)" not in ul
 
@@ -134,18 +142,25 @@ class TestClientTables:
     def test_tab_spec(self):
         spec = JS[JS.index("var TAB_SPEC = {"):JS.index("var _chipSectionBuilt")]
         keys = re.findall(r"^\s+(\w+):\s+\{ build:", spec, re.M)
-        assert keys == ["overview", "health", "topology", "fidelity", "coherence", "frequencies", "calibration", "trends"]
+        assert keys == ["overview", "health", "topology", "fidelity2q", "fidelity1q", "readout",
+                        "coherence", "frequencies", "calibration", "trends"]
         assert "gate:" not in spec
-        assert "fidelity:     { build: ['2qrb', 'metrics'], sel: '[data-topo-section=\"fidelity\"]' }" in spec
-        assert "if (view === 'gate') view = 'fidelity';" in JS
+        assert "fidelity2q:   { build: '2qrb',          sel: '[data-topo-section=\"fidelity\"]' }" in spec
+        assert "if (view === 'gate' || view === 'fidelity') view = 'fidelity2q';" in JS
 
     def test_panel_defs_order_and_names(self):
         defs = JS[JS.index("var PANEL_DEFS = ["):JS.index("function findProp")]
         keys = re.findall(r"\{key:'(\w+)',", defs)
         fid = [k for k in keys if "fidelity" in k]
+        # docs/148b (customer): the readout block reads GE (g, e) then GEF (g, e, f)
         assert fid == ["gate_fidelity_avg", "gate_fidelity_x180", "gate_fidelity_x90",
-                       "assignment_fidelity", "assignment_fidelity_gef", "ro_fidelity_g", "ro_fidelity_e"]
+                       "assignment_fidelity", "ro_fidelity_g", "ro_fidelity_e",
+                       "assignment_fidelity_gef", "ro_fidelity_gef_g",
+                       "ro_fidelity_gef_e", "ro_fidelity_gef_f"]
         assert "title:'Readout Fidelity (GE) (%)'" in defs and "title:'Readout Fidelity (GEF) (%)'" in defs
+        # every readout panel names the leaf its honest-empty line fills from
+        assert defs.count("source:'confusion_matrix'") == 3
+        assert defs.count("source:'gef_confusion_matrix'") == 4
         assert "IQ Blob" not in JS and "Assign" not in JS
 
     def test_every_panel_title_carries_its_own_size_control(self):
@@ -225,6 +240,14 @@ class TestGefMetric:
         assert q0["metrics"]["assignment_fidelity_gef"]["value"] == pytest.approx((0.90 + 0.86 + 0.85) / 3)
         assert q0["assignment_fidelity"] == pytest.approx(0.96)
         assert q2["assignment_fidelity_gef"] is None and q2["assignment_fidelity"] == pytest.approx(0.96)
+        # docs/148b: per-state diagonals of the same two matrices
+        assert q0["ro_fidelity_g"] == pytest.approx(0.97)
+        assert q0["ro_fidelity_gef_g"] == pytest.approx(0.90)
+        assert q0["ro_fidelity_gef_e"] == pytest.approx(0.86)
+        assert q0["ro_fidelity_gef_f"] == pytest.approx(0.85)
+        assert q0["metrics"]["ro_fidelity_gef_f"]["value"] == pytest.approx(0.85)
+        assert (q2["ro_fidelity_gef_g"] is None and q2["ro_fidelity_gef_e"] is None
+                and q2["ro_fidelity_gef_f"] is None)
 
     def test_the_chip_status_page_ships_it(self, client):
         body = client.get("/topology", headers={"HX-Request": "true"}).get_data(as_text=True)
