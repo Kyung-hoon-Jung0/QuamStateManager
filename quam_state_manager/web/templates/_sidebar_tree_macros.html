@@ -60,12 +60,7 @@
 {% set _lazy = (lazy_groups | default(false)) and node.is_date and node.entries
                and node.tpath not in (eager_tpaths | default(())) %}
 <details class="tree-dir{% if node.is_date %} tree-date{% endif %}"
-         data-tpath="{{ node.tpath }}"{% if not node.is_date %} open{% endif %}
-         {% if _lazy %}data-lazy-group="1"
-         hx-get="/workspace/tree/group?capped=1"
-         hx-vals='{"root": {{ root_path | string | tojson }}, "tpath": {{ node.tpath | string | tojson }}}'
-         hx-trigger="toggle[this.open] once" hx-target="find ul.tree-entries"
-         hx-swap="innerHTML"{% endif %}>
+         data-tpath="{{ node.tpath }}"{% if not node.is_date %} open{% endif %}{% if _lazy %} data-lazy-group="1" hx-get="/workspace/tree/group?capped=1" hx-vals='{"root": {{ root_path | string | tojson }}, "tpath": {{ node.tpath | string | tojson }}}' hx-trigger="toggle[this.open] once" hx-target="find ul.tree-entries" hx-swap="innerHTML"{% endif %}>
     <summary class="tree-date-label{% if not node.is_date %} tree-dirname{% endif %}">{{ node.name }} <small class="muted">({{ node.n_total }})</small></summary>
     {% for child in node.children %}{{ dir_node(root_path, child, name_filter) }}{% endfor %}
     {% if _lazy %}

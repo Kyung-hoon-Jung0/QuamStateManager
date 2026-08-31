@@ -277,7 +277,11 @@ class TestLazySidebarGroups:
     @pytest.fixture()
     def client(self, tmp_path, monkeypatch):
         from quam_state_manager.web.app import create_app
+        from quam_state_manager.web import routes as routes_mod
         monkeypatch.setenv("SM_DISABLE_ENV_WARMUP", "1")
+        # docs/148b: small trees render eagerly; force the lazy path for the
+        # fixture's 4-run tree so these pins keep testing it
+        monkeypatch.setattr(routes_mod, "_LAZY_GROUP_MIN_ENTRIES", 0)
         self.root = tmp_path / "data"
         self.qs = _mk_run(self.root, "2026-03-01", 1)
         for rid in range(2, 5):
@@ -315,5 +319,14 @@ class TestLazySidebarGroups:
 
     def test_filtered_tree_renders_matches_eagerly(self, client):
         html = client.get("/workspace/tree?name=rabi").data.decode("utf-8")
+        assert 'data-lazy-group="1"' not in html
+        assert html.count("tree-entry-click") == 4
+
+    def test_small_trees_render_eagerly(self, client, monkeypatch):
+        """docs/148b: at or below the floor the whole tree ships eagerly --
+        lazy groups exist for the 5,000-run archives, not 5-run chips."""
+        from quam_state_manager.web import routes as routes_mod
+        monkeypatch.setattr(routes_mod, "_LAZY_GROUP_MIN_ENTRIES", 200)
+        html = client.get("/workspace/tree").data.decode("utf-8")
         assert 'data-lazy-group="1"' not in html
         assert html.count("tree-entry-click") == 4

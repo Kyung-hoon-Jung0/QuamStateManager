@@ -105,16 +105,18 @@ doc = win.document;
 const scrolled = [];
 win.Element.prototype.scrollIntoView = function () { scrolled.push(this.id || this.getAttribute('data-topo-section')); };
 const J = win.ChipStatus.jumpGuard;
-const selOf = (v) => '[data-topo-section="' + v + '"]';
+// docs/148: mirrors production TAB_SPEC -- the 2Q view's section keeps its
+// historical data-topo-section="fidelity" anchor
+const selOf = (v) => '[data-topo-section="' + (v === 'fidelity2q' ? 'fidelity' : v) + '"]';
 ok(J && typeof J.note === 'function' && typeof J.reanchor === 'function', 'the jump guard is a top-level core');
 ok(J.reanchor(selOf) === false, 'nothing to re-anchor before any jump');
-J.note('fidelity');
-ok(J.reanchor(selOf) === true && scrolled.join(',') === 'sec-fidelity', 'a fresh jump to Fidelity is scrolled back to when Trends lands');
+J.note('fidelity2q');   // docs/148: the split view keys
+ok(J.reanchor(selOf) === true && scrolled.join(',') === 'sec-fidelity', 'a fresh jump to 2Q Fidelity is scrolled back to when Trends lands');
 J.note('overview');
 ok(J.reanchor(selOf) === false && scrolled.length === 1, 'a jump to a section ABOVE Trends is left alone (it cannot be displaced)');
 J.note('coherence');
 ok(J.reanchor(selOf) === false && scrolled.length === 1, 'a section that is not on the page yet is not scrolled to');
-J.note('fidelity');
+J.note('fidelity2q');
 const _realNow = win.Date.now;
 win.Date.now = (function (orig) { return function () { return orig() + 9000; }; })(win.Date.now);
 ok(J.reanchor(selOf) === false, 'a jump older than the window is not re-anchored (the user has scrolled on)');
@@ -135,14 +137,14 @@ win.Date.now = _realNow;
   const before = scrolled.length;
 
   // positive control WITH a real gap: a fresh jump, 100 ms later, still anchors
-  J.note('fidelity', pane);
+  J.note('fidelity2q', pane);
   win.Date.now = (function (orig) { return function () { return orig() + 100; }; })(_realNow);
   ok(J.reanchor(selOf) === true && scrolled.length === before + 1,
      'a jump made 100 ms ago is still re-anchored (the window is really consulted)');
   win.Date.now = _realNow;
 
   // and the user's own scroll cancels it
-  J.note('fidelity', pane);
+  J.note('fidelity2q', pane);
   pane.dispatchEvent(new win.Event('wheel'));
   win.Date.now = (function (orig) { return function () { return orig() + 100; }; })(_realNow);
   ok(J.reanchor(selOf) === false && scrolled.length === before + 1,
@@ -150,12 +152,12 @@ win.Date.now = _realNow;
   win.Date.now = _realNow;
 
   // a keypress counts too, and re-noting re-arms
-  J.note('fidelity', pane);
+  J.note('fidelity2q', pane);
   pane.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'PageDown' }));
   win.Date.now = (function (orig) { return function () { return orig() + 100; }; })(_realNow);
   ok(J.reanchor(selOf) === false, 'a key on the pane cancels it too');
   win.Date.now = _realNow;
-  J.note('fidelity', pane);
+  J.note('fidelity2q', pane);
   win.Date.now = (function (orig) { return function () { return orig() + 100; }; })(_realNow);
   ok(J.reanchor(selOf) === true, 'a NEW jump re-arms the guard');
   win.Date.now = _realNow;
@@ -168,11 +170,24 @@ win.Date.now = _realNow;
   const src = read('chip-status.js');
   const i = src.indexOf('var _deepView = ');
   ok(i > 0, 'the deep-link path normalises the gate alias before the TAB_SPEC test');
-  ok(/_deepView\s*=\s*\(_serverChipView === 'gate'\) \? 'fidelity' : _serverChipView/.test(src),
-     'and it maps gate -> fidelity');
+  ok(/_deepView\s*=\s*\(_serverChipView === 'gate' \|\| _serverChipView === 'fidelity'\)[\s\S]{0,40}\? 'fidelity2q' : _serverChipView/.test(src),
+     'and it maps gate + the retired merged view -> fidelity2q (docs/148)');
   const guard = src.slice(i, i + 400);
   ok(/if \(_deepView && TAB_SPEC\[_deepView\]\)/.test(guard),
      'the guard then tests the NORMALISED view, not the raw one');
+
+  /* docs/148 -- the Fidelity split: 2Q / 1Q / readout are separate views,
+     the 1Q + readout panels route to their own hosts, and an ABSENT readout
+     metric (the customer's "why is GEF missing?") renders an honest empty
+     line naming its source leaf instead of vanishing. */
+  ok(/fidelity2q:\s*\{ build: '2qrb'/.test(src) && /fidelity1q:\s*\{ build: 'metrics'/.test(src)
+     && /readout:\s*\{ build: 'metrics'/.test(src), 'TAB_SPEC carries the three split views');
+  ok(src.indexOf("key === 'fid1q' || key === 'fidro'") > -1,
+     'the 1Q/readout sections trigger the metrics build');
+  ok(new RegExp("if \\(def\\.group === 'fid1q' \\|\\| def\\.group === 'fidro'\\) \\{[\\s\\S]{0,800}no values on this chip yet").test(src) && /gef_confusion_matrix/.test(src),
+     'an absent fidelity metric renders an HONEST empty panel (the GUARD feeds the push) naming its source leaf');
+  ok(/'fidelity2q', 'fidelity1q', 'readout',/.test(src),
+     'the jump guard knows all three sit below Trends');
 
   /* the guard can only yield to the user if the CALLER hands it the pane the
      user scrolls -- the harness drives jumpGuard directly, so only the source

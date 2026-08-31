@@ -15176,6 +15176,11 @@ import weakref
 _NESTED_MEMO: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
 
+# docs/148b: below this many entries (whole tree) the sidebar renders
+# eagerly -- lazy groups exist for the 5,000-run archives, not 5-run chips.
+_LAZY_GROUP_MIN_ENTRIES = 200
+
+
 def _tree_render_ctx(tree: dict, ws=None) -> dict:
     """Template context for _sidebar_tree.html: the flat tree (root iteration,
     empty checks) + the per-root NESTED render model (r13 hierarchy — real
@@ -15216,7 +15221,12 @@ def _tree_render_ctx(tree: dict, ws=None) -> dict:
     # nobody had expanded. Only the unfiltered tree (a filtered tree must
     # show its matches), and never the group chain holding the ACTIVE run
     # (.tree-branch-active needs that entry present at paint).
-    lazy_groups = ws is not None
+    # docs/148b: and only when the tree is actually BIG -- at
+    # _LAZY_GROUP_MIN_ENTRIES or fewer entries across the whole tree the old
+    # eager render is strictly better (one click saved, nothing to bound).
+    _total_entries = sum(len(g.entries) for groups in (tree or {}).values()
+                         for g in groups)
+    lazy_groups = ws is not None and _total_entries > _LAZY_GROUP_MIN_ENTRIES
     eager_tpaths: set[str] = set()
     if lazy_groups:
         try:

@@ -1705,17 +1705,21 @@ class TestSidebarFeatures:
         assert 'id="chip-status-subnav"' in text, "left-nav Chip Status sub-items missing"
         # 8 sections, each wired to chipNavView(), in top-to-bottom scroll order.
         # Trends joined in docs/120 items 5+9; Distributions left in docs/126 ②.
-        assert text.count("chipNavView(") == 8
+        assert text.count("chipNavView(") == 10
         assert "view=full" not in text, "Full View was removed in the Phase C scroll dashboard"
         assert "view=distributions" not in text, "Distributions was removed (docs/126 ②)"
         assert "view=trends" in text
-        # docs/141 4o (user-directed order): Overview leads, Health right below
-        # it, then Topology, then Trends, then Fidelity (which absorbed the old
-        # Gate (2Q) tab), then the rest. No "gate" sub-link any more.
-        assert "view=gate" not in text, "Gate (2Q) was absorbed by Fidelity (docs/141 4o)"
-        order = ["overview", "health", "topology", "trends", "fidelity", "coherence", "frequencies", "calibration"]
+        # docs/148 (customer): Fidelity split into 2Q Fid. / 1Q Fid. /
+        # Read. Fid. -- one crammed section made finding readout a fight.
+        # Old links (view=gate, view=fidelity) survive as JS aliases only.
+        assert "view=gate" not in text, "Gate (2Q) was absorbed (docs/141 4o)"
+        assert 'view=fidelity"' not in text, "the merged Fidelity entry is split (docs/148)"
+        order = ["overview", "health", "topology", "trends", "fidelity2q",
+                 "fidelity1q", "readout", "coherence", "frequencies", "calibration"]
         idx = [text.index(f"view={v}") for v in order]
         assert idx == sorted(idx), "the sidebar sub-links follow the page order"
+        for label in ("2Q Fid.", "1Q Fid.", "Read. Fid."):
+            assert label in text
 
     def test_core_scripts_not_deferred(self):
         """app.js (UI_CONFIG) and dataset-virtual.js (DatasetVirtual) must load
@@ -3222,7 +3226,12 @@ class TestParamHistoryMultiChip:
         client.post("/load", data={"folder": str(loaded_dir)})
         client.post("/workspace/add", data={"folder": str(ws_root / "LabB_1Q")})
 
-        body = client.get("/param-history",
+        # docs/142 C: the page renders from SQLite alone; the banner lives in
+        # the lazy alignment fragment the page's slot fetches after paint.
+        page = client.get("/param-history",
+                          headers={"HX-Request": "true"}).data.decode()
+        assert 'id="ph-alignment-slot"' in page
+        body = client.get("/param-history/alignment",
                           headers={"HX-Request": "true"}).data.decode()
         # Either red banner ("No experiments match") or yellow with breakdown
         # — both indicate the alignment scan is running and detecting mismatch.
@@ -3243,7 +3252,11 @@ class TestParamHistoryMultiChip:
         client.post("/load", data={"folder": str(loaded_dir)})
         client.post("/workspace/add", data={"folder": str(ws_root / "ExampleChip 1Q")})
 
-        body = client.get("/param-history",
+        # docs/142 C: banner via the lazy fragment (see the red-banner pin)
+        page = client.get("/param-history",
+                          headers={"HX-Request": "true"}).data.decode()
+        assert 'id="ph-alignment-slot"' in page
+        body = client.get("/param-history/alignment",
                           headers={"HX-Request": "true"}).data.decode()
         assert "alignment-green" in body or "All " in body
 
@@ -6501,6 +6514,15 @@ class TestSidebarSearchLagFix:
         app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
         c = app.test_client()
         c.post("/workspace/add", data={"folder": str(root)})
+        # docs/142/148b: the add is listing-first -- let the background
+        # node.json hydration settle so the memo pin compares a stable tree
+        # (the hydration's version bump legitimately invalidates the memo).
+        import time as _t
+        ws = app.config["workspace"]
+        deadline = _t.time() + 15
+        while ws.hydrating_roots():
+            assert _t.time() < deadline, "hydration never settled"
+            _t.sleep(0.02)
         a = c.get("/workspace/tree").data.decode()
         b = c.get("/workspace/tree").data.decode()
         assert a == b and "resonator_spectroscopy" in a

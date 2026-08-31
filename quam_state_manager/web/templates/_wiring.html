@@ -48,8 +48,12 @@
             onclick="setChipStatusView('topology', this, true)" title="Jump to the chip topology diagram">Topology</button>
     <button type="button" class="topo-subnav-btn" role="tab" data-view="trends"
             onclick="setChipStatusView('trends', this, true)" title="Jump to the chip-wide trends">Trends</button>
-    <button type="button" class="topo-subnav-btn" role="tab" data-view="fidelity"
-            onclick="setChipStatusView('fidelity', this, true)" title="Jump to the fidelity panels — 2Q gate (RB), 1Q gate, readout">Fidelity</button>
+    <button type="button" class="topo-subnav-btn" role="tab" data-view="fidelity2q"
+            onclick="setChipStatusView('fidelity2q', this, true)" title="Jump to the 2Q gate fidelity panels (RB)">2Q Fid.</button>
+    <button type="button" class="topo-subnav-btn" role="tab" data-view="fidelity1q"
+            onclick="setChipStatusView('fidelity1q', this, true)" title="Jump to the 1Q gate fidelity panels">1Q Fid.</button>
+    <button type="button" class="topo-subnav-btn" role="tab" data-view="readout"
+            onclick="setChipStatusView('readout', this, true)" title="Jump to the readout fidelity panels (GE + GEF)">Read. Fid.</button>
     <button type="button" class="topo-subnav-btn" role="tab" data-view="coherence"
             onclick="setChipStatusView('coherence', this, true)" title="Jump to the coherence panels">Coherence</button>
     <button type="button" class="topo-subnav-btn" role="tab" data-view="frequencies"
@@ -133,9 +137,22 @@
      inner hosts are filled lazily by build2QRBPanels / buildMetricPanels.
      ═════════════════════════════════════════════════════════════════ -->
 <div class="topo-section" data-topo-section="fidelity" id="sec-fidelity">
-    <h3 class="topo-section-title">Fidelity</h3>
+    <h3 class="topo-section-title">2Q Gate Fidelity</h3>
     <div id="topo-2q-rb-panels" data-topo-section="2qrb"></div>
-    <div id="topo-fidelity-panels"></div>
+</div>
+
+<!-- docs/148: 1Q and readout are their own sections (and menu entries) --
+     one crammed Fidelity section made finding readout a fight. Their panels
+     are rendered by buildMetricPanels ('metrics' build; the fid1q/fidro
+     data-topo-section keys let the lazy IntersectionObserver trigger it). -->
+<div class="topo-section" data-topo-section="fid1q" id="sec-fidelity-1q">
+    <h3 class="topo-section-title">1Q Gate Fidelity</h3>
+    <div id="topo-fidelity-1q-panels"></div>
+</div>
+
+<div class="topo-section" data-topo-section="fidro" id="sec-readout">
+    <h3 class="topo-section-title">Readout Fidelity</h3>
+    <div id="topo-fidelity-ro-panels"></div>
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════

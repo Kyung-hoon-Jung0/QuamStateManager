@@ -110,7 +110,8 @@ window.ChipStatus.density = (function () {
    the selector for a view. */
 window.ChipStatus.jumpGuard = (function () {
     var last = null, WINDOW_MS = 8000, armedPane = null;
-    var BELOW = ['fidelity', 'coherence', 'frequencies', 'calibration'];   // rendered below Trends
+    var BELOW = ['fidelity2q', 'fidelity1q', 'readout',
+                 'coherence', 'frequencies', 'calibration'];   // rendered below Trends
     /* docs/141 4ac: the guard must not fight the USER. It used to re-anchor on
        nothing but the age of the jump, so a deliberate scroll made inside the
        8 s window was yanked back the moment the lazy Trends charts landed
@@ -2078,16 +2079,17 @@ window.ChipStatus.mount = function (opts) {
 
         // Define which metrics get their own full panel, in display order
         var PANEL_DEFS = [
-            {key:'gate_fidelity_avg', title:'1Q Gate Fidelity \u2014 RB avg (%)',group:'fidelity'},
-            {key:'gate_fidelity_x180',title:'1Q Gate Fidelity x180 (%)',group:'fidelity'},
-            {key:'gate_fidelity_x90', title:'1Q Gate Fidelity x90 (%)', group:'fidelity'},
+            {key:'gate_fidelity_avg', title:'1Q Gate Fidelity \u2014 RB avg (%)',group:'fid1q'},
+            {key:'gate_fidelity_x180',title:'1Q Gate Fidelity x180 (%)',group:'fid1q'},
+            {key:'gate_fidelity_x90', title:'1Q Gate Fidelity x90 (%)', group:'fid1q'},
             // docs/141 4o (user-directed): the IQ-blob metric is named for what
             // it IS everywhere in SM — readout fidelity, two-state (GE) from the
             // confusion matrix, three-state (GEF) from gef_confusion_matrix.
-            {key:'assignment_fidelity',title:'Readout Fidelity (GE) (%)', group:'fidelity'},
-            {key:'assignment_fidelity_gef',title:'Readout Fidelity (GEF) (%)', group:'fidelity'},
-            {key:'ro_fidelity_g',     title:'Readout Fidelity |g\u27E9 (%)',group:'fidelity'},
-            {key:'ro_fidelity_e',     title:'Readout Fidelity |e\u27E9 (%)',group:'fidelity'},
+            {key:'assignment_fidelity',title:'Readout Fidelity (GE) (%)', group:'fidro'},
+            {key:'assignment_fidelity_gef',title:'Readout Fidelity (GEF) (%)', group:'fidro',
+             source:'gef_confusion_matrix'},
+            {key:'ro_fidelity_g',     title:'Readout Fidelity |g\u27E9 (%)',group:'fidro'},
+            {key:'ro_fidelity_e',     title:'Readout Fidelity |e\u27E9 (%)',group:'fidro'},
             {key:'T1',                title:'T1 (\u00b5s)',             group:'coherence'},
             {key:'T2ramsey',          title:'T2 Ramsey (\u00b5s)',      group:'coherence'},
             {key:'T2echo',            title:'T2 Echo (\u00b5s)',        group:'coherence'},
@@ -2123,9 +2125,14 @@ window.ChipStatus.mount = function (opts) {
         // docs/141 4o: the fidelity group lives in the Fidelity section (after
         // the 2Q RB panels) when the page has one; the other groups keep
         // this container.
-        var fidHost = document.getElementById('topo-fidelity-panels');
-        var fidHtml = [];
-        var sink = function (def) { return (fidHost && def.group === 'fidelity') ? fidHtml : html; };
+        var fid1qHost = document.getElementById('topo-fidelity-1q-panels');
+        var fidRoHost = document.getElementById('topo-fidelity-ro-panels');
+        var fid1qHtml = [], fidRoHtml = [];
+        var sink = function (def) {
+            if (fid1qHost && def.group === 'fid1q') return fid1qHtml;
+            if (fidRoHost && def.group === 'fidro') return fidRoHtml;
+            return html;
+        };
 
         PANEL_DEFS.forEach(function(def) {
             var prop = findProp(def.key);
@@ -2135,15 +2142,30 @@ window.ChipStatus.mount = function (opts) {
             // avg/min/max, never colours red, never stretches the relative range.
             var vals = topo.nodes.map(function(n) { return _mv(n, def.key); });
             var agg = computeAggregates(vals);
-            if (agg.count === 0) return;
+            if (agg.count === 0) {
+                // docs/148 (customer: "why is GEF missing?"): inside the
+                // dedicated fidelity sections an absent metric renders an
+                // HONEST empty line naming the leaf it fills from -- a
+                // silently skipped panel reads as a missing feature
+                // (docs/94 rule). The shared metrics container keeps the
+                // old skip: coherence/frequency panels absent from a chip
+                // are not a question anyone asked.
+                if (def.group === 'fid1q' || def.group === 'fidro') {
+                    sink(def).push('<div class="topo-section topo-metric-empty" data-group="'
+                        + def.group + '"><h4 class="topo-metric-panel-title">' + def.title
+                        + '</h4><p class="muted" style="margin:0.2rem 0 0.8rem">no values on this chip yet'
+                        + (def.source ? ' \u2014 fills from <code>' + def.source + '</code> once a run writes it' : '')
+                        + '</p></div>');
+                }
+                return;
+            }
 
-            // Group header
+            // Group header (the dedicated fidelity sections carry their own
+            // <h3> in the template -- no injected header there)
             if (def.group !== prevGroup) {
                 prevGroup = def.group;
-                var groupLabel = {fidelity:'1Q Gate & Readout Fidelity', coherence:'Coherence', frequency:'Frequencies', calibration:'Calibration'}[def.group] || def.group;
-                if (fidHost && def.group === 'fidelity') {
-                    fidHtml.push('<h4 class="topo-section-title topo-fidelity-subtitle" data-group="fidelity" style="margin-top:1rem;font-size:1.05em">' + groupLabel + '</h4>');
-                } else {
+                var groupLabel = {coherence:'Coherence', frequency:'Frequencies', calibration:'Calibration'}[def.group];
+                if (groupLabel) {
                     html.push('<h3 class="topo-section-title" data-group="' + def.group + '" style="margin-top:1.5rem">' + groupLabel + '</h3>');
                 }
             }
@@ -2294,10 +2316,12 @@ window.ChipStatus.mount = function (opts) {
 
         // Single DOM write per host, then re-query click handlers, then render charts.
         container.innerHTML = html.join('');
-        if (fidHost) fidHost.innerHTML = fidHtml.join('');
+        if (fid1qHost) fid1qHost.innerHTML = fid1qHtml.join('');
+        if (fidRoHost) fidRoHost.innerHTML = fidRoHtml.join('');
         window.ChipStatus.density.applyAll(container);
-        if (fidHost) window.ChipStatus.density.applyAll(fidHost);
-        var hosts = fidHost ? [container, fidHost] : [container];
+        if (fid1qHost) window.ChipStatus.density.applyAll(fid1qHost);
+        if (fidRoHost) window.ChipStatus.density.applyAll(fidRoHost);
+        var hosts = [container].concat(fid1qHost ? [fid1qHost] : []).concat(fidRoHost ? [fidRoHost] : []);
         var eachCell = function (sel, fn) { hosts.forEach(function (h) { h.querySelectorAll(sel).forEach(fn); }); };
 
         eachCell('.heatmap-cell[data-qubit]', function(cell) {
@@ -2436,7 +2460,10 @@ window.ChipStatus.mount = function (opts) {
         overview:     { build: null,           sel: '[data-topo-section="overview"]' },
         health:       { build: null,           sel: '[data-topo-section="health"]' },
         topology:     { build: null,           sel: '#sec-topology' },
-        fidelity:     { build: ['2qrb', 'metrics'], sel: '[data-topo-section="fidelity"]' },
+        // docs/148: 2Q / 1Q / readout are separate menu entries + sections.
+        fidelity2q:   { build: '2qrb',          sel: '[data-topo-section="fidelity"]' },
+        fidelity1q:   { build: 'metrics',       sel: '#sec-fidelity-1q' },
+        readout:      { build: 'metrics',       sel: '#sec-readout' },
         coherence:    { build: 'metrics',       sel: '#topo-metric-panels [data-group="coherence"]' },
         frequencies:  { build: 'metrics',       sel: '#topo-metric-panels [data-group="frequency"]' },
         calibration:  { build: 'metrics',       sel: '#topo-metric-panels [data-group="calibration"]' },
@@ -2464,6 +2491,8 @@ window.ChipStatus.mount = function (opts) {
         if (!key || _chipSectionBuilt[key]) return;
         else if (key === '2qrb') { _chipSectionBuilt[key] = true; build2QRBPanels(); }
         else if (key === 'metrics') { _chipSectionBuilt[key] = true; buildMetricPanels(); }
+        // docs/148: the 1Q / readout sections' panels come from the metrics build
+        else if (key === 'fid1q' || key === 'fidro') { _ensureSectionBuilt('metrics'); }
         // Trends fetches its own data (the history index is not cheap enough to
         // ride the page render), so building it means asking for it once.
         else if (key === 'trends') {
@@ -2517,7 +2546,7 @@ window.ChipStatus.mount = function (opts) {
 
     // Click a tab → build its section if needed, then smooth-scroll to it.
     window.setChipStatusView = function(view, btn, scroll) {
-        if (view === 'gate') view = 'fidelity';          // absorbed (docs/141 4o)
+        if (view === 'gate' || view === 'fidelity') view = 'fidelity2q';   // docs/141 4o + docs/148 aliases
         var spec = TAB_SPEC[view] || TAB_SPEC.overview;
         try { localStorage.setItem('quam_chipstatus_view', view); } catch (e) {}
         if (scroll !== false) _jump.note(view);
@@ -2554,7 +2583,7 @@ window.ChipStatus.mount = function (opts) {
                 document.body.removeEventListener('htmx:beforeSwap', _ioTeardown);
             }
         });
-        ['2qrb', 'metrics', 'trends'].forEach(function(k) {
+        ['2qrb', 'metrics', 'trends', 'fid1q', 'fidro'].forEach(function(k) {
             var el = document.querySelector('[data-topo-section="' + k + '"]');
             if (el) io.observe(el);
         });
@@ -2993,7 +3022,8 @@ window.ChipStatus.mount = function (opts) {
     // deliberately removed `gate`, so the branch was skipped and the mapping
     // never ran: an old bookmark landed on Topology with no sign anything was
     // ignored.
-    var _deepView = (_serverChipView === 'gate') ? 'fidelity' : _serverChipView;
+    var _deepView = (_serverChipView === 'gate' || _serverChipView === 'fidelity')
+        ? 'fidelity2q' : _serverChipView;
     if (_deepView && TAB_SPEC[_deepView]) {
         window.setChipStatusView(_deepView, null, true);
     } else {
