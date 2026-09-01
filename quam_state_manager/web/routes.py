@@ -19256,7 +19256,8 @@ def _dataset_candidate_folders(*, fast: bool = False) -> list[Path]:
     return result
 
 
-def _active_dataset_stores(*, fast: bool = False) -> list[dict[str, Any]]:
+def _active_dataset_stores(*, fast: bool = False,
+                           rescan: bool = True) -> list[dict[str, Any]]:
     """Every workspace data folder that yielded >=1 run, each as
     ``{"key", "path", "label", "store"}``.
 
@@ -19268,14 +19269,31 @@ def _active_dataset_stores(*, fast: bool = False) -> list[dict[str, Any]]:
     ``fast=True`` (the periodic polls) reuses the cached candidate-folder list
     instead of recomputing the expensive workspace-token stat-walk (~0.3-1s on
     9p) every 60 s — a poll only needs the already-known folder set, and
-    workspace mutations invalidate the candidates cache explicitly. The per-store
-    ``rescan_if_stale`` below still runs, so new runs are still detected.
+    workspace mutations invalidate the candidates cache explicitly.
+
+    ``rescan=False`` (docs/155 F4) skips the per-store ``rescan_if_stale``,
+    for the two callers that do not want one HERE: the delta poll, which
+    rescans each store itself moments later with the docs/105 #4 deadline,
+    and ``/datasets/wait``, which wants nothing from the stores but their
+    PATHS. `rescan_if_stale` stats every date dir under the root, so on the
+    delta poll — five seconds apart, on every open tab — that was two full
+    sweeps of the archive per call where one was asked for, and the first of
+    them ran WITHOUT the deadline, quietly defeating the budget the second
+    one carries.
+
+    With ``rescan=False`` the ``run_count`` filter is skipped too: a store
+    whose count we deliberately did not refresh must not be dropped for
+    being empty, or a folder receiving its FIRST run would fall out of the
+    delta poll exactly when it starts mattering. The callers that pass it
+    either rescan immediately (and so discover that run) or only read paths.
     """
     result: list[dict[str, Any]] = []
     seen_keys: set[str] = set()
     for cand in _dataset_candidate_folders(fast=fast):
-        store = _get_or_create_store(cand)
-        if store is None or store.run_count == 0:
+        store = _get_or_create_store(cand, rescan=rescan)
+        if store is None:
+            continue
+        if rescan and store.run_count == 0:
             continue
         key = _folder_key(cand)
         if key in seen_keys:  # two candidates resolving to the same real path
@@ -20005,7 +20023,13 @@ def datasets_changes_since():
     except (TypeError, ValueError):
         ts = 0.0
     try:
-        active = _active_dataset_stores(fast=True)  # 60s poll — skip the token stat-walk
+        # docs/155 F4 — `rescan=False`: `changes_since` below rescans each
+        # store itself, WITH the docs/105 #4 deadline. Letting the lookup
+        # rescan too meant two full sweeps of every date dir per call, five
+        # seconds apart, on every open tab — and the first one carried no
+        # deadline, so the budget the second one respects was being spent
+        # before it was consulted.
+        active = _active_dataset_stores(fast=True, rescan=False)
     except Exception:
         # Never 500 the monitoring poll: hold the cursor and try again next
         # tick. A 500 here is invisible to the user (the client catches it)
@@ -20185,7 +20209,13 @@ def datasets_wait():
     except (TypeError, ValueError):
         timeout = 25.0
     try:
-        active = _active_dataset_stores(fast=True)
+        # docs/155 F4 — this route wants PATHS, nothing else: the watcher
+        # takes its own signature on its own thread. Rescanning every store
+        # here stat'ed every date dir in the archive, once per wait, on every
+        # open tab, to compute a run table nobody reads. `rescan=False` also
+        # keeps a folder that has not yet yielded a run in the watched set,
+        # which is the one folder a watcher most wants to be watching.
+        active = _active_dataset_stores(fast=True, rescan=False)
         w.set_roots([f["path"] for f in active if f.get("path")])
     except Exception:
         logger.exception("datasets/wait: could not resolve the active data folders")

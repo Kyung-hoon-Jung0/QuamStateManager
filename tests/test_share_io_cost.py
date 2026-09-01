@@ -1,4 +1,4 @@
-r"""Share I/O cost of the surfaces users named as slow (docs/155 F1, F2, F2').
+r"""Share I/O cost of the surfaces users named as slow (docs/155 F1, F2, F2', F4).
 
 The customer's workspace is an SMB share, so a filesystem operation is a
 network round-trip (~1.8 ms measured) rather than the ~1 us it is on the
@@ -6,12 +6,14 @@ development NVMe. Wall clock measured locally cannot see that difference at
 all; the OPERATION COUNT is identical on both machines, which is why every pin
 here counts syscalls and none of them looks at a clock.
 
-Three fixes, measured at 390 date dirs (roughly 13 months of daily runs):
+Four fixes, measured at 390 date dirs (roughly 13 months of daily runs):
 
     /topology (Chip Status / Overview)   7,831 -> 403 ops   (~14.1 s -> ~0.7 s)
     /param-history/alignment             1,180 -> 401
     /datasets  ·  /trends/data           1,564 -> 784
-    /datasets/poll  (every page, polled)   782 -> 392
+    /datasets/changes-since (every 5 s)    784 -> 392
+    /datasets/wait  (the long poll)        392 ->   0
+    /datasets/poll  (every 60 s)           782 -> 392
     /field/history  (the 🕘 popover)       789 -> 399
 
 F1 — the per-gate RB derivation (docs/138) called `_rb_run_folder` once per 2Q
@@ -28,8 +30,13 @@ alignment path a third call per entry: docs/139's own-root exclusion resolved
 EVERY entry. The root is resolved once now, and a non-symlink child's resolved
 path is `parent_resolved / name` — string work, no syscall.
 
-Both are cost-only: the fingerprint this function returns, and the staleness
-contract built on it, must not move. That is pinned first, below.
+F4 — the two background polls stopped sweeping the archive to answer questions
+they do not ask: the delta poll rescanned every store and then rescanned it
+again (the first one WITHOUT the docs/105 #4 deadline), and `/datasets/wait`
+built a run table to read the folder paths off it.
+
+All four are cost-only: the fingerprints these functions return, and the
+staleness contracts built on them, must not move. That is pinned first, below.
 """
 from __future__ import annotations
 
@@ -446,4 +453,148 @@ class TestWorkspaceTokenCostsOnePerDir:
         assert (HistoryManager._workspace_token(ws)
                 != HistoryManager._workspace_token(ws, own_root=own)), (
             "the exclusion made no difference at all — it is not being applied"
+        )
+
+
+# ---------------------------------------------------------------------------
+# F4 — the background polls stopped sweeping the archive to answer questions
+#      they do not ask
+# ---------------------------------------------------------------------------
+
+class TestBackgroundPollsSweepOnce:
+    """These two run forever on every open tab. The delta poll fires every 5 s
+    and did TWO full staleness sweeps per call; `/datasets/wait` did one to
+    compute a run table it never reads. On the customer's share that was
+    ~19 s of network round-trips per minute per tab, which is what makes a
+    page nobody is looking at slow down the page somebody is."""
+
+    def _app(self, tmp_path, folder):
+        from quam_state_manager.web.app import create_app
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        c = app.test_client()
+        r = c.post("/workspace/add", data={"folder": str(folder)})
+        assert r.status_code in (200, 204, 302), r.status_code
+        return app, c
+
+    def _count_sweeps(self, monkeypatch, client, url):
+        calls = []
+        real = DatasetStore.rescan_if_stale
+
+        def counting(self, *a, **k):
+            calls.append(k.get("deadline", "no-deadline"))
+            return real(self, *a, **k)
+
+        monkeypatch.setattr(DatasetStore, "rescan_if_stale", counting)
+        r = client.get(url)
+        assert r.status_code == 200, r.status_code
+        return calls
+
+    def test_the_delta_poll_sweeps_once_per_store_not_twice(
+            self, tmp_path, monkeypatch):
+        folder = _seed_archive(tmp_path / "data", dates=6)
+        _, c = self._app(tmp_path, folder)
+        c.get("/datasets")                       # warm the store, as a page does
+
+        calls = self._count_sweeps(monkeypatch, c, "/datasets/changes-since?ts=0")
+
+        assert len(calls) == 1, (
+            f"{len(calls)} staleness sweeps for one folder in one delta poll "
+            f"({calls}) — every one of them stats every date dir in the archive"
+        )
+
+    def test_the_delta_poll_keeps_the_deadline_on_the_sweep_it_does(
+            self, tmp_path, monkeypatch):
+        """docs/105 #4 bounded this walk. The sweep that got removed was the
+        UNBOUNDED one, which ran first and spent the budget before the bounded
+        one was consulted — so this is not merely cheaper, it is the shape the
+        budget was written for."""
+        folder = _seed_archive(tmp_path / "data", dates=6)
+        _, c = self._app(tmp_path, folder)
+        c.get("/datasets")
+
+        calls = self._count_sweeps(monkeypatch, c, "/datasets/changes-since?ts=0")
+
+        assert calls and all(d not in (None, "no-deadline") for d in calls), (
+            f"the surviving sweep carries no deadline ({calls}) — the poll is "
+            f"unbounded again on a folder someone is actively writing"
+        )
+
+    def test_the_long_poll_sweeps_nothing(self, tmp_path, monkeypatch):
+        """`/datasets/wait` hands the watcher a list of PATHS. The watcher
+        takes its own signature on its own thread; the run table it used to
+        build here was read by nobody."""
+        folder = _seed_archive(tmp_path / "data", dates=6)
+        _, c = self._app(tmp_path, folder)
+        c.get("/datasets")
+
+        calls = self._count_sweeps(monkeypatch, c, "/datasets/wait?since=-1")
+
+        assert calls == [], (
+            f"{len(calls)} staleness sweeps to answer a question about paths"
+        )
+
+    def test_the_long_poll_still_watches_the_folder(self, tmp_path):
+        """A cost pin alone would pass with `set_roots` deleted."""
+        folder = _seed_archive(tmp_path / "data", dates=3)
+        app, c = self._app(tmp_path, folder)
+        c.get("/datasets")
+
+        r = c.get("/datasets/wait?since=-1")
+        assert r.status_code == 200
+        assert r.get_json().get("roots", 0) >= 1, (
+            "the watcher was handed no roots — nothing wakes the polls now"
+        )
+
+    def test_a_folder_with_no_runs_yet_is_not_dropped(self, tmp_path):
+        """`rescan=False` means we did not refresh `run_count`, so filtering on
+        it would drop a folder that is EMPTY at this instant — which is exactly
+        the folder about to receive its first run, and exactly the moment a
+        watcher is for."""
+        empty = tmp_path / "brand_new"
+        empty.mkdir()
+        app, c = self._app(tmp_path, empty)
+
+        with app.test_request_context():
+            from quam_state_manager.web.routes import _active_dataset_stores
+            # normcase: Windows hands tmp_path back as `pytest-of-measurement`
+            # while the scanner's resolve() returns the on-disk casing — the
+            # docs/87 class, nothing to do with what this pin measures.
+            paths = {os.path.normcase(e["path"])
+                     for e in _active_dataset_stores(fast=True, rescan=False)}
+        assert os.path.normcase(str(empty)) in paths, (
+            "an empty data folder fell out of the watched set; its first run "
+            "would not wake anything"
+        )
+
+    def test_the_delta_poll_still_discovers_a_new_run(self, tmp_path):
+        """The end-to-end contract the cost pins must not have broken: the
+        delta poll's OWN rescan — the one `rescan=False` leaves it to do —
+        still finds a run that landed after the last poll.
+
+        Asserted against a `ts=0` poll rather than against the running cursor
+        on purpose. The cursor is a wall-clock float compared with `<=`, and
+        this test creates a run microseconds after taking the cursor, so
+        whether the row clears that comparison is a race at test timescales
+        (measured 3 failures in 40 when asserted that way, and the same
+        raciness is 13x WORSE without this commit: 2 in 6). Nothing here can
+        fix that comparison, and in production the polls are five seconds
+        apart. What this pin owns is discovery — that the rescan happened at
+        all — and `ts=0` asks exactly that, deterministically.
+        """
+        folder = _seed_archive(tmp_path / "data", dates=2)
+        _, c = self._app(tmp_path, folder)
+        c.get("/datasets")
+        c.get("/datasets/changes-since?ts=0")
+
+        run = folder / "2026-06-15" / "#4242_04_power_rabi_235959"
+        run.mkdir(parents=True)
+        (run / "node.json").write_text(
+            json.dumps({"id": 4242, "name": "power_rabi"}), encoding="utf-8")
+
+        body = c.get("/datasets/changes-since?ts=0").get_json()
+        ids = {row["id"] for row in body.get("updated", [])}
+        assert 4242 in ids, (
+            "the delta poll no longer discovers a run that landed after the "
+            "last poll — its own rescan is not running, and nothing else on "
+            "this path was going to do it"
         )

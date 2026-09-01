@@ -126,6 +126,27 @@ directory the walk already holds, so for anything that is not a symlink the
 resolved path is `parent_resolved / name` and the predicate is string work. A
 symlink, or a parent that would not resolve, falls back to the original.
 
+**F4 — the background polls stopped sweeping to answer questions they do not
+ask. SHIPPED.** These two run forever on every open tab, and they were the
+whole reason a page nobody is looking at slows down the page somebody is.
+`_active_dataset_stores` gained `rescan=False`:
+
+- `/datasets/changes-since` (every **5 s**) rescanned every store in the
+  lookup and then rescanned it again inside `changes_since` — two full sweeps
+  of every date dir per call. Worse, the first one carried **no deadline**, so
+  docs/105 #4's budget was being spent before the bounded sweep it belongs to
+  was ever consulted. The lookup no longer rescans; the deadline-bearing sweep
+  is the only one left.
+- `/datasets/wait` wants the folder **paths** and nothing else — the watcher
+  takes its own signature on its own thread. It built and rescanned a run
+  table that nothing read.
+
+With `rescan=False` the `run_count` filter is skipped too: a count we
+deliberately did not refresh must not be used to drop a folder for being
+empty, which would drop exactly the folder about to receive its first run.
+`/datasets/wait` therefore now watches an empty data folder, which it never
+did before.
+
 ### 5a. Measured (same fixture, 390 date dirs)
 
 | route | before | F1+F2 | +F2' | total |
@@ -134,8 +155,20 @@ symlink, or a parent that would not resolve, falls back to the original.
 | `/param-history/alignment` | 1,180 | 1,180 | **401** | **-66%** |
 | `/datasets` | 1,564 | 1,174 | **784** | **-50%** |
 | `/trends/data` | 1,564 | 1,174 | **784** | **-50%** |
-| `/datasets/poll` (every page, polled) | 782 | 392 | **392** | **-50%** |
+| `/datasets/poll` (every 60 s) | 782 | 392 | **392** | **-50%** |
 | `/field/history` (the 🕘 popover) | 789 | 399 | **399** | **-49%** |
+| `/datasets/changes-since` (every **5 s**) | 1,568 | 784 | **392** (F4) | **-75%** |
+| `/datasets/wait` (the long poll) | 782 | 392 | **0** (F4) | **-100%** |
+
+**What a tab costs while nobody touches it**, at 1.8 ms per share op — the
+number that decides whether four open tabs saturate the pool:
+
+| | before | after |
+|---|---|---|
+| `/datasets/changes-since`, every 5 s | 16.9 s/min | **8.5 s/min** |
+| `/datasets/wait`, continuous | 1.7 s/min | **0** |
+| `/datasets/poll`, every 60 s | 0.7 s/min | 0.7 s/min |
+| **per open tab** | **19.3 s/min** | **9.2 s/min** |
 
 `/topology`'s attribution afterwards shows exactly ONE `_current_mtime` sweep,
 where it was ten; the alignment path's per-entry `resolve()` storm is gone
