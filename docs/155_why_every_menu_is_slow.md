@@ -320,6 +320,12 @@ notification (`ReadDirectoryChangesW`), not a smaller constant.
 investigated. It is a user-initiated action rather than a background one, so it
 ranks below the others, but it is the same order of magnitude as a poll.
 
+**F8 — jsdom, and this environment's baseline. DONE** (§8): `npm install`
+run, 101/101 selfchecks executing, and the full-suite baseline established at
+35 failed / 6,911 passed with every failure reproduced on the pre-campaign
+tree. What remains open here is smaller: the 35 are worth triaging into
+"stale pin" and "genuine OS-behaviour difference", which nobody has done.
+
 **F7 — tests write into the developer's real `instance/` dir.** Observed during
 this work: `instance/workspace_cache/` gained entries while the suite ran, and
 `instance/last_session.json` had been overwritten with a `pytest-of-Measurement`
@@ -329,7 +335,101 @@ and the session file are not covered, and the failure mode is a developer's own
 SM state being silently replaced by a test's. Unrelated to performance; found
 here, recorded here.
 
-## 7. What this does not show
+## 7. Does this help anybody but the customer? — the A/B
+
+Everything above was measured on one archive shape at one size, on a machine
+whose workspace is a NAS share, and every "on the share" figure is arithmetic.
+That leaves the question that actually matters for shipping: **does a lab with
+a small archive on a local disk get anything?** So the pre-campaign commit
+(`c247338`) was checked out into a worktree and the same routes were driven
+against three archive sizes, in-process, counting syscalls against the
+workspace directory. Local NVMe, no share involved.
+
+| | **30 runs** / 10 dates | | **300 runs** / 60 dates | | **1,440 runs** / 180 dates | |
+|---|---|---|---|---|---|---|
+| route | before | after | before | after | before | after |
+| `/topology` (Overview) | 220 / 16.7 ms | **12 / 6.9** | 1,220 / 71.2 | **62 / 10.3** | 3,620 / 247 | **182 / 18.0** |
+| `/param-history/alignment` | 132 / 19.4 | **13 / 6.3** | 1,142 / 133 | **63 / 11.0** | 5,042 / **627** | **183 / 22.8** |
+| `/datasets` | 114 / 5.5 | **12 / 1.5** | 904 / 51.2 | **62 / 6.6** | 3,784 / 219 | **182 / 21.9** |
+| `/trends/data` | 114 / 5.5 | **12 / 0.8** | 904 / 43.2 | **62 / 3.4** | 3,784 / 224 | **182 / 14.2** |
+| `/datasets/changes-since` (5 s) | 44 / 2.0 | **12 / 1.0** | 244 / 12.3 | **62 / 3.6** | 724 / 39.5 | **182 / 12.8** |
+| `/datasets/wait` (continuous) | 22 / 1.5 | **0 / 0.4** | 122 / 6.8 | **0 / 0.3** | 362 / 26.7 | **0 / 0.2** |
+| `/field/history` | 23 / 6.8 | 13 / 6.7 | 123 / 18.1 | 63 / 18.3 | 363 / 65.1 | 183 / 60.8 |
+
+(ops / milliseconds, best of three after warming.)
+
+**The answer is yes, and it is stronger than the share arithmetic suggested.**
+
+- At **30 runs** — a lab two weeks old — operation counts already fall ~90% and
+  a Chip Status render goes 16.7 → 6.9 ms. Real, free, and not something a
+  person would notice.
+- At **300 runs** — a few months — Param History goes **133 → 11 ms** and Chip
+  Status **71 → 10 ms**. That is the point where it stops being a rounding
+  error on a local disk.
+- At **1,440 runs** — about a year of daily measurement — Param History goes
+  **627 → 23 ms (27x)** and Chip Status **247 → 18 ms**. Plainly perceptible,
+  with no network anywhere.
+- **No route got worse at any size.**
+
+`/field/history` is the honest exception: its share ops halve but its wall
+time does not move (65 → 61 ms), because that route is dominated by snapshot
+and SQLite reads rather than by the directory walk. It is not a beneficiary of
+this campaign, and saying otherwise from the op count alone would be wrong.
+
+Two things this A/B corrected:
+
+1. **A defect in the measurement itself.** Driving `/datasets/changes-since`
+   with `ts=0` returns every row in the archive, and under `TESTING` the
+   docs/132 EXP-ingest then runs INLINE for each one — file I/O a real poll
+   never pays. The first run of this table read 3,604 ops at the mid size for
+   that route and showed almost no improvement; driven the way the browser
+   drives it (the previous response's cursor) it reads 724 → 182.
+2. **docs/154's finding, confirmed at a second size.** The pre-campaign
+   `/param-history/alignment` costs 5,042 ops at 180 date dirs — that is per
+   RUN, not per date, which is exactly the O(runs) token this campaign opened
+   with. Worth stating plainly: **that half of the benefit only reaches labs
+   whose workspace root is the SHALLOW layout** (`<root>/<date>/<run>`, which
+   is what qualibrate's `storage.location` is). A deep-layout root already
+   stopped at the date level and sees only the other fixes.
+
+## 8. The client side, and this environment's real baseline
+
+Everything above is server-side. The client half was unverifiable here until
+now, because the `.cjs` selfchecks need jsdom and this machine did not have
+it — so 78 DOM-level pins were reporting as failures-or-skips rather than
+running (the state CLAUDE.md warns about, and docs/120 records once hid four
+genuinely failing selfchecks).
+
+`npm install` was run. Results:
+
+- **`npm run selfcheck`: 101 passed, 0 failed, 0 skipped, of 101.** The whole
+  client suite actually executes.
+- The nine pytest drivers that had been failing (`test_pane_state`,
+  `test_pulses_commit`, `test_undo_nav`, `test_kb_polish`, `test_grid_editing`,
+  `test_ds_flow`, `test_figure_lightbox`, `test_interactive_theme`,
+  `test_apply_ux`) — **21 passed**. Those failures were jsdom's absence, not
+  regressions.
+- And structurally: `git diff c247338..HEAD -- '*.js' '*.cjs' '*.html' '*.css'`
+  is **empty**. This campaign touched four Python files, two test files and two
+  docs. A client-side regression was impossible by construction; the selfchecks
+  confirm the harness that would have caught one now runs.
+
+**Baseline for this environment (`QM_Qualibrate`, Windows 11, jsdom
+installed), full suite minus `TestWaitForServer`: 35 failed, 6,911 passed, 280
+skipped, ~21 min.** All 35 were re-run against the pre-campaign worktree: 33
+fail there identically. The remaining two are flakes, measured 15x on each
+tree — `test_state_only_run_waits_for_wiring` 0/15 on both (it only fails
+inside a larger run, an ordering effect) and
+`test_native_path_anchors_on_the_config_dir` 2/15 on both. **Zero regressions
+from the campaign.**
+
+The 35 fall into the classes this project already documents: the docs/87
+OS-behaviour set (tmp-path case identity, WSL kernel checks, Windows
+file-locking timing), the `test_scanner` staleness-timing group, and the stale
+pins CLAUDE.md already records for `test_auto_apply` and `test_auto_sync`.
+Nothing in the client half.
+
+## 9. What this does not show
 
 - **The NAS was unreachable throughout** (the same network fault that ended the
   docs/154 session). Every "est. on NAS" figure is op-count x 1.8 ms, and the
@@ -338,8 +438,8 @@ here, recorded here.
 - **The customer's real date-dir count is unknown.** 390 is a modelled
   13-months-of-daily-runs, chosen to make the scaling visible, not read off their
   archive. Their absolute numbers could be smaller or considerably larger.
-- Only the server side was measured. Client-side render cost (docs/141's subject)
-  is a separate axis and is what dominates `/bulk` locally.
+- Client-side RENDER COST (docs/141's subject) is still a separate axis and is
+  what dominates `/bulk` locally. §8 verifies client CORRECTNESS, not speed.
 - Surfaces reachable only by clicking through a run (figures, h5 reads) were not
   swept.
 - The measuring harness itself (`scratchpad/serve_instrumented.py`) wraps `open`
