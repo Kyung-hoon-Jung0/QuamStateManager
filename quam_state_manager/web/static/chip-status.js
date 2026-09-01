@@ -883,6 +883,21 @@ window.ChipStatus.mount = function (opts) {
             }
         });
 
+        // docs/153: apply the stored ORDER. The DEFAULT order is remembered
+        // so a drag that lands back where it started deletes the entry
+        // (same default-elision rule as every other pref); ids the stored
+        // order does not know (a new custom tile, ro_gef appearing) append
+        // at the end in their default relative order.
+        _ovDefaultOrder = tiles.map(function(t) { return t.id; }).filter(Boolean);
+        if (ovPrefs.order && ovPrefs.order.length) {
+            var _pos = {};
+            ovPrefs.order.forEach(function(oid, i) { _pos[oid] = i; });
+            var _base = ovPrefs.order.length;
+            tiles = tiles.map(function(t, i) {
+                return { t: t, k: (t.id in _pos) ? _pos[t.id] : _base + i };
+            }).sort(function(a, b) { return a.k - b.k; }).map(function(x) { return x.t; });
+        }
+
         // docs/152: what the settings panel lists -- every tile whose big
         // number IS an aggregate (a muted no-data tile has none to switch).
         _ovStatTiles = tiles.filter(function(t) { return t.id && t.stat; })
@@ -897,7 +912,7 @@ window.ChipStatus.mount = function (opts) {
             var statTag = c.stat
                 ? ' <span class="ov-stat-tag">' + _esc(c.stat === 'median' ? 'med' : c.stat) + '</span>' : '';
             html += '<div class="topo-card' + (c.muted ? ' topo-card-empty' : '') + '"'
-                  + (c.id ? ' data-tile-id="' + _esc(c.id) + '"' : '')
+                  + (c.id ? ' data-tile-id="' + _esc(c.id) + '" draggable="true"' : '')
                   + (c.composite ? ' data-tile-composite="1"' : '')
                   + ' style="border-top-color:' + border + '">'
                   + (c.id ? '<button type="button" class="ov-tile-menu" data-tile-id="' + _esc(c.id) + '" title="Customize this panel" aria-label="Customize this panel">\u22ee</button>' : '')
@@ -922,8 +937,9 @@ window.ChipStatus.mount = function (opts) {
     function _ovLoad() {
         try {
             var p = JSON.parse(localStorage.getItem(OV_PREFS_KEY) || '{}') || {};
-            return { removed: p.removed || [], stats: p.stats || {}, added: p.added || [] };
-        } catch (e) { return { removed: [], stats: {}, added: [] }; }
+            return { removed: p.removed || [], stats: p.stats || {}, added: p.added || [],
+                     order: p.order || [] };
+        } catch (e) { return { removed: [], stats: {}, added: [], order: [] }; }
     }
     function _ovSave(p) {
         try {
@@ -933,7 +949,7 @@ window.ChipStatus.mount = function (opts) {
     }
     function _ovCustomized(p) {
         return !!((p.removed && p.removed.length) || (p.stats && Object.keys(p.stats).length)
-                  || (p.added && p.added.length));
+                  || (p.added && p.added.length) || (p.order && p.order.length));
     }
     function _ovRefreshNote(prefs) {
         var n = document.getElementById('ov-custom-note');
@@ -964,6 +980,43 @@ window.ChipStatus.mount = function (opts) {
             else _ovHideHover();
         });
         container.addEventListener('mouseleave', function() { _ovHideHover(); });
+        // docs/153: drag a tile to reorder. Live DOM move on dragover;
+        // the resulting order persists on dragend (deleted again when it
+        // matches the default order).
+        container.addEventListener('dragstart', function(ev) {
+            var tile = ev.target.closest ? ev.target.closest('.topo-card[data-tile-id]') : null;
+            if (!tile) return;
+            _ovDragEl = tile;
+            _ovHideHover();
+            tile.classList.add('ov-dragging');
+            if (ev.dataTransfer) {
+                ev.dataTransfer.effectAllowed = 'move';
+                try { ev.dataTransfer.setData('text/plain', tile.getAttribute('data-tile-id')); } catch (e) {}
+            }
+        });
+        container.addEventListener('dragover', function(ev) {
+            if (!_ovDragEl) return;
+            ev.preventDefault();
+            if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+            var over = ev.target.closest ? ev.target.closest('.topo-card[data-tile-id]') : null;
+            if (!over || over === _ovDragEl) return;
+            var r = over.getBoundingClientRect ? over.getBoundingClientRect() : { left: 0, width: 0 };
+            if ((ev.clientX - r.left) < r.width / 2) container.insertBefore(_ovDragEl, over);
+            else container.insertBefore(_ovDragEl, over.nextSibling);
+        });
+        container.addEventListener('drop', function(ev) { if (_ovDragEl) ev.preventDefault(); });
+        container.addEventListener('dragend', function() {
+            if (!_ovDragEl) return;
+            _ovDragEl.classList.remove('ov-dragging');
+            _ovDragEl = null;
+            var ids = Array.prototype.map.call(
+                container.querySelectorAll('.topo-card[data-tile-id]'),
+                function(el) { return el.getAttribute('data-tile-id'); });
+            var prefs = _ovLoad();
+            prefs.order = (JSON.stringify(ids) === JSON.stringify(_ovDefaultOrder)) ? [] : ids;
+            _ovSave(prefs);
+            _ovRefreshNote(prefs);
+        });
         if (!_ovScrollBound) {
             _ovScrollBound = true;
             window.addEventListener('scroll', _ovHideHover, true);
@@ -1034,6 +1087,8 @@ window.ChipStatus.mount = function (opts) {
     };
     // ── docs/152: the visible settings panel (global + per-tile stat) ─────
     var _ovStatTiles = [];
+    var _ovDefaultOrder = [];
+    var _ovDragEl = null;
     function _ovSetDocClose(ev) {
         var p = document.getElementById('ov-settings-pop');
         var btn = document.getElementById('ov-settings-btn');
@@ -1086,7 +1141,7 @@ window.ChipStatus.mount = function (opts) {
             + '<div class="ov-set-foot">'
             + '<button type="button" class="btn-sm outline" id="ov-set-reset"'
             + (_ovCustomized(prefs) ? '' : ' disabled') + '>Reset all</button>'
-            + '<span class="muted ov-set-hint">each tile\u2019s \u22ee can also remove it \u00b7 \u201c+ Add panel\u201d adds one</span>'
+            + '<span class="muted ov-set-hint">drag a tile to reorder \u00b7 each tile\u2019s \u22ee can remove it \u00b7 \u201c+ Add panel\u201d adds one</span>'
             + '</div>';
         function applyAnd(fn) { var p2 = _ovLoad(); fn(p2); _ovSave(p2); buildOverviewTiles(); _ovRenderSettingsBody(pop); }
         Array.prototype.forEach.call(pop.querySelectorAll('[data-global-stat]'), function(b) {

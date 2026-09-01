@@ -4642,6 +4642,12 @@ a.topo-health-tile:hover { background: var(--pico-card-sectioning-background-col
 #ov-settings-pop .ov-set-foot .btn-sm { width: auto; margin: 0; }
 #ov-settings-pop .ov-set-hint { font-size: 0.85em; }
 
+/* docs/153: drag-reorder — grab cursor signals draggability, the dragged
+   tile ghosts while its live position previews. */
+.topo-card[draggable="true"] { cursor: grab; }
+.topo-card[draggable="true"]:active { cursor: grabbing; }
+.topo-card.ov-dragging { opacity: 0.45; outline: 2px dashed var(--pico-primary); outline-offset: -2px; }
+
 /* ── Qubit heatmap grid ───────────────────────────────────────────── */
 .topo-heatmap-grid {
     display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--topo-heatmap-cell-min), 1fr));

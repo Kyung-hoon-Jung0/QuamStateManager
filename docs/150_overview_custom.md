@@ -45,6 +45,7 @@ Per the user's scope ruling these are the follow-up plan, in rough order of
 value:
 
 1. **Drag re-ordering** of tiles (persist an `order` list in the same key).
+   — **SHIPPED** same-day as docs/153 (user-directed).
 2. **Server-side persistence & sharing** — the layout as part of a chip's
    instance data so a team shares one Overview (needs a write path + the
    docs/55 no-conflict doctrine review).

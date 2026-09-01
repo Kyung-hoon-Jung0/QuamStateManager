@@ -264,6 +264,39 @@ function stored(win) { return win.localStorage.getItem('quam_overview_tiles_v1')
     ok(!win.document.getElementById('ov-settings-pop'), 'C7: the button toggles the panel closed');
   }
 
+  // C8 (docs/153): drag-reorder -- live DOM move, order persisted on
+  // dragend, default order never stored, survives a re-mount, reset clears.
+  {
+    const win = makeWorld();
+    mount(win);
+    const cont = win.document.getElementById('topo-overview-tiles');
+    function firstId() { return cont.querySelector('.topo-card[data-tile-id]').getAttribute('data-tile-id'); }
+    ok(firstId() === 'chip_size', 'C8: default first tile is chip_size');
+    ok(tileById(win, 't1').getAttribute('draggable') === 'true', 'C8: tiles are draggable');
+    // no-move drag: default order must NOT be stored
+    tileById(win, 't1').dispatchEvent(new win.MouseEvent('dragstart', { bubbles: true }));
+    tileById(win, 't1').dispatchEvent(new win.MouseEvent('dragend', { bubbles: true }));
+    ok(stored(win) === null, 'C8: a drag landing where it began stores nothing');
+    // real move: t1 to the front (zero-rects: clientX<0 means "before")
+    const t1 = tileById(win, 't1');
+    t1.dispatchEvent(new win.MouseEvent('dragstart', { bubbles: true }));
+    ok(t1.classList.contains('ov-dragging'), 'C8: dragged tile ghosts');
+    tileById(win, 'chip_size').dispatchEvent(
+      new win.MouseEvent('dragover', { bubbles: true, clientX: -5 }));
+    ok(firstId() === 't1', 'C8: dragover previews the move live');
+    t1.dispatchEvent(new win.MouseEvent('dragend', { bubbles: true }));
+    ok(!t1.classList.contains('ov-dragging'), 'C8: ghost class cleared');
+    const st = JSON.parse(stored(win) || '{}');
+    ok(Array.isArray(st.order) && st.order[0] === 't1',
+      'C8: the order persisted with t1 first (got ' + JSON.stringify(st.order && st.order.slice(0, 3)) + ')');
+    ok(win.document.getElementById('ov-custom-note').hidden === false, 'C8: note shows');
+    mount(win);
+    ok(firstId() === 't1', 'C8: the order survives a full re-mount');
+    win._ovResetTiles();
+    ok(firstId() === 'chip_size' && stored(win) === null,
+      'C8: reset restores the default order and clears storage');
+  }
+
   if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
   console.log('overview_custom_selfcheck: all checks passed');
   process.exit(0);
