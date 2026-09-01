@@ -174,10 +174,11 @@ number that decides whether four open tabs saturate the pool:
 where it was ten; the alignment path's per-entry `resolve()` storm is gone
 entirely.
 
-Pinned by `tests/test_share_io_cost.py` (16 asserts) plus the docs/154 pins in
+Pinned by `tests/test_share_io_cost.py` (22 asserts) plus the docs/154 pins in
 `tests/test_workspace_walk_depth.py`, all counting syscalls and never a clock.
-**12/12 mutations caught**, including the three docs/154 mutations re-verified
-against the new code shape.
+**18 mutations, 18 caught** across the four fixes — including the three
+docs/154 mutations re-verified against the new code shape, and one whose only
+job is to prove a pin is not vacuous.
 
 **A pin can go blind without failing.** docs/154's spy hooked `Path.stat` and
 `Path.iterdir`; F2' moved the walk onto `os.scandir` + `os.stat` and every one
@@ -187,10 +188,11 @@ hooked at the `os` layer now, which both spellings reach and neither can
 bypass. A spy that sees only one spelling of a syscall pins the spelling, not
 the cost.
 
-Regression: 417 passed across the dataset/history/RB/poll/project suites. The
-two failures are the pre-existing set (§7): the docs/87 tmp-path case class,
-and one poll-stability concurrency flake measured at 20/20 passing WITH this
-change and 17/20 without it.
+Regression: 858 passed across the dataset/history/RB/poll/web suites. Every
+failure is pre-existing (§7): the docs/87 tmp-path case class, and
+`test_poll_stability` flakes that reproduce at the same rate with that file run
+entirely alone (1 in 3) and pass 10/10 in isolation with and without these
+changes. One of them was measured at 20/20 passing WITH F2' and 17/20 without.
 
 ### 5b. The one thing that could not be pinned, and why that is the finding
 
@@ -221,7 +223,7 @@ window measured here, and `run_watch` (docs/141 §4p) polls at 0.5 s anyway —
 but it is the reason a write-then-poll test in this project always bumps the
 mtime explicitly rather than trusting the filesystem to have noticed.
 
-## 6. The backlog after F1 + F2 + F2' — every item measured, none guessed
+## 6. The backlog after F1 + F2 + F2' + F4 — every item measured, none guessed
 
 Attribution of what is LEFT, on the shipped code at 390 date dirs. Frame counts
 are exact, not sampled.
@@ -235,7 +237,9 @@ are exact, not sampled.
    390  history.py  _workspace_token   (one os.stat per date dir)
 
 /topology                         403 ops     <- was 7,831
-/datasets/poll  ·  /datasets/wait 392 ops     <- was 782
+/datasets/poll (60 s)             392 ops     <- was 782
+/datasets/changes-since (5 s)     392 ops     <- was 1,568
+/datasets/wait (continuous)         0 ops     <- was 782
 ```
 
 What is left is one `os.stat` per date dir per walker, and there are two
@@ -258,13 +262,17 @@ version of what F3 was reaching for, and it is worth roughly another 50% on
 `/datasets` and `/trends/data`. It needs the two staleness contracts to be
 reconciled first, which is real design work.
 
-**F4 — the two every-page polls read a watcher instead of sweeping.**
-`/datasets/poll` and `/datasets/wait` each re-derive a fingerprint that
-`core/run_watch.py`'s thread (docs/141 §4p) already computes on a 0.5 s timer.
-Reading the watcher's last tick would take both to ~0 ops. This is a design
-change, not a patch: ownership of "is the archive stale" moves from the request
-to the watcher, and every consumer's staleness contract has to be re-argued
-against that.
+**F4' — could a poll read the watcher's tick instead of sweeping at all?**
+F4 was originally framed that way, and reading `run_watch.signature()` refuted
+the framing: the watcher looks at the ROOT and the NEWEST date dir only, while
+`_current_mtime` looks at every date dir. Gating a poll on it would silently
+stop noticing a change in an OLDER date dir — a backfilled import, a figure
+landing in yesterday's run, a folder deleted — and the polls are documented as
+the watcher's safety net, so the net would be gating on the thing it protects.
+What shipped as F4 instead removes only sweeps that were duplicated or unused
+and changes no staleness question. A real version of this needs a periodic full
+check to keep the net, and should be judged against the ~9 s/min a tab costs
+now rather than the ~19 it did.
 
 **F5 — the O(dates) sweep is unbounded by construction.** Even at one syscall
 per date dir, a five-year archive is ~1,800 round-trips per poll. Nothing in
