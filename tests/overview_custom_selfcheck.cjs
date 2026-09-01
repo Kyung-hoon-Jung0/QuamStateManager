@@ -43,7 +43,8 @@ function makeWorld() {
   const dom = new JSDOM(
     '<!DOCTYPE html><html><body>'
     + '<div id="topo-hero"></div><div id="topo-html-wrap"></div>'
-    + '<h3>Overview <span id="ov-custom-note" hidden>customized · <a href="#">reset</a></span></h3>'
+    + '<h3>Overview <button id="ov-settings-btn"></button>'
+    + '<span id="ov-custom-note" hidden>customized · <a href="#">reset</a></span></h3>'
     + '<div class="topo-summary-cards" id="topo-overview-tiles"></div>'
     + '</body></html>',
     { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/' });
@@ -227,6 +228,40 @@ function stored(win) { return win.localStorage.getItem('quam_overview_tiles_v1')
     tileById(win, 't1').dispatchEvent(new win.MouseEvent('mouseover', { bubbles: true }));
     cont.dispatchEvent(new win.MouseEvent('mouseleave'));
     ok(!win.document.getElementById('ov-hover-pop'), 'C6: leaving the strip hides the popup');
+  }
+
+  // C7 (docs/152): the VISIBLE settings door -- global apply + per-tile
+  // selects + reset, panel stays open across applies.
+  {
+    const win = makeWorld();
+    mount(win);
+    win._ovOpenSettings(win.document.getElementById('ov-settings-btn'));
+    const pop = win.document.getElementById('ov-settings-pop');
+    ok(!!pop, 'C7: the settings button opens the panel');
+    const rows = pop.querySelectorAll('.ov-set-row');
+    ok(rows.length >= 3, 'C7: per-tile rows listed (got ' + rows.length + ')');
+    ok(/Add panel/.test(pop.textContent), 'C7: the hint names the other doors');
+    pop.querySelector('[data-global-stat="min"]')
+      .dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    ok(/10\.0/.test(tileById(win, 't1').querySelector('.topo-card-value').textContent),
+      'C7: global apply -> T1 shows the MIN');
+    ok(/"t1":"min"/.test(stored(win) || '') && /"gate1q":"min"/.test(stored(win) || ''),
+      'C7: the global stat persisted for every stat tile');
+    ok(!!win.document.getElementById('ov-settings-pop'), 'C7: the panel stays open after apply');
+    ok(!!pop.querySelector('[data-global-stat="min"].active'), 'C7: the uniform stat shows active');
+    const sel = pop.querySelector('.ov-set-sel[data-tile-id="t1"]');
+    sel.value = 'avg';
+    sel.dispatchEvent(new win.Event('change', { bubbles: true }));
+    ok(/30\.0/.test(tileById(win, 't1').querySelector('.topo-card-value').textContent),
+      'C7: per-tile apply -> T1 back to AVG while others stay MIN');
+    ok(!/"t1"/.test(stored(win) || '') && /"gate1q":"min"/.test(stored(win) || ''),
+      'C7: the default stat is deleted from storage, the rest kept');
+    win.document.getElementById('ov-set-reset')
+      .dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    ok(stored(win) === null, 'C7: the panel reset clears storage');
+    // toggle: a second press closes it
+    win._ovOpenSettings(win.document.getElementById('ov-settings-btn'));
+    ok(!win.document.getElementById('ov-settings-pop'), 'C7: the button toggles the panel closed');
   }
 
   if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }

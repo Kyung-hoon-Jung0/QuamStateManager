@@ -883,6 +883,11 @@ window.ChipStatus.mount = function (opts) {
             }
         });
 
+        // docs/152: what the settings panel lists -- every tile whose big
+        // number IS an aggregate (a muted no-data tile has none to switch).
+        _ovStatTiles = tiles.filter(function(t) { return t.id && t.stat; })
+            .map(function(t) { return { id: t.id, title: t.title }; });
+
         var html = '';
         tiles.forEach(function(c) {
             var border = c.muted ? 'var(--pico-muted-border-color)' : (c.color || 'var(--pico-muted-border-color)');
@@ -1027,8 +1032,99 @@ window.ChipStatus.mount = function (opts) {
         _ovClosePopover();
         buildOverviewTiles();
     };
+    // ── docs/152: the visible settings panel (global + per-tile stat) ─────
+    var _ovStatTiles = [];
+    function _ovSetDocClose(ev) {
+        var p = document.getElementById('ov-settings-pop');
+        var btn = document.getElementById('ov-settings-btn');
+        if (p && !p.contains(ev.target)
+                && !(btn && (ev.target === btn || btn.contains(ev.target)))) {
+            _ovCloseSettings();
+        }
+    }
+    function _ovCloseSettings() {
+        var p = document.getElementById('ov-settings-pop');
+        if (p) p.remove();
+        document.removeEventListener('mousedown', _ovSetDocClose, true);
+    }
+    function _ovStatOf(prefs, id) {
+        if (id.indexOf('custom:') === 0) {
+            var a = prefs.added[parseInt(id.slice(7), 10)];
+            return (a && a.stat) || 'avg';
+        }
+        return (prefs.stats || {})[id] || 'avg';
+    }
+    function _ovSetStat(prefs, id, stat) {
+        if (id.indexOf('custom:') === 0) {
+            var a = prefs.added[parseInt(id.slice(7), 10)];
+            if (a) a.stat = stat;
+        } else if (stat === 'avg') delete prefs.stats[id];
+        else prefs.stats[id] = stat;
+    }
+    function _ovRenderSettingsBody(pop) {
+        var prefs = _ovLoad();
+        var stats = ['avg', 'median', 'min', 'max'];
+        var uniform = _ovStatTiles.length ? _ovStatOf(prefs, _ovStatTiles[0].id) : null;
+        _ovStatTiles.forEach(function(t) { if (_ovStatOf(prefs, t.id) !== uniform) uniform = null; });
+        var seg = stats.map(function(s) {
+            return '<button type="button" class="ov-set-seg-btn' + (s === uniform ? ' active' : '')
+                 + '" data-global-stat="' + s + '">' + s + '</button>';
+        }).join('');
+        var rows = _ovStatTiles.map(function(t) {
+            var cur = _ovStatOf(prefs, t.id);
+            var opts = stats.map(function(s) {
+                return '<option value="' + s + '"' + (s === cur ? ' selected' : '') + '>' + s + '</option>';
+            }).join('');
+            return '<div class="ov-set-row"><span class="ov-set-title">' + _esc(t.title) + '</span>'
+                 + '<select class="ov-set-sel" data-tile-id="' + _esc(t.id) + '">' + opts + '</select></div>';
+        }).join('');
+        pop.innerHTML =
+              '<div class="ov-set-head">Overview panels</div>'
+            + '<div class="ov-set-global"><span class="ov-set-title">Statistic for ALL panels</span>'
+            + '<div class="ov-set-seg">' + seg + '</div></div>'
+            + '<div class="ov-set-list">' + rows + '</div>'
+            + '<div class="ov-set-foot">'
+            + '<button type="button" class="btn-sm outline" id="ov-set-reset"'
+            + (_ovCustomized(prefs) ? '' : ' disabled') + '>Reset all</button>'
+            + '<span class="muted ov-set-hint">each tile\u2019s \u22ee can also remove it \u00b7 \u201c+ Add panel\u201d adds one</span>'
+            + '</div>';
+        function applyAnd(fn) { var p2 = _ovLoad(); fn(p2); _ovSave(p2); buildOverviewTiles(); _ovRenderSettingsBody(pop); }
+        Array.prototype.forEach.call(pop.querySelectorAll('[data-global-stat]'), function(b) {
+            b.addEventListener('click', function() {
+                var s = b.getAttribute('data-global-stat');
+                applyAnd(function(p2) { _ovStatTiles.forEach(function(t) { _ovSetStat(p2, t.id, s); }); });
+            });
+        });
+        Array.prototype.forEach.call(pop.querySelectorAll('.ov-set-sel'), function(sel) {
+            sel.addEventListener('change', function() {
+                applyAnd(function(p2) { _ovSetStat(p2, sel.getAttribute('data-tile-id'), sel.value); });
+            });
+        });
+        var rs = pop.querySelector('#ov-set-reset');
+        if (rs) rs.addEventListener('click', function() {
+            _ovSave({ removed: [], stats: {}, added: [] });
+            buildOverviewTiles();
+            _ovRenderSettingsBody(pop);
+        });
+    }
+    window._ovOpenSettings = function(btn) {
+        if (document.getElementById('ov-settings-pop')) { _ovCloseSettings(); return; }   // toggle
+        _ovClosePopover();
+        _ovHideHover();
+        var pop = document.createElement('div');
+        pop.id = 'ov-settings-pop';
+        document.body.appendChild(pop);
+        _ovRenderSettingsBody(pop);
+        var r = btn && btn.getBoundingClientRect ? btn.getBoundingClientRect() : { bottom: 60, left: 200 };
+        var vw = window.innerWidth || 1200, vh = window.innerHeight || 800;
+        pop.style.top = Math.max(4, Math.min(r.bottom + 6, vh - (pop.offsetHeight || 320) - 8)) + 'px';
+        pop.style.left = Math.max(8, Math.min(r.left, vw - (pop.offsetWidth || 330) - 8)) + 'px';
+        document.addEventListener('mousedown', _ovSetDocClose, true);
+    };
+
     function _ovOpenPopover(anchor, tileId) {
         _ovClosePopover();
+        _ovCloseSettings();
         _ovHideHover();
         var prefs = _ovLoad();
         var isAdd = tileId == null;

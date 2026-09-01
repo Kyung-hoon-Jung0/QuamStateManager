@@ -4605,6 +4605,43 @@ a.topo-health-tile:hover { background: var(--pico-card-sectioning-background-col
 .ov-hover-dot-na { background: var(--pico-muted-border-color); }
 .ov-hover-more { margin-top: 0.3rem; color: var(--pico-muted-color); }
 
+/* docs/152: the visible settings door + panel (global/per-tile statistic). */
+.ov-settings-btn {
+    font-size: 0.6em; font-weight: 400; text-transform: none; letter-spacing: 0;
+    vertical-align: middle; margin: 0 0 0 0.6rem; width: auto; padding: 0.1rem 0.5rem;
+}
+#ov-settings-pop {
+    position: fixed; z-index: 300; width: 330px; padding: 0.6rem 0.7rem;
+    background: var(--pico-card-background-color, var(--pico-background-color));
+    border: 1px solid var(--pico-muted-border-color); border-radius: 8px;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.28); font-size: 0.85em;
+}
+#ov-settings-pop .ov-set-head { font-weight: 600; margin-bottom: 0.4rem; }
+#ov-settings-pop .ov-set-global {
+    display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;
+    padding-bottom: 0.45rem; border-bottom: 1px solid var(--pico-muted-border-color);
+    margin-bottom: 0.35rem;
+}
+#ov-settings-pop .ov-set-seg { display: flex; gap: 2px; }
+#ov-settings-pop .ov-set-seg-btn {
+    padding: 0.1rem 0.45rem; font-size: 0.85em; width: auto; margin: 0; cursor: pointer;
+    border: 1px solid var(--pico-muted-border-color); background: none;
+    color: var(--pico-muted-color); border-radius: 4px;
+}
+#ov-settings-pop .ov-set-seg-btn.active {
+    background: var(--pico-primary); color: #fff; border-color: var(--pico-primary);
+}
+#ov-settings-pop .ov-set-list { max-height: 45vh; overflow-y: auto; }
+#ov-settings-pop .ov-set-row {
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 0.6rem; padding: 0.15rem 0;
+}
+#ov-settings-pop .ov-set-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#ov-settings-pop .ov-set-row select { width: auto; margin: 0; padding: 0.1rem 0.3rem; font-size: 0.9em; }
+#ov-settings-pop .ov-set-foot { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.45rem; }
+#ov-settings-pop .ov-set-foot .btn-sm { width: auto; margin: 0; }
+#ov-settings-pop .ov-set-hint { font-size: 0.85em; }
+
 /* ── Qubit heatmap grid ───────────────────────────────────────────── */
 .topo-heatmap-grid {
     display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--topo-heatmap-cell-min), 1fr));
