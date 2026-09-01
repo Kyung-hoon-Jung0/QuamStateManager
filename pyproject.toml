@@ -83,6 +83,10 @@ include-package-data = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "real_instance_path: opt out of the tmp instance-dir isolation (docs/155 F7) -- only for tests that assert on the instance-path policy itself",
+    "slow: builds a wheel / installs it / drives a subprocess (test_pip_install)",
+]
 
 [tool.ruff]
 line-length = 120

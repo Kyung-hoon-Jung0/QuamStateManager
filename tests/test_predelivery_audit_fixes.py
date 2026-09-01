@@ -553,6 +553,7 @@ class TestP4CoverageFixes:
         for ep in ("main.regenerate_build", "main.regenerate_reconstruct", "main.fit_audit_run"):
             assert ep in _SCHEDULER_MUTATOR_ENDPOINTS
 
+    @pytest.mark.real_instance_path    # docs/155 F7: asserts the real policy
     def test_frozen_instance_path_is_dev_none(self):
         # source runs keep the repo instance/ (None); frozen would relocate.
         from quam_state_manager.main import _user_instance_path

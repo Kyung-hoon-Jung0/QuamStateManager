@@ -411,14 +411,75 @@ run, 101/101 selfchecks executing, and the full-suite baseline established at
 tree. What remains open here is smaller: the 35 are worth triaging into
 "stale pin" and "genuine OS-behaviour difference", which nobody has done.
 
-**F7 — tests write into the developer's real `instance/` dir.** Observed during
-this work: `instance/workspace_cache/` gained entries while the suite ran, and
-`instance/last_session.json` had been overwritten with a `pytest-of-Measurement`
-tmp path. The directory is gitignored so nothing reaches a commit, and
-`_purge_test_leftovers` already mops up leaked *history* dirs — but the cache
-and the session file are not covered, and the failure mode is a developer's own
-SM state being silently replaced by a test's. Unrelated to performance; found
-here, recorded here.
+**F7 — tests write into the developer's real `instance/` dir. SHIPPED.**
+Recorded as an observation during the F1–F4 work and measured properly
+afterwards. `create_app()` with no `instance_path` falls back to
+`default_instance_path()`, which is `None` in a repo checkout so Flask derives
+`<repo>/instance` — right for the app, and wrong for the ~22 test call sites
+that build an app that way.
+
+**Measured, on six of those files alone: 36 files disturbed.** 33 stray
+working copies created, and three REWRITTEN — `last_session.json`,
+`workspace_roots.json` (the developer's configured workspace roots, replaced
+by a test's tmp paths) and docs/139's `history/_fingerprints.json`. Nothing
+failed loudly and nothing reached a commit; it just quietly replaced state a
+person was relying on.
+
+**A census made the scale plain.** Every one of the 96 working copies in that
+directory pointed at a `pytest-of-*` folder that no longer exists, from pytest
+runs numbered 78 to 595 — months of them — and all 105 cached workspace
+listings were rooted in a tmp dir too. Not *some* litter: the directory was
+litter, with nothing of the developer's own left in either place.
+
+Two halves:
+
+- **Stop making more.** `tests/conftest.py::_isolate_instance_dir` (autouse)
+  redirects the default into pytest's own tmp tree, lazily, so only a test
+  that actually builds such an app pays for a directory.
+  `create_app(testing=True)` takes an earlier branch — `tempfile.mkdtemp` —
+  which never consults the default and had left **327 `quam_test_instance_*`
+  directories in %TEMP%**; that one call is redirected by its own prefix into
+  the basetemp pytest garbage-collects, with no change to the production
+  branch. Opt out with `@pytest.mark.real_instance_path`, for the handful of
+  tests that assert on the instance-path POLICY itself. Re-measured after:
+  **36 → 0.**
+
+- **Clear what the un-isolated years left.** `_purge_test_leftovers` already
+  dropped leaked history dirs and tmp paths out of `workspace_roots.json` /
+  `last_session.json`; it now also drops working copies and cached listings,
+  under the same "$TEMP only" rule the function already documents. A working
+  copy needs **two** signals — under `$TEMP` *and* gone from disk — because a
+  working copy can hold unapplied edits and a real chip folder can be absent
+  for innocent reasons; what a real chip never is, is under the system
+  tempdir. A cached listing needs only the first: it is a pure cache, rebuilt
+  by the ordinary staleness path (docs/142). On this machine that clears 96
+  copies and 105 listings and keeps **zero** of either, which is the census
+  above restated as an outcome.
+
+Pinned by `tests/test_instance_isolation.py` (13 tests). **4 of 4 mutations
+caught** on the fixture, **6 of 6** on the purge.
+
+**Three drafts of one pin, each corrected by a mutation rather than by
+re-reading it.** The pin for "a real chip that is merely missing is never
+deleted" first used an unreachable UNC share — and passed with the `$TEMP`
+rule deleted, because on Windows `Path.exists()` against a dead UNC host
+RAISES, so the copy was kept by a different guard and never reached the rule
+at all. Draft two moved to a `.invalid` host, which answers False politely —
+and stopped testing the OSError guard, whose own mutation then went green.
+Draft three separates them: a plain absent path pins the `$TEMP` rule, and a
+simulated `OSError` on a path **under** `$TEMP` pins the conservative branch
+(the `$TEMP` test comes first, so a share path never reaches it — an
+unreachable share is kept by the `$TEMP` rule, not by the error handler). The
+assertions never moved across those drafts; only the mutations distinguished
+them. Same lesson as F6 above and docs/141 §4af, arrived at from the other
+direction: there, a pin measured the wrong moment; here, a pin passed for the
+wrong reason.
+
+**Deliberately not done:** nothing deletes a working copy that is not under
+`$TEMP`, whatever its state. A chip on a disconnected share is indistinguishable
+from a deleted one, and the copy may hold edits nobody has applied — so the
+directory can still grow for a user who renames chips, and that is the right
+trade.
 
 ## 7. Does this help anybody but the customer? — the A/B
 

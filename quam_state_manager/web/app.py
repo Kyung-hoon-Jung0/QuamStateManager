@@ -239,7 +239,7 @@ def default_instance_path() -> str | None:
 def _purge_test_leftovers(instance_path: str) -> None:
     """Drop legacy test-tmp leftovers from the user's instance/ folder.
 
-    Cleans up three forms of pollution that older un-isolated test fixtures
+    Cleans up five forms of pollution that older un-isolated test fixtures
     could leave behind:
 
     1. ``instance/history/pytest-NN/`` and ``instance/history/Temp/`` — entire
@@ -248,9 +248,23 @@ def _purge_test_leftovers(instance_path: str) -> None:
        — they refer to vanished pytest tmp dirs.
     3. Paths under ``$TEMP`` inside ``last_session.json`` (both
        ``last_quam_state_path`` and ``recent_quam_state_paths``).
+    4. ``instance/working_state/`` copies of chips that only ever existed in
+       a test's tmp dir (docs/155 F7).
+    5. ``instance/workspace_cache/`` listings of a tmp workspace root.
 
     Idempotent and defensive: only paths under the system tempdir are
     affected, never a real research data path.
+
+    docs/155 F7 added 4 and 5 after finding that on this machine EVERY one of
+    the 96 working copies and all 105 cached listings in a developer's
+    ``instance/`` were test leftovers, from pytest runs spanning months. The
+    conftest fixture stops new ones; this clears what the un-isolated years
+    left. A working copy needs TWO signals before it is removed — under
+    ``$TEMP`` **and** gone from disk — because a working copy can hold
+    unapplied edits and a real chip on a disconnected share is also missing;
+    what a real chip never is, is under the system tempdir. A cached listing
+    needs only the first: it is a pure cache, rebuilt by the ordinary
+    staleness path (docs/142).
     """
     inst = Path(instance_path)
 
@@ -303,6 +317,51 @@ def _purge_test_leftovers(instance_path: str) -> None:
                 sf.write_text(_json.dumps(data, indent=2), encoding="utf-8")
         except Exception:
             pass
+
+    # 4. working copies whose live chip only ever existed in a test's tmp dir
+    ws_dir = inst / "working_state"
+    if ws_dir.is_dir():
+        suffix = ".meta.json"
+        try:
+            metas = [m for m in ws_dir.iterdir() if m.name.endswith(suffix)]
+        except OSError:
+            metas = []
+        for meta in metas:
+            try:
+                live = _json.loads(
+                    meta.read_text(encoding="utf-8")).get("live_folder")
+            except Exception:
+                continue          # unreadable sidecar: leave it entirely alone
+            if not live or not _is_under_tempdir(live):
+                continue
+            try:
+                if Path(live).exists():
+                    continue      # a run may still be using it
+            except OSError:
+                continue
+            shutil.rmtree(ws_dir / meta.name[:-len(suffix)], ignore_errors=True)
+            try:
+                meta.unlink()
+            except OSError:
+                pass
+
+    # 5. cached workspace listings rooted in a tmp dir
+    cache_dir = inst / "workspace_cache"
+    if cache_dir.is_dir():
+        try:
+            cached = [c for c in cache_dir.iterdir() if c.suffix == ".json"]
+        except OSError:
+            cached = []
+        for c in cached:
+            try:
+                root = _json.loads(c.read_text(encoding="utf-8")).get("root")
+            except Exception:
+                continue
+            if root and _is_under_tempdir(root):
+                try:
+                    c.unlink()
+                except OSError:
+                    pass
 
 
 def create_app(*, testing: bool = False, instance_path: str | None = None) -> Flask:

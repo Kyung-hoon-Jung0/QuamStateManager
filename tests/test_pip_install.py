@@ -20,6 +20,7 @@ from quam_state_manager.web import app as app_mod
 _REPO = Path(__file__).resolve().parent.parent
 
 
+@pytest.mark.real_instance_path        # docs/155 F7: this class IS the policy
 class TestDefaultInstancePath:
     def test_repo_checkout_keeps_repo_instance(self):
         # The test run IS a repo checkout (pyproject.toml beside the package).
