@@ -659,16 +659,77 @@ Twenty-six deterministic failures remain, and they are the classes this project
 already documents — tmp-path case identity (`test_state_coherence` ×4,
 `test_web` ×3, `test_chip_identity` ×2, `test_predelivery_audit_fixes`,
 `test_sidebar_root_row`), the WSL kernel probe, Windows file locking, and the
-**`test_scanner` staleness group (10)**.
+**`test_scanner` staleness group (9, plus a tenth that needs two directories
+differing only in case)**.
 
 One correction to how that last group has been described here and in CLAUDE.md:
 it is called a *timing* group, but all ten fail **3 of 3 alone**. Deterministic
-failure is not what a timing flake looks like. Whether that is a real staleness
-defect on this filesystem or a fixture assumption has **not** been established,
-and this section does not claim either — it is the next thing to measure.
+failure is not what a timing flake looks like. **§10e measured it** — it is
+neither a timing flake nor a staleness defect.
 
 **Baseline after this section: 29 failed** (35 minus the six fixed), same suite
 and same exclusion as §8.
+
+## 10e. Fifteen failures were one character
+
+The `test_scanner` staleness group looked like the most alarming thing in §10d:
+if `_is_root_stale` really answered "stale" with nothing changed on disk, every
+5-second poll would rescan the whole archive — which is precisely the complaint
+this whole document is about. So it was measured before it was believed.
+
+**On a real archive on disk, `_is_root_stale` is correct.** Twelve runs across
+two chips and two date dirs, probed three times with nothing touched: `False`
+every time, 0 of 7 spine dirs differing. Rebuilding the failing test's exact
+shape with the test's own helpers, outside pytest: `False`, 0 differing. The
+product was never the problem.
+
+Inside pytest the same code raises `KeyError` on the root's own spine entry, and
+`_is_root_stale` returns `True` for exactly one documented reason —
+`spine is None` means "never probed, one rescan seeds it". The root was
+registered, just not under the name the test used:
+
+```
+str(root)      C:\...\Temp\pytest-of-measurement\pytest-933\...\ws
+root.resolve() C:\...\Temp\pytest-of-Measurement\pytest-933\...\ws
+registered     C:\...\Temp\pytest-of-Measurement\pytest-933\...\ws
+```
+
+Windows is case-insensitive but case-**preserving**. pytest builds its base temp
+dir from `getpass.getuser()`, which returns `measurement` here, while the
+directory that exists on disk is `pytest-of-Measurement` — created once, long
+ago, with a capital M, and reused ever since because `mkdir` on an existing
+case-variant simply succeeds. `Path.resolve()` returns what is on disk. SM
+canonicalizes every root and chip path it registers **on purpose**, so that two
+spellings of one folder can never become two entries; the test then looks its
+own path up under the spelling it was handed. Miss.
+
+Proof, not inference: re-running five of those files with `--basetemp` pointed
+at a correctly-cased directory turned 13 of their 18 failures green with no code
+change (18 -> 5). The fix is one fixture in
+`tests/conftest.py` that hands tests the canonical spelling
+(`os.path.realpath`), a no-op wherever the two already agree — POSIX, and any
+Windows box whose account name is lowercase.
+
+**Fifteen tests, six files, all green** (22 failures -> 7): the nine
+`test_scanner` staleness tests, `test_chip_identity` ×2, `test_predelivery_audit_fixes`,
+`test_sidebar_root_row`, and `test_web` ×2
+(`test_hx_vals_escapes_backslashes`, `test_session_handles_missing_folder`).
+
+What that costs to have not known: these sixteen have been carried for months as
+an "OS-behaviour class the product has to live with" (docs/87's list, quoted
+forward into CLAUDE.md and into §8 of this document). They are not OS behaviour
+and not a class. They are one machine's temp-directory casing, and the reason
+nobody found it is that nobody ran one of them alone and asked what the KeyError
+was actually saying. §10a is the same lesson from the other direction: a red
+test that has been red a long time stops being read.
+
+**Not fixed by this, and separate**: `test_state_coherence` ×4 (the cache key is
+canonical now and the entry is genuinely absent — a real question, unanswered),
+`test_web` ×2 (a concurrency race, a dataset payload),
+`test_add_root_dedups_same_inode_spellings` (it needs two directories differing
+only in case, which this filesystem cannot hold — arguably an honest Windows
+skip), the two WSL probes, `test_safe_io` ×2, and `test_poll_stability` ×2
+(order-dependent — they pass alone).
 
 ## 9. What this does not show
 

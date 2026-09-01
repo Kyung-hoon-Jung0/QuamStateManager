@@ -31,6 +31,31 @@ import pytest
 os.environ.setdefault("SM_DISABLE_ENV_WARMUP", "1")
 
 
+@pytest.fixture
+def tmp_path(tmp_path):
+    """Hand every test the CANONICAL on-disk spelling of its temp dir.
+
+    Windows is case-insensitive but case-PRESERVING, and pytest builds its base
+    temp dir from ``getpass.getuser()`` -- "measurement" on this machine, while
+    the directory that actually exists is ``pytest-of-Measurement``.
+    ``Path.resolve()`` returns what is on disk, so SM -- which canonicalizes
+    every root and chip path it registers, deliberately, so two spellings of one
+    folder can never become two entries -- stores its state under the capital-M
+    spelling while the test looks it up under the lowercase one it was handed.
+
+    The result is not a wrong answer from SM but a lookup miss in the test:
+    ``KeyError: 'C:\...\Temp\pytest-of-measurement\...'``, or a staleness
+    probe that finds no recorded spine for the root it was asked about and
+    therefore answers "stale" forever. Sixteen failures across five files were
+    this and nothing else (docs/155 10e), and for months they were read as an
+    OS-behaviour class the product had to live with.
+
+    Resolving here is a no-op wherever the two spellings already agree, which
+    includes POSIX and any Windows box whose account name is lowercase.
+    """
+    return type(tmp_path)(os.path.realpath(tmp_path))
+
+
 @pytest.fixture(autouse=True)
 def _isolate_qualibrate_config(tmp_path_factory, monkeypatch):
     missing = tmp_path_factory.getbasetemp() / "_no_qualibrate_config"
