@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import shutil
 import sqlite3
@@ -1266,6 +1267,40 @@ class HistoryManager:
                 rd = d
             return rd == own or own in rd.parents
 
+        def _de_is_dir(de: "os.DirEntry[str]") -> bool:
+            """``Path.is_dir()``'s answer, from the directory listing.
+
+            The type bits ride the listing ``os.scandir`` already fetched, so
+            this costs nothing where ``Path.is_dir()`` cost a stat per entry
+            (docs/155 F2'). ``Path.is_dir()`` answers False rather than
+            raising on an unreadable entry; keep that.
+            """
+            try:
+                return de.is_dir()
+            except OSError:
+                return False
+
+        def _is_own_entry(parent_resolved: "Path | None", name: str,
+                          path: str, is_link: bool) -> bool:
+            """``_is_own`` for an entry whose PARENT is already resolved.
+
+            ``_is_own`` called ``Path.resolve()`` on every entry at both
+            levels — one share round-trip each, and on the alignment path
+            (the only caller that passes ``own_root``) that was a third of
+            the whole sweep. Every entry here is a direct child of a
+            directory we are already walking, so for anything that is not a
+            symlink its resolved path is ``parent_resolved / name`` and the
+            predicate becomes pure string work. A symlink, or a parent we
+            could not resolve, falls back to the original — correctness
+            first, and both are rare.
+            """
+            if own is None:
+                return False
+            if parent_resolved is None or is_link:
+                return _is_own(Path(path))
+            rd = parent_resolved / name
+            return rd == own or own in rd.parents
+
         try:
             roots = list(workspace.root_folders)
         except Exception:
@@ -1280,17 +1315,40 @@ class HistoryManager:
             except OSError:
                 mtimes.append(0.0)
                 continue
+            # Resolve the ROOT once instead of every entry under it
+            # (docs/155 F2'); only the alignment path passes ``own_root``, so
+            # a caller that does not use the exclusion pays nothing for it.
+            root_resolved: Path | None = None
+            if own is not None:
+                try:
+                    root_resolved = root_path.resolve()
+                except OSError:
+                    root_resolved = None
             # Level 1: immediate child (chip) dirs. Level 2: their child
             # (date) dirs. New runs land *inside* a date dir, bumping its
             # mtime; we go exactly this deep and no deeper.
+            #
+            # docs/155 F2' — this walk had `DatasetStore._current_mtime`'s
+            # shape exactly: `Path.iterdir()` then `is_dir()` (a stat) then
+            # `.stat()`, two share round-trips per entry, three on the
+            # alignment path where `_is_own` resolved each one as well.
+            # `os.scandir` carries the type bits, so `is_dir()` is free;
+            # `os.stat` is kept for the MTIME, never `de.stat()`, which is
+            # served from the parent's listing and does not see a write
+            # inside the directory — the one change this token exists to
+            # notice (docs/141 §4ac, docs/155 §5b).
             try:
-                chip_dirs = [c for c in root_path.iterdir()
-                             if c.is_dir() and not _is_own(c)]
+                with os.scandir(root_path) as it:
+                    chip_entries = [(de.name, de.path, de.is_symlink())
+                                    for de in it if _de_is_dir(de)]
             except OSError:
                 continue
-            for chip_dir in chip_dirs:
+            for chip_name, chip_path, chip_is_link in chip_entries:
+                if _is_own_entry(root_resolved, chip_name, chip_path,
+                                 chip_is_link):
+                    continue
                 try:
-                    mtimes.append(chip_dir.stat().st_mtime)
+                    mtimes.append(os.stat(chip_path).st_mtime)
                 except OSError:
                     pass
                 # STOP at the date level, whichever level that is (docs/154).
@@ -1306,17 +1364,25 @@ class HistoryManager:
                 # positive would stop the walk a level EARLY and reintroduce the
                 # staleness this token exists to prevent, while a false negative
                 # only costs the old speed.
-                if _DATE_RE.fullmatch(chip_dir.name):
+                if _DATE_RE.fullmatch(chip_name):
                     continue
+                # The chip dir's own resolved path, again without a syscall:
+                # we just listed it under a root we already resolved.
+                chip_resolved: Path | None = None
+                if own is not None and root_resolved is not None and not chip_is_link:
+                    chip_resolved = root_resolved / chip_name
                 try:
-                    date_dirs = [d for d in chip_dir.iterdir() if d.is_dir()]
+                    with os.scandir(chip_path) as it:
+                        date_entries = [(de.name, de.path, de.is_symlink())
+                                        for de in it if _de_is_dir(de)]
                 except OSError:
                     continue
-                for date_dir in date_dirs:
-                    if _is_own(date_dir):
+                for date_name, date_path, date_is_link in date_entries:
+                    if _is_own_entry(chip_resolved, date_name, date_path,
+                                     date_is_link):
                         continue
                     try:
-                        mtimes.append(date_dir.stat().st_mtime)
+                        mtimes.append(os.stat(date_path).st_mtime)
                     except OSError:
                         pass
         return (len(roots), tuple(sorted(roots)), max(mtimes) if mtimes else 0.0)

@@ -117,26 +117,47 @@ name test also moved in FRONT of it, so a non-date entry (a README, an export
 folder) now costs nothing at all. `os.stat` is kept for the **mtime** — see
 §5b. 2 ops per date dir -> 1, for every caller, at no semantic cost.
 
-### 5a. Measured after F1 + F2 (same fixture, 390 date dirs)
+**F2' — `_workspace_token` had F2's shape too. SHIPPED.** The other walker on
+these routes made the same two calls per entry, and on the alignment path a
+third: docs/139's own-root exclusion called `Path.resolve()` on EVERY entry at
+both levels. `os.scandir` makes `is_dir()` free the same way, and the exclusion
+now resolves the ROOT once — every entry it tests is a direct child of a
+directory the walk already holds, so for anything that is not a symlink the
+resolved path is `parent_resolved / name` and the predicate is string work. A
+symlink, or a parent that would not resolve, falls back to the original.
 
-| route | before | after | saved |
-|---|---|---|---|
-| `/topology` (Chip Status / Overview) | 7,831 | **403** | **-95%** (~14.1 s -> ~0.7 s on the share) |
-| `/datasets/poll` (every page, polled) | 782 | 392 | -50% |
-| `/field/history` (the 🕘 popover) | 789 | 399 | -49% |
-| `/datasets` | 1,564 | 1,174 | -25% |
-| `/param-history/alignment` | 1,180 | 1,180 | 0% — its own walk, untouched here |
+### 5a. Measured (same fixture, 390 date dirs)
 
-`/topology`'s attribution afterwards shows exactly ONE `_current_mtime` sweep of
-390 stats, where it was ten sweeps of 780. `/datasets` keeps two further sweeps
-of its own, which F3 would collapse.
+| route | before | F1+F2 | +F2' | total |
+|---|---|---|---|---|
+| `/topology` (Chip Status / Overview) | 7,831 | 403 | **403** | **-95%** (~14.1 s -> ~0.7 s on the share) |
+| `/param-history/alignment` | 1,180 | 1,180 | **401** | **-66%** |
+| `/datasets` | 1,564 | 1,174 | **784** | **-50%** |
+| `/trends/data` | 1,564 | 1,174 | **784** | **-50%** |
+| `/datasets/poll` (every page, polled) | 782 | 392 | **392** | **-50%** |
+| `/field/history` (the 🕘 popover) | 789 | 399 | **399** | **-49%** |
 
-Pinned by `tests/test_share_io_cost.py` — 13 asserts that count syscalls and
-never look at a clock, so they mean the same thing here as on the share.
-**7/7 mutations caught**: the old two-syscall loop, `os.stat` -> `de.stat()`,
-the `is_dir()` check dropped, an unreadable root swallowed into the sentinel,
-the resolver back to per-edge, the stores resolved eagerly, and the derivation
-call removed. Regression: 308 passed across the dataset/history/RB/poll suites.
+`/topology`'s attribution afterwards shows exactly ONE `_current_mtime` sweep,
+where it was ten; the alignment path's per-entry `resolve()` storm is gone
+entirely.
+
+Pinned by `tests/test_share_io_cost.py` (16 asserts) plus the docs/154 pins in
+`tests/test_workspace_walk_depth.py`, all counting syscalls and never a clock.
+**12/12 mutations caught**, including the three docs/154 mutations re-verified
+against the new code shape.
+
+**A pin can go blind without failing.** docs/154's spy hooked `Path.stat` and
+`Path.iterdir`; F2' moved the walk onto `os.scandir` + `os.stat` and every one
+of those pins started asserting against an empty set — they had stopped
+watching the walk and would have passed a mutation that deleted it. The spy is
+hooked at the `os` layer now, which both spellings reach and neither can
+bypass. A spy that sees only one spelling of a syscall pins the spelling, not
+the cost.
+
+Regression: 417 passed across the dataset/history/RB/poll/project suites. The
+two failures are the pre-existing set (§7): the docs/87 tmp-path case class,
+and one poll-stability concurrency flake measured at 20/20 passing WITH this
+change and 17/20 without it.
 
 ### 5b. The one thing that could not be pinned, and why that is the finding
 
@@ -167,44 +188,42 @@ window measured here, and `run_watch` (docs/141 §4p) polls at 0.5 s anyway —
 but it is the reason a write-then-poll test in this project always bumps the
 mtime explicitly rather than trusting the filesystem to have noticed.
 
-## 6. The backlog after F1 + F2 — every item measured, none guessed
+## 6. The backlog after F1 + F2 + F2' — every item measured, none guessed
 
-Attribution of what is LEFT, taken on the shipped code at 390 date dirs. The
-frame counts are exact, not sampled.
+Attribution of what is LEFT, on the shipped code at 390 date dirs. Frame counts
+are exact, not sampled.
 
 ```
-/datasets                     1,174 ops
-   390  history.py:1288  _workspace_token   (c.is_dir() per child)
-   390  history.py:1293  _workspace_token   (chip_dir.stat() per child)
-   390  dataset.py:956   _current_mtime     (already halved by F2)
+/datasets  ·  /trends/data        784 ops     <- was 1,564
+   390  history.py  _workspace_token   (one os.stat per date dir)
+   390  dataset.py  _current_mtime     (one os.stat per date dir)
 
-/param-history/alignment      1,180 ops
-   390  history.py:1288  _workspace_token   (c.is_dir())
-   390  history.py:1264  _is_own            (d.resolve() per child)
-   390  history.py:1293  _workspace_token   (chip_dir.stat())
+/param-history/alignment          401 ops     <- was 1,180
+   390  history.py  _workspace_token   (one os.stat per date dir)
 
-/topology                       403 ops     <- was 7,831
-/datasets/poll                  392 ops     <- was 782
+/topology                         403 ops     <- was 7,831
+/datasets/poll  ·  /datasets/wait 392 ops     <- was 782
 ```
 
-**F2' — `_workspace_token` has F2's exact shape, untouched.** It walks the same
-children with `iterdir()` + `is_dir()` + `stat()`: two syscalls per date dir,
-and THREE on the alignment path, where `_is_own` (the docs/139 own-root
-exclusion) calls `Path.resolve()` on every child. `os.scandir` makes the
-`is_dir()` half free the same way, and `resolve()` can be avoided for every
-child that is not a symlink — `DirEntry.is_symlink()` is free from the listing,
-and a non-symlink child's resolved path is just `resolved_root / name`.
-Projected: `/datasets` 1,174 -> ~394, `/param-history/alignment` 1,180 -> ~400.
-Same risk profile as F2, same pin style. **The obvious next commit.**
+What is left is one `os.stat` per date dir per walker, and there are two
+walkers doing the same walk (F3'). Nothing above is a repeated call any more.
 
-**F3 — a request-scoped fingerprint memo.** docs/105 #8 rejected a *TTL* memo,
-correctly: a run written milliseconds before a poll must be seen by that poll.
-A memo scoped to one HTTP request keeps that contract exactly — each poll is
-its own request and re-samples — while collapsing every repeated call inside
-one render. With F2' it is worth less than it looks (the repeats are mostly
-gone), so it should be judged on what remains, not on the pre-F1 numbers.
-Needs care: the scheduler and autofit workers are not request-scoped, so the
-memo must key on a real request context and simply not exist outside one.
+**F3 — a request-scoped fingerprint memo. DEFERRED, on the measurement.** The
+case for it was "the same call repeats inside one request", and F1 removed the
+repetition. `/datasets` now spends its 784 on `_workspace_token` (390) and
+`DatasetStore._current_mtime` (390) — two DIFFERENT functions called once each,
+which no memo merges. There is no longer enough on the table to justify
+touching what docs/105 #8 decided deliberately. Revisit only with a
+measurement that shows repetition returning.
+
+**F3' — the two walkers walk the same tree.** What the attribution actually
+shows is a duplicate SWEEP, not a repeated call: `_workspace_token` stats every
+date dir to answer "did the workspace change", and `_current_mtime` stats every
+date dir to answer "did this store's root change". Same directories, same
+syscalls, two answers. Merging them — one sweep feeding both — is the honest
+version of what F3 was reaching for, and it is worth roughly another 50% on
+`/datasets` and `/trends/data`. It needs the two staleness contracts to be
+reconciled first, which is real design work.
 
 **F4 — the two every-page polls read a watcher instead of sweeping.**
 `/datasets/poll` and `/datasets/wait` each re-derive a fingerprint that

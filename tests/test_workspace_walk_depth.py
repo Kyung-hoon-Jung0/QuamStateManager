@@ -103,31 +103,41 @@ def _seed_run(root: Path, run_id: int, *, date: str = "2026-08-19",
 
 @contextlib.contextmanager
 def _fs_spy():
-    """Record every ``Path.stat`` / ``Path.iterdir`` target as a string.
+    """Record every directory STAT and every directory LISTING, by path.
 
-    ``Path.is_dir()`` is ``S_ISDIR(self.stat().st_mode)`` in CPython, so
-    patching ``stat`` catches the ``is_dir()`` storms too — which is the whole
-    point: both defects here were stat storms wearing an ``is_dir()`` hat.
+    Hooked at the ``os`` level, not on ``pathlib``. That is not a style
+    choice: docs/155 F2' moved this walk from ``Path.iterdir()`` +
+    ``Path.is_dir()`` + ``Path.stat()`` onto ``os.scandir`` + ``os.stat``,
+    and a pathlib-only spy went BLIND — every pin below started asserting
+    against an empty set instead of against the walk. A spy that only sees
+    one spelling of a syscall pins the spelling, not the cost.
+
+    ``os`` is also the layer that cannot be bypassed: ``Path.stat`` calls
+    ``os.stat`` and ``Path.iterdir`` calls ``os.listdir``, so both spellings
+    land here, and ``Path.is_dir()`` (a stat in CPython) is counted with the
+    stats — which is the whole point, since both docs/154 defects were stat
+    storms wearing an ``is_dir()`` hat.
     """
     seen: dict[str, list[str]] = {"stat": [], "iterdir": []}
-    real_stat = pathlib.Path.stat
-    real_iterdir = pathlib.Path.iterdir
+    real_stat, real_scandir, real_listdir = os.stat, os.scandir, os.listdir
 
-    def stat(self, *a, **k):
-        seen["stat"].append(_np(self))
-        return real_stat(self, *a, **k)
+    def stat(path, *a, **k):
+        seen["stat"].append(_np(path))
+        return real_stat(path, *a, **k)
 
-    def iterdir(self):
-        seen["iterdir"].append(_np(self))
-        return real_iterdir(self)
+    def scandir(path=".", *a, **k):
+        seen["iterdir"].append(_np(path))
+        return real_scandir(path, *a, **k)
 
-    pathlib.Path.stat = stat
-    pathlib.Path.iterdir = iterdir
+    def listdir(path=".", *a, **k):
+        seen["iterdir"].append(_np(path))
+        return real_listdir(path, *a, **k)
+
+    os.stat, os.scandir, os.listdir = stat, scandir, listdir
     try:
         yield seen
     finally:
-        pathlib.Path.stat = real_stat
-        pathlib.Path.iterdir = real_iterdir
+        os.stat, os.scandir, os.listdir = real_stat, real_scandir, real_listdir
 
 
 def _touched(seen: dict[str, list[str]]) -> set[str]:

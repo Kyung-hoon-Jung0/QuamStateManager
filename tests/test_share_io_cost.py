@@ -1,4 +1,4 @@
-r"""Share I/O cost of the surfaces users named as slow (docs/155 F1 + F2).
+r"""Share I/O cost of the surfaces users named as slow (docs/155 F1, F2, F2').
 
 The customer's workspace is an SMB share, so a filesystem operation is a
 network round-trip (~1.8 ms measured) rather than the ~1 us it is on the
@@ -6,9 +6,11 @@ development NVMe. Wall clock measured locally cannot see that difference at
 all; the OPERATION COUNT is identical on both machines, which is why every pin
 here counts syscalls and none of them looks at a clock.
 
-Two fixes, measured at 390 date dirs (roughly 13 months of daily runs):
+Three fixes, measured at 390 date dirs (roughly 13 months of daily runs):
 
     /topology (Chip Status / Overview)   7,831 -> 403 ops   (~14.1 s -> ~0.7 s)
+    /param-history/alignment             1,180 -> 401
+    /datasets  ·  /trends/data           1,564 -> 784
     /datasets/poll  (every page, polled)   782 -> 392
     /field/history  (the 🕘 popover)       789 -> 399
 
@@ -20,6 +22,11 @@ the archive to look up ten run folders.
 F2 — `DatasetStore._current_mtime` spent TWO syscalls per date dir
 (`Path.is_dir()` is a stat, `.stat()` is another). `os.scandir` carries the
 file-type bits in the listing, so the is_dir half is free.
+
+F2' — `HistoryManager._workspace_token` had the same shape, and on the
+alignment path a third call per entry: docs/139's own-root exclusion resolved
+EVERY entry. The root is resolved once now, and a non-symlink child's resolved
+path is `parent_resolved / name` — string work, no syscall.
 
 Both are cost-only: the fingerprint this function returns, and the staleness
 contract built on it, must not move. That is pinned first, below.
@@ -34,6 +41,8 @@ from pathlib import Path
 import pytest
 
 from quam_state_manager.core.dataset import DatasetStore
+from quam_state_manager.core.history import HistoryManager
+from quam_state_manager.core.scanner import Workspace
 from quam_state_manager.web import routes
 
 
@@ -349,3 +358,92 @@ class TestRbDerivationSweepsOnce:
                             lambda *a, **k: (sweeps.append(1), [])[1])
         assert routes._rb_run_folder(1234) is None
         assert len(sweeps) == 1
+
+
+# ---------------------------------------------------------------------------
+# F2' — `_workspace_token` had F2's shape, and the own-root exclusion resolved
+#       every entry on top of it
+# ---------------------------------------------------------------------------
+
+def _seed_shallow(root: Path, dates: int) -> Path:
+    """``<root>/<date>/<run>`` — the layout a qualibrate storage.location has,
+    and the one docs/154 taught this token to stop descending."""
+    return _seed_archive(root, dates=dates)
+
+
+class TestWorkspaceTokenCostsOnePerDir:
+    """The token's promise is O(roots + chips + dates). That was true of the
+    number of DIRECTORIES it visits and false of the number of SYSCALLS it
+    spent on each."""
+
+    def _ws(self, root: Path) -> Workspace:
+        ws = Workspace()
+        ws.add_root(root)
+        return ws
+
+    def test_one_stat_per_dir_not_two(self, tmp_path):
+        root = _seed_shallow(tmp_path / "ws", 25)
+        ws = self._ws(root)
+
+        with _fs_spy() as s:
+            HistoryManager._workspace_token(ws)
+
+        # The root itself + one stat per date dir. `is_dir()` rides the
+        # listing; before F2' it was a second stat each.
+        assert s.stat <= 1 + 25, (
+            f"{s.stat} stats for a root with 25 date dirs — the free is_dir() "
+            f"from the directory listing is being paid for again"
+        )
+        assert s.scandir + s.listdir == 1, (
+            f"{s.scandir + s.listdir} listings, expected exactly 1 (the root); "
+            f"a date dir must never be descended into (docs/154)"
+        )
+
+    def test_the_own_root_exclusion_costs_no_resolve_per_entry(self, tmp_path):
+        """docs/139's own-root exclusion called ``Path.resolve()`` on EVERY
+        entry at both levels — one share round-trip each, and on the alignment
+        path (the only caller that passes ``own_root``) that was a third of
+        the whole sweep. Every entry is a direct child of a directory the walk
+        already holds, so the root is resolved once and the rest is string
+        work."""
+        root = _seed_shallow(tmp_path / "ws", 30)
+        ws = self._ws(root)
+        own = tmp_path / "instance" / "history"
+        own.mkdir(parents=True)
+
+        with _fs_spy() as without:
+            HistoryManager._workspace_token(ws)
+        with _fs_spy() as with_own:
+            HistoryManager._workspace_token(ws, own_root=own)
+
+        extra = with_own.total - without.total
+        assert extra <= 4, (
+            f"asking for the own-root exclusion cost {extra} extra syscalls "
+            f"over 30 entries — it is resolving per entry again"
+        )
+
+    def test_the_exclusion_still_excludes(self, tmp_path):
+        """A cost pin alone would pass with the exclusion deleted. SM's own
+        history dir nested under a workspace root must not contribute: its
+        mtime moving is the scan's own bookkeeping, and folding it in makes
+        the scan invalidate its own cache (docs/139 fix 2)."""
+        root = tmp_path / "ws"
+        _seed_shallow(root, 3)
+        own = root / "_sm_instance"
+        own.mkdir()
+
+        ws = self._ws(root)
+        before = HistoryManager._workspace_token(ws, own_root=own)
+
+        bumped = os.stat(own).st_mtime + 10_000.0
+        os.utime(own, (bumped, bumped))
+
+        assert HistoryManager._workspace_token(ws, own_root=own) == before, (
+            "SM's own instance dir moved the workspace token — the scan's "
+            "bookkeeping is invalidating the scan's own cache"
+        )
+        # …and with no own_root declared it is ordinary content again.
+        assert (HistoryManager._workspace_token(ws)
+                != HistoryManager._workspace_token(ws, own_root=own)), (
+            "the exclusion made no difference at all — it is not being applied"
+        )
