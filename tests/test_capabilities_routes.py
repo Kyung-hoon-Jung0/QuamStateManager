@@ -63,10 +63,13 @@ def test_capabilities_endpoint_all_present(client, monkeypatch):
     assert body["report"]["warnings"] == [] and body["report"]["blockers"] == []
 
 
-def test_build_degrade_needs_ack(client, monkeypatch):
+def test_build_degrade_needs_ack(client, monkeypatch, tmp_path):
     _patch(monkeypatch, has_twpa=False)
+    # A REAL absolute path. A bare POSIX literal has no drive, so on Windows
+    # it fails _ingest_abs_path and the route answers 400 BEFORE the
+    # capability gate -- the gate under test then never ran (docs/155 F8').
     r = client.post("/generate/build",
-                    json={"spec": _SPEC, "output_path": "/tmp/x"})
+                    json={"spec": _SPEC, "output_path": str(tmp_path / "x")})
     body = r.get_json()
     assert body["ok"] is False and body.get("needs_confirm") is True
     assert body.get("confirm_kind") == "capability"
@@ -90,7 +93,7 @@ def test_build_proceeds_after_ack(client, monkeypatch, tmp_path):
     assert body["ok"] is True
 
 
-def test_build_blocker_refuses(client, monkeypatch):
+def test_build_blocker_refuses(client, monkeypatch, tmp_path):
     # env missing a CORE cap (build.quam) → hard blocker, no override
     from quam_state_manager.generator.probe_capabilities import CATALOG_IDS
     caps = {cid: {"available": True, "detail": ""} for cid in CATALOG_IDS}
@@ -100,7 +103,8 @@ def test_build_blocker_refuses(client, monkeypatch):
                         lambda *a, **k: {"ok": True, "capabilities": caps,
                                          "versions": {}, "error": None})
     r = client.post("/generate/build",
-                    json={"spec": _SPEC, "output_path": "/tmp/x", "ack_degrades": True})
+                    json={"spec": _SPEC, "output_path": str(tmp_path / "x"),
+                          "ack_degrades": True})
     assert r.status_code == 400
     body = r.get_json()
     assert body["ok"] is False

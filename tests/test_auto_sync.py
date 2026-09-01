@@ -216,9 +216,18 @@ class TestTheSignalRidesTheExistingPoll:
     def test_no_new_poller_was_added(self):
         src = (Path(__file__).resolve().parent.parent / "quam_state_manager"
                / "web" / "static" / "app.js").read_text(encoding="utf-8")
-        # the pull is issued from inside the existing drift poll's handler
+        # The pull is issued from inside the EXISTING drift poll's handler.
+        # Pinned structurally rather than by byte distance: the old 4,000-char
+        # window expired because app.js grew (docs/155 F8'), which says nothing
+        # about whether a second poller appeared. What must stay true is that
+        # nothing between the drift fetch and the pull opens a request of its own.
         i = src.index("/auto-sync/pull")
-        assert "/state/drift" in src[max(0, i - 4000):i]
+        j = src.rindex("/state/drift", 0, i)          # the poll it rides
+        between = src[j:i]
+        for tok in ("setInterval(", "fetch(", "XMLHttpRequest", "function poll"):
+            assert tok not in between, (
+                "a second poller (%s) sits between the drift poll and the "
+                "auto-sync pull" % tok)
 
 
 class TestFailuresDisarm:

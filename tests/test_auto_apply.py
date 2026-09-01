@@ -82,7 +82,7 @@ class TestArming:
         r = c.post("/auto-apply/arm")
         assert r.status_code == 200
         assert 'data-auto-apply="1"' in r.data.decode()
-        assert "Auto-apply" in r.data.decode()
+        assert "Auto-Sync" in r.data.decode()      # renamed, docs/120 item 8
         assert 'data-auto-apply="1"' in c.get("/state/tray").data.decode()
         r = c.post("/auto-apply/disarm")
         assert 'data-auto-apply="1"' not in r.data.decode()
@@ -149,7 +149,7 @@ class TestArming:
         c.post("/auto-apply/arm")
         on = c.get("/state/tray").data.decode()
         assert "until you press" not in on
-        assert "Auto-apply is ON" in on
+        assert "Auto-Sync is ON" in on             # renamed, docs/120 item 8
 
     def test_gate_route_reports_without_blocking(self, env):
         body = env["client"].get("/auto-apply/gate").get_json()

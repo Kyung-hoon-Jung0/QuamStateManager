@@ -148,12 +148,24 @@ class TestHubShell:
         assert r.status_code == 200
 
     def test_label_html_is_escaped(self, env, tmp_path):
-        evil = _write_quam(
-            tmp_path / "ws2" / '<script>alert(1)</script>' / "quam_state")
+        # Windows forbids < > : " / \ | ? * in a filename, so the old
+        # '<script>' folder could not be CREATED here (WinError 123) and this
+        # pin never ran on this OS at all. `&` and `'` are legal everywhere and
+        # go through the same autoescape, so the rule is pinned unchanged --
+        # and asserting the ESCAPED form is PRESENT is stronger than the old
+        # absence check, which also passed if the label was never rendered.
+        from urllib.parse import quote
+        evil = _write_quam(tmp_path / "ws2" / "a&b'c" / "quam_state")
         c, a, _b = env
-        r = c.get(f"/compare-hub?src=ws:{evil}&src=ws:{a}&bucket=1")
+        # percent-encoded: a raw "&" in the path would split the query and
+        # the source would never be read -- which is how the old assertion
+        # (absence of a raw payload) could pass on a page that rendered no
+        # label at all.
+        r = c.get(f"/compare-hub?src=ws:{quote(str(evil), safe='')}"
+                  f"&src=ws:{a}&bucket=1")
         assert r.status_code == 200
-        assert b"<script>alert(1)</script>" not in r.data
+        assert b"a&b'c" not in r.data          # never raw
+        assert b"a&amp;b" in r.data            # ...and it IS rendered
 
 
 # ===========================================================================

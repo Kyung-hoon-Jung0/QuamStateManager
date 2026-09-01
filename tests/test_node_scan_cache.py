@@ -20,7 +20,10 @@ GRAPH_SRC = 'from qualibrate import QualibrationGraph\ng = QualibrationGraph(nam
 def _write(folder: Path, name: str, src: str) -> Path:
     folder.mkdir(parents=True, exist_ok=True)
     p = folder / name
-    p.write_text(src)
+    # bytes, not text: on Windows write_text translates newlines to CRLF,
+    # so a _pad_to(.., 400) source landed as 403 bytes and the mtime+size
+    # collision test below (which rewrites with write_bytes) never collided.
+    p.write_bytes(src.encode())
     return p
 
 

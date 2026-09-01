@@ -575,6 +575,101 @@ file-locking timing), the `test_scanner` staleness-timing group, and the stale
 pins CLAUDE.md already records for `test_auto_apply` and `test_auto_sync`.
 Nothing in the client half.
 
+## 10. F8' — the 36 failures, triaged one at a time
+
+§8 established that the campaign caused none of the failures (33 of 35 fail
+identically on the pre-campaign worktree). It did not establish **why** each one
+fails. So every failing test was run ALONE, three times, and classified by what
+happened — never by what its name suggests.
+
+```
+total                     36
+fails alone every time    32   deterministic: an OS difference or a stale pin
+flaky alone (1 of 3)       2   test_safe_io::reader_survives_concurrent_os_replace
+                               test_qualibrate_location::native_path_anchors_on_the_config_dir
+PASSES alone (0 of 3)      2   test_poll_stability x2 -- ordering / shared state,
+                               they only fail inside a larger run
+```
+
+The 32 deterministic ones are not one class. Six of them turned out to be
+**defects in this repository**, not OS behaviour — and one of the six is in the
+product, not in a test.
+
+### 10a. The product defect: the tray's hover contradicts Auto-Sync
+
+`432c764` ("the How-this-works banner becomes the sync badge's hover", a docs/132
+follow-up) folded a two-branch banner into one unconditional `title` string. The
+branch it dropped was this one, whose own comment said what it was for:
+
+```jinja
+{# docs/117: while auto-apply is ON this sentence would be FALSE -- the
+   whole point of the mode is that leaving a field writes the chip. #}
+{% if auto_apply %} ... {% else %}
+<b>How this works:</b> edits stay in your <b>working state</b> (a private copy)
+until you press <b>Apply to live</b> -- reversible with <b>Revert last apply</b>.
+```
+
+So with Auto-Sync ON the badge's hover told the user their edits stay private
+until they press Apply (false — that mode exists precisely so they do not have
+to), and pointed at a **Revert last apply** button that is not the one rendered
+underneath: the button correctly reads *Revert this session*, because under an
+armed session the anchor IS the session. Two of the three `test_auto_apply`
+failures were this, failing honestly for eleven days. The branch is restored,
+in the docs/120 vocabulary.
+
+Worth stating plainly: **the tests were right and the code was wrong**, which is
+the opposite of what "35 known failures" invites one to assume. That is the
+argument for triaging a stale-looking list instead of rounding it off.
+
+### 10b. Two pins that measured something other than their subject
+
+| pin | what it actually measured | now |
+|---|---|---|
+| `test_auto_apply` ×2 (label), `test_auto_sync` | the string "Auto-apply", which docs/120 item 8 renamed to **Auto-Sync** on the user's own instruction | assert the current name |
+| `test_no_new_poller_was_added` | that `/state/drift` sits within **4,000 characters** of `/auto-sync/pull` in app.js. It is 4,696 now — the pin expired because the file grew | assert **structurally**: no `setInterval(`/`fetch(`/`XMLHttpRequest`/`function poll` between the two, which is what "no new poller" means |
+
+### 10c. Three fixtures that could not run on Windows at all
+
+None of these three is an OS *behaviour* difference — each is a POSIX assumption
+baked into a fixture, so the rule under test was never exercised here.
+
+- **`test_capabilities_routes` ×2.** Both posted `output_path` as a bare POSIX
+  literal. `WindowsPath` with no drive is **not absolute**, so `_ingest_abs_path`
+  answered 400 and the route returned *before* the capability gate — the gate
+  under test never ran. (`test_build_proceeds_after_ack`, which uses `tmp_path`,
+  passes; that contrast is the whole diagnosis.) Now `tmp_path`.
+- **`test_label_html_is_escaped`.** It built a directory literally named
+  `<script>alert(1)</script>`. Windows forbids `< >` in a filename, so the
+  fixture died with WinError 123. Payload is now `a&b'c` (legal everywhere, same
+  autoescape). **Fixing it exposed a second defect in the pin itself**: the
+  assertion was *absence of the raw payload*, which also passes on a page that
+  renders no label at all — and that is what was happening, because a raw `&`
+  in the path split the query string so the source was never read. The payload
+  is percent-encoded now and the assertion is that the **escaped** form is
+  PRESENT, which cannot pass vacuously.
+- **`test_scan_file_always_fresh_even_on_mtime_size_collision`.** The helper
+  wrote with `write_text` (which translates newlines to CRLF on Windows) and the
+  test then rewrote with `write_bytes` (which does not), so a `_pad_to(.., 400)`
+  source was 403 bytes and the size collision the test needs never occurred:
+  `assert 400 == 403`. The helper writes bytes now.
+
+### 10d. What is left, and what it is
+
+Twenty-six deterministic failures remain, and they are the classes this project
+already documents — tmp-path case identity (`test_state_coherence` ×4,
+`test_web` ×3, `test_chip_identity` ×2, `test_predelivery_audit_fixes`,
+`test_sidebar_root_row`), the WSL kernel probe, Windows file locking, and the
+**`test_scanner` staleness group (10)**.
+
+One correction to how that last group has been described here and in CLAUDE.md:
+it is called a *timing* group, but all ten fail **3 of 3 alone**. Deterministic
+failure is not what a timing flake looks like. Whether that is a real staleness
+defect on this filesystem or a fixture assumption has **not** been established,
+and this section does not claim either — it is the next thing to measure.
+
+**Baseline after this section: 29 failed** (35 minus the six fixed), same suite
+and same exclusion as §8.
+
 ## 9. What this does not show
 
 - **The NAS was unreachable throughout** (the same network fault that ended the
