@@ -19208,10 +19208,21 @@ def _dataset_candidate_folders(*, fast: bool = False) -> list[Path]:
     candidates: set[Path] = set()
     for root in ws.root_folders:
         candidates.add(Path(root))
+    # Dedupe BEFORE the stat (docs/154). Every entry under one data folder
+    # yields the SAME grandparent, so the old loop paid one ``is_dir()`` per
+    # ENTRY to re-answer a question about a handful of distinct paths —
+    # measured on a real workspace: 5,574 calls against 1 distinct path,
+    # 9.7 s of SMB round-trips per /datasets render. The set below is exactly
+    # what that loop built anyway, so nothing about the result changes; a
+    # grandparent that is already a known root skips the stat entirely.
+    grandparents: set[Path] = set()
     for entry in ws.all_entries:
         if entry.is_standalone:
             continue
-        cand = entry.folder_path.parent.parent
+        grandparents.add(entry.folder_path.parent.parent)
+    for cand in grandparents:
+        if cand in candidates:
+            continue
         if cand.is_dir():
             candidates.add(cand)
     result = sorted(candidates)

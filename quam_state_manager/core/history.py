@@ -31,6 +31,11 @@ from quam_state_manager.core.loader import QuamStore
 from quam_state_manager.core.query import (
     QueryEngine, _assignment_fidelity, _assignment_fidelity_n,
 )
+# ONE spelling of "this dir name is a date" for the whole app — the scanner
+# already owns it (``<root>/.../YYYY-MM-DD/<run>``); ``_workspace_token``
+# stops its descent on it (docs/154). scanner imports nothing from history,
+# so this is cycle-free.
+from quam_state_manager.core.scanner import _DATE_RE
 
 if TYPE_CHECKING:
     from quam_state_manager.core.scanner import Workspace
@@ -1228,6 +1233,14 @@ class HistoryManager:
         not O(runs). Mirrors ``DatasetStore._current_mtime``: stat dirs
         only, never read files.
 
+        "The date level" is found by NAME, not by depth (docs/154): a
+        workspace root that is itself a chip's results folder holds
+        ``<root>/<date>/<run>``, one level shallower than the canonical
+        ``<root>/<chip>/<date>/<run>``, and descending the fixed two levels
+        there lands on run folders — turning the promise above into a lie
+        (measured: 20.2 s per call on a 5,574-run NAS workspace). A
+        date-named child therefore ends the descent.
+
         SM's OWN history store is never workspace content (docs/139 fix 2):
         when the instance dir happens to nest inside a workspace root, a
         snapshot capture or the fingerprint-sidecar flush would bump a dir
@@ -1280,6 +1293,21 @@ class HistoryManager:
                     mtimes.append(chip_dir.stat().st_mtime)
                 except OSError:
                     pass
+                # STOP at the date level, whichever level that is (docs/154).
+                # The two-descent shape above assumes <root>/<chip>/<date>/<run>.
+                # A workspace root that IS a chip's results folder is one level
+                # shallower — <root>/<date>/<run> — so level 2 lands on RUN
+                # folders and this "cheap" token becomes O(runs), the exact cost
+                # the docstring promises never to pay. Measured on a 5,574-run
+                # NAS workspace: 11,148 SMB stats, 20.2 s per call. A date dir's
+                # own mtime already moves when a run is added or removed under
+                # it (that is why level 2 exists at all), so stopping here keeps
+                # C33 intact. ``fullmatch`` deliberately, not ``search``: a false
+                # positive would stop the walk a level EARLY and reintroduce the
+                # staleness this token exists to prevent, while a false negative
+                # only costs the old speed.
+                if _DATE_RE.fullmatch(chip_dir.name):
+                    continue
                 try:
                     date_dirs = [d for d in chip_dir.iterdir() if d.is_dir()]
                 except OSError:
