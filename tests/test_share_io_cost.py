@@ -1,4 +1,4 @@
-r"""Share I/O cost of the surfaces users named as slow (docs/155 F1, F2, F2', F4).
+r"""Share I/O cost of the surfaces users named as slow (docs/155 F1-F4).
 
 The customer's workspace is an SMB share, so a filesystem operation is a
 network round-trip (~1.8 ms measured) rather than the ~1 us it is on the
@@ -6,13 +6,13 @@ development NVMe. Wall clock measured locally cannot see that difference at
 all; the OPERATION COUNT is identical on both machines, which is why every pin
 here counts syscalls and none of them looks at a clock.
 
-Four fixes, measured at 390 date dirs (roughly 13 months of daily runs):
+Five fixes, measured at 390 date dirs (roughly 13 months of daily runs):
 
     /topology (Chip Status / Overview)   7,831 -> 403 ops   (~14.1 s -> ~0.7 s)
+    /datasets  ·  /trends/data           1,564 -> 392
+    /datasets/changes-since (every 5 s)  1,568 -> 392
     /param-history/alignment             1,180 -> 401
-    /datasets  ·  /trends/data           1,564 -> 784
-    /datasets/changes-since (every 5 s)    784 -> 392
-    /datasets/wait  (the long poll)        392 ->   0
+    /datasets/wait  (the long poll)        782 ->   0
     /datasets/poll  (every 60 s)           782 -> 392
     /field/history  (the 🕘 popover)       789 -> 399
 
@@ -35,7 +35,12 @@ they do not ask: the delta poll rescanned every store and then rescanned it
 again (the first one WITHOUT the docs/105 #4 deadline), and `/datasets/wait`
 built a run table to read the folder paths off it.
 
-All four are cost-only: the fingerprints these functions return, and the
+F3' — `_workspace_token` and `_current_mtime` stat the SAME directories to
+answer two different questions, so a /datasets render walked the archive twice.
+`core/dir_sample.py` is the one listing; the scope of its cache is ONE REQUEST,
+which is what keeps docs/105 #8's write-then-poll contract intact.
+
+All five are cost-only: the fingerprints these functions return, and the
 staleness contracts built on them, must not move. That is pinned first, below.
 """
 from __future__ import annotations
@@ -47,6 +52,7 @@ from pathlib import Path
 
 import pytest
 
+from quam_state_manager.core import dir_sample as _dir_sample
 from quam_state_manager.core.dataset import DatasetStore
 from quam_state_manager.core.history import HistoryManager
 from quam_state_manager.core.scanner import Workspace
@@ -60,12 +66,13 @@ from quam_state_manager.web import routes
 class _Spy:
     def __init__(self) -> None:
         self.stat = 0
+        self.lstat = 0
         self.scandir = 0
         self.listdir = 0
 
     @property
     def total(self) -> int:
-        return self.stat + self.scandir + self.listdir
+        return self.stat + self.lstat + self.scandir + self.listdir
 
 
 @contextlib.contextmanager
@@ -75,13 +82,23 @@ def _fs_spy():
     Deliberately hooks the ``os`` level only: ``Path.stat`` calls ``os.stat``,
     so hooking both double-counts every pathlib-routed stat and inflates
     exactly the number these pins exist to hold down.
+
+    ``lstat`` is counted because it is where a syscall hides in plain sight:
+    ``os.path.islink`` routes through it, and a mutation swapping the free
+    ``DirEntry.is_symlink()`` for it went completely unseen by an earlier
+    version of this spy.
     """
     s = _Spy()
-    o_stat, o_scan, o_list = os.stat, os.scandir, os.listdir
+    o_stat, o_lstat = os.stat, os.lstat
+    o_scan, o_list = os.scandir, os.listdir
 
     def stat(*a, **k):
         s.stat += 1
         return o_stat(*a, **k)
+
+    def lstat(*a, **k):
+        s.lstat += 1
+        return o_lstat(*a, **k)
 
     def scandir(*a, **k):
         s.scandir += 1
@@ -91,11 +108,23 @@ def _fs_spy():
         s.listdir += 1
         return o_list(*a, **k)
 
-    os.stat, os.scandir, os.listdir = stat, scandir, listdir
+    os.stat, os.lstat = stat, lstat
+    os.scandir, os.listdir = scandir, listdir
     try:
         yield s
     finally:
-        os.stat, os.scandir, os.listdir = o_stat, o_scan, o_list
+        os.stat, os.lstat = o_stat, o_lstat
+        os.scandir, os.listdir = o_scan, o_list
+
+
+@contextlib.contextmanager
+def _sample_scope():
+    """One sampling scope, exactly as a request opens and closes it."""
+    _dir_sample.begin()
+    try:
+        yield
+    finally:
+        _dir_sample.end()
 
 
 def _seed_archive(root: Path, *, dates: int, junk: int = 0) -> Path:
@@ -597,4 +626,210 @@ class TestBackgroundPollsSweepOnce:
             "the delta poll no longer discovers a run that landed after the "
             "last poll — its own rescan is not running, and nothing else on "
             "this path was going to do it"
+        )
+
+
+# ---------------------------------------------------------------------------
+# F3' — the two walkers stopped walking the same tree twice
+# ---------------------------------------------------------------------------
+
+class TestOneSweepSharedByBothWalkers:
+    """`_workspace_token` and `_current_mtime` ask different questions of the
+    SAME directories, and a /datasets render walked the archive once for each.
+    They share one listing now; they must not share an answer."""
+
+    def _app(self, tmp_path, folder):
+        from quam_state_manager.web.app import create_app
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        c = app.test_client()
+        r = c.post("/workspace/add", data={"folder": str(folder)})
+        assert r.status_code in (200, 204, 302), r.status_code
+        return app, c
+
+    def _date_dir_stats(self, client, url, dates):
+        hits = []
+        real = os.stat
+
+        def counting(path, *a, **k):
+            try:
+                if os.path.basename(os.fspath(path)) in dates:
+                    hits.append(os.fspath(path))
+            except (TypeError, ValueError):
+                pass
+            return real(path, *a, **k)
+
+        os.stat = counting
+        try:
+            r = client.get(url)
+        finally:
+            os.stat = real
+        assert r.status_code == 200, r.status_code
+        return len(hits)
+
+    def test_a_datasets_render_stats_each_date_dir_once(self, tmp_path):
+        folder = _seed_archive(tmp_path / "data", dates=20)
+        _, c = self._app(tmp_path, folder)
+        dates = {q.name for q in folder.iterdir() if q.is_dir()}
+        c.get("/datasets")                      # warm every other cache first
+
+        n = self._date_dir_stats(c, "/datasets", dates)
+
+        assert n <= 20, (
+            "%d stats over 20 date dirs in one render - the workspace token "
+            "and the store's staleness check are each sweeping the archive"
+            % n
+        )
+
+    def test_the_two_walkers_still_answer_independently(self, tmp_path):
+        """Sharing the I/O must not merge the ANSWERS: the token folds in
+        every root, a store's fingerprint is about its own folder alone."""
+        a = _seed_archive(tmp_path / "a", dates=3)
+        b = _seed_archive(tmp_path / "b", dates=5)
+        ws = Workspace()
+        ws.add_root(a)
+        ws.add_root(b)
+
+        with _sample_scope():
+            token = HistoryManager._workspace_token(ws)
+            best_a, n_a = DatasetStore(a)._current_mtime()
+            best_b, n_b = DatasetStore(b)._current_mtime()
+
+        assert (n_a, n_b) == (3, 5), (
+            "the stores' date counts came back as %r - a shared listing is "
+            "being read as a shared answer" % ((n_a, n_b),)
+        )
+        assert token[0] == 2
+        assert best_a != 0.0 and best_b != 0.0
+
+
+class TestTheSampleScopeIsOneRequest:
+    """docs/105 #8's contract, restated for the shared listing: a TTL memo was
+    rejected because a run written milliseconds before a poll must be seen by
+    THAT poll. A request-scoped one keeps it - every poll is its own request."""
+
+    def test_a_later_request_takes_a_fresh_sample(self, tmp_path):
+        from quam_state_manager.web.app import create_app
+        folder = _seed_archive(tmp_path / "data", dates=3)
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        c = app.test_client()
+        c.post("/workspace/add", data={"folder": str(folder)})
+        c.get("/datasets")
+
+        store = DatasetStore(folder)
+        with app.test_request_context():
+            first = store._current_mtime()
+
+        date_dir = sorted(q for q in folder.iterdir() if q.is_dir())[0]
+        bumped = os.stat(date_dir).st_mtime + 10.0
+        os.utime(date_dir, (bumped, bumped))
+
+        with app.test_request_context():
+            second = store._current_mtime()
+
+        assert second != first, (
+            "a second request reused the first one's listing - the cache "
+            "outlived the request, and the write-then-poll contract with it"
+        )
+
+    def test_outside_a_request_nothing_is_cached(self, tmp_path):
+        """The scheduler worker, autofit and the CLI never open a scope. They
+        must behave exactly as they did before this module existed."""
+        folder = _seed_archive(tmp_path / "data", dates=3)
+        _dir_sample.end()                        # no scope, as a worker has
+
+        store = DatasetStore(folder)
+        first = store._current_mtime()
+        date_dir = sorted(q for q in folder.iterdir() if q.is_dir())[0]
+        bumped = os.stat(date_dir).st_mtime + 10.0
+        os.utime(date_dir, (bumped, bumped))
+
+        assert store._current_mtime() != first, (
+            "a caller with no sampling scope was served a cached listing"
+        )
+
+    def test_a_leaked_scope_self_heals_on_the_next_begin(self, tmp_path):
+        """Worker threads are reused. If a teardown is ever missed, the next
+        request must not inherit the stale listing."""
+        folder = _seed_archive(tmp_path / "data", dates=3)
+        store = DatasetStore(folder)
+
+        _dir_sample.begin()
+        try:
+            first = store._current_mtime()
+            date_dir = sorted(q for q in folder.iterdir() if q.is_dir())[0]
+            bumped = os.stat(date_dir).st_mtime + 10.0
+            os.utime(date_dir, (bumped, bumped))
+            assert store._current_mtime() == first   # same scope, by design
+
+            _dir_sample.begin()                      # a new one, no end() first
+            assert store._current_mtime() != first, (
+                "a new scope inherited the previous one's listing"
+            )
+        finally:
+            _dir_sample.end()
+
+
+class TestDirSampleItself:
+
+    def test_a_known_mtime_is_not_stat_ed_again(self, tmp_path):
+        """The deep layout reads a chip dir's mtime while listing the root and
+        then descends into it. Paying a second stat for the same directory
+        would hand back what F2' removed."""
+        d = _seed_archive(tmp_path / "chip", dates=4)
+
+        with _fs_spy() as s:
+            _dir_sample.sample(d, own_mtime=123.0)
+
+        assert s.stat == 0, "%d stats for a directory whose mtime we had" % s.stat
+        assert s.scandir == 1
+
+    def test_a_listing_costs_the_same_whatever_it_holds(self, tmp_path):
+        """One stat for the directory, one scandir, and nothing per entry.
+
+        Everything the listing yields — the name, that it is a directory, that
+        it is not a symlink — rides that one scandir. The own-root exclusion
+        in `_workspace_token` needs the symlink bit PER ENTRY, so taking it
+        any other way (``os.path.islink``, which is an ``lstat``) puts the
+        per-entry syscall back that docs/155 F2' removed.
+
+        Written as an invariant across sizes rather than a magic number: the
+        first version of this pin read ``smp.children`` inside the spy, which
+        measures a tuple unpack rather than the listing, and a mutation doing
+        exactly that swap passed it.
+        """
+        few = _seed_archive(tmp_path / "few", dates=3)
+        many = _seed_archive(tmp_path / "many", dates=30)
+
+        with _fs_spy() as a:
+            smp_few = _dir_sample.sample(few)
+        with _fs_spy() as b:
+            smp_many = _dir_sample.sample(many)
+
+        assert len(smp_few.children) == 3 and len(smp_many.children) == 30
+        assert a.total == b.total, (
+            "listing 30 entries cost %d syscalls where 3 cost %d - something "
+            "is asking the filesystem per entry" % (b.total, a.total)
+        )
+        assert b.total == 2, (
+            "a listing cost %d syscalls; it should be one stat and one "
+            "scandir" % b.total
+        )
+        assert not any(is_link for _n, _p, is_link in smp_many.children)
+
+    def test_a_listing_failure_is_reported_not_swallowed(self, tmp_path,
+                                                         monkeypatch):
+        d = _seed_archive(tmp_path / "ws", dates=2)
+        real = os.scandir
+
+        def boom(path, *a, **k):
+            if os.fspath(path) == str(d):
+                raise PermissionError(13, "denied")
+            return real(path, *a, **k)
+
+        monkeypatch.setattr(os, "scandir", boom)
+        smp = _dir_sample.sample(d)
+
+        assert isinstance(smp.error, OSError), (
+            "a failed listing came back as an empty directory - the caller "
+            "that propagates one would report the archive as unchanged"
         )

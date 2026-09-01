@@ -21,6 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from quam_state_manager.core import dir_sample
 from quam_state_manager.core import safe_io
 from quam_state_manager.core import units
 from quam_state_manager.core.scanner import _with_pair_qubits
@@ -912,10 +913,10 @@ class DatasetStore:
         scan cursor, cutting one full sweep per scan with identical
         semantics (both are pre-walk samples taken under the lock).
         """
-        try:
-            best = self.folder_path.stat().st_mtime
-        except OSError:
+        smp = dir_sample.sample(self.folder_path)
+        if smp.own_mtime is None:
             return (0.0, -1)
+        best = smp.own_mtime
         n_dates = 0
         # Also check the date subfolders — new runs land inside them.
         #
@@ -936,28 +937,28 @@ class DatasetStore:
         # detect. The free half is the type bits; the mtime is not free and
         # must not be faked.
         #
-        # scandir is deliberately NOT wrapped: ``Path.iterdir()`` raised out
-        # of this method on an unreadable root and callers are written for
-        # that. Returning the (0.0, -1) sentinel here instead would quietly
-        # reclassify a permissions failure as a fingerprint.
-        with os.scandir(self.folder_path) as it:
-            for de in it:
-                if not _DATE_FOLDER_RE.match(de.name):
-                    continue
-                try:
-                    if not de.is_dir():
-                        continue
-                except OSError:
-                    # Path.is_dir() answers False here rather than raising;
-                    # keep that.
-                    continue
-                n_dates += 1
-                try:
-                    mt = os.stat(de.path).st_mtime
-                    if mt > best:
-                        best = mt
-                except OSError:
-                    pass
+        # A listing failure is deliberately NOT swallowed: ``Path.iterdir()``
+        # raised out of this method on an unreadable root and callers are
+        # written for that. Returning the (0.0, -1) sentinel here instead
+        # would quietly reclassify a permissions failure as a fingerprint.
+        #
+        # docs/155 F3' — the listing comes from ``dir_sample``, which
+        # ``HistoryManager._workspace_token`` walks through too. On this
+        # archive the two stat the SAME directories (a data folder is a
+        # workspace root in the shallow layout and the chip dir the token
+        # descends into in the deep one), so a /datasets render walked it
+        # twice. Inside one request the second walk is now free; outside one
+        # — the scheduler worker, a CLI call — nothing is cached and this
+        # costs exactly what it did before.
+        if smp.error is not None:
+            raise smp.error
+        for name, path, _is_link in smp.children:
+            if not _DATE_FOLDER_RE.match(name):
+                continue
+            n_dates += 1
+            mt = smp.mtime(name, path)
+            if mt is not None and mt > best:
+                best = mt
         return (best, n_dates)
 
     def rescan_if_stale(self, deadline: float | None = None) -> bool:

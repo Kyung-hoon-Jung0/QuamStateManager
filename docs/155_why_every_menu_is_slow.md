@@ -147,18 +147,52 @@ empty, which would drop exactly the folder about to receive its first run.
 `/datasets/wait` therefore now watches an empty data folder, which it never
 did before.
 
+**F3' — the two walkers stopped walking the same tree twice. SHIPPED.**
+`HistoryManager._workspace_token` stats every date directory to answer *"did
+the workspace change?"*; `DatasetStore._current_mtime` stats every date
+directory to answer *"did this store's root change?"*. Those are the SAME
+directories — a data folder is a workspace root in the shallow layout, and the
+chip directory the token descends into in the deep one (a run entry's
+`folder_path.parent.parent` is the root in one and the chip dir in the other,
+which is exactly what the token stats) — so a `/datasets` render walked the
+whole archive twice, in two functions, for two answers.
+
+`core/dir_sample.py` is the one walk. It merges the I/O, not the questions:
+each walker still computes its own fingerprint from it, and a pin holds the
+two answers apart. Two costs are kept separate because the callers want
+different subsets — the LISTING (names + type bits + the symlink bit) rides
+one `os.scandir`, while an mtime needs an `os.stat` per entry and is taken
+lazily, memoized per entry. The store asks about date directories only, the
+token about every child directory, and the second caller in a request pays for
+none of them again.
+
+**The scope is a request, and that is the whole argument.** docs/105 #8
+rejected a *TTL* memo because a run written milliseconds before a poll must be
+seen by THAT poll; a request-scoped cache keeps that exactly, because every
+poll is its own request and takes its own sample. `before_request` opens the
+scope and `teardown_request` closes it (it runs even when the view raised),
+and `begin()` overwrites whatever a missed teardown left, so a leaked scope
+cannot outlive one request on a reused worker thread. Outside a request — the
+scheduler worker, autofit, the CLI — no scope is ever opened, nothing is
+cached, and both walkers behave precisely as they did before the module
+existed. All four properties are pinned.
+
 ### 5a. Measured (same fixture, 390 date dirs)
 
-| route | before | F1+F2 | +F2' | total |
-|---|---|---|---|---|
-| `/topology` (Chip Status / Overview) | 7,831 | 403 | **403** | **-95%** (~14.1 s -> ~0.7 s on the share) |
-| `/param-history/alignment` | 1,180 | 1,180 | **401** | **-66%** |
-| `/datasets` | 1,564 | 1,174 | **784** | **-50%** |
-| `/trends/data` | 1,564 | 1,174 | **784** | **-50%** |
-| `/datasets/poll` (every 60 s) | 782 | 392 | **392** | **-50%** |
-| `/field/history` (the 🕘 popover) | 789 | 399 | **399** | **-49%** |
-| `/datasets/changes-since` (every **5 s**) | 1,568 | 784 | **392** (F4) | **-75%** |
-| `/datasets/wait` (the long poll) | 782 | 392 | **0** (F4) | **-100%** |
+| route | before | F1+F2 | +F2' | +F4 | +F3' | total |
+|---|---|---|---|---|---|---|
+| `/topology` (Chip Status / Overview) | 7,831 | 403 | 403 | 403 | **403** | **-95%** |
+| `/datasets` | 1,564 | 1,174 | 784 | 784 | **392** | **-75%** |
+| `/trends/data` | 1,564 | 1,174 | 784 | 784 | **392** | **-75%** |
+| `/datasets/changes-since` (every **5 s**) | 1,568 | 784 | 784 | 392 | **392** | **-75%** |
+| `/param-history/alignment` | 1,180 | 1,180 | 401 | 401 | **401** | **-66%** |
+| `/datasets/poll` (every 60 s) | 782 | 392 | 392 | 392 | **392** | **-50%** |
+| `/field/history` (the 🕘 popover) | 789 | 399 | 399 | 399 | **399** | **-49%** |
+| `/datasets/wait` (the long poll) | 782 | 392 | 392 | **0** | **0** | **-100%** |
+
+Every surface users named is now between 0 and 403 share operations — about
+0.7 s on the share where the worst of them was ~14 s, and where all of them
+grew by one date directory per day of measurement.
 
 **What a tab costs while nobody touches it**, at 1.8 ms per share op — the
 number that decides whether four open tabs saturate the pool:
@@ -170,15 +204,24 @@ number that decides whether four open tabs saturate the pool:
 | `/datasets/poll`, every 60 s | 0.7 s/min | 0.7 s/min |
 | **per open tab** | **19.3 s/min** | **9.2 s/min** |
 
-`/topology`'s attribution afterwards shows exactly ONE `_current_mtime` sweep,
-where it was ten; the alignment path's per-entry `resolve()` storm is gone
-entirely.
+`/topology`'s attribution afterwards shows exactly ONE `_current_mtime` sweep
+where it was ten; the alignment path's per-entry `resolve()` storm is gone;
+and `/datasets`' attribution is now a single `dir_sample` listing — 390
+mtimes, one stat, one scandir — serving both walkers.
 
-Pinned by `tests/test_share_io_cost.py` (22 asserts) plus the docs/154 pins in
+Pinned by `tests/test_share_io_cost.py` (30 asserts) plus the docs/154 pins in
 `tests/test_workspace_walk_depth.py`, all counting syscalls and never a clock.
-**18 mutations, 18 caught** across the four fixes — including the three
-docs/154 mutations re-verified against the new code shape, and one whose only
+**26 mutations, 26 caught** across the five fixes — including the three
+docs/154 mutations re-verified against each new code shape, and two whose only
 job is to prove a pin is not vacuous.
+
+**A pin can measure the wrong moment, too.** The first pin for "the symlink
+bit rides the listing" read `smp.children` inside the spy — which measures a
+tuple unpack, not the listing — and the mutation swapping the free
+`DirEntry.is_symlink()` for `os.path.islink` (an `lstat` per entry, exactly
+the cost F2' removed) passed it untouched. The pin measures `sample()` itself
+now, as an invariant across sizes, and the spy counts `lstat` as well: a
+syscall the spy does not hook is a syscall the pins cannot hold down.
 
 **A pin can go blind without failing.** docs/154's spy hooked `Path.stat` and
 `Path.iterdir`; F2' moved the walk onto `os.scandir` + `os.stat` and every one
@@ -223,44 +266,38 @@ window measured here, and `run_watch` (docs/141 §4p) polls at 0.5 s anyway —
 but it is the reason a write-then-poll test in this project always bumps the
 mtime explicitly rather than trusting the filesystem to have noticed.
 
-## 6. The backlog after F1 + F2 + F2' + F4 — every item measured, none guessed
+## 6. The backlog after F1 + F2 + F2' + F3' + F4 — every item measured, none guessed
 
 Attribution of what is LEFT, on the shipped code at 390 date dirs. Frame counts
 are exact, not sampled.
 
 ```
-/datasets  ·  /trends/data        784 ops     <- was 1,564
-   390  history.py  _workspace_token   (one os.stat per date dir)
-   390  dataset.py  _current_mtime     (one os.stat per date dir)
+/datasets  ·  /trends/data        392 ops     <- was 1,564
+   390  dir_sample  mtime()            (one os.stat per date dir, ONCE,
+     1  dir_sample  _read                shared by both walkers)
+     1  dir_sample  _list
 
 /param-history/alignment          401 ops     <- was 1,180
-   390  history.py  _workspace_token   (one os.stat per date dir)
-
 /topology                         403 ops     <- was 7,831
 /datasets/poll (60 s)             392 ops     <- was 782
 /datasets/changes-since (5 s)     392 ops     <- was 1,568
 /datasets/wait (continuous)         0 ops     <- was 782
 ```
 
-What is left is one `os.stat` per date dir per walker, and there are two
-walkers doing the same walk (F3'). Nothing above is a repeated call any more.
+What is left is one `os.stat` per date dir, once, for both walkers together.
+There is no duplicated I/O left on these paths — only F5's single sweep, which
+is the shape of the question rather than a defect in the answer.
 
-**F3 — a request-scoped fingerprint memo. DEFERRED, on the measurement.** The
-case for it was "the same call repeats inside one request", and F1 removed the
-repetition. `/datasets` now spends its 784 on `_workspace_token` (390) and
-`DatasetStore._current_mtime` (390) — two DIFFERENT functions called once each,
-which no memo merges. There is no longer enough on the table to justify
-touching what docs/105 #8 decided deliberately. Revisit only with a
-measurement that shows repetition returning.
-
-**F3' — the two walkers walk the same tree.** What the attribution actually
-shows is a duplicate SWEEP, not a repeated call: `_workspace_token` stats every
-date dir to answer "did the workspace change", and `_current_mtime` stats every
-date dir to answer "did this store's root change". Same directories, same
-syscalls, two answers. Merging them — one sweep feeding both — is the honest
-version of what F3 was reaching for, and it is worth roughly another 50% on
-`/datasets` and `/trends/data`. It needs the two staleness contracts to be
-reconciled first, which is real design work.
+**F3 — a request-scoped fingerprint memo. Answered by F3', and the record of
+how it was nearly dropped is worth keeping.** F3 was deferred on the reasoning
+that F1 had removed the repetition — measured on `/datasets` and `/topology`,
+where that was true. It was false on `/datasets/changes-since`, the route that
+runs every five seconds on every tab, which had not been measured when the
+call was made and was doing two sweeps per request. F4 removed that pair
+outright; F3' then took the request-scoped cache to the place the duplication
+actually lived — one directory listing, shared by two walkers — rather than
+memoizing a fingerprint. The lesson is smaller than the fix: a deferral is
+only as good as the routes it was measured on.
 
 **F4' — could a poll read the watcher's tick instead of sweeping at all?**
 F4 was originally framed that way, and reading `run_watch.signature()` refuted

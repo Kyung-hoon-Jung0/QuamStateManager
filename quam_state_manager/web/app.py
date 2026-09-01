@@ -28,6 +28,7 @@ from pathlib import Path
 from flask import Flask, current_app, request
 from markupsafe import Markup
 
+from quam_state_manager.core import dir_sample
 from quam_state_manager.core.history import (
     HistoryManager,
     migrate_legacy_histories,
@@ -541,6 +542,21 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     app.before_request(_csrf_origin_check)
     app.before_request(_record_own_port)
     app.after_request(_add_security_headers)
+
+    # docs/155 F3' — one directory listing per request, shared by the two
+    # staleness walkers that were sweeping the same date directories twice
+    # (`HistoryManager._workspace_token` and `DatasetStore._current_mtime`).
+    # The scope is a REQUEST, never a duration: docs/105 #8 rejected a TTL
+    # memo because a run written milliseconds before a poll must be seen by
+    # that poll, and every poll is its own request. `teardown_request` runs
+    # even when the view raised, and `begin` overwrites whatever a missed
+    # teardown left, so a leaked scope cannot outlive one request on a
+    # reused worker thread.
+    app.before_request(dir_sample.begin)
+
+    @app.teardown_request
+    def _close_dir_sample(exc=None):        # noqa: ANN001 — Flask's signature
+        dir_sample.end()
 
     # One-time housekeeping: remove ``pytest-*`` / ``Temp`` history dirs leaked
     # by older un-isolated test runs. Cheap and idempotent.

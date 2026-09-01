@@ -13,7 +13,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import re
 import shutil
 import sqlite3
@@ -26,7 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from quam_state_manager.core import leaf_index, safe_io
+from quam_state_manager.core import dir_sample, leaf_index, safe_io
 from quam_state_manager.core.differ import DiffEntry, Differ
 from quam_state_manager.core.loader import QuamStore
 from quam_state_manager.core.query import (
@@ -1267,19 +1266,6 @@ class HistoryManager:
                 rd = d
             return rd == own or own in rd.parents
 
-        def _de_is_dir(de: "os.DirEntry[str]") -> bool:
-            """``Path.is_dir()``'s answer, from the directory listing.
-
-            The type bits ride the listing ``os.scandir`` already fetched, so
-            this costs nothing where ``Path.is_dir()`` cost a stat per entry
-            (docs/155 F2'). ``Path.is_dir()`` answers False rather than
-            raising on an unreadable entry; keep that.
-            """
-            try:
-                return de.is_dir()
-            except OSError:
-                return False
-
         def _is_own_entry(parent_resolved: "Path | None", name: str,
                           path: str, is_link: bool) -> bool:
             """``_is_own`` for an entry whose PARENT is already resolved.
@@ -1310,11 +1296,17 @@ class HistoryManager:
         mtimes: list[float] = []
         for r in roots:
             root_path = Path(r)
-            try:
-                mtimes.append(root_path.stat().st_mtime)
-            except OSError:
+            # docs/155 F3' — through `dir_sample`, the one listing
+            # `DatasetStore._current_mtime` also walks. On this archive the
+            # two stat the SAME directories, so a /datasets render swept it
+            # twice for two different questions; inside one request the
+            # second sweep is free now. Outside a request nothing is cached
+            # and this costs exactly what it did before.
+            root_smp = dir_sample.sample(root_path)
+            if root_smp.own_mtime is None:
                 mtimes.append(0.0)
                 continue
+            mtimes.append(root_smp.own_mtime)
             # Resolve the ROOT once instead of every entry under it
             # (docs/155 F2'); only the alignment path passes ``own_root``, so
             # a caller that does not use the exclusion pays nothing for it.
@@ -1331,26 +1323,22 @@ class HistoryManager:
             # docs/155 F2' — this walk had `DatasetStore._current_mtime`'s
             # shape exactly: `Path.iterdir()` then `is_dir()` (a stat) then
             # `.stat()`, two share round-trips per entry, three on the
-            # alignment path where `_is_own` resolved each one as well.
-            # `os.scandir` carries the type bits, so `is_dir()` is free;
-            # `os.stat` is kept for the MTIME, never `de.stat()`, which is
-            # served from the parent's listing and does not see a write
-            # inside the directory — the one change this token exists to
-            # notice (docs/141 §4ac, docs/155 §5b).
-            try:
-                with os.scandir(root_path) as it:
-                    chip_entries = [(de.name, de.path, de.is_symlink())
-                                    for de in it if _de_is_dir(de)]
-            except OSError:
+            # alignment path where `_is_own` resolved each one as well. Both
+            # halves now live in `dir_sample`: the type and symlink bits ride
+            # its one listing, and the mtime is an `os.stat` per entry taken
+            # lazily — never `DirEntry.stat()`, which is served from the
+            # parent's listing and does not see a write inside the directory,
+            # the one change this token exists to notice (docs/141 §4ac,
+            # docs/155 §5b).
+            if root_smp.error is not None:
                 continue
-            for chip_name, chip_path, chip_is_link in chip_entries:
+            for chip_name, chip_path, chip_is_link in root_smp.children:
                 if _is_own_entry(root_resolved, chip_name, chip_path,
                                  chip_is_link):
                     continue
-                try:
-                    mtimes.append(os.stat(chip_path).st_mtime)
-                except OSError:
-                    pass
+                chip_mtime = root_smp.mtime(chip_name, chip_path)
+                if chip_mtime is not None:
+                    mtimes.append(chip_mtime)
                 # STOP at the date level, whichever level that is (docs/154).
                 # The two-descent shape above assumes <root>/<chip>/<date>/<run>.
                 # A workspace root that IS a chip's results folder is one level
@@ -1371,20 +1359,17 @@ class HistoryManager:
                 chip_resolved: Path | None = None
                 if own is not None and root_resolved is not None and not chip_is_link:
                     chip_resolved = root_resolved / chip_name
-                try:
-                    with os.scandir(chip_path) as it:
-                        date_entries = [(de.name, de.path, de.is_symlink())
-                                        for de in it if _de_is_dir(de)]
-                except OSError:
+                chip_smp = dir_sample.sample(chip_path,
+                                             own_mtime=chip_mtime)
+                if chip_smp.error is not None:
                     continue
-                for date_name, date_path, date_is_link in date_entries:
+                for date_name, date_path, date_is_link in chip_smp.children:
                     if _is_own_entry(chip_resolved, date_name, date_path,
                                      date_is_link):
                         continue
-                    try:
-                        mtimes.append(os.stat(date_path).st_mtime)
-                    except OSError:
-                        pass
+                    date_mtime = chip_smp.mtime(date_name, date_path)
+                    if date_mtime is not None:
+                        mtimes.append(date_mtime)
         return (len(roots), tuple(sorted(roots)), max(mtimes) if mtimes else 0.0)
 
     # ------------------------------------------------------------------
