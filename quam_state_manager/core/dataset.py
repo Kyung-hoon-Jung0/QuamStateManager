@@ -917,12 +917,43 @@ class DatasetStore:
         except OSError:
             return (0.0, -1)
         n_dates = 0
-        # Also check the date subfolders — new runs land inside them
-        for entry in self.folder_path.iterdir():
-            if entry.is_dir() and _DATE_FOLDER_RE.match(entry.name):
+        # Also check the date subfolders — new runs land inside them.
+        #
+        # docs/155 F2 — this loop is the single most-executed piece of share
+        # I/O in the app (every poll on every open tab, plus once per 2Q edge
+        # of a Chip Status render before docs/155 F1), and it cost TWO
+        # syscalls per date dir: ``Path.is_dir()`` is a stat, and ``.stat()``
+        # is another. ``os.scandir`` carries the file-type bits in the
+        # directory listing itself, so the is_dir() half is free — and the
+        # name test moved in FRONT of it, so an entry that is not a date
+        # (a README, a stray export) now costs nothing at all. Same answer,
+        # half the round-trips: 2 x dates -> 1 x dates.
+        #
+        # ``os.stat(de.path)``, NEVER ``de.stat()``: on Windows the DirEntry's
+        # stat is served from the parent's listing and does not see a write
+        # INSIDE the directory (docs/141 §4ac established that by
+        # measurement) — which is the only change this function exists to
+        # detect. The free half is the type bits; the mtime is not free and
+        # must not be faked.
+        #
+        # scandir is deliberately NOT wrapped: ``Path.iterdir()`` raised out
+        # of this method on an unreadable root and callers are written for
+        # that. Returning the (0.0, -1) sentinel here instead would quietly
+        # reclassify a permissions failure as a fingerprint.
+        with os.scandir(self.folder_path) as it:
+            for de in it:
+                if not _DATE_FOLDER_RE.match(de.name):
+                    continue
+                try:
+                    if not de.is_dir():
+                        continue
+                except OSError:
+                    # Path.is_dir() answers False here rather than raising;
+                    # keep that.
+                    continue
                 n_dates += 1
                 try:
-                    mt = entry.stat().st_mtime
+                    mt = os.stat(de.path).st_mtime
                     if mt > best:
                         best = mt
                 except OSError:

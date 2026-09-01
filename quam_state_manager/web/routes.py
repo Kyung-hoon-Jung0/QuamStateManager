@@ -18261,8 +18261,11 @@ def api_topology():
     return jsonify(_topology_with_derived_rb(engine))
 
 
-def _rb_run_folder(load_id):
+def _rb_run_folder(load_id, stores=None):
     """``load_id -> the run's folder``, or None if no loaded folder has it.
+
+    *stores* lets a caller that resolves MANY ids in one render pass the store
+    list in once (docs/155 F1). Omitted, the behaviour is exactly as before.
 
     docs/138 — the per-GATE fidelity a Standard-RB run computed lives in that
     run's own `data.json`, and the chip records which run it was. This is the
@@ -18274,7 +18277,7 @@ def _rb_run_folder(load_id):
         rid = int(load_id)
     except (TypeError, ValueError):
         return None
-    for entry in _active_dataset_stores(fast=True):
+    for entry in (_active_dataset_stores(fast=True) if stores is None else stores):
         try:
             run = entry["store"].get_run(rid)
         except Exception:  # noqa: BLE001 — one bad folder never breaks a render
@@ -18304,7 +18307,28 @@ def _topology_with_derived_rb(engine):
                    for r in (e.get("gate_fidelities") or [])):
             return topo                      # nothing to enrich; skip the copy
         topo = copy.deepcopy(topo)           # get_topology's result is CACHED
-        n = rb_gate_fidelity.derive_for_edges(topo.get("edges"), _rb_run_folder)
+
+        # ONE staleness sweep per render, not one per edge (docs/155 F1).
+        # `_rb_run_folder` re-entered `_active_dataset_stores`, and each of
+        # those rescans every dataset store — `DatasetStore._current_mtime`
+        # stats every date dir under the root. On a 390-date-dir archive that
+        # was 7,831 filesystem operations per Chip Status render, ten sweeps
+        # to look up ten run folders, and it grew by one date dir per day of
+        # measurement forever. Resolved once here — and with F2 halving the
+        # sweep itself — the same render measures 403.
+        #
+        # LAZY on purpose: a chip whose edges carry no Standard-RB load_id
+        # resolves nothing, and must keep paying nothing. (The guard above
+        # already returns early for the common case, but `derive_for_edges`
+        # is also free to call the resolver zero times.)
+        _rb_stores: list = []
+
+        def _resolve_rb_run(load_id):
+            if not _rb_stores:
+                _rb_stores.append(_active_dataset_stores(fast=True))
+            return _rb_run_folder(load_id, stores=_rb_stores[0])
+
+        n = rb_gate_fidelity.derive_for_edges(topo.get("edges"), _resolve_rb_run)
         if n:
             logger.debug("topology: derived per-gate RB fidelity for %d row(s)", n)
     except Exception:  # noqa: BLE001 — an enrichment never breaks the page

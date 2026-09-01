@@ -100,36 +100,139 @@ Exactly `edges x dates x 2`. Run count is not the axis (the archive kept its
 to every Chip Status render per year on this share, forever, and nothing in the
 app ever prunes or amortizes it.
 
-## 5. Fixes, in value-per-risk order — proposed, not yet implemented
+## 5. Fixes, in value-per-risk order
 
-**F1 — `/topology`: one staleness sweep per render, not one per edge.** Resolve
-the dataset stores once for the whole RB derivation and hand `derive_for_edges` a
-resolver that reuses them. 7,831 -> ~800 ops (-90%, ~14 s -> ~1.4 s on the
-share). Contained to the docs/138 enrichment path; touches no contract.
+**F1 — `/topology`: one staleness sweep per render, not one per edge.
+SHIPPED.** `_topology_with_derived_rb` resolves `_active_dataset_stores` once
+and hands `derive_for_edges` a resolver that reuses it; `_rb_run_folder` gained
+an optional `stores=` and is byte-identical without it. The resolution is LAZY
+— a chip with no Standard-RB `load_id` resolved nothing before and must keep
+paying nothing, so an eager sweep would have been a regression for those chips
+dressed as a fix.
 
-**F2 — halve `_current_mtime`.** `entry.is_dir()` on a `Path` from `iterdir()` is
-a syscall; the same answer comes free from `os.scandir`'s `DirEntry`, which
-carries the file-type bits from the directory listing. Keep `os.stat` for the
-**mtime** — docs/141 §4ac established by measurement that `DirEntry.stat()` on
-Windows serves a cached mtime that never sees a write *inside* the directory,
-which is precisely the change this function exists to detect. 2 ops per date dir
--> 1, for every caller, at no semantic cost.
+**F2 — halve `_current_mtime`. SHIPPED.** `entry.is_dir()` on a `Path` from
+`iterdir()` is a syscall; the same answer comes free from `os.scandir`'s
+`DirEntry`, which carries the file-type bits from the directory listing. The
+name test also moved in FRONT of it, so a non-date entry (a README, an export
+folder) now costs nothing at all. `os.stat` is kept for the **mtime** — see
+§5b. 2 ops per date dir -> 1, for every caller, at no semantic cost.
+
+### 5a. Measured after F1 + F2 (same fixture, 390 date dirs)
+
+| route | before | after | saved |
+|---|---|---|---|
+| `/topology` (Chip Status / Overview) | 7,831 | **403** | **-95%** (~14.1 s -> ~0.7 s on the share) |
+| `/datasets/poll` (every page, polled) | 782 | 392 | -50% |
+| `/field/history` (the 🕘 popover) | 789 | 399 | -49% |
+| `/datasets` | 1,564 | 1,174 | -25% |
+| `/param-history/alignment` | 1,180 | 1,180 | 0% — its own walk, untouched here |
+
+`/topology`'s attribution afterwards shows exactly ONE `_current_mtime` sweep of
+390 stats, where it was ten sweeps of 780. `/datasets` keeps two further sweeps
+of its own, which F3 would collapse.
+
+Pinned by `tests/test_share_io_cost.py` — 13 asserts that count syscalls and
+never look at a clock, so they mean the same thing here as on the share.
+**7/7 mutations caught**: the old two-syscall loop, `os.stat` -> `de.stat()`,
+the `is_dir()` check dropped, an unreadable root swallowed into the sentinel,
+the resolver back to per-edge, the stores resolved eagerly, and the derivation
+call removed. Regression: 308 passed across the dataset/history/RB/poll suites.
+
+### 5b. The one thing that could not be pinned, and why that is the finding
+
+`DirEntry.stat()` is the obvious way to make the mtime free too, and docs/141
+§4ac already forbids it. The natural semantic pin — write a run inside a date
+dir with nobody touching the dir, assert the fingerprint moved — was written,
+and it **passed under exactly that mutation**. Measured cause, 20 trials per
+gap on this NTFS volume:
+
+| gap after `mkdir` | `DirEntry.stat()` saw it | `os.stat()` saw it |
+|---|---|---|
+| 0.00 s | 1/20 | 6/20 |
+| 0.02 s | 0/20 | 5/20 |
+| 0.50 s | 5/20 | 8/20 |
+| 1.20 s | 5/20 | 16/20 |
+
+NTFS updates the parent's recorded timestamps for a child lazily, so within
+about a second of a `mkdir` **neither** call reliably reports the change.
+`os.stat` is markedly better and still not deterministic. A pin built on that
+is a coin toss, which is worse than no pin — so the guard is the COST pin
+(`de.stat()` costs zero syscalls, so the slope pin reds), verified by mutation,
+with the reasoning recorded beside it in the test file.
+
+Worth separating from the fix: this also says SM's own new-run detection on
+Windows has an inherent sub-second latency that no amount of polling removes.
+It has never mattered — a real run folder takes far longer to write than the
+window measured here, and `run_watch` (docs/141 §4p) polls at 0.5 s anyway —
+but it is the reason a write-then-poll test in this project always bumps the
+mtime explicitly rather than trusting the filesystem to have noticed.
+
+## 6. The backlog after F1 + F2 — every item measured, none guessed
+
+Attribution of what is LEFT, taken on the shipped code at 390 date dirs. The
+frame counts are exact, not sampled.
+
+```
+/datasets                     1,174 ops
+   390  history.py:1288  _workspace_token   (c.is_dir() per child)
+   390  history.py:1293  _workspace_token   (chip_dir.stat() per child)
+   390  dataset.py:956   _current_mtime     (already halved by F2)
+
+/param-history/alignment      1,180 ops
+   390  history.py:1288  _workspace_token   (c.is_dir())
+   390  history.py:1264  _is_own            (d.resolve() per child)
+   390  history.py:1293  _workspace_token   (chip_dir.stat())
+
+/topology                       403 ops     <- was 7,831
+/datasets/poll                  392 ops     <- was 782
+```
+
+**F2' — `_workspace_token` has F2's exact shape, untouched.** It walks the same
+children with `iterdir()` + `is_dir()` + `stat()`: two syscalls per date dir,
+and THREE on the alignment path, where `_is_own` (the docs/139 own-root
+exclusion) calls `Path.resolve()` on every child. `os.scandir` makes the
+`is_dir()` half free the same way, and `resolve()` can be avoided for every
+child that is not a symlink — `DirEntry.is_symlink()` is free from the listing,
+and a non-symlink child's resolved path is just `resolved_root / name`.
+Projected: `/datasets` 1,174 -> ~394, `/param-history/alignment` 1,180 -> ~400.
+Same risk profile as F2, same pin style. **The obvious next commit.**
 
 **F3 — a request-scoped fingerprint memo.** docs/105 #8 rejected a *TTL* memo,
-correctly: a run written milliseconds before a poll must be seen by that poll. A
-memo scoped to one HTTP request keeps that contract exactly — each poll is its
-own request and re-samples — while collapsing every repeated call inside one
-render. Needs care: the scheduler and autofit workers are not request-scoped, so
-the memo must be keyed on a real request context and simply not exist outside
-one.
+correctly: a run written milliseconds before a poll must be seen by that poll.
+A memo scoped to one HTTP request keeps that contract exactly — each poll is
+its own request and re-samples — while collapsing every repeated call inside
+one render. With F2' it is worth less than it looks (the repeats are mostly
+gone), so it should be judged on what remains, not on the pre-F1 numbers.
+Needs care: the scheduler and autofit workers are not request-scoped, so the
+memo must key on a real request context and simply not exist outside one.
 
-**F4 — the two every-page polls.** With F2 they halve. Beyond that, both
-`/datasets/poll` and `/datasets/wait` re-derive the same fingerprint that
-`core/run_watch.py`'s watcher thread (docs/141 §4p) is already computing on a
-timer; making the polls read the watcher's last tick instead of sweeping
-themselves would take them to ~0, but that is a design change, not a patch.
+**F4 — the two every-page polls read a watcher instead of sweeping.**
+`/datasets/poll` and `/datasets/wait` each re-derive a fingerprint that
+`core/run_watch.py`'s thread (docs/141 §4p) already computes on a 0.5 s timer.
+Reading the watcher's last tick would take both to ~0 ops. This is a design
+change, not a patch: ownership of "is the archive stale" moves from the request
+to the watcher, and every consumer's staleness contract has to be re-argued
+against that.
 
-## 6. What this does not show
+**F5 — the O(dates) sweep is unbounded by construction.** Even at one syscall
+per date dir, a five-year archive is ~1,800 round-trips per poll. Nothing in
+the app ever caps, tiers or ages this. Any real answer is F4 or an OS change
+notification (`ReadDirectoryChangesW`), not a smaller constant.
+
+**F6 — `/load` costs 804 share ops** (~1.4 s on the share) and was not
+investigated. It is a user-initiated action rather than a background one, so it
+ranks below the others, but it is the same order of magnitude as a poll.
+
+**F7 — tests write into the developer's real `instance/` dir.** Observed during
+this work: `instance/workspace_cache/` gained entries while the suite ran, and
+`instance/last_session.json` had been overwritten with a `pytest-of-Measurement`
+tmp path. The directory is gitignored so nothing reaches a commit, and
+`_purge_test_leftovers` already mops up leaked *history* dirs — but the cache
+and the session file are not covered, and the failure mode is a developer's own
+SM state being silently replaced by a test's. Unrelated to performance; found
+here, recorded here.
+
+## 7. What this does not show
 
 - **The NAS was unreachable throughout** (the same network fault that ended the
   docs/154 session). Every "est. on NAS" figure is op-count x 1.8 ms, and the

@@ -1,0 +1,351 @@
+r"""Share I/O cost of the surfaces users named as slow (docs/155 F1 + F2).
+
+The customer's workspace is an SMB share, so a filesystem operation is a
+network round-trip (~1.8 ms measured) rather than the ~1 us it is on the
+development NVMe. Wall clock measured locally cannot see that difference at
+all; the OPERATION COUNT is identical on both machines, which is why every pin
+here counts syscalls and none of them looks at a clock.
+
+Two fixes, measured at 390 date dirs (roughly 13 months of daily runs):
+
+    /topology (Chip Status / Overview)   7,831 -> 403 ops   (~14.1 s -> ~0.7 s)
+    /datasets/poll  (every page, polled)   782 -> 392
+    /field/history  (the 🕘 popover)       789 -> 399
+
+F1 — the per-gate RB derivation (docs/138) called `_rb_run_folder` once per 2Q
+edge, and each call re-entered `_active_dataset_stores`, which rescans every
+dataset store, which stats every date dir. Ten edges meant ten full sweeps of
+the archive to look up ten run folders.
+
+F2 — `DatasetStore._current_mtime` spent TWO syscalls per date dir
+(`Path.is_dir()` is a stat, `.stat()` is another). `os.scandir` carries the
+file-type bits in the listing, so the is_dir half is free.
+
+Both are cost-only: the fingerprint this function returns, and the staleness
+contract built on it, must not move. That is pinned first, below.
+"""
+from __future__ import annotations
+
+import contextlib
+import json
+import os
+from pathlib import Path
+
+import pytest
+
+from quam_state_manager.core.dataset import DatasetStore
+from quam_state_manager.web import routes
+
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+class _Spy:
+    def __init__(self) -> None:
+        self.stat = 0
+        self.scandir = 0
+        self.listdir = 0
+
+    @property
+    def total(self) -> int:
+        return self.stat + self.scandir + self.listdir
+
+
+@contextlib.contextmanager
+def _fs_spy():
+    """Count SYSCALLS.
+
+    Deliberately hooks the ``os`` level only: ``Path.stat`` calls ``os.stat``,
+    so hooking both double-counts every pathlib-routed stat and inflates
+    exactly the number these pins exist to hold down.
+    """
+    s = _Spy()
+    o_stat, o_scan, o_list = os.stat, os.scandir, os.listdir
+
+    def stat(*a, **k):
+        s.stat += 1
+        return o_stat(*a, **k)
+
+    def scandir(*a, **k):
+        s.scandir += 1
+        return o_scan(*a, **k)
+
+    def listdir(*a, **k):
+        s.listdir += 1
+        return o_list(*a, **k)
+
+    os.stat, os.scandir, os.listdir = stat, scandir, listdir
+    try:
+        yield s
+    finally:
+        os.stat, os.scandir, os.listdir = o_stat, o_scan, o_list
+
+
+def _seed_archive(root: Path, *, dates: int, junk: int = 0) -> Path:
+    """``<root>/<date>/<run>`` with one run per date dir, plus *junk*
+    non-date entries beside them (a README, an export folder — the things a
+    real results folder accumulates)."""
+    root.mkdir(parents=True, exist_ok=True)
+    for i in range(dates):
+        d = root / f"2026-{i // 28 + 1:02d}-{i % 28 + 1:02d}"
+        run = d / f"#{i + 1}_04_power_rabi_120000"
+        run.mkdir(parents=True, exist_ok=True)
+        (run / "node.json").write_text(
+            json.dumps({"id": i + 1, "name": "power_rabi"}), encoding="utf-8")
+    for j in range(junk):
+        (root / f"notes_{j}.md").write_text("x", encoding="utf-8")
+        (root / f"export_{j}").mkdir(exist_ok=True)
+    return root
+
+
+# ---------------------------------------------------------------------------
+# F2 — the fingerprint must not move, and must cost half as much
+# ---------------------------------------------------------------------------
+
+class TestCurrentMtimeSemanticsUnchanged:
+    """Cost work that changes an answer is not an optimisation. These come
+    first for that reason."""
+
+    def test_a_run_landing_in_an_EXISTING_date_dir_still_moves_it(self, tmp_path):
+        """The whole point of stat'ing the date dirs at all: a new run inside
+        one already present must change the fingerprint, or a poll serves a
+        stale run list.
+
+        This pin bumps the dir's own mtime explicitly, so it is deterministic
+        — and for that same reason it does NOT catch a mtime read from the
+        parent's directory listing. See the note below for why nothing here
+        can catch that semantically, and what does catch it instead.
+        """
+        root = _seed_archive(tmp_path / "ws", dates=3)
+        store = DatasetStore(root)
+
+        before = store._current_mtime()
+
+        date_dir = sorted(p for p in root.iterdir() if p.is_dir())[0]
+        new_run = date_dir / "#999_04_power_rabi_235959"
+        new_run.mkdir()
+        (new_run / "node.json").write_text('{"id": 999}', encoding="utf-8")
+        bumped = date_dir.stat().st_mtime + 10.0
+        os.utime(date_dir, (bumped, bumped))
+
+        assert store._current_mtime() != before, (
+            "a run written into an existing date dir did not move the "
+            "fingerprint — every poll would report the archive unchanged"
+        )
+
+    # The `DirEntry.stat()` trap has NO semantic pin here, deliberately, and
+    # the reason is worth more than a pin would be.
+    #
+    # The free half of `os.scandir` is the file-TYPE bits; the mtime is not
+    # free, and reading it from the listing anyway is the one mistake this
+    # rewrite could make (docs/141 §4ac). The obvious pin — write a run inside
+    # a date dir with nobody touching the dir, assert the fingerprint moved —
+    # was written, and it passed under exactly that mutation. Measured cause,
+    # 20 trials per gap on this NTFS volume:
+    #
+    #     gap after mkdir   DirEntry.stat() saw it   os.stat() saw it
+    #             0.00 s          1/20                     6/20
+    #             0.02 s          0/20                     5/20
+    #             0.50 s          5/20                     8/20
+    #             1.20 s          5/20                    16/20
+    #
+    # NTFS updates the parent's recorded timestamps for a child lazily, so
+    # within about a second of a `mkdir` NEITHER call reliably reports the
+    # change — `os.stat` is markedly better but not deterministic either. A
+    # pin built on that is a coin toss, which is worse than no pin.
+    #
+    # The guard that IS deterministic is the cost pin below: `de.stat()` costs
+    # zero syscalls, so `test_cost_is_linear_in_dates_with_a_slope_of_one`
+    # goes red the moment the mtime stops coming from `os.stat`. Verified by
+    # mutation. The semantic contract keeps the explicit-`utime` pin above,
+    # which is deterministic because touching the directory's own metadata is
+    # what the parent's listing does record promptly.
+
+    def test_a_new_date_dir_changes_the_count_rider(self, tmp_path):
+        """The count rider (r13 audit D6) exists because one future-dated dir
+        pins the max() forever. A new date dir must still change the count."""
+        root = _seed_archive(tmp_path / "ws", dates=3)
+        store = DatasetStore(root)
+        _, n_before = store._current_mtime()
+
+        (root / "2026-12-31" / "#77_04_power_rabi_010101").mkdir(parents=True)
+
+        _, n_after = store._current_mtime()
+        assert n_after == n_before + 1
+
+    def test_non_date_entries_are_not_counted_as_dates(self, tmp_path):
+        """The name test moved in FRONT of the is_dir() test; it must still be
+        an AND, not a substitution."""
+        root = _seed_archive(tmp_path / "ws", dates=4, junk=3)
+        store = DatasetStore(root)
+        _, n_dates = store._current_mtime()
+        assert n_dates == 4
+
+    def test_a_date_NAMED_file_is_not_a_date_dir(self, tmp_path):
+        """The is_dir() half is free now, not gone."""
+        root = _seed_archive(tmp_path / "ws", dates=2)
+        (root / "2026-07-04").write_text("a file, not a folder", encoding="utf-8")
+        store = DatasetStore(root)
+        _, n_dates = store._current_mtime()
+        assert n_dates == 2, (
+            "a FILE named like a date was counted as a date dir — the free "
+            "is_dir() from the listing was dropped rather than made free"
+        )
+
+    def test_an_unreadable_root_still_raises_rather_than_fingerprinting(
+            self, tmp_path, monkeypatch):
+        """``Path.iterdir()`` raised out of this method and the callers are
+        written for that. Swallowing it into the (0.0, -1) sentinel would
+        reclassify a permissions failure as a fingerprint — a different bug
+        wearing a fixed bug's clothes."""
+        root = _seed_archive(tmp_path / "ws", dates=2)
+        store = DatasetStore(root)
+        real = os.scandir
+
+        def boom(path, *a, **k):
+            if str(path) == str(root):
+                raise PermissionError(13, "denied")
+            return real(path, *a, **k)
+
+        monkeypatch.setattr(os, "scandir", boom)
+        with pytest.raises(OSError):
+            store._current_mtime()
+
+
+class TestCurrentMtimeCostsOneSyscallPerDateDir:
+
+    def test_one_stat_per_date_dir_not_two(self, tmp_path):
+        root = _seed_archive(tmp_path / "ws", dates=25)
+        store = DatasetStore(root)
+
+        with _fs_spy() as s:
+            store._current_mtime()
+
+        # 25 date dirs + the root's own stat. The is_dir() half rides the
+        # scandir listing, so it costs nothing extra.
+        assert s.stat <= 25 + 1, (
+            f"{s.stat} stats for 25 date dirs — the free is_dir() from the "
+            f"directory listing is being paid for again"
+        )
+        assert s.scandir == 1, f"{s.scandir} directory listings, expected 1"
+
+    def test_a_non_date_entry_costs_nothing_at_all(self, tmp_path):
+        """The name test in front of is_dir() is what makes this true: a
+        results folder full of exports and notes pays for its date dirs only."""
+        plain = DatasetStore(_seed_archive(tmp_path / "plain", dates=10))
+        junky = DatasetStore(_seed_archive(tmp_path / "junky", dates=10, junk=20))
+
+        # Built OUTSIDE the spy: constructing a store scans the archive, and
+        # counting that here would measure the constructor, not this function.
+        with _fs_spy() as a:
+            plain._current_mtime()
+        with _fs_spy() as b:
+            junky._current_mtime()
+
+        assert a.total == b.total, (
+            f"40 non-date entries cost {b.total - a.total} extra syscalls; "
+            f"their names alone are enough to skip them"
+        )
+
+    def test_cost_is_linear_in_dates_with_a_slope_of_one(self, tmp_path):
+        """The invariant stated as a measurement — the axis that grows every
+        day of measurement, with the constant this fix halved."""
+        small = DatasetStore(_seed_archive(tmp_path / "small", dates=10))
+        big = DatasetStore(_seed_archive(tmp_path / "big", dates=60))
+
+        with _fs_spy() as a:
+            small._current_mtime()
+        with _fs_spy() as b:
+            big._current_mtime()
+
+        assert b.total - a.total == 50, (
+            f"50 more date dirs cost {b.total - a.total} more syscalls, not 50 "
+            f"— back to two per date dir"
+        )
+
+
+# ---------------------------------------------------------------------------
+# F1 — one staleness sweep per render, not one per 2Q edge
+# ---------------------------------------------------------------------------
+
+class _FakeEngine:
+    """Just enough topology for `_topology_with_derived_rb`: *n_edges* pairs,
+    each carrying one Standard-RB (clifford-level) row with its own load_id."""
+
+    def __init__(self, n_edges: int, *, load_ids: bool = True) -> None:
+        self._topo = {
+            "edges": [
+                {"pair_id": f"q{i}-q{i+1}",
+                 "gate_fidelities": [
+                     {"level": "clifford", "value": 0.97,
+                      "load_id": (2000 + i) if load_ids else None},
+                 ]}
+                for i in range(n_edges)
+            ]
+        }
+
+    def get_topology(self):
+        return self._topo
+
+
+class TestRbDerivationSweepsOnce:
+
+    def _count_sweeps(self, monkeypatch, engine):
+        sweeps = []
+
+        def fake_stores(*a, **k):
+            sweeps.append(1)
+            return []          # no store has the run -> every lookup is a miss
+
+        monkeypatch.setattr(routes, "_active_dataset_stores", fake_stores)
+        routes._topology_with_derived_rb(engine)
+        return len(sweeps)
+
+    def test_one_sweep_for_many_edges(self, monkeypatch):
+        """The fix, stated as the thing that failed: `_active_dataset_stores`
+        rescans every store, and a rescan stats every date dir. Called per
+        edge on a 390-date-dir archive that was 7,831 operations per render."""
+        assert self._count_sweeps(monkeypatch, _FakeEngine(12)) == 1
+
+    def test_the_sweep_count_does_not_grow_with_the_chip(self, monkeypatch):
+        """A 2-pair chip and a 20-pair chip pay the same. Before, a bigger
+        chip paid proportionally more — for a fixed archive."""
+        small = self._count_sweeps(monkeypatch, _FakeEngine(2))
+        large = self._count_sweeps(monkeypatch, _FakeEngine(20))
+        assert small == large == 1, (
+            f"{small} sweep(s) for 2 edges, {large} for 20 — the archive is "
+            f"being re-swept per edge"
+        )
+
+    def test_nothing_to_derive_sweeps_nothing(self, monkeypatch):
+        """Laziness is the other half: a chip with no Standard-RB load_id must
+        keep paying zero. Resolving the stores eagerly would hand every such
+        chip a full archive sweep it never used to pay."""
+        assert self._count_sweeps(
+            monkeypatch, _FakeEngine(8, load_ids=False)) == 0
+
+    def test_the_enrichment_still_happens(self, monkeypatch):
+        """Cost pins alone would pass with the derivation deleted."""
+        seen = []
+
+        class _OneStore:
+            def get_run(self, rid):
+                seen.append(rid)
+                return None
+
+        monkeypatch.setattr(routes, "_active_dataset_stores",
+                            lambda *a, **k: [{"store": _OneStore()}])
+        routes._topology_with_derived_rb(_FakeEngine(5))
+        assert sorted(seen) == [2000, 2001, 2002, 2003, 2004], (
+            "the per-gate RB derivation stopped resolving its runs"
+        )
+
+    def test_a_direct_caller_still_gets_the_old_behaviour(self, monkeypatch):
+        """`stores=None` must remain byte-identical to before — the parameter
+        is an opt-in for a caller resolving many ids in one render."""
+        sweeps = []
+        monkeypatch.setattr(routes, "_active_dataset_stores",
+                            lambda *a, **k: (sweeps.append(1), [])[1])
+        assert routes._rb_run_folder(1234) is None
+        assert len(sweeps) == 1
