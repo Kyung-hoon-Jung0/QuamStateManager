@@ -1,4 +1,4 @@
-r"""Share I/O cost of the surfaces users named as slow (docs/155 F1-F4).
+r"""Share I/O cost of the surfaces users named as slow (docs/155 F1-F4, F6).
 
 The customer's workspace is an SMB share, so a filesystem operation is a
 network round-trip (~1.8 ms measured) rather than the ~1 us it is on the
@@ -40,6 +40,13 @@ answer two different questions, so a /datasets render walked the archive twice.
 `core/dir_sample.py` is the one listing; the scope of its cache is ONE REQUEST,
 which is what keeps docs/105 #8's write-then-poll contract intact.
 
+F6 — `_dataset_candidate_folders(fast=True)` validates its cache on
+`ws.version`, and on a miss it computed the `_workspace_token` walk anyway —
+one stat per date dir, for a value that path can never read back. The scanner
+bumps `ws.version` whenever a run lands, so this was re-paid all day: chip
+activation went 421 -> 29 ops, and the long poll's documented 0 became true
+after a change as well as before one.
+
 All five are cost-only: the fingerprints these functions return, and the
 staleness contracts built on them, must not move. That is pinned first, below.
 """
@@ -48,6 +55,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import threading
 from pathlib import Path
 
 import pytest
@@ -76,8 +84,17 @@ class _Spy:
 
 
 @contextlib.contextmanager
-def _fs_spy():
+def _fs_spy(*, own_thread: bool = False):
     """Count SYSCALLS.
+
+    ``own_thread=True`` counts only the calling thread's calls. The wrappers
+    are process-wide, so anything SM does on a daemon thread — the docs/142
+    listing hydration, a deferred index rebuild, `run_watch` — lands in the
+    same counter, and a pin that drives a ROUTE and compares two archive sizes
+    then measures whichever background thread happened to be awake. Measured:
+    that made one such pin fail about one run in three, and a flaky pin makes
+    every mutation verdict a coin toss (docs/141 §4ae). Off by default so the
+    pins written before it count exactly what they counted.
 
     Deliberately hooks the ``os`` level only: ``Path.stat`` calls ``os.stat``,
     so hooking both double-counts every pathlib-routed stat and inflates
@@ -91,21 +108,25 @@ def _fs_spy():
     s = _Spy()
     o_stat, o_lstat = os.stat, os.lstat
     o_scan, o_list = os.scandir, os.listdir
+    owner = threading.get_ident()
+
+    def mine():
+        return not own_thread or threading.get_ident() == owner
 
     def stat(*a, **k):
-        s.stat += 1
+        s.stat += mine()
         return o_stat(*a, **k)
 
     def lstat(*a, **k):
-        s.lstat += 1
+        s.lstat += mine()
         return o_lstat(*a, **k)
 
     def scandir(*a, **k):
-        s.scandir += 1
+        s.scandir += mine()
         return o_scan(*a, **k)
 
     def listdir(*a, **k):
-        s.listdir += 1
+        s.listdir += mine()
         return o_list(*a, **k)
 
     os.stat, os.lstat = stat, lstat
@@ -832,4 +853,203 @@ class TestDirSampleItself:
         assert isinstance(smp.error, OSError), (
             "a failed listing came back as an empty directory - the caller "
             "that propagates one would report the archive as unchanged"
+        )
+
+
+# ---------------------------------------------------------------------------
+# F6 — a fast caller stopped paying the walk that `fast=True` exists to skip
+# ---------------------------------------------------------------------------
+
+class TestFastCandidatesNeverWalkTheArchive:
+    """`_dataset_candidate_folders(fast=True)` validates its cache on
+    ``ws.version``. On a MISS it used to fall through and compute
+    ``HistoryManager._workspace_token`` — one stat per date dir — which can
+    never produce a hit there: the token slot is validated on ``ws.version``
+    too, and a fast miss has already failed that test. It was computed only to
+    be STORED, priming a cache for some future slow caller at exactly the cost
+    the flag exists to avoid.
+
+    That made it far worse than a cold-start constant. The scanner bumps
+    ``ws.version`` on every rescan that finds something new, so the walk was
+    re-paid every time a run landed — by chip activation (``POST /load``,
+    measured 421 -> 29 share ops at 390 date dirs) and by whichever background
+    poll fired first afterwards.
+    """
+
+    def _app(self, tmp_path, folder, name="_inst"):
+        from quam_state_manager.web.app import create_app
+        app = create_app(testing=True, instance_path=str(tmp_path / name))
+        c = app.test_client()
+        r = c.post("/workspace/add", data={"folder": str(folder)})
+        assert r.status_code in (200, 204, 302), r.status_code
+        return app, c
+
+    # -- cost -------------------------------------------------------------
+
+    def test_a_fast_rebuild_costs_the_same_whatever_the_archive_holds(
+            self, tmp_path):
+        """The axis that grows every day of measurement, held flat.
+
+        A slope, not an absolute: what must never come back is a per-date-dir
+        cost on the fast path.
+        """
+        counts = {}
+        for label, dates in (("small", 6), ("big", 46)):
+            folder = _seed_archive(tmp_path / label, dates=dates)
+            app, _ = self._app(tmp_path, folder, name="_inst_" + label)
+            with app.test_request_context():
+                routes._dataset_candidates_cache.clear()
+                routes._dataset_candidate_folders(fast=True)      # warm
+                app.config["workspace"]._version += 1             # a run landed
+                with _sample_scope(), _fs_spy(own_thread=True) as s:
+                    routes._dataset_candidate_folders(fast=True)  # the miss
+            counts[label] = s.total
+
+        assert counts["big"] == counts["small"], (
+            f"40 more date dirs cost {counts['big'] - counts['small']} more "
+            f"syscalls on the FAST path ({counts['small']} -> {counts['big']}) "
+            f"— the token walk is back, and it is paid every time a run lands"
+        )
+
+    def test_the_fast_path_does_not_compute_the_token_at_all(
+            self, tmp_path, monkeypatch):
+        """Stated directly, because the slope pin above cannot tell a walk
+        that got cheaper from a walk that is gone."""
+        folder = _seed_archive(tmp_path / "ws", dates=8)
+        app, _ = self._app(tmp_path, folder)
+        calls = []
+
+        def counting(_ws):
+            calls.append(1)
+            return "TOKEN"
+
+        monkeypatch.setattr(HistoryManager, "_workspace_token",
+                            staticmethod(counting))
+
+        with app.test_request_context():
+            routes._dataset_candidates_cache.clear()
+            routes._dataset_candidate_folders(fast=True)     # cold miss
+            app.config["workspace"]._version += 1
+            routes._dataset_candidate_folders(fast=True)     # version miss
+
+        assert calls == [], (
+            f"{len(calls)} workspace-token walks on the fast path — that is "
+            f"one stat per date dir, for a value the fast path never reads"
+        )
+
+    def test_chip_activation_after_a_run_lands_stops_scaling_with_the_archive(
+            self, tmp_path):
+        """The user-visible half: opening a chip runs
+        ``_maybe_data_folder_suggest`` -> ``_data_folder_candidates`` ->
+        ``_dataset_candidate_folders(fast=True)``, so ``/load`` inherited the
+        walk — and inherited it again after every run that landed.
+        """
+        live = tmp_path / "chip"
+        live.mkdir()
+        (live / "state.json").write_text(
+            json.dumps({"qubits": {"q1": {"T1": 1e-5}}}), encoding="utf-8")
+        (live / "wiring.json").write_text(
+            json.dumps({"network": {"host": "1.2.3.4"}}), encoding="utf-8")
+
+        counts = {}
+        for label, dates in (("small", 6), ("big", 46)):
+            folder = _seed_archive(tmp_path / label, dates=dates)
+            app, c = self._app(tmp_path, folder, name="_inst_load_" + label)
+            assert c.post("/load", data={"folder": str(live)}).status_code < 400
+            app.config["workspace"]._version += 1             # a run landed
+            with _fs_spy(own_thread=True) as s:
+                assert c.post(
+                    "/load", data={"folder": str(live)}).status_code < 400
+            counts[label] = s.total
+
+        assert counts["big"] == counts["small"], (
+            f"opening a chip cost {counts['big'] - counts['small']} more "
+            f"syscalls on the bigger archive ({counts['small']} -> "
+            f"{counts['big']}) — a chip load is walking the run archive again"
+        )
+
+    # -- the promises the cost must not have cost --------------------------
+
+    def test_a_fast_caller_still_discovers_a_new_candidate_after_a_bump(
+            self, tmp_path):
+        """The property the old pin was reaching for. It asserted it by
+        counting token computations — a PROXY for "did it rebuild" — so
+        removing the token broke the pin while the property stood. Assert the
+        property.
+        """
+        folder = _seed_archive(tmp_path / "ws", dates=4)
+        other = _seed_archive(tmp_path / "later", dates=2)
+        app, _ = self._app(tmp_path, folder)
+
+        with app.test_request_context():
+            routes._dataset_candidates_cache.clear()
+            before = routes._dataset_candidate_folders(fast=True)
+            assert other not in before
+            app.config["workspace"].add_root(other)       # bumps ws.version
+            after = routes._dataset_candidate_folders(fast=True)
+
+        assert other in after, (
+            "a folder the scanner has already discovered is invisible to every "
+            "fast caller — polls would not see a new data folder until a full "
+            "/datasets render"
+        )
+
+    def test_a_fast_caller_answers_from_the_cache_while_the_version_holds(
+            self, tmp_path):
+        """The other half: without a version bump the cached list stands, so
+        the fast path really is a cache and not a rebuild every time."""
+        folder = _seed_archive(tmp_path / "ws", dates=4)
+        sneaky = _seed_archive(tmp_path / "sneaky", dates=2)
+        app, _ = self._app(tmp_path, folder)
+
+        with app.test_request_context():
+            routes._dataset_candidates_cache.clear()
+            routes._dataset_candidate_folders(fast=True)          # warm
+            app.config["workspace"].root_folders.append(sneaky)   # no bump
+            again = routes._dataset_candidate_folders(fast=True)
+
+        assert sneaky not in again, (
+            "the fast path rebuilt without a version bump — it is not "
+            "consulting the cache, and the pin above proves nothing"
+        )
+
+    def test_a_slow_caller_still_validates_on_its_token(self, tmp_path):
+        """``fast=False`` keeps the token contract exactly: the same token and
+        version answers from the cache, a moved token rebuilds."""
+        folder = _seed_archive(tmp_path / "ws", dates=4)
+        sneaky = _seed_archive(tmp_path / "sneaky", dates=2)
+        app, _ = self._app(tmp_path, folder)
+        token = {"v": "T1"}
+
+        with app.test_request_context():
+            routes._dataset_candidates_cache.clear()
+            with pytest.MonkeyPatch.context() as mp:
+                mp.setattr(HistoryManager, "_workspace_token",
+                           staticmethod(lambda ws: token["v"]))
+                routes._dataset_candidate_folders()                   # warm
+                app.config["workspace"].root_folders.append(sneaky)   # no bump
+                assert sneaky not in routes._dataset_candidate_folders()
+                token["v"] = "T2"                                     # layout moved
+                assert sneaky in routes._dataset_candidate_folders(), (
+                    "the token moved and the slow path still answered from "
+                    "the cache — the staleness contract is gone"
+                )
+
+    def test_an_unvalidated_slot_never_satisfies_a_slow_caller(self, tmp_path):
+        """A fast rebuild stores its result with NO token. A slow caller must
+        read that as a miss: it never validated the layout, so answering a
+        ``fast=False`` caller from it would hand out an unchecked list."""
+        folder = _seed_archive(tmp_path / "ws", dates=4)
+        sneaky = _seed_archive(tmp_path / "sneaky", dates=2)
+        app, _ = self._app(tmp_path, folder)
+
+        with app.test_request_context():
+            routes._dataset_candidates_cache.clear()
+            routes._dataset_candidate_folders(fast=True)          # stores no token
+            app.config["workspace"].root_folders.append(sneaky)   # no bump
+            slow = routes._dataset_candidate_folders()
+
+        assert sneaky in slow, (
+            "a slow caller was served the fast path's unvalidated slot — the "
+            "token it computed was never compared against anything"
         )

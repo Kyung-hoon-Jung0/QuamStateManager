@@ -190,6 +190,10 @@ existed. All four properties are pinned.
 | `/field/history` (the 🕘 popover) | 789 | 399 | 399 | 399 | **399** | **-49%** |
 | `/datasets/wait` (the long poll) | 782 | 392 | 392 | **0** | **0** | **-100%** |
 
+(The `/datasets/wait` row is measured in the steady state. F6 in §6 records
+what it cost on the request right after a run landed — 392, not 0 — and closes
+that too.)
+
 Every surface users named is now between 0 and 403 share operations — about
 0.7 s on the share where the worst of them was ~14 s, and where all of them
 grew by one date directory per day of measurement.
@@ -316,9 +320,90 @@ per date dir, a five-year archive is ~1,800 round-trips per poll. Nothing in
 the app ever caps, tiers or ages this. Any real answer is F4 or an OS change
 notification (`ReadDirectoryChangesW`), not a smaller constant.
 
-**F6 — `/load` costs 804 share ops** (~1.4 s on the share) and was not
-investigated. It is a user-initiated action rather than a background one, so it
-ranks below the others, but it is the same order of magnitude as a poll.
+**F6 — `/load` costs 804 share ops. SHIPPED — and it was never a cost of
+reading the chip.** The 804 was measured before F1–F4; on the shipped code it
+was 421, and attribution put 390 of those in ONE chain that has nothing to do
+with the chip being opened:
+
+```
+  _maybe_data_folder_suggest        (routes.py — every chip activation)
+    -> _data_folder_candidates
+      -> _dataset_candidate_folders(fast=True)
+        -> HistoryManager._workspace_token
+          -> dir_sample.mtime   x 390   (one os.stat per date dir)
+```
+
+`_dataset_candidate_folders(fast=True)` exists precisely to skip that walk
+(docs/142 measured it at ~1.2 s on a 9p workspace and took it off the per-run
+click). It validates its cache on `ws.version` instead. But on a MISS it fell
+through to the token anyway — and **that token can never produce a hit there**:
+the token slot is validated on `ws.version` too, and a fast miss has already
+failed that test, so the comparison below it is guaranteed false. It was
+computed only to be STORED, priming a cache for some future slow caller, at
+exactly the cost the flag exists to avoid.
+
+**Which made it a recurring cost, not a cold-start constant.** The scanner
+bumps `ws.version` on every rescan that finds something new, so the walk was
+re-paid every time a run landed — and paid by whichever fast caller arrived
+first afterwards. Measured both ways at 390 date dirs, on the same fixture:
+
+| after ONE new run lands | pre-F6 | post-F6 |
+|---|---|---|
+| `POST /load` first | **406** | **14** |
+| `/datasets/wait` first | **392** | **0** |
+| `POST /load`, cold (first in the process) | **421** | **29** |
+
+That is also an honest correction to §5a. **`/datasets/wait`'s "0 ops" was
+true only while nothing changed** — and the long poll re-arms exactly when
+something changes, so on a lab that measures all day it paid a full sweep on
+the request right after every run. It is 0 now in both states.
+
+The fix is four lines of control flow: a fast caller never computes the token,
+rebuilds from the in-memory tree (which is all the candidate list is ever
+derived from — `ws.root_folders` + `ws.all_entries`; the token never enters the
+result), and stores its result with `token = None`. A slow caller reads an
+untokened slot as a miss and recomputes, so `fast=False` keeps its staleness
+contract byte for byte. Every route's steady-state cost is unchanged, measured
+against the pre-F6 tree across the whole §2 table — this fix moves the cold
+start and the first request after a change, and nothing else.
+
+**Audited and left:** `HistoryManager.scan_workspace_alignment` also computes
+`_workspace_token`, and that one stays. It is not the same shape — there the
+token is the cache's ONLY validator (no `ws.version` equivalent exists for a
+scan keyed on the loaded chip's fingerprint), and it guards a scan that reads
+two JSON files per run rather than a set built in memory.
+
+**The pin lesson, which is the reason this took a rewrite:**
+`test_fast_candidates_rebuild_on_workspace_version_bump` (docs's own
+pre-delivery audit) asserted the right property — *a new candidate dir must
+become visible to fast callers once the scanner finds it* — by **counting
+`_workspace_token` calls**. That is a proxy for "did it rebuild", and F6
+removed the thing being counted, so the pin went red while the property it
+names stood untouched. It asserts the property now: a root the scanner has
+discovered appears, one appended behind the scanner's back does not. Same
+lesson as docs/141 §4af — *a pin can measure the wrong moment.*
+
+**And one of the new pins was flaky before it was right.** The two that drive
+real code and compare two archive sizes were counting syscalls with the file's
+process-wide spy, so anything SM does on a daemon thread — the docs/142 listing
+hydration, a deferred index rebuild, `run_watch` — landed in whichever side's
+counter happened to be open. Measured at about one failure in three when the
+file runs beside its neighbours, and green in isolation, which is the worst
+shape a pin can have: docs/141 §4ae showed a single flaky test turning a whole
+mutation sweep into coin tosses reported as verdicts. `_fs_spy` grew an
+`own_thread=True` option (default off, so every pin written before it counts
+exactly what it counted), and both syscall-counting pins use it. 6 consecutive
+three-file runs, one pre-existing failure each and no others.
+
+Pinned by `TestFastCandidatesNeverWalkTheArchive` in
+`tests/test_share_io_cost.py` (7 tests: two cost slopes that must not scale
+with date dirs, the direct "no token on the fast path" statement, and four
+that hold the cache's promises — discovery after a bump, the cache hit while
+the version holds, the slow caller's token validation, and an untokened slot
+never satisfying a slow caller). **5 mutations, 5 caught**, one per property:
+restoring the fall-through, dropping the fast store, letting a slow caller
+accept an untokened slot, ignoring `ws.version` on the fast path, and ignoring
+the token on the slow one.
 
 **F8 — jsdom, and this environment's baseline. DONE** (§8): `npm install`
 run, 101/101 selfchecks executing, and the full-suite baseline established at

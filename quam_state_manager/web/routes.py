@@ -19206,29 +19206,49 @@ def _dataset_candidate_folders(*, fast: bool = False) -> list[Path]:
     per-run click (the measured ~900ms run-detail latency) and every ~60s poll.
     It instead validates the cheap monotonic ``ws.version`` (bumped by the scanner
     when a root/chip/date dir appears), so a fast caller still rebuilds — and
-    discovers a new candidate dir — when the workspace tree actually changes."""
+    discovers a new candidate dir — when the workspace tree actually changes.
+
+    docs/155 F6: that now holds on a MISS as well. It used to fall through to
+    the token walk it had just skipped — on a value a fast miss can never read
+    back — which put one stat per date dir on every chip activation and on the
+    first poll after each run landed."""
     ws = current_app.config.get("workspace")
     if not ws:
         return []
+    # One cache slot per app (keyed by app identity so multiple apps in-process
+    # don't collide); the token guards staleness for a SLOW caller, ws.version
+    # for a fast one.
+    app_key = id(current_app._get_current_object())
+    token = None
     if fast:
-        cached = _dataset_candidates_cache.get(id(current_app._get_current_object()))
+        cached = _dataset_candidates_cache.get(app_key)
         if cached is not None and cached[1] == ws.version:
             return list(cached[2])
-        # Miss (empty, or the scanner discovered a new dir → version moved) —
-        # fall through to the token-validated rebuild.
-    # Cheap-on-ext4, EXPENSIVE-on-9p token — flips when the workspace layout
-    # changes (mirrors ``HistoryManager``'s alignment cache). Outside the lock.
-    try:
-        token = HistoryManager._workspace_token(ws)
-    except Exception:
-        token = None
-    # One cache slot per app (keyed by app identity so multiple apps in-process
-    # don't collide); the token guards staleness.
-    app_key = id(current_app._get_current_object())
-    if token is not None:
-        cached = _dataset_candidates_cache.get(app_key)
-        if cached is not None and cached[0] == token and cached[1] == ws.version:
-            return list(cached[2])
+        # Miss: empty cache, or the scanner discovered a new dir so ws.version
+        # moved. docs/155 F6 — a fast caller must NOT fall through to the
+        # token here. That walk is one stat per date directory (390 on a
+        # 13-month archive, ~0.7 s on the customer's SMB share) and it cannot
+        # produce a hit: the token slot is validated on ``ws.version`` too, and
+        # we have just failed that test, so the comparison below is guaranteed
+        # false. It was computed only to be STORED — priming a cache for a
+        # future slow caller, at the exact cost ``fast=True`` exists to avoid,
+        # and re-paid on every version bump, i.e. every time a run lands.
+        # Rebuilding from the in-memory tree is what a fast miss is FOR (the
+        # candidate list is derived from ``ws.root_folders`` + ``ws.all_entries``
+        # — the token never enters the result), so the rebuild below runs
+        # with ``token = None`` and stores an unvalidated slot that a slow
+        # caller reads as a miss and recomputes.
+    else:
+        # Cheap-on-ext4, EXPENSIVE-on-9p token — flips when the workspace layout
+        # changes (mirrors ``HistoryManager``'s alignment cache). Outside the lock.
+        try:
+            token = HistoryManager._workspace_token(ws)
+        except Exception:
+            token = None
+        if token is not None:
+            cached = _dataset_candidates_cache.get(app_key)
+            if cached is not None and cached[0] == token and cached[1] == ws.version:
+                return list(cached[2])
     candidates: set[Path] = set()
     for root in ws.root_folders:
         candidates.add(Path(root))
@@ -19250,9 +19270,14 @@ def _dataset_candidate_folders(*, fast: bool = False) -> list[Path]:
         if cand.is_dir():
             candidates.add(cand)
     result = sorted(candidates)
-    if token is not None:
-        with _dataset_candidates_lock:
-            _dataset_candidates_cache[app_key] = (token, ws.version, list(result))
+    # Stored even when ``token is None`` (a fast rebuild, or a slow one whose
+    # token could not be computed): the entry is keyed by ``ws.version``, and
+    # every tree rebind in the scanner bumps that version, so a version-matched
+    # slot describes exactly the tree this result was built from. A slow caller
+    # still requires a MATCHING token, so an unvalidated slot never satisfies
+    # one — it rebuilds and re-stores with its own token.
+    with _dataset_candidates_lock:
+        _dataset_candidates_cache[app_key] = (token, ws.version, list(result))
     return result
 
 

@@ -581,31 +581,45 @@ class TestPerf:
         client.get("/workbench/match")   # unchanged folders/mtimes → cache hit
         assert calls["n"] == 1
 
-    def test_fast_candidates_rebuild_on_workspace_version_bump(self, app, monkeypatch):
+    def test_fast_candidates_rebuild_on_workspace_version_bump(self, app, tmp_path):
         # fast=True polls must still surface a new candidate dir once the scanner
         # discovers it (bumps ws.version) — otherwise a new chip dir under an
         # existing root is invisible to polls until a full /datasets render.
-        from quam_state_manager.core.history import HistoryManager
+        #
+        # docs/155 F6: this used to assert the property by counting
+        # ``HistoryManager._workspace_token`` calls — a PROXY for "did it
+        # rebuild". F6 removed that walk from the fast path (it is one stat per
+        # date dir, and on a fast miss it can never produce a cache hit), which
+        # broke the proxy while the property below stood untouched. Assert the
+        # property: a root the scanner has discovered appears, and one it has
+        # not does not.
         from quam_state_manager.core.scanner import Workspace
         from quam_state_manager.web import routes
         ws = Workspace()
         app.config["workspace"] = ws
-        calls = {"n": 0}
+        known = tmp_path / "known"
+        known.mkdir()
+        unknown = tmp_path / "unknown"
+        unknown.mkdir()
 
-        def counting(_workspace):
-            calls["n"] += 1
-            return "STABLE_TOKEN"
-
-        monkeypatch.setattr(HistoryManager, "_workspace_token", staticmethod(counting))
         with app.test_request_context():
             routes._dataset_candidates_cache.clear()
-            routes._dataset_candidate_folders(fast=True)   # builds → 1 token compute
-            n = calls["n"]
-            routes._dataset_candidate_folders(fast=True)   # same version → cache hit
-            assert calls["n"] == n                          # no recompute
-            ws._version += 1                                # scanner found a new dir
-            routes._dataset_candidate_folders(fast=True)   # version moved → rebuild
-            assert calls["n"] > n
+            first = routes._dataset_candidate_folders(fast=True)
+            assert known not in first and unknown not in first
+
+            ws.root_folders.append(unknown)                 # tree moved, NO bump
+            assert unknown not in routes._dataset_candidate_folders(fast=True), (
+                "the fast path rebuilt without a version bump — it is not "
+                "consulting its cache at all"
+            )
+
+            ws.add_root(known)                              # the scanner: bumps version
+            after = routes._dataset_candidate_folders(fast=True)
+
+        assert known in after, (
+            "a folder the scanner has already discovered is invisible to every "
+            "fast caller"
+        )
 
 
 class TestConcurrencyAndSafeIO:
