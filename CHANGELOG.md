@@ -505,80 +505,114 @@ shows marker/channel/delay/buffer/shareable/inverted, and a chip with no
 digital wiring renders byte-identically to before. Same drawing in the
 floating wiring panel and the drag-drop preview.
 
-## v0.9.9 (in progress — auto-calibration)
+## v0.9.9 (2026-09-03)
 
-**Verified against a real 2,655-run customer corpus (docs/127).** The whole
-offline verification stack of the auto-calibration loop was executed against
-seven days of a real 20-qubit chip's data — family dispatch, the deterministic
-gates, the lab-analysis refit tier, band derivation, the revert path at
-archive scale, and the replay scorer — and the seven defects it surfaced are
-fixed:
+172 commits since v0.9.8. Two headlines: **every menu got faster**, and **the
+screen stops resetting under you**.
 
-- **Replay runner honored the run's own parameters** — it used a raw deep-find
-  instead of the one `run_params` unwrap, so every knob fell to defaults and a
-  state-discriminated run crashed the refit; the refit now reproduces the
-  stored fit value to the last digit (consumer pin extended).
-- **G3 reads this generation's recordings**: `state` serves the I-families
-  (423 targets were stuck unverifiable), `D` serves the readout-freq-opt
-  check, `state_moving` serves chevron, and pair families read the renamed
-  `qubit` pair-dim (85 targets) — each a verified rename of the same trace.
-- **Ramsey recalibrated by the corpus** (docs/78 §15.2 method): freq_offset
-  band widens to the ±50 MHz absurdity envelope (26 false alarms, ~20
-  confirmed-good corrections among them), the decay band is gone (its entire
-  measured effect was 26 false alarms) with write-honesty moved into a T2*
-  update guard, and judging rides the node's own `osc_amp_snr`/`r2`.
-- **Three-zone feature check**: per-family `z_min` + a sign-agnostic
-  claim-region test in the weak zone (smooth by the feature's width, no
-  look-elsewhere penalty) — 123 false gate-fails on accepted qubit-spec
-  claims became 16 honest flags, while the no-signal corruption stays a hard
-  fail (noise control p99 = 3.2 vs threshold 5).
-- **The sandbox revert walks lists** (confusion_matrix/0/0 — 295 real revert
-  targets died as dict lookups); all 1,755 patch-carrying targets now revert
-  byte-exact, verified against the archive.
-- **numpy-2 `.ptp()`** — the 23 "environmental" cqt-env failures were a real
-  incompatibility; the autofit baseline in the customer env is now 0.
-- **replay_score proven on real retry chains**: 105 sessions, 195 decision
-  points; the deterministic ladder's baseline is 4 runs saved / 52%
-  agreement — the number the model-driven proposer has to beat.
+### Speed
 
-**Domain knowledge as versioned data, and a future-blind benchmark over it
-(docs/129–133).** The auto-calibration loop's weakest point is that every run
-is seeded by the previous one, so a wrong fit does not stay local — it
-ratchets. The answer built here is a per-family case manual (pictures, cases,
-prescriptions) that a reader or a vision judge consults, plus a replay harness
-that walks a real archived session from the start and is structurally forbidden
-from seeing the future (`Session.reveal(k)` raises past `k`, so cheating is a
-crash rather than a better score).
+One cause under all of it — every render walked the whole run archive. Invisible
+on a local disk, brutal on an SMB share where each `stat` is a round-trip
+(docs/141, 142, 143, 154, 155).
 
-- **Eight families across six labs** now carry a manual with rendered,
-  unlabelled exemplars: resonator-vs-power, resonator 1-D, resonator-vs-flux,
-  resonator-vs-coupler-flux, qubit 1-D, qubit-vs-flux, and — read as one
-  session — qubit spectroscopy with qubit-spectroscopy-vs-power.
-- **Clause B is enforced at load, not in review**: a case that names an
-  absolute frequency, power, or a size as a fraction of the window is DROPPED
-  when the pack loads. It has refused real cases twice in this campaign.
-- **The manual never supplies a number.** Offsets are written against values
-  the run itself reports (its own anharmonicity, its own `target_peak_width`,
-  its own `intrinsic_fwhm`), so a pack written on one chip stays true on
-  another.
-- **`08b_qubit_spectroscopy_vs_power` is the hardest case and the first read
-  as a PAIR** (docs/133). Its node reports `success` on 182 of 182 targets and
-  its frequency is right on 52 of 103 with an independently derived truth. The
-  shipped reader answers 56 of those 103 and is right on 41 — fewer answers,
-  better answers, which is the correct trade for a loop that ratchets.
-- **The two-photon trap, measured honestly**: the 0→2 line sits half an
-  anharmonicity below the fundamental and grows faster with drive, so a 1-D
-  fit can land on it and look perfect. Expert reading of 1,150 annotated
-  targets finds it implicated on 107 of them; the obvious statistic (two
-  accepted values one rung apart in the same session) finds 6, and is not
-  enriched over placebo offsets. When the trap bites the session usually never
-  records the right value at all, so there is no pair for a statistic to find
-  — the failure is only visible in the picture.
-- **Reading a drive amplitude without its port gets the SIGN wrong**
-  (`P = FSP + 20*log10|amp|`), demonstrated on a real run whose amplitude rose
-  while its power fell. The replay now computes the physical drive power from
-  each run's own snapshot.
-- **What the benchmark does not show** is written into every doc: over-adoption
-  where a key says nothing trustworthy existed, sessions poisoned before the
-  first run in scope, blind re-classification as low as 7/12 on one family, and
-  two answer keys challenged by their own adversarial auditor.
+- **Chip Status: 7,831 archive file-ops per render → 182.**
+- Local-disk A/B at 1,440 runs (~a year of daily measurement): **Param History
+  627 → 23 ms (27×)**, Chip Status **247 → 18 ms**. At 30 runs op counts already
+  drop ~90%. **No route got slower at any size.**
+- **Live State Edit revisit 4–5 s → 1.0 s**; its document **8.98 → 2.30 MB**.
+- **Param History first open 18–22 s → 0.5 s**, render **16.9 s → 0.16 s**.
+- At 5,000 runs: **chip load 12.8 → 4.2 s** (1.3 s warm), sidebar HTML
+  **4.1 MB → 113 KB**.
+- Thousands of snapshots on one chip: a warm Versions list is **3 file
+  operations**, flat in N — was 4,006.
+- **A new run folder reaches the screen in under a second** (push, not polling).
+
+### The view no longer resets
+
+- **Sync / pull / apply keep tree search, expansion, scroll and grid state** —
+  only the values change, in place (docs/144).
+- Leaving a tab and coming back keeps the page.
+- **Red "modified" cells clear the moment the tray goes clean** — they used to
+  sit under a "No differences" verdict.
+- The loading popup is visible **while you actually wait**.
+
+### Compare
+
+- **Compare Selected opens 2–5 runs side by side** — differing values only,
+  baseline column you pick (docs/141).
+- Keys column is a **collapsible tree**, with the app's search grammar in it.
+- **Figures pair left-to-right even across different experiments** — they used
+  to stack A above B (docs/147).
+- 2-way names its direction: **`A #256 → B #255`**.
+
+### Versions
+
+- Every row is **EXP / MANUAL / BACKUP** — who made this snapshot, and why.
+- EXP rows carry an **`After #<run>`** chip straight to that run's data.
+- **Per-row Diff**; tick 3+ for a **differences-only N-way compare**.
+- **Take a single value with ✓** — editable before you take it, Ctrl+Z after.
+- Zero-change snapshots hidden by default, with an honest count (docs/128, 132).
+
+### Chip Status
+
+- **A 2Q RB number is per-Clifford or per-gate.** One CZ read 97.1% and 99.09%
+  on the same page: `StandardRB` is per-Clifford, `InterleavedRB` is per-gate.
+  Both are labeled now and the default is the gate number (docs/138).
+- **Fidelity splits into 2Q / 1Q / Readout.** An absent GEF says which leaf it
+  fills from instead of silently not existing, and the GEF per-state diagonals
+  are computed at all (docs/148).
+- **Overview tiles are yours** — pick the statistic (avg / median / min / max),
+  add, remove, drag to reorder, hover for a per-qubit value list, ⚙ to set every
+  tile at once (docs/150–153).
+
+### QDAC-II — reading it, not just building it
+
+v0.9.8 could *build* a QDAC-biased chip; this release can **read, edit and check
+one** (docs/136, 137).
+
+- **11 QDAC-biased qubits showed zero bias fields** on their own inspector page.
+  They have them now, derived structurally rather than by class name.
+- **New `/qdac` page** — trigger wiring as a table of cables
+  (`ext1 → con1/fem4/p1 → q1 q9 q17`), the grouping that makes a shared port
+  read as correct instead of as a collision.
+- **Diagnostics checks these qubits** — nothing linted them before.
+- **Bias tee** (QDAC holds the DC point, LF-FEM plays pulses on top) is
+  recognized and buildable; its flux port wears its own colour on the rack.
+- `qdac` quick-filter on Live State Edit and Json Tree.
+
+### Generate / Wiring wizard
+
+- **Auto-allocate is the default** — step 5 draws its diagram on its own; the
+  button used to sit dead beside a list (docs/134).
+- **The rack diagram was cropping FEMs**, silently, on every surface — one chip
+  read as 3 MW + 2 LF when it has 3 MW + 5 LF. Fit / 1:1 with real scrolling
+  (docs/135).
+- **Digital trigger ports appear in the wizard's diagram too**, and drag to
+  re-cable.
+- Environment discovery **6.1 → 1.8 s**, and it names what it is doing.
+- The config-path picker gets a folder browser and keyboard navigation.
+
+### Undo
+
+- Every Ctrl+Z / Ctrl+Shift+Z answers with a panel: **path, old → new, and one
+  "go to field" button**.
+- Held keys coalesce into one step; inline fields take Ctrl+Z too.
+- An undo repaints **the cells it changed, not the whole grid** — 2,418 → 55 ms.
+
+### Config Manual (new)
+
+- Sidebar → **a manual for every key in state.json**: 111 classes / ~940 keys,
+  from the selected environment's own docstrings plus the official QM docs.
+- **F1** on a value, `?` on a tree row, or a grid header opens it.
+
+### Auto-calibration (research — offline only, no hardware in the loop)
+
+- The whole verification stack **replayed against a real 2,655-run customer
+  archive** (docs/127); seven defects fixed, including a numpy-2 break and a
+  revert path that missed 295 list-indexed targets.
+- **Case manuals for eight families across six labs**, plus a future-blind
+  replay benchmark that crashes rather than let a run see its own future
+  (docs/129–133).
+- **The manual never supplies an absolute number** — enforced when the pack
+  loads, and it has refused real cases twice.
