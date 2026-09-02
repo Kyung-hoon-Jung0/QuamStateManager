@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+{# docs/156 (user feedback: the calculator floats, but only INSIDE the SM
+   window) — the Calculator as its OWN browser window. STANDALONE by design:
+   no base.html, no topbar/sidebar, no htmx/app.js. The calculator is pure
+   client-side and chip-independent, so this document needs calc.js, the
+   stylesheet and the theme boot — nothing else. The sections are the SAME
+   partial the popover renders (_calc_body.html: one source, no drift); the
+   wrapper carries .calc-standalone, which is what calc.js keys on (Escape
+   closes the window, no outside-click closer, no drag, size + position
+   remembered) and what the stylesheet keys on (the OS window frame replaces
+   the popover's). Opened by calc.js openCalcWindow via window.open; browser
+   mode only — see that function for why the desktop shell never gets here. #}
+<html lang="en" data-theme="dark" class="calc-window">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calculator — QUAM State Manager</title>
+    <link rel="icon" type="image/svg+xml"
+          href="{{ url_for('static', filename='favicon.svg') }}">
+    {% include '_theme_boot.html' %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='pico.min.css') }}">
+    <link rel="stylesheet" href="{{ asset_url('style.css') }}">
+    <script src="{{ asset_url('calc.js') }}"></script>
+</head>
+<body class="calc-window-body">
+    <div id="calc-popover" class="calc-popover calc-standalone" aria-label="Calculator">
+{% include '_calc_body.html' %}
+    </div>
+</body>
+</html>

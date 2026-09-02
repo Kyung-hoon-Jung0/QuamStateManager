@@ -3848,6 +3848,22 @@ def help_page():
     return render_template(template, **_ctx(page="help"))
 
 
+@bp.route("/calc-window")
+def calc_window():
+    """docs/156 (user feedback): the Calculator as its OWN browser window.
+
+    The in-page popover floats, but only INSIDE the SM window. This page is
+    the same calculator (``_calc_body.html`` — one partial, both surfaces)
+    as a standalone document: no base.html, no htmx/app.js, and deliberately
+    no ``_ctx()`` — the calculator is pure client-side and chip-independent,
+    so rendering it must never touch (or activate) a chip. Opened by
+    ``openCalcWindow`` in calc.js via ``window.open``; browser mode only —
+    under pywebview the WebView2 backend answers window.open by navigating
+    the SAME window, so calc.js never calls it there.
+    """
+    return render_template("calc_window.html")
+
+
 @bp.route("/")
 def home():
     """Project-first landing (docs/63): with a qualibrate config the home

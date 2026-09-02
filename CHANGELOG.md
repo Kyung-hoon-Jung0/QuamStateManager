@@ -616,3 +616,14 @@ one** (docs/136, 137).
   (docs/129–133).
 - **The manual never supplies an absolute number** — enforced when the pack
   loads, and it has refused real cases twice.
+
+## Unreleased
+
+### Calculator
+
+- **The Calculator opens as its own browser window** — the ↗ in the popover
+  header pops it out (`/calc-window`): movable across monitors, above other
+  apps, and it outlives navigation. While it is open, the Calculator button and
+  Alt+C bring that window forward instead of opening a second one; Escape closes
+  it and it reopens where you left it. Browser mode only — the desktop shell
+  keeps the in-page floating popover (docs/156).

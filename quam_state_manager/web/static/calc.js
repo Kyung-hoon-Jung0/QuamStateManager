@@ -11,6 +11,12 @@
  *
  * Formulas are byte-identical to generate.js ampToDisplay/ampToBase so the
  * calculator can't drift from the rest of the app.
+ *
+ * Two surfaces, one script (docs/156): the in-page popover (#calc-popover in
+ * base.html — anchored, draggable, Alt+C) and the standalone /calc-window
+ * document (#calc-popover.calc-standalone — the calculator as its OWN browser
+ * window, opened by openCalcWindow). Every field is found by id, so both
+ * render the same _calc_body.html partial.
  */
 (function () {
     'use strict';
@@ -250,7 +256,15 @@
         var raw = target.dataset.raw || (target.value !== undefined ? target.value : '') || target.textContent;
         if (!raw || raw === '—') return;
         if (window.copyWithFeedback) window.copyWithFeedback(raw, btn);
-        else if (navigator.clipboard) navigator.clipboard.writeText(raw);
+        else if (navigator.clipboard) {
+            // the standalone window has no app.js toast: the button itself
+            // says it happened (docs/156)
+            navigator.clipboard.writeText(raw).then(function () {
+                if (!btn || !btn.classList) return;
+                btn.classList.add('calc-copied');
+                setTimeout(function () { btn.classList.remove('calc-copied'); }, 800);
+            }).catch(function () {});
+        }
     }
 
     /* ── size (docs/141 4aj, user: "calculator는 크기 조절이 안되고 있어") ──
@@ -293,6 +307,95 @@
     }
     window.CalcWindow = { restoreSize: restoreSize, watchSize: watchSize, SIZE_KEY: SIZE_KEY };
 
+    /* ── a window of its own (docs/156) ──────────────────────────────────────
+       User feedback: the popover floats, but only INSIDE the SM window. This
+       opens the SAME calculator (/calc-window renders the same partial) as its
+       own browser window — window.open with a size, which Chrome/Edge/Firefox
+       answer with a popup WINDOW rather than a tab: movable across monitors,
+       above other apps, and it outlives every navigation of the page that
+       opened it. The page keeps ONE reference: while that window is alive the
+       Calculator button and Alt+C FOCUS it instead of opening a second
+       calculator in-page (two calculators with two sets of numbers is the
+       confusing outcome). The window remembers its own size + screen position
+       (quam_calc_win) and reopens there.
+
+       Browser mode only. Under the desktop shell (pywebview) the WebView2
+       backend answers window.open by navigating THIS window to the URL
+       (edgechromium.py on_new_window_request: Handled=True, then load_url) —
+       the whole app replaced by a calculator, with no way back. So there the
+       button is hidden and openCalcWindow does nothing; the in-page floating
+       popover stays the desktop answer. `window.pywebview` is injected by
+       the shell AFTER navigation completes, so it is checked at click time
+       (reliable) and the button is hidden on `pywebviewready` (cosmetic). */
+    var WIN_URL_FALLBACK = '/calc-window';
+    var WIN_NAME = 'quam-calc';
+    var WIN_KEY = 'quam_calc_win';          // {w, h, x, y} the separate window last had
+    var WIN_DEFAULT = { w: 400, h: 680 };
+    var _calcWin = null;
+
+    function calcWinAlive() {
+        try { return !!(_calcWin && !_calcWin.closed); } catch (e) { return false; }
+    }
+    function standalone() {
+        var p = document.getElementById('calc-popover');
+        return !!(p && p.classList.contains('calc-standalone'));
+    }
+    function winFeatures() {
+        var s = null;
+        try { s = JSON.parse(window.localStorage.getItem(WIN_KEY) || 'null'); } catch (e) {}
+        var w = (s && s.w > 200) ? s.w : WIN_DEFAULT.w;
+        var h = (s && s.h > 150) ? s.h : WIN_DEFAULT.h;
+        var f = 'popup=yes,width=' + Math.round(w) + ',height=' + Math.round(h)
+              + ',resizable=yes,scrollbars=yes';
+        if (s && isFinite(s.x) && isFinite(s.y)) f += ',left=' + Math.round(s.x) + ',top=' + Math.round(s.y);
+        return f;
+    }
+    function winUrl(trigger) {
+        var el = (trigger && trigger.dataset && trigger.dataset.calcWindowUrl)
+            ? trigger : document.querySelector('[data-calc-window-url]');
+        var url = (el && el.dataset.calcWindowUrl) || WIN_URL_FALLBACK;
+        // the OPENING page's theme, even when it was forced by ?theme= and
+        // never persisted — the window should look like the page it came from
+        var theme = document.documentElement.getAttribute('data-theme');
+        if (theme) url += (url.indexOf('?') < 0 ? '?' : '&') + 'theme=' + encodeURIComponent(theme);
+        return url;
+    }
+    window.openCalcWindow = function (trigger) {
+        if (calcWinAlive()) { try { _calcWin.focus(); } catch (e) {} return _calcWin; }
+        if (window.pywebview) return null;   // desktop shell — see the note above
+        var w = null;
+        try { w = window.open(winUrl(trigger), WIN_NAME, winFeatures()); } catch (e) { w = null; }
+        if (!w) return null;                 // popup blocked: the in-page popover stays
+        if (calcOpen()) window.toggleCalc();  // it moved out — close the in-page one first
+        _calcWin = w;
+        try { w.focus(); } catch (e) {}
+        return w;
+    };
+    function hidePopout() {
+        document.querySelectorAll('.calc-popout').forEach(function (b) { b.hidden = true; });
+    }
+    // (guarded: calc_selfcheck.cjs evaluates this file against a bare `{}` window)
+    if (window.addEventListener) window.addEventListener('pywebviewready', hidePopout);
+
+    // The standalone document: the window IS the frame, so no anchoring, no
+    // drag, no outside-click closer; Escape closes the window; the size and
+    // screen position are remembered for the next open.
+    function wireStandalone() {
+        if (!_calcInit) { recomputeAll(); _calcInit = true; }
+        var first = document.getElementById('calc-s1-dp');
+        if (first) setTimeout(function () { first.focus(); first.select && first.select(); }, 0);
+        var t = null;
+        function remember() {
+            try {
+                window.localStorage.setItem(WIN_KEY, JSON.stringify({
+                    w: window.innerWidth, h: window.innerHeight,
+                    x: window.screenX, y: window.screenY }));
+            } catch (e) {}
+        }
+        window.addEventListener('resize', function () { clearTimeout(t); t = setTimeout(remember, 250); });
+        window.addEventListener('pagehide', remember);
+    }
+
     // ── open / close / pin ──────────────────────────────────────────────────────
     var _calcWired = false, _calcInit = false;
     window.toggleCalc = function (trigger) {
@@ -304,6 +407,9 @@
             : document.getElementById('calc-btn'));
         if (!pop || !btn) return;
         var willOpen = pop.classList.contains('calc-hidden');
+        // docs/156: the calculator is OUT in its own window — bring that one
+        // forward rather than open a second calculator here
+        if (willOpen && calcWinAlive()) { try { _calcWin.focus(); } catch (e) {} return; }
         // docs/141 4u (user: "a bug"): the Calculator and Settings are two
         // windows, not a singleton -- opening one leaves the other alone
         pop.classList.toggle('calc-hidden', !willOpen);
@@ -403,7 +509,12 @@
             }
         });
         pop.addEventListener('keydown', function (e) {
-            if (e.key === 'Escape') { e.preventDefault(); window.toggleCalc(); }
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                // docs/156: in the standalone window Escape closes the WINDOW
+                if (standalone()) { try { window.close(); } catch (e2) {} }
+                else window.toggleCalc();
+            }
             else if (e.key === 'Tab' && e.target.matches &&
                      e.target.matches('input.calc-in, input.calc-expr')) {
                 // Field-to-field hop: visible calc inputs only — skip the
@@ -426,6 +537,8 @@
                 if (out) copyFrom(out, out);
             }
         });
+        if (standalone()) { wireStandalone(); return; }   // docs/156: the window is the frame
+        if (window.pywebview) hidePopout();
         enableDrag();
     }
 

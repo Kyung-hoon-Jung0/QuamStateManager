@@ -1385,6 +1385,24 @@ html.topbar-hidden .topbar-reveal { display: block; }
 }
 .calc-popover .calc-expr:focus { border-color: var(--pico-primary); outline: none; box-shadow: none; }
 .calc-expr-eq { color: var(--pico-muted-color); }
+/* docs/156 (user feedback: "SM 창 내부에서만 floating"): the calculator as its
+   OWN browser window (/calc-window, opened by the popover's ↗). Same markup
+   (the _calc_body.html partial), but here it is the whole document, so the OS
+   window frame replaces the popover's: no border/shadow/radius, no resize
+   handle (the window resizes), filling the viewport; the body still scrolls
+   between the static header-less top and the expression footer. .calc-popover
+   .calc-standalone (0,2,0) outranks the shared tool-window frame rule (0,1,0)
+   regardless of source order. */
+html.calc-window, html.calc-window body { height: 100%; margin: 0; }
+html.calc-window body { display: flex; background: var(--pico-background-color); }
+.calc-popover.calc-standalone {
+    position: static; flex: 1 1 auto; width: auto; max-width: none; min-width: 0;
+    height: 100%; max-height: none; margin: 0;
+    border: 0; border-radius: 0; box-shadow: none; resize: none;
+}
+.calc-popout { font-size: 0.9rem; }
+/* the standalone window has no app.js toast — the copy button itself flashes */
+.calc-copy.calc-copied { opacity: 1; color: var(--pico-primary); }
 .visually-hidden {
     position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px;
     overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
