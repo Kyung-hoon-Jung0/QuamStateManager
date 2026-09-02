@@ -2098,7 +2098,11 @@ class HistoryManager:
         return self._list_snapshots_in_dir(self._history_dir(quam_state_path))
 
     _MANIFEST_NAME = "snapshots_manifest.json"
-    _MANIFEST_V = 1
+    # v2 (docs/155 10g). The bump is not about shape -- it is that a v1
+    # sidecar was written by a build whose in-place meta.json writers did
+    # NOT refresh it, which the fast path in _list_snapshots_in_dir now
+    # depends on. A v1 file reads as a miss -> one slow scan -> v2.
+    _MANIFEST_V = 2
 
     def _list_snapshots_in_dir(self, hist_dir: Path) -> list[SnapshotMeta]:
         """Scan a SPECIFIC chip history dir for snapshot folders + meta.json.
@@ -2145,6 +2149,67 @@ class HistoryManager:
                 children = sorted(it, key=lambda de: de.name, reverse=True)
         except OSError:
             return []
+
+        dir_names: list[str] = []
+        for de in children:
+            try:
+                if de.is_dir():
+                    dir_names.append(de.name)
+            except OSError:
+                continue
+
+        # FAST PATH (docs/155 10g) -- zero stats.
+        #
+        # The scandir above already handed us every child directory name
+        # for ONE syscall. If that set is exactly the set the sidecar was
+        # built from, the only thing that can have changed since is an
+        # in-place meta.json rewrite -- and both writers that do that
+        # (annotate_snapshot and the run-id enrichment) now refresh the
+        # sidecar entry themselves through _manifest_update_entry. So the
+        # sidecar is trustworthy and the per-entry freshness stat has
+        # nothing left to discover. Measured (stat + scandir + every open,
+        # pathlib's included) on synthetic stores at n=200 and n=1,000, so
+        # these are fitted formulas and not one lucky run: a warm scan was
+        # N+3 file operations and is now 3, flat in N -- one stat of the
+        # chip dir, one read of the sidecar, one scandir. On the customer's
+        # 4,003-snapshot chip that is 4,006 -> 3, about 7.2 s -> 0.005 s of
+        # their SMB share's round trips.
+        #
+        # The gate is EQUALITY, deliberately. An earlier draft also
+        # memoised the dirs that had NO meta.json so it could exclude
+        # them -- but a capture creates its directory BEFORE writing
+        # meta.json, and the writer lists priors mid-capture, so that scan
+        # memoised the half-written snapshot as one to ignore and it
+        # vanished from the timeline for good. A meta-less dir now just
+        # costs the full scan every time: honest, self-healing, and the
+        # existing tests caught the alternative within a minute.
+        #
+        # The trade, stated plainly: a meta.json edited by something OTHER
+        # than SM -- a person with a text editor -- stays invisible until a
+        # directory is added or removed. That reverses docs/143, which
+        # stat'ed every entry to catch exactly that. It was costing 4,003
+        # syscalls per scan to defend SM's own cache of SM's own files
+        # against hand-editing.
+        if manifest and set(dir_names) == set(manifest):
+            fast: list[SnapshotMeta] = []
+            ok = True
+            for name in dir_names:
+                ent = manifest.get(name)
+                data = ent.get("meta") if isinstance(ent, dict) else None
+                if not isinstance(data, dict):
+                    ok = False
+                    break
+                try:
+                    fast.append(SnapshotMeta(
+                        **{k: v for k, v in data.items()
+                           if k in _SNAPSHOT_META_FIELDS}))
+                except Exception:
+                    ok = False
+                    break
+            if ok:
+                return fast
+            # any doubt at all -> fall through to the full scan below
+
         for de in children:
             try:
                 if not de.is_dir():
@@ -2191,6 +2256,44 @@ class HistoryManager:
                 logger.warning("snapshot manifest write failed for %s",
                                hist_dir, exc_info=True)
         return snapshots
+
+    def _manifest_update_entry(self, hist_dir: Path, name: str,
+                               data: dict) -> None:
+        """Keep the sidecar truthful after an IN-PLACE ``meta.json`` rewrite.
+
+        The scan's fast path (docs/155 10g) trusts the sidecar whenever the
+        child-NAME set matches, so an edit that neither adds nor removes a
+        directory -- a label, a pin, a note, a run-id enrichment -- has to
+        announce itself here or it would never be read again.
+
+        Best-effort, and its failure mode is the safe one: if the entry
+        cannot be refreshed the sidecar is DELETED, which costs one full
+        rescan and cannot serve a stale value. No sidecar yet is not a
+        failure -- the next scan builds one from disk.
+        """
+        mpath = hist_dir / self._MANIFEST_NAME
+        try:
+            raw = json.loads(mpath.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return
+        except Exception:
+            raw = None
+        try:
+            if not isinstance(raw, dict) or raw.get("v") != self._MANIFEST_V:
+                raise ValueError("unusable manifest")
+            entries = raw.get("entries")
+            if not isinstance(entries, dict):
+                raise ValueError("unusable entries")
+            st = os.stat(os.path.join(str(hist_dir), name, "meta.json"))
+            entries[name] = {"sig": [st.st_size, st.st_mtime_ns],
+                             "meta": data}
+            safe_io.atomic_write_json(
+                mpath, {"v": self._MANIFEST_V, "entries": entries})
+        except Exception:
+            try:
+                mpath.unlink()
+            except OSError:
+                pass
 
     def load_snapshot(self, quam_state_path: str | Path, timestamp: str) -> QuamStore:
         """Load a ``QuamStore`` from a historical snapshot (LRU-cached).
@@ -2466,6 +2569,8 @@ class HistoryManager:
             tmp = meta_p.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
             tmp.replace(meta_p)
+            # in-place: the name set did not move, so the sidecar must be told
+            self._manifest_update_entry(snap_dir.parent, snap_dir.name, data)
             self._snapshot_list_cache.pop(str(path.resolve()), None)
 
     def clear_cache(self) -> None:
@@ -4397,6 +4502,8 @@ class HistoryManager:
                     tmp = meta_p.with_suffix(".json.tmp")
                     tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
                     tmp.replace(meta_p)
+                    # in-place: same rule as the label writer above
+                    self._manifest_update_entry(target_dir, snap.timestamp, data)
                 except (OSError, ValueError):
                     logger.warning("Could not enrich snapshot %s with run #%s",
                                    snap.timestamp, run_id, exc_info=True)

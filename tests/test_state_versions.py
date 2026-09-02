@@ -965,6 +965,12 @@ class TestKindChips:
         data["trigger"] = "auto"
         data.pop("kind", None)
         meta_p.write_text(json.dumps(data), encoding="utf-8")
+        # This hand-writes meta.json, which is out-of-band as far as the
+        # snapshot sidecar is concerned (docs/155 10g). A genuinely legacy
+        # snapshot predates the sidecar anyway, so drop it -- the test is
+        # about how a pre-`kind` row DISPLAYS, not about detecting an edit
+        # made by a text editor.
+        (hm._history_dir(path) / hm._MANIFEST_NAME).unlink(missing_ok=True)
         hm.clear_cache()
         body = client.get("/state/versions").get_data(as_text=True)
         assert "sv-kind-backup" in body and ">BACKUP<" in body

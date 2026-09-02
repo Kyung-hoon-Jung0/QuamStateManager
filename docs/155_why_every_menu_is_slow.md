@@ -815,6 +815,80 @@ in one step with no code: the browser's Network tab shows `GET /` and
 half, and the second one would mean the qualibrate listing + doctor rather than
 anything in this document.
 
+## 10g. The sidecar earns its keep: a warm scan is 3 file operations, flat
+
+§10f halved the snapshot scan and recorded the rest as a decision for the
+user rather than a change to make unilaterally. The user took it.
+
+The remaining 4,003 stats were the sidecar's per-entry freshness check. After
+§10f's `scandir` the enumeration already yields the complete child-directory
+name set for **one** syscall, so if that set is exactly the set the sidecar was
+built from, the only thing that can have changed since is an in-place
+`meta.json` rewrite. There are exactly two of those in the codebase —
+`annotate_snapshot` (label / pin / note) and the run-id enrichment — and both
+now refresh their sidecar entry through `_manifest_update_entry`. The other
+three writers create or move directories, so the name set moves and the gate
+catches them for free.
+
+```
+                                 before 10f    after 10f    after 10g
+COLD  (no sidecar)                  12,014        8,011        8,011
+WARM  (sidecar, cold process)        8,010        4,006            3
+est. on the customer's share         ~14.4 s      ~7.2 s     ~0.005 s
+```
+
+Counted with one instrument across all three revisions — every `os.stat`,
+`os.scandir`/`os.listdir` and every `open`, including the ones `pathlib`
+routes through `io.open`. Each column is a fitted formula, not one run: at
+n=200 and n=1,000 a warm scan is `2N+4` before 10f, `N+3` after it, and a
+flat **3** after 10g (one stat of the chip dir, one read of the sidecar, one
+scandir), so the per-snapshot term is gone rather than merely small. The
+numbers first published here were one op lower in every warm cell: the first
+harness wrapped `builtins.open`, which `Path.read_text` does not go through,
+so it never saw the sidecar's own read. The conclusion is unchanged and the
+correction is recorded rather than quietly swapped in.
+
+**The trade, kept explicit.** A `meta.json` edited by something other than SM
+— a person with a text editor — is invisible until a directory is added or
+removed. docs/143 stat'ed every entry to catch exactly that; it was costing
+4,003 syscalls a scan to defend SM's own cache of SM's own files against hand
+editing. The reversal is pinned in both directions:
+`test_an_in_place_label_edit_through_sm_is_picked_up` (SM's own edit must
+survive) and `test_an_out_of_band_meta_edit_is_the_accepted_trade`, which
+asserts the *limitation* so that reversing it later has to be a decision rather
+than a drift — and also that it self-heals the moment the name set moves.
+
+**One upgrade cost, once.** The sidecar version is bumped to v2, not for its
+shape but because a v1 file was written by a build whose in-place writers did
+not refresh it. So the first project open after upgrading still pays the cold
+scan (~14 s on their share); every one after that is ~0.
+
+### Two things the tests caught that reasoning did not
+
+**A capture is momentarily meta-less, and memoising that is fatal.** The first
+draft also recorded the dirs that had *no* `meta.json` so the gate could
+exclude them. A capture creates its directory *before* writing `meta.json`, and
+the writer lists priors mid-capture — so that scan memoised the half-written
+snapshot as one to ignore, permanently. 40 tests went red inside a minute, and
+the log line naming a snapshot dir without a `meta.json` said exactly what had
+happened. The gate is plain equality now: a meta-less dir just costs the full
+scan, every time, which is honest and self-healing.
+
+**The addition-only case had no pin.** Mutating the gate from equality to a
+subset test (`every entry I know still exists`) passed the whole suite. The
+existing add-and-remove test could not catch it — its removal breaks the
+subset and sends it down the slow path anyway. A snapshot that is only ADDED is
+the case that matters, because it is the newest one, the one the user is
+looking for. It has its own pin now.
+
+That mutation is nonetheless a genuine **no-op**, proven rather than assumed:
+the fast path looks each name up individually and bails to the full scan on the
+first unknown, so a subset gate cannot actually serve a short list. The
+equality gate stays as the earlier, clearer short-circuit; the per-name lookup
+is what enforces it. A pin cannot fail on a mutation that does not mutate
+(docs/141 §4ad established the same distinction), so the rule is guarded by
+the pin above, which fails on the behaviour rather than the spelling.
+
 ## 9. What this does not show
 
 - **The NAS was unreachable throughout** (the same network fault that ended the

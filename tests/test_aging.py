@@ -185,17 +185,72 @@ class TestSnapshotManifest:
         got = [m.timestamp for m in hm2._list_snapshots_in_dir(chip)]
         assert got == [_ts(9), _ts(2), _ts(1)]
 
-    def test_in_place_meta_edit_is_picked_up(self, tmp_path):
-        # a label/pin edit rewrites meta.json IN PLACE -- the (size, mtime_ns)
-        # signature must force a re-parse, never serve the stale manifest copy
+    def test_a_new_snapshot_appears_though_the_sidecar_predates_it(self, tmp_path):
+        """ADDITION ONLY -- nothing removed, nothing edited.
+
+        The fast path's gate must be EQUALITY of the name sets. A subset test
+        ("every entry I know still exists") passes here and then serves the
+        sidecar wholesale, silently dropping the snapshot that was just
+        captured -- the newest one, the one the user is looking for. The
+        existing add-and-remove test cannot catch it, because the removal
+        breaks the subset and sends it down the slow path anyway; that is
+        exactly why this case gets its own pin.
+        """
+        hm, qs = _mk_chip(tmp_path)
+        chip = hm._history_dir(qs)
+        for i in range(3):
+            self._snap(chip, _ts(i))
+        assert len(hm._list_snapshots_in_dir(chip)) == 3        # seeds sidecar
+        self._snap(chip, _ts(9))                                # capture lands
+        hm2 = HistoryManager(tmp_path / "instance")
+        got = [m.timestamp for m in hm2._list_snapshots_in_dir(chip)]
+        assert got == [_ts(9), _ts(2), _ts(1), _ts(0)], got
+
+    def test_an_in_place_label_edit_through_sm_is_picked_up(self, tmp_path):
+        """A label/pin edit rewrites meta.json IN PLACE, so the directory-name
+        set does not move and the fast path (docs/155 10g) would happily serve
+        the old copy. ``annotate_snapshot`` refreshes the sidecar entry itself;
+        this pins that it does. Break that wiring and a user's label silently
+        never appears.
+        """
         hm, qs = _mk_chip(tmp_path)
         chip = hm._history_dir(qs)
         self._snap(chip, _ts(0))
-        assert hm._list_snapshots_in_dir(chip)[0].label is None
+        assert hm._list_snapshots_in_dir(chip)[0].label is None    # seeds sidecar
         time.sleep(0.01)
-        self._snap(chip, _ts(0), label="golden baseline")
-        hm2 = HistoryManager(tmp_path / "instance")
+        hm.annotate_snapshot(qs, _ts(0), label="golden baseline")
+        hm2 = HistoryManager(tmp_path / "instance")                # cold process
         assert hm2._list_snapshots_in_dir(chip)[0].label == "golden baseline"
+
+    def test_an_out_of_band_meta_edit_is_the_accepted_trade(self, tmp_path):
+        """The cost of the fast path, written down as a test rather than left
+        as a surprise.
+
+        docs/143 stat'ed every meta.json so a hand edit would be seen. That was
+        4,003 syscalls per scan on the customer's chip -- ~7.2 s of one page
+        load on their share -- spent defending SM's cache of SM's own files
+        against a text editor. docs/155 10g stopped paying it: an edit made by
+        something OTHER than SM is invisible until a directory is added or
+        removed.
+
+        If this test ever fails, the trade was reversed -- which is allowed,
+        but it must be a decision rather than a drift.
+        """
+        hm, qs = _mk_chip(tmp_path)
+        chip = hm._history_dir(qs)
+        self._snap(chip, _ts(0))
+        assert hm._list_snapshots_in_dir(chip)[0].label is None    # seeds sidecar
+        time.sleep(0.01)
+        self._snap(chip, _ts(0), label="edited by hand")           # out of band
+        hm2 = HistoryManager(tmp_path / "instance")
+        assert hm2._list_snapshots_in_dir(chip)[0].label is None, (
+            "an out-of-band edit became visible -- the fast path is off, or the "
+            "trade was reversed without updating this pin")
+        # ...and it self-heals the moment the name set moves.
+        self._snap(chip, _ts(1))
+        hm3 = HistoryManager(tmp_path / "instance")
+        by_ts = {m.timestamp: m for m in hm3._list_snapshots_in_dir(chip)}
+        assert by_ts[_ts(0)].label == "edited by hand"
 
     def test_the_scan_costs_one_stat_per_snapshot_not_two(self, tmp_path):
         """The enumeration already carries each child's kind.
@@ -205,9 +260,12 @@ class TestSnapshotManifest:
         and this scan runs on every process-cold read and after every
         capture/ingest invalidation. On a customer chip with 4,003 snapshots
         that was 8,008 stats; on their SMB share, ~14 s of one page load
-        (docs/155 10f). The remaining stat per snapshot is the manifest's
-        freshness check and is load-bearing -- see
-        test_in_place_meta_edit_is_picked_up.
+        (docs/155 10f). 10g then removed the sidecar's own freshness stat as
+        well, so a warm scan of ANY size costs three file operations flat --
+        one guard stat, one read of the sidecar, one scandir. This test spies
+        `os.stat` alone, so it pins the per-entry term (the one that scales)
+        and not that constant. What pays for it is
+        test_an_in_place_label_edit_through_sm_is_picked_up.
         """
         import os as _os
         hm, qs = _mk_chip(tmp_path)
@@ -232,10 +290,13 @@ class TestSnapshotManifest:
         assert len(got) == n
         under = [c for c in calls if str(chip) in c]
         meta = [c for c in under if c.endswith("meta.json")]
-        assert len(meta) == n, "one freshness stat per snapshot is expected"
-        # ...and nothing else inside the chip dir. A stat of a snapshot DIR
-        # itself is the regression this pins.
-        # the one legitimate non-meta stat is the hist_dir guard itself
+        # ZERO per-entry syscalls. iterdir() + is_dir() spent one stat per
+        # snapshot on what the enumeration already knew, and the sidecar's
+        # freshness check spent another; docs/155 10f and 10g removed both. On
+        # the customer's 4,003-snapshot chip that pair was 8,008 stats -- about
+        # 14 s of a single page load on their SMB share.
+        assert meta == [], f"per-entry freshness stats are back: {meta[:3]}"
+        # the one legitimate stat is the hist_dir guard itself
         extra = [c for c in under
                  if not c.endswith("meta.json") and c != str(chip)]
         assert extra == [], f"per-child stats the enumeration already answered: {extra}"
