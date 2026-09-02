@@ -12186,3 +12186,20 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .dp-delta { display: block; font-size: 0.85em; line-height: 1.15; }
 .dp-delta[hidden] { display: none; }
 .diff-view-fixed { font-size: 0.8em; padding: 0 0.4rem; }
+
+/* ── 2Q Gate Detuning Inspector (docs/154) ──────────────────────────── */
+.gi-inspector { padding: 0.5rem 0; }
+.gi-controls { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; padding: 0 0.5rem 0.5rem; }
+.gi-label { font-size: 0.85em; white-space: nowrap; }
+.gi-toggle { display: inline-flex; gap: 0.25rem; }
+.gi-chip { all: unset; cursor: pointer; padding: 0.2rem 0.6rem; border-radius: 12px; font-size: 0.82em; border: 1px solid var(--pico-muted-border-color); transition: background 0.15s, border-color 0.15s; }
+.gi-chip:hover { background: var(--pico-card-sectioning-background-color); }
+.gi-chip-active { background: var(--pico-primary-background); color: var(--pico-primary-inverse); border-color: var(--pico-primary); }
+.gi-chip-active:hover { background: var(--pico-primary-hover-background); }
+.gi-switch-btn { font-size: 0.78em; padding: 0.15rem 0.5rem; border-radius: 4px; cursor: pointer; border: 1px solid var(--pico-muted-border-color); background: none; color: var(--pico-color); margin-left: auto; }
+.gi-switch-btn:hover { background: var(--pico-card-sectioning-background-color); }
+.gi-plot-area { min-height: 300px; }
+.gi-plot { min-height: 300px; }
+.gi-info { padding: 0.25rem 0.5rem; }
+.gi-error, .gi-warnings { padding: 0.5rem; }
+.gi-warnings ul { margin: 0.25rem 0 0 1rem; padding: 0; }

@@ -1,0 +1,48 @@
+{# 2Q Gate Detuning Inspector — lazy-loaded section in the pair detail panel.
+   Shows energy-level detunings as a function of voltage for CZ gate tuning. #}
+{% if error %}
+<div class="gi-error muted">{{ error }}</div>
+{% elif warnings %}
+<div class="gi-warnings">
+    <p class="muted">Missing data for the detuning inspector:</p>
+    <ul>{% for w in warnings %}<li class="muted">{{ w }}</li>{% endfor %}</ul>
+</div>
+{% else %}
+<div class="gi-inspector" data-pair="{{ pair_name }}">
+    <div class="gi-controls">
+        <span class="gi-label muted">Moving qubit:</span>
+        <div class="gi-toggle" role="radiogroup">
+            <button class="gi-chip{% if moving_role == 'control' %} gi-chip-active{% endif %}"
+                    data-role="control"
+                    title="Sweep {{ control_name }} (control)">
+                {{ control_name }} <small class="muted">(control)</small>
+            </button>
+            <button class="gi-chip{% if moving_role == 'target' %} gi-chip-active{% endif %}"
+                    data-role="target"
+                    title="Sweep {{ target_name }} (target)">
+                {{ target_name }} <small class="muted">(target)</small>
+            </button>
+        </div>
+        <button class="gi-switch-btn btn-sm"
+                title="Switch the pair's moving_qubit to the selected role and rewire CZ pulse references (stages edits in the review tray)"
+                data-pair="{{ pair_name }}"
+                data-current-moving="{{ current_moving }}">
+            ⇄ Switch moving qubit
+        </button>
+    </div>
+    <div class="gi-plot-area">
+        <div class="gi-plot" id="gi-plot-{{ pair_name | replace('-', '_') }}"
+             data-pair="{{ pair_name }}"
+             data-role="{{ moving_role }}">
+            <p class="muted" style="text-align:center;padding:2em">Loading detuning plot…</p>
+        </div>
+    </div>
+    <div class="gi-info muted">
+        <small>
+            Click on the plot to stage a z-voltage edit.
+            Δ(|11⟩−|20⟩) and Δ(|11⟩−|02⟩) zero crossings are CZ interaction points.
+            Red ✕ markers show where detunings vanish.
+        </small>
+    </div>
+</div>
+{% endif %}
