@@ -46,7 +46,7 @@ class TestKind:
         (3.5, "num"),
         (None, "null"),
         ({"a": 1}, "other"),
-        ([1, 2], "other"),
+        ([1, 2], "list"),        # docs/159: a list is its own kind -- the grids repaint it from the list strings
     ])
     def test_classification(self, value, kind):
         assert _revert_entry_payload("x.y", value)["old_kind"] == kind

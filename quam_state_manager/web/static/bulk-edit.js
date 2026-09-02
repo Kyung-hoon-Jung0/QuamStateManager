@@ -2958,7 +2958,10 @@
         // value, saves the PARSED value through the same atomic /field/edit-batch
         // path (non-string values skip server-side re-parse, so the list commits
         // typed-correctly); client parse errors + server 400s render inline.
-        openJsonCell: function (path, btn) {
+        // docs/159: an optional third argument is the JSON TEXT to start from
+        // (the 🕘 popover's Use on a list cell hands over the historical
+        // value) -- no peek then: the user asked for THAT value.
+        openJsonCell: function (path, btn, prefillText) {
             var old = document.getElementById('bulk-json-modal');
             if (old && old.parentNode) old.parentNode.removeChild(old);
             var ov = document.createElement('div');
@@ -2989,6 +2992,10 @@
                 ta.value = JSON.stringify(v === undefined ? null : v, null, 2);
                 ta.focus();
             }
+            if (prefillText !== undefined && prefillText !== null) {
+                try { prefill(JSON.parse(String(prefillText))); }
+                catch (e0) { ta.value = String(prefillText); ta.focus(); }
+            } else
             fetch('/field/peek?dot_path=' + encodeURIComponent(path))
                 .then(function (r) { return r.json(); })
                 .then(function (jb) {
@@ -3240,9 +3247,16 @@
             // both get value AND data-orig and the phantom-dirty twin (M-8)
             // cannot arise.
             var q = _cssEsc(p);
+            // docs/159: the listedit preview span carries its ALIAS in data-path
+            // and, since docs/159, the resolved leaf in data-resolved -- /undo
+            // names the resolved one (a port field behind the qubit's io
+            // pointer: qubits.q2.z.opx_output.exponential_filter is undone as
+            // ports.analog_outputs.con1.4.1.exponential_filter), so without the
+            // second axis the span was `missing` and Ctrl+Z visibly did nothing
             return t.querySelectorAll('.bulk-cell[data-dot-path="' + q + '"]'
                 + ', .bulk-cell[data-resolved="' + q + '"]'
-                + ', .bulk-cell-list[data-path="' + q + '"]');   // the listedit preview span: found, never value-written
+                + ', .bulk-cell-list[data-path="' + q + '"]'
+                + ', .bulk-cell-list[data-resolved="' + q + '"]');
         };
         // A cold column (docs/105) has no .bulk-cell to land in — the same trap
         // _consumeEditCarry hit. Hydrate once if any named path is absent.
@@ -3295,11 +3309,26 @@
             var wrote = 0;
             var honest = e.old_kind !== 'pointer';
             Array.prototype.forEach.call(cs, function (c) {
-                // A readonly cell (a list / runtime column) and the qubit
-                // grid's list-preview span are FOUND but cannot be repainted
-                // by a value write: they stay uncovered (docs/124 M-10) so
-                // the caller's rebuild clears the edited preview + the red
-                // modified marker. Only a path with NO cell at all is
+                // docs/159: the qubit grid's list-preview span IS repaintable
+                // when the reverted value is a list -- the server ships the
+                // very string `_list_json_cell` renders (old_value_disp via
+                // `_list_preview`), so the repaint is a fresh render. Any
+                // other kind (the field went back to null / a scalar) changes
+                // the cell's SHAPE and stays uncovered for the honest rebuild.
+                if (c.classList.contains('bulk-cell-list')) {
+                    if (e.old_kind !== 'list') return;
+                    c.textContent = v;
+                    _hayCache = null;                 // the preview is search text
+                    var trl = _rowOf(c);
+                    if (trl && rows.indexOf(trl) < 0) rows.push(trl);
+                    patched++;
+                    wrote++;
+                    return;
+                }
+                // A readonly cell (a runtime column) is FOUND but cannot be
+                // repainted by a value write: it stays uncovered (docs/124
+                // M-10) so the caller's rebuild clears the edited preview +
+                // the red modified marker. Only a path with NO cell at all is
                 // "missing" -- that one is not the grid's to repaint.
                 if (c.readOnly || c.tagName !== 'INPUT') return;
                 var isStr = c.hasAttribute('data-str-numeric')

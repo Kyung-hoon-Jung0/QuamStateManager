@@ -16761,6 +16761,17 @@ window.FieldHistory = (function () {
 
     function useValue(btn) {
         var v = btn.getAttribute("data-value") || "";
+        // docs/159: a LIST cell (the qubit grid's preview span) has no input
+        // to type into -- Use opens the whole-value JSON editor started from
+        // this historical value (its fill is compact JSON), same commit door
+        if (applyInput && applyInput.classList && applyInput.classList.contains("bulk-cell-list")
+                && window.BulkEdit && window.BulkEdit.openJsonCell) {
+            var td = applyInput.closest("td");
+            var pen = (td && td.querySelector(".bulk-list-edit")) || applyInput;
+            close();
+            window.BulkEdit.openJsonCell(applyInput.dataset.path || applyInput.dataset.resolved || "", pen, v);
+            return;
+        }
         if (applyInput && document.body.contains(applyInput)) {
             // Grid cells join the LiveEditUndo stack (docs/20 v2) so one
             // Ctrl+Z reverts this fill before it is ever staged.
@@ -16853,7 +16864,8 @@ window.FieldHistory = (function () {
        length×char-width monospace fallback where canvas is unavailable). */
     var _measureCanvas = null;
     function _cellTextWidth(input, geom) {
-        var value = input.value || "";
+        // an <input> has .value; the list-preview span (docs/159) has text
+        var value = (input.value !== undefined ? input.value : input.textContent) || "";
         // `geom` carries the font already measured for this cell (docs/120 item
         // 24) — asking the engine again per keystroke is a forced style recalc
         // for values that cannot have changed since the cell took focus.
@@ -16983,8 +16995,11 @@ window.FieldHistory = (function () {
     };
     document.addEventListener("focusin", function (e) {
         var t = e.target;
-        if (t && t.classList && t.classList.contains("bulk-cell") &&
-            !t.classList.contains("bulk-cell-ro")) {
+        // docs/159 (customer: no 🕘 on exponential_filter): the qubit grid's
+        // LIST cell is a preview span, not an input -- focusable since
+        // docs/159 (tabindex), so a click docks the same shared button
+        if (t && t.classList && ((t.classList.contains("bulk-cell") &&
+            !t.classList.contains("bulk-cell-ro")) || t.classList.contains("bulk-cell-list"))) {
             showCellBtn(t);
         } else if (!t || t.id !== "fh-cellbtn") {
             hideCellBtn();

@@ -641,3 +641,10 @@ one** (docs/136, 137).
   to the defaults (or every qubit) with the whole page re-rendering; an empty
   selection is now a selection, a chip click re-renders only the results, and
   the page-load popup no longer flashes over it (docs/158).
+
+### Live State Edit
+
+- **Ctrl+Z / Ctrl+Shift+Z on a list cell (`exponential_filter`, a confusion
+  matrix) now changes what you see.** The value moved in the working copy but
+  the cell kept its old preview; it repaints in place now, and the 🕘 value
+  history reaches list cells too (docs/159).

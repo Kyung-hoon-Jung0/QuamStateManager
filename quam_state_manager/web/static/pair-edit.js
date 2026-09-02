@@ -1136,11 +1136,25 @@
             var wrote = 0;
             var honest = e.old_kind !== 'pointer';
             Array.prototype.forEach.call(cs, function (c) {
-                // A readonly cell (a list / runtime column) and the qubit
-                // grid's list-preview span are FOUND but cannot be repainted
-                // by a value write: they stay uncovered (docs/124 M-10) so
-                // the caller's rebuild clears the edited preview + the red
-                // modified marker. Only a path with NO cell at all is
+                // docs/159: the pair grid's LIST cell (a readonly `▦ N×M`
+                // badge, data-list) is repaintable when the reverted value is
+                // a list -- the server ships the badge `_list_pair_cell`
+                // renders (old_value_badge via `_list_badge`). Any other kind
+                // changes the cell's shape and stays uncovered for the rebuild.
+                if (c.hasAttribute('data-list')) {
+                    if (e.old_kind !== 'list' || e.old_value_badge == null) return;
+                    c.value = String(e.old_value_badge);
+                    c.setAttribute('data-orig', c.value);
+                    var trl = _rowOf(c);
+                    if (trl && rows.indexOf(trl) < 0) rows.push(trl);
+                    patched++;
+                    wrote++;
+                    return;
+                }
+                // A readonly cell (a runtime column) is FOUND but cannot be
+                // repainted by a value write: it stays uncovered (docs/124
+                // M-10) so the caller's rebuild clears the edited preview +
+                // the red modified marker. Only a path with NO cell at all is
                 // "missing" -- that one is not the grid's to repaint.
                 if (c.readOnly || c.tagName !== 'INPUT') return;
                 var isStr = c.hasAttribute('data-str-numeric')

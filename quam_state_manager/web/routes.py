@@ -5317,16 +5317,36 @@ def _list_pair_cell(merged: dict, pair_id: str, path: str) -> dict[str, Any]:
             val = None
     except Exception:
         val = None
-    if isinstance(val, list) and val and all(isinstance(r, list) for r in val):
-        badge = "▦ %d×%d" % (len(val), len(val[0]) if val[0] else 0)
-    elif isinstance(val, list):
-        badge = "[ %d ]" % len(val)
-    else:
-        badge = ""
+    badge = _list_badge(val)
     return {"dot_path": path, "resolved_path": path, "display": badge,
             "is_pointer": False, "missing": val is None, "linkable": False,
             "modified": False, "old_display": "", "editable": False,
             "kind": "list", "pair_id": pair_id}
+
+
+def _list_preview(val: Any) -> str:
+    """The qubit grid's list-cell text (docs/159): compact JSON, cut at 24
+    characters. ONE function for the page render (`_list_json_cell`) and the
+    undo/discard payload (`_revert_entry_payload`), so a repainted cell is
+    byte-identical to a fresh one."""
+    try:
+        preview = json.dumps(val, separators=(",", ":")) if val is not None else ""
+    except (TypeError, ValueError):
+        preview = str(val)
+    if len(preview) > 24:
+        preview = preview[:24] + "…"
+    return preview
+
+
+def _list_badge(val: Any) -> str:
+    """The pair grid's list-cell text (docs/159): a `▦ N×M` matrix badge, a
+    `[ N ]` vector badge, blank for anything else. Same one-function rule as
+    `_list_preview`."""
+    if isinstance(val, list) and val and all(isinstance(r, list) for r in val):
+        return "▦ %d×%d" % (len(val), len(val[0]) if val[0] else 0)
+    if isinstance(val, list):
+        return "[ %d ]" % len(val)
+    return ""
 
 
 def _list_json_cell(merged: dict, path: str, modified: dict) -> dict[str, Any]:
@@ -5345,12 +5365,7 @@ def _list_json_cell(merged: dict, path: str, modified: dict) -> dict[str, Any]:
     if ft.get("resolvable"):
         found, node = _walk_abs(merged, resolved.split("."))
         val = node if found else None
-    try:
-        preview = json.dumps(val, separators=(",", ":")) if val is not None else ""
-    except (TypeError, ValueError):
-        preview = str(val)
-    if len(preview) > 24:
-        preview = preview[:24] + "…"
+    preview = _list_preview(val)
     return {"dot_path": path, "resolved_path": resolved, "display": preview,
             "is_pointer": bool(ft.get("is_pointer")), "missing": val is None,
             "linkable": False, "modified": resolved in modified,
@@ -5668,9 +5683,11 @@ def _revert_entry_payload(dot_path, value, *, created=False, deleted=False,
         kind = "bool"
     elif isinstance(value, (int, float)):
         kind = "num"
+    elif isinstance(value, list):
+        kind = "list"
     else:
         kind = "other"
-    return {
+    out = {
         "dot_path": dot_path,
         "old_value_str": _fmt_val(value),
         "old_value_disp": _bulk_display(value),
@@ -5678,6 +5695,18 @@ def _revert_entry_payload(dot_path, value, *, created=False, deleted=False,
         "created": bool(created), "deleted": bool(deleted),
         "source_file": source_file,
     }
+    if kind == "list":
+        # docs/159 (customer: Ctrl+Z on exponential_filter "did nothing"):
+        # a LIST cell is not a text input -- the qubit grid shows the same
+        # compact JSON preview `_list_json_cell` renders, the pair grid the
+        # `▦ N×M` badge `_list_pair_cell` renders. Ship BOTH, from the same
+        # two helpers the page uses, so the grids can repaint a reverted
+        # list cell byte-identically to a fresh render instead of leaving
+        # the pre-undo preview on screen. `_bulk_display(list)` is
+        # `str(list)` -- Python's repr, which no cell ever shows.
+        out["old_value_disp"] = _list_preview(value)
+        out["old_value_badge"] = _list_badge(value)
+    return out
 
 
 _SYNC_PATCH_CAP = 4000
