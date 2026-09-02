@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import shutil
 import sqlite3
@@ -2133,12 +2134,27 @@ class HistoryManager:
         snapshots: list[SnapshotMeta] = []
         fresh_entries: dict = {}
         parsed_new = 0
-        for child in sorted(hist_dir.iterdir(), reverse=True):
-            if not child.is_dir():
+        # scandir, not iterdir + is_dir(): the enumeration already carries each
+        # child's kind, where Path.is_dir() is one stat per child. On a chip
+        # with 4,003 snapshots that was 4,004 stats of the 8,008 this scan made
+        # -- half its cost, for an answer the OS had already handed us. Same
+        # lesson (and same wording) as scanner._spine_of. Measured on a
+        # synthetic 4,003-snapshot store: 8,009 ops -> 4,005.
+        try:
+            with os.scandir(hist_dir) as it:
+                children = sorted(it, key=lambda de: de.name, reverse=True)
+        except OSError:
+            return []
+        for de in children:
+            try:
+                if not de.is_dir():
+                    continue
+            except OSError:
                 continue
+            child = Path(de.path)          # no syscall -- for messages + keys
             meta_path = child / "meta.json"
             try:
-                st = meta_path.stat()
+                st = os.stat(os.path.join(de.path, "meta.json"))
                 sig = [st.st_size, st.st_mtime_ns]
             except OSError:
                 logger.warning("Skipping snapshot dir without meta.json: %s", child)

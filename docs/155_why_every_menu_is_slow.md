@@ -731,6 +731,90 @@ only in case, which this filesystem cannot hold — arguably an honest Windows
 skip), the two WSL probes, `test_safe_io` ×2, and `test_poll_stability` ×2
 (order-dependent — they pass alone).
 
+## 10f. The customer installed it — and named the one number we lacked
+
+**2026-09-02, first real deployment of this campaign.** Chip Status, Live State
+Edit and data loading are "상당히 빨라졌" — the surfaces §2 predicted and §5
+fixed. Two remain slow, and one of them came with the fact this document has
+been missing since §1: **their chip has 4,003 versions.**
+
+§9 says the customer's real archive size was unknown and that 390 date dirs was
+a model. This is the first measured number off their box, and it is about a
+different store than §2 profiled — the snapshot history, not the run archive.
+
+Reported: the landing at `127.0.0.1` takes **>10 s**, and pressing the project
+button takes **~20 s**, after which the Versions chip reads 4,003.
+
+### The measurement
+
+A synthetic 4,003-snapshot store, syscalls counted per call and attributed to
+the innermost SM frame (§1's method):
+
+```
+                                  ops      est. on their share (@1.8 ms/op)
+COLD  (no manifest)             12,013     ~21.6 s
+WARM  (manifest, cold process)   8,009     ~14.4 s
+```
+
+The reported ~20 s for the project press is the COLD figure almost exactly.
+docs/143's manifest is doing its job — it removes the 4,004 `meta.json`
+**opens** — but it never addressed the stats, and the stats are most of the
+cost:
+
+```
+history.py:2137   child.is_dir()      4,004 stats
+history.py:2141   meta_path.stat()    4,003 stats   <- the manifest's freshness check
+```
+
+### The fix, and why it was already written down
+
+`hist_dir.iterdir()` yields `Path` objects, so `child.is_dir()` is **one stat
+per snapshot for an answer the directory enumeration already carried**.
+`os.scandir` hands it over free. This project already knows this —
+`scanner._spine_of` carries the comment verbatim ("scandir, not iterdir +
+is_dir(): the enumeration already carries each child's kind", docs/126 r3
+profile) — it had simply never been applied here.
+
+```
+COLD   12,013 -> 8,010 ops    ~21.6 s -> ~14.4 s
+WARM    8,009 -> 4,005 ops    ~14.4 s ->  ~7.2 s
+```
+
+Same 4,003 snapshots out, so this is a pure cost removal with no semantic
+change; 237 history/aging/versions tests pass unchanged. Pinned by
+`test_the_scan_costs_one_stat_per_snapshot_not_two`, which counts stats under
+the chip dir and allows exactly one per snapshot (the freshness check) plus the
+single `hist_dir` guard — mutation-verified by restoring the per-child
+`is_dir()`.
+
+### What is still there, and the trade it would cost
+
+The remaining 4,003 stats are the manifest's per-entry freshness check, and
+they are load-bearing: an in-place label/pin edit rewrites `meta.json` without
+touching any directory mtime, which is what
+`test_in_place_meta_edit_is_picked_up` protects.
+
+They **could** go. After the scandir change the enumeration already yields the
+complete child-name set for one op, so a manifest whose key set matches could
+be trusted outright — 4,005 ops -> ~5, i.e. ~7.2 s -> effectively nothing. The
+price is that an in-place `meta.json` edit made by something other than SM
+would be invisible until the name set moved. That reverses a deliberate
+docs/143 decision, so it is written down here rather than taken unilaterally.
+
+### The landing is NOT explained by this
+
+`GET /` is deliberately cheap (docs/63: the project cards are a lazy fragment
+so the landing "never pays the TOML/doctor I/O"). Candidates for the >10 s,
+**none of them measured**: `tray_status()`; up to six
+`(Path(p) / "state.json").exists()` probes over the resume path and recent
+chips, which on an unreachable or slow share can each block for seconds;
+`_chip_display_name` per recent, which reads state.json; and first-request app
+startup. **This section does not claim any of them.** The customer can split it
+in one step with no code: the browser's Network tab shows `GET /` and
+`GET /landing/projects` separately — whichever holds the seconds names the
+half, and the second one would mean the qualibrate listing + doctor rather than
+anything in this document.
+
 ## 9. What this does not show
 
 - **The NAS was unreachable throughout** (the same network fault that ended the

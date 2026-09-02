@@ -197,6 +197,49 @@ class TestSnapshotManifest:
         hm2 = HistoryManager(tmp_path / "instance")
         assert hm2._list_snapshots_in_dir(chip)[0].label == "golden baseline"
 
+    def test_the_scan_costs_one_stat_per_snapshot_not_two(self, tmp_path):
+        """The enumeration already carries each child's kind.
+
+        `iterdir()` + `child.is_dir()` spent one stat per snapshot dir on an
+        answer os.scandir hands over for free -- half of this scan's syscalls,
+        and this scan runs on every process-cold read and after every
+        capture/ingest invalidation. On a customer chip with 4,003 snapshots
+        that was 8,008 stats; on their SMB share, ~14 s of one page load
+        (docs/155 10f). The remaining stat per snapshot is the manifest's
+        freshness check and is load-bearing -- see
+        test_in_place_meta_edit_is_picked_up.
+        """
+        import os as _os
+        hm, qs = _mk_chip(tmp_path)
+        chip = hm._history_dir(qs)
+        n = 12
+        for i in range(n):
+            self._snap(chip, _ts(i))
+        hm._list_snapshots_in_dir(chip)                # seed the manifest
+
+        calls = []
+        real = _os.stat
+        def spy(path, *a, **k):
+            calls.append(str(path))
+            return real(path, *a, **k)
+        hm2 = HistoryManager(tmp_path / "instance")
+        _os.stat = spy
+        try:
+            got = hm2._list_snapshots_in_dir(chip)
+        finally:
+            _os.stat = real
+
+        assert len(got) == n
+        under = [c for c in calls if str(chip) in c]
+        meta = [c for c in under if c.endswith("meta.json")]
+        assert len(meta) == n, "one freshness stat per snapshot is expected"
+        # ...and nothing else inside the chip dir. A stat of a snapshot DIR
+        # itself is the regression this pins.
+        # the one legitimate non-meta stat is the hist_dir guard itself
+        extra = [c for c in under
+                 if not c.endswith("meta.json") and c != str(chip)]
+        assert extra == [], f"per-child stats the enumeration already answered: {extra}"
+
     def test_corrupt_manifest_reads_as_a_miss(self, tmp_path):
         hm, qs = _mk_chip(tmp_path)
         chip = hm._history_dir(qs)
