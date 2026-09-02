@@ -627,3 +627,10 @@ one** (docs/136, 137).
   Alt+C bring that window forward instead of opening a second one; Escape closes
   it and it reopens where you left it. Browser mode only — the desktop shell
   keeps the in-page floating popover (docs/156).
+
+### Sidebar
+
+- **The experiment list is easier to read** — larger rows, the run number is a
+  bold badge, names wrap at their own `_` joints (two lines at most for every
+  name in a 2,655-run archive), and the sidebar opens 300 px wide by default
+  (docs/157).
