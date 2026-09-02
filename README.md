@@ -52,8 +52,8 @@ a feature tour and every keyboard shortcut.
 
 ```bash
 # From a clone (or a release archive) — a plain install is all you need:
-git clone https://github.com/Kyung-hoon-Jung0/statemanager.git
-cd statemanager
+git clone https://github.com/Kyung-hoon-Jung0/QuamStateManager.git
+cd QuamStateManager
 pip install .
 
 # `qsm` (short) and `quam-manager` are now on your PATH:

@@ -854,9 +854,14 @@ removed. docs/143 stat'ed every entry to catch exactly that; it was costing
 4,003 syscalls a scan to defend SM's own cache of SM's own files against hand
 editing. The reversal is pinned in both directions:
 `test_an_in_place_label_edit_through_sm_is_picked_up` (SM's own edit must
-survive) and `test_an_out_of_band_meta_edit_is_the_accepted_trade`, which
-asserts the *limitation* so that reversing it later has to be a decision rather
-than a drift — and also that it self-heals the moment the name set moves.
+survive) and a pin asserting the *limitation* itself, so that reversing it
+later has to be a decision rather than a drift.
+
+> **Superseded by §10h, same day.** The trade above lasted one section: the
+> stats it was avoiding did not have to happen on the request path at all,
+> and a background sweep now pays them. §10h also measures what "the first
+> open" in the next paragraph actually means, and finds this section still
+> re-paying the full scan on every capture.
 
 **One upgrade cost, once.** The sidecar version is bumped to v2, not for its
 shape but because a v1 file was written by a build whose in-place writers did
@@ -888,6 +893,90 @@ equality gate stays as the earlier, clearer short-circuit; the per-name lookup
 is what enforces it. A pin cannot fail on a mutation that does not mutate
 (docs/141 §4ad established the same distinction), so the rule is guarded by
 the pin above, which fails on the behaviour rather than the spelling.
+
+## 10h. "Once" was the wrong word: the delta, and the sweep that pays the rest
+
+10g was reported here as "one cold scan on upgrade, then flat". The user asked
+the right question of that sentence — *does it mean once ever, or every time SM
+restarts?* — and measuring the answer showed the sentence was wrong in a third
+way neither of us had said out loud.
+
+Each line below is a **separate cold process**, on a 4,003-snapshot chip, with
+the instrument of 10g's table (every `os.stat`/`scandir` and every `open`):
+
+```
+                                            10g      10h     est. on their share
+1. upgrade: no v2 sidecar yet              8,011    8,011    ~14.4 s   (once per chip)
+2. SM restarted, nothing changed               3        3    ~0.005 s
+3. SM restarted again                          3        3    ~0.005 s
+4. mid-capture (dir exists, no meta yet)   4,007        4    ~7.2 s -> ~0.007 s
+5. first listing after the capture         4,010        7    ~7.2 s -> ~0.013 s
+6. next listing, still nothing new             3        3    ~0.005 s
+7. and again                                   3        3    ~0.005 s
+```
+
+So **restarting SM was never the cost** — the sidecar is a file, and a cold
+process reads it in three operations. What 10g still re-paid in full was a
+**capture**: its gate was equality of the two name sets, and one new directory
+fails equality, so the whole listing fell back to the full scan. Lines 4 and 5
+are the same capture — the writer lists priors mid-write, then the next reader
+lists again — so a lab that captures one snapshot per run was paying **~14 s of
+its share per run**, which is most of what 10g claimed to have removed.
+
+**The fix is to stop comparing sets and start comparing entries.** A name in
+both is served from the sidecar; a name the sidecar does not know is stat'ed and
+parsed; a name only the sidecar knows is simply never rendered, because the loop
+walks what is on DISK. Cost is O(what changed). It also subsumes 10g's
+meta-less-directory trap without memoising anything: a half-written capture is
+just an unknown name, stat'ed on each listing until its `meta.json` lands.
+
+### The trade is not a trade any more
+
+10g accepted that an edit made outside SM stays invisible. That was the honest
+price of not stat'ing 4,003 files **on the request path, while somebody waits**.
+Nothing about those stats has to happen there. `verify_manifest` now does them
+on a daemon thread, 200 entries at a time with a pause between chunks, holding
+no lock while it stats — 4,003 stats is ~7.2 s of share time spread over ~15 s
+of background time, and the request path never sees it. Same shape as docs/142's
+listing cache: serve from the cache at once, verify quietly afterwards.
+
+It needs no new signalling. The sidecar lives *inside* the chip's history dir,
+so healing it moves that dir's mtime — which is exactly what `history_seq_for`
+already watches on the every-page poll (docs/132), so an open Versions panel
+repaints itself. That is also why a sweep that applied nothing must not write:
+a pointless rewrite is a phantom "another process captured something" on a
+timer, forever.
+
+### What the mutation sweep found that the tests did not
+
+Eleven mutations, and the first run caught eight. The three misses were all
+mine, and one of them was a real defect:
+
+- **The sweep could take a label back off the screen.** It reads a `meta.json`
+  seconds or minutes before it writes. If the user renames that version in SM
+  in between, `annotate_snapshot` refreshes the sidecar entry — and then the
+  sweep's *older* read was written over it, so the label the user just typed
+  disappeared until the next sweep. The write is compare-and-swap on the
+  entry's signature now: the sweep's copy loses to anything newer. Found by
+  writing the mutation, not by reasoning about the code.
+- **Two pins asserted nothing.** The "does not undo a concurrent capture" pin
+  checked the rendered list, which is self-healing (the listing re-parses any
+  name the sidecar does not know), so the read-modify-write bug it was written
+  for changed nothing it looked at; it asserts the sidecar's contents now, and
+  says in the test why the rendered list cannot show it. The "healed value is
+  visible" pin called `_list_snapshots_in_dir`, which does not consult the
+  cache — the invalidation it was meant to guard was untested until it went
+  through `list_snapshots`, the cached public read a page actually calls.
+
+After those, **11 of 11**. The two interleave pins (a capture, and a user's
+rename, both landing inside the sweep) are deterministic: they run from inside
+the sweep's own pause.
+
+### What is left
+
+Line 1 — the one-time cold scan per chip after upgrading, ~14 s on their share,
+because a v1 sidecar was written by a build whose in-place writers did not
+refresh it. Everything after it is flat.
 
 ## 9. What this does not show
 

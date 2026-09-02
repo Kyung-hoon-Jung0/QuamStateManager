@@ -30,6 +30,13 @@ import pytest
 # a 4 s `conda env list` per app and race the cache-reset fixture below.
 os.environ.setdefault("SM_DISABLE_ENV_WARMUP", "1")
 
+# Listing a chip's snapshots arms a background sweep that re-stats the sidecar
+# (docs/155 10h). It is harmless but it is a THREAD touching tmp dirs the test
+# is about to delete, and its timing is not the subject of any test. Off by
+# default; the pins that are about it either call `verify_manifest` directly or
+# clear this variable themselves.
+os.environ.setdefault("SM_DISABLE_HISTORY_VERIFY", "1")
+
 
 @pytest.fixture
 def tmp_path(tmp_path):

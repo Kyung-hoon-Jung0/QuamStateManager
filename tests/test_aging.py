@@ -188,13 +188,12 @@ class TestSnapshotManifest:
     def test_a_new_snapshot_appears_though_the_sidecar_predates_it(self, tmp_path):
         """ADDITION ONLY -- nothing removed, nothing edited.
 
-        The fast path's gate must be EQUALITY of the name sets. A subset test
-        ("every entry I know still exists") passes here and then serves the
-        sidecar wholesale, silently dropping the snapshot that was just
-        captured -- the newest one, the one the user is looking for. The
-        existing add-and-remove test cannot catch it, because the removal
-        breaks the subset and sends it down the slow path anyway; that is
-        exactly why this case gets its own pin.
+        The listing must render what is on DISK, not what the sidecar knows.
+        A path that serves the sidecar wholesale drops the snapshot that was
+        just captured -- the newest one, the one the user is looking for. The
+        existing add-and-remove test cannot catch that, because its removal
+        also changes the name set and would send a set-comparing gate down
+        the slow path anyway; that is why this case has its own pin.
         """
         hm, qs = _mk_chip(tmp_path)
         chip = hm._history_dir(qs)
@@ -222,19 +221,48 @@ class TestSnapshotManifest:
         hm2 = HistoryManager(tmp_path / "instance")                # cold process
         assert hm2._list_snapshots_in_dir(chip)[0].label == "golden baseline"
 
-    def test_an_out_of_band_meta_edit_is_the_accepted_trade(self, tmp_path):
-        """The cost of the fast path, written down as a test rather than left
-        as a surprise.
+    def test_an_out_of_band_edit_costs_the_request_path_nothing(self, tmp_path):
+        """The request path never re-reads a meta.json the sidecar knows.
 
-        docs/143 stat'ed every meta.json so a hand edit would be seen. That was
-        4,003 syscalls per scan on the customer's chip -- ~7.2 s of one page
-        load on their share -- spent defending SM's cache of SM's own files
-        against a text editor. docs/155 10g stopped paying it: an edit made by
-        something OTHER than SM is invisible until a directory is added or
-        removed.
+        That is the whole point: on the customer's chip those stats were
+        ~7.2 s of their share, in one block, while somebody waited. An edit
+        made by something other than SM is therefore not visible to the
+        LISTING -- it becomes visible when the background sweep gets to it,
+        which is the next test. Deleting the sweep must not make this pass
+        quietly, so this test asserts the cost, not the staleness.
+        """
+        hm, qs = _mk_chip(tmp_path)
+        chip = hm._history_dir(qs)
+        for i in range(6):
+            self._snap(chip, _ts(i))
+        hm._list_snapshots_in_dir(chip)                            # seeds sidecar
+        time.sleep(0.01)
+        self._snap(chip, _ts(0), label="edited by hand")           # out of band
 
-        If this test ever fails, the trade was reversed -- which is allowed,
-        but it must be a decision rather than a drift.
+        import os as _os
+        calls: list[str] = []
+        real = _os.stat
+
+        def spy(path, *a, **k):
+            calls.append(str(path))
+            return real(path, *a, **k)
+
+        hm2 = HistoryManager(tmp_path / "instance")
+        _os.stat = spy
+        try:
+            got = hm2._list_snapshots_in_dir(chip)
+        finally:
+            _os.stat = real
+        assert len(got) == 6
+        metas = [c for c in calls if c.endswith("meta.json") and str(chip) in c]
+        assert metas == [], f"the listing re-read known entries: {metas[:3]}"
+
+    def test_the_background_sweep_heals_an_out_of_band_edit(self, tmp_path):
+        """...and the staleness is temporary, not a trade.
+
+        docs/143 paid for this on every read. docs/155 10h pays for it once
+        in a while, on a daemon thread, in chunks -- which is the same
+        correctness for none of the latency.
         """
         hm, qs = _mk_chip(tmp_path)
         chip = hm._history_dir(qs)
@@ -242,15 +270,253 @@ class TestSnapshotManifest:
         assert hm._list_snapshots_in_dir(chip)[0].label is None    # seeds sidecar
         time.sleep(0.01)
         self._snap(chip, _ts(0), label="edited by hand")           # out of band
+
         hm2 = HistoryManager(tmp_path / "instance")
-        assert hm2._list_snapshots_in_dir(chip)[0].label is None, (
-            "an out-of-band edit became visible -- the fast path is off, or the "
-            "trade was reversed without updating this pin")
-        # ...and it self-heals the moment the name set moves.
-        self._snap(chip, _ts(1))
+        # list_snapshots (not the _in_dir helper) is the CACHED public read --
+        # the one a page actually calls, and the one that would keep serving
+        # the stale label forever if the sweep healed only the disk.
+        assert hm2.list_snapshots(qs)[0].label is None             # not yet
+        res = hm2.verify_manifest(chip, pause=0)
+        assert res["refreshed"] == 1, res
+        # a cold process now reads the healed sidecar...
+        hm3 = HistoryManager(tmp_path / "instance")
+        assert hm3.list_snapshots(qs)[0].label == "edited by hand"
+        # ...and the sweeping process dropped its own cached list, so it does
+        # not keep serving the value it just corrected on disk.
+        assert hm2.list_snapshots(qs)[0].label == "edited by hand", (
+            "the sweep healed the sidecar but left its own cache stale")
+
+    def test_the_sweep_says_nothing_changed_when_nothing_did(self, tmp_path):
+        """A sweep that rewrites the sidecar every time would move the chip
+        dir's mtime every time, and history_seq_for reads that as "another
+        process captured something" -- repainting every open Versions panel
+        on a timer, forever."""
+        hm, qs = _mk_chip(tmp_path)
+        chip = hm._history_dir(qs)
+        for i in range(3):
+            self._snap(chip, _ts(i))
+        hm._list_snapshots_in_dir(chip)
+        side = chip / hm._MANIFEST_NAME
+        before = side.stat().st_mtime_ns
+        res = hm.verify_manifest(chip, pause=0)
+        assert res == {"checked": 3, "refreshed": 0, "dropped": 0}, res
+        assert side.stat().st_mtime_ns == before, "sidecar rewritten for nothing"
+
+    def _sweep_with_interleave(self, hm, chip, action):
+        """Run a sweep, performing ``action()`` inside its first pause."""
+        fired: list[int] = []
+
+        def once(_secs):
+            if fired:
+                return
+            fired.append(1)
+            action()
+
+        orig_sleep = H.time.sleep
+        H.time.sleep = once
+        try:
+            res = hm.verify_manifest(chip, chunk=1, pause=0.001)
+        finally:
+            H.time.sleep = orig_sleep
+        assert fired, "the interleave never happened -- the pause was skipped"
+        return res
+
+    def test_a_users_label_beats_the_sweeps_older_read(self, tmp_path):
+        """The sweep must not write its own copy over a NEWER one.
+
+        It read that meta.json seconds or minutes ago, at share latency. If
+        the user renames the version in SM while the sweep is walking, the
+        sweep's copy is the older read -- writing it back takes the label the
+        user just typed straight off the screen until the next sweep. So the
+        write is compare-and-swap on the entry's signature.
+        """
+        hm, qs = _mk_chip(tmp_path)
+        chip = hm._history_dir(qs)
+        for i in range(3):
+            self._snap(chip, _ts(i))
+        hm._list_snapshots_in_dir(chip)                       # seeds sidecar
+        time.sleep(0.01)
+        self._snap(chip, _ts(0), label="edited by hand")      # something to fix
+
+        hm2 = HistoryManager(tmp_path / "instance")
+        res = self._sweep_with_interleave(
+            hm2, chip,
+            # the sweep has already read ts(0); now the user renames it
+            lambda: hm2.annotate_snapshot(qs, _ts(0), label="typed in SM"))
+        assert res["refreshed"] == 0, "the sweep overwrote a newer entry"
+
         hm3 = HistoryManager(tmp_path / "instance")
         by_ts = {m.timestamp: m for m in hm3._list_snapshots_in_dir(chip)}
-        assert by_ts[_ts(0)].label == "edited by hand"
+        assert by_ts[_ts(0)].label == "typed in SM", (
+            "the sweep's older read replaced the label the user just typed")
+
+    def test_the_sweep_does_not_undo_a_capture_that_landed_mid_sweep(self, tmp_path):
+        """The sweep merges onto the sidecar as it is when it WRITES, never
+        the copy it started from -- the failure mode of every
+        read-modify-write. A capture during a long sweep is the normal case
+        on a live chip.
+
+        Note what this pin can and cannot show: dropping the new entry from
+        the SIDECAR does not lose the snapshot, because the listing walks
+        disk and re-parses anything the sidecar does not know. What it costs
+        is that re-parse, on every listing, until some scan rewrites it --
+        so this asserts the sidecar's contents, not the rendered list.
+        """
+        hm, qs = _mk_chip(tmp_path)
+        chip = hm._history_dir(qs)
+        for i in range(3):
+            self._snap(chip, _ts(i))
+        hm._list_snapshots_in_dir(chip)                       # seeds sidecar
+        time.sleep(0.01)
+        self._snap(chip, _ts(0), label="edited by hand")      # something to fix
+
+        def capture():
+            self._snap(chip, _ts(9))                          # a run finishes
+            HistoryManager(tmp_path / "instance")._list_snapshots_in_dir(chip)
+
+        hm2 = HistoryManager(tmp_path / "instance")
+        self._sweep_with_interleave(hm2, chip, capture)
+
+        side = json.loads((chip / hm._MANIFEST_NAME).read_text(encoding="utf-8"))
+        assert _ts(9) in side["entries"], "the sweep wrote back its stale copy"
+        assert side["entries"][_ts(0)]["meta"]["label"] == "edited by hand"
+        got = [m.timestamp for m in
+               HistoryManager(tmp_path / "instance")._list_snapshots_in_dir(chip)]
+        assert got == [_ts(9), _ts(2), _ts(1), _ts(0)], got
+
+    def test_the_sweep_writes_nothing_when_every_fix_was_out_voted(self, tmp_path):
+        """A sweep that finished with nothing to apply must not touch the
+        sidecar at all.
+
+        The sidecar lives INSIDE the chip dir, so writing it moves that dir's
+        mtime -- and history_seq_for reads exactly that as "another process
+        captured something", repainting every open Versions panel. A sweep
+        whose only fix lost the compare-and-swap has applied nothing, and
+        must therefore write nothing.
+        """
+        hm, qs = _mk_chip(tmp_path)
+        chip = hm._history_dir(qs)
+        for i in range(3):
+            self._snap(chip, _ts(i))
+        hm._list_snapshots_in_dir(chip)
+        time.sleep(0.01)
+        self._snap(chip, _ts(0), label="edited by hand")      # the only fix
+
+        hm2 = HistoryManager(tmp_path / "instance")
+        side = chip / hm._MANIFEST_NAME
+        before = None
+
+        def out_vote():
+            nonlocal before
+            hm2.annotate_snapshot(qs, _ts(0), label="typed in SM")
+            before = side.stat().st_mtime_ns                  # after THAT write
+
+        res = self._sweep_with_interleave(hm2, chip, out_vote)
+        assert res == {"checked": 3, "refreshed": 0, "dropped": 0}, res
+        assert side.stat().st_mtime_ns == before, (
+            "the sweep rewrote the sidecar although it applied nothing")
+
+    def test_the_sweep_drops_an_entry_whose_meta_is_gone(self, tmp_path):
+        hm, qs = _mk_chip(tmp_path)
+        chip = hm._history_dir(qs)
+        for i in range(3):
+            self._snap(chip, _ts(i))
+        hm._list_snapshots_in_dir(chip)
+        (chip / _ts(0) / "meta.json").unlink()                # dir stays, meta goes
+        res = hm.verify_manifest(chip, pause=0)
+        assert res["dropped"] == 1, res
+        side = json.loads((chip / hm._MANIFEST_NAME).read_text(encoding="utf-8"))
+        assert _ts(0) not in side["entries"]
+        # and the listing now skips it rather than serving a remembered copy
+        got = [m.timestamp for m in
+               HistoryManager(tmp_path / "instance")._list_snapshots_in_dir(chip)]
+        assert got == [_ts(2), _ts(1)], got
+
+    def test_the_sweep_keeps_an_entry_that_came_back_while_it_swept(self, tmp_path):
+        """"Its meta.json is gone" was true minutes ago, at share latency.
+
+        Between the sweep seeing that and the sweep writing, a capture can
+        have recreated the very same timestamp. Dropping it then would delete
+        a live entry, so the removal is re-checked under the lock.
+        """
+        hm, qs = _mk_chip(tmp_path)
+        chip = hm._history_dir(qs)
+        for i in range(3):
+            self._snap(chip, _ts(i))
+        hm._list_snapshots_in_dir(chip)
+        (chip / _ts(0) / "meta.json").unlink()
+
+        fired: list[int] = []
+
+        def recreate_mid_sweep(_secs):
+            if fired:
+                return
+            fired.append(1)
+            self._snap(chip, _ts(0), label="came back")
+
+        orig_sleep = H.time.sleep
+        H.time.sleep = recreate_mid_sweep
+        try:
+            res = hm.verify_manifest(chip, chunk=1, pause=0.001)
+        finally:
+            H.time.sleep = orig_sleep
+        assert fired, "the interleave never happened"
+        assert res["dropped"] == 0, "dropped an entry that exists on disk"
+        side = json.loads((chip / hm._MANIFEST_NAME).read_text(encoding="utf-8"))
+        assert _ts(0) in side["entries"]
+
+    def test_arming_is_off_under_the_suite_flag_and_runs_without_it(
+            self, tmp_path, monkeypatch):
+        """The sweep is armed by an ordinary listing. The suite disables it
+        (a thread over a tmp dir pytest is about to delete), so the arming
+        itself needs a test that turns it back on -- otherwise the whole
+        mechanism could be dead in production and every other pin here, which
+        calls verify_manifest directly, would still be green.
+        """
+        hm, qs = _mk_chip(tmp_path)
+        chip = hm._history_dir(qs)
+        self._snap(chip, _ts(0))
+        hm._list_snapshots_in_dir(chip)                       # seeds sidecar
+        time.sleep(0.01)
+        self._snap(chip, _ts(0), label="edited by hand")
+
+        monkeypatch.setenv("SM_DISABLE_HISTORY_VERIFY", "1")
+        hm2 = HistoryManager(tmp_path / "instance")
+        hm2._list_snapshots_in_dir(chip)
+        hm2.join_manifest_verify(5)
+        assert hm2._verify_threads == {}, "armed while the suite flag was set"
+
+        monkeypatch.delenv("SM_DISABLE_HISTORY_VERIFY", raising=False)
+        hm3 = HistoryManager(tmp_path / "instance")
+        hm3._list_snapshots_in_dir(chip)                      # this arms it
+        hm3.join_manifest_verify(10)
+        assert hm3._verify_threads, "an ordinary listing armed no sweep"
+        side = json.loads((chip / hm3._MANIFEST_NAME).read_text(encoding="utf-8"))
+        assert side["entries"][_ts(0)]["meta"]["label"] == "edited by hand"
+
+    def test_a_second_listing_does_not_start_a_second_sweep(self, tmp_path,
+                                                            monkeypatch):
+        """Every listing arming its own thread would put the per-entry stats
+        back on top of the request rate they were removed from."""
+        monkeypatch.delenv("SM_DISABLE_HISTORY_VERIFY", raising=False)
+        hm, qs = _mk_chip(tmp_path)
+        chip = hm._history_dir(qs)
+        self._snap(chip, _ts(0))
+        hm._list_snapshots_in_dir(chip)
+
+        started: list[Path] = []
+        real = HistoryManager._verify_worker
+
+        def counting(self_, d):
+            started.append(d)
+            return real(self_, d)
+
+        monkeypatch.setattr(HistoryManager, "_verify_worker", counting)
+        hm2 = HistoryManager(tmp_path / "instance")
+        for _ in range(5):
+            hm2._list_snapshots_in_dir(chip)
+        hm2.join_manifest_verify(10)
+        assert len(started) == 1, f"{len(started)} sweeps for 5 listings"
 
     def test_the_scan_costs_one_stat_per_snapshot_not_two(self, tmp_path):
         """The enumeration already carries each child's kind.
@@ -300,6 +566,69 @@ class TestSnapshotManifest:
         extra = [c for c in under
                  if not c.endswith("meta.json") and c != str(chip)]
         assert extra == [], f"per-child stats the enumeration already answered: {extra}"
+
+    def _stat_spy(self, chip, fn):
+        """Run ``fn()`` with os.stat spied; return the calls under ``chip``."""
+        import os as _os
+        calls: list[str] = []
+        real = _os.stat
+
+        def spy(path, *a, **k):
+            calls.append(str(path))
+            return real(path, *a, **k)
+
+        _os.stat = spy
+        try:
+            fn()
+        finally:
+            _os.stat = real
+        return [c for c in calls if str(chip) in c]
+
+    def test_a_capture_costs_o_new_not_o_n(self, tmp_path):
+        """The listing after a capture must pay for the NEW snapshot only.
+
+        10g gated the sidecar on the two name sets being EQUAL, so one new
+        directory sent the whole listing down the full scan: measured on the
+        customer's 4,003-snapshot chip, 4,007 ops for the writer's own
+        mid-capture listing and 4,010 for the next one -- about 14 s of their
+        share per run, and they capture one per run. The gate is a DELTA now.
+        """
+        hm, qs = _mk_chip(tmp_path)
+        chip = hm._history_dir(qs)
+        n = 30
+        for i in range(n):
+            self._snap(chip, _ts(i))
+        hm._list_snapshots_in_dir(chip)                    # seeds the sidecar
+        self._snap(chip, _ts(99))                          # one capture lands
+
+        hm2 = HistoryManager(tmp_path / "instance")
+        got: list = []
+        under = self._stat_spy(
+            chip, lambda: got.extend(hm2._list_snapshots_in_dir(chip)))
+        assert len(got) == n + 1, "the new snapshot is missing from the listing"
+        metas = [c for c in under if c.endswith("meta.json")]
+        assert len(metas) == 1, f"expected one stat (the new dir), got {len(metas)}"
+        assert _ts(99) in metas[0]
+
+    def test_a_half_written_capture_is_never_remembered_as_absent(self, tmp_path):
+        """A capture creates its directory BEFORE writing meta.json, and the
+        writer lists priors in between. An earlier draft memoised the dirs
+        that had no meta.json so it could stop stat'ing them -- and registered
+        the half-written snapshot as one to ignore, permanently. Nothing may
+        remember an absence.
+        """
+        hm, qs = _mk_chip(tmp_path)
+        chip = hm._history_dir(qs)
+        for i in range(3):
+            self._snap(chip, _ts(i))
+        hm._list_snapshots_in_dir(chip)
+        (chip / _ts(9)).mkdir()                            # capture starts
+        mid = hm._list_snapshots_in_dir(chip)              # writer lists priors
+        assert [m.timestamp for m in mid] == [_ts(2), _ts(1), _ts(0)]
+        self._snap(chip, _ts(9))                           # meta.json lands
+        for mgr in (hm, HistoryManager(tmp_path / "instance")):
+            got = [m.timestamp for m in mgr._list_snapshots_in_dir(chip)]
+            assert got == [_ts(9), _ts(2), _ts(1), _ts(0)], got
 
     def test_corrupt_manifest_reads_as_a_miss(self, tmp_path):
         hm, qs = _mk_chip(tmp_path)

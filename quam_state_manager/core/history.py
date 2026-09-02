@@ -899,6 +899,11 @@ class HistoryManager:
         self._hist_seq_seen: dict[str, int] = {}
         # history_seq_for's TTL memo of resolved chip dirs (see its docstring)
         self._hist_seq_dir_memo: dict[str, tuple[Path, float]] = {}
+        # docs/155 10h — the background sidecar verifier: last sweep start and
+        # the live thread, per chip history dir. Bookkeeping only; nothing
+        # waits on either outside the tests.
+        self._verify_last: dict[str, float] = {}
+        self._verify_threads: dict[str, threading.Thread] = {}
         self._lock = threading.RLock()
 
         # Param-history performance caches (see docs/23_param_history_performance.md)
@@ -2158,12 +2163,12 @@ class HistoryManager:
             except OSError:
                 continue
 
-        # FAST PATH (docs/155 10g) -- zero stats.
+        # DELTA PATH (docs/155 10g, generalized in 10h) -- O(what changed).
         #
         # The scandir above already handed us every child directory name
-        # for ONE syscall. If that set is exactly the set the sidecar was
-        # built from, the only thing that can have changed since is an
-        # in-place meta.json rewrite -- and both writers that do that
+        # for ONE syscall. For a name the sidecar already knows, the only
+        # thing that can have changed since is an in-place meta.json
+        # rewrite -- and both writers that do that
         # (annotate_snapshot and the run-id enrichment) now refresh the
         # sidecar entry themselves through _manifest_update_entry. So the
         # sidecar is trustworthy and the per-entry freshness stat has
@@ -2175,39 +2180,74 @@ class HistoryManager:
         # 4,003-snapshot chip that is 4,006 -> 3, about 7.2 s -> 0.005 s of
         # their SMB share's round trips.
         #
-        # The gate is EQUALITY, deliberately. An earlier draft also
-        # memoised the dirs that had NO meta.json so it could exclude
-        # them -- but a capture creates its directory BEFORE writing
-        # meta.json, and the writer lists priors mid-capture, so that scan
-        # memoised the half-written snapshot as one to ignore and it
-        # vanished from the timeline for good. A meta-less dir now just
-        # costs the full scan every time: honest, self-healing, and the
-        # existing tests caught the alternative within a minute.
+        # 10g gated this on EQUALITY of the two name sets, which meant a
+        # capture -- one new directory -- sent the whole listing down the
+        # full scan again. Measured on a 4,003-snapshot chip, that was
+        # 4,007 ops for the writer's own mid-capture listing and 4,010 for
+        # the next one, ~14 s of the customer's share per snapshot
+        # captured, and they capture one per run. So the gate is now a
+        # DELTA (docs/155 10h): names in both are served from the sidecar,
+        # names the sidecar does not know are stat'ed and parsed, names
+        # only the sidecar knows are simply not rendered (the loop walks
+        # what is on DISK). Cost is O(what changed), not O(N).
         #
-        # The trade, stated plainly: a meta.json edited by something OTHER
-        # than SM -- a person with a text editor -- stays invisible until a
-        # directory is added or removed. That reverses docs/143, which
-        # stat'ed every entry to catch exactly that. It was costing 4,003
-        # syscalls per scan to defend SM's own cache of SM's own files
-        # against hand-editing.
-        if manifest and set(dir_names) == set(manifest):
-            fast: list[SnapshotMeta] = []
+        # This also subsumes 10g's meta-less-directory trap without
+        # memoising anything: a capture's half-written dir is unknown to
+        # the sidecar, so it is stat'ed on every listing until its
+        # meta.json lands, and then it is parsed once. The earlier draft
+        # that recorded such dirs to skip them made a snapshot vanish for
+        # good; nothing here remembers an absence.
+        if manifest:
+            delta: list[SnapshotMeta] = []
+            entries: dict = {}
+            parsed = 0
             ok = True
             for name in dir_names:
                 ent = manifest.get(name)
                 data = ent.get("meta") if isinstance(ent, dict) else None
-                if not isinstance(data, dict):
-                    ok = False
-                    break
+                sig = ent.get("sig") if isinstance(ent, dict) else None
+                if isinstance(data, dict) and isinstance(sig, list):
+                    entries[name] = {"sig": sig, "meta": data}
+                else:
+                    # the ONLY thing a delta listing pays for
+                    child = hist_dir / name
+                    mp = os.path.join(str(hist_dir), name, "meta.json")
+                    try:
+                        st = os.stat(mp)
+                    except OSError:
+                        logger.warning(
+                            "Skipping snapshot dir without meta.json: %s", child)
+                        continue
+                    try:
+                        with open(mp, encoding="utf-8") as f:
+                            data = json.load(f)
+                    except Exception:
+                        logger.warning("Corrupted meta.json in %s, skipping",
+                                       child, exc_info=True)
+                        continue
+                    parsed += 1
+                    entries[name] = {"sig": [st.st_size, st.st_mtime_ns],
+                                     "meta": data}
                 try:
-                    fast.append(SnapshotMeta(
+                    delta.append(SnapshotMeta(
                         **{k: v for k, v in data.items()
                            if k in _SNAPSHOT_META_FIELDS}))
                 except Exception:
                     ok = False
                     break
             if ok:
-                return fast
+                if parsed or set(entries) != set(manifest):
+                    try:
+                        safe_io.atomic_write_json(
+                            mpath, {"v": self._MANIFEST_V, "entries": entries})
+                    except OSError:
+                        logger.warning("snapshot manifest write failed for %s",
+                                       hist_dir, exc_info=True)
+                # Nothing above ever re-reads a meta.json the sidecar
+                # already knows, so an edit made OUTSIDE SM would be
+                # invisible. That is what the background verifier is for.
+                self._arm_manifest_verify(hist_dir)
+                return delta
             # any doubt at all -> fall through to the full scan below
 
         for de in children:
@@ -2294,6 +2334,182 @@ class HistoryManager:
                 mpath.unlink()
             except OSError:
                 pass
+
+    # --- the background sidecar verifier (docs/155 10h) -------------------
+    #
+    # The delta listing never re-reads a meta.json the sidecar already knows,
+    # so an edit made outside SM would be invisible for as long as that entry
+    # survives. 10g accepted that as a trade. It does not have to be one: the
+    # per-entry stats cost ~7.2 s of the customer's share IN ONE BLOCK on the
+    # request path, and nothing about them has to happen there. So they happen
+    # here instead -- on a daemon thread, in chunks with a pause between them,
+    # holding no lock while it stats. Same shape as docs/142's listing cache:
+    # serve from the sidecar at once, verify quietly afterwards.
+    _VERIFY_CHUNK = 200          # entries per pass
+    _VERIFY_PAUSE_S = 0.4        # ...then yield the disk/share for this long
+    _VERIFY_COOLDOWN_S = 300.0   # per chip dir, per process
+
+    def verify_manifest(self, hist_dir: str | Path, *,
+                        chunk: int | None = None,
+                        pause: float | None = None) -> dict[str, int]:
+        """Re-stat every sidecar entry and heal the ones that drifted.
+
+        Synchronous and safe to call directly — that is how the tests drive
+        it. Returns ``{checked, refreshed, dropped}``.
+
+        Two rules make this safe to run beside live captures. It holds the
+        manager lock only to WRITE, never while stat'ing; and it merges its
+        corrections onto the sidecar as it is at that moment rather than
+        writing back the copy it started from, so a capture that landed
+        mid-sweep is not undone. An entry whose meta.json has disappeared is
+        re-stat'ed under the lock before being dropped, because a capture may
+        have recreated it in between.
+        """
+        hist_dir = Path(hist_dir)
+        mpath = hist_dir / self._MANIFEST_NAME
+        result = {"checked": 0, "refreshed": 0, "dropped": 0}
+        try:
+            raw = json.loads(mpath.read_text(encoding="utf-8"))
+            entries = raw.get("entries") if raw.get("v") == self._MANIFEST_V else None
+        except Exception:
+            entries = None
+        if not isinstance(entries, dict) or not entries:
+            return result
+
+        chunk = chunk or self._VERIFY_CHUNK
+        pause = self._VERIFY_PAUSE_S if pause is None else pause
+        fixes: dict[str, dict] = {}
+        seen: dict[str, Any] = {}     # the sig each fix was decided against
+        gone: list[str] = []
+        for i, name in enumerate(sorted(entries)):
+            ent = entries.get(name)
+            sig = ent.get("sig") if isinstance(ent, dict) else None
+            mp = os.path.join(str(hist_dir), name, "meta.json")
+            result["checked"] += 1
+            try:
+                st = os.stat(mp)
+            except OSError:
+                gone.append(name)
+            else:
+                if sig != [st.st_size, st.st_mtime_ns]:
+                    try:
+                        with open(mp, encoding="utf-8") as f:
+                            data = json.load(f)
+                    except Exception:
+                        logger.warning("Corrupted meta.json in %s, skipping",
+                                       hist_dir / name, exc_info=True)
+                    else:
+                        fixes[name] = {"sig": [st.st_size, st.st_mtime_ns],
+                                       "meta": data}
+                        seen[name] = sig
+            if pause and (i + 1) % chunk == 0:
+                time.sleep(pause)
+
+        if not fixes and not gone:
+            return result
+
+        with self._lock:
+            try:
+                raw = json.loads(mpath.read_text(encoding="utf-8"))
+                cur = raw.get("entries") if raw.get("v") == self._MANIFEST_V else None
+            except Exception:
+                cur = None
+            if not isinstance(cur, dict):
+                return result       # rebuilt under us: our corrections are moot
+            for name, ent in fixes.items():
+                have = cur.get(name)
+                if not isinstance(have, dict):
+                    continue        # only correct, never resurrect
+                # Compare-and-swap. This sweep read that meta.json seconds or
+                # minutes ago, at share latency; if the entry has moved since,
+                # a writer that saw MORE than we did already refreshed it --
+                # an annotate_snapshot, say. Writing our copy over theirs
+                # would take a label the user just typed back off the screen
+                # until the next sweep. Ours is the older read; it loses.
+                if have.get("sig") != seen.get(name):
+                    continue
+                cur[name] = ent
+                result["refreshed"] += 1
+            for name in gone:
+                if name not in cur:
+                    continue
+                try:
+                    os.stat(os.path.join(str(hist_dir), name, "meta.json"))
+                except OSError:
+                    cur.pop(name, None)
+                    result["dropped"] += 1
+            if not result["refreshed"] and not result["dropped"]:
+                return result
+            try:
+                safe_io.atomic_write_json(
+                    mpath, {"v": self._MANIFEST_V, "entries": cur})
+            except OSError:
+                logger.warning("snapshot manifest write failed for %s",
+                               hist_dir, exc_info=True)
+                return result
+            # The sidecar lives INSIDE hist_dir, so writing it moves that
+            # dir's mtime -- which is exactly what history_seq_for watches on
+            # the every-page poll. An open Versions panel therefore repaints
+            # itself with the healed value without a new mechanism.
+            self._invalidate_snapshot_lists_for(hist_dir)
+            self._bump_chip_version(hist_dir)
+        logger.info("snapshot manifest verified for %s: %s", hist_dir, result)
+        return result
+
+    def _invalidate_snapshot_lists_for(self, hist_dir: Path) -> None:
+        """Drop cached snapshot lists whose chip dir is this one."""
+        try:
+            target = hist_dir.resolve()
+        except OSError:
+            target = hist_dir
+        with self._lock:
+            for k in list(self._snapshot_list_cache):
+                d = self._safe_history_dir(k)
+                if d is None:
+                    continue
+                try:
+                    if d.resolve() == target:
+                        self._snapshot_list_cache.pop(k, None)
+                except OSError:
+                    continue
+
+    def _arm_manifest_verify(self, hist_dir: Path) -> None:
+        """Start one background sweep for this chip, at most every cooldown.
+
+        Deliberately fire-and-forget: nothing joins it, a failure is logged
+        and never reaches the request, and `SM_DISABLE_HISTORY_VERIFY=1`
+        turns it off entirely (the suite sets that, so a test that wants the
+        sweep runs it directly or clears the variable).
+        """
+        if os.environ.get("SM_DISABLE_HISTORY_VERIFY") == "1":
+            return
+        key = str(hist_dir)
+        now_t = time.time()
+        with self._lock:
+            if now_t - self._verify_last.get(key, 0.0) < self._VERIFY_COOLDOWN_S:
+                return
+            live = self._verify_threads.get(key)
+            if live is not None and live.is_alive():
+                return
+            self._verify_last[key] = now_t
+            th = threading.Thread(target=self._verify_worker, args=(hist_dir,),
+                                  name="sm-manifest-verify", daemon=True)
+            self._verify_threads[key] = th
+        th.start()
+
+    def _verify_worker(self, hist_dir: Path) -> None:
+        try:
+            self.verify_manifest(hist_dir)
+        except Exception:      # noqa: BLE001 — a cache sweep must never escape
+            logger.warning("snapshot manifest verify failed for %s",
+                           hist_dir, exc_info=True)
+
+    def join_manifest_verify(self, timeout: float = 10.0) -> None:
+        """Wait for in-flight background sweeps (tests only)."""
+        with self._lock:
+            threads = list(self._verify_threads.values())
+        for th in threads:
+            th.join(timeout)
 
     def load_snapshot(self, quam_state_path: str | Path, timestamp: str) -> QuamStore:
         """Load a ``QuamStore`` from a historical snapshot (LRU-cached).
