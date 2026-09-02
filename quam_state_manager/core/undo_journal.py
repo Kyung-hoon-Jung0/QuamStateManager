@@ -57,7 +57,11 @@ GID_PREFIX = "jrn:"
 #: cursor can never be left pointing into a trimmed range by construction).
 MAX_UNITS = 200
 
-JOURNAL_VERSION = 1
+#: docs/160: the sidecar also carries the walk CURSOR (how many units are in
+#: effect on the chip) once a live undo/redo has moved it -- a restart or a
+#: second window then resumes the walk where it stands instead of at the tip.
+#: A version-1 sidecar (no cursor) reads as "cursor at the tip", unchanged.
+JOURNAL_VERSION = 2
 
 _lock = threading.Lock()
 
@@ -161,23 +165,89 @@ def inverse_ops(unit: dict) -> list[tuple[str, str, Any, str]]:
     return ops
 
 
+def forward_ops(unit: dict) -> list[tuple[str, str, Any, str]]:
+    """The REPLAY plan for one unit (docs/160: Ctrl+Shift+Z after a live undo
+    re-applies the unit forward): ``(op, path, value, source_file)`` tuples in
+    CHRONOLOGICAL order -- the exact mirror of :func:`inverse_ops`.  A rename
+    unit is create(new)+delete(old) again, in that order.
+
+    ops: ``create`` (entry created a key -> create it with its new value) /
+    ``delete`` (entry deleted a subtree -> delete it again) / ``set`` (its
+    new value).  Values are deep-copied.
+    """
+    ops: list[tuple[str, str, Any, str]] = []
+    for e in unit.get("entries", []):
+        if e.get("created"):
+            ops.append(("create", e["path"], copy.deepcopy(e.get("new")),
+                        e.get("source_file", "state")))
+        elif e.get("deleted"):
+            ops.append(("delete", e["path"], None, e.get("source_file", "state")))
+        else:
+            ops.append(("set", e["path"], copy.deepcopy(e.get("new")),
+                        e.get("source_file", "state")))
+    return ops
+
+
 # ----------------------------------------------------------------------
 # Sidecar I/O
 # ----------------------------------------------------------------------
 
+def _read_doc(p: Path) -> dict:
+    if not p.exists():
+        return {}
+    try:
+        doc = safe_io.read_json(p, attempts=1)
+        return doc if isinstance(doc, dict) else {}
+    except Exception:
+        logger.warning("undo journal unreadable, starting empty: %s", p)
+        return {}
+
+
 def load(path: str | Path) -> list[dict]:
     """Load the units list (oldest first).  Missing/corrupt -> ``[]`` --
     the journal is advisory history and must never block activation."""
+    units = _read_doc(Path(path)).get("units", [])
+    return units if isinstance(units, list) else []
+
+
+def load_state(path: str | Path) -> tuple[list[dict], int]:
+    """``(units, cursor)`` -- the cursor is the persisted walk position when
+    the sidecar carries one (docs/160), else the tip.  Always clamped into
+    ``[0, len(units)]``: a cursor written against a longer list (another
+    window trimmed it) can never point past the end."""
+    doc = _read_doc(Path(path))
+    units = doc.get("units", [])
+    units = units if isinstance(units, list) else []
+    cur = doc.get("cursor")
+    if not isinstance(cur, int) or isinstance(cur, bool):
+        cur = len(units)
+    return units, max(0, min(cur, len(units)))
+
+
+def save_cursor(path: str | Path, cursor: int) -> None:
+    """Persist the walk cursor (docs/160) -- load-merge-write under the
+    module lock so a concurrent append is never clobbered.  Advisory."""
     p = Path(path)
-    if not p.exists():
-        return []
-    try:
-        doc = safe_io.read_json(p, attempts=1)
+    with _lock:
+        doc = _read_doc(p)
         units = doc.get("units", [])
-        return units if isinstance(units, list) else []
-    except Exception:
-        logger.warning("undo journal unreadable, starting empty: %s", p)
-        return []
+        units = units if isinstance(units, list) else []
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            safe_io.atomic_write_json(p, {"version": JOURNAL_VERSION,
+                                          "units": units,
+                                          "cursor": max(0, min(int(cursor), len(units)))})
+        except Exception:
+            logger.warning("undo journal cursor write failed: %s", p, exc_info=True)
+
+
+def sidecar_mtime(path: str | Path) -> float | None:
+    """The sidecar's mtime, or None -- what :func:`routes._journal_sync`
+    compares to notice another window's write (docs/160 C)."""
+    try:
+        return Path(path).stat().st_mtime
+    except OSError:
+        return None
 
 
 def mark_unit(path: str | Path, unit_id: str, patch: dict) -> list[dict]:
@@ -191,7 +261,7 @@ def mark_unit(path: str | Path, unit_id: str, patch: dict) -> list[dict]:
     """
     p = Path(path)
     with _lock:
-        units = load(p)
+        units, cursor = load_state(p)   # docs/160: the persisted cursor survives a mark
         hit = False
         for u in units:
             if u.get("id") == unit_id:
@@ -204,16 +274,27 @@ def mark_unit(path: str | Path, unit_id: str, patch: dict) -> list[dict]:
             return units
         try:
             safe_io.atomic_write_json(p, {"version": JOURNAL_VERSION,
-                                          "units": units})
+                                          "units": units, "cursor": cursor})
         except Exception:
             logger.warning("undo journal mark failed: %s", p, exc_info=True)
         return units
 
 
-def append_units(path: str | Path, new_units: list[dict]) -> list[dict]:
+def append_units(path: str | Path, new_units: list[dict], *,
+                 truncate_at_cursor: bool = True) -> list[dict]:
     """Append units to the sidecar (load-merge-write under the module lock),
     trim to :data:`MAX_UNITS` keeping the newest, atomic write.  Returns the
-    full post-append list (the caller's RAM mirror).
+    full post-append list (the caller's RAM mirror).  The cursor is written
+    at the new tip: a save is a new action, and after it every unit in the
+    file is in effect.
+
+    ``truncate_at_cursor`` (docs/160): when the sidecar's own persisted cursor
+    sits below the tip, the units past it were undone ON THE CHIP (only a
+    live undo/redo ever writes that cursor); a new action after such an undo
+    discards that redo branch -- the editor rule -- so the journal stays a
+    straight line of what is in effect.  A staged-only walk never moves the
+    persisted cursor, so the docs/107 stage-only mode keeps its file whole,
+    byte-for-byte (a re-save of staged steps still appends them as units).
 
     Cross-process note (docs/80 stance): two windows on one chip race this
     file load-merge-write; the module lock serializes same-process, the
@@ -225,14 +306,16 @@ def append_units(path: str | Path, new_units: list[dict]) -> list[dict]:
         return load(path)
     p = Path(path)
     with _lock:
-        units = load(p)
+        units, cursor = load_state(p)
+        if truncate_at_cursor and 0 <= cursor < len(units):
+            units = units[:cursor]
         units.extend(new_units)
         if len(units) > MAX_UNITS:
             units = units[-MAX_UNITS:]
         try:
             p.parent.mkdir(parents=True, exist_ok=True)
             safe_io.atomic_write_json(p, {"version": JOURNAL_VERSION,
-                                          "units": units})
+                                          "units": units, "cursor": len(units)})
         except Exception:
             # Advisory: never let journal persistence break the save path.
             logger.warning("undo journal write failed: %s", p, exc_info=True)

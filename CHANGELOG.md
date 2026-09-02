@@ -648,3 +648,11 @@ one** (docs/136, 137).
   matrix) now changes what you see.** The value moved in the working copy but
   the cell kept its old preview; it repaints in place now, and the 🕘 value
   history reaches list cells too (docs/159).
+
+### Undo after Apply (covenant amendment)
+
+- **Ctrl+Z / Ctrl+Shift+Z keep working after Apply to live — on the chip.** The
+  Apply press was the consent; undo withdraws it, through the same apply door with
+  the same never-clobber gate. Default ON, Settings → "Ctrl+Z writes live" (OFF is
+  the old stage-only behaviour). State-History stage → Apply, dataset Apply to
+  chip and restore-live are walkable too (docs/160).

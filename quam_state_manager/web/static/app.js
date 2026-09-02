@@ -1909,6 +1909,27 @@ window.toggleTopbar = function() {
     } catch(e) {}
 };
 
+/* docs/160: "Ctrl+Z writes live" is a MACHINE-WIDE server setting (it decides
+   whether a keypress writes the instrument), so the Settings button posts to
+   the server and reflects the answer -- never a localStorage flag. */
+window.toggleUndoLive = function() {
+    var b = document.getElementById("undo-live-toggle");
+    fetch("/settings/undo-live", { method: "POST", headers: { "X-Requested-With": "fetch" } })
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+            if (!j || !j.ok) { if (window.showToast) window.showToast("Could not change the setting.", "error"); return; }
+            if (b) {
+                b.textContent = "Ctrl+Z writes live: " + (j.enabled ? "ON" : "OFF");
+                b.setAttribute("data-on", j.enabled ? "1" : "0");
+                b.classList.toggle("settings-opt-active", !!j.enabled);
+            }
+            if (window.showToast) window.showToast(j.enabled
+                ? "Ctrl+Z / Ctrl+Shift+Z on an applied change now writes the live chip."
+                : "Ctrl+Z on an applied change now only stages it — press Apply to write.", "success");
+        })
+        .catch(function () { if (window.showToast) window.showToast("Could not change the setting.", "error"); });
+};
+
 /**
  * Per-page header collapse (Item 4): hide the current page's .table-header-row
  * heading to give the list/content more vertical room. The class lives on <body>

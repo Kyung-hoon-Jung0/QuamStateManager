@@ -33,6 +33,7 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 from collections import Counter, OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1959,39 +1960,174 @@ def _clear_reapply(ctx: dict | None = None) -> None:
 _REDO_MAX_FRAMES = 100
 
 
+# ----------------------------------------------------------------------
+# docs/160 — Ctrl+Z after Apply-to-live writes the chip (the setting)
+# ----------------------------------------------------------------------
+#
+# Customer (CRITICAL, many users): after "Apply to chip", Ctrl+Z must still
+# undo -- on the chip, not into a tray they then have to Apply again. The
+# covenant is AMENDED for the third time (docs/107 → 117 → 120 → 160): the
+# Apply press that put a change on the chip was the consent for that change,
+# and Ctrl+Z is the withdrawal of that same consent, so the withdrawal needs
+# no second press. It still goes through the ONE door (`_sync_pull_apply_to_
+# live`, the same core the ⚡ button and the Auto-Sync flusher press), with
+# the same staleness gate: a chip that moved is never clobbered.
+#
+# A MACHINE-WIDE server setting, not a browser preference: it decides whether
+# a keypress writes an instrument, and every window on this machine must
+# agree. Default ON; OFF is the docs/107 stage-only behaviour byte-for-byte.
+
+_UNDO_LIVE_FILE = "undo_live.json"
+
+
+def _undo_live_path() -> Path:
+    return Path(current_app.instance_path) / _UNDO_LIVE_FILE
+
+
+def _undo_live_enabled() -> bool:
+    """The setting, read through a stat-keyed cache (another window may have
+    toggled it -- the file is the truth, one stat per read is the cost)."""
+    try:
+        p = _undo_live_path()
+        try:
+            mt = p.stat().st_mtime_ns
+        except OSError:
+            return True                                   # absent ⇒ default ON
+        cache = current_app.config.get("_undo_live_cache")
+        if cache and cache[0] == mt:
+            return bool(cache[1])
+        doc = safe_io.read_json(p, attempts=1)
+        val = bool(doc.get("enabled", True)) if isinstance(doc, dict) else True
+        current_app.config["_undo_live_cache"] = (mt, val)
+        return val
+    except Exception:  # noqa: BLE001 — a bad file must never break a keypress
+        return True
+
+
+def _set_undo_live(enabled: bool) -> None:
+    p = _undo_live_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    safe_io.atomic_write_json(p, {"enabled": bool(enabled)})
+    current_app.config.pop("_undo_live_cache", None)
+
+
+@bp.route("/settings/undo-live", methods=["POST"])
+def settings_undo_live():
+    """Toggle (or set with ``enabled=1|0``) whether Ctrl+Z / Ctrl+Shift+Z on an
+    applied change writes the live chip (docs/160)."""
+    raw = request.values.get("enabled")
+    new = (raw == "1") if raw in ("0", "1") else (not _undo_live_enabled())
+    try:
+        _set_undo_live(new)
+    except OSError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    return jsonify({"ok": True, "enabled": new})
+
+
 def _journal_reset(ctx: dict) -> None:
-    """(Re)load the sidecar journal + cursor := tip.
+    """(Re)load the sidecar journal + cursor.
 
     Called where journal RAM state must be (re)derived: fresh context builds
     (restart, LRU rehydrate) and wholesale working-copy replacement (pull /
     stage / restore — ``store.reload`` cleared the log, so any staged journal
-    steps died with it and the cursor must return to the tip; the redo stack
-    dies via the seq handshake). The cached fast path deliberately does NOT
-    reset: a live ctx's units+cursor+staged ``jrn:`` groups are coherent RAM
-    state, and resetting mid-walk would let the next Ctrl+Z re-stage a unit
-    that is already sitting in the tray.
+    steps died with it; the redo stack dies via the seq handshake). The
+    cached fast path deliberately does NOT reset: a live ctx's units+cursor+
+    staged ``jrn:`` groups are coherent RAM state, and resetting mid-walk
+    would let the next Ctrl+Z re-stage a unit that is already sitting in the
+    tray.
+
+    docs/160: the cursor comes back from the sidecar when a live undo/redo
+    persisted one (units past it were undone ON THE CHIP and are still
+    redoable), else the tip -- a staged-only step never persists, so its
+    death with the log is exactly what the persisted value reflects.
     """
     try:
         if ctx.get("type") != "quam" or (ctx.get("origin") or "live") != "live":
             ctx["undo_units"], ctx["undo_cursor"] = [], 0
             return
         path = undo_journal.sidecar_path(current_app.instance_path, ctx["path"])
-        units = undo_journal.load(path)
-        ctx["undo_units"], ctx["undo_cursor"] = units, len(units)
+        units, cursor = undo_journal.load_state(path)
+        ctx["undo_units"], ctx["undo_cursor"] = units, cursor
+        ctx["undo_sidecar_mtime"] = undo_journal.sidecar_mtime(path)
     except Exception:
         logger.warning("undo journal load failed", exc_info=True)
         ctx["undo_units"], ctx["undo_cursor"] = [], 0
+
+
+def _journal_sync(ctx: dict) -> None:
+    """docs/160 C: notice another SM window's journal write before walking.
+
+    The sidecar is per chip and shared across processes; each process keeps a
+    RAM mirror. Before a Ctrl+Z / Ctrl+Shift+Z acts on the journal, one stat
+    tells whether the file moved since this process last read or wrote it --
+    if so the units + persisted cursor are re-read, so a unit another window
+    applied a second ago is walked (and, being foreign, staged rather than
+    written -- see :func:`_journal_unit_foreign`). While THIS process holds
+    staged ``jrn:`` steps in its log the RAM cursor is kept (those steps are
+    not in the file), clamped to the re-read list.
+    """
+    try:
+        if not ctx or ctx.get("type") != "quam" or (ctx.get("origin") or "live") != "live":
+            return
+        path = undo_journal.sidecar_path(current_app.instance_path, ctx["path"])
+        mt = undo_journal.sidecar_mtime(path)
+        if mt == ctx.get("undo_sidecar_mtime"):
+            return
+        units, cursor = undo_journal.load_state(path)
+        store = ctx.get("store")
+        # ANY staged step alive in the log -- not only the top one: an `alr:`
+        # revert or an ordinary edit can sit above it (review N2), and taking
+        # the file's cursor then would re-offer a unit already in the tray
+        staged_alive = bool(store is not None and any(
+            isinstance(e.group_id, str) and e.group_id.startswith(undo_journal.GID_PREFIX)
+            for e in store.change_log))
+        ctx["undo_units"] = units
+        ctx["undo_cursor"] = (min(int(ctx.get("undo_cursor") or 0), len(units))
+                              if staged_alive else cursor)
+        ctx["undo_sidecar_mtime"] = mt
+    except Exception:
+        logger.warning("undo journal sync failed", exc_info=True)
+
+
+def _journal_persist_cursor(ctx: dict) -> None:
+    """docs/160: after a LIVE undo/redo moved the walk, write the cursor so a
+    restart / another window resumes where the chip actually stands."""
+    try:
+        path = undo_journal.sidecar_path(current_app.instance_path, ctx["path"])
+        undo_journal.save_cursor(path, int(ctx.get("undo_cursor") or 0))
+        ctx["undo_sidecar_mtime"] = undo_journal.sidecar_mtime(path)
+    except Exception:
+        logger.warning("undo journal cursor persist failed", exc_info=True)
+
+
+def _journal_unit_foreign(unit: dict) -> int | None:
+    """docs/160 C: the pid of ANOTHER live SM process that applied this unit,
+    else None. A unit with no owner (older sidecar) or whose owner is gone
+    (a restart of this very window) is ours to walk."""
+    try:
+        pid = int((unit.get("meta") or {}).get("owner_pid") or 0)
+    except (TypeError, ValueError):
+        return None
+    if not pid or pid == os.getpid():
+        return None
+    from quam_state_manager.core import instances as _inst
+    return pid if _inst.pid_alive(pid) else None
 
 
 def _journal_prepare(store, ctx, meta: dict | None = None) -> list[dict]:
     """Capture phase 1, inside the caller's ``store._lock`` hold: serialize
     the OUTGOING change log as journal units. Committed only after the save
     SUCCEEDS (phase 2) — a failed save keeps the log, and appending at prepare
-    time would duplicate the units on the retry. Advisory: never raises."""
+    time would duplicate the units on the retry. Advisory: never raises.
+
+    docs/160 C: every unit is stamped with the applying process (``owner_pid``)
+    so a second window on the same chip walks it as foreign."""
     try:
         if not ctx or (ctx.get("origin") or "live") != "live":
             return []
-        return undo_journal.units_from_log(list(store.change_log), meta=meta)
+        m = dict(meta or {})
+        m.setdefault("owner_pid", os.getpid())
+        return undo_journal.units_from_log(list(store.change_log), meta=m)
     except Exception:
         logger.warning("undo journal capture failed", exc_info=True)
         return []
@@ -2000,15 +2136,127 @@ def _journal_prepare(store, ctx, meta: dict | None = None) -> list[dict]:
 def _journal_commit(ctx, units: list[dict]) -> None:
     """Capture phase 2, after a SUCCESSFUL save: append to the sidecar + RAM
     mirror; cursor := tip (the one rule that collapses every restart /
-    eviction / replace edge). Advisory: never raises."""
+    eviction / replace edge). Advisory: never raises.
+
+    docs/160: the append truncates at the sidecar's PERSISTED cursor first
+    (moved only by a live undo/redo) -- a new action after a live undo
+    discards the undone (redoable) units, the editor rule, so the journal
+    stays a straight line of what is in effect on the chip. A staged-only
+    step never moves that cursor, so the docs/107 mode is byte-identical."""
     if not units or not ctx:
         return
     try:
         path = undo_journal.sidecar_path(current_app.instance_path, ctx["path"])
         ctx["undo_units"] = undo_journal.append_units(path, units)
         ctx["undo_cursor"] = len(ctx["undo_units"])
+        ctx["undo_sidecar_mtime"] = undo_journal.sidecar_mtime(path)
     except Exception:
         logger.warning("undo journal commit failed", exc_info=True)
+
+
+#: docs/160 B: a wholesale load (a staged snapshot applied, a run's state
+#: applied to the chip, a restore) becomes ONE journal unit of leaf changes,
+#: capped -- past this it is recorded as a unit Ctrl+Z names but cannot walk
+#: (↺ Revert last apply is the door for it).
+_WHOLESALE_UNIT_CAP = 4000
+
+
+def _live_merged_tree(wc) -> dict | None:
+    """docs/160 B: what the CHIP holds right now, merged the way the store
+    merges state + wiring (`QuamStore._merge`), so paths compare 1:1 with
+    ``store.merged``. None when the live files cannot be read -- then no unit
+    is recorded (a unit whose `old` is a guess would be worse than none).
+
+    Read at APPLY time, never at stage time: the review of the first cut found
+    the stage-time `_leaf_snapshot` was the WORKING view, unsaved in-memory
+    edits included, so Ctrl+Z wrote values the chip never held."""
+    from quam_state_manager.core.loader import _deep_merge
+    try:
+        state, wiring = safe_io.read_state_wiring(wc.live_folder)
+    except Exception:  # noqa: BLE001 — unreadable live ⇒ nothing honest to record
+        return None
+    merged = {**state}
+    for key, value in (wiring or {}).items():
+        existing = merged.get(key)
+        if key not in merged:
+            merged[key] = value
+        elif isinstance(existing, dict) and isinstance(value, dict):
+            merged[key] = _deep_merge(existing, value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _wholesale_unit(before: dict | None, ctx: dict, src: str) -> dict | None:
+    """docs/160 B: the difference between ``before`` (the chip's merged tree,
+    read right before the write) and the working copy NOW, as one journal
+    unit -- what a Ctrl+Z can walk after a State-History stage → Apply, a
+    dataset "Apply to chip", or a restore, none of which leave change-log
+    entries (docs/65). None when nothing differs or the chip could not be
+    read (then there is nothing honest to record).
+
+    A TREE diff, not a leaf diff (the review of the first cut): a subtree
+    the chip gained or lost is ONE ``create``/``delete`` entry at its highest
+    changed ancestor -- per-leaf entries could not be replayed (a deleted
+    pulse's leaves have no parent to create into, and undoing an added pulse
+    leaf by leaf left an empty ``{}`` shell on the chip) -- and a list is a
+    WHOLE value (a shortened list has no per-index op; ``set`` with the old
+    list is what the ✎ editor does)."""
+    if before is None:
+        return None
+    try:
+        store = ctx["store"]
+        after = store.merged
+    except Exception:  # noqa: BLE001
+        return None
+    wiring_keys = set(store.wiring.keys()) if isinstance(store.wiring, dict) else set()
+
+    def _src(p: str) -> str:
+        return "wiring" if p.split(".", 1)[0] in wiring_keys else "state"
+
+    entries: list[dict] = []
+
+    def _walk(bt: dict, at: dict, prefix: str) -> None:
+        for k, av in at.items():
+            p = f"{prefix}.{k}" if prefix else str(k)
+            if k not in bt:
+                entries.append({"path": p, "old": None, "new": copy.deepcopy(av),
+                                "source_file": _src(p), "created": True, "deleted": False})
+            elif isinstance(bt[k], dict) and isinstance(av, dict):
+                _walk(bt[k], av, p)
+            elif bt[k] != av:
+                entries.append({"path": p, "old": copy.deepcopy(bt[k]), "new": copy.deepcopy(av),
+                                "source_file": _src(p), "created": False, "deleted": False})
+        for k, bv in bt.items():
+            if k not in at:
+                p = f"{prefix}.{k}" if prefix else str(k)
+                entries.append({"path": p, "old": copy.deepcopy(bv), "new": None,
+                                "source_file": _src(p), "created": False, "deleted": True})
+
+    try:
+        _walk(before, after, "")
+    except Exception:  # noqa: BLE001 — a diff that cannot be built is not recorded
+        logger.warning("wholesale diff failed", exc_info=True)
+        return None
+    if not entries:
+        return None
+    meta = {"src": src, "wholesale": True, "owner_pid": os.getpid(), "at": time.time()}
+    if len(entries) > _WHOLESALE_UNIT_CAP:
+        meta["too_large"] = len(entries)
+        entries = []
+    return {"id": uuid.uuid4().hex[:12], "ts": time.time(), "entries": entries, "meta": meta}
+
+
+def _journal_wholesale_commit(ctx: dict, before: dict | None, src: str) -> None:
+    """docs/160 B: journal the staged wholesale content that just reached the
+    chip as one unit (``before`` = the chip's tree read right before the
+    write). Advisory: never raises."""
+    try:
+        unit = _wholesale_unit(before, ctx, src)
+        if unit is not None:
+            _journal_commit(ctx, [unit])
+    except Exception:
+        logger.warning("wholesale journal unit failed", exc_info=True)
 
 
 def _redo_stack(ctx) -> list:
@@ -3232,6 +3480,8 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         "chip_token": _active_chip_token() or "",
         "context_type": _context_type(),
         "change_count": _change_count(),
+        # docs/160: the Settings toggle reflects the machine-wide setting
+        "undo_live": _undo_live_enabled(),
         # THE SAME TRAP, THIRD FIELD. base.html includes _pending_tray.html
         # directly, so on a FULL page render the tray's context comes from
         # HERE, not from _render_tray — and the Review drawer loops over
@@ -9182,6 +9432,7 @@ def state_history_restore_live(timestamp: str):
                                        level="error"), 404
 
             safe_io.write_state_wiring(wc.working_folder, state, wiring)
+            _before_tree = _live_merged_tree(wc)      # docs/160 B: the chip, before
             working_copy.apply_to_live(wc, force=True)
             ctx["_alarm_reason"] = "restore-live"
             _rebuild_after_working_copy_replaced(ctx)
@@ -9192,6 +9443,10 @@ def state_history_restore_live(timestamp: str):
     # pre-restore edits is stale (it targeted the old state) — drop it so a
     # later sync 'reapply' can't replay it onto the restored chip.
     _clear_reapply(ctx)
+    # docs/160 B: the restore wrote the chip wholesale -- journal the leaf
+    # difference as one unit so Ctrl+Z can walk it (the rebuild above already
+    # re-read the sidecar, so this appends at the persisted cursor)
+    _journal_wholesale_commit(ctx, _before_tree, "restore-live")
     # A restore is the user deliberately writing live — rebase drift tracking on
     # the restored state so it isn't reported as accumulated live drift.
     _reset_baseline_after_apply(ctx)
@@ -12166,12 +12421,14 @@ def undo():
 
     ctx = _active_ctx()
     store = ctx.get("store") if ctx else None
+    _journal_sync(ctx)      # docs/160 C: another window may have written the journal
 
     all_entries: list = []
     groups = 0
     n_req = _undo_count()
     stopped = None          # None | "journal" | "error" | "exhausted"
     err_text = ""
+    _journal_now = False    # docs/160: the journal step runs OUTSIDE the burst lock
     # ONE lock around the whole burst (review of eaa0f05): k pops as one
     # critical section, so a foreign write cannot land between two of them
     # and be undone as if it were the user's own.
@@ -12191,7 +12448,7 @@ def undo():
                     or (isinstance(top_gid, str)
                         and top_gid.startswith(undo_journal.GID_PREFIX))):
                 if groups == 0:
-                    return _undo_journal_step(ctx)
+                    _journal_now = True
                 stopped = "journal"
                 break
 
@@ -12215,6 +12472,13 @@ def undo():
         _redo_push_group(ctx, store, entries)   # docs/107: Ctrl+Shift+Z target
         all_entries.extend(entries)
         groups += 1
+    if _journal_now:
+        # docs/160 (review C1): a live journal step takes the BUILD lock (the
+        # apply door); every wholesale-replace path takes the build lock and
+        # then `store._lock` (store.reload) -- holding the burst lock across
+        # the flush was an ABBA deadlock against a pull / a stage / a node's
+        # reconcile. The step takes `store._lock` itself, briefly, to stage.
+        return _undo_journal_step(ctx)
     if not all_entries:
         # Nothing to undo — return the (unchanged) tray so the keyboard-triggered
         # outerHTML swap is a harmless no-op instead of replacing the tray with a
@@ -12305,10 +12569,27 @@ def _undo_journal_step(ctx):
     unit = units[cursor - 1]
     uents = list(reversed(unit.get("entries") or []))   # staging order (LIFO)
     if not uents:
-        ctx["undo_cursor"] = cursor - 1                 # skip an empty unit
+        # skip an empty unit -- RAM only, as docs/107: the chip still holds
+        # this unit's content, and a persisted cursor below it would let the
+        # next save truncate it away (review N3)
+        ctx["undo_cursor"] = cursor - 1
+        _too_large = (unit.get("meta") or {}).get("too_large")
+        if _too_large:
+            # docs/160 B: a wholesale load too big for a leaf unit -- say so
+            # instead of silently walking past it
+            resp = make_response(_tray_html())
+            resp.headers["HX-Trigger"] = json.dumps({"cellsReverted": {
+                "message": (f"This step loaded {_too_large} values at once — too many "
+                            "for Ctrl+Z. Use ↺ Revert last apply (State History) for it."),
+                "entries": [], "level": "warning"}})
+            return resp
         return _tray_html()
     gid = undo_journal.GID_PREFIX + str(unit.get("id") or cursor)
     ops = undo_journal.inverse_ops(unit)
+    # docs/160: a live flush is only honest onto a chip that holds EXACTLY the
+    # journal's content -- so the log must be empty now (no unapplied edits
+    # would ride along), captured before the staging below fills it.
+    log_was_empty = not store.change_log
 
     staged: list = []
     drift = 0
@@ -12348,32 +12629,59 @@ def _undo_journal_step(ctx):
     _redo_mark(ctx, store)
     _invalidate_engine_cache()
 
+    # docs/160: push the staged inverse to the chip through the one door, or
+    # say exactly why it stays in the tray.
+    flush = _undo_live_flush(ctx, store, modifier, unit, staged,
+                             drift=drift, log_was_empty=log_was_empty,
+                             cursor_before=cursor)
+    live = bool(flush.get("live"))
+    if flush.get("rolled_back"):
+        # the chip refused (it moved) and the step was undone again: NOTHING
+        # changed anywhere -- say so; the drift banner is the door forward
+        resp = make_response(_tray_html())
+        resp.headers["HX-Trigger"] = json.dumps({"cellsReverted": {
+            "message": "Not undone — " + (flush.get("note") or "the chip refused the write"),
+            "entries": [], "level": "warning", "live": False}})
+        return resp
+    if live:
+        _journal_persist_cursor(ctx)
+        # the redo of a live undo re-applies THIS unit forward and writes live
+        _redo_stack(ctx).append({"gid": None, "kind": "jrn_live",
+                                 "unit_index": cursor - 1,
+                                 "unit_id": unit.get("id"), "entries": []})
+        _redo_mark(ctx, store)
+
     # Response mirrors /undo's exactly (docs/73: UndoNav + cell repaints ride
     # the response). Flags are the ORIGINAL entry's — original created=True
     # means the key is removed now (client: "removed"), original deleted=True
     # means it is restored now — and old_value_str is the value now in place.
     n = len(uents)
     anchor = uents[-1]
+    head = "Undone → live" if live else "Undone (staged)"
     if n > 1:
-        message = f"Undone (staged): {n} changes ({anchor['path']} …)"
+        message = f"{head}: {n} changes ({anchor['path']} …)"
     elif anchor.get("deleted"):
-        message = f"Undone (staged): {anchor['path']} restored"
+        message = f"{head}: {anchor['path']} restored"
     elif anchor.get("created"):
-        message = f"Undone (staged): {anchor['path']} removed"
+        message = f"{head}: {anchor['path']} removed"
     else:
         from quam_state_manager.core import value_delta as _vd
         _d = _vd.compute(anchor.get("new"), anchor.get("old"))
-        message = f"Undone (staged): {anchor['path']} → {_fmt_val(anchor.get('old'))}"
+        message = f"{head}: {anchor['path']} → {_fmt_val(anchor.get('old'))}"
         if _d and _d["dir"] != "same":
             message += f" ({_d['text']}"
             message += f", {_d['pct_text']})" if _d["pct_text"] else ")"
     if drift:
         message += f" — {drift} value(s) had moved since; the tray now holds the journal value"
+    if not live and flush.get("note"):
+        message += f" — {flush['note']}"
 
     resp = make_response(_tray_html())
     resp.headers["HX-Trigger"] = json.dumps({
         "cellsReverted": {
             "message": message,
+            "live": live,
+            "tier_note": flush.get("note") if not live else None,
             "entries": [
                 _revert_entry_payload(u["path"], u.get("old"),
                                       created=bool(u.get("created")),
@@ -12384,8 +12692,242 @@ def _undo_journal_step(ctx):
         },
         "pulses-changed": True,
         "diagnostics-changed": True,
+        **({"liveDriftChanged": True, "stateHistoryChanged": True} if live else {}),
     })
     return resp
+
+
+def _working_at_sync_point(ctx, store, *, log_was_empty: bool) -> str | None:
+    """docs/160 (review C2): a live walk step may only write a chip that holds
+    EXACTLY the journal's content, and the door pushes the WHOLE working copy
+    -- so anything else the working copy carries would ride along under a
+    keypress that never meant it. Returns the reason it cannot, else None."""
+    if not log_was_empty:
+        return "the tray already holds unapplied edits — press Apply to write them, or discard them"
+    if ctx.get("staged_base"):
+        return "a staged snapshot is waiting in the working state — Apply or discard it first"
+    if ctx.get("working_dirty") or ctx.get("pending_reapply"):
+        return "the working state holds saved-but-unapplied changes — Apply or discard them first"
+    return None
+
+
+def _rollback_walk_step(ctx, store, modifier, staged: list) -> None:
+    """docs/160 (review M2): a refused live flush had ALREADY saved the staged
+    step into the working copy (the door saves before it writes), so the log
+    is empty and nothing can be un-staged -- put the pre-step values back the
+    same way and save again, then clear the dirty/stash marks: the working
+    copy is exactly the synced content once more. All-or-nothing.
+    ``staged`` is in STAGING order (oldest first); the rollback walks it
+    newest-first, so a unit that touched one path twice lands on the value
+    it started from (review N1 -- the first cut walked it forwards and saved
+    the middle value as if it were the sync point)."""
+    try:
+        with store._lock:
+            for e in reversed(list(staged)):       # LIFO: newest first
+                if e.created:
+                    modifier.delete_subtree(e.dot_path)
+                elif e.deleted:
+                    modifier.create_subtree(e.dot_path, copy.deepcopy(e.old_value))
+                else:
+                    modifier.set_value(e.dot_path, copy.deepcopy(e.old_value), coerce=False)
+        with _active_wc_lock(ctx):
+            ctx["saver"].save()
+        _clear_reapply(ctx)
+        _set_working_dirty(False, ctx)
+        _invalidate_engine_cache()
+    except Exception:  # noqa: BLE001 — the tray then shows whatever is left, honestly
+        logger.warning("walk-step rollback failed", exc_info=True)
+
+
+def _flush_walk_step_live(ctx) -> dict:
+    """docs/160: the ONE door, pressed for a walk step. Under an armed
+    Auto-Sync session the anchor of ↺ Revert this session (`last_apply`) is
+    the SESSION's, not this write's (docs/117) -- kept. Returns the core's
+    JSON body (``status`` ok / conflict / error)."""
+    _auto = _auto_apply_state(ctx)
+    _keep = ctx.get("last_apply") if _auto else None
+    try:
+        result = _sync_pull_apply_to_live(ctx, None, journal=False)
+        body = (result[0] if isinstance(result, tuple) else result).get_json() or {}
+    except Exception as exc:  # noqa: BLE001 — never lose the step over a write error
+        logger.warning("walk-step live flush failed", exc_info=True)
+        body = {"status": "error", "message": str(exc)}
+    if _auto and _keep and body.get("status") == "ok":
+        ctx["last_apply"] = _keep
+    return body
+
+
+def _undo_live_flush(ctx, store, modifier, unit: dict, staged: list, *,
+                     drift: int, log_was_empty: bool, cursor_before: int) -> dict:
+    """docs/160 A: write a just-staged journal step to the live chip through
+    the ONE door (`_sync_pull_apply_to_live`, journal=False so the walk's own
+    step is never recorded as a new unit), or return why it stays staged.
+
+    Stays STAGED (the docs/107 outcome, with the reason in the toast) when:
+      - the setting is OFF (no note);
+      - the working copy is not provably at the sync point (unapplied edits
+        in the tray, a staged snapshot, saved-but-unapplied content);
+      - the journal's recorded value had already moved (``drift``: what the
+        chip holds is not what this step's inverse assumes);
+      - the chip is an archive / read-only;
+      - another LIVE SM window applied this unit (docs/160 C).
+    Is ROLLED BACK -- nothing changed anywhere, cursor restored -- when the
+    door refuses: the live files moved since the sync (the staleness gate,
+    never clobbered) or the write failed. The drift banner is then the way
+    forward, and the next Ctrl+Z walks the same unit again.
+    Returns ``{"live": bool, "note": str | None, "rolled_back": bool}``.
+    """
+    if not _undo_live_enabled():
+        return {"live": False, "note": None}
+    why = _working_at_sync_point(ctx, store, log_was_empty=log_was_empty)
+    if why:
+        return {"live": False, "note": "staged only: " + why}
+    if drift:
+        return {"live": False, "note": "staged only: the value had moved since — review, then Apply"}
+    try:
+        if _archive_write_blocked(ctx) is not None:
+            return {"live": False, "note": "staged only: this chip is read-only"}
+    except Exception:  # noqa: BLE001 — a guard failure must never write
+        return {"live": False, "note": "staged only: the chip could not be checked"}
+    foreign = _journal_unit_foreign(unit)
+    if foreign:
+        return {"live": False,
+                "note": f"staged only: this change was applied from another SM window (pid {foreign}) — press Apply to write it from here"}
+    body = _flush_walk_step_live(ctx)
+    if body.get("status") == "ok":
+        return {"live": True, "note": None}
+    _rollback_walk_step(ctx, store, modifier, staged)
+    ctx["undo_cursor"] = cursor_before
+    _redo_mark(ctx, store)
+    if body.get("status") == "conflict":
+        note = "the live chip changed since it was synced; nothing was written — take the live changes (drift banner), then undo again"
+    else:
+        note = f"{body.get('message') or 'apply failed'}; nothing was written"
+    return {"live": False, "note": note, "rolled_back": True}
+
+
+def _redo_journal_forward(ctx, store, modifier, index: int, unit_id: str | None = None):
+    """docs/160: Ctrl+Shift+Z after a LIVE undo -- re-apply ``units[index]``
+    forward and write it live through the same door.  All-or-nothing: the
+    forward ops are staged under the unit's ``jrn:`` gid, CAS-checked against
+    the unit's OLD values (the undo put them there; anything else means the
+    chip moved and this redo would clobber it), flushed, and on any refusal
+    ROLLED BACK (the door saves before it writes, so "un-stage" is a re-save
+    of the pre-step values -- review M2) so nothing is half-done.  Same
+    guards as the undo side: the working copy must be at the sync point, and
+    a unit another live window owns is never written from here (review m1).
+    ``unit_id`` (a redo frame's) must still name ``units[index]`` -- another
+    window's append can have truncated the list (review m4).
+    Returns ``(entries, note)`` -- entries empty when nothing happened.
+    Runs OUTSIDE `store._lock` (review C1): the door takes the build lock.
+    """
+    from quam_state_manager.core import edit_policy
+    from quam_state_manager.core.pointer_path import _walk as _walk_abs, resolve_field_target
+
+    def _current(merged, path):
+        # the RAW value at the resolved leaf: `resolved_value` is scalar-nulled
+        # for containers, and a wholesale unit's entry can be a whole list
+        try:
+            ft = resolve_field_target(merged, path)
+            rp = ft.get("resolved_path") or path
+            found, node = _walk_abs(merged, rp.split("."))
+            return node if found else None
+        except Exception:  # noqa: BLE001 — unreadable == moved
+            return None
+
+    units = ctx.get("undo_units") or []
+    if index != int(ctx.get("undo_cursor") or 0) or index >= len(units):
+        return [], "nothing to redo"
+    unit = units[index]
+    if unit_id and unit.get("id") != unit_id:
+        return [], "nothing to redo (the journal moved under this step)"
+    if not unit.get("entries"):
+        # an empty (too-large) unit was skipped on the way down: walk back up
+        # over it the same way -- RAM only, nothing to write (review N3)
+        ctx["undo_cursor"] = index + 1
+        _redo_mark(ctx, store)
+        _n = (unit.get("meta") or {}).get("too_large")
+        return [], (f"skipped a step too large for Ctrl+Z ({_n} values) — the chip is unchanged"
+                    if _n else "skipped an empty step — the chip is unchanged")
+    if not _undo_live_enabled():
+        return [], "Ctrl+Z writes live is OFF — the redo of a live undo needs it"
+    why = _working_at_sync_point(ctx, store, log_was_empty=not store.change_log)
+    if why:
+        return [], why
+    foreign = _journal_unit_foreign(unit)
+    if foreign:
+        return [], f"this change was applied from another SM window (pid {foreign}) — not written from here"
+    gid = undo_journal.GID_PREFIX + str(unit.get("id") or index)
+    fops = undo_journal.forward_ops(unit)
+    staged: list = []
+    with store._lock:
+        merged = store.merged
+        for e in unit.get("entries") or []:
+            if e.get("created") or e.get("deleted"):
+                continue
+            cur = _current(merged, e["path"])
+            same = (cur == e.get("old")) if isinstance(cur, (list, dict)) or isinstance(e.get("old"), (list, dict)) \
+                else edit_policy.cas_equal(cur, e.get("old"))
+            if not same:
+                return [], (f"{e['path']} has changed since "
+                            f"(now {_fmt_val(cur)}); nothing was written")
+        _redo_begin(ctx, store)
+        try:
+            for (op, path, value, _src) in fops:
+                if op == "create":
+                    staged.append(modifier.create_subtree(path, value, group_id=gid))
+                elif op == "delete":
+                    staged.append(modifier.delete_subtree(path, group_id=gid))
+                else:
+                    staged.append(modifier.set_value(path, value, coerce=False, group_id=gid))
+        except Exception as exc:  # noqa: BLE001 — all-or-nothing, still in memory
+            for _ in staged:
+                try:
+                    modifier.undo()
+                except Exception:
+                    logger.warning("redo-forward rollback lagged", exc_info=True)
+                    break
+            _invalidate_engine_cache()
+            return [], f"redo failed, nothing changed: {exc}"
+    _invalidate_engine_cache()
+    body = _flush_walk_step_live(ctx)
+    if body.get("status") != "ok":
+        _rollback_walk_step(ctx, store, modifier, staged)
+        _redo_mark(ctx, store)
+        why = ("the live chip changed since it was synced; nothing was written — take the live changes (drift banner), then redo again"
+               if body.get("status") == "conflict" else f"{body.get('message') or 'apply failed'}; nothing was written")
+        return [], why
+    ctx["undo_cursor"] = index + 1
+    _journal_persist_cursor(ctx)
+    _redo_mark(ctx, store)
+    return staged, None
+
+
+def _live_redo_response(fw: list, why: str | None, n_req: int):
+    """docs/160: the response of a live journal-forward press -- its own
+    press, never part of a burst (like the undo side's journal boundary)."""
+    if not fw:
+        return _redo_response("Redo: " + (why or "nothing to redo"), [],
+                              extra={"requested": n_req, "consumed": 0,
+                                     "stopped": "exhausted", "level": "warning", "live": False})
+    anchor = fw[0]
+    n = len(fw)
+    if n > 1:
+        message = f"Redone → live: {n} changes ({anchor.dot_path} …)"
+    elif anchor.deleted:
+        message = f"Redone → live: {anchor.dot_path} removed"
+    elif anchor.created:
+        message = f"Redone → live: {anchor.dot_path} restored"
+    else:
+        message = f"Redone → live: {anchor.dot_path} → {_fmt_val(anchor.new_value)}"
+    return _redo_response(
+        message,
+        [_revert_entry_payload(e.dot_path, e.new_value, created=bool(e.deleted),
+                               deleted=bool(e.created), source_file=e.source_file)
+         for e in fw],
+        extra={"requested": n_req, "consumed": 1, "stopped": None, "level": "success",
+               "live": True},
+        live=True)
 
 
 @bp.route("/redo", methods=["POST"])
@@ -12409,6 +12951,7 @@ def redo():
     store = ctx.get("store") if ctx else None
     if store is None:
         return _tray_html()
+    _journal_sync(ctx)      # docs/160 C
 
     top_gid = store.change_log[-1].group_id if store.change_log else None
     if isinstance(top_gid, str) and top_gid.startswith(undo_journal.GID_PREFIX):
@@ -12440,6 +12983,26 @@ def redo():
     n_req = _undo_count()
     stopped = None
     err_text = ""
+    # docs/160: a LIVE journal-forward step is its own press, taken OUTSIDE
+    # the burst lock (review C1: the door takes the build lock; holding
+    # `store._lock` across it deadlocked against a pull / stage / reconcile).
+    # Two shapes: the top redo frame is a live undo's `jrn_live` marker, or
+    # the RAM stack is empty while the persisted cursor sits below the tip
+    # (a restart). A `jrn_live` frame met MID-burst ends the burst instead.
+    _frames = _redo_stack(ctx)
+    if _frames and ctx.get("redo_seq") != store.mutation_seq:
+        _frames.clear()   # foreign mutation since — dead timeline
+    if _frames and _frames[-1].get("kind") == "jrn_live":
+        _frame = _frames.pop()
+        _fw, _why = _redo_journal_forward(ctx, store, modifier,
+                                          int(_frame.get("unit_index") or 0),
+                                          unit_id=_frame.get("unit_id"))
+        return _live_redo_response(_fw, _why, n_req)
+    if (not _frames and not store.change_log and _undo_live_enabled()
+            and int(ctx.get("undo_cursor") or 0) < len(ctx.get("undo_units") or [])):
+        _fw, _why = _redo_journal_forward(ctx, store, modifier,
+                                          int(ctx.get("undo_cursor") or 0))
+        return _live_redo_response(_fw, _why, n_req)
     with store._lock:
       for _ in range(n_req):
         top_gid = store.change_log[-1].group_id if store.change_log else None
@@ -12453,6 +13016,9 @@ def redo():
         if ctx.get("redo_seq") != store.mutation_seq:
             frames.clear()   # foreign mutation since — dead timeline, silent no-op
             stopped = "exhausted"
+            break
+        if frames[-1].get("kind") == "jrn_live":
+            stopped = "journal"      # its own press: the client re-queues the rest
             break
         frame = frames.pop()
 
@@ -12528,12 +13094,16 @@ def redo():
             for fe in group
         ],
         extra={"requested": n_req, "consumed": len(all_fents), "stopped": stopped,
-               "level": "error" if stopped == "error" else "success"})
+               "level": "error" if stopped == "error" else "success",
+               "live": False})
 
 
-def _redo_response(message: str, entries_payload: list[dict], extra: dict | None = None):
+def _redo_response(message: str, entries_payload: list[dict], extra: dict | None = None,
+                   *, live: bool = False):
     """The /undo response shape (tray + cellsReverted HX-Trigger), reused by
-    both /redo branches so the client repaint/UndoNav path stays ONE."""
+    both /redo branches so the client repaint/UndoNav path stays ONE.
+    ``live`` (docs/160): the press wrote the chip -- the drift banner and the
+    Versions panel must follow, exactly as after an Apply (review m2)."""
     resp = make_response(_tray_html())
     payload = {"message": message, "entries": entries_payload}
     if extra:
@@ -12545,6 +13115,7 @@ def _redo_response(message: str, entries_payload: list[dict], extra: dict | None
         **(_pulses_changed_for_entries(_store_, _pulse_index(), entries_payload)
            if _store_ else {"pulses-changed": True}),
         "diagnostics-changed": True,
+        **({"liveDriftChanged": True, "stateHistoryChanged": True} if live else {}),
     })
     return resp
 
@@ -13086,6 +13657,9 @@ def auto_apply_revert():
         ctx["undo_units"] = undo_journal.mark_unit(path, unit_id, meta_patch)
         ctx["undo_cursor"] = min(int(ctx.get("undo_cursor") or 0),
                                  len(ctx["undo_units"]))
+        # docs/160 (review N2): our own write -- the mirror must not read it
+        # back as another window's and reset the RAM cursor
+        ctx["undo_sidecar_mtime"] = undo_journal.sidecar_mtime(path)
     except Exception:
         logger.warning("applied-log mark failed", exc_info=True)
 
@@ -13772,7 +14346,7 @@ def state_sync():
 
 
 def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
-                             force=False, patch=None):
+                             force=False, patch=None, journal=True):
     """Finish a ``mode=apply`` sync: save the re-applied edits to the working
     copy and push them to the live chip. Mirrors ``/state/apply-to-live`` but
     returns JSON so ``doStateSync`` can drive it. On a fresh staleness conflict
@@ -13780,7 +14354,10 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
     ``pulled_other_changes`` (echoed to the client) — the pull absorbed live
     changes beyond the user's own edits, so the surface needs one refresh.
     ``force`` (docs/126 ⑤) pushes over a drifted live — callers pass it only
-    when the user's one press already meant exactly that."""
+    when the user's one press already meant exactly that.
+    ``journal=False`` (docs/160): the outgoing log is a journal WALK step
+    (Ctrl+Z / Ctrl+Shift+Z writing live) — recorded by the cursor, never as a
+    new unit, or the next Ctrl+Z would undo the undo."""
     store = ctx["store"]
     wc = ctx["working_copy"]
     saver = ctx["saver"]
@@ -13793,7 +14370,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
     with store._lock:
         _clear_reapply(ctx)
         _stash_reapply(_capture_change_log_as_updates(store), ctx)
-        _jrn_units = _journal_prepare(store, ctx)   # docs/107: outgoing log
+        _jrn_units = _journal_prepare(store, ctx) if journal else []   # docs/107: outgoing log
 
     if store.change_log:
         try:
@@ -13833,8 +14410,13 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
     except Exception:
         logger.warning("Pre-apply snapshot failed", exc_info=True)
 
+    _before_tree = None
     try:
         with _active_wc_lock(ctx):
+            # docs/160 B: the chip's tree right before the write is the `old`
+            # side of a wholesale unit (read only when one will be recorded)
+            if journal and ctx.get("staged_base"):
+                _before_tree = _live_merged_tree(wc)
             working_copy.apply_to_live(wc, force=force)
     except working_copy.StaleLiveError:
         # The live chip changed again while we merged. Keep the stash and hand
@@ -13865,6 +14447,12 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
                                    f"{type(exc).__name__}: {exc}"}), 500
 
     _set_working_dirty(False, ctx)
+    # docs/160 B: staged wholesale content (a snapshot / a run's state) just
+    # reached the chip with no change-log entries to journal -- record the
+    # leaf difference as ONE unit so Ctrl+Z can walk it. Before the flag is
+    # cleared below, and only for a real apply (a walk step never stages one).
+    if journal and ctx.get("staged_base"):
+        _journal_wholesale_commit(ctx, _before_tree, "apply-staged")
     ctx["staged_base"] = False   # the staged content reached live (audit-r10)
     _clear_reapply(ctx)  # edits are on the live chip now — nothing left to re-apply
     ctx["live_diverged"] = False  # live now holds the merged working content
@@ -13990,8 +14578,11 @@ def state_apply_to_live():
         if _auto is not None and pre_apply_ts:
             _auto["pre_ts"] = pre_apply_ts
 
+    _before_tree = None
     try:
         with _active_wc_lock(ctx):
+            if ctx.get("staged_base"):                  # docs/160 B (see the sync twin)
+                _before_tree = _live_merged_tree(wc)
             working_copy.apply_to_live(wc, force=force)
     except working_copy.StaleLiveError:
         # stash kept for the pull choice; staged_conflict — see the sync twin
@@ -14027,6 +14618,8 @@ def state_apply_to_live():
         return _body, 500
 
     _set_working_dirty(False, ctx)
+    if ctx.get("staged_base"):
+        _journal_wholesale_commit(ctx, _before_tree, "apply-staged")   # docs/160 B
     ctx["staged_base"] = False   # the staged content reached live (audit-r10)
     _clear_reapply(ctx)  # the edits are now on the live chip — nothing left to re-apply
     ctx["live_diverged"] = False  # live now holds the working content (incl. force)

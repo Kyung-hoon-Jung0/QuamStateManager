@@ -76,7 +76,7 @@ window.UndoTrail = (function () {
         _steps.forEach(function (st, i) {
             h += '<div class="undo-trail-step' + (i === 0 ? ' undo-trail-latest' : '') + '" data-kind="' + esc(st.kind) + '">';
             h += '<div class="undo-trail-kind">' + (st.kind === 'redo' ? '↷ redo' : st.kind === 'discard' ? '✕ discarded' : '↶ undo')
-               + '<span class="muted"> · ' + esc(st.tier === 'memory' ? 'typed' : 'staged') + (st.label ? ' · ' + esc(st.label) : '') + '</span></div>';
+               + '<span class="muted"> · ' + esc(st.tier === 'memory' ? 'typed' : st.tier === 'live' ? '→ live' : 'staged') + (st.label ? ' · ' + esc(st.label) : '') + '</span></div>';
             st.entries.slice(0, 6).forEach(function (e) {
                 h += '<div class="undo-trail-row"><code class="undo-trail-path" title="' + esc(e.dot_path) + '">' + esc(e.dot_path) + '</code>'
                    + '<span class="undo-trail-vals">' + (e.from !== undefined ? '<span class="undo-trail-from">' + esc(fmt(e.from)) + '</span> → ' : '')
@@ -110,7 +110,12 @@ window.UndoTrail = (function () {
                      value: e.deleted ? '(deleted)' : (e.old_value_disp != null ? e.old_value_disp : e.old_value_str),
                      from: undefined };
         });
-        push({ kind: kind, tier: 'server', entries: entries, label: null });
+        // docs/160: the server says where the step landed -- on the live chip
+        // (Ctrl+Z writes live) or only in the tray ("staged"). Before, every
+        // server step read "staged", which after an apply was the whole reason
+        // users thought Ctrl+Z was broken.
+        var tier = d.live === true ? 'live' : 'server';
+        push({ kind: kind, tier: tier, entries: entries, label: d.tier_note || null });
     });
     // in-memory tier: LiveEditUndo announces each step
     document.addEventListener('quam:undo-step', function (evt) {

@@ -864,6 +864,19 @@
         <button onclick="toggleTopbar()" class="settings-opt" id="topbar-toggle">Hide top bar</button>
         </div>
         </div>
+        {# docs/160 (customer, CRITICAL): Ctrl+Z after Apply-to-live writes the
+           chip. A MACHINE-WIDE server setting (not localStorage) because it
+           decides whether a keypress writes the instrument -- every window
+           on this machine must agree. Default ON; OFF restores the docs/107
+           stage-only behaviour byte-for-byte. #}
+        <div class="settings-group">
+        <small class="settings-label">Undo <span class="muted">(after Apply to live)</span></small>
+        <div class="settings-options">
+        <button onclick="toggleUndoLive()" class="settings-opt{% if undo_live %} settings-opt-active{% endif %}" id="undo-live-toggle"
+                data-on="{{ '1' if undo_live else '0' }}"
+                title="ON: Ctrl+Z / Ctrl+Shift+Z on an already-applied change writes the live chip right away (through the same Apply door, refused if the chip moved). OFF: the reverted value only waits in the review tray until you press Apply.">Ctrl+Z writes live: {{ 'ON' if undo_live else 'OFF' }}</button>
+        </div>
+        </div>
         {# docs/109: how MW amplitude annotations read — some labs think in dBm,
            others in volts. ONE global viewer setting (quam_phys_unit) drives
            every surface (Live-Edit sub-lines, Components tables, inspectors);
