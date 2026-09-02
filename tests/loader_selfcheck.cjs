@@ -20,6 +20,7 @@ function ok(c, m) { if (!c) { console.error('FAIL: ' + m); fails++; } else { con
 
 const dom = new JSDOM('<!doctype html><html><body>'
     + '<div id="table-pane"></div>'
+    + '<form id="param-history-filters"><input type="checkbox" id="phf-box" name="qubits" value="q1"></form>'
     + '<div id="quam-loader" class="quam-loader"><div class="quam-loader-spinner"></div>'
     + '<div class="quam-loader-text"><span>Q</span></div>'
     + '<div class="quam-loader-sub">Please wait</div>'
@@ -46,8 +47,8 @@ window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
 const d = window.document;
 const loader = d.getElementById('quam-loader');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-function fire(name, path) {
-    d.dispatchEvent(new window.CustomEvent(name, { detail: { requestConfig: { path: path } } }));
+function fire(name, path, elt) {
+    d.dispatchEvent(new window.CustomEvent(name, { detail: { requestConfig: { path: path }, elt: elt } }));
 }
 
 (async () => {
@@ -78,6 +79,27 @@ function fire(name, path) {
     fire('htmx:responseError', '/param-history');
     ok(!loader.classList.contains('visible'), 'an error hides it immediately');
 
+    // 6. docs/158: a Param History FILTER change (issued from inside the
+    //    filter form, same /param-history path) is an in-page refinement
+    //    that swaps only the results -- the page-load popup must not flash
+    //    over it, and its completion must not touch a real slow request's
+    //    pending count either.
+    const box = d.getElementById('phf-box');
+    fire('htmx:beforeRequest', '/param-history?props=&qubits=', box);
+    await sleep(140);
+    ok(!loader.classList.contains('visible'), 'a filter-form request to /param-history never shows the loader');
+    fire('htmx:beforeRequest', '/bulk');
+    await sleep(140);
+    ok(loader.classList.contains('visible'), '(a real slow request still does)');
+    fire('htmx:afterRequest', '/param-history?props=&qubits=', box);
+    d.dispatchEvent(new window.CustomEvent('htmx:afterSettle', { detail: {} }));
+    await sleep(60);
+    ok(loader.classList.contains('visible'), 'the filter request finishing does not douse a slow request still pending');
+    fire('htmx:afterRequest', '/bulk');
+    d.dispatchEvent(new window.CustomEvent('htmx:afterSettle', { detail: {} }));
+    await sleep(60);
+    ok(!loader.classList.contains('visible'), '(and the slow one finishing still does)');
+
     // 5. markup + CSS contracts
     const base = fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'templates', 'base.html'), 'utf8');
     ok(base.indexOf('quam-loader-spinner') > -1 && /quam-loader-sub[^>]*>Please wait a moment/.test(base),
@@ -89,6 +111,6 @@ function fire(name, path) {
        || /\.quam-loader-spinner \{ animation: none; \}/.test(css),
        'reduced-motion users get a static ring');
 
-    console.log(fails ? ('FAILED: ' + fails) : 'ALL OK (10 assertions)');
+    console.log(fails ? ('FAILED: ' + fails) : 'ALL OK (14 assertions)');
     process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error('FATAL', e && e.message); process.exit(1); });

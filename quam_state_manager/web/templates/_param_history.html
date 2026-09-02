@@ -280,9 +280,14 @@
      always wins. NOT `changed`: htmx 2 keys it on event.target.value, which for
      a checkbox is the static value attr — a re-toggle would never fire again.
      The chips' lit state is echoed instantly by an app.js change listener
-     (inputs are display:none; without the echo a click shows nothing for 500ms). #}
+     (inputs are display:none; without the echo a click shows nothing for 500ms).
+     docs/158: a filter change swaps ONLY #param-history-results (hx-select
+     picks it out of the full render) — the header, the alignment slot (a
+     load-fragment that used to re-fetch and pop its banner on every chip
+     click) and this form stay put, so the chips the user just set never
+     re-render under them. Reset filters below still swaps the whole root. #}
   <form id="param-history-filters" class="param-history-filters"
-        hx-get="/param-history" hx-target="#param-history-root" hx-swap="outerHTML"
+        hx-get="/param-history" hx-target="#param-history-results" hx-select="#param-history-results" hx-swap="outerHTML"
         hx-push-url="true" hx-trigger="change delay:500ms" hx-sync="this:replace">
 
     <div class="phf-row">
@@ -315,9 +320,10 @@
 
     {# All/None: flip every checkbox in the row, then ONE dispatched change
        event → one debounced submit (paramHistoryFilterSetRow in app.js).
-       Server contract unchanged: an empty selection still means the default
-       view, so None is a starting point for picking a few chips within the
-       debounce window, not a persistent "hide everything". #}
+       docs/158 (customer): None MEANS none. The hidden empty value below
+       keeps the parameter present when every chip is off, so the server
+       sees an explicit empty selection (``props=``) instead of an absent
+       one — absent is the only thing that means "default view". #}
     <div class="phf-row">
       <label class="phf-label">Properties</label>
       <span class="phf-allnone">
@@ -326,6 +332,7 @@
         <button type="button" class="btn-xs outline"
                 onclick="paramHistoryFilterSetRow(this, false)">None</button>
       </span>
+      <input type="hidden" name="props" value="">
       <div class="phf-chips phf-chip-grid">
         {% for p in all_properties %}
           {% set is_active = (p in properties) or (properties == all_properties) %}
@@ -345,9 +352,11 @@
         <button type="button" class="btn-xs outline"
                 onclick="paramHistoryFilterSetRow(this, false)">None</button>
       </span>
+      <input type="hidden" name="qubits" value="">
       <div class="phf-chips phf-chip-grid">
         {% for q in all_qubits %}
-          {% set is_active = (q in qubits_selected) or (not qubits_selected) %}
+          {# no selection = every qubit, EXCEPT an explicit None (docs/158) #}
+          {% set is_active = (q in qubits_selected) or (not qubits_selected and not none_qubits) %}
           <label class="phf-chip phf-chip-qubit{% if is_active %} active{% endif %}">
             <input type="checkbox" name="qubits" value="{{ q }}" {% if is_active %}checked{% endif %}>
             {{ q }}
@@ -370,6 +379,10 @@
     </div>
   </form>
 
+  {# docs/158: everything a filter change can alter lives in this ONE
+     container — the form above targets it with hx-select, so a chip click
+     re-renders the results and nothing else. #}
+  <div id="param-history-results">
   <div class="param-history-summary">
     <strong>{{ summary.window_count }}</strong> snapshots match
     {% if summary.total %}<span class="muted">({{ summary.total }} total in index)</span>{% endif %}
@@ -391,7 +404,17 @@
     {% endif %}
   </div>
 
-  {% if not cells %}
+  {% if none_props or none_qubits %}
+    {# docs/158: the None button's honest answer — not the defaults, not
+       every qubit, and not "no data matches" either #}
+    <div class="param-history-empty param-history-none">
+      <p><strong>Nothing selected.</strong></p>
+      <p class="muted">
+        {% if none_props and none_qubits %}No properties and no qubits are selected{% elif none_props %}No properties are selected{% else %}No qubits are selected{% endif %}
+        — pick some above, or <em>All</em>.
+      </p>
+    </div>
+  {% elif not cells %}
     {% if summary.total == 0 and is_loaded_chip and importable_count > 0 %}
       {# First-visit CTA: there's nothing in the index yet, but the         #}
       {# alignment scan found N workspace experiments that match this chip.#}
@@ -474,6 +497,7 @@
 
   <div id="param-history-drawer" class="param-history-drawer" style="display:none"
        hx-target="this" hx-swap="innerHTML"></div>
+  </div>{# /#param-history-results #}
 </div>
 
 <script>

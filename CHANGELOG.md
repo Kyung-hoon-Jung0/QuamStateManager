@@ -634,3 +634,10 @@ one** (docs/136, 137).
   bold badge, names wrap at their own `_` joints (two lines at most for every
   name in a 2,655-run archive), and the sidebar opens 300 px wide by default
   (docs/157).
+
+### Param History
+
+- **None means none.** The Properties / Qubits None buttons used to bounce back
+  to the defaults (or every qubit) with the whole page re-rendering; an empty
+  selection is now a selection, a chip click re-renders only the results, and
+  the page-load popup no longer flashes over it (docs/158).

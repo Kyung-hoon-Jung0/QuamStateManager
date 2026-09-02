@@ -14590,8 +14590,16 @@ function paramHistoryMaybeAutoBackfill() {
 // Listen on `document` (not document.body): this script loads in <head>,
 // before <body> exists. HTMX events bubble to document either way.
 document.addEventListener('htmx:afterSwap', function(evt) {
-    if (evt.target && (evt.target.id === 'param-history-root'
-                       || (evt.target.querySelector && evt.target.querySelector('#param-history-root')))) {
+    if (!evt.target) return;
+    // docs/158: a filter change swaps only #param-history-results (the form
+    // hx-selects it), so the trailing inline <script> of the full render
+    // never arrives — the sparklines are (re)drawn from here instead.
+    if (evt.target.id === 'param-history-results') {
+        renderParamHistorySparklines();
+        return;
+    }
+    if (evt.target.id === 'param-history-root'
+        || (evt.target.querySelector && evt.target.querySelector('#param-history-root'))) {
         renderParamHistorySparklines();
         // Subsequent visits to a chip the user has already imported once:
         // silently catch up on any new workspace experiments. CTA card
@@ -14688,6 +14696,13 @@ window.PendingMarkers = (function () {
 
     function isSlow(detail) {
         var path = (detail && detail.requestConfig && detail.requestConfig.path) || '';
+        // docs/158: a Param History FILTER change is an in-page refinement
+        // (the grid renders from SQLite in ~0.2 s, docs/142) and swaps only
+        // the results — the page-load popup flashing over it on every chip
+        // click was half of the customer's "SM이 흔들린다". Same answer on
+        // both events (before/after), so the pending counter stays paired.
+        var elt = detail && detail.elt;
+        if (elt && elt.closest && elt.closest('#param-history-filters')) return false;
         for (var i = 0; i < SLOW_PREFIXES.length; i++) {
             if (path.indexOf(SLOW_PREFIXES[i]) === 0) return true;
         }

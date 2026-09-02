@@ -17679,9 +17679,17 @@ def param_history():
         _sanitize_name as _hist_sanitize, chip_name_for as _chip_name_for)
     legacy_chip_key = _hist_sanitize(_chip_name_for(loaded_path))
 
-    # Raw user selections (preserve empty list as "user explicitly cleared")
-    raw_props = request.args.getlist("props")
-    raw_qubits = request.args.getlist("qubits")
+    # docs/158 (customer: "None이면 말그대로 선택하지 않게"): an EMPTY selection
+    # is a selection. The filter form always carries the parameter (a hidden
+    # empty value per row), so "None" arrives as ``props=`` / ``qubits=`` —
+    # only the ABSENCE of the parameter means the default view (a fresh
+    # navigation, Reset filters, a link from elsewhere). ``props=`` used to
+    # fall back to the defaults and ``qubits=`` to every qubit, so the None
+    # button flipped every chip off and the re-render flipped them back on.
+    explicit_props = "props" in request.args
+    explicit_qubits = "qubits" in request.args
+    raw_props = [p for p in request.args.getlist("props") if p]
+    raw_qubits = [q for q in request.args.getlist("qubits") if q]
     raw_triggers = request.args.getlist("triggers")
     chip_key_param = request.args.get("chip_key", "").strip()
 
@@ -17692,8 +17700,10 @@ def param_history():
     # docs/142: default-visible = T1/T2 only; the picker still offers all
     # tracked properties and ?props= opt-in renders any of them.
     from quam_state_manager.core.history import DEFAULT_VISIBLE_PROPERTIES
-    props = raw_props or list(DEFAULT_VISIBLE_PROPERTIES)
+    props = raw_props if explicit_props else list(DEFAULT_VISIBLE_PROPERTIES)
+    none_props = explicit_props and not raw_props
     qubits_selected = raw_qubits
+    none_qubits = explicit_qubits and not raw_qubits
     qubit_filter = qubits_selected or None
     triggers = raw_triggers or None
     # Loaded chip's default view = recent 7d (active monitoring).
@@ -17713,7 +17723,8 @@ def param_history():
     # into a dead/broken page (the diff/compare routes already catch this way).
     index_error = None
     try:
-        rows = hm.extract_property_history(
+        # docs/158: nothing selected is an honest empty grid, not a query
+        rows = [] if (none_props or none_qubits) else hm.extract_property_history(
             target_path, props,
             qubit_filter=qubit_filter,
             since=since, until=until,
@@ -17771,7 +17782,10 @@ def param_history():
         except Exception:
             all_qubits = sorted({r["qubit"] for r in rows})
 
-    qubits = sorted(qubits_selected) if qubits_selected else sorted(all_qubits)
+    if qubits_selected:
+        qubits = sorted(qubits_selected)
+    else:
+        qubits = [] if none_qubits else sorted(all_qubits)   # docs/158
     by_cell = {(r["qubit"], r["property"]): r for r in rows}
 
     # Current-value overlay: only meaningful when viewing the loaded chip.
@@ -17857,6 +17871,11 @@ def param_history():
             page="param_history",
             qubits=qubits,
             qubits_selected=qubits_selected,
+            # docs/158: an explicit empty selection (the None button) — the
+            # chips render unlit and the grid says so, instead of the
+            # defaults / every qubit coming back
+            none_props=none_props,
+            none_qubits=none_qubits,
             properties=props,
             all_properties=list(DEFAULT_TRACKED_PROPERTIES),
             all_qubits=all_qubits,
