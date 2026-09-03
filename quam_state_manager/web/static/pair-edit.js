@@ -1105,8 +1105,15 @@
                 if (!e || !e.dot_path) return;
                 var ck = _pgv.colOfPath(e.dot_path);
                 if (ck && _pgv.isRemote(ck)) {
-                    _pgv.patchColdValue(e.dot_path,
-                        e.old_value_disp != null ? e.old_value_disp : e.old_value_str);
+                    // docs/159 + round 2, F10: the pair grid renders a LIST as
+                    // the `▦ N×M` badge, so the badge is this column's search
+                    // text -- writing the qubit grid's 24-char JSON preview
+                    // here made a search for "2×2" miss the row and a search
+                    // for a number the cell never shows hit it.
+                    var cv = (e.old_kind === 'list' && e.old_value_badge != null)
+                        ? e.old_value_badge
+                        : (e.old_value_disp != null ? e.old_value_disp : e.old_value_str);
+                    _pgv.patchColdValue(e.dot_path, cv);
                 }
             });
         }

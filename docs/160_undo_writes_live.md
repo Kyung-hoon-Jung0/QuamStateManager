@@ -227,3 +227,50 @@ calculator window (same name), wiping typed values — the page now pings a
 `BroadcastChannel` first and only silence opens a new window (CDP-verified:
 one window, same target, the typed value survives). Pinned in
 `tests/test_undo_live.py` (42) and `tests/test_sweep_misc.py` (7).
+
+## 5d. The second /code-review round (2026-09-03)
+
+The same reviewer, re-run over the branch INCLUDING its own sweep commit,
+returned fifteen findings. All fifteen were re-derived against the tree; two
+turned out to describe the app's standing model rather than a defect
+introduced here (noted below). The rest are fixed in one commit.
+
+### The live walk (docs/160)
+
+| | finding | fix |
+|---|---|---|
+| R1 | the sweep's own F12 fix — re-push a refused redo frame — JAMMED the stack for any NON-transient refusal (the setting turned OFF, a `unit_id` the journal moved under, an index the cursor had passed): every later press met the same refusal and the frames beneath became unreachable | a frame that no longer NAMES the walk cursor is stale: dropped, and that press does nothing else (it must never be applied to a stranger's unit — review m4). A refusal that leaves the step still next in line keeps its frame, as before |
+| R2 | the empty / too-large skip moved the cursor with NO redo frame, so the redo stack and the walk drifted apart — the unit UNDER the skipped one could never be redone | every step that moves the cursor pushes a frame (`_push_jrn_live_frame`), skips included; an empty unit now also says so instead of looking like a dead key |
+| R3 | the ✕ that un-staged a journal step moved the cursor up (sweep F2) but the redo that re-staged it did not move it back — the next Ctrl+Z staged that unit's inverse a second time on top of itself | the redo frame keeps its `jrn:` gid exactly when the ✕ moved the cursor |
+| R4 | every live press re-anchored ↺ **Revert last apply** on the undo itself, so the button silently came to mean "redo what I just undid" | a walk step (`walk=True`) leaves `last_apply` alone — it is not an apply |
+| R5 | and it took TWO full history snapshots per press (pre-apply backup + post-apply save), with none of the docs/117 throttle auto-apply added for exactly this | the pre-apply snapshot is gone for a walk (its only consumer was R4's anchor) and the post-apply one is throttled per chip by `_AUTO_SNAPSHOT_MIN_S`, as the auto-apply session does. A held Ctrl+Z is one gesture, not N archive copies |
+| R6 | a coalesced `?n=k` walk press answered `stopped: null`, so the client dropped the remaining k−1 presses (the ordinary burst path signals `journal` for exactly this) | `_walk_burst_extra`: every walk response — down, up, and the skip — reports requested / consumed / stopped |
+| R7 | a wholesale DELETE whose subtree contained an excluded (already-journaled) edit path was dropped entirely, leaving that subtree unrecoverable | the delete is recorded; its `old` is the chip's whole subtree, which restores the leaf too |
+| R8 | `insert_units` read the persisted cursor and discarded it, writing the tip — an insert after a live undo resurrected units the chip no longer holds | it truncates at the cursor first, exactly as `append_units` does |
+| R9 | `jrn_live` frames were appended raw, bypassing the `_REDO_MAX_FRAMES` cap every other frame obeys | pushed through one helper that caps |
+| R10 | `_journal_sync` scanned `store.change_log` outside `store._lock`, while the caller takes it for the rest of the burst | the scan takes the (reentrant) lock |
+| R11 | `_journal_unit_foreign` — a predicate on every press — did a directory scan plus one PID probe per registry entry | memoized for 2 s (never under TESTING). The unlinking of dead entries is `peers()`'s documented self-cleaning, kept |
+
+### Outside the walk
+
+| | finding | fix |
+|---|---|---|
+| R12 | the docs/159 list-cell repaint wrote the reverted preview but left `bulk-cell-modified` on — and still reported the path covered, so no rebuild followed: a reverted value sat under a red "unapplied edit" box forever | the class goes with the value (what the `<input>` branch already did through `data-orig`) |
+| R13 | the pair grid's COLD-column search text was patched with the qubit grid's 24-char JSON preview, where a fresh render puts the `▦ N×M` badge | the badge (`old_value_badge`), which the in-DOM branch beside it already used |
+| R14 | a `calc-here` answer focused the live calculator window but the page never recorded that a window exists, so Alt+C / the Calculator button opened a SECOND calculator beside it | `_extAlive`, kept true by the window's own announcements (`calc-here` / `calc-bye`), asked once per page load with a focus-free `calc-probe`; a press that finds no answer heals the flag and opens in-page after all |
+
+### Not a defect
+
+The fifteenth finding: `_wholesale_unit`'s `_src` classifies a path as wiring
+by its top-level key, which mislabels a chip whose wiring.json carries a
+top-level `qubits`. True — but that IS the app's one rule
+(`QuamStore.source_file_for`), the same one the modifier stamps on every
+change-log entry, so a wholesale entry and an edit entry can never disagree.
+The real problem was a second copy of it; the copy is gone and the store's
+own method is called. Changing the rule itself would be a separate change,
+app-wide.
+
+Pinned in `tests/test_undo_live.py` (`TestReviewRound2`, `TestJournalInsertCursor`),
+`tests/test_sweep_misc.py`, `tests/undo_repaint_selfcheck.cjs` and
+`tests/calc_window_selfcheck.cjs` (World C drives the real ping flow against a
+faked BroadcastChannel bus).

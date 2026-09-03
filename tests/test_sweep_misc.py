@@ -88,6 +88,22 @@ class TestParamHistoryChipKey:
         assert tpl.index('<div id="param-history-results">') < tpl.index("{% if index_error %}")
 
 
+class TestPairColdSearchTextIsTheBadge:
+    """Round 2, F10: the pair grid renders a list as `▦ N×M`, so the badge is
+    that column's SEARCH TEXT. The cold-map patch wrote the qubit grid's
+    24-char JSON preview instead — a search for the badge then missed the row,
+    and a search for a number the cell never shows hit it."""
+
+    def test_the_cold_map_patch_prefers_the_badge(self):
+        js = (_STATIC / "pair-edit.js").read_text(encoding="utf-8")
+        i = js.index("_pgv.patchColdValue(")
+        seg = js[max(0, i - 700):i + 200]
+        assert "old_value_badge" in seg and "old_kind === 'list'" in seg
+        # the payload the server ships for a list carries both
+        p = routes._revert_entry_payload("x.y", [[1, 2]])
+        assert p["old_value_badge"] == "▦ 1×2" and p["old_value_disp"] == "[[1,2]]"
+
+
 class TestCalcWindowAsksBeforeOpening:
     def test_the_page_pings_a_live_window_before_a_same_name_open(self):
         i = _CALC_JS.index("window.openCalcWindow = function (trigger) {")

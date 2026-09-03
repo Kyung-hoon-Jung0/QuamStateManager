@@ -284,10 +284,19 @@ def insert_units(path: str | Path, new_units: list[dict], *, before_tail: int) -
     """Insert ``new_units`` below the newest ``before_tail`` units (docs/160 B,
     review F1): a wholesale base recorded in the same apply as the edits made
     on top of it must sit BELOW those edits so the walk undoes the edits
-    first. Cursor at the tip. Advisory, atomic, under the module lock."""
+    first. Cursor at the tip. Advisory, atomic, under the module lock.
+
+    Like :func:`append_units`, an insert TRUNCATES at the persisted cursor
+    first (code-review round 2, F9): a new action after a live undo discards
+    the redo branch. Writing the cursor at the tip over an un-truncated list
+    resurrected units the chip no longer holds -- the applied log reported
+    them as in effect and offered a ✕ that then 409s."""
     p = Path(path)
     with _lock:
-        units, _cursor = load_state(p)
+        units, cursor = load_state(p)
+        if 0 <= cursor < len(units):
+            units = units[:cursor]
+            before_tail = min(int(before_tail), len(units))
         cut = max(0, len(units) - max(0, int(before_tail)))
         units = units[:cut] + list(new_units) + units[cut:]
         if len(units) > MAX_UNITS:

@@ -333,8 +333,15 @@
     var WIN_DEFAULT = { w: 400, h: 680 };
     var _calcWin = null;
 
+    // A calculator window this page did not open (it survived a full reload of
+    // the SM page, so `_calcWin` is gone) still answers on the channel --
+    // `_extAlive` is what the page knows about it (code-review round 2, F11).
+    // Without it the ↗ ping focused the live window while every OTHER entry
+    // point (Alt+C, the sidebar button) still believed no window existed and
+    // opened a SECOND calculator beside it.
+    var _extAlive = false, _extCh = null;
     function calcWinAlive() {
-        try { return !!(_calcWin && !_calcWin.closed); } catch (e) { return false; }
+        try { return _extAlive || !!(_calcWin && !_calcWin.closed); } catch (e) { return _extAlive; }
     }
     function standalone() {
         var p = document.getElementById('calc-popover');
@@ -371,6 +378,27 @@
         try { return window.BroadcastChannel ? new BroadcastChannel(CH_NAME) : null; }
         catch (e) { return null; }
     }
+    // ONE long-lived listener per page: the window announces itself (`calc-here`,
+    // answered to a ping or a silent probe) and says goodbye when it closes
+    // (`calc-bye`), so `_extAlive` stays true only while a window really is there.
+    function _extListen() {
+        if (_extCh || standalone()) return;
+        _extCh = _channel();
+        if (!_extCh) return;
+        _extCh.onmessage = function (ev) {
+            var d = ev && ev.data;
+            if (!d) return;
+            if (d.type === 'calc-here') _extAlive = true;
+            else if (d.type === 'calc-bye') _extAlive = false;
+        };
+    }
+    // asked once at page load: unlike `calc-ping` it must NOT pull the window
+    // to the front -- a page reload is not a request to see the calculator.
+    function _extProbe() {
+        _extListen();
+        if (!_extCh) return;
+        try { _extCh.postMessage({ type: 'calc-probe' }); } catch (e) {}
+    }
     function _openNew(trigger) {
         var w = null;
         try { w = window.open(winUrl(trigger), WIN_NAME, winFeatures()); } catch (e) { w = null; }
@@ -380,9 +408,30 @@
         try { w.focus(); } catch (e) {}
         return w;
     }
+    // Bring a window this page did NOT open to the front; if nothing answers,
+    // it is gone -- clear the flag and let the caller act as if there were none.
+    function _focusExternal(onGone) {
+        var ch = _channel();
+        if (!ch) { _extAlive = false; if (onGone) onGone(); return; }
+        var answered = false;
+        var timer = setTimeout(function () {
+            try { ch.close(); } catch (e) {}
+            if (answered) return;
+            _extAlive = false;
+            if (onGone) onGone();
+        }, 200);
+        ch.onmessage = function (ev) {
+            if (ev && ev.data && ev.data.type === 'calc-here') answered = true;
+        };
+        try { ch.postMessage({ type: 'calc-ping' }); }
+        catch (e) { clearTimeout(timer); _extAlive = false; if (onGone) onGone(); }
+    }
     window.openCalcWindow = function (trigger) {
-        if (calcWinAlive()) { try { _calcWin.focus(); } catch (e) {} return _calcWin; }
+        // only a window THIS page opened can be focused directly; an external
+        // one is reached through the ping below (F11)
+        if (_calcWin && !_calcWin.closed) { try { _calcWin.focus(); } catch (e) {} return _calcWin; }
         if (window.pywebview) return null;   // desktop shell — see the note above
+        _extListen();
         var ch = _channel();
         if (!ch) return _openNew(trigger);
         var answered = false;
@@ -396,6 +445,9 @@
             answered = true;
             clearTimeout(timer);
             try { ch.close(); } catch (e) {}
+            // the page now KNOWS a window is out there (F11) — Alt+C and the
+            // sidebar button must bring that one forward, not open a second
+            _extAlive = true;
             if (calcOpen()) window.toggleCalc();
         };
         try { ch.postMessage({ type: 'calc-ping' }); } catch (e) { clearTimeout(timer); return _openNew(trigger); }
@@ -429,10 +481,18 @@
         var ch = _channel();
         if (ch) {
             ch.onmessage = function (ev) {
-                if (!ev || !ev.data || ev.data.type !== 'calc-ping') return;
+                var d = ev && ev.data;
+                if (!d || (d.type !== 'calc-ping' && d.type !== 'calc-probe')) return;
                 try { ch.postMessage({ type: 'calc-here' }); } catch (e) {}
-                try { window.focus(); } catch (e) {}
+                // a PROBE is the opener page asking on load whether a window
+                // exists (F11) — answering must not steal the user's focus
+                if (d.type === 'calc-ping') { try { window.focus(); } catch (e) {} }
             };
+            // ... and say goodbye, so the page stops believing in a window
+            // the user closed
+            window.addEventListener('pagehide', function () {
+                try { ch.postMessage({ type: 'calc-bye' }); } catch (e) {}
+            });
         }
         window.addEventListener('storage', function (ev) {
             if (!ev || ev.key !== 'quam_theme') return;
@@ -454,7 +514,13 @@
         var willOpen = pop.classList.contains('calc-hidden');
         // docs/156: the calculator is OUT in its own window — bring that one
         // forward rather than open a second calculator here
-        if (willOpen && calcWinAlive()) { try { _calcWin.focus(); } catch (e) {} return; }
+        if (willOpen && calcWinAlive()) {
+            if (_calcWin) { try { _calcWin.focus(); } catch (e) {} return; }
+            // an EXTERNAL window (F11): ping it forward, and if it turns out
+            // to be gone, open here after all rather than doing nothing
+            _focusExternal(function () { window.toggleCalc(trigger); });
+            return;
+        }
         // docs/141 4u (user: "a bug"): the Calculator and Settings are two
         // windows, not a singleton -- opening one leaves the other alone
         pop.classList.toggle('calc-hidden', !willOpen);
@@ -584,6 +650,8 @@
         });
         if (standalone()) { wireStandalone(); return; }   // docs/156: the window is the frame
         if (window.pywebview) hidePopout();
+        // F11: a calculator window can outlive this page's load — ask, quietly
+        _extProbe();
         enableDrag();
     }
 

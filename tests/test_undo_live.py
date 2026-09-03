@@ -961,3 +961,164 @@ class TestForeignWindow:
         with env["app"].app_context():
             routes_mod._journal_sync(ctx)
         assert len(ctx["undo_units"]) == 2 and ctx["undo_cursor"] == 2
+
+
+# ======================================================================
+# D. the second /code-review round (docs/160 §5d)
+# ======================================================================
+
+class TestReviewRound2:
+    def _snapshot_ts(self, env):
+        hm = env["app"].config["history_manager"]
+        snaps = hm.list_snapshots(_ctx(env)["path"])
+        assert snaps, "no snapshot to stage"
+        s = snaps[0]
+        return s.timestamp if hasattr(s, "timestamp") else s["timestamp"]
+
+    def test_a_refused_redo_retries_that_step_but_never_jams(self, env):
+        """F1: an ENVIRONMENTAL refusal keeps its frame (the retry must be THIS
+        step, never an older one out of order) -- but the frame must not
+        multiply, and lifting the refusal must un-block the stack."""
+        c = env["client"]
+        _edit(c, 0.10); _apply(c)
+        _edit(c, 0.12); _apply(c)
+        c.post("/undo")                                   # live: 0.12 -> 0.10
+        assert _live_off(env) == 0.10
+        _set_setting(env, False)
+        for _ in range(3):
+            r = c.post("/redo")
+            assert "is OFF" in _trig(r)["cellsReverted"]["message"]
+        frames = [f for f in _ctx(env)["redo_stack"] if f.get("kind") == "jrn_live"]
+        assert len(frames) == 1, "the retried frame must not multiply"
+        _set_setting(env, True)
+        c.post("/redo")
+        assert _live_off(env) == 0.12, "the step is redone once the refusal is gone"
+
+    def test_a_skipped_unit_keeps_the_walk_and_the_stack_in_step(self, env):
+        """F2: the empty/too-large skip moved the cursor with NO redo frame, so
+        the next redo popped a frame whose index no longer named the cursor and
+        dead-ended -- the unit UNDER it could never be redone again."""
+        c = env["client"]
+        _edit(c, 0.10); _apply(c)                          # u1: 0.08 -> 0.10
+        _edit(c, 0.12); _apply(c)                          # u3: 0.10 -> 0.12
+        sc = _sidecar(env)
+        # an unwalkable unit BETWEEN them (what a too-large wholesale load
+        # leaves behind), so the walk has to step over one
+        undo_journal.insert_units(sc, [{"id": "skipme", "ts": 1.0, "entries": [],
+                                        "meta": {"owner_pid": os.getpid()}}],
+                                  before_tail=1)
+        os.utime(sc, (10 ** 9, 10 ** 9))
+        ctx = _ctx(env)
+        with env["app"].app_context():
+            routes_mod._journal_sync(ctx)
+        assert [u["id"] for u in ctx["undo_units"]][1] == "skipme" and ctx["undo_cursor"] == 3
+        c.post("/undo")                                    # u3, live
+        assert _live_off(env) == 0.10
+        r = c.post("/undo")                                # the empty one, skipped
+        assert "recorded no values" in _trig(r)["cellsReverted"]["message"]
+        c.post("/undo")                                    # u1, live
+        assert _live_off(env) == 0.08 and ctx["undo_cursor"] == 0
+        c.post("/redo")                                    # u1 forward
+        assert _live_off(env) == 0.10
+        r = c.post("/redo")                                # the skip, walked back up
+        assert "skipped an empty step" in _trig(r)["cellsReverted"]["message"]
+        c.post("/redo")                                    # u3 forward -- reachable again
+        assert _live_off(env) == 0.12
+
+    def test_a_re_staged_step_puts_the_cursor_back(self, env):
+        """F3: the X that un-staged a journal step moved the cursor UP; the redo
+        that re-stages it must move the cursor back DOWN, or the next Ctrl+Z
+        stages that same unit's inverse a second time on top of itself."""
+        c = env["client"]
+        _set_setting(env, False)
+        _edit(c, 0.10); _apply(c)
+        _edit(c, 0.12); _apply(c)
+        c.post("/undo")                                    # staged u2's inverse, cursor 1
+        ctx = _ctx(env)
+        assert ctx["undo_cursor"] == 1
+        c.post("/discard", data={"index": "0", "expect_path": "qubits.qA1.z.joint_offset"})
+        assert ctx["undo_cursor"] == 2
+        c.post("/redo")                                    # re-stage it
+        assert ctx["undo_cursor"] == 1, "the re-staged step consumes its unit again"
+        assert len(ctx["store"].change_log) == 1
+        c.post("/undo")                                    # the NEXT unit, not the same one
+        assert ctx["undo_cursor"] == 0 and _work_off(env) == 0.08
+
+    def test_a_walk_step_keeps_the_applys_revert_anchor(self, env):
+        """F6: the "Revert last apply" button must keep meaning 'put the chip
+        back to before the apply I pressed'. Re-anchoring it on every Ctrl+Z
+        turned it into 'redo what I just undid', with no wording change.
+        F5: and one press takes at most one history snapshot, not two."""
+        c = env["client"]
+        _edit(c, 0.10); _apply(c)
+        ctx = _ctx(env)
+        anchor = ctx["last_apply"]["pre_ts"]
+        hm = env["app"].config["history_manager"]
+        before = len(hm.list_snapshots(ctx["path"]))
+        c.post("/undo")
+        assert _live_off(env) == 0.08
+        assert ctx["last_apply"]["pre_ts"] == anchor, "the apply's own anchor stands"
+        after = len(hm.list_snapshots(ctx["path"]))
+        assert after - before <= 1, f"a walk press took {after - before} snapshots"
+
+    def test_a_burst_press_is_told_where_it_stopped(self, env):
+        """F15: one press walks one unit, so a coalesced ?n=k must come back
+        saying it stopped at the journal boundary -- else the client drops the
+        remaining k-1 presses silently."""
+        c = env["client"]
+        _edit(c, 0.10); _apply(c)
+        _edit(c, 0.12); _apply(c)
+        t = _trig(c.post("/undo?n=3"))["cellsReverted"]
+        assert (t["requested"], t["consumed"], t["stopped"]) == (3, 1, "journal")
+        t = _trig(c.post("/redo?n=2"))["cellsReverted"]
+        assert (t["requested"], t["consumed"], t["stopped"]) == (2, 1, "journal")
+        assert _live_off(env) == 0.12
+
+    def test_a_deleted_subtree_is_recorded_even_around_an_edited_leaf(self, env):
+        """F8: a subtree the apply deleted is ONE entry even when an edit unit
+        names a path inside it -- dropping it left the subtree unrecoverable.
+        F7: and the owning file comes from the store's own rule, not a copy."""
+        ctx = _ctx(env)
+        store = ctx["store"]
+        before = json.loads(json.dumps(store.merged))
+        before["network"] = dict(before.get("network") or {}, host="9.9.9.9")
+        with env["app"].app_context():
+            ctx["modifier"].delete_subtree("qubits.qA1")
+            unit = routes_mod._wholesale_unit(before, ctx, "t",
+                                              exclude={"qubits.qA1.f_01"})
+        paths = {e["path"]: e for e in (unit or {}).get("entries") or []}
+        assert "qubits.qA1" in paths and paths["qubits.qA1"]["deleted"] is True
+        assert paths["qubits.qA1"]["old"]["f_01"] == 5.0e9, "the whole subtree is the old value"
+        assert paths["network.host"]["source_file"] == "wiring"
+        assert paths["qubits.qA1"]["source_file"] == "state"
+
+    def test_live_redo_frames_are_capped(self, env):
+        """F12: they were appended raw, bypassing the cap every other frame
+        obeys -- a 200-unit walk kept 200 of them for the life of the ctx."""
+        ctx = _ctx(env)
+        for i in range(routes_mod._REDO_MAX_FRAMES + 25):
+            routes_mod._push_jrn_live_frame(ctx, ctx["store"], i, f"u{i}")
+        frames = ctx["redo_stack"]
+        assert len(frames) == routes_mod._REDO_MAX_FRAMES
+        assert frames[-1]["unit_id"] == f"u{routes_mod._REDO_MAX_FRAMES + 24}"
+
+
+class TestJournalInsertCursor:
+    def test_an_insert_truncates_the_redo_branch_like_an_append(self, tmp_path):
+        """F9: `insert_units` read the persisted cursor and threw it away,
+        writing the tip -- resurrecting units a live undo had walked off the
+        chip (the applied log then reports them in effect and offers an X that
+        409s). The append one line below always handled this."""
+        p = tmp_path / "j.json"
+
+        def _u(i):
+            return {"id": f"u{i}", "ts": 1.0, "entries": [
+                {"path": "a.b", "old": i, "new": i + 1, "source_file": "state",
+                 "created": False, "deleted": False}], "meta": {}}
+
+        undo_journal.append_units(p, [_u(1), _u(2), _u(3)])
+        undo_journal.save_cursor(p, 1)                      # two units undone live
+        units = undo_journal.insert_units(p, [_u(9)], before_tail=0)
+        got, cursor = undo_journal.load_state(p)
+        assert [u["id"] for u in got] == ["u1", "u9"], f"got {[u['id'] for u in got]}"
+        assert cursor == len(got) == 2 and got == units

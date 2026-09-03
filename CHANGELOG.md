@@ -672,3 +672,11 @@ one** (docs/136, 137).
   could ride a Ctrl+Z onto the chip, a recycled PID hid the user's own history,
   NaN leaves blocked wholesale undos, pointer re-links could not be redone, and
   the calculator window lost typed values after a page reload (docs/160 §5c).
+
+- A second round over that sweep found 15 more, all fixed: a refused redo no
+  longer jams the redo stack, a skipped step keeps the walk and the stack in
+  step, ↺ Revert last apply stays anchored on the apply you pressed, a held
+  Ctrl+Z no longer writes two history snapshots per press, a coalesced burst
+  finishes, a reverted list cell drops its "unapplied edit" marker, and a
+  calculator window that answers the page's ping is remembered by every entry
+  point (docs/160 §5d).

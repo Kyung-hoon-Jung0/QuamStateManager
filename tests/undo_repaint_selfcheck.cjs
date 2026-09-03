@@ -199,6 +199,12 @@ function cell(win, sel) { return win.document.querySelector(sel); }
        'listedit: an undo naming the RESOLVED leaf finds the alias span and covers it');
     ok(span.textContent === '[[0.5,123.0]]',
        'listedit: the span shows the reverted list exactly as the page renders it (got ' + span.textContent + ')');
+    // code-review round 2, F4: the value is COMMITTED, so the cell is clean --
+    // the red "unapplied edit" box must go with it. Left on, it sat over a
+    // reverted value forever: covered ⇒ no rebuild, and the tray was not empty
+    // either, so nothing else would have cleared it.
+    ok(!span.classList.contains('bulk-cell-modified'),
+       'listedit: the reverted span is no longer marked as an unapplied edit');
     // …but a revert that changes the cell's SHAPE (back to null) is not a
     // string write: found, uncovered, the rebuild repaints it honestly
     const rn = win.BulkEdit.revertPaths([{

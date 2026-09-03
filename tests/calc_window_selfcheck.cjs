@@ -50,10 +50,11 @@ const FIELDS = `
   <span id="calc-s1-k"></span><span id="calc-s1-anew"></span><span id="calc-s2-dbm"></span>
   <span id="calc-s2-anew"></span><span id="calc-s3-pmw"></span><span id="calc-expr-res"></span>`;
 
-function world(bodyHtml, opts) {
+function world(bodyHtml, opts, prep) {
   const dom = new JSDOM('<!doctype html><html data-theme="dark"><body>' + bodyHtml + '</body></html>',
     Object.assign({ url: 'http://localhost/', pretendToBeVisual: true, runScripts: 'outside-only' }, opts || {}));
   const w = dom.window;
+  if (prep) prep(w);      // e.g. a BroadcastChannel jsdom does not ship
   // `window.eval` runs in the jsdom realm (runScripts outside-only), so the
   // bare `document` / `navigator` / `setTimeout` calc.js makes resolve there.
   w.eval(CALC_JS);
@@ -213,5 +214,86 @@ function worldB() {
   ok(popout.hidden === true, 'B8 pywebviewready hides the ↗');
   delete w.pywebview;
 
-  process.exit(fails ? 1 : 0);
+  worldC();
+}
+
+/* ══ World C: a window this page did NOT open ═════════════════════════════
+   code-review round 2, F11. After a full reload of the SM page the `_calcWin`
+   handle is gone but the calculator window is still on screen. The ↗ asks on
+   the BroadcastChannel and the live window answers -- and the page must
+   REMEMBER that answer, or Alt+C / the Calculator button still believe there
+   is no window and open a second calculator beside it. jsdom ships no
+   BroadcastChannel, so the bus is faked (synchronously delivered, which only
+   makes the timing race easier to observe). */
+function worldC() {
+  const bus = [];
+  function FakeBC(name) {
+    const self = this;
+    self.name = name; self.onmessage = null; self.closed = false;
+    self.postMessage = function (data) {
+      const copy = JSON.parse(JSON.stringify(data));
+      bus.forEach(function (ch) {
+        if (ch !== self && !ch.closed && ch.onmessage) ch.onmessage({ data: copy });
+      });
+    };
+    self.close = function () { self.closed = true; };
+    bus.push(self);
+  }
+  const w = world(`
+    <button class="sidebar-tool calc-btn" id="calc-btn" aria-expanded="false"></button>
+    <div id="calc-popover" class="calc-popover calc-hidden">
+      <div class="calc-header" id="calc-header"><span class="calc-header-tools">
+        <button type="button" class="calc-close calc-popout" id="popout" data-calc-window-url="/calc-window"></button>
+      </span></div>
+      ${FIELDS}
+    </div>`, null, function (win) { win.BroadcastChannel = FakeBC; });
+  const doc = w.document;
+  const pop = doc.getElementById('calc-popover');
+  const btn = doc.getElementById('calc-btn');
+  const popout = doc.getElementById('popout');
+  const opened = [];
+  w.open = function (url, name, features) { opened.push({ url, name, features }); return { closed: false, focus() {} }; };
+
+  // the live window that outlived the page reload: it answers a ping (and
+  // comes forward) and a probe (silently)
+  const live = new w.BroadcastChannel('quam-calc');
+  let pings = 0, probes = 0;
+  live.onmessage = function (ev) {
+    const d = ev && ev.data; if (!d) return;
+    if (d.type === 'calc-ping') { pings++; live.postMessage({ type: 'calc-here' }); }
+    else if (d.type === 'calc-probe') { probes++; live.postMessage({ type: 'calc-here' }); }
+  };
+
+  w.openCalcWindow(popout);
+  ok(opened.length === 0 && pings === 1,
+     'C1 ↗ asks first and does NOT navigate the live window away (window.open called ' + opened.length + 'x)');
+  w.toggleCalc(btn);
+  ok(pop.classList.contains('calc-hidden') && opened.length === 0,
+     'C2 the Calculator button now knows a window is out there — no second calculator in the page');
+  doc.body.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'c', altKey: true, bubbles: true, cancelable: true }));
+  ok(pop.classList.contains('calc-hidden'), 'C2 Alt+C does the same');
+  ok(pings >= 2, 'C3 …and each of those presses pings the window forward instead of doing nothing');
+
+  // the user closes the window: it says goodbye, and the page opens in-page again
+  live.postMessage({ type: 'calc-bye' });
+  live.close();
+  w.toggleCalc(btn);
+  ok(!pop.classList.contains('calc-hidden'), 'C4 after calc-bye the Calculator button opens the in-page popover again');
+  w.toggleCalc(btn);
+
+  // and if the window vanished WITHOUT a goodbye (a crash), the unanswered
+  // ping heals the flag and the press still lands
+  const live2 = new w.BroadcastChannel('quam-calc');
+  live2.onmessage = function (ev) {
+    if (ev && ev.data && ev.data.type === 'calc-probe') live2.postMessage({ type: 'calc-here' });
+  };
+  live2.postMessage({ type: 'calc-here' });        // the page believes again
+  live2.close();                                    // …and now it is gone, silently
+  w.toggleCalc(btn);
+  ok(pop.classList.contains('calc-hidden'), 'C5 the first press after a silent death is spent asking');
+  setTimeout(function () {
+    ok(!pop.classList.contains('calc-hidden'),
+       'C5 …and when nothing answers, the popover opens here after all (never a dead press)');
+    process.exit(fails ? 1 : 0);
+  }, 400);
 }

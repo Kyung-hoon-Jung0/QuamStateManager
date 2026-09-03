@@ -3318,6 +3318,14 @@
                 if (c.classList.contains('bulk-cell-list')) {
                     if (e.old_kind !== 'list') return;
                     c.textContent = v;
+                    // The server has COMMITTED this value, so the cell is
+                    // CLEAN -- the input branch below says the same thing by
+                    // rewriting data-orig. Left on (code-review round 2, F4),
+                    // the red "unapplied edit" box stayed over a reverted
+                    // value forever: the path was reported covered, so no
+                    // rebuild followed, and the tray was not empty either.
+                    c.classList.remove('bulk-cell-modified');
+                    c.removeAttribute('data-baseline');
                     _hayCache = null;                 // the preview is search text
                     var trl = _rowOf(c);
                     if (trl && rows.indexOf(trl) < 0) rows.push(trl);
