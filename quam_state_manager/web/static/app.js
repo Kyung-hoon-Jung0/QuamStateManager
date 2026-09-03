@@ -14695,9 +14695,25 @@ window.PendingMarkers = (function () {
     }
 
     var timer = null, safety = null, pending = 0;
+    // docs/156: the loader may only be visible while something is actually in
+    // flight. `show` used to trust its timer, and a timer that outlives its
+    // own request strands the popup until SAFETY_HIDE_MS -- measured in real
+    // Chrome on the 20Q chip: shown at 316 ms for a legitimate /bulk, and
+    // still up 47 SECONDS later over a fully rendered grid, because a stale
+    // 80 ms timer fired one millisecond after the hide that ended the work.
+    // Nothing was loading; the user is told to please wait a moment.
     function show() {
+        if (pending <= 0) return;
         var el = getLoader();
         if (el) el.classList.add('visible');
+    }
+    // Is any htmx request genuinely in flight? htmx puts `htmx-request` on the
+    // requesting element for exactly its lifetime, so this is the DOM's own
+    // answer rather than a counter that can only be decremented by a matching
+    // afterRequest -- one increment without one used to cost 45 s.
+    function anyInFlight() {
+        try { return !!document.querySelector('.htmx-request'); }
+        catch (e) { return false; }
     }
     function hide() {
         if (timer) { clearTimeout(timer); timer = null; }
@@ -14709,6 +14725,12 @@ window.PendingMarkers = (function () {
     window._slowLoaderHide = hide;   // selfcheck seam
 
     document.addEventListener('htmx:beforeRequest', function(evt) {
+        // A cancelled request is not an in-flight request. PaneState's
+        // keep-route interceptor (docs/139) stops propagation before this
+        // listener, so today this is belt-and-braces -- but any future
+        // canceller that only calls preventDefault would otherwise increment
+        // a counter nothing will ever decrement.
+        if (evt.defaultPrevented) return;
         if (!isSlow(evt.detail)) return;
         pending++;
         if (timer) clearTimeout(timer);
@@ -14733,7 +14755,21 @@ window.PendingMarkers = (function () {
             if (settled) return;
             settled = true;
             document.removeEventListener('htmx:afterSettle', onSettle);
-            requestAnimationFrame(function () { requestAnimationFrame(hide); });
+            // docs/156: the double rAF is the PREFERRED hide -- it lands on
+            // the first frame the new pane has actually painted, which is why
+            // docs/146 put it there. But rAF does not run at all in a hidden
+            // or occluded window: measured in real Chrome with
+            // `document.hidden === true`, ZERO frames in 3 seconds. And
+            // switching to another window is exactly what a person does while
+            // waiting for a slow page, so the frame that was supposed to hide
+            // this popup is the one least likely to arrive. It then sat there
+            // over a finished, fully rendered grid until SAFETY_HIDE_MS --
+            // 45 s of "Please wait a moment…" on a page that was ready.
+            // Prefer the frame; never depend on it.
+            var done = false;
+            function fin() { if (done) return; done = true; hide(); }
+            requestAnimationFrame(function () { requestAnimationFrame(fin); });
+            setTimeout(fin, 250);
         }
         function onSettle() { finish(); }
         document.addEventListener('htmx:afterSettle', onSettle);
