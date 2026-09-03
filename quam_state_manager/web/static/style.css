@@ -12187,7 +12187,7 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .dp-delta[hidden] { display: none; }
 .diff-view-fixed { font-size: 0.8em; padding: 0 0.4rem; }
 
-/* ── 2Q Gate Detuning Inspector (docs/154) ──────────────────────────── */
+/* ── 2Q Gate Detuning Inspector (docs/162) ──────────────────────────── */
 .gi-inspector { padding: 0.5rem 0; }
 .gi-controls { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; padding: 0 0.5rem 0.5rem; }
 .gi-label { font-size: 0.85em; white-space: nowrap; }
@@ -12209,6 +12209,6 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .gi-warnings ul { margin: 0.25rem 0 0 1rem; padding: 0; }
 .gi-note { margin: 0 0 0.35rem; padding: 0 0.5rem; font-size: 0.8em; }
 
-/* An out-of-range metric in the Overview hover list (docs/154): shown with
+/* An out-of-range metric in the Overview hover list (docs/162): shown with
    its real number, struck through, never coloured and never aggregated. */
 .ov-hover-val-bad { text-decoration: line-through; opacity: 0.75; color: var(--pico-del-color, var(--pico-muted-color)); cursor: help; }

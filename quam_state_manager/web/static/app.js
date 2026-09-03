@@ -14695,7 +14695,7 @@ window.PendingMarkers = (function () {
     }
 
     var timer = null, safety = null, pending = 0;
-    // docs/156: the loader may only be visible while something is actually in
+    // docs/163: the loader may only be visible while something is actually in
     // flight. `show` used to trust its timer, and a timer that outlives its
     // own request strands the popup until SAFETY_HIDE_MS -- measured in real
     // Chrome on the 20Q chip: shown at 316 ms for a legitimate /bulk, and
@@ -14755,7 +14755,7 @@ window.PendingMarkers = (function () {
             if (settled) return;
             settled = true;
             document.removeEventListener('htmx:afterSettle', onSettle);
-            // docs/156: the double rAF is the PREFERRED hide -- it lands on
+            // docs/163: the double rAF is the PREFERRED hide -- it lands on
             // the first frame the new pane has actually painted, which is why
             // docs/146 put it there. But rAF does not run at all in a hidden
             // or occluded window: measured in real Chrome with
@@ -18647,7 +18647,7 @@ window.GridVirtMissingNote = function (t, noteId) {
 };
 /* GRIDVIRT-MISSING-NOTE:END */
 
-/* ── 2Q Gate Detuning Inspector (docs/154) ───────────────────────────── */
+/* ── 2Q Gate Detuning Inspector (docs/162) ───────────────────────────── */
 window.GateInspector = (function() {
     function init(root) {
         if (!root) return;

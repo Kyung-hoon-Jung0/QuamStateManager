@@ -348,7 +348,7 @@ window.ChipStatus.mount = function (opts) {
         if (!r || r.value != null || r.unresolved) return false;
         // a measured-but-unphysical number...
         if (typeof r.raw === 'number' && isFinite(r.raw)) return true;
-        // ...or a metric whose SOURCE was refused (docs/154): a confusion
+        // ...or a metric whose SOURCE was refused (docs/162): a confusion
         // matrix that is not row-stochastic derives no number at all, so
         // there is no `raw` to show -- but it is still not "never measured".
         return r.physical === false;

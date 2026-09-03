@@ -41,7 +41,7 @@ _EDGE_METRIC_KEYS = ("cz_fidelity", "detuning", "coupler_decouple_offset", "mutu
 
 # Which metric keys are DERIVED from a readout confusion matrix. When the
 # matrix is present but not row-stochastic these derive nothing, and the
-# record has to say the source was refused rather than absent (docs/154).
+# record has to say the source was refused rather than absent (docs/162).
 _CM_DERIVED = {
     "confusion_matrix": ("assignment_fidelity", "ro_fidelity_g", "ro_fidelity_e"),
     "gef_confusion_matrix": ("assignment_fidelity_gef", "ro_fidelity_gef_g",

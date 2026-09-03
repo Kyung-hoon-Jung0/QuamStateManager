@@ -507,7 +507,7 @@ async function main() {
   doc.dispatchEvent(evt2);
   ok(evt2.detail.path === '/bulk/all-values', 'other paths are untouched');
 
-  // ── docs/156: the mount reads geometry ONCE, and last ───────────────────
+  // ── docs/163: the mount reads geometry ONCE, and last ───────────────────
   // `_pinBarsToScroll` reads scrollLeft. Every phase it used to sit in front
   // of WRITES, and a read after a write lays the whole grid out again -- so
   // the mount paid two full layouts of the same 53,000 px table (measured on

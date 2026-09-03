@@ -78,7 +78,7 @@ function fireCancelable(name, path) {
     await sleep(60);   // double-rAF (stubbed at 5 ms each)
     ok(!loader.classList.contains('visible'), 'hidden one painted frame after settle');
 
-    // 3b. docs/156: THE FRAME MAY NEVER COME.
+    // 3b. docs/163: THE FRAME MAY NEVER COME.
     // The harness stubs rAF as `setTimeout(f, 5)`, so it always fires and the
     // assertion above could never fail -- the state the bug lives in was
     // unreachable from this fixture. In a hidden or occluded window Chrome
@@ -107,7 +107,7 @@ function fireCancelable(name, path) {
         global.requestAnimationFrame = realRaf;
     }
 
-    // 3c. docs/156: a timer that outlives its own request may not show the
+    // 3c. docs/163: a timer that outlives its own request may not show the
     // popup. `/datasets` is in SLOW_PREFIXES and its poll runs every 5 s, so a
     // poll that answers inside the 80 ms grace arms a show timer that only
     // `hide()` would clear -- and in a hidden window `hide()` is the thing
@@ -129,7 +129,7 @@ function fireCancelable(name, path) {
         global.requestAnimationFrame = realRaf;
     }
 
-    // 3d. docs/156: a CANCELLED request is not an in-flight request. Capture
+    // 3d. docs/163: a CANCELLED request is not an in-flight request. Capture
     // phase runs before every bubble listener, so this cancels it the way
     // PaneState's keep-route interceptor does.
     {

@@ -2595,7 +2595,7 @@
             // geometry of the PRUNED table) hydrates anything on screen it
             // called cold -- a drag-resized or zoomed grid (docs/141 4l-review)
             if (_virt) _virtOnScroll();
-            // docs/156: _pinBarsToScroll READS scrollLeft, and every phase
+            // docs/163: _pinBarsToScroll READS scrollLeft, and every phase
             // below WRITES. A read after a write lays the whole grid out
             // again, so having the read HERE cost the mount two full layouts
             // of the same 53,000 px table -- measured on the 20Q chip at
@@ -2625,7 +2625,7 @@
             _ph('band validation');
             _markLinkedCells();   // tag shared physical-port cells so edits mirror across the port
             _ph('linked cells');
-            // docs/156: the mount's LAST act, and its only geometry read --
+            // docs/163: the mount's LAST act, and its only geometry read --
             // one layout, which grid-virt's deferred pass then reads for free.
             _pinBarsToScroll();      // docs/141 4q: the toolbar rows follow the pane's sideways scroll
             _ph('pin bars');

@@ -1679,7 +1679,7 @@ def _pair_drive_carrier_findings(store) -> list[Finding]:
 
 
 def _unphysical_findings(root: dict) -> list[Finding]:
-    """Stored numbers that cannot be what their field names (docs/154).
+    """Stored numbers that cannot be what their field names (docs/162).
 
     The Chip Status surfaces now DROP these from every average, range and
     colour, which is right -- a mean over a 153% fidelity is a claim SM would
@@ -1691,7 +1691,7 @@ def _unphysical_findings(root: dict) -> list[Finding]:
     and that is a data problem, not a display one.
 
     Deliberately narrow: only where the domain is DEFINITIONAL. Anharmonicity
-    (whose sign convention differs between labs, docs/154) and amplitudes
+    (whose sign convention differs between labs, docs/162) and amplitudes
     (>1 is normal, and CLAUDE.md's Type Coercion Philosophy says to trust
     researcher input) are not checked, and never will be from here.
     """

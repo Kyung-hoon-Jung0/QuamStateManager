@@ -318,7 +318,7 @@ def make_record(key: str, value: Any, *, updated_at: int | None = None,
     """
     finite_num = (isinstance(value, (int, float)) and not isinstance(value, bool)
                   and math.isfinite(value))
-    # docs/154: "the source existed and was REFUSED" is not the same fact as
+    # docs/162: "the source existed and was REFUSED" is not the same fact as
     # "there is no source". A readout confusion matrix whose rows are not a
     # distribution derives no fidelity -- the value is None either way -- but a
     # chip that never measured one and a chip whose matrix is broken are

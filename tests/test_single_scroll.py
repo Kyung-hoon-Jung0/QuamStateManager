@@ -77,7 +77,7 @@ class TestOneScroller:
         assert "will-change" not in CSS[i:i + 400], \
             "4s removed will-change from these rows -- it made each one a stacking context"
         assert "function _pinBarsToScroll() {" in JS and "'translateX(' + x + 'px)'" in JS
-        # docs/156: the live call at mount, not a commented-out one. This used
+        # docs/163: the live call at mount, not a commented-out one. This used
         # to be "within 1,800 characters of _virtInit()" -- a DISTANCE grep,
         # the same shape docs/155 10 had to retire in test_auto_sync when it
         # simply expired as the file grew. It expired here too, the moment the

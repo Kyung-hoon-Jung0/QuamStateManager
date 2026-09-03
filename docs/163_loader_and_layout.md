@@ -1,4 +1,4 @@
-# 156 — the loading popup that outlived its own work
+# 163 — the loading popup that outlived its own work
 
 Customer report: *"live edit을 순간 눌렀다가 처음이라 느리게 로딩중일 때 다른 메뉴 버튼
 누르니까 SM이 갑자기 좀 튕기는? 듯하면서 live edit이 랜더링이 안되더라구, 다시 몇 더
@@ -103,7 +103,7 @@ the literal had already drifted (it said 10 while printing 14).
 
 ---
 
-# 156b — the mount paid for two layouts of the same grid
+# 163b — the mount paid for two layouts of the same grid
 
 Follow-up to the same report ("안정성과 속도는 우리 SM의 생명"). The remaining
 suspicion was a ~929 ms block on the keep-route restore. **That figure was

@@ -1,4 +1,4 @@
-"""Tests for the 2Q gate detuning inspector (docs/154).
+"""Tests for the 2Q gate detuning inspector (docs/162).
 
 The review of PR #5 found the original fixtures had invented a convention no
 chip in the corpus uses — ``anharmonicity=-250e6`` (negative) and

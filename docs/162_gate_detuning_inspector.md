@@ -1,4 +1,4 @@
-# 154 — 2Q gate detuning inspector, and the review that had to precede it
+# 162 — 2Q gate detuning inspector, and the review that had to precede it
 
 PR #5 (`2q-gate-detuning-inspector`, paulQM) adds a section to the pair detail
 inspector that plots the three bare-state detunings relevant to a flux CZ as a

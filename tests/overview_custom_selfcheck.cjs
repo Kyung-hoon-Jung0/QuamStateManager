@@ -75,7 +75,7 @@ function topoFixture() {
   };
 }
 
-// docs/154: a chip whose 2Q fidelity rows include values the server marked
+// docs/162: a chip whose 2Q fidelity rows include values the server marked
 // unphysical. `physical:false` + `raw_value` is exactly what
 // query._gate_fidelity_row emits -- `value` is GONE, which is the safety
 // property (no reader can use the number by accident).
@@ -344,7 +344,7 @@ function stored(win) { return win.localStorage.getItem('quam_overview_tiles_v1')
   }
 
 
-  // C9 (docs/154): a value outside (0,1] is excluded from every aggregate and
+  // C9 (docs/162): a value outside (0,1] is excluded from every aggregate and
   // every colour, counted where the user can see it, and still LISTED.
   {
     const win = makeWorld();
@@ -393,7 +393,7 @@ function stored(win) { return win.localStorage.getItem('quam_overview_tiles_v1')
   }
 
 
-  // C10 (docs/154): a metric whose SOURCE was refused is not a missing one.
+  // C10 (docs/162): a metric whose SOURCE was refused is not a missing one.
   // Readout Fidelity (GEF) used to go 20 -> 19 in silence on a chip whose
   // confusion matrix is not row-stochastic.
   {
