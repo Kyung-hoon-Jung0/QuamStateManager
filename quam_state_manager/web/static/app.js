@@ -1383,6 +1383,11 @@ window.setFontSize = function(size) {
             ? 'Trend Tracker (' + n + ')' : 'Trend Tracker';
         var clr = document.getElementById('compare-clear');
         if (clr) clr.hidden = n === 0;
+        // docs/161: the "what are these boxes for" line shows only while
+        // nothing is ticked -- once a tick exists the count on the button
+        // says it
+        var hint = document.getElementById('compare-hint');
+        if (hint) hint.hidden = n > 0;
     }
     window.syncCompareCount = syncCompareCount;
 
@@ -1907,6 +1912,32 @@ window.toggleTopbar = function() {
     try {
         localStorage.setItem("quam_topbar_hidden", hidden ? "1" : "0");
     } catch(e) {}
+};
+
+/* docs/160: "Ctrl+Z writes live" is a MACHINE-WIDE server setting (it decides
+   whether a keypress writes the instrument), so the Settings button posts to
+   the server and reflects the answer -- never a localStorage flag. */
+window.toggleUndoLive = function() {
+    var b = document.getElementById("undo-live-toggle");
+    // The press means what the presser could SEE (docs/120): send the state
+    // this button shows, inverted -- never a bare flip. Two windows share the
+    // setting; a bare flip on a stale button would turn it the wrong way.
+    var want = b && b.getAttribute("data-on") === "1" ? "0" : "1";
+    var body = new URLSearchParams({ enabled: want });
+    fetch("/settings/undo-live", { method: "POST", body: body, headers: { "X-Requested-With": "fetch" } })
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+            if (!j || !j.ok) { if (window.showToast) window.showToast("Could not change the setting.", "error"); return; }
+            if (b) {
+                b.textContent = "Ctrl+Z writes live: " + (j.enabled ? "ON" : "OFF");
+                b.setAttribute("data-on", j.enabled ? "1" : "0");
+                b.classList.toggle("settings-opt-active", !!j.enabled);
+            }
+            if (window.showToast) window.showToast(j.enabled
+                ? "Ctrl+Z / Ctrl+Shift+Z on an applied change now writes the live chip."
+                : "Ctrl+Z on an applied change now only stages it — press Apply to write.", "success");
+        })
+        .catch(function () { if (window.showToast) window.showToast("Could not change the setting.", "error"); });
 };
 
 /**
@@ -3556,7 +3587,11 @@ document.addEventListener("cellsReverted", function(evt) {
         // old_value_disp is the LOSSLESS string (docs/124 M-9); old_value_str
         // is %.6e. The Pulses inputs render the lossless value, so the
         // reverted baseline must be lossless too (review of eaa0f05).
-        var v = e.old_value_disp != null ? e.old_value_disp
+        // docs/159: for a LIST old_value_disp is the grid's 24-char preview,
+        // deliberately NOT lossless -- an inspector field / the tree model must
+        // get the full JSON (old_value_json) instead, never the truncated text.
+        var v = e.old_kind === 'list' && e.old_value_json != null ? e.old_value_json
+              : e.old_value_disp != null ? e.old_value_disp
               : (e.old_value_str != null ? e.old_value_str : "");
         _revertCell(e.dot_path, String(v));
     });
@@ -3572,7 +3607,13 @@ document.addEventListener("cellsReverted", function(evt) {
     }
     // The Live-State-Edit grids render their own cells (not inspector inputs),
     // so _revertCell can't reach them — repaint by path, then decide.
-    var structural = entries.some(function (e) { return e && (e.created || e.deleted); });
+    // docs/160: a walk step too large for the header ships NO entries and
+    // `structural: true` -- the wholesale resync (and a stateRestored for the
+    // tree/inspector) stands in for the per-cell repaint
+    var structural = !!d.structural || entries.some(function (e) { return e && (e.created || e.deleted); });
+    if (d.structural && !entries.length) {
+        try { document.dispatchEvent(new CustomEvent("stateRestored", { detail: { structural: true, changes: [] } })); } catch (e2) {}
+    }
     var gridOnScreen = !!(document.getElementById('bulk-table')
                           || document.getElementById('bulk-pair-table'));
     var uncovered = 0;
@@ -3590,7 +3631,10 @@ document.addEventListener("cellsReverted", function(evt) {
         });
     } catch (err) { uncovered = entries.length; }   // never trust a half repaint
     if (gridOnScreen && (structural || uncovered > 0 || d.stopped === "error")) _scheduleGridResync();
-    if (d.message && window.showToast) window.showToast(d.message, d.level === "error" ? "error" : "success");
+    // docs/160: a refused / rolled-back walk step ("Not undone — …", a too-large
+    // skip) arrives as level "warning" -- it must not read as a green success
+    if (d.message && window.showToast) window.showToast(d.message,
+        d.level === "error" ? "error" : d.level === "warning" ? "warning" : "success");
     // Flash the reverted items that are on screen. NO automatic navigation
     // (docs/73's "open the owning surface" is retired): on the Pulses page a
     // redo of a field that was not visible replaced the pulse inspector
@@ -5379,6 +5423,11 @@ window.UndoQueue = (function () {
         try {
             r = htmx.ajax("POST", path, {
                 source: src(), target: "#pending-tray", swap: "outerHTML",
+                // F-CHIPID: since docs/160 a Ctrl+Z writes the ACTIVE chip's
+                // live files; send this window's render-time chip token so a
+                // stale window (another tab switched chips) is refused server
+                // side instead of rewriting the wrong chip's live state.
+                values: { expect_chip: String(window.__chipToken || "") },
             });
         } catch (e) { done(); return; }
         /* A /undo that never settles used to hold `busy` FOREVER — every
@@ -14590,8 +14639,16 @@ function paramHistoryMaybeAutoBackfill() {
 // Listen on `document` (not document.body): this script loads in <head>,
 // before <body> exists. HTMX events bubble to document either way.
 document.addEventListener('htmx:afterSwap', function(evt) {
-    if (evt.target && (evt.target.id === 'param-history-root'
-                       || (evt.target.querySelector && evt.target.querySelector('#param-history-root')))) {
+    if (!evt.target) return;
+    // docs/158: a filter change swaps only #param-history-results (the form
+    // hx-selects it), so the trailing inline <script> of the full render
+    // never arrives — the sparklines are (re)drawn from here instead.
+    if (evt.target.id === 'param-history-results') {
+        renderParamHistorySparklines();
+        return;
+    }
+    if (evt.target.id === 'param-history-root'
+        || (evt.target.querySelector && evt.target.querySelector('#param-history-root'))) {
         renderParamHistorySparklines();
         // Subsequent visits to a chip the user has already imported once:
         // silently catch up on any new workspace experiments. CTA card
@@ -14688,6 +14745,13 @@ window.PendingMarkers = (function () {
 
     function isSlow(detail) {
         var path = (detail && detail.requestConfig && detail.requestConfig.path) || '';
+        // docs/158: a Param History FILTER change is an in-page refinement
+        // (the grid renders from SQLite in ~0.2 s, docs/142) and swaps only
+        // the results — the page-load popup flashing over it on every chip
+        // click was half of the customer's "SM이 흔들린다". Same answer on
+        // both events (before/after), so the pending counter stays paired.
+        var elt = detail && detail.elt;
+        if (elt && elt.closest && elt.closest('#param-history-filters')) return false;
         for (var i = 0; i < SLOW_PREFIXES.length; i++) {
             if (path.indexOf(SLOW_PREFIXES[i]) === 0) return true;
         }
@@ -14767,7 +14831,18 @@ window.PendingMarkers = (function () {
             // 45 s of "Please wait a moment…" on a page that was ready.
             // Prefer the frame; never depend on it.
             var done = false;
-            function fin() { if (done) return; done = true; hide(); }
+            function fin() {
+                if (done) return;
+                done = true;
+                // docs/163 + docs/158: only hide if nothing slow is in flight
+                // NOW. This closure was created when `pending` reached zero,
+                // but a settle can arrive later than the next slow request
+                // starts -- and `onSettle` listens for ANY settle, so a
+                // stale one used to douse a request that had only just begun.
+                // The newer request owns the hide; it registers its own.
+                if (pending > 0) return;
+                hide();
+            }
             requestAnimationFrame(function () { requestAnimationFrame(fin); });
             setTimeout(fin, 250);
         }
@@ -16782,6 +16857,17 @@ window.FieldHistory = (function () {
 
     function useValue(btn) {
         var v = btn.getAttribute("data-value") || "";
+        // docs/159: a LIST cell (the qubit grid's preview span) has no input
+        // to type into -- Use opens the whole-value JSON editor started from
+        // this historical value (its fill is compact JSON), same commit door
+        if (applyInput && applyInput.classList && applyInput.classList.contains("bulk-cell-list")
+                && window.BulkEdit && window.BulkEdit.openJsonCell) {
+            var td = applyInput.closest("td");
+            var pen = (td && td.querySelector(".bulk-list-edit")) || applyInput;
+            close();
+            window.BulkEdit.openJsonCell(applyInput.dataset.path || applyInput.dataset.resolved || "", pen, v);
+            return;
+        }
         if (applyInput && document.body.contains(applyInput)) {
             // Grid cells join the LiveEditUndo stack (docs/20 v2) so one
             // Ctrl+Z reverts this fill before it is ever staged.
@@ -16874,7 +16960,8 @@ window.FieldHistory = (function () {
        length×char-width monospace fallback where canvas is unavailable). */
     var _measureCanvas = null;
     function _cellTextWidth(input, geom) {
-        var value = input.value || "";
+        // an <input> has .value; the list-preview span (docs/159) has text
+        var value = (input.value !== undefined ? input.value : input.textContent) || "";
         // `geom` carries the font already measured for this cell (docs/120 item
         // 24) — asking the engine again per keystroke is a forced style recalc
         // for values that cannot have changed since the cell took focus.
@@ -17004,8 +17091,11 @@ window.FieldHistory = (function () {
     };
     document.addEventListener("focusin", function (e) {
         var t = e.target;
-        if (t && t.classList && t.classList.contains("bulk-cell") &&
-            !t.classList.contains("bulk-cell-ro")) {
+        // docs/159 (customer: no 🕘 on exponential_filter): the qubit grid's
+        // LIST cell is a preview span, not an input -- focusable since
+        // docs/159 (tabindex), so a click docks the same shared button
+        if (t && t.classList && ((t.classList.contains("bulk-cell") &&
+            !t.classList.contains("bulk-cell-ro")) || t.classList.contains("bulk-cell-list"))) {
             showCellBtn(t);
         } else if (!t || t.id !== "fh-cellbtn") {
             hideCellBtn();

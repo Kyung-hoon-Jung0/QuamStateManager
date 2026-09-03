@@ -26,7 +26,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from flask import Flask, current_app, request
-from markupsafe import Markup
+from markupsafe import Markup, escape
 
 from quam_state_manager.core import dir_sample
 from quam_state_manager.core.history import (
@@ -526,6 +526,16 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
         walk(value, "")
         return out[:cap]
     app.jinja_env.filters["flatten_leaves"] = _flatten_leaves_filter
+
+    def _soft_breaks_filter(name) -> Markup:
+        """A run name with a soft break opportunity (``<wbr>``) after every
+        ``_`` (docs/157): the sidebar wraps long names at their own word
+        joints (``34b_cz_phase_`` / ``compensation_error_amp``) instead of
+        mid-word. Each piece is HTML-escaped; ``<wbr>`` carries no text, so
+        textContent, search and copy still see the plain name."""
+        parts = str(name if name is not None else "").split("_")
+        return Markup("_<wbr>".join(escape(p) for p in parts))
+    app.jinja_env.filters["soft_breaks"] = _soft_breaks_filter
 
     def _format_ts_filter(ts) -> str:
         """Render a ``YYYYMMDD_HHMMSS`` snapshot timestamp as

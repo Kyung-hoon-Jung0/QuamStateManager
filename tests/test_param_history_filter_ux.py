@@ -88,14 +88,22 @@ class TestDebouncedTrigger:
         assert "changed" not in m.group(1)
 
     def test_contract_otherwise_unchanged(self, filter_form):
-        """Byte-equivalent behavior for one-click-and-wait, except the delay:
-        same route, same target, same swap, and the URL still becomes
-        canonical (with the debounce the pushes collapse to one per settled
-        state, so hx-push-url stays)."""
-        assert 'hx-get="/param-history"' in filter_form
-        assert 'hx-target="#param-history-root"' in filter_form
-        assert 'hx-swap="outerHTML"' in filter_form
-        assert 'hx-push-url="true"' in filter_form
+        """Same route, same swap, and the URL still becomes canonical (with
+        the debounce the pushes collapse to one per settled state, so
+        hx-push-url stays). docs/158 moved the TARGET: a filter change swaps
+        only #param-history-results (hx-select picks it out of the full
+        render) so the form the user just set never re-renders under them."""
+        tag = re.match(r"<form[^>]*>", filter_form).group(0)
+        assert 'hx-get="/param-history"' in tag
+        assert 'hx-target="#param-history-results"' in tag
+        assert 'hx-select="#param-history-results"' in tag
+        assert 'hx-target="#param-history-root"' not in tag
+        assert 'hx-swap="outerHTML"' in tag
+        assert 'hx-push-url="true"' in tag
+        # Reset filters (inside the form) still re-renders the WHOLE root —
+        # it resets the chips too, so the form must re-render there
+        assert 'Reset filters' in filter_form
+        assert 'hx-target="#param-history-root"' in filter_form[filter_form.index("Reset filters") - 300:]
 
 
 class TestAllNoneTogglers:

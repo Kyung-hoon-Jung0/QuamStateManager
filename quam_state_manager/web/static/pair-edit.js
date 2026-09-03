@@ -1105,8 +1105,15 @@
                 if (!e || !e.dot_path) return;
                 var ck = _pgv.colOfPath(e.dot_path);
                 if (ck && _pgv.isRemote(ck)) {
-                    _pgv.patchColdValue(e.dot_path,
-                        e.old_value_disp != null ? e.old_value_disp : e.old_value_str);
+                    // docs/159 + round 2, F10: the pair grid renders a LIST as
+                    // the `▦ N×M` badge, so the badge is this column's search
+                    // text -- writing the qubit grid's 24-char JSON preview
+                    // here made a search for "2×2" miss the row and a search
+                    // for a number the cell never shows hit it.
+                    var cv = (e.old_kind === 'list' && e.old_value_badge != null)
+                        ? e.old_value_badge
+                        : (e.old_value_disp != null ? e.old_value_disp : e.old_value_str);
+                    _pgv.patchColdValue(e.dot_path, cv);
                 }
             });
         }
@@ -1136,13 +1143,35 @@
             var wrote = 0;
             var honest = e.old_kind !== 'pointer';
             Array.prototype.forEach.call(cs, function (c) {
-                // A readonly cell (a list / runtime column) and the qubit
-                // grid's list-preview span are FOUND but cannot be repainted
-                // by a value write: they stay uncovered (docs/124 M-10) so
-                // the caller's rebuild clears the edited preview + the red
-                // modified marker. Only a path with NO cell at all is
+                // docs/159: the pair grid's LIST cell (a readonly `▦ N×M`
+                // badge, data-list) is repaintable when the reverted value is
+                // a list -- the server ships the badge `_list_pair_cell`
+                // renders (old_value_badge via `_list_badge`). Any other kind
+                // changes the cell's shape and stays uncovered for the rebuild.
+                if (c.hasAttribute('data-list')) {
+                    if (e.old_kind !== 'list' || e.old_value_badge == null) return;
+                    c.value = String(e.old_value_badge);
+                    c.setAttribute('data-orig', c.value);
+                    var trl = _rowOf(c);
+                    if (trl && rows.indexOf(trl) < 0) rows.push(trl);
+                    patched++;
+                    wrote++;
+                    return;
+                }
+                // A readonly cell (a runtime column) is FOUND but cannot be
+                // repainted by a value write: it stays uncovered (docs/124
+                // M-10) so the caller's rebuild clears the edited preview +
+                // the red modified marker. Only a path with NO cell at all is
                 // "missing" -- that one is not the grid's to repaint.
                 if (c.readOnly || c.tagName !== 'INPUT') return;
+                // F-LIST-TRUNC (final review): a LIST restored into a scalar /
+                // editable pair cell (pair_columns._leaf picks list-vs-edit PER
+                // PAIR, so an un-calibrated pair renders an editable box in the
+                // same column as a calibrated pair's `▦ N×M` badge) changes the
+                // cell's SHAPE -- old_value_disp is the 24-char TRUNCATED preview
+                // and must never become the value or the clean baseline. Leave it
+                // uncovered for the honest rebuild (same as the qubit grid).
+                if (e.old_kind === 'list') { honest = false; return; }
                 var isStr = c.hasAttribute('data-str-numeric')
                     || c.classList.contains('bulk-cell-str');
                 if ((e.old_kind === 'str_numeric') !== isStr) honest = false;

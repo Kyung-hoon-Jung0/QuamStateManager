@@ -236,3 +236,16 @@ same `root()` gate `tryUndo` already used internally), pinned both ways in
 
 docs/20:755 amended: Ctrl+Z crosses the save/apply boundary **only by loud
 staging** — live writes remain Apply-only.
+
+### AMENDED A THIRD TIME 2026-09-03 by the user (docs/160)
+
+> apply to chip을 적용한 이후에도, ctrl z가 되기를 강력하게 원하고 있음.
+
+**A direct live write happens on an explicit Apply press, inside an armed
+Auto-Sync session, OR as the undo/redo of a change that reached the chip
+through one of those.** The Apply press was the consent for the change; Ctrl+Z
+withdraws that same consent and needs no second press. A journal step now
+stages the inverse AND pushes it through the one apply door (default ON,
+machine-wide, Settings → "Ctrl+Z writes live"; OFF is this document's
+behaviour byte-for-byte). Wholesale loads (stage → Apply, dataset Apply to
+chip, restore-live) become one journal unit each. See docs/160.

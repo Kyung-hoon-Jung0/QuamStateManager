@@ -59,6 +59,11 @@ def env(tmp_path):
     c = app.test_client()
     r = c.post("/load", data={"folder": str(live)})
     assert r.status_code in (200, 302)
+    # docs/160: Ctrl+Z after an apply now writes the chip by DEFAULT. The pins
+    # in this file describe the stage-only walk (the docs/107 contract, kept
+    # verbatim as the OFF mode) — so the fixture turns the setting off; the ON
+    # mode is pinned in tests/test_undo_live.py.
+    assert c.post("/settings/undo-live", data={"enabled": "0"}).get_json()["enabled"] is False
     return {"app": app, "client": c, "live": live, "tmp": tmp_path}
 
 

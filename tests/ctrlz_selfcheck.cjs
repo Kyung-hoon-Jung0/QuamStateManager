@@ -460,5 +460,27 @@ ok(window.LiveEditUndo.tryRedo() === false, 'clear() empties the redo stack too'
        'the held backlog drains once the apply clears');
 }
 
+// ── F-CHIPID: the queue's POST carries THIS window's chip token ───────────
+// Since docs/160 a Ctrl+Z writes the active chip's live files; the server gates
+// a stale window on expect_chip, so the client must send window.__chipToken or
+// the gate can never fire.
+{
+    if (!window.document.getElementById('pending-tray')) {
+        const t = window.document.createElement('div');
+        t.id = 'pending-tray';
+        window.document.body.appendChild(t);
+    }
+    const n = calls.length;
+    window.__chipToken = 'CHIP-TOK-XYZ';
+    window.UndoQueue.push('/undo');
+    for (let i = 0; i < 8; i++) await settle();
+    const issued = calls.slice(n).filter((c) => c.url.indexOf('/undo') === 0);
+    ok(issued.length >= 1
+        && issued[0].opts && issued[0].opts.values
+        && issued[0].opts.values.expect_chip === 'CHIP-TOK-XYZ',
+        'F-CHIPID: the undo request carries window.__chipToken as expect_chip');
+    for (let i = 0; i < 20; i++) await settle();
+}
+
 process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error('FAIL: selfcheck threw: ' + (e && e.stack || e)); process.exit(1); });

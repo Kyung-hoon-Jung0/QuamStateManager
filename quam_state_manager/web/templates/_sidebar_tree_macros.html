@@ -25,6 +25,7 @@
     <div class="tree-entry-label">
         <input type="checkbox" name="paths" value="{{ entry.quam_state_path }}"
                form="compare-form"
+               title="Tick to select this run — Compare Selected diffs 2–5 ticked runs side by side, Trend Tracker plots them (Shift+click ticks a range)"
                aria-label="Select {{ entry.experiment_name }} for compare">
         {# A RUN entry only VIEWS its dataset detail (loaded into the inspector
            via JS on data-uid) — it must NOT activate the run's frozen quam_state
@@ -43,7 +44,10 @@
               {% if entry.run_id is not none %}data-run-id="{{ entry.run_id }}" data-uid="{{ ds_entry_uid(entry) }}"
               tabindex="0" role="button"{% endif %}>
             {% if entry.run_id is not none %}<span class="run-id">#{{ entry.run_id }}</span>{% endif %}
-            <span class="entry-name" title="{{ entry.experiment_name }}">{{ entry.experiment_name }}</span>
+            {# docs/157: soft break opportunities after each `_`, so a long
+               name wraps at its own word joints (`34b_cz_phase_` /
+               `compensation_error_amp`) instead of mid-word #}
+            <span class="entry-name" title="{{ entry.experiment_name }}">{{ entry.experiment_name | soft_breaks }}</span>
         </span>
     </div>
 </li>

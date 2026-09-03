@@ -616,3 +616,75 @@ one** (docs/136, 137).
   (docs/129–133).
 - **The manual never supplies an absolute number** — enforced when the pack
   loads, and it has refused real cases twice.
+
+## Unreleased
+
+### Calculator
+
+- **The Calculator opens as its own browser window** — the ↗ in the popover
+  header pops it out (`/calc-window`): movable across monitors, above other
+  apps, and it outlives navigation. While it is open, the Calculator button and
+  Alt+C bring that window forward instead of opening a second one; Escape closes
+  it and it reopens where you left it. Browser mode only — the desktop shell
+  keeps the in-page floating popover (docs/156).
+
+### Sidebar
+
+- **The experiment list is easier to read** — larger rows, the run number is a
+  bold badge, names wrap at their own `_` joints (two lines at most for every
+  name in a 2,655-run archive), and the sidebar opens 300 px wide by default
+  (docs/157).
+
+### Param History
+
+- **None means none.** The Properties / Qubits None buttons used to bounce back
+  to the defaults (or every qubit) with the whole page re-rendering; an empty
+  selection is now a selection, a chip click re-renders only the results, and
+  the page-load popup no longer flashes over it (docs/158).
+
+### Live State Edit
+
+- **Ctrl+Z / Ctrl+Shift+Z on a list cell (`exponential_filter`, a confusion
+  matrix) now changes what you see.** The value moved in the working copy but
+  the cell kept its old preview; it repaints in place now, and the 🕘 value
+  history reaches list cells too (docs/159).
+
+### Undo after Apply (covenant amendment)
+
+- **Ctrl+Z / Ctrl+Shift+Z keep working after Apply to live — on the chip.** The
+  Apply press was the consent; undo withdraws it, through the same apply door with
+  the same never-clobber gate. Default ON, Settings → "Ctrl+Z writes live" (OFF is
+  the old stage-only behaviour). State-History stage → Apply, dataset Apply to
+  chip and restore-live are walkable too (docs/160).
+
+### Sidebar selection
+
+- **The tick box is a real control**: 18 px, rounded, SM-blue fill with a check,
+  a tooltip saying what it selects for, and a hint under the compare buttons
+  while nothing is ticked. **Compare Selected / Trend Tracker collapse an open
+  run detail first** so the result is on top, not under it (docs/161).
+
+### Review sweep (docs/156–161)
+
+- A ten-angle code review of this round found and fixed 15 defects, most in the
+  new live undo: a mixed stage+edit apply journaled paths twice, the tray ✕ and a
+  failed save could corrupt the walk, a concurrent edit from another window
+  could ride a Ctrl+Z onto the chip, a recycled PID hid the user's own history,
+  NaN leaves blocked wholesale undos, pointer re-links could not be redone, and
+  the calculator window lost typed values after a page reload (docs/160 §5c).
+
+- A second round over that sweep found 15 more, all fixed: a refused redo no
+  longer jams the redo stack, a skipped step keeps the walk and the stack in
+  step, ↺ Revert last apply stays anchored on the apply you pressed, a held
+  Ctrl+Z no longer writes two history snapshots per press, a coalesced burst
+  finishes, a reverted list cell drops its "unapplied edit" marker, and a
+  calculator window that answers the page's ping is remembered by every entry
+  point (docs/160 §5d).
+
+- A pre-customer review found one more, fixed: the grid's ⚡ **Apply to live now**
+  pulls the live chip and re-applies your pending edits before pushing, and that
+  re-apply used to split one gesture into separate undo steps — so after Apply,
+  a single Ctrl+Z could revert half of a coupled edit (a qubit frequency without
+  its RF-mirror twin, an FSP change without its compensating amplitudes). The
+  re-apply now keeps each gesture whole, so one Ctrl+Z takes the whole gesture
+  off the chip (docs/160 §5e).

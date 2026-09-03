@@ -392,7 +392,13 @@
                     if (a2) v.byPath[a2] = colKey;
                 } else {
                     var ls = td.querySelector('.bulk-cell-list[data-path]');
-                    if (ls) v.byPath[ls.getAttribute('data-path')] = colKey;
+                    if (ls) {
+                        v.byPath[ls.getAttribute('data-path')] = colKey;
+                        // docs/159: /undo names the RESOLVED leaf -- a detached
+                        // list column must be findable by it too
+                        var lr = ls.getAttribute('data-resolved');
+                        if (lr) v.byPath[lr] = colKey;
+                    }
                 }
                 v.vals.set(td, val.toLowerCase());
                 // the cell's NODES move into a fragment (docs/141 4i): no

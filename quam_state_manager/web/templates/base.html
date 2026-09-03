@@ -7,34 +7,11 @@
     <title>QUAM State Manager</title>
     <link rel="icon" type="image/svg+xml"
           href="{{ url_for('static', filename='favicon.svg') }}">
-    {# Apply theme as early as possible to prevent FOUC. Dark is the default; #}
-    {# users who explicitly chose 'light' have it persisted in localStorage. #}
-    <script>
-      (function() {
-        var saved = null;
-        try { saved = localStorage.getItem('quam_theme'); } catch(e) {}
-        // ?theme=light|dark forces the theme for this view (deep-link / support /
-        // screenshots) without persisting — overrides the saved preference.
-        var qp = null;
-        try { qp = new URLSearchParams(location.search).get('theme'); } catch(e) {}
-        var theme = (qp === 'light' || qp === 'dark') ? qp : (saved || 'dark');
-        document.documentElement.setAttribute('data-theme', theme);
-        // Readability prefs, applied BEFORE first paint (no FOUC):
-        // - quam_font_size (S/M/L rem baseline — pre-existing setting; it used
-        //   to apply only after DOMContentLoaded and flashed the default size)
-        // - quam_ui_scale (global zoom 0.8–1.5 — scales EVERYTHING including
-        //   the app's many hardcoded px font sizes; the customer's "adjust
-        //   overall fontsize throughout the program")
-        try {
-          var fs = localStorage.getItem('quam_font_size') || '';
-          if (fs) document.documentElement.setAttribute('data-font-size', fs);
-          var sc = parseFloat(localStorage.getItem('quam_ui_scale'));
-          if (isFinite(sc) && sc >= 0.8 && sc <= 1.5 && Math.abs(sc - 1) > 0.001) {
-            document.documentElement.style.zoom = sc;
-          }
-        } catch(e) {}
-      })();
-    </script>
+    {# Apply theme as early as possible to prevent FOUC. Dark is the default;
+       users who explicitly chose 'light' have it persisted in localStorage.
+       docs/156: the boot is a partial — the standalone /calc-window runs the
+       same one, so a window opened from this page looks like this page. #}
+    {% include '_theme_boot.html' %}
     {# Render-time chip fingerprint token (topology-only). Set on every FULL page
        load; HTMX fragment swaps deliberately don't reset it, so it stays pinned to
        the chip that was active when this page was rendered. Sent as expect_chip on
@@ -640,6 +617,9 @@
                             id="compare-clear" hidden
                             onclick="compareClearSelection()"
                             title="Untick every selected run">Clear</button>
+                    {# docs/161: what the tick boxes are FOR, said once, only
+                       while nothing is ticked (app.js syncCompareCount) #}
+                    <span class="compare-hint" id="compare-hint">&#9744; Tick runs in the list below to compare or trend them (2–5).</span>
                 </form>
                 <div class="sidebar-filter">
                     <div class="ds-search-wrap">
@@ -887,6 +867,19 @@
         <button onclick="toggleTopbar()" class="settings-opt" id="topbar-toggle">Hide top bar</button>
         </div>
         </div>
+        {# docs/160 (customer, CRITICAL): Ctrl+Z after Apply-to-live writes the
+           chip. A MACHINE-WIDE server setting (not localStorage) because it
+           decides whether a keypress writes the instrument -- every window
+           on this machine must agree. Default ON; OFF restores the docs/107
+           stage-only behaviour byte-for-byte. #}
+        <div class="settings-group">
+        <small class="settings-label">Undo <span class="muted">(after Apply to live)</span></small>
+        <div class="settings-options">
+        <button onclick="toggleUndoLive()" class="settings-opt{% if undo_live %} settings-opt-active{% endif %}" id="undo-live-toggle"
+                data-on="{{ '1' if undo_live else '0' }}"
+                title="ON: Ctrl+Z / Ctrl+Shift+Z on an already-applied change writes the live chip right away (through the same Apply door, refused if the chip moved). OFF: the reverted value only waits in the review tray until you press Apply.">Ctrl+Z writes live: {{ 'ON' if undo_live else 'OFF' }}</button>
+        </div>
+        </div>
         {# docs/109: how MW amplitude annotations read — some labs think in dBm,
            others in volts. ONE global viewer setting (quam_phys_unit) drives
            every surface (Live-Edit sub-lines, Components tables, inspectors);
@@ -980,56 +973,19 @@
         <div class="calc-header" id="calc-header">
         <strong class="calc-title">Calculator</strong>
         <span class="calc-header-tools">
+        {# docs/156 (user feedback: "SM 창 내부에서만 floating"): open the same
+           calculator as its OWN browser window — movable across monitors,
+           above other apps, outliving every navigation of this page. calc.js
+           hides this under the desktop shell (pywebview), where window.open
+           would navigate THIS window instead of opening a second one. #}
+        <button type="button" class="calc-close calc-popout" onclick="openCalcWindow(this)"
+                data-calc-window-url="{{ url_for('main.calc_window') }}"
+                title="Open in a separate window" aria-label="Open in a separate window">&#8599;</button>
         <button type="button" class="calc-close" onclick="toggleCalc()" title="Close" aria-label="Close">&times;</button>
         </span>
         </div>
-        <div class="calc-body">
-        <details class="calc-sec" open>
-        <summary class="calc-sec-label">Power change → amplitude</summary>
-        <div class="calc-row"><label class="calc-field">Power change Δ<input type="text" id="calc-s1-dp" class="calc-in" value="-25" inputmode="decimal"><span class="calc-unit">dB</span></label></div>
-        <div class="calc-row"><label class="calc-field">Current amplitude<input type="text" id="calc-s1-amp" class="calc-in" value="0.5" inputmode="decimal"></label></div>
-        <div class="calc-row calc-or">or <input type="text" id="calc-s1-from" class="calc-in calc-in-sm" value="10"> dBm → <input type="text" id="calc-s1-to" class="calc-in calc-in-sm" value="-15"> dBm</div>
-        <div class="calc-result"><span class="calc-rlabel">Factor 10^(Δ/20)</span><span class="calc-rval" id="calc-s1-k">—</span></div>
-        <div class="calc-result"><span class="calc-rlabel">New amplitude</span><span class="calc-rval" id="calc-s1-anew" data-raw="">—</span><button class="calc-copy" type="button" data-copy="calc-s1-anew" title="Copy">&#128203;</button><a href="#" class="calc-chain" id="calc-s1-use" title="Use as amplitude in the dBm bridge below">↳ use</a></div>
-        <p class="calc-help">Power ∝ amp². Δ dB uses 20·log₁₀ (voltage), not 10·log₁₀.</p>
-        </details>
-        <details class="calc-sec">
-        <summary class="calc-sec-label">MW-FEM amplitude ↔ dBm</summary>
-        <div class="calc-row"><label class="calc-field">full_scale_power_dbm<input type="text" id="calc-s2-fsp" class="calc-in" value="-11"><span class="calc-unit">dBm</span></label></div>
-        <div class="calc-row"><label class="calc-field">amplitude a<input type="text" id="calc-s2-amp" class="calc-in" value="1.0"></label></div>
-        <div class="calc-result"><span class="calc-rlabel">Power = FSP + 20·log₁₀|a|</span><span class="calc-rval" id="calc-s2-dbm" data-raw="">—</span><button class="calc-copy" type="button" data-copy="calc-s2-dbm" title="Copy">&#128203;</button></div>
-        <div class="calc-row"><label class="calc-field">target power<input type="text" id="calc-s2-target" class="calc-in" value="-15"><span class="calc-unit">dBm</span></label></div>
-        <div class="calc-result"><span class="calc-rlabel">amplitude = 10^((tgt−FSP)/20)</span><span class="calc-rval" id="calc-s2-anew" data-raw="">—</span><button class="calc-copy" type="button" data-copy="calc-s2-anew" title="Copy">&#128203;</button></div>
-        </details>
-        <details class="calc-sec">
-        <summary class="calc-sec-label">dBm ↔ Volt (50 Ω RF)</summary>
-        <div class="calc-row"><label class="calc-field">Power<input type="text" id="calc-s3-dbm" class="calc-in" value="0"><span class="calc-unit">dBm</span></label><label class="calc-field calc-field-sm">R<input type="text" id="calc-s3-r" class="calc-in calc-in-sm" value="50"><span class="calc-unit">Ω</span></label></div>
-        <div class="calc-result"><span class="calc-rlabel">P</span><span class="calc-rval" id="calc-s3-pmw">—</span><span class="calc-unit">mW</span></div>
-        <div class="calc-row"><label class="calc-field">V_rms<input type="text" id="calc-s3-vrms" class="calc-in" inputmode="decimal"><span class="calc-unit">V</span></label><button class="calc-copy" type="button" data-copy="calc-s3-vrms" title="Copy">&#128203;</button></div>
-        <div class="calc-row"><label class="calc-field">V_peak<input type="text" id="calc-s3-vpk" class="calc-in" inputmode="decimal"><span class="calc-unit">V</span></label><button class="calc-copy" type="button" data-copy="calc-s3-vpk" title="Copy">&#128203;</button></div>
-        <div class="calc-row"><label class="calc-field">V_pp<input type="text" id="calc-s3-vpp" class="calc-in" inputmode="decimal"><span class="calc-unit">V</span></label><button class="calc-copy" type="button" data-copy="calc-s3-vpp" title="Copy">&#128203;</button></div>
-        <p class="calc-help">V_peak is the amplitude-relevant one. Edit any V to back-convert to dBm.</p>
-        </details>
-        <details class="calc-sec">
-        <summary class="calc-sec-label">RF = LO + IF</summary>
-        <div class="calc-row"><label class="calc-field">RF<input type="text" id="calc-s4-rf" class="calc-in" inputmode="decimal"><span class="calc-unit">GHz</span></label></div>
-        <div class="calc-row"><label class="calc-field">LO<input type="text" id="calc-s4-lo" class="calc-in" inputmode="decimal"><span class="calc-unit">GHz</span></label></div>
-        <div class="calc-row"><label class="calc-field">IF<input type="text" id="calc-s4-if" class="calc-in" inputmode="decimal"><span class="calc-unit">MHz</span></label><button class="calc-copy" type="button" data-copy="calc-s4-if" title="Copy">&#128203;</button></div>
-        <div class="calc-result"><span class="calc-rlabel">IF window</span><span class="calc-rval" id="calc-s4-note">—</span></div>
-        <p class="calc-help">Type any two — the third fills in. MW-FEM IF window is ±400 MHz.</p>
-        </details>
-        <details class="calc-sec">
-        <summary class="calc-sec-label">Quick reference</summary>
-        <p class="calc-help">0 dBm → 0.2236 V_rms / 0.3162 V_pk / 0.6325 V_pp (50 Ω)<br>−6 dB ≈ ×0.501 amp · −20 dB = ×0.1 amp<br>×0.5 amp = −6.02 dB power<br>−25 dB power = ÷17.78 in amplitude (10^(25/20)), not ÷316</p>
-        </details>
-        </div>
-        <div class="calc-foot">
-        <div class="calc-expr-row">
-        <input type="text" id="calc-expr" class="calc-expr" value="0.5*10^(-25/20)" spellcheck="false" autocomplete="off" placeholder="= e.g. 0.5*10^(-25/20)">
-        <span class="calc-expr-eq">=</span><span class="calc-rval" id="calc-expr-res" data-raw="">—</span><button class="calc-copy" type="button" data-copy="calc-expr-res" title="Copy (or Enter)">&#128203;</button>
-        </div>
-        <p class="calc-help">^ power · log10 log ln sqrt exp abs sin cos tan · pi e</p>
-        </div>
+        {# the sections + expression footer: ONE partial, shared with /calc-window #}
+        {% include '_calc_body.html' %}
         </div>
 
 
@@ -1479,6 +1435,21 @@
             if (!inspectorExpanded) return;
             var pane = document.getElementById("inspector-pane");
             if (!pane || !pane.querySelector("#ds-detail-root")) return;
+            window._applySplitPreset("collapsed");
+        });
+
+        // docs/161 (customer): Compare Selected / Trend Tracker land in the
+        // TOP pane, and a run detail opens the inspector at 85% -- so the
+        // result arrived under a 15% sliver and "did the compare open at
+        // all?" was the report. Any inspector content (a run detail, a qubit
+        // inspector) collapses to the user's ⤓ preset when the compare form
+        // fires; saving the sizes first is what keeps the table-pane swap's
+        // initSplit() from restoring the old split. The content stays -- ▲
+        // brings it back.
+        document.addEventListener("htmx:beforeRequest", function(e) {
+            var src = e.detail && e.detail.elt;
+            if (!src || !src.closest || !src.closest("#compare-form")) return;
+            if (!inspectorExpanded || !inspectorHasContent()) return;
             window._applySplitPreset("collapsed");
         });
 

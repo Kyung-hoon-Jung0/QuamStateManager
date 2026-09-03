@@ -11,6 +11,12 @@
  *
  * Formulas are byte-identical to generate.js ampToDisplay/ampToBase so the
  * calculator can't drift from the rest of the app.
+ *
+ * Two surfaces, one script (docs/156): the in-page popover (#calc-popover in
+ * base.html — anchored, draggable, Alt+C) and the standalone /calc-window
+ * document (#calc-popover.calc-standalone — the calculator as its OWN browser
+ * window, opened by openCalcWindow). Every field is found by id, so both
+ * render the same _calc_body.html partial.
  */
 (function () {
     'use strict';
@@ -250,7 +256,15 @@
         var raw = target.dataset.raw || (target.value !== undefined ? target.value : '') || target.textContent;
         if (!raw || raw === '—') return;
         if (window.copyWithFeedback) window.copyWithFeedback(raw, btn);
-        else if (navigator.clipboard) navigator.clipboard.writeText(raw);
+        else if (navigator.clipboard) {
+            // the standalone window has no app.js toast: the button itself
+            // says it happened (docs/156)
+            navigator.clipboard.writeText(raw).then(function () {
+                if (!btn || !btn.classList) return;
+                btn.classList.add('calc-copied');
+                setTimeout(function () { btn.classList.remove('calc-copied'); }, 800);
+            }).catch(function () {});
+        }
     }
 
     /* ── size (docs/141 4aj, user: "calculator는 크기 조절이 안되고 있어") ──
@@ -293,6 +307,225 @@
     }
     window.CalcWindow = { restoreSize: restoreSize, watchSize: watchSize, SIZE_KEY: SIZE_KEY };
 
+    /* ── a window of its own (docs/156) ──────────────────────────────────────
+       User feedback: the popover floats, but only INSIDE the SM window. This
+       opens the SAME calculator (/calc-window renders the same partial) as its
+       own browser window — window.open with a size, which Chrome/Edge/Firefox
+       answer with a popup WINDOW rather than a tab: movable across monitors,
+       above other apps, and it outlives every navigation of the page that
+       opened it. The page keeps ONE reference: while that window is alive the
+       Calculator button and Alt+C FOCUS it instead of opening a second
+       calculator in-page (two calculators with two sets of numbers is the
+       confusing outcome). The window remembers its own size + screen position
+       (quam_calc_win) and reopens there.
+
+       Browser mode only. Under the desktop shell (pywebview) the WebView2
+       backend answers window.open by navigating THIS window to the URL
+       (edgechromium.py on_new_window_request: Handled=True, then load_url) —
+       the whole app replaced by a calculator, with no way back. So there the
+       button is hidden and openCalcWindow does nothing; the in-page floating
+       popover stays the desktop answer. `window.pywebview` is injected by
+       the shell AFTER navigation completes, so it is checked at click time
+       (reliable) and the button is hidden on `pywebviewready` (cosmetic). */
+    var WIN_URL_FALLBACK = '/calc-window';
+    var WIN_NAME = 'quam-calc';
+    var WIN_KEY = 'quam_calc_win';          // {w, h, x, y} the separate window last had
+    var REQ_KEY = 'quam_calc_req';          // {w, h} the CONTENT size we last ASKED window.open for
+    var WIN_DEFAULT = { w: 400, h: 680 };
+    var _calcWin = null;
+
+    // A calculator window this page did not open (it survived a full reload of
+    // the SM page, so `_calcWin` is gone) still answers on the channel --
+    // `_extAlive` is what the page knows about it (code-review round 2, F11).
+    // Without it the ↗ ping focused the live window while every OTHER entry
+    // point (Alt+C, the sidebar button) still believed no window existed and
+    // opened a SECOND calculator beside it.
+    var _extAlive = false, _extCh = null;
+    function calcWinAlive() {
+        try { return _extAlive || !!(_calcWin && !_calcWin.closed); } catch (e) { return _extAlive; }
+    }
+    function standalone() {
+        var p = document.getElementById('calc-popover');
+        return !!(p && p.classList.contains('calc-standalone'));
+    }
+    function winFeatures() {
+        var s = null;
+        try { s = JSON.parse(window.localStorage.getItem(WIN_KEY) || 'null'); } catch (e) {}
+        var w = (s && s.w > 200) ? s.w : WIN_DEFAULT.w;
+        var h = (s && s.h > 150) ? s.h : WIN_DEFAULT.h;
+        // F-CALC-GROW: record the CONTENT size we are asking for, so the window
+        // can measure this browser's frame overhead (inner - requested) once and
+        // store back a size that reproduces the same content next time, instead
+        // of feeding its realised (larger) inner size back as the next request.
+        try { window.localStorage.setItem(REQ_KEY, JSON.stringify({ w: w, h: h })); } catch (e) {}
+        var f = 'popup=yes,width=' + Math.round(w) + ',height=' + Math.round(h)
+              + ',resizable=yes,scrollbars=yes';
+        if (s && isFinite(s.x) && isFinite(s.y)) f += ',left=' + Math.round(s.x) + ',top=' + Math.round(s.y);
+        return f;
+    }
+    function winUrl(trigger) {
+        var el = (trigger && trigger.dataset && trigger.dataset.calcWindowUrl)
+            ? trigger : document.querySelector('[data-calc-window-url]');
+        var url = (el && el.dataset.calcWindowUrl) || WIN_URL_FALLBACK;
+        // the OPENING page's theme, even when it was forced by ?theme= and
+        // never persisted — the window should look like the page it came from
+        var theme = document.documentElement.getAttribute('data-theme');
+        if (theme) url += (url.indexOf('?') < 0 ? '?' : '&') + 'theme=' + encodeURIComponent(theme);
+        return url;
+    }
+    // The window announces itself on a BroadcastChannel (docs/156 review):
+    // after a full reload of the SM page `_calcWin` is gone, and a
+    // window.open on the same NAME would NAVIGATE the still-open window --
+    // wiping every value the user typed. So the page first asks "anyone
+    // there?"; a live window answers and focuses itself, and only silence
+    // opens a new one.
+    var CH_NAME = 'quam-calc';
+    function _channel() {
+        try { return window.BroadcastChannel ? new BroadcastChannel(CH_NAME) : null; }
+        catch (e) { return null; }
+    }
+    // ONE long-lived listener per page: the window announces itself (`calc-here`,
+    // answered to a ping or a silent probe) and says goodbye when it closes
+    // (`calc-bye`), so `_extAlive` stays true only while a window really is there.
+    function _extListen() {
+        if (_extCh || standalone()) return;
+        _extCh = _channel();
+        if (!_extCh) return;
+        _extCh.onmessage = function (ev) {
+            var d = ev && ev.data;
+            if (!d) return;
+            if (d.type === 'calc-here') _extAlive = true;
+            else if (d.type === 'calc-bye') _extAlive = false;
+        };
+    }
+    // asked once at page load: unlike `calc-ping` it must NOT pull the window
+    // to the front -- a page reload is not a request to see the calculator.
+    function _extProbe() {
+        _extListen();
+        if (!_extCh) return;
+        try { _extCh.postMessage({ type: 'calc-probe' }); } catch (e) {}
+    }
+    function _openNew(trigger) {
+        var w = null;
+        try { w = window.open(winUrl(trigger), WIN_NAME, winFeatures()); } catch (e) { w = null; }
+        if (!w) return null;                 // popup blocked: the in-page popover stays
+        if (calcOpen()) window.toggleCalc();  // it moved out — close the in-page one first
+        _calcWin = w;
+        try { w.focus(); } catch (e) {}
+        return w;
+    }
+    // Bring a window this page did NOT open to the front; if nothing answers,
+    // it is gone -- clear the flag and let the caller act as if there were none.
+    function _focusExternal(onGone) {
+        var ch = _channel();
+        if (!ch) { _extAlive = false; if (onGone) onGone(); return; }
+        var answered = false;
+        var timer = setTimeout(function () {
+            try { ch.close(); } catch (e) {}
+            if (answered) return;
+            _extAlive = false;
+            if (onGone) onGone();
+        }, 200);
+        ch.onmessage = function (ev) {
+            if (ev && ev.data && ev.data.type === 'calc-here') answered = true;
+        };
+        try { ch.postMessage({ type: 'calc-ping' }); }
+        catch (e) { clearTimeout(timer); _extAlive = false; if (onGone) onGone(); }
+    }
+    window.openCalcWindow = function (trigger) {
+        // only a window THIS page opened can be focused directly; an external
+        // one is reached through the ping below (F11)
+        if (_calcWin && !_calcWin.closed) { try { _calcWin.focus(); } catch (e) {} return _calcWin; }
+        if (window.pywebview) return null;   // desktop shell — see the note above
+        _extListen();
+        var ch = _channel();
+        if (!ch) return _openNew(trigger);
+        var answered = false;
+        var timer = setTimeout(function () {
+            if (answered) return;
+            try { ch.close(); } catch (e) {}
+            _openNew(trigger);
+        }, 120);
+        ch.onmessage = function (ev) {
+            if (!ev || !ev.data || ev.data.type !== 'calc-here') return;
+            answered = true;
+            clearTimeout(timer);
+            try { ch.close(); } catch (e) {}
+            // the page now KNOWS a window is out there (F11) — Alt+C and the
+            // sidebar button must bring that one forward, not open a second
+            _extAlive = true;
+            if (calcOpen()) window.toggleCalc();
+        };
+        try { ch.postMessage({ type: 'calc-ping' }); } catch (e) { clearTimeout(timer); return _openNew(trigger); }
+        return null;                         // asynchronous: the answer decides
+    };
+    function hidePopout() {
+        document.querySelectorAll('.calc-popout').forEach(function (b) { b.hidden = true; });
+    }
+    // (guarded: calc_selfcheck.cjs evaluates this file against a bare `{}` window)
+    if (window.addEventListener) window.addEventListener('pywebviewready', hidePopout);
+
+    // The standalone document: the window IS the frame, so no anchoring, no
+    // drag, no outside-click closer; Escape closes the window; the size and
+    // screen position are remembered for the next open.
+    function wireStandalone() {
+        if (!_calcInit) { recomputeAll(); _calcInit = true; }
+        var first = document.getElementById('calc-s1-dp');
+        if (first) setTimeout(function () { first.focus(); first.select && first.select(); }, 0);
+        var t = null;
+        // F-CALC-GROW: measure the frame overhead ONCE at load -- how much
+        // bigger the realised inner size is than the content size we asked
+        // window.open for. remember() then stores (inner - overhead), the size
+        // that reproduces the current content, so a pure open/close cycle stores
+        // the SAME size and only a genuine user resize moves it. Clamped to the
+        // screen so a maximised window can never seed an off-screen next open.
+        var _req = null;
+        try { _req = JSON.parse(window.localStorage.getItem(REQ_KEY) || 'null'); } catch (e) {}
+        var _frameDW = (_req && _req.w > 0) ? (window.innerWidth - _req.w) : 0;
+        var _frameDH = (_req && _req.h > 0) ? (window.innerHeight - _req.h) : 0;
+        function remember() {
+            try {
+                var sw = (window.screen && window.screen.availWidth) || 100000;
+                var sh = (window.screen && window.screen.availHeight) || 100000;
+                window.localStorage.setItem(WIN_KEY, JSON.stringify({
+                    w: Math.max(200, Math.min(sw, window.innerWidth - _frameDW)),
+                    h: Math.max(150, Math.min(sh, window.innerHeight - _frameDH)),
+                    x: window.screenX, y: window.screenY }));
+            } catch (e) {}
+        }
+        window.addEventListener('resize', function () { clearTimeout(t); t = setTimeout(remember, 250); });
+        window.addEventListener('pagehide', remember);
+        // answer the opener page's "anyone there?" (see openCalcWindow) and
+        // come to the front; follow the page's theme toggle via storage
+        var ch = _channel();
+        if (ch) {
+            ch.onmessage = function (ev) {
+                var d = ev && ev.data;
+                if (!d || (d.type !== 'calc-ping' && d.type !== 'calc-probe')) return;
+                try { ch.postMessage({ type: 'calc-here' }); } catch (e) {}
+                // a PROBE is the opener page asking on load whether a window
+                // exists (F11) — answering must not steal the user's focus
+                if (d.type === 'calc-ping') { try { window.focus(); } catch (e) {} }
+            };
+            // F-CALC-DUP (final review): announce ourselves ONCE on open, so any
+            // SM tab that was ALREADY open when this window opened latches
+            // _extAlive=true now (a page only ASKS once, at its own load) --
+            // otherwise those tabs keep _extAlive=false and their Calculator
+            // button / Alt+C open a SECOND in-page calculator beside the window.
+            try { ch.postMessage({ type: 'calc-here' }); } catch (e) {}
+            // ... and say goodbye, so the page stops believing in a window
+            // the user closed
+            window.addEventListener('pagehide', function () {
+                try { ch.postMessage({ type: 'calc-bye' }); } catch (e) {}
+            });
+        }
+        window.addEventListener('storage', function (ev) {
+            if (!ev || ev.key !== 'quam_theme') return;
+            var th = ev.newValue === 'light' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', th);
+        });
+    }
+
     // ── open / close / pin ──────────────────────────────────────────────────────
     var _calcWired = false, _calcInit = false;
     window.toggleCalc = function (trigger) {
@@ -304,6 +537,21 @@
             : document.getElementById('calc-btn'));
         if (!pop || !btn) return;
         var willOpen = pop.classList.contains('calc-hidden');
+        // docs/156: the calculator is OUT in its own window — bring that one
+        // forward rather than open a second calculator here
+        if (willOpen && calcWinAlive()) {
+            // F-CALC-DEAD (final review): a CLOSED handle must fall through to
+            // _focusExternal (which heals a stale _extAlive and reopens in-page)
+            // -- focus() on a closed window is a silent no-op, so `if (_calcWin)`
+            // alone left the Calculator button dead after the window crashed /
+            // was discarded while _extAlive was still latched true.
+            if (_calcWin && !_calcWin.closed) { try { _calcWin.focus(); } catch (e) {} return; }
+            // an EXTERNAL window (F11), or a closed local handle: ping it
+            // forward, and if it turns out to be gone, open here after all
+            // rather than doing nothing
+            _focusExternal(function () { window.toggleCalc(trigger); });
+            return;
+        }
         // docs/141 4u (user: "a bug"): the Calculator and Settings are two
         // windows, not a singleton -- opening one leaves the other alone
         pop.classList.toggle('calc-hidden', !willOpen);
@@ -403,7 +651,12 @@
             }
         });
         pop.addEventListener('keydown', function (e) {
-            if (e.key === 'Escape') { e.preventDefault(); window.toggleCalc(); }
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                // docs/156: in the standalone window Escape closes the WINDOW
+                if (standalone()) { try { window.close(); } catch (e2) {} }
+                else window.toggleCalc();
+            }
             else if (e.key === 'Tab' && e.target.matches &&
                      e.target.matches('input.calc-in, input.calc-expr')) {
                 // Field-to-field hop: visible calc inputs only — skip the
@@ -426,6 +679,10 @@
                 if (out) copyFrom(out, out);
             }
         });
+        if (standalone()) { wireStandalone(); return; }   // docs/156: the window is the frame
+        if (window.pywebview) hidePopout();
+        // F11: a calculator window can outlive this page's load — ask, quietly
+        _extProbe();
         enableDrag();
     }
 

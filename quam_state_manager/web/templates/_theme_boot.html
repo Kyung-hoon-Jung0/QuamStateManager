@@ -1,0 +1,31 @@
+{# Theme + readability boot, applied BEFORE first paint (no FOUC). ONE source
+   for every full document SM serves (docs/156): base.html and the standalone
+   /calc-window, so a window opened from a page looks like that page.
+   Dark is the default; users who explicitly chose 'light' have it persisted in
+   localStorage. #}
+    <script>
+      (function() {
+        var saved = null;
+        try { saved = localStorage.getItem('quam_theme'); } catch(e) {}
+        // ?theme=light|dark forces the theme for this view (deep-link / support /
+        // screenshots) without persisting — overrides the saved preference.
+        var qp = null;
+        try { qp = new URLSearchParams(location.search).get('theme'); } catch(e) {}
+        var theme = (qp === 'light' || qp === 'dark') ? qp : (saved || 'dark');
+        document.documentElement.setAttribute('data-theme', theme);
+        // Readability prefs, applied BEFORE first paint (no FOUC):
+        // - quam_font_size (S/M/L rem baseline — pre-existing setting; it used
+        //   to apply only after DOMContentLoaded and flashed the default size)
+        // - quam_ui_scale (global zoom 0.8–1.5 — scales EVERYTHING including
+        //   the app's many hardcoded px font sizes; the customer's "adjust
+        //   overall fontsize throughout the program")
+        try {
+          var fs = localStorage.getItem('quam_font_size') || '';
+          if (fs) document.documentElement.setAttribute('data-font-size', fs);
+          var sc = parseFloat(localStorage.getItem('quam_ui_scale'));
+          if (isFinite(sc) && sc >= 0.8 && sc <= 1.5 && Math.abs(sc - 1) > 0.001) {
+            document.documentElement.style.zoom = sc;
+          }
+        } catch(e) {}
+      })();
+    </script>

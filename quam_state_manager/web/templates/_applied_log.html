@@ -36,7 +36,10 @@
         {% endif %}
         {% if r.n > 1 %}<span class="applied-log-more">+{{ r.n - 1 }} more</span>{% endif %}
       </div>
-      {% if r.reverted_by %}
+      {% if r.reverted_by == 'undo' %}
+        {# docs/160: undone on the chip by Ctrl+Z -- Ctrl+Shift+Z brings it back #}
+        <span class="applied-log-reverted" title="Undone with Ctrl+Z — Ctrl+Shift+Z re-applies it">undone</span>
+      {% elif r.reverted_by %}
         <span class="applied-log-reverted" title="Already reverted">reverted</span>
       {% else %}
         <button type="button" class="outline btn-sm btn-al-revert"

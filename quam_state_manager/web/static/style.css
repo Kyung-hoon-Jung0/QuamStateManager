@@ -51,9 +51,9 @@
     --search-input-font:     0.92em;  /* font size of text typed into the search box */
 
     /* ── SIDEBAR ──────────────────────────────────────────────────── */
-    --sidebar-width:          260px;   /* default width of the left sidebar panel */
+    --sidebar-width:          300px;   /* default width of the left sidebar panel (docs/157: 260 → 300 with the larger run rows — a dragged width persists and wins) */
     --sidebar-min-width:      200px;   /* minimum width the sidebar can shrink to */
-    --sidebar-max-width:      300px;   /* maximum width the sidebar can grow to */
+    --sidebar-max-width:      420px;   /* maximum width the sidebar can grow to (docs/157: 300 → 420, the drag handle must reach past the new default) */
     --sidebar-pad-v:          0.4rem;  /* top/bottom padding inside the sidebar */
     --sidebar-pad-h:          0.6rem;  /* left/right padding inside the sidebar */
     --sidebar-font:           0.92em;  /* base font size for all text in the sidebar */
@@ -68,16 +68,20 @@
 
     /* ── WORKSPACE FOLDER TREE (sidebar) ─────────────────────────── */
     --tree-root-label-font:    0.85em;   /* font size of the workspace root path row (e.g. D:\work\...) */
-    --tree-date-label-font:    0.9em;    /* font size of date group headers (e.g. 2026-03-04 (314)) */
-    --tree-entry-label-font:   0.95em;   /* base font size for each experiment run row (bumped for readability) */
-    --tree-run-id-font:        0.9em;    /* font size of the bold run ID number (e.g. #10157) */
+    /* docs/157 (customer: the run number is hard to spot, the names too small):
+       rows raised 0.95 → 1.06em, the run number is a 1em BADGE in its own
+       left column, the name wraps in its own column beside it (two lines are
+       fine, said the customer — not a truncation). */
+    --tree-date-label-font:    1em;      /* font size of date group headers (e.g. 2026-03-04 (314)) — never smaller than the rows under it */
+    --tree-entry-label-font:   1.06em;   /* base font size for each experiment run row */
+    --tree-run-id-font:        1em;      /* font size of the run-number badge (e.g. #10157) — see .run-id */
     --tree-entry-name-font:    1em;      /* font size of the experiment name — 1em means same as --tree-entry-label-font */
     --tree-entry-time-font:    0.76em;   /* font size of the HH:MM timestamp shown on each run row */
     --tree-entry-status-font:  0.7em;    /* font size of the status chip (e.g. finished, unknown) on each run row */
     --tree-entry-indent-pl:    0.3rem;   /* left padding of the run list under each date group (tightened — push left) */
     --tree-entry-indent-ml:    0.25rem;  /* left margin that offsets the vertical indent guide line */
-    --tree-entry-pad-v:        0.06rem;  /* top/bottom padding of each individual run row — increase to space rows out */
-    --tree-entry-row-gap:      0.15rem;  /* gap between elements within one run row (ID · name · time · status) */
+    --tree-entry-pad-v:        0.18rem;  /* top/bottom padding of each individual run row — increase to space rows out */
+    --tree-entry-row-gap:      0.3rem;   /* gap between elements within one run row (checkbox · ID badge · name) */
     --tree-date-divider-color: #b8cce0;  /* color of the thin separator line between date groups — set transparent to hide */
     --tree-collapse-btn-font:  0.75em;   /* font size of the "↑ collapse" button at the bottom of an expanded date group */
 
@@ -1032,6 +1036,13 @@ html.topbar-hidden .topbar-reveal { display: block; }
 .settings-dropdown {
     position: absolute; right: 0; top: 100%; z-index: 120;
     min-width: 140px;
+    /* F-SETTINGS-TALL (final review): the popover is anchored at the viewport
+       top (y=6) and the drag/reflow clamp never lets it go higher, so once its
+       content is taller than the viewport the bottom group is unreachable --
+       there was no scrollbar (overflow was the default `visible`). docs/160's
+       Undo group pushed it past the ~827px it already reached. Cap it to the
+       viewport and let it scroll. */
+    max-height: calc(100vh - 12px); overflow-y: auto;
     background: var(--pico-background-color);
     border: 1px solid var(--pico-muted-border-color);
     border-radius: 6px;
@@ -1385,6 +1396,24 @@ html.topbar-hidden .topbar-reveal { display: block; }
 }
 .calc-popover .calc-expr:focus { border-color: var(--pico-primary); outline: none; box-shadow: none; }
 .calc-expr-eq { color: var(--pico-muted-color); }
+/* docs/156 (user feedback: "SM 창 내부에서만 floating"): the calculator as its
+   OWN browser window (/calc-window, opened by the popover's ↗). Same markup
+   (the _calc_body.html partial), but here it is the whole document, so the OS
+   window frame replaces the popover's: no border/shadow/radius, no resize
+   handle (the window resizes), filling the viewport; the body still scrolls
+   between the static header-less top and the expression footer. .calc-popover
+   .calc-standalone (0,2,0) outranks the shared tool-window frame rule (0,1,0)
+   regardless of source order. */
+html.calc-window, html.calc-window body { height: 100%; margin: 0; }
+html.calc-window body { display: flex; background: var(--pico-background-color); }
+.calc-popover.calc-standalone {
+    position: static; flex: 1 1 auto; width: auto; max-width: none; min-width: 0;
+    height: 100%; max-height: none; margin: 0;
+    border: 0; border-radius: 0; box-shadow: none; resize: none;
+}
+.calc-popout { font-size: 0.9rem; }
+/* the standalone window has no app.js toast — the copy button itself flashes */
+.calc-copy.calc-copied { opacity: 1; color: var(--pico-primary); }
 .visually-hidden {
     position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px;
     overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
@@ -1843,11 +1872,47 @@ details.tree-branch-active > summary {
 /* Hover highlight across the whole row. Brighter in dark mode (below) so the
    tint is actually distinguishable on the dark background. */
 .tree-entry-label:hover { background: color-mix(in srgb, var(--pico-primary) 10%, transparent); }
-.tree-entry-label input[type=checkbox] { margin: 0.15em 0 0 0; width: 12px; height: 12px; flex-shrink: 0; cursor: pointer; }
+/* docs/161 (customer: the tick box was too small and nobody knew what it was
+   for): a 12 px native box became an 18 px custom one -- SQUARE (a box wider
+   than tall reads as a text field), rounded, a soft SM-blue border that
+   brightens on row hover, and a solid SM-blue fill with a white check when
+   ticked. The ✓ is drawn with two borders rotated 45° (no image, inherits
+   the theme). Pico's own accent styling is bypassed via appearance:none. */
+.tree-entry-label input[type=checkbox] {
+    appearance: none; -webkit-appearance: none;
+    margin: 0.22em 0 0 0; width: 18px; height: 18px; flex-shrink: 0; cursor: pointer;
+    border: 1.5px solid color-mix(in srgb, var(--pico-primary) 45%, var(--pico-muted-border-color));
+    border-radius: 5px; background: color-mix(in srgb, var(--pico-primary) 5%, transparent);
+    position: relative; transition: border-color .12s, background .12s, box-shadow .12s;
+}
+.tree-entry-label:hover input[type=checkbox],
+.tree-entry-label input[type=checkbox]:hover { border-color: var(--pico-primary); }
+.tree-entry-label input[type=checkbox]:focus-visible {
+    outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--pico-primary) 30%, transparent);
+}
+.tree-entry-label input[type=checkbox]:checked {
+    background: var(--pico-primary); border-color: var(--pico-primary);
+}
+.tree-entry-label input[type=checkbox]:checked::after {
+    content: ""; position: absolute; left: 5px; top: 1.5px; width: 5px; height: 9px;
+    border: solid #fff; border-width: 0 2.2px 2.2px 0; transform: rotate(45deg);
+}
+/* the compare hint under the buttons: shown only while nothing is ticked (app.js) */
+.compare-hint {
+    display: block; flex: 1 1 100%; margin: .1rem 0 0; font-size: .8em; line-height: 1.3;
+    color: var(--pico-muted-color);
+}
+.compare-hint[hidden] { display: none; }
 /* flex:1 makes the clickable span fill the whole row (right of the checkbox), so
    clicking ANYWHERE on the highlighted row opens the run — not just on the title
    text. The checkbox stays separate (deliberate compare-select). */
-.tree-entry-click { display: flex; flex: 1 1 auto; flex-wrap: wrap; gap: 0 var(--tree-entry-row-gap); align-items: baseline; overflow: hidden; min-width: 0; cursor: pointer;
+/* docs/157: ONE text flow, not a flex row — the run badge is an inline box
+   at the start of the line and the name flows after it, wrapping under it
+   when long. Every row STARTS with its badge at the same x, so the numbers
+   still read as a column, and a wrapped name gets the row's full width
+   (a two-column layout measured 113 px for the name in the 260 px sidebar:
+   even `38_two_qubit_xeb` took two lines). */
+.tree-entry-click { display: block; flex: 1 1 auto; overflow: hidden; min-width: 0; cursor: pointer;
     /* This span carries role="button" (a11y, added in 2f88342). Pico skins every
        [role="button"] as a filled primary button — which painted every run row blue
        and forced button-sized font/padding (regression seen in 0.4.0). Neutralize the
@@ -1855,8 +1920,10 @@ details.tree-branch-active > summary {
        .tree-entry-label still provide the affordance. */
     background: transparent; border: 0; border-radius: 0; box-shadow: none;
     color: inherit; padding: 0; font: inherit; text-align: left; }
-/* Default: full names wrap over as many lines as needed (no truncation). */
-.entry-name { flex: 1 1 auto; min-width: 0; white-space: normal; overflow-wrap: anywhere; line-height: 1.25; }
+/* Default: full names wrap over as many lines as needed (no truncation) —
+   inside their own column (flex-basis 0, docs/157), so a long name never
+   pushes the run badge around. */
+.entry-name { display: inline; min-width: 0; white-space: normal; overflow-wrap: anywhere; line-height: 1.3; }
 .tree-entry-click:hover { text-decoration: underline; }
 /* Active run — the entry matching the dataset open in the inspector (item 8). */
 .tree-entry-label:has(.tree-entry-active) { background: color-mix(in srgb, var(--pico-primary) 16%, transparent); }
@@ -1864,7 +1931,17 @@ details.tree-branch-active > summary {
 /* Dark mode: the 10%/16% tints wash out on the dark background — brighten them. */
 [data-theme="dark"] .tree-entry-label:hover { background: color-mix(in srgb, var(--pico-primary) 24%, transparent); }
 [data-theme="dark"] .tree-entry-label:has(.tree-entry-active) { background: color-mix(in srgb, var(--pico-primary) 36%, transparent); }
-.run-id { color: var(--pico-primary); font-weight: 600; font-size: var(--tree-run-id-font); font-family: var(--font-mono); }
+/* docs/157: the run number is the thing a researcher scans for ("#2556 —
+   that one"), so it is a BADGE: tabular mono digits, bold, on a soft
+   SM-blue field, in its own left column. Same colour vocabulary as the
+   date headers, one step heavier. */
+.run-id {
+    display: inline-block; vertical-align: baseline; margin-right: .3em;
+    color: var(--pico-primary); font-weight: 700; font-size: var(--tree-run-id-font);
+    font-family: var(--font-mono); font-variant-numeric: tabular-nums; letter-spacing: .01em;
+    line-height: 1.25; padding: .02em .3em; border-radius: 4px;
+    background: color-mix(in srgb, var(--pico-primary) 13%, transparent);
+}
 .entry-name { font-size: var(--tree-entry-name-font); }
 .entry-time { font-size: var(--tree-entry-time-font); color: var(--pico-muted-color); font-family: var(--font-mono); }
 .entry-status { font-size: var(--tree-entry-status-font); padding: 0; border-radius: 0; font-weight: 600; }
@@ -1911,6 +1988,11 @@ body.exp-list-compact .entry-name {
     text-overflow: ellipsis;
     line-height: normal;
 }
+/* docs/157: the name carries <wbr> after every `_` (word-joint wrapping in
+   the full rows) — a <wbr> is a break opportunity even under nowrap, so the
+   compact rows wrapped at them (measured 51–73 px rows where one 32 px line
+   was promised). A display:none wbr makes no box and no opportunity. */
+body.exp-list-compact .entry-name wbr { display: none; }
 
 .compare-form { margin-top: .3rem; }
 .btn-compare { width: 100%; }
@@ -3769,7 +3851,13 @@ td.col-delta .val-delta { margin-left: 0; }
 
 /* Sidebar: two buttons side by side */
 .compare-buttons {
-    display: flex; gap: 0.35rem;
+    /* F-LAYOUT-HINT (final review): .compare-hint is `flex: 1 1 100%`, which is
+       "a one-line hint UNDER the buttons" only inside a WRAPPING flex container.
+       Without flex-wrap the hint stays on the buttons' line and, with basis 100%
+       vs the buttons' basis 0, absorbs all the free space -- collapsing both
+       buttons to min-content and breaking them over two lines on every page
+       load (the hint shows precisely when nothing is ticked). */
+    display: flex; flex-wrap: wrap; gap: 0.35rem;
     margin-top: 0.5rem;
 }
 .compare-buttons button { flex: 1; }
