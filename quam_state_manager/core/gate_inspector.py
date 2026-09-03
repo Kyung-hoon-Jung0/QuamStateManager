@@ -304,7 +304,16 @@ def build_plotly_figure(
         "title": {
             "text": f"Sweeping {moving_name} ({moving_role})",
             "font": {"size": 14},
+            # anchored to the CONTAINER top, not the plot area: the second
+            # x axis puts its own title in the top margin, and the default
+            # placement draws the two on top of each other (measured: a 4 px
+            # overlap of two centred strings, i.e. unreadable).
+            "y": 0.98, "yref": "container", "yanchor": "top",
         },
+        # `PlotTheme.houseLayout` merges a base with `showlegend: false`, so a
+        # figure that does not ask for a legend does not get one -- and this
+        # one is three colour-coded curves whose colours are its whole key.
+        "showlegend": True,
         "xaxis": {"title": {"text": x_title}, "zeroline": False},
         "yaxis": {
             "title": {"text": "Detuning (MHz)"},
@@ -323,6 +332,8 @@ def build_plotly_figure(
             },
         ],
         "legend": {"orientation": "h", "y": -0.25},
+        # top margin grows below when a second x axis is added (title +
+        # that axis's own title + its ticks all live in this margin)
         "margin": {"t": 60, "b": 80, "l": 60, "r": 20},
         "hovermode": "x unified",
     }
@@ -352,6 +363,7 @@ def build_plotly_figure(
             "showlegend": False,
             "hoverinfo": "skip",
         })
+        layout["margin"]["t"] = 104          # title + x2 title + x2 ticks
         layout["xaxis2"] = {
             "title": {"text": f"{moving_name} detuning from idle bias (MHz)"},
             "overlaying": "x",

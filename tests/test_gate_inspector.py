@@ -295,6 +295,50 @@ class TestPlotlyFigure:
         assert fig["clickable"]["axis"] == "x"
         assert fig["clickable"]["targets"][0]["path"] == "qubits.qA1.z.joint_offset"
 
+    def test_the_legend_is_asked_for_explicitly(self):
+        """`PlotTheme.houseLayout` merges a base carrying `showlegend: false`,
+        so a figure that does not ASK for a legend silently does not get one.
+        This figure is three colour-coded curves whose colours are its only
+        key, and it shipped without one — measured in real Chrome, the
+        `.legend` node was absent from the rendered SVG."""
+        fig = build_plotly_figure(compute_detuning_sweep(QC, QT, "control"),
+                                  moving_role="control")
+        assert fig["layout"]["showlegend"] is True
+        assert fig["layout"]["legend"]["orientation"] == "h"
+        # and every curve has to be nameable in it
+        named = [t["name"] for t in fig["data"] if t.get("name")]
+        for lbl in ("Δ(|11⟩−|20⟩)", "Δ(|11⟩−|02⟩)", "Δ(|10⟩−|01⟩)"):
+            assert lbl in named
+
+    def test_the_top_margin_makes_room_for_the_second_axis(self):
+        """The plot title and xaxis2's own title both live in the TOP margin.
+        At t=60 they were drawn over each other — measured in real Chrome as
+        two centred strings overlapping by 4 px. The title is anchored to the
+        container and the margin grows only when the second axis exists."""
+        dual = build_plotly_figure(compute_detuning_sweep(QC, QT, "control"),
+                                   moving_role="control")["layout"]
+        assert "xaxis2" in dual
+        assert dual["margin"]["t"] >= 100
+        assert dual["title"]["yref"] == "container"
+        # a frequency-axis figure has no second axis and keeps the tight margin
+        single = build_plotly_figure(
+            compute_detuning_sweep(_q("q1", quad_term=None), QT, "control"),
+            moving_role="control")["layout"]
+        assert "xaxis2" not in single
+        assert single["margin"]["t"] == 60
+
+    def test_the_plot_is_tall_enough_to_read(self):
+        """t=104 + b=80 out of a 300 px box leaves a 116 px data area for three
+        curves and six markers. The mount height and the CSS floor agree."""
+        import re
+        root = __import__("pathlib").Path(__file__).resolve().parent.parent
+        css = (root / "quam_state_manager" / "web" / "static" / "style.css").read_text(encoding="utf-8")
+        js = (root / "quam_state_manager" / "web" / "static" / "app.js").read_text(encoding="utf-8")
+        for sel in (".gi-plot-area", ".gi-plot"):
+            m = re.search(re.escape(sel) + r"\s*\{[^}]*min-height:\s*(\d+)px", css)
+            assert m and int(m.group(1)) >= 400, sel
+        assert re.search(r"inner\.style\.minHeight = '(\d+)px'", js).group(1) == "420"
+
     def test_the_second_axis_is_measured_from_the_idle_bias(self):
         fig = build_plotly_figure(compute_detuning_sweep(QC, QT, "control"),
                                   moving_role="control")

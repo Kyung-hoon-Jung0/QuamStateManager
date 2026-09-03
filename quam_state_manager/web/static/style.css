@@ -12202,8 +12202,8 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
    exists to catch. --pico-contrast is the readable one. */
 .gi-switch-btn { font-size: 0.78em; padding: 0.15rem 0.5rem; border-radius: 4px; cursor: pointer; border: 1px solid var(--pico-muted-border-color); background: none; color: var(--pico-contrast); margin-left: auto; }
 .gi-switch-btn:hover { background: var(--pico-card-sectioning-background-color); }
-.gi-plot-area { min-height: 300px; }
-.gi-plot { min-height: 300px; }
+.gi-plot-area { min-height: 420px; }
+.gi-plot { min-height: 420px; }
 .gi-info { padding: 0.25rem 0.5rem; }
 .gi-error, .gi-warnings { padding: 0.5rem; }
 .gi-warnings ul { margin: 0.25rem 0 0 1rem; padding: 0; }

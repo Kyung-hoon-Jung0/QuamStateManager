@@ -18702,7 +18702,7 @@ window.GateInspector = (function() {
                 }
                 var inner = document.createElement('div');
                 inner.style.width = '100%';
-                inner.style.minHeight = '300px';
+                inner.style.minHeight = '420px';
                 el.appendChild(inner);
 
                 var layout = (window.PlotTheme && window.PlotTheme.houseLayout)
