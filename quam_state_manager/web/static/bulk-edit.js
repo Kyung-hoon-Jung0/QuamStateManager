@@ -3318,13 +3318,17 @@
                 if (c.classList.contains('bulk-cell-list')) {
                     if (e.old_kind !== 'list') return;
                     c.textContent = v;
-                    // The server has COMMITTED this value, so the cell is
-                    // CLEAN -- the input branch below says the same thing by
-                    // rewriting data-orig. Left on (code-review round 2, F4),
-                    // the red "unapplied edit" box stayed over a reverted
-                    // value forever: the path was reported covered, so no
-                    // rebuild followed, and the tray was not empty either.
-                    c.classList.remove('bulk-cell-modified');
+                    // F-LIST-MARK (final review): do NOT strip bulk-cell-modified
+                    // here. That marker means "an unapplied change-log entry
+                    // exists for this path" -- and when the walk STAGES the
+                    // inverse (the setting is OFF, a stale working copy, archive,
+                    // a foreign owner), the reverted value IS a pending edit, so
+                    // the fresh render draws it WITH the red box. The input
+                    // branch below never touches this class (it lets
+                    // PendingMarkers clear it when the tray reaches 0); the list
+                    // branch now matches, so a staged revert no longer reads as
+                    // "on the chip". (data-baseline is the list cell's own clean
+                    // baseline and is still cleared here.)
                     c.removeAttribute('data-baseline');
                     _hayCache = null;                 // the preview is search text
                     var trl = _rowOf(c);
@@ -3339,6 +3343,14 @@
                 // the red modified marker. Only a path with NO cell at all is
                 // "missing" -- that one is not the grid's to repaint.
                 if (c.readOnly || c.tagName !== 'INPUT') return;
+                // F-LIST-TRUNC (final review): a LIST restored into a scalar /
+                // editable cell (old_kind==list, e.g. an un-calibrated pair whose
+                // column also holds calibrated `▦ N×M` badges) changes the cell's
+                // SHAPE -- old_value_disp is the 24-char TRUNCATED preview, which
+                // must never become the cell's value or its clean baseline
+                // (data-orig). Leave it uncovered, like the docs/124 M-10 shape
+                // change, so the debounced rebuild re-renders the real list cell.
+                if (e.old_kind === 'list') { honest = false; return; }
                 var isStr = c.hasAttribute('data-str-numeric')
                     || c.classList.contains('bulk-cell-str');
                 if ((e.old_kind === 'str_numeric') !== isStr) honest = false;

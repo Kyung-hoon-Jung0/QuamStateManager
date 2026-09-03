@@ -102,3 +102,45 @@ One XHR per press (`/undo` / `/redo` plus the banner refreshers), no grid re-GET
 - An `/field/edit-batch` from outside the ✎ editor does not repaint the list
   cell (only the tray) — the editor is the only in-app door and it repaints
   itself, so nothing user-visible depends on it.
+
+## The pre-customer review — three list-cell revert defects (2026-09-04)
+
+Three findings around the list-cell revert repaint (`revertPaths`). One had to be
+re-diagnosed against the code, which changed the fix.
+
+- **F-LIST-TRUNC.** A LIST restored into a SCALAR / editable cell wrote the grid's
+  24-char TRUNCATED preview (`old_value_disp`, e.g. `[[0.98,0.02],[0.03,0.97]…`)
+  into the cell's value AND `data-orig` (its clean baseline) and reported the path
+  covered — so no rebuild followed, and any edit started from the mangled text.
+  This is reachable on the pair grid, where `pair_columns._leaf` picks list-vs-edit
+  PER PAIR (an un-calibrated pair is a scalar box in a column whose calibrated
+  peers are `▦ N×M` badges). Both grids' scalar branches now leave a
+  `old_kind === 'list'` revert UNCOVERED (a shape change, like docs/124 M-10), so
+  the honest rebuild re-renders the real list cell.
+
+- **F-LIST-MARK.** docs/160 R12 made the qubit grid's list-span repaint strip
+  `bulk-cell-modified` unconditionally, on the belief "the value is COMMITTED, so
+  the cell is clean." It is not: a `/undo` STAGES the inverse (it reaches the chip
+  only when the walk writes live — the setting OFF, a stale working copy, an
+  archive, a foreign owner all stage instead), so the reverted value IS a pending
+  edit and the fresh render draws it WITH the red box. The client drew it without
+  and reported covered, so the grid read a staged value as "on the chip". The list
+  branch now leaves the marker exactly as the input branch does — to
+  `PendingMarkers`, which clears it when the tray reaches 0.
+
+- **F-LIST-BADGE — re-diagnosed.** The finding read the pair grid KEEPING the
+  marker as the defect and "the qubit-grid twin removes it" as the fix to mirror.
+  The opposite is true: `bulk-cell-modified` has NO per-path removal anywhere (only
+  `PendingMarkers.clearAll` at tray 0, and the qubit list branch's R12 strip), so a
+  partial in-memory undo leaves a stale marker on EVERY cell type — the pair was
+  consistent with the scalar input branch; the qubit's R12 strip was the outlier
+  (and the F-LIST-MARK bug). Removing the qubit strip makes all three cell types
+  consistent, resolving the inconsistency the finding pointed at. The residual
+  stale marker after a partial undo (tray > 0) is a universal `PendingMarkers`
+  limitation, not list- or pair-specific, and is left as-is rather than risking a
+  backwards marker with a per-path guess client-side.
+
+Pinned by `tests/undo_repaint_selfcheck.cjs`: the F-LIST-MARK pin that had asserted
+the strip is rewritten to assert the marker is KEPT for a staged revert, plus two
+F-LIST-TRUNC cases (qubit + pair, a list into a scalar cell is uncovered, never a
+truncated baseline). All mutation-checked.

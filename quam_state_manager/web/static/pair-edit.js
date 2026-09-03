@@ -1164,6 +1164,14 @@
                 // the red modified marker. Only a path with NO cell at all is
                 // "missing" -- that one is not the grid's to repaint.
                 if (c.readOnly || c.tagName !== 'INPUT') return;
+                // F-LIST-TRUNC (final review): a LIST restored into a scalar /
+                // editable pair cell (pair_columns._leaf picks list-vs-edit PER
+                // PAIR, so an un-calibrated pair renders an editable box in the
+                // same column as a calibrated pair's `▦ N×M` badge) changes the
+                // cell's SHAPE -- old_value_disp is the 24-char TRUNCATED preview
+                // and must never become the value or the clean baseline. Leave it
+                // uncovered for the honest rebuild (same as the qubit grid).
+                if (e.old_kind === 'list') { honest = false; return; }
                 var isStr = c.hasAttribute('data-str-numeric')
                     || c.classList.contains('bulk-cell-str');
                 if ((e.old_kind === 'str_numeric') !== isStr) honest = false;

@@ -199,12 +199,15 @@ function cell(win, sel) { return win.document.querySelector(sel); }
        'listedit: an undo naming the RESOLVED leaf finds the alias span and covers it');
     ok(span.textContent === '[[0.5,123.0]]',
        'listedit: the span shows the reverted list exactly as the page renders it (got ' + span.textContent + ')');
-    // code-review round 2, F4: the value is COMMITTED, so the cell is clean --
-    // the red "unapplied edit" box must go with it. Left on, it sat over a
-    // reverted value forever: covered ⇒ no rebuild, and the tray was not empty
-    // either, so nothing else would have cleared it.
-    ok(!span.classList.contains('bulk-cell-modified'),
-       'listedit: the reverted span is no longer marked as an unapplied edit');
+    // F-LIST-MARK (final review): the round-2 F4 fix stripped bulk-cell-modified
+    // here on the reasoning "the value is COMMITTED, so the cell is clean" -- but
+    // a /undo STAGES the inverse (it reaches the chip only when the walk writes
+    // live), so the reverted value IS a pending edit and the fresh render draws
+    // it WITH the red box. The list branch must leave the marker exactly as the
+    // input branch does -- to PendingMarkers, which clears it when the tray hits
+    // 0. So the span KEEPS the marker after a staged revert.
+    ok(span.classList.contains('bulk-cell-modified'),
+       'listedit: the reverted span KEEPS the unapplied-edit marker (a staged revert is still pending)');
     // …but a revert that changes the cell's SHAPE (back to null) is not a
     // string write: found, uncovered, the rebuild repaints it honestly
     const rn = win.BulkEdit.revertPaths([{
@@ -213,6 +216,23 @@ function cell(win, sel) { return win.document.querySelector(sel); }
     ok(rn.missing === 0 && (rn.uncovered || []).indexOf('qubits.q1.z.opx_output.exponential_filter') >= 0
        && span.textContent === '[[0.5,123.0]]',
        'listedit: a revert to null is found but uncovered (the shape changes; the rebuild owns it)');
+    // F-LIST-TRUNC: a LIST restored into a SCALAR/editable cell must NOT install
+    // the 24-char truncated old_value_disp as the value/baseline -- it stays
+    // uncovered for the honest rebuild that re-renders the real list cell.
+    const std = win.document.createElement('td'); std.className = 'bulk-td';
+    std.innerHTML = '<input type="text" class="bulk-cell" value="" data-orig="" placeholder="not set"'
+                  + ' data-dot-path="qubits.q2.z.opx_output.exponential_filter"'
+                  + ' data-resolved="qubits.q2.z.opx_output.exponential_filter">';
+    tr.appendChild(std);
+    const rt2 = win.BulkEdit.revertPaths([{
+        dot_path: 'qubits.q2.z.opx_output.exponential_filter',
+        old_value_str: '[[0.98, 0.02], [0.03, 0.97]]', old_value_disp: '[[0.98,0.02],[0.03,0.97]…',
+        old_value_json: '[[0.98,0.02],[0.03,0.97]]', old_kind: 'list',
+    }]);
+    const scell = win.document.querySelector('[data-dot-path="qubits.q2.z.opx_output.exponential_filter"]');
+    ok((rt2.uncovered || []).indexOf('qubits.q2.z.opx_output.exponential_filter') >= 0
+       && scell.value.indexOf('…') < 0 && (scell.getAttribute('data-orig') || '').indexOf('…') < 0,
+       'F-LIST-TRUNC (qubit): a list restored into a scalar cell is uncovered, never a truncated baseline');
     // the pair grid's list column: a readonly ▦ badge input (data-list) --
     // repainted from old_value_badge (the badge _list_pair_cell renders)
     const ptr = win.document.querySelector('#bulk-pair-table tbody tr');
@@ -234,6 +254,22 @@ function cell(win, sel) { return win.document.querySelector(sel); }
     }]);
     ok((rr.uncovered || []).indexOf('qubit_pairs.p1.macros.cz.runtime_thing') >= 0 && rr.missing === 0,
        'pair grid: a readonly RUNTIME cell is still FOUND and uncovered (docs/124 M-10 kept)');
+    // F-LIST-TRUNC (pair): the SAME shape on the pair grid's editable box
+    // (pair_columns._leaf picks list-vs-edit PER PAIR, so an un-calibrated pair
+    // is a scalar cell in a column whose calibrated peers are ▦ badges).
+    const spd = win.document.createElement('td'); spd.className = 'bulk-td';
+    spd.innerHTML = '<input type="text" class="bulk-cell" value="" data-orig="" placeholder="not set"'
+                  + ' data-dot-path="qubit_pairs.p2.macros.cz.filters" data-resolved="qubit_pairs.p2.macros.cz.filters">';
+    ptr.appendChild(spd);
+    const rp2 = win.BulkPairEdit.revertPaths([{
+        dot_path: 'qubit_pairs.p2.macros.cz.filters',
+        old_value_str: '[[0.98, 0.02], [0.03, 0.97]]', old_value_disp: '[[0.98,0.02],[0.03,0.97]…',
+        old_value_json: '[[0.98,0.02],[0.03,0.97]]', old_value_badge: '▦ 2×2', old_kind: 'list',
+    }]);
+    const pcell = win.document.querySelector('[data-dot-path="qubit_pairs.p2.macros.cz.filters"]');
+    ok((rp2.uncovered || []).indexOf('qubit_pairs.p2.macros.cz.filters') >= 0
+       && pcell.value.indexOf('…') < 0 && (pcell.getAttribute('data-orig') || '').indexOf('…') < 0,
+       'F-LIST-TRUNC (pair): a list restored into a scalar pair cell is uncovered, never truncated');
 }
 
 // ── M-8: the pair grid's alias twin gets value AND baseline, no phantom dirty
