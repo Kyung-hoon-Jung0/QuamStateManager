@@ -23,12 +23,17 @@
                 {{ target_name }} <small class="muted">(target)</small>
             </button>
         </div>
+        {# docs/162: read_only is the Pulses inspector. The plot answers a
+           question about THIS pulse; switching which qubit moves is a
+           structural rewire of the pair and belongs on the pair's page. #}
+        {% if not read_only %}
         <button class="gi-switch-btn btn-sm"
                 title="Switch the pair's moving_qubit to the selected role and rewire CZ pulse references (stages edits in the review tray)"
                 data-pair="{{ pair_name }}"
                 data-current-moving="{{ current_moving }}">
             ⇄ Switch moving qubit
         </button>
+        {% endif %}
     </div>
     <div class="gi-plot-area">
         <div class="gi-plot" id="gi-plot-{{ pair_name | replace('-', '_') }}"

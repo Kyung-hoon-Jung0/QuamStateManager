@@ -11082,8 +11082,25 @@ def _render_pulse_detail(path: str, *, status_msg: str | None = None,
                     "role": sec["role"], "color": sec["color"], "index": sec["index"],
                     "plot": sec["plot"]} for sec in sections],
     })
+    # docs/162: a flux pulse IS an operating point -- show the pair's detuning
+    # curve right here, so opening the pulse answers "where does this put us"
+    # without a trip to the Pairs page. Read-only: the moving-qubit SWITCH is a
+    # structural rewire and stays on the pair's own page.
+    gi_pair = gate_inspector.pair_for_pulse(store, main["actual_path"])
+    if gi_pair is None and main["actual_path"] != path:
+        gi_pair = gate_inspector.pair_for_pulse(store, path)
+    gi_ctx = None
+    if gi_pair:
+        try:
+            gi_ctx = _gate_inspector_ctx(gi_pair, _engine().get_pair(gi_pair), _engine())
+        except (KeyError, TypeError, ValueError):
+            gi_ctx = None
+    if gi_ctx is not None:
+        gi_ctx = dict(gi_ctx, read_only=True)
+
     return render_template(
         "_pulse_detail.html",
+        gi=gi_ctx,
         sections=sections,
         view_paths=view_paths,
         dropped=dropped,

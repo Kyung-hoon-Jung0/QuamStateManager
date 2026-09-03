@@ -19,6 +19,7 @@ import json
 
 import pytest
 
+from quam_state_manager.core import gate_inspector
 from quam_state_manager.core.gate_inspector import (
     build_plotly_figure,
     compute_detuning_sweep,
@@ -437,3 +438,110 @@ class TestRoutes:
         assert "gi-inspector" in html and "2Q Gate Detuning Inspector" in html
         _ctx(app)["store"].merged["qubit_pairs"]["q1-2"]["macros"] = {}
         assert "gi-inspector" not in c.get("/pair/q1-2").get_data(as_text=True)
+
+
+class TestTheOperatingPointFollowsThePulse:
+    """docs/162: opening a flux pulse shows the pair's detuning curve, because
+    a flux pulse's whole meaning is where it puts the moving qubit.
+
+    The mapping is READ from the pulse, never inferred from its name. On the
+    corpus 20-qubit chip q2 is the moving qubit of BOTH q1-2 and q2-5, so
+    matching `cz_unipolar_pulse` against the pairs that declare that macro
+    returns two answers, and "take the first" would caption the pulse with the
+    wrong pair's operating point. The pulse's own fields are pointers into the
+    macro that owns it, and that is the answer.
+    """
+
+    @staticmethod
+    def _store(app):
+        return _ctx(app)["store"]
+
+    def test_a_pair_macros_own_pulse_needs_no_inference(self, chip):
+        app, _ = chip
+        assert gate_inspector.pair_for_pulse(
+            self._store(app),
+            "qubit_pairs.q1-2.macros.cz_unipolar.flux_pulse_qubit") == "q1-2"
+
+    def test_a_z_pulse_is_read_from_its_pointer_not_its_name(self, chip):
+        app, _ = chip
+        st = self._store(app)
+        # q2 is the moving qubit of q1-2 here; point the pulse at a DIFFERENT
+        # pair and the answer must follow the pointer, not the name.
+        st.merged["qubit_pairs"]["q9-9"] = {
+            "id": "q9-9", "qubit_control": "#/qubits/q1", "qubit_target": "#/qubits/q2",
+            "moving_qubit": "target", "macros": {"cz_unipolar": {
+                "__class__": "CZGate", "flux_pulse_qubit": {"amplitude": 0.1, "length": 60},
+                "phase_shift_control": 0.0}}}
+        op = st.merged["qubits"]["q2"]["z"]["operations"]["cz_unipolar_pulse"]
+        op["amplitude"] = "#/qubit_pairs/q9-9/macros/cz_unipolar/flux_pulse_qubit/amplitude"
+        assert gate_inspector.pair_for_pulse(
+            st, "qubits.q2.z.operations.cz_unipolar_pulse") == "q9-9"
+
+    def test_two_pairs_named_by_one_pulse_is_no_answer(self, chip):
+        app, _ = chip
+        st = self._store(app)
+        op = st.merged["qubits"]["q2"]["z"]["operations"]["cz_unipolar_pulse"]
+        op["amplitude"] = "#/qubit_pairs/q1-2/macros/cz_unipolar/flux_pulse_qubit/amplitude"
+        op["length"] = "#/qubit_pairs/q2-5/macros/cz_unipolar/flux_pulse_qubit/length"
+        assert gate_inspector.pair_for_pulse(
+            st, "qubits.q2.z.operations.cz_unipolar_pulse") is None
+
+    def test_a_pulse_with_no_pair_pointer_gets_nothing(self, chip):
+        app, _ = chip
+        st = self._store(app)
+        st.merged["qubits"]["q1"]["z"] = {"flux_point": "joint", "joint_offset": 0.05,
+                                          "operations": {"const": {"amplitude": 0.1}}}
+        assert gate_inspector.pair_for_pulse(st, "qubits.q1.z.operations.const") is None
+
+    def test_a_pair_the_chip_does_not_have_is_refused(self, chip):
+        app, _ = chip
+        assert gate_inspector.pair_for_pulse(
+            self._store(app),
+            "qubit_pairs.nosuch.macros.cz_unipolar.flux_pulse_qubit") is None
+
+    def test_a_non_flux_pulse_is_not_a_flux_pulse(self, chip):
+        """The xy pulse here CARRIES a pair pointer, so only the z-line path
+        gate can refuse it. Without one that pointed anywhere, this passed for
+        the wrong reason -- the fixture had no xy operation at all, so the
+        lookup raised and returned None however the gate was written."""
+        app, _ = chip
+        st = self._store(app)
+        st.merged["qubits"]["q1"]["xy"] = {"operations": {"x180": {
+            "__class__": "SquarePulse",
+            "amplitude": "#/qubit_pairs/q1-2/macros/cz_unipolar/flux_pulse_qubit/amplitude"}}}
+        assert gate_inspector.pair_for_pulse(
+            st, "qubits.q1.xy.operations.x180") is None
+
+    def test_a_z_pulse_pointing_at_a_pair_the_chip_lacks_is_refused(self, chip):
+        """The existence check on the POINTER branch. A dangling macro pointer
+        (a pair renamed or removed out of band) must not caption the pulse
+        with a pair that is not there."""
+        app, _ = chip
+        st = self._store(app)
+        op = st.merged["qubits"]["q2"]["z"]["operations"]["cz_unipolar_pulse"]
+        op["amplitude"] = "#/qubit_pairs/ghost-pair/macros/cz_unipolar/flux_pulse_qubit/amplitude"
+        assert gate_inspector.pair_for_pulse(
+            st, "qubits.q2.z.operations.cz_unipolar_pulse") is None
+
+    def test_the_pulse_inspector_renders_it_read_only(self, chip):
+        _, c = chip
+        html = c.get("/pulse/detail",
+                     query_string={"path": "qubit_pairs.q1-2.macros.cz_unipolar.flux_pulse_qubit"}
+                     ).get_data(as_text=True)
+        assert "Operating point · q1-2" in html
+        assert "gi-in-pulse" in html and 'class="gi-plot' in html
+        # the moving-qubit SWITCH is a structural rewire -- it stays on the
+        # pair's own page, never in a pulse inspector
+        assert "gi-switch-btn" not in html
+        assert "gi-chip" in html          # the read-only sweep toggle does come
+
+    def test_a_pulse_with_no_pair_renders_no_section(self, chip):
+        _, c = chip
+        html = c.get("/pulse/detail",
+                     query_string={"path": "qubits.q1.xy.operations.x180"}).get_data(as_text=True)
+        assert "gi-in-pulse" not in html and "Operating point ·" not in html
+
+    def test_the_pair_page_still_offers_the_switch(self, chip):
+        _, c = chip
+        html = c.get("/pair/q1-2").get_data(as_text=True)
+        assert "gi-switch-btn" in html

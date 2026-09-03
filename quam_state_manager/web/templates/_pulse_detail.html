@@ -149,6 +149,21 @@
 </div>
 <div id="pulse-detail-plot" class="pulse-detail-plot"></div>
 
+{# docs/162: the operating point, where the pulse is. A flux pulse's whole
+   meaning is where on the pair's detuning curve it puts the moving qubit, and
+   that curve lived only on the Pairs page. Rendered only when the pulse's own
+   pointers name exactly one real pair -- never inferred from a name. #}
+{% if gi and not gi.error and not gi.warnings %}
+<details open class="detail-section gi-section gi-in-pulse">
+    <summary class="section-header">Operating point · {{ gi.pair_name }}</summary>
+    {% with pair_name=gi.pair_name, control_name=gi.control_name, target_name=gi.target_name,
+            moving_role=gi.moving_role, current_moving=gi.current_moving,
+            error=gi.error, warnings=gi.warnings, read_only=True %}
+    {% include '_pair_gate_inspector.html' %}
+    {% endwith %}
+</details>
+{% endif %}
+
 {% for sec in sections %}
 {% include '_pulse_params_section.html' %}
 {% endfor %}

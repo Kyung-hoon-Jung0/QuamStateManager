@@ -44,6 +44,7 @@ Pure functions — no store dependency beyond the initial parameter snapshot.
 from __future__ import annotations
 
 import math
+import re
 from typing import Any
 
 import numpy as np
@@ -395,6 +396,60 @@ def build_plotly_figure(
 
     return {"data": traces, "layout": layout, "clickable": clickable,
             "notes": sweep.get("notes") or []}
+
+
+_PAIR_MACRO_PULSE = re.compile(
+    r"^qubit_pairs\.([^.]+)\.macros\.[^.]+\.(?:flux_pulse_qubit|coupler_flux_pulse)$")
+_QUBIT_Z_OP = re.compile(r"^qubits\.([^.]+)\.z\.operations\.[^.]+$")
+_PAIR_POINTER = re.compile(r"^#/qubit_pairs/([^/]+)/")
+
+
+def pair_for_pulse(store: Any, path: str) -> str | None:
+    """Which CZ pair's operating point does *path* belong to? None if unknown.
+
+    Two shapes reach this:
+
+    * ``qubit_pairs.<pair>.macros.<gate>.flux_pulse_qubit`` -- the pair is the
+      path's own second segment, so there is nothing to infer.
+    * ``qubits.<q>.z.operations.<gate>_pulse`` -- the flux pulse parked on the
+      moving qubit's z line. Here the answer is READ, never guessed, because
+      guessing is measurably wrong: on the corpus 20-qubit chip q2 is the
+      moving qubit of BOTH q1-2 and q2-5, so matching the operation name
+      against the pairs that claim it returns two answers and the obvious
+      "take the first" would put q1-2's operating point under a pulse that
+      belongs to q2-5. The pulse itself settles it -- its fields are pointers
+      into the macro that owns it
+      (``#/qubit_pairs/q2-5/macros/cz_unipolar/flux_pulse_qubit/amplitude``).
+
+    So: follow the pulse's own pointers, and answer only when they agree on
+    ONE pair that the chip really has. A pulse with no such pointer (a plain
+    ``const``), or one whose pointers name two different pairs, gets None --
+    the caller renders nothing rather than a plot about the wrong pair.
+    """
+    if not isinstance(path, str):
+        return None
+    m = _PAIR_MACRO_PULSE.match(path)
+    if m:
+        pairs = (store.merged.get("qubit_pairs") or {})
+        return m.group(1) if m.group(1) in pairs else None
+    if not _QUBIT_Z_OP.match(path):
+        return None
+    try:
+        body = store.get_value(path)
+    except (KeyError, TypeError, ValueError, IndexError):
+        return None
+    if not isinstance(body, dict):
+        return None
+    named = set()
+    for v in body.values():
+        if isinstance(v, str):
+            pm = _PAIR_POINTER.match(v)
+            if pm:
+                named.add(pm.group(1))
+    if len(named) != 1:
+        return None
+    pair = named.pop()
+    return pair if pair in (store.merged.get("qubit_pairs") or {}) else None
 
 
 def plan_switch_moving_qubit(
