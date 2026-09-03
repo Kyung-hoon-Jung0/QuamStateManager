@@ -300,20 +300,31 @@ def make_record(key: str, value: Any, *, updated_at: int | None = None,
                 n: int | None = None, sigma: float | None = None,
                 provenance: dict | None = None,
                 thresholds: dict[str, dict] | None = None,
-                unresolved: bool = False) -> dict[str, Any]:
+                unresolved: bool = False,
+                source_rejected: bool = False) -> dict[str, Any]:
     """The ONE constructor for a MetricRecord — the universal per-metric carrier.
 
     Fixed shape from day one (later phases populate ``n``/``sigma``/``provenance``):
     ``{value, raw, physical, unresolved, verdict, updated_at, n, sigma, provenance}``.
     ``value`` is the usable number (``None`` when missing / unphysical /
     unresolved → excluded from aggregates & colour); ``raw`` keeps the original
-    for the "likely failed fit" tooltip; ``verdict`` is the DEFAULT-spec seed
+    for the "likely failed fit" tooltip. ``source_rejected`` marks the case
+    where the INPUT this metric is derived from exists but was refused (a
+    confusion matrix that is not row-stochastic): there is no number to show,
+    and ``physical`` is False so the surfaces count and name it instead of
+    reading it as never-measured; ``verdict`` is the DEFAULT-spec seed
     (the client recomputes the live verdict from ``value`` + its own thresholds)
     and is forced ``None`` whenever the value is not trustworthy.
     """
     finite_num = (isinstance(value, (int, float)) and not isinstance(value, bool)
                   and math.isfinite(value))
-    phys = physicality(key, value)
+    # docs/154: "the source existed and was REFUSED" is not the same fact as
+    # "there is no source". A readout confusion matrix whose rows are not a
+    # distribution derives no fidelity -- the value is None either way -- but a
+    # chip that never measured one and a chip whose matrix is broken are
+    # different chips, and reading both as `missing` made the second one's tile
+    # count drop with nothing to explain it.
+    phys = physicality(key, value) and not source_rejected
     usable = value if (finite_num and phys and not unresolved) else None
     th = (thresholds or DEFAULT_THRESHOLDS).get(key)
     return {

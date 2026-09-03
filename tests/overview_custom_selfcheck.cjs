@@ -80,17 +80,24 @@ function topoFixture() {
 // query._gate_fidelity_row emits -- `value` is GONE, which is the safety
 // property (no reader can use the number by accident).
 function badFixture() {
-  function node(id, gl, t1) {
+  function node(id, gl, t1, roGef) {
     return { id: id, grid_location: gl, T1: t1, gate_fidelity_avg: 0.999,
-             metrics: { T1: { value: t1 }, gate_fidelity_avg: { value: 0.999 } } };
+             metrics: { T1: { value: t1 }, gate_fidelity_avg: { value: 0.999 },
+                        // `physical:false` with NO raw is what chip_health emits
+                        // for a metric whose confusion matrix was refused: there
+                        // is no number to show, and it is not "never measured".
+                        assignment_fidelity_gef: roGef } };
   }
+  const GEF_OK = { value: 0.90, physical: true };
+  const GEF_REFUSED = { value: null, raw: null, physical: false, unresolved: false };
+  const GEF_ABSENT = { value: null, raw: null, physical: true, unresolved: false };
   function gf(metric, value, extra) {
     return Object.assign({ gate: 'cz_unipolar', metric: metric, level: 'gate',
                            value: value }, extra || {});
   }
   return {
-    nodes: [node('q1', '0,0', 1e-5), node('q2', '1,0', 2e-5),
-            node('q3', '0,1', 3e-5), node('q4', '1,1', 4e-5)],
+    nodes: [node('q1', '0,0', 1e-5, GEF_REFUSED), node('q2', '1,0', 2e-5, GEF_OK),
+            node('q3', '0,1', 3e-5, GEF_OK), node('q4', '1,1', 4e-5, GEF_ABSENT)],
     edges: [
       // clean pair
       { pair_id: 'q1-q2', source: 'q1', target: 'q2', has_cz: true, gate_kind: 'cz',
@@ -355,7 +362,7 @@ function stored(win) { return win.localStorage.getItem('quam_overview_tiles_v1')
     // dropped ROWS, which is the truer number when a pair survives on
     // another macro (2 rows here, only 1 pair lost)
     ok(/\(2\)/.test(txt), 'C9: N is the pairs with a usable value (got "' + txt + '")');
-    ok(/2 out of range/.test(txt),
+    ok(/2 excluded/.test(txt),
       'C9: the tile SAYS how many rows it set aside (got "' + txt + '")');
 
     // the hover list still names the fully-excluded pair, uncoloured and last
@@ -382,6 +389,47 @@ function stored(win) { return win.localStorage.getItem('quam_overview_tiles_v1')
         'C9: it takes no heat colour — one 470% would wash out every other dot');
       ok(items.length && items[items.length - 1].bad,
         'C9: it sorts LAST, never to the top of a fidelity list');
+    }
+  }
+
+
+  // C10 (docs/154): a metric whose SOURCE was refused is not a missing one.
+  // Readout Fidelity (GEF) used to go 20 -> 19 in silence on a chip whose
+  // confusion matrix is not row-stochastic.
+  {
+    const win = makeWorld();
+    mountBad(win);
+    const t = tileById(win, 'ro_gef');
+    ok(!!t, 'C10: the GEF tile renders');
+    const txt = t.textContent.replace(/\s+/g, ' ');
+    // two usable (q2, q3); q1 refused; q4 genuinely absent
+    ok(/\(2\)/.test(txt), 'C10: N counts only the usable ones (got "' + txt + '")');
+    ok(/1 excluded/.test(txt),
+      'C10: the refused one is COUNTED, the absent one is not (got "' + txt + '")');
+
+    t.dispatchEvent(new win.MouseEvent('mouseenter', { bubbles: true }));
+    t.dispatchEvent(new win.MouseEvent('mouseover', { bubbles: true }));
+    await new Promise(function (r) { setTimeout(r, 30); });
+    const pop = win.document.getElementById('ov-hover-pop');
+    ok(!!pop, 'C10: the hover popup opens');
+    if (pop) {
+      const items = Array.prototype.map.call(
+        pop.querySelectorAll('.ov-hover-item'), function (e) {
+          const v = e.querySelector('.ov-hover-val');
+          return { id: e.querySelector('.ov-hover-id').textContent,
+                   txt: v.textContent, bad: v.classList.contains('ov-hover-val-bad'),
+                   title: v.getAttribute('title') || '' };
+        });
+      const bad = items.filter(function (x) { return x.bad; });
+      ok(bad.length === 1 && bad[0].id === 'q1',
+        'C10: only the REFUSED qubit is marked, never the absent one (got '
+        + JSON.stringify(items.map(function (x) { return x.id + (x.bad ? '*' : ''); })) + ')');
+      ok(bad.length === 1 && /source was refused/.test(bad[0].title),
+        'C10: it says its source was refused, not "a failed fit" — there is no '
+        + 'number here to be out of range (got "' + (bad[0] || {}).title + '")');
+      const absent = items.filter(function (x) { return x.id === 'q4'; })[0];
+      ok(absent && !absent.bad && absent.txt === '\u2014',
+        'C10: a genuinely absent value still reads as a plain dash');
     }
   }
 

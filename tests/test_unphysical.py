@@ -194,3 +194,45 @@ class TestTheAlarm:
         blob = repr(diagnostics.check_catalog()
                     if hasattr(diagnostics, "check_catalog") else diagnostics._CHECK_CATALOG)
         assert "(0, 1]" in blob
+
+
+class TestARefusedSourceIsNotAMissingOne:
+    """A confusion matrix that exists but is not row-stochastic derives no
+    number — the value is None either way — but a chip that never measured one
+    and a chip whose matrix is broken are different chips. Reading both as
+    `missing` made the second one's tile count drop with nothing to explain it
+    (measured: Readout Fidelity (GEF) went 20 -> 19 in silence)."""
+
+    BAD = [[0.9, 0.4, 0.3], [0.1, 0.8, 0.2], [0.0, 0.1, 0.9]]
+
+    def test_a_refused_source_is_marked_unphysical(self):
+        r = chip_health.make_record("assignment_fidelity_gef", None,
+                                    source_rejected=True)
+        assert r["value"] is None and r["physical"] is False
+        assert r["unresolved"] is False and r["raw"] is None
+
+    def test_a_genuinely_absent_one_still_reads_as_missing(self):
+        r = chip_health.make_record("assignment_fidelity_gef", None)
+        assert r["value"] is None and r["physical"] is True
+
+    def test_a_dangling_pointer_is_neither(self):
+        r = chip_health.make_record("T1", None, unresolved=True)
+        assert r["unresolved"] is True and r["physical"] is True
+
+    def test_the_engine_marks_every_metric_the_matrix_feeds(self):
+        rej = query._rejected_metric_keys(
+            {"gef_confusion_matrix": self.BAD,
+             "confusion_matrix": TestConfusionMatrices.GOOD})
+        assert rej == {"assignment_fidelity_gef", "ro_fidelity_gef_g",
+                       "ro_fidelity_gef_e", "ro_fidelity_gef_f"}
+
+    def test_a_good_matrix_marks_nothing(self):
+        assert query._rejected_metric_keys(
+            {"gef_confusion_matrix": TestConfusionMatrices.GOOD,
+             "confusion_matrix": TestConfusionMatrices.GOOD}) == set()
+
+    def test_an_absent_matrix_marks_nothing(self):
+        """Absent is not refused — the whole point of the distinction."""
+        assert query._rejected_metric_keys({}) == set()
+        assert query._rejected_metric_keys({"gef_confusion_matrix": None}) == set()
+        assert query._rejected_metric_keys({"gef_confusion_matrix": []}) == set()

@@ -39,7 +39,30 @@ _NODE_METRIC_KEYS = (
 _EDGE_METRIC_KEYS = ("cz_fidelity", "detuning", "coupler_decouple_offset", "mutual_flux_bias")
 
 
-def _make_metric_record(key, resolved_value, *, updated_at=None, provenance=None):
+# Which metric keys are DERIVED from a readout confusion matrix. When the
+# matrix is present but not row-stochastic these derive nothing, and the
+# record has to say the source was refused rather than absent (docs/154).
+_CM_DERIVED = {
+    "confusion_matrix": ("assignment_fidelity", "ro_fidelity_g", "ro_fidelity_e"),
+    "gef_confusion_matrix": ("assignment_fidelity_gef", "ro_fidelity_gef_g",
+                             "ro_fidelity_gef_e", "ro_fidelity_gef_f"),
+}
+
+
+def _rejected_metric_keys(readout: Any) -> set[str]:
+    """Metric keys whose confusion matrix EXISTS but is not a distribution."""
+    out: set[str] = set()
+    if not isinstance(readout, dict):
+        return out
+    for field, keys in _CM_DERIVED.items():
+        cm = readout.get(field)
+        if isinstance(cm, list) and cm and not _valid_confusion_matrix(cm):
+            out.update(keys)
+    return out
+
+
+def _make_metric_record(key, resolved_value, *, updated_at=None, provenance=None,
+                        source_rejected=False):
     """Build a MetricRecord from an already-resolved value.
 
     A value that is *still a pointer* didn't resolve (dangling ref) → record it
@@ -50,7 +73,8 @@ def _make_metric_record(key, resolved_value, *, updated_at=None, provenance=None
     unresolved = is_pointer(resolved_value)
     val = None if unresolved else resolved_value
     return chip_health.make_record(key, val, updated_at=updated_at,
-                                   provenance=provenance, unresolved=unresolved)
+                                   provenance=provenance, unresolved=unresolved,
+                                   source_rejected=source_rejected)
 
 
 class QueryEngine:
@@ -684,8 +708,10 @@ class QueryEngine:
             # already-resolved scalars. Per-metric recency wired where known
             # (Phase 5 expands the rest); the 1Q-fidelity timestamp is real now.
             _node_ts = {"gate_fidelity_avg": node.get("gate_fidelity_updated_at")}
+            _rejected = _rejected_metric_keys(rr)
             node["metrics"] = {
-                k: _make_metric_record(k, node.get(k), updated_at=_node_ts.get(k))
+                k: _make_metric_record(k, node.get(k), updated_at=_node_ts.get(k),
+                                       source_rejected=(k in _rejected))
                 for k in _NODE_METRIC_KEYS
             }
             nodes.append(node)

@@ -345,8 +345,13 @@ window.ChipStatus.mount = function (opts) {
     // dangling pointer) — a "likely failed fit", shown distinctly, not as a bad qubit.
     function _badFit(entity, key) {
         var r = entity.metrics && entity.metrics[key];
-        return !!(r && r.value == null && !r.unresolved
-                  && typeof r.raw === 'number' && isFinite(r.raw));
+        if (!r || r.value != null || r.unresolved) return false;
+        // a measured-but-unphysical number...
+        if (typeof r.raw === 'number' && isFinite(r.raw)) return true;
+        // ...or a metric whose SOURCE was refused (docs/154): a confusion
+        // matrix that is not row-stochastic derives no number at all, so
+        // there is no `raw` to show -- but it is still not "never measured".
+        return r.physical === false;
     }
     // One qubit-card / popup property row with the physical gate applied: an
     // unphysical fit shows its raw value struck-through ("bad fit"), never a
@@ -641,7 +646,9 @@ window.ChipStatus.mount = function (opts) {
         function collect2QField(match, field) {
             return collect2QFieldE(match, field).map(function(x) { return x.v; });
         }
-        function nodeAgg(key) { return computeAggregates(topo.nodes.map(function(n) { return _mv(n, key); })); }
+        // via nodeEntries so an excluded qubit is COUNTED, not just absent
+        // (same aggregate as before -- computeAggregates over the gated values).
+        function nodeAgg(key) { return aggE(nodeEntries(key)); }
         function pct(v) { return fmtPct(v, 2) + '%'; }
         function us(v) { return fmt(v, 'us'); }
 
@@ -655,12 +662,12 @@ window.ChipStatus.mount = function (opts) {
             stat = stat || 'avg';
             if (!agg || agg.count === 0) {
                 return {title: title, metricKey: metricKey, value: '—', muted: true,
-                        sub: agg && agg.bad ? agg.bad + ' out of range · nothing usable'
+                        sub: agg && agg.bad ? agg.bad + ' excluded · nothing usable'
                                             : 'no data'};
             }
             // Never a silently smaller N: an exclusion the user cannot see is
             // the same defect as a silently truncated column (docs/94).
-            var badTail = agg.bad ? '  ·  ' + agg.bad + ' out of range' : '';
+            var badTail = agg.bad ? '  ·  ' + agg.bad + ' excluded' : '';
             var sub;
             if (stat === 'avg') {
                 sub = 'med ' + fmtFn(agg.median) + '  ·  ' + fmtFn(agg.min) + '–' + fmtFn(agg.max) + '  ·  (' + agg.count + ')' + badTail;
@@ -1102,8 +1109,12 @@ window.ChipStatus.mount = function (opts) {
                 ? '<span class="ov-hover-dot" style="background:' + cardColor(x.v, d.range) + '"></span>'
                 : '<span class="ov-hover-dot ov-hover-dot-na"></span>';
             var vCls = x.bad ? ' ov-hover-val-bad' : '';
-            var vTit = x.bad ? ' title="out of range \u2014 likely a failed fit; excluded'
-                             + ' from the average, the range and the colours"' : '';
+            var vTit = !x.bad ? ''
+                : num ? ' title="out of range \u2014 likely a failed fit; excluded'
+                        + ' from the average, the range and the colours"'
+                      : ' title="its source was refused \u2014 the readout confusion'
+                        + ' matrix is not a distribution, so no value can be derived'
+                        + ' from it; see Diagnostics"';
             return '<span class="ov-hover-item">' + dot
                  + '<span class="ov-hover-id">' + _esc(x.id) + '</span>'
                  + '<span class="ov-hover-val' + vCls + '"' + vTit + '>'
