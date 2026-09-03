@@ -917,18 +917,34 @@ class TestForeignWindow:
         assert _trig(r)["cellsReverted"].get("live") is True, _trig(r)
         assert live_ptr() == "#../x180/amp"
 
-    def test_a_refused_live_redo_keeps_its_frame(self, env):
-        """sweep F12: a refused live redo used to drop its frame; the next
-        Ctrl+Shift+Z then re-applied an OLDER in-memory frame out of order."""
+    def test_an_off_mode_redo_drops_the_live_frame_and_reaches_beneath(self, env):
+        """F-REDOJAM (final review): a jrn_live redo frame cannot be honoured in
+        OFF mode (it would write live), and re-pushing it -- a PERMANENT refusal
+        that never clears on its own -- JAMMED the whole stack: every
+        Ctrl+Shift+Z met the same OFF refusal and an ordinary in-memory frame
+        BENEATH it was unreachable forever (the only escapes were turning the
+        setting back ON, which writes the chip -- the very thing the user turned
+        off -- or a new edit, which discards the stack). The OFF press now DROPS
+        the live frame, so the redo order stays correct and what is under it is
+        reached. (A TRANSIENT refusal -- the chip moved -- still keeps its frame;
+        see test_a_transient_redo_refusal_keeps_its_frame_and_unblocks.)"""
         c = env["client"]
-        _edit(c, 0.10); _apply(c)
-        c.post("/undo")                                        # live undo, frame jrn_live
+        # build [ordinary(B), jrn_live(A)] with NO edit between the two presses,
+        # so the ordinary frame is not discarded before the live one is pushed.
+        _edit(c, 0.30); _apply(c)                              # A: applied -> journal unit
+        _edit(c, 0.44)                                         # B: unapplied -> tray
+        c.post("/undo")                                        # in-memory undo of B -> ordinary frame
+        c.post("/undo")                                        # live undo of A -> jrn_live frame ON TOP
+        stack = [f.get("kind") for f in _ctx(env)["redo_stack"]]
+        assert stack[-1] == "jrn_live" and any(k is None for k in stack), stack
         _set_setting(env, False)
-        r = c.post("/redo")                                    # refused: setting OFF
-        assert "OFF" in _trig(r)["cellsReverted"]["message"]
-        _set_setting(env, True)
-        r = c.post("/redo")                                    # the SAME step, now live
-        assert _trig(r)["cellsReverted"].get("live") is True and _live_off(env) == 0.10
+        r1 = c.post("/redo")                                   # drops the jrn_live frame, no jam
+        assert _trig(r1)["cellsReverted"].get("live") is not True
+        assert not [f for f in _ctx(env)["redo_stack"] if f.get("kind") == "jrn_live"], \
+            "the OFF press dropped the live frame instead of re-pushing it"
+        c.post("/redo")                                        # reaches the ordinary frame beneath
+        assert _work_off(env) == 0.44, \
+            "the ordinary frame under the dropped jrn_live is reachable in OFF mode"
 
     def test_a_recycled_pid_is_not_a_foreign_window(self, env, monkeypatch):
         """sweep F6: `pid_alive` is an existence probe; after a restart any
@@ -975,24 +991,34 @@ class TestReviewRound2:
         s = snaps[0]
         return s.timestamp if hasattr(s, "timestamp") else s["timestamp"]
 
-    def test_a_refused_redo_retries_that_step_but_never_jams(self, env):
-        """F1: an ENVIRONMENTAL refusal keeps its frame (the retry must be THIS
-        step, never an older one out of order) -- but the frame must not
-        multiply, and lifting the refusal must un-block the stack."""
+    def test_a_transient_redo_refusal_keeps_its_frame_and_unblocks(self, env):
+        """F1, the TRANSIENT case (final review): an environmental refusal that
+        WILL clear on its own -- the live chip drifted, a locked file -- keeps
+        its frame so the retry is THIS step, never an older one out of order;
+        the frame must not multiply, and once the drift is resolved the step
+        lands. (The setting being OFF is a PERMANENT refusal handled by dropping
+        the frame -- F-REDOJAM -- so this pin uses a chip-drift refusal, which is
+        what the original OFF-based pin should have used to exercise the retry.)"""
         c = env["client"]
-        _edit(c, 0.10); _apply(c)
-        _edit(c, 0.12); _apply(c)
-        c.post("/undo")                                   # live: 0.12 -> 0.10
-        assert _live_off(env) == 0.10
-        _set_setting(env, False)
+        _edit(c, 0.10); _apply(c)                         # chip 0.10, journal unit
+        c.post("/undo")                                   # live undo -> chip 0.08, jrn_live frame
+        assert _live_off(env) == 0.08
+        # the chip drifts out-of-band -> the redo conflicts (the setting stays ON)
+        st = json.loads((env["live"] / "state.json").read_text(encoding="utf-8"))
+        st["qubits"]["qA1"]["z"]["joint_offset"] = 0.99
+        (env["live"] / "state.json").write_text(json.dumps(st), encoding="utf-8")
         for _ in range(3):
             r = c.post("/redo")
-            assert "is OFF" in _trig(r)["cellsReverted"]["message"]
+            assert "changed since" in _trig(r)["cellsReverted"]["message"]
+            assert _live_off(env) == 0.99, "a refused redo writes nothing"
         frames = [f for f in _ctx(env)["redo_stack"] if f.get("kind") == "jrn_live"]
         assert len(frames) == 1, "the retried frame must not multiply"
-        _set_setting(env, True)
+        # resolve the drift and pull; the step then lands
+        st["qubits"]["qA1"]["z"]["joint_offset"] = 0.08
+        (env["live"] / "state.json").write_text(json.dumps(st), encoding="utf-8")
+        c.post("/state/sync")
         c.post("/redo")
-        assert _live_off(env) == 0.12, "the step is redone once the refusal is gone"
+        assert _live_off(env) == 0.10, "the step is redone once the refusal is gone"
 
     def test_a_skipped_unit_keeps_the_walk_and_the_stack_in_step(self, env):
         """F2: the empty/too-large skip moved the cursor with NO redo frame, so
@@ -1173,3 +1199,69 @@ class TestJournalInsertCursor:
         got, cursor = undo_journal.load_state(p)
         assert [u["id"] for u in got] == ["u1", "u9"], f"got {[u['id'] for u in got]}"
         assert cursor == len(got) == 2 and got == units
+
+
+class TestFinalReviewWalk:
+    """Pre-customer review: three live-walk defects reproduced on the real
+    routes and fixed (docs/160 §5e2)."""
+
+    def test_a_nan_undo_writes_live_and_does_not_blame_drift(self, env):
+        """F-NAN: a leaf applied as NaN (an autofit/wholesale write, not through
+        the finite-checked edit door) could never be undone live -- the walk's
+        drift counter compared with ``!=`` and ``nan != nan`` is True, so every
+        NaN step counted phantom drift and stayed staged with a false 'the value
+        had moved' toast. The drift check now uses the NaN-aware ``_differs``."""
+        c = env["client"]
+        # inject NaN the way a wholesale/autofit write does (coerce=False, no
+        # finite gate) so the journal unit's recorded `new` is NaN
+        _ctx(env)["modifier"].set_value("qubits.qA1.z.joint_offset",
+                                        float("nan"), coerce=False)
+        c.post("/state/apply-to-live")
+        import math
+        assert math.isnan(_live_off(env))
+        r = c.post("/undo")
+        m = _trig(r)["cellsReverted"]
+        assert m.get("live") is True, m.get("message")
+        assert "had moved" not in (m.get("message") or ""), m.get("message")
+        assert _live_off(env) == 0.08, "the NaN step wrote the old value to the chip"
+
+    def test_a_refused_walk_step_refreshes_the_drift_banner(self, env):
+        """F-DRIFTBANNER: when the chip drifted out-of-band, the refused walk
+        step's toast told the user to 'take the live changes (drift banner)' but
+        the response never escalated liveDriftChanged, so no banner appeared and
+        the tray still said Synced until a full re-render. The refusal now
+        refreshes the drift/version surfaces like the success path does."""
+        c = env["client"]
+        _edit(c, 0.20); _apply(c)
+        st = json.loads((env["live"] / "state.json").read_text(encoding="utf-8"))
+        st["qubits"]["qA1"]["z"]["joint_offset"] = 0.99
+        (env["live"] / "state.json").write_text(json.dumps(st), encoding="utf-8")
+        r = c.post("/undo")
+        trig = _trig(r)
+        assert trig.get("liveDriftChanged") is True, "the refusal must refresh the drift banner"
+        assert _live_off(env) == 0.99, "the chip was correctly left untouched"
+
+    def test_a_redo_over_a_skipped_unit_reports_the_consumed_step(self, env, monkeypatch):
+        """F-BURST-SKIP: redoing over a skipped (too-large/empty) unit moves the
+        cursor -- a step IS consumed -- but the response reported
+        consumed:0/exhausted, so a coalesced Ctrl+Shift+Z dropped its remaining
+        presses. The skip now reports consumed:1/journal like the down side."""
+        monkeypatch.setattr(routes_mod, "_WHOLESALE_UNIT_CAP", 0)
+        c = env["client"]
+        hm = env["app"].config["history_manager"]
+        hm.check_and_snapshot(_ctx(env)["path"], "manual", force=True)
+        snaps = hm.list_snapshots(_ctx(env)["path"])
+        ts = snaps[0].timestamp if hasattr(snaps[0], "timestamp") else snaps[0]["timestamp"]
+        _edit(c, 0.20); _apply(c)                       # move the chip so the stage is a real diff
+        assert c.post(f"/state-history/{ts}/stage").status_code == 200
+        c.post("/state/apply-to-live")                  # -> a too_large wholesale unit
+        cur0 = int(_ctx(env)["undo_cursor"] or 0)
+        c.post("/undo")                                 # skip the too_large unit (cursor moves)
+        cur1 = int(_ctx(env)["undo_cursor"] or 0)
+        assert cur1 != cur0, "the down walk skipped the too-large unit"
+        r = c.post("/redo?n=3")                         # a coalesced burst lands on the skip
+        cur2 = int(_ctx(env)["undo_cursor"] or 0)
+        m = _trig(r)["cellsReverted"]
+        assert cur2 != cur1, "the redo consumed the skipped step"
+        assert m.get("consumed") == 1 and m.get("stopped") == "journal", \
+            f"the skip must report the consumed step, got {m.get('consumed')}/{m.get('stopped')}"

@@ -317,3 +317,26 @@ two-unit split; (3) a real headless-Chrome run on the customer chip copy — edi
 coupled `f_01` cell → Apply → Ctrl+Z, and both `f_01` and `RF_frequency` come back
 together on the live file (`A4f`). Pinned by
 `tests/test_undo_live.py::TestReplayKeepsTheGesture`.
+
+## 5f. The pre-customer review — the live walk (2026-09-04)
+
+Seven live-walk defects, each reproduced against the real routes on a copy of
+the customer's chip before the customer saw them, and each fixed with a
+mutation-checked pin. Four are gathered here; the three larger ones (the chip
+whose Ctrl+Z rewrote ANOTHER chip's live files, the mixed staged+edited apply
+that lost the real pre-apply value, and the autofit-diverged working copy that
+rode a Ctrl+Z onto the instrument) have their own sections below.
+
+| | finding | fix |
+|---|---|---|
+| **F-NAN** | a leaf applied as NaN (an autofit/wholesale write — never through the finite-checked edit door) could not be undone live: the walk's drift counter compared with `!=`, and `nan != nan` is True, so every NaN step counted phantom drift and stayed staged with a false "the value had moved" toast — exactly on the NaN-bearing chips the sweep's `_differs` was written for | the two drift checks in `_undo_journal_step` use the NaN-aware `_differs`, not raw `!=` |
+| **F-DRIFTBANNER** | a walk step refused because the chip drifted out-of-band told the user to "take the live changes (drift banner)", but the refusal response never escalated `liveDriftChanged` — so the page showed no banner and the tray still said "Synced" until a full re-render | the refusal path escalates `liveDriftChanged`/`stateHistoryChanged` like the success path (the banner re-checks live vs synced, so it appears only when there really is drift) |
+| **F-BURST-SKIP** | redoing over a skipped (too-large/empty) unit MOVED the cursor — a step was consumed — but `_live_redo_response` reported `consumed:0 / exhausted`, so a coalesced `?n=k` Ctrl+Shift+Z dropped its remaining k−1 presses (the down side already reported this correctly via `_walk_burst_extra`) | the skip reports `consumed:1 / journal`; only a genuine nothing-to-redo / refusal reports `consumed:0 / exhausted` |
+| **F-REDOJAM** | the sweep's §5d re-push of a refused redo frame was correct for a TRANSIENT refusal (the chip moved) but JAMMED on a PERMANENT one: with the setting turned OFF, every Ctrl+Shift+Z met the same OFF refusal, the `jrn_live` frame was re-pushed forever, and an ordinary in-memory frame BENEATH it was unreachable (the only escapes were turning the setting back ON — which writes the chip, the very thing the user turned off — or a new edit, which discards the stack) | an OFF refusal DROPS the `jrn_live` frame instead of re-pushing it: a live redo is unavailable in OFF mode by covenant, and dropping it keeps the redo ORDER correct (the frame beneath becomes the legitimate next redo) and unjams the stack. A transient refusal still keeps its frame and retries THIS step |
+
+Pinned by `tests/test_undo_live.py::TestFinalReviewWalk` (F-NAN / F-DRIFTBANNER /
+F-BURST-SKIP), `::TestForeignWindow::test_an_off_mode_redo_drops_the_live_frame_and_reaches_beneath`
+and `::test_a_transient_redo_refusal_keeps_its_frame_and_unblocks` (F-REDOJAM,
+which replaces the two docs/160 §5d pins that had pinned the OFF re-push). Every
+pin was mutation-checked: reverting the `routes.py` change fails it with the
+exact defect.

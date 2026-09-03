@@ -12788,7 +12788,7 @@ def _undo_journal_step(ctx, n_req: int = 1):
             for (op, path, value, _src), uent in zip(ops, uents):
                 if op == "delete":
                     e = modifier.delete_subtree(path, group_id=gid)
-                    if e.old_value != uent.get("new"):
+                    if _differs(e.old_value, uent.get("new")):
                         drift += 1
                 elif op == "create":
                     e = modifier.create_subtree(path, value, group_id=gid)
@@ -12798,7 +12798,7 @@ def _undo_journal_step(ctx, n_req: int = 1):
                     # and coercion would cast the restoration back to it.
                     e = modifier.set_value(path, value, coerce=False,
                                            group_id=gid)
-                    if e.old_value != uent.get("new"):
+                    if _differs(e.old_value, uent.get("new")):
                         drift += 1
                 staged.append(e)
         except Exception as exc:   # noqa: BLE001 — any failure un-stages all
@@ -12826,14 +12826,22 @@ def _undo_journal_step(ctx, n_req: int = 1):
     live = bool(flush.get("live"))
     if flush.get("rolled_back"):
         # the chip refused (it moved) and the step was undone again: NOTHING
-        # changed anywhere -- say so; the drift banner is the door forward
+        # changed anywhere -- say so; the drift banner is the door forward.
+        # F-DRIFTBANNER: the toast tells the user to "take the live changes
+        # (drift banner)", so the banner must actually REFRESH -- the success
+        # path escalates liveDriftChanged and this one never did, so the page
+        # showed no banner and the tray still said "Synced" until a full
+        # re-render. Escalate it here too (the banner re-checks live vs synced,
+        # so it appears only when there really is drift).
         resp = make_response(_tray_html())
-        resp.headers["HX-Trigger"] = json.dumps({"cellsReverted": {
-            "message": "Not undone — " + (flush.get("note") or "the chip refused the write"),
-            "entries": [], "level": "warning", "live": False,
-            # a refused write must not be retried by the burst's remaining
-            # presses -- they would hammer the same refusal (round 2, F15)
-            "requested": n_req, "consumed": 0, "stopped": "exhausted"}})
+        resp.headers["HX-Trigger"] = json.dumps({
+            "cellsReverted": {
+                "message": "Not undone — " + (flush.get("note") or "the chip refused the write"),
+                "entries": [], "level": "warning", "live": False,
+                # a refused write must not be retried by the burst's remaining
+                # presses -- they would hammer the same refusal (round 2, F15)
+                "requested": n_req, "consumed": 0, "stopped": "exhausted"},
+            "liveDriftChanged": True, "stateHistoryChanged": True})
         return resp
     if live:
         _journal_persist_cursor(ctx)
@@ -13147,13 +13155,23 @@ def _redo_journal_forward(ctx, store, modifier, index: int, unit_id: str | None 
     return staged, None
 
 
-def _live_redo_response(fw: list, why: str | None, n_req: int):
+def _live_redo_response(fw: list, why: str | None, n_req: int, *, consumed: int = 0):
     """docs/160: the response of a live journal-forward press -- its own
-    press, never part of a burst (like the undo side's journal boundary)."""
+    press, never part of a burst (like the undo side's journal boundary).
+
+    ``consumed`` (F-BURST-SKIP): a redo that SKIPPED a too-large/empty unit
+    moved the cursor -- a step WAS consumed even though nothing was written --
+    so a coalesced ``?n=k`` press must be told it stopped at the journal
+    boundary (consumed=1) or the client drops the remaining k-1 presses. Only
+    a genuine nothing-to-redo / refusal reports consumed=0 / exhausted."""
     if not fw:
-        return _redo_response("Redo: " + (why or "nothing to redo"), [],
-                              extra={"requested": n_req, "consumed": 0,
-                                     "stopped": "exhausted", "level": "warning", "live": False})
+        if consumed > 0:
+            extra = {**_walk_burst_extra(n_req, consumed=consumed),
+                     "level": "warning", "live": False}
+        else:
+            extra = {"requested": n_req, "consumed": 0,
+                     "stopped": "exhausted", "level": "warning", "live": False}
+        return _redo_response("Redo: " + (why or "nothing to redo"), [], extra=extra)
     anchor = fw[0]
     n = len(fw)
     if n > 1:
@@ -13262,15 +13280,29 @@ def redo():
             continue
         _frames.pop()
         _fw, _why = _redo_journal_forward(ctx, store, modifier, _idx, unit_id=_uid)
-        if not _fw and _idx == int(ctx.get("undo_cursor") or 0):
+        _cursor_now = int(ctx.get("undo_cursor") or 0)
+        _skipped = (not _fw and _cursor_now != _idx)   # F-BURST-SKIP: a step WAS consumed
+        if not _fw and _cursor_now == _idx:
             # code-review sweep F12: an ENVIRONMENTAL refusal (the chip moved,
-            # the setting is OFF, a foreign owner) leaves the unit undone and
-            # still next in line -- the frame goes back so the next press
-            # retries THIS step instead of an older one, out of order. A
-            # refusal that MOVED the cursor (the skip above) is not re-pushed.
+            # a foreign owner) leaves the unit undone and still next in line --
+            # the frame goes back so the next press retries THIS step instead
+            # of an older one, out of order. A refusal that MOVED the cursor
+            # (the skip above) is not re-pushed.
+            #
+            # F-REDOJAM: the setting being OFF is NOT a transient refusal -- it
+            # will not clear on its own, so re-pushing the frame jams the whole
+            # redo stack forever, and any ordinary in-memory frame beneath it
+            # can never be reached (turning the setting back ON would then write
+            # the chip -- the very thing the user turned off). Drop it instead:
+            # a live redo is unavailable in OFF mode by covenant, and the next
+            # press reaches what is under it.
+            if not _undo_live_enabled():
+                _dropped_stale = True
+                _redo_mark(ctx, store)
+                continue
             _frames.append(_frame)
             _redo_mark(ctx, store)
-        return _live_redo_response(_fw, _why, n_req)
+        return _live_redo_response(_fw, _why, n_req, consumed=(1 if _skipped else 0))
     if _dropped_stale:
         # this press cleaned the dead frames and did nothing else (review m4:
         # a frame that stopped naming its unit must never be applied to a
