@@ -77,9 +77,22 @@ class TestOneScroller:
         assert "will-change" not in CSS[i:i + 400], \
             "4s removed will-change from these rows -- it made each one a stacking context"
         assert "function _pinBarsToScroll() {" in JS and "'translateX(' + x + 'px)'" in JS
-        k = JS.index("_virtInit();            // docs/105 #1")
-        # the live call at mount, not a commented-out one (mutation-checked)
-        assert "\n            _pinBarsToScroll();" in JS[k:k + 1800]
+        # docs/156: the live call at mount, not a commented-out one. This used
+        # to be "within 1,800 characters of _virtInit()" -- a DISTANCE grep,
+        # the same shape docs/155 10 had to retire in test_auto_sync when it
+        # simply expired as the file grew. It expired here too, the moment the
+        # call moved behind the mount's writes so the mount would stop paying
+        # two full layouts. Pin the RULE: the call is inside `mount:`, on its
+        # own line, uncommented. WHERE inside is a behaviour, and behaviour is
+        # pinned where behaviour can be run -- `bulk_virt_server_selfcheck.cjs`
+        # S9 asserts it is the mount's LAST phase, from the real phase clock.
+        m = JS.index("        mount: function (columns, bandMeta, dynModel, qubitMeta) {")
+        end = JS.index("\n        },", m)
+        body = JS[m:end]
+        live = [ln for ln in body.splitlines()
+                if ln.strip().startswith("_pinBarsToScroll();")]
+        assert len(live) == 1, (
+            "exactly one live _pinBarsToScroll() call in mount, got %d" % len(live))
 
     def test_a_restored_pane_re_derives_the_bars(self):
         """docs/141 4ac (CRITICAL, R7-1). The bars' inline transform is a

@@ -507,6 +507,33 @@ async function main() {
   doc.dispatchEvent(evt2);
   ok(evt2.detail.path === '/bulk/all-values', 'other paths are untouched');
 
+  // ── docs/156: the mount reads geometry ONCE, and last ───────────────────
+  // `_pinBarsToScroll` reads scrollLeft. Every phase it used to sit in front
+  // of WRITES, and a read after a write lays the whole grid out again -- so
+  // the mount paid two full layouts of the same 53,000 px table (measured on
+  // the 20Q chip: 137 ms for this read, 124 ms for grid-virt's deferred pass
+  // whose own read the following writes invalidated). Moving the read behind
+  // every write cut the cold mount's blocking time 510 -> 422 ms and the
+  // keep-route return's 158 -> 131 ms, both over three runs.
+  //
+  // Pinned behaviourally: the real mount pushes one entry per phase, so the
+  // LAST entry naming the pin proves the ordering. A source-text check would
+  // pass with the call moved back (docs/148's lesson about vacuous pins).
+  {
+    const w = world({}).win;
+    const phases = (w.__bulkMountTimings || []).map((e) => e[0]);
+    ok(phases.length > 3, 'S9: the mount recorded its phases (got ' + phases.length + ')');
+    ok(phases[phases.length - 1] === 'pin bars',
+       'S9: the geometry read is the mount\'s LAST phase (got "'
+       + phases[phases.length - 1] + '", order: ' + phases.join(' > ') + ')');
+    const iPin = phases.indexOf('pin bars');
+    ['virtualization', 'editing + pins', 'linked cells'].forEach((ph) => {
+      const j = phases.indexOf(ph);
+      if (j < 0) return;
+      ok(j < iPin, 'S9: "' + ph + '" (a writing phase) runs BEFORE the read');
+    });
+  }
+
   console.log(fails ? ('FAILED ' + fails) : 'bulk_virt_server_selfcheck: all ok');
   process.exit(fails ? 1 : 0);
 }

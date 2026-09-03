@@ -2595,7 +2595,16 @@
             // geometry of the PRUNED table) hydrates anything on screen it
             // called cold -- a drag-resized or zoomed grid (docs/141 4l-review)
             if (_virt) _virtOnScroll();
-            _pinBarsToScroll();      // docs/141 4q: the toolbar rows follow the pane's sideways scroll
+            // docs/156: _pinBarsToScroll READS scrollLeft, and every phase
+            // below WRITES. A read after a write lays the whole grid out
+            // again, so having the read HERE cost the mount two full layouts
+            // of the same 53,000 px table -- measured on the 20Q chip at
+            // 137 ms (this read) and 124 ms (grid-virt's deferred pass, whose
+            // own read is invalidated by the writes that follow this line).
+            // It runs at the END of the mount now; see the call below.
+            // Later is also more correct: _consumeEditCarry restores the
+            // pane's scroll position, and pinning the bars before that pinned
+            // them to the PRE-restore offset.
             // docs/111 (#11): selection/fill/paste/pins + the dyn-reload
             // edit carry. Pins re-apply AFTER virtualization (a pinned cold
             // column is hydrated by _applyColPins itself).
@@ -2616,6 +2625,10 @@
             _ph('band validation');
             _markLinkedCells();   // tag shared physical-port cells so edits mirror across the port
             _ph('linked cells');
+            // docs/156: the mount's LAST act, and its only geometry read --
+            // one layout, which grid-virt's deferred pass then reads for free.
+            _pinBarsToScroll();      // docs/141 4q: the toolbar rows follow the pane's sideways scroll
+            _ph('pin bars');
             var fsCb = document.getElementById('bulk-freq-sync');
             if (fsCb) fsCb.checked = _freqSyncOn();   // restore the 🔗 toggle across swaps
             if (t._bulkBound) { _refreshGlobal(); return; }
