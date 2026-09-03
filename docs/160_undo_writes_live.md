@@ -186,3 +186,16 @@ skipped unit). All three are pins now.
 `_journal_wholesale_commit`, the `journal=` flag on the apply core, the
 stage/restore/dataset hooks, `undo_live` in `_ctx`), `base.html` (Settings
 toggle), `app.js` (`toggleUndoLive`), `undo-trail.js` ("→ live" tier).
+
+## 5c. The /code-review sweep (same day, after the commit)
+
+A ten-finder code review over the six docs/156–161 commits confirmed two more
+docs/160 defects before it was cut short by a session limit (its remaining
+verifications were re-run by hand):
+
+| | finding | fix |
+|---|---|---|
+| S1 | the Settings toggle POSTed a bare flip — two windows share the setting, so a press on a stale button turned it the wrong way (the docs/120 class: a press must mean what the presser could see) | the client sends `enabled=<inverse of what its button shows>`; an explicit value is idempotent, never a flip |
+| S2 | the Auto-Sync applied log ignored the walk cursor: a unit Ctrl+Z had undone on the chip still offered an armed ✕, which then 409'd "has changed since", blaming a foreign write | a unit at or past the cursor renders **undone** (Ctrl+Shift+Z brings it back) with no ✕; the revert route says "already undone" |
+
+Both pinned in `tests/test_undo_live.py`.

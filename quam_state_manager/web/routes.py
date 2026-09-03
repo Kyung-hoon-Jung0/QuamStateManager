@@ -5791,7 +5791,13 @@ def _applied_log_rows(ctx: dict | None = None, limit: int = 50) -> list[dict]:
     # like live auto-apply feedback for a session that never armed anything.
     since = current_app.config.get("process_start_ts", 0)
     rows: list[dict] = []
-    for u in reversed(ctx.get("undo_units") or []):
+    units = ctx.get("undo_units") or []
+    # docs/160: a unit at or past the walk cursor was undone ON THE CHIP by
+    # Ctrl+Z -- its ✕ would only 409 ("has changed since") blaming a foreign
+    # write. It renders reverted, like a ✕'d row, until a redo brings it back.
+    cursor = int(ctx.get("undo_cursor") or 0)
+    for idx in range(len(units) - 1, -1, -1):
+        u = units[idx]
         meta = u.get("meta") or {}
         if meta.get("src") != "auto":
             continue
@@ -5805,7 +5811,7 @@ def _applied_log_rows(ctx: dict | None = None, limit: int = 50) -> list[dict]:
             "ts": u.get("ts"),
             "n": len(ents),
             "entries": ents,
-            "reverted_by": meta.get("reverted_by"),
+            "reverted_by": meta.get("reverted_by") or ("undo" if idx >= cursor else None),
         })
         if len(rows) >= limit:
             break
@@ -13600,6 +13606,16 @@ def auto_apply_revert():
     if (unit.get("meta") or {}).get("reverted_by"):
         return render_template("_status.html",
                                message="That change was already reverted.",
+                               level="warning"), 409
+    # docs/160: undone on the chip by Ctrl+Z (the walk cursor sits at or
+    # below it) -- there is nothing to revert; say that, not "changed since"
+    try:
+        _idx = next(i for i, u in enumerate(ctx.get("undo_units") or []) if u.get("id") == unit_id)
+    except StopIteration:
+        _idx = -1
+    if 0 <= _idx and _idx >= int(ctx.get("undo_cursor") or 0):
+        return render_template("_status.html",
+                               message="That change was already undone (Ctrl+Z) — Ctrl+Shift+Z brings it back.",
                                level="warning"), 409
 
     ents = list(reversed(unit.get("entries") or []))

@@ -128,6 +128,49 @@ class TestLiveWalk:
         assert "Ctrl+Z writes live: OFF" in c.get("/").get_data(as_text=True)
         _set_setting(env, True)
 
+    def test_the_toggle_sends_the_state_it_shows(self):
+        """review (code-review sweep): a bare POST flips the SERVER state; two
+        windows share the setting, so a stale button would turn it the wrong
+        way. The client sends the inverse of what its own button shows --
+        a press means what the presser could see (docs/120)."""
+        js = (Path(__file__).resolve().parent.parent / "quam_state_manager" / "web" / "static" / "app.js").read_text(encoding="utf-8")
+        i = js.index("window.toggleUndoLive = function()")
+        seg = js[i:i + 900]
+        assert 'getAttribute("data-on") === "1" ? "0" : "1"' in seg
+        assert "new URLSearchParams({ enabled: want })" in seg
+
+    def test_an_explicit_enabled_never_flips(self, env):
+        c = env["client"]
+        for _ in range(2):                                     # idempotent, not a toggle
+            assert c.post("/settings/undo-live", data={"enabled": "0"}).get_json()["enabled"] is False
+        for _ in range(2):
+            assert c.post("/settings/undo-live", data={"enabled": "1"}).get_json()["enabled"] is True
+
+    def test_the_applied_log_shows_a_live_undone_unit_as_undone(self, env):
+        """review (code-review sweep): an Auto-Sync row whose unit Ctrl+Z
+        undid on the chip kept an armed ✕ that then 409'd "has changed
+        since", blaming a foreign write. It renders undone, and its ✕ says so."""
+        c = env["client"]
+        assert c.post("/auto-apply/arm").status_code == 200
+        _edit(c, 0.10); _apply(c)                              # an auto flush → applied-log row
+        with env["app"].app_context():
+            rows = routes_mod._applied_log_rows()
+        assert rows and rows[0]["reverted_by"] is None
+        uid = rows[0]["id"]
+        r = c.post("/auto-apply/disarm")
+        c.post("/undo")                                        # live undo of that unit
+        assert _live_off(env) == 0.08
+        with env["app"].app_context():
+            rows = routes_mod._applied_log_rows()
+        assert rows[0]["reverted_by"] == "undo"
+        assert ">undone<" in c.get("/state/tray").get_data(as_text=True)
+        r = c.post("/auto-apply/revert", data={"unit_id": uid})
+        assert r.status_code == 409 and b"already undone" in r.data
+        c.post("/redo")                                        # back on the chip → the row is live again
+        with env["app"].app_context():
+            rows = routes_mod._applied_log_rows()
+        assert rows[0]["reverted_by"] is None
+
     def test_ctrl_z_after_apply_writes_the_live_file(self, env):
         c = env["client"]
         _edit(c, 0.10); _apply(c)

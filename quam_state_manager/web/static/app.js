@@ -1919,7 +1919,12 @@ window.toggleTopbar = function() {
    the server and reflects the answer -- never a localStorage flag. */
 window.toggleUndoLive = function() {
     var b = document.getElementById("undo-live-toggle");
-    fetch("/settings/undo-live", { method: "POST", headers: { "X-Requested-With": "fetch" } })
+    // The press means what the presser could SEE (docs/120): send the state
+    // this button shows, inverted -- never a bare flip. Two windows share the
+    // setting; a bare flip on a stale button would turn it the wrong way.
+    var want = b && b.getAttribute("data-on") === "1" ? "0" : "1";
+    var body = new URLSearchParams({ enabled: want });
+    fetch("/settings/undo-live", { method: "POST", body: body, headers: { "X-Requested-With": "fetch" } })
         .then(function (r) { return r.json(); })
         .then(function (j) {
             if (!j || !j.ok) { if (window.showToast) window.showToast("Could not change the setting.", "error"); return; }
