@@ -1814,9 +1814,35 @@ def _archive_write_blocked(ctx: dict | None = None):
     ), 409
 
 
+def _tagged(op: str, value: Any, gid: str | None):
+    """One entry of the replay map. The group id rides ALONG (a 3-tuple) only
+    when there IS one (final review, R-A1): a single-field edit is ungrouped
+    exactly as before, so every 2-tuple caller and pin is untouched."""
+    return (op, value) if gid is None else (op, value, gid)
+
+
+def _untag(opval) -> tuple:
+    """``(op, value, gid)`` from any replay-map entry shape — 3-tuple, 2-tuple,
+    or the legacy bare value."""
+    if isinstance(opval, tuple):
+        if len(opval) >= 3:
+            return opval[0], opval[1], opval[2]
+        if len(opval) == 2:
+            return opval[0], opval[1], None
+    return "set", opval, None
+
+
 def _capture_change_log_as_updates(store) -> dict:
-    """Snapshot the change log as an op-tagged ``{dot_path: (op, value)}``
+    """Snapshot the change log as an op-tagged ``{dot_path: (op, value[, gid])}``
     replay map, where op is ``"set" | "create" | "delete"``.
+
+    ``gid`` (final review, R-A1) is the change entry's group id — what makes
+    several leaves ONE user action. The pull-and-re-apply path (the grid's ⚡
+    "Apply to live now", every conflict retry) replays this map, and replaying
+    it ungrouped turned one gesture into N undo units. Since docs/160 each of
+    those units is a separate LIVE WRITE, so one Ctrl+Z left the chip holding
+    half a gesture — f_01 reverted while xy.RF_frequency still held the new
+    value, or an FSP change without its compensating amplitudes.
 
     Replay used to flatten to plain ``{path: new_value}`` and re-apply via
     ``set_value`` only — which silently dropped created subtrees after a
@@ -1843,13 +1869,14 @@ def _capture_change_log_as_updates(store) -> dict:
         # into the store, so a later edit/undo of it before the conflict resolves
         # would otherwise mutate the stashed object by reference) — audit D7.
         nv = copy.deepcopy(entry.new_value)
+        gid = entry.group_id
         if entry.created:
             prev = updates.get(path)
             if prev is not None and prev[0] == "delete":
                 updates.pop(path)
-                updates[path] = ("replace", nv)
+                updates[path] = _tagged("replace", nv, gid)
             else:
-                updates[path] = ("create", nv)
+                updates[path] = _tagged("create", nv, gid)
         elif entry.deleted:
             prev = updates.get(path)
             # Drop anything recorded inside the deleted subtree — the delete
@@ -1859,13 +1886,13 @@ def _capture_change_log_as_updates(store) -> dict:
                 updates.pop(stale)
             if prev is not None and prev[0] == "create":
                 continue  # created then deleted in this session → net nothing
-            updates[path] = ("delete", None)
+            updates[path] = _tagged("delete", None, gid)
         else:
             prev = updates.get(path)
             if prev is not None and prev[0] in ("create", "replace"):
-                updates[path] = (prev[0], nv)
+                updates[path] = _tagged(prev[0], nv, gid)
             else:
-                updates[path] = ("set", nv)
+                updates[path] = _tagged("set", nv, gid)
     return updates
 
 
@@ -1887,24 +1914,25 @@ def _merge_reapply(base: dict, incoming: dict) -> dict:
     """
     out = dict(base)
     for path, opval in incoming.items():
-        op, value = opval
+        op, value, gid = _untag(opval)     # the incoming group id wins (R-A1)
         prev = out.get(path)
         if op == "create":
-            out[path] = ("replace", value) if (prev and prev[0] == "delete") else ("create", value)
+            out[path] = _tagged("replace" if (prev and prev[0] == "delete") else "create", value, gid)
         elif op == "delete":
             prefix = path + "."
             for stale in [p for p in out if p == path or p.startswith(prefix)]:
                 out.pop(stale)
             if prev and prev[0] == "create":
                 continue   # created then deleted across captures → net nothing
-            out[path] = ("delete", None)
+            out[path] = _tagged("delete", None, gid)
         elif op == "replace":
             prefix = path + "."
             for stale in [p for p in out if p != path and p.startswith(prefix)]:
                 out.pop(stale)
-            out[path] = ("replace", value)
+            out[path] = _tagged("replace", value, gid)
         else:  # set
-            out[path] = (prev[0], value) if (prev and prev[0] in ("create", "replace")) else ("set", value)
+            out[path] = _tagged(prev[0] if (prev and prev[0] in ("create", "replace")) else "set",
+                                value, gid)
     return out
 
 
@@ -2470,18 +2498,29 @@ def _replay_updates(modifier, updates: dict) -> dict:
     applied = 0
     failed: list[dict] = []
     store = modifier.store
+    # R-A1: the replay must keep the user's ACTIONS intact. Each original group
+    # id maps to one fresh gid (never the old one — the log it is going into is
+    # a different one), so a gesture that wrote several leaves comes back as one
+    # undoable unit instead of N. An ungrouped edit (gid None) stays a singleton.
+    _gids: dict[str, str] = {}
+
+    def _gid_for(old_gid):
+        if not old_gid:
+            return None
+        if old_gid not in _gids:
+            _gids[old_gid] = modifier.new_group_id()
+        return _gids[old_gid]
+
     with store._lock:
         for dot_path, tagged in updates.items():
-            if isinstance(tagged, tuple) and len(tagged) == 2:
-                op, value = tagged
-            else:  # legacy plain-value form
-                op, value = "set", tagged
+            op, value, _old_gid = _untag(tagged)
+            gid = _gid_for(_old_gid)
             try:
                 if op == "create":
                     try:
                         # enforce=False: previously-accepted values replayed
                         # verbatim — blocking mid-replay would be data loss.
-                        modifier.create_subtree(dot_path, value, enforce=False)
+                        modifier.create_subtree(dot_path, value, enforce=False, group_id=gid)
                     except KeyError:
                         # The pulled live state ALREADY has this key — it was
                         # created out-of-band (e.g. qualibrate calibrated the same
@@ -2505,13 +2544,13 @@ def _replay_updates(modifier, updates: dict) -> dict:
                     try:
                         modifier.set_value(dot_path, value,
                                            _defer_hooks=True, coerce=False,
-                                           enforce=False)
+                                           enforce=False, group_id=gid)
                     except KeyError:
                         # live deleted it too — re-create the session's value
-                        modifier.create_subtree(dot_path, value, enforce=False)
+                        modifier.create_subtree(dot_path, value, enforce=False, group_id=gid)
                 elif op == "delete":
                     try:
-                        modifier.delete_subtree(dot_path)
+                        modifier.delete_subtree(dot_path, group_id=gid)
                     except KeyError:
                         pass  # already gone on the pulled state — noop success
                 else:
@@ -2525,7 +2564,7 @@ def _replay_updates(modifier, updates: dict) -> dict:
                     # reported as success). Replay the value the user accepted verbatim —
                     # consistent with the 'create'/'replace' branches above.
                     modifier.set_value(target_path, value, _defer_hooks=True,
-                                       coerce=False, enforce=False)
+                                       coerce=False, enforce=False, group_id=gid)
                 applied += 1
             except (KeyError, TypeError, ValueError, IndexError) as exc:
                 failed.append({"dot_path": dot_path, "error": str(exc)})

@@ -680,3 +680,11 @@ one** (docs/136, 137).
   finishes, a reverted list cell drops its "unapplied edit" marker, and a
   calculator window that answers the page's ping is remembered by every entry
   point (docs/160 §5d).
+
+- A pre-customer review found one more, fixed: the grid's ⚡ **Apply to live now**
+  pulls the live chip and re-applies your pending edits before pushing, and that
+  re-apply used to split one gesture into separate undo steps — so after Apply,
+  a single Ctrl+Z could revert half of a coupled edit (a qubit frequency without
+  its RF-mirror twin, an FSP change without its compensating amplitudes). The
+  re-apply now keeps each gesture whole, so one Ctrl+Z takes the whole gesture
+  off the chip (docs/160 §5e).

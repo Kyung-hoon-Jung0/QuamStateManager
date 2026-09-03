@@ -1103,6 +1103,57 @@ class TestReviewRound2:
         assert frames[-1]["unit_id"] == f"u{routes_mod._REDO_MAX_FRAMES + 24}"
 
 
+class TestReplayKeepsTheGesture:
+    """Final review, R-A1 — found in a real browser on the customer's own 20Q chip.
+
+    The grid's ⚡ "Apply to live now" does not go through /state/apply-to-live: it
+    PULLS the live chip, re-applies the pending edits on top, and pushes
+    (`doStateSync('apply')`). The re-apply wrote every path with no group id, so
+    one user gesture that touched several leaves — the coupled f_01 ↔
+    xy.RF_frequency pair, a multi-cell row, an FSP change bundled with its
+    compensating amplitudes (docs/126) — came back as N separate journal units.
+    Before docs/160 that only cost extra Ctrl+Z presses in the tray; now each
+    press is its own LIVE WRITE, so the chip sat holding half a gesture:
+    f_01 reverted while RF_frequency still held the new value.
+    """
+
+    def test_one_gesture_stays_one_unit_through_pull_and_reapply(self, env):
+        c = env["client"]
+        r = c.post("/field/edit-batch", json={"updates": [
+            {"dot_path": "qubits.qA1.f_01", "value": "5100000000"},
+            {"dot_path": "qubits.qA1.z.joint_offset", "value": "0.11"},
+        ], "expect_chip": ""})
+        assert r.status_code == 200 and r.get_json()["ok"], r.data
+        r = c.post("/state/sync?mode=apply")          # the ⚡ button's route
+        assert r.status_code == 200 and (r.get_json() or {}).get("status") == "ok"
+        assert (_live_f01(env), _live_off(env)) == (5.1e9, 0.11)
+
+        units, cursor = undo_journal.load_state(_sidecar(env))
+        assert len(units) == 1 and cursor == 1, \
+            f"one gesture must be one unit, got {[[e['path'] for e in u['entries']] for u in units]}"
+        assert {e["path"] for e in units[0]["entries"]} == {
+            "qubits.qA1.f_01", "qubits.qA1.z.joint_offset"}
+
+        c.post("/undo")
+        assert (_live_f01(env), _live_off(env)) == (5.0e9, 0.08), \
+            "one Ctrl+Z must take the WHOLE gesture off the chip, never half of it"
+
+    def test_separate_gestures_still_undo_one_at_a_time(self, env):
+        """…and the fix must not over-group: two gestures re-applied together
+        stay two units (one press = one user action, docs/107)."""
+        c = env["client"]
+        _edit(c, 0.10)                                    # gesture 1 (ungrouped)
+        r = c.post("/field/edit-batch", json={
+            "updates": [{"dot_path": "qubits.qA1.f_01", "value": "5100000000"}],
+            "expect_chip": ""})
+        assert r.status_code == 200                       # gesture 2 (ungrouped)
+        assert c.post("/state/sync?mode=apply").status_code == 200
+        units, _ = undo_journal.load_state(_sidecar(env))
+        assert len(units) == 2, [[e["path"] for e in u["entries"]] for u in units]
+        c.post("/undo")
+        assert _live_f01(env) == 5.0e9 and _live_off(env) == 0.10, "only the newest gesture"
+
+
 class TestJournalInsertCursor:
     def test_an_insert_truncates_the_redo_branch_like_an_append(self, tmp_path):
         """F9: `insert_units` read the persisted cursor and threw it away,

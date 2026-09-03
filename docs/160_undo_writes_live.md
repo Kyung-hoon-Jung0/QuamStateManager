@@ -274,3 +274,46 @@ Pinned in `tests/test_undo_live.py` (`TestReviewRound2`, `TestJournalInsertCurso
 `tests/test_sweep_misc.py`, `tests/undo_repaint_selfcheck.cjs` and
 `tests/calc_window_selfcheck.cjs` (World C drives the real ping flow against a
 faked BroadcastChannel bus).
+
+## 5e. The pre-customer review — R-A1 (2026-09-04)
+
+Found in a real browser on a copy of the customer's 20-qubit chip, before the
+customer ever saw it. The grid's ⚡ **Apply to live now** does NOT go through
+`/state/apply-to-live`; it PULLS the live chip, re-applies the pending edits on
+top of the fresh state, and pushes (`doStateSync('apply')`). The re-apply
+(`_replay_updates`) wrote every path as its own change-log entry with **no group
+id** — so any ONE user gesture that touched several leaves came back split into N
+undo units: the coupled `f_01` ↔ `xy.RF_frequency` pair (the grid mirrors an
+edit of one onto the other), a multi-cell row, an FSP change bundled with its
+compensating amplitudes (docs/126).
+
+Before docs/160 that only cost extra Ctrl+Z presses in the editor. **After
+docs/160 each of those units is a separate LIVE WRITE**, so one Ctrl+Z left the
+chip holding half a gesture — `f_01` reverted while `RF_frequency` still held the
+new value, an FSP change without its amplitudes. A qubit sitting at a frequency
+its own drive line no longer matches is exactly the silent, hard-to-see
+corruption docs/160 was supposed to make safe.
+
+The replay map now carries the change entry's **group id** alongside each op
+(`_tagged`/`_untag`; a single-field edit stays ungrouped, so every 2-tuple caller
+and pin is untouched), and `_replay_updates` maps each original group id to one
+fresh id — so a gesture that wrote several leaves is re-applied as ONE undoable
+unit, not N. It does not over-group: two SEPARATE gestures re-applied together
+stay two units (one press = one user action, docs/107).
+
+Two distinct real gestures can never be merged by the remap: for two group ids to
+collide on the same fresh id, `mutation_seq` would have to be unchanged between
+their first-sightings, which requires every write of the first gesture to have
+FAILED on replay — in which case that gesture contributes nothing to the journal,
+so there is nothing to merge. A rarer capture whose dict-collapse leaves a group's
+paths non-contiguous simply degrades to the pre-R-A1 separate-units behaviour
+(never worse).
+
+Verified three independent ways: (1) an A/B mechanism probe — with the fix one
+gesture is one unit and one Ctrl+Z restores both leaves, with the fix stashed the
+chip holds half a gesture; (2) a mutation-checked pin — reverting `routes.py`
+fails `test_one_gesture_stays_one_unit_through_pull_and_reapply` with exactly the
+two-unit split; (3) a real headless-Chrome run on the customer chip copy — edit a
+coupled `f_01` cell → Apply → Ctrl+Z, and both `f_01` and `RF_frequency` come back
+together on the live file (`A4f`). Pinned by
+`tests/test_undo_live.py::TestReplayKeepsTheGesture`.
