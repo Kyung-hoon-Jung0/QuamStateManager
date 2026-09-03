@@ -1373,3 +1373,76 @@ class TestUndoChipIdentity:
         r = c.post("/undo", data={"expect_chip": ""})
         assert r.status_code == 200
         assert self._off(B, "qB1") == 0.55
+
+
+class TestReplayNeverMergesTwoGestures:
+    """R-A1 Round-2 (docs/160 §5e2): the replay's fresh-gid remap must never fuse
+    TWO distinct user gestures into one undo unit -- `new_group_id()` does not
+    advance `mutation_seq`, so a gesture whose first replayed op is a NO-OP (a
+    create byte-equal on an out-of-band value, a delete already gone) could hand
+    a LATER gesture the SAME fresh gid, and `segment_change_log` then fuses the
+    contiguous same-gid run. Since docs/160 that unit is a LIVE write -- one
+    Ctrl+Z left half of an earlier gesture on the chip. Found by the Round-2
+    adversarial re-review of the R-A1 fix; reproduced end-to-end through the real
+    routes (the qualibrate-out-of-band byte-equal create the create branch's own
+    comment anticipates)."""
+
+    def _env(self, tmp_path):
+        live = tmp_path / "chips" / "live"
+        _write_chip(live, _state())
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        c = app.test_client()
+        c.post("/load", data={"folder": str(live)})
+        return app, c, live
+
+    def test_a_noop_first_gesture_never_merges_into_a_later_one(self, tmp_path):
+        app, c, live = self._env(tmp_path)
+
+        def lv():
+            return json.loads((live / "state.json").read_text(encoding="utf-8"))["qubits"]["qA1"]
+
+        # g1: create newparam (FIRST) + set f_01 + set joint_offset -- one gid
+        r = c.post("/field/edit-batch", json={"updates": [
+            {"dot_path": "qubits.qA1.xy.ops.x180.newparam", "value": "0.9", "create": True},
+            {"dot_path": "qubits.qA1.f_01", "value": "5200000000"},
+            {"dot_path": "qubits.qA1.z.joint_offset", "value": "0.20"},
+        ], "expect_chip": ""})
+        assert r.status_code == 200 and r.get_json()["ok"], r.data
+        assert c.post("/save").status_code == 200
+        # g2: re-touch f_01 (a MIDDLE path of g1) + set amp -- a second gid
+        r = c.post("/field/edit-batch", json={"updates": [
+            {"dot_path": "qubits.qA1.f_01", "value": "5250000000"},
+            {"dot_path": "qubits.qA1.xy.ops.x180.amp", "value": "0.25"},
+        ], "expect_chip": ""})
+        assert r.status_code == 200 and r.get_json()["ok"]
+        # qualibrate creates newparam byte-equal on live, out-of-band (so the
+        # replay's create no-ops WITHOUT bumping mutation_seq)
+        ls = json.loads((live / "state.json").read_text(encoding="utf-8"))
+        ls["qubits"]["qA1"]["xy"]["ops"]["x180"]["newparam"] = 0.9
+        (live / "state.json").write_text(json.dumps(ls), encoding="utf-8")
+        # the grid's ⚡ Apply-to-live: pull + merge_reapply + replay
+        r = c.post("/state/sync?mode=apply")
+        assert r.status_code == 200 and (r.get_json() or {}).get("status") == "ok"
+
+        units, cursor = undo_journal.load_state(_sidecar_app(app))
+        # NO single unit may contain leaves from BOTH gestures -- g1's
+        # joint_offset must never share a unit with g2's amp.
+        for u in units:
+            paths = {e["path"] for e in u["entries"]}
+            assert not ({"qubits.qA1.z.joint_offset"} <= paths
+                        and {"qubits.qA1.xy.ops.x180.amp"} <= paths), \
+                f"two gestures merged into one unit: {sorted(paths)}"
+
+        # and one Ctrl+Z must not leave a HALF gesture on the chip: it can never
+        # revert g1's joint_offset while g1's created newparam stays behind.
+        c.post("/undo")
+        a = lv()
+        assert not (a["z"]["joint_offset"] == 0.08
+                    and a["xy"]["ops"]["x180"].get("newparam") == 0.9), \
+            "one Ctrl+Z left half of gesture g1 on the live chip"
+
+
+def _sidecar_app(app):
+    files = sorted((Path(app.instance_path) / "working_state").glob("*.undo_journal.json"))
+    assert files, "no journal sidecar"
+    return files[0]

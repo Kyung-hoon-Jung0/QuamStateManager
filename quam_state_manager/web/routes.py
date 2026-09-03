@@ -2534,7 +2534,22 @@ def _replay_updates(modifier, updates: dict) -> dict:
         if not old_gid:
             return None
         if old_gid not in _gids:
-            _gids[old_gid] = modifier.new_group_id()
+            # R-A1 Round-2 fix (docs/160 §5e2): `new_group_id()` returns
+            # `f"grp{mutation_seq}"` WITHOUT advancing mutation_seq, so two
+            # distinct ORIGINAL gids would collide on the SAME fresh gid whenever
+            # no successful write lands between their first-sightings in this
+            # loop -- e.g. a gesture whose first replayed op is a NO-OP (a create
+            # that landed byte-equal on an out-of-band value, or a delete already
+            # gone) does not bump mutation_seq, yet the gesture has a LATER real
+            # write. A collision fuses two distinct gestures into one undo unit
+            # (`segment_change_log` groups CONTIGUOUS same-gid entries), and since
+            # docs/160 that unit is a LIVE write -- one Ctrl+Z then left half of
+            # an earlier gesture on the chip, the very corruption §5e closed.
+            # Suffix each fresh gid with a monotonic per-replay index so distinct
+            # original gids can NEVER share a fresh gid, whatever mutation_seq does
+            # (the suffix also keeps it distinct from any plain `grpN` already in
+            # the log).
+            _gids[old_gid] = f"{modifier.new_group_id()}-r{len(_gids)}"
         return _gids[old_gid]
 
     with store._lock:

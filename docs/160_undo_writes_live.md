@@ -437,3 +437,34 @@ redo round-trips to the applied `(0.55, 5.0e9)`. The docs/160 §5c pin that had
 pinned the `0.08` residue is rewritten to assert the true pre-apply; pinned by
 `tests/test_undo_live.py::TestWholesale::test_a_mixed_apply_undoes_to_the_true_pre_apply_state`
 (mutation-checked).
+
+## 5e2. The R-A1 fix's own Round-2 defect (2026-09-04)
+
+The Round-2 adversarial re-review of §5e (R-A1) found that the fix REINTRODUCED
+the "half a gesture on the chip" corruption in a new shape. `_replay_updates`
+mapped each original group id to a fresh one via `modifier.new_group_id()`, which
+returns `f"grp{mutation_seq}"` WITHOUT advancing `mutation_seq`. §5e's safety
+argument ("two distinct real gestures can never merge — a collision needs the
+first gesture's every write to have failed, contributing nothing") had a hole: a
+gesture's FIRST replayed op can be a NO-OP that does not bump `mutation_seq` (a
+create that lands byte-equal on an out-of-band value — the qualibrate case the
+create branch's own comment anticipates — or a delete already gone on live) while
+the SAME gesture has a LATER real write. Two distinct original gids then collide
+on the same fresh gid, and `segment_change_log` fuses the contiguous same-gid run
+across the gesture boundary into ONE unit. Since docs/160 that unit is a live
+write, one Ctrl+Z reverts half of an earlier gesture on the live file.
+
+Reproduced end-to-end through the real routes: a grouped batch (create newparam +
+set f_01 + set joint_offset) → Save → a second grouped batch re-touching f_01 →
+qualibrate creates newparam byte-equal on live → ⚡ Apply → the newest unit
+merged g1's joint_offset with g2's leaves, and one Ctrl+Z reverted g1's
+joint_offset (0.20 → 0.08) on disk while g1's created newparam (0.9) stayed.
+
+The fix: `_gid_for` now suffixes each fresh gid with a monotonic per-replay index
+(`f"{new_group_id()}-r{len(_gids)}"`), so distinct original gids can NEVER share a
+fresh gid whatever `mutation_seq` does. The common coupled-gesture case still
+groups as one unit (§5e's purpose); the rare interleaved-capture case degrades to
+separate units (harmless, ≤ pre-R-A1). Pinned by
+`tests/test_undo_live.py::TestReplayNeverMergesTwoGestures` (the Round-2 repro,
+mutation-checked). Lesson, again: re-review a fix campaign's own fixes — this
+defect was in the very commit that closed the original of the same bug.
