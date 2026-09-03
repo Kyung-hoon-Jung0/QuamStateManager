@@ -7984,26 +7984,34 @@ def pair_gate_inspector_switch(name: str):
     if not modifier or not store:
         return render_template("_status.html", message="No state loaded", level="warning")
 
-    new_role = (request.form.get("role") or "").strip()
-    plan = gate_inspector.plan_switch_moving_qubit(store, name, new_role)
-
-    if plan.get("error") and not plan.get("edits"):
-        return render_template(
-            "_status.html", message=plan["error"], level="warning"), 409
-
+    # The chip gate first — the same one every other staging door uses. It is
+    # `_active_chip_token`; there is no `_chip_token`, and naming it wrong made
+    # this route raise NameError on every press (app.js always sends the field).
     chip_token = request.form.get("expect_chip") or ""
-    if chip_token and chip_token != _chip_token():
+    if chip_token and chip_token != (_active_chip_token() or ""):
         return render_template(
             "_status.html", message="Chip changed — please reload.", level="error"), 409
 
+    new_role = (request.form.get("role") or "").strip()
+    plan = gate_inspector.plan_switch_moving_qubit(store, name, new_role)
+
+    if plan.get("error"):
+        return render_template(
+            "_status.html", message=plan["error"], level="warning"), 409
+
+    # One gid for the whole rewire: the review tray shows one gesture and one
+    # Ctrl+Z takes all of it back, never half a moved pulse.
+    gid = modifier.new_group_id()
     try:
         for dot_path in plan.get("deletes", []):
             try:
-                modifier.delete_value(dot_path)
+                modifier.delete_subtree(dot_path, group_id=gid)
             except (KeyError, TypeError):
                 pass
-        for dot_path, value in plan.get("edits", []):
-            modifier.set_value(dot_path, value, create=True)
+        for dot_path, value in plan.get("creates", []):
+            modifier.create_subtree(dot_path, value, group_id=gid)
+        for dot_path, value in plan.get("sets", []):
+            modifier.set_value(dot_path, value, group_id=gid)
     except Exception as e:  # noqa: BLE001
         logger.warning("switch-moving(%r, %r) failed: %s", name, new_role, e)
         return render_template(

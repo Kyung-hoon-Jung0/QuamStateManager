@@ -12196,10 +12196,15 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .gi-chip:hover { background: var(--pico-card-sectioning-background-color); }
 .gi-chip-active { background: var(--pico-primary-background); color: var(--pico-primary-inverse); border-color: var(--pico-primary); }
 .gi-chip-active:hover { background: var(--pico-primary-hover-background); }
-.gi-switch-btn { font-size: 0.78em; padding: 0.15rem 0.5rem; border-radius: 4px; cursor: pointer; border: 1px solid var(--pico-muted-border-color); background: none; color: var(--pico-color); margin-left: auto; }
+/* `color: var(--pico-color)` on a <button> resolves to --pico-primary-inverse
+   (white in BOTH themes) under Pico v2, so a transparent button using it is
+   invisible on the light page -- the exact defect TestThemeContrastGuard
+   exists to catch. --pico-contrast is the readable one. */
+.gi-switch-btn { font-size: 0.78em; padding: 0.15rem 0.5rem; border-radius: 4px; cursor: pointer; border: 1px solid var(--pico-muted-border-color); background: none; color: var(--pico-contrast); margin-left: auto; }
 .gi-switch-btn:hover { background: var(--pico-card-sectioning-background-color); }
 .gi-plot-area { min-height: 300px; }
 .gi-plot { min-height: 300px; }
 .gi-info { padding: 0.25rem 0.5rem; }
 .gi-error, .gi-warnings { padding: 0.5rem; }
 .gi-warnings ul { margin: 0.25rem 0 0 1rem; padding: 0; }
+.gi-note { margin: 0 0 0.35rem; padding: 0 0.5rem; font-size: 0.8em; }

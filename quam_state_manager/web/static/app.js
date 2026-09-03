@@ -18619,6 +18619,8 @@ window.GateInspector = (function() {
         plots.forEach(function(el) { loadPlot(el); });
 
         root.querySelectorAll('.gi-toggle').forEach(function(toggle) {
+            if (toggle.dataset.giWired) return;
+            toggle.dataset.giWired = '1';
             toggle.addEventListener('click', function(e) {
                 var chip = e.target.closest('.gi-chip');
                 if (!chip || chip.classList.contains('gi-chip-active')) return;
@@ -18637,6 +18639,8 @@ window.GateInspector = (function() {
         });
 
         root.querySelectorAll('.gi-switch-btn').forEach(function(btn) {
+            if (btn.dataset.giWired) return;
+            btn.dataset.giWired = '1';
             btn.addEventListener('click', function() {
                 var inspector = btn.closest('.gi-inspector');
                 if (!inspector) return;
@@ -18688,6 +18692,14 @@ window.GateInspector = (function() {
                     return;
                 }
                 el.innerHTML = '';
+                // the server says out loud when the x axis is frequency
+                // rather than voltage, or when a crossing is unreachable
+                if (d.notes && d.notes.length) {
+                    var note = document.createElement('p');
+                    note.className = 'muted gi-note';
+                    note.textContent = d.notes.join(' ');
+                    el.appendChild(note);
+                }
                 var inner = document.createElement('div');
                 inner.style.width = '100%';
                 inner.style.minHeight = '300px';

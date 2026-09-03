@@ -1,15 +1,41 @@
 """2Q gate detuning inspector — energy-level computation for CZ gate tuning.
 
-Computes bare-state detunings between the |11⟩, |20⟩, |02⟩, |10⟩, and |01⟩
-states as a function of voltage on one qubit's z-line, using the parabolic
-flux-tuning model:
+Computes the bare-state detunings between |11>, |20>, |02>, |10> and |01> as a
+function of the z-line voltage on ONE qubit, using the parabolic flux-tuning
+model the customer's own CZ helpers use.
 
-    f_01(V) = f_max + quad_term × (V − V_sweetspot)²
+Two conventions in this file are NOT free choices — they are read off the
+chips and off the lab's own calibration code, and getting either backwards
+moves an "interaction point" by hundreds of MHz:
 
-The three detunings that matter for a CZ gate:
-    Δ(11−20) = f_01^B − f_01^A − α_A   (avoided crossing for qubit-A CZ)
-    Δ(11−02) = f_01^A − f_01^B − α_B   (avoided crossing for qubit-B CZ)
-    Δ(10−01) = f_01^A − f_01^B          (qubit-qubit detuning)
+**Anharmonicity is a positive magnitude.** Every chip in the corpus stores
+``anharmonicity`` positive (CQT 20Q: 135–229 MHz on all twenty qubits), and
+the customer's ``calibration_utils/chevron_cz/cz_branch.py`` says so in as
+many words — "(anharmonicity A is stored as a positive magnitude in this
+state.)" — while ``chip_health`` defines it as ``f_01 - f_12``.  So
+``f_12 = f_01 - A`` and the second excited level sits at ``2*f_01 - A``:
+
+    E|11> = f_c + f_t         E|20> = 2*f_c - A_c        E|02> = 2*f_t - A_t
+
+    D(11-20) = E|11> - E|20> = f_t - f_c + A_c
+    D(11-02) = E|11> - E|02> = f_c - f_t + A_t
+    D(10-01) =                 f_c - f_t
+
+whose zeros are exactly ``cz_branch``'s two branch conditions
+(``f_c - f_t - A_c = 0`` and ``f_c - f_t + A_t = 0``).
+
+**``z.flux_point`` is a MODE STRING, not a voltage.**  It is ``"joint"`` /
+``"independent"`` and names WHICH stored offset the qubit idles at; the
+voltage itself lives in ``z.joint_offset`` / ``z.independent_offset``.
+``autofit/families.py`` routes on the same field the same way.  The parabola
+is anchored at that idle bias, where the stored ``f_01`` was measured:
+
+    f_01(V) = f_01_idle + quad_term * (V - V_idle)^2
+
+which is the inverse of ``cz_branch``'s ``amp = sqrt(-detuning / quad)``.
+Without a known idle voltage the curve cannot be placed on a voltage axis at
+all, so the sweep degrades to an honest frequency axis instead of silently
+re-centring on 0 V.
 
 Pure functions — no store dependency beyond the initial parameter snapshot.
 """
@@ -24,26 +50,50 @@ import numpy as np
 
 def extract_qubit_params(
     engine: Any, qubit_name: str,
-) -> dict[str, float | None]:
+) -> dict[str, Any]:
     """Pull the flux-tuning parameters for one qubit."""
     q = engine.get_qubit(qubit_name)
-    f_01 = q.get("f_01")
-    anharmonicity = q.get("anharmonicity")
-    quad_term = q.get("freq_vs_flux_01_quad_term")
     flux_point = q.get("z_flux_point")
-    joint_offset = q.get("z_joint_offset")
-    return {
+    joint = _to_float(q.get("z_joint_offset"))
+    independent = _to_float(q.get("z_independent_offset"))
+    params: dict[str, Any] = {
         "name": qubit_name,
-        "f_01": _to_float(f_01),
-        "anharmonicity": _to_float(anharmonicity),
-        "quad_term": _to_float(quad_term),
-        "flux_point": _to_float(flux_point),
-        "joint_offset": _to_float(joint_offset),
+        "f_01": _to_float(q.get("f_01")),
+        "anharmonicity": _to_float(q.get("anharmonicity")),
+        "quad_term": _to_float(q.get("freq_vs_flux_01_quad_term")),
+        # kept verbatim — it is a mode name ("joint"/"independent"), not a number
+        "flux_point": flux_point if isinstance(flux_point, str) else None,
+        "joint_offset": joint,
+        "independent_offset": independent,
     }
+    params["idle_voltage"], params["idle_source"] = _idle_voltage(params)
+    return params
+
+
+def _idle_voltage(params: dict[str, Any]) -> tuple[float | None, str | None]:
+    """The z voltage the qubit idles at, and which field it came from.
+
+    ``z.flux_point`` selects it exactly as ``autofit/families.py`` routes node
+    updates: ``"independent"`` takes ``independent_offset``, anything else
+    takes ``joint_offset``.  Falls back to the other offset when the routed
+    one is absent, so a chip that only fills one of the two still anchors.
+    """
+    point = (params.get("flux_point") or "").strip().lower()
+    if point == "independent":
+        order = [("independent_offset", "z.independent_offset"),
+                 ("joint_offset", "z.joint_offset")]
+    else:
+        order = [("joint_offset", "z.joint_offset"),
+                 ("independent_offset", "z.independent_offset")]
+    for key, label in order:
+        v = params.get(key)
+        if v is not None:
+            return v, label
+    return None, None
 
 
 def validate_params(
-    qa: dict[str, float | None], qb: dict[str, float | None],
+    qa: dict[str, Any], qb: dict[str, Any],
 ) -> list[str]:
     """Return a list of missing-field error messages (empty = ready)."""
     errors: list[str] = []
@@ -57,23 +107,20 @@ def validate_params(
 
 
 def compute_detuning_sweep(
-    control: dict[str, float | None],
-    target: dict[str, float | None],
+    control: dict[str, Any],
+    target: dict[str, Any],
     sweep_role: str = "control",
     *,
     n_points: int = 500,
 ) -> dict[str, Any]:
     """Compute the three detuning curves for one sweep direction.
 
-    *sweep_role* is ``"control"`` or ``"target"`` — the qubit whose
-    voltage varies.  The detuning labels are always control/target:
+    *sweep_role* is ``"control"`` or ``"target"`` — the qubit whose frequency
+    varies.  The detuning labels are always in control/target coordinates
+    (|ab> where a = control level, b = target level); see the module docstring
+    for the sign conventions, which are not negotiable.
 
-        |ab⟩ where a = control level, b = target level
-        Δ(11−20) = f_t − f_c − α_c   (|20⟩ = control in level 2)
-        Δ(11−02) = f_c − f_t − α_t   (|02⟩ = target in level 2)
-        Δ(10−01) = f_c − f_t
-
-    Returns ``{voltages, frequencies, delta_*, zeros, …}`` or ``{error}``.
+    Returns ``{x, x_kind, delta_*, zeros, notes, …}`` or ``{error}``.
     """
     f_c = control["f_01"]
     f_t = target["f_01"]
@@ -84,68 +131,83 @@ def compute_detuning_sweep(
         return {"error": "Missing frequency or anharmonicity data."}
 
     moving = control if sweep_role == "control" else target
+    fixed = target if sweep_role == "control" else control
     quad = moving.get("quad_term")
-    sweetspot = moving.get("flux_point")
-    offset = moving.get("joint_offset")
+    v_idle = moving.get("idle_voltage")
+    f_idle = moving["f_01"]
+    notes: list[str] = []
 
-    has_flux = quad is not None and quad != 0
+    # A voltage axis needs BOTH the curvature and the bias it is measured
+    # from. One without the other is a frequency sweep, said out loud.
+    has_flux = bool(quad) and v_idle is not None
+    if quad and v_idle is None:
+        notes.append(
+            f"{moving['name']} has a flux curvature but no z offset to anchor it "
+            f"(z.joint_offset / z.independent_offset are unset) — the x axis is "
+            f"frequency, not voltage.")
+    elif not quad and v_idle is not None:
+        notes.append(
+            f"{moving['name']} has no freq_vs_flux_01_quad_term — run the "
+            f"qubit-spectroscopy-vs-flux calibration to get a voltage axis.")
 
-    if has_flux and sweetspot is not None:
-        v_op = offset if offset is not None else sweetspot
-        f_max = moving["f_01"] - quad * (v_op - sweetspot) ** 2
-    else:
-        f_max = moving["f_01"]
-        sweetspot = 0.0
-        v_op = 0.0
+    targets = _zero_frequencies(f_c, f_t, alpha_c, alpha_t, sweep_role)
 
     if has_flux:
-        v_min, v_max = _sweep_range_for_pair(
-            f_max, quad, sweetspot, v_op,
-            f_c, f_t, alpha_c, alpha_t, sweep_role,
-        )
-        voltages = np.linspace(v_min, v_max, n_points)
-        swept_freqs = f_max + quad * (voltages - sweetspot) ** 2
+        zeros = _zeros_on_voltage(targets, f_idle, quad, v_idle)
+        v_lo, v_hi = _voltage_range(targets, zeros, f_idle, quad, v_idle)
+        x = np.linspace(v_lo, v_hi, n_points)
+        swept = f_idle + quad * (x - v_idle) ** 2
+        x_kind = "voltage"
+        missing = [lbl for lbl, _ in targets
+                   if not any(z["label"].startswith(lbl) for z in zeros)]
+        if missing:
+            notes.append(
+                "No reachable crossing for " + ", ".join(missing) + " — the "
+                f"parabola on {moving['name']} only bends "
+                f"{'up' if quad > 0 else 'down'} from its idle point, so that "
+                f"interaction lies on the side flux cannot reach.")
     else:
-        f_span = max(abs(alpha_c), abs(alpha_t)) * 3
-        swept_freqs = np.linspace(moving["f_01"] - f_span,
-                                  moving["f_01"] + f_span, n_points)
-        voltages = np.full_like(swept_freqs, v_op)
+        zeros = [{"label": lbl, "voltage": None, "frequency": f}
+                 for lbl, f in targets]
+        span = max(abs(alpha_c), abs(alpha_t), 1.0) * 3.0
+        lo = min([f_idle - span] + [f for _, f in targets])
+        hi = max([f_idle + span] + [f for _, f in targets])
+        pad = (hi - lo) * 0.05
+        x = np.linspace(lo - pad, hi + pad, n_points)
+        swept = x
+        x_kind = "frequency"
 
     if sweep_role == "control":
-        fc_arr = swept_freqs
-        ft_val = f_t
+        fc_arr, ft_arr = swept, np.full_like(swept, f_t)
     else:
-        fc_arr = np.full_like(swept_freqs, f_c)
-        ft_val = None
-        ft_arr = swept_freqs
+        fc_arr, ft_arr = np.full_like(swept, f_c), swept
 
-    if sweep_role == "control":
-        delta_11_20 = ft_val - fc_arr - alpha_c
-        delta_11_02 = fc_arr - ft_val - alpha_t
-        delta_10_01 = fc_arr - ft_val
-    else:
-        delta_11_20 = ft_arr - f_c - alpha_c
-        delta_11_02 = f_c - ft_arr - alpha_t
-        delta_10_01 = f_c - ft_arr
-
-    zeros = _find_zero_crossings_pair(
-        f_max, quad, sweetspot, f_c, f_t, alpha_c, alpha_t, sweep_role,
-    )
+    # See the module docstring: A is stored POSITIVE, so |20> = 2*f_c - A_c.
+    delta_11_20 = ft_arr - fc_arr + alpha_c
+    delta_11_02 = fc_arr - ft_arr + alpha_t
+    delta_10_01 = fc_arr - ft_arr
 
     return {
-        "voltages": voltages.tolist(),
-        "frequencies": swept_freqs.tolist(),
-        "f_max": f_max,
+        "x": x.tolist(),
+        "x_kind": x_kind,
+        "voltages": x.tolist() if x_kind == "voltage" else None,
+        "frequencies": swept.tolist(),
         "quad_term": quad if has_flux else None,
-        "sweetspot": sweetspot,
+        "idle_voltage": v_idle,
+        "idle_source": moving.get("idle_source"),
         "delta_11_20": delta_11_20.tolist(),
         "delta_11_02": delta_11_02.tolist(),
         "delta_10_01": delta_10_01.tolist(),
         "zeros": zeros,
-        "operating_point": {"voltage": v_op, "frequency": moving["f_01"]},
+        "operating_point": {
+            "x": v_idle if x_kind == "voltage" else f_idle,
+            "voltage": v_idle,
+            "frequency": f_idle,
+        },
         "has_flux": has_flux,
+        "notes": notes,
         "moving": moving["name"],
-        "fixed": (target if sweep_role == "control" else control)["name"],
+        "fixed": fixed["name"],
         "sweep_role": sweep_role,
     }
 
@@ -157,47 +219,49 @@ def build_plotly_figure(
 ) -> dict[str, Any]:
     """Build a Plotly-JSON figure from a sweep result.
 
-    Returns ``{data, layout, clickable}`` ready for ``jsonify()``.
+    Returns ``{data, layout, clickable, notes}`` ready for ``jsonify()``.
     """
     if "error" in sweep:
         return {"error": sweep["error"]}
 
     hz_to_mhz = 1e-6
-    voltages = sweep["voltages"]
+    x_kind = sweep["x_kind"]
+    xs = sweep["x"] if x_kind == "voltage" else [v * hz_to_mhz for v in sweep["x"]]
     moving_name = sweep["moving"]
-    fixed_name = sweep["fixed"]
+
+    def _fmt_x(v: float) -> str:
+        return f"{v:.4f} V" if x_kind == "voltage" else f"{v * hz_to_mhz:.1f} MHz"
 
     traces = []
     for key, label, color in _DETUNING_TRACES:
-        vals = [v * hz_to_mhz for v in sweep[key]]
         traces.append({
-            "x": voltages,
-            "y": vals,
+            "x": xs,
+            "y": [v * hz_to_mhz for v in sweep[key]],
             "type": "scatter",
             "mode": "lines",
             "name": label,
             "line": {"color": color, "width": 2},
             "hovertemplate": (
                 f"<b>{label}</b><br>"
-                "V = %{x:.4f} V<br>"
-                "Δ = %{y:.1f} MHz"
-                "<extra></extra>"
+                + ("V = %{x:.4f} V<br>" if x_kind == "voltage"
+                   else "f = %{x:.1f} MHz<br>")
+                + "Δ = %{y:.1f} MHz<extra></extra>"
             ),
         })
 
-    # Zero-crossing markers
-    zero_v = []
-    zero_d = []
-    zero_labels = []
+    # Zero-crossing markers — only the ones that exist on THIS axis.
+    zero_x, zero_labels = [], []
     for z in sweep["zeros"]:
-        zero_v.append(z["voltage"])
-        zero_d.append(0.0)
+        zx = z["voltage"] if x_kind == "voltage" else z["frequency"]
+        if zx is None:
+            continue
+        zero_x.append(zx if x_kind == "voltage" else zx * hz_to_mhz)
         zero_labels.append(z["label"])
 
-    if zero_v:
+    if zero_x:
         traces.append({
-            "x": zero_v,
-            "y": zero_d,
+            "x": zero_x,
+            "y": [0.0] * len(zero_x),
             "type": "scatter",
             "mode": "markers+text",
             "name": "Interaction points",
@@ -207,48 +271,41 @@ def build_plotly_figure(
             "textfont": {"size": 10},
             "hovertemplate": (
                 "<b>%{text}</b><br>"
-                "V = %{x:.4f} V"
-                "<extra></extra>"
+                + ("V = %{x:.4f} V" if x_kind == "voltage" else "f = %{x:.1f} MHz")
+                + "<extra></extra>"
             ),
         })
 
-    # Operating point marker
     op = sweep["operating_point"]
-    f_op = op["frequency"]
-    d_11_20_op = (sweep["fixed_f01"] if "fixed_f01" in sweep
-                  else _interp_at(voltages, sweep["delta_11_20"], op["voltage"])) * hz_to_mhz
+    op_x = op["x"] if x_kind == "voltage" else op["x"] * hz_to_mhz
     traces.append({
-        "x": [op["voltage"]],
+        "x": [op_x],
         "y": [0],
         "type": "scatter",
         "mode": "markers",
         "name": "Operating point",
         "marker": {"color": "#2ecc71", "size": 12, "symbol": "diamond"},
         "hovertemplate": (
-            f"<b>Operating point</b><br>"
-            f"V = {op['voltage']:.4f} V<br>"
-            f"f₀₁ = {op['frequency'] * hz_to_mhz:.1f} MHz"
+            "<b>Operating point</b><br>"
+            + (f"V = {op['voltage']:.4f} V<br>" if op["voltage"] is not None else "")
+            + f"f₀₁ = {op['frequency'] * hz_to_mhz:.1f} MHz"
             "<extra></extra>"
         ),
         "showlegend": True,
     })
 
-    # Operating point vertical line
-    y_vals = []
-    for key, _, _ in _DETUNING_TRACES:
-        y_vals.extend(v * hz_to_mhz for v in sweep[key])
+    y_vals = [v * hz_to_mhz for key, _, _ in _DETUNING_TRACES for v in sweep[key]]
     y_min = min(y_vals) if y_vals else -500
     y_max = max(y_vals) if y_vals else 500
 
-    layout = {
+    x_title = (f"{moving_name} z voltage (V)" if x_kind == "voltage"
+               else f"{moving_name} f₀₁ (MHz)")
+    layout: dict[str, Any] = {
         "title": {
             "text": f"Sweeping {moving_name} ({moving_role})",
             "font": {"size": 14},
         },
-        "xaxis": {
-            "title": {"text": f"{moving_name} z voltage (V)"},
-            "zeroline": False,
-        },
+        "xaxis": {"title": {"text": x_title}, "zeroline": False},
         "yaxis": {
             "title": {"text": "Detuning (MHz)"},
             "zeroline": True,
@@ -258,8 +315,8 @@ def build_plotly_figure(
         "shapes": [
             {
                 "type": "line",
-                "x0": op["voltage"],
-                "x1": op["voltage"],
+                "x0": op_x,
+                "x1": op_x,
                 "y0": y_min * 1.1,
                 "y1": y_max * 1.1,
                 "line": {"color": "rgba(46,204,113,0.4)", "width": 1, "dash": "dot"},
@@ -271,20 +328,18 @@ def build_plotly_figure(
     }
 
     quad_term = sweep.get("quad_term")
-    sweetspot = sweep.get("sweetspot", 0.0)
-    if quad_term and sweep["has_flux"]:
-        v_lo = min(voltages)
-        v_hi = max(voltages)
+    if x_kind == "voltage" and quad_term:
+        v_idle = sweep["idle_voltage"]
+        v_lo, v_hi = min(xs), max(xs)
         n_ticks = 8
         tick_vs = [v_lo + i * (v_hi - v_lo) / n_ticks for i in range(n_ticks + 1)]
         tick_labels = []
         for v in tick_vs:
-            det_hz = quad_term * (v - sweetspot) ** 2
-            det_mhz = det_hz * hz_to_mhz
+            det_mhz = quad_term * (v - v_idle) ** 2 * hz_to_mhz
             if abs(det_mhz) < 0.5:
                 tick_labels.append("0")
             elif abs(det_mhz) >= 1000:
-                tick_labels.append(f"{det_mhz / 1000:.1f} GHz")
+                tick_labels.append(f"{det_mhz / 1000:.1f}k")
             else:
                 tick_labels.append(f"{det_mhz:.0f}")
         # Plotly needs at least one trace bound to xaxis2 for it to render.
@@ -298,7 +353,7 @@ def build_plotly_figure(
             "hoverinfo": "skip",
         })
         layout["xaxis2"] = {
-            "title": {"text": f"{moving_name} detuning from sweetspot (MHz)"},
+            "title": {"text": f"{moving_name} detuning from idle bias (MHz)"},
             "overlaying": "x",
             "side": "top",
             "range": [v_lo, v_hi],
@@ -309,8 +364,10 @@ def build_plotly_figure(
         }
 
     clickable = None
-    if sweep["has_flux"]:
-        offset_path = f"qubits.{moving_name}.z.joint_offset"
+    if x_kind == "voltage" and sweep.get("idle_source"):
+        # write back into the SAME field the idle bias was read from, so a
+        # click never silently retargets a chip that idles independently
+        offset_path = f"qubits.{moving_name}.{sweep['idle_source']}"
         clickable = {
             "axis": "x",
             "qubit": moving_name,
@@ -323,7 +380,8 @@ def build_plotly_figure(
             }],
         }
 
-    return {"data": traces, "layout": layout, "clickable": clickable}
+    return {"data": traces, "layout": layout, "clickable": clickable,
+            "notes": sweep.get("notes") or []}
 
 
 def plan_switch_moving_qubit(
@@ -331,8 +389,11 @@ def plan_switch_moving_qubit(
 ) -> dict[str, Any]:
     """Plan the edits needed to switch the moving qubit for a pair.
 
-    Returns ``{edits: [(dot_path, value)], deletes: [dot_path], error?}``
-    to be staged through ``modifier.batch_set`` / ``modifier.delete_paths``.
+    Returns ``{sets, creates, deletes, error?}`` where *sets* are
+    ``(dot_path, value)`` for keys that already exist, *creates* are
+    ``(dot_path, value)`` for keys that do not, and *deletes* are dot-paths.
+    The route stages them through ``Modifier.set_value`` /
+    ``Modifier.create_subtree`` / ``Modifier.delete_subtree``.
     """
     from .cr_semantics import is_cz_shaped_macro
 
@@ -342,11 +403,12 @@ def plan_switch_moving_qubit(
     if not isinstance(pair, dict):
         return {"error": f"Pair {pair_name!r} not found."}
 
-    current_role = pair.get("moving_qubit")
-    if new_role == current_role:
-        return {"error": "Already set to that role.", "edits": [], "deletes": []}
     if new_role not in ("control", "target"):
         return {"error": f"Invalid role: {new_role!r}"}
+    current_role = pair.get("moving_qubit")
+    if new_role == current_role:
+        return {"error": "Already set to that role.",
+                "sets": [], "creates": [], "deletes": []}
 
     old_role = current_role
     qc_ref = pair.get("qubit_control", "")
@@ -363,7 +425,8 @@ def plan_switch_moving_qubit(
     if not isinstance(new_z, dict):
         return {"error": f"{new_qubit} has no z element — cannot host CZ pulses."}
     new_z_ops = new_z.get("operations")
-    if not isinstance(new_z_ops, dict):
+    has_ops_dict = isinstance(new_z_ops, dict)
+    if not has_ops_dict:
         new_z_ops = {}
 
     old_q = qubits.get(old_qubit, {})
@@ -376,11 +439,15 @@ def plan_switch_moving_qubit(
     if not isinstance(macros, dict):
         macros = {}
 
-    edits: list[tuple[str, Any]] = []
+    sets: list[tuple[str, Any]] = []
+    creates: list[tuple[str, Any]] = []
     deletes: list[str] = []
 
-    edits.append((f"qubit_pairs.{pair_name}.moving_qubit", new_role))
+    # `moving_qubit` may not exist yet on an older chip.
+    (sets if "moving_qubit" in pair else creates).append(
+        (f"qubit_pairs.{pair_name}.moving_qubit", new_role))
 
+    new_ops: dict[str, Any] = {}
     for gate_name, gate in macros.items():
         if not isinstance(gate, dict) or not is_cz_shaped_macro(gate):
             continue
@@ -391,10 +458,20 @@ def plan_switch_moving_qubit(
 
         _move_gate_ops(
             pair_name, gate_name, old_qubit, new_qubit,
-            old_z_ops, edits, deletes,
+            old_z_ops, new_z_ops, new_ops, deletes,
         )
 
-    return {"edits": edits, "deletes": deletes}
+    if new_ops:
+        if has_ops_dict:
+            for op_name, value in new_ops.items():
+                creates.append(
+                    (f"qubits.{new_qubit}.z.operations.{op_name}", value))
+        else:
+            # the parent dict itself is missing — create_subtree needs an
+            # existing parent, so create `operations` whole, in one entry
+            creates.append((f"qubits.{new_qubit}.z.operations", new_ops))
+
+    return {"sets": sets, "creates": creates, "deletes": deletes}
 
 
 # ── Private helpers ──────────────────────────────────────────────────────────
@@ -407,131 +484,88 @@ _DETUNING_TRACES = [
 
 
 def _to_float(v: Any) -> float | None:
-    if v is None:
+    if v is None or isinstance(v, bool):
         return None
-    if isinstance(v, str):
-        try:
-            return float(v)
-        except (ValueError, TypeError):
-            return None
     try:
-        return float(v)
+        f = float(v)
     except (ValueError, TypeError):
         return None
+    return None if math.isnan(f) or math.isinf(f) else f
 
 
-def _find_zero_crossings_pair(
-    f_max: float,
-    quad: float | None,
-    sweetspot: float,
-    f_c: float,
-    f_t: float,
-    alpha_c: float,
-    alpha_t: float,
-    sweep_role: str,
-) -> list[dict[str, Any]]:
-    """Solve for the voltages where each detuning is zero.
+def _zero_frequencies(
+    f_c: float, f_t: float, alpha_c: float, alpha_t: float, sweep_role: str,
+) -> list[tuple[str, float]]:
+    """The swept qubit's frequency at which each detuning vanishes.
 
-    The three detunings are ALWAYS in control/target coordinates:
-        Δ(11−20) = f_t − f_c − α_c = 0  →  swept freq = f_t − α_c  (if sweeping c)
-                                              or f_t = f_c + α_c      (if sweeping t)
-        Δ(11−02) = f_c − f_t − α_t = 0  →  swept freq = f_t + α_t  (if sweeping c)
-                                              or f_t = f_c − α_t      (if sweeping t)
-        Δ(10−01) = f_c − f_t = 0         →  swept freq = f_t        (if sweeping c)
-                                              or f_t = f_c             (if sweeping t)
+        D(11-20) = f_t - f_c + A_c = 0
+        D(11-02) = f_c - f_t + A_t = 0
+        D(10-01) = f_c - f_t      = 0
+
+    solved for whichever of f_c / f_t is the one being swept.  These are
+    exactly ``cz_branch``'s two branch conditions plus the 1Q resonance.
     """
-    zeros: list[dict[str, Any]] = []
-
     if sweep_role == "control":
-        freq_targets = [
-            ("Δ(11−20)=0", f_t - alpha_c),
-            ("Δ(11−02)=0", f_t + alpha_t),
+        return [
+            ("Δ(11−20)=0", f_t + alpha_c),
+            ("Δ(11−02)=0", f_t - alpha_t),
             ("Δ(10−01)=0", f_t),
         ]
-    else:
-        freq_targets = [
-            ("Δ(11−20)=0", f_c + alpha_c),
-            ("Δ(11−02)=0", f_c - alpha_t),
-            ("Δ(10−01)=0", f_c),
-        ]
+    return [
+        ("Δ(11−20)=0", f_c - alpha_c),
+        ("Δ(11−02)=0", f_c + alpha_t),
+        ("Δ(10−01)=0", f_c),
+    ]
 
-    for label, f_target in freq_targets:
-        if quad is not None and quad != 0:
-            v = _freq_to_voltage(f_target, f_max, quad, sweetspot)
-            if v is not None:
-                for vi in v:
-                    zeros.append({
-                        "label": label,
-                        "voltage": vi,
-                        "frequency": f_target,
-                    })
-        else:
-            zeros.append({
-                "label": label,
-                "voltage": sweetspot,
-                "frequency": f_target,
-            })
 
+def _zeros_on_voltage(
+    targets: list[tuple[str, float]],
+    f_idle: float, quad: float, v_idle: float,
+) -> list[dict[str, Any]]:
+    """Invert ``f = f_idle + quad*(V - V_idle)^2`` for each zero frequency.
+
+    A target on the side the parabola does not bend towards is simply not
+    reachable by flux and is left out — never bent onto the axis anyway.
+    """
+    zeros: list[dict[str, Any]] = []
+    for label, f_target in targets:
+        ratio = (f_target - f_idle) / quad
+        if ratio < 0:
+            continue
+        root = math.sqrt(ratio)
+        if root == 0.0:
+            zeros.append({"label": label, "voltage": v_idle,
+                          "frequency": f_target})
+            continue
+        for sign in (1.0, -1.0):
+            zeros.append({"label": label, "voltage": v_idle + sign * root,
+                          "frequency": f_target})
     return zeros
 
 
-def _freq_to_voltage(
-    f_target: float, f_max: float, quad: float, sweetspot: float,
-) -> list[float] | None:
-    """Invert the parabolic model: f = f_max + quad*(V-Vss)²."""
-    delta_f = f_target - f_max
-    if quad == 0:
-        return None
-    ratio = delta_f / quad
-    if ratio < 0:
-        return None
-    sqrt_r = math.sqrt(ratio)
-    return [sweetspot + sqrt_r, sweetspot - sqrt_r]
-
-
-def _sweep_range_for_pair(
-    f_max: float,
-    quad: float | None,
-    sweetspot: float,
-    v_op: float,
-    f_c: float,
-    f_t: float,
-    alpha_c: float,
-    alpha_t: float,
-    sweep_role: str,
+def _voltage_range(
+    targets: list[tuple[str, float]],
+    zeros: list[dict[str, Any]],
+    f_idle: float, quad: float, v_idle: float,
 ) -> tuple[float, float]:
-    """Determine a voltage sweep range that covers all zero crossings."""
-    zeros = _find_zero_crossings_pair(
-        f_max, quad, sweetspot, f_c, f_t, alpha_c, alpha_t, sweep_role,
-    )
-    points = [v_op]
-    for z in zeros:
-        points.append(z["voltage"])
-    if sweetspot is not None:
-        points.append(sweetspot)
+    """A voltage window centred on the idle bias that shows the physics.
 
-    v_min = min(points)
-    v_max = max(points)
-    margin = max((v_max - v_min) * 0.2, 0.01)
-    return v_min - margin, v_max + margin
-
-
-def _interp_at(xs: list[float], ys: list[float], x0: float) -> float:
-    """Linear interpolation to find y at x0."""
-    if not xs:
-        return 0.0
-    if x0 <= xs[0]:
-        return ys[0]
-    if x0 >= xs[-1]:
-        return ys[-1]
-    for i in range(len(xs) - 1):
-        if xs[i] <= x0 <= xs[i + 1]:
-            t = (x0 - xs[i]) / (xs[i + 1] - xs[i]) if xs[i + 1] != xs[i] else 0
-            return ys[i] + t * (ys[i + 1] - ys[i])
-    return ys[-1]
+    Reachable crossings set the width.  When none is reachable the window
+    still spans the voltage that WOULD reach the furthest of them, so the
+    plot keeps a physical scale instead of collapsing to a hairline around
+    the operating point (which is what an empty crossing list used to do).
+    """
+    half = max((abs(z["voltage"] - v_idle) for z in zeros), default=0.0)
+    if half <= 0.0:
+        reach = max((abs(f - f_idle) for _, f in targets), default=0.0)
+        half = math.sqrt(reach / abs(quad)) if reach > 0 and quad else 0.0
+    if half <= 0.0:
+        half = 0.05
+    margin = half * 0.2
+    return v_idle - half - margin, v_idle + half + margin
 
 
-def _ref_to_name(ref: str) -> str | None:
+def _ref_to_name(ref: Any) -> str | None:
     """Extract qubit name from a QUAM pointer like ``#/qubits/qA1``."""
     if isinstance(ref, str) and ref.startswith("#/qubits/"):
         return ref.split("/")[-1]
@@ -540,50 +574,57 @@ def _ref_to_name(ref: str) -> str | None:
     return None
 
 
+def _matches_gate(op_name: str, gate_name: str) -> bool:
+    """Does *op_name* belong to *gate_name*?
+
+    The naming on real chips is exactly ``<macro>_pulse`` — the CQT 20Q chip
+    carries ``cz_unipolar_pulse`` / ``cz_flattop_pulse`` / ``cz_bipolar_pulse``
+    against macros ``cz_unipolar`` / ``cz_flattop`` / ``cz_bipolar`` — and that
+    is what the fallback below creates.  A bare ``startswith(gate_name)`` (or
+    even ``gate_name + "_"``) would drag a NEIGHBOURING gate's pulse along:
+    moving ``cz_flattop`` would take ``cz_flattop_2_pulse`` with it and break
+    a gate nobody asked about.  Leaving an oddly-named pulse behind is the
+    visible failure; silently stealing another gate's is not.
+    """
+    return op_name in (gate_name, f"{gate_name}_pulse")
+
+
 def _move_gate_ops(
     pair_name: str,
     gate_name: str,
     old_qubit: str,
     new_qubit: str,
     old_z_ops: dict,
-    edits: list[tuple[str, Any]],
+    new_z_ops: dict,
+    new_ops: dict[str, Any],
     deletes: list[str],
 ) -> None:
-    """Stage edits to move a CZ gate's z-line operations between qubits."""
+    """Collect the z-line operations a CZ gate must move between qubits."""
     macro_ref = f"#/qubit_pairs/{pair_name}/macros/{gate_name}"
+    default_op = {
+        "__class__": "SquarePulse",
+        "amplitude": f"{macro_ref}/flux_pulse_qubit/amplitude",
+        "length": f"{macro_ref}/flux_pulse_qubit/length",
+    }
 
-    pulse_names = [
-        k for k in old_z_ops
-        if k.startswith(gate_name) or k == f"{gate_name}_pulse"
-    ]
+    pulse_names = [k for k in old_z_ops if _matches_gate(k, gate_name)]
 
     for pulse_name in pulse_names:
-        old_path = f"qubits.{old_qubit}.z.operations.{pulse_name}"
-        deletes.append(old_path)
-
-        new_path = f"qubits.{new_qubit}.z.operations.{pulse_name}"
+        deletes.append(f"qubits.{old_qubit}.z.operations.{pulse_name}")
+        if pulse_name in new_z_ops:
+            continue                      # already there — never overwrite
         old_op = old_z_ops.get(pulse_name)
         if isinstance(old_op, dict):
-            linked = {}
-            for k, v in old_op.items():
-                if isinstance(v, str) and v.startswith(f"#/qubits/{old_qubit}"):
-                    linked[k] = v.replace(
-                        f"#/qubits/{old_qubit}", f"#/qubits/{new_qubit}")
-                else:
-                    linked[k] = v
-            edits.append((new_path, linked))
+            new_ops[pulse_name] = {
+                k: (v.replace(f"#/qubits/{old_qubit}", f"#/qubits/{new_qubit}")
+                    if isinstance(v, str) and v.startswith(f"#/qubits/{old_qubit}")
+                    else v)
+                for k, v in old_op.items()
+            }
         else:
-            edits.append((new_path, {
-                "__class__": "SquarePulse",
-                "amplitude": f"{macro_ref}/flux_pulse_qubit/amplitude",
-                "length": f"{macro_ref}/flux_pulse_qubit/length",
-            }))
+            new_ops[pulse_name] = dict(default_op)
 
     if not pulse_names:
         op_name = f"{gate_name}_pulse"
-        new_path = f"qubits.{new_qubit}.z.operations.{op_name}"
-        edits.append((new_path, {
-            "__class__": "SquarePulse",
-            "amplitude": f"{macro_ref}/flux_pulse_qubit/amplitude",
-            "length": f"{macro_ref}/flux_pulse_qubit/length",
-        }))
+        if op_name not in new_z_ops:
+            new_ops[op_name] = dict(default_op)
