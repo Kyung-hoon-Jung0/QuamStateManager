@@ -656,3 +656,10 @@ one** (docs/136, 137).
   the same never-clobber gate. Default ON, Settings → "Ctrl+Z writes live" (OFF is
   the old stage-only behaviour). State-History stage → Apply, dataset Apply to
   chip and restore-live are walkable too (docs/160).
+
+### Sidebar selection
+
+- **The tick box is a real control**: 18 px, rounded, SM-blue fill with a check,
+  a tooltip saying what it selects for, and a hint under the compare buttons
+  while nothing is ticked. **Compare Selected / Trend Tracker collapse an open
+  run detail first** so the result is on top, not under it (docs/161).

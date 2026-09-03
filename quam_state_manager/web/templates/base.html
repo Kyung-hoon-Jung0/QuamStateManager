@@ -617,6 +617,9 @@
                             id="compare-clear" hidden
                             onclick="compareClearSelection()"
                             title="Untick every selected run">Clear</button>
+                    {# docs/161: what the tick boxes are FOR, said once, only
+                       while nothing is ticked (app.js syncCompareCount) #}
+                    <span class="compare-hint" id="compare-hint">&#9744; Tick runs in the list below to compare or trend them (2–5).</span>
                 </form>
                 <div class="sidebar-filter">
                     <div class="ds-search-wrap">
@@ -1432,6 +1435,21 @@
             if (!inspectorExpanded) return;
             var pane = document.getElementById("inspector-pane");
             if (!pane || !pane.querySelector("#ds-detail-root")) return;
+            window._applySplitPreset("collapsed");
+        });
+
+        // docs/161 (customer): Compare Selected / Trend Tracker land in the
+        // TOP pane, and a run detail opens the inspector at 85% -- so the
+        // result arrived under a 15% sliver and "did the compare open at
+        // all?" was the report. Any inspector content (a run detail, a qubit
+        // inspector) collapses to the user's ⤓ preset when the compare form
+        // fires; saving the sizes first is what keeps the table-pane swap's
+        // initSplit() from restoring the old split. The content stays -- ▲
+        // brings it back.
+        document.addEventListener("htmx:beforeRequest", function(e) {
+            var src = e.detail && e.detail.elt;
+            if (!src || !src.closest || !src.closest("#compare-form")) return;
+            if (!inspectorExpanded || !inspectorHasContent()) return;
             window._applySplitPreset("collapsed");
         });
 

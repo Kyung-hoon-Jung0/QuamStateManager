@@ -1383,6 +1383,11 @@ window.setFontSize = function(size) {
             ? 'Trend Tracker (' + n + ')' : 'Trend Tracker';
         var clr = document.getElementById('compare-clear');
         if (clr) clr.hidden = n === 0;
+        // docs/161: the "what are these boxes for" line shows only while
+        // nothing is ticked -- once a tick exists the count on the button
+        // says it
+        var hint = document.getElementById('compare-hint');
+        if (hint) hint.hidden = n > 0;
     }
     window.syncCompareCount = syncCompareCount;
 

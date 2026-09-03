@@ -24,7 +24,8 @@ function treeHtml(n, keep) {
 }
 const DOM = '<div id="sidebar-tree">' + treeHtml(8) + '</div>' +
   '<form id="compare-form"><button type="submit" class="btn-compare">Compare Selected</button>' +
-  '<button type="submit" class="btn-trend">Trend Tracker</button><button type="button" id="compare-clear" hidden>Clear</button></form>';
+  '<button type="submit" class="btn-trend">Trend Tracker</button><button type="button" id="compare-clear" hidden>Clear</button>' +
+  '<span class="compare-hint" id="compare-hint">Tick runs…</span></form>';
 
 function makeWorld(seed) {
   const dom = new JSDOM('<!doctype html><html><body>' + DOM + '</body></html>', { url: 'http://localhost/datasets', pretendToBeVisual: true });
@@ -63,9 +64,12 @@ function settle() { return new Promise((r) => setTimeout(r, 20)); }
   const { win, store, toasts } = makeWorld();
   await settle();
   ok(cmpDisabled(win) === true, 'Compare Selected is disabled with nothing ticked');
+  // docs/161: the hint line is what says what the boxes are FOR -- only while nothing is ticked
+  ok(win.document.getElementById('compare-hint').hidden === false, 'the hint shows while nothing is ticked');
   const all = boxes(win);
   click(win, all[0]);
   ok(cmpDisabled(win) === true, 'still disabled with ONE tick');
+  ok(win.document.getElementById('compare-hint').hidden === true, 'one tick hides the hint (the button count takes over)');
   for (let i = 1; i < 5; i++) click(win, all[i]);
   ok(checked(win) === 5 && label(win) === 'Compare Selected (5)' && !cmpDisabled(win), 'five ticks: count 5, button enabled');
   click(win, all[5]);
