@@ -86,3 +86,40 @@ every one).
 The Source row (Save/Manual/Auto/…) keeps "none checked = all" — it has no
 None button and nobody asked; giving it the explicit contract is the same
 two-line change if it ever comes up.
+
+## 6. The pre-customer review — three results-only-swap fallouts (2026-09-04)
+
+docs/158 made a filter change swap only `#param-history-results` (so the chips
+the user just set never re-render under them). Three surfaces still assumed the
+old full-root swap:
+
+- **F-PH1 — "Reset filters" deleted the page.** The Reset anchor is a CHILD of
+  `#param-history-filters`, which carries `hx-select="#param-history-results"`.
+  `hx-select` is an INHERITED htmx attribute, so the anchor's full-root reset
+  response was reduced to just the results container and `outerHTML`-swapped over
+  the whole `#param-history-root` — deleting the header, the Trends/Changes tab
+  strip, the chip selector and the filter form itself until a reload (and, with
+  `#param-history-root` gone, `paramHistoryOpenDrawer` lost `data-active-chip-key`).
+  The anchor now declares `hx-select="unset"`.
+
+- **F-PH2 — another chip's rows under this chip's header.** The form OMITTED the
+  `chip_key` hidden input for the loaded chip, so a filter change (results-only)
+  queried whatever chip is now active. Two windows share one server context
+  (docs/120), so if window B loaded a different chip, window A's next filter
+  change painted B's values into A's results while A's header still said A. The
+  form now ALWAYS carries the rendered chip's own key, pinning the results to the
+  header (and flipping `is_loaded_chip` off, so the live-value overlay disappears
+  when the shown chip is no longer the loaded one). Single-window is unchanged.
+
+- **F-PH3 — unticking every Source showed all sources with all five chips dark.**
+  The Source row kept the old "none checked = all" contract, but with the form no
+  longer re-rendering, an all-off row left every chip dark while the grid still
+  showed every snapshot. Source now has the same explicit-empty contract
+  props/qubits got: a hidden empty `triggers` input makes an all-unticked row a
+  present-but-empty selection (`none_triggers`) — an honest empty grid — and the
+  first load (no `triggers` param at all) still lights and shows every source.
+
+Pinned by `tests/test_sweep_misc.py::TestFinalReviewParamHistory` (F-PH1 anchor,
+F-PH3 empty grid + hidden input) and `::TestParamHistoryChipKey::test_the_form_always_carries_the_rendered_chips_key`
+(F-PH2), all mutation-checked. The docs/158 pin that had pinned the loaded chip's
+chip_key OMISSION is rewritten to assert it is always present.

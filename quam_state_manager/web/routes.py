@@ -18729,9 +18729,16 @@ def param_history():
     # button flipped every chip off and the re-render flipped them back on.
     explicit_props = "props" in request.args
     explicit_qubits = "qubits" in request.args
+    # F-PH3 (final review): the Source row kept the old "none checked = all"
+    # contract, but a filter change swaps only #param-history-results, so the
+    # form no longer re-renders -- unticking every source left all five chips
+    # dark while the grid still showed every snapshot. Give it the same
+    # explicit-empty contract props/qubits got in docs/158: a present-but-empty
+    # `triggers` (its hidden input + no checked box) is an honest empty grid.
+    explicit_triggers = "triggers" in request.args
     raw_props = [p for p in request.args.getlist("props") if p]
     raw_qubits = [q for q in request.args.getlist("qubits") if q]
-    raw_triggers = request.args.getlist("triggers")
+    raw_triggers = [t for t in request.args.getlist("triggers") if t]
     chip_key_param = request.args.get("chip_key", "").strip()
 
     active_chip_key = chip_key_param or loaded_key
@@ -18747,6 +18754,7 @@ def param_history():
     none_qubits = explicit_qubits and not raw_qubits
     qubit_filter = qubits_selected or None
     triggers = raw_triggers or None
+    none_triggers = explicit_triggers and not raw_triggers
     # Loaded chip's default view = recent 7d (active monitoring).
     # Other chip view = all (user is browsing historical data, often
     # months old from past backfills).
@@ -18765,7 +18773,7 @@ def param_history():
     index_error = None
     try:
         # docs/158: nothing selected is an honest empty grid, not a query
-        rows = [] if (none_props or none_qubits) else hm.extract_property_history(
+        rows = [] if (none_props or none_qubits or none_triggers) else hm.extract_property_history(
             target_path, props,
             qubit_filter=qubit_filter,
             since=since, until=until,
@@ -18926,7 +18934,8 @@ def param_history():
             disk_stats=disk_stats,
             index_error=index_error,
             since=since_raw,
-            triggers_filter=triggers or [],
+            triggers_filter=raw_triggers,
+            none_triggers=none_triggers,
             only_changed=only_changed,
             # Multi-chip:
             active_chip_key=active_chip_key,

@@ -97,7 +97,8 @@ class TestExplicitEmpty:
 
     def test_both_none(self, client):
         html = _get(client, "?props=&qubits=")
-        assert "No properties and no qubits are selected" in html
+        # F-PH3 unified the empty-state message across props/qubits/sources
+        assert "No properties and qubits are selected" in html
         assert 'phf-chip-qubit active' not in html and 'phf-chip-prop active' not in html
 
     def test_a_partial_selection_still_works(self, client):

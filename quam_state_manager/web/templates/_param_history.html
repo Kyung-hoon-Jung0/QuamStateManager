@@ -283,8 +283,17 @@
         hx-push-url="true" hx-trigger="change delay:500ms" hx-sync="this:replace">
     {# code-review sweep (docs/158): a ?chip_key= view must keep filtering THAT
        chip — without this the filter request fell back to the loaded chip and
-       swapped its results under the other chip's header #}
-    {% if not is_loaded_chip %}<input type="hidden" name="chip_key" value="{{ active_chip_key }}">{% endif %}
+       swapped its results under the other chip's header.
+       F-PH1/F-PH2 (final review): emit it UNCONDITIONALLY (was gated on
+       `not is_loaded_chip`). A filter change swaps only #param-history-results,
+       so the header/selector never re-render; if another window loads a
+       DIFFERENT chip, this window's next filter request would otherwise query
+       the newly-active chip and paint ITS rows under this window's header.
+       Carrying the rendered chip's own key pins the results to the header
+       (and flips is_loaded_chip off, so the live-value overlay disappears when
+       the shown chip is no longer the loaded one). Single-window is unchanged:
+       active_chip_key == the loaded chip. #}
+    <input type="hidden" name="chip_key" value="{{ active_chip_key }}">{# noqa #}
 
     <div class="phf-row">
       <label class="phf-label">Date</label>
@@ -301,10 +310,14 @@
     <div class="phf-row">
       <label class="phf-label">Source</label>
       <div class="phf-chips">
+        {# F-PH3 (final review): the hidden empty input makes an all-unticked
+           Source row a PRESENT-but-empty `triggers` (none_triggers) -- an
+           honest empty grid -- rather than the old "none = all". A chip is lit
+           iff selected, except the default first load (nothing selected AND not
+           an explicit empty), which lights all. Same shape as Qubits. #}
+        <input type="hidden" name="triggers" value="">
         {% for tk in ['save','manual','auto','experiment','restore'] %}
-          {# Default (no filter) shows all four as active.
-             A non-empty triggers_filter list overrides — only those listed are active. #}
-          {% set is_active = (tk in triggers_filter) or (not triggers_filter) %}
+          {% set is_active = (tk in triggers_filter) or (not triggers_filter and not none_triggers) %}
           <label class="phf-chip phf-chip-trigger phf-trig-{{ tk }}{% if is_active %} active{% endif %}">
             <input type="checkbox" name="triggers" value="{{ tk }}"
                    {% if is_active %}checked{% endif %}>
@@ -366,8 +379,14 @@
         <input type="checkbox" name="only_changed" value="1" {% if only_changed %}checked{% endif %}>
         Only show fields that changed
       </label>
+      {# F-PH1 (final review): this anchor is a CHILD of #param-history-filters,
+         which carries hx-select="#param-history-results" (docs/158). hx-select
+         is an INHERITED htmx attribute, so without hx-select="unset" the reset
+         response is reduced to just the results container and outerHTML-swapped
+         over the whole #param-history-root -- deleting the header, tab strip,
+         chip selector and the filter form itself until a full reload. #}
       <a href="/param-history" hx-get="/param-history" hx-target="#param-history-root"
-         hx-swap="outerHTML" hx-push-url="true"
+         hx-select="unset" hx-swap="outerHTML" hx-push-url="true"
          class="phf-chip" role="button" style="text-decoration:none">Reset filters</a>
       <button type="button" class="phf-backfill outline btn-sm"
               onclick="paramHistoryBackfill()">Import from workspace &#8635;</button>
@@ -410,13 +429,17 @@
     {% endif %}
   </div>
 
-  {% if none_props or none_qubits %}
-    {# docs/158: the None button's honest answer — not the defaults, not
-       every qubit, and not "no data matches" either #}
+  {% if none_props or none_qubits or none_triggers %}
+    {# docs/158 + F-PH3: the None answer — not the defaults, not every qubit,
+       not every source, and not "no data matches" either #}
     <div class="param-history-empty param-history-none">
       <p><strong>Nothing selected.</strong></p>
       <p class="muted">
-        {% if none_props and none_qubits %}No properties and no qubits are selected{% elif none_props %}No properties are selected{% else %}No qubits are selected{% endif %}
+        {% set _none = [] %}
+        {% if none_props %}{% set _ = _none.append('properties') %}{% endif %}
+        {% if none_qubits %}{% set _ = _none.append('qubits') %}{% endif %}
+        {% if none_triggers %}{% set _ = _none.append('sources') %}{% endif %}
+        No {{ _none | join(' and ') }} are selected
         — pick some above, or <em>All</em>.
       </p>
     </div>

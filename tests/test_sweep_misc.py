@@ -74,11 +74,16 @@ class TestParamHistoryChipKey:
         c.post("/load", data={"folder": str(folder)})
         return app, c
 
-    def test_the_loaded_chip_carries_no_chip_key_and_an_archived_view_does(self, tmp_path):
+    def test_the_form_always_carries_the_rendered_chips_key(self, tmp_path):
+        # F-PH2 (final review): the loaded chip used to OMIT chip_key, so a
+        # filter change (which swaps only #param-history-results) queried
+        # whatever chip is now active -- another window switching chips painted
+        # ITS rows under this window's header. The form now ALWAYS carries the
+        # RENDERED chip's own key, pinning the results to the header.
         app, c = self._client(tmp_path)
         html = c.get("/param-history", headers={"HX-Request": "true"}).get_data(as_text=True)
         form = re.search(r'<form id="param-history-filters".*?</form>', html, re.S).group(0)
-        assert 'name="chip_key"' not in form
+        assert 'name="chip_key"' in form, "the loaded chip's form carries its own key"
         html = c.get("/param-history?chip_key=SomeOtherChip", headers={"HX-Request": "true"}).get_data(as_text=True)
         form = re.search(r'<form id="param-history-filters".*?</form>', html, re.S).group(0)
         assert '<input type="hidden" name="chip_key" value="SomeOtherChip">' in form
@@ -114,6 +119,57 @@ class TestCalcWindowAsksBeforeOpening:
         # a silence opens; an answer never calls window.open
         assert "_openNew(trigger)" in seg
         j = _CALC_JS.index("function wireStandalone()")
-        seg2 = _CALC_JS[j:j + 2000]
+        # F-CALC-GROW added the frame-overhead measurement before the channel
+        # block, and F-CALC-DUP an announce-on-open calc-here after it, so the
+        # window is longer -- reach past both.
+        seg2 = _CALC_JS[j:j + 3600]
         assert "ch.postMessage({ type: 'calc-here' })" in seg2
         assert "ev.key !== 'quam_theme'" in seg2        # the theme follows the page
+
+
+class TestFinalReviewParamHistory:
+    """F-PH1 / F-PH3 (final review): the Reset-filters anchor and the Source
+    row, both broken by docs/158's results-only swap."""
+
+    def _client(self, tmp_path):
+        folder = tmp_path / "quam_state"
+        folder.mkdir()
+        (folder / "state.json").write_text(json.dumps({
+            "qubits": {"qA1": {"id": "qA1", "f_01": 5e9, "T1": 10.0}}, "active_qubit_names": ["qA1"]}), encoding="utf-8")
+        (folder / "wiring.json").write_text(json.dumps({"network": {"host": "10.0.0.1"}}), encoding="utf-8")
+        app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
+        c = app.test_client()
+        c.post("/load", data={"folder": str(folder)})
+        return app, c
+
+    def test_reset_filters_stops_inheriting_the_forms_hx_select(self):
+        # F-PH1: the Reset-filters anchor is a CHILD of #param-history-filters
+        # (which carries hx-select="#param-history-results"). hx-select is an
+        # INHERITED htmx attribute, so without hx-select="unset" the full-root
+        # reset response is reduced to just the results container and swapped
+        # over #param-history-root -- deleting the header/tabs/selector/form.
+        tpl = (Path(__file__).resolve().parents[1]
+               / "quam_state_manager" / "web" / "templates" / "_param_history.html").read_text(encoding="utf-8")
+        end = tpl.index(">Reset filters<")
+        anchor = tpl[tpl.rindex("<a ", 0, end):end]
+        assert 'hx-target="#param-history-root"' in anchor
+        assert 'hx-select="unset"' in anchor, "the reset anchor must not inherit the form's hx-select"
+
+    def test_unticking_all_sources_is_an_honest_empty_grid(self, tmp_path):
+        app, c = self._client(tmp_path)
+        # no triggers param -> the default (all sources); never the none-state
+        html = c.get("/param-history?props=T1&qubits=qA1",
+                     headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert "param-history-none" not in html, "the default view is not the nothing-selected state"
+        # a PRESENT-but-empty triggers row -> an honest empty grid naming sources
+        html = c.get("/param-history?props=T1&qubits=qA1&triggers=",
+                     headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert "param-history-none" in html and "sources are selected" in html
+
+    def test_the_source_row_carries_a_hidden_empty_input(self):
+        tpl = (Path(__file__).resolve().parents[1]
+               / "quam_state_manager" / "web" / "templates" / "_param_history.html").read_text(encoding="utf-8")
+        # the Source row's hidden input is what makes an all-unticked row a
+        # present-but-empty `triggers` (none_triggers) instead of "none = all"
+        src_row = tpl[tpl.index(">Source<"):tpl.index(">Source<") + 900]
+        assert '<input type="hidden" name="triggers" value="">' in src_row
