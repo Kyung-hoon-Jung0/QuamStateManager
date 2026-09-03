@@ -372,3 +372,33 @@ flag checks pass, so it costs one local read per otherwise-clean live-undo press
 and nothing on the common paths. Pinned by
 `tests/test_undo_live.py::TestWorkingCopyContentGate` (mutation-checked: without
 the fix, the 9.9e9 rides the undo onto the chip).
+
+## 5h. The pre-customer review — Ctrl+Z rewrote ANOTHER chip's live files (F-CHIPID, critical)
+
+Since docs/160 a Ctrl+Z / Ctrl+Shift+Z WRITES the active chip's live files. But
+`active_context` is process-global (docs/120: two windows share one server
+context), and `/undo` and `/redo` were the only live-write doors that never
+gated on chip identity — the edit routes have carried an `expect_chip`
+render-time token check (`_chip_mismatch_response` / `_chip_mismatch_html`, a
+409 on mismatch) since docs/120, undo/redo did not.
+
+So: a lab has SM open on chip A in one window and opens chip B in a second
+(`active_context` becomes B). The user goes back to window A, still showing chip
+A, and presses Ctrl+Z to take back an edit they made on A. **Chip B's live
+state.json is rewritten on disk** — B's last applied calibration silently rolled
+back while B's experiments read it — and window A's toast names a qubit that is
+not even on the page. Reproduced on the real routes: two chips under distinct
+parents, active = B, a `/undo` from window A rewrote B's `joint_offset`
+0.66 → 0.55.
+
+The fix gives undo/redo the same gate the edit doors use: the client
+(`window.UndoQueue`) sends this window's `window.__chipToken` as `expect_chip` on
+every `/undo` / `/redo` POST, and both routes call `_chip_mismatch_html` — a 409
+when the token no longer matches the active chip (the tray is left untouched and
+the `htmx:responseError` handler surfaces the message as a toast). An empty token
+(a caller that sends none) is byte-identical to before. Verified three ways: a
+stale token → 409, chip B untouched; the active window's own token → proceeds; an
+empty token → the previous behaviour. Pinned by
+`tests/test_undo_live.py::TestUndoChipIdentity` (server, mutation-checked) and the
+`F-CHIPID` case in `tests/ctrlz_selfcheck.cjs` (client sends the token,
+mutation-checked).

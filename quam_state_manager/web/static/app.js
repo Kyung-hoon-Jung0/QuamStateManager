@@ -5423,6 +5423,11 @@ window.UndoQueue = (function () {
         try {
             r = htmx.ajax("POST", path, {
                 source: src(), target: "#pending-tray", swap: "outerHTML",
+                // F-CHIPID: since docs/160 a Ctrl+Z writes the ACTIVE chip's
+                // live files; send this window's render-time chip token so a
+                // stale window (another tab switched chips) is refused server
+                // side instead of rewriting the wrong chip's live state.
+                values: { expect_chip: String(window.__chipToken || "") },
             });
         } catch (e) { done(); return; }
         /* A /undo that never settles used to hold `busy` FOREVER — every

@@ -12605,6 +12605,17 @@ def undo():
 
     ctx = _active_ctx()
     store = ctx.get("store") if ctx else None
+    # F-CHIPID (final review): since docs/160 a Ctrl+Z WRITES the active chip's
+    # live files, but two windows share one server context (docs/120) -- a press
+    # in a window still showing chip A, while chip B is the active context,
+    # would rewrite chip B's LIVE state.json (reverting B's last apply while B's
+    # experiments read it) and name a qubit not even on A's page. The edit doors
+    # gate on the render-time chip token (expect_chip); undo/redo never did.
+    # Refuse a stale window the same way, so the press hits nothing. An empty
+    # token (a caller that sends none) is byte-identical to before.
+    guard = _chip_mismatch_html(request.values.get("expect_chip", ""), False)
+    if guard is not None:
+        return guard
     _journal_sync(ctx)      # docs/160 C: another window may have written the journal
 
     all_entries: list = []
@@ -13240,6 +13251,12 @@ def redo():
     store = ctx.get("store") if ctx else None
     if store is None:
         return _tray_html()
+    # F-CHIPID (final review): Ctrl+Shift+Z can write the active chip's live
+    # files too -- gate a stale window's redo on the render-time chip token
+    # exactly as /undo does (see undo() for the full note).
+    guard = _chip_mismatch_html(request.values.get("expect_chip", ""), False)
+    if guard is not None:
+        return guard
     _journal_sync(ctx)      # docs/160 C
 
     top_gid = store.change_log[-1].group_id if store.change_log else None

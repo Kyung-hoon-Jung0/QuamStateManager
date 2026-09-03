@@ -1301,3 +1301,61 @@ class TestWorkingCopyContentGate:
         r = c.post("/undo")
         assert _trig(r)["cellsReverted"].get("live") is not True, "the diverged working copy must not ride the undo"
         assert _live_f01(env) == 5.0e9, "the never-verified 9.9e9 stayed off the chip"
+
+
+class TestUndoChipIdentity:
+    """F-CHIPID (final review): a Ctrl+Z / Ctrl+Shift+Z writes the ACTIVE chip's
+    live files, but two windows share one server context (docs/120). A stale
+    window (its render-time chip token != the active chip) must be refused, or a
+    press meant for chip A rewrites chip B's live state.json."""
+
+    def _chip(self, folder, qname, off, host):
+        folder.mkdir(parents=True, exist_ok=True)
+        st = {"qubits": {qname: {"id": qname, "f_01": 5.0e9, "z": {"joint_offset": off},
+                                 "xy": {"ops": {"x180": {"amp": 0.2}}}}},
+              "qubit_pairs": {}, "active_qubit_names": [qname]}
+        (folder / "state.json").write_text(json.dumps(st), encoding="utf-8")
+        (folder / "wiring.json").write_text(
+            json.dumps({"network": {"host": host, "cluster_name": "C1"}}), encoding="utf-8")
+
+    def _off(self, folder, q):
+        return json.loads((folder / "state.json").read_text())["qubits"][q]["z"]["joint_offset"]
+
+    def _two_chips(self, tmp_path):
+        A = tmp_path / "labA" / "chipA"; self._chip(A, "qA1", 0.10, "10.0.0.1")
+        B = tmp_path / "labB" / "chipB"; self._chip(B, "qB1", 0.55, "10.0.0.2")
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        c = app.test_client()
+        c.post("/load", data={"folder": str(A)})
+        tokA = c.get("/chip/active-token").get_json().get("token")
+        c.post("/field/edit-batch", json={"updates": [{"dot_path": "qubits.qA1.z.joint_offset", "value": "0.20"}], "expect_chip": ""})
+        c.post("/state/apply-to-live")
+        c.post("/load", data={"folder": str(B)})
+        tokB = c.get("/chip/active-token").get_json().get("token")
+        c.post("/field/edit-batch", json={"updates": [{"dot_path": "qubits.qB1.z.joint_offset", "value": "0.66"}], "expect_chip": ""})
+        c.post("/state/apply-to-live")
+        return c, A, B, tokA, tokB
+
+    def test_a_stale_windows_undo_never_writes_another_chip(self, tmp_path):
+        c, A, B, tokA, tokB = self._two_chips(tmp_path)
+        assert tokA and tokB and tokA != tokB
+        # window A (still showing chip A) presses Ctrl+Z while B is active
+        r = c.post("/undo", data={"expect_chip": tokA})
+        assert r.status_code == 409, "a stale window's undo must be refused"
+        assert self._off(B, "qB1") == 0.66, "chip B's live file was NOT rewritten"
+        # Ctrl+Shift+Z is gated the same way
+        r = c.post("/redo", data={"expect_chip": tokA})
+        assert r.status_code == 409
+        assert self._off(B, "qB1") == 0.66
+
+    def test_the_active_windows_own_token_proceeds(self, tmp_path):
+        c, A, B, tokA, tokB = self._two_chips(tmp_path)
+        r = c.post("/undo", data={"expect_chip": tokB})
+        assert r.status_code == 200
+        assert self._off(B, "qB1") == 0.55, "B's own token undoes B"
+
+    def test_an_empty_token_is_unchanged_behaviour(self, tmp_path):
+        c, A, B, tokA, tokB = self._two_chips(tmp_path)
+        r = c.post("/undo", data={"expect_chip": ""})
+        assert r.status_code == 200
+        assert self._off(B, "qB1") == 0.55
