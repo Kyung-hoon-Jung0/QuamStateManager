@@ -402,3 +402,38 @@ empty token → the previous behaviour. Pinned by
 `tests/test_undo_live.py::TestUndoChipIdentity` (server, mutation-checked) and the
 `F-CHIPID` case in `tests/ctrlz_selfcheck.cjs` (client sends the token,
 mutation-checked).
+
+## 5i. The pre-customer review — a mixed apply lost the chip's real value (F-MIX, critical)
+
+The sweep's §5c F1 fixed a double-journaling of a staged snapshot applied
+TOGETHER with a tray edit (docs/65 mixed state) by EXCLUDING the tray-edit paths
+from the wholesale unit entirely. But that lost the chip's real pre-apply value
+whenever an edited path was ALSO changed by the stage: the edit unit's `old` is
+the STAGED value (the working copy after the stage, before the tray edit), NOT
+the chip's pre-apply value, and with the path excluded from the wholesale unit,
+the chip's real value was journaled nowhere.
+
+So: chip holds `joint_offset 0.10, f_01 5.3e9`. The user stages an older snapshot
+(0.08 / 5.0e9) to review it, tweaks `joint_offset` to 0.55 in the grid, presses
+Apply. Chip = `0.55 / 5.0e9`. Ctrl+Z → 0.08 (the edit inverse). Ctrl+Z → f_01
+back to 5.3e9, but joint_offset stays **0.08** — a flux bias from a snapshot the
+user just undid — instead of its real pre-apply 0.10. And the branch's own pin
+asserted `0.08` as correct. Reproduced on the real routes.
+
+The wholesale unit now records an edited path at its STAGED value (chip → the
+value the working copy held before the tray edit, taken from the oldest edit
+entry's `old`) instead of excluding it, so the two units compose exactly:
+
+    chip pre-apply:  joint_offset 0.10, f_01 5.3e9
+    wholesale unit:  joint 0.10 → 0.08,  f_01 5.3e9 → 5.0e9
+    edit unit:       joint 0.08 → 0.55
+    undo edit:       joint 0.55 → 0.08
+    undo wholesale:  joint 0.08 → 0.10,  f_01 5.0e9 → 5.3e9   == the true pre-apply
+
+Created/deleted tray edits stay excluded (the edit unit owns the subtree op); a
+pure wholesale apply (no tray edits) is byte-identical to before (`staged_over`
+is empty). Verified: undoing the whole mixed apply restores `(0.10, 5.3e9)`, and
+redo round-trips to the applied `(0.55, 5.0e9)`. The docs/160 §5c pin that had
+pinned the `0.08` residue is rewritten to assert the true pre-apply; pinned by
+`tests/test_undo_live.py::TestWholesale::test_a_mixed_apply_undoes_to_the_true_pre_apply_state`
+(mutation-checked).

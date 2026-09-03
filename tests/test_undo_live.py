@@ -503,19 +503,26 @@ class TestWholesale:
         assert "y90" not in live["qubits"]["qA1"]["xy"]["ops"]
         assert live["qubits"]["qA1"]["z"]["taps"] == [1]
 
-    def test_a_mixed_apply_journals_each_path_once(self, env):
-        """sweep F1: a staged snapshot applied TOGETHER with tray edits
-        (docs/65 mixed state) used to journal the edited paths twice -- once
-        as the edit unit, once inside the wholesale unit whose `after` is the
-        working copy WITH the edits -- so the second Ctrl+Z staged a value the
-        chip never held. The wholesale unit excludes the edit unit's paths
-        and sits BELOW it; both Ctrl+Z presses write the chip's real history."""
+    def test_a_mixed_apply_undoes_to_the_true_pre_apply_state(self, env):
+        """sweep F1 + F-MIX (final review): a staged snapshot applied TOGETHER
+        with a tray edit (docs/65 mixed state). The first cut journaled the
+        edited path twice, so the sweep EXCLUDED the tray-edit paths from the
+        wholesale unit entirely -- but then the chip's real pre-apply value at an
+        edited path was journaled NOWHERE (the edit unit's `old` is the STAGED
+        value, not the chip's), so undoing the whole apply left the discarded
+        snapshot's value on the chip forever. The wholesale unit now records an
+        edited path at its STAGED value (chip -> staged), so the two units
+        compose back to the chip's TRUE pre-apply state:
+          chip pre-apply: joint_offset 0.10, f_01 5.3e9
+          undo edit:      joint 0.55 -> 0.08 (staged)
+          undo wholesale: joint 0.08 -> 0.10, f_01 5.0e9 -> 5.3e9  == pre-apply."""
         c = env["client"]
         hm = env["app"].config["history_manager"]
         hm.check_and_snapshot(_ctx(env)["path"], "manual", force=True)   # snapshot @ off 0.08, f_01 5.0e9
         ts = self._snapshot_ts(env)
         _edit(c, 0.10); _apply(c)                                          # chip: off 0.10
         _edit(c, 5.3e9, dot_path="qubits.qA1.f_01"); _apply(c)             # chip: f_01 5.3e9
+        assert (_live_off(env), _live_f01(env)) == (0.10, 5.3e9)           # TRUE pre-apply state
         assert c.post(f"/state-history/{ts}/stage").status_code == 200    # working: off 0.08, f_01 5.0e9
         _edit(c, 0.55)                                                      # a tray edit ON TOP of the stage
         _apply(c)                                                           # chip: off 0.55, f_01 5.0e9
@@ -524,16 +531,23 @@ class TestWholesale:
         assert cur == len(units) == 4
         w, e = units[-2], units[-1]
         assert w["meta"].get("wholesale") and not e["meta"].get("wholesale")
-        assert {x["path"] for x in e["entries"]} == {"qubits.qA1.z.joint_offset"}
-        assert {x["path"]: (x["old"], x["new"]) for x in w["entries"]} == {"qubits.qA1.f_01": (5.3e9, 5.0e9)}
-        # Ctrl+Z: the edit (0.55 → 0.08 as the edit recorded it: old=0.08 from the stage)
+        # the tray edit is journaled once, as the edit unit (staged -> edited)
+        assert {x["path"]: (x["old"], x["new"]) for x in e["entries"]} == {
+            "qubits.qA1.z.joint_offset": (0.08, 0.55)}
+        # the wholesale unit records BOTH the pure-stage f_01 AND the edited
+        # joint_offset at its STAGED value (chip -> staged), never the edited value
+        assert {x["path"]: (x["old"], x["new"]) for x in w["entries"]} == {
+            "qubits.qA1.f_01": (5.3e9, 5.0e9),
+            "qubits.qA1.z.joint_offset": (0.10, 0.08)}
+        # Ctrl+Z: the edit inverse (0.55 -> 0.08, the staged value)
         r = c.post("/undo")
         assert _trig(r)["cellsReverted"]["live"] is True, _trig(r)
         assert _live_off(env) == 0.08 and _live_f01(env) == 5.0e9
-        # Ctrl+Z: the wholesale base (f_01 back to what the chip held before the stage)
+        # Ctrl+Z: the wholesale inverse -> the chip's TRUE pre-apply state
         r = c.post("/undo")
         assert _trig(r)["cellsReverted"]["live"] is True, _trig(r)
-        assert _live_off(env) == 0.08 and _live_f01(env) == 5.3e9
+        assert (_live_off(env), _live_f01(env)) == (0.10, 5.3e9), \
+            "undoing the whole apply restores the chip's real pre-apply state, not the snapshot"
         c.post("/redo"); c.post("/redo")
         assert _live_off(env) == 0.55 and _live_f01(env) == 5.0e9
 

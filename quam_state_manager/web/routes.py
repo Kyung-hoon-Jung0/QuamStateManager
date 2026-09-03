@@ -2267,7 +2267,8 @@ def _live_merged_tree(wc) -> dict | None:
 
 
 def _wholesale_unit(before: dict | None, ctx: dict, src: str,
-                    exclude: set[str] | None = None) -> dict | None:
+                    exclude: set[str] | None = None,
+                    staged_over: dict[str, Any] | None = None) -> dict | None:
     """docs/160 B: the difference between ``before`` (the chip's merged tree,
     read right before the write) and the working copy NOW, as one journal
     unit -- what a Ctrl+Z can walk after a State-History stage → Apply, a
@@ -2318,13 +2319,25 @@ def _wholesale_unit(before: dict | None, ctx: dict, src: str,
             p = f"{prefix}.{k}" if prefix else str(k)
             if _excluded(p):
                 continue
+            # F-MIX (final review): when a path was ALSO edited in the tray (a
+            # plain set), `av` is the EDITED value, and the edit unit already
+            # journals (staged value -> edited). The wholesale unit must record
+            # the STAGE's effect on the chip -- (chip value -> the value the
+            # working copy held BEFORE the tray edit, i.e. the edit's `old`) --
+            # not the edited value (double-journals the new value) and not
+            # nothing (the chip's real pre-apply value would be lost, and two
+            # Ctrl+Z presses would leave the discarded snapshot's value on the
+            # chip). So the two units compose exactly:
+            #   undo edit:      edited  -> staged
+            #   undo wholesale: staged  -> chip
+            av_eff = staged_over[p] if (staged_over and p in staged_over) else av
             if k not in bt:
-                entries.append({"path": p, "old": None, "new": copy.deepcopy(av),
+                entries.append({"path": p, "old": None, "new": copy.deepcopy(av_eff),
                                 "source_file": _src(p), "created": True, "deleted": False})
             elif isinstance(bt[k], dict) and isinstance(av, dict):
                 _walk(bt[k], av, p)
-            elif _differs(bt[k], av):
-                entries.append({"path": p, "old": copy.deepcopy(bt[k]), "new": copy.deepcopy(av),
+            elif _differs(bt[k], av_eff):
+                entries.append({"path": p, "old": copy.deepcopy(bt[k]), "new": copy.deepcopy(av_eff),
                                 "source_file": _src(p), "created": False, "deleted": False})
         for k, bv in bt.items():
             if k not in at:
@@ -2364,8 +2377,21 @@ def _journal_wholesale_commit(ctx: dict, before: dict | None, src: str,
     edits were made on, so Ctrl+Z walks the edits first, then the base).
     Advisory: never raises."""
     try:
-        excl = {e["path"] for u in (edit_units or []) for e in (u.get("entries") or [])}
-        unit = _wholesale_unit(before, ctx, src, exclude=excl)
+        # F-MIX: split the same-apply edit paths by op. A created/deleted tray
+        # edit is EXCLUDED from the wholesale unit (the edit unit owns the
+        # subtree op). A plain SET edit is instead recorded at its STAGED value
+        # (the value before the tray edit = the OLDEST edit entry's `old`), so
+        # the wholesale + edit units compose back to the chip's pre-apply state
+        # rather than dropping it.
+        excl: set[str] = set()
+        staged_over: dict[str, Any] = {}
+        for u in (edit_units or []):
+            for e in (u.get("entries") or []):
+                if e.get("created") or e.get("deleted"):
+                    excl.add(e["path"])
+                else:
+                    staged_over.setdefault(e["path"], e.get("old"))
+        unit = _wholesale_unit(before, ctx, src, exclude=excl, staged_over=staged_over)
         if unit is None:
             return
         if edit_units:
