@@ -1036,6 +1036,13 @@ html.topbar-hidden .topbar-reveal { display: block; }
 .settings-dropdown {
     position: absolute; right: 0; top: 100%; z-index: 120;
     min-width: 140px;
+    /* F-SETTINGS-TALL (final review): the popover is anchored at the viewport
+       top (y=6) and the drag/reflow clamp never lets it go higher, so once its
+       content is taller than the viewport the bottom group is unreachable --
+       there was no scrollbar (overflow was the default `visible`). docs/160's
+       Undo group pushed it past the ~827px it already reached. Cap it to the
+       viewport and let it scroll. */
+    max-height: calc(100vh - 12px); overflow-y: auto;
     background: var(--pico-background-color);
     border: 1px solid var(--pico-muted-border-color);
     border-radius: 6px;
@@ -3844,7 +3851,13 @@ td.col-delta .val-delta { margin-left: 0; }
 
 /* Sidebar: two buttons side by side */
 .compare-buttons {
-    display: flex; gap: 0.35rem;
+    /* F-LAYOUT-HINT (final review): .compare-hint is `flex: 1 1 100%`, which is
+       "a one-line hint UNDER the buttons" only inside a WRAPPING flex container.
+       Without flex-wrap the hint stays on the buttons' line and, with basis 100%
+       vs the buttons' basis 0, absorbs all the free space -- collapsing both
+       buttons to min-content and breaking them over two lines on every page
+       load (the hint shows precisely when nothing is ticked). */
+    display: flex; flex-wrap: wrap; gap: 0.35rem;
     margin-top: 0.5rem;
 }
 .compare-buttons button { flex: 1; }

@@ -68,3 +68,27 @@ detail content stays; ▲ brings it back.
 mark, the hover rule, the tooltip, the hint markup + toggle, the beforeRequest
 collapse hook with its wider gate vs the menu one) and two new asserts in
 `sidebar_compare_selfcheck.cjs` (hint shown at 0 ticks, hidden at 1).
+
+## The pre-customer review — two layout fixes (2026-09-04)
+
+- **F-LAYOUT-HINT.** `.compare-hint` is `flex: 1 1 100%`, which only reads as "a
+  one-line hint UNDER the buttons" inside a WRAPPING flex container. Its parent
+  `.compare-buttons` was `display:flex` with no `flex-wrap`, so the hint stayed on
+  the buttons' line and, with basis 100% against the buttons' basis 0, absorbed
+  all the free space — collapsing both compare buttons to min-content and breaking
+  them over two lines on every page load (the hint shows precisely when nothing is
+  ticked). Adding `flex-wrap: wrap` puts the hint on its own line and restores
+  full-width one-line buttons. Real Chrome (headless, 1500×950): the two buttons
+  now share one line at 127 px each with the hint below, instead of 75 px towers.
+
+- **F-SETTINGS-TALL** (docs/160's Undo group tipped it over). The Settings popover
+  is anchored at the viewport top and the drag/reflow clamp never lets it go
+  higher, so once its content is taller than the viewport the bottom group is
+  unreachable — and there was no scrollbar (`overflow` was the default `visible`).
+  `.settings-dropdown` now caps at `calc(100vh - 12px)` with `overflow-y: auto`.
+  Real Chrome: `max-height 840px`, `overflow-y auto`, `scrollHeight 870 >
+  clientHeight 838` — it scrolls.
+
+Pinned by `tests/test_sidebar_select_ux.py::TestHint::test_the_compare_buttons_wrap_so_the_hint_drops_below`
+and `::TestSettingsPopoverScrolls`, both mutation-checked, plus the real-browser
+measurement above.

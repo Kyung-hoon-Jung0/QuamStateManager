@@ -70,6 +70,26 @@ class TestHint:
         assert "var(--pico-muted-color)" in r
         assert "display: none" in _rule(".compare-hint[hidden]")
 
+    def test_the_compare_buttons_wrap_so_the_hint_drops_below(self):
+        # F-LAYOUT-HINT: .compare-hint is `flex: 1 1 100%`, which only reads as
+        # "a line UNDER the buttons" inside a WRAPPING flex container. Without
+        # flex-wrap it stays on the buttons' line and, with basis 100% vs the
+        # buttons' basis 0, collapses both buttons over two lines on every load.
+        r = _rule(".compare-buttons")
+        assert "display: flex" in r and "flex-wrap: wrap" in r
+        assert "flex: 1 1 100%" in _rule(".compare-hint")   # the hint takes the wrapped line
+
+
+class TestSettingsPopoverScrolls:
+    def test_the_settings_dropdown_caps_and_scrolls(self):
+        # F-SETTINGS-TALL: the popover is anchored at the viewport top and can't
+        # be dragged higher, so once its content is taller than the viewport the
+        # bottom group is unreachable -- there was no scrollbar (overflow was the
+        # default `visible`). Cap it to the viewport and let it scroll.
+        r = _rule(".settings-dropdown")
+        assert "max-height:" in r and "100vh" in r
+        assert "overflow-y: auto" in r
+
 
 class TestCompareMakesRoom:
     def test_the_compare_form_collapses_an_expanded_inspector(self):
