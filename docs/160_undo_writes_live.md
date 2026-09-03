@@ -340,3 +340,35 @@ and `::test_a_transient_redo_refusal_keeps_its_frame_and_unblocks` (F-REDOJAM,
 which replaces the two docs/160 §5d pins that had pinned the OFF re-push). Every
 pin was mutation-checked: reverting the `routes.py` change fails it with the
 exact defect.
+
+## 5g. The pre-customer review — a diverged working copy rode a Ctrl+Z (F-WORKING-SYNC)
+
+`_working_at_sync_point` — the gate that decides whether a live walk step may
+push the WHOLE working copy — checked only ctx FLAGS (`working_dirty`,
+`pending_reapply`, `staged_base`, an empty log). All four can be clean while the
+working copy has genuinely diverged from the last sync point:
+
+An **Auto-Calibrate** `apply_rows` stages a fit (`batch_set` → change log),
+`saver.save()` writes the working copy AND clears the change log
+(`store.change_log.clear()`), then `apply_to_live` fails (a live folder locked by
+the running experiment, an SMB hiccup — the cases `safe_io` exists for). The
+writer ledgers `action:staged` and moves on; the chip correctly does NOT have the
+value, but the never-verified value now sits in the working copy with the log
+cleared and every ctx flag clean. The user then presses Ctrl+Z to undo an edit of
+their OWN — the gate returns None, the door pushes the whole working copy, and the
+autofit value the chip never had lands on the instrument, its toast naming only
+the path the user undid. Reproduced end-to-end through the real `RealWriter` with
+`apply_to_live` made to raise: chip `f_01` unchanged after the failed autofit,
+working copy `f_01 = 9.9e9`, all flags clean, `_working_at_sync_point` → None,
+then the user's Ctrl+Z → live `f_01 = 9.9e9`.
+
+The gate now VERIFIES CONTENT, not just flags: the working FILES still hold the
+pre-walk content (the staging only mutated memory; the door has not saved yet),
+so their `content_hash` equals `wc.synced_live_hash` exactly when nothing has
+diverged since the last sync. On a mismatch the step stays staged — "the working
+state has changed since it was last synced (a background write left a value
+un-applied) — Apply or discard it first". The check runs only after the cheap
+flag checks pass, so it costs one local read per otherwise-clean live-undo press
+and nothing on the common paths. Pinned by
+`tests/test_undo_live.py::TestWorkingCopyContentGate` (mutation-checked: without
+the fix, the 9.9e9 rides the undo onto the chip).

@@ -1265,3 +1265,39 @@ class TestFinalReviewWalk:
         assert cur2 != cur1, "the redo consumed the skipped step"
         assert m.get("consumed") == 1 and m.get("stopped") == "journal", \
             f"the skip must report the consumed step, got {m.get('consumed')}/{m.get('stopped')}"
+
+
+class TestWorkingCopyContentGate:
+    """F-WORKING-SYNC (final review): a live walk step must not push a working
+    copy that DIVERGED from the sync point without a change-log entry to show
+    for it."""
+
+    def test_a_diverged_working_copy_does_not_ride_a_ctrl_z_onto_the_chip(self, env, monkeypatch):
+        import threading
+        from quam_state_manager.core import working_copy as _wc
+        from quam_state_manager.core.autofit.writer import ChipHandle, apply_rows
+        c = env["client"]
+        ctx = _ctx(env)
+        # a synced baseline + a journal unit the user can undo later
+        _edit(c, 0.20); _apply(c)
+        assert _live_off(env) == 0.20
+        # an autofit write whose apply_to_live FAILS: batch_set stages it,
+        # saver.save() clears the log AND saves the diverged working copy, then
+        # the apply raises -> the never-verified value sits in the working copy
+        # with every ctx flag clean.
+        chip = ChipHandle(store=ctx["store"], modifier=ctx["modifier"],
+                          saver=ctx["saver"], wc=ctx["working_copy"],
+                          build_lock=threading.RLock(), live_path=env["live"])
+        monkeypatch.setattr(_wc, "apply_to_live",
+                            lambda *a, **k: (_ for _ in ()).throw(OSError("live folder busy")))
+        out = apply_rows(chip, [{"path": "qubits.qA1.f_01", "value": 9.9e9}],
+                         apply_live=True, label="autofit")
+        assert out.ok is False and out.action == "staged"
+        monkeypatch.undo()   # restore apply_to_live for the user's own undo
+        assert _live_f01(env) == 5.0e9, "the failed autofit did NOT reach the chip"
+        assert ctx["store"].merged["qubits"]["qA1"]["f_01"] == 9.9e9, "but the working copy diverged"
+        # the user's Ctrl+Z (of THEIR joint_offset edit) must STAGE, not push the
+        # whole diverged working copy onto the instrument
+        r = c.post("/undo")
+        assert _trig(r)["cellsReverted"].get("live") is not True, "the diverged working copy must not ride the undo"
+        assert _live_f01(env) == 5.0e9, "the never-verified 9.9e9 stayed off the chip"

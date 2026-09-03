@@ -12919,6 +12919,26 @@ def _working_at_sync_point(ctx, store, *, log_was_empty: bool) -> str | None:
         return "a staged snapshot is waiting in the working state — Apply or discard it first"
     if ctx.get("working_dirty") or ctx.get("pending_reapply"):
         return "the working state holds saved-but-unapplied changes — Apply or discard them first"
+    # F-WORKING-SYNC (final review): the flags above can ALL be clean while the
+    # working copy has diverged from the last sync point with NO change-log
+    # entry to show for it -- an Auto-Calibrate `apply_to_live` that failed
+    # AFTER `saver.save()` had already cleared the log leaves the never-verified
+    # value sitting in the working copy, flags untouched. The door pushes the
+    # WHOLE working copy, so a user's next Ctrl+Z would ride that value onto the
+    # instrument. Verify the content actually matches the sync point: the
+    # working FILES still hold the pre-walk content (the staging only mutated
+    # memory; the door has not saved yet), so their hash equals
+    # ``synced_live_hash`` exactly when nothing has diverged since the last sync.
+    wc = ctx.get("working_copy")
+    if wc is not None and getattr(wc, "synced_live_hash", None):
+        try:
+            w_state, w_wiring = safe_io.read_state_wiring(wc.working_folder)
+            if working_copy.content_hash(w_state, w_wiring) != wc.synced_live_hash:
+                return ("the working state has changed since it was last synced "
+                        "(a background write left a value un-applied) — Apply or "
+                        "discard it first")
+        except Exception:  # noqa: BLE001 — a read/hash failure must never block a legit undo
+            logger.warning("sync-point content check failed", exc_info=True)
     return None
 
 
