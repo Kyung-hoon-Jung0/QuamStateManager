@@ -9,7 +9,8 @@ chips and off the lab's own calibration code, and getting either backwards
 moves an "interaction point" by hundreds of MHz:
 
 **Anharmonicity is a positive magnitude.** Every chip in the corpus stores
-``anharmonicity`` positive (CQT 20Q: 135–229 MHz on all twenty qubits), and
+``anharmonicity`` positive (a 20-qubit corpus chip: 135–229 MHz on all
+twenty of them), and
 the customer's ``calibration_utils/chevron_cz/cz_branch.py`` says so in as
 many words — "(anharmonicity A is stored as a positive magnitude in this
 state.)" — while ``chip_health`` defines it as ``f_01 - f_12``.  So
@@ -589,7 +590,8 @@ def _ref_to_name(ref: Any) -> str | None:
 def _matches_gate(op_name: str, gate_name: str) -> bool:
     """Does *op_name* belong to *gate_name*?
 
-    The naming on real chips is exactly ``<macro>_pulse`` — the CQT 20Q chip
+    The naming on real chips is exactly ``<macro>_pulse`` — the 20-qubit
+    corpus chip
     carries ``cz_unipolar_pulse`` / ``cz_flattop_pulse`` / ``cz_bipolar_pulse``
     against macros ``cz_unipolar`` / ``cz_flattop`` / ``cz_bipolar`` — and that
     is what the fallback below creates.  A bare ``startswith(gate_name)`` (or
