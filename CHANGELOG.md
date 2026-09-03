@@ -663,3 +663,12 @@ one** (docs/136, 137).
   a tooltip saying what it selects for, and a hint under the compare buttons
   while nothing is ticked. **Compare Selected / Trend Tracker collapse an open
   run detail first** so the result is on top, not under it (docs/161).
+
+### Review sweep (docs/156–161)
+
+- A ten-angle code review of this round found and fixed 15 defects, most in the
+  new live undo: a mixed stage+edit apply journaled paths twice, the tray ✕ and a
+  failed save could corrupt the walk, a concurrent edit from another window
+  could ride a Ctrl+Z onto the chip, a recycled PID hid the user's own history,
+  NaN leaves blocked wholesale undos, pointer re-links could not be redone, and
+  the calculator window lost typed values after a page reload (docs/160 §5c).

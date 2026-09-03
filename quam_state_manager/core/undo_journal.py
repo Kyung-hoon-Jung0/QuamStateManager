@@ -280,6 +280,27 @@ def mark_unit(path: str | Path, unit_id: str, patch: dict) -> list[dict]:
         return units
 
 
+def insert_units(path: str | Path, new_units: list[dict], *, before_tail: int) -> list[dict]:
+    """Insert ``new_units`` below the newest ``before_tail`` units (docs/160 B,
+    review F1): a wholesale base recorded in the same apply as the edits made
+    on top of it must sit BELOW those edits so the walk undoes the edits
+    first. Cursor at the tip. Advisory, atomic, under the module lock."""
+    p = Path(path)
+    with _lock:
+        units, _cursor = load_state(p)
+        cut = max(0, len(units) - max(0, int(before_tail)))
+        units = units[:cut] + list(new_units) + units[cut:]
+        if len(units) > MAX_UNITS:
+            units = units[-MAX_UNITS:]
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            safe_io.atomic_write_json(p, {"version": JOURNAL_VERSION,
+                                          "units": units, "cursor": len(units)})
+        except Exception:
+            logger.warning("undo journal insert failed: %s", p, exc_info=True)
+        return units
+
+
 def append_units(path: str | Path, new_units: list[dict], *,
                  truncate_at_cursor: bool = True) -> list[dict]:
     """Append units to the sidecar (load-merge-write under the module lock),

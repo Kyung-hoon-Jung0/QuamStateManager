@@ -52,14 +52,6 @@
   </div>
   {% endif %}
 
-  {% if index_error %}
-  <div class="toast toast-warning" style="margin:0.5rem 0">
-    <p style="margin:0">{{ index_error }}
-      <a href="/param-history" hx-get="/param-history" hx-target="#param-history-root"
-         hx-swap="outerHTML" hx-sync="#param-history-root:replace">Reload</a></p>
-  </div>
-  {% endif %}
-
   {% if reattributed_v3 %}
   <div class="toast toast-info" style="margin:0.5rem 0">
     <p style="margin:0">
@@ -289,6 +281,10 @@
   <form id="param-history-filters" class="param-history-filters"
         hx-get="/param-history" hx-target="#param-history-results" hx-select="#param-history-results" hx-swap="outerHTML"
         hx-push-url="true" hx-trigger="change delay:500ms" hx-sync="this:replace">
+    {# code-review sweep (docs/158): a ?chip_key= view must keep filtering THAT
+       chip — without this the filter request fell back to the loaded chip and
+       swapped its results under the other chip's header #}
+    {% if not is_loaded_chip %}<input type="hidden" name="chip_key" value="{{ active_chip_key }}">{% endif %}
 
     <div class="phf-row">
       <label class="phf-label">Date</label>
@@ -383,6 +379,16 @@
      container — the form above targets it with hx-select, so a chip click
      re-renders the results and nothing else. #}
   <div id="param-history-results">
+  {# the busy-index banner lives INSIDE the results (code-review sweep): a
+     filter change swaps only this container, so a failure during one must
+     land where the user can see it #}
+  {% if index_error %}
+  <div class="toast toast-warning" style="margin:0.5rem 0">
+    <p style="margin:0">{{ index_error }}
+      <a href="/param-history" hx-get="/param-history" hx-target="#param-history-root"
+         hx-swap="outerHTML" hx-sync="#param-history-root:replace">Reload</a></p>
+  </div>
+  {% endif %}
   <div class="param-history-summary">
     <strong>{{ summary.window_count }}</strong> snapshots match
     {% if summary.total %}<span class="muted">({{ summary.total }} total in index)</span>{% endif %}

@@ -360,9 +360,18 @@
         if (theme) url += (url.indexOf('?') < 0 ? '?' : '&') + 'theme=' + encodeURIComponent(theme);
         return url;
     }
-    window.openCalcWindow = function (trigger) {
-        if (calcWinAlive()) { try { _calcWin.focus(); } catch (e) {} return _calcWin; }
-        if (window.pywebview) return null;   // desktop shell — see the note above
+    // The window announces itself on a BroadcastChannel (docs/156 review):
+    // after a full reload of the SM page `_calcWin` is gone, and a
+    // window.open on the same NAME would NAVIGATE the still-open window --
+    // wiping every value the user typed. So the page first asks "anyone
+    // there?"; a live window answers and focuses itself, and only silence
+    // opens a new one.
+    var CH_NAME = 'quam-calc';
+    function _channel() {
+        try { return window.BroadcastChannel ? new BroadcastChannel(CH_NAME) : null; }
+        catch (e) { return null; }
+    }
+    function _openNew(trigger) {
         var w = null;
         try { w = window.open(winUrl(trigger), WIN_NAME, winFeatures()); } catch (e) { w = null; }
         if (!w) return null;                 // popup blocked: the in-page popover stays
@@ -370,6 +379,27 @@
         _calcWin = w;
         try { w.focus(); } catch (e) {}
         return w;
+    }
+    window.openCalcWindow = function (trigger) {
+        if (calcWinAlive()) { try { _calcWin.focus(); } catch (e) {} return _calcWin; }
+        if (window.pywebview) return null;   // desktop shell — see the note above
+        var ch = _channel();
+        if (!ch) return _openNew(trigger);
+        var answered = false;
+        var timer = setTimeout(function () {
+            if (answered) return;
+            try { ch.close(); } catch (e) {}
+            _openNew(trigger);
+        }, 120);
+        ch.onmessage = function (ev) {
+            if (!ev || !ev.data || ev.data.type !== 'calc-here') return;
+            answered = true;
+            clearTimeout(timer);
+            try { ch.close(); } catch (e) {}
+            if (calcOpen()) window.toggleCalc();
+        };
+        try { ch.postMessage({ type: 'calc-ping' }); } catch (e) { clearTimeout(timer); return _openNew(trigger); }
+        return null;                         // asynchronous: the answer decides
     };
     function hidePopout() {
         document.querySelectorAll('.calc-popout').forEach(function (b) { b.hidden = true; });
@@ -394,6 +424,21 @@
         }
         window.addEventListener('resize', function () { clearTimeout(t); t = setTimeout(remember, 250); });
         window.addEventListener('pagehide', remember);
+        // answer the opener page's "anyone there?" (see openCalcWindow) and
+        // come to the front; follow the page's theme toggle via storage
+        var ch = _channel();
+        if (ch) {
+            ch.onmessage = function (ev) {
+                if (!ev || !ev.data || ev.data.type !== 'calc-ping') return;
+                try { ch.postMessage({ type: 'calc-here' }); } catch (e) {}
+                try { window.focus(); } catch (e) {}
+            };
+        }
+        window.addEventListener('storage', function (ev) {
+            if (!ev || ev.key !== 'quam_theme') return;
+            var th = ev.newValue === 'light' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', th);
+        });
     }
 
     // ── open / close / pin ──────────────────────────────────────────────────────

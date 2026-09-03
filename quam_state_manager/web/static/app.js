@@ -3587,7 +3587,11 @@ document.addEventListener("cellsReverted", function(evt) {
         // old_value_disp is the LOSSLESS string (docs/124 M-9); old_value_str
         // is %.6e. The Pulses inputs render the lossless value, so the
         // reverted baseline must be lossless too (review of eaa0f05).
-        var v = e.old_value_disp != null ? e.old_value_disp
+        // docs/159: for a LIST old_value_disp is the grid's 24-char preview,
+        // deliberately NOT lossless -- an inspector field / the tree model must
+        // get the full JSON (old_value_json) instead, never the truncated text.
+        var v = e.old_kind === 'list' && e.old_value_json != null ? e.old_value_json
+              : e.old_value_disp != null ? e.old_value_disp
               : (e.old_value_str != null ? e.old_value_str : "");
         _revertCell(e.dot_path, String(v));
     });
@@ -3603,7 +3607,13 @@ document.addEventListener("cellsReverted", function(evt) {
     }
     // The Live-State-Edit grids render their own cells (not inspector inputs),
     // so _revertCell can't reach them — repaint by path, then decide.
-    var structural = entries.some(function (e) { return e && (e.created || e.deleted); });
+    // docs/160: a walk step too large for the header ships NO entries and
+    // `structural: true` -- the wholesale resync (and a stateRestored for the
+    // tree/inspector) stands in for the per-cell repaint
+    var structural = !!d.structural || entries.some(function (e) { return e && (e.created || e.deleted); });
+    if (d.structural && !entries.length) {
+        try { document.dispatchEvent(new CustomEvent("stateRestored", { detail: { structural: true, changes: [] } })); } catch (e2) {}
+    }
     var gridOnScreen = !!(document.getElementById('bulk-table')
                           || document.getElementById('bulk-pair-table'));
     var uncovered = 0;
@@ -3621,7 +3631,10 @@ document.addEventListener("cellsReverted", function(evt) {
         });
     } catch (err) { uncovered = entries.length; }   // never trust a half repaint
     if (gridOnScreen && (structural || uncovered > 0 || d.stopped === "error")) _scheduleGridResync();
-    if (d.message && window.showToast) window.showToast(d.message, d.level === "error" ? "error" : "success");
+    // docs/160: a refused / rolled-back walk step ("Not undone — …", a too-large
+    // skip) arrives as level "warning" -- it must not read as a green success
+    if (d.message && window.showToast) window.showToast(d.message,
+        d.level === "error" ? "error" : d.level === "warning" ? "warning" : "success");
     // Flash the reverted items that are on screen. NO automatic navigation
     // (docs/73's "open the owning surface" is retired): on the Pulses page a
     // redo of a field that was not visible replaced the pulse inspector

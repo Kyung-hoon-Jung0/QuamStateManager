@@ -503,6 +503,81 @@ class TestWholesale:
         assert "y90" not in live["qubits"]["qA1"]["xy"]["ops"]
         assert live["qubits"]["qA1"]["z"]["taps"] == [1]
 
+    def test_a_mixed_apply_journals_each_path_once(self, env):
+        """sweep F1: a staged snapshot applied TOGETHER with tray edits
+        (docs/65 mixed state) used to journal the edited paths twice -- once
+        as the edit unit, once inside the wholesale unit whose `after` is the
+        working copy WITH the edits -- so the second Ctrl+Z staged a value the
+        chip never held. The wholesale unit excludes the edit unit's paths
+        and sits BELOW it; both Ctrl+Z presses write the chip's real history."""
+        c = env["client"]
+        hm = env["app"].config["history_manager"]
+        hm.check_and_snapshot(_ctx(env)["path"], "manual", force=True)   # snapshot @ off 0.08, f_01 5.0e9
+        ts = self._snapshot_ts(env)
+        _edit(c, 0.10); _apply(c)                                          # chip: off 0.10
+        _edit(c, 5.3e9, dot_path="qubits.qA1.f_01"); _apply(c)             # chip: f_01 5.3e9
+        assert c.post(f"/state-history/{ts}/stage").status_code == 200    # working: off 0.08, f_01 5.0e9
+        _edit(c, 0.55)                                                      # a tray edit ON TOP of the stage
+        _apply(c)                                                           # chip: off 0.55, f_01 5.0e9
+        assert _live_off(env) == 0.55 and _live_f01(env) == 5.0e9
+        units, cur = undo_journal.load_state(_sidecar(env))
+        assert cur == len(units) == 4
+        w, e = units[-2], units[-1]
+        assert w["meta"].get("wholesale") and not e["meta"].get("wholesale")
+        assert {x["path"] for x in e["entries"]} == {"qubits.qA1.z.joint_offset"}
+        assert {x["path"]: (x["old"], x["new"]) for x in w["entries"]} == {"qubits.qA1.f_01": (5.3e9, 5.0e9)}
+        # Ctrl+Z: the edit (0.55 → 0.08 as the edit recorded it: old=0.08 from the stage)
+        r = c.post("/undo")
+        assert _trig(r)["cellsReverted"]["live"] is True, _trig(r)
+        assert _live_off(env) == 0.08 and _live_f01(env) == 5.0e9
+        # Ctrl+Z: the wholesale base (f_01 back to what the chip held before the stage)
+        r = c.post("/undo")
+        assert _trig(r)["cellsReverted"]["live"] is True, _trig(r)
+        assert _live_off(env) == 0.08 and _live_f01(env) == 5.3e9
+        c.post("/redo"); c.post("/redo")
+        assert _live_off(env) == 0.55 and _live_f01(env) == 5.0e9
+
+    def test_nan_leaves_are_not_phantom_changes(self, env):
+        """sweep F7: `nan != nan` made every NaN leaf a phantom wholesale
+        entry, and the drift check then refused every wholesale undo."""
+        c = env["client"]
+        hm = env["app"].config["history_manager"]
+        ctx = _ctx(env)
+        with ctx["store"]._lock:
+            ctx["modifier"].create_subtree("qubits.qA1.T2echo", float("nan"))
+        _apply(c)
+        hm.check_and_snapshot(ctx["path"], "manual", force=True)          # snapshot with the NaN
+        ts = self._snapshot_ts(env)
+        _edit(c, 0.10); _apply(c)
+        assert c.post(f"/state-history/{ts}/stage").status_code == 200
+        _apply(c)
+        units, _ = undo_journal.load_state(_sidecar(env))
+        paths = {e["path"] for e in units[-1]["entries"]}
+        assert paths == {"qubits.qA1.z.joint_offset"}, paths                 # no NaN phantom
+        r = c.post("/undo")
+        assert _trig(r)["cellsReverted"]["live"] is True and _live_off(env) == 0.10
+
+    def test_a_large_wholesale_undo_ships_no_header_entries(self, env, monkeypatch):
+        """sweep F4: the walk response rides the HX-Trigger HEADER; past the
+        project's header cap the entries are dropped and `structural` makes
+        the client resync wholesale -- Chrome rejected the whole response
+        otherwise, AFTER the chip was written."""
+        c = env["client"]
+        monkeypatch.setattr(routes_mod, "_HEADER_PATCH_CAP", 1)
+        hm = env["app"].config["history_manager"]
+        hm.check_and_snapshot(_ctx(env)["path"], "manual", force=True)
+        ts = self._snapshot_ts(env)
+        _edit(c, 0.10); _apply(c)
+        _edit(c, 5.3e9, dot_path="qubits.qA1.f_01"); _apply(c)
+        c.post(f"/state-history/{ts}/stage"); _apply(c)                  # a 2-entry wholesale unit
+        r = c.post("/undo")
+        t = _trig(r)["cellsReverted"]
+        assert t["live"] is True and t["entries"] == [] and t["structural"] is True and t["n_entries"] == 2
+        assert _live_off(env) == 0.10 and _live_f01(env) == 5.3e9
+        r = c.post("/redo")
+        t = _trig(r)["cellsReverted"]
+        assert t["live"] is True and t["entries"] == [] and t["structural"] is True
+
     def test_restore_live_is_walkable(self, env):
         c = env["client"]
         hm = env["app"].config["history_manager"]
@@ -574,11 +649,12 @@ class TestForeignWindow:
         _edit(c, 0.10); _apply(c)
         units, _ = undo_journal.load_state(_sidecar(env))
         assert units[-1]["meta"]["owner_pid"] == os.getpid()
-        # pretend another live SM process applied it
+        # pretend another live SM process applied it (a REGISTERED peer, sweep F6)
         ctx = _ctx(env)
         ctx["undo_units"][-1]["meta"]["owner_pid"] = 424242
+        from types import SimpleNamespace
         from quam_state_manager.core import instances
-        monkeypatch.setattr(instances, "pid_alive", lambda pid: pid == 424242)
+        monkeypatch.setattr(instances, "peers", lambda *a, **k: [SimpleNamespace(pid=424242)])
         r = c.post("/undo")
         t = _trig(r)["cellsReverted"]
         assert t["live"] is False and "another SM window" in t["message"]
@@ -590,7 +666,7 @@ class TestForeignWindow:
         ctx = _ctx(env)
         ctx["undo_units"][-1]["meta"]["owner_pid"] = 424242
         from quam_state_manager.core import instances
-        monkeypatch.setattr(instances, "pid_alive", lambda pid: False)
+        monkeypatch.setattr(instances, "peers", lambda *a, **k: [])      # no SM peer registered
         r = c.post("/undo")
         assert _trig(r)["cellsReverted"]["live"] is True
         assert _live_off(env) == 0.08
@@ -602,8 +678,9 @@ class TestForeignWindow:
         c.post("/undo")                                        # ours: live 0.08
         ctx = _ctx(env)
         ctx["undo_units"][-1]["meta"]["owner_pid"] = 424242
+        from types import SimpleNamespace
         from quam_state_manager.core import instances
-        monkeypatch.setattr(instances, "pid_alive", lambda pid: pid == 424242)
+        monkeypatch.setattr(instances, "peers", lambda *a, **k: [SimpleNamespace(pid=424242)])
         r = c.post("/redo")
         t = _trig(r)["cellsReverted"]
         assert "another SM window" in t["message"] and _live_off(env) == 0.08
@@ -655,9 +732,9 @@ class TestForeignWindow:
         seen = {}
         orig = routes_mod._flush_walk_step_live
 
-        def spy(ctx):
+        def spy(ctx, **kw):
             seen["held"] = store._lock._is_owned()
-            return orig(ctx)
+            return orig(ctx, **kw)
         monkeypatch.setattr(routes_mod, "_flush_walk_step_live", spy)
         c.post("/undo")
         assert seen.get("held") is False, "the live flush must not run under store._lock"
@@ -739,6 +816,133 @@ class TestForeignWindow:
         _edit(c, 0.30); _apply(c)
         units, cur = undo_journal.load_state(_sidecar(env))
         assert len(units) == 3 and units[1]["meta"].get("too_large")
+
+    def test_the_tray_x_on_a_staged_step_moves_the_cursor_back(self, env):
+        """sweep F2: ✕ on the (last) entry of a staged journal step un-stages
+        it -- the unit is back in effect, so the cursor must move back up, or
+        the next LIVE undo persists a cursor under a unit still on the chip
+        and the next save truncates that unit away."""
+        c = env["client"]
+        _set_setting(env, False)
+        _edit(c, 0.10); _apply(c)
+        _edit(c, 0.12); _apply(c)
+        c.post("/undo")                                        # staged: 0.12 → 0.10, cursor 1
+        ctx = _ctx(env)
+        assert ctx["undo_cursor"] == 1 and len(ctx["store"].change_log) == 1
+        r = c.post("/discard", data={"index": "0", "expect_path": "qubits.qA1.z.joint_offset"})
+        assert r.status_code == 200
+        assert not ctx["store"].change_log and _work_off(env) == 0.12
+        assert ctx["undo_cursor"] == 2, "the ✕ un-staged the step: the unit is in effect again"
+        _set_setting(env, True)
+        c.post("/undo")                                        # live: 0.12 → 0.10, persisted 1
+        assert _live_off(env) == 0.10 and undo_journal.load_state(_sidecar(env))[1] == 1
+        _edit(c, 0.30); _apply(c)
+        units, _ = undo_journal.load_state(_sidecar(env))
+        assert [u["entries"][0]["new"] for u in units] == [0.10, 0.30]   # u1 kept, u2 (undone) discarded
+
+    def test_a_failed_save_leaves_no_phantom_edits(self, env, monkeypatch):
+        """sweep F3: when the door's own save raises, the staged step is
+        STILL in the log; the rollback must pop it, not append inverses."""
+        c = env["client"]
+        _edit(c, 0.10); _apply(c)
+        ctx = _ctx(env)
+        saver = ctx["saver"]
+        calls = {"n": 0}
+        real_save = saver.save
+
+        def failing_save(*a, **k):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise OSError(13, "locked")
+            return real_save(*a, **k)
+        monkeypatch.setattr(saver, "save", failing_save)
+        r = c.post("/undo")
+        t = _trig(r)["cellsReverted"]
+        assert t["message"].startswith("Not undone") and "Save failed" in t["message"]
+        assert not ctx["store"].change_log, "no phantom entries in the tray"
+        assert _work_off(env) == 0.10 and _live_off(env) == 0.10
+        assert not ctx.get("pending_reapply") and not ctx["working_dirty"]
+        assert ctx["undo_cursor"] == 1
+
+    def test_a_concurrent_edit_never_rides_a_walk_step(self, env, monkeypatch):
+        """sweep F5: an edit landing in the shared log between the staging and
+        the door must not reach the chip under this keypress."""
+        c = env["client"]
+        _edit(c, 0.10); _apply(c)
+        ctx = _ctx(env)
+        real = routes_mod._flush_walk_step_live
+
+        def flush_with_intruder(ctx_, **kw):
+            # window B's edit lands after the staging lock was released and
+            # before the walk step reaches the door
+            with ctx_["store"]._lock:
+                ctx_["modifier"].set_value("qubits.qA1.f_01", 9.9e9)
+            return real(ctx_, **kw)
+        monkeypatch.setattr(routes_mod, "_flush_walk_step_live", flush_with_intruder)
+        r = c.post("/undo")
+        t = _trig(r)["cellsReverted"]
+        assert t["message"].startswith("Not undone") and "another window" in t["message"]
+        assert _live_off(env) == 0.10 and _live_f01(env) == 5.0e9          # nothing reached the chip
+        # the intruder's edit is still in the tray for review; our step is gone
+        paths = [e.dot_path for e in ctx["store"].change_log]
+        assert paths == ["qubits.qA1.f_01"]
+        assert ctx["undo_cursor"] == 1
+
+    def test_a_pointer_relink_redoes(self, env):
+        """sweep F8: the redo CAS compared the pointer TARGET's value with the
+        unit's old (the pointer string) and refused every pointer redo."""
+        c = env["client"]
+        ctx = _ctx(env)
+        with ctx["store"]._lock:
+            ctx["modifier"].create_subtree("qubits.qA1.xy.ops.x90", {"amp": 0.1})
+            ctx["modifier"].create_subtree("qubits.qA1.xy.ops.y90", {"amp": "#../x90/amp"})
+        _apply(c)
+        # re-link the pointer LEAF itself (what the Json Tree's pointer edit
+        # does -- the modifier writes the raw leaf and never chases it; the
+        # grid's edit-batch would instead write THROUGH the alias to its target)
+        with ctx["store"]._lock:
+            ctx["modifier"].set_value("qubits.qA1.xy.ops.y90.amp", "#../x180/amp", coerce=False)
+        _apply(c)
+        units, _ = undo_journal.load_state(_sidecar(env))
+        assert units[-1]["entries"][0]["path"] == "qubits.qA1.xy.ops.y90.amp"
+        assert units[-1]["entries"][0]["old"] == "#../x90/amp"
+
+        def live_ptr():
+            return json.loads((env["live"] / "state.json").read_text(encoding="utf-8"))["qubits"]["qA1"]["xy"]["ops"]["y90"]["amp"]
+        assert live_ptr() == "#../x180/amp"
+        r = c.post("/undo")
+        assert _trig(r)["cellsReverted"]["live"] is True, _trig(r)
+        assert live_ptr() == "#../x90/amp"
+        r = c.post("/redo")
+        assert _trig(r)["cellsReverted"].get("live") is True, _trig(r)
+        assert live_ptr() == "#../x180/amp"
+
+    def test_a_refused_live_redo_keeps_its_frame(self, env):
+        """sweep F12: a refused live redo used to drop its frame; the next
+        Ctrl+Shift+Z then re-applied an OLDER in-memory frame out of order."""
+        c = env["client"]
+        _edit(c, 0.10); _apply(c)
+        c.post("/undo")                                        # live undo, frame jrn_live
+        _set_setting(env, False)
+        r = c.post("/redo")                                    # refused: setting OFF
+        assert "OFF" in _trig(r)["cellsReverted"]["message"]
+        _set_setting(env, True)
+        r = c.post("/redo")                                    # the SAME step, now live
+        assert _trig(r)["cellsReverted"].get("live") is True and _live_off(env) == 0.10
+
+    def test_a_recycled_pid_is_not_a_foreign_window(self, env, monkeypatch):
+        """sweep F6: `pid_alive` is an existence probe; after a restart any
+        process Windows handed the old pid would have made the user's own
+        history "another window's". Only a registered SM peer is foreign."""
+        c = env["client"]
+        _edit(c, 0.10); _apply(c)
+        ctx = _ctx(env)
+        ctx["undo_units"][-1]["meta"]["owner_pid"] = 424242
+        from quam_state_manager.core import instances
+        monkeypatch.setattr(instances, "pid_alive", lambda pid: True)      # alive, but not SM
+        monkeypatch.setattr(instances, "peers", lambda *a, **k: [])
+        r = c.post("/undo")
+        assert _trig(r)["cellsReverted"]["live"] is True and _live_off(env) == 0.08
 
     def test_another_process_write_is_re_read_before_the_walk(self, env):
         c = env["client"]

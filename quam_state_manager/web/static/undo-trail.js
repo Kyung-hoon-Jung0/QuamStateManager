@@ -106,9 +106,12 @@ window.UndoTrail = (function () {
         var msg = String(d.message || '');
         var kind = /^Redid|^Redone/i.test(msg) ? 'redo' : /^Discard/i.test(msg) ? 'discard' : 'undo';
         var entries = (d.entries || []).filter(function (e) { return e && e.dot_path; }).map(function (e) {
-            return { dot_path: e.dot_path,
-                     value: e.deleted ? '(deleted)' : (e.old_value_disp != null ? e.old_value_disp : e.old_value_str),
-                     from: undefined };
+            // a list's old_value_disp is the grid's cut preview (docs/159); the
+            // trail names the real value
+            var val = e.deleted ? '(deleted)'
+                : (e.old_kind === 'list' && e.old_value_json != null) ? e.old_value_json
+                : (e.old_value_disp != null ? e.old_value_disp : e.old_value_str);
+            return { dot_path: e.dot_path, value: val, from: undefined };
         });
         // docs/160: the server says where the step landed -- on the live chip
         // (Ctrl+Z writes live) or only in the tray ("staged"). Before, every

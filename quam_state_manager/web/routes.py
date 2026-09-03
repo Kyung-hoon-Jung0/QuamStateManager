@@ -2110,8 +2110,16 @@ def _journal_unit_foreign(unit: dict) -> int | None:
         return None
     if not pid or pid == os.getpid():
         return None
+    # code-review sweep F6: a bare PID-alive probe cannot tell an SM peer from
+    # any process Windows later handed the same number -- after a restart
+    # the user's OWN units read as "another window's". The docs/80 registry
+    # names the live SM processes; only one of THOSE is a foreign owner.
     from quam_state_manager.core import instances as _inst
-    return pid if _inst.pid_alive(pid) else None
+    try:
+        live_sm = {p.pid for p in _inst.peers(current_app.instance_path)}
+    except Exception:  # noqa: BLE001 — an unreadable registry never blocks a walk
+        return None
+    return pid if pid in live_sm else None
 
 
 def _journal_prepare(store, ctx, meta: dict | None = None) -> list[dict]:
@@ -2161,6 +2169,21 @@ def _journal_commit(ctx, units: list[dict]) -> None:
 _WHOLESALE_UNIT_CAP = 4000
 
 
+def _differs(a: Any, b: Any) -> bool:
+    """Leaf inequality for the wholesale diff (code-review sweep, F7): two
+    NaNs are the SAME value -- ``nan != nan`` would make every failed-fit
+    leaf a phantom entry that the drift check then counts as 'moved', and
+    no wholesale undo would ever write live on a NaN-bearing chip. Lists and
+    dicts compare element-wise by the same rule; everything else by ``==``."""
+    if isinstance(a, float) and isinstance(b, float) and math.isnan(a) and math.isnan(b):
+        return False
+    if isinstance(a, list) and isinstance(b, list):
+        return len(a) != len(b) or any(_differs(x, y) for x, y in zip(a, b))
+    if isinstance(a, dict) and isinstance(b, dict):
+        return set(a) != set(b) or any(_differs(a[k], b[k]) for k in a)
+    return a != b
+
+
 def _live_merged_tree(wc) -> dict | None:
     """docs/160 B: what the CHIP holds right now, merged the way the store
     merges state + wiring (`QuamStore._merge`), so paths compare 1:1 with
@@ -2187,13 +2210,20 @@ def _live_merged_tree(wc) -> dict | None:
     return merged
 
 
-def _wholesale_unit(before: dict | None, ctx: dict, src: str) -> dict | None:
+def _wholesale_unit(before: dict | None, ctx: dict, src: str,
+                    exclude: set[str] | None = None) -> dict | None:
     """docs/160 B: the difference between ``before`` (the chip's merged tree,
     read right before the write) and the working copy NOW, as one journal
     unit -- what a Ctrl+Z can walk after a State-History stage → Apply, a
     dataset "Apply to chip", or a restore, none of which leave change-log
     entries (docs/65). None when nothing differs or the chip could not be
     read (then there is nothing honest to record).
+
+    ``exclude`` (code-review sweep, F1): the paths the SAME apply already
+    journaled as change-log units -- a staged snapshot applied together with
+    tray edits (docs/65 mixed state) must not record those edits twice, or
+    the second Ctrl+Z stages a value the chip never held. An excluded path
+    and every path under it is left to the edit unit that owns it.
 
     A TREE diff, not a leaf diff (the review of the first cut): a subtree
     the chip gained or lost is ONE ``create``/``delete`` entry at its highest
@@ -2215,21 +2245,39 @@ def _wholesale_unit(before: dict | None, ctx: dict, src: str) -> dict | None:
         return "wiring" if p.split(".", 1)[0] in wiring_keys else "state"
 
     entries: list[dict] = []
+    excl = set(exclude or ())
+
+    def _excluded(p: str) -> bool:
+        if not excl:
+            return False
+        if p in excl:
+            return True
+        # a journaled edit inside this subtree: the subtree op would carry it
+        # a second time -- descend instead (handled by the caller's recursion)
+        return False
+
+    def _covers_excluded(p: str) -> bool:
+        pre = p + "."
+        return any(x.startswith(pre) for x in excl)
 
     def _walk(bt: dict, at: dict, prefix: str) -> None:
         for k, av in at.items():
             p = f"{prefix}.{k}" if prefix else str(k)
+            if _excluded(p):
+                continue
             if k not in bt:
                 entries.append({"path": p, "old": None, "new": copy.deepcopy(av),
                                 "source_file": _src(p), "created": True, "deleted": False})
             elif isinstance(bt[k], dict) and isinstance(av, dict):
                 _walk(bt[k], av, p)
-            elif bt[k] != av:
+            elif _differs(bt[k], av):
                 entries.append({"path": p, "old": copy.deepcopy(bt[k]), "new": copy.deepcopy(av),
                                 "source_file": _src(p), "created": False, "deleted": False})
         for k, bv in bt.items():
             if k not in at:
                 p = f"{prefix}.{k}" if prefix else str(k)
+                if _excluded(p) or _covers_excluded(p):
+                    continue
                 entries.append({"path": p, "old": copy.deepcopy(bv), "new": None,
                                 "source_file": _src(p), "created": False, "deleted": True})
 
@@ -2247,16 +2295,35 @@ def _wholesale_unit(before: dict | None, ctx: dict, src: str) -> dict | None:
     return {"id": uuid.uuid4().hex[:12], "ts": time.time(), "entries": entries, "meta": meta}
 
 
-def _journal_wholesale_commit(ctx: dict, before: dict | None, src: str) -> None:
+def _journal_wholesale_commit(ctx: dict, before: dict | None, src: str,
+                              edit_units: list[dict] | None = None) -> None:
     """docs/160 B: journal the staged wholesale content that just reached the
     chip as one unit (``before`` = the chip's tree read right before the
-    write). Advisory: never raises."""
+    write). ``edit_units`` are the change-log units the same apply journaled
+    (docs/65 mixed state): their paths are excluded so nothing is recorded
+    twice, and the wholesale unit is inserted BEFORE them (it is the base the
+    edits were made on, so Ctrl+Z walks the edits first, then the base).
+    Advisory: never raises."""
     try:
-        unit = _wholesale_unit(before, ctx, src)
-        if unit is not None:
+        excl = {e["path"] for u in (edit_units or []) for e in (u.get("entries") or [])}
+        unit = _wholesale_unit(before, ctx, src, exclude=excl)
+        if unit is None:
+            return
+        if edit_units:
+            _journal_insert_before(ctx, unit, len(edit_units))
+        else:
             _journal_commit(ctx, [unit])
     except Exception:
         logger.warning("wholesale journal unit failed", exc_info=True)
+
+
+def _journal_insert_before(ctx: dict, unit: dict, n_tail: int) -> None:
+    """Insert ``unit`` below the newest ``n_tail`` units of the sidecar (the
+    edit units the same apply just appended), cursor at the tip."""
+    path = undo_journal.sidecar_path(current_app.instance_path, ctx["path"])
+    ctx["undo_units"] = undo_journal.insert_units(path, [unit], before_tail=n_tail)
+    ctx["undo_cursor"] = len(ctx["undo_units"])
+    ctx["undo_sidecar_mtime"] = undo_journal.sidecar_mtime(path)
 
 
 def _redo_stack(ctx) -> list:
@@ -5558,6 +5625,7 @@ def _list_pair_cell(merged: dict, pair_id: str, path: str) -> dict[str, Any]:
     """A badge cell for a list leaf (confusion matrix, etc.) that deep-links to
     the pair inspector; the ✎ opens the whole-value JSON editor (r6 item 4)."""
     from quam_state_manager.core.pointer_path import _walk as _walk_abs, resolve_field_target
+    ft: dict = {}
     try:
         ft = resolve_field_target(merged, path)
         # resolved_value is scalar-nulled for containers — fetch the real list
@@ -5568,7 +5636,15 @@ def _list_pair_cell(merged: dict, pair_id: str, path: str) -> dict[str, Any]:
     except Exception:
         val = None
     badge = _list_badge(val)
-    return {"dot_path": path, "resolved_path": path, "display": badge,
+    # code-review sweep F9: the RESOLVED leaf goes out as data-resolved (the
+    # qubit-grid twin `_list_json_cell` always did) -- /undo names the
+    # resolved path, and a pointer-aliased pair list cell (a coupler's port
+    # taps on a QDAC chip) was unreachable by the docs/159 repaint otherwise
+    try:
+        resolved = ft.get("resolved_path") or path
+    except Exception:  # noqa: BLE001
+        resolved = path
+    return {"dot_path": path, "resolved_path": resolved, "display": badge,
             "is_pointer": False, "missing": val is None, "linkable": False,
             "modified": False, "old_display": "", "editable": False,
             "kind": "list", "pair_id": pair_id}
@@ -5960,8 +6036,14 @@ def _revert_entry_payload(dot_path, value, *, created=False, deleted=False,
         # list cell byte-identically to a fresh render instead of leaving
         # the pre-undo preview on screen. `_bulk_display(list)` is
         # `str(list)` -- Python's repr, which no cell ever shows.
+        # The preview is CUT at 24 chars: consumers that need the value
+        # (an inspector field, the tree model) take old_value_json.
         out["old_value_disp"] = _list_preview(value)
         out["old_value_badge"] = _list_badge(value)
+        try:
+            out["old_value_json"] = json.dumps(value, separators=(",", ":"))
+        except (TypeError, ValueError):
+            out["old_value_json"] = None
     return out
 
 
@@ -12592,14 +12674,16 @@ def _undo_journal_step(ctx):
         return _tray_html()
     gid = undo_journal.GID_PREFIX + str(unit.get("id") or cursor)
     ops = undo_journal.inverse_ops(unit)
-    # docs/160: a live flush is only honest onto a chip that holds EXACTLY the
-    # journal's content -- so the log must be empty now (no unapplied edits
-    # would ride along), captured before the staging below fills it.
-    log_was_empty = not store.change_log
 
     staged: list = []
     drift = 0
     with store._lock:
+        # docs/160: a live flush is only honest onto a chip that holds EXACTLY
+        # the journal's content -- so the log must be empty now (no unapplied
+        # edits would ride along), sampled UNDER the lock right before the
+        # staging fills it (sweep F5: sampled outside, a concurrent edit could
+        # land between the sample and the stage)
+        log_was_empty = not store.change_log
         _redo_begin(ctx, store)   # a foreign edit since our last op forks redo
         try:
             for (op, path, value, _src), uent in zip(ops, uents):
@@ -12688,19 +12772,32 @@ def _undo_journal_step(ctx):
             "message": message,
             "live": live,
             "tier_note": flush.get("note") if not live else None,
-            "entries": [
-                _revert_entry_payload(u["path"], u.get("old"),
-                                      created=bool(u.get("created")),
-                                      deleted=bool(u.get("deleted")),
-                                      source_file=u.get("source_file", "state"))
-                for u in uents
-            ],
+            **_walk_entries_payload(uents, lambda u: u.get("old"),
+                                    created=lambda u: bool(u.get("created")),
+                                    deleted=lambda u: bool(u.get("deleted"))),
         },
         "pulses-changed": True,
         "diagnostics-changed": True,
         **({"liveDriftChanged": True, "stateHistoryChanged": True} if live else {}),
     })
     return resp
+
+
+def _walk_entries_payload(uents: list, value_of, *, created, deleted) -> dict:
+    """The `entries` of a walk-step response, CAPPED (code-review sweep, F4):
+    the payload rides the HX-Trigger response HEADER, and a wholesale unit
+    (docs/160 B) can carry thousands of entries -- past the project's own
+    header rule (`_HEADER_PATCH_CAP`, docs/144) Chrome rejects the response
+    outright, AFTER the chip was written. Past the cap the response carries no
+    entries and `structural: True`, which the client answers with the
+    wholesale grid resync it already has for structural undos."""
+    if len(uents) > _HEADER_PATCH_CAP:
+        return {"entries": [], "structural": True, "n_entries": len(uents)}
+    return {"entries": [
+        _revert_entry_payload(u["path"], value_of(u), created=created(u), deleted=deleted(u),
+                              source_file=u.get("source_file", "state"))
+        for u in uents
+    ]}
 
 
 def _working_at_sync_point(ctx, store, *, log_was_empty: bool) -> str | None:
@@ -12717,39 +12814,80 @@ def _working_at_sync_point(ctx, store, *, log_was_empty: bool) -> str | None:
     return None
 
 
-def _rollback_walk_step(ctx, store, modifier, staged: list) -> None:
-    """docs/160 (review M2): a refused live flush had ALREADY saved the staged
-    step into the working copy (the door saves before it writes), so the log
-    is empty and nothing can be un-staged -- put the pre-step values back the
-    same way and save again, then clear the dirty/stash marks: the working
-    copy is exactly the synced content once more. All-or-nothing.
+def _rollback_walk_step(ctx, store, modifier, staged: list) -> bool:
+    """docs/160 (review M2): a refused live flush had usually ALREADY saved the
+    staged step into the working copy (the door saves before it writes), so
+    the log is empty and nothing can be un-staged -- put the pre-step values
+    back the same way and save again, then clear the dirty/stash marks: the
+    working copy is exactly the synced content once more. All-or-nothing.
     ``staged`` is in STAGING order (oldest first); the rollback walks it
     newest-first, so a unit that touched one path twice lands on the value
-    it started from (review N1 -- the first cut walked it forwards and saved
-    the middle value as if it were the sync point)."""
+    it started from (review N1).
+
+    Code-review sweep F3: when the door's own SAVE failed (a locked
+    state.json), the staged entries are STILL in the log -- then the honest
+    rollback is to pop them (``undo_group``), not to append inverses that
+    the same failing save would then leave as 2N phantom edits.
+    Returns True when the working copy is back at the synced content."""
     try:
+        gid = staged[-1].group_id if staged else None
         with store._lock:
-            for e in reversed(list(staged)):       # LIFO: newest first
-                if e.created:
-                    modifier.delete_subtree(e.dot_path)
-                elif e.deleted:
-                    modifier.create_subtree(e.dot_path, copy.deepcopy(e.old_value))
-                else:
-                    modifier.set_value(e.dot_path, copy.deepcopy(e.old_value), coerce=False)
-        with _active_wc_lock(ctx):
-            ctx["saver"].save()
+            # the door never saved when OUR group is still in the log (a save
+            # failure, or the F5 foreign-edit refusal) -- pop our entries by
+            # identity; a stranger's entry above them stays in the tray
+            mine = [e for e in store.change_log if gid is not None and e.group_id == gid]
+            still_staged = bool(mine)
+            if still_staged:
+                for e in reversed(mine):
+                    idx = next((i for i in range(len(store.change_log) - 1, -1, -1)
+                                if store.change_log[i] is e), None)
+                    if idx is not None:
+                        modifier.discard(idx)
+            else:
+                for e in reversed(list(staged)):       # LIFO: newest first
+                    if e.created:
+                        modifier.delete_subtree(e.dot_path)
+                    elif e.deleted:
+                        modifier.create_subtree(e.dot_path, copy.deepcopy(e.old_value))
+                    else:
+                        modifier.set_value(e.dot_path, copy.deepcopy(e.old_value), coerce=False)
+        if not still_staged:
+            with _active_wc_lock(ctx):
+                ctx["saver"].save()
         _clear_reapply(ctx)
+        # a stranger's entries left in the log keep the tray honest; only an
+        # EMPTY log is provably back at the synced content
         _set_working_dirty(False, ctx)
         _invalidate_engine_cache()
+        return True
     except Exception:  # noqa: BLE001 — the tray then shows whatever is left, honestly
         logger.warning("walk-step rollback failed", exc_info=True)
+        _invalidate_engine_cache()
+        return False
 
 
-def _flush_walk_step_live(ctx) -> dict:
+def _flush_walk_step_live(ctx, gid: str | None = None) -> dict:
     """docs/160: the ONE door, pressed for a walk step. Under an armed
     Auto-Sync session the anchor of ↺ Revert this session (`last_apply`) is
     the SESSION's, not this write's (docs/117) -- kept. Returns the core's
-    JSON body (``status`` ok / conflict / error)."""
+    JSON body (``status`` ok / conflict / error).
+
+    Sweep F5: two windows share one server context, and the staging lock is
+    released before the door -- a concurrent `/field/edit` could land in the
+    log between them and ride onto the chip under this keypress, un-reviewed
+    and (journal=False) un-journaled. So right before the door, under the
+    store lock, the log must hold NOTHING but this step's own ``gid`` group;
+    anything else refuses as ``status: foreign_edit`` (the caller rolls the
+    step back and says so). The docs/120 gate, applied to the walk."""
+    store = ctx.get("store")
+    if store is not None and gid is not None:
+        with store._lock:
+            stray = [e.dot_path for e in store.change_log if e.group_id != gid]
+        if stray:
+            return {"status": "foreign_edit",
+                    "message": ("an edit from another window arrived meanwhile ("
+                                + ", ".join(stray[:3]) + ("…" if len(stray) > 3 else "")
+                                + ") — review the tray, then undo again")}
     _auto = _auto_apply_state(ctx)
     _keep = ctx.get("last_apply") if _auto else None
     try:
@@ -12799,16 +12937,18 @@ def _undo_live_flush(ctx, store, modifier, unit: dict, staged: list, *,
     if foreign:
         return {"live": False,
                 "note": f"staged only: this change was applied from another SM window (pid {foreign}) — press Apply to write it from here"}
-    body = _flush_walk_step_live(ctx)
+    body = _flush_walk_step_live(ctx, gid=(staged[-1].group_id if staged else None))
     if body.get("status") == "ok":
         return {"live": True, "note": None}
-    _rollback_walk_step(ctx, store, modifier, staged)
+    clean = _rollback_walk_step(ctx, store, modifier, staged)
     ctx["undo_cursor"] = cursor_before
     _redo_mark(ctx, store)
     if body.get("status") == "conflict":
         note = "the live chip changed since it was synced; nothing was written — take the live changes (drift banner), then undo again"
     else:
         note = f"{body.get('message') or 'apply failed'}; nothing was written"
+    if not clean:
+        note += " — the rollback could not complete: check the review tray"
     return {"live": False, "note": note, "rolled_back": True}
 
 
@@ -12831,12 +12971,13 @@ def _redo_journal_forward(ctx, store, modifier, index: int, unit_id: str | None 
     from quam_state_manager.core.pointer_path import _walk as _walk_abs, resolve_field_target
 
     def _current(merged, path):
-        # the RAW value at the resolved leaf: `resolved_value` is scalar-nulled
-        # for containers, and a wholesale unit's entry can be a whole list
+        # the RAW value AT THE PATH the journal names (code-review sweep, F8):
+        # the modifier writes the raw leaf and never chases a pointer, so a
+        # re-linked pointer's `old` is the pointer STRING -- resolving through
+        # it would compare the target's dict and refuse every pointer redo.
+        # `_walk` also returns a whole list where `resolved_value` is nulled.
         try:
-            ft = resolve_field_target(merged, path)
-            rp = ft.get("resolved_path") or path
-            found, node = _walk_abs(merged, rp.split("."))
+            found, node = _walk_abs(merged, path.split("."))
             return node if found else None
         except Exception:  # noqa: BLE001 — unreadable == moved
             return None
@@ -12896,7 +13037,7 @@ def _redo_journal_forward(ctx, store, modifier, index: int, unit_id: str | None 
             _invalidate_engine_cache()
             return [], f"redo failed, nothing changed: {exc}"
     _invalidate_engine_cache()
-    body = _flush_walk_step_live(ctx)
+    body = _flush_walk_step_live(ctx, gid=gid)
     if body.get("status") != "ok":
         _rollback_walk_step(ctx, store, modifier, staged)
         _redo_mark(ctx, store)
@@ -12926,6 +13067,12 @@ def _live_redo_response(fw: list, why: str | None, n_req: int):
         message = f"Redone → live: {anchor.dot_path} restored"
     else:
         message = f"Redone → live: {anchor.dot_path} → {_fmt_val(anchor.new_value)}"
+    if len(fw) > _HEADER_PATCH_CAP:          # sweep F4: see _walk_entries_payload
+        return _redo_response(message, [],
+                              extra={"requested": n_req, "consumed": 1, "stopped": None,
+                                     "level": "success", "live": True,
+                                     "structural": True, "n_entries": len(fw)},
+                              live=True)
     return _redo_response(
         message,
         [_revert_entry_payload(e.dot_path, e.new_value, created=bool(e.deleted),
@@ -13003,6 +13150,13 @@ def redo():
         _fw, _why = _redo_journal_forward(ctx, store, modifier,
                                           int(_frame.get("unit_index") or 0),
                                           unit_id=_frame.get("unit_id"))
+        if not _fw:
+            # code-review sweep F12: a REFUSED live redo (the chip moved, the
+            # setting is OFF, a foreign owner) leaves the unit undone -- the
+            # frame goes back so the next press retries THIS step instead of
+            # re-applying an older frame beneath it out of order
+            _frames.append(_frame)
+            _redo_mark(ctx, store)
         return _live_redo_response(_fw, _why, n_req)
     if (not _frames and not store.change_log and _undo_live_enabled()
             and int(ctx.get("undo_cursor") or 0) < len(ctx.get("undo_units") or [])):
@@ -13168,6 +13322,17 @@ def discard():
     # docs/107: recoverability is what licenses the ✕'s no-confirm — the
     # discarded change goes onto the redo stack, Ctrl+Shift+Z brings it back.
     _redo_push_group(ctx, store, [entry], keep_jrn=False)
+    # docs/160 (code-review sweep, F2): the ✕ took the LAST entry of a staged
+    # journal step out of the log -- that unit's content is back on the chip
+    # as far as the walk is concerned, so the cursor moves back up over it
+    # (discard_all does the same by count). Left below the unit, the next
+    # LIVE undo would persist a cursor under a unit still in effect and the
+    # next save would truncate it out of the journal.
+    _gid = entry.group_id
+    if (ctx is not None and isinstance(_gid, str) and _gid.startswith(undo_journal.GID_PREFIX)
+            and not any(e.group_id == _gid for e in store.change_log)):
+        ctx["undo_cursor"] = min(int(ctx.get("undo_cursor") or 0) + 1,
+                                 len(ctx.get("undo_units") or []))
 
     resp = make_response(_tray_html())
     resp.headers["HX-Trigger"] = json.dumps({
@@ -14468,7 +14633,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
     # leaf difference as ONE unit so Ctrl+Z can walk it. Before the flag is
     # cleared below, and only for a real apply (a walk step never stages one).
     if journal and ctx.get("staged_base"):
-        _journal_wholesale_commit(ctx, _before_tree, "apply-staged")
+        _journal_wholesale_commit(ctx, _before_tree, "apply-staged", edit_units=_jrn_units)
     ctx["staged_base"] = False   # the staged content reached live (audit-r10)
     _clear_reapply(ctx)  # edits are on the live chip now — nothing left to re-apply
     ctx["live_diverged"] = False  # live now holds the merged working content
@@ -14635,7 +14800,7 @@ def state_apply_to_live():
 
     _set_working_dirty(False, ctx)
     if ctx.get("staged_base"):
-        _journal_wholesale_commit(ctx, _before_tree, "apply-staged")   # docs/160 B
+        _journal_wholesale_commit(ctx, _before_tree, "apply-staged", edit_units=_jrn_units)   # docs/160 B
     ctx["staged_base"] = False   # the staged content reached live (audit-r10)
     _clear_reapply(ctx)  # the edits are now on the live chip — nothing left to re-apply
     ctx["live_diverged"] = False  # live now holds the working content (incl. force)

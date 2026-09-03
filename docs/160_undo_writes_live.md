@@ -109,7 +109,7 @@ before every walk and re-reads units + cursor when another process wrote it.
 
 | check | result |
 |---|---|
-| `tests/test_undo_live.py` | 30: the walk down/up, persisted cursor, truncation, OFF mode, pending edits, saved-but-unapplied content, a staged snapshot, drift, a chip that moved (rolled back, never clobbered; redo refused too; the walk resumes after taking the live changes), archive, restart (journal-forward fallback), the flush outside `store._lock`, stage→apply unit, dataset Apply-to-chip unit, restore-live unit, the unit's `old` = the chip's value, structural subtree/list round trip, too-large, foreign live owner (both directions), dead owner, the applied-log ✕ keeping the cursor, live-redo triggers, a redo frame bound to its unit, sidecar re-read |
+| `tests/test_undo_live.py` | 42 (after §5b/§5c): the walk down/up, persisted cursor, truncation, OFF mode, pending edits, saved-but-unapplied content, a staged snapshot, drift, a chip that moved (rolled back, never clobbered; redo refused too; the walk resumes after taking the live changes), archive, restart (journal-forward fallback), the flush outside `store._lock`, stage→apply unit, dataset Apply-to-chip unit, restore-live unit, the unit's `old` = the chip's value, structural subtree/list round trip, too-large, foreign live owner (both directions), dead owner, the applied-log ✕ keeping the cursor, live-redo triggers, a redo frame bound to its unit, sidecar re-read |
 | `tests/test_undo_journal.py` (OFF mode) | 21, unchanged pins |
 | regression (undo, auto-apply, ctrlz, undo-trail, versions, roundtrip, live-replace, sync, overwrite, dataset apply, unseen edits, multi-instance, revert payload, sidebar tools, float panel, all of test_web) | 850 passed |
 | node selfchecks (ctrlz, undo_trail, undo_pages, sidebar_tools, float_panel, auto_apply) | green |
@@ -199,3 +199,31 @@ verifications were re-run by hand):
 | S2 | the Auto-Sync applied log ignored the walk cursor: a unit Ctrl+Z had undone on the chip still offered an armed ✕, which then 409'd "has changed since", blaming a foreign write | a unit at or past the cursor renders **undone** (Ctrl+Shift+Z brings it back) with no ✕; the revert route says "already undone" |
 
 Both pinned in `tests/test_undo_live.py`.
+
+The sweep's full report (delivered after two interruptions, every verdict
+re-derived by hand against the tree) named eleven more, all fixed in the
+same commit as this section:
+
+| | finding | fix |
+|---|---|---|
+| F1 | a staged snapshot applied TOGETHER with tray edits (docs/65 mixed state) journaled the edited paths twice — once as the edit unit, once inside the wholesale unit — so the second Ctrl+Z staged a value the chip never held | the wholesale unit excludes the edit unit's paths and is INSERTED BELOW it (`undo_journal.insert_units`): the walk undoes the edits first, then the base |
+| F2 | the tray ✕ on a staged step's last entry left the RAM cursor below a unit still in effect; the next live undo persisted it and the next save truncated the unit away | `/discard` moves the cursor back up when it un-stages a whole `jrn:` group (as `discard_all` already did) |
+| F3 | when the door's own SAVE failed, the staged step was still in the log and the rollback appended N inverses on top — 2N phantom edits under "nothing was written" | the rollback pops OUR entries by identity when they are still in the log, else re-sets + saves |
+| F4 | a wholesale unit's walk response carried up to 4,000 entries in the HX-Trigger HEADER — past the project's own `_HEADER_PATCH_CAP` Chrome rejects the response, after the chip was written | past the cap: no entries, `structural: true`, the client resyncs wholesale (`stateRestored`) |
+| F5 | `log_was_empty` sampled outside the lock + no unseen-edit gate on the walk's door: a concurrent edit from another window could ride the keypress onto the chip, un-journaled | sampled under the lock; right before the door, under the lock, the log must hold nothing but the step's own group — else `foreign_edit`, rolled back, the stranger's entry left in the tray |
+| F6 | `_journal_unit_foreign` trusted a bare PID-alive probe — after a restart any process that inherited the old pid made the user's own history "another window's" | only a pid in the docs/80 `instances.peers()` registry is foreign |
+| F7 | `nan != nan` made every NaN leaf a phantom wholesale entry; the drift check then refused every wholesale undo on a NaN-bearing chip | `_differs`: two NaNs are the same value (lists/dicts element-wise) |
+| F8 | the redo CAS resolved THROUGH a pointer leaf and compared the target with the unit's old (the pointer string) — every pointer re-link redo refused | the CAS reads the raw leaf at the journal's path, as the modifier writes it |
+| F9 | `_list_pair_cell` emitted the ALIAS as `data-resolved`, so the docs/159 repaint could not find a pointer-aliased pair list cell | the resolved leaf, as the qubit-grid twin always did |
+| F10 | a list's `old_value_disp` is the grid's 24-char preview, and the inspector / tree / Undo trail consumed it as the lossless value | `old_value_json` rides beside it; those consumers prefer it |
+| F12 | a REFUSED live redo dropped its frame; the next Ctrl+Shift+Z re-applied an older in-memory frame out of order | the frame goes back on refusal |
+| + | the walk's `level: "warning"` toasts rendered green | the toast honours `warning` |
+
+Two more outside this document: docs/158's filter form lost `chip_key` on an
+archived chip's view (the loaded chip's results landed under the other chip's
+header — fixed, and the busy-index banner moved inside the results
+container), and docs/156's ↗ after a full page reload NAVIGATED the still-open
+calculator window (same name), wiping typed values — the page now pings a
+`BroadcastChannel` first and only silence opens a new window (CDP-verified:
+one window, same target, the typed value survives). Pinned in
+`tests/test_undo_live.py` (42) and `tests/test_sweep_misc.py` (7).
