@@ -18610,3 +18610,151 @@ window.GridVirtMissingNote = function (t, noteId) {
     } catch (e) { return 0; }
 };
 /* GRIDVIRT-MISSING-NOTE:END */
+
+/* ── 2Q Gate Detuning Inspector (docs/154) ───────────────────────────── */
+window.GateInspector = (function() {
+    function init(root) {
+        if (!root) return;
+        var plots = root.querySelectorAll('.gi-plot[data-pair]');
+        plots.forEach(function(el) { loadPlot(el); });
+
+        root.querySelectorAll('.gi-toggle').forEach(function(toggle) {
+            if (toggle.dataset.giWired) return;
+            toggle.dataset.giWired = '1';
+            toggle.addEventListener('click', function(e) {
+                var chip = e.target.closest('.gi-chip');
+                if (!chip || chip.classList.contains('gi-chip-active')) return;
+                var role = chip.getAttribute('data-role');
+                toggle.querySelectorAll('.gi-chip').forEach(function(c) {
+                    c.classList.toggle('gi-chip-active', c === chip);
+                });
+                var inspector = toggle.closest('.gi-inspector');
+                if (!inspector) return;
+                var plotEl = inspector.querySelector('.gi-plot');
+                if (plotEl) {
+                    plotEl.setAttribute('data-role', role);
+                    loadPlot(plotEl);
+                }
+            });
+        });
+
+        root.querySelectorAll('.gi-switch-btn').forEach(function(btn) {
+            if (btn.dataset.giWired) return;
+            btn.dataset.giWired = '1';
+            btn.addEventListener('click', function() {
+                var inspector = btn.closest('.gi-inspector');
+                if (!inspector) return;
+                var activeChip = inspector.querySelector('.gi-chip-active');
+                var newRole = activeChip ? activeChip.getAttribute('data-role') : null;
+                if (!newRole) return;
+                var pair = btn.getAttribute('data-pair');
+                if (newRole === btn.getAttribute('data-current-moving')) {
+                    window.showToast && showToast('Already the moving qubit', 'info');
+                    return;
+                }
+                var body = new FormData();
+                body.append('role', newRole);
+                body.append('expect_chip', window.__chipToken || '');
+                fetch('/pair/' + encodeURIComponent(pair) + '/gate-inspector/switch-moving', {
+                    method: 'POST', body: body,
+                }).then(function(r) {
+                    if (r.ok) {
+                        r.text().then(function(html) {
+                            var pane = document.getElementById('inspector-pane');
+                            if (pane) {
+                                pane.innerHTML = html;
+                                window.GateInspector.init(pane);
+                            }
+                        });
+                        window.showToast && showToast('Moving qubit switched — edits staged in the review tray', 'ok');
+                    } else {
+                        r.text().then(function(t) {
+                            window.showToast && showToast('Switch failed: ' + t.slice(0, 200), 'error');
+                        });
+                    }
+                }).catch(function(e) {
+                    window.showToast && showToast('Network error: ' + e.message, 'error');
+                });
+            });
+        });
+    }
+
+    function loadPlot(el) {
+        var pair = el.getAttribute('data-pair');
+        var role = el.getAttribute('data-role') || 'control';
+        el.innerHTML = '<p class="muted" style="text-align:center;padding:2em">Loading detuning plot…</p>';
+
+        fetch('/pair/' + encodeURIComponent(pair) + '/gate-inspector/plot?moving=' + role)
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.error) {
+                    el.innerHTML = '<p class="muted" style="padding:1em">' + d.error + '</p>';
+                    return;
+                }
+                el.innerHTML = '';
+                // the server says out loud when the x axis is frequency
+                // rather than voltage, or when a crossing is unreachable
+                if (d.notes && d.notes.length) {
+                    var note = document.createElement('p');
+                    note.className = 'muted gi-note';
+                    note.textContent = d.notes.join(' ');
+                    el.appendChild(note);
+                }
+                var inner = document.createElement('div');
+                inner.style.width = '100%';
+                inner.style.minHeight = '300px';
+                el.appendChild(inner);
+
+                var layout = (window.PlotTheme && window.PlotTheme.houseLayout)
+                    ? window.PlotTheme.houseLayout(d.layout || {}) : (d.layout || {});
+
+                Promise.resolve(window._plotlyRender(inner, d.data, layout, {responsive: true}))
+                    .then(function() {
+                        if (window.PlotHost) window.PlotHost.observe(el);
+                        if (d.clickable && typeof window._attachInteractivePlotClickHandler === 'function') {
+                            _attachGateInspectorClickHandler(inner, d.clickable);
+                        }
+                    });
+            })
+            .catch(function(e) {
+                el.innerHTML = '<p class="muted" style="padding:1em">Failed to load plot: ' + e.message + '</p>';
+            });
+    }
+
+    function _attachGateInspectorClickHandler(plotDiv, clickable) {
+        if (!clickable || !clickable.targets || !clickable.targets.length) return;
+        plotDiv.on('plotly_click', function(ev) {
+            if (!ev || !ev.points || !ev.points.length) return;
+            var pt = ev.points[0];
+            var av = ((clickable.axis || 'x') === 'y') ? pt.y : pt.x;
+            if (av === undefined || av === null) return;
+
+            var updates = [];
+            clickable.targets.forEach(function(t) {
+                var scale = (t.scale === undefined || t.scale === null) ? 1 : t.scale;
+                var offset = (t.offset === undefined || t.offset === null) ? 0 : t.offset;
+                var value = av * scale + offset;
+                updates.push({dot_path: t.path, value: value});
+            });
+            if (!updates.length) return;
+
+            var q = clickable.qubit || '';
+            if (typeof window._openPlotApplyPopup === 'function') {
+                window._openPlotApplyPopup(updates, '', q, [], window.__chipToken || '');
+            }
+        });
+    }
+
+    return { init: init, loadPlot: loadPlot };
+})();
+
+document.addEventListener('htmx:afterSettle', function(e) {
+    var target = e.detail ? e.detail.target : null;
+    if (!target) return;
+    if (target.querySelector && target.querySelector('.gi-inspector')) {
+        window.GateInspector.init(target);
+    }
+});
+document.addEventListener('DOMContentLoaded', function() {
+    window.GateInspector.init(document);
+});

@@ -60,6 +60,7 @@ from quam_state_manager.core import (
     config_view,
     cr_semantics,
     diagnostics,
+    gate_inspector,
     gen_presets,
     json_diff,
     node_scan,
@@ -7894,6 +7895,133 @@ def pair_detail(name: str):
 
 
 # ======================================================================
+# 2Q Gate Detuning Inspector
+# ======================================================================
+
+def _gate_inspector_ctx(
+    pair_name: str, pair_data: dict[str, Any], engine: QueryEngine,
+) -> dict[str, Any]:
+    """Build template context for the gate detuning inspector section.
+
+    Returns a dict with keys the template expects, or ``None`` if the
+    pair has no CZ macros (the section is hidden entirely).
+    """
+    pair_obj = engine.store.merged.get("qubit_pairs", {}).get(pair_name, {})
+    macros = pair_obj.get("macros") or {}
+    if not isinstance(macros, dict):
+        return None
+    has_cz = any(
+        isinstance(g, dict) and cr_semantics.is_cz_shaped_macro(g)
+        for g in macros.values()
+    )
+    if not has_cz:
+        return None
+
+    control = pair_data.get("qubit_control")
+    target = pair_data.get("qubit_target")
+    moving_role = pair_data.get("moving_qubit") or "control"
+    if not control or not target:
+        return {"error": "Qubit references not resolved."}
+
+    try:
+        qa = gate_inspector.extract_qubit_params(engine, control)
+        qb = gate_inspector.extract_qubit_params(engine, target)
+    except KeyError as e:
+        return {"error": str(e)}
+
+    warnings = gate_inspector.validate_params(qa, qb)
+
+    return {
+        "pair_name": pair_name,
+        "control_name": control,
+        "target_name": target,
+        "moving_role": moving_role,
+        "current_moving": moving_role,
+        "warnings": warnings if warnings else None,
+        "error": None,
+    }
+
+
+@bp.route("/pair/<name>/gate-inspector/plot", methods=["GET"])
+def pair_gate_inspector_plot(name: str):
+    """Return Plotly JSON for the detuning sweep of one pair."""
+    engine = _engine()
+    store = _store()
+    if not engine or not store:
+        return jsonify({"error": "No state loaded"}), 400
+
+    try:
+        pair_data = engine.get_pair(name)
+    except (KeyError, TypeError) as e:
+        return jsonify({"error": str(e)}), 404
+
+    role = request.args.get("moving") or pair_data.get("moving_qubit") or "control"
+    control = pair_data.get("qubit_control")
+    target = pair_data.get("qubit_target")
+    if not control or not target:
+        return jsonify({"error": "Qubit references not resolved"}), 422
+
+    try:
+        qa = gate_inspector.extract_qubit_params(engine, control)
+        qb = gate_inspector.extract_qubit_params(engine, target)
+    except KeyError as e:
+        return jsonify({"error": str(e)}), 404
+
+    sweep = gate_inspector.compute_detuning_sweep(qa, qb, sweep_role=role)
+
+    if "error" in sweep:
+        return jsonify({"error": sweep["error"]}), 422
+
+    figure = gate_inspector.build_plotly_figure(sweep, moving_role=role)
+    return jsonify(figure)
+
+
+@bp.route("/pair/<name>/gate-inspector/switch-moving", methods=["POST"])
+def pair_gate_inspector_switch(name: str):
+    """Stage edits to switch the pair's moving qubit and rewire CZ pulses."""
+    modifier = _modifier()
+    store = _store()
+    if not modifier or not store:
+        return render_template("_status.html", message="No state loaded", level="warning")
+
+    # The chip gate first — the same one every other staging door uses. It is
+    # `_active_chip_token`; there is no `_chip_token`, and naming it wrong made
+    # this route raise NameError on every press (app.js always sends the field).
+    chip_token = request.form.get("expect_chip") or ""
+    if chip_token and chip_token != (_active_chip_token() or ""):
+        return render_template(
+            "_status.html", message="Chip changed — please reload.", level="error"), 409
+
+    new_role = (request.form.get("role") or "").strip()
+    plan = gate_inspector.plan_switch_moving_qubit(store, name, new_role)
+
+    if plan.get("error"):
+        return render_template(
+            "_status.html", message=plan["error"], level="warning"), 409
+
+    # One gid for the whole rewire: the review tray shows one gesture and one
+    # Ctrl+Z takes all of it back, never half a moved pulse.
+    gid = modifier.new_group_id()
+    try:
+        for dot_path in plan.get("deletes", []):
+            try:
+                modifier.delete_subtree(dot_path, group_id=gid)
+            except (KeyError, TypeError):
+                pass
+        for dot_path, value in plan.get("creates", []):
+            modifier.create_subtree(dot_path, value, group_id=gid)
+        for dot_path, value in plan.get("sets", []):
+            modifier.set_value(dot_path, value, group_id=gid)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("switch-moving(%r, %r) failed: %s", name, new_role, e)
+        return render_template(
+            "_status.html", level="error",
+            message=f"Failed to switch moving qubit: {e}"), 500
+
+    return _render_pair_detail(name)
+
+
+# ======================================================================
 # Couplers — coupler-channel-scoped pair view (same table/filter/JSON-
 # drill-down pattern as Pairs, narrowed to coupler fields; a pair without a
 # coupler — e.g. a CR chip — simply isn't a row here, see has_coupler in
@@ -7964,6 +8092,9 @@ def _render_pair_detail(name: str, *, focus_path: str | None = None):
     # captioned "coupler" through the single-return fallback.
     port_info = engine.get_pair_port_roles(name)
 
+    # 2Q gate detuning inspector context — gated on having CZ macros.
+    gi_ctx = _gate_inspector_ctx(name, data, engine)
+
     template = "_pair_detail.html" if _is_htmx() else "pair_detail.html"
     return render_template(
         template,
@@ -7975,6 +8106,7 @@ def _render_pair_detail(name: str, *, focus_path: str | None = None):
             port_info=port_info,
             modified_map=_modified_map(),
             focus_path=focus_path,
+            gi=gi_ctx,
         ),
     )
 
