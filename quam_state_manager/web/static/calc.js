@@ -330,6 +330,7 @@
     var WIN_URL_FALLBACK = '/calc-window';
     var WIN_NAME = 'quam-calc';
     var WIN_KEY = 'quam_calc_win';          // {w, h, x, y} the separate window last had
+    var REQ_KEY = 'quam_calc_req';          // {w, h} the CONTENT size we last ASKED window.open for
     var WIN_DEFAULT = { w: 400, h: 680 };
     var _calcWin = null;
 
@@ -352,6 +353,11 @@
         try { s = JSON.parse(window.localStorage.getItem(WIN_KEY) || 'null'); } catch (e) {}
         var w = (s && s.w > 200) ? s.w : WIN_DEFAULT.w;
         var h = (s && s.h > 150) ? s.h : WIN_DEFAULT.h;
+        // F-CALC-GROW: record the CONTENT size we are asking for, so the window
+        // can measure this browser's frame overhead (inner - requested) once and
+        // store back a size that reproduces the same content next time, instead
+        // of feeding its realised (larger) inner size back as the next request.
+        try { window.localStorage.setItem(REQ_KEY, JSON.stringify({ w: w, h: h })); } catch (e) {}
         var f = 'popup=yes,width=' + Math.round(w) + ',height=' + Math.round(h)
               + ',resizable=yes,scrollbars=yes';
         if (s && isFinite(s.x) && isFinite(s.y)) f += ',left=' + Math.round(s.x) + ',top=' + Math.round(s.y);
@@ -467,10 +473,23 @@
         var first = document.getElementById('calc-s1-dp');
         if (first) setTimeout(function () { first.focus(); first.select && first.select(); }, 0);
         var t = null;
+        // F-CALC-GROW: measure the frame overhead ONCE at load -- how much
+        // bigger the realised inner size is than the content size we asked
+        // window.open for. remember() then stores (inner - overhead), the size
+        // that reproduces the current content, so a pure open/close cycle stores
+        // the SAME size and only a genuine user resize moves it. Clamped to the
+        // screen so a maximised window can never seed an off-screen next open.
+        var _req = null;
+        try { _req = JSON.parse(window.localStorage.getItem(REQ_KEY) || 'null'); } catch (e) {}
+        var _frameDW = (_req && _req.w > 0) ? (window.innerWidth - _req.w) : 0;
+        var _frameDH = (_req && _req.h > 0) ? (window.innerHeight - _req.h) : 0;
         function remember() {
             try {
+                var sw = (window.screen && window.screen.availWidth) || 100000;
+                var sh = (window.screen && window.screen.availHeight) || 100000;
                 window.localStorage.setItem(WIN_KEY, JSON.stringify({
-                    w: window.innerWidth, h: window.innerHeight,
+                    w: Math.max(200, Math.min(sw, window.innerWidth - _frameDW)),
+                    h: Math.max(150, Math.min(sh, window.innerHeight - _frameDH)),
                     x: window.screenX, y: window.screenY }));
             } catch (e) {}
         }
@@ -488,6 +507,12 @@
                 // exists (F11) — answering must not steal the user's focus
                 if (d.type === 'calc-ping') { try { window.focus(); } catch (e) {} }
             };
+            // F-CALC-DUP (final review): announce ourselves ONCE on open, so any
+            // SM tab that was ALREADY open when this window opened latches
+            // _extAlive=true now (a page only ASKS once, at its own load) --
+            // otherwise those tabs keep _extAlive=false and their Calculator
+            // button / Alt+C open a SECOND in-page calculator beside the window.
+            try { ch.postMessage({ type: 'calc-here' }); } catch (e) {}
             // ... and say goodbye, so the page stops believing in a window
             // the user closed
             window.addEventListener('pagehide', function () {
@@ -515,9 +540,15 @@
         // docs/156: the calculator is OUT in its own window — bring that one
         // forward rather than open a second calculator here
         if (willOpen && calcWinAlive()) {
-            if (_calcWin) { try { _calcWin.focus(); } catch (e) {} return; }
-            // an EXTERNAL window (F11): ping it forward, and if it turns out
-            // to be gone, open here after all rather than doing nothing
+            // F-CALC-DEAD (final review): a CLOSED handle must fall through to
+            // _focusExternal (which heals a stale _extAlive and reopens in-page)
+            // -- focus() on a closed window is a silent no-op, so `if (_calcWin)`
+            // alone left the Calculator button dead after the window crashed /
+            // was discarded while _extAlive was still latched true.
+            if (_calcWin && !_calcWin.closed) { try { _calcWin.focus(); } catch (e) {} return; }
+            // an EXTERNAL window (F11), or a closed local handle: ping it
+            // forward, and if it turns out to be gone, open here after all
+            // rather than doing nothing
             _focusExternal(function () { window.toggleCalc(trigger); });
             return;
         }

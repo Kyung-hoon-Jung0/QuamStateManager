@@ -294,6 +294,106 @@ function worldC() {
   setTimeout(function () {
     ok(!pop.classList.contains('calc-hidden'),
        'C5 …and when nothing answers, the popover opens here after all (never a dead press)');
-    process.exit(fails ? 1 : 0);
+    worldD();
   }, 400);
+}
+
+/* ══ World D: the pre-customer review's three calculator fixes ═════════════ */
+function worldD() {
+  // ── F-CALC-DUP: a real wireStandalone ANNOUNCES itself (calc-here) on open,
+  // so an SM tab that was ALREADY open latches _extAlive and never opens a
+  // second in-page calculator. (A page only ASKS once, at its own load.)
+  const bus = [];
+  function FakeBC(name) {
+    const self = this;
+    self.name = name; self.onmessage = null; self.closed = false;
+    self.postMessage = function (data) {
+      const copy = JSON.parse(JSON.stringify(data));
+      bus.forEach(function (ch) { if (ch !== self && !ch.closed && ch.onmessage) ch.onmessage({ data: copy }); });
+    };
+    self.close = function () { self.closed = true; };
+    bus.push(self);
+  }
+  // an already-open tab, listening before the window exists
+  const tab = new FakeBC('quam-calc');
+  let heard = 0;
+  tab.onmessage = function (ev) { if (ev && ev.data && ev.data.type === 'calc-here') heard++; };
+
+  // the standalone window comes up (real wireStandalone) on the same bus, and
+  // with a known frame overhead so F-CALC-GROW is exercised in the same realm
+  const win = world('<div id="calc-popover" class="calc-popover calc-standalone">' + FIELDS + '</div>',
+    null, function (w) {
+      w.BroadcastChannel = FakeBC;
+      w.localStorage.setItem('quam_calc_req', JSON.stringify({ w: 400, h: 680 }));  // winFeatures asked 400x680
+      Object.defineProperty(w, 'innerWidth', { value: 406, configurable: true });   // browser realised 406x696
+      Object.defineProperty(w, 'innerHeight', { value: 696, configurable: true });  // (+6, +16 frame overhead)
+    });
+  ok(heard === 1, 'F-CALC-DUP: the standalone window announces itself (calc-here) on open, so an already-open tab knows (heard ' + heard + 'x)');
+
+  // ── F-CALC-GROW: remember() stores the CONTENT size asked for, not the
+  // realised (larger) inner size, so a pure open/close does not ratchet.
+  win.localStorage.removeItem('quam_calc_win');
+  win.dispatchEvent(new win.Event('pagehide'));
+  let g = null;
+  try { g = JSON.parse(win.localStorage.getItem('quam_calc_win')); } catch (e) {}
+  ok(g && g.w === 400 && g.h === 680,
+     'F-CALC-GROW: open/close stores the asked-for 400x680, not the realised 406x696 (no ratchet; got ' + JSON.stringify(g) + ')');
+  // a genuine user resize still flows through (406 -> 456 inner => 450 content)
+  win.localStorage.removeItem('quam_calc_win');
+  Object.defineProperty(win, 'innerWidth', { value: 456, configurable: true });
+  win.dispatchEvent(new win.Event('pagehide'));
+  try { g = JSON.parse(win.localStorage.getItem('quam_calc_win')); } catch (e) {}
+  ok(g && g.w === 450, 'F-CALC-GROW: a genuine resize still changes the stored size (got ' + JSON.stringify(g) + ')');
+
+  worldE();
+}
+
+/* ══ World E: F-CALC-DEAD — a closed _calcWin handle heals instead of dying ══ */
+function worldE() {
+  const bus = [];
+  function FakeBC(name) {
+    const self = this;
+    self.name = name; self.onmessage = null; self.closed = false;
+    self.postMessage = function (data) {
+      const copy = JSON.parse(JSON.stringify(data));
+      bus.forEach(function (ch) { if (ch !== self && !ch.closed && ch.onmessage) ch.onmessage({ data: copy }); });
+    };
+    self.close = function () { self.closed = true; };
+    bus.push(self);
+  }
+  const w = world(`
+    <button class="sidebar-tool calc-btn" id="calc-btn" aria-expanded="false"></button>
+    <div id="calc-popover" class="calc-popover calc-hidden">
+      <div class="calc-header"><span class="calc-header-tools">
+        <button type="button" class="calc-close calc-popout" id="popout" data-calc-window-url="/calc-window"></button>
+      </span></div>${FIELDS}</div>`, null, function (win) { win.BroadcastChannel = FakeBC; });
+  const doc = w.document, pop = doc.getElementById('calc-popover'), btn = doc.getElementById('calc-btn');
+  const popout = doc.getElementById('popout');
+  // window.open returns a fake handle we can later mark closed
+  let fake = { closed: false, focused: 0, focus() { this.focused++; } };
+  w.open = function () { return fake; };
+
+  // open the window: no live answerer on the bus, so the ping times out and
+  // _openNew runs, setting _calcWin = fake and latching _extAlive via its OWN
+  // calc-here announcement (the window realm is not modelled here, so post it).
+  w.openCalcWindow(popout);
+  setTimeout(function () {
+    // _openNew has run (ping timed out); _calcWin is the fake handle.
+    // Latch _extAlive true the way a second tab's calc-here would, then the
+    // window dies WITHOUT a goodbye (crash/discard): the handle is closed and
+    // nothing answers a ping.
+    const ghost = new w.BroadcastChannel('quam-calc');
+    ghost.postMessage({ type: 'calc-here' });   // page believes a window is alive
+    ghost.close();                               // ...and it is gone, silently
+    fake.closed = true;                          // the local handle is now closed
+    pop.classList.add('calc-hidden');            // ensure a clean starting state
+    w.toggleCalc(btn);                           // OLD code: focus(closed) + return -> dead
+    ok(pop.classList.contains('calc-hidden'),
+       'F-CALC-DEAD: the first press after a silent death is spent asking (not a focus() no-op that returns)');
+    setTimeout(function () {
+      ok(!pop.classList.contains('calc-hidden'),
+         'F-CALC-DEAD: a CLOSED _calcWin handle falls through to _focusExternal and the popover opens (never a dead button)');
+      process.exit(fails ? 1 : 0);
+    }, 300);
+  }, 260);
 }

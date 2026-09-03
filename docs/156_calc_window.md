@@ -135,3 +135,42 @@ page such a window would load.
   the one allowed hand-written placeholder, now in the partial),
   `test_bundles.py`, `test_unseen_edits.py`, `test_config_manual.py`,
   `test_tab_focus.py`, `test_misc_ui.py`, and all of `test_web.py`.
+
+## 7. The pre-customer review — three window fixes (2026-09-04)
+
+Three defects in the separate-window path, each reproduced against the real
+calc.js and fixed with a mutation-checked jsdom pin (`worldD` / `worldE`).
+
+- **F-CALC-DEAD (a regression from the docs/160 §5d guard).** `toggleCalc`'s
+  guard passed on `_extAlive` alone and then did `if (_calcWin) { focus(); return; }`
+  WITHOUT re-checking `_calcWin.closed`. `focus()` on a closed window is a silent
+  no-op, so after the window crashed / was discarded while `_extAlive` was still
+  latched true (a second tab's `calc-here`), the sidebar Calculator button and
+  Alt+C did nothing — the healing `_focusExternal` path sat behind that `return`.
+  Now `if (_calcWin && !_calcWin.closed)`: a closed handle falls through to
+  `_focusExternal`, which pings, and — when nothing answers — heals `_extAlive`
+  and opens the popover in-page.
+
+- **F-CALC-DUP.** The standalone window only ever SPOKE in reply (it answered
+  `calc-ping` / `calc-probe`, said `calc-bye` at pagehide) and never announced
+  itself on open, while a page only ASKS once, at its own load. So any SM tab
+  already open when the window opened kept `_extAlive = false` and opened a
+  SECOND in-page calculator on the Calculator button / Alt+C. `wireStandalone`
+  now posts one `calc-here` when it wires up, so every already-open tab latches
+  the window immediately. (This also tightens the §5 "full reload loses the
+  reference" residual: a reloaded page now learns of the window from its next
+  announcement, not only from its own load-time probe.)
+
+- **F-CALC-GROW.** `remember()` stored the realised `innerWidth`/`innerHeight`,
+  and `winFeatures()` fed those straight back as the next `window.open` size —
+  but the realised inner box is a few px larger than the requested content size,
+  so the window ratcheted bigger every open/close cycle (measured +6/+16 px per
+  cycle in real Chrome until it saturated the screen). `winFeatures()` now
+  records the CONTENT size it asked for (`quam_calc_req`), the window measures
+  this browser's frame overhead once at load (`inner − requested`), and
+  `remember()` stores `inner − overhead` clamped to the screen — so a pure
+  open/close stores the same size and only a genuine user resize moves it.
+
+Pinned by `tests/calc_window_selfcheck.cjs` World D (F-CALC-DUP announce-on-open,
+F-CALC-GROW no-ratchet + resize-still-flows) and World E (F-CALC-DEAD closed
+handle heals), all mutation-checked.
