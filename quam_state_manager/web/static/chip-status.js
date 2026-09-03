@@ -577,21 +577,51 @@ window.ChipStatus.mount = function (opts) {
         // hover list); the value-only forms are derived from them, so the
         // aggregates cannot drift from the listed entries.
         function collect2QE(match) {
-            var out = [];
+            var out = [], dropped = 0;
             topo.edges.forEach(function(e) {
                 if (!e.gate_fidelities) return;
-                var best = null;
+                var best = null, worst = null;
                 e.gate_fidelities.forEach(function(gf) {
                     if (!match(gf.metric)) return;
+                    if (gf.physical === false) dropped++;
                     var v = typeof gf.value === 'number' ? gf.value
                           : typeof gf.average_gate_fidelity === 'number' ? gf.average_gate_fidelity : null;
                     if (v != null && (best == null || v > best)) best = v;
+                    // the server dropped `value` and kept the number in
+                    // `raw_value` (query._gate_fidelity_row) -- a fidelity
+                    // outside (0,1]. It is never a candidate for `best`, but
+                    // the pair must still be NAMEABLE: a silently smaller N
+                    // is the failure this project keeps fixing (docs/94).
+                    var r = typeof gf.raw_value === 'number' ? gf.raw_value
+                          : typeof gf.raw_average_gate_fidelity === 'number' ? gf.raw_average_gate_fidelity : null;
+                    if (r != null && (worst == null || Math.abs(r - 1) > Math.abs(worst - 1))) worst = r;
                 });
                 if (best != null) out.push({ id: _pairId(e), v: best });
+                else if (worst != null) out.push({ id: _pairId(e), v: worst, bad: true });
             });
+            out.excluded = dropped;
             return out;
         }
-        function collect2Q(match) { return collect2QE(match).map(function(x) { return x.v; }); }
+        // Values fit to AGGREGATE: an out-of-range one never reaches a mean,
+        // a median, a min/max or a colour scale -- but it is still listed.
+        function collect2Q(match) {
+            return collect2QE(match).filter(function(x) { return !x.bad; })
+                                    .map(function(x) { return x.v; });
+        }
+        // computeAggregates over an entry list, carrying how many entries were
+        // set aside as out of range so the tile can say so.
+        function aggE(entries) {
+            var agg = computeAggregates(entries.filter(function(x) { return !x.bad; })
+                                               .map(function(x) { return x.v; }));
+            // `excluded` (rows the server marked unphysical) is the truer count
+            // where the collector reports one: a pair keeps its place in the
+            // aggregate on another macro's value while a real number was still
+            // dropped, and saying 0 there would be the silent cap again.
+            agg.bad = typeof entries.excluded === 'number'
+                ? entries.excluded
+                : entries.filter(function(x) { return x.bad; }).length;
+            return agg;
+        }
         // Per-pair best of an arbitrary numeric FIELD on matching rows (used for
         // the docs/138 run-derived values: derived_gate_fidelity + the divisor).
         function collect2QFieldE(match, field) {
@@ -624,15 +654,20 @@ window.ChipStatus.mount = function (opts) {
         function metricTile(title, agg, fmtFn, range, metricKey, stat) {
             stat = stat || 'avg';
             if (!agg || agg.count === 0) {
-                return {title: title, metricKey: metricKey, value: '—', sub: 'no data', muted: true};
+                return {title: title, metricKey: metricKey, value: '—', muted: true,
+                        sub: agg && agg.bad ? agg.bad + ' out of range · nothing usable'
+                                            : 'no data'};
             }
+            // Never a silently smaller N: an exclusion the user cannot see is
+            // the same defect as a silently truncated column (docs/94).
+            var badTail = agg.bad ? '  ·  ' + agg.bad + ' out of range' : '';
             var sub;
             if (stat === 'avg') {
-                sub = 'med ' + fmtFn(agg.median) + '  ·  ' + fmtFn(agg.min) + '–' + fmtFn(agg.max) + '  ·  (' + agg.count + ')';
+                sub = 'med ' + fmtFn(agg.median) + '  ·  ' + fmtFn(agg.min) + '–' + fmtFn(agg.max) + '  ·  (' + agg.count + ')' + badTail;
             } else if (stat === 'min' || stat === 'max') {
-                sub = 'med ' + fmtFn(agg.median) + '  ·  avg ' + fmtFn(agg.avg) + '  ·  (' + agg.count + ')';
+                sub = 'med ' + fmtFn(agg.median) + '  ·  avg ' + fmtFn(agg.avg) + '  ·  (' + agg.count + ')' + badTail;
             } else {
-                sub = 'avg ' + fmtFn(agg.avg) + '  ·  ' + fmtFn(agg.min) + '–' + fmtFn(agg.max) + '  ·  (' + agg.count + ')';
+                sub = 'avg ' + fmtFn(agg.avg) + '  ·  ' + fmtFn(agg.min) + '–' + fmtFn(agg.max) + '  ·  (' + agg.count + ')' + badTail;
             }
             return {
                 title: title,
@@ -692,10 +727,10 @@ window.ChipStatus.mount = function (opts) {
         // never invented, so with no run on disk the converted line is absent.
         var isSRB = function(m) { return m === 'StandardRB'; };
         var isIRB = function(m) { return m === 'InterleavedRB' || m === 'IRB'; };
-        var srbAgg = computeAggregates(collect2Q(isSRB));
+        var srbAgg = aggE(collect2QE(isSRB));
         var srbDer = computeAggregates(collect2QField(isSRB, 'derived_gate_fidelity'));
         var divAgg = computeAggregates(collect2QField(isSRB, 'average_gates_per_clifford'));
-        var irbAgg = computeAggregates(collect2Q(isIRB));
+        var irbAgg = aggE(collect2QE(isIRB));
         // Per-edge Clifford-equivalent of the IRB gate error: epc = epg x divisor
         // (the same identity fidelity.py uses in the other direction).
         var irbEpcE = [];
@@ -847,7 +882,15 @@ window.ChipStatus.mount = function (opts) {
         // tiles (Chip Size, coverage, spec, age) have no per-entity value
         // and register nothing, so they show no popup.
         function nodeEntries(key) {
-            return topo.nodes.map(function(n) { return { id: n.id, v: _mv(n, key) }; });
+            // A bad fit carries its RAW number and a flag, exactly as the
+            // qubit-card rows have shown it since docs/141 4o -- listed, never
+            // aggregated, never coloured.
+            return topo.nodes.map(function(n) {
+                if (_badFit(n, key)) {
+                    return { id: n.id, v: (n.metrics[key] || {}).raw, bad: true };
+                }
+                return { id: n.id, v: _mv(n, key) };
+            });
         }
         _ovEntries = {
             gate1q:   { kind: 'qubit', fmt: pct, range: fidRange, entries: nodeEntries('gate_fidelity_avg') },
@@ -1039,6 +1082,9 @@ window.ChipStatus.mount = function (opts) {
         if (!d.entries.some(function(x) { return typeof x.v === 'number'; })) return;
         _ovHoverId = tileId;
         var list = d.entries.slice().sort(function(a, b) {
+            // out-of-range entries sort LAST whatever their number: sorting a
+            // 153% to the top of a fidelity list reads as the best pair.
+            if (!!a.bad !== !!b.bad) return a.bad ? 1 : -1;
             var av = typeof a.v === 'number' ? a.v : -Infinity;
             var bv = typeof b.v === 'number' ? b.v : -Infinity;
             return bv - av;
@@ -1049,12 +1095,19 @@ window.ChipStatus.mount = function (opts) {
             .replace(/[\u2191\u2193]/g, '').trim();
         var rows = list.slice(0, CAP).map(function(x) {
             var num = typeof x.v === 'number';
-            var dot = (num && d.range)
+            // An out-of-range value never takes a heat colour: cardColor
+            // normalises against the tile's range, so one 153% would not just
+            // mis-colour itself -- it would wash out every other dot with it.
+            var dot = (num && d.range && !x.bad)
                 ? '<span class="ov-hover-dot" style="background:' + cardColor(x.v, d.range) + '"></span>'
                 : '<span class="ov-hover-dot ov-hover-dot-na"></span>';
+            var vCls = x.bad ? ' ov-hover-val-bad' : '';
+            var vTit = x.bad ? ' title="out of range \u2014 likely a failed fit; excluded'
+                             + ' from the average, the range and the colours"' : '';
             return '<span class="ov-hover-item">' + dot
                  + '<span class="ov-hover-id">' + _esc(x.id) + '</span>'
-                 + '<span class="ov-hover-val">' + (num ? d.fmt(x.v) : '\u2014') + '</span></span>';
+                 + '<span class="ov-hover-val' + vCls + '"' + vTit + '>'
+                 + (num ? d.fmt(x.v) : '\u2014') + '</span></span>';
         }).join('');
         var pop = document.createElement('div');
         pop.id = 'ov-hover-pop';

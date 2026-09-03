@@ -136,7 +136,7 @@ def domain_of(category: str) -> str:
     if c.startswith("waveform"):
         return "waveforms"
     if c.startswith(("value_spec", "value_type")) or c in (
-            "value_nan", "value_freq_consistency"):
+            "value_nan", "value_freq_consistency", "value_unphysical"):
         return "values"
     if c == "dangling_pointer":
         return "references"
@@ -181,6 +181,7 @@ _CHECK_CATALOG: list[tuple[str, list[tuple[str, str, str]]]] = [
     ]),
     ("values", [
         ("error", "Finite numbers", "No leaf holds NaN or Infinity."),
+        ("warning", "Fidelities in (0, 1]", "A stored 2Q gate fidelity or RB decay base lies in (0, 1], and a readout confusion matrix is row-stochastic. An impossible value is excluded from every Chip Status average, range and colour (and named there), but never rewritten. Anharmonicity and amplitudes are deliberately NOT checked — their domains are lab conventions, not definitions."),
         ("warning", "f_01 ↔ RF_frequency in sync", "A qubit's bookkeeping f_01 matches the carrier RF_frequency the hardware actually plays (a deliberate readout detuning is allowed)."),
         ("warning", "f_01 drive reach", "An MW-driven qubit's f_01 falls within the FEM's 50 MHz–10.5 GHz drive range."),
         ("warning", "Readout IF demod floor", "A readout intermediate frequency is above the MW-FEM 5 MHz demodulation floor (|IF| ≤ 5 MHz can't be measured)."),
@@ -278,6 +279,7 @@ def _lint_state_uncached(store) -> list[Finding]:
     findings.extend(_mw_carrier_findings(root))
     findings.extend(_pair_drive_carrier_findings(store))
     findings.extend(_f01_range_findings(root))
+    findings.extend(_unphysical_findings(root))
     findings.extend(_lffem_output_bw_findings(root))
     findings.extend(_qdac_findings(root))
     findings.extend(_resonator_if_floor_findings(root))
@@ -1673,6 +1675,93 @@ def _pair_drive_carrier_findings(store) -> list[Finding]:
                     f"for pair drives — retune the port's upconverter-2 LO "
                     f"closer to the target frequency",
                     detail=f"formula {eff.formula}", jump_path=dp))
+    return findings
+
+
+def _unphysical_findings(root: dict) -> list[Finding]:
+    """Stored numbers that cannot be what their field names (docs/154).
+
+    The Chip Status surfaces now DROP these from every average, range and
+    colour, which is right -- a mean over a 153% fidelity is a claim SM would
+    be making, not the lab. But dropping is not the same as reporting: an
+    exclusion the user cannot see is a silently smaller N, the failure this
+    project keeps re-fixing. The Overview tile says how many it set aside and
+    the hover list shows each one struck through; the PATHS live here, because
+    a fidelity above 1 means a fit did not converge and got written anyway,
+    and that is a data problem, not a display one.
+
+    Deliberately narrow: only where the domain is DEFINITIONAL. Anharmonicity
+    (whose sign convention differs between labs, docs/154) and amplitudes
+    (>1 is normal, and CLAUDE.md's Type Coercion Philosophy says to trust
+    researcher input) are not checked, and never will be from here.
+    """
+    from quam_state_manager.core import chip_health as _ch
+    from quam_state_manager.core import query as _q
+
+    findings: list[Finding] = []
+
+    # ── readout confusion matrices: each row is a probability vector ─────
+    qubits = root.get("qubits") if isinstance(root.get("qubits"), dict) else {}
+    for qn, q in sorted(qubits.items()):
+        res = q.get("resonator") if isinstance(q, dict) else None
+        if not isinstance(res, dict):
+            continue
+        for key in ("confusion_matrix", "gef_confusion_matrix"):
+            cm = res.get(key)
+            if not isinstance(cm, list) or not cm:
+                continue
+            if _q._valid_confusion_matrix(cm):
+                continue
+            try:
+                sums = ", ".join(f"{sum(r):.3f}" for r in cm
+                                 if isinstance(r, list))
+            except TypeError:
+                sums = "unreadable"
+            findings.append(Finding(
+                "warning", "value_unphysical", f"qubits.{qn}.resonator.{key}",
+                f"{qn}: {key} is not row-stochastic (row sums {sums})",
+                detail="Each row of a readout confusion matrix is a probability "
+                       "vector, so it must be square, non-negative and sum to 1. "
+                       "An unnormalised, counts-valued or transposed matrix would "
+                       "yield a confident but wrong readout fidelity, so SM "
+                       "derives none from it — which is why the readout-fidelity "
+                       "metrics read as missing for this qubit."))
+
+    # ── 2Q gate fidelity rows: a fidelity lives in (0, 1] ────────────────
+    pairs = root.get("qubit_pairs") if isinstance(root.get("qubit_pairs"), dict) else {}
+    for pn, pair in sorted(pairs.items()):
+        macros = pair.get("macros") if isinstance(pair, dict) else None
+        if not isinstance(macros, dict):
+            continue
+        for gn, gate in sorted(macros.items()):
+            fid = gate.get("fidelity") if isinstance(gate, dict) else None
+            if not isinstance(fid, dict):
+                continue
+            for mn, mv in sorted(fid.items()):
+                if not isinstance(mn, str) or mn.endswith("_load_id"):
+                    continue
+                if _q._rb_level(mn) not in ("gate", "clifford", "state", "decay"):
+                    continue
+                for field, val in (((None, mv),) if isinstance(mv, (int, float))
+                                   else sorted((mv or {}).items())
+                                   if isinstance(mv, dict) else ()):
+                    if field is not None and field not in _q._FIDELITY_FIELDS:
+                        continue
+                    if isinstance(val, bool) or not isinstance(val, (int, float)):
+                        continue
+                    if _ch.physical_fidelity(val):
+                        continue
+                    dp = (f"qubit_pairs.{pn}.macros.{gn}.fidelity.{mn}"
+                          + (f".{field}" if field else ""))
+                    findings.append(Finding(
+                        "warning", "value_unphysical", dp,
+                        f"{pn}/{gn}: {mn} = {val:g} is outside (0, 1]",
+                        detail="A fidelity (and an RB decay base) has to lie in "
+                               "(0, 1]; zero is excluded because a fit that "
+                               "returns exactly zero has not converged. This "
+                               "value is excluded from every average, range and "
+                               "colour on Chip Status — the number itself is "
+                               "left exactly as the node wrote it."))
     return findings
 
 

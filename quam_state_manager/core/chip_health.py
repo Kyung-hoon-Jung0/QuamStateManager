@@ -251,6 +251,31 @@ _POSITIVE_KEYS = frozenset({"T1", "T2ramsey", "T2echo"})
 _FIDELITY_EPS = 1e-6  # tolerate float overshoot of an exact 1.0
 
 
+def physical_fidelity(value: Any) -> bool:
+    """The ``(0, 1]`` rule, for a value the CALLER already knows is a fidelity.
+
+    ``physicality`` below decides "is this a fidelity" from the metric KEY,
+    which only works where the key comes from a curated set. A 2Q pair's
+    fidelity rows are named by the lab (``StandardRB`` / ``IRB`` /
+    ``Bell_State`` / …), so what makes them fidelities is their ``level``
+    (:data:`query._RB_LEVEL`), not their name. Both callers must apply the
+    SAME bound, so it lives here once: a second copy would drift, and this
+    project has paid for that before (docs/118, one comparison rule).
+
+    ``None`` and non-numbers are physical-N/A → ``True`` (missing is not the
+    same as impossible). The upper bound tolerates float overshoot of an
+    exact 1.0; the lower bound is EXCLUSIVE — a fidelity of exactly zero is
+    a fit that did not converge, not a measurement (user-directed).
+    """
+    if value is None:
+        return True
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return True
+    if not math.isfinite(value):
+        return False
+    return 0.0 < value <= 1.0 + _FIDELITY_EPS
+
+
 def physicality(key: str, value: Any) -> bool:
     """Is *value* physically possible for metric *key*?
 
@@ -265,7 +290,7 @@ def physicality(key: str, value: Any) -> bool:
     if not math.isfinite(value):
         return False
     if key in _FIDELITY_KEYS:
-        return 0.0 < value <= 1.0 + _FIDELITY_EPS
+        return physical_fidelity(value)
     if key in _POSITIVE_KEYS:
         return value > 0.0
     return True

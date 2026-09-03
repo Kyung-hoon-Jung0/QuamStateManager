@@ -75,6 +75,45 @@ function topoFixture() {
   };
 }
 
+// docs/154: a chip whose 2Q fidelity rows include values the server marked
+// unphysical. `physical:false` + `raw_value` is exactly what
+// query._gate_fidelity_row emits -- `value` is GONE, which is the safety
+// property (no reader can use the number by accident).
+function badFixture() {
+  function node(id, gl, t1) {
+    return { id: id, grid_location: gl, T1: t1, gate_fidelity_avg: 0.999,
+             metrics: { T1: { value: t1 }, gate_fidelity_avg: { value: 0.999 } } };
+  }
+  function gf(metric, value, extra) {
+    return Object.assign({ gate: 'cz_unipolar', metric: metric, level: 'gate',
+                           value: value }, extra || {});
+  }
+  return {
+    nodes: [node('q1', '0,0', 1e-5), node('q2', '1,0', 2e-5),
+            node('q3', '0,1', 3e-5), node('q4', '1,1', 4e-5)],
+    edges: [
+      // clean pair
+      { pair_id: 'q1-q2', source: 'q1', target: 'q2', has_cz: true, gate_kind: 'cz',
+        gate_fidelities: [gf('InterleavedRB', 0.99)] },
+      // one macro dropped, another still usable -> the pair KEEPS its place
+      { pair_id: 'q2-q3', source: 'q2', target: 'q3', has_cz: true, gate_kind: 'cz',
+        gate_fidelities: [
+          Object.assign(gf('InterleavedRB', undefined),
+                        { physical: false, raw_value: 1.5345, value: undefined }),
+          gf('InterleavedRB', 0.97, { gate: 'cz_flattop' })] },
+      // every macro dropped -> the pair leaves the aggregate but stays listed
+      { pair_id: 'q3-q4', source: 'q3', target: 'q4', has_cz: true, gate_kind: 'cz',
+        gate_fidelities: [
+          Object.assign(gf('InterleavedRB', undefined),
+                        { physical: false, raw_value: 4.7, value: undefined })] },
+    ],
+  };
+}
+function mountBad(win) {
+  win.ChipStatus.mount({ topo: badFixture(), rawWiring: {}, defaultThresholds: {},
+                         diagFindings: [], metricMeta: {} });
+}
+
 function mount(win) {
   win.ChipStatus.mount({ topo: topoFixture(), rawWiring: {}, defaultThresholds: {},
                          diagFindings: [], metricMeta: {} });
@@ -295,6 +334,55 @@ function stored(win) { return win.localStorage.getItem('quam_overview_tiles_v1')
     win._ovResetTiles();
     ok(firstId() === 'chip_size' && stored(win) === null,
       'C8: reset restores the default order and clears storage');
+  }
+
+
+  // C9 (docs/154): a value outside (0,1] is excluded from every aggregate and
+  // every colour, counted where the user can see it, and still LISTED.
+  {
+    const win = makeWorld();
+    mountBad(win);
+    const t = tileById(win, 'irb');
+    ok(!!t, 'C9: the IRB tile renders');
+    const txt = t.textContent.replace(/\s+/g, ' ');
+
+    // the aggregate is over the two usable values only (0.99, 0.97)
+    ok(/98\.00%/.test(txt),
+      'C9: the average excludes the unphysical rows (got "' + txt.slice(0, 90) + '")');
+    ok(!/153|470|1\.53|4\.7/.test(txt),
+      'C9: no unphysical number reaches the tile (got "' + txt.slice(0, 90) + '")');
+    // N counts pairs that still have a usable value; the tail counts the
+    // dropped ROWS, which is the truer number when a pair survives on
+    // another macro (2 rows here, only 1 pair lost)
+    ok(/\(2\)/.test(txt), 'C9: N is the pairs with a usable value (got "' + txt + '")');
+    ok(/2 out of range/.test(txt),
+      'C9: the tile SAYS how many rows it set aside (got "' + txt + '")');
+
+    // the hover list still names the fully-excluded pair, uncoloured and last
+    t.dispatchEvent(new win.MouseEvent('mouseenter', { bubbles: true }));
+    t.dispatchEvent(new win.MouseEvent('mouseover', { bubbles: true }));
+    await new Promise(function (r) { setTimeout(r, 30); });
+    const pop = win.document.getElementById('ov-hover-pop');
+    ok(!!pop, 'C9: the hover popup opens');
+    if (pop) {
+      const items = Array.prototype.map.call(
+        pop.querySelectorAll('.ov-hover-item'), function (e) {
+          const v = e.querySelector('.ov-hover-val');
+          return { id: e.querySelector('.ov-hover-id').textContent,
+                   txt: v.textContent,
+                   bad: v.classList.contains('ov-hover-val-bad'),
+                   dot: !!e.querySelector('.ov-hover-dot-na') };
+        });
+      const bad = items.filter(function (x) { return x.bad; });
+      ok(bad.length === 1 && bad[0].id === 'q3-q4',
+        'C9: the excluded pair is still LISTED (got ' + JSON.stringify(items) + ')');
+      ok(bad.length === 1 && /470/.test(bad[0].txt),
+        'C9: it shows its REAL number, not a dash (got "' + (bad[0] || {}).txt + '")');
+      ok(bad.length === 1 && bad[0].dot,
+        'C9: it takes no heat colour — one 470% would wash out every other dot');
+      ok(items.length && items[items.length - 1].bad,
+        'C9: it sorts LAST, never to the top of a fidelity list');
+    }
   }
 
   if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }

@@ -1353,6 +1353,53 @@ def _rb_level(metric: Any) -> str | None:
     return _RB_LEVEL.get(metric)
 
 
+# Which fields of a fidelity row carry a FIDELITY (as opposed to an error, a
+# decay base read separately, or a run id). `value` is the canonical scalar
+# `_extract_pair_gate_fidelities` derives below; the rest are the nested
+# spellings different labs use for the same quantity.
+_FIDELITY_FIELDS = ("value", "average_gate_fidelity", "Fidelity", "fidelity")
+
+
+def _gate_fidelity_row(entry: dict) -> dict:
+    """Apply the (0,1] physical bound to one pair-fidelity row.
+
+    The qubit metrics have gone through ``chip_health.make_record`` since
+    docs/141 4o, which drops an unphysical value out of every aggregate and
+    every colour. The 2Q PAIR rows never did: they are emitted here and read
+    straight off ``gf.value`` by the Overview tiles, the edge metrics, the 2Q
+    RB panels and the report card. A real donor chip carries ``IRB = 1.5345``,
+    and that one value made the Overview say the chip's 2Q gate fidelity was
+    **107.47%** — a claim SM was making, not the lab.
+
+    What makes these rows fidelities is their ``level`` (docs/138), not their
+    name, so that is what selects the bound. A row whose level is unknown is
+    left ALONE: inventing a domain for a metric nobody has classified is how
+    a plausibility band gets invented, which this project refuses to do
+    without evidence (docs/78).
+
+    An offending row keeps its number in ``raw_value`` and LOSES ``value``.
+    Losing it is the safety property: every existing reader tests
+    ``typeof gf.value === 'number'``, so none of them can use the number by
+    accident, whether or not it was updated to know about this.
+    """
+    level = entry.get("level")
+    if level not in ("gate", "clifford", "state", "decay"):
+        return entry
+    bad = [k for k in _FIDELITY_FIELDS
+           if isinstance(entry.get(k), (int, float))
+           and not isinstance(entry[k], bool)
+           and not chip_health.physical_fidelity(entry[k])]
+    if not bad:
+        return entry
+    entry["physical"] = False
+    if "value" in entry:
+        entry["raw_value"] = entry.pop("value")
+    for k in bad:
+        if k != "value":
+            entry.setdefault("raw_" + k, entry.pop(k))
+    return entry
+
+
 def _extract_pair_gate_fidelities(macros: dict) -> list[dict]:
     """Search all gate macros for fidelity data, return list of found results.
 
@@ -1396,11 +1443,12 @@ def _extract_pair_gate_fidelities(macros: dict) -> list[dict]:
                 if len(entry) > 2:  # has at least one numeric value
                     entry["load_id"] = gate_load_id
                     entry["level"] = _rb_level(metric_name)
-                    results.append(entry)
+                    results.append(_gate_fidelity_row(entry))
             elif isinstance(metric_val, (int, float)):
-                results.append({"gate": gate_name, "metric": metric_name,
-                                "value": metric_val, "load_id": gate_load_id,
-                                "level": _rb_level(metric_name)})
+                results.append(_gate_fidelity_row(
+                    {"gate": gate_name, "metric": metric_name,
+                     "value": metric_val, "load_id": gate_load_id,
+                     "level": _rb_level(metric_name)}))
     return results
 
 

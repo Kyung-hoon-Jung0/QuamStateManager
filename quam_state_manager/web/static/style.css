@@ -12208,3 +12208,7 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .gi-error, .gi-warnings { padding: 0.5rem; }
 .gi-warnings ul { margin: 0.25rem 0 0 1rem; padding: 0; }
 .gi-note { margin: 0 0 0.35rem; padding: 0 0.5rem; font-size: 0.8em; }
+
+/* An out-of-range metric in the Overview hover list (docs/154): shown with
+   its real number, struck through, never coloured and never aggregated. */
+.ov-hover-val-bad { text-decoration: line-through; opacity: 0.75; color: var(--pico-del-color, var(--pico-muted-color)); cursor: help; }
