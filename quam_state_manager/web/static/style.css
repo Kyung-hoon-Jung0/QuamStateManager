@@ -72,8 +72,14 @@
        rows raised 0.95 → 1.06em, the run number is a 1em BADGE in its own
        left column, the name wraps in its own column beside it (two lines are
        fine, said the customer — not a truncation). */
-    --tree-date-label-font:    1em;      /* font size of date group headers (e.g. 2026-03-04 (314)) — never smaller than the rows under it */
-    --tree-entry-label-font:   1.06em;   /* base font size for each experiment run row */
+    /* docs/165 (customer, multiple users agreeing): still too small to read.
+       Rows 1.06 → 1.32em, a 1.25x on top of docs/157's own raise. The run-number
+       badge and the experiment name are each 1em OF THE ROW, so they follow
+       without a second number to keep in step. The date header is a sibling,
+       not a child, so it takes the same value explicitly — its own comment is
+       the invariant that it is never smaller than the rows beneath it. */
+    --tree-date-label-font:    1.32em;   /* font size of date group headers (e.g. 2026-03-04 (314)) — never smaller than the rows under it */
+    --tree-entry-label-font:   1.32em;   /* base font size for each experiment run row */
     --tree-run-id-font:        1em;      /* font size of the run-number badge (e.g. #10157) — see .run-id */
     --tree-entry-name-font:    1em;      /* font size of the experiment name — 1em means same as --tree-entry-label-font */
     --tree-entry-time-font:    0.76em;   /* font size of the HH:MM timestamp shown on each run row */
@@ -1880,7 +1886,7 @@ details.tree-branch-active > summary {
    the theme). Pico's own accent styling is bypassed via appearance:none. */
 .tree-entry-label input[type=checkbox] {
     appearance: none; -webkit-appearance: none;
-    margin: 0.22em 0 0 0; width: 18px; height: 18px; flex-shrink: 0; cursor: pointer;
+    margin: 0.22em 0 0 0; width: 22px; height: 22px; flex-shrink: 0; cursor: pointer;
     border: 1.5px solid color-mix(in srgb, var(--pico-primary) 45%, var(--pico-muted-border-color));
     border-radius: 5px; background: color-mix(in srgb, var(--pico-primary) 5%, transparent);
     position: relative; transition: border-color .12s, background .12s, box-shadow .12s;
@@ -1893,10 +1899,16 @@ details.tree-branch-active > summary {
 .tree-entry-label input[type=checkbox]:checked {
     background: var(--pico-primary); border-color: var(--pico-primary);
 }
-.tree-entry-label input[type=checkbox]:checked::after {
-    content: ""; position: absolute; left: 5px; top: 1.5px; width: 5px; height: 9px;
-    border: solid #fff; border-width: 0 2.2px 2.2px 0; transform: rotate(45deg);
-}
+/* docs/165 (customer): the tick exists in EVERY state — what changes is how
+   loud it is. Empty, it is a faint grey ghost, which is what tells a person
+   the box is tickable at all; under the pointer it comes up; ticked it turns
+   white on the filled blue box. Three steps, so the control announces itself
+   instead of waiting to be discovered. */
+.tree-entry-label input[type=checkbox]::after { content: ""; position: absolute; left: 6.5px; top: 2.5px; width: 6px; height: 11px; border: solid var(--pico-muted-color); border-width: 0 2.6px 2.6px 0; transform: rotate(45deg); opacity: 0.34; transition: opacity .12s, border-color .12s; }
+.tree-entry-label:hover input[type=checkbox]::after,
+.tree-entry-label input[type=checkbox]:hover::after,
+.tree-entry-label input[type=checkbox]:focus-visible::after { opacity: 0.8; }
+.tree-entry-label input[type=checkbox]:checked::after { border-color: #fff; opacity: 1; }
 /* the compare hint under the buttons: shown only while nothing is ticked (app.js) */
 .compare-hint {
     display: block; flex: 1 1 100%; margin: .1rem 0 0; font-size: .8em; line-height: 1.3;

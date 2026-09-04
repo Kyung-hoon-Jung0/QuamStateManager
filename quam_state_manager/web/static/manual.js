@@ -377,6 +377,8 @@ window.ConfigManual = (function () {
         var head = p.querySelector('.manual-header');
         if (!head || !window.FloatPanel) return;
         window.FloatPanel.drag(p, { handle: head, tools: '.manual-header-tools', floatClass: 'manual-floating' });
+        // docs/165 (user): every edge, not just the bottom-right corner
+        if (window.FloatPanel.resize) window.FloatPanel.resize(p, { floatClass: 'manual-floating' });
     }
 
     function wire() {

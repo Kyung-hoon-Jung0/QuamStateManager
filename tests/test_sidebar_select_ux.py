@@ -32,18 +32,41 @@ def _rule(selector: str) -> str:
 
 
 class TestTickBox:
-    def test_the_box_is_a_square_18px_custom_control(self):
+    def test_the_box_is_a_square_custom_control_sized_to_the_text(self):
+        """docs/165: multiple users, independently, said the rows were too
+        small to read. The row font went 1.06 -> 1.32em, so the box goes with
+        it -- a control that stays 18px beside 1.32em text reads as an
+        afterthought. Square is the part that must never drift: a non-square
+        box reads as a text field."""
         r = _rule(".tree-entry-label input[type=checkbox]")
         assert "appearance: none" in r
-        assert "width: 18px" in r and "height: 18px" in r        # square — never a text-field shape
+        assert "width: 22px" in r and "height: 22px" in r        # square — never a text-field shape
         assert "border-radius: 5px" in r
         assert "var(--pico-primary)" in r                          # the theme's own blue, no literal
 
-    def test_ticked_is_a_solid_fill_with_a_white_check(self):
+    def test_the_tick_has_three_states_and_is_visible_before_it_is_ticked(self):
+        """docs/165 (customer): an empty box did not say it was tickable. The
+        tick mark now EXISTS in every state and only its loudness changes --
+        a faint grey ghost when empty, brighter under the pointer, white on
+        the filled blue box when ticked. The geometry lives on the base rule
+        so the three states cannot drift into three different shapes."""
+        base = _rule(".tree-entry-label input[type=checkbox]::after")
+        assert "rotate(45deg)" in base                 # the tick's shape, defined once
+        assert "var(--pico-muted-color)" in base       # grey while empty, no literal
+        ghost = float(re.search(r"opacity:\s*([0-9.]+)", base).group(1))
+        assert 0 < ghost < 0.5, f"empty must be a HINT, not a tick: {ghost}"
+
+        css = re.sub(r"/\*.*?\*/", "", _CSS, flags=re.S)
+        m = re.search(r"\.tree-entry-label:hover input\[type=checkbox\]::after[^{]*\{([^}]*)\}", css)
+        assert m, "hovering the row must bring the tick up"
+        hover = float(re.search(r"opacity:\s*([0-9.]+)", m.group(1)).group(1))
+        assert hover > ghost, f"hover must be louder than empty ({hover} vs {ghost})"
+
         on = _rule(".tree-entry-label input[type=checkbox]:checked")
-        assert "background: var(--pico-primary)" in on
+        assert "background: var(--pico-primary)" in on          # the box fills
         mark = _rule(".tree-entry-label input[type=checkbox]:checked::after")
-        assert "rotate(45deg)" in mark and "border: solid #fff" in mark
+        assert "border-color: #fff" in mark                     # the tick turns white
+        assert float(re.search(r"opacity:\s*([0-9.]+)", mark).group(1)) == 1.0
 
     def test_row_hover_brightens_the_box(self):
         css = re.sub(r"/\*.*?\*/", "", _CSS, flags=re.S)
@@ -53,6 +76,22 @@ class TestTickBox:
         m = re.search(r'<input type="checkbox" name="paths"[^>]*>', _MACROS)
         assert m and 'title="Tick to select this run' in m.group(0)
         assert "Compare Selected" in m.group(0) and "Trend Tracker" in m.group(0)
+
+
+class TestRowSize:
+    def test_the_rows_are_the_size_the_customers_asked_for(self):
+        """docs/165: 1.06 -> 1.32em is the 1.25x multiple users agreed on. The
+        badge and the name are each 1em OF THE ROW, so they follow from this
+        one number; the date header is a sibling and must match explicitly, or
+        it ends up smaller than the rows beneath it."""
+        css = re.sub(r"/\*.*?\*/", "", _CSS, flags=re.S)
+        def var(name):
+            return float(re.search(name + r":\s*([0-9.]+)em", css).group(1))
+        row = var("--tree-entry-label-font")
+        assert 1.28 <= row <= 1.36, f"rows should be ~1.32em, got {row}"
+        assert var("--tree-run-id-font") == 1.0, "the run badge follows the row"
+        assert var("--tree-entry-name-font") == 1.0, "the name follows the row"
+        assert var("--tree-date-label-font") >= row,             "a date header must never be smaller than the rows under it"
 
 
 class TestHint:

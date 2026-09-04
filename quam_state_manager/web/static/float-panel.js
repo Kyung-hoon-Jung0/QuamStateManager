@@ -59,6 +59,108 @@
         window.addEventListener('blur', function () { if (dragging) endDrag(); });
         return true;
     }
+    /* docs/165 (user): "크기 조절을 할수있으면 좋겠다 -- 마우스로 edge에
+       가져갔을 때". CSS `resize: both` gives ONE grip, in the bottom-right
+       corner, and only two of the three windows even had it. This gives all
+       three every edge and every corner: the cursor changes as the pointer
+       crosses the border band, and a drag from there resizes.
+
+       A resize FLOATS the panel first. Anchored, a panel is pinned by `right`
+       and `top: 100%`, so dragging its north or west edge would have to move
+       an origin it does not own -- the box would grow the wrong way. Floating
+       it gives it explicit left/top, which is also what the user means by
+       grabbing a window's edge. The existing clamp then keeps it on screen.
+
+       Minimums come from the panel's OWN computed style, so each window keeps
+       the floor its CSS declares rather than a number repeated here. */
+    var EDGE = 6;
+    var CURSORS = { n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize',
+                    ne: 'nesw-resize', sw: 'nesw-resize', nw: 'nwse-resize', se: 'nwse-resize' };
+
+    function edgeAt(panel, e) {
+        var r = panel.getBoundingClientRect();
+        var v = '';
+        if (e.clientY - r.top <= EDGE) v = 'n';
+        else if (r.bottom - e.clientY <= EDGE) v = 's';
+        if (e.clientX - r.left <= EDGE) v += 'w';
+        else if (r.right - e.clientX <= EDGE) v += 'e';
+        return v;
+    }
+
+    function minOf(panel, prop, fallback) {
+        var v = parseFloat(getComputedStyle(panel)[prop]);
+        return (isNaN(v) || v <= 0) ? fallback : v;
+    }
+
+    function resize(panel, opts) {
+        opts = opts || {};
+        if (!panel || panel._fpResizeBound) return false;
+        panel._fpResizeBound = true;
+        var floatClass = opts.floatClass || 'fp-floating';
+        var side = '', active = '', sx = 0, sy = 0, r0 = null;
+
+        panel.addEventListener('mousemove', function (e) {
+            if (active) return;                       // mid-resize, cursor is set
+            if (e.target.closest && e.target.closest('input, textarea, select, button, a')) {
+                side = ''; panel.style.cursor = ''; return;
+            }
+            side = edgeAt(panel, e);
+            panel.style.cursor = CURSORS[side] || '';
+        });
+        panel.addEventListener('mouseleave', function () {
+            if (!active) { side = ''; panel.style.cursor = ''; }
+        });
+
+        function onMove(e) {
+            if (!active) return;
+            if (e.buttons === 0) { endResize(); return; }
+            var minW = minOf(panel, 'minWidth', 160), minH = minOf(panel, 'minHeight', 120);
+            var dx = e.clientX - sx, dy = e.clientY - sy;
+            var x = r0.left, y = r0.top, w = r0.width, h = r0.height;
+            if (active.indexOf('e') >= 0) w = r0.width + dx;
+            if (active.indexOf('s') >= 0) h = r0.height + dy;
+            if (active.indexOf('w') >= 0) { w = r0.width - dx; x = r0.left + dx; }
+            if (active.indexOf('n') >= 0) { h = r0.height - dy; y = r0.top + dy; }
+            if (w < minW) { if (active.indexOf('w') >= 0) x = r0.right - minW; w = minW; }
+            if (h < minH) { if (active.indexOf('n') >= 0) y = r0.bottom - minH; h = minH; }
+            panel.style.width = Math.round(w) + 'px';
+            panel.style.height = Math.round(h) + 'px';
+            panel.style.left = Math.round(x) + 'px';
+            panel.style.top = Math.round(y) + 'px';
+            e.preventDefault();
+        }
+        function endResize() {
+            if (!active) return;
+            active = ''; panel.style.cursor = '';
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', endResize);
+            clampIntoView(panel);
+            try {
+                panel.dispatchEvent(new CustomEvent('fp:resized', { bubbles: true }));
+            } catch (e2) {}
+        }
+        panel.addEventListener('mousedown', function (e) {
+            if (e.button !== 0) return;
+            var s2 = edgeAt(panel, e);
+            if (!CURSORS[s2]) return;                 // not on a border band
+            if (!isFloating(panel)) {                 // grabbing an edge floats it
+                var r = panel.getBoundingClientRect();
+                panel.classList.add(floatClass);
+                panel.classList.add('fp-floating');
+                panel.style.left = r.left + 'px'; panel.style.top = r.top + 'px';
+                panel.style.width = r.width + 'px'; panel.style.height = r.height + 'px';
+                if (typeof opts.onFloat === 'function') { try { opts.onFloat(panel); } catch (e3) {} }
+            }
+            active = s2; sx = e.clientX; sy = e.clientY;
+            r0 = panel.getBoundingClientRect();
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', endResize);
+            e.preventDefault(); e.stopPropagation();
+        });
+        window.addEventListener('blur', function () { if (active) endResize(); });
+        return true;
+    }
+
     function isFloating(panel) { return !!panel && panel.classList.contains('fp-floating'); }
     /* docs/141 4ac: the clamp was a DRAG-time invariant, and the viewport is
        the other half of the constraint -- it changes without a drag (a window
@@ -86,12 +188,14 @@
         panel.classList.remove('fp-floating');
         if (floatClass) panel.classList.remove(floatClass);
         panel.style.left = ''; panel.style.top = ''; panel.style.width = '';
+        panel.style.height = ''; panel.style.cursor = '';
     }
     /* The one place the tool windows are named. docs/141 4ac: each closer used
        to carry its own literal pair, so the third window (the Config Manual)
        was "outside" both of the others and closed them. */
     var TOOLS_SEL = '.settings-btn, #settings-dropdown, .calc-btn, #calc-popover, .manual-btn, #manual-popover';
-    window.FloatPanel = { drag: drag, isFloating: isFloating, unfloat: unfloat,
+    window.FloatPanel = { drag: drag, resize: resize, isFloating: isFloating,
+                          unfloat: unfloat, edgeAt: edgeAt,
                           clampIntoView: clampIntoView, clampAll: clampAll,
-                          TOOLS_SEL: TOOLS_SEL, THRESHOLD: THRESHOLD };
+                          TOOLS_SEL: TOOLS_SEL, THRESHOLD: THRESHOLD, EDGE: EDGE };
 })();

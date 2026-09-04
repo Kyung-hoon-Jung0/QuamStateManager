@@ -697,6 +697,8 @@
         var head = document.getElementById('calc-header');
         if (!pop || !head || !window.FloatPanel) return;
         window.FloatPanel.drag(pop, { handle: head, tools: '.calc-header-tools', floatClass: 'calc-floating' });
+        // docs/165 (user): every edge, not just the bottom-right corner
+        if (window.FloatPanel.resize) window.FloatPanel.resize(pop, { floatClass: 'calc-floating' });
     }
 
     if (document.readyState === 'loading')

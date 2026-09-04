@@ -1267,6 +1267,9 @@ window.toggleSettings = function(trigger) {
     var head = document.getElementById("settings-header");
     if (head && window.FloatPanel) {
         window.FloatPanel.drag(dd, { handle: head, tools: ".settings-header-tools", floatClass: "settings-floating" });
+        // docs/165 (user): every edge resizes, not just a corner grip -- and
+        // Settings had no grip at all, being the one window without `resize`.
+        if (window.FloatPanel.resize) window.FloatPanel.resize(dd, { floatClass: "settings-floating" });
     }
     if (!dd._closerBound) {
         dd._closerBound = true;
