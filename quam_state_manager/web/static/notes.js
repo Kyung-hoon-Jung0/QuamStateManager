@@ -93,7 +93,9 @@
                 say('A note needs both a subject and some text.', 'warning');
                 return;
             }
-            post('/note', { subject: subj.value.trim(), text: text.value.trim() })
+            var tuned = host.querySelector('.notes-add-tuned-cb');
+            post('/note', { subject: subj.value.trim(), text: text.value.trim(),
+                            hand_tuned: (tuned && tuned.checked) ? '1' : '' })
                 .then(handle);
             return;
         }
@@ -110,7 +112,10 @@
             if (next === null) return;
             if (!next.trim()) { say('Use × to delete a note.', 'warning'); return; }
             // The rev the row was RENDERED with — the compare-and-swap token.
+            // An edit must not silently drop the mark the row is showing.
+            var wasTuned = !!item.querySelector('.notes-tuned');
             post('/note', { subject: subject, text: next.trim(),
+                            hand_tuned: wasTuned ? '1' : '',
                             expect_rev: item.getAttribute('data-rev') })
                 .then(handle);
             return;

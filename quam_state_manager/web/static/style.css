@@ -12471,6 +12471,16 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
     background: color-mix(in srgb, #f59e0b 12%, transparent);
 }
 .notes-orphan-head { font-size: .8em; margin: .6rem 0 .1rem; }
+/* A value somebody tuned by hand. Not a padlock, and not coloured like one:
+   SM cannot enforce this against the lab's own calibration nodes, so the mark
+   promises exactly what it delivers -- a sentence in the confirmations. */
+.notes-tuned {
+    font-size: .72em; padding: 0 .35rem; border-radius: 999px; cursor: help;
+    border: 1px solid var(--pico-primary); color: var(--pico-primary);
+    background: color-mix(in srgb, var(--pico-primary) 10%, transparent);
+}
+.notes-add-tuned { font-size: .78em; display: inline-flex; align-items: center; gap: .25rem; margin: 0; }
+.notes-add-tuned input { margin: 0; width: auto; }
 .notes-add { display: flex; gap: .3rem; margin: .5rem 0 .2rem; flex-wrap: wrap; }
 .notes-add input { margin: 0; padding: .18rem .4rem; font-size: .82em; height: auto; }
 .notes-add-subject { width: 12rem; }

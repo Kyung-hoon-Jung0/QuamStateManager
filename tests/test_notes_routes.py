@@ -11,6 +11,8 @@ SM's own machinery instead.
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -208,3 +210,75 @@ class TestNoChipLoaded:
                        "chip": False}
         assert c.post("/note", data={"subject": "qubits.q1", "text": "x"}).status_code == 400
         assert "No chip is open" in _html(c.get("/notes/panel"))
+
+
+class TestHandTunedReachesTheConfirmation:
+    """The mark's ONLY job: adding a clause to a confirmation that already
+    exists. The overwrite-live preflight (docs/86) already names what
+    disappears, because a push discards live content — a value somebody tuned
+    by hand is exactly the content worth naming before it goes."""
+
+    def test_the_preflight_names_the_marked_values(self, client):
+        client.post("/note", data={"subject": "qubits.qA1.T1",
+                                   "text": "tuned by hand on 09-04",
+                                   "hand_tuned": "1"})
+        client.post("/note", data={"subject": "qubits.qA2", "text": "just a note"})
+        got = client.get("/state/overwrite-live/preflight").get_json()
+        assert got["ok"] is True
+        assert got["hand_tuned"] == ["qubits.qA1.T1"], got
+        # everything the confirm said before is still there
+        for key in ("live_changes", "unsaved", "reversible", "run_active"):
+            assert key in got
+
+    def test_it_is_an_empty_list_when_nothing_is_marked(self, client):
+        client.post("/note", data={"subject": "qubits.qA1", "text": "plain"})
+        assert client.get("/state/overwrite-live/preflight").get_json()["hand_tuned"] == []
+
+    def test_the_note_probe_can_never_break_the_gate(self, client, monkeypatch):
+        """An advisory that can 500 the confirm is worse than no advisory: the
+        user would be unable to overwrite at all."""
+        from quam_state_manager.core import entity_notes
+        monkeypatch.setattr(entity_notes, "load",
+                            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+        got = client.get("/state/overwrite-live/preflight").get_json()
+        assert got["ok"] is True and got["hand_tuned"] == []
+
+    def test_the_mark_blocks_nothing(self, client):
+        """Pinned as an absence, deliberately. A gate SM cannot enforce against
+        the lab's own calibration nodes would teach people to stop reading the
+        gates it CAN enforce."""
+        client.post("/note", data={"subject": "qubits.qA1", "text": "x",
+                                   "hand_tuned": "1"})
+        r = client.post("/field/edit", data={"dot_path": "qubits.qA1.T1",
+                                            "value": "2e-05"})
+        assert r.status_code == 200, r.get_data(as_text=True)[:200]
+
+    def test_the_panel_offers_and_shows_the_mark(self, client):
+        client.post("/note", data={"subject": "qubits.qA1", "text": "x",
+                                   "hand_tuned": "1"})
+        html = _html(client.get("/notes/panel"))
+        assert "notes-tuned" in html and "hand-tuned" in html
+        # the ROW's own tooltip, not the add-form's: both say it, so a
+        # whole-page search stayed green when the row's promise was rewritten
+        row = html[html.index('class="notes-tuned"'):]
+        row = row[:row.index("</span>")]
+        assert "does not and cannot block" in row, (
+            "the row's mark must say what it is NOT, where it is shown")
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not on PATH")
+def test_notes_panel_selfcheck_passes():
+    """The panel's client, driven under jsdom.
+
+    A source pin would not have caught the one that matters: an EDIT that
+    silently drops the hand-tuned mark. The harness clicks Edit on a marked row
+    and reads what actually goes over the wire.
+    """
+    root = Path(__file__).resolve().parent.parent
+    r = subprocess.run(["node", str(root / "tests" / "notes_panel_selfcheck.cjs")],
+                       capture_output=True, text=True, encoding="utf-8",
+                       cwd=str(root), timeout=180)
+    if r.returncode == 2:
+        pytest.skip("jsdom not installed (run `npm install jsdom`)")
+    assert r.returncode == 0, (r.stdout + r.stderr)
+    assert "all checks passed" in r.stdout, (r.stdout + r.stderr)

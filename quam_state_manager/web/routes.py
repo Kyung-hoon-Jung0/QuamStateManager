@@ -15355,10 +15355,27 @@ def state_overwrite_live_preflight():
 
     with store._lock:
         unsaved = len(store.change_log)
+
+    # docs/167: the advisory half of "value locking". A push discards live
+    # content, and a value somebody hand-tuned is exactly the content worth
+    # naming before it goes. This is the ONLY thing the mark does -- it adds a
+    # clause to a confirmation that already exists. It never blocks, because a
+    # gate SM cannot enforce on the lab's own calibration nodes would teach
+    # people to stop reading the ones it can.
+    marked: list[str] = []
+    try:
+        from quam_state_manager.core import entity_notes as _en
+        _nc = _notes_ctx()
+        if _nc:
+            marked = _en.hand_tuned(_en.load(*_nc))
+    except Exception:       # noqa: BLE001 — an advisory must never break the gate
+        logger.debug("overwrite-live preflight note probe failed", exc_info=True)
+
     return jsonify({
         "ok": True,
         "live_changes": live_changes,
         "unsaved": unsaved,
+        "hand_tuned": marked,
         # The push snapshots the pre-apply live first, which is what powers the
         # tray's "Revert last apply" — so this is a reversible action and the
         # confirm should say so.
@@ -21698,7 +21715,8 @@ def note_save():
             ctx[0], ctx[1], subject, text,
             author=(request.form.get("author") or "").strip(),
             expect_rev=int(expect_rev) if (expect_rev or "").strip().isdigit() else None,
-            chip_token=_active_chip_token() or "")
+            chip_token=_active_chip_token() or "",
+            hand_tuned_flag=request.form.get("hand_tuned") == "1")
     except entity_notes.NoteConflict as exc:
         # Somebody else's text, handed back rather than overwritten -- the
         # docs/120 two-token discipline: `force=1` is a separate decision.

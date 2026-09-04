@@ -199,9 +199,44 @@ class NoteConflict(Exception):
         self.stored = stored
 
 
+def hand_tuned(notes: dict[str, dict]) -> list[str]:
+    """The subjects somebody marked as hand-tuned, sorted.
+
+    This is the ADVISORY half of "value locking", and advisory is the whole
+    design. A real lock would have to be honoured by thirteen write paths, and
+    the actor that actually overwrites a hand-tuned flux point is the lab's own
+    calibration node — an external process SM spawns but does not mediate. A
+    padlock that process walks straight through is WORSE than no padlock,
+    because people stop checking. A mark that makes the existing confirmations
+    say "3 of these are hand-tuned" is honest about exactly what it is: a note
+    to the person pressing the button.
+    """
+    return sorted(k for k, v in notes.items()
+                  if isinstance(v, dict) and v.get("hand_tuned"))
+
+
+def touches(subjects, changed_paths) -> list[str]:
+    """Which marked subjects a set of changing dot-paths would disturb.
+
+    A subject matches a path when either contains the other: a mark on
+    ``qubits.q12`` is disturbed by a write to ``qubits.q12.T1``, and a mark on
+    ``qubits.q12.T1`` is disturbed by a write that replaces ``qubits.q12``.
+    Deliberately generous — this decides what a CONFIRMATION mentions, and the
+    cost of naming one path too many is a sentence, while the cost of missing
+    one is the whole point of the mark.
+    """
+    hits: set[str] = set()
+    for path in changed_paths or ():
+        p = str(path or "")
+        for subject in subjects:
+            if p == subject or p.startswith(subject + ".") or subject.startswith(p + "."):
+                hits.add(subject)
+    return sorted(hits)
+
+
 def save(instance_path, live_folder, subject: str, text: str, *,
          author: str = "", expect_rev: int | None = None,
-         chip_token: str = "") -> dict:
+         chip_token: str = "", hand_tuned_flag: bool = False) -> dict:
     """Write one note. Returns the stored record.
 
     Two disciplines, and neither is claimed to be more than it is:
@@ -246,6 +281,8 @@ def save(instance_path, live_folder, subject: str, text: str, *,
             "created_at": (prev or {}).get("created_at") or now,
             "updated_at": now,
             "author": str(author or "").strip(),
+            # docs/167: the advisory half of "value locking" -- see hand_tuned().
+            "hand_tuned": bool(hand_tuned_flag),
             "rev": int((prev or {}).get("rev") or 0) + 1,
         }
         notes[subject] = record

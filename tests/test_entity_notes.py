@@ -271,3 +271,71 @@ class TestRefusals:
 
     def test_deleting_a_note_that_is_not_there_is_false_not_an_error(self, chip):
         assert entity_notes.delete(chip["inst"], chip["live"], "qubits.qX") is False
+
+
+# ---------------------------------------------------------------------------
+# The advisory half of "value locking" — and why it is only advisory
+# ---------------------------------------------------------------------------
+
+class TestHandTuned:
+    """A real lock was DEFERRED, and this is what shipped instead.
+
+    The claim "every write path must respect it" is not just true, it is
+    understated: thirteen write paths, five of which replace the tree wholesale
+    and cannot honour a per-path rule; undo and discard write through
+    `_revert_entry` and never see a `set_value` gate at all. And the actor that
+    actually overwrites a hand-tuned flux point is the lab's own calibration
+    node — a process SM spawns but does not mediate. A padlock that walks
+    through is WORSE than no padlock, because people stop checking it.
+
+    So the mark promises exactly what it delivers: a sentence in the
+    confirmations that already exist.
+    """
+
+    def test_the_flag_is_stored_and_defaults_off(self, chip):
+        plain = entity_notes.save(chip["inst"], chip["live"], "qubits.q1", "a")
+        assert plain["hand_tuned"] is False
+        marked = entity_notes.save(chip["inst"], chip["live"], "qubits.q12", "b",
+                                   hand_tuned_flag=True)
+        assert marked["hand_tuned"] is True
+        assert entity_notes.hand_tuned(
+            entity_notes.load(chip["inst"], chip["live"])) == ["qubits.q12"]
+
+    def test_it_survives_a_readdress(self, chip):
+        entity_notes.save(chip["inst"], chip["live"], "qubits.qOLD", "b",
+                          hand_tuned_flag=True)
+        entity_notes.readdress(chip["inst"], chip["live"], "qubits.qOLD", "qubits.q12")
+        assert entity_notes.hand_tuned(
+            entity_notes.load(chip["inst"], chip["live"])) == ["qubits.q12"]
+
+    def test_an_old_sidecar_without_the_field_reads_as_unmarked(self, chip):
+        path = entity_notes.notes_path(chip["inst"], chip["live"])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"version": 1, "notes": {
+            "qubits.q1": {"text": "written before the flag existed", "rev": 1}}}),
+            encoding="utf-8")
+        assert entity_notes.hand_tuned(
+            entity_notes.load(chip["inst"], chip["live"])) == []
+
+    @pytest.mark.parametrize("subject,path,hit", [
+        # a write to a leaf under a marked entity
+        ("qubits.q12", "qubits.q12.T1", True),
+        # a write that replaces the parent of a marked leaf
+        ("qubits.q12.T1", "qubits.q12", True),
+        ("qubits.q12.T1", "qubits.q12.T1", True),
+        # neighbours are not hits
+        ("qubits.q12", "qubits.q1", False),
+        ("qubits.q12", "qubits.q120.T1", False),
+        ("qubits.q12.T1", "qubits.q12.T2echo", False),
+    ])
+    def test_touches_is_generous_but_not_sloppy(self, subject, path, hit):
+        """It decides what a CONFIRMATION mentions: naming one path too many
+        costs a sentence, missing one costs the whole point of the mark. The
+        prefix test is on a dotted boundary, so q12 never matches q120."""
+        got = entity_notes.touches([subject], [path])
+        assert bool(got) is hit, got
+
+    def test_touches_takes_the_empties_calmly(self):
+        assert entity_notes.touches([], ["qubits.q1"]) == []
+        assert entity_notes.touches(["qubits.q1"], []) == []
+        assert entity_notes.touches(["qubits.q1"], [None, ""]) == []

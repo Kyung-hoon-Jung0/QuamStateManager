@@ -28,6 +28,7 @@
     <li class="notes-item" data-subject="{{ n.subject }}" data-rev="{{ n.rev }}">
       <div class="notes-head">
         <code class="notes-subject">{{ n.subject }}</code>
+        {% if n.hand_tuned %}<span class="notes-tuned" title="Marked hand-tuned. SM will NAME this value in the confirmations before a write that would replace it — it does not and cannot block one: the lab's own calibration nodes write these files directly.">&#9998; hand-tuned</span>{% endif %}
         <span class="muted notes-when" title="updated {{ n.updated_at }}">{{ n.updated_at[:10] }}</span>
         {% if n.author %}<span class="muted notes-author">{{ n.author }}</span>{% endif %}
         <span class="notes-actions">
@@ -76,6 +77,9 @@
            autocomplete="off">
     <input type="text" class="notes-add-text" placeholder="what you want the next person to know"
            maxlength="2000" autocomplete="off">
+    <label class="notes-add-tuned"
+           title="Name this value in the confirmations before anything overwrites it. Advisory: SM cannot block the lab's own calibration nodes, and a padlock they walk through would be worse than none.">
+      <input type="checkbox" class="notes-add-tuned-cb"> hand-tuned</label>
     <button type="button" class="btn-sm notes-add-go">Add note</button>
   </form>
   <p class="muted notes-foot">Notes live beside SM's own bookkeeping
