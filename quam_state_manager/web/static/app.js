@@ -642,6 +642,50 @@ document.addEventListener('htmx:afterSwap', function(evt) {
             }
         });
     });
+    // docs/164: a lazy date group restored to OPEN above never fetched its
+    // runs, so it sat there saying "loading…" forever -- with nobody running
+    // an experiment, which is what made it read as a bug rather than a wait.
+    // Customer-reported, and reported twice.
+    //
+    // The group's contents arrive on ONE path: `hx-trigger="toggle[this.open]
+    // once"`. That is true for a person opening it, and it is not true for the
+    // restore above, which sets `.open` programmatically -- measured 4 of 4 at
+    // every timing: after the refetch neither a `toggle` nor a request fires,
+    // while dispatching a toggle by hand fills the group instantly. htmx has
+    // processed the element and its listener works; nothing ever rings it.
+    //
+    // So ring it. Only for a group that is open AND still showing the
+    // placeholder -- a group with its runs already in it is left alone.
+    tree.querySelectorAll('details[data-lazy-group][open]').forEach(function (g) {
+        if (!g.querySelector('.tree-lazy-hint')) return;   // it has its runs
+        if (g.__lazyAsked) return;                         // one ask per element
+        g.__lazyAsked = true;
+        // A PLAIN Event, which is what the browser itself fires on a
+        // <details>. `htmx.trigger` sends a CustomEvent and, measured, does
+        // NOT reach this trigger -- the group stayed stuck with `__lazyAsked`
+        // already true, which is how that attempt was caught rather than
+        // shipped.
+        // Ask with the element's OWN declared config, not by simulating a
+        // toggle. Three toggle-based attempts were measured and none reached
+        // the trigger from here (htmx.trigger's CustomEvent, a native Event
+        // inside afterSwap, and the same deferred a task) -- `__lazyAsked`
+        // came back true on a still-stuck group every time. The request is
+        // read OFF the element, so it cannot drift from what the markup says.
+        setTimeout(function () {
+            try {
+                if (!g.isConnected || !g.open) return;             // closed meanwhile
+                if (!g.querySelector('.tree-lazy-hint')) return;   // filled meanwhile
+                var url = g.getAttribute('hx-get');
+                var box = g.querySelector('ul.tree-entries');
+                if (!url || !box || !window.htmx) return;
+                var vals = {};
+                try { vals = JSON.parse(g.getAttribute('hx-vals') || '{}'); } catch (e2) {}
+                window.htmx.ajax('GET', url,
+                                 { target: box, swap: 'innerHTML', values: vals });
+            } catch (e) { /* torn down mid-swap -- the next swap re-asks */ }
+        }, 0);
+    });
+
     // Re-mark the active branch (the swap rebuilt the DOM).
     if (window._markActiveTreeBranch) window._markActiveTreeBranch(null);
 
