@@ -1313,3 +1313,96 @@ window.PulsesPage = (function () {
         envStripProbe: envStripProbe
     };
 })();
+
+/* docs/166 (customer): "pulses 메뉴를 열면 너무 많은 pulse 리스트가 있다 ... chip
+ * component처럼 ... 마우스로 클릭하면 그 qubit 혹은 pair의 pulse list만 나오게".
+ *
+ * The chip map above the table is the SAME drawing the component pages use
+ * (`_component_map.html` -> ComponentMap -> TopoGraph.renderLayout), so there
+ * is no second layout to keep in step and no numbers on it. Its stones carry
+ * `data-cm="q:<id>"` and its pair edges `data-cm="p:<id>"` already — those
+ * are the ids the pulse rows' `owner` column holds verbatim, so a pick is an
+ * EXACT match and picking q1 can never drag in q10.
+ *
+ * The pick itself lives in one hidden input, because app.js's
+ * `htmx:configRequest` rewriter already rebuilds every pulses-table request
+ * path from live DOM state: the tabs, the search box, the pagination links
+ * and the mutation refresh all inherit the pick with nothing else to update.
+ */
+(function () {
+    "use strict";
+
+    function pickEl() { return document.getElementById("pulses-owner-pick"); }
+
+    function syncChip() {
+        var el = pickEl(), chip = document.getElementById("pulses-owner-chip");
+        if (!chip) return;
+        var id = el ? (el.value || "").trim() : "";
+        var name = document.getElementById("pulses-owner-chip-id");
+        if (name) name.textContent = id;
+        chip.hidden = !id;
+        // and mark the picked shape on the map itself
+        var map = document.getElementById("component-map");
+        if (!map) return;
+        map.querySelectorAll("[data-cm].cm-picked").forEach(function (n) {
+            n.classList.remove("cm-picked");
+        });
+        if (!id) return;
+        var esc = (window.CSS && CSS.escape) ? CSS.escape(id) : id;
+        var g = map.querySelector('[data-cm="q:' + esc + '"], [data-cm="p:' + esc + '"]');
+        if (g) g.classList.add("cm-picked");
+    }
+
+    function refreshRows() {
+        var wrap = document.getElementById("pulses-rows-wrap");
+        if (!wrap || !window.htmx) return;
+        // Carry the rows-per-page the reader chose. The channel tabs bake it
+        // into their own hx-get, so a pick that dropped it would silently put
+        // an "All" view back on 50 rows.
+        var pp = (String(wrap.getAttribute("hx-get") || "").match(/per_page=(\d+)/) || [])[1];
+        // `source: wrap` so the request's element IS #pulses-rows-wrap, which
+        // is what the configRequest rewriter keys on -- an htmx.ajax with no
+        // source is issued from the body and would carry no filter at all.
+        window.htmx.ajax("GET", "/pulses?rows=1" + (pp ? "&per_page=" + pp : ""),
+                         { source: wrap, target: wrap, swap: "innerHTML" });
+    }
+
+    /* Pick an entity, or pass "" to clear. Picking the CURRENT entity again
+       clears it, so the same click both enters and leaves the filtered view. */
+    window.pulsePickOwner = function (id) {
+        var el = pickEl();
+        if (!el) return;
+        var next = (id === el.value) ? "" : (id || "");
+        if (next === el.value && next !== "") return;
+        el.value = next;
+        syncChip();
+        if (window._pulsesSyncUrl) window._pulsesSyncUrl();
+        refreshRows();
+    };
+
+    document.addEventListener("click", function (e) {
+        if (!e.target || !e.target.closest) return;
+        var map = e.target.closest('.cmap[data-cm-pick="1"]');
+        if (!map) return;
+        var g = e.target.closest("[data-cm]");
+        if (!g) return;
+        var v = g.getAttribute("data-cm") || "";
+        var i = v.indexOf(":");
+        if (i < 0) return;
+        window.pulsePickOwner(v.slice(i + 1));
+    });
+
+    // The map is drawn asynchronously (ComponentMap fetches /api/topology), and
+    // the rows swap without re-rendering the chip -- re-mark after either.
+    document.addEventListener("htmx:afterSwap", syncChip);
+    document.addEventListener("DOMContentLoaded", syncChip);
+    var _t = 0;
+    var _tick = setInterval(function () {
+        if (++_t > 20 || !document.getElementById("pulses-owner-pick")) {
+            clearInterval(_tick); return;
+        }
+        if (document.querySelector("#component-map [data-cm]")) {
+            clearInterval(_tick); syncChip();
+        }
+    }, 250);
+})();

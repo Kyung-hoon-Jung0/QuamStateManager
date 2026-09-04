@@ -2683,8 +2683,15 @@ input:where(:not([type=checkbox], [type=radio], [type=range], [type=color], [typ
     --pico-form-element-spacing-vertical: var(--compact-field-pico-sv);
     --pico-form-element-spacing-horizontal: var(--compact-field-pico-sh);
 }
-.clickable-row:hover { background: var(--pico-muted-border-color) !important; }
-.clickable-row.row-selected { background: var(--pico-primary-background); color: var(--pico-primary-inverse); }
+.clickable-row:hover > td, .clickable-row:hover > th {
+    background: color-mix(in srgb, var(--pico-primary) 8%, var(--pico-background-color)) !important;
+}
+[data-theme="dark"] .clickable-row:hover > td, [data-theme="dark"] .clickable-row:hover > th {
+    background: color-mix(in srgb, var(--pico-primary) 14%, var(--pico-background-color)) !important;
+}
+.clickable-row.row-selected > td, .clickable-row.row-selected > th {
+    background: var(--pico-primary-background); color: var(--pico-primary-inverse);
+}
 .clickable-row.row-selected td { color: inherit; }
 .table-scroll { overflow-x: auto; }
 
@@ -5533,12 +5540,8 @@ input.tree-edit-input {
 }
 /* B1 — primary-tint row hover (scoped to datasets; beats the global grey .clickable-row
    hover). Paint-only: background only, the 32px row box is untouched (G1/G6/G7). */
-.datasets-table-virtual tbody tr.clickable-row:hover {
-    background: color-mix(in srgb, var(--pico-primary) 6%, transparent) !important;
-}
-[data-theme="dark"] .datasets-table-virtual tbody tr.clickable-row:hover {
-    background: color-mix(in srgb, var(--pico-primary) 10%, transparent) !important;
-}
+/* The tint itself now lives on .clickable-row:hover > td (see the note there):
+   these rules painted the <tr>, which Pico's opaque cell background covered. */
 
 /* ── Live State Edit: segmented control (Live grid | All values) ───────────── */
 /* r6b: the Table View / Flat View switch was near-invisible (boundary only
@@ -12312,3 +12315,66 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 /* An out-of-range metric in the Overview hover list (docs/162): shown with
    its real number, struck through, never coloured and never aggregated. */
 .ov-hover-val-bad { text-decoration: line-through; opacity: 0.75; color: var(--pico-del-color, var(--pico-muted-color)); cursor: help; }
+
+/* ── docs/166: the Pulses page's chip map is a row filter ─────────────────
+   The drawing is the shared component-page one; only the Pulses mount sets
+   data-cm-pick, so every other page's map is untouched. */
+.cm-edge-hit { stroke: transparent; stroke-width: 14px; fill: none; pointer-events: none; }
+.cmap[data-cm-pick="1"] .cm-edge-hit { pointer-events: stroke; }
+/* Centred and modest: this map sits above a 500-row table, so it is a control
+   rather than the page's subject. */
+.cmap[data-cm-pick="1"] .cmap-body { display: flex; justify-content: center; }
+/* A control shows what you can press and nothing else. The component pages'
+   drawing carries every symbol it has (resonator marks, flux stubs, coupler
+   rings, direction arrows, C/T/M role labels, feedline buses, frequency
+   chevrons) because there the map IS the subject; here only the stones and
+   the pair edges do anything, and the rest reads as clutter over a table.
+   Scoped to the pick mount, so the component pages are untouched. */
+.cmap[data-cm-pick="1"] .cm-res,
+.cmap[data-cm-pick="1"] .cm-flux,
+.cmap[data-cm-pick="1"] .cm-feed,
+.cmap[data-cm-pick="1"] .cm-freq,
+.cmap[data-cm-pick="1"] .cm-freqchev,
+.cmap[data-cm-pick="1"] .cm-arrow,
+.cmap[data-cm-pick="1"] .cm-coupler,
+.cmap[data-cm-pick="1"] .cm-qdac,
+.cmap[data-cm-pick="1"] .cm-qdac-tee,
+.cmap[data-cm-pick="1"] .cm-note,
+.cmap[data-cm-pick="1"] .cm-role,
+.cmap[data-cm-pick="1"] .cm-role-dot,
+.cmap[data-cm-pick="1"] .cm-role-txt,
+.cmap[data-cm-pick="1"] .cm-feed-legend { display: none; }
+.cmap[data-cm-pick="1"] .cm-stone {
+    stroke: var(--pico-primary); stroke-width: 2.2px;
+    fill: color-mix(in srgb, var(--pico-primary) 10%, var(--pico-background-color));
+}
+.cmap[data-cm-pick="1"] .cm-edge-line {
+    stroke: color-mix(in srgb, var(--pico-primary) 55%, var(--pico-muted-border-color));
+    stroke-width: 2.5px; opacity: 1;
+}
+.cmap[data-cm-pick="1"] [data-cm] { cursor: pointer; }
+.cmap[data-cm-pick="1"] [data-cm]:hover .cm-stone { filter: brightness(1.35); }
+.cmap[data-cm-pick="1"] [data-cm]:hover .cm-edge-line { stroke-width: 4px; }
+.cmap[data-cm-pick="1"] .cmap-hint {
+    margin: 0 0 0.5rem; font-size: 0.86em; color: var(--pico-muted-color);
+}
+.cmap[data-cm-pick="1"] .cm-picked .cm-stone {
+    fill: var(--pico-primary); stroke: var(--pico-primary); stroke-width: 3px;
+}
+.cmap[data-cm-pick="1"] .cm-picked .cm-id { fill: var(--pico-primary-inverse); }
+.cmap[data-cm-pick="1"] .cm-picked .cm-edge-line {
+    stroke: var(--pico-primary); stroke-width: 5px;
+}
+.pulse-owner-chip {
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    margin: 0.35rem 0 0.1rem; padding: 0.2rem 0.35rem 0.2rem 0.6rem;
+    border-radius: 999px; font-size: 0.9em;
+    background: color-mix(in srgb, var(--pico-primary) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--pico-primary) 40%, transparent);
+}
+.pulse-owner-clear {
+    background: none; border: 0; padding: 0 0.3rem; margin: 0; width: auto;
+    line-height: 1; font-size: 1.1em; cursor: pointer; color: var(--pico-color);
+    text-decoration: none;
+}
+.pulse-owner-clear:hover { color: var(--pico-primary); }

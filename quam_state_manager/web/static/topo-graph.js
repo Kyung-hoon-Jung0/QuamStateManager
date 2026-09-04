@@ -710,7 +710,12 @@ window.TopoGraph = (function () {
       }
       var cls = "cm-edge" + (e.has_coupler ? " cm-edge-hascoupler" : "") +
                 (e.active === false ? " cm-off" : "");
+      // docs/166: an invisible fat line under the visible one, so a pair edge
+      // has a real hit target when the map is used as a control. It is inert
+      // by default (`pointer-events: none` in the stylesheet) and only the
+      // pick-mode mount turns it on, so every other map behaves as before.
       svg += '<g class="' + cls + '" data-cm="p:' + esc(e.pair_id) + '">' +
+             '<line class="cm-edge-hit" x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"/>' +
              '<line class="cm-edge-line" x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"/>';
       if (e.directed) {
         var ux = (x2 - x1), uy = (y2 - y1), ul = Math.sqrt(ux * ux + uy * uy) || 1;

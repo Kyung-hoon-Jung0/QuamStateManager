@@ -4,7 +4,12 @@
    ('qubits'|'pairs'|'resonators'|'flux'|'couplers'). Default open; the user's
    collapse choice persists (ComponentMap, localStorage). The table below is
    untouched — this block is purely additive above it. #}
-<details class="cmap" id="component-map" data-highlight="{{ cmap_highlight }}" data-cell="120"
+{# docs/166: `cmap_cell` and `cmap_pick` are optional — every existing caller
+   passes neither, so its markup is byte-identical to before. The Pulses page
+   passes a smaller cell and turns the drawing into a row filter. #}
+<details class="cmap" id="component-map" data-highlight="{{ cmap_highlight }}"
+         data-cell="{{ cmap_cell | default(120) }}" data-cm-pick="{{ cmap_pick | default('') }}"
+         data-open-key="{{ cmap_open_key | default('') }}"
          {# `or ''`, not `| default('')` — default() covers only UNDEFINED
             (pairs/couplers pass no active_chain), while qubits unfiltered
             passes None, which default() would print as "None" #}

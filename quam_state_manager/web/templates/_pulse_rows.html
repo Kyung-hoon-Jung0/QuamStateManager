@@ -35,6 +35,7 @@
 
 {% set base_url = "/pulses" %}
 {% set extra_qs = (("&channel=" ~ active_channel) if active_channel else "")
-                  ~ (("&q=" ~ (active_query | urlencode)) if active_query else "") %}
+                  ~ (("&q=" ~ (active_query | urlencode)) if active_query else "")
+                  ~ (("&owner=" ~ (active_owner | urlencode)) if active_owner else "") %}
 {% set storage_key = "quam_pulses_per_page" %}
 {% include "_pagination.html" %}

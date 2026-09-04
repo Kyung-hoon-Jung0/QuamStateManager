@@ -79,10 +79,17 @@ class TestSoftBreaks:
 
 class TestRowStyle:
     def test_rows_are_larger_and_the_group_header_is_not_smaller(self):
-        assert _token("--tree-entry-label-font") == "1.06em"
+        """docs/157 raised these, docs/165 raised them again (customer: still
+        "눈에 잘 안보인다"). The literal is pinned so a change is deliberate, and
+        the INVARIANTS are pinned separately so they survive the next raise."""
+        rows = _token("--tree-entry-label-font")
+        assert rows == "1.32em", "docs/165 raised the rows 1.06 -> 1.32em"
+        # the date header is never smaller than the rows beneath it
+        assert _token("--tree-date-label-font") == rows
+        # the badge and the name are each 1em OF THE ROW, so they follow it
+        # without a second number to keep in step
         assert _token("--tree-run-id-font") == "1em"
         assert _token("--tree-entry-name-font") == "1em"
-        assert _token("--tree-date-label-font") == "1em"
         assert _token("--tree-entry-pad-v") == "0.18rem"
 
     def test_the_run_number_is_a_badge(self):

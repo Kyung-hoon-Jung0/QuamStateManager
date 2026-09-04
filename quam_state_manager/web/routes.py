@@ -10750,10 +10750,16 @@ def _pulse_rows_touched(store, pulse_index, paths) -> list[str] | None:
             return None
         if root not in roots:
             roots.append(root)
-        for ref in used_by(store.merged, root, rev):
-            r2 = _pulse_root_of(ref, known)
-            if r2 and r2 not in roots:
-                roots.append(r2)
+        queue = [root]
+        while queue:
+            cur = queue.pop(0)
+            for ref in used_by(store.merged, cur, rev):
+                r2 = _pulse_root_of(ref, known)
+                if r2 and r2 not in roots:
+                    roots.append(r2)
+                    queue.append(r2)
+            if len(roots) > 24:
+                return None
         if len(roots) > 24:
             return None
     return roots
@@ -10821,10 +10827,15 @@ def _pulses_changed_payload(store, pulse_index, paths) -> dict:
     return {"pulses-rows-changed": {"paths": roots}}
 
 
-def _pulse_rows_filter(rows: list, channel: str, query: str) -> list:
-    """The Pulses table's channel tab + search filter: ONE truth for the page
-    and for ``/pulse/row`` (docs/141 4l-review), so a patched row that no
-    longer matches the active filter leaves the table."""
+def _pulse_rows_filter(rows: list, channel: str, query: str,
+                       owner: str = "") -> list:
+    """The Pulses table's channel tab + owner pick + search filter: ONE truth
+    for the page and for ``/pulse/row`` (docs/141 4l-review), so a patched row
+    that no longer matches the active filter leaves the table.
+
+    docs/166: *owner* is the chip-map pick — an EXACT entity id (``q1``,
+    ``q1-2``), never a substring, so picking q1 cannot drag in q10 and q11.
+    The search box stays the fuzzy one."""
     from quam_state_manager.core.pulse_index import GATE_SLOTS, PAIR_PULSE_CHANNELS
     if channel == "flux":
         # pair-gate flux slots only -- pair drive channels have their own tab
@@ -10840,6 +10851,8 @@ def _pulse_rows_filter(rows: list, channel: str, query: str) -> list:
     # pages were unfindable). Shared grammar (docs/96): space = AND, standalone
     # | = OR; the haystack is owner / op name / class / channel / alias target /
     # summary -- purely metadata, no waveform synthesis.
+    if owner:
+        rows = [r for r in rows if r.get("owner") == owner]
     if query:
         from quam_state_manager.core.search_query import groups as _sq_groups
         from quam_state_manager.core.search_query import matches_hay as _sq_match
@@ -10869,7 +10882,8 @@ def pulse_row():
     # the page's active filter rides along: a row that no longer matches it
     # answers 204 and the client removes it (docs/141 4l-review)
     if not _pulse_rows_filter([row], request.args.get("channel", ""),
-                              (request.args.get("q") or "").strip()):
+                              (request.args.get("q") or "").strip(),
+                              (request.args.get("owner") or "").strip()):
         return "", 204
     row = dict(row)
     from quam_state_manager.core.waveform_synth import sparkline_svg, synth_for_operation
@@ -10891,6 +10905,7 @@ def pulses_page():
 
     channel = request.args.get("channel", "")
     query = request.args.get("q", "").strip()
+    owner = request.args.get("owner", "").strip()
     page = _int_arg("page", 1, minimum=1)
     per_page = _int_arg("per_page", _DEFAULT_PER_PAGE, minimum=0)  # 0 = "All" (see _paginate)
     rows_only = request.args.get("rows") == "1"
@@ -10919,7 +10934,7 @@ def pulses_page():
     has_pair_drive = any(r["owner_kind"] == "pair"
                          and r["channel"] in PAIR_PULSE_CHANNELS
                          for r in all_rows)
-    all_rows = _pulse_rows_filter(all_rows, channel, query)
+    all_rows = _pulse_rows_filter(all_rows, channel, query, owner)
 
     page_rows, total, page, total_pages = _paginate(all_rows, page, per_page)
 
@@ -10952,6 +10967,16 @@ def pulses_page():
             rows=page_rows,
             active_channel=channel,
             active_query=query,
+            active_owner=owner,
+            # docs/166: the chip map, at a smaller cell than a component page's
+            # (the customer asked for "살짝 축소된 크기"), and clickable.
+            cmap_highlight="",
+            # compact -- the component pages' map is a page's subject, this one
+            # is a control sitting above a 500-row table
+            cmap_cell=60,
+            cmap_pick="1",
+            cmap_label="click a qubit or a pair to show only its pulses",
+            cmap_open_key="quam_pulses_map_open",
             current_page=page,
             total_pages=total_pages,
             total=total,

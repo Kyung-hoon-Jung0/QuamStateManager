@@ -17,6 +17,18 @@ window.ComponentMap = (function () {
   "use strict";
 
   var OPEN_KEY = "quam_component_map_open";
+  // docs/166: a mount may claim its own memory. The Pulses map is a row
+  // FILTER above a table, not the page's subject, so collapsing it must
+  // not also collapse the component pages' drawing (one key, two roles).
+  function openKey(root) {
+    return (root && root.getAttribute("data-open-key")) || OPEN_KEY;
+  }
+  // A PICK mount is a control: its click belongs to the page that mounted it,
+  // and the hover card must not promise an inspector it will not open.
+  function _isPick() {
+    return !!(_active && _active.root
+              && _active.root.getAttribute("data-cm-pick") === "1");
+  }
   var _active = null;          // {root, body, api} of the CURRENT mount
   var _hotRow = null;          // table row lit from the map
   var _hotEnt = null;          // "kind:id" lit from the table
@@ -131,7 +143,8 @@ window.ComponentMap = (function () {
     }
     var hint = document.createElement("div");
     hint.className = "cm-popup-hint";
-    hint.textContent = "click to open in the inspector";
+    hint.textContent = _isPick() ? "click to show only its pulses"
+                                 : "click to open in the inspector";
     pop.appendChild(hint);
     pop.hidden = false;
     _popEnt = key;
@@ -175,6 +188,7 @@ window.ComponentMap = (function () {
     });
     body.addEventListener("click", function (ev) {
       _hidePopup();
+      if (_isPick()) return;    // the page owns this click (docs/166)
       var el = ev.target.closest && ev.target.closest("[data-cm]");
       if (!el) return;
       var e = _parseCm(el);
@@ -245,12 +259,12 @@ window.ComponentMap = (function () {
 
     // collapse persistence — default open (docs/91 §6.5), remembered choice wins
     try {
-      var saved = localStorage.getItem(OPEN_KEY);
+      var saved = localStorage.getItem(openKey(root));
       if (saved === "0") root.removeAttribute("open");
       else if (saved === "1") root.setAttribute("open", "open");
     } catch (e) {}
     root.addEventListener("toggle", function () {
-      try { localStorage.setItem(OPEN_KEY, root.open ? "1" : "0"); } catch (e) {}
+      try { localStorage.setItem(openKey(root), root.open ? "1" : "0"); } catch (e) {}
       if (root.open && !root._cmapLoaded) load();
     });
 

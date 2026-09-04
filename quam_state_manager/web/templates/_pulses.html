@@ -32,6 +32,26 @@
             hx-indicator="#inspector-pane">+ New pulse</button>
 </div>
 
+{# docs/166 (customer): "chip component처럼 살짝 축소된 크기로, qubit과 pair를
+   모두 표시해주는 diagram을 그리고, 마우스로 클릭하면 그 qubit 혹은 pair의 pulse
+   list만 나오게끔". The SAME drawing the component pages use — no second map to
+   keep in step — at a smaller cell and with its stones and pair edges made into
+   the row filter. The pick is EXACT (q1 never means q10), so it composes with
+   the fuzzy search box rather than competing with it.
+
+   The pick lives in one hidden input: `htmx:configRequest` already rewrites
+   every pulses-table request path from live DOM state (search keyword +
+   active channel), so the owner rides along on the tabs, the search box, the
+   pagination and the mutation refresh without a second place to keep in sync. #}
+<input type="hidden" id="pulses-owner-pick" name="owner" value="{{ active_owner or '' }}">
+{% include '_component_map.html' %}
+<div id="pulses-owner-chip" class="pulse-owner-chip"{% if not active_owner %} hidden{% endif %}>
+    Showing <strong id="pulses-owner-chip-id">{{ active_owner or '' }}</strong> only
+    <a class="pulse-owner-clear" title="Show every pulse again"
+       href="/pulses{{ ('?channel=' ~ active_channel) if active_channel else '' }}"
+       onclick="if (window.pulsePickOwner) { window.pulsePickOwner(''); return false; }">&times;</a>
+</div>
+
 <nav class="chain-tabs pulse-channel-tabs" id="pulse-channel-tabs">
     <ul>
         {# Channel badges swap only the rows so the search input DOM is never
@@ -85,7 +105,7 @@
    run of per-field commits refetches the whole row set ONCE instead of once
    per keystroke-commit — the table flicker the user reported (docs/75). #}
 <div id="pulses-rows-wrap"
-     hx-get="/pulses?rows=1&channel={{ active_channel }}&per_page={{ per_page }}{{ ('&q=' ~ (active_query | urlencode)) if active_query else '' }}"
+     hx-get="/pulses?rows=1&channel={{ active_channel }}&per_page={{ per_page }}{{ ('&q=' ~ (active_query | urlencode)) if active_query else '' }}{{ ('&owner=' ~ (active_owner | urlencode)) if active_owner else '' }}"
      hx-trigger="pulses-changed from:body delay:400ms"
      hx-swap="innerHTML">
 {% include '_pulse_rows.html' %}

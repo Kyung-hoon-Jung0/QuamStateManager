@@ -4,7 +4,15 @@
    so the ids here are the contract; the wrapper (#calc-popover) and the
    header stay with each surface, because only the popover has a header. #}
         <div class="calc-body">
-        <details class="calc-sec" open>
+        <details class="calc-sec">
+        <summary class="calc-sec-label">Simple Math Calculation</summary>
+        <div class="calc-expr-row">
+        <input type="text" id="calc-expr" class="calc-expr" value="0.5*10^(-25/20)" spellcheck="false" autocomplete="off" placeholder="= e.g. 0.5*10^(-25/20)">
+        <span class="calc-expr-eq">=</span><span class="calc-rval" id="calc-expr-res" data-raw="">&#8212;</span><button class="calc-copy" type="button" data-copy="calc-expr-res" title="Copy (or Enter)">&#128203;</button>
+        </div>
+        <p class="calc-help">^ power &#183; log10 log ln sqrt exp abs sin cos tan &#183; pi e</p>
+        </details>
+        <details class="calc-sec">
         <summary class="calc-sec-label">Power change → amplitude</summary>
         <div class="calc-row"><label class="calc-field">Power change Δ<input type="text" id="calc-s1-dp" class="calc-in" value="-25" inputmode="decimal"><span class="calc-unit">dB</span></label></div>
         <div class="calc-row"><label class="calc-field">Current amplitude<input type="text" id="calc-s1-amp" class="calc-in" value="0.5" inputmode="decimal"></label></div>
@@ -42,11 +50,4 @@
         <summary class="calc-sec-label">Quick reference</summary>
         <p class="calc-help">0 dBm → 0.2236 V_rms / 0.3162 V_pk / 0.6325 V_pp (50 Ω)<br>−6 dB ≈ ×0.501 amp · −20 dB = ×0.1 amp<br>×0.5 amp = −6.02 dB power<br>−25 dB power = ÷17.78 in amplitude (10^(25/20)), not ÷316</p>
         </details>
-        </div>
-        <div class="calc-foot">
-        <div class="calc-expr-row">
-        <input type="text" id="calc-expr" class="calc-expr" value="0.5*10^(-25/20)" spellcheck="false" autocomplete="off" placeholder="= e.g. 0.5*10^(-25/20)">
-        <span class="calc-expr-eq">=</span><span class="calc-rval" id="calc-expr-res" data-raw="">—</span><button class="calc-copy" type="button" data-copy="calc-expr-res" title="Copy (or Enter)">&#128203;</button>
-        </div>
-        <p class="calc-help">^ power · log10 log ln sqrt exp abs sin cos tan · pi e</p>
         </div>

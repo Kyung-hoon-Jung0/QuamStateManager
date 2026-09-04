@@ -16500,12 +16500,16 @@ var _pulseRowGen = {};
 function _pulseRowEl(wrap, p) {
     return wrap.querySelector('tr[data-pulse-path="' + (window.CSS && CSS.escape ? CSS.escape(p) : p) + '"]');
 }
+function _pulsesOwnerPick() {
+    var el = document.getElementById("pulses-owner-pick");
+    return el ? (el.value || "").trim() : "";
+}
 function _pulsesActiveFilter() {
     var inp = document.querySelector('.table-filter input[name="q"]');
     var tab = document.querySelector("#pulse-channel-tabs a.active");
     var ch = "";
     if (tab) { var m = (tab.getAttribute("hx-get") || "").match(/channel=([^&]+)/); if (m) ch = m[1]; }
-    return { q: inp ? inp.value.trim() : "", channel: ch };
+    return { q: inp ? inp.value.trim() : "", channel: ch, owner: _pulsesOwnerPick() };
 }
 document.addEventListener("pulses-rows-changed", function (evt) {
     var d = evt && evt.detail;
@@ -16529,7 +16533,8 @@ document.addEventListener("pulses-rows-changed", function (evt) {
         var gen = (_pulseRowGen[p] = (_pulseRowGen[p] || 0) + 1);
         var url = "/pulse/row?path=" + encodeURIComponent(p)
                 + (filt.channel ? "&channel=" + encodeURIComponent(filt.channel) : "")
-                + (filt.q ? "&q=" + encodeURIComponent(filt.q) : "");
+                + (filt.q ? "&q=" + encodeURIComponent(filt.q) : "")
+                + (filt.owner ? "&owner=" + encodeURIComponent(filt.owner) : "");
         fetch(url, { credentials: "same-origin", headers: { "HX-Request": "true" } })
             .then(function (r) {
                 if (r.status === 204) return "";
@@ -16567,9 +16572,11 @@ function _pulsesSyncUrl() {
         var m = (tab.getAttribute("hx-get") || "").match(/channel=([^&]+)/);
         if (m) ch = m[1];
     }
+    var owner = _pulsesOwnerPick();
     var parts = [];
     if (ch) parts.push("channel=" + ch);
     if (q) parts.push("q=" + encodeURIComponent(q));
+    if (owner) parts.push("owner=" + encodeURIComponent(owner));
     try {
         history.replaceState(history.state, "", "/pulses" + (parts.length ? "?" + parts.join("&") : ""));
     } catch (e) {}
@@ -16692,9 +16699,14 @@ document.addEventListener("htmx:configRequest", function (evt) {
     }
     var path = _setQueryParam(evt.detail.path, "q", q);
     path = _setQueryParam(path, "channel", channel);
+    // docs/166: the chip-map pick rides the same rewrite, so the tabs, the
+    // search box, the pagination links and the mutation refresh all keep it
+    // without a second place that has to remember.
+    path = _setQueryParam(path, "owner", _pulsesOwnerPick());
     evt.detail.path = path;
     delete evt.detail.parameters["q"];
     delete evt.detail.parameters["channel"];
+    delete evt.detail.parameters["owner"];
     // Keep the browser URL in sync so a later full re-fetch / reload preserves both.
     if (window._pulsesSyncUrl) window._pulsesSyncUrl();
 });

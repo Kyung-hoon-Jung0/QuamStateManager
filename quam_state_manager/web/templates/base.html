@@ -82,9 +82,11 @@
         'autofit': ['autofit.js'],
         'compare': ['topo-graph.js', 'compare-hub.js', 'diff-panes.js'],
     } %}
+    {# docs/166: 'pulses' takes the components bundle too — its chip map
+       (topo-graph + component-map) is the page's row filter. #}
     {% set page_bundles = {
         'bulk': ['grid'], 'table': ['grid'],
-        'pulses': ['pulses'],
+        'pulses': ['pulses', 'components'],
         'generate': ['generate'], 'regenerate': ['generate'],
         'instrument': ['wiring'],
         'topology': ['chipstatus', 'components'], 'trends': ['chipstatus', 'datasets'], 'trend': ['chipstatus', 'datasets'],

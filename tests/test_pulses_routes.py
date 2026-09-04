@@ -35,6 +35,10 @@ def _make_state() -> dict:
                             "__class__": QC + "DragCosinePulse",
                         },
                         "x180": "#./x180_DragCosine",
+                        # docs/166: an alias ON TOP of a pulse whose own field
+                        # points elsewhere -- the real chip's two-hop chain
+                        # (x90 -> x90_DragCosine -> x180_DragCosine.length).
+                        "x90": "#./x90_DragCosine",
                         "saturation": {"length": 20000, "amplitude": 0.004,
                                        "__class__": QC + "SquarePulse"},
                         "mystery": {"length": 10, "amplitude": 0.1,
@@ -1485,6 +1489,33 @@ class TestPulseRow:
         und = _json.loads(loaded_client.post("/undo").headers["HX-Trigger"])
         assert set(und["pulses-rows-changed"]["paths"]) >= {f"{XY}.x180_DragCosine", f"{XY}.x90_DragCosine"}
 
+    def test_the_expansion_follows_a_pointer_chain_all_the_way(self, loaded_client):
+        """docs/166 (customer): "length나 amplitude를 수정했는데 pulse list에
+        반영이 안된다."
+
+        Reproduced in real Chrome on the 20Q chip: editing
+        ``x180_DragCosine.length`` 44 -> 48 repainted that row and the ``x180``
+        alias, and left ``x90`` and ``y180`` reading 44 -- values the chip did
+        not hold. The expansion was one hop, and the chain is two:
+
+            x90 (alias) -> x90_DragCosine -> x180_DragCosine.length
+
+        The first hop reaches ``x90_DragCosine``; nothing then asked who points
+        at THAT, so the alias above it never learned. A row left showing a
+        stale number is worse than a whole-table re-fetch, which is what the
+        24-root cap still degrades to.
+        """
+        import json as _json
+        resp = loaded_client.post("/pulse/edit", data={
+            "path": f"{XY}.x180_DragCosine", "dot_path": f"{XY}.x180_DragCosine.length",
+            "mode": "value", "value": "56",
+        })
+        paths = set(_json.loads(resp.headers["HX-Trigger"])["pulses-rows-changed"]["paths"])
+        assert f"{XY}.x90_DragCosine" in paths, "one hop"
+        assert f"{XY}.x90" in paths,             "the alias two hops out still shows the old length until it is named"
+        # and it stays honest about what it did NOT touch
+        assert f"{XY}.saturation" not in paths
+
     def test_structural_changes_and_pointer_moves_refetch_the_table(self, loaded_client):
         import json as _json
         # a re-link names the OLD target's row too (its used_by changed) -- docs/141 4l-review
@@ -1503,6 +1534,12 @@ class TestPulseRow:
         assert r.status_code == 200, r.data[:200]
         und2 = _json.loads(loaded_client.post("/undo").headers["HX-Trigger"])
         assert und2.get("pulses-changed") is True and "pulses-rows-changed" not in und2
+
+    def test_a_row_outside_the_chip_map_pick_answers_204(self, loaded_client):
+        """docs/166: the map pick is part of the page's filter, so a patched
+        row belonging to another entity leaves the table like any other."""
+        assert loaded_client.get(f"/pulse/row?path={XY}.saturation&owner=qA1").status_code == 200
+        assert loaded_client.get(f"/pulse/row?path={XY}.saturation&owner=qZZ").status_code == 204
 
     def test_a_row_that_left_the_page_filter_answers_204(self, loaded_client):
         assert loaded_client.get(f"/pulse/row?path={XY}.saturation&q=saturation").status_code == 200
