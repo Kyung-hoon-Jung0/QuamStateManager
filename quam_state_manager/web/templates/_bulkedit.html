@@ -1,7 +1,18 @@
 {%- import '_bulk_cell_macros.html' as cells -%}
 {%- set cold_keys = cold_keys or [] -%}
 {%- set pair_cold_keys = pair_cold_keys or [] -%}
+{%- set note_rows = note_rows or {} -%}
+{%- set pair_note_rows = pair_note_rows or {} -%}
 <div class="bulk-panel" id="bulk-panel">
+    {# docs/167: notes live above the grid because this is the daily-driver
+       surface and the page already has the data (the row markers below read
+       the same dicts) -- so the panel costs one include and no extra request.
+       Closed by default; the summary carries the count, so a chip with no
+       notes reads as one quiet line. #}
+    <details class="notes-block" id="notes-block"{% if count %} data-has-notes="1"{% endif %}>
+        <summary class="notes-summary">&#128221; Notes{% if count %} <span class="notes-count">{{ count }}</span>{% endif %}{% if orphans %} <span class="notes-orphan-tag">{{ orphans | length }} orphaned</span>{% endif %}</summary>
+        {% include '_notes_panel.html' %}
+    </details>
     {# Title row: just the title + the help (ⓘ) toggle beside it. #}
     <div class="bulk-toolbar bulk-toolbar-title">
         <h2 style="white-space:nowrap;margin:0">Live State Edit</h2>
@@ -181,7 +192,7 @@
             <tbody>
                 {% for row in rows %}
                 <tr data-qubit="{{ row.id }}">
-                    <th class="bulk-rowhead" scope="row" data-col-key="__id__">{{ row.id }}</th>
+                    <th class="bulk-rowhead{% if row.id in note_rows %} bulk-rowhead-note{% endif %}" scope="row" data-col-key="__id__"{% if row.id in note_rows %} title="{{ note_rows[row.id] }}"{% endif %}>{{ row.id }}{% if row.id in note_rows %}<span class="bulk-note-mark" aria-label="has a note">&#128221;</span>{% endif %}</th>
                     {%- for cell in row.cells -%}
                     {%- set col = columns[loop.index0] -%}
                     <td class="bulk-td ck-{{ loop.index0 }}{% if not col.default_on %} bulk-col-hidden{% endif %}{% if col.group_start %} bulk-col-group-start{% endif %}{% if cell.is_pointer %} bulk-td-pointer{% endif %}{% if cell.lo and cell.lo.peer_qubit %} bulk-td-lo{% endif %}{% if cell.kind in ('listedit', 'runtime', 'missing') %} bulk-td-ro{% endif %}{% if col.key in cold_keys %} bulk-td-cold{% endif %}" data-col-key="{{ col.key }}">
@@ -264,7 +275,7 @@
             <tbody>
                 {% for row in pair_rows %}
                 <tr data-qubit="{{ row.id }}" data-pair="{{ row.id }}">
-                    <th class="bulk-rowhead" scope="row" data-col-key="__id__">{{ row.id }}</th>
+                    <th class="bulk-rowhead{% if row.id in pair_note_rows %} bulk-rowhead-note{% endif %}" scope="row" data-col-key="__id__"{% if row.id in pair_note_rows %} title="{{ pair_note_rows[row.id] }}"{% endif %}>{{ row.id }}{% if row.id in pair_note_rows %}<span class="bulk-note-mark" aria-label="has a note">&#128221;</span>{% endif %}</th>
                     {%- for cell in row.cells -%}
                     {%- set col = pair_columns[loop.index0] -%}
                     <td class="bulk-td ck-{{ loop.index0 }}{% if not col.default_on %} bulk-col-hidden{% endif %}{% if col.group_start %} bulk-col-group-start{% endif %}{% if cell.kind in ('runtime','list','missing') %} bulk-td-ro{% endif %}{% if cell.is_pointer and cell.kind == 'scalar' %} bulk-td-pointer{% endif %}{% if cell.lo and cell.lo.peer_qubit %} bulk-td-lo{% endif %}{% if col.key in pair_cold_keys %} bulk-td-cold{% endif %}" data-col-key="{{ col.key }}">

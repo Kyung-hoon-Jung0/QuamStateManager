@@ -1,0 +1,84 @@
+{# docs/167 — every note on this chip, in one place.
+
+   Two sections, because they need different actions. A PRESENT note points at
+   something the chip still has. An ORPHAN points at something that vanished —
+   a regenerated chip, a renamed pulse — and SM neither deletes it nor guesses
+   where it went: it shows the last-known subject and offers Re-address or
+   Delete, both explicit acts.
+
+   With no readable chip nothing is stamped orphan at all (a panel that
+   declared every note broken because no chip was open would be worse than one
+   that says nothing about orphan-ness), so the heading says so. #}
+<div id="notes-panel" class="notes-panel" data-count="{{ count }}">
+  {% if not chip %}
+  <p class="muted notes-empty">No chip is open, so these notes cannot be
+     checked against one — they are listed exactly as written.</p>
+  {% endif %}
+
+  {% if not count %}
+  <p class="muted notes-empty">No notes yet. A note is a sentence about a qubit,
+     a pair or a single parameter — "q12's flux line contact is suspect, do not
+     trust these values" — and it is stored beside SM's own bookkeeping, never
+     in the chip's state.json.</p>
+  {% endif %}
+
+  {% if present %}
+  <ul class="notes-list">
+    {% for n in present %}
+    <li class="notes-item" data-subject="{{ n.subject }}" data-rev="{{ n.rev }}">
+      <div class="notes-head">
+        <code class="notes-subject">{{ n.subject }}</code>
+        <span class="muted notes-when" title="updated {{ n.updated_at }}">{{ n.updated_at[:10] }}</span>
+        {% if n.author %}<span class="muted notes-author">{{ n.author }}</span>{% endif %}
+        <span class="notes-actions">
+          <button type="button" class="btn-xs outline notes-edit"
+                  title="Edit this note">Edit</button>
+          <button type="button" class="btn-xs outline notes-del"
+                  title="Delete this note">&times;</button>
+        </span>
+      </div>
+      <div class="notes-text">{{ n.text }}</div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if orphans %}
+  <p class="notes-orphan-head">
+    {{ orphans | length }} note{{ '' if orphans | length == 1 else 's' }} point
+    at something this chip no longer has. Nothing was deleted — re-address or
+    remove each one yourself.
+  </p>
+  <ul class="notes-list notes-orphans">
+    {% for n in orphans %}
+    <li class="notes-item notes-item-orphan" data-subject="{{ n.subject }}" data-rev="{{ n.rev }}">
+      <div class="notes-head">
+        <code class="notes-subject">{{ n.subject }}</code>
+        <span class="notes-orphan-tag" title="This path is not on the loaded chip">not on this chip</span>
+        <span class="muted notes-when" title="updated {{ n.updated_at }}">{{ n.updated_at[:10] }}</span>
+        <span class="notes-actions">
+          <button type="button" class="btn-xs outline notes-readdress"
+                  title="Point this note at a path the chip does have">Re-address…</button>
+          <button type="button" class="btn-xs outline notes-del"
+                  title="Delete this note">&times;</button>
+        </span>
+      </div>
+      <div class="notes-text">{{ n.text }}</div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  <form class="notes-add" onsubmit="return false">
+    <input type="text" class="notes-add-subject" placeholder="qubits.q12"
+           title="What the note is about: a qubit (qubits.q12), a pair
+(qubit_pairs.q1-2) or a single parameter (qubits.q12.T1)."
+           autocomplete="off">
+    <input type="text" class="notes-add-text" placeholder="what you want the next person to know"
+           maxlength="2000" autocomplete="off">
+    <button type="button" class="btn-sm notes-add-go">Add note</button>
+  </form>
+  <p class="muted notes-foot">Notes live beside SM's own bookkeeping
+     (<code>instance/annotations/</code>), never in the chip's state.json — so
+     they need no Apply and cannot collide with a running experiment.</p>
+</div>

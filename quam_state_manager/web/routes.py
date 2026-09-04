@@ -5532,6 +5532,14 @@ def bulk_edit():
     # live in the pair table.
     filter_chips = _bulk_filter_chips(columns, pair_columns)
     template = "_bulkedit.html" if _is_htmx() else "bulkedit.html"
+    # docs/167: one dict per grid, built once. Row heads are ~20-100 elements
+    # and grid-virt.js never selects them (every selector there is
+    # `td[data-col-key]` or `th.bulk-col-head`), so a marker costs no client
+    # pass and no per-cell work.
+    from quam_state_manager.core import entity_notes as _en
+    _nctx = _notes_ctx()
+    note_rows, pair_note_rows = (
+        _en.row_marks(_en.load(*_nctx)) if _nctx else ({}, {}))
     html = render_template(template, **_ctx(page="bulk", columns=columns, rows=rows,
                                             column_groups=column_groups, band_meta=band_meta,
                                             dyn_cols=dyn_cols, qubit_meta=qubit_meta,
@@ -5541,7 +5549,10 @@ def bulk_edit():
                                             active_chip_key=_bulk_chip_gate_token() or "",
                                             cold_keys=cold_keys, cold_map=cold_map,
                                             pair_cold_keys=pair_cold_keys,
-                                            pair_cold_map=pair_cold_map))
+                                            pair_cold_map=pair_cold_map,
+                                            note_rows=note_rows,
+                                            pair_note_rows=pair_note_rows,
+                                            **_notes_state()))
     # docs/103: this is the app's largest response by an order of magnitude
     # (measured 10.0 MB / 6.5 MB HTML on real 21Q/10Q chips — docs/85 ships
     # every cell deliberately). Repetitive table markup gzips ~25x, so
@@ -6317,6 +6328,7 @@ def _render_qubit_detail(name: str, *, focus_path: str | None = None):
             port_info=port_info,
             modified_map=_modified_map(),
             focus_path=focus_path,
+            entity_note=_entity_note("qubits." + name),
         ),
     )
 
@@ -8626,6 +8638,7 @@ def _render_pair_detail(name: str, *, focus_path: str | None = None):
             port_info=port_info,
             modified_map=_modified_map(),
             focus_path=focus_path,
+            entity_note=_entity_note("qubit_pairs." + name),
             gi=gi_ctx,
         ),
     )
@@ -21564,6 +21577,135 @@ def datasets_wait():
     resp = jsonify({"tick": tick, "changed": tick != since, "roots": len(w.roots)})
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+
+# ======================================================================
+# docs/167 — operator notes on a qubit, a pair, or any single parameter
+# ======================================================================
+
+def _notes_ctx() -> tuple[str, str] | None:
+    """``(instance_path, live_folder)`` for the open chip, or None."""
+    live = _active_path()
+    if not live:
+        return None
+    return current_app.instance_path, live
+
+
+def _notes_state() -> dict:
+    """Everything the panel and the markers need, in one read."""
+    from quam_state_manager.core import entity_notes
+    ctx = _notes_ctx()
+    if not ctx:
+        return {"notes": {}, "present": [], "orphans": [], "count": 0,
+                "chip": False}
+    raw = entity_notes.load(*ctx)
+    store = _store()
+    merged = store.merged if store and isinstance(store.merged, dict) else None
+    items = entity_notes.classify(merged, raw)
+    ordered = sorted(items.values(), key=lambda r: (r.get("entity") or "",
+                                                    r.get("subject") or ""))
+    # With no readable chip nothing is stamped, so `orphan` is absent and every
+    # note lands in `present` -- the honest reading of "we cannot tell".
+    present = [r for r in ordered if not r.get("orphan")]
+    orphans = [r for r in ordered if r.get("orphan")]
+    return {"notes": raw, "present": present, "orphans": orphans,
+            "count": len(ordered), "chip": merged is not None}
+
+
+def _entity_note(entity: str) -> dict | None:
+    """The note about ONE entity, for the inspector strip.
+
+    Entity-level only: a leaf note lights its entity in the grid (that is what
+    `row_marks` rolls up) but the header is one line, so it shows the note
+    written ABOUT the qubit rather than a digest of everything under it.
+    """
+    from quam_state_manager.core import entity_notes
+    ctx = _notes_ctx()
+    if not ctx:
+        return None
+    rec = entity_notes.load(*ctx).get(entity)
+    return dict(rec, subject=entity) if isinstance(rec, dict) else None
+
+
+
+@bp.route("/notes")
+def notes_json():
+    return jsonify(_notes_state())
+
+
+@bp.route("/notes/panel")
+def notes_panel():
+    return render_template("_notes_panel.html", **_notes_state())
+
+
+@bp.route("/note", methods=["POST"])
+def note_save():
+    from quam_state_manager.core import entity_notes
+    ctx = _notes_ctx()
+    if not ctx:
+        return jsonify(ok=False, error="No chip is loaded."), 400
+    bad = _chip_mismatch_response(request.form.get("expect_chip", ""),
+                                 request.form.get("force_chip") == "1")
+    if bad:
+        return bad
+    subject = (request.form.get("subject") or "").strip()
+    text = (request.form.get("text") or "").strip()
+    expect_rev = request.form.get("expect_rev")
+    try:
+        rec = entity_notes.save(
+            ctx[0], ctx[1], subject, text,
+            author=(request.form.get("author") or "").strip(),
+            expect_rev=int(expect_rev) if (expect_rev or "").strip().isdigit() else None,
+            chip_token=_active_chip_token() or "")
+    except entity_notes.NoteConflict as exc:
+        # Somebody else's text, handed back rather than overwritten -- the
+        # docs/120 two-token discipline: `force=1` is a separate decision.
+        return jsonify(ok=False, note_conflict=True, stored=exc.stored,
+                       error="Somebody else changed this note since you opened "
+                             "it. Their text is shown below."), 409
+    except (ValueError, KeyError) as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    return jsonify(ok=True, note=rec, panel=render_template(
+        "_notes_panel.html", **_notes_state()))
+
+
+@bp.route("/note/delete", methods=["POST"])
+def note_delete():
+    from quam_state_manager.core import entity_notes
+    ctx = _notes_ctx()
+    if not ctx:
+        return jsonify(ok=False, error="No chip is loaded."), 400
+    gone = entity_notes.delete(ctx[0], ctx[1],
+                               (request.form.get("subject") or "").strip())
+    return jsonify(ok=bool(gone), panel=render_template(
+        "_notes_panel.html", **_notes_state()))
+
+
+@bp.route("/note/readdress", methods=["POST"])
+def note_readdress():
+    """Repair an orphan: the chip was regenerated, the observation still holds.
+
+    Deliberately an explicit act -- nothing guesses where a vanished subject
+    went, and the new subject is checked against the loaded chip so a typo is
+    refused rather than creating a second orphan.
+    """
+    from quam_state_manager.core import entity_notes
+    ctx = _notes_ctx()
+    if not ctx:
+        return jsonify(ok=False, error="No chip is loaded."), 400
+    subject = (request.form.get("subject") or "").strip()
+    new_subject = (request.form.get("new_subject") or "").strip()
+    store = _store()
+    merged = store.merged if store and isinstance(store.merged, dict) else None
+    if merged is not None and not entity_notes._present(merged, new_subject):
+        return jsonify(ok=False, error=f"{new_subject} is not on this chip."), 400
+    try:
+        rec = entity_notes.readdress(ctx[0], ctx[1], subject, new_subject)
+    except (ValueError, KeyError) as exc:
+        return jsonify(ok=False, error=str(exc) or "no such note"), 400
+    return jsonify(ok=True, note=rec, panel=render_template(
+        "_notes_panel.html", **_notes_state()))
 
 
 @bp.route("/datasets/poll")

@@ -12428,3 +12428,63 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
     text-decoration: none;
 }
 .pulse-owner-clear:hover { color: var(--pico-primary); }
+
+/* ── docs/167: operator notes ─────────────────────────────────────────────
+   A note is a sentence somebody left for the next person. It is styled to be
+   READ, not to alarm: a warm neutral card, never the amber of an unsaved edit
+   or the red of a defect. The only loud thing here is an ORPHAN tag, because
+   a note pointing at something the chip no longer has is a claim that has
+   quietly stopped being about anything. */
+.notes-block { margin: 0 0 .4rem; }
+.notes-block > .notes-summary {
+    cursor: pointer; font-size: .84em; padding: .15rem .4rem;
+    border-radius: 6px; display: inline-flex; align-items: center; gap: .3rem;
+    list-style: none;
+}
+.notes-block > .notes-summary::-webkit-details-marker { display: none; }
+.notes-block > .notes-summary:hover { background: rgba(128,128,128,0.1); }
+.notes-count {
+    font-weight: 600; font-size: .92em; padding: 0 .35rem; border-radius: 999px;
+    background: color-mix(in srgb, var(--pico-primary) 18%, transparent);
+    color: var(--pico-primary);
+}
+.notes-panel {
+    border: 1px solid var(--pico-muted-border-color); border-radius: 8px;
+    padding: .5rem .65rem; margin: .3rem 0 0; max-width: 62rem;
+}
+.notes-empty, .notes-foot { font-size: .8em; margin: .2rem 0; }
+.notes-list { list-style: none; margin: .2rem 0; padding: 0; }
+.notes-item {
+    padding: .3rem 0; border-top: 1px solid var(--pico-muted-border-color);
+}
+.notes-item:first-child { border-top: 0; }
+.notes-head { display: flex; align-items: baseline; gap: .45rem; flex-wrap: wrap; }
+.notes-subject { font-size: .8em; }
+.notes-when, .notes-author { font-size: .76em; }
+.notes-actions { margin-left: auto; display: inline-flex; gap: .2rem; }
+.notes-text { font-size: .88em; margin: .1rem 0 0; white-space: pre-wrap; }
+/* A note whose subject vanished. Named rather than coloured like an error:
+   the note is not wrong, it is unattached. */
+.notes-orphan-tag {
+    font-size: .72em; padding: 0 .35rem; border-radius: 999px;
+    border: 1px solid #f59e0b; color: #b45309;
+    background: color-mix(in srgb, #f59e0b 12%, transparent);
+}
+.notes-orphan-head { font-size: .8em; margin: .6rem 0 .1rem; }
+.notes-add { display: flex; gap: .3rem; margin: .5rem 0 .2rem; flex-wrap: wrap; }
+.notes-add input { margin: 0; padding: .18rem .4rem; font-size: .82em; height: auto; }
+.notes-add-subject { width: 12rem; }
+.notes-add-text { flex: 1; min-width: 14rem; }
+.notes-add .btn-sm { margin: 0; padding: .18rem .6rem; font-size: .8em; }
+/* The grid's row marker. A row head is ~20-100 elements and grid-virt.js never
+   selects them, so this costs no client pass. */
+.bulk-note-mark { font-size: .76em; margin-left: .2rem; opacity: .75; }
+.bulk-rowhead-note { cursor: help; }
+/* The inspector's one-line strip, right where somebody about to trust the
+   numbers below it will see it. Truncated, with the whole note in the title. */
+.inspector-note {
+    font-size: .78em; max-width: 26ch; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; padding: .1rem .4rem; border-radius: 4px; cursor: help;
+    background: color-mix(in srgb, #f59e0b 12%, transparent);
+    border: 1px solid color-mix(in srgb, #f59e0b 40%, transparent);
+}

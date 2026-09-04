@@ -17,6 +17,13 @@
         {% if inspector_inactive is defined and inspector_inactive %}<span class="inactive-chip" title="Not listed in the state's active names — shown anyway (r15: everything is listed, active is a mark)">inactive</span>{% endif %}
     </div>
     <div class="inspector-actions">
+        {% if inspector_type in ('qubit', 'pair') and entity_note %}
+        {# docs/167: an operator note about THIS entity, right where somebody
+           about to trust its numbers will see it. Only the text and its date —
+           editing lives in the Live State Edit panel, so this surface stays a
+           statement rather than a second editor. #}
+        <span class="inspector-note" title="{{ entity_note.text }}&#10;&#10;noted {{ entity_note.updated_at }}{% if entity_note.author %} by {{ entity_note.author }}{% endif %}">&#128221; {{ entity_note.text }}</span>
+        {% endif %}
         {% if inspector_type in ('qubit', 'pair') %}
         {# The other half of the /pulses?q= link further down a qubit's page: the
            runs that MEASURED this entity. Deliberately the BARE name, never
