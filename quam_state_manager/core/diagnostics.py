@@ -34,6 +34,7 @@ from quam_state_manager.core import (
 )
 from quam_state_manager.core.loader import _walk
 from quam_state_manager.core.mw_fem import MW_MAX_ABS_IF_HZ
+from quam_state_manager.core import units as _units
 from quam_state_manager.core.query import _parse_port_ref, _resolve
 
 # Roles that may legitimately share one physical port (readout multiplexing:
@@ -119,6 +120,7 @@ DIAG_DOMAINS = [
     ("env", "Environment match"),
     ("connectivity", "Connectivity & wiring"),
     ("values", "Values"),
+    ("physics", "Physics"),
     ("waveforms", "Waveforms"),
     ("references", "References"),
     ("config", "Config"),
@@ -138,6 +140,8 @@ def domain_of(category: str) -> str:
     if c.startswith(("value_spec", "value_type")) or c in (
             "value_nan", "value_freq_consistency", "value_unphysical"):
         return "values"
+    if c.startswith("physics_"):
+        return "physics"
     if c == "dangling_pointer":
         return "references"
     if c.startswith("config"):
@@ -188,6 +192,10 @@ _CHECK_CATALOG: list[tuple[str, list[tuple[str, str, str]]]] = [
         ("warning", "Hardware value specs", "Catalogued hardware fields are in range/step: time_of_flight (mult-of-4), pulse length, full_scale_power_dbm (−11..18 dBm), band ∈ {1,2,3}, gain_db, sampling_rate, output/upsampling/lo_mode, Octave LO/gain/enums."),
         ("warning", "Field type consistency", "A field that is numeric on most siblings isn't a stray text value on one."),
         ("warning", "Numbers stored as text", "No state leaf holds a numeric-looking STRING (\"0.13\") — external regeneration string-ifies values wholesale, and SM edits then keep text unless the type is converted (r14)."),
+    ]),
+    ("physics", [
+        ("warning", "T2 within the 2·T1 bound", "A qubit's T2ramsey / T2echo does not exceed 2·T1 — the hard bound coherence obeys by definition. The excess MARGIN is reported, not a verdict: a few percent is inside typical fit uncertainty, a large excess means one of the two fits is wrong. SM never says WHICH, and never drops either value from an average."),
+        ("warning", "Qubits a drive can tell apart", "Two qubits that can actually affect each other — a declared qubit_pairs coupling, or two qubits sharing one physical xy output port — are separated by more than their own x180 drive bandwidth. The scale comes from the chip (Δ·T, where T is that qubit's own x180 length: 40 ns ⇒ ≈25 MHz, 200 ns ⇒ ≈5 MHz); the cut at Δ·T = 1 is SM's own guideline. Qubits with no mechanism to reach each other are never compared — reusing a frequency across a chip is deliberate design. Silent for any qubit whose x180 length cannot be read."),
     ]),
     ("waveforms", [
         ("error", "Sample within DAC range", "Every synthesized pulse sample stays inside its output's range (MW ±1, LF direct ±0.5 V / amplified ±2.5 V) — a sample outside it makes generate_config() reject the whole config."),
@@ -280,6 +288,7 @@ def _lint_state_uncached(store) -> list[Finding]:
     findings.extend(_pair_drive_carrier_findings(store))
     findings.extend(_f01_range_findings(root))
     findings.extend(_unphysical_findings(root))
+    findings.extend(_relational_findings(root))
     findings.extend(_lffem_output_bw_findings(root))
     findings.extend(_qdac_findings(root))
     findings.extend(_resonator_if_floor_findings(root))
@@ -1762,6 +1771,222 @@ def _unphysical_findings(root: dict) -> list[Finding]:
                                "value is excluded from every average, range and "
                                "colour on Chip Status — the number itself is "
                                "left exactly as the node wrote it."))
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# Relational physics — checks that need TWO numbers at once
+# ---------------------------------------------------------------------------
+
+# How far past the 2·T1 bound a T2 has to sit before it stops reading as fit
+# noise. THE BOUND IS PHYSICS AND HAS NOTHING TO CONFIGURE; this fraction is
+# SM's own judgement about how well a lab's T1/Ramsey fits converge, and it
+# only moves the finding between the info and warning tiers — it never
+# suppresses one. On the reference 20-qubit chip the single real violation
+# sits at 4.6%, which is exactly the regime this constant exists to describe.
+_T2_EXCESS_INFO_FRACTION = 0.10
+
+# Addressability cut. The SCALE here is the chip's own and nothing is invented:
+# a π-pulse of length T has a spectral width of order 1/T, so two qubits are
+# separately drivable when their detuning Δ is large against it — the
+# dimensionless product Δ·T. A 40 ns x180 puts the boundary near 25 MHz and a
+# 200 ns one near 5 MHz, with no constant of ours in the arithmetic. The CUT at
+# 1.0 IS ours, it is not a QM specification, and the catalogue text says so.
+_ADDRESSABILITY_DELTA_T_MIN = 1.0
+
+# The T2 flavours a quam transmon actually stores. Verified against both env
+# schema goldens (tests/golden/state_schema_{modern,fork}.json) and against
+# chip_health._POSITIVE_KEYS — `T2_echo` / `T2_star` exist too but are FIT-RESULT
+# keys inside run data, never state leaves.
+_T2_KEYS = ("T2ramsey", "T2echo")
+
+
+def _seconds(value: float, field: str) -> str:
+    """A coherence time in the units the rest of the app shows it in (µs)."""
+    shown = _units.format_quantity(value, field)
+    return f"{shown[0]} {shown[1]}" if shown else f"{value:g}"
+
+
+def _relational_findings(root: dict) -> list[Finding]:
+    """Physics that only appears when you hold TWO numbers at once.
+
+    Every other physics check in this project judges one value alone.
+    :func:`chip_health.physicality` is literally ``(key, value) -> bool`` and
+    :func:`_unphysical_findings` reads one leaf at a time, so neither signature
+    can express ``T2 <= 2*T1`` (which needs a sibling on the same qubit) or a
+    frequency collision (which needs a different qubit). The consequence was
+    visible on a real 20-qubit chip: this page reported "No structural issues
+    found" over a T2 sitting above its own 2·T1 bound.
+
+    Both rules REPORT WITHOUT DROPPING, which is the deliberate opposite of
+    docs/162's confusion-matrix rule. A row that does not sum to one is provably
+    bad on its own; but when T1 and T2 disagree, neither value is convicted —
+    SM cannot know which fit broke, so it names the pair, reports the margin,
+    and leaves both numbers in every average exactly as the lab wrote them.
+
+    Nothing else is checked here. Amplitudes and anharmonicity stay excluded for
+    the reasons :func:`_unphysical_findings` gives in its own docstring. A ratio
+    rule like "T2/T1 < 0.15 means dephasing-dominated" is not here either,
+    because it is a lab preference wearing a physics costume: measured on the
+    reference chip, even ``T2echo >= T2ramsey`` — which sounds like it must be
+    true — fails on 10 of 20 qubits.
+    """
+    return _coherence_bound_findings(root) + _addressability_findings(root)
+
+
+def _coherence_bound_findings(root: dict) -> list[Finding]:
+    """``T2 <= 2*T1``, reported as an excess MARGIN rather than a verdict.
+
+    Pure dephasing can only shorten T2. The best a qubit can manage is to be
+    limited by energy relaxation alone, which puts T2 at exactly 2·T1, so a
+    stored value above that is not describing a qubit — it is describing a fit.
+    But a few percent over is inside what T1 and Ramsey fits routinely return,
+    which is why the margin IS the finding and the severity follows it. Neither
+    number is rewritten, excluded, or blamed.
+    """
+    findings: list[Finding] = []
+    qubits = root.get("qubits")
+    if not isinstance(qubits, dict):
+        return findings
+
+    for qn, q in sorted(qubits.items()):
+        if not isinstance(q, dict):
+            continue
+        t1 = q.get("T1")
+        if not _isnum(t1) or t1 <= 0:
+            continue
+        bound = 2.0 * t1
+        for key in _T2_KEYS:
+            t2 = q.get(key)
+            if not _isnum(t2) or t2 <= 0 or t2 <= bound:
+                continue
+            excess = t2 / bound - 1.0
+            marginal = excess <= _T2_EXCESS_INFO_FRACTION
+            findings.append(Finding(
+                severity="info" if marginal else "warning",
+                category="physics_coherence_bound",
+                location=f"qubits.{qn}",
+                message=(f"{qn}: {key} {_seconds(t2, key)} exceeds the 2·T1 "
+                         f"bound ({_seconds(bound, 'T1')}) by {excess * 100:.1f}%"),
+                detail=(
+                    "T2 ≤ 2·T1 holds by definition — dephasing can only shorten "
+                    "the coherence that relaxation already limits, so a T2 above "
+                    "2·T1 means one of the two fits is wrong. "
+                    + ("This excess is small enough to be fit uncertainty; it is "
+                       "worth a look, not an alarm. "
+                       if marginal else
+                       "This excess is far outside fit uncertainty. ")
+                    + "SM does not know WHICH of the two is the broken one, so it "
+                      "names both and changes neither: both values stay in every "
+                      "Chip Status average, range and colour exactly as the node "
+                      "wrote them."),
+                jump_path=f"qubits.{qn}.{key}",
+            ))
+    return findings
+
+
+def _addressability_findings(root: dict) -> list[Finding]:
+    """Two qubits a drive pulse cannot tell apart — but only where a drive
+    aimed at one can actually reach the other.
+
+    The mechanism has to come first, because without it this check is noise. A
+    π-pulse of length T is spectrally about 1/T wide, so it rotates anything
+    within roughly that of its carrier; the dimensionless Δ·T says whether two
+    qubits are far enough apart, and the scale comes from the chip's own x180
+    rather than from a number SM picked.
+
+    But that only MATTERS between qubits that can affect each other. Reusing a
+    frequency between two qubits at opposite corners of a chip is deliberate,
+    correct design — measured on the reference 20-qubit chip, 14 of the 19
+    frequency-adjacent qubit pairs sit inside Δ·T < 1 while all 30 of the
+    DECLARED couplings are clear (the tightest at Δ·T = 2.4). Comparing every
+    frequency neighbour would therefore have flagged a healthy chip fourteen
+    times and a broken one no more loudly. So only two relations are compared:
+
+    * a coupling the chip itself declares in ``qubit_pairs``, and
+    * two qubits wired to one physical ``xy`` output port, where one pulse
+      physically arrives at both.
+
+    Silent — not zero, silent — for any qubit whose ``f_01`` or x180 length
+    cannot be read. ``operations.x180`` is a ``#./x180_DragCosine`` alias on
+    real chips, so the read goes through
+    :func:`pointer_path.resolve_field_target`, which crosses a pointer mid-path;
+    the store's own ``resolve_value`` raises on that chain.
+    """
+    from quam_state_manager.core.pointer_path import resolve_field_target
+    from quam_state_manager.core.regen_spec import qubit_ref_name
+
+    findings: list[Finding] = []
+    qubits = root.get("qubits")
+    if not isinstance(qubits, dict):
+        return findings
+
+    freq: dict[str, float] = {}
+    length: dict[str, float] = {}
+    by_port: dict[str, list[str]] = {}
+    for qn in sorted(qubits):
+        if not isinstance(qubits.get(qn), dict):
+            continue
+        f01 = resolve_field_target(root, f"qubits.{qn}.f_01").get("resolved_value")
+        if _isnum(f01) and f01 > 0:
+            freq[qn] = float(f01)
+        span = resolve_field_target(
+            root, f"qubits.{qn}.xy.operations.x180.length").get("resolved_value")
+        if _isnum(span) and span > 0:
+            length[qn] = float(span)
+        # `resolved_path` is truthy even when the walk gave up early (it hands
+        # back the deepest prefix it reached), so the gate is `resolvable` —
+        # otherwise two qubits with no xy port at all would be grouped by
+        # whatever partial path they happened to share.
+        wired = resolve_field_target(root, f"qubits.{qn}.xy.opx_output")
+        if wired.get("resolvable") and wired.get("resolved_path"):
+            by_port.setdefault(wired["resolved_path"], []).append(qn)
+
+    # A qubit pair, to the reason those two qubits can reach each other. A
+    # declared coupling wins over a shared port when a pair is both.
+    reason: dict[tuple[str, str], str] = {}
+    pairs = root.get("qubit_pairs")
+    if isinstance(pairs, dict):
+        for pid, pair in sorted(pairs.items()):
+            if not isinstance(pair, dict):
+                continue
+            a = qubit_ref_name(root, pair.get("qubit_control"))
+            b = qubit_ref_name(root, pair.get("qubit_target"))
+            if a and b and a != b:
+                reason[tuple(sorted((a, b)))] = f"coupled as {pid}"
+    for shared in by_port.values():
+        if len(shared) < 2:
+            continue
+        for i, a in enumerate(shared):
+            for b in shared[i + 1:]:
+                reason.setdefault(tuple(sorted((a, b))),
+                                  "driven through one xy output port")
+
+    for (a, b), why in sorted(reason.items()):
+        if a not in freq or b not in freq or a not in length or b not in length:
+            continue
+        delta = abs(freq[a] - freq[b])
+        span = min(length[a], length[b])
+        product = delta * span * 1e-9  # Δ in Hz, x180 length in ns
+        if product >= _ADDRESSABILITY_DELTA_T_MIN:
+            continue
+        findings.append(Finding(
+            severity="warning",
+            category="physics_addressability",
+            location=f"qubits.{a}",
+            message=(f"{a} and {b} ({why}) are "
+                     f"{_fmt_delta(delta).lstrip('+')} apart — Δ·T = "
+                     f"{product:.3f} with a {span:g} ns x180"),
+            detail=(
+                f"A {span:g} ns π-pulse is about {1e3 / span:.0f} MHz wide, so a "
+                f"drive aimed at {a} also rotates {b}. These two are compared "
+                f"because the chip says they can reach each other ({why}); "
+                "qubits with no such mechanism are never compared, since reusing "
+                "a frequency across a chip is deliberate design. The scale is the "
+                "chip's own x180 length, not a number SM picked — but the cut at "
+                "Δ·T = 1 IS SM's own guideline, not a QM specification."),
+            jump_path=f"qubits.{a}.f_01",
+        ))
     return findings
 
 
