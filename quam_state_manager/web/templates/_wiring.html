@@ -189,6 +189,7 @@ ChipStatus.mount({
     topo: {{ topology_json | script_json }},
     rawWiring: {{ wiring_json | script_json }},
     defaultThresholds: {{ (default_thresholds | default({})) | script_json }},
+    labSpec: {{ (lab_spec | default({})) | script_json }},
     metricMeta: {{ (metric_meta | default({})) | script_json }},
     diagFindings: {{ (diag_findings | default([])) | script_json }},
     chipView: {{ (chip_view or '') | tojson }},

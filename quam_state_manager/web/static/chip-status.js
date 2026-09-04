@@ -290,26 +290,58 @@ window.ChipStatus.mount = function (opts) {
     // Health layer (Chip Status overhaul): structural findings + spec thresholds.
     // The client owns the live verdict/colour; the in-UI editor mutates
     // `thresholds`, persists to localStorage, and re-runs buildHealthSummary().
+    // docs/167: the spec lives on DISK now, one per installation, and the
+    // server resolves it. It used to live in this browser's localStorage,
+    // which meant five people on a team had five definitions of "in spec" and
+    // clearing a cache erased one of them.
+    //
+    // The old key is read exactly once, to MIGRATE. Nothing is written to
+    // localStorage from here again -- a client that still wrote it would keep
+    // the per-browser divergence alive underneath a shared file, which is
+    // worse than either arrangement alone.
     var THRESH_KEY = 'quam_chip_thresholds';
-    function _loadThresholds(defaults) {
-        var t = JSON.parse(JSON.stringify(defaults || {}));
-        try {
-            var saved = JSON.parse(localStorage.getItem(THRESH_KEY) || '{}');
-            Object.keys(saved).forEach(function(k) {
-                if (t[k]) {
-                    if (typeof saved[k].warn === 'number') t[k].warn = saved[k].warn;
-                    if (typeof saved[k].fail === 'number') t[k].fail = saved[k].fail;
-                }
-            });
-        } catch (e) {}
-        return t;
-    }
-    function _saveThresholds(t) {
+    var MIGRATED_KEY = 'quam_chip_thresholds_migrated';
+    var _labSpec = opts.labSpec || {};
+    function _specOf(t) {
         var out = {};
         Object.keys(t).forEach(function(k) { out[k] = { warn: t[k].warn, fail: t[k].fail }; });
-        try { localStorage.setItem(THRESH_KEY, JSON.stringify(out)); } catch (e) {}
+        return out;
+    }
+    function _postSpec(t) {
+        var body = new FormData();
+        body.append('metrics', JSON.stringify(_specOf(t)));
+        return fetch('/chip-status/spec', { method: 'POST', body: body,
+                                            headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+            .then(function (r) { return r.json(); })
+            .then(function (j) { if (j && j.spec) _labSpec = j.spec; return j; })
+            .catch(function () { return null; });
+    }
+    function _loadThresholds(defaults) {
+        // The server already merged the lab's bands over the defaults, so this
+        // is a copy of ITS answer -- one resolver, not two.
+        var resolved = (_labSpec && _labSpec.metrics) ? _labSpec.metrics : defaults;
+        return JSON.parse(JSON.stringify(resolved || {}));
     }
     var thresholds = _loadThresholds(_defaultThresholds);
+    // One-time migration: a spec somebody set before this change must not
+    // silently vanish. It is pushed to the shared file only when the file has
+    // NOTHING yet -- a lab spec that already exists is the team's answer and a
+    // straggler browser must not overwrite it.
+    (function _migrateOnce() {
+        try {
+            if (localStorage.getItem(MIGRATED_KEY)) return;
+            var saved = JSON.parse(localStorage.getItem(THRESH_KEY) || 'null');
+            localStorage.setItem(MIGRATED_KEY, '1');
+            if (!saved || !Object.keys(saved).length) return;
+            if (_labSpec && _labSpec.source && _labSpec.source !== 'default') return;
+            Object.keys(saved).forEach(function (k) {
+                if (!thresholds[k]) return;
+                if (typeof saved[k].warn === 'number') thresholds[k].warn = saved[k].warn;
+                if (typeof saved[k].fail === 'number') thresholds[k].fail = saved[k].fail;
+            });
+            _postSpec(thresholds);
+        } catch (e) {}
+    })();
 
     if (!topo.nodes || topo.nodes.length === 0) return;
 
@@ -3301,8 +3333,9 @@ window.ChipStatus.mount = function (opts) {
         html += _hTile('qubits below spec', belowCount,
                        belowCount ? (failCount ? 'fail' : 'warn')
                                   : (measuredCount ? 'pass' : 'neutral'),
-                       failCount ? (failCount + ' failing &middot; ' + (belowCount - failCount) + ' warn')
-                                 : (belowCount ? 'to watch'
+                       failCount ? (failCount + ' failing &middot; ' + (belowCount - failCount) + ' warn'
+                                    + _specNote())
+                                 : (belowCount ? ('to watch' + _specNote())
                                     : (measuredCount === 0 ? 'no data yet'
                                        : (measuredCount < nodes.length
                                           ? measuredCount + ' of ' + nodes.length + ' measured'
@@ -3440,6 +3473,17 @@ window.ChipStatus.mount = function (opts) {
         function diff(a, b) { return Math.abs(a - b) > 1e-12 * Math.max(1, Math.abs(b)); }
         return diff(t.warn, d.warn) || diff(t.fail, d.fail);
     }
+    // Whose bands produced this verdict. Rendered ONLY where a qubit is being
+    // called out of spec: "0/20 in spec" read as a statement about the chip
+    // when it was a statement about a comparison nobody had configured. Silent
+    // once the lab has set its own bands -- at that point the number means
+    // exactly what it says.
+    function _specNote() {
+        var src = _labSpec && _labSpec.source;
+        if (src === 'default') return ' &middot; against SM\u2019s default bands';
+        if (src === 'mixed') return ' &middot; partly SM\u2019s default bands';
+        return '';
+    }
     function buildThresholdEditor() {
         var host = document.getElementById('topo-thresh-editor');
         if (!host) return;
@@ -3469,8 +3513,10 @@ window.ChipStatus.mount = function (opts) {
                 '<button type="button" class="btn-sm thresh-apply" onclick="applyThresholds()">Update colour bands</button>' +
                 '<button type="button" class="btn-sm outline" onclick="resetThresholds()"' + (anyEdited ? '' : ' disabled') + '>Reset all to spec</button>' +
                 '<span class="muted thresh-hint" id="thresh-status">' +
-                (anyEdited ? 'some thresholds edited' : 'all at spec default') +
-                ' · saved to this browser</span></div>';
+                ((_labSpec && _labSpec.summary)
+                    ? _labSpec.summary
+                    : (anyEdited ? 'some thresholds edited' : 'all at spec default')) +
+                ' · shared with everyone using this SM</span></div>';
         host.innerHTML = html;
         // Enter in any field applies; Esc closes.
         host.querySelectorAll('.thresh-in').forEach(function(inp) {
@@ -3492,13 +3538,19 @@ window.ChipStatus.mount = function (opts) {
             var v = parseFloat(inp.value);
             if (!isNaN(v) && thresholds[k]) thresholds[k][bound] = v / disp.scale;
         });
-        _saveThresholds(thresholds);
         window._chipThresholds = thresholds;
         buildThresholdEditor();   // refresh the default/edited markers + reset state
         buildHealthSummary();
         var st = document.getElementById('thresh-status');
-        if (st) { st.textContent = '✓ applied'; st.classList.add('applied');
-                  setTimeout(function() { if (st) { st.classList.remove('applied'); } }, 1600); }
+        if (st) { st.textContent = 'saving…'; }
+        _postSpec(thresholds).then(function () {
+            buildThresholdEditor();
+            buildHealthSummary();
+            var s2 = document.getElementById('thresh-status');
+            if (s2) { s2.textContent = '✓ saved for everyone using this SM';
+                      s2.classList.add('applied');
+                      setTimeout(function() { if (s2) { s2.classList.remove('applied'); } }, 1600); }
+        });
     };
     window.toggleThresholdEditor = function() {
         var host = document.getElementById('topo-thresh-editor');
@@ -3508,9 +3560,12 @@ window.ChipStatus.mount = function (opts) {
     window.resetThresholds = function() {
         thresholds = JSON.parse(JSON.stringify(_defaultThresholds));
         window._chipThresholds = thresholds;
-        try { localStorage.removeItem(THRESH_KEY); } catch (e) {}
-        buildThresholdEditor();
-        buildHealthSummary();
+        fetch('/chip-status/spec/clear', { method: 'POST',
+                                           headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+            .then(function (r) { return r.json(); })
+            .then(function (j) { if (j && j.spec) _labSpec = j.spec;
+                                 buildThresholdEditor(); buildHealthSummary(); })
+            .catch(function () { buildThresholdEditor(); buildHealthSummary(); });
     };
     // Reset ONE metric back to its spec default (mirrors applyThresholds' commit
     // order: persist → editor rebuild → summary).
@@ -3519,10 +3574,11 @@ window.ChipStatus.mount = function (opts) {
         if (!d || !thresholds[k]) return;
         thresholds[k].warn = d.warn;
         thresholds[k].fail = d.fail;
-        _saveThresholds(thresholds);
         window._chipThresholds = thresholds;
-        buildThresholdEditor();
-        buildHealthSummary();
+        _postSpec(thresholds).then(function () {
+            buildThresholdEditor();
+            buildHealthSummary();
+        });
     };
 
     // ── Cell colour: ONE continuous app-blue magnitude read, everywhere ──

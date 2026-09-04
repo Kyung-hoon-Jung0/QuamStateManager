@@ -54,6 +54,7 @@ from flask import (
 from markupsafe import escape
 from werkzeug.utils import secure_filename
 
+from quam_state_manager.core import spec_thresholds
 from quam_state_manager.core import (
     capabilities,
     chip_health,
@@ -9419,7 +9420,13 @@ def wiring_view():
             chip_view=chip_view,
             diag_summary=diag_summary,
             diag_findings=[f.as_dict() for f in diag_findings],
+            # docs/167: SM's seed bands stay, because the editor's per-row
+            # "default / edited" marker is a comparison against them. What the
+            # page now COMPUTES verdicts from is the lab's resolved spec, and
+            # it carries its own provenance so the tile can say whose numbers
+            # produced "0/20 in spec".
             default_thresholds=chip_health.DEFAULT_THRESHOLDS,
+            lab_spec=spec_thresholds.resolve(current_app.instance_path),
             # Per-metric glossary (label / abbr / good-direction / blurb) — the
             # single source the client's tooltips, arrows and threshold-editor
             # labels all read, so they can't drift from the verdict direction.
@@ -21627,6 +21634,40 @@ def _entity_note(entity: str) -> dict | None:
     rec = entity_notes.load(*ctx).get(entity)
     return dict(rec, subject=entity) if isinstance(rec, dict) else None
 
+
+
+
+# ======================================================================
+# docs/167 — the lab's spec thresholds, on disk instead of in one browser
+# ======================================================================
+
+@bp.route("/chip-status/spec", methods=["GET"])
+def chip_spec_get():
+    return jsonify(spec_thresholds.resolve(current_app.instance_path))
+
+
+@bp.route("/chip-status/spec", methods=["POST"])
+def chip_spec_set():
+    """Persist the lab's bands. One spec per installation, deliberately.
+
+    Only the values that DIFFER from SM's seeds are stored, so a later
+    correction to a seed still reaches a lab that once pressed Apply -- storing
+    a full copy would freeze today's defaults into the file and turn "we use
+    the defaults" into "we use August's defaults".
+    """
+    try:
+        metrics = json.loads(request.form.get("metrics") or "{}")
+    except ValueError:
+        return jsonify(ok=False, error="metrics must be JSON"), 400
+    if not isinstance(metrics, dict):
+        return jsonify(ok=False, error="metrics must be an object"), 400
+    return jsonify(ok=True, spec=spec_thresholds.save(
+        current_app.instance_path, metrics))
+
+
+@bp.route("/chip-status/spec/clear", methods=["POST"])
+def chip_spec_clear():
+    return jsonify(ok=True, spec=spec_thresholds.clear(current_app.instance_path))
 
 
 @bp.route("/notes")
