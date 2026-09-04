@@ -2233,16 +2233,13 @@
        gave up, and every such row is MARKED in the preview. */
     function _floatStr(x) {
         if (!isFinite(x)) return null;
-        var s = x.toFixed(20).replace(/0+$/, '').replace(/\.$/, '');
-        if (Math.abs(x) >= 1e15 || (x !== 0 && Math.abs(x) < 1e-6)) {
-            // toFixed(20) is lossy at these magnitudes; take the double's own
-            // shortest round-tripping form and expand it out of exponent form.
-            var d = window.ValueDelta && window.ValueDelta.parse(x);
-            if (!d) return null;
-            return _decStr(d.mant, d.scale);
-        }
-        var d2 = window.ValueDelta && window.ValueDelta.parse(s);
-        return d2 ? _decStr(d2.mant, d2.scale) : null;
+        // ValueDelta.parse of a NUMBER goes through String(x) -- the double's
+        // own shortest round-tripping form -- and reads the exponent, so this
+        // is both the shortest honest spelling and never exponential.
+        // (toFixed(20) was the first attempt and is wrong: it pads a double out
+        // to twenty digits it does not have, which is the opposite of the point.)
+        var d = window.ValueDelta && window.ValueDelta.parse(x);
+        return d ? _decStr(d.mant, d.scale) : null;
     }
 
     /* The operand, as an exact decimal factor/term plus a flag saying whether
@@ -2275,18 +2272,40 @@
     }
 
     /* cellDecimal ∘ operand -> {text, exact} or null. */
+    // state.json stores DOUBLES. An exact decimal product can need more digits
+    // than a double holds -- 0.45919729451219904 * 1.1 is exactly
+    // 0.505117023963418944, eighteen significant digits -- and writing all of
+    // them into a cell shows precision the value cannot carry: the server
+    // parses it to the nearest double anyway, so the cell and the chip would
+    // disagree in their last digits from the moment it is applied. Past the
+    // limit the double's own shortest round-tripping form is written and the
+    // row SAYS it was rounded.
+    var _MAX_SIG = 17;
+    function _sigDigits(text) {
+        var d = String(text).replace(/[-.,]/g, '').replace(/^0+/, '');
+        return d.length;
+    }
+    function _fitDouble(text) {
+        if (_sigDigits(text) <= _MAX_SIG) return { text: text, exact: true };
+        var shorter = _floatStr(Number(String(text).replace(/,/g, '')));
+        return shorter == null ? { text: text, exact: true }
+                               : { text: shorter, exact: false };
+    }
+
     function _arithOne(cur, oper) {
         var m, sc;
         if (oper.kind === '*') {
             m = cur.mant * oper.mant; sc = cur.scale + oper.scale;
-            return { text: _decStr(m, sc), exact: oper.exact };
+            var fit = _fitDouble(_decStr(m, sc));
+            return { text: fit.text, exact: oper.exact && fit.exact };
         }
         if (oper.kind === '+' || oper.kind === '-') {
             sc = Math.max(cur.scale, oper.scale);
             var a = cur.mant * _pow10(sc - cur.scale);
             var b = oper.mant * _pow10(sc - oper.scale);
             m = oper.kind === '-' ? a - b : a + b;
-            return { text: _decStr(m, sc), exact: oper.exact };
+            var fit2 = _fitDouble(_decStr(m, sc));
+            return { text: fit2.text, exact: oper.exact && fit2.exact };
         }
         // '/': long-divide to a cap. Exact when the remainder reaches zero;
         // otherwise the row is marked and the value is the double.
@@ -2297,7 +2316,8 @@
         if (num % den === 0n) {
             var q = num / den;
             if (scale < 0) { q *= _pow10(-scale); scale = 0; }
-            return { text: _decStr(q, scale), exact: oper.exact };
+            var fit3 = _fitDouble(_decStr(q, scale));
+            return { text: fit3.text, exact: oper.exact && fit3.exact };
         }
         var approx = _floatStr(
             Number(cur.mant.toString() + 'e' + (-cur.scale))

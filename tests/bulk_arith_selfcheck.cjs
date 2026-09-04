@@ -138,6 +138,28 @@ const vals = (win) => Array.prototype.slice.call(
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// 1b. Past double precision, the row says it was rounded
+//     (found in a real browser on the customer chip: 0.45919729451219904 * 1.1
+//     is EXACTLY 0.505117023963418944, eighteen significant digits, and
+//     state.json stores doubles)
+// ───────────────────────────────────────────────────────────────────────────
+{
+  const win = world(['0.45919729451219904', '0.2', '0.3', '0.4']);
+  selectAll(win);
+  const r = win.BulkEdit._ge.arithPlan('*1.1').rows[0];
+  ok(r.text === '0.505117023963419',
+     'the value is the shortest round-tripping form of that double (got ' + r.text + ')');
+  ok(r.exact === false, 'and the row is marked as not exact');
+  ok(Number(r.text) === Number('0.505117023963418944'),
+     'it is the SAME double, so nothing was lost -- only digits that could '
+     + 'never have been stored');
+  // the plain case is untouched
+  const plain = win.BulkEdit._ge.arithPlan('*2').rows[1];
+  ok(plain.text === '0.4' && plain.exact === true,
+     'a result inside double precision stays exact (got ' + plain.text + ')');
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // 2. The operators, including what "%" is defined to mean
 // ───────────────────────────────────────────────────────────────────────────
 {
