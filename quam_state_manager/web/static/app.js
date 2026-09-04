@@ -12215,6 +12215,9 @@ function _swapPendingTray(html) {
     // drawer state + clear stale sidebar pending markers here too (audit P1) — all 7
     // JS edit callers funnel through this one place.
     if (window._restoreTrayState) window._restoreTrayState();
+    // docs/167: the swap destroyed the notification chip with the rest of the
+    // tray; this is the path htmx:afterSwap never fires on.
+    try { document.dispatchEvent(new CustomEvent('sm:tray-swapped')); } catch (e) {}
     // docs/146b: a tray that just went CLEAN retires every pending-edit
     // marker (red boxes, tree tints) — the patch-first rounds removed the
     // full re-render that used to do this implicitly.
@@ -13852,7 +13855,15 @@ document.addEventListener('htmx:afterSwap', function(evt) {
     // run_id. That kills the old false positive where the active folder silently
     // flipped (a different folder's higher run_id read as a "new experiment").
     var _lastSeenUid = null;
-    var _lastSeenStamp = null;   // "<date> <time>" of the latest run we've acknowledged
+    var _lastSeenStamp = null;   // "<date> <time>" of the latest run we've DETECTED
+    // docs/167: the detection baseline and the ACKNOWLEDGED baseline are two
+    // different things, and collapsing them is why a count could never
+    // accumulate. _lastSeenStamp advances on every detection (that is what
+    // makes "strictly newer" work); _ackStamp advances only when the user
+    // acknowledges the chip, so the server's "how many since" answer keeps
+    // growing across polls until they look. It is seeded at the first poll,
+    // so runs that existed before this page loaded are never announced.
+    var _ackStamp = null;
     var _newRunHideTimer = null; // auto-dismiss timer for the new-run popup
     var _pendingRun = null;
     var POLL_SECS = (window.UI_CONFIG && UI_CONFIG.autoRefreshInterval) || 60;
@@ -13891,10 +13902,26 @@ document.addEventListener('htmx:afterSwap', function(evt) {
     // docs/141 4p: a wake that arrives while a poll is in flight is not lost
     // and not doubled -- it runs once more when this one lands.
     var _inFlight = false, _wakeAgain = false;
+    // Clicking the chip is the acknowledge: the count resets from here, and the
+    // existing popup card shows the newest run — the same information the card
+    // used to push, now pulled.
+    if (window.SyncBadge) {
+        window.SyncBadge.onAck('new', function (payload) {
+            _ackStamp = _lastSeenStamp;
+            if (payload && payload.run) _showNewRunPopup(payload.run);
+        });
+    }
+
     function pollForNewRuns() {
         if (_inFlight) { _wakeAgain = true; return; }
         _inFlight = true;
-        _fetchWithTimeout('/datasets/poll', POLL_FETCH_TIMEOUT_MS)
+        var _q = '';
+        if (_ackStamp) {
+            var _p = _ackStamp.split(' ');
+            _q = '?since_date=' + encodeURIComponent(_p[0] || '')
+               + '&since_time=' + encodeURIComponent(_p[1] || '');
+        }
+        _fetchWithTimeout('/datasets/poll' + _q, POLL_FETCH_TIMEOUT_MS)
             .then(function(r) {
                 if (!r.ok) throw new Error("HTTP " + r.status);
                 return r.json();
@@ -13913,13 +13940,25 @@ document.addEventListener('htmx:afterSwap', function(evt) {
                 if (_lastSeenUid === null) {
                     _lastSeenUid = data.uid;
                     _lastSeenStamp = stamp;
+                    _ackStamp = stamp;          // nothing that already existed is "new"
                 } else if (data.uid !== _lastSeenUid && stamp > _lastSeenStamp) {
                     // A genuinely newer run (later timestamp) became the latest —
                     // not merely a folder-set change pointing at a pre-existing run.
                     _lastSeenUid = data.uid;
                     _lastSeenStamp = stamp;
                     _pendingRun = data;
-                    _showNewRunPopup(data);
+                    // docs/167: a chip, not a card. This used to call
+                    // _showNewRunPopup once per detection, which is the
+                    // "popping up every time a run finishes" the user asked us
+                    // to stop doing. The card is still what the chip OPENS.
+                    if (window.SyncBadge) {
+                        window.SyncBadge.note('new', {
+                            count: (typeof data.new_count === 'number') ? data.new_count : null,
+                            run: data
+                        });
+                    } else {
+                        _showNewRunPopup(data);   // no badge on the page — say it the old way
+                    }
                 }
                 _schedule(POLL_SECS * 1000);
             })
@@ -14061,6 +14100,16 @@ document.addEventListener('htmx:afterSwap', function(evt) {
                 htmx.ajax('GET', '/dataset/' + runId, {source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML'});
             });
         }
+    };
+
+    // docs/167 test seam. The detection baseline and the ACKNOWLEDGED baseline
+    // are two different variables for one reason, and a harness that cannot
+    // read both cannot tell them apart — which is exactly the defect a review
+    // found in the first design of this feature.
+    window.__newRunPoll = {
+        poll: pollForNewRuns,
+        stamps: function () { return { seen: _lastSeenStamp, ack: _ackStamp }; },
+        reset: function () { _lastSeenUid = null; _lastSeenStamp = null; _ackStamp = null; }
     };
 
     // Start polling after page settles. The chain re-schedules itself

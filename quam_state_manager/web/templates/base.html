@@ -69,6 +69,9 @@
     {# docs/141 4p: the long-poll that wakes the run polls the moment a run
        folder changes — core (the new-run popup lives on every page). #}
     <script src="{{ asset_url('live-wake.js') }}"></script>
+    {# docs/167: the sync pill's notification chip. A core script — the pill is
+       on every page, and so are the two polls that feed it. #}
+    <script src="{{ asset_url('sync-badge.js') }}"></script>
     {% set bundle_files = {
         'grid': ['grid-virt.js', 'bulk-edit.js', 'pair-edit.js', 'all-values.js'],
         'pulses': ['pulses.js'],
@@ -1623,6 +1626,21 @@
             // each node and bumps run.chip_rev. Every tab just re-renders its own
             // chip page once when chip_rev advances — no client-side fan-out (so no
             // N-tab stampede) and it works even with no tab open (the worker did it).
+            // docs/167: the queue finishing is worth ONE chip, so a person who
+            // walked away can see it happened. The terminal set is enumerated
+            // from runner_status's own vocabulary rather than negating
+            // "running": `paused` is a first-class status, and a user pausing
+            // their own queue must not be told it is done.
+            var st = run.status || "idle";
+            if (runStatus === null) {
+                runStatus = st;                  // baseline — never announce on load
+            } else if (runStatus === "running"
+                       && (st === "idle" || st === "done"
+                           || st === "failed" || st === "aborted")) {
+                if (window.SyncBadge) SyncBadge.note("rundone", {});
+            }
+            runStatus = st;
+
             var rev = run.chip_rev || 0;
             if (chipRev === null) {
                 chipRev = rev;                       // baseline — no spurious render on load
@@ -1632,6 +1650,7 @@
             }
             chipRev = rev;
         }
+        var runStatus = null;   // docs/167 baseline, like chipRev above
         var _schedPolling = false;
         var _schedActive = false;   // last poll saw a running queue
         function poll() {

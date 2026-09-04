@@ -21576,26 +21576,42 @@ def datasets_poll():
     the multi-folder fix for the spurious "New Experiment Run" popup.)
     """
     active = _active_dataset_stores(fast=True)   # 60s poll — skip the token stat-walk
+    # docs/167: the sync pill carries a COUNT, not a stream of events, so the
+    # client sends the stamp it last ACKNOWLEDGED and gets back how many runs
+    # have landed since. Counted in the walk that was already happening — no
+    # extra store, no extra I/O. Absent (not zero) when the client sent no
+    # stamp, so a client that cannot say "since when" shows no number rather
+    # than a fabricated one.
+    since_date = (request.args.get("since_date") or "").strip()
+    since_time = (request.args.get("since_time") or "").strip()
+    since = (since_date, since_time) if (since_date and since_time) else None
+    new_count = 0
+
     latest_key: tuple[str, str] | None = None
     latest_uid: str | None = None
     latest_run = None
     for fol in active:
         for run in fol["store"].runs_snapshot():
             key = (run.date or "", run.time or "")
+            if since is not None and key > since:
+                new_count += 1
             if latest_key is None or key > latest_key:
                 latest_key = key
                 latest_uid = _dataset_uid(fol["key"], run.run_id)
                 latest_run = run
     if latest_run is None:
         return jsonify({"uid": None, "run_id": None})
-    return jsonify({
+    payload = {
         "uid": latest_uid,
         "run_id": latest_run.run_id,
         "experiment_name": latest_run.experiment_name,
         "qubits": latest_run.qubits or [],
         "time": latest_run.time or "",
         "date": latest_run.date or "",
-    })
+    }
+    if since is not None:
+        payload["new_count"] = new_count
+    return jsonify(payload)
 
 
 # Per-run chip-identity memo. A run's frozen quam_state is WRITE-ONCE (tags/

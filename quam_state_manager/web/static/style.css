@@ -2249,6 +2249,32 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
     background: color-mix(in srgb, #38bdf8 14%, transparent);
 }
 .state-status-drifted .state-status-dot { color: #38bdf8; }
+/* docs/167 — the notification chip beside the status pill. It is a SIBLING of
+   the pill, not a child: the pill is a button whose click opens the Review
+   tray, and a chip that means something else cannot live inside it. Created
+   lazily and removed when nothing is pending, so a page with nothing to say
+   renders exactly the markup it rendered before. */
+.state-status-notice {
+    display: inline-flex; align-items: center; gap: .25rem;
+    margin: 0 0 0 .35rem; padding: .1rem .5rem; width: auto;
+    font-size: .76em; line-height: 1.5; font-weight: 600;
+    border-radius: 999px; border: 1px solid; cursor: pointer;
+    white-space: nowrap;
+}
+/* New runs — the app's own "new" blue, the same one #ds-new-pill uses, so the
+   two surfaces that say "new runs" say it in one colour. */
+.state-status-notice.sync-note-new {
+    border-color: var(--pico-primary);
+    background: color-mix(in srgb, var(--pico-primary) 16%, transparent);
+    color: var(--pico-primary);
+}
+/* The queue finished. Green, because it is a completion and not a warning. */
+.state-status-notice.sync-note-run {
+    border-color: #22c55e;
+    background: color-mix(in srgb, #22c55e 16%, transparent);
+    color: #16a34a;
+}
+.state-status-notice:hover { filter: brightness(1.12); }
 /* Folder names are user-controlled and can be long — cap them so one name
    can't push the whole topbar cluster into wrapping. Full name in tooltip. */
 .state-status-name { opacity: .65; font-weight: 400; margin-left: .1rem;
