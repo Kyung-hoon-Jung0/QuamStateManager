@@ -2112,7 +2112,7 @@
         var el = _selHintEl(); if (!el) return;
         var n = _selCells().length;
         el.textContent = n
-            ? (n + ' cell' + (n === 1 ? '' : 's') + ' selected — Ctrl+D fills from the anchor · Esc clears')
+            ? (n + ' cell' + (n === 1 ? '' : 's') + ' selected — Ctrl+D fills from the anchor · Esc clears · or scale them:')
             : '';
         var t = table();
         if (t) {
@@ -2121,6 +2121,7 @@
             });
             if (n && _selAnchor) _selAnchor.classList.add('bulk-sel-anchor');
         }
+        _syncArithBar();
     }
     function _clearSel() {
         _selCells().forEach(function (td) { td.classList.remove('bulk-sel'); });
@@ -2172,6 +2173,352 @@
         if (n && window.showToast) window.showToast('Filled ' + n + ' cell' + (n === 1 ? '' : 's') + ' — review, then Apply');
         return n;
     }
+
+    // ── Selection arithmetic: "*1.1" over a selected column range ────────────
+    // "Raise readout amplitude 10% on all 20 qubits" was twenty calculations
+    // and twenty typed numbers. The grid already had multi-select, Ctrl+D and
+    // multi-line paste; only ARITHMETIC over a selection was missing.
+    //
+    // It is computed HERE, on the client, and the server never learns a
+    // relative grammar. Three reasons, in order of weight:
+    //   1. `parse_value` is shared by /field/edit, the CLI, the type-fix
+    //      offer and the pull REPLAY. Teaching it "*1.1" would hand every one
+    //      of those the grammar, and a replay that re-multiplies compounds.
+    //   2. "+5e6" is ALREADY a valid absolute literal in a cell. Any in-cell
+    //      relative grammar would silently change what that input means.
+    //   3. SM's standing doctrine is that nothing commits before the user saw
+    //      the offer (the FSP compensation contract). Computing here makes the
+    //      offer free: the numbers are ordinary dirty edits, visible in the
+    //      cells, the Δ chips, the Review tray, and reversible by Ctrl+Z
+    //      before anything reaches the working state.
+    //
+    // The preview is UNCONDITIONAL, never threshold-gated — a threshold would
+    // be a constant SM invented, and one extra click on a two-cell change is
+    // cheaper than one wrong twenty-cell fill.
+
+    // A leading operator is REQUIRED. A bare number would be a second, worse
+    // fill-down and would collide with absolute entry.
+    var _ARITH_RE = /^\s*([*/+-])\s*(.+?)\s*$/;
+    // The output must be plain grouped decimal — the JS mirror of
+    // type_policy._PLAIN_GROUPED_NUMBER, whose commas parse_value strips. Never
+    // exponential: the round trip through the unchanged server is guaranteed by
+    // the SHAPE of the string, so it is asserted rather than assumed.
+    var _PLAIN_GROUPED = /^[+-]?\d[\d,]*(\.\d+)?$/;
+    var _DIV_SCALE_CAP = 30;          // where a non-terminating division stops
+
+    function _pow10(n) { var r = 1n; for (var i = 0; i < n; i++) r *= 10n; return r; }
+
+    /* Exact decimal → the plain grouped string a cell accepts. Deliberately not
+       ValueDelta.formatDelta (it prefixes a sign) nor formatMagnitude (it is
+       unexported AND switches to toExponential outside [1e-6, 1e15], which
+       would silently round a small amplitude). */
+    function _decStr(mant, scale) {
+        var neg = mant < 0n;
+        var digits = (neg ? -mant : mant).toString();
+        if (scale > 0) {
+            while (digits.length <= scale) digits = '0' + digits;
+            var cut = digits.length - scale;
+            var whole = digits.slice(0, cut);
+            var frac = digits.slice(cut).replace(/0+$/, '');
+            digits = frac ? whole + '.' + frac : whole;
+        } else if (scale < 0) {
+            digits += new Array(-scale + 1).join('0');
+        }
+        var parts = digits.split('.');
+        parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        return (neg ? '-' : '') + parts.join('.');
+    }
+
+    /* A double, in the same plain grouped shape. Used only where the exact path
+       gave up, and every such row is MARKED in the preview. */
+    function _floatStr(x) {
+        if (!isFinite(x)) return null;
+        var s = x.toFixed(20).replace(/0+$/, '').replace(/\.$/, '');
+        if (Math.abs(x) >= 1e15 || (x !== 0 && Math.abs(x) < 1e-6)) {
+            // toFixed(20) is lossy at these magnitudes; take the double's own
+            // shortest round-tripping form and expand it out of exponent form.
+            var d = window.ValueDelta && window.ValueDelta.parse(x);
+            if (!d) return null;
+            return _decStr(d.mant, d.scale);
+        }
+        var d2 = window.ValueDelta && window.ValueDelta.parse(s);
+        return d2 ? _decStr(d2.mant, d2.scale) : null;
+    }
+
+    /* The operand, as an exact decimal factor/term plus a flag saying whether
+       the exact path survived. `%` is ALWAYS relative to the cell's own value
+       (a rule stated in the bar's title and the preview header) — SM must never
+       decide that one field is "a percentage" and another is not. */
+    function _arithOperand(op, raw) {
+        var VD = window.ValueDelta;
+        var pct = /%\s*$/.test(raw);
+        var body = pct ? raw.replace(/%\s*$/, '') : raw;
+        var dec = VD ? VD.parse(body) : null;
+        if (pct) {
+            if (!dec || (op !== '+' && op !== '-')) return null;   // only ±N%
+            // +10% -> ×110/100 ; -2% -> ×98/100, exactly.
+            var hundred = { mant: _pow10(dec.scale) * 100n, scale: dec.scale };
+            var m = op === '-' ? hundred.mant - dec.mant : hundred.mant + dec.mant;
+            return { kind: '*', mant: m, scale: dec.scale + 2, exact: true,
+                     note: 'percent of each cell’s own value' };
+        }
+        if (dec) return { kind: op, mant: dec.mant, scale: dec.scale, exact: true };
+        // Not a plain literal: hand it to the app's own audited expression
+        // parser (calc.js), which buys *10^(-1/20), /sqrt(2), *(1+0.05) for
+        // free. Its result is a float64, so the row says so.
+        var v = null;
+        try { v = window.calcEval ? window.calcEval(body) : null; } catch (e) { v = null; }
+        if (typeof v !== 'number' || !isFinite(v)) return null;
+        var f = window.ValueDelta && window.ValueDelta.parse(v);
+        if (!f) return null;
+        return { kind: op, mant: f.mant, scale: f.scale, exact: false };
+    }
+
+    /* cellDecimal ∘ operand -> {text, exact} or null. */
+    function _arithOne(cur, oper) {
+        var m, sc;
+        if (oper.kind === '*') {
+            m = cur.mant * oper.mant; sc = cur.scale + oper.scale;
+            return { text: _decStr(m, sc), exact: oper.exact };
+        }
+        if (oper.kind === '+' || oper.kind === '-') {
+            sc = Math.max(cur.scale, oper.scale);
+            var a = cur.mant * _pow10(sc - cur.scale);
+            var b = oper.mant * _pow10(sc - oper.scale);
+            m = oper.kind === '-' ? a - b : a + b;
+            return { text: _decStr(m, sc), exact: oper.exact };
+        }
+        // '/': long-divide to a cap. Exact when the remainder reaches zero;
+        // otherwise the row is marked and the value is the double.
+        if (oper.mant === 0n) return null;
+        var num = cur.mant, den = oper.mant;
+        var scale = cur.scale - oper.scale;
+        while (scale < _DIV_SCALE_CAP && num % den !== 0n) { num *= 10n; scale++; }
+        if (num % den === 0n) {
+            var q = num / den;
+            if (scale < 0) { q *= _pow10(-scale); scale = 0; }
+            return { text: _decStr(q, scale), exact: oper.exact };
+        }
+        var approx = _floatStr(
+            Number(cur.mant.toString() + 'e' + (-cur.scale))
+            / Number(oper.mant.toString() + 'e' + (-oper.scale)));
+        return approx == null ? null : { text: approx, exact: false };
+    }
+
+    /* Plan the whole selection. Nothing is coerced and nothing is dropped in
+       silence: every cell the user selected ends up in exactly one bucket. */
+    function _arithPlan(expr) {
+        var m = _ARITH_RE.exec(String(expr || ''));
+        if (!m) {
+            return { error: 'Start with *, /, + or − — e.g. *1.1, +5e6, -2%. '
+                            + 'To set every cell to one value use Ctrl+D.' };
+        }
+        var oper = _arithOperand(m[1], m[2]);
+        if (!oper) return { error: 'Could not read "' + m[2] + '" as a number or expression.' };
+
+        var rows = [], skipped = [], unchanged = [], anyFloat = false;
+        _selCells().forEach(function (td) {
+            var label = (td.getAttribute('data-dot-path') || td.getAttribute('data-col-key') || '?');
+            function skip(reason) { skipped.push({ label: label, reason: reason }); }
+            // Always through _editableIn: it hydrates a virtualized cold cell.
+            var c = _editableIn(td);
+            if (!c || c.readOnly) return skip('read-only');
+            if (td.getAttribute('data-missing') === '1') {
+                return skip('not set — there is no value to scale');
+            }
+            var cur = window.ValueDelta && window.ValueDelta.parse(c.value);
+            if (!cur) {
+                return skip(td.getAttribute('data-is-pointer') === '1'
+                    ? 'holds a reference, not a number — edit its target'
+                    : 'not a number');
+            }
+            var out = _arithOne(cur, oper);
+            if (!out || !_PLAIN_GROUPED.test(out.text)) {
+                return skip('the result could not be written as a plain number');
+            }
+            if (!out.exact) anyFloat = true;
+            // An unchanged cell must not be written: dirtiness is a plain string
+            // compare against data-orig, so re-writing an identical value would
+            // arm Apply over a change that is not one.
+            var same = window.ValueDelta.parse(out.text);
+            if (same && cur.mant * _pow10(Math.max(0, same.scale - cur.scale))
+                     === same.mant * _pow10(Math.max(0, cur.scale - same.scale))) {
+                return unchanged.push({ label: label, now: c.value });
+            }
+            rows.push({ cell: c, td: td, label: label, now: c.value,
+                        text: out.text, exact: out.exact });
+        });
+        return { rows: rows, skipped: skipped, unchanged: unchanged,
+                 anyFloat: anyFloat, expr: String(expr).trim(),
+                 note: oper.note || '' };
+    }
+
+    /* Write the planned rows. One LiveEditUndo action, so one Ctrl+Z reverts
+       the whole fill. Every `prev` is snapshotted BEFORE anything is written
+       (audit F13): a linked column mirrors each write across its group, so a
+       read-as-you-go prev records an intermediate. */
+    function _arithApply(plan) {
+        var undo = [];
+        plan.rows.forEach(function (r) {
+            undo.push({ dp: r.cell.getAttribute('data-dot-path'),
+                        prev: r.cell.value, next: r.text });
+        });
+        plan.rows.forEach(function (r) {
+            // the manual path decides f_01<->RF coupling at FOCUS; a
+            // programmatic write must do the same or the twin desyncs
+            if (FREQ_TWIN[_colKeyOf(r.cell)]) _freqFocus(r.cell);
+            r.cell.value = r.text;
+            r.cell.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        if (undo.length && window.LiveEditUndo) {
+            window.LiveEditUndo.record(
+                plan.expr + ' on ' + undo.length + ' cell'
+                + (undo.length === 1 ? '' : 's'), undo);
+        }
+        return undo.length;
+    }
+
+    // ── the bar ─────────────────────────────────────────────────────────────
+    function _arithBarEl() {
+        var el = document.getElementById('bulk-arith-bar');
+        if (!el) {
+            var hint = _selHintEl();
+            if (!hint || !hint.parentNode) return null;
+            el = document.createElement('span');
+            el.id = 'bulk-arith-bar';
+            el.className = 'bulk-arith-bar';
+            el.hidden = true;
+            var inp = document.createElement('input');
+            inp.type = 'text';
+            inp.id = 'bulk-arith-expr';
+            inp.className = 'bulk-arith-expr';
+            inp.placeholder = '*1.1';
+            inp.title = 'Scale the selected cells: *1.1  /2  +5e6  -1.2e6  +10%'
+                      + '\nA percentage is always of each cell’s OWN value, '
+                      + 'never percentage points — for those use +0.02.'
+                      + '\nExpressions work too: *10^(-1/20), /sqrt(2).'
+                      + '\nYou always see the new numbers before anything changes.';
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn-sm outline bulk-arith-go';
+            btn.textContent = 'Preview…';
+            el.appendChild(inp);
+            el.appendChild(btn);
+            hint.parentNode.insertBefore(el, hint.nextSibling);
+            btn.addEventListener('click', function () { _arithOpen(inp.value); });
+            inp.addEventListener('keydown', function (ev) {
+                if (ev.key === 'Enter') { ev.preventDefault(); _arithOpen(inp.value); }
+                // Escape inside the box must not also clear the selection the
+                // preview is about to describe.
+                if (ev.key === 'Escape') { ev.stopPropagation(); inp.blur(); }
+            });
+        }
+        return el;
+    }
+
+    function _arithOpen(expr) {
+        var plan = _arithPlan(expr);
+        if (plan.error) { if (window.showToast) window.showToast(plan.error, 'warning'); return; }
+        if (!plan.rows.length && !plan.skipped.length && !plan.unchanged.length) return;
+        _arithPreview(plan);
+    }
+
+    function _arithPreview(plan) {
+        var ov = document.createElement('div');
+        ov.className = 'ch-overlay';
+        var esc = function (t) {
+            var d = document.createElement('div'); d.textContent = String(t);
+            return d.innerHTML;
+        };
+        var head = '<h3>' + esc(plan.expr) + '</h3><p class="muted">'
+            + plan.rows.length + ' cell' + (plan.rows.length === 1 ? '' : 's')
+            + ' will change'
+            + (plan.note ? ' — ' + esc(plan.note) : '')
+            + (plan.anyFloat
+                ? ' — rows marked ≈ were computed in floating point'
+                : '')
+            + '. Nothing is written to the chip: the cells become ordinary '
+            + 'unsaved edits you can review, undo with Ctrl+Z, and then Apply.</p>';
+        var body = '';
+        if (plan.rows.length) {
+            body += '<table class="ch-table"><thead><tr><th>Cell</th><th>Now</th>'
+                 + '<th></th><th>New</th></tr></thead><tbody>'
+                 + plan.rows.map(function (r) {
+                     return '<tr><td>' + esc(r.label) + '</td><td>' + esc(r.now)
+                          + '</td><td>→</td><td>' + esc(r.text)
+                          + (r.exact ? '' : ' <span class="muted">≈</span>')
+                          + '</td></tr>';
+                 }).join('') + '</tbody></table>';
+        }
+        if (plan.unchanged.length) {
+            body += '<p class="muted bulk-arith-note">' + plan.unchanged.length
+                 + ' cell' + (plan.unchanged.length === 1 ? '' : 's')
+                 + ' already hold' + (plan.unchanged.length === 1 ? 's' : '')
+                 + ' the result and will not be touched.</p>';
+        }
+        if (plan.skipped.length) {
+            body += '<p class="muted bulk-arith-note">Skipped ' + plan.skipped.length
+                 + ':</p><table class="ch-table"><tbody>'
+                 + plan.skipped.map(function (k) {
+                     return '<tr><td>' + esc(k.label) + '</td><td class="muted">'
+                          + esc(k.reason) + '</td></tr>';
+                 }).join('') + '</tbody></table>';
+        }
+        var acts = '<div class="ch-actions">'
+            + '<button type="button" class="secondary bulk-arith-cancel">Cancel</button>'
+            + (plan.rows.length
+                ? '<button type="button" class="outline bulk-arith-one">'
+                  + 'Fill and stage as one change</button>'
+                  + '<button type="button" class="bulk-arith-fill">Fill '
+                  + plan.rows.length + ' cell'
+                  + (plan.rows.length === 1 ? '' : 's') + '</button>'
+                : '') + '</div>';
+        ov.innerHTML = '<div class="ch-card bulk-arith-card">' + head + body + acts + '</div>';
+        document.body.appendChild(ov);
+
+        var done = false;
+        function close() {
+            if (done) return; done = true;
+            if (ov._releaseTrap) { try { ov._releaseTrap(); } catch (e) {} }
+            if (ov.parentNode) ov.parentNode.removeChild(ov);
+        }
+        if (window.trapFocus) ov._releaseTrap = window.trapFocus(ov, close);
+        ov.addEventListener('click', function (ev) { if (ev.target === ov) close(); });
+        ov.querySelector('.bulk-arith-cancel').addEventListener('click', close);
+
+        var fill = ov.querySelector('.bulk-arith-fill');
+        if (fill) {
+            fill.addEventListener('click', function () {
+                var n = _arithApply(plan);
+                close();
+                if (window.showToast) {
+                    window.showToast(n + ' cell' + (n === 1 ? '' : 's') + ' updated ('
+                        + plan.expr + ') — one Ctrl+Z undoes the whole change; '
+                        + 'review, then Apply');
+                }
+            });
+            fill.focus();
+        }
+        var one = ov.querySelector('.bulk-arith-one');
+        if (one) {
+            one.addEventListener('click', function () {
+                // _applyCells tolerates a null tr and posts ONE
+                // /field/edit-batch, so >1 update earns one server group id —
+                // one Review-tray group and one server-tier Ctrl+Z. Working
+                // state only; the live chip still needs the Apply-to-live door.
+                var cells = plan.rows.map(function (r) { return r.cell; });
+                _arithApply(plan);
+                close();
+                _applyCells(cells, null, false, {});
+            });
+        }
+    }
+
+    function _syncArithBar() {
+        var el = _arithBarEl(); if (!el) return;
+        el.hidden = !_selCells().length;
+    }
+
     function _pasteColumn(cell, text) {
         var lines = String(text).replace(/\r/g, '').split('\n')
             .map(function (l) { return l.split('\t')[0].trim(); })
@@ -2485,6 +2832,11 @@
                         return;
                     }
                 }
+                // The preview describes the selection, so Escape belongs to
+                // the modal while one is open (the dataset-virtual.js idiom) —
+                // otherwise one press closes the dialog AND destroys the
+                // selection it was about to act on.
+                if (window.smModalOpen && window.smModalOpen()) return;
                 if (!_selCells().length) return;
                 if (isFill) {
                     ev.preventDefault();
@@ -3419,6 +3771,12 @@
         pinCol: _togglePinCol, pinRow: _togglePinRow, repin: _repinAfterLayout,
         captureCarry: _captureEditCarry, consumeCarry: _consumeEditCarry,
         applyRowPins: _applyRowPins, applyColPins: _applyColPins,
+        // docs/167: selection arithmetic. `arithPlan` is pure (it computes and
+        // classifies, writing nothing), `arithOpen` is the door a keypress
+        // takes — a pin on the SAFETY claim has to drive the door, not the
+        // planner, or a wiring that skipped the preview would stay green.
+        arithPlan: _arithPlan, arithApply: _arithApply, arithOpen: _arithOpen,
+        arithBar: _arithBarEl, decStr: _decStr, syncSel: _syncSelHint,
     };
     window.BulkEdit = BulkEdit;
     // Restore the persisted density scale onto :root at load (this script is eager

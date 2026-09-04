@@ -9653,6 +9653,19 @@ a.sidebar-tool-btn { text-decoration: none; color: inherit; }
    like every other selected cell (audit). */
 .bulk-td.bulk-sel-anchor { outline-width: 3px; background: color-mix(in srgb, var(--pico-primary) 22%, transparent); }
 .bulk-sel-hint { font-size: .78em; opacity: .8; margin-right: .5rem; white-space: nowrap; }
+/* docs/167 — selection arithmetic. Sits beside the selection hint, appears
+   with the selection, and is sized like the toolbar's other small affordances
+   so it never competes with the grid. Injected by bulk-edit.js, so /bulk's
+   server-rendered HTML stays byte-identical (the docs/111 contract). */
+.bulk-arith-bar { display: inline-flex; align-items: center; gap: .25rem; margin-right: .5rem; }
+.bulk-arith-bar[hidden] { display: none; }
+.bulk-arith-expr {
+    width: 7rem; margin: 0; padding: .1rem .35rem; height: auto;
+    font-size: .78em; font-family: var(--pico-font-family); line-height: 1.4;
+}
+.bulk-arith-bar .bulk-arith-go { padding: .1rem .45rem; font-size: .74em; margin: 0; }
+.bulk-arith-card { max-width: 46rem; max-height: 80vh; overflow: auto; }
+.bulk-arith-note { margin: .6rem 0 .2rem; font-size: .82em; }
 .bulk-pin { border: 0; background: none; padding: 0 2px; margin-left: 2px; font-size: 0.72em; cursor: pointer; opacity: 0; transition: opacity .12s; filter: grayscale(1); }
 th:hover > .bulk-pin, .bulk-pin.bulk-pin-on { opacity: 0.85; }
 .bulk-pin.bulk-pin-on { filter: none; }
