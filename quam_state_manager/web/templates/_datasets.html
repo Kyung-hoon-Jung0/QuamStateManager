@@ -41,9 +41,16 @@
         <small class="muted ds-tz-note" title="Run dates and times are read from the run folders exactly as the acquisition PC wrote them (its local clock). SM does not convert time zones.">&#128336; acquisition&#8209;PC local time</small></h2>
     <div style="display:flex;gap:.5rem;align-items:center;flex:1;min-width:0">
         <div class="table-filter ds-search-wrap" style="flex:1;position:relative">
+            {# `data-preset` is the ARRIVAL marker, not a copy of the value: the
+               client clears leftover picker/facet ticks only when a swap brings
+               one, so a date tab or a Rescan never disturbs the user's own
+               filters. `| default('')` because the no-workspace branch renders
+               this partial without the variable. #}
             <input type="search" id="dataset-search"
                    placeholder="{{ search_hint('tag:', 'is:') }}"
                    title="{{ search_title('tag:flagged', 'is:bookmarked', 'run:', 'q:') }}"
+                   value="{{ search | default('') }}"
+                   data-preset="{{ search | default('') }}"
                    autocomplete="off" style="width:100%">
             <button type="button" id="ds-search-help-toggle" class="ds-search-help-btn"
                     aria-label="Show search syntax help"
@@ -213,11 +220,11 @@
         {% if dates | length > 1 %}
         <div class="ds-date-tabs" role="tablist" aria-label="Filter by date">
             <a class="ds-date-tab{% if not active_date %} active{% endif %}"
-               hx-get="/datasets" hx-target="#table-pane"
+               hx-get="/datasets{% if search %}?q={{ search | urlencode }}{% endif %}" hx-target="#table-pane"
                onclick="var e=document.getElementById('ds-active-date');if(e)e.value=''">All dates</a>
             {% for d in dates %}
             <a class="ds-date-tab{% if active_date == d %} active{% endif %}"
-               hx-get="/datasets?date={{ d }}" hx-target="#table-pane"
+               hx-get="/datasets?date={{ d }}{% if search %}&q={{ search | urlencode }}{% endif %}" hx-target="#table-pane"
                onclick="var e=document.getElementById('ds-active-date');if(e)e.value='{{ d }}'">{{ d[5:] }}</a>
             {% endfor %}
         </div>

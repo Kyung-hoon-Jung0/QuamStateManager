@@ -20783,6 +20783,14 @@ def _datasets_view(view_mode: str):
     # single "most-runs" winner. Each row is tagged with its folder_key ("f") so
     # the client can build a uid ("<f>:<id>") and the folder filter badges.
     active = _active_dataset_stores()
+    # A deep link from a qubit/pair inspector: /datasets?q=q7. SM does not
+    # INTERPRET the token — it hands the string to the search box and lets the
+    # grammar dataset-virtual.js already ships do the filtering, which is the
+    # only way a link cannot disagree with typing the same thing by hand.
+    # (The token is the BARE name on purpose: a bare `q1` is matched exactly
+    # against the run's own qubit list, while the `qubit:` scope is a substring
+    # test that would drag q10…q19 in with it.)
+    search = (request.args.get("q") or "").strip()
     if _is_htmx():
         template = "_datasets.html"
     else:
@@ -20792,7 +20800,8 @@ def _datasets_view(view_mode: str):
                                rows_json="[]", initial_poll_ts=0, total=0,
                                active_folder="", folders=[], folders_json="[]",
                                no_workspace=True, curated_keys_json="[]",
-                               view_mode=view_mode, collection_tags=[])
+                               view_mode=view_mode, collection_tags=[],
+                               search=search)
     import time as _t
     poll_ts = _t.time()
     date = request.args.get("date")
@@ -20913,6 +20922,7 @@ def _datasets_view(view_mode: str):
         stats=stats,
         all_tags=all_tags,
         active_date=date,
+        search=search,
     )
 
 

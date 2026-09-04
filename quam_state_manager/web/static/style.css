@@ -6118,6 +6118,17 @@ table.h5-vars-table tr.h5-var-selected .btn-sm { background: var(--pico-primary)
 .inspector-actions {
     display: flex; align-items: center; gap: 0.25rem;
 }
+/* "runs →" — the link from a qubit/pair to the experiments that measured it.
+   Sized like the header's other small affordances rather than like body text,
+   so it reads as an action without competing with the entity name. */
+.inspector-runs-link {
+    font-size: 0.82em; text-decoration: none; white-space: nowrap;
+    padding: 0.1rem 0.4rem; border-radius: 4px;
+    transition: background 0.15s, color 0.15s;
+}
+.inspector-runs-link:hover {
+    background: rgba(128,128,128,0.1); color: var(--pico-primary);
+}
 .inspector-pin {
     background: none; border: none; cursor: pointer;
     font-size: 1.1rem; padding: 0.1rem 0.4rem;

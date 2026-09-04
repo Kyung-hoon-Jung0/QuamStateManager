@@ -2298,6 +2298,25 @@
         _loadSortPrefs();
         _rebuildFitKeys();
         _rebuildParamFacets();   // (also prunes facet selections whose key/value vanished)
+        // A deep link (/datasets?q=q7 from a qubit or pair inspector) states the
+        // WHOLE intent, so it must not be ANDed with picker / facet / experiment
+        // ticks the user left behind on an earlier visit — that combination
+        // shows zero rows and the link reads as broken, which is the same silent
+        // lie as the substring trap, pointing the other way. Keyed on the
+        // ARRIVAL of a preset rather than on its value changing: clicking the
+        // same link twice must clear twice. A swap that carries no preset (a
+        // date tab with no q, Rescan, nav-back) is byte-identical to before.
+        var _presetEl = document.getElementById('dataset-search');
+        if (_presetEl && (_presetEl.getAttribute('data-preset') || '')) {
+            state.qubitFilter.clear();
+            state.pairFilter.clear();
+            state.paramFilter.clear();
+            state.paramRangeFilter.clear();
+            // also disarms app.js's post-swap chip restore, whose own early
+            // return is `size === 0`
+            if (window._selectedExps && window._selectedExps.clear) window._selectedExps.clear();
+        }
+
         // Drop any selected qubits / pairs that no longer exist in this payload.
         Array.from(state.qubitFilter).forEach(function (q) { if (!state.knownQubits.has(q)) state.qubitFilter.delete(q); });
         Array.from(state.pairFilter).forEach(function (p) { if (!state.knownPairs.has(p)) state.pairFilter.delete(p); });
