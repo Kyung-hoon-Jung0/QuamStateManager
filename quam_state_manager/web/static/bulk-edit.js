@@ -2263,8 +2263,11 @@
         // Not a plain literal: hand it to the app's own audited expression
         // parser (calc.js), which buys *10^(-1/20), /sqrt(2), *(1+0.05) for
         // free. Its result is a float64, so the row says so.
-        var v = null;
-        try { v = window.calcEval ? window.calcEval(body) : null; } catch (e) { v = null; }
+        // calc.js returns {ok, value} -- NOT a bare number. Reading it as a
+        // number refused every expression the bar's own tooltip advertises.
+        var r = null;
+        try { r = window.calcEval ? window.calcEval(body) : null; } catch (e) { r = null; }
+        var v = (r && r.ok) ? r.value : null;
         if (typeof v !== 'number' || !isFinite(v)) return null;
         var f = window.ValueDelta && window.ValueDelta.parse(v);
         if (!f) return null;
@@ -2280,16 +2283,49 @@
     // disagree in their last digits from the moment it is applied. Past the
     // limit the double's own shortest round-tripping form is written and the
     // row SAYS it was rounded.
-    var _MAX_SIG = 17;
-    function _sigDigits(text) {
-        var d = String(text).replace(/[-.,]/g, '').replace(/^0+/, '');
-        return d.length;
-    }
+    //
+    // A digit COUNT cannot answer this, in either direction, and the first
+    // version of this guard counted digits:
+    //   * 0.45919729451219904 * 2 is exactly 0.91839458902439808 -- SEVENTEEN
+    //     significant digits, so a <=17 gate passed it, and the double's own
+    //     spelling is 0.9183945890243981. On the customer's 20-qubit chip a
+    //     plain *1.1 over the x180 amplitude column left 11 of 20 rows spelled
+    //     with digits the chip does not keep, each marked exact.
+    //   * 1000000000 * 1000000000 is 1e18, which a double holds EXACTLY, but
+    //     its nineteen digits tripped the same gate and the row was marked as
+    //     rounded when nothing had been rounded.
+    // So ask the question the value actually poses: will this text survive the
+    // round trip into what stores it?
+    //
+    // Integral text was carved out of this for one round, on the grounds that
+    // `type_policy.parse_value` tries int() before float() and would keep
+    // 9007199254740993 exactly. That is true of parse_value and FALSE of the
+    // path this grid takes: arithmetic always scales a cell that already holds
+    // a number, so `modifier._type_coerce` has a non-None old value and casts
+    // through float() for an int-typed leaf as well as a float-typed one --
+    // 9007199254740993 lands as ...992 either way. The round trip is therefore
+    // the right question for integral text too, and asking it also retires the
+    // opposite error: 1e18 written out is nineteen digits but IS its own
+    // double's spelling, so it round-trips and is not marked.
+    //
+    // One measured exception, named rather than handled: when an ENFORCED type
+    // is in force (env schema or a docs/79 verdict), `_checked_value` calls
+    // `policy.check` instead, whose `_reconcile_numeric` keeps an exact int on
+    // an int-typed leaf -- so above 2^53 the preview would understate what is
+    // stored. It needs an integral leaf past 9.007e15; the largest thing on a
+    // real chip is a ~1e10 frequency, so this is unreachable rather than
+    // handled, and the client cannot see the expected type anyway.
+    // Compare the two spellings with their GROUPING REMOVED. `_decStr`
+    // comma-groups the integer part, so comparing its output against an
+    // ungrouped string marks every value over 999 as shortened when nothing
+    // was shortened at all.
     function _fitDouble(text) {
-        if (_sigDigits(text) <= _MAX_SIG) return { text: text, exact: true };
-        var shorter = _floatStr(Number(String(text).replace(/,/g, '')));
-        return shorter == null ? { text: text, exact: true }
-                               : { text: shorter, exact: false };
+        var bare = String(text).replace(/,/g, '');
+        var shorter = _floatStr(Number(bare));
+        if (shorter == null) return { text: text, exact: true };
+        return String(shorter).replace(/,/g, '') === bare
+            ? { text: text, exact: true }
+            : { text: shorter, exact: false };
     }
 
     function _arithOne(cur, oper) {
@@ -2323,6 +2359,29 @@
             Number(cur.mant.toString() + 'e' + (-cur.scale))
             / Number(oper.mant.toString() + 'e' + (-oper.scale)));
         return approx == null ? null : { text: approx, exact: false };
+    }
+
+    function _approxCount(plan) {
+        return plan.rows.filter(function (r) { return !r.exact; }).length;
+    }
+    /* An armed Auto-Sync push session turns staging into a live write
+       (docs/117 -- the module is auto-apply.js, the CONTROL is labelled
+       Auto-Sync, which is the name a user can go and find). Read through the
+       module when it is there. The fallback is NOT a load-order race --
+       base.html loads auto-apply.js as a core script and bulk-edit.js in the
+       'grid' bundle after it, so in production the module is always present.
+       It is here because the answer this function gets wrong is the one that
+       PROMISES a user nothing was written: if the module is absent for any
+       reason at all, reading the tray's own marker beats defaulting to the
+       reassuring answer. */
+    function _autoApplyArmed() {
+        try {
+            if (window.AutoApply && typeof window.AutoApply.armed === 'function') {
+                return !!window.AutoApply.armed();
+            }
+            var tray = document.getElementById('pending-tray');
+            return !!(tray && tray.getAttribute('data-auto-apply') === '1');
+        } catch (e) { return false; }
     }
 
     /* Plan the whole selection. Nothing is coerced and nothing is dropped in
@@ -2454,11 +2513,28 @@
             + plan.rows.length + ' cell' + (plan.rows.length === 1 ? '' : 's')
             + ' will change'
             + (plan.note ? ' — ' + esc(plan.note) : '')
-            + (plan.anyFloat
-                ? ' — rows marked ≈ were computed in floating point'
+            // Gated on the rows the table will actually SHOW, not on
+            // plan.anyFloat: that flag is raised before the unchanged-cell
+            // check, so a selection whose only inexact result lands back on its
+            // own value printed a sentence explaining a glyph that appears
+            // nowhere ("0 cells will change - rows marked ~ were computed...").
+            + (_approxCount(plan) > 0
+                ? ' — ' + (_approxCount(plan) === 1 ? 'the row' : 'rows')
+                  + ' marked ≈ ' + (_approxCount(plan) === 1 ? 'was' : 'were')
+                  + ' computed in floating point, or shortened to what the'
+                  + ' chip can store'
                 : '')
-            + '. Nothing is written to the chip: the cells become ordinary '
-            + 'unsaved edits you can review, undo with Ctrl+Z, and then Apply.</p>';
+            // The covenant (docs/107) is that a live write needs an explicit
+            // press -- but an ARMED Auto-Sync push session (docs/117) is that
+            // press, given in advance, so for those few minutes staging IS
+            // writing. Promising otherwise would be the app lying about its own
+            // state. "Auto-Sync" is what the pill and the panel call it.
+            + (_autoApplyArmed()
+                ? '. An Auto-Sync push session is armed, so these will be pushed'
+                  + ' to the live chip as soon as you stage them.</p>'
+                : '. Nothing is written to the chip: the cells become ordinary '
+                  + 'unsaved edits you can review, undo with Ctrl+Z, and then'
+                  + ' Apply.</p>');
         var body = '';
         if (plan.rows.length) {
             body += '<table class="ch-table"><thead><tr><th>Cell</th><th>Now</th>'

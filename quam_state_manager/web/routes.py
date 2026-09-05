@@ -54,10 +54,10 @@ from flask import (
 from markupsafe import escape
 from werkzeug.utils import secure_filename
 
-from quam_state_manager.core import spec_thresholds
 from quam_state_manager.core import (
     capabilities,
     chip_health,
+    compare_sources,
     config_generator,
     config_view,
     cr_semantics,
@@ -71,12 +71,12 @@ from quam_state_manager.core import (
     regenerate,
     safe_io,
     scheduler,
+    spec_thresholds,
     undo_journal,
     working_copy,
 )
 from quam_state_manager.core import compare as compare_engine
 from quam_state_manager.core import qdac as qdac_mod
-from quam_state_manager.core import compare_sources
 from quam_state_manager.core.dataset import DatasetStore
 from quam_state_manager.core.differ import Differ
 from quam_state_manager.core.experiment_data import ExperimentContext, load_experiment_context

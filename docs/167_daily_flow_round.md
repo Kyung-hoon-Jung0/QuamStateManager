@@ -207,7 +207,8 @@ number is refused — it would be a second, worse fill-down.
 and both survivors were guards the harness could not reach: it had no read-only
 cell and no LINKED pair. Adding them turned both red — the read-only skip, and
 the snapshot-`prev`-first rule (writing a linked cell mirrors its sibling, so a
-read-as-you-go `prev` records the intermediate; audit F13). 53 asserts, 16/16.
+read-as-you-go `prev` records the intermediate; audit F13). 53 asserts, 16/16
+at that point; the file is at 100 now (§8b, §8c).
 
 ---
 
@@ -389,7 +390,290 @@ stone dot for notes** (a docs/92 decision about which of the two maps owns it).
 
 ---
 
-## 9. Five things this round is worth remembering for
+## 8b. Verified in real Chrome, on the customer's chip
+
+Thirty-two checks, driven over CDP against `PJ_10082026` with the CQT run
+archive attached (the browser extension cannot reach this machine's localhost —
+docs/141 §5's tooling). All pass.
+
+What that run found that no unit test did:
+
+**A scaled value was showing more digits than a double can hold.**
+`0.45919729451219904 * 1.1` is *exactly* `0.505117023963418944` — eighteen
+significant digits — and `state.json` stores doubles. The exact-decimal
+arithmetic was right and the SPELLING was not: the server parses the long form
+to the nearest double anyway, so the cell and the chip would have disagreed in
+their last digits from the moment it was applied. Past seventeen significant
+digits the double's own shortest round-tripping form is written now, and the
+row is marked NOT exact — the same disclosure a non-terminating division
+already carried. Same double, fewer lies.
+
+> **Superseded by §8c.** "Past seventeen significant digits" was the rule as
+> shipped that night, and a digit count turned out to be the wrong question in
+> both directions. The rule now is the round trip itself. This paragraph is
+> left as written because §8c is the record of why it changed.
+
+That fix exposed a second one in the same file: `_floatStr` used `toFixed(20)`,
+which pads a double out to twenty digits it does not have. It goes through
+`ValueDelta.parse` of the NUMBER now — `String(x)`, the shortest round-tripping
+form — which is both the shortest honest spelling and never exponential.
+
+**And two "failures" that were the verification's own**, worth writing down
+because both are easy to repeat:
+
+* Diagnostics' domain sections are collapsed `<details>`, and `innerText`
+  excludes collapsed content. The check read an empty string and called the
+  feature broken. The finding was rendering perfectly the whole time.
+* `/datasets?q=q7` showed the no-workspace branch because that server had no
+  data folder attached. Not a defect — but a check that cannot tell "the
+  feature is missing" from "the precondition is missing" is not a check.
+
+---
+
+## 8c. Four review rounds over §8b, and the fix that took all four
+
+2026-09-05. §8b was written one night and reviewed the next day, four
+times — and every round after the first found something wrong with the round
+before it, including a defect the second round had already shipped into this
+document as a virtue.
+
+**Round 1** — six independent lenses over the two uncommitted files AND over
+the commit §8b describes, every finding then reproduced, refuted and
+impact-checked by separate agents (33 agents, 21 findings, 5 survived).
+**Round 2** — a heavy red team plus four customer-role reviewers over round 1's
+own fixes. It hit a session limit with 33 of 38 agents dead, so its 12 findings
+came back UNVERIFIED; they were verified by hand instead, which is how the
+largest defect in this round was found.
+
+### What was wrong, and is now fixed
+
+**A pointer to the wrong section.** §8b credited the CDP tooling to
+`docs/141 §4l-review`, which is that file's five-reviewer adversarial round and
+mentions CDP, headless Chrome, DevTools and the extension exactly zero times
+(lines 554–702). The tooling is `docs/141 §5`.
+
+**Two of the three call sites were pinned by nothing.** `_fitDouble` guards
+three branches — `*`, `+`/`-`, and the terminating `/`. Deleting the guard
+outright from either of the last two left all 57 assertions green:
+
+    M1  * branch: delete the guard      RED
+    M2  +/- branch: delete the guard    GREEN   <- nothing pinned it
+    M3  / branch: delete the guard      GREEN   <- nothing pinned it
+
+The commit message's "18/18 mutations red" was true of the mutations it ran; the
+two it did not run were the two that mattered.
+
+**The digit-count gate was wrong in BOTH directions.** `_sigDigits(text) <= 17`
+is a PROXY for "is this text already the double's own spelling", and a proxy is
+all it is:
+
+* `0.45919729451219904 * 2` is exactly `0.91839458902439808` — seventeen
+  significant digits, so the gate passed it — and the double's own spelling is
+  `0.9183945890243981`. Measured on the customer's 20-qubit chip, one plain
+  `*1.1` over the `x180_amplitude` column left **11 of 20 rows** spelled with
+  digits the chip does not keep, each marked exact and carrying no glyph.
+* `1000000000 * 1000000000` is 1e18, which a double holds EXACTLY, but its
+  nineteen characters tripped the same gate: the row was marked as rounded when
+  nothing had been rounded.
+
+So the glyph was close to an inverted signal — the marked rows were the
+trustworthy ones. `_fitDouble` now asks the question directly: is this text
+already what `_floatStr(Number(text))` spells? All twenty rows are honest now,
+and 19 of 20 carry the mark, because on this chip 19 of those products genuinely
+are not storable as written.
+
+**The integer carve-out was wrong too, and a third review round removed
+it.** It was the reason the first draft of this section refused the fix at all:
+`type_policy.parse_value` tries `int()` before `float()`, so an integral text
+looked like it would be stored as an exact arbitrary-precision Python int, and a
+blanket round-trip rule would rewrite `9007199254740993` to `9007199254740992`
+— silent numeric corruption in the name of fixing a spelling.
+
+That is true of `parse_value` and **false of the path this grid takes**.
+Arithmetic always scales a cell that ALREADY holds a number, so
+`modifier._type_coerce` has a non-None old value, and it casts through
+`float()` for an int-typed leaf just as it does for a float-typed one:
+
+    parse_value('9007199254740993')            -> 9007199254740993   (int)
+    _type_coerce(7,   9007199254740993)        -> 9007199254740992   (int)
+    _type_coerce(0.5, 9007199254740993)        -> 9007199254740992.0 (float)
+
+So the value is rounded either way on that path, and the round trip is the
+right question for integral text as well. Removing the carve-out also settles
+the false mark, since 1e18 written out round-trips and is left alone.
+
+**One measured exception, named rather than handled.** When an ENFORCED type is
+in force — an env schema, or a docs/79 verdict — `_checked_value` calls
+`policy.check` instead of `_type_coerce`, and its `_reconcile_numeric` DOES keep
+an exact int on an int-typed leaf:
+
+    _reconcile_numeric(7,   9007199254740993) -> 9007199254740993   (exact)
+    _reconcile_numeric(0.5, 9007199254740993) -> 9007199254740992.0
+
+so above 2^53 on an enforced int leaf the preview would understate what is
+stored. Reaching it needs an integral leaf past 9.007e15; the largest value on a
+real chip is a ~1e10 frequency. The client cannot see the expected type anyway,
+so this is recorded, not handled — and the sentence that used to say "either
+way" without qualification was overbroad, which is the same class of error as
+the premise it was correcting.
+
+**And removing it exposed a second bug — which the carve-out had been hiding
+only HALF of.** `_decStr` comma-groups the integer part, and the comparison was
+made against the comma-stripped string, so every result over 999 came back
+"shortened" when nothing had been shortened. The carve-out returned early on the
+INTEGRAL ones, so removing it is what made a doubled 6 GHz frequency visible —
+but a fractional result over 999 never took that early return, and was being
+falsely marked in the version this document had already called correct. Both
+spellings have their grouping removed before the comparison now, and §1c3 pins
+an integral case, a fractional one and the value that only just crosses the
+grouping threshold, for that reason.
+
+**The glyph was claiming something it could not know.** The legend read "rows
+marked ≈ were computed in floating point". After c3dd655 TWO different things
+set `exact: false`: a division that never terminates (floating point, true), and
+an exact BigInt decimal shortened to what a double holds (not floating point at
+all). It names both causes now — and that is also what answers the second
+objection to the round-trip fix, which was that it would stamp a
+floating-point label onto rows computed exactly.
+
+**"Nothing is written to the chip" was false exactly when it mattered.** The
+preview's closing sentence was unconditional, but inside an armed Auto-Sync push
+session (docs/117) staging IS writing: the tray observer flushes it to the live
+chip with no further press. The sentence is now conditional on
+`AutoApply.armed()`, falling back to the tray's own `data-auto-apply` marker so
+a preview opened before that module loads still tells the truth rather than the
+reassuring answer — pinned on both paths, because the fallback exists for
+exactly the window in which a wrong answer is most likely.
+
+**And it calls the control what the user's control is called.** The module is
+`auto-apply.js`, so the first draft of the sentence said "Auto-apply is armed" —
+but docs/120 item 8 renamed the visible control, and the pill, the panel and
+`_diff_workbench.html:205` all say **Auto-Sync**. A sentence naming the module
+sends the reader looking for a switch that does not exist. Three of the five
+final-review lenses raised this independently.
+
+**And the sentence now agrees with its own plan.** "1 cell will change — rows
+marked ≈ were computed" was the plural half of a sentence whose first half is
+carefully singularised.
+
+**The expressions the bar advertises were all refused.** Not a rounding matter
+at all — found by a red-team lens looking at the legend and following
+`exact: false` back to its sources. `calc.js`'s `calcEval` returns
+`{ok, value}`; `_arithOperand` stored that object in `v` and gated on
+`typeof v !== 'number'`, so it was ALWAYS null. Every expression the bar's own
+tooltip promises — `*10^(-1/20)`, `/sqrt(2)`, `*(1+0.05)` — came back as an
+error toast, while the tooltip went on promising them. Introduced by 5146650 in
+this same round; it has never been on `main`. `calc.js` is now loaded in the
+selfcheck's world, because stubbing it would have hidden exactly this.
+
+**The import consolidation was half done** — `compare_sources` was still a
+standalone line three below the group `spec_thresholds` had just joined.
+
+### What this round is really about
+
+The first draft of this section recorded a DECISION not to fix the gate, and
+argued it well: the residue is a transient pre-audit display, both spellings
+parse to a bit-identical double, and the apply path repaints each cell from the
+server's committed value (`bulk-edit.js:1553-1557`), so it cannot outlive a
+press. Every one of those statements is true and none of them was the point.
+
+What changed the answer was measuring it on the real chip. "Four of six
+operators on one contrived value" is a corner case. **Eleven of twenty rows of
+one ordinary column under the most ordinary operator there is** is the feature's
+normal behaviour — and the user-visible symptom is not the extra digits, it is
+that eight rows carry a mark and eleven identical-looking ones do not, for
+reasons invisible from the screen.
+
+The two objections that killed the fix were both answerable. The legend fix
+removed the false label; and the integer objection turned out to rest on a
+premise nobody had measured on the path the grid actually takes — which took a
+THIRD round to find, after the carve-out written to satisfy it had shipped into
+this very document as a virtue. A refusal that rests on two objections is worth
+revisiting when both are cheap to check, and "cheap to check" means running the
+real path, not reading the function whose name sounds right.
+
+### What the reviews got wrong about themselves
+
+**Round 1's minor and nit findings were verified by a SINGLE refuting lens**,
+briefed to default to "refuted" when uncertain. Three of the sixteen it killed
+were true on re-check: §3's frozen assert count, the half-finished import
+consolidation, and the false glyph on large exactly-representable integers —
+which was the same defect as the biggest finding of round 2, seen from the other
+side and dismissed. A refutation budget that scales with the reporter's own
+severity guess filters confidence, not truth.
+
+**Round 2 lost 33 of 38 agents to a session limit**, and the script filed its
+unverified findings under "refuted" because its survival rule reads a majority
+of zero votes as a kill. Twelve findings arrived pre-dismissed. Verifying them
+by hand is what found the dead expression path. A verification pipeline needs to
+distinguish *nobody checked this* from *somebody checked this and it is wrong*.
+
+**And a green suite hid a lost patch, twice.** Two patch scripts accumulated
+edits in memory and wrote once at the end; when a later step's anchor assertion
+failed, the earlier successful steps went with it. The suite stayed green at 74
+assertions and said nothing, because the blocks that were missing were the ones
+that would have failed. The mutation sweep is what caught it — four mutations
+came back GREEN, and the reason was that the pins for them did not exist. Every
+patch step writes its own file now.
+
+### The sentence that described a mark the table did not have
+
+`anyFloat` is raised at `_arithPlan`'s line 2404, and the unchanged-cell carve-
+out returns at 2412 — eight lines later. So a cell whose scaled value lands back
+on its own value flips the flag on the way OUT of the plan, and the legend, which
+gated on that flag, described marked rows that did not exist. The empty-table
+form of this predates the round; the fourth review's verifiers found the harder
+one, and it IS new here, because the round-trip `_fitDouble` is what starts
+producing inexact-but-unchanged cells at all:
+
+    +1 over [0.5, 9007199254740992, ...]
+       1 cell changes, is exact, carries no glyph
+       -- and the sentence said "rows marked ≈ were computed ..."
+
+The clause is gated on `_approxCount(plan)` now — the rows the table will
+actually show — not on `anyFloat`, whose meaning ("something in this selection
+was inexact") is left alone for any future reader. Measured against all five
+shapes the reviewers built, empty and populated: the sentence matches the table
+in every one.
+
+Two smaller ones from the same round. The armed-session sentence said
+"Auto-apply is armed" — the module's name; three lenses independently pointed
+out that the user's control is labelled **Auto-Sync**, so the sentence sent them
+looking for a switch that does not exist. And the comment justifying the tray
+fallback claimed a load-order race that cannot happen: `auto-apply.js` is a core
+script and `bulk-edit.js` is in the `grid` bundle after it, so the module is
+always there. The fallback stays — the answer it exists to prevent is the one
+that PROMISES a user nothing was written — but its comment now says why, rather
+than inventing a race.
+
+### The third round, and what it took to see
+
+The final pre-push review is where the carve-out fell. Nothing in the suite
+could have found it: 85 assertions were green, 15 of 15 mutations were red, and
+the real-browser run passed 26 checks — because every pin and every probe was
+written from the same wrong premise. What found it was running
+`_type_coerce` against a float-typed leaf and reading the number that came back.
+
+The rule that survives is smaller than any of the three that preceded it: **the
+text the preview shows is the text `_floatStr(Number(text))` produces, or it is
+marked.** No digit counts, no type carve-outs, no exceptions.
+
+Final state: **100 assertions, 19/19 mutations red**; `2 failed, 682 passed,
+19 skipped` across `test_bulk_edit` / `test_bulk_virt_server` /
+`test_grid_editing` / `test_bulk_markup` / `test_bulk_pairs_picker` /
+`test_web` / `test_auto_apply`, where those two failures reproduce identically
+on a pristine `HEAD` worktree — measured, not assumed (docs/155 §10a); every
+`tests/*.cjs` exits as it did before this diff (the two that do not are the
+parity harnesses, which require a `cases.json` argument pytest supplies); and on
+the real 20-qubit chip every value the arithmetic preview shows — under five
+operators over all twenty amplitudes — is one the chip stores exactly, end to
+end: the preview promised `1.1910395203393354` and `state.json` holds that
+number.
+
+
+---
+
+## 9. Eight things this round is worth remembering for
 
 1. **A plan that cannot measure says so, and then you measure.** The physics
    plan listed "I could not re-measure the customer chip" in its own open
@@ -407,3 +691,21 @@ stone dot for notes** (a docs/92 decision about which of the two maps owns it).
 5. **Reduce, and say what you reduced.** Four features shipped smaller than
    planned. Each deferral is written down with its reason, so the next round
    argues with it rather than rediscovering it.
+6. **Check the premise on the path the code actually takes, not on the
+   function whose name sounds right** (§8c). A fix was refused because
+   `parse_value` keeps an integral value exact. It does — and the grid's writes
+   go through `_type_coerce`, which does not. The carve-out written to satisfy
+   that objection shipped into this document as a virtue and survived a green
+   suite, a full mutation sweep and a real-browser run, because every pin was
+   written from the same wrong premise. One call to `_type_coerce(0.5, ...)`
+   settled it — and the correction was then overbroad in its turn, until a
+   reviewer measured the ENFORCED branch and found the one path that does keep
+   the exact int.
+7. **Measure the residue on the real chip before deciding it is a corner case.**
+   The same defect reads as "four of six operators on one contrived value" in a
+   probe and as "11 of 20 rows of an ordinary column under `*1.1`" on the
+   customer's chip. Only the second number is about the feature.
+8. **A patch script that writes once at the end can lose the work it already
+   did.** It happened twice here, and the suite stayed green both times —
+   because what went missing were the pins for the mutations that then came back
+   GREEN. The mutation sweep is the only thing that noticed.

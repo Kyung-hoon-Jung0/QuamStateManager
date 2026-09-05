@@ -33,6 +33,11 @@ try {
 
 const STATIC = path.join(__dirname, '..', 'quam_state_manager', 'web', 'static');
 const GRID_VIRT_JS = fs.readFileSync(path.join(STATIC, 'grid-virt.js'), 'utf8');
+// calc.js is loaded on every page by base.html, and the operand parser hands
+// it anything that is not a plain literal. Stubbing it would pin a fiction:
+// the bug this file now guards was calc.js's REAL contract ({ok, value})
+// being read as a bare number, and a stub would have hidden it.
+const CALC_JS = fs.readFileSync(path.join(STATIC, 'calc.js'), 'utf8');
 const BULK_JS = fs.readFileSync(path.join(STATIC, 'bulk-edit.js'), 'utf8');
 const APP_JS = fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8');
 
@@ -91,6 +96,7 @@ function world(values, extras) {
   win.trapFocus = function () { return function () {}; };
   win.smModalOpen = function () { return !!win.document.querySelector('.ch-overlay'); };
   new win.Function(VALUE_DELTA_JS).call(win);
+  new win.Function(CALC_JS).call(win);
   new win.Function(GRID_VIRT_JS).call(win);
   new win.Function(BULK_JS).call(win);
   win.BulkEdit.mount(
@@ -157,6 +163,289 @@ const vals = (win) => Array.prototype.slice.call(
   const plain = win.BulkEdit._ge.arithPlan('*2').rows[1];
   ok(plain.text === '0.4' && plain.exact === true,
      'a result inside double precision stays exact (got ' + plain.text + ')');
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// 1c. The SAME guard, on the other two branches
+//     Only the `*` branch was pinned when the guard was written, so `+`/`-` and
+//     the terminating `/` could each have lost it in silence -- and did stay
+//     green through a mutation that deleted them outright. Every input below
+//     needs more significant digits than a double carries, so a branch missing
+//     the guard writes the long spelling AND calls it exact.
+// ───────────────────────────────────────────────────────────────────────────
+{
+  const win = world(['0.4', '0.2', '0.3', '0.45919729451219904']);
+  selectAll(win);
+  const ge = win.BulkEdit._ge;
+
+  const plus = ge.arithPlan('+0.100000000000000001').rows[0];
+  ok(plus.text === '0.5',
+     '+ : the sum is written as the double that will store it (got ' + plus.text + ')');
+  ok(plus.exact === false, '+ : and the row says so');
+
+  const minus = ge.arithPlan('-0.100000000000000001').rows[0];
+  ok(minus.text === '0.3',
+     '- : the same on subtraction (got ' + minus.text + ')');
+  ok(minus.exact === false, '- : and the row says so');
+
+  // a division whose remainder DOES reach zero -- an exact decimal, still longer
+  // than a double: the branch that returns early must be fitted too.
+  const div = ge.arithPlan('/0.0625').rows[3];
+  ok(div.text === '7.347156712195185',
+     '/ : a terminating quotient is fitted too (got ' + div.text + ')');
+  ok(div.exact === false, '/ : and the row says so');
+
+  // The two asserts above cannot tell the terminating branch from the float
+  // fallback: both spell this quotient identically and both report inexact, so
+  // lowering _DIV_SCALE_CAP silently moves the fixture to the other branch and
+  // they stay green. Only the terminating branch can return exact:true.
+  const tiny = world(['0.0000000000000001', '0.2', '0.3', '0.4']);
+  selectAll(tiny);
+  const long = tiny.BulkEdit._ge.arithPlan('/8').rows[0];
+  ok(long.text === '0.0000000000000000125' && long.exact === true,
+     '/ : a long-scale terminating division stays exact, so the fixture really '
+     + 'is on the terminating branch (got ' + long.text + ' exact=' + long.exact + ')');
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// 1c2. Integral results, in both directions
+//     An integral text was carved out of the round trip for one round, on the
+//     grounds that `type_policy.parse_value` tries int() before float(). That
+//     is true of parse_value and FALSE of the path this grid takes: arithmetic
+//     always scales a cell that ALREADY holds a number, so
+//     `modifier._type_coerce` has a non-None old value and casts through
+//     float() for an int-typed leaf as well as a float-typed one. So an
+//     integer past 2^53 is shortened and marked like anything else --
+//     and 1e18, which IS exactly representable, is left alone even though it
+//     is nineteen digits long, which the digit-counting gate marked as rounded.
+// ───────────────────────────────────────────────────────────────────────────
+{
+  const win = world(['9007199254740993', '1000000000', '0.3', '0.4']);
+  selectAll(win);
+  const ge = win.BulkEdit._ge;
+
+  const big = ge.arithPlan('+2').rows[0];
+  ok(big.text === '9,007,199,254,740,996',
+     'an integer past 2^53 is written as the double that will store it (got '
+     + big.text + ')');
+  ok(big.exact === false, 'and the row says it was shortened');
+
+  const e18 = ge.arithPlan('*1000000000').rows[1];
+  ok(e18.text === '1,000,000,000,000,000,000',
+     'an exactly-representable 19-digit product is left alone (got ' + e18.text + ')');
+  ok(e18.exact === true, 'and carries no approx mark, because nothing was rounded');
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// 1c3. The comparison is made on the same spelling at both ends
+//     `_decStr` comma-groups the integer part. Comparing its output against an
+//     UNGROUPED string marks every result over 999 as shortened when nothing
+//     was shortened -- and this is not a corner case: a frequency is the most
+//     ordinary value on the grid.
+// ───────────────────────────────────────────────────────────────────────────
+{
+  const win = world(['6000000000', '1234.5', '0.215', '999']);
+  selectAll(win);
+  const ge = win.BulkEdit._ge;
+
+  const freq = ge.arithPlan('*2').rows[0];
+  ok(freq.text === '12,000,000,000' && freq.exact === true,
+     'a doubled 6 GHz frequency is exact and grouped (got ' + freq.text
+     + ' exact=' + freq.exact + ')');
+
+  const mixed = ge.arithPlan('*2').rows[1];
+  ok(mixed.text === '2,469' && mixed.exact === true,
+     'so is a grouped result that came from a fractional cell (got '
+     + mixed.text + ' exact=' + mixed.exact + ')');
+
+  const small = ge.arithPlan('*2').rows[3];
+  ok(small.text === '1,998' && small.exact === true,
+     'and one that only just crosses the grouping threshold (got '
+     + small.text + ')');
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// 1f. The expressions the bar's own tooltip advertises
+//     calc.js returns {ok, value}. This read it as if it returned a number, so
+//     every expression the tooltip promises was refused with an error toast
+//     while the tooltip went on promising them. A UI that advertises a syntax
+//     it rejects is worse than one that never offered it.
+//     calc.js is evaluated in the world for this reason -- a stub would have
+//     hidden the very contract mismatch that was the bug.
+// ───────────────────────────────────────────────────────────────────────────
+{
+  const win = world(['0.5', '0.25', '0.125', '0.0625']);
+  selectAll(win);
+  const ge = win.BulkEdit._ge;
+
+  // A refused operand comes back as a plan with NO rows array at all, so every
+  // read below -- the assert AND its failure message -- goes through nRows.
+  // Reading db.rows.length inside a message crashes the file instead of failing
+  // it, which costs every assert after this block.
+  const nRows = (p) => (p && p.rows ? p.rows.length : -1);
+  const row0 = (p, k) => (p && p.rows && p.rows[0] ? p.rows[0][k] : null);
+
+  const db = ge.arithPlan('*10^(-1/20)');
+  ok(nRows(db) === 4,
+     'a dB-style expression is accepted (got ' + nRows(db) + ' rows)');
+  ok(row0(db, 'text') !== null
+     && Number(row0(db, 'text')) === 0.5 * Math.pow(10, -1 / 20),
+     'and lands on the value calc.js computes (got ' + row0(db, 'text') + ')');
+  ok(row0(db, 'exact') === false,
+     'and says so: an expression result is a float64, never an exact decimal');
+
+  ok(nRows(ge.arithPlan('/sqrt(2)')) === 4, 'so is /sqrt(2)');
+  ok(nRows(ge.arithPlan('*(1+0.05)')) === 4, 'so is *(1+0.05)');
+
+  // and the refusal path still refuses
+  const bad = ge.arithPlan('*banana');
+  ok(!bad || !bad.rows || bad.rows.length === 0,
+     'while a non-expression is still refused');
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// 1d. What the approx glyph is allowed to claim
+//     The legend is the only thing that gives `exact: false` a meaning, and TWO
+//     different things set it now: a division that never terminates, and an
+//     exact decimal shortened to what a double holds. A legend naming only the
+//     first is a false statement about every row of the second kind -- and the
+//     rows below are the second kind: each is computed in exact BigInt decimal,
+//     not in floating point, and each is then shortened.
+//     The four values are real x180 amplitudes from a 20-qubit chip. Round
+//     fixtures like 0.2 scale exactly and would leave one marked row, which
+//     cannot pin the plural clause.
+// ───────────────────────────────────────────────────────────────────────────
+{
+  const win = world(['0.45919729451219904', '0.5921391107323938',
+                     '0.4167411533476113', '0.3491514335162928']);
+  selectAll(win);
+  win.BulkEdit._ge.arithOpen('*1.1');
+  const ov = win.document.querySelector('.ch-overlay');
+  ok(!!ov, 'the preview opened');
+  // Read the LEGEND from its own element. Taking ov.textContent lets the
+  // per-row glyph satisfy a legend assert and the legend satisfy a row assert,
+  // so neither is pinned -- deleting the row glyph outright stayed green.
+  const legend = ov ? (ov.querySelector('p.muted') || {}).textContent || '' : '';
+  const bodyRow = ov ? (ov.querySelector('.ch-table tbody tr') || {}).textContent || '' : '';
+  ok(legend.indexOf('≈') >= 0, 'the legend names the glyph');
+  ok(legend.indexOf('shortened to what the chip can store') >= 0,
+     'and covers the shortened case');
+  ok(legend.indexOf('computed in floating point') >= 0,
+     'while still covering the float-division case');
+  ok(bodyRow.indexOf('≈') >= 0,
+     'and the inexact row actually carries the glyph the legend explains');
+  ok(legend.indexOf('rows marked') >= 0 && legend.indexOf('were computed') >= 0,
+     'plural, because this plan has several marked rows');
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// 1d2. The sentence agrees with the plan, and with the session it runs in
+//     "1 cell will change -- ROWS marked ... WERE computed" was the plural half
+//     of a sentence whose first half is carefully singularised. And the
+//     unconditional "Nothing is written to the chip" is FALSE while an
+//     auto-apply session is armed (docs/117) -- which is exactly the moment a
+//     user most needs it to be true.
+// ───────────────────────────────────────────────────────────────────────────
+{
+  const win = world(['0.45919729451219904', '0.2', '0.3', '0.4']);
+  const tds = Array.prototype.slice.call(
+    win.document.querySelectorAll('#bulk-table tbody td[data-col-key="amp"]'));
+  tds[0].classList.add('bulk-sel');          // exactly ONE marked row
+  win.BulkEdit._ge.arithOpen('*1.1');
+  const solo = (win.document.querySelector('.ch-overlay')
+    .querySelector('p.muted') || {}).textContent || '';
+  ok(/1 cell will change/.test(solo), 'the count is singular');
+  ok(solo.indexOf('the row marked') >= 0 && solo.indexOf('was computed') >= 0,
+     'and so is the clause about it (got: ' + solo.slice(0, 100) + ')');
+  ok(solo.indexOf('Nothing is written to the chip') >= 0,
+     'with auto-apply disarmed, staging really does write nothing');
+}
+{
+  // And the clause is gated on the rows the table SHOWS. `anyFloat` is raised
+  // before the unchanged-cell check, so a selection whose only inexact result
+  // lands back on its own value used to print a sentence explaining a glyph
+  // that appears nowhere: "0 cells will change - rows marked ~ were computed".
+  const win = world(['1', '0.2', '0.3', '0.4']);
+  const tds = Array.prototype.slice.call(
+    win.document.querySelectorAll('#bulk-table tbody td[data-col-key="amp"]'));
+  tds[0].classList.add('bulk-sel');
+  const plan = win.BulkEdit._ge.arithPlan('*1.0000000000000001');
+  ok(plan.rows.length === 0 && plan.unchanged.length === 1 && plan.anyFloat === true,
+     'the fixture really is the inexact-but-unchanged case (rows='
+     + plan.rows.length + ' unchanged=' + plan.unchanged.length
+     + ' anyFloat=' + plan.anyFloat + ')');
+  win.BulkEdit._ge.arithOpen('*1.0000000000000001');
+  const none = (win.document.querySelector('.ch-overlay')
+    .querySelector('p.muted') || {}).textContent || '';
+  ok(none.indexOf('≈') < 0,
+     'with no row to mark, the glyph is not explained (got: ' + none.slice(0, 90) + ')');
+  ok(none.indexOf('marked') < 0, 'and nothing claims a row was marked');
+}
+{
+  // The harder half of the same defect, found by a verifier rather than the
+  // reporter: a POPULATED table. One cell changes and is exact; another is a
+  // below-half-ULP no-op that raises anyFloat on its way to `unchanged`. The
+  // table has a row, that row has no glyph, and the sentence used to send the
+  // reader looking for one.
+  const win = world(['0.5', '9007199254740992', '9007199254740992', '9007199254740992']);
+  selectAll(win);
+  const plan = win.BulkEdit._ge.arithPlan('+1');
+  ok(plan.rows.length === 1 && plan.unchanged.length === 3 && plan.anyFloat === true,
+     'the fixture is the mixed case (rows=' + plan.rows.length
+     + ' unchanged=' + plan.unchanged.length + ' anyFloat=' + plan.anyFloat + ')');
+  win.BulkEdit._ge.arithOpen('+1');
+  const ov = win.document.querySelector('.ch-overlay');
+  const legend = (ov.querySelector('p.muted') || {}).textContent || '';
+  const body = Array.prototype.slice.call(ov.querySelectorAll('.ch-table tbody tr'))
+    .map(function (t) { return t.textContent; }).join(' ');
+  ok(body.indexOf('≈') < 0, 'the one row really carries no glyph');
+  ok(legend.indexOf('marked') < 0,
+     'so the sentence does not claim one (got: ' + legend.slice(0, 90) + ')');
+  ok(/1 cell will change/.test(legend), 'while still reporting the count honestly');
+}
+{
+  const win = world(['0.45919729451219904', '0.2', '0.3', '0.4']);
+  win.AutoApply = { armed: function () { return true; } };
+  selectAll(win);
+  win.BulkEdit._ge.arithOpen('*1.1');
+  const armed = (win.document.querySelector('.ch-overlay')
+    .querySelector('p.muted') || {}).textContent || '';
+  ok(armed.indexOf('Nothing is written to the chip') < 0,
+     'an armed session is NOT promised that nothing is written');
+  ok(armed.indexOf('pushed to the live chip') >= 0,
+     'it is told what will really happen (got: ' + armed.slice(-100) + ')');
+  // The module is auto-apply.js; the CONTROL is labelled Auto-Sync (docs/120
+  // item 8), and that is the only name a user can go and find. A sentence that
+  // names the module sends them looking for a switch that does not exist.
+  ok(/Auto-Sync/.test(armed) && !/Auto-apply/i.test(armed),
+     'and it calls the control what the pill calls it (got: ' + armed.slice(-100) + ')');
+}
+{
+  // The fallback exists for the window before auto-apply.js has loaded, which
+  // is exactly when a wrong answer is most likely -- so it is read from the
+  // tray's own marker, and pinned separately from the module path.
+  const win = world(['0.45919729451219904', '0.2', '0.3', '0.4']);
+  const tray = win.document.createElement('div');
+  tray.id = 'pending-tray';
+  tray.setAttribute('data-auto-apply', '1');
+  win.document.body.appendChild(tray);
+  ok(!win.AutoApply, 'the module really is absent in this world');
+  selectAll(win);
+  win.BulkEdit._ge.arithOpen('*1.1');
+  const viaTray = (win.document.querySelector('.ch-overlay')
+    .querySelector('p.muted') || {}).textContent || '';
+  ok(viaTray.indexOf('Nothing is written to the chip') < 0,
+     'with only the tray marker, the reassuring sentence is still withheld');
+  ok(viaTray.indexOf('pushed to the live chip') >= 0,
+     'and the honest one is given (got: ' + viaTray.slice(-90) + ')');
+
+  tray.setAttribute('data-auto-apply', '0');
+  win.document.querySelector('.ch-overlay').remove();
+  win.BulkEdit._ge.arithOpen('*1.1');
+  const off = (win.document.querySelector('.ch-overlay')
+    .querySelector('p.muted') || {}).textContent || '';
+  ok(off.indexOf('Nothing is written to the chip') >= 0,
+     'and a tray that says the session is OFF gets the ordinary sentence');
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -344,6 +633,7 @@ function specialWorld() {
   win.trapFocus = function () { return function () {}; };
   win.smModalOpen = function () { return !!win.document.querySelector('.ch-overlay'); };
   new win.Function(VALUE_DELTA_JS).call(win);
+  new win.Function(CALC_JS).call(win);
   new win.Function(GRID_VIRT_JS).call(win);
   new win.Function(BULK_JS).call(win);
   win.BulkEdit.mount(
