@@ -437,6 +437,44 @@ function jsonResponse(body, status) {
         ok(pill.hidden === true, 'reaching the top of the list acknowledges applied arrivals');
     }
 
+    // ------------------------------------------------------------------
+    // 13. docs/170: a row that arrives OLDER than the newest one the table
+    //     holds is the cold build catching up (the render is bounded now and
+    //     the delta poll indexes the rest) -- it lands, but is never announced
+    //     or flashed as a new run. A genuinely newer row in the same delta
+    //     still is. And the render's "still indexing" note goes away on the
+    //     first poll that reports a complete scan.
+    // ------------------------------------------------------------------
+    {
+        const BACKFILL = { id: 0, exp: 'old_run', date: '2026-07-01', time: '09:00:00',
+                           q: ['q1'], p: [], oc: {}, metric: '', bm: false, tags: [],
+                           status: 'successful', dur: 1, note: '', parent: null,
+                           hs: false, sm: {}, pm: {}, f: 'fold1' };
+        const FRESH = { id: 11, exp: 'fresh_run', date: '2026-08-10', time: '05:00:00',
+                        q: ['q1'], p: [], oc: {}, metric: '', bm: false, tags: [],
+                        status: 'successful', dur: 1, note: '', parent: null,
+                        hs: false, sm: {}, pm: {}, f: 'fold1' };
+        const { w } = boot(() => jsonResponse({ updated: [BACKFILL, FRESH], vanished: [],
+                                                now: 9500, partial: false }));
+        const note = w.document.createElement('small');
+        note.id = 'ds-scan-note';
+        w.document.body.appendChild(note);
+        pump(w);
+        await wait(40);
+        ok(w.DatasetVirtual.getRow('fold1:0') != null, 'the backfilled (older) run lands in the store');
+        ok(w.DatasetVirtual.getRow('fold1:11') != null, 'and so does the genuinely new one');
+        const pill = w.document.getElementById('ds-new-pill');
+        ok(pill && pill.hidden === false && /1 new run/.test(pill.textContent),
+           `only the newer run is announced (got "${pill && pill.textContent}")`);
+        await wait(120);
+        const tbody = w.document.getElementById('datasets-tbody');
+        const oldTr = tbody.querySelector('tr[data-id="fold1:0"]');
+        const newTr = tbody.querySelector('tr[data-id="fold1:11"]');
+        ok(oldTr != null && !oldTr.classList.contains('ds-row-new'), 'the backfilled row does not flash');
+        ok(newTr != null && newTr.classList.contains('ds-row-new'), 'the new row does');
+        ok(note.hidden === true, 'a complete scan hides the "still indexing" note');
+    }
+
     if (failures) {
         console.error(`${failures} failure(s) of ${checks} checks`);
         process.exit(1);

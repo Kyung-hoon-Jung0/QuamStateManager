@@ -75,7 +75,10 @@ class TestDatasetDetailScanFree:
         assert re.search(r"def _resolve_run\(uid: str, rescan: bool = False\)", _ROUTES)
 
     def test_get_or_create_store_takes_rescan_flag(self):
-        assert re.search(r"def _get_or_create_store\(folder: Path, rescan: bool = True\)", _ROUTES)
+        # docs/170 added the keyword-only scan deadline; the rescan flag and
+        # its default are what this pin is about
+        assert re.search(r"def _get_or_create_store\(folder: Path, rescan: bool = True,\s*\*,\s*"
+                         r"deadline: float \| None = None\)", _ROUTES)
 
     def test_detail_rescans_only_on_miss(self):
         dd = _fn(_ROUTES, "def dataset_detail", 1100)

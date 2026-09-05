@@ -55,6 +55,12 @@
        navigation by window.Bundles (app.js) before the request is issued
        (htmx:confirm), so a swapped-in partial's inline script always finds
        its globals. Every lazy file is listed ONCE, in the manifest. #}
+    {# docs/167: the sync pill's notification chip. A core script — the pill is
+       on every page, and so are the two polls that feed it. docs/170: it must
+       load BEFORE app.js, whose new-run poll registers its acknowledge handler
+       at load time against `window.SyncBadge` -- after app.js, the handler was
+       never registered and clicking the chip did nothing but clear it. #}
+    <script src="{{ asset_url('sync-badge.js') }}"></script>
     <script src="{{ asset_url('app.js') }}"></script>
     {# docs/117: the auto-apply flusher — kept out of app.js so its
        behaviour is testable in isolation under jsdom. #}
@@ -69,9 +75,6 @@
     {# docs/141 4p: the long-poll that wakes the run polls the moment a run
        folder changes — core (the new-run popup lives on every page). #}
     <script src="{{ asset_url('live-wake.js') }}"></script>
-    {# docs/167: the sync pill's notification chip. A core script — the pill is
-       on every page, and so are the two polls that feed it. #}
-    <script src="{{ asset_url('sync-badge.js') }}"></script>
     {% set bundle_files = {
         'grid': ['grid-virt.js', 'bulk-edit.js', 'pair-edit.js', 'all-values.js', 'notes.js'],
         'pulses': ['pulses.js'],

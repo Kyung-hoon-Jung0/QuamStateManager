@@ -46,7 +46,10 @@
             text: function (p) {
                 return (p && p.count ? p.count + ' new' : 'new runs');
             },
-            title: 'New experiment runs have landed — click to see the newest'
+            // docs/170: the click REFRESHES the run lists (the sidebar's ↻ and,
+            // on the Datasets page, its Rescan) -- what the user does by hand
+            // to see them. No card: after the refresh the runs are simply there.
+            title: 'New experiment runs have landed — click to refresh the run lists'
         }
     };
     var ORDER = ['rundone', 'new'];

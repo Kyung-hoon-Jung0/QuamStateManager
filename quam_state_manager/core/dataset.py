@@ -7,6 +7,7 @@ are loaded on-demand via accessor methods.
 from __future__ import annotations
 
 import bisect
+import hashlib
 import json
 import logging
 import math
@@ -163,6 +164,32 @@ class RunInfo:
     # Without that, a run caught mid-write could freeze with partial metadata
     # until its files happened to be touched again (docs/80).
     incomplete: bool = False
+
+    # docs/170: blake2b of (node.json bytes, data.json bytes) as parsed --
+    # None for an absent file. A re-read whose bytes hash the same is the same
+    # run and is not re-parsed (see ``_parse_run_folder``).
+    content_fp: tuple | None = None
+
+
+def _content_hash(raw: bytes | None) -> str | None:
+    """Fingerprint of one file's bytes (docs/170); ``None`` for no file."""
+    if raw is None:
+        return None
+    return hashlib.blake2b(raw, digest_size=16).hexdigest()
+
+
+def _parse_scan_bytes(raw: bytes | None) -> dict | None:
+    """``safe_io.scan_json``'s parse half over bytes ``scan_bytes`` read:
+    ``None`` for an unreadable file, a truncated / half-written document, or a
+    document that is not a JSON object -- the caller treats all three as
+    "not written yet" (docs/80)."""
+    if raw is None:
+        return None
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def _parse_time(hhmmss: str) -> str:
@@ -385,8 +412,17 @@ class DatasetStore:
         # merge, vanish pass skipped) and the client's delta poll finishes
         # the job within a few ticks. Newest dates are walked first (see
         # _scan), so the visible top of the table is what lands in-budget.
-        self._scan(deadline=_time.monotonic() + _COLD_SCAN_BUDGET_S)
+        self._last_scan_truncated = self._scan(
+            deadline=_time.monotonic() + _COLD_SCAN_BUDGET_S)
         self._load_tags()
+
+    @property
+    def scan_truncated(self) -> bool:
+        """True while the last walk stopped at its deadline -- the run table
+        is still filling in and a render should say so (docs/170). The gate
+        stays open after a truncated walk, so the next scan continues and
+        clears this once it finishes."""
+        return bool(getattr(self, "_last_scan_truncated", False))
 
     def _cache_data_json(self, run_id: int, data: dict) -> None:
         """Insert *data* into the LRU cache, evicting the oldest if over cap.
@@ -491,7 +527,9 @@ class DatasetStore:
             return (None, None)
 
     def _parse_run_folder(
-        self, run_entry: Path, date_str: str, run_id: int, time_str: str, experiment_name: str
+        self, run_entry: Path, date_str: str, run_id: int, time_str: str,
+        experiment_name: str, *, known: "RunInfo | None" = None,
+        refresh_flags: bool = True,
     ) -> RunInfo | None:
         """Parse a single run folder (node.json + data.json) into a RunInfo.
 
@@ -508,25 +546,56 @@ class DatasetStore:
         what guarantees a run another process is mid-write is eventually
         picked up in full rather than frozen with the metadata we happened to
         catch.
+
+        docs/170 -- ``known`` is the RunInfo already indexed for this folder,
+        if any. Both files are read as BYTES and hashed first; when the hashes
+        equal ``known.content_fp`` the run has not changed and ``known`` itself
+        is handed back -- no parse, no key-metric / sort-scalar / facet
+        extraction, and ``last_parsed`` untouched (docs/105 #3). This is what
+        keeps the explicit Rescan button, which re-READS every run by contract
+        (docs/105 #5 -- the same-tick same-size rewrite), from re-parsing
+        thousands of unchanged JSON documents on the request thread: measured
+        4.5 s -> 3.1 s for a force_rescan of a 2,655-run archive on NVMe (what
+        remains is the reads and stats the contract requires). On a network
+        share the reads dominate either way, so nothing is lost there.
+        ``refresh_flags`` re-stats the ``has_*`` files on the reused object;
+        the caller passes True when the folder's own mtime moved (a file was
+        added or removed inside it), which is the only way those can change
+        while node.json and data.json stay byte-identical.
         """
         incomplete = False
 
-        # Read node.json
         node_path = run_entry / "node.json"
+        data_path = run_entry / "data.json"
+        node_raw = safe_io.scan_bytes(node_path) if node_path.exists() else None
+        data_raw = safe_io.scan_bytes(data_path) if data_path.exists() else None
+        content_fp = (_content_hash(node_raw), _content_hash(data_raw))
+        if (known is not None and known.content_fp is not None
+                and known.content_fp == content_fp
+                and not known.incomplete and known.folder_path == run_entry):
+            if refresh_flags:
+                flags = (known.has_ds_raw, known.has_ds_fit, known.has_quam_state)
+                known.has_ds_raw = (run_entry / "ds_raw.h5").exists()
+                known.has_ds_fit = (run_entry / "ds_fit.h5").exists()
+                known.has_quam_state = (run_entry / "quam_state").is_dir()
+                if flags != (known.has_ds_raw, known.has_ds_fit, known.has_quam_state):
+                    known.last_parsed = _time.time()   # the row changed: ship it
+            return known
+
+        # Parse node.json
         node_data: dict = {}
         if node_path.exists():
-            parsed_node = safe_io.scan_json(node_path)
+            parsed_node = _parse_scan_bytes(node_raw)
             if parsed_node is None:
                 incomplete = True
                 logger.debug("node.json not readable yet: %s", node_path)
             else:
                 node_data = parsed_node
 
-        # Read data.json
-        data_path = run_entry / "data.json"
+        # Parse data.json
         data_json: dict = {}
         if data_path.exists():
-            parsed_data = safe_io.scan_json(data_path)
+            parsed_data = _parse_scan_bytes(data_raw)
             if parsed_data is None:
                 incomplete = True
                 logger.debug("data.json not readable yet: %s", data_path)
@@ -596,6 +665,7 @@ class DatasetStore:
         info.sort_scalars = self._extract_sort_scalars(info)
         info.filter_params = self._extract_filter_params(info)
         info.incomplete = incomplete
+        info.content_fp = content_fp
         return info
 
     def _scan(self, deadline: float | None = None,
@@ -715,7 +785,19 @@ class DatasetStore:
 
             # Changed (or first-seen / unverifiable) date dir — full walk.
             date_run_paths: set[Path] = set()
+            cut_mid_dir = False
             for run_entry in date_entry.iterdir():
+                # docs/170: the deadline is checked per RUN as well as per
+                # date dir. One busy day (467 runs on the pilot archive) is
+                # ~1,900 stats -- 3.4 s at a share's 1.8 ms per operation --
+                # so a per-dir check let a 3 s render budget run to 5.4 s
+                # and a 20 s Rescan to 44 s (measured). A dir cut mid-walk
+                # gets NO fingerprint below, so the next walk re-lists it in
+                # full: the B27 short-circuit must never cache a partial run
+                # set as a complete one.
+                if deadline is not None and _time.monotonic() >= deadline:
+                    cut_mid_dir = truncated = True
+                    break
                 if not run_entry.is_dir():
                     continue
                 m = _RUN_FOLDER_RE.match(run_entry.name)
@@ -749,6 +831,8 @@ class DatasetStore:
                     run_entry, date_str, run_id, time_str, experiment_name,
                     folder_fp, node_fp, data_fp,
                 ))
+            if cut_mid_dir:
+                break           # its runs found so far still parse below
             # Record the date dir's mtime + run-path set so the next scan can
             # skip it if untouched. Only safe to short-circuit once all its
             # runs are committed to self.runs, so freshly-parsed dirs are
@@ -765,9 +849,16 @@ class DatasetStore:
             workers = min(_SCAN_PARSE_WORKERS, len(to_parse))
 
             def _parse_one(task):
-                run_entry, date_str, run_id, time_str, experiment_name, *_fps = task
+                run_entry, date_str, run_id, time_str, experiment_name, folder_fp, *_ = task
+                # docs/170: the run we hold for this id, so an unchanged file
+                # pair is recognised and not re-parsed. The folder's OWN
+                # fingerprint moving (or being unknown / poisoned) means a
+                # file appeared or vanished inside it: re-stat the has_* flags.
+                cached_fp = self._folder_fp.get(run_entry)
+                refresh = cached_fp is None or cached_fp[0] != folder_fp
                 return run_id, self._parse_run_folder(
                     run_entry, date_str, run_id, time_str, experiment_name,
+                    known=self.runs.get(run_id), refresh_flags=refresh,
                 )
 
             # docs/142: the deadline used to bound only the WALK -- on a cold

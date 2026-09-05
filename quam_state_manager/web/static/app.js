@@ -14004,15 +14004,43 @@ document.addEventListener('htmx:afterSwap', function(evt) {
     // docs/141 4p: a wake that arrives while a poll is in flight is not lost
     // and not doubled -- it runs once more when this one lands.
     var _inFlight = false, _wakeAgain = false;
-    // Clicking the chip is the acknowledge: the count resets from here, and the
-    // existing popup card shows the newest run — the same information the card
-    // used to push, now pulled.
-    if (window.SyncBadge) {
-        window.SyncBadge.onAck('new', function (payload) {
-            _ackStamp = _lastSeenStamp;
-            if (payload && payload.run) _showNewRunPopup(payload.run);
-        });
+    // Clicking the chip is the acknowledge: the count resets from here, and
+    // the run lists REFRESH -- what the user does by hand to see the runs
+    // (docs/170, customer 2026-09-05: "pressing new should do what the list's
+    // refresh button does"). No card: after the refresh the runs are simply
+    // there, in the sidebar and (on the Datasets page) in the table.
+    //
+    // docs/167 wired this handler as `if (window.SyncBadge) onAck(...)` at
+    // load time, and base.html loaded sync-badge.js AFTER this file -- so
+    // `window.SyncBadge` was undefined here, nothing was registered, and the
+    // click did nothing but clear the chip (measured in real Chrome). The
+    // count "kept accumulating" for the same reason: `_ackStamp` only moves
+    // in this handler. The script order is fixed in base.html, and the
+    // registration retries after the document is parsed so the order can
+    // never silently undo it again.
+    function _ackNewRuns() {
+        _ackStamp = _lastSeenStamp;
+        if (window.SyncBadge) window.SyncBadge.clear('new');
     }
+    function _armNewRunAck() {
+        if (!window.SyncBadge) return false;
+        window.SyncBadge.onAck('new', function () {
+            _ackNewRuns();
+            if (typeof window.refreshRunLists === 'function') window.refreshRunLists();
+        });
+        return true;
+    }
+    if (!_armNewRunAck()) {
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _armNewRunAck);
+        else setTimeout(_armNewRunAck, 0);
+    }
+    // Pressing either refresh button yourself is the same acknowledgement:
+    // the list you just refreshed shows the runs the chip was counting.
+    document.addEventListener('click', function (ev) {
+        var t = ev.target && ev.target.closest
+            ? ev.target.closest('.btn-workspace-refresh, button[hx-post="/datasets/rescan"]') : null;
+        if (t) _ackNewRuns();
+    }, true);
 
     function pollForNewRuns() {
         if (_inFlight) { _wakeAgain = true; return; }
@@ -14123,6 +14151,21 @@ document.addEventListener('htmx:afterSwap', function(evt) {
     // that evaluates app.js, which is what made version_diff_selfcheck.cjs
     // flake (a failure this range introduced and the handoff called inherited).
     if (document.getElementById('new-run-popup')) _schedule(1500);
+
+    // docs/170: what the "N new" chip does when clicked -- the same two
+    // presses a person makes to see new runs: the sidebar's ↻ (always on the
+    // page) and, when the Datasets table is open, its Rescan. Both go through
+    // the buttons' own htmx requests, so the spinner feedback, the
+    // in-flight guard and the sidebar filter come along for free. Returns
+    // what it pressed, so a harness can see it without a DOM full of htmx.
+    window.refreshRunLists = function () {
+        var did = { sidebar: false, datasets: false };
+        var ws = document.querySelector('.btn-workspace-refresh');
+        if (ws && !ws.classList.contains('htmx-request')) { ws.click(); did.sidebar = true; }
+        var rs = document.querySelector('button[hx-post="/datasets/rescan"]');
+        if (rs && !rs.classList.contains('htmx-request') && !rs.disabled) { rs.click(); did.datasets = true; }
+        return did;
+    };
 
     function _showNewRunPopup(data) {
         var popup = document.getElementById('new-run-popup');
