@@ -63,7 +63,7 @@
         <tbody>
         {% for f in rows %}
           {% set bucket = 'error' if f.severity == 'error' else ('info' if f.severity == 'info' else ('advisory' if f.advisory else 'warning')) %}
-          <tr class="diag-row diag-row-{{ f.severity }}{% if f.advisory %} diag-row-advisory{% endif %}" data-bucket="{{ bucket }}">
+          <tr class="diag-row diag-row-{{ f.severity }}{% if f.advisory %} diag-row-advisory{% endif %}{% if f.acknowledged %} diag-row-acknowledged{% endif %}" data-bucket="{{ bucket }}">
             <td>
               {% if f.advisory %}
                 <span class="diag-badge diag-advisory">Recommendation</span>
@@ -104,6 +104,27 @@
                       data-confirm-text="{{ f.fix.confirm }}"
                       title="Set {{ f.fix.dot_path }} = {{ f.fix.value }} (lands in pending edits)"
                       onclick="applyDiagFix(this)">{{ f.fix.label }}</button>
+              {% endif %}
+              {# docs/168 (customer): SM cannot know that a lab extended quam on
+                 purpose, so it must be TELLABLE. Only on environment-match
+                 findings, because only those are about what an env declares.
+                 Acknowledging does not make the finding false and does not
+                 lower its severity -- it stops being COUNTED, so the red
+                 banner and the badge go quiet while the row stays here,
+                 marked, with the date, and revocable. #}
+              {% if f.ack_key and f.category.startswith('env_') %}
+                {% if f.acknowledged %}
+                <button type="button" class="btn-sm outline diag-ack-revoke"
+                        data-ack-key="{{ f.ack_key }}"
+                        title="Count this as an issue again"
+                        onclick="envAckRevoke(this)">Un-acknowledge</button>
+                {% else %}
+                <button type="button" class="btn-sm outline diag-ack"
+                        data-ack-key="{{ f.ack_key }}"
+                        data-detail="{{ f.detail }}"
+                        title="Tell SM this is expected in this environment. The finding stays listed and keeps its severity — it stops raising the alarm."
+                        onclick="envAck(this)">This is correct</button>
+                {% endif %}
               {% endif %}
             </td>
             {% endif %}

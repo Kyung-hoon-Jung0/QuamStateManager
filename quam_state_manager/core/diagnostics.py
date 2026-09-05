@@ -70,6 +70,13 @@ class Finding:
     advisory: bool = False  # an OPTIONAL recommendation (e.g. band-edge headroom),
     #                         not a defect — surfaced with a distinct "Recommendation"
     #                         tier in the UI without lowering its warning severity.
+    acknowledged: dict | None = None  # the user has said this one is expected
+    #                         (docs/168). NOT a claim that it is false and NOT a
+    #                         severity change: the finding still says what it
+    #                         says. It stops being COUNTED as an issue, exactly
+    #                         as `advisory` does, and carries who/when so the
+    #                         page can show it and offer to revoke.
+    ack_key: str = ""       # its own identity, for the acknowledge/revoke door
 
     def as_dict(self) -> dict:
         return {
@@ -82,6 +89,8 @@ class Finding:
             "port_key": self.port_key,
             "fix": self.fix,
             "advisory": self.advisory,
+            "acknowledged": self.acknowledged,
+            "ack_key": self.ack_key,
         }
 
 
@@ -95,9 +104,15 @@ def summarize(findings: list[Finding]) -> dict:
     ``_diagnostics_list.html`` already splits them out on the Diagnostics page;
     before this, the same chip showed "2 warnings" on the badge and
     "0 warnings / 2 recommendations" on the page."""
-    out = {"error": 0, "warning": 0, "info": 0, "advisory": 0}
+    out = {"error": 0, "warning": 0, "info": 0, "advisory": 0, "acknowledged": 0}
     for f in findings:
-        if getattr(f, "advisory", False):
+        # Checked FIRST, like `advisory`: the user has said this one is
+        # expected, so it must not drive the red banner or colour the badge.
+        # Its severity is UNCHANGED -- the fact keeps its weight, the alarm
+        # stops. `total` still counts it and the page still lists it.
+        if getattr(f, "acknowledged", None):
+            out["acknowledged"] += 1
+        elif getattr(f, "advisory", False):
             out["advisory"] += 1
         elif f.severity in out:
             out[f.severity] += 1
@@ -107,6 +122,8 @@ def summarize(findings: list[Finding]) -> dict:
     # read as something to fix — a lab retuned an LO over a band-edge
     # recommendation that no QM document asks for (docs/81). ``total`` keeps
     # its meaning for callers that genuinely want every finding.
+    # Acknowledged findings are absent from these three by construction
+    # above, so they leave `issues` the same way advisories do.
     out["issues"] = out["error"] + out["warning"] + out["info"]
     return out
 

@@ -6627,6 +6627,16 @@ def field_edit():
 
     dot_path = _normalize_dot_path(request.form.get("dot_path", "").strip())
     raw_value = request.form.get("value", "")
+    # docs/145's tree editor shows a string as its JSON literal and UNWRAPS a
+    # valid one before posting, so the quotes a user typed to say "this stays
+    # text" never arrive. Standing the type-fix offer down is not enough: the
+    # value still goes through parse_value, which reads 007 as the number 7 and
+    # stores "7" -- the zeros are gone, on the very edit that asked to keep
+    # them. Putting the quotes back makes this byte-identical to the literal
+    # the user actually typed, which is the path that already preserves them.
+    if _value_was_quoted() and not (raw_value.startswith('"')
+                                    or raw_value.startswith("'")):
+        raw_value = json.dumps(raw_value)
 
     if not dot_path:
         return jsonify(ok=False, error="dot_path required"), 400
@@ -6677,7 +6687,8 @@ def field_edit():
         # typed) and stores the number; type_fix=keep proceeds as text.
         _type_fix = request.form.get("type_fix", "")
         if _type_fix not in ("convert", "keep"):
-            offer = _type_fix_offer(modifier.store, target_path, raw_value)
+            offer = _type_fix_offer(modifier.store, target_path, raw_value,
+                                    was_quoted=_value_was_quoted())
             if offer is not None:
                 return jsonify(
                     ok=False, type_fix=offer,
@@ -6687,13 +6698,23 @@ def field_edit():
                            f"the number, or keep text (wrap the value in "
                            'quotes "…" to keep text without asking)')), 409
         if _type_fix == "convert":
-            offer = _type_fix_offer(modifier.store, target_path, raw_value)
+            offer = _type_fix_offer(modifier.store, target_path, raw_value,
+                                    was_quoted=_value_was_quoted())
             if offer is not None:
                 _tp.save_assignment(
                     current_app.instance_path, ctx["path"], target_path,
                     {"type": offer["proposed"], "override_env": False,
                      "note": "converted from text via edit (r14)"})
                 _attach_type_policy(ctx)
+        elif _type_fix == "keep" and not (raw_value.startswith('"')
+                                          or raw_value.startswith("'")):
+            # KEEP means keep the text, and the text is what was typed. Without
+            # this the value still went through parse_value, so answering
+            # "keep" to the offer on a leading-zero label stored 007 as "7" --
+            # data loss on the branch whose whole purpose is not to lose it.
+            # The quoted form is the spelling that already survives, so this
+            # makes the two answers agree.
+            raw_value = json.dumps(raw_value)
         parsed = _parse_for_target(modifier.store, target_path, raw_value)
         modifier.set_value(target_path, parsed)
         _invalidate_engine_cache(ctx)
@@ -6747,7 +6768,20 @@ def _kind_of(v: Any) -> str:
     return "list" if isinstance(v, list) else "dict"
 
 
-def _type_fix_offer(store, target_path: str, raw_value: str) -> dict | None:
+def _value_was_quoted() -> bool:
+    """Did the client unwrap a JSON string literal out of what the user typed?
+
+    docs/145's tree editor shows a string AS ITS LITERAL and unwraps a valid one
+    before posting, which is what `tree_edit_literal_selfcheck.cjs` pins. The
+    quotes are the user saying "this stays text", which is exactly what
+    :func:`_type_fix_offer` reads a leading quote as -- so the client sends the
+    fact instead of the character. Absent on every other caller, where a leading
+    quote still arrives literally and is read the old way."""
+    return request.form.get("value_quoted") == "1"
+
+
+def _type_fix_offer(store, target_path: str, raw_value: str,
+                    *, was_quoted: bool = False) -> dict | None:
     """The r14 stored-as-text repair offer, else None (edit proceeds normally).
 
     Fires only when EVERY leg holds: the target is NOT inside an ``extras``
@@ -6773,6 +6807,13 @@ def _type_fix_offer(store, target_path: str, raw_value: str) -> dict | None:
             return None
         raw = (raw_value or "").strip()
         if raw.startswith('"') or raw.startswith("'"):
+            return None
+        # docs/145's tree editor UNWRAPS a full JSON string literal before
+        # posting, so a user who typed "3125" to say "keep this text" sends
+        # 3125 and the quotes never reach this test -- the escape hatch the
+        # 409 message advertises could not be taken from the one surface that
+        # shows the literal in the first place. The client says so instead.
+        if was_quoted:
             return None
         old = store.get_value(target_path)
         if not _is_numeric_string(old):
@@ -23862,11 +23903,89 @@ def _env_schema_findings(store: QuamStore) -> list:
                                   for k in _schema_warm_inflight)
         except Exception:  # noqa: BLE001
             probing = False
-        return state_env_validate.to_diag_findings(analysis, env_label=label,
-                                                   probing=probing)
+        return state_env_validate.to_diag_findings(
+            analysis, env_label=label, probing=probing,
+            acknowledged=_env_acks_now(store))
     except Exception:  # noqa: BLE001 — env findings must never break /diagnostics
         logger.warning("env-schema findings failed", exc_info=True)
         return []
+
+
+def _env_ack_key_now(store) -> str:
+    """The env these acknowledgements are ABOUT.
+
+    An acknowledgement says "this environment does not declare that, and I
+    know". Point SM at a different env and the sentence is about nothing, so it
+    must not resolve there -- which is exactly what keying on the env identity
+    gives, for free, through the same `env_key` the baselines and verdicts use.
+    """
+    from quam_state_manager.core import state_env_baseline as _seb
+    try:
+        _manifest, versions = _env_manifest_and_versions(store)
+        return _seb.env_key(versions) if versions else ""
+    except Exception:  # noqa: BLE001 — never break /diagnostics over this
+        logger.debug("env ack key unavailable", exc_info=True)
+        return ""
+
+
+def _env_acks_now(store) -> dict:
+    from quam_state_manager.core import env_ack as _ea
+    try:
+        return _ea.resolve(current_app.instance_path, _env_ack_key_now(store))
+    except Exception:  # noqa: BLE001
+        logger.debug("env acknowledgements unavailable", exc_info=True)
+        return {}
+
+
+@bp.route("/env-ack", methods=["POST"])
+def env_ack_save():
+    """The user says an environment finding is expected (docs/168).
+
+    It records agreement with a SENTENCE, not with a location: the finding's
+    own detail is stored, and `env_ack.applies` lapses the acknowledgement if
+    that sentence later changes. Nothing about the type system moves --
+    `type_policy` never reads this store.
+    """
+    from quam_state_manager.core import env_ack as _ea
+    ctx = _active_ctx()
+    store = (ctx or {}).get("store")
+    if store is None:
+        return jsonify(ok=False, error="No state loaded"), 400
+    env_key = _env_ack_key_now(store)
+    if not env_key:
+        return jsonify(ok=False, error=(
+            "SM has not probed this environment yet, so it cannot record what "
+            "the acknowledgement would be about. Select an environment first.")), 409
+    kind = (request.form.get("kind") or "").strip()
+    if not kind:
+        return jsonify(ok=False, error="kind required"), 400
+    try:
+        rec = _ea.acknowledge(
+            current_app.instance_path, env_key, kind=kind,
+            class_path=(request.form.get("class_path") or "").strip(),
+            field=(request.form.get("field") or "").strip(),
+            code=(request.form.get("code") or "").strip(),
+            detail=request.form.get("detail") or "",
+            note=request.form.get("note") or "")
+    except ValueError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    return jsonify(ok=True, acknowledged=rec, env_key=env_key)
+
+
+@bp.route("/env-ack/revoke", methods=["POST"])
+def env_ack_revoke():
+    """Take it back -- the finding starts counting again."""
+    from quam_state_manager.core import env_ack as _ea
+    ctx = _active_ctx()
+    store = (ctx or {}).get("store")
+    if store is None:
+        return jsonify(ok=False, error="No state loaded"), 400
+    env_key = _env_ack_key_now(store)
+    key = (request.form.get("ack_key") or "").strip()
+    if not key:
+        return jsonify(ok=False, error="ack_key required"), 400
+    gone = _ea.revoke(current_app.instance_path, env_key, key)
+    return jsonify(ok=True, revoked=gone)
 
 
 def _active_chip_findings(store: QuamStore) -> list:

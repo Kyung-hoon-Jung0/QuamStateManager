@@ -3996,6 +3996,46 @@ window.TypeAlert = (function () {
     window.openEnvSchemaChanges = function () { open("/env-schema/changes"); };
     window.openEnvSchemaVerdicts = function () { open("/env-schema/verdicts"); };
 
+    /* docs/168 — "this is correct". The key IS the finding's identity
+       (kind|class|field|code), built server-side, so the client never has to
+       reconstruct what is being acknowledged. */
+    function _ackPost(url, body, btn) {
+        var was = btn.textContent;
+        btn.disabled = true; btn.textContent = "…";
+        return fetch(url, { method: "POST", body: body })
+            .then(function (r) { return r.json().catch(function () { return {}; }); })
+            .then(function (d) {
+                if (!d.ok) {
+                    btn.disabled = false; btn.textContent = was;
+                    if (window.showToast) window.showToast(d.error || "Could not record that");
+                    return;
+                }
+                if (window.htmx) htmx.trigger(document.body, "diagnostics-changed");
+            })
+            .catch(function () {
+                btn.disabled = false; btn.textContent = was;
+                if (window.showToast) window.showToast("Could not record that");
+            });
+    }
+
+    window.envAck = function (btn) {
+        var parts = String(btn.getAttribute("data-ack-key") || "").split("|");
+        var b = new URLSearchParams();
+        b.append("kind", parts[0] || "");
+        b.append("class_path", parts[1] || "");
+        b.append("field", parts[2] || "");
+        b.append("code", parts[3] || "");
+        // the SENTENCE the user is agreeing with, so a changed one lapses it
+        b.append("detail", btn.getAttribute("data-detail") || "");
+        return _ackPost("/env-ack", b, btn);
+    };
+
+    window.envAckRevoke = function (btn) {
+        var b = new URLSearchParams();
+        b.append("ack_key", btn.getAttribute("data-ack-key") || "");
+        return _ackPost("/env-ack/revoke", b, btn);
+    };
+
     function _err(btn, msg) {
         var card = btn.closest(".tfx-card");
         var box = card && card.querySelector(".tfx-error");
@@ -7053,6 +7093,21 @@ window.clearDetailPanelSearch = function(btnEl) {
         delete nodeEl._lazyData; // free memory, prevent double-build
     }
 
+    /* Direct children the SEARCH filtered out. A node the filter kept can sit
+       over children it hid, and search renders kept nodes expanded, so the row
+       reads open with nothing under it. */
+    function _searchHiddenKids(nodeEl) {
+        var kids = nodeEl.querySelector(":scope > .tree-children");
+        if (!kids) return [];
+        var out = [], ch = kids.children;
+        for (var i = 0; i < ch.length; i++) {
+            if (ch[i].classList && ch[i].classList.contains("tree-search-hidden")) {
+                out.push(ch[i]);
+            }
+        }
+        return out;
+    }
+
     function _toggleNode(nodeEl) {
         var children = nodeEl.querySelector(":scope > .tree-children");
         var toggle = nodeEl.querySelector(":scope > .tree-row > .tree-toggle");
@@ -7062,6 +7117,27 @@ window.clearDetailPanelSearch = function(btnEl) {
         // Lazy: build children on first expand
         if (collapsed && nodeEl._lazyData) {
             _materializeChildren(nodeEl);
+        }
+
+        // While a search is filtering, the arrow on a KEPT row means "show me
+        // this row's values" -- match or not. That is the only thing the click
+        // can honestly mean when the children are present and all hidden, and
+        // it is what the customer asked for: the values under a searched key
+        // may start collapsed, but they must open. ONE level per click: a
+        // revealed container keeps its own hidden set and its own click, and a
+        // never-materialised grandchild is built by the lazy path above when
+        // the user gets there.
+        var hidden = _searchHiddenKids(nodeEl);
+        if (hidden.length) {
+            for (var h = 0; h < hidden.length; h++) {
+                hidden[h].classList.remove("tree-search-hidden");
+                hidden[h].classList.add("tree-search-revealed");
+            }
+            children.style.display = "";
+            toggle.textContent = "\u25BC";
+            toggle.classList.remove("collapsed");
+            toggle.classList.add("expanded");
+            return;
         }
 
         children.style.display = collapsed ? "" : "none";
@@ -7564,14 +7640,34 @@ window.clearDetailPanelSearch = function(btnEl) {
             // docs/145: unwrap a JSON string literal typed into the editor
             // ("direct" -> direct). Only for a full, valid literal -- anything
             // else goes through unchanged, exactly as before.
+            var unwrapped = false;
             if (newVal.length >= 2 && newVal.charAt(0) === '"'
                     && newVal.charAt(newVal.length - 1) === '"') {
                 try {
                     var parsed = JSON.parse(newVal);
-                    if (typeof parsed === "string") newVal = parsed;
+                    if (typeof parsed === "string") { newVal = parsed; unwrapped = true; }
                 } catch (e) { /* not a valid literal -- send as typed */ }
             }
-            if (newVal === editVal) { cancel(); return; }
+            // A string leaf is SHOWN quoted, so deleting the quotes and typing
+            // 3124 leaves newVal === editVal ("3124" both times) while meaning
+            // the OPPOSITE of unchanged: it is how a user says "make this a
+            // number", and it is the gesture SM's own numeric-string alarm
+            // sends them to make. Cancelling threw that intent away before the
+            // request that answers it -- the server already 409s with a
+            // type_fix offer, and the handler below already takes it.
+            //
+            // "Not a string any more" is the whole test, and JSON is the judge:
+            // 3124 parses to a number, true to a boolean, null to null, while
+            // abc does not parse at all. So retyping a NON-numeric string
+            // unquoted still cancels, and does not put a no-op in the tray --
+            // measured, /field/edit does not no-op an identical value (the
+            // change count goes 9 -> 10), which is what this guard is for.
+            var meansTypeChange = false;
+            if (!unwrapped && isStringKind) {
+                try { meansTypeChange = typeof JSON.parse(newVal) !== "string"; }
+                catch (e) { /* not a JSON value -- ordinary text, no intent */ }
+            }
+            if (newVal === editVal && !meansTypeChange) { cancel(); return; }
             committed = true;
             valEl.textContent = currentDisplay;
             valEl.classList.remove("tree-val-editing");
@@ -7580,6 +7676,12 @@ window.clearDetailPanelSearch = function(btnEl) {
             body.append("dot_path", dotPath);
             body.append("value", newVal);
             body.append("expect_chip", window.__chipToken || "");   // wrong-chip 409 gate
+            // The unwrap above removed the quotes the server reads as "this
+            // stays text" (routes.py _type_fix_offer). The value still goes
+            // raw -- that is what docs/145 pinned -- so the FACT travels
+            // instead of the character, and the escape hatch the 409 message
+            // advertises works from the one surface that shows the literal.
+            if (unwrapped) body.append("value_quoted", "1");
 
             var _post = function(extraBody) {
                 var b2 = new URLSearchParams(body);

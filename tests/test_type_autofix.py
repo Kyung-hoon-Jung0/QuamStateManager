@@ -26,6 +26,8 @@ _STATE = {
             "T1": "8834",                               # convert → int
             "grid_location": "4,8",                     # a pair, not a number
             "slot": "02",                               # label, not a number
+            "slot0": "007",                             # leading zeros
+            "grouped": "1_000",                         # a separator
             "flux_point": "joint",                      # never numeric
             "thermalization_factor": 5,                 # already a number
             "xy": {
@@ -297,6 +299,123 @@ class TestEntryPoints:
             assert f"window.{fn}" in app_js, fn
         # the apply path must go through the shared tray swap + refresh events
         assert "_swapPendingTray(d.tray_html)" in app_js
+
+
+class TestTheQuotedSignalFromTheTreeEditor:
+    """The escape hatch the 409 message advertises, reaching the one surface
+    that shows the literal (customer, 2026-09-05).
+
+    ``_type_fix_offer`` reads a LEADING QUOTE in the typed value as "I want
+    text" and stands down. The Json Tree editor (docs/145) shows a string as
+    its JSON literal and UNWRAPS a valid one before posting -- which
+    `tree_edit_literal_selfcheck.cjs` pins -- so those quotes never arrived and
+    the hatch could not be taken from there. The client reports the fact
+    instead of the character.
+    """
+
+    def test_an_unquoted_number_still_gets_the_offer(self, client):
+        r = client.post("/field/edit", data={
+            "dot_path": "qubits.q1.T1", "value": "8834"})
+        assert r.status_code == 409, r.get_data(as_text=True)
+        assert r.get_json()["type_fix"]["proposed"] == "int"
+
+    def test_the_quoted_marker_stands_the_offer_down(self, client):
+        r = client.post("/field/edit", data={
+            "dot_path": "qubits.q1.T1", "value": "8835", "value_quoted": "1"})
+        assert r.status_code == 200, r.get_data(as_text=True)
+        body = r.get_json()
+        assert body["ok"] is True
+        # and it is still TEXT, which is what the quotes asked for
+        assert body["stored"] == "8835"
+        assert body["stored_kind"] == "str"
+
+    def test_a_literal_leading_quote_still_works_for_every_other_caller(self, client):
+        """The character route is untouched -- only the tree editor needs the
+        flag, because only the tree editor removes the character."""
+        r = client.post("/field/edit", data={
+            "dot_path": "qubits.q1.T1", "value": '"8836"'})
+        assert r.status_code == 200, r.get_data(as_text=True)
+        assert r.get_json()["stored"] == "8836"
+
+    def test_the_marker_cannot_convert_by_itself(self, client):
+        """`value_quoted` says "do not ask me", never "change the type". A
+        conversion still needs the user's own type_fix=convert."""
+        r = client.post("/field/edit", data={
+            "dot_path": "qubits.q1.T1", "value": "8837", "value_quoted": "1"})
+        assert r.get_json()["stored_kind"] == "str"
+        r2 = client.post("/field/edit", data={
+            "dot_path": "qubits.q1.T1", "value": "8838", "type_fix": "convert"})
+        assert r2.status_code == 200, r2.get_data(as_text=True)
+        assert r2.get_json()["stored_kind"] in ("int", "real")
+
+    def test_the_client_sends_it_only_when_it_unwrapped(self):
+        from pathlib import Path
+        app_js = (Path(__file__).resolve().parent.parent / "quam_state_manager"
+                  / "web" / "static" / "app.js").read_text(encoding="utf-8")
+        assert 'body.append("value_quoted", "1")' in app_js
+        assert "if (unwrapped) body.append" in app_js
+
+
+class TestKeepActuallyKeepsTheText:
+    """Answering "keep text" to the offer must not drop what makes it text.
+
+    Measured before the fix, on a chip carrying real label-shaped values:
+    007 -> "7", 02 -> "3", 1_000 -> "1000". The user was asked "convert to a
+    number, or keep text", answered KEEP, and the zeros went anyway -- because
+    `keep` only skipped the 409 and the value still went through
+    `parse_value`. The quoted literal was the only spelling that survived, and
+    docs/145's tree editor is the one surface that deletes the quotes.
+    """
+
+    def test_keep_preserves_leading_zeros(self, client):
+        r = client.post("/field/edit", data={
+            "dot_path": "qubits.q1.slot0", "value": "008", "type_fix": "keep"})
+        assert r.status_code == 200, r.get_data(as_text=True)
+        body = r.get_json()
+        assert body["stored"] == "008", body
+        assert body["stored_kind"] == "str"
+
+    def test_keep_preserves_a_separator(self, client):
+        r = client.post("/field/edit", data={
+            "dot_path": "qubits.q1.grouped", "value": "2_000", "type_fix": "keep"})
+        assert r.get_json()["stored"] == "2_000"
+
+    def test_the_quoted_marker_preserves_them_too(self, client):
+        """`value_quoted` says the user typed quotes, so it must reach the
+        PARSE, not only the offer -- standing the question down while still
+        losing the zeros would be the worse half of both answers."""
+        r = client.post("/field/edit", data={
+            "dot_path": "qubits.q1.slot0", "value": "009", "value_quoted": "1"})
+        assert r.status_code == 200, r.get_data(as_text=True)
+        assert r.get_json()["stored"] == "009"
+
+    def test_an_explicit_literal_is_unchanged(self, client):
+        """The path that always worked still works, byte for byte."""
+        r = client.post("/field/edit", data={
+            "dot_path": "qubits.q1.slot0", "value": '"010"'})
+        assert r.get_json()["stored"] == "010"
+
+    def test_the_marker_does_not_double_wrap_a_literal(self, client):
+        """The tree only sets the marker AFTER removing the quotes, so the two
+        never arrive together from there -- but another caller could send both,
+        and wrapping twice would store the quote characters themselves."""
+        r = client.post("/field/edit", data={
+            "dot_path": "qubits.q1.slot0", "value": '"012"', "value_quoted": "1"})
+        assert r.status_code == 200, r.get_data(as_text=True)
+        assert r.get_json()["stored"] == "012"
+
+    def test_convert_still_converts(self, client):
+        """The other answer is untouched: keep is not a way to block convert."""
+        r = client.post("/field/edit", data={
+            "dot_path": "qubits.q1.T1", "value": "8834", "type_fix": "convert"})
+        assert r.status_code == 200, r.get_data(as_text=True)
+        assert r.get_json()["stored_kind"] in ("int", "real")
+
+    def test_keep_does_not_wrap_a_value_that_is_already_a_literal(self, client):
+        """Double-wrapping would store the quotes themselves."""
+        r = client.post("/field/edit", data={
+            "dot_path": "qubits.q1.slot0", "value": '"011"', "type_fix": "keep"})
+        assert r.get_json()["stored"] == "011"
 
 
 class TestAStringifiedChipStaysNavigable:

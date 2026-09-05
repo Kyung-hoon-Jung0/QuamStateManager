@@ -78,15 +78,15 @@
        without a second number to keep in step. The date header is a sibling,
        not a child, so it takes the same value explicitly — its own comment is
        the invariant that it is never smaller than the rows beneath it. */
-    --tree-date-label-font:    1.32em;   /* font size of date group headers (e.g. 2026-03-04 (314)) — never smaller than the rows under it */
-    --tree-entry-label-font:   1.32em;   /* base font size for each experiment run row */
+    --tree-date-label-font:    1.26em;   /* font size of date group headers (e.g. 2026-03-04 (314)) — never smaller than the rows under it */
+    --tree-entry-label-font:   1.26em;   /* base font size for each experiment run row */
     --tree-run-id-font:        1em;      /* font size of the run-number badge (e.g. #10157) — see .run-id */
     --tree-entry-name-font:    1em;      /* font size of the experiment name — 1em means same as --tree-entry-label-font */
     --tree-entry-time-font:    0.76em;   /* font size of the HH:MM timestamp shown on each run row */
     --tree-entry-status-font:  0.7em;    /* font size of the status chip (e.g. finished, unknown) on each run row */
     --tree-entry-indent-pl:    0.3rem;   /* left padding of the run list under each date group (tightened — push left) */
     --tree-entry-indent-ml:    0.25rem;  /* left margin that offsets the vertical indent guide line */
-    --tree-entry-pad-v:        0.18rem;  /* top/bottom padding of each individual run row — increase to space rows out */
+    --tree-entry-pad-v:        0.12rem;  /* top/bottom padding of each individual run row — increase to space rows out */
     --tree-entry-row-gap:      0.3rem;   /* gap between elements within one run row (checkbox · ID badge · name) */
     --tree-date-divider-color: #b8cce0;  /* color of the thin separator line between date groups — set transparent to hide */
     --tree-collapse-btn-font:  0.75em;   /* font size of the "↑ collapse" button at the bottom of an expanded date group */
@@ -1847,6 +1847,30 @@ details.tree-dir details.tree-dir { margin-left: .55rem; }
 details.tree-branch-active > summary {
     background: color-mix(in srgb, var(--pico-primary) 12%, transparent);
     border-radius: 3px;
+    /* A pinned header needs an OPAQUE ground (rows would show through a
+       transparent one), so the active tint is published as a token the
+       sticky rule below composites over the sidebar's own background.
+       Unstuck, the paint is exactly what it was. */
+    --tree-summary-bg: color-mix(in srgb, var(--pico-primary) 12%,
+                                 var(--pico-background-color));
+}
+
+/* A date group taller than the sidebar used to take its header off screen,
+   and with it the only way to collapse the group -- on the real archive one
+   capped group is 4.1 sidebar screens, and 48.6 after "Show all". The level
+   that holds ROWS (marked .tree-leafdir by _sidebar_tree_macros.html) pins
+   its own summary while those rows scroll past.
+
+   `top` cancels the sidebar's own top padding rather than being 0: with
+   `top: 0` a run row paints in the 8.4px strip above the pinned header,
+   because `overflow: auto` does not clip at the padding-box edge. Same
+   padding-cancel pattern as the sticky rules at style.css:3939. */
+.tree-dir.tree-leafdir > summary {
+    position: sticky;
+    top: calc(-1 * var(--sidebar-pad-v));
+    z-index: 4;
+    background: var(--tree-summary-bg, var(--pico-background-color));
+    box-shadow: 0 1px 0 var(--pico-muted-border-color);
 }
 .tree-collapse-btn {
     display: block; width: 100%; background: none; border: none;
@@ -1865,7 +1889,7 @@ details.tree-branch-active > summary {
     cursor: pointer; line-height: 1.3; border-radius: 4px;
 }
 .tree-show-more-btn:hover { color: var(--pico-primary); border-color: var(--pico-primary); }
-.tree-date-label { font-size: var(--tree-date-label-font); font-weight: 700; color: var(--pico-primary); letter-spacing: .01em; }
+.tree-date-label { font-size: var(--tree-date-label-font); font-weight: 700; color: var(--pico-primary); letter-spacing: .01em; font-variant-numeric: tabular-nums; }
 .tree-entries {
     list-style: none; padding-left: var(--tree-entry-indent-pl); margin: 0 0 .1rem var(--tree-entry-indent-ml);
     border-left: 1px solid var(--pico-muted-border-color); /* VSCode-style indent guide */
@@ -1874,7 +1898,7 @@ details.tree-branch-active > summary {
 .tree-entry { margin: 0; padding: 0; border-bottom: 1px solid color-mix(in srgb, var(--pico-muted-border-color) 45%, transparent); }
 .tree-entry:last-child { border-bottom: none; }
 .tree-entry.tree-show-more { border-bottom: none; }
-.tree-entry-label { display: flex; align-items: flex-start; gap: var(--tree-entry-row-gap); font-size: var(--tree-entry-label-font); padding: var(--tree-entry-pad-v) .2rem; overflow: hidden; border-radius: 3px; }
+.tree-entry-label { display: flex; align-items: flex-start; gap: var(--tree-entry-row-gap); font-size: var(--tree-entry-label-font); line-height: var(--dense-line-height); padding: var(--tree-entry-pad-v) .2rem; overflow: hidden; border-radius: 3px; }
 /* Hover highlight across the whole row. Brighter in dark mode (below) so the
    tint is actually distinguishable on the dark background. */
 .tree-entry-label:hover { background: color-mix(in srgb, var(--pico-primary) 10%, transparent); }
@@ -1886,7 +1910,7 @@ details.tree-branch-active > summary {
    the theme). Pico's own accent styling is bypassed via appearance:none. */
 .tree-entry-label input[type=checkbox] {
     appearance: none; -webkit-appearance: none;
-    margin: 0.22em 0 0 0; width: 22px; height: 22px; flex-shrink: 0; cursor: pointer;
+    margin: 0.08em 0 0 0; width: 22px; height: 22px; flex-shrink: 0; cursor: pointer;
     border: 1.5px solid color-mix(in srgb, var(--pico-primary) 45%, var(--pico-muted-border-color));
     border-radius: 5px; background: color-mix(in srgb, var(--pico-primary) 5%, transparent);
     position: relative; transition: border-color .12s, background .12s, box-shadow .12s;
@@ -1936,9 +1960,14 @@ details.tree-branch-active > summary {
    inside their own column (flex-basis 0, docs/157), so a long name never
    pushes the run badge around. */
 .entry-name { display: inline; min-width: 0; white-space: normal; overflow-wrap: anywhere; line-height: 1.3; }
-.tree-entry-click:hover { text-decoration: underline; }
+.tree-entry-click:hover { text-decoration: none; }
 /* Active run — the entry matching the dataset open in the inspector (item 8). */
-.tree-entry-label:has(.tree-entry-active) { background: color-mix(in srgb, var(--pico-primary) 16%, transparent); }
+.tree-entry-label:has(.tree-entry-active) {
+    background: color-mix(in srgb, var(--pico-primary) 16%, transparent);
+    /* the accent bar this app uses for "you are here" — an inset shadow, so it
+       costs no layout and sits inside the row's existing left padding */
+    box-shadow: inset 3px 0 0 0 var(--pico-primary);
+}
 .tree-entry-active .entry-name { font-weight: 700; }
 /* Dark mode: the 10%/16% tints wash out on the dark background — brighten them. */
 [data-theme="dark"] .tree-entry-label:hover { background: color-mix(in srgb, var(--pico-primary) 24%, transparent); }
@@ -1951,7 +1980,7 @@ details.tree-branch-active > summary {
     display: inline-block; vertical-align: baseline; margin-right: .3em;
     color: var(--pico-primary); font-weight: 700; font-size: var(--tree-run-id-font);
     font-family: var(--font-mono); font-variant-numeric: tabular-nums; letter-spacing: .01em;
-    line-height: 1.25; padding: .02em .3em; border-radius: 4px;
+    line-height: 1.15; padding: .02em .3em; border-radius: 4px;
     background: color-mix(in srgb, var(--pico-primary) 13%, transparent);
 }
 .entry-name { font-size: var(--tree-entry-name-font); }
@@ -5144,6 +5173,13 @@ table code { font-size: 0.88em; }
     background: var(--tree-match-strong-bg);
 }
 .tree-search-hidden { display: none; }
+/* docs/168: a finding the user has said is expected. Still listed, still its
+   own severity -- muted so the eye passes over it, never hidden. */
+.diag-row-acknowledged { opacity: 0.62; }
+/* Rows the search filtered out that the USER asked to see, by opening the row
+   above them (customer 2026-09-05). They did not match the query, so they must
+   not read as hits -- one muted step, and no layout change. */
+.tree-search-revealed > .tree-row { opacity: 0.78; }
 
 .tree-row-pending { background: var(--tree-pending-bg); border-left: 3px solid var(--color-warning-border); }
 .tree-row-pending:hover { background: var(--tree-pending-hover-bg); }
@@ -6276,12 +6312,7 @@ table.h5-vars-table tr.h5-var-selected .btn-sm { background: var(--pico-primary)
 
 /* The run currently open in the inspector — the flip-compare gesture needs to
    see where it is in the tree at a glance. */
-.tree-entry-active {
-    background: var(--pico-primary-background);
-    color: var(--pico-primary-inverse);
-    border-radius: 3px;
-}
-.tree-entry-active .run-id, .tree-entry-active .entry-name { color: inherit; }
+.tree-entry-active { border-radius: 3px; }
 
 /* Honest slow-load feedback: after 200ms in flight the pane gets a clear
    "Loading #id…" chip instead of only dimming the PREVIOUS run's content. */

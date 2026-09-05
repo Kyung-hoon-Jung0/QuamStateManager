@@ -80,15 +80,19 @@ class TestTickBox:
 
 class TestRowSize:
     def test_the_rows_are_the_size_the_customers_asked_for(self):
-        """docs/165: 1.06 -> 1.32em is the 1.25x multiple users agreed on. The
-        badge and the name are each 1em OF THE ROW, so they follow from this
-        one number; the date header is a sibling and must match explicitly, or
-        it ends up smaller than the rows beneath it."""
+        """docs/165 took 1.06 -> 1.32em, the 1.25x multiple users agreed on.
+        2026-09-05 the same customers asked for "아주 조금만 더 작게" and it
+        stepped once to 1.26em -- still far above the 1.06 they called too
+        small, which is what the RANGE is for. The badge and the name are each
+        1em OF THE ROW, so they follow from this one number; the date header is
+        a sibling and must match explicitly, or it ends up smaller than the
+        rows beneath it. The exact literal is pinned in
+        test_sidebar_run_rows.py; this range is the band it must stay in."""
         css = re.sub(r"/\*.*?\*/", "", _CSS, flags=re.S)
         def var(name):
             return float(re.search(name + r":\s*([0-9.]+)em", css).group(1))
         row = var("--tree-entry-label-font")
-        assert 1.28 <= row <= 1.36, f"rows should be ~1.32em, got {row}"
+        assert 1.20 <= row <= 1.36, f"rows should be ~1.26em, got {row}"
         assert var("--tree-run-id-font") == 1.0, "the run badge follows the row"
         assert var("--tree-entry-name-font") == 1.0, "the name follows the row"
         assert var("--tree-date-label-font") >= row,             "a date header must never be smaller than the rows under it"

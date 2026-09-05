@@ -527,8 +527,25 @@ def analysis_for_store(store, manifest: dict | None) -> dict:
     return res
 
 
+def _ack_key(rec: dict) -> str:
+    """A finding's identity, shared with :mod:`env_ack` so the two cannot
+    disagree about what is being acknowledged."""
+    from quam_state_manager.core import env_ack as _ea
+    return _ea.finding_key(rec.get("kind") or "", rec.get("class"),
+                           rec.get("field"), rec.get("code"))
+
+
+def _ack_date(ack: dict) -> str:
+    import time as _t
+    at = ack.get("at")
+    try:
+        return _t.strftime("%Y-%m-%d", _t.localtime(int(at))) if at else ""
+    except (TypeError, ValueError, OSError):
+        return ""
+
+
 def to_diag_findings(analysis: dict, env_label: str = "", *,
-                     probing: bool = False) -> list:
+                     probing: bool = False, acknowledged: dict | None = None) -> list:
     """Bridge the analyzer's aggregated findings into diagnostics ``Finding``
     objects (category ``env_*`` → the "Environment match" domain) so the
     existing badge / banner / list / Explorer-marks machinery renders them
@@ -560,6 +577,21 @@ def to_diag_findings(analysis: dict, env_label: str = "", *,
             sev = "warning"
             msg = f"{msg} — probing the environment…"
             detail = f"{detail} — a schema probe is in flight; this resolves when it lands"
+        # docs/168: the user can say a finding is expected. Matched on the
+        # finding's OWN identity -- (kind, class, field, code), the same tuple
+        # analyze_state aggregates on -- because two different findings can
+        # share a class and field, and one acknowledgement must never silence
+        # the other. `applies` then checks the finding still SAYS what was
+        # acknowledged; a changed detail lapses it.
+        ack_key = _ack_key(rec)
+        ack = (acknowledged or {}).get(ack_key)
+        if ack is not None:
+            from quam_state_manager.core import env_ack as _ea
+            if not _ea.applies(ack, rec.get("detail") or ""):
+                ack = None
+        if ack is not None:
+            detail = (f"{detail} — acknowledged by you"
+                      + (f" on {_ack_date(ack)}" if _ack_date(ack) else ""))
         out.append(Finding(
             severity=sev,
             category=f"env_{rec.get('kind') or 'finding'}",
@@ -567,5 +599,7 @@ def to_diag_findings(analysis: dict, env_label: str = "", *,
             message=msg,
             detail=detail,
             jump_path=examples[0] if examples else "",
+            acknowledged=ack,
+            ack_key=ack_key,
         ))
     return out
