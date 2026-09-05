@@ -67,12 +67,13 @@ DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5"
 # The targets it names are then re-plotted ALONE and judged individually.
 TRIAGE_STATES = ("all_fine", "some_suspect", "unreadable")
 _DEFAULTS = {
-    "provider": "off",            # off | fake | anthropic | openai_compat
+    "provider": "off",            # off | fake | anthropic | openai_compat | claude_code
     "api_key": "",
     "base_url": "",               # openai_compat only (e.g. http://localhost:11434)
     "model": "",
     "max_calls_per_plan": 40,
     "timeout_s": 60,
+    "claude_bin": "",             # claude_code only: the CLI, blank = "claude" on PATH
 }
 
 
@@ -521,6 +522,138 @@ def _call_anthropic(settings: dict, bundle: dict) -> str:
     return "".join(p.get("text", "") for p in parts if p.get("type") == "text")
 
 
+# The verdict shape every ask already parses (parse_audit / parse_signature /
+# parse_comparison / parse_triage read a JSON object out of free text). The
+# CLI's --json-schema makes the model return that object DIRECTLY, so the
+# provider hands back the structured result re-serialised, which the existing
+# parsers accept unchanged.
+# Measured before this was an enum: with a free-text "verdict" the model
+# answered "defer" -- a perfectly sensible word that the parser rejects as
+# "invalid verdict value", so the whole call became an abstain. The parser's
+# OWN vocabularies are the schema, and --json-schema makes the CLI enforce
+# them, which is stronger than any prompt wording. One schema per ask.
+def _cc_schema(ask: str) -> str:
+    if ask == "signature":
+        props = {"signature": {"type": "string", "enum": list(SIGNATURES)},
+                 "reason": {"type": "string"}}
+        req = ["signature", "reason"]
+    elif ask == "compare":
+        props = {"comparison": {"type": "string", "enum": list(COMPARISONS)},
+                 "reason": {"type": "string"}}
+        req = ["comparison", "reason"]
+    elif ask == "triage":
+        props = {"state": {"type": "string", "enum": list(TRIAGE_STATES)},
+                 "suspects": {"type": "array", "items": {"type": "string"}},
+                 "reason": {"type": "string"}}
+        req = ["state", "suspects", "reason"]
+    else:                                      # judge / presence
+        props = {"verdict": {"type": "string", "enum": list(VERDICTS)},
+                 "failure_mode": {"type": ["string", "null"],
+                                  "enum": list(FAILURE_MODES) + [None]},
+                 "reason": {"type": "string"}}
+        req = ["verdict", "reason"]
+    return json.dumps({"type": "object", "properties": props, "required": req})
+
+
+def _cc_ask_of(bundle: dict) -> str:
+    """Which ask this bundle is, from what the builders already put in it."""
+    sysmsg = str(bundle.get("system") or "")
+    if sysmsg == _COMPARE_SYSTEM or "previous" in bundle.get("context", {})             and "current" in bundle.get("context", {}):
+        return "compare"
+    if sysmsg == _TRIAGE_SYSTEM:
+        return "triage"
+    if sysmsg == _SIGNATURE_SYSTEM:
+        return "signature"
+    return "judge"
+
+
+def claude_code_available(settings: dict | None = None) -> tuple[bool, str]:
+    """Is the Claude Code CLI on this machine, and can it be run?
+
+    Only the binary is checked here -- whether it is LOGGED IN is answered by
+    the call itself (the CLI returns is_error with "Not logged in"), and that
+    answer is surfaced verbatim so the operator sees the real reason.
+    """
+    import shutil
+    exe = (settings or {}).get("claude_bin") or "claude"
+    found = shutil.which(exe)
+    if not found:
+        return False, f"'{exe}' is not on PATH -- install Claude Code, or set claude_bin"
+    return True, found
+
+
+def _call_claude_code(settings: dict, bundle: dict) -> str:
+    """One headless Claude Code call, on the user's own login.
+
+    Images go to disk: `claude -p` has no image input, so each PNG is written to
+    a private temp dir and the prompt names the paths, with `Read` the ONLY
+    tool the model may use. Order is preserved (the comparison ask is
+    order-dependent). The temp dir is removed after the call whatever happens.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+
+    exe = settings.get("claude_bin") or "claude"
+    # The shared timeout_s default (60 s) is API-shaped. A CLI call spawns a
+    # process, loads a session, READS the figure and answers -- measured 30 s
+    # on haiku with one figure -- so the default model would be cut off. A
+    # floor, never a cap: a larger user value still wins.
+    timeout = max(float(settings.get("timeout_s") or _DEFAULTS["timeout_s"]), 120.0)
+    tmp = tempfile.mkdtemp(prefix="sm-judge-")
+    try:
+        paths: list[str] = []
+        for i, b in enumerate(_images_of(bundle)):
+            p = Path(tmp) / f"figure_{i + 1}.png"
+            p.write_bytes(base64.b64decode(b))
+            paths.append(str(p).replace("\\", "/"))
+        lines = []
+        if paths:
+            lines.append("Open the following figure(s) with your Read tool, in this "
+                         "order, before answering:")
+            lines.extend(f"  {i + 1}. {p}" for i, p in enumerate(paths))
+            lines.append("")
+        lines.append(json.dumps(bundle["context"], indent=1))
+        prompt = "\n".join(lines)
+
+        # NOT --bare: it skips the keychain and answers "Not logged in".
+        cmd = [exe, "-p", "--output-format", "json",
+               "--json-schema", _cc_schema(_cc_ask_of(bundle)),
+               "--allowedTools", "Read" if paths else "",
+               "--permission-mode", "bypassPermissions"]
+        model = settings.get("model") or ""
+        if model:
+            cmd += ["--model", model]
+        # The signature / triage / compare asks carry their own system prompt
+        # (the family knowledge the judge is supposed to apply). Dropping it
+        # would leave the model guessing at the question.
+        if bundle.get("system"):
+            cmd += ["--system-prompt", str(bundle["system"])]
+        try:
+            proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
+                                  encoding="utf-8", timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            # TimeoutExpired is NOT an OSError -- unwrapped it would escape
+            # audit()'s catch and take the running plan down with it.
+            raise OSError(f"claude did not answer within {timeout:.0f}s") from exc
+        raw = (proc.stdout or "").strip()
+        try:
+            env = json.loads(raw)
+        except ValueError as exc:
+            raise OSError(f"claude returned non-JSON (exit {proc.returncode}): "
+                          f"{(proc.stderr or raw)[:200]}") from exc
+        if env.get("is_error"):
+            # "Not logged in", a usage limit, a refused model -- the CLI's own
+            # words, so the ledger records the real reason.
+            raise OSError(f"claude: {str(env.get('result'))[:200]}")
+        structured = env.get("structured_output")
+        if isinstance(structured, dict):
+            return json.dumps(structured)
+        return str(env.get("result") or "")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def _call_openai_compat(settings: dict, bundle: dict) -> str:
     content: list[Any] = [{"type": "text",
                            "text": json.dumps(bundle["context"], indent=1)}]
@@ -602,6 +735,8 @@ class Auditor:
             return bool(self.settings.get("api_key"))
         if p == "openai_compat":
             return bool(self.settings.get("base_url"))
+        if p == "claude_code":
+            return claude_code_available(self.settings)[0]
         return False
 
     def audit(self, bundle: dict) -> AuditVerdict:
@@ -623,6 +758,8 @@ class Auditor:
                 text = _call_anthropic(self.settings, bundle)
             elif provider == "openai_compat":
                 text = _call_openai_compat(self.settings, bundle)
+            elif provider == "claude_code":
+                text = _call_claude_code(self.settings, bundle)
             else:  # pragma: no cover
                 return _ABSTAIN
         # AttributeError/TypeError/IndexError belong here too: a provider
@@ -663,6 +800,8 @@ class Auditor:
                 return _call_anthropic(self.settings, bundle), provider, model
             if provider == "openai_compat":
                 return _call_openai_compat(self.settings, bundle), provider, model
+            if provider == "claude_code":
+                return _call_claude_code(self.settings, bundle), provider, model
         # AttributeError/TypeError/IndexError belong here too: a provider
         # that answers with an unexpected PAYLOAD SHAPE (a list where a
         # dict was expected, a missing content block) raises one of those,

@@ -11208,6 +11208,16 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
     flex-direction: column; gap: .15rem; }
 .autofit-planbar select { margin: 0; padding: .2rem .4rem; font-size: .82rem;
     width: auto; min-width: 9rem; }
+/* the AI judge block (docs/169): a compact grid of labelled fields */
+.autofit-ai-body { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+    gap: .5rem .9rem; align-items: end; padding: .5rem .6rem .6rem; }
+.autofit-ai-body label { font-size: .74rem; margin: 0; display: flex;
+    flex-direction: column; gap: .15rem; }
+.autofit-ai-body input, .autofit-ai-body select { margin: 0; padding: .2rem .4rem;
+    font-size: .82rem; height: auto; }
+.autofit-ai-note { grid-column: 1 / -1; font-size: .78rem; margin: 0; }
+.autofit-ai-actions { grid-column: 1 / -1; display: flex; gap: .5rem; align-items: center; }
+.autofit-ai-actions #ai-status { font-size: .78rem; }
 .autofit-run-btn { font-weight: 700; padding: .45rem 1.1rem; }
 .autofit-board-table td { text-align: center; font-size: .95rem; width: 2.2rem; }
 .autofit-board-table td:first-child { text-align: left; width: auto;

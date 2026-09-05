@@ -16,11 +16,49 @@
     <span class="autofit-ready-chip {{ 'ok' if readiness.calibrations_folder.ok else 'bad' }}"
           title="{{ readiness.calibrations_folder.value }}">
         Calibrations {{ '✓' if readiness.calibrations_folder.ok else '— set on Experiment Runner' }}</span>
-    <span class="autofit-ready-chip {{ 'ok' if readiness.llm.enabled else 'off' }}">
+    <span id="ai-ready-chip" class="autofit-ready-chip {{ 'ok' if readiness.llm.enabled else 'off' }}">
         LLM audit: {{ readiness.llm.provider }}</span>
     <a href="/scheduler" hx-get="/scheduler" hx-target="#table-pane" hx-push-url="true"
        class="muted autofit-ready-fix">fix on Experiment Runner →</a>
 </div>
+
+{# ---- the AI judge (docs/169): which login answers "is this fit real?" ---- #}
+<details class="autofit-profile autofit-ai" id="autofit-ai" style="margin:0.4rem 0">
+  <summary>AI judge <small class="muted">a second opinion on suspect fits — off, your Claude Code login, an API key, or a local model</small></summary>
+  <div class="autofit-ai-body">
+    <label>Provider
+      <select id="ai-provider" onchange="autofitAiProviderChanged()">
+        <option value="off">off — deterministic gates only</option>
+        <option value="claude_code">Claude Code login (no API key)</option>
+        <option value="anthropic">Anthropic API key</option>
+        <option value="openai_compat">OpenAI-compatible endpoint (e.g. a local model)</option>
+      </select>
+    </label>
+    <label data-ai-for="claude_code anthropic openai_compat">Model
+      <input id="ai-model" type="text" placeholder="blank = the provider's default">
+    </label>
+    <label data-ai-for="anthropic">API key
+      <input id="ai-api-key" type="password" autocomplete="off" placeholder="leave blank to keep the saved one">
+    </label>
+    <label data-ai-for="openai_compat">Base URL
+      <input id="ai-base-url" type="text" placeholder="http://localhost:11434">
+    </label>
+    <label data-ai-for="claude_code">claude executable
+      <input id="ai-claude-bin" type="text" placeholder="blank = claude on PATH">
+    </label>
+    <p class="muted autofit-ai-note" data-ai-for="claude_code">
+      Uses the Claude Code you are already logged into on this machine — run
+      <code>claude</code> once in a terminal and sign in with your plan. Nothing is stored by SM.
+      Figures are handed to the model as files it reads itself.
+    </p>
+    <div class="autofit-ai-actions">
+      <button type="button" class="btn-sm" onclick="autofitAiSave()">Save</button>
+      <button type="button" class="btn-sm outline" onclick="autofitAiProbe()"
+              title="One real call through the configured provider">Test</button>
+      <span id="ai-status" class="muted"></span>
+    </div>
+  </div>
+</details>
 
 {# ---- plan bar: THE button ---- #}
 <details class="autofit-profile" style="margin:0.4rem 0">

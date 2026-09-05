@@ -139,10 +139,13 @@ skip it (docs/47 §resonator DEFER) and rely on G2/G4.
   context), output = `{verdict: accept|reject|abstain, failure_mode, reason}`.
   No numeric field exists in the schema. `failure_mode` selects the adaptation
   rule — qualitative, not quantitative.
-- **Providers:** `anthropic` (Messages API, vision), `openai_compat`
-  (`/v1/chat/completions`, urllib — covers Ollama/gateways), `fake`
-  (deterministic, for tests), `off`. Config in `instance/autofit_ai.json`
-  (key, base URL, model, max calls per plan). stdlib urllib only — no new deps.
+- **Providers:** `claude_code` (the user's own Claude Code subscription login,
+  headless `claude -p` — no API key; docs/169), `anthropic` (Messages API,
+  vision), `openai_compat` (`/v1/chat/completions`, urllib — covers
+  Ollama/gateways), `fake` (deterministic, for tests), `off`. Config in
+  `instance/autofit_ai.json` (key, base URL, model, claude executable, max calls
+  per plan), editable from the Auto Calibrate page's "AI judge" block
+  (`GET/POST /autofit/ai`, `POST /autofit/ai/probe`). stdlib urllib only — no new deps.
 - **Scope:** suspects only (G-pipeline residual). Never a pre-filter on
   success; never an authority over G3's deterministic rejection (an LLM accept
   cannot override a deterministic fail — one ack never collapses two gates).

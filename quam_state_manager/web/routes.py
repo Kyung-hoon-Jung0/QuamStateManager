@@ -25586,6 +25586,91 @@ def autofit_status():
                     "readiness": _autofit_readiness()})
 
 
+@bp.route("/autofit/ai", methods=["GET"])
+def autofit_ai_get():
+    """The AI-judge settings as the page reads them (docs/169). The API key is
+    never echoed back -- only whether one is set."""
+    from quam_state_manager.core.autofit import auditor as af_auditor
+    s = af_auditor.load_settings(current_app.instance_path)
+    avail, where = af_auditor.claude_code_available(s)
+    return jsonify({
+        "provider": s.get("provider", "off"),
+        "model": s.get("model", ""),
+        "base_url": s.get("base_url", ""),
+        "claude_bin": s.get("claude_bin", ""),
+        "max_calls_per_plan": s.get("max_calls_per_plan"),
+        "timeout_s": s.get("timeout_s"),
+        "has_api_key": bool(s.get("api_key")),
+        "claude_code": {"available": avail, "detail": where},
+    })
+
+
+@bp.route("/autofit/ai", methods=["POST"])
+def autofit_ai_set():
+    """Write the AI-judge settings. An empty api_key field in the form means
+    "leave it alone", so a user changing the model does not wipe a key they
+    typed last week; to clear a key they send api_key=CLEAR."""
+    from quam_state_manager.core.autofit import auditor as af_auditor
+    data = request.get_json(silent=True) or request.form.to_dict()
+    patch: dict = {}
+    for k in ("provider", "model", "base_url", "claude_bin"):
+        if k in data:
+            patch[k] = str(data.get(k) or "").strip()
+    for k in ("max_calls_per_plan", "timeout_s"):
+        if data.get(k) not in (None, ""):
+            try:
+                patch[k] = int(data[k])
+            except (TypeError, ValueError):
+                return jsonify(ok=False, error=f"{k} must be a whole number"), 400
+    key = data.get("api_key")
+    if key == "CLEAR":
+        patch["api_key"] = ""
+    elif key:
+        patch["api_key"] = str(key)
+    prov = patch.get("provider")
+    if prov is not None and prov not in ("off", "anthropic", "openai_compat", "claude_code"):
+        return jsonify(ok=False, error=f"unknown provider {prov!r}"), 400
+    saved = af_auditor.save_settings(current_app.instance_path, patch)
+    avail, where = af_auditor.claude_code_available(saved)
+    return jsonify(ok=True, provider=saved.get("provider"),
+                   claude_code={"available": avail, "detail": where})
+
+
+@bp.route("/autofit/ai/probe", methods=["POST"])
+def autofit_ai_probe():
+    """One real call through whatever is configured, so "does my login work"
+    is answered by the judge itself and not by a green chip. Returns the
+    provider's own words on failure -- "Not logged in" is the useful one."""
+    from quam_state_manager.core.autofit import auditor as af_auditor
+    s = af_auditor.load_settings(current_app.instance_path)
+    aud = af_auditor.Auditor(s)
+    if not aud.enabled:
+        avail, where = af_auditor.claude_code_available(s)
+        why = where if s.get("provider") == "claude_code" else "provider is off or unconfigured"
+        return jsonify(ok=False, error=why), 409
+    bundle = {"context": {"ask": "probe",
+                          "instruction": "Reply with verdict=accept and reason='probe ok'."}}
+    prov = s.get("provider", "off")
+    # NOT through Auditor._raw: it turns every provider failure into a silent
+    # None (the right thing mid-plan, where a judge that cannot answer must
+    # abstain). Here the failure's own words ARE the answer -- "Not logged in"
+    # is what the operator pressed Test to find out.
+    callers = {"anthropic": af_auditor._call_anthropic,
+               "openai_compat": af_auditor._call_openai_compat,
+               "claude_code": af_auditor._call_claude_code}
+    call = callers.get(prov)
+    if call is None:
+        return jsonify(ok=False, error=f"no live provider: {prov}"), 409
+    try:
+        text = call(s, bundle)
+    except Exception as exc:  # noqa: BLE001 -- the reason IS the answer
+        return jsonify(ok=False, error=str(exc)[:300]), 502
+    if not text:
+        return jsonify(ok=False, error="the provider answered nothing"), 502
+    return jsonify(ok=True, provider=prov, model=s.get("model") or "",
+                   sample=str(text)[:200])
+
+
 @bp.route("/autofit/resolve", methods=["POST"])
 def autofit_resolve():
     """Resolve a preset/plan's steps against the scanned calibrations folder —

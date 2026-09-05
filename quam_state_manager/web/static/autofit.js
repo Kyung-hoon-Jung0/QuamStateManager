@@ -35,6 +35,7 @@
 
   // ---------------- init / poll lifecycle ----------------
   window.autofitInit = function () {
+    aiLoad();
     if (window._autofitPoll) { clearInterval(window._autofitPoll); }
     if (!$("autofit-board")) return;          // navigated away
     fillTargets();
@@ -44,6 +45,69 @@
     if (backend) backend.onchange = onPresetOrBackendChange;
     poll();
     window._autofitPoll = setInterval(poll, POLL_MS);
+  };
+
+  /* docs/169 -- the AI judge settings block */
+  function aiShowFor(provider) {
+    var els = document.querySelectorAll("#autofit-ai [data-ai-for]");
+    for (var i = 0; i < els.length; i++) {
+      var ok = (els[i].getAttribute("data-ai-for") || "").split(" ").indexOf(provider) >= 0;
+      els[i].hidden = !ok;
+    }
+  }
+  window.autofitAiProviderChanged = function () { aiShowFor($("ai-provider").value); };
+  function aiLoad() {
+    if (!$("ai-provider")) return;
+    fetchJSON("/autofit/ai").then(function (r) {
+      var d = r.body || {};                 // fetchJSON answers {status, body}
+      if (r.status !== 200) { $("ai-status").textContent = "settings unavailable (" + r.status + ")"; return; }
+      $("ai-provider").value = d.provider || "off";
+      $("ai-model").value = d.model || "";
+      $("ai-base-url").value = d.base_url || "";
+      $("ai-claude-bin").value = d.claude_bin || "";
+      $("ai-api-key").placeholder = d.has_api_key ? "a key is saved -- leave blank to keep it, type CLEAR to remove it" : "paste an API key";
+      aiShowFor(d.provider || "off");
+      var cc = d.claude_code || {};
+      $("ai-status").textContent = (d.provider === "claude_code" && !cc.available)
+        ? ("claude not found: " + (cc.detail || "")) : "";
+    }).catch(function () {});
+  }
+  window.autofitAiSave = function () {
+    var body = { provider: $("ai-provider").value, model: $("ai-model").value,
+                 base_url: $("ai-base-url").value, claude_bin: $("ai-claude-bin").value };
+    if ($("ai-api-key").value) body.api_key = $("ai-api-key").value;
+    $("ai-status").textContent = "saving…";
+    fetchJSON("/autofit/ai", { method: "POST", headers: { "Content-Type": "application/json" },
+                               body: JSON.stringify(body) })
+      .then(function (r) {
+        var d = r.body || {};
+        if (r.status !== 200 || !d.ok) { $("ai-status").textContent = "not saved: " + (d.error || ("HTTP " + r.status)); return; }
+        $("ai-api-key").value = "";
+        $("ai-status").textContent = "saved (" + d.provider + ")";
+        // the readiness chip is server-rendered; patch it in place rather than
+        // re-pulling the page (which would collapse this block and wipe the message)
+        var chip = $("ai-ready-chip");
+        if (chip) {
+          chip.textContent = "LLM audit: " + d.provider;
+          chip.classList.toggle("ok", d.provider !== "off");
+          chip.classList.toggle("off", d.provider === "off");
+        }
+        var cc = d.claude_code || {};
+        if (d.provider === "claude_code" && !cc.available)
+          $("ai-status").textContent += " — claude not found: " + (cc.detail || "");
+      })
+      .catch(function (e) { $("ai-status").textContent = "not saved: " + e; });
+  };
+  window.autofitAiProbe = function () {
+    $("ai-status").textContent = "asking the judge…";
+    fetchJSON("/autofit/ai/probe", { method: "POST" })
+      .then(function (r) {
+        var d = r.body || {};
+        $("ai-status").textContent = (r.status === 200 && d.ok)
+          ? ("works — " + (d.provider || "") + (d.model ? " / " + d.model : ""))
+          : ("failed: " + (d.error || "?"));
+      })
+      .catch(function (e) { $("ai-status").textContent = "failed: " + e; });
   };
 
   function readiness() {
