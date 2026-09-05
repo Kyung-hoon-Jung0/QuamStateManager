@@ -20423,7 +20423,10 @@ def _get_or_create_store(folder: Path, rescan: bool = True, *,
             lru.move_to_end(folder)
             return cached
         try:
-            ds = DatasetStore(folder)
+            # docs/171: the persisted store lives beside the sidebar's listing
+            # cache, in the INSTANCE dir -- never on the archive's share.
+            ds = DatasetStore(folder, cache_dir=Path(current_app.instance_path)
+                              / "workspace_cache")
         except Exception:
             return None
         lru[folder] = ds

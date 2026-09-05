@@ -401,12 +401,15 @@ def _replace_into_place(tmp: Path, dst: Path) -> None:
     )
 
 
-def _write_tmp_json(path: Path, data) -> Path:
+def _write_tmp_json(path: Path, data, *, compact: bool = False) -> Path:
     """Write *data* as pretty JSON to a ``.tmp`` sibling of *path* (flushed +
     fsync'd) and return the tmp path. The caller swaps it into place."""
     tmp = path.with_suffix(path.suffix + ".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
+        if compact:      # docs/171: a 10 MB store cache is not for reading
+            json.dump(data, f, separators=(",", ":"), ensure_ascii=False)
+        else:
+            json.dump(data, f, indent=4, ensure_ascii=False)
         f.write("\n")
         f.flush()
         os.fsync(f.fileno())
@@ -426,7 +429,7 @@ def _write_tmp_bytes(path: Path, data: bytes) -> Path:
     return tmp
 
 
-def atomic_write_json(path: Path | str, data) -> None:
+def atomic_write_json(path: Path | str, data, *, compact: bool = False) -> None:
     """Write *data* as pretty JSON to *path* atomically.
 
     Writes a ``.tmp`` sibling (flushed + fsync'd), then atomically replaces
@@ -438,7 +441,7 @@ def atomic_write_json(path: Path | str, data) -> None:
     ``workspace_roots.json`` is a list, ``last_session.json`` is a dict).
     """
     path = Path(path)
-    _replace_into_place(_write_tmp_json(path, data), path)
+    _replace_into_place(_write_tmp_json(path, data, compact=compact), path)
 
 
 def write_state_wiring(folder: Path | str, state: dict, wiring: dict) -> None:

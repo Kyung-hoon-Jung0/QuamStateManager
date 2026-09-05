@@ -44,6 +44,12 @@ _DATA_JSON_CACHE_MAX = 200
 # docs/142: wall-clock budget for the SYNCHRONOUS first scan of a folder
 # (DatasetStore.__init__). Rescans/polls keep their own budgets.
 _COLD_SCAN_BUDGET_S = 3.0
+# docs/171: the persisted store. Version bumps when the payload's shape or
+# meaning changes (a mismatch reads as a miss: one cold scan, then flat).
+_STORE_CACHE_V = 1
+# A scan that changed something writes the cache this long after the LAST
+# such scan -- a burst of landing runs is one write, not one per run.
+_STORE_CACHE_DEBOUNCE_S = 3.0
 
 _SCAN_PARSE_WORKERS = min(32, (os.cpu_count() or 4) * 4)
 
@@ -349,7 +355,8 @@ def _resolve_figure_path(run_folder: Path, data: dict, figure_name: str) -> Path
 class DatasetStore:
     """In-memory index of all experiment runs in a data folder."""
 
-    def __init__(self, folder_path: str | Path):
+    def __init__(self, folder_path: str | Path, *,
+                 cache_dir: str | Path | None = None):
         self.folder_path = Path(folder_path)
         self.runs: dict[int, RunInfo] = {}
         self.dates: list[str] = []
@@ -412,6 +419,19 @@ class DatasetStore:
         # merge, vanish pass skipped) and the client's delta poll finishes
         # the job within a few ticks. Newest dates are walked first (see
         # _scan), so the visible top of the table is what lands in-budget.
+        # docs/171: the persisted store. With a cache_dir, a previous
+        # session's runs + fingerprints are loaded FIRST, so the cold scan
+        # below is the ordinary incremental one -- one stat per date dir for
+        # an unchanged archive, and only what moved is walked and parsed.
+        # Without one (every direct constructor: tests, the CLI) nothing is
+        # read or written and the build is exactly what it was.
+        self.cache_dir = Path(cache_dir) if cache_dir else None
+        self._cache_lock = threading.Lock()
+        self._cache_dirty = False
+        self._cache_timer: threading.Timer | None = None
+        self._cache_saved = False
+        self.cache_hit_runs = 0
+        self._load_store_cache()
         self._last_scan_truncated = self._scan(
             deadline=_time.monotonic() + _COLD_SCAN_BUDGET_S)
         self._load_tags()
@@ -972,6 +992,12 @@ class DatasetStore:
         self._run_ids_sorted = sorted(self.runs.keys())
         if not truncated:
             self._last_mtime = pre_walk_mtime
+            # docs/171: a COMPLETE walk that changed something (or the first
+            # one this cache has seen) is what the next session should start
+            # from. A truncated walk never is -- its un-walked dirs would be
+            # persisted as if verified.
+            if parsed or vanished or not self._cache_saved:
+                self._mark_store_cache_dirty()
         if parsed or vanished or truncated:
             logger.info(
                 "DatasetStore scan: %d parsed, %d reused, %d removed%s "
@@ -984,6 +1010,169 @@ class DatasetStore:
                 len(self.dates),
             )
         return truncated
+
+    # ------------------------------------------------------------------
+    # docs/171: the persisted store -- the docs/142 A' shape for the run table
+    # ------------------------------------------------------------------
+    #
+    # The sidebar's Workspace has had a per-root listing cache since docs/142;
+    # the run table had none, so every SM start re-read and re-parsed every
+    # run's node.json + data.json (~11 file operations per run: 29,000 on a
+    # 2,655-run archive, ~52 s at a share's 1.8 ms per operation) before the
+    # Datasets panel was complete. What is persisted is exactly what a warm
+    # process holds: every RunInfo (descriptions interned -- one node's
+    # docstring repeats across hundreds of runs, 36% of the payload), the
+    # per-run fingerprints and the per-date-dir fingerprints. Loading them and
+    # running the ORDINARY scan is the verification: an unchanged date dir
+    # costs one stat and re-serves its runs (B27), a changed one is walked
+    # and its runs compared fingerprint by fingerprint, a vanished folder is
+    # dropped by the vanish pass. Nothing is trusted that the scan does not
+    # check the way it checks a warm process's own memory.
+    #
+    # Never persisted: a run caught mid-write (its sentinel fingerprint would
+    # freeze it), a poisoned fingerprint, a truncated walk's state, the
+    # parsed-data.json LRU. The file lives in the INSTANCE dir, never on the
+    # archive's share.
+
+    def _store_cache_path(self) -> Path | None:
+        if self.cache_dir is None:
+            return None
+        key = hashlib.sha1(str(self.folder_path).lower().encode("utf-8")).hexdigest()[:16]
+        return self.cache_dir / f"ds_{key}.json"
+
+    def _store_cache_payload(self, runs: list, folder_fp: dict, date_fp: dict) -> dict:
+        """The persisted shape, built from a snapshot taken under ``_scan_lock``
+        (the build itself is ~0.2 s at 2,500 runs and must not hold the lock
+        the polls wait on)."""
+        fields = list(RunInfo.__dataclass_fields__)
+        desc_index: dict[str, int] = {}
+        descs: list[str] = []
+        runs_out: list[dict] = []
+        skip: set[Path] = set()
+        for r in runs:
+            if r.incomplete:
+                skip.add(r.folder_path)
+                continue
+            row: dict = {}
+            for k in fields:
+                v = getattr(r, k)
+                if k == "folder_path":
+                    v = str(v)
+                elif k == "description":
+                    idx = desc_index.get(v)
+                    if idx is None:
+                        idx = desc_index[v] = len(descs)
+                        descs.append(v)
+                    v = idx
+                elif k == "content_fp":
+                    v = list(v) if v else None
+                row[k] = v
+            runs_out.append(row)
+        folder_out: dict[str, list] = {}
+        for path, fp in folder_fp.items():
+            if path in skip or fp[0] == _INCOMPLETE_FP or fp[0] is None:
+                continue
+            folder_out[str(path)] = [list(fp[0]), list(fp[1]), list(fp[2]), fp[3]]
+        date_out = {str(path): [mt, [str(x) for x in paths]]
+                    for path, (mt, paths) in date_fp.items()}
+        return {"v": _STORE_CACHE_V, "root": str(self.folder_path),
+                "saved": _time.time(), "descriptions": descs, "runs": runs_out,
+                "folder_fp": folder_out, "date_fp": date_out}
+
+    def _load_store_cache(self) -> bool:
+        """Populate runs + fingerprints from a previous session's file.
+        Any doubt -- version, root, shape, a bad row -- reads as a miss and
+        the cold scan runs as if there were no file."""
+        p = self._store_cache_path()
+        if p is None:
+            return False
+        try:
+            if not p.is_file():
+                return False
+            raw = json.loads(p.read_text(encoding="utf-8"))
+            if raw.get("v") != _STORE_CACHE_V or raw.get("root") != str(self.folder_path):
+                return False
+            descs = raw.get("descriptions") or []
+            fields = RunInfo.__dataclass_fields__
+            runs: dict[int, RunInfo] = {}
+            for row in raw["runs"]:
+                kw = {k: row[k] for k in fields if k in row}
+                kw["folder_path"] = Path(row["folder_path"])
+                d = kw.get("description")
+                if isinstance(d, int):
+                    kw["description"] = descs[d]
+                cfp = kw.get("content_fp")
+                kw["content_fp"] = tuple(cfp) if cfp else None
+                info = RunInfo(**kw)
+                runs[int(info.run_id)] = info
+            folder_fp = {Path(k): (tuple(v[0]), tuple(v[1]), tuple(v[2]), int(v[3]))
+                         for k, v in raw["folder_fp"].items()}
+            date_fp = {Path(k): (float(v[0]), frozenset(Path(x) for x in v[1]))
+                       for k, v in raw["date_fp"].items()}
+        except Exception:
+            logger.warning("dataset store cache %s unreadable -- cold scan", p,
+                           exc_info=True)
+            return False
+        self.runs = runs
+        self._folder_fp = folder_fp
+        self._date_fp = date_fp
+        self._run_ids_sorted = sorted(runs)
+        self.dates = sorted({r.date for r in runs.values()}, reverse=True)
+        self.experiment_types = sorted({r.experiment_name for r in runs.values()})
+        self._cache_saved = True
+        self.cache_hit_runs = len(runs)
+        logger.info("DatasetStore %s: %d runs from the store cache, verifying",
+                    self.folder_path, len(runs))
+        return True
+
+    def _mark_store_cache_dirty(self) -> None:
+        if self.cache_dir is None:
+            return
+        with self._cache_lock:
+            self._cache_dirty = True
+            if self._cache_timer is None:
+                t = threading.Timer(_STORE_CACHE_DEBOUNCE_S, self._save_store_cache)
+                t.daemon = True
+                self._cache_timer = t
+                t.start()
+
+    def flush_store_cache(self) -> bool:
+        """Write the cache NOW if anything is pending (tests, shutdown).
+        Returns whether a file was written."""
+        with self._cache_lock:
+            if self._cache_timer is not None:
+                self._cache_timer.cancel()
+                self._cache_timer = None
+        return self._save_store_cache()
+
+    def _save_store_cache(self) -> bool:
+        p = self._store_cache_path()
+        if p is None:
+            return False
+        with self._cache_lock:
+            self._cache_timer = None
+            if not self._cache_dirty:
+                return False
+            self._cache_dirty = False
+        try:
+            with self._scan_lock:
+                snap = (list(self.runs.values()), dict(self._folder_fp),
+                        dict(self._date_fp))
+            payload = self._store_cache_payload(*snap)
+            # the instance dir itself is gone (a test's teardown, an uninstall):
+            # never recreate it for a cache
+            if not p.parent.parent.is_dir():
+                return False
+            p.parent.mkdir(exist_ok=True)
+            safe_io.atomic_write_json(p, payload, compact=True)
+            self._cache_saved = True
+            return True
+        except Exception:
+            logger.warning("dataset store cache save for %s failed",
+                           self.folder_path, exc_info=True)
+            with self._cache_lock:
+                self._cache_dirty = True
+            return False
 
     def _current_mtime(self) -> tuple[float, int]:
         """Staleness fingerprint of the root: (newest root/date-dir mtime,

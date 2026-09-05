@@ -205,10 +205,10 @@ class TestOneBuilderPerFolder:
         real = routes.DatasetStore
 
         class Counting(real):
-            def __init__(self, folder):
+            def __init__(self, folder, **kw):
                 built.append(threading.get_ident())
                 time.sleep(0.15)                 # long enough for the others to arrive
-                super().__init__(folder)
+                super().__init__(folder, **kw)
         monkeypatch.setattr(routes, "DatasetStore", Counting)
         got = []
 
