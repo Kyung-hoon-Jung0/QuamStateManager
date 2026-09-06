@@ -341,3 +341,39 @@ pill 텍스트에 현재 모드. 예약(소유자·종료 예정)은 pill 옆 �
 **실브라우저(CDP, headless Chrome, PJ 사본, 실 claude).** `/` → Agent home mount → `/run 05_power_rabi q1 num_shots=200` → 초안 카드 7 ms("Start — 2 value(s) may change"; "pi amplitude `qubits.q1.xy.operations.x180.amplitude` now: not set (operation x180 assumed)") → observer 토글이 Start/Arm을 숨기고 되돌림 → **Start 클릭** → 카드 RUNNING 616 ms · armed · `[Start] plan` 카드 → 실 Claude의 **새** 답변 6.2 s("Running plan … step 0 now: checking SM status, journaling the reason, then launching 05_power_rabi on q1") → Stop now → "stopped" + Stop 카드 → `/bulk`에서 Agent 버튼 → 떠다니는 패널 327 ms(compact, 같은 65개 카드). 프로브의 실수 둘(첫 실행에서 옛 답변 카드를 새 것으로 읽음, 하루의 이전 plan 카드를 초안으로 집음)은 프로브를 고쳤고, `now: not set`은 PJ 사본의 `x180`이 포인터 alias라 `store.get_value`가 못 푸는 것 — S9에서 resolved 읽기로.
 
 **S6에서 넘긴 것.** `--include-partial-messages` 글자 스트리밍(카드는 턴 단위) · 답변 카드의 "표 먼저·숫자마다 #run·썸네일"은 모델의 markdown에 맡김(S8/S9에서 runs_summary 도구가 표를 만들면 연결) · "남의 세션 Stop 확인" 문구(관찰자 토글로 대신, 이름 선택기는 S8) · 용어 규칙의 라벨(Live State Edit 열 라벨)은 dot path 꼬리 + 툴팁으로 근사 · `/qualibrate/open`은 여전히 `/qubits`로 감(S9에서 Agent home으로).
+
+### 검증 라운드 1 — S4·S5·S6 적대 리뷰 (커밋 c7cc5cd, 2026-09-06)
+
+네 차원(엔진·웹·기록·UX)으로 S4(채팅)·S5(run_node)·S6(Agent home)을 리뷰했다. **가능하면 실제 브라우저에서** — 리뷰어는 실 claude/codex CLI와 실 headless Chrome(CDP)에서 재현한 뒤에만 발견을 인정했다. 모든 발견은 고치기 전에 다시 실행해 확인했다. 리뷰어의 재현 테스트 38개를 고친 코드에 돌려 24개가 통과(결함 닫힘), 14개는 실패 — 그중 **진짜 프로덕션 결함은 5개**, 나머지는 shipped된 안전한 설계(예: `queue_not_empty` 가드가 아예 거부)와 리뷰어가 `_chip_name()`을 라우트의 `_chip_key()` 자리에 쓴 테스트 아티팩트였다.
+
+**기록(R3/R4) — 진짜 결함.**
+- **이벤트가 이름이 아니라 키를 달고 있었다.** chat 이벤트는 칩의 **records 키**(`<name>-<hash8>`)를 달았는데 피드·events는 **이름**으로 거른다 — `agent_backend._mk`가 이미 `chip`을 AgentProcess의 키로 찍고 `ChatSession._on_event`가 `setdefault`만 했다. 이제 `rec["chip"] = self.display`로 **강제**한다(프로세스는 키를 알고, 이벤트는 이름을 단다).
+- **Calibration log가 다른 칩의 run을 주장했다.** `build_day`가 agent-run 인덱스를 **칩으로 거르지 않아** 칩 A의 #104가 칩 B의 #104를 저자했다(run id는 데이터 폴더별). `load_agent_runs(inst, chip)`으로 고침.
+- **커서 n이 경쟁했다.** 요청 스레드가 사람의 `User` 이벤트를, 프로세스 리더 스레드가 `Init`을 동시에 기록하면 둘이 같은 `cur`를 읽어 같은 n을 찍었다 — `after=n`을 든 페이지가 진 쪽을 영영 못 본다. read-modify-write를 `_N_LOCK` 아래로. 그리고 hook 이벤트 폭주가 링에서 chat 이벤트를 밀어내도 다음 n이 그 위로 가도록, 카운터를 **링이 아니라 당일 파일**에서 끌어올린다.
+- **journal 렌더러가 앵커를 중첩시켰다.** 링크 href 안의 `#N`(예: `[z](/a?x=#123)`)이 **중첩 `<a>`**가 됐다. `#run` 링커를 `_LINK`가 만든 앵커 **바깥** 세그먼트에서만 돌린다.
+
+**문·run(R1).** 승인 하나 = run 하나(`used_by_run`; 같은 id로 두 번째 run은 거부); all-or-nothing — 새/삭제 키처럼 staging 못하는 값이 하나라도 있으면 그룹을 거부하고 이름을 대며 **쓰기를 사람에게 park**(반쯤 안 남긴다); `run_active` 뷰는 칩 **키**로 조회; simulate run의 값에는 `simulated` 표시.
+
+**패널(R2) — 실 Chrome 확인.** 카드는 도착 순서와 무관하게 **시간순**으로 자리 잡는다(live 객체는 매 폴, chat 카드는 한 번뿐이라 append하면 옛 plan이 새 답변 밑으로 갔다); 손가락이 올라간 카드는 재렌더하지 않고 focus가 떠나면 따라잡는다; 안 바뀐 카드는 재렌더 안 함; 피드는 읽는 이가 바닥에 있을 때만 따라간다; **Enter 전송·Shift+Enter 줄바꿈**; 거부된 줄은 상자에 남는다; 닿지 않는 SM은 그렇다고 말한다; run 요청은 **Allow run**; Stop now는 흰 글씨 채운 빨강(`rgb(136,57,53)` 확인); Send 버튼은 `width:auto`(53 px vs 행 694 px); 떠다니는 패널의 **home**은 순수 href(hx-get 아님); 팝오버는 폼을 고정하고 카드만 스크롤(`overflow-y:auto`, formInside 확인). mutation 19/19, jsdom 50 asserts.
+
+**핀.** `test_journal`(중첩 앵커) · `test_story`(칩별 저자) · `test_chat_api`(커서 동시성 + 링 축출) · `test_agent_runs`(승인=run 하나, all-or-nothing) · `test_agent_api`(이벤트 날짜·한 번만·claude_says) · `test_agent_panel`(순수 home 링크) · `agent_panel_selfcheck.cjs`(R2 전부). CDP: `/` → Agent home, Send 폭, home 순수 링크, Stop now 색, simulated 플래그, 승인 라벨, 떠다니는 폼 고정 — 전부 확인.
+
+**리뷰가 드러낸 문서 정정 8개(앞 절들에 흩어진 주장).**
+1. 승인은 **디스크에 산다**(`instance/agent_approvals/<chip>.json`) — tray 플래그가 아니다. run 하나당 레코드 하나.
+2. 페이지 커서 n은 재시작을 건너 단조 — **당일 파일**까지 스캔하므로 링 축출로도 리셋되지 않는다(앞서 "링 800줄/2일" 표현은 backstop 하나만 가리켰다).
+3. Stop now는 **프로세스 간** — 두 번째 창의 Stop이 첫 창의 살아 있는 claude pid를 죽인다(`kill_tree`), 파일의 stop 플래그와 별개로.
+4. Registry는 재시작 뒤 in-flight run을 `interrupted`로 표시하고 **그 plan step을 failed·plan을 stopped로** 화해시킨다(meta의 `chip`은 키).
+5. agent-run 인덱스는 run id로 키되지만 `build_day`·`_human_ran_recently`는 **칩으로 거른다**(둘 다 프로덕션 호출은 `_chip_key()`를 넘긴다).
+6. `human_active`는 에이전트 자신의 unattributed run을 사람의 것으로 보지 않는다 — `unattributed_agent_runs(chip)`가 활성 칩으로 걸러 자기 것을 안다.
+7. `User`(사람 메시지) 이벤트는 세션의 다른 이벤트와 같은 `owner`/`mode`를 달고 디스크에 남아 재시작을 견딘다.
+8. 전부 skip된 plan은 `done`이 아니라 `skipped`(아무것도 안 돌았다).
+
+### S7 — 설정: 이 PC를 SM에 연결, 미리보기 다음 클릭 (커밋 8c20b71, 2026-09-06)
+
+Agent → 설정. 랩이 Claude/Codex를 SM에 잇는 한 곳. **이 PC에서 아직 안 된 것만** 펼쳐 보이고, 모든 쓰기는 **미리보기(diff) 먼저·클릭 다음**, SM이 손대는 파일마다 날짜 붙은 백업(`*.sm-backup-YYYYMMDD-HHMMSS`)이 옆에 남는다. 유일한 실 호출은 진짜 read-only 질문 하나(시간과 답을 그대로).
+
+**들어간 것.** `core/agent_setup.py`(레코드·백업·hook 명령·MCP 서버 스펙; Claude `~/.claude.json` mcpServers `quam-state-manager` + `~/.claude/settings.json` hooks 병합 + `.claude/settings.local.json` allow 규칙; Codex `config.toml` 마커 사이 블록; 랩 컨텍스트 파일을 `<!-- sm:lab-context:start/end -->`로 fenced; `detect_facts`/`questions`/`status`) · `web/setup_api.py`(`GET /api/agent/setup` 상태, `POST /connect`(apply 없으면 미리보기)·`/disconnect`·`/journal`·`/context`·`/test`; `GET /agent/setup` 페이지) · `static/agent-setup.js` + `_agent_setup.html`(페이지는 `GET /api/agent/setup`에서 렌더; 안 된 항목만 펼침; diff는 LCS 줄 단위) · `app.py`가 blueprint 둘 등록 · base.html이 페이지를 자기 번들(`agent_setup`)로 include · hook.py가 커스텀 instance dir에 `--instance <dir>`를 hook 줄에 쓴다.
+
+**핀.** `test_agent_setup.py`(14) · `agent_setup_selfcheck.cjs`(16) · `test_agent_panel`의 설정-페이지 배선 핀 · `test_hook`의 `--instance` 핀. 실 Chrome: `/agent/setup` 렌더, 번들·페이지 표, HX 폼은 partial 하나.
+
+**S7에서 넘긴 것.** UI에서 Limits/모드 카드(패널의 "지금" 칼럼이 이미 arm/mode를 쥔다) · journal 미러/동기화 감지의 실 SMB 경로(S9) · PyInstaller 번들에서 MCP 서버의 python은 설정의 env python으로(스펙엔 있으나 실 exe 빌드 검증은 S9).
