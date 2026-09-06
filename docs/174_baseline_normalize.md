@@ -49,3 +49,47 @@ pristine copy) while a pending approval still referenced the old one.
 `flux_crosstalk.json` is created by `machine.save()` only in the per-run scratch,
 is never read by `diff_states` (`_merged` reads state+wiring only) and never
 reaches live, so multi-file working-copy tracking is not needed to close this.
+
+---
+
+## Amendment (same day) — the diff fix was incomplete; strip at the source
+
+The baseline-normalization above cancelled the phantom roots in SM's **diff**
+(0 writes), which is correct as far as it goes. But it was verified live on the
+real KRISS arbel chain to be **incomplete**: SM's post-run adopt copies the
+scratch's FULL state into the working copy (confirmed byte-identical, same
+content hash), and Auto-Sync then carries it to live. `machine.save()` had still
+materialized the 3 class-default root keys INTO the scratch, so they rode the
+adopt path — which never consults the diff — all the way to live. Live then
+diverged from `synced_live_hash`, and the **next** node refused with
+`stale_live`. (The SM chatbot agent diagnosed this itself: "run 13 저장 시
+state.json 에 Quam 클래스 기본값 3개(root 키)가 추가된 것", then called `take_live`
+and correctly did NOT retry — a refusal is a stop signal.)
+
+**The real fix: remove the phantom roots at the source, in the node subprocess.**
+- `run_target` captures `_state_root_keys(state_path)` BEFORE `runpy` — the chip's
+  own top-level keys, while the scratch is still the byte-for-byte make_scratch
+  copy.
+- After `_persist_node_state`'s `machine.save()`, `_strip_phantom_roots` deletes
+  any top-level key that (a) the chip did not originally have AND (b) the node's
+  `state_updates` did not write. The scratch SM reads back is then the chip + the
+  node's real writes and nothing else, so NO downstream path — diff, apply,
+  adopt, auto-sync — ever sees a phantom, and live never diverges.
+- A node that genuinely writes a new root key keeps it (its ref is in
+  `state_updates`). Best-effort and never fatal.
+
+`_materialize_baseline` / `_load_machine` are removed; `before/` is once again the
+raw make_scratch copy, and the diff comes out clean because the scratch is now
+clean too. The `--baseline-out` plumbing is left inert (harmless).
+
+**Verified in-session against the real `quam_config.my_quam.Quam`** on a truly
+pristine customer state (the 3 fields absent): `machine.save()` added
+`flux_crosstalk_max_v` / `require_flux_crosstalk_dc` / `twpa_ext`; the strip
+removed exactly those three; the scratch returned to the chip's own schema; SM's
+diff was 0 writes for an untouched node. Pinned by the rewritten
+`tests/test_baseline_normalize.py` (file-level, runs in `cqt`; the raw-save test
+proves the fixture reaches the 3-phantom state, so the strip test is not vacuous).
+
+**Corrected conclusion on stale_live:** it is a REAL SM issue (not a test-rig
+artifact, as first thought), caused entirely by these materialized root defaults,
+and this amendment closes it at the source.

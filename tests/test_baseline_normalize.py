@@ -1,20 +1,21 @@
-"""docs/174 -- the diff baseline is serializer-normalized so class-default
-fields don't surface as phantom node writes.
+"""docs/174 (amended) -- the node subprocess strips class-default root keys so
+the scratch SM adopts matches the chip's own schema and never diverges live.
 
-Found on the real KRISS arbel run: ``machine.save()`` materializes every field
-the quam class declares that the raw state.json lacked (the KRISS class's
-top-level ``flux_crosstalk_max_v`` / ``require_flux_crosstalk_dc`` /
-``twpa_ext``). SM diffed ``before/`` (a raw copy of the working state) against
-the scratch AFTER that save, so an UNTOUCHED node staged those three as
-'created' writes -- ``twpa_ext`` even as ``None -> None``, a write that changes
-nothing. The fix runs the same serializer over the PRE-node state and hands SM
-that as the baseline, so the defaults appear on BOTH sides and cancel; a genuine
-node write still surfaces because the baseline carries its OLD value.
+Found on the real KRISS arbel chain: ``machine.save()`` writes back EVERY field
+the quam class declares, so it adds top-level ROOT keys the customer's
+state.json never had (the KRISS class's ``flux_crosstalk_max_v`` /
+``require_flux_crosstalk_dc`` / ``twpa_ext``). The first docs/174 fix only
+cancelled these in SM's DIFF -- but SM's post-run adopt copies the scratch's FULL
+state into the working copy (byte-identical, then to live), so the phantom roots
+still reached live and diverged it -> ``stale_live`` on the very next node.
 
-These tests use a fake machine (no quam/env needed) whose ``save()`` reproduces
-the real materialization, so they run in the plain ``cqt`` suite. The behaviour
-was also verified against the real KRISS ``quam_config.my_quam.Quam`` in-session
-(untouched node: 3 writes -> 0; genuine tof write: still 1).
+The amended fix removes them at the source: ``_strip_phantom_roots`` deletes any
+top-level key that the chip did not originally have AND the node's
+``state_updates`` did not write. Verified in-session against the real
+``quam_config.my_quam.Quam`` (a node saving materialized 3 root defaults; after
+the strip the scratch matched the pristine chip schema and the next node did not
+refuse). These tests operate on files only (no quam/env needed) so they run in
+the plain ``cqt`` suite.
 """
 
 from __future__ import annotations
@@ -22,183 +23,175 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from quam_state_manager.core import agent_runs, scheduler
+from quam_state_manager.core import agent_runs
 from quam_state_manager.generator import run_experiment as RE
 
 LIVE_STATE = {"qubits": {"qA1": {"resonator": {"time_of_flight": 372}}}}
-DEFAULTS = ("flux_crosstalk_max_v", "require_flux_crosstalk_dc", "twpa_ext")
+PHANTOMS = {"flux_crosstalk_max_v": 0.45, "require_flux_crosstalk_dc": False, "twpa_ext": None}
 
 
 def _write(folder: Path, state: dict, wiring: dict | None = None) -> None:
     folder.mkdir(parents=True, exist_ok=True)
-    (folder / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    (folder / "state.json").write_text(json.dumps(state, indent=4), encoding="utf-8")
     (folder / "wiring.json").write_text(json.dumps(wiring or {}), encoding="utf-8")
 
 
-class FakeMachine:
-    """Reproduces the real quam behaviour: ``save()`` writes back EVERY declared
-    field, so fields absent from the raw state.json get materialized to their
-    class default. ``twpa_ext`` materializes to ``None`` (present-but-null)."""
-
-    def __init__(self, state_path: str | Path):
-        self.state_path = Path(state_path)
-        self._state = json.loads((self.state_path / "state.json").read_text(encoding="utf-8"))
-
-    def save(self):
-        self._state.setdefault("flux_crosstalk_max_v", 0.45)
-        self._state.setdefault("require_flux_crosstalk_dc", False)
-        self._state.setdefault("twpa_ext", None)
-        (self.state_path / "state.json").write_text(json.dumps(self._state), encoding="utf-8")
+def _read(folder: Path) -> dict:
+    return json.loads((folder / "state.json").read_text(encoding="utf-8"))
 
 
-def _fake_loader(monkeypatch):
-    monkeypatch.setattr(RE, "_load_machine", lambda sp: FakeMachine(sp))
+def _save_adds_phantoms(folder: Path, extra_state: dict | None = None) -> None:
+    """Reproduce machine.save(): rewrite state.json with EVERY declared field,
+    so the class-default root keys get materialized alongside the node's writes."""
+    state = _read(folder)
+    if extra_state:
+        state.update(extra_state)
+    state.update(PHANTOMS)
+    (folder / "state.json").write_text(json.dumps(state, indent=4), encoding="utf-8")
+
+
+# --------------------------------------------------------------------------
+# _state_root_keys: the pre-save snapshot of the chip's own top-level keys.
+# --------------------------------------------------------------------------
+def test_state_root_keys_reads_top_level(tmp_path):
+    scratch = tmp_path / "quam_state"
+    _write(scratch, LIVE_STATE)
+    assert RE._state_root_keys(str(scratch)) == {"qubits"}
+
+
+def test_state_root_keys_none_on_unreadable(tmp_path):
+    assert RE._state_root_keys(str(tmp_path / "nope")) is None
 
 
 # --------------------------------------------------------------------------
 # The fixture CAN reach the phantom state (a-vacuous-pin-passes discipline):
-# without normalization an untouched node stages exactly the 3 default writes.
+# without the strip, save() leaves 3 phantom roots that the diff reports.
 # --------------------------------------------------------------------------
-def test_raw_baseline_leaks_three_phantom_default_writes(tmp_path):
+def test_raw_save_leaks_three_phantom_roots(tmp_path):
     before = tmp_path / "before"
     scratch = tmp_path / "quam_state"
-    _write(before, LIVE_STATE)          # raw copy of the working state
+    _write(before, LIVE_STATE)
     _write(scratch, LIVE_STATE)
-    FakeMachine(scratch).save()         # an UNTOUCHED node's machine.save()
+    _save_adds_phantoms(scratch)                     # an UNTOUCHED node's save()
 
+    assert set(PHANTOMS) <= set(_read(scratch).keys())
     writes, _ = agent_runs.diff_states(before, scratch)
     created = {w["path"] for w in writes if w.get("created")}
-    assert created == set(DEFAULTS), created
-    # twpa_ext is the egregious one: a write whose old and new are both null.
-    twpa = next(w for w in writes if w["path"] == "twpa_ext")
-    assert twpa["old"] is None and twpa["new"] is None
+    assert created == set(PHANTOMS), created
 
 
 # --------------------------------------------------------------------------
-# WITH docs/174 normalization the phantom defaults cancel: 0 writes.
+# The strip removes exactly the phantom roots the chip never had.
 # --------------------------------------------------------------------------
-def test_normalized_baseline_cancels_phantom_defaults(tmp_path, monkeypatch):
-    _fake_loader(monkeypatch)
+def test_strip_removes_phantom_roots(tmp_path):
+    scratch = tmp_path / "quam_state"
+    _write(scratch, LIVE_STATE)
+    _save_adds_phantoms(scratch)
+
+    RE._strip_phantom_roots(str(scratch), {"qubits"}, updates={})
+
+    state = _read(scratch)
+    assert set(state.keys()) == {"qubits"}
+    assert all(k not in state for k in PHANTOMS)
+    # the chip's own data is untouched
+    assert state["qubits"]["qA1"]["resonator"]["time_of_flight"] == 372
+
+
+# --------------------------------------------------------------------------
+# After the strip, the diff is genuine writes only -- the whole cascade
+# (diff, adopt, live) is now phantom-free.
+# --------------------------------------------------------------------------
+def test_diff_after_strip_is_writes_only(tmp_path):
     before = tmp_path / "before"
     scratch = tmp_path / "quam_state"
     _write(before, LIVE_STATE)
     _write(scratch, LIVE_STATE)
+    # node writes a real leaf AND save() materializes phantoms
+    node_state = {"qubits": {"qA1": {"resonator": {"time_of_flight": 388}}}}
+    _save_adds_phantoms(scratch, extra_state=node_state)
 
-    RE._materialize_baseline(str(scratch), str(before))   # normalize the baseline
-    FakeMachine(scratch).save()                           # untouched node -> after
-
-    writes, _ = agent_runs.diff_states(before, scratch)
-    assert writes == [], writes
-    # the baseline itself now carries the materialized defaults on disk
-    base_state = json.loads((before / "state.json").read_text(encoding="utf-8"))
-    assert all(k in base_state for k in DEFAULTS)
-
-
-# --------------------------------------------------------------------------
-# Honesty: a genuine node write still surfaces -- the baseline holds its OLD
-# value, so old->new is reported, never hidden by the normalization.
-# --------------------------------------------------------------------------
-def test_genuine_write_survives_normalization(tmp_path, monkeypatch):
-    _fake_loader(monkeypatch)
-    before = tmp_path / "before"
-    scratch = tmp_path / "quam_state"
-    _write(before, LIVE_STATE)
-    _write(scratch, LIVE_STATE)
-
-    RE._materialize_baseline(str(scratch), str(before))
-    fm = FakeMachine(scratch)                             # loads the normalized scratch
-    fm._state["qubits"]["qA1"]["resonator"]["time_of_flight"] = 388
-    fm.save()
+    RE._strip_phantom_roots(str(scratch), {"qubits"}, updates={})
 
     writes, _ = agent_runs.diff_states(before, scratch)
     assert len(writes) == 1, writes
     w = writes[0]
     assert w["path"] == "qubits.qA1.resonator.time_of_flight"
     assert w["old"] == 372 and w["new"] == 388
-    assert not w.get("created")
 
 
 # --------------------------------------------------------------------------
-# A change to a default field IS a real write (not cancelled): the baseline
-# holds the materialized old value, the node saves a different one.
+# Honesty: a genuine NEW root key the node actually wrote survives the strip,
+# because its ref is in state_updates.
 # --------------------------------------------------------------------------
-def test_a_real_change_to_a_default_field_is_not_cancelled(tmp_path, monkeypatch):
-    _fake_loader(monkeypatch)
-    before = tmp_path / "before"
+def test_strip_keeps_a_genuinely_written_new_root(tmp_path):
     scratch = tmp_path / "quam_state"
-    _write(before, LIVE_STATE)
     _write(scratch, LIVE_STATE)
+    _save_adds_phantoms(scratch, extra_state={"network": {"host": "10.1.1.6"}})
+    updates = {"u0": {"key": "#/network/host", "new": "10.1.1.6"}}
 
-    RE._materialize_baseline(str(scratch), str(before))
-    fm = FakeMachine(scratch)
-    fm._state["flux_crosstalk_max_v"] = 0.9              # a genuine change
-    fm.save()
+    RE._strip_phantom_roots(str(scratch), {"qubits"}, updates=updates)
 
-    writes, _ = agent_runs.diff_states(before, scratch)
-    assert len(writes) == 1, writes
-    w = writes[0]
-    assert w["path"] == "flux_crosstalk_max_v"
-    assert w["old"] == 0.45 and w["new"] == 0.9
-    assert not w.get("created")   # it EXISTED in the baseline, so it's a change
+    state = _read(scratch)
+    assert "network" in state              # genuinely written -> kept
+    assert state["network"]["host"] == "10.1.1.6"
+    assert all(k not in state for k in PHANTOMS)   # phantoms still stripped
 
 
 # --------------------------------------------------------------------------
-# Best-effort: a load/save failure leaves the raw before/ standing (pre-174).
+# Best-effort: no captured baseline -> no strip, no crash (pre-174 behaviour).
 # --------------------------------------------------------------------------
-def test_materialize_baseline_is_best_effort(tmp_path, monkeypatch):
-    monkeypatch.setattr(RE, "_load_machine", lambda sp: (_ for _ in ()).throw(RuntimeError("boom")))
-    before = tmp_path / "before"
+def test_strip_is_a_noop_when_original_roots_unknown(tmp_path):
     scratch = tmp_path / "quam_state"
-    _write(before, LIVE_STATE)
     _write(scratch, LIVE_STATE)
+    _save_adds_phantoms(scratch)
 
-    # must not raise; before/ is untouched (still the raw copy)
-    RE._materialize_baseline(str(scratch), str(before))
-    assert json.loads((before / "state.json").read_text(encoding="utf-8")) == LIVE_STATE
+    RE._strip_phantom_roots(str(scratch), None, updates={})   # must not raise
+    assert set(PHANTOMS) <= set(_read(scratch).keys())        # left as-is
 
 
 # --------------------------------------------------------------------------
-# run_target wiring: baseline normalization runs only when a baseline_out is
-# given, and always before the node body (runpy).
+# run_target wiring: original roots are captured BEFORE runpy and handed to
+# _persist_node_state.
 # --------------------------------------------------------------------------
-def test_run_target_calls_normalize_before_runpy(tmp_path, monkeypatch):
+def test_run_target_captures_roots_before_runpy(tmp_path, monkeypatch):
+    scratch = tmp_path / "sp"
+    _write(scratch, LIVE_STATE)
     target = tmp_path / "node.py"
     target.write_text("node = None\n", encoding="utf-8")
-    order: list[str] = []
-    monkeypatch.setattr(RE, "_materialize_baseline",
-                        lambda sp, bo: order.append(f"normalize:{bo}"))
-    monkeypatch.setattr(RE.runpy if hasattr(RE, "runpy") else RE, "run_path",
-                        lambda *a, **k: order.append("runpy") or {}, raising=False)
-    # run_target imports runpy locally, so patch the module attribute it resolves
+
+    order: list = []
+    monkeypatch.setattr(RE, "_state_root_keys",
+                        lambda sp: order.append("capture") or {"qubits"})
     import runpy as _runpy
     monkeypatch.setattr(_runpy, "run_path", lambda *a, **k: order.append("runpy") or {})
-    monkeypatch.setattr(RE, "_persist_node_state", lambda ns, sp: None)
+    captured = {}
+    monkeypatch.setattr(RE, "_persist_node_state",
+                        lambda ns, sp, roots=None: captured.update(roots=roots) or order.append("persist"))
 
-    RE.run_target(str(target), str(tmp_path / "sp"), None, str(tmp_path / "before"))
-    assert order and order[0].startswith("normalize:") and "runpy" in order
-    assert order.index("runpy") > 0   # normalize ran first
-
-
-def test_run_target_skips_normalize_without_baseline(tmp_path, monkeypatch):
-    target = tmp_path / "node.py"
-    target.write_text("node = None\n", encoding="utf-8")
-    called = []
-    monkeypatch.setattr(RE, "_materialize_baseline", lambda sp, bo: called.append(bo))
-    import runpy as _runpy
-    monkeypatch.setattr(_runpy, "run_path", lambda *a, **k: {})
-    monkeypatch.setattr(RE, "_persist_node_state", lambda ns, sp: None)
-
-    RE.run_target(str(target), str(tmp_path / "sp"), None, None)
-    assert called == []   # no baseline_out -> no normalization
+    RE.run_target(str(target), str(scratch), None)
+    assert order == ["capture", "runpy", "persist"]   # capture strictly before runpy
+    assert captured["roots"] == {"qubits"}
 
 
 # --------------------------------------------------------------------------
-# Scheduler plumbing: an agent item carries baseline_path through _new_item;
-# a human item leaves it None.
+# _persist_node_state calls the strip after machine.save() with the roots.
 # --------------------------------------------------------------------------
-def test_new_item_carries_baseline_path():
-    agent_item = scheduler._new_item(
-        {"file": "n.py", "name": "n", "state_path": "/s", "baseline_path": "/b"}, ["qA1"])
-    assert agent_item["baseline_path"] == "/b"
-    human_item = scheduler._new_item({"file": "n.py", "name": "n"}, ["qA1"])
-    assert human_item["baseline_path"] is None
+def test_persist_strips_after_save(tmp_path, monkeypatch):
+    scratch = tmp_path / "sp"
+    _write(scratch, LIVE_STATE)
+
+    calls: list = []
+
+    class FakeMachine:
+        def save(self):
+            calls.append("save")
+
+    class FakeNode:
+        machine = FakeMachine()
+        state_updates = {}
+
+    monkeypatch.setattr(RE, "_strip_phantom_roots",
+                        lambda sp, roots, updates: calls.append(("strip", roots)))
+
+    RE._persist_node_state({"node": FakeNode()}, str(scratch), original_roots={"qubits"})
+    assert calls == ["save", ("strip", {"qubits"})]   # strip AFTER save

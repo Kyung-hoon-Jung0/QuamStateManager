@@ -206,63 +206,74 @@ def run_target(target: str, state_path: str | None, config_file: str | None,
     # blocks forever on a GUI window that never opens. Force a non-interactive
     # backend before the node imports matplotlib; an operator override wins.
     os.environ.setdefault("MPLBACKEND", "Agg")
-    # docs/174: normalize the diff baseline through the SAME serializer the node's
-    # machine.save() uses, BEFORE the node runs, so class-declared default fields
-    # (materialized identically on both sides) cancel out and only genuine node
-    # writes survive the diff. Best-effort -- on any failure SM falls back to the
-    # raw before/ copy (the pre-174 behaviour).
-    if state_path and baseline_out:
-        _materialize_baseline(str(state_path), str(baseline_out))
+    # docs/174 (amended): capture the state's top-level keys BEFORE the node runs,
+    # while the scratch is still the byte-for-byte make_scratch copy of the chip.
+    # ``machine.save()`` later materializes EVERY field the quam class declares,
+    # adding class-default ROOT keys the customer's state.json never had
+    # (flux_crosstalk_max_v / require_flux_crosstalk_dc / twpa_ext on the KRISS
+    # class). Knowing the original roots lets _persist strip exactly those, so the
+    # scratch SM reads back is the chip + the node's real writes and nothing else.
+    original_roots = _state_root_keys(state_path) if state_path else None
     ns = runpy.run_path(str(target), run_name="__main__")
     if state_path:
-        _persist_node_state(ns, str(state_path))
+        _persist_node_state(ns, str(state_path), original_roots)
 
 
-def _load_machine(state_path: str):
-    """Load the quam machine declared by the ``__class__`` in the state.json at
-    *state_path* (that selects the customer's own Quam subclass). Best-effort:
-    returns None if quam is unavailable or the load fails."""
+def _state_root_keys(state_path: str) -> set | None:
+    """The top-level keys of ``state.json`` at *state_path* right now, or None if
+    it can't be read. Captured BEFORE the node's ``machine.save()`` so
+    _strip_phantom_roots can tell a class-default root the serializer added from a
+    key the chip genuinely had (docs/174 amended)."""
     try:
-        from quam import Quam
-        return Quam.load(state_path)
+        raw = json.loads((Path(state_path) / "state.json").read_text(encoding="utf-8"))
+        return set(raw.keys()) if isinstance(raw, dict) else None
     except Exception:  # noqa: BLE001
-        try:
-            from quam.core import QuamRoot
-            return QuamRoot.load(state_path)
-        except Exception:  # noqa: BLE001
-            return None
+        return None
 
 
-def _materialize_baseline(state_path: str, baseline_out: str) -> None:
-    """docs/174 (found on the real KRISS arbel run): SM diffs ``before/`` (a raw
-    copy of the working state) against the scratch AFTER the node's
-    ``machine.save()``. But ``machine.save()`` MATERIALIZES every field the quam
-    class declares that the raw state.json lacked -- e.g. the KRISS class's
-    top-level ``flux_crosstalk_max_v`` / ``require_flux_crosstalk_dc`` /
-    ``twpa_ext`` -- so an UNTOUCHED node stages them as phantom 'created' writes
-    (``twpa_ext`` even as ``None -> None``, a write that changes nothing).
+def _strip_phantom_roots(state_path: str, original_roots: set | None, updates: dict) -> None:
+    """docs/174 (amended -- the real fix, found on the real KRISS arbel chain):
+    ``machine.save()`` writes back EVERY field the quam class declares, so it adds
+    top-level ROOT keys the customer's state.json never had (the KRISS class's
+    ``flux_crosstalk_max_v`` / ``require_flux_crosstalk_dc`` / ``twpa_ext``). The
+    first docs/174 fix only cancelled these in SM's DIFF; but SM's post-run adopt
+    copies the scratch's FULL state into the working copy (byte-identical, then to
+    live), so the phantom roots still reached live and diverged it -> ``stale_live``
+    on the very next node.
 
-    Fix: run that same serializer over the PRE-node state and hand SM the result
-    as the baseline. The defaults then appear on BOTH sides of the diff and
-    cancel; only genuine node writes remain. A node that really changes one of
-    these fields still shows old->new, because the baseline carries the old
-    value. Best-effort and never fatal: on any failure the raw ``before/`` copy
-    SM already made stands (the pre-174 behaviour)."""
-    import shutil
+    Fix at the source: after the node's save, delete any top-level key that (a) the
+    chip did not originally have AND (b) the node's ``state_updates`` did not write.
+    The scratch SM reads back is then the chip + the node's real writes and nothing
+    else, so nothing downstream (diff, apply, adopt, auto-sync) ever sees a phantom.
+    A node that genuinely writes a new root key keeps it (its ref is in
+    ``state_updates``). Best-effort and never fatal."""
+    if original_roots is None:
+        return
     try:
-        machine = _load_machine(state_path)
-        if machine is not None and hasattr(machine, "save"):
-            machine.save()   # materialize class defaults into the scratch
-        for name in ("state.json", "wiring.json"):
-            src = Path(state_path) / name
-            if src.exists():
-                shutil.copyfile(src, Path(baseline_out) / name)
+        sp = Path(state_path) / "state.json"
+        state = json.loads(sp.read_text(encoding="utf-8"))
+        if not isinstance(state, dict):
+            return
+        touched = set()
+        for key, rec in (updates or {}).items():
+            ref = (rec or {}).get("key") or key
+            seg = str(ref).lstrip("#/").split("/")[0]
+            if seg:
+                touched.add(seg)
+        removed = [k for k in list(state.keys())
+                   if k not in original_roots and k not in touched]
+        if not removed:
+            return
+        for k in removed:
+            del state[k]
+        sp.write_text(json.dumps(state, indent=4), encoding="utf-8")
+        sys.stderr.write(f"[run_experiment] stripped {len(removed)} class-default root key(s): "
+                         f"{', '.join(removed)}\n")
     except Exception as exc:  # noqa: BLE001
-        sys.stderr.write(
-            f"[run_experiment] baseline normalize skipped: {type(exc).__name__}: {exc}\n")
+        sys.stderr.write(f"[run_experiment] phantom-root strip skipped: {type(exc).__name__}: {exc}\n")
 
 
-def _persist_node_state(ns: dict, state_path: str) -> None:
+def _persist_node_state(ns: dict, state_path: str, original_roots: set | None = None) -> None:
     """docs/173 S9 (found on the real KRISS arbel cloud): a qualibrate node NEVER
     rewrites the state.json at QUAM_STATE_PATH. In a non-interactive run its
     ``record_state_updates()`` either applies the calibration to the in-memory
@@ -301,6 +312,10 @@ def _persist_node_state(ns: dict, state_path: str) -> None:
             except Exception:  # noqa: BLE001
                 _set_by_ref(machine, ref, rec["new"])
         machine.save()
+        # docs/174 amended: remove the class-default root keys machine.save() just
+        # materialized, so the scratch (and everything SM adopts from it) matches
+        # the chip's own schema and never diverges live on the next node.
+        _strip_phantom_roots(state_path, original_roots, updates)
     except Exception as exc:  # noqa: BLE001
         # never let the capture step fail a run that already measured on hardware
         sys.stderr.write(f"[run_experiment] state capture skipped: {type(exc).__name__}: {exc}\n")
