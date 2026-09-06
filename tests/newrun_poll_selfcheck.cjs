@@ -51,7 +51,8 @@ function mkStorage() {
            removeItem: (k) => m.delete(k), clear: () => m.clear() };
 }
 
-function world() {
+function world(opts) {
+  const reverse = !!(opts && opts.reverse);   // docs/170: app.js BEFORE the badge
   const dom = new JSDOM('<!DOCTYPE html><html><body>' + HTML + '</body></html>',
     { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/' });
   const win = dom.window;
@@ -88,8 +89,13 @@ function world() {
     + "   json: function () { return Promise.resolve(window.__nextAnswer()); } });"
     + "};");
 
-  new win.Function(BADGE_JS).call(win);
-  new win.Function(APP_JS).call(win);
+  if (reverse) {
+    new win.Function(APP_JS).call(win);
+    new win.Function(BADGE_JS).call(win);
+  } else {
+    new win.Function(BADGE_JS).call(win);
+    new win.Function(APP_JS).call(win);
+  }
   return win;
 }
 
@@ -170,13 +176,18 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
     win.__newRunPoll.poll(); await settle(); await settle();
     ok(!!chip(win), 'precondition: the chip is up');
 
+    // docs/170: the click REFRESHES the run lists (what the user does by hand
+    // to see the runs) and opens no card. The refresh itself presses the two
+    // buttons' htmx requests, which this harness has neither of -- the seam
+    // is the function app.js exposes for exactly this reason.
+    let refreshed = 0;
+    win.refreshRunLists = function () { refreshed++; return { sidebar: true, datasets: false }; };
     chip(win).dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
     ok(chip(win) === null, 'clicking clears it');
     ok(win.__newRunPoll.stamps().ack === '2026-01-01 11:00:00',
        'the acknowledged baseline catches up to what was detected');
-    ok(cardShown(win), 'and the card opens — the same information, pulled');
-    ok(win.document.getElementById('new-run-popup-id').textContent.indexOf('11') >= 0,
-       'showing the run that was announced');
+    ok(refreshed === 1, 'and the run lists refresh -- the list\'s own refresh button, pressed for you');
+    ok(!cardShown(win), 'no card: after the refresh the runs are simply there');
 
     // the next poll counts from the new stamp
     win.urls.length = 0;
@@ -184,6 +195,53 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
     win.__newRunPoll.poll(); await settle(); await settle();
     ok(/since_time=11%3A00%3A00/.test(win.urls[0]),
        'the next poll asks from there (' + win.urls[0] + ')');
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // 3b. docs/170: the SCRIPT ORDER cannot silently disarm the click. base.html
+  //     used to load sync-badge.js AFTER app.js, so `window.SyncBadge` was
+  //     undefined when app.js registered its handler: the chip cleared itself
+  //     and nothing else happened, and the count could only ever grow. The
+  //     registration now retries once the document is parsed -- pinned by
+  //     loading the two files in the WRONG order on purpose.
+  // ─────────────────────────────────────────────────────────────────────────
+  {
+    const win = world({ reverse: true });
+    ok(!!win.SyncBadge, 'precondition: the badge is up (loaded second)');
+    await settle();                                    // the deferred re-arm
+    win.__newRunPoll.reset();
+    win.answer = { uid: 'f:10', run_id: 10, date: '2026-01-01', time: '10:00:00' };
+    win.__newRunPoll.poll(); await settle(); await settle();
+    win.answer = { uid: 'f:11', run_id: 11, date: '2026-01-01', time: '11:00:00', new_count: 1 };
+    win.__newRunPoll.poll(); await settle(); await settle();
+    ok(!!chip(win), 'precondition: the chip is up');
+    let refreshed = 0;
+    win.refreshRunLists = function () { refreshed++; return { sidebar: true, datasets: false }; };
+    chip(win).dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    ok(win.__newRunPoll.stamps().ack === '2026-01-01 11:00:00',
+       'loaded in the wrong order, the click still acknowledges (got ' + win.__newRunPoll.stamps().ack + ')');
+    ok(refreshed === 1, 'and still refreshes');
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // 3c. docs/170: pressing a refresh button YOURSELF is the same acknowledgement
+  //     -- the list you just refreshed shows the runs the chip was counting.
+  // ─────────────────────────────────────────────────────────────────────────
+  {
+    const win = world();
+    win.__newRunPoll.reset();
+    win.answer = { uid: 'f:10', run_id: 10, date: '2026-01-01', time: '10:00:00' };
+    win.__newRunPoll.poll(); await settle(); await settle();
+    win.answer = { uid: 'f:11', run_id: 11, date: '2026-01-01', time: '11:00:00', new_count: 1 };
+    win.__newRunPoll.poll(); await settle(); await settle();
+    ok(!!chip(win), 'precondition: the chip is up');
+    const btn = win.document.createElement('button');
+    btn.className = 'btn-workspace-refresh';
+    win.document.body.appendChild(btn);
+    btn.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    ok(chip(win) === null, 'the sidebar refresh button clears the chip');
+    ok(win.__newRunPoll.stamps().ack === '2026-01-01 11:00:00',
+       'and moves the acknowledged baseline (got ' + win.__newRunPoll.stamps().ack + ')');
   }
 
   // ─────────────────────────────────────────────────────────────────────────

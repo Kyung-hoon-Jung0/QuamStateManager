@@ -70,6 +70,38 @@ class LiveFileError(OSError):
 # Share-delete open
 # ----------------------------------------------------------------------
 
+_CREATE_FILE_W = None   # the bound CreateFileW, built once (docs/170)
+
+
+def _create_file_w():
+    """``kernel32.CreateFileW`` with its signature set -- resolved ONCE.
+
+    docs/170: this used to be rebuilt inside every ``open_shared`` call
+    (``ctypes.WinDLL`` + a fresh function prototype): a profile of one
+    Rescan over a 2,655-run archive showed 5,308 ``LoadLibrary`` calls and
+    5,308 ``__build_class__`` calls, one pair per file read. The handle
+    and the prototype are process-wide constants.
+    """
+    global _CREATE_FILE_W
+    if _CREATE_FILE_W is None:
+        import ctypes
+        from ctypes import wintypes
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        create_file = kernel32.CreateFileW
+        create_file.restype = wintypes.HANDLE
+        create_file.argtypes = [
+            wintypes.LPCWSTR,  # lpFileName
+            wintypes.DWORD,    # dwDesiredAccess
+            wintypes.DWORD,    # dwShareMode
+            wintypes.LPVOID,   # lpSecurityAttributes
+            wintypes.DWORD,    # dwCreationDisposition
+            wintypes.DWORD,    # dwFlagsAndAttributes
+            wintypes.HANDLE,   # hTemplateFile
+        ]
+        _CREATE_FILE_W = create_file
+    return _CREATE_FILE_W
+
+
 def _create_file_shared_windows(path: Path) -> int:
     """``CreateFileW`` with all three share flags; return an OS handle (int).
 
@@ -77,7 +109,6 @@ def _create_file_shared_windows(path: Path) -> int:
     ``DeleteFile``, POSIX-semantics rename) proceed while we read.
     """
     import ctypes
-    from ctypes import wintypes
 
     GENERIC_READ = 0x80000000
     FILE_SHARE_READ = 0x00000001
@@ -87,18 +118,7 @@ def _create_file_shared_windows(path: Path) -> int:
     FILE_ATTRIBUTE_NORMAL = 0x00000080
     INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    create_file = kernel32.CreateFileW
-    create_file.restype = wintypes.HANDLE
-    create_file.argtypes = [
-        wintypes.LPCWSTR,  # lpFileName
-        wintypes.DWORD,    # dwDesiredAccess
-        wintypes.DWORD,    # dwShareMode
-        wintypes.LPVOID,   # lpSecurityAttributes
-        wintypes.DWORD,    # dwCreationDisposition
-        wintypes.DWORD,    # dwFlagsAndAttributes
-        wintypes.HANDLE,   # hTemplateFile
-    ]
+    create_file = _create_file_w()
 
     handle = create_file(
         str(path),
@@ -237,6 +257,25 @@ def scan_json(path: Path | str) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def scan_bytes(path: Path | str) -> bytes | None:
+    """:func:`scan_json`'s read without its parse -- one attempt, share-delete,
+    ``None`` on any OS error (absent, locked, mid-rename).
+
+    For a caller that wants to decide, from the bytes, whether parsing is
+    even needed: ``DatasetStore`` hashes a run's ``node.json`` + ``data.json``
+    and re-parses only when the content moved (docs/170), so the explicit
+    Rescan button re-READS every run (its contract, docs/105 #5) without
+    re-parsing 5,000 unchanged JSON documents on the request thread.
+    """
+    path = Path(path)
+    try:
+        with open_shared(path) as f:
+            return f.read()
+    except OSError as exc:
+        logger.debug("scan read %s skipped: %s", path, exc)
+        return None
+
+
 def read_state_wiring(folder: Path | str, *, attempts: int | None = None) -> tuple[dict, dict]:
     """Read ``state.json`` + ``wiring.json`` from a live folder, conflict-safe.
 
@@ -362,12 +401,15 @@ def _replace_into_place(tmp: Path, dst: Path) -> None:
     )
 
 
-def _write_tmp_json(path: Path, data) -> Path:
+def _write_tmp_json(path: Path, data, *, compact: bool = False) -> Path:
     """Write *data* as pretty JSON to a ``.tmp`` sibling of *path* (flushed +
     fsync'd) and return the tmp path. The caller swaps it into place."""
     tmp = path.with_suffix(path.suffix + ".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
+        if compact:      # docs/171: a 10 MB store cache is not for reading
+            json.dump(data, f, separators=(",", ":"), ensure_ascii=False)
+        else:
+            json.dump(data, f, indent=4, ensure_ascii=False)
         f.write("\n")
         f.flush()
         os.fsync(f.fileno())
@@ -387,7 +429,7 @@ def _write_tmp_bytes(path: Path, data: bytes) -> Path:
     return tmp
 
 
-def atomic_write_json(path: Path | str, data) -> None:
+def atomic_write_json(path: Path | str, data, *, compact: bool = False) -> None:
     """Write *data* as pretty JSON to *path* atomically.
 
     Writes a ``.tmp`` sibling (flushed + fsync'd), then atomically replaces
@@ -399,7 +441,7 @@ def atomic_write_json(path: Path | str, data) -> None:
     ``workspace_roots.json`` is a list, ``last_session.json`` is a dict).
     """
     path = Path(path)
-    _replace_into_place(_write_tmp_json(path, data), path)
+    _replace_into_place(_write_tmp_json(path, data, compact=compact), path)
 
 
 def write_state_wiring(folder: Path | str, state: dict, wiring: dict) -> None:

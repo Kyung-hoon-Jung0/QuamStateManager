@@ -1383,6 +1383,17 @@
             .then(function(data) {
                 if (!data || typeof data.now !== 'number') throw new Error('bad payload');
                 pollSucceeded();
+                // docs/170: the render's "still indexing" note goes away on
+                // the first poll that reports a complete scan -- and the
+                // header's run count, server-rendered from the partial table,
+                // is corrected to what the table now holds.
+                if (!data.partial) {
+                    var scanNote = document.getElementById('ds-scan-note');
+                    if (scanNote && !scanNote.hidden) {
+                        scanNote.hidden = true;
+                        state.pendingHeadCount = true;
+                    }
+                }
                 // The server hit its wall-clock budget and left folders
                 // un-scanned (their cursors held). Come back promptly instead
                 // of waiting out the full interval, so a burst of incoming
@@ -1435,10 +1446,28 @@
         if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
     }
 
+    // docs/170: "new" is measured against the newest run the table already
+    // holds. A row that arrives OLDER than that is the cold build catching up
+    // (the render is bounded now and the delta poll indexes the rest, newest
+    // dates first) -- it lands silently, never announced or flashed as if an
+    // experiment had just finished.
+    function _stampOf(row) { return (row.date || '') + ' ' + (row.time || ''); }
+    function _newestStamp() {
+        var best = '';
+        for (var i = 0; i < state.rows.length; i++) {
+            var r = state.rows[i];
+            if (!r) continue;
+            var s = _stampOf(r);
+            if (s > best) best = s;
+        }
+        return best;
+    }
+
     function applyDelta(data) {
         var changed = false;
         var newUids = [];          // genuinely-new runs (insert, not in-place update)
         var updated = data.updated || [];
+        var newestBefore = updated.length ? _newestStamp() : '';
         for (var i = 0; i < updated.length; i++) {
             var row = updated[i];
             row._s = null;
@@ -1447,7 +1476,7 @@
             if (idx == null) {
                 state.rows.push(row);
                 state.rowsById.set(row.uid, state.rows.length - 1);
-                newUids.push(row.uid);
+                if (_stampOf(row) > newestBefore) newUids.push(row.uid);
             } else {
                 state.rows[idx] = row;
             }
@@ -1494,6 +1523,15 @@
             }
         }
         _updateNewPill();
+        // docs/170: a table rendered mid-index said "(256 runs" in its header;
+        // once the scan is complete the number is what the table holds.
+        if (state.pendingHeadCount && !state.pendingDelta) {
+            state.pendingHeadCount = false;
+            var headSmall = document.querySelector('.table-header-row h2 > small');
+            var live = 0;
+            for (var hc = 0; hc < state.rows.length; hc++) if (state.rows[hc]) live++;
+            if (headSmall) headSmall.textContent = headSmall.textContent.replace(/^\(\d+ runs/, '(' + live + ' runs');
+        }
         if (changed) {
             _rebuildFitKeys();     // a delta may introduce a brand-new fit key / qubit
             _rebuildParamFacets(); // …or a brand-new param key/value facet
@@ -1530,9 +1568,11 @@
 
     function _noteHeldArrivals(data) {
         var updated = (data && data.updated) || [];
+        var newest = updated.length ? _newestStamp() : '';
         for (var i = 0; i < updated.length; i++) {
             var uid = (updated[i].f || '') + ':' + updated[i].id;
-            if (!state.rowsById || !state.rowsById.has(uid)) state.arrivalUids.add(uid);
+            if ((!state.rowsById || !state.rowsById.has(uid)) &&
+                _stampOf(updated[i]) > newest) state.arrivalUids.add(uid);   // docs/170
         }
         _updateNewPill();
     }
@@ -2359,6 +2399,13 @@
             if (state.pollInFlight) { state.pollWakeAgain = true; return true; }
             pollDelta();
             return true;
+        },
+        // docs/170: how many runs the table holds right now (a probe / harness
+        // seam -- the header count is server-rendered and can be behind)
+        rowCount: function () {
+            var n = 0;
+            for (var i = 0; i < state.rows.length; i++) if (state.rows[i]) n++;
+            return n;
         },
         applyFilters: applyFilters,
         patchRow: patchRow,

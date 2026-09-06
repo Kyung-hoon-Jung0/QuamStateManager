@@ -54,6 +54,11 @@ class TestTheWiring:
         # are both polls that feed it
         head = base[:base.index("</head>")]
         assert "sync-badge.js" in head
+        # docs/170: and BEFORE app.js. app.js registers the chip's acknowledge
+        # handler at load time against `window.SyncBadge`; loaded after it,
+        # the registration was skipped and the click did nothing but clear
+        # the chip (measured in real Chrome, 2026-09-05).
+        assert base.index("asset_url('sync-badge.js')") < base.index("asset_url('app.js')")
 
     def test_the_hand_rolled_tray_swap_tells_the_badge(self):
         """_swapPendingTray replaces the tray with outerHTML, which does not

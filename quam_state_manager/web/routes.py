@@ -20366,7 +20366,23 @@ def _dataset_store_lru() -> OrderedDict[Path, DatasetStore]:
     return lru
 
 
-def _get_or_create_store(folder: Path, rescan: bool = True) -> DatasetStore | None:
+def _dataset_build_lock(folder: Path) -> threading.Lock:
+    """One construction lock per data folder (docs/170) -- see
+    ``_get_or_create_store``. Created under ``_dataset_lru_lock``."""
+    with _dataset_lru_lock:
+        locks = current_app.config.get("_dataset_build_locks")
+        if locks is None:
+            locks = {}
+            current_app.config["_dataset_build_locks"] = locks
+        lock = locks.get(folder)
+        if lock is None:
+            lock = threading.Lock()
+            locks[folder] = lock
+        return lock
+
+
+def _get_or_create_store(folder: Path, rescan: bool = True, *,
+                         deadline: float | None = None) -> DatasetStore | None:
     """Return a cached DatasetStore for ``folder``, building it if needed.
 
     Cached stores have their incremental rescan triggered before return UNLESS
@@ -20375,6 +20391,21 @@ def _get_or_create_store(folder: Path, rescan: bool = True) -> DatasetStore | No
     there stalls every click behind a lock-held ``_scan`` while an experiment is
     actively writing (the run TABLE is kept fresh by the delta poll + the /datasets
     render, not by opening a row). See the datasets-dead-clicks root-cause notes.
+
+    ``deadline`` (docs/170) bounds that rescan the way the delta poll's is
+    bounded (docs/105 #4): a truncated walk leaves the staleness gate open and
+    the next call continues it. Without one, the FIRST render after a cold
+    build (docs/142 E truncates the build at 3 s) continued the walk
+    unbounded on the user's own click -- 31.6 s measured at the customer's
+    share latency on a 2,655-run archive.
+
+    Construction is SINGLE-FLIGHT per folder (docs/170). The cold build is the
+    most expensive thing this process does (~11 file operations per run) and
+    at page load three requests reach here within a second -- the long poll,
+    the new-run poll and the render. Each used to build its own store; the LRU
+    kept one and the others were discarded after paying in full (two parallel
+    3 s scans of the same folder, measured). Now one thread builds and the
+    rest wait for it and share the result.
     """
     lru = _dataset_store_lru()
     cached = lru.get(folder)
@@ -20382,18 +20413,26 @@ def _get_or_create_store(folder: Path, rescan: bool = True) -> DatasetStore | No
         lru.move_to_end(folder)
         if rescan:
             try:
-                cached.rescan_if_stale()
+                cached.rescan_if_stale(deadline=deadline)
             except Exception:
                 logger.exception("rescan_if_stale failed for %s", folder)
         return cached
-    try:
-        ds = DatasetStore(folder)
-    except Exception:
-        return None
-    lru[folder] = ds
-    lru.move_to_end(folder)
-    while len(lru) > _DATASET_STORE_LRU_MAX:
-        lru.popitem(last=False)
+    with _dataset_build_lock(folder):
+        cached = lru.get(folder)
+        if cached is not None:              # built by the thread we waited for
+            lru.move_to_end(folder)
+            return cached
+        try:
+            # docs/171: the persisted store lives beside the sidebar's listing
+            # cache, in the INSTANCE dir -- never on the archive's share.
+            ds = DatasetStore(folder, cache_dir=Path(current_app.instance_path)
+                              / "workspace_cache")
+        except Exception:
+            return None
+        lru[folder] = ds
+        lru.move_to_end(folder)
+        while len(lru) > _DATASET_STORE_LRU_MAX:
+            lru.popitem(last=False)
     return ds
 
 
@@ -20537,6 +20576,11 @@ _POLL_BUDGET_S = 8.0
 # poll tick, but it must never hold the scan lock for an entire 10k-run
 # re-parse. A truncated re-check continues through the ordinary poll.
 _RESCAN_BUDGET_S = 20.0
+#: docs/170 -- how long the Datasets RENDER may spend continuing a scan before
+#: it shows what is indexed so far (the delta poll continues the rest, docs/105
+#: #4). Equal to the cold-build budget (docs/142 E), for the same reason: the
+#: user is waiting on this thread.
+_RENDER_SCAN_BUDGET_S = 3.0
 
 _dataset_candidates_lock = threading.Lock()
 _dataset_candidates_cache: dict[Any, tuple[Any, int, list[Path]]] = {}
@@ -20634,7 +20678,8 @@ def _dataset_candidate_folders(*, fast: bool = False) -> list[Path]:
 
 
 def _active_dataset_stores(*, fast: bool = False,
-                           rescan: bool = True) -> list[dict[str, Any]]:
+                           rescan: bool = True,
+                           deadline: float | None = None) -> list[dict[str, Any]]:
     """Every workspace data folder that yielded >=1 run, each as
     ``{"key", "path", "label", "store"}``.
 
@@ -20663,11 +20708,14 @@ def _active_dataset_stores(*, fast: bool = False,
     being empty, or a folder receiving its FIRST run would fall out of the
     delta poll exactly when it starts mattering. The callers that pass it
     either rescan immediately (and so discover that run) or only read paths.
+
+    ``deadline`` (docs/170) bounds each store's rescan; see
+    ``_get_or_create_store``.
     """
     result: list[dict[str, Any]] = []
     seen_keys: set[str] = set()
     for cand in _dataset_candidate_folders(fast=fast):
-        store = _get_or_create_store(cand, rescan=rescan)
+        store = _get_or_create_store(cand, rescan=rescan, deadline=deadline)
         if store is None:
             continue
         if rescan and store.run_count == 0:
@@ -20860,7 +20908,15 @@ def _datasets_view(view_mode: str):
     # Multi-folder: the table merges runs from EVERY active data folder, not the
     # single "most-runs" winner. Each row is tagged with its folder_key ("f") so
     # the client can build a uid ("<f>:<id>") and the folder filter badges.
-    active = _active_dataset_stores()
+    # docs/170: BOUNDED. On a fresh process the cold build is truncated at
+    # _COLD_SCAN_BUDGET_S (docs/142 E) and the next rescan_if_stale continued
+    # it unbounded -- on the customer's share that was the user's first click
+    # on Datasets blocking for the remaining walk (31.6 s measured at 1.8 ms
+    # per file operation, 2,655 runs). The panel now shows what is indexed
+    # inside the budget and SAYS so (`scan_partial`); the delta poll already
+    # carries the continuation (docs/105 #4) and fills the rest in.
+    active = _active_dataset_stores(
+        deadline=time.monotonic() + _RENDER_SCAN_BUDGET_S)
     # A deep link from a qubit/pair inspector: /datasets?q=q7. SM does not
     # INTERPRET the token — it hands the string to the search box and lets the
     # grammar dataset-virtual.js already ships do the filtering, which is the
@@ -20868,6 +20924,9 @@ def _datasets_view(view_mode: str):
     # (The token is the BARE name on purpose: a bare `q1` is matched exactly
     # against the run's own qubit list, while the `qubit:` scope is a substring
     # test that would drag q10…q19 in with it.)
+    # (docs/170: `q` stays a GET-only preset on purpose -- a Rescan POST never
+    # carries one, so the swap it answers with clears no filters; only the
+    # date tab rides along, read below through request.values.)
     search = (request.args.get("q") or "").strip()
     if _is_htmx():
         template = "_datasets.html"
@@ -20882,7 +20941,11 @@ def _datasets_view(view_mode: str):
                                search=search)
     import time as _t
     poll_ts = _t.time()
-    date = request.args.get("date")
+    date = request.values.get("date")
+    # docs/170: still indexing? (any store whose last walk stopped at its
+    # deadline). Rendered as one muted note beside the count; the client
+    # hides it on the first delta poll that reports a complete scan.
+    scan_partial = any(getattr(f["store"], "scan_truncated", False) for f in active)
 
     rows: list[dict] = []
     folders: list[dict] = []
@@ -20980,6 +21043,7 @@ def _datasets_view(view_mode: str):
         scope_keys_json=json.dumps(scope_keys, separators=(",", ":")),
         view_mode=view_mode,
         collection_tags=collection_tags,
+        scan_partial=scan_partial,
         digest=digest,
         rows_json=json.dumps(rows, separators=(",", ":")),
         # Curated fit-key order (from FIT_TARGET_MAP) for the Sort banner's
@@ -21511,7 +21575,13 @@ def datasets_changes_since():
 @bp.route("/datasets/rescan", methods=["POST"])
 def datasets_rescan():
     """Rescan every active data folder for new runs (incremental)."""
-    active = _active_dataset_stores()
+    # docs/170: rescan=False -- force_rescan below is the scan this button
+    # means, and it is budgeted. The lookup's own rescan_if_stale carried NO
+    # deadline, so on a fresh process it continued the cold build unbounded
+    # before the budgeted re-read even started: 46 s measured at the
+    # customer's share latency, against a 20 s budget (the docs/155 F4 shape,
+    # one more place).
+    active = _active_dataset_stores(rescan=False)
     if not active:
         return render_template("_status.html",
                                message="No data folders in workspace", level="warning")
@@ -21539,9 +21609,13 @@ def datasets_rescan():
                     "the poll continues the re-check incrementally.",
                     _RESCAN_BUDGET_S, _truncated)
     if _is_htmx():
-        resp = make_response()
-        resp.headers["HX-Redirect"] = "/datasets"
-        return resp
+        # docs/170: the partial, not a redirect. HX-Redirect reloaded the WHOLE
+        # page (base.html, every script, the sidebar tree, ~45 requests) to
+        # show a rescanned table -- the visible half of "the refresh button
+        # got slow". The button now swaps exactly what the Datasets link
+        # swaps, on the date tab it was pressed from (hx-include).
+        view = (request.form.get("view") or "").strip()
+        return _datasets_view("collections" if view == "collections" else "datasets")
     return redirect(url_for("main.datasets"))
 
 
@@ -21817,7 +21891,12 @@ def datasets_poll():
     is active never fires a popup — only a genuinely newer run does. (This is
     the multi-folder fix for the spurious "New Experiment Run" popup.)
     """
-    active = _active_dataset_stores(fast=True)   # 60s poll — skip the token stat-walk
+    # 60s poll — skip the token stat-walk. docs/170: and BOUND the rescan; a
+    # background poll continuing a cold build unbounded held the scan lock
+    # for the whole remaining walk, and the user's own Datasets click queued
+    # behind it.
+    active = _active_dataset_stores(fast=True,
+                                    deadline=time.monotonic() + _POLL_BUDGET_S)
     # docs/167: the sync pill carries a COUNT, not a stream of events, so the
     # client sends the stamp it last ACKNOWLEDGED and gets back how many runs
     # have landed since. Counted in the walk that was already happening — no
