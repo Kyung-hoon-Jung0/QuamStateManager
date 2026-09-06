@@ -26,7 +26,11 @@ from datetime import datetime
 from pathlib import Path
 
 _LOCK = threading.Lock()
-KINDS = ("agent", "hook", "human", "sm")
+# docs/173 S8: a journal line names its AUTHOR. by_claude/by_codex = the agent
+# that ran it (from the backend); hook = a terminal agent SM could not name;
+# unknown = a run nobody claimed; human = a person; sm = SM's own bookkeeping.
+KINDS = ("agent", "hook", "human", "sm", "by_claude", "by_codex", "unknown")
+_AUTHOR_KINDS = ("by_claude", "by_codex", "human", "unknown")
 
 
 # ----------------------------------------------------------------- storage
@@ -44,7 +48,11 @@ def settings(instance_path) -> dict:
         cfg = json.loads(config_path(instance_path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         cfg = {}
-    return {"root": str(cfg.get("root") or ""), "claude_says": bool(cfg.get("claude_says", False))}
+    # docs/173 S8: agent_says defaults ON now (the user's decision), because a
+    # LABELLED line -- `by_claude` in front of the model's own words -- reads as
+    # the model, not as the person. The old key `claude_says` still overrides.
+    says = cfg.get("agent_says", cfg.get("claude_says", True))
+    return {"root": str(cfg.get("root") or ""), "agent_says": bool(says), "claude_says": bool(says)}
 
 
 def root(instance_path) -> Path:
@@ -74,8 +82,17 @@ def set_root(instance_path, folder: str | None) -> Path:
 
 
 def set_claude_says(instance_path, on: bool) -> bool:
-    cfg = settings(instance_path)
-    cfg["claude_says"] = bool(on)
+    return set_agent_says(instance_path, on)
+
+
+def set_agent_says(instance_path, on: bool) -> bool:
+    """docs/173 S8: whether the agent's own final message becomes a labelled
+    journal line. Writes both keys so an older reader still sees it."""
+    try:
+        cfg = json.loads(config_path(instance_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cfg = {}
+    cfg["agent_says"] = cfg["claude_says"] = bool(on)
     _write_settings(instance_path, cfg)
     return bool(on)
 
@@ -195,6 +212,7 @@ _ITALIC = re.compile(r"(?<![*\w])\*([^*\n]+)\*(?!\w)")
 _LINK = re.compile(r"\[([^\]\n]+)\]\(((?:https?://|/(?!/))[^)\s]+)\)")
 _WIKI = re.compile(r"\[\[([^\]\n|]+)(?:\|([^\]\n]+))?\]\]")
 _TIME = re.compile(r"^\*\*(\d{2}:\d{2}:\d{2})\*\*")
+_ENTRY_KIND = re.compile(r"^\*\*\d{2}:\d{2}:\d{2}\*\*\s+`([A-Za-z_][\w:.-]*)`")   # docs/173 S8: the author token
 
 
 def _inline(s: str) -> str:
@@ -302,7 +320,11 @@ def render(md: str) -> str:
             tm = _TIME.match(body)
             cls = ""
             if tm:
+                km = _ENTRY_KIND.match(body)
+                author = html.escape(km.group(1)) if km else ""
                 cls = f' class="jr-entry" data-time="{tm.group(1)}"'
+                if author:
+                    cls += f' data-author="{author}"'      # docs/173 S8: by_claude / by_codex / human / unknown / sm
             out.append(f"<li{cls}>{_inline(body)}</li>")
             i += 1; continue
         if stripped.startswith(">"):

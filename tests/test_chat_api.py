@@ -278,11 +278,10 @@ class TestClaudeDriving:
 
 class TestStop:
     def test_stop_now_kills_and_records_first(self, c, inst):
-        from quam_state_manager.core import journal as jm
-        jm.set_claude_says(str(inst), True)
         c.post("/api/agent/chat/start", json={"prompt": "x"})
         assert _wait(lambda: len(_texts(c)) == 1)
-        assert _wait(lambda: "Claude: answer 1: x" in _journal(c, inst)), "the agent's own words are journaled"
+        # docs/173 S8: agent_says is ON by default and the line is LABELLED by_claude
+        assert _wait(lambda: "`by_claude` answer 1: x" in _journal(c, inst)), "the agent's own words are journaled, labelled"
         r = c.post("/api/agent/session/stop", json={"mode": "now"}).get_json()
         assert r["ok"] and r["session"]["stopped"]
         assert _wait(lambda: not c.get("/api/agent/chat/status").get_json()["session"]["alive"])

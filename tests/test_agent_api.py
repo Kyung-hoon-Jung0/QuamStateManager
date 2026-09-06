@@ -257,12 +257,28 @@ class TestEventsBecomeJournalLines:
         assert "✗ `05_power_rabi` failed: KeyError: 'q9'" in text
         assert client.get("/api/agent/now").get_json()["failures_today"] == 1
 
-    def test_claude_says_is_opt_in(self, client):
-        _ev(client, hook_event_name="Stop", summary="I moved to Ramsey.")
-        assert "Claude:" not in client.get("/api/agent/journal?chip=unassigned").get_json()["text"]
-        client.post("/api/agent/journal/root", json={"root": "", "claude_says": "1"}, headers=_H)
-        _ev(client, hook_event_name="Stop", summary="Now Ramsey.")
-        assert "Claude: Now Ramsey." in client.get("/api/agent/journal?chip=unassigned").get_json()["text"]
+    def test_a_run_line_names_the_backend_that_ran_it(self, client):
+        """docs/173 S8: a hook run names its author -- by_codex when the event says
+        so, `hook` when SM cannot name the terminal agent."""
+        _ev(client, hook_event_name="PostToolUse", tool_name="Bash", tool_use_id="t1",
+            summary="python 05_power_rabi.py", backend="codex")
+        assert "`by_codex` ran `05_power_rabi`" in client.get("/api/agent/journal?chip=unassigned").get_json()["text"]
+        _ev(client, hook_event_name="PostToolUse", tool_name="Bash", tool_use_id="t2", summary="python 07_ramsey.py")
+        assert "`hook` ran `07_ramsey`" in client.get("/api/agent/journal?chip=unassigned").get_json()["text"]
+
+    def test_agent_says_is_on_and_labelled(self, client):
+        """docs/173 S8: the agent's own final message is a journal line by DEFAULT
+        now, LABELLED `by_claude` (not a "Claude:" prefix); it can be turned off."""
+        _ev(client, hook_event_name="Stop", summary="I moved to Ramsey.", backend="claude")
+        text = client.get("/api/agent/journal?chip=unassigned").get_json()["text"]
+        assert "`by_claude` I moved to Ramsey." in text and "Claude:" not in text
+        # a Codex turn is labelled by_codex
+        _ev(client, hook_event_name="Stop", summary="Rabi first.", backend="codex")
+        assert "`by_codex` Rabi first." in client.get("/api/agent/journal?chip=unassigned").get_json()["text"]
+        # turned OFF, a later turn is not journaled
+        assert client.post("/api/agent/journal/root", json={"root": "", "agent_says": "0"}, headers=_H).get_json()["agent_says"] is False
+        _ev(client, hook_event_name="Stop", summary="Quiet now.", backend="claude")
+        assert "Quiet now." not in client.get("/api/agent/journal?chip=unassigned").get_json()["text"]
 
     def test_the_chip_is_the_sessions_state_path_never_invented(self, loaded_client, synth_folder):
         _ev(loaded_client, hook_event_name="PostToolUse", tool_name="Bash", tool_use_id="a",

@@ -253,6 +253,18 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   const yd = new Date(Date.now() - 86400 * 1000);
   ok(/^\d\d-\d\d \d\d:\d\d$/.test(P.fmtClock(yd.getTime() / 1000)) && /^\d\d:\d\d$/.test(P.fmtClock(Date.now() / 1000)), 'a card from another day says which day');
   ok(/Setup →/.test(nowCol.textContent) && nowCol.querySelector('a.ag-setup-link').getAttribute('href') === '/agent/setup', 'the now column links to the setup page');
+
+  // docs/173 S8: the name picker in front of the keyboard writes the one actor key,
+  // which the api() helper sends as X-SM-Actor
+  const actorIn = home.querySelector('.ag-actor');
+  ok(actorIn && actorIn.getAttribute('list') === 'ag-actor-list', 'the form row carries a name picker with a datalist');
+  P.setActor('박OO');
+  ok(P.actorName() === '박OO' && window.localStorage.getItem('quam_actor_name') === '박OO', 'the picker sets the one actor key');
+  ok(JSON.parse(window.localStorage.getItem('quam_actor_recents') || '[]')[0] === '박OO', 'the name is remembered for the datalist');
+  calls.length = 0;
+  P.arm();
+  await tick(30);
+  ok(calls[0] && calls[0].headers && calls[0].headers['X-SM-Actor'] === '박OO', 'every door press now carries the person\'s name');
   delete window.showToast;
 
   // the floating panel mounts compact and does not double-mount on the home

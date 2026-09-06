@@ -58,7 +58,7 @@ window.JournalPage.init();   // what htmx:afterSwap does on the real page (jsdom
   window.JournalPage.claim(document.querySelector('.claim-btn'));
   await new Promise(r => setTimeout(r, 5));
   ok(posts.length === 1 && posts[0].url === '/journal/claim' && posts[0].body.run_id === '2' && posts[0].body.who === '박OO' && posts[0].body.note === 'n', 'claim POSTs run, who, note');
-  ok(window.localStorage.getItem('quam_actor') === '박OO', 'the name is remembered for next time');
+  ok(window.localStorage.getItem('quam_actor_name') === '박OO', 'the name is remembered for next time (docs/173 S8: one key across the app)');
   ok(submits.length === 2, 'and the body re-fetches after a claim');
 
   const text = window.JournalPage.copyDigest(document.createElement('button'));

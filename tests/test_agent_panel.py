@@ -159,6 +159,7 @@ class TestPlans:
         # mode on the card
         assert c.post(f"/api/agent/plans/{pid}/mode", json={"mode": "auto"}, headers=HUMAN).get_json()["plan"]["mode"] == "auto"
         assert c.post(f"/api/agent/plans/{pid}/mode", json={"mode": "nope"}, headers=HUMAN).status_code == 400
+        assert "mode set to auto by human:kyunghoon" in _journal(c, inst), "docs/173 S8: a mode change is a journal line"
         # THE click
         d = c.post(f"/api/agent/plans/{pid}/start", json={}, headers=HUMAN).get_json()
         assert d["ok"] and d["session_started"] is True and d["pre_ts"]

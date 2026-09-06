@@ -377,3 +377,13 @@ Agent → 설정. 랩이 Claude/Codex를 SM에 잇는 한 곳. **이 PC에서 �
 **핀.** `test_agent_setup.py`(14) · `agent_setup_selfcheck.cjs`(16) · `test_agent_panel`의 설정-페이지 배선 핀 · `test_hook`의 `--instance` 핀. 실 Chrome: `/agent/setup` 렌더, 번들·페이지 표, HX 폼은 partial 하나.
 
 **S7에서 넘긴 것.** UI에서 Limits/모드 카드(패널의 "지금" 칼럼이 이미 arm/mode를 쥔다) · journal 미러/동기화 감지의 실 SMB 경로(S9) · PyInstaller 번들에서 MCP 서버의 python은 설정의 env python으로(스펙엔 있으나 실 exe 빌드 검증은 S9).
+
+### S8 — journal 저자: 줄마다 누가 (2026-09-06)
+
+**들어간 것.** 이제 journal 줄은 **저자**를 단다. `core/journal.py`의 `KINDS`에 `by_claude`·`by_codex`·`unknown` 추가; 렌더러가 시간 뒤의 kind 토큰을 뽑아 `<li … data-author=...>`로 찍어 페이지가 by_claude/by_codex/human/unknown을 서로 다르게 칠할 수 있다. **`agent_says` 기본 ON**(사용자 결정; 라벨이 붙으니 — 모델의 말 앞의 `by_claude` — 사람의 노트가 아니라 모델로 읽힌다. 옛 키 `claude_says`는 여전히 override, `set_agent_says`가 두 키를 함께 쓴다). `web/agent_api.py`: `_author_kind(rec)`가 이벤트가 대는 backend에서 저자를 유도(`by_claude`/`by_codex`; 이름 못 대는 터미널 hook은 `hook`), `_journal_line`이 `(line, run_id, author)` 3튜플을 돌려주고 `_absorb`가 `kind=author`로 append; Stop 요약(agent_says)은 "Claude:" 접두 대신 **kind가 라벨**(`by_claude` 그 말…). `/journal/root`가 `agent_says`를 읽고 쓴다. **모드 변경 줄**: `plan_mode`가 값이 바뀔 때 `plan <제목> mode set to <mode> by <who>`(kind sm). **예약 줄**은 이미 세션 시작 줄에 탄다(`… (mode <mode>, until HH:MM)`), **Stop 줄**도 이미 있다.
+
+**키보드 앞 이름 선택기.** `web/static/agent.js`가 폼 줄에 `⌨ <input class="ag-actor" list=…>`를 둔다 — 한 키 `quam_actor_name`(SM이 Arm/Stop/모드/"이건 내가"에 기록하는 사람), datalist에 최근 이름, `setActor`가 `quam_actor_recents`도 관리. 비면 라우트는 plain `human`으로. `journal.js`의 claim도 같은 키로 통일(옛 `quam_actor`는 fallback으로만).
+
+**핀.** `test_journal`(저자 kind 유지+렌더, agent_says 기본 ON) · `test_agent_api`(run 줄이 backend를 저자로, agent_says 기본 ON+라벨+끄기) · `test_chat_api`(에이전트 말이 `by_claude` 라벨로) · `test_agent_panel`(모드 변경 줄) · `agent_panel_selfcheck.cjs`(이름 선택기가 한 키를 쓰고 X-SM-Actor로 감) · `journal_page_selfcheck.cjs`(claim 이름 키 통일). **실 Chrome(CDP, PJ 사본):** 이름 선택기가 `quam_actor_name=박OO`+recents를 쓰고, journal이 `by_codex ran 05_power_rabi` / `by_claude Rabi looks clean`(agent_says 기본 ON)을 렌더.
+
+**S8에서 넘긴 것.** 답변 카드의 표/썸네일은 여전히 모델 markdown(S9 runs_summary) · `human:<이름>` journal 줄의 kind는 텍스트에 이름을 담고 kind는 sm/human으로(kind 화이트리스트에 `human:<이름>`을 넣지 않음) · Codex hook 페이로드의 터미널 "지금"은 S9.

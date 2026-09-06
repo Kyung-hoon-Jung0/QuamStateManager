@@ -60,8 +60,9 @@ window.JournalPage = (function () {
     var run = box && box.getAttribute("data-run");
     var who = (box.querySelector(".jr-who") || {}).value || "";
     var note = (box.querySelector(".jr-note-in") || {}).value || "";
-    if (!who) { try { who = localStorage.getItem("quam_actor") || ""; } catch (e) { /* ignore */ } }
-    if (who) { try { localStorage.setItem("quam_actor", who); } catch (e) { /* ignore */ } }
+    // docs/173 S8: one name key across the app — the same the chat's picker sets
+    if (!who) { try { who = localStorage.getItem("quam_actor_name") || localStorage.getItem("quam_actor") || ""; } catch (e) { /* ignore */ } }
+    if (who) { try { localStorage.setItem("quam_actor_name", who); } catch (e) { /* ignore */ } }
     fetch("/journal/claim", { method: "POST", headers: { "Content-Type": "application/json" },
                               body: JSON.stringify({ run_id: run, who: who, note: note }) })
       .then(function (r) { return r.json(); })

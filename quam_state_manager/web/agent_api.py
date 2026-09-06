@@ -515,13 +515,15 @@ def journal_root():
             root = journal_mod.set_root(current_app.instance_path, data.get("root"))
         except OSError as exc:
             return _err(f"cannot use that folder: {exc}")
-        if "claude_says" in data:
-            journal_mod.set_claude_says(current_app.instance_path, str(data.get("claude_says")).lower() in ("1", "true", "on"))
-        return jsonify(ok=True, root=str(root),
-                       claude_says=journal_mod.settings(current_app.instance_path)["claude_says"])
+        if "agent_says" in data or "claude_says" in data:
+            v = data.get("agent_says", data.get("claude_says"))
+            journal_mod.set_agent_says(current_app.instance_path, str(v).lower() in ("1", "true", "on"))
+        st = journal_mod.settings(current_app.instance_path)
+        return jsonify(ok=True, root=str(root), agent_says=st["agent_says"], claude_says=st["agent_says"])
+    st = journal_mod.settings(current_app.instance_path)
     return jsonify(ok=True, root=str(journal_mod.root(current_app.instance_path)),
                    default=str(Path(current_app.instance_path) / "journal"),
-                   claude_says=journal_mod.settings(current_app.instance_path)["claude_says"])
+                   agent_says=st["agent_says"], claude_says=st["agent_says"])
 
 
 # ------------------------------------------------------- the live strip
@@ -651,35 +653,48 @@ def _newest_run_since(ts: float | None) -> int | None:
     return None
 
 
-def _journal_line(rec: dict) -> tuple[str | None, int | None]:
-    """What of an event belongs in the human's notes. A node run (with its
-    run id and failure), a .py edit, and -- opt-in -- what Claude said."""
+def _author_kind(rec: dict) -> str:
+    """docs/173 S8: the author a journal line is stamped with. A backend the
+    event names is the agent that did it (by_claude / by_codex); a terminal
+    hook SM cannot name stays `hook`; a node SM ran itself is the driving
+    session's backend, filled by the caller."""
+    b = (rec.get("backend") or "").lower()
+    if b in ("claude", "codex"):
+        return f"by_{b}"
+    return "hook"
+
+
+def _journal_line(rec: dict) -> tuple[str | None, int | None, str]:
+    """What of an event belongs in the human's notes, and WHO. A node run (with
+    its run id and failure), a .py edit, and -- default ON, labelled -- what the
+    agent said. Returns (line, run_id, author_kind)."""
     h = rec.get("hook_event_name")
     tool = rec.get("tool_name") or ""
     s = rec.get("summary") or ""
+    who = _author_kind(rec)
     if h == "Stop":
         if rec.get("stopped"):
-            return None, None                     # the human's Stop is journaled by the door that pressed it
-        if s and journal_mod.settings(current_app.instance_path)["claude_says"]:
-            who = "Codex" if (rec.get("backend") or "") == "codex" else "Claude"
-            return f"{who}: " + s.replace("\n", " ")[:600], None
-        return None, None
+            return None, None, who                # the human's Stop is journaled by the door that pressed it
+        if s and journal_mod.settings(current_app.instance_path)["agent_says"]:
+            # docs/173 S8: the label IS the kind now (`by_claude` said …), not a "Claude:" prefix
+            return s.replace("\n", " ")[:600], None, (who if who != "hook" else "by_claude")
+        return None, None, who
     if h not in ("PostToolUse", "PostToolUseFailure"):
-        return None, None
+        return None, None, who
     failed = bool(rec.get("failed"))
     err = (rec.get("error") or "").replace("\n", " ")[-200:]
     if tool == "Bash":
         node = _node_of(s)
         if not node:
-            return None, None
+            return None, None, who
         run_id = None if failed else _newest_run_since(_pre_ts_of(rec) or (float(rec.get("ts") or 0) - 3600))
         line = f"ran `{node}`"
         if failed:
             line = f"✗ `{node}` failed" + (f": {err}" if err else "")
-        return line, run_id
+        return line, run_id, who
     if tool in ("Edit", "Write", "MultiEdit") and s.endswith(".py"):
-        return (f"✗ edit of `{s}` failed" if failed else f"edited `{s}`"), None
-    return None, None
+        return (f"✗ edit of `{s}` failed" if failed else f"edited `{s}`"), None, who
+    return None, None, who
 
 
 def _absorb(rec: dict, *, from_replay: bool = False) -> None:
@@ -688,14 +703,14 @@ def _absorb(rec: dict, *, from_replay: bool = False) -> None:
     done: set = current_app.config.setdefault("agent_journaled", set())
     if key in done:
         return
-    line, run_id = _journal_line(rec)
+    line, run_id, who = _journal_line(rec)
     if line:
         when = None
         try:
             when = datetime.fromtimestamp(float(rec.get("ts")))   # review R3-4: the event's own time, not now
         except (TypeError, ValueError, OSError):
             when = None
-        journal_mod.append(current_app.instance_path, _chip_for_event(rec), line, kind="hook", run_id=run_id, when=when)
+        journal_mod.append(current_app.instance_path, _chip_for_event(rec), line, kind=who, run_id=run_id, when=when)
     _mark_journaled(key)
     if rec.get("failed") and not from_replay:
         _notify("agent_failure", {"tool": rec.get("tool_name"), "summary": rec.get("summary"),
@@ -1866,6 +1881,8 @@ def plan_mode(pid: str):
     mode = str(data.get("mode") or "")
     if mode not in limits.MODES:
         return _err(f"mode must be one of {list(limits.MODES)}")
+    if mode != rec.get("mode"):                   # docs/173 S8: a mode change is a journal line
+        journal_mod.append(inst, _chip_name(), f"plan `{rec.get('title')}` mode set to {mode} by {r._request_actor()}", kind="sm")
     rec = agent_plans.update(inst, chip, pid, mode=mode)
     return jsonify(ok=True, plan=_plan_view(rec))
 

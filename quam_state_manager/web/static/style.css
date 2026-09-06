@@ -12671,6 +12671,13 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .ag-st-interrupted, .ag-st-stopping { color: var(--pico-muted-color); }
 .ag-unreachable { font-weight: 600; }
 .ag-cancel { border-color: var(--pico-muted-border-color); color: var(--pico-muted-color); background: transparent; }
+/* docs/173 S8: the name picker in front of the keyboard */
+.ag-actor-wrap { display: inline-flex; align-items: center; gap: .25rem; font-size: .85em; color: var(--pico-muted-color); }
+.ag-actor { width: 8rem; margin: 0; padding: .15rem .4rem; height: auto; font-size: .9em; }
+/* the journal's author labels (by_claude / by_codex / human / unknown) */
+.jr-entry[data-author^="by_"] > code:first-of-type { color: var(--pico-primary); }
+.jr-entry[data-author="human"] > code:first-of-type, .jr-entry[data-author^="human:"] > code:first-of-type { color: #2e7d32; }
+.jr-entry[data-author="unknown"] > code:first-of-type { color: var(--pico-muted-color); }
 /* docs/173 S7 -- the Agent setup page */
 .agent-setup { max-width: 62rem; }
 .as-sec { border: 1px solid var(--pico-muted-border-color); border-radius: .5rem; padding: .6rem .9rem; margin: .6rem 0; }

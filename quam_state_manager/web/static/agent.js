@@ -62,7 +62,23 @@ window.AgentPanel = (function () {
     if (typeof v === "object") return JSON.stringify(v).slice(0, 60);
     return String(v);
   }
+  // docs/173 S8: the name picker in front of the keyboard. One key, `quam_actor_name`,
+  // is the person the door records (armed by / Stop by / mode by / "I ran it"). Empty =
+  // the routes fall back to a plain "human".
   function actorName() { try { return localStorage.getItem("quam_actor_name") || ""; } catch (e) { return ""; } }
+  function actorRecents() { try { return JSON.parse(localStorage.getItem("quam_actor_recents") || "[]"); } catch (e) { return []; } }
+  function setActor(v) {
+    v = String(v || "").trim();
+    try {
+      localStorage.setItem("quam_actor_name", v);
+      if (v) {
+        var r = actorRecents().filter(function (x) { return x !== v; });
+        r.unshift(v);
+        localStorage.setItem("quam_actor_recents", JSON.stringify(r.slice(0, 8)));
+      }
+    } catch (e) { /* ignore */ }
+    S.mounts.forEach(function (m) { var d = m.root.querySelector("#ag-actor-list"); if (d) d.innerHTML = actorRecents().map(function (x) { return '<option value="' + esc(x) + '">'; }).join(""); });
+  }
   function api(method, path, body) {
     // review R2-3: a rejected fetch (SM gone, network) answers like a refused
     // request -- status 0 and a message -- so no caller ever throws or hangs
@@ -503,6 +519,7 @@ window.AgentPanel = (function () {
       '<form class="ag-form" onsubmit="return AgentPanel.submit(event)">' +
       '<textarea class="ag-input" rows="2" onkeydown="return AgentPanel.key(event)" placeholder="What do you want to know, or what should the agent do?   Enter sends, Shift+Enter breaks a line   (/run <node> <targets> k=v makes a plan card directly)"></textarea>' +
       '<div class="ag-form-row"><select class="ag-backend" title="which CLI drives"></select> <button type="submit" class="btn-sm ag-send">Send</button> ' +
+      '<label class="ag-actor-wrap" title="who is at the keyboard — the person SM records for Arm / Stop / mode / “I ran it”">⌨ <input class="ag-actor" list="ag-actor-list" placeholder="your name" autocomplete="off" spellcheck="false" oninput="AgentPanel.setActor(this.value)"><datalist id="ag-actor-list"></datalist></label> ' +
       '<span class="ag-presets">' + PRESETS.map(function (p, i) { return '<button type="button" class="btn-sm ag-preset" onclick="AgentPanel.preset(' + i + ', this.closest(\'.ag-root\'))">' + esc(p[0]) + "</button>"; }).join(" ") + "</span>" +
       '<span class="muted ag-hint">a preset fills a draft; nothing starts before a plan card\'s Start</span></div></form></div>' +
       '<aside class="ag-now"></aside><div id="ag-toast" class="ag-toast" hidden></div></div>';
@@ -529,6 +546,10 @@ window.AgentPanel = (function () {
       var chipEl = m.root.querySelector(".ag-chip");
       if (chipEl) chipEl.textContent = r.body.chip || "no chip open";
     });
+    var actorEl = m.root.querySelector(".ag-actor");
+    if (actorEl) { actorEl.value = actorName(); }
+    var dl = m.root.querySelector("#ag-actor-list");
+    if (dl) dl.innerHTML = actorRecents().map(function (x) { return '<option value="' + esc(x) + '">'; }).join("");
     S.after = 0;
     poll(true);
     schedule();
@@ -576,6 +597,6 @@ window.AgentPanel = (function () {
 
   return { mount: mount, poll: poll, submit: submit, key: key, preset: preset, startPlan: startPlan, cancelPlan: cancelPlan,
            setPlanMode: setPlanMode, approve: approve, reject: reject, stop: stop, arm: arm, disarm: disarm,
-           endSession: endSession, setObserver: setObserver, toggleFloat: toggleFloat, init: init, absorb: absorb,
-           _state: S, fmtNum: fmtNum, fmtClock: fmtClock };
+           endSession: endSession, setObserver: setObserver, setActor: setActor, actorName: actorName,
+           toggleFloat: toggleFloat, init: init, absorb: absorb, _state: S, fmtNum: fmtNum, fmtClock: fmtClock };
 })();

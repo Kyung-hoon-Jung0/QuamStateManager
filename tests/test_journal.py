@@ -52,6 +52,20 @@ class TestStorage:
     def test_unknown_kind_falls_back_to_agent(self, tmp_path):
         assert journal.append(tmp_path, "c", "x", kind="robot")["kind"] == "agent"
 
+    def test_author_kinds_are_kept_and_stamped_on_the_entry(self, tmp_path):
+        """docs/173 S8: a line names its author, and the renderer stamps it so the
+        page can style by_claude / by_codex / unknown apart."""
+        for k in ("by_claude", "by_codex", "unknown"):
+            assert journal.append(tmp_path, "c", f"{k} did it", kind=k)["kind"] == k
+        out = journal.render(journal.read(tmp_path, "c"))
+        assert 'data-author="by_claude"' in out and 'data-author="by_codex"' in out and 'data-author="unknown"' in out
+
+    def test_agent_says_defaults_on(self, tmp_path):
+        """docs/173 S8: the user's decision -- ON by default, but LABELLED."""
+        assert journal.settings(tmp_path)["agent_says"] is True
+        assert journal.set_agent_says(tmp_path, False) is False
+        assert journal.settings(tmp_path)["agent_says"] is False and journal.settings(tmp_path)["claude_says"] is False
+
 
 class TestRendererWhitelist:
     def test_html_never_passes_through(self):
@@ -93,7 +107,7 @@ class TestRendererWhitelist:
 
     def test_the_entry_bullets_carry_their_time(self):
         out = journal.render("- **02:13:44** `hook` ran `05_power_rabi`\n  - because: q1 rabi\n- plain bullet\n")
-        assert '<li class="jr-entry" data-time="02:13:44">' in out
+        assert '<li class="jr-entry" data-time="02:13:44"' in out and 'data-author="hook"' in out  # docs/173 S8: the author is stamped on the entry
         assert out.count("<li") == 3 and "<ul>" in out
         assert out.count("<ul>") == 2, "the because-line is a nested list"
 
