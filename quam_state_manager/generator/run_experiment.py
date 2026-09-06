@@ -199,7 +199,80 @@ def run_target(target: str, state_path: str | None, config_file: str | None) -> 
         os.environ["QUAM_STATE_PATH"] = str(state_path)
     if config_file:
         os.environ["QUALIBRATE_CONFIG_FILE"] = str(config_file)
-    runpy.run_path(str(target), run_name="__main__")
+    # docs/173 S9 (found on the real KRISS env): a node's plot action calls
+    # plt.show(), and the customer env's default matplotlib backend is the
+    # INTERACTIVE tkagg (tkinter present) -- so a headless Scheduler subprocess
+    # blocks forever on a GUI window that never opens. Force a non-interactive
+    # backend before the node imports matplotlib; an operator override wins.
+    os.environ.setdefault("MPLBACKEND", "Agg")
+    ns = runpy.run_path(str(target), run_name="__main__")
+    if state_path:
+        _persist_node_state(ns, str(state_path))
+
+
+def _persist_node_state(ns: dict, state_path: str) -> None:
+    """docs/173 S9 (found on the real KRISS arbel cloud): a qualibrate node NEVER
+    rewrites the state.json at QUAM_STATE_PATH. In a non-interactive run its
+    ``record_state_updates()`` either applies the calibration to the in-memory
+    machine and records nothing (interactive_only=True, the customer default),
+    or reverts the machine and records the diff in ``node.state_updates``
+    (interactive_only=False). ``node.save()`` only writes the run's storage
+    snapshot. So the Scheduler's scratch state.json stays byte-identical and
+    SM's leaf-diff sees NO writes.
+
+    Here, on SM's own subprocess boundary, we make the node's PROPOSED state the
+    thing on disk at QUAM_STATE_PATH: apply any recorded ``state_updates`` back
+    onto the machine (the reverted case), then ``machine.save()`` to the scratch.
+    The live chip is never touched -- state_path is always the Scheduler's
+    per-run scratch copy. Best-effort and never fatal: a run that produced no
+    node object, or a machine without ``save``, just leaves the scratch as-is
+    (the pre-S9 behaviour) rather than failing the whole run.
+    """
+    try:
+        node = ns.get("node") if isinstance(ns, dict) else None
+        machine = getattr(node, "machine", None)
+        if node is None or machine is None or not hasattr(machine, "save"):
+            return
+        updates = {}
+        try:
+            updates = dict(getattr(node, "state_updates", {}) or {})
+        except Exception:  # noqa: BLE001
+            updates = {}
+        for key, rec in updates.items():
+            # rec = {"key": "#/qubits/qA1/resonator/time_of_flight", "attr": ..., "old": .., "new": ..}
+            ref = (rec or {}).get("key") or key
+            if "new" not in (rec or {}):
+                continue
+            try:
+                from qualibrate.core.utils.node.record_state_update import update_machine_attribute
+                update_machine_attribute(machine, ref, rec["new"])   # writes rec["new"] at ref
+            except Exception:  # noqa: BLE001
+                _set_by_ref(machine, ref, rec["new"])
+        machine.save()
+    except Exception as exc:  # noqa: BLE001
+        # never let the capture step fail a run that already measured on hardware
+        sys.stderr.write(f"[run_experiment] state capture skipped: {type(exc).__name__}: {exc}\n")
+
+
+def _set_by_ref(machine, ref: str, value) -> None:
+    """Fallback setter for a ``#/a/b/c`` quam reference when qualibrate's own
+    helper is unavailable: walk attributes/items and set the leaf."""
+    parts = [p for p in str(ref).lstrip("#/").split("/") if p]
+    obj = machine
+    for p in parts[:-1]:
+        if isinstance(obj, dict):
+            obj = obj[p]
+        elif isinstance(obj, (list, tuple)):
+            obj = obj[int(p)]
+        else:
+            obj = getattr(obj, p)
+    leaf = parts[-1]
+    if isinstance(obj, dict):
+        obj[leaf] = value
+    elif isinstance(obj, list):
+        obj[int(leaf)] = value
+    else:
+        setattr(obj, leaf, value)
 
 
 # ---------------------------------------------------------------------------

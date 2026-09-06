@@ -387,3 +387,21 @@ Agent → 설정. 랩이 Claude/Codex를 SM에 잇는 한 곳. **이 PC에서 �
 **핀.** `test_journal`(저자 kind 유지+렌더, agent_says 기본 ON) · `test_agent_api`(run 줄이 backend를 저자로, agent_says 기본 ON+라벨+끄기) · `test_chat_api`(에이전트 말이 `by_claude` 라벨로) · `test_agent_panel`(모드 변경 줄) · `agent_panel_selfcheck.cjs`(이름 선택기가 한 키를 쓰고 X-SM-Actor로 감) · `journal_page_selfcheck.cjs`(claim 이름 키 통일). **실 Chrome(CDP, PJ 사본):** 이름 선택기가 `quam_actor_name=박OO`+recents를 쓰고, journal이 `by_codex ran 05_power_rabi` / `by_claude Rabi looks clean`(agent_says 기본 ON)을 렌더.
 
 **S8에서 넘긴 것.** 답변 카드의 표/썸네일은 여전히 모델 markdown(S9 runs_summary) · `human:<이름>` journal 줄의 kind는 텍스트에 이름을 담고 kind는 sm/human으로(kind 화이트리스트에 `human:<이름>`을 넣지 않음) · Codex hook 페이로드의 터미널 "지금"은 S9.
+
+### S9 (일부) — 실노드 서브프로세스 루프를 실제 하드웨어에서 (2026-09-07)
+
+사용자가 놀이터를 줬다: KRISS_CZ env(`D:\miniconda3\envs\KRISS_CZ`), qualibrate config, state `260906_KRS_CZ`(칩 qA1–qD5), 코드 `D:\work\Customer_Codes\KRISS_CZ`, 데이터 `KRISS_CZ_260906`. 네트워크는 **iqcc 클라우드**(host 10.1.1.6, 백엔드 `arbel`, `CloudQuantumMachinesManager`) — 실제(클라우드) 하드웨어. **qA1으로 time of flight를 돌려** 확인했다. 상태는 항상 스크래치 사본에만 썼고, 놀이터 원본과 PJ 칩은 읽기만 했다.
+
+**qualibrate는 완전히 돈다.** 직접 실행(`node.run(qubits=["qA1"], simulate=False)`): QUA 제출 → arbel 실행 → 100 shot → fit → 플롯 2장 → 데이터셋 저장(run **#4**), `RUN OK`, outcome `{qA1: successful}`. ToF는 **372 그대로** — 사용자가 지적한 대로 노드가 execute 때 `time_of_flight_in_ns = 28`(기본값)로 놓고 측정하고, fit이 `tof_to_add = 344`를 더해 `28 + 344 = 372`가 되는 것. 값이 안 바뀐 게 아니라 **일관된 재측정**이다.
+
+**실노드 루프가 잡아낸 SM의 진짜 갭 두 개(S5의 가짜 서브프로세스로는 절대 못 봄):**
+
+1. **qualibrate 노드는 `state.json`을 다시 쓰지 않는다.** `record_state_updates()`는 기본값(interactive_only=True)에서 비대화형 실행이면 업데이트를 **머신에 적용하지만 아무것도 기록 안 하고**(state_updates 비어 있음), `interactive_only=False`면 반대로 **머신을 되돌리고** `node.state_updates`에 diff(`{old,new}`)를 남긴다. `node.save()`는 **저장소(run 폴더) 스냅샷**에만 쓴다 — `QUAM_STATE_PATH`의 `state.json`은 어느 쪽도 안 건드린다. 그래서 Scheduler의 스크래치 `state.json`은 바이트 그대로였고 SM의 leaf-diff는 **아무 쓰기도 못 봤다.** 실측으로 확인: `machine.save()`는 `QUAM_STATE_PATH`(스크래치)에 제대로 쓴다. **고침** — `run_experiment._persist_node_state`: 노드 실행 뒤 기록된 state_updates를 머신에 적용하고(되돌림 케이스) `machine.save()`로 스크래치에 저장 → SM의 diff가 제안 업데이트를 본다. 두 스타일 모두 실 Quam으로 확인(A: 머신이 값을 쥔 경우 350 저장 / B: 되돌리고 기록한 경우 361 저장).
+
+2. **헤드리스 서브프로세스가 `plt.show()`에서 영원히 멈춘다.** 노드의 plot 액션은 `plt.show()`를 부르고, 고객 env의 matplotlib 기본 백엔드는 **대화형 `tkagg`**(tkinter 있음) — Scheduler가 띄운 헤드리스 서브프로세스는 열리지 않는 GUI 창을 기다리며 멈춘다(관측: `analyse_data` 뒤 plot_data에서 정지, `_run_item`의 timeout까지). **고침** — `run_experiment.run_target`이 runpy 전에 `MPLBACKEND=Agg`를 setdefault로 강제(운영자 override 우선).
+
+**끝까지 확인.** SM의 **실제** `scheduler._run_item`(cqt) → run_experiment를 **KRISS env**로 spawn → 실노드 실행. 클라우드 실행은 로그로 확인(`execute_qua_program` → arbel → `analyse_data: qA1 SUCCESS, tof_to_add=344`). 두 고침 적용 뒤 replay(`load_data_id=4`, 하드웨어 없이 plot/update/save/_persist 경로) 로 전체 서브프로세스 경로가 **`status: done`(10s, plt.show 정지 없음)** 로 끝나고 스크래치가 `_persist_node_state`로 **재저장됨**(mtime 상승), 원본 372 유지. 즉 S5가 가짜로 둔 "실 서브프로세스 + 실 노드" 절반이 이제 실증됐고, diff/gate/door 절반은 이미 `test_agent_runs`(FakeRun) 핀이 덮는다.
+
+**핀.** `tests/test_node_persist.py`(5) — `_persist_node_state`의 두 스타일(머신-보유 / 되돌림+기록), 노드 없음/save 예외의 무해, `_set_by_ref`의 attr·dict leaf; mutation 3/3. run_experiment는 KRISS env 없이 cqt에서 importlib로 로드해 fake 노드/머신으로 검증(하드웨어 불필요).
+
+**S9에서 아직 남은 것.** 페르소나 시나리오 CDP 재생 · 실 CLI ×2(코덱스가 사용량 한도면 코덱스 없이 그 역할을 직접 대신 — 사용자 지시) · 두 인스턴스/고아/heartbeat/hold 핀 재확인 · **1.0.0 승격**(사용자 판단). 실노드 루프의 **핵심(실 하드웨어 한 바퀴)** 은 이제 통과했다.
