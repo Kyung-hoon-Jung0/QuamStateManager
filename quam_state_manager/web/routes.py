@@ -1799,6 +1799,19 @@ def _active_chip_identity() -> dict | None:
     }
 
 
+def _agent_edit_lock_refusal(ctx: dict | None):
+    """docs/173 S5: while the agent's node runs, the working copy is what its
+    writes will be diffed against -- a human edit meanwhile would be silently
+    folded into or lost under them. The agent's own staging goes direct."""
+    lock = current_app.config.get("agent_edit_lock")
+    if not lock or not ctx or lock.get("path") != ctx.get("path"):
+        return None
+    if request.headers.get("X-SM-Agent"):
+        return None
+    return jsonify(ok=False, agent_lock=lock, error="agent_running",
+                   message=f"Agent가 {lock.get('node')}를 돌리는 중 — 편집이 잠겼습니다. Stop을 누르면 편집할 수 있습니다."), 409
+
+
 def _archive_write_blocked(ctx: dict | None = None):
     """Return an error response when *ctx* is a dataset archive (a frozen
     per-run snapshot), else None. Mutating routes call this to refuse
@@ -6635,6 +6648,9 @@ def field_edit():
     modifier = ctx.get("modifier") if ctx else None
     if not modifier:
         return jsonify(ok=False, error="No active context"), 400
+    _lk = _agent_edit_lock_refusal(ctx)
+    if _lk is not None:
+        return _lk
 
     dot_path = _normalize_dot_path(request.form.get("dot_path", "").strip())
     raw_value = request.form.get("value", "")
@@ -8195,6 +8211,9 @@ def field_edit_batch():
     modifier = ctx.get("modifier") if ctx else None
     if not modifier:
         return jsonify(ok=False, error="No active context"), 400
+    _lk = _agent_edit_lock_refusal(ctx)
+    if _lk is not None:
+        return _lk
 
     payload = request.get_json(silent=True)
     # Cross-chip guard (audit #1): the apply-fit popup stamps the run's chip token.
@@ -15191,6 +15210,20 @@ def state_apply_to_live():
     _unseen = _unseen_edit_refusal(ctx)
     if _unseen is not None:
         return jsonify(_unseen), 409
+    if request.headers.get("X-SM-Agent"):
+        # docs/173 S5: an agent applies its own rows, never a person's -- a human's
+        # staged edit is that person's decision to press
+        _hum = [c.dot_path for c in ctx["store"].change_log
+                if not str(getattr(c, "actor", "human")).startswith("by_")]
+        if _hum:
+            return jsonify(ok=False, conflict="human_groups", paths=_hum[:50],
+                           message="the tray holds a person's staged edits; an agent never applies them -- "
+                                   "ask the human to apply or discard in the SM window"), 409
+        _lk = _agent_edit_lock_refusal(ctx)
+    else:
+        _lk = _agent_edit_lock_refusal(ctx)
+    if _lk is not None:
+        return _lk
     wc = ctx["working_copy"]
     store = ctx["store"]
     saver = ctx["saver"]
@@ -24878,6 +24911,17 @@ def _scheduler_lock_guard():
             resp.headers["HX-Reswap"] = "none"
             resp.headers["HX-Trigger"] = "autofitLocked"
             return resp
+    # docs/173 S5: the agent's run_node holds the chassis too -- say so in the
+    # agent's words, not the Experiment Runner's (the runner is hidden in 1.0)
+    _alk = current_app.config.get("agent_edit_lock")
+    if _alk and request.method != "GET" and request.endpoint in _SCHEDULER_MUTATOR_ENDPOINTS:
+        resp = make_response(jsonify({
+            "error": "agent_running", "agent_lock": _alk,
+            "message": f"Agent가 {_alk.get('node')}를 돌리는 중 — 편집이 잠겼습니다. Stop을 누르면 편집할 수 있습니다.",
+        }), 409)
+        resp.headers["HX-Reswap"] = "none"
+        resp.headers["HX-Trigger"] = "schedulerLocked"
+        return resp
     if request.endpoint in _SCHEDULER_MUTATOR_ENDPOINTS \
             and scheduler.is_active(_sched_inst()):
         resp = make_response(jsonify({

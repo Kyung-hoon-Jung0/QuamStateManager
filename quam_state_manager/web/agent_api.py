@@ -25,6 +25,7 @@ import logging
 import re
 import threading
 import time
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -132,13 +133,17 @@ def chip():
     ctx = r._active_ctx()
     if not store or not ctx:
         return jsonify(ok=True, loaded=False, sm_version=_version(), now=_now_state())
+    diverged = _live_flag()
     return jsonify(ok=True, loaded=True, sm_version=_version(),
                    path=r._active_path(), name=_chip_name(),
                    chip_token=r._active_chip_token() or "",
                    qubits=list(store.qubit_names), pairs=list(store.qubit_pair_names),
                    pending=r._change_count(),
-                   live_diverged=_live_flag(),
+                   live_diverged=diverged,
+                   stale_since=_stale_since() if diverged else None,
                    live_readonly=bool(ctx.get("live_readonly")),
+                   waiting=_waiting_count(),
+                   run_active=_run_active_view(),
                    now=_now_state())
 
 
@@ -157,10 +162,11 @@ def state_get():
     if not store:
         return _err("no chip loaded", 409)
     diverged = _live_flag()
+    stale_since = _stale_since() if diverged else None
     path = (request.args.get("path") or "").strip().strip(".")
     if not path:
         keys = sorted(k for k in store.merged.keys())
-        return jsonify(ok=True, path="", kind="container", keys=keys, live_diverged=diverged)
+        return jsonify(ok=True, path="", kind="container", keys=keys, live_diverged=diverged, stale_since=stale_since)
     try:
         raw = store.get_value(path)
     except (KeyError, IndexError, TypeError, ValueError):
@@ -170,10 +176,10 @@ def state_get():
         keys = list(raw.keys()) if isinstance(raw, dict) else list(range(len(raw)))
         if len(text) > _MAX_SUBTREE_CHARS:
             return jsonify(ok=True, path=path, kind="container", keys=[str(k) for k in keys],
-                           truncated=True, size_chars=len(text), live_diverged=diverged,
+                           truncated=True, size_chars=len(text), live_diverged=diverged, stale_since=stale_since,
                            hint="ask for a deeper path; this subtree is too large to return whole")
         return jsonify(ok=True, path=path, kind="container", keys=[str(k) for k in keys],
-                       value=_jsonable(raw), live_diverged=diverged)
+                       value=_jsonable(raw), live_diverged=diverged, stale_since=stale_since)
     resolved = raw
     if isinstance(raw, str) and raw.startswith("#"):
         try:
@@ -187,7 +193,7 @@ def state_get():
     return jsonify(ok=True, path=path, kind="leaf", value=_jsonable(raw),
                    resolved=_jsonable(resolved), source_file=src,
                    is_pointer=isinstance(raw, str) and raw.startswith("#"),
-                   live_diverged=diverged)
+                   live_diverged=diverged, stale_since=stale_since)
 
 
 @agent_bp.route("/tray")
@@ -878,15 +884,32 @@ def _limit_until(v):
 
 
 def _waiting_count() -> int:
-    """Held groups + approval cards (S5 fills the hold flag; 0 until then)."""
-    r = _r()
-    mod = r._modifier()
-    if not mod:
+    """Approval cards waiting for a human (docs/173 S5: a held write lives
+    OUTSIDE the tray, in core/approvals.py -- the working copy applies whole)."""
+    from quam_state_manager.core import approvals
+    if not _r()._active_path():
         return 0
     try:
-        return sum(1 for c in mod.get_change_log() if getattr(c, "hold", False))
+        return len(approvals.pending(current_app.instance_path, _chip_name()))
     except Exception:  # noqa: BLE001
         return 0
+
+
+def _stale_since() -> float | None:
+    """When the live files last moved, for an answer that says live_diverged
+    (docs/173 S5 ``stale_since``): the newest mtime of the two live files."""
+    r = _r()
+    ctx = r._active_ctx()
+    if not ctx or not ctx.get("path"):
+        return None
+    best = None
+    for name in ("state.json", "wiring.json"):
+        try:
+            m = (Path(ctx["path"]) / name).stat().st_mtime
+            best = m if best is None else max(best, m)
+        except OSError:
+            continue
+    return best
 
 
 def _typical_duration(node: str | None) -> float | None:
@@ -973,3 +996,470 @@ def events_list():
     with _events_lock:
         ev = list(_events())[-n:]
     return jsonify(ok=True, count=len(ev), events=ev)
+
+
+# ================================================================ S5: run_node
+# SM runs the node (core/agent_runs.py); these routes are the agent's door,
+# the human's Arm / approve / reject clicks, and the adapter that hands the
+# engine everything it needs from the app.
+
+def _registry():
+    from quam_state_manager.core import agent_runs
+    app = current_app._get_current_object()
+    reg = app.config.get("agent_run_registry")
+    if reg is None:
+        reg = agent_runs.Registry(app.instance_path)
+        app.config["agent_run_registry"] = reg
+    return reg
+
+
+def _run_active_view() -> dict | None:
+    try:
+        if not _r()._active_path():
+            return None
+        m = _registry().active_for(_chip_name())
+        return {k: m.get(k) for k in ("key", "node", "targets", "since", "actor")} if m else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan_id: str | None,
+                  apply: bool, *, presser: str | None = None) -> dict:
+    """Stage ``writes`` onto the chip's working copy as ONE group with the
+    agent's actor and, when ``apply``, push them through the ONE door
+    (``/state/apply-to-live``) as the presser's own press -- the agent's
+    (X-SM-Agent) or, for an approval, the human's (X-SM-Actor). Refused by
+    the door => the group is un-staged again so the caller can park it."""
+    r = _r()
+    ctx = r._find_quam_ctx_by_path(live)
+    if ctx is None or ctx.get("type") != "quam":
+        return {"group_id": gid, "staged": 0, "applied": False, "error": "the chip is no longer loaded",
+                "unstaged": [{"path": w["path"], "why": "chip not loaded"} for w in writes[:50]]}
+    mod, store = ctx["modifier"], ctx["store"]
+    staged, unstaged = [], []
+    with store._lock:
+        for w in writes:
+            if w.get("created") or w.get("deleted"):
+                unstaged.append({"path": w["path"], "why": "new/removed key -- SM stages existing leaves only; "
+                                                            "apply the run's state from Datasets → Apply to chip"})
+                continue
+            try:
+                e = mod.set_value(w["path"], w["new"], _defer_hooks=True, group_id=gid)
+                e.actor = actor
+                staged.append(e)
+            except Exception as exc:  # noqa: BLE001
+                unstaged.append({"path": w["path"], "why": f"{type(exc).__name__}: {str(exc)[:160]}"})
+        store._clear_pointer_cache()
+        if store.search_index is not None:
+            for e in staged:
+                store.search_index.update_entry(e.dot_path, e.new_value)
+    out = {"group_id": gid, "staged": len(staged), "unstaged": unstaged, "applied": False, "error": None}
+    if not staged or not apply:
+        return out
+    if r._active_ctx() is not ctx:
+        out["error"] = "another chip is active in the window; staged only"
+        return out
+
+    def _take_back():
+        with store._lock:                      # the group comes back out of the tray
+            while store.change_log and store.change_log[-1].group_id == gid:
+                mod.undo_group()
+    # The door SAVES the log into the working copy before it writes the chip and
+    # only then notices a moved chip (docs/65's re-apply stash) -- a refusal there
+    # would leave the agent's values half-way, in SM but not on the chip. Ask first.
+    try:
+        from quam_state_manager.core import working_copy as wc_mod
+        if wc_mod.live_diverged_now(ctx["working_copy"]):
+            _take_back()
+            out["error"] = "stale_live: the live files moved outside SM since the last sync (take live first)"
+            return out
+    except Exception:  # noqa: BLE001
+        logger.debug("live_diverged_now failed", exc_info=True)
+    n = len(store.change_log)
+    headers = {"Accept": "application/json"}
+    who = presser or actor
+    if str(who).startswith("by_"):
+        headers["X-SM-Agent"] = str(who)[3:]
+    elif ":" in str(who):
+        headers["X-SM-Actor"] = str(who).split(":", 1)[1]
+    if plan_id:
+        headers["X-SM-Plan"] = str(plan_id)
+    try:
+        with app.test_request_context("/state/apply-to-live", method="POST",
+                                      data={"seen_changes": str(n)}, headers=headers):
+            resp = r.state_apply_to_live()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("agent apply failed")
+        resp = (jsonify(ok=False, error=f"{type(exc).__name__}: {exc}"), 500)
+    status = resp[1] if isinstance(resp, tuple) else getattr(resp, "status_code", 200)
+    body = resp[0] if isinstance(resp, tuple) else resp
+    if status != 200:
+        js = body.get_json(silent=True) if hasattr(body, "get_json") else None
+        out["error"] = ((js or {}).get("message") or (js or {}).get("conflict") or (js or {}).get("error")
+                        or f"HTTP {status}")
+        if store.change_log:
+            _take_back()                       # refused BEFORE the save: the group comes back out
+        else:
+            # refused AFTER the save: the values sit in SM's working copy as unapplied edits
+            out["saved_in_working_copy"] = True
+            out["error"] += " -- the values are saved in SM's working copy (unapplied); a human decides in the window"
+        return out
+    if r._change_count() == 0 and not ctx.get("live_diverged"):
+        out["applied"] = True
+    else:
+        out["error"] = "SM did not clear the tray"
+    return out
+
+
+def _run_adapter():
+    """The engine's view of this app for the chip open NOW, captured on the
+    request thread; every callable re-enters an app context on the driver."""
+    from quam_state_manager.core import agent_runs, limits, scheduler, story
+    app = current_app._get_current_object()
+    r = _r()
+    ctx = r._active_ctx()
+    chip = _chip_name()
+    live = str(ctx["path"])
+    wc = ctx["working_copy"]
+    scope = r._sched_inst()
+    inst = app.instance_path
+
+    def settings():
+        return scheduler.load_settings(scope)
+
+    def human_recent(window_min: float):
+        with app.app_context():
+            try:
+                with _events_lock:
+                    ev = list(_events())
+                h = _human_ran_recently(time.time(), story.load_agent_runs(inst), ev)
+                if h and time.time() - float(h.get("ts") or 0) <= float(window_min) * 60:
+                    return h
+            except Exception:  # noqa: BLE001
+                logger.debug("human_recent failed", exc_info=True)
+            return None
+
+    def list_runs():
+        with app.app_context():
+            ds = _ds()
+            if ds is None:
+                return None                     # no dataset store: nothing to attribute against
+            try:
+                ds.rescan_if_stale()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                return ds.list_runs()[:60]
+            except Exception:  # noqa: BLE001
+                return []
+
+    def stage(writes, gid, actor, plan_id, apply):
+        with app.app_context():
+            return _stage_writes(app, live, writes, gid, actor, plan_id, apply)
+
+    def journal(text, kind="agent", reason=None, run_id=None, paths=None):
+        with app.app_context():
+            journal_mod.append(inst, chip, text, kind=kind, reason=reason, run_id=run_id, paths=paths or [])
+
+    def wake():
+        with app.app_context():
+            _bump()
+            _wake()
+
+    def set_lock(info):
+        app.config["agent_edit_lock"] = ({**info, "chip": chip, "path": live} if info else None)
+
+    def notify(event, payload):
+        with app.app_context():
+            try:
+                limits.notify(inst, chip, event, payload)
+            except Exception:  # noqa: BLE001
+                logger.debug("notify failed", exc_info=True)
+
+    def queue_state():
+        with scheduler._QLOCK:
+            return scheduler.load_queue(scope)
+
+    return agent_runs.RunAdapter(
+        instance_path=inst, chip=chip, scope=scope, live_folder=live, working_folder=str(wc.working_folder),
+        settings=settings, human_recent=human_recent, list_runs=list_runs, stage=stage, journal=journal,
+        wake=wake, set_lock=set_lock, notify=notify,
+        queue_state=queue_state, own_runner_alive=lambda: scheduler.is_running(scope))
+
+
+def _run_view(m: dict) -> dict:
+    res = m.get("result") or {}
+    out = {"key": m.get("key"), "status": m.get("status"), "node": m.get("node"), "targets": m.get("targets"),
+           "since": m.get("since"), "ended": m.get("ended"), "actor": m.get("actor"), "plan_id": m.get("plan_id"),
+           "result": res}
+    if m.get("status") in ("starting", "running"):
+        out["how"] = f"still running; call run_wait with key {m.get('key')}"
+    elif res.get("classification") == "hardware_contention":
+        out["how"] = "the OPX is held elsewhere (hardware contention): do NOT retry; tell the human"
+    elif res.get("approval"):
+        out["how"] = f"{len(res.get('writes') or [])} write(s) wait for the human's approval ({res.get('why_held')}); " \
+                     "do not re-run this node on these targets until it is decided"
+    elif res.get("classification") == "unattributed":
+        out["how"] = "the node finished but no run folder appeared under its name; check the log tail"
+    elif res.get("apply_error"):
+        out["how"] = f"applied: no ({res.get('apply_error')})"
+    return out
+
+
+@agent_bp.route("/run-node", methods=["POST"])
+def run_node():
+    """The agent's ONE way to run a calibration node. Gates answer as data
+    (docs/173 §3.4); the node runs on a scratch copy; the writes go through
+    the door or into an approval; the run is attributed to the agent."""
+    from quam_state_manager.core import agent_runs, agent_session, approvals, limits
+    r = _r()
+    if not r._active_path():
+        return _err("open a chip first", 409)
+    data = request.get_json(silent=True) or {}
+    node = str(data.get("node") or "").strip()
+    if not node:
+        return _err("node required")
+    targets = data.get("targets") or []
+    if isinstance(targets, str):
+        targets = targets.replace(",", " ").split()
+    targets = [str(t).strip() for t in targets if str(t).strip()]
+    reason = str(data.get("reason") or "").strip()
+    if not reason:
+        return _err("reason required: say WHY this node now (it goes into the human's journal)")
+    params = data.get("params") or {}
+    if not isinstance(params, dict):
+        return _err("params must be an object")
+    actor = r._request_actor()
+    if not actor.startswith("by_"):
+        return _err("run_node is the agent's door; a person runs nodes from the QUAlibrate GUI", 403)
+    store = r._store()
+    known = set(store.qubit_names) | set(store.qubit_pair_names)
+    bad = [t for t in targets if t not in known]
+    if bad:
+        return _err(f"unknown targets {bad}", 400, known=sorted(known)[:80])
+    inst, chip = current_app.instance_path, _chip_name()
+    adapter = _run_adapter()
+    reg = _registry()
+    settings = adapter.settings()
+    node_info, available = agent_runs.resolve_node(settings.get("calibrations_folder"), node, instance_path=inst)
+    session = agent_session.load(inst, chip)
+    lim = limits.load(inst, chip)
+    try:
+        timeout_s = float(data.get("timeout_s")) if data.get("timeout_s") else None
+    except (TypeError, ValueError):
+        timeout_s = None
+    req = agent_runs.RunRequest(node=node, targets=targets, params=params, reason=reason, timeout_s=timeout_s,
+                                plan_id=request.headers.get("X-SM-Plan") or data.get("plan_id") or None,
+                                actor=actor, approval_id=data.get("approval_id") or None,
+                                session_id=(session or {}).get("session_id"))
+    pend = approvals.pending(inst, chip)
+    human = adapter.human_recent(float(lim.get("human_recent_min") or 30))
+    refusal = agent_runs.check_gates(req, session=session, lim=lim, settings=settings, pending=pend, human=human,
+                                     queue_state=adapter.queue_state(), own_running=adapter.own_runner_alive(),
+                                     run_active=reg.active_for(chip), node_info=node_info, available=available)
+    if refusal is not None:
+        if refusal.pop("file_request", False) and node_info is not None:
+            ap = approvals.add(inst, chip, kind="run", node=node_info.name, targets=targets, writes=None,
+                               reason=reason, why_held="mode ask-all", actor=actor, plan_id=req.plan_id, params=params)
+            refusal["approval"] = approvals.summary(ap)
+            journal_mod.append(inst, chip, f"asked to run `{node_info.name}` on {' '.join(targets)} -- waiting for "
+                                           f"approval (mode ask-all)", kind="agent", reason=reason)
+            _bump()
+            _wake()
+        return jsonify(ok=False, **refusal), 409
+    mode = (session or {}).get("mode") or lim.get("mode")
+    if mode == "ask-all":
+        ap = approvals.get(inst, chip, req.approval_id or "")
+        if (not ap or ap.get("status") != "approved" or ap.get("kind") != "run"
+                or ap.get("node") != node_info.name or list(ap.get("targets") or []) != targets):
+            return jsonify(ok=False, refused="awaiting_approval", needs="run",
+                           how="approval_id must name an APPROVED run request for this node and these targets"), 409
+    meta = reg.start(req, adapter, node_info=node_info, session=session, lim=lim)
+    try:
+        wait_s = float(data.get("wait_s") or agent_runs.DEFAULT_WAIT_S)
+    except (TypeError, ValueError):
+        wait_s = agent_runs.DEFAULT_WAIT_S
+    m = reg.wait(meta["key"], max(0.0, min(wait_s, 3600.0)))
+    return jsonify(ok=True, **_run_view(m or meta))
+
+
+@agent_bp.route("/run/<key>")
+def run_wait(key: str):
+    try:
+        wait_s = float(request.args.get("wait_s") or 0)
+    except ValueError:
+        wait_s = 0.0
+    m = _registry().wait(key, max(0.0, min(wait_s, 3600.0)))
+    if m is None:
+        return _err("unknown run key", 404)
+    return jsonify(ok=True, **_run_view(m))
+
+
+@agent_bp.route("/runs/agent")
+def runs_agent():
+    """This process's run_node runs, newest first (the cards read these)."""
+    reg = _registry()
+    chip = _chip_name() if _r()._active_path() else None
+    rows = [_run_view(m) for m in reg.runs.values() if chip is None or m.get("chip") == chip]
+    rows.sort(key=lambda x: float(x.get("since") or 0), reverse=True)
+    return jsonify(ok=True, runs=rows[:50])
+
+
+@agent_bp.route("/session/arm", methods=["POST"])
+def session_arm():
+    """Rule 0: hardware starts only by a human click. This IS the click."""
+    from quam_state_manager.core import agent_session
+    r = _r()
+    if not r._active_path():
+        return _err("open a chip first", 409)
+    actor = r._request_actor()
+    if actor.startswith("by_"):
+        return _err("only a person's click arms a session (rule 0)", 403)
+    data = request.get_json(silent=True) or request.form.to_dict()
+    inst, chip = current_app.instance_path, _chip_name()
+    token = uuid.uuid4().hex[:12]
+    rec = agent_session.save(inst, chip, start_token=token, armed_by=actor, armed_at=time.time(),
+                             agent_stop=None, plan_id=data.get("plan_id") or (agent_session.load(inst, chip) or {}).get("plan_id"))
+    journal_mod.append(inst, chip, f"armed by {actor}: the agent may start hardware runs on this chip", kind="sm")
+    _bump()
+    _wake()
+    return jsonify(ok=True, session=agent_session.summary(rec))
+
+
+@agent_bp.route("/session/disarm", methods=["POST"])
+def session_disarm():
+    from quam_state_manager.core import agent_session
+    r = _r()
+    if not r._active_path():
+        return _err("open a chip first", 409)
+    inst, chip = current_app.instance_path, _chip_name()
+    if agent_session.load(inst, chip) is None:
+        return _err("no agent session on this chip", 409)
+    rec = agent_session.save(inst, chip, start_token=None)
+    journal_mod.append(inst, chip, f"disarmed by {r._request_actor()}", kind="sm")
+    _bump()
+    _wake()
+    return jsonify(ok=True, session=agent_session.summary(rec))
+
+
+@agent_bp.route("/approvals")
+def approvals_list():
+    from quam_state_manager.core import approvals
+    r = _r()
+    if not r._active_path():
+        return jsonify(ok=True, pending=[], recent=[])
+    rows = approvals.load(current_app.instance_path, _chip_name())
+    pend = [x for x in rows if x.get("status") == "pending"]
+    recent = [approvals.summary(x) for x in rows if x.get("status") != "pending"][-20:]
+    return jsonify(ok=True, pending=pend, recent=recent, waiting=len(pend))
+
+
+@agent_bp.route("/approvals/<aid>/<verb>", methods=["POST"])
+def approvals_decide(aid: str, verb: str):
+    """approve / reject, by a person. Approving ``writes`` stages them as the
+    agent's rows and pushes them through the door as THIS person's press."""
+    from quam_state_manager.core import approvals
+    r = _r()
+    if verb not in ("approve", "reject"):
+        return _err("verb must be approve or reject", 404)
+    if not r._active_path():
+        return _err("open a chip first", 409)
+    actor = r._request_actor()
+    if actor.startswith("by_"):
+        return _err("only a person decides an approval", 403)
+    data = request.get_json(silent=True) or {}
+    inst, chip = current_app.instance_path, _chip_name()
+    writes = data.get("writes") if isinstance(data.get("writes"), list) else None
+    cur = approvals.get(inst, chip, aid)
+    if cur is None or cur.get("status") != "pending":
+        return _err("no pending approval with that id", 404)
+    out = {"ok": True}
+    if verb == "approve" and cur.get("kind") == "writes":
+        # the writes go through the door FIRST; a refusal keeps the approval pending
+        # (the human sees why, takes live, presses again) instead of recording an
+        # approval that never reached the chip
+        res = _stage_writes(current_app._get_current_object(), str(r._active_path()),
+                            writes if writes is not None else (cur.get("writes") or []),
+                            f"approved:{aid}", cur.get("actor") or "by_agent", cur.get("plan_id"), True, presser=actor)
+        out["stage"] = res
+        if not res.get("applied") and res.get("staged", 0) > 0 and not res.get("saved_in_working_copy"):
+            return jsonify(ok=False, error=res.get("error") or "not applied", stage=res,
+                           approval=approvals.summary(cur), how="the approval stays pending; take live, then approve again"), 409
+    rec = approvals.decide(inst, chip, aid, status="approved" if verb == "approve" else "rejected", who=actor,
+                           note=data.get("note"), writes=writes)
+    out["approval"] = approvals.summary(rec)
+    if verb == "approve" and rec.get("kind") == "writes":
+        res = out["stage"]
+        rid = rec.get("run_id")
+        journal_mod.append(inst, chip, f"approved {res.get('staged', 0)} write(s) from `{rec.get('node')}`"
+                                       + (f" #{rid}" if rid else "") + f" -- {'applied' if res.get('applied') else 'NOT applied: ' + str(res.get('error'))}",
+                           kind="sm", run_id=rid, paths=[w.get("path") for w in (rec.get("writes") or [])[:20]])
+    elif verb == "approve":
+        journal_mod.append(inst, chip, f"approved the run of `{rec.get('node')}` on {' '.join(rec.get('targets') or [])}",
+                           kind="sm")
+    else:
+        journal_mod.append(inst, chip, f"rejected {rec.get('kind')} from `{rec.get('node')}`"
+                                       + (f": {data.get('note')}" if data.get("note") else ""), kind="sm")
+    _bump()
+    _wake()
+    return jsonify(**out)
+
+
+@agent_bp.route("/undo-mine", methods=["POST"])
+def undo_mine():
+    """Undo the agent's OWN staged groups from the top of the tray, stopping
+    at the first human entry (a person's edit is never undone by an agent)."""
+    r = _r()
+    mod = r._modifier()
+    if not mod:
+        return _err("no chip loaded", 409)
+    store = mod.store
+    reverted: list[str] = []
+    stopped_at = None
+    with store._lock:
+        while store.change_log:
+            top = store.change_log[-1]
+            if not str(getattr(top, "actor", "human")).startswith("by_"):
+                stopped_at = {"path": top.dot_path, "actor": getattr(top, "actor", "human")}
+                break
+            for e in mod.undo_group():
+                reverted.append(e.dot_path)
+    if reverted:
+        journal_mod.append(current_app.instance_path, _chip_name(),
+                           f"undid {len(reverted)} of its own staged edit(s)", kind="agent" if r._request_actor().startswith("by_") else "sm",
+                           reason="undo_mine", paths=reverted[:20])
+    _bump()
+    _wake()
+    return jsonify(ok=True, reverted=reverted, stopped_at=stopped_at, pending=r._change_count())
+
+
+@agent_bp.route("/live-diff")
+def live_diff():
+    """What take_live would change: live leaves that differ from the working
+    copy, and which of those the tray also touches (overlap)."""
+    from quam_state_manager.core import json_diff, working_copy as wc_mod
+    r = _r()
+    ctx = r._active_ctx()
+    if not ctx or ctx.get("type") != "quam":
+        return _err("no chip loaded", 409)
+    wc = ctx["working_copy"]
+    store = ctx["store"]
+    try:
+        live_state, live_wiring = wc_mod.read_live(wc)
+    except Exception as exc:  # noqa: BLE001
+        return _err(f"live files unreadable: {exc}", 502)
+    with store._lock:
+        work, _ = json_diff.flatten({**store.state, **store.wiring}, cap=250_000)
+        tray = {c.dot_path for c in store.change_log}
+    live, _ = json_diff.flatten({**live_state, **live_wiring}, cap=250_000)
+    changed = []
+    for p in sorted(set(work) | set(live)):
+        a, b = work.get(p, "<absent>"), live.get(p, "<absent>")
+        if a == b and type(a) is type(b):
+            continue
+        changed.append({"path": p, "working": _jsonable(a), "live": _jsonable(b)})
+        if len(changed) >= 300:
+            break
+    overlap = [c["path"] for c in changed if c["path"] in tray]
+    return jsonify(ok=True, count=len(changed), changed=changed, overlap=overlap,
+                   live_diverged=_live_flag(), stale_since=_stale_since())

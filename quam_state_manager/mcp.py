@@ -36,12 +36,18 @@ _link: agent_link.SMLink | None = None
 # what apply_to_live declares -- never a fresh read the agent never looked at.
 _seen: int | None = None
 _chip: str | None = None       # the chip SM last said it had open -- stamped on every answer
+_CHIP_PIN = (os.environ.get("SM_CHIP") or "").strip() or None   # docs/173 S5: one bridge, one chip
 
 
 def _chip_facts() -> dict:
     global _chip
     chip = _ok(*_sm().get("/api/agent/chip"))
     _chip = chip.get("name") if chip.get("loaded") else None
+    if _CHIP_PIN and chip.get("loaded") and chip.get("name") != _CHIP_PIN:
+        raise ToolError(json.dumps({"refused": "chip_mismatch", "open": chip.get("name"), "pinned": _CHIP_PIN,
+                                    "how": f"this bridge was made for {_CHIP_PIN}; SM has {chip.get('name')} open. "
+                                           "Every tool is refused until that chip is open in SM (two fridges, "
+                                           "two bridges -- never one bridge across both)"}))
     return chip
 
 
@@ -102,11 +108,22 @@ def t_take_live(_a: dict) -> Any:
                                         "edits is a merge only a human should decide in the SM window"}
     if not chip.get("live_diverged"):
         return {"taken": False, "note": "SM already matches the live files"}
+    changed, overlap = [], []
+    try:
+        d = _ok(*sm.get("/api/agent/live-diff"))
+        changed = [{"path": c["path"], "old": c.get("working"), "new": c.get("live")} for c in d.get("changed") or []]
+        overlap = list(d.get("overlap") or [])
+    except ToolError:
+        pass
     code, body = sm.post_form("/state/sync", {"mode": "discard"})
     _ok(code, body)
     after = _chip_facts()
-    _journal("sm", "took the live files into SM (the chip had moved outside SM)")
-    return {"taken": True, "live_diverged": after.get("live_diverged")}
+    _journal("sm", f"took the live files into SM ({len(changed)} value(s) had moved outside SM)",
+             paths=[c["path"] for c in changed[:20]])
+    return {"taken": True, "live_diverged": after.get("live_diverged"), "changed": changed[:200],
+            "overlap": overlap, "reverted": [],
+            "note": "changed = live vs what SM held; overlap = also in the tray (empty: the tray was empty); "
+                    "reverted = staged edits dropped (none: take_live needs an empty tray)"}
 
 
 def t_state_get(a: dict) -> Any:
@@ -255,6 +272,35 @@ def t_journal_read(a: dict) -> Any:
     return _ok(*_sm().get("/api/agent/journal", {"date": a.get("date")}))
 
 
+def t_run_node(a: dict) -> Any:
+    """SM runs the node; the answer is the gate's refusal (data) or the run."""
+    body = {"node": a.get("node"), "targets": a.get("targets") or [], "params": a.get("params") or {},
+            "reason": a.get("reason"), "timeout_s": a.get("timeout_s"), "wait_s": a.get("wait_s"),
+            "approval_id": a.get("approval_id"), "plan_id": a.get("plan_id") or os.environ.get("SM_PLAN")}
+    wait_s = float(a.get("wait_s") or 240)
+    code, res = _sm().post_json("/api/agent/run-node", body, timeout=wait_s + 60)
+    if code == 409 and isinstance(res, dict):
+        return {k: v for k, v in res.items() if k != "ok"}
+    return _ok(code, res)
+
+
+def t_run_wait(a: dict) -> Any:
+    wait_s = float(a.get("wait_s") or 240)
+    code, res = _sm().get(f"/api/agent/run/{a.get('key')}", {"wait_s": wait_s}, timeout=wait_s + 60)
+    return _ok(code, res)
+
+
+def t_approvals(_a: dict) -> Any:
+    return _ok(*_sm().get("/api/agent/approvals"))
+
+
+def t_undo_mine(_a: dict) -> Any:
+    global _seen
+    res = _ok(*_sm().post_json("/api/agent/undo-mine", {}))
+    _seen = int(res.get("pending") or 0)
+    return res
+
+
 def t_note_set(a: dict) -> Any:
     return _ok(*_sm().post_json("/api/agent/note", {"subject": a["subject"], "text": a["text"],
                                                     "author": "claude-code"}))
@@ -268,7 +314,8 @@ def _s(desc: str, **props) -> dict:
 # docs/173 §3.3: a QUESTION never writes. With SM_MCP_MODE=readonly the bridge
 # lists and allows only the read tools -- mechanical, the same for every CLI.
 READ_ONLY = os.environ.get("SM_MCP_MODE", "").strip().lower() == "readonly"
-WRITE_TOOLS = frozenset({"state_edit", "apply_to_live", "undo", "take_live", "note_set", "journal_append", "run_node"})
+WRITE_TOOLS = frozenset({"state_edit", "apply_to_live", "undo", "take_live", "note_set", "journal_append", "run_node",
+                         "run_wait", "undo_mine"})
 
 
 def _visible_tools() -> dict:
@@ -295,6 +342,22 @@ TOOLS: dict[str, tuple[dict, Any]] = {
                      "EMPTY tray; refuses otherwise. sm_status / state_get say live_diverged when this is needed."),
                   t_take_live),
     "undo": (_s("Undo the most recent staged group (the same Ctrl+Z the human has)."), t_undo),
+    "undo_mine": (_s("Undo YOUR OWN staged groups from the top of the tray, stopping at the first human entry."), t_undo_mine),
+    "run_node": (_s("Run a calibration node through SM (the ONLY way to run hardware): SM checks the gates "
+                    "(a refusal comes back as data with `refused` and `how`), runs the node on a scratch copy "
+                    "of the state, and puts what it wrote through the door -- applied at once in auto mode, "
+                    "parked for the human's approval otherwise. Blocks up to wait_s; if still running, call "
+                    "run_wait with the key. Never retry on hardware_contention.",
+                    node={"type": "string", "required": True, "description": "node name or file stem, e.g. 05_power_rabi"},
+                    targets={"type": "array", "items": {"type": "string"}, "required": True},
+                    reason={"type": "string", "required": True, "description": "WHY now -- goes into the human's journal"},
+                    params={"type": "object", "description": "node parameter overrides (never simulate/targets)"},
+                    timeout_s={"type": "number"}, wait_s={"type": "number"},
+                    approval_id={"type": "string", "description": "an APPROVED run request id (mode ask-all)"},
+                    plan_id={"type": "string"}), t_run_node),
+    "run_wait": (_s("Wait (up to wait_s) for a run_node key to finish and return its result.",
+                    key={"type": "string", "required": True}, wait_s={"type": "number"}), t_run_wait),
+    "approvals": (_s("Writes/runs of yours waiting for a human's approval, and recent decisions."), t_approvals),
     "apply_to_live": (_s("Write the staged tray to the live state.json/wiring.json through SM's one door. "
                          "Refuses if a human edited something in the SM window you have not seen; never forces."),
                       t_apply_to_live),

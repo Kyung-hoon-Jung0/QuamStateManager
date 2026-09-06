@@ -61,7 +61,8 @@ logger = logging.getLogger(__name__)
 
 BACKENDS = ("claude", "codex")
 READ_TOOLS = ("sm_status", "state_get", "state_search", "tray", "versions", "field_history", "runs", "run",
-              "diagnostics", "check_fit", "families", "family_manual", "journal_read")
+              "diagnostics", "check_fit", "families", "family_manual", "journal_read", "approvals")
+MCP_TOOL_TIMEOUT_S = 30 * 60      # run_node blocks up to wait_s (<= 60 min); both CLIs default far lower
 _LIMIT_RE = re.compile(r"(limit|quota|rate).{0,80}?(resets?|until|at)\s*(\d{1,2}:\d{2}\s*(?:am|pm)?)", re.I)
 
 
@@ -204,7 +205,8 @@ class CodexBackend(Backend):
         env_toml = ",".join(f"{k}={toml_str(v)}" for k, v in cfg["env"].items())
         cmd += ["-c", f"mcp_servers.sm.command={toml_str(cfg['command'])}",
                 "-c", "mcp_servers.sm.args=[" + ",".join(toml_str(a) for a in cfg["args"]) + "]",
-                "-c", "mcp_servers.sm.env={" + env_toml + "}"]
+                "-c", "mcp_servers.sm.env={" + env_toml + "}",
+                "-c", f"mcp_servers.sm.tool_timeout_sec={MCP_TOOL_TIMEOUT_S}"]
         cmd += ["--approve-for-me"] if self.readonly else ["--dangerously-bypass-approvals-and-sandbox"]
         if self.model:
             cmd += ["-m", self.model]
@@ -379,7 +381,7 @@ class AgentProcess:
         self.ended: float | None = None
         self.returncode: int | None = None
         cmd = resolve_command(backend.command(resume=resume, prompt=prompt))
-        full_env = dict(os.environ, PYTHONUTF8="1")
+        full_env = dict(os.environ, PYTHONUTF8="1", MCP_TOOL_TIMEOUT=str(MCP_TOOL_TIMEOUT_S * 1000))
         full_env.update(env or {})
         self.cmd = cmd
         self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,

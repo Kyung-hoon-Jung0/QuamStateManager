@@ -966,6 +966,9 @@ def _new_item(info: dict, targets: list | None) -> dict:
         "on_outcome": [dict(r) for r in (info.get("on_outcome") or [])],
         "inserted_by": None,       # {"rule": idx, "parent_item": id, "depth": int} on auto-inserts
         "outcome_note": None,      # why an outcome rule no-op'd (attribution miss etc.)
+        # docs/173 S5: an agent run reads/writes a SCRATCH copy of the working copy,
+        # never the chip; None = the settings' quam_state_path (a human's item)
+        "state_path": info.get("state_path") or None,
     }
 
 
@@ -1448,6 +1451,13 @@ def _kill(proc) -> None:
 _pid_alive = instances.pid_alive
 
 
+def state_path_for(item: dict, settings: dict) -> str | None:
+    """The QUAM_STATE_PATH one item runs against: its own scratch copy when
+    an agent queued it (docs/173 S5), else the settings' chip."""
+    own = item.get("state_path")
+    return str(own) if own else (settings.get("quam_state_path") or None)
+
+
 def _classify_result(work_dir: Path, returncode: int) -> tuple[str, str | None]:
     """Map a finished run to (status, error) from its ``_result.json``."""
     result_file = work_dir / "_result.json"
@@ -1571,8 +1581,9 @@ def _run_item(instance_path, item: dict, settings: dict, runner: dict) -> dict:
 
         argv = [settings["env_python"], str(EXPERIMENT_SCRIPT),
                 "--mode", "run", "--target", str(temp), "--out", str(work_dir)]
-        if settings.get("quam_state_path"):
-            argv += ["--state-path", settings["quam_state_path"]]
+        _sp = state_path_for(item, settings)
+        if _sp:
+            argv += ["--state-path", _sp]
         # Pin the qualibrate config so storage.location / library come from the
         # verified config, not whatever is ambient in the env.
         cfg_file = (settings.get("effective_config") or {}).get("config_file")

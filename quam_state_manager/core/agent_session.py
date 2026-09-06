@@ -21,7 +21,8 @@ from pathlib import Path
 from quam_state_manager.core import journal as journal_mod
 
 FIELDS = ("chip", "backend", "session_id", "mode", "owner", "started", "until", "pid", "worker_pid",
-          "agent_stop", "stop_by", "plan_id", "limited_until", "claimed_by_tool", "window")
+          "agent_stop", "stop_by", "plan_id", "limited_until", "claimed_by_tool", "window",
+          "start_token", "armed_by", "armed_at", "run_key")
 
 
 def _dir(instance_path) -> Path:
@@ -86,7 +87,8 @@ def request_stop(instance_path, chip: str, *, who: str, mode: str = "after_run")
     """Stop, recorded before anything is killed: run_node reads this first."""
     if load(instance_path, chip) is None:
         return None
-    return save(instance_path, chip, agent_stop={"who": who, "mode": mode, "at": time.time()})
+    # rule 0 both ways: a Stop also takes the start token back -- the next run needs a new click
+    return save(instance_path, chip, agent_stop={"who": who, "mode": mode, "at": time.time()}, start_token=None)
 
 
 def summary(rec: dict | None) -> dict | None:
@@ -97,7 +99,8 @@ def summary(rec: dict | None) -> dict | None:
             "started": rec.get("started"), "until": rec.get("until"), "plan_id": rec.get("plan_id"),
             "alive": alive(rec), "stopped": stopped(rec), "stop": rec.get("agent_stop"),
             "limited_until": rec.get("limited_until"), "session_id": rec.get("session_id"),
-            "claimed_by_tool": rec.get("claimed_by_tool")}
+            "claimed_by_tool": rec.get("claimed_by_tool"), "armed": bool(rec.get("start_token")),
+            "armed_by": rec.get("armed_by"), "armed_at": rec.get("armed_at"), "run_key": rec.get("run_key")}
 
 
 def safe_owner(name: str | None) -> str:

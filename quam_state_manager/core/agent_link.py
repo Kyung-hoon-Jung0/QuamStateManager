@@ -114,13 +114,13 @@ class SMLink:
             h.update(extra)
         return h
 
-    def get(self, path: str, params: dict | None = None) -> tuple[int, object]:
+    def get(self, path: str, params: dict | None = None, *, timeout: float | None = None) -> tuple[int, object]:
         url = self.base + path
         if params:
             url += ("&" if "?" in url else "?") + urllib.parse.urlencode(
                 {k: v for k, v in params.items() if v is not None})
         req = urllib.request.Request(url, headers=self._headers())
-        return self._send(req)
+        return self._send(req, timeout)
 
     def post_form(self, path: str, data: dict) -> tuple[int, object]:
         body = urllib.parse.urlencode({k: v for k, v in data.items() if v is not None}).encode()
@@ -128,15 +128,15 @@ class SMLink:
                                      headers=self._headers({"Content-Type": "application/x-www-form-urlencoded"}))
         return self._send(req)
 
-    def post_json(self, path: str, data: dict) -> tuple[int, object]:
+    def post_json(self, path: str, data: dict, *, timeout: float | None = None) -> tuple[int, object]:
         body = json.dumps(data).encode("utf-8")
         req = urllib.request.Request(self.base + path, data=body, method="POST",
                                      headers=self._headers({"Content-Type": "application/json"}))
-        return self._send(req)
+        return self._send(req, timeout)
 
-    def _send(self, req) -> tuple[int, object]:
+    def _send(self, req, timeout: float | None = None) -> tuple[int, object]:
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as r:
+            with urllib.request.urlopen(req, timeout=timeout or self.timeout) as r:
                 return r.status, _decode(r.read(), r.headers.get("Content-Type", ""))
         except urllib.error.HTTPError as e:
             return e.code, _decode(e.read(), e.headers.get("Content-Type", ""))
