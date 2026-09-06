@@ -195,3 +195,41 @@ def test_persist_strips_after_save(tmp_path, monkeypatch):
 
     RE._persist_node_state({"node": FakeNode()}, str(scratch), original_roots={"qubits"})
     assert calls == ["save", ("strip", {"qubits"})]   # strip AFTER save
+
+
+# --------------------------------------------------------------------------
+# docs/174 amended II: the qualibrate config's [quam] state_path is repointed
+# at the scratch so a node never writes live directly.
+# --------------------------------------------------------------------------
+def test_config_pinned_to_scratch_repoints_state_path(tmp_path):
+    cfg = tmp_path / "qualibrate_config.toml"
+    cfg.write_text(
+        '[qualibrate.storage]\n'
+        'type = "local_storage"\n'
+        'location = "D:/data/KRISS"\n'
+        '[quam]\n'
+        'state_path = "D:/live/kriss"\n'
+        '[quam.serialization]\n'
+        'action = "serialize"\n', encoding="utf-8")
+    scratch = tmp_path / "agent_runs" / "k" / "quam_state"
+    scratch.mkdir(parents=True)
+
+    out = RE._config_pinned_to_scratch(str(cfg), str(scratch))
+    assert Path(out) != cfg                      # a NEW file, original untouched
+    text = Path(out).read_text(encoding="utf-8")
+    assert f'state_path = "{str(scratch).replace(chr(92), "/")}"' in text
+    assert 'location = "D:/data/KRISS"' in text  # storage.location left alone
+    assert text.count("state_path =") == 1       # only the one key rewritten
+
+
+def test_config_pin_returns_original_when_no_state_path(tmp_path):
+    cfg = tmp_path / "c.toml"
+    cfg.write_text('[qualibrate.storage]\nlocation = "D:/d"\n', encoding="utf-8")
+    scratch = tmp_path / "sp"; scratch.mkdir()
+    assert RE._config_pinned_to_scratch(str(cfg), str(scratch)) == str(cfg)
+
+
+def test_config_pin_is_best_effort(tmp_path):
+    scratch = tmp_path / "sp"; scratch.mkdir()
+    missing = str(tmp_path / "nope.toml")
+    assert RE._config_pinned_to_scratch(missing, str(scratch)) == missing   # no raise

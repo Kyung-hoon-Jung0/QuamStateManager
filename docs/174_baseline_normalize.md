@@ -93,3 +93,31 @@ proves the fixture reaches the 3-phantom state, so the strip test is not vacuous
 **Corrected conclusion on stale_live:** it is a REAL SM issue (not a test-rig
 artifact, as first thought), caused entirely by these materialized root defaults,
 and this amendment closes it at the source.
+
+---
+
+## Amendment II (same day) — the node was writing LIVE directly; repoint the config
+
+Even with the scratch strip, a fresh pristine run STILL diverged live. Traced on
+the real KRISS arbel chain: the qualibrate config's `[quam] state_path` pointed
+at the LIVE chip, and that wins over the `QUAM_STATE_PATH` env for the framework's
+own `machine.save()` — so `node.save()` wrote the LIVE state.json **directly,
+mid-run** (live mtime landed 1 s into the run), re-materializing the 3 class
+defaults onto live and bypassing the scratch (and its strip) entirely. Auto-Sync
+then pulled that into the working copy. So the scratch was clean but live was not.
+
+**Fix (`_config_pinned_to_scratch`):** before `runpy`, rewrite the qualibrate
+config so its one `state_path =` key points at the per-run scratch, and pass that
+as `QUALIBRATE_CONFIG_FILE`. Every qualibrate save — the framework machine save
+AND the run's storage snapshot's `quam_state` — now lands in the scratch, where
+`_strip_phantom_roots` cleans it, and **a run never touches the live chip** (the
+docs/173 S9 invariant, restored). `state_path` is the only such key in a
+qualibrate config (storage uses `location`), so a line-wise rewrite is safe;
+best-effort, the original config stands on any failure.
+
+**Verified live on the real arbel hardware:** a fresh pristine run through the
+cockpit left `LIVE phantoms: []` and `working-copy phantoms: []`, with the scratch
+config's `state_path` pointing at `agent_runs/<run>/quam_state`. The three fixes
+together — diff-cancel (superseded), scratch strip, and config repoint — close the
+stale_live at the source: the node writes only the scratch, the scratch is
+stripped, and live is never diverged.

@@ -199,7 +199,18 @@ def run_target(target: str, state_path: str | None, config_file: str | None,
     if state_path:
         os.environ["QUAM_STATE_PATH"] = str(state_path)
     if config_file:
-        os.environ["QUALIBRATE_CONFIG_FILE"] = str(config_file)
+        # docs/174 amended II (found on the real KRISS arbel chain): the qualibrate
+        # config's ``[quam] state_path`` wins over the QUAM_STATE_PATH env for the
+        # framework's own machine save, so a node whose config points at the LIVE
+        # chip writes LIVE directly mid-run -- bypassing the scratch entirely and
+        # re-introducing the class-default root keys (and any writes) onto live,
+        # which then diverges -> stale_live on the next node. Redirect that config's
+        # state_path at the per-run scratch so EVERY qualibrate save lands there
+        # (where _strip_phantom_roots cleans it) and a run never touches live -- the
+        # docs/173 S9 invariant. Best-effort: on any failure the original config
+        # stands.
+        eff_config = _config_pinned_to_scratch(config_file, state_path) if state_path else config_file
+        os.environ["QUALIBRATE_CONFIG_FILE"] = str(eff_config)
     # docs/173 S9 (found on the real KRISS env): a node's plot action calls
     # plt.show(), and the customer env's default matplotlib backend is the
     # INTERACTIVE tkagg (tkinter present) -- so a headless Scheduler subprocess
@@ -217,6 +228,35 @@ def run_target(target: str, state_path: str | None, config_file: str | None,
     ns = runpy.run_path(str(target), run_name="__main__")
     if state_path:
         _persist_node_state(ns, str(state_path), original_roots)
+
+
+def _config_pinned_to_scratch(config_file: str, state_path: str) -> str:
+    """docs/174 amended II: return a copy of the qualibrate config whose
+    ``[quam] state_path`` is repointed at *state_path* (the per-run scratch), so
+    the node's framework-level ``machine.save()`` writes the scratch, never the
+    live chip. ``state_path`` is the only ``state_path =`` key in a qualibrate
+    config (storage uses ``location``), so a line-wise rewrite is safe. TOML basic
+    strings take forward slashes; backslashes would be escapes. Best-effort: any
+    failure returns the original config path unchanged."""
+    import re
+    try:
+        text = Path(config_file).read_text(encoding="utf-8")
+        scratch = str(state_path).replace("\\", "/")
+        new_line = f'state_path = "{scratch}"'
+        out, replaced = [], False
+        for line in text.splitlines():
+            if re.match(r"\s*state_path\s*=", line):
+                out.append(new_line); replaced = True
+            else:
+                out.append(line)
+        if not replaced:
+            return config_file
+        dst = Path(state_path).parent / "qualibrate_config.scratch.toml"
+        dst.write_text("\n".join(out) + "\n", encoding="utf-8")
+        return str(dst)
+    except Exception as exc:  # noqa: BLE001
+        sys.stderr.write(f"[run_experiment] config repoint skipped: {type(exc).__name__}: {exc}\n")
+        return config_file
 
 
 def _state_root_keys(state_path: str) -> set | None:
