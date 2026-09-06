@@ -132,10 +132,28 @@ def journal_claim():
     if str(data.get("author") or "").strip() in ("unknown", ""):
         pass
     rec = story.claim_run(current_app.instance_path, _chip_name(), run_id, author=author, note=data.get("note"))
+    # docs/173 S8: journal the claim on the RUN's own day, so the line sits next to
+    # the run it is about (and is not stranded on today's page when the claim is made
+    # later). Fall back to now() when the run's date cannot be resolved.
+    when = _run_when(run_id)
     journal_mod.append(current_app.instance_path, _chip_name(),
                        f"run #{run_id} was run by {author}" + (f": {rec['note']}" if rec.get("note") else ""),
-                       kind="human", run_id=run_id)
+                       kind="human", run_id=run_id, when=when)
     return jsonify(ok=True, claim=rec)
+
+
+def _run_when(run_id: int):
+    """The run's own timestamp (for placing its claim line), or None -> now()."""
+    try:
+        from quam_state_manager.web import routes as r
+        ds = r._dataset_store()
+        run = ds.get_run(int(run_id)) if ds is not None else None
+        if not run:
+            return None
+        ep = story._epoch(run.get("run_start"), run.get("date"), run.get("time"))
+        return datetime.fromtimestamp(ep) if ep else None
+    except Exception:  # noqa: BLE001
+        return None
 
 
 @journal_bp.route("/journal/adopt", methods=["POST"])

@@ -405,3 +405,18 @@ Agent → 설정. 랩이 Claude/Codex를 SM에 잇는 한 곳. **이 PC에서 �
 **핀.** `tests/test_node_persist.py`(5) — `_persist_node_state`의 두 스타일(머신-보유 / 되돌림+기록), 노드 없음/save 예외의 무해, `_set_by_ref`의 attr·dict leaf; mutation 3/3. run_experiment는 KRISS env 없이 cqt에서 importlib로 로드해 fake 노드/머신으로 검증(하드웨어 불필요).
 
 **S9에서 아직 남은 것.** 페르소나 시나리오 CDP 재생 · 실 CLI ×2(코덱스가 사용량 한도면 코덱스 없이 그 역할을 직접 대신 — 사용자 지시) · 두 인스턴스/고아/heartbeat/hold 핀 재확인 · **1.0.0 승격**(사용자 판단). 실노드 루프의 **핵심(실 하드웨어 한 바퀴)** 은 이제 통과했다.
+
+### S9 acceptance — the chatbot ran ToF→Ramsey on real hardware and CHECKED every fit (2026-09-07)
+
+The user's binding acceptance: in a REAL BROWSER, the chat bot must itself run the QUAlibrate chain from time-of-flight through Ramsey, and — the whole point of the AI agent — **verify each run's measured data, never blindly trust the fitted value**. Done, on the [[kriss-playground]] arbel cloud, driven end to end through SM.
+
+**Setup.** SM (cqt) served a COPY of the KRISS chip (`kriss_live`), scheduler → the KRISS env python + the KRISS qualibrate config + `global_simulate=False`, and a `DatasetStore` on the KRISS data folder so runs attribute and their figures reach the agent. A real `claude` (2.1.263) session started inside SM (cwd = the calibrations folder), the MCP bridge a thin client of the window.
+
+**What the agent did (all observed live).** It loaded the tools, checked `sm_status`, noticed the live had diverged and pulled it with `take_live`, then `plan_propose`d ONE 5-step plan and STOPPED — rule 0 held, nothing on hardware until a person pressed Start. On Start it ran, in order on the arbel cloud: `01_time_of_flight_mw_fem` (run 8) → `03_resonator_spectroscopy_single` (9) → `08_qubit_spectroscopy` (10) → `11_power_rabi` (11) → `12_ramsey` (12), **5/5 done, 0 failed**. And on EVERY run it called `check_fit` AND `Read` the run's figure PNG — the headless `claude -p` CLI CAN see the plots. Its per-step verdicts were data-driven, not fit-worship:
+- res spec: check_fit reported a circle-fit **FAIL**; the agent looked at the figure and OVERRULED it — "a reporting-only residual just over its gate; single deep dip with a coincident phase step." (not blindly trusting a gate)
+- qubit spec: "**R² 0.858 is shot noise, not a wrong center**" — judged from the trace, one symmetric peak in 100 MHz.
+- Ramsey: "high-contrast fringes to 30 µs, arm average matches the applied detuning to 0.03%, envelope consistent with T2*."
+
+It really calibrated qA1 (to SM's copy): resonator.f_01 7.12574→7.12597 GHz, f_01 5.0752→5.0787 GHz, x180 amp 0.3196→0.3225, x90 0.1598→0.1613, T2ramsey 29.1→34.2 µs. **The customer's original state folder was only READ** (mtime unchanged). Rule 0, the one door, take_live, and the honest stops all held.
+
+**A real finding, recorded not rushed.** Applying a node's writes leaves a `flux_crosstalk.json` beside `state.json` (a `connect()` side-effect), and SM's working copy tracks only `state.json` + `wiring.json`, so every apply trips `stale_live` and the run's writes are parked as an approval. The agent handled it each time (`take_live`, then a person clears the duplicate hold), so the chain completed — but it is friction. **The fix is to make the working copy track the WHOLE multi-file quam state folder (extra top-level `*.json`, and named-snapshot subfolders like `KH_202608/`), not just the two files.** That is a change to the core `working_copy`/`make_scratch` and is deferred to its own careful pass with tests; noted here as the one rough edge 1.0.0 ships with. (Also incidental: the whole-machine capture stages `connect()`-set top-level fields — dc_bias, flux_crosstalk_max_v, twpa_ext — as writes; harmless, reviewed and cleared.)
