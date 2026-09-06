@@ -41,10 +41,14 @@ class TestPage:
         assert "1Q bringup" in body and "CZ tuneup" in body
         assert "autofit-readiness" in body
 
-    def test_sidebar_carries_the_autofit_entry(self, client):
+    def test_sidebar_carries_the_autofit_entry(self, client, monkeypatch):
+        """docs/172: the entry exists only under SM_EXPERIMENTAL=1 now."""
+        monkeypatch.setenv("SM_EXPERIMENTAL", "1")
         body = client.get("/").get_data(as_text=True)
         assert 'href="/autofit"' in body
         assert "autofit-nav-badge" in body
+        monkeypatch.delenv("SM_EXPERIMENTAL")
+        assert 'href="/autofit"' not in client.get("/").get_data(as_text=True)
 
 
 class TestOneButtonSimFlow:

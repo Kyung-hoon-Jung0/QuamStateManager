@@ -34,6 +34,24 @@ _link: agent_link.SMLink | None = None
 # see. The tray count the agent last SAW (via tray / state_edit / undo) is
 # what apply_to_live declares -- never a fresh read the agent never looked at.
 _seen: int | None = None
+_chip: str | None = None       # the chip SM last said it had open -- stamped on every answer
+
+
+def _chip_facts() -> dict:
+    global _chip
+    chip = _ok(*_sm().get("/api/agent/chip"))
+    _chip = chip.get("name") if chip.get("loaded") else None
+    return chip
+
+
+def _journal(kind: str, text: str, reason: str | None = None, paths=None) -> None:
+    """A line the bridge writes about its OWN acts (the hook does not see
+    MCP calls). Best effort: a journal failure never fails the act."""
+    try:
+        _sm().post_json("/api/agent/journal", {"kind": kind, "text": text, "reason": reason,
+                                               "paths": paths or []})
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _sm() -> agent_link.SMLink:
@@ -64,7 +82,28 @@ def _ok(code: int, body: Any, *, expect=(200,)) -> Any:
 # ------------------------------------------------------------------ tools
 
 def t_sm_status(_a: dict) -> Any:
-    return _ok(*_sm().get("/api/agent/chip"))
+    return _chip_facts()
+
+
+def t_take_live(_a: dict) -> Any:
+    """Pull the chip's live files into SM's working copy. A node the agent ran
+    writes state.json itself; SM's user-facing path never adopts that on its
+    own (docs/87), so the agent must ask -- and only with an EMPTY tray: a
+    pull over staged edits is the human's merge decision, not the agent's."""
+    sm = _sm()
+    chip = _chip_facts()
+    if not chip.get("loaded"):
+        raise ToolError("no chip is loaded in SM")
+    if int(chip.get("pending") or 0) > 0:
+        return {"taken": False, "note": "the tray is not empty -- undo or apply first; a pull over staged "
+                                        "edits is a merge only a human should decide in the SM window"}
+    if not chip.get("live_diverged"):
+        return {"taken": False, "note": "SM already matches the live files"}
+    code, body = sm.post_form("/state/sync", {"mode": "discard"})
+    _ok(code, body)
+    after = _chip_facts()
+    _journal("sm", "took the live files into SM (the chip had moved outside SM)")
+    return {"taken": True, "live_diverged": after.get("live_diverged")}
 
 
 def t_state_get(a: dict) -> Any:
@@ -80,7 +119,7 @@ def t_state_edit(a: dict) -> Any:
     A 409 is an OFFER (type fix, FSP compensation) that the agent answers
     by calling again with the named ack; it is returned verbatim."""
     sm = _sm()
-    chip = _ok(*sm.get("/api/agent/chip"))
+    chip = _chip_facts()
     if not chip.get("loaded"):
         raise ToolError("no chip is loaded in SM")
     value = a["value"]
@@ -95,8 +134,11 @@ def t_state_edit(a: dict) -> Any:
     if code != 200:
         _ok(code, body)
     tray = _tray_seen()
-    return {"staged": True, "pending": tray["count"],
-            "entry": tray["entries"][-1] if tray["entries"] else None,
+    entry = tray["entries"][-1] if tray["entries"] else None
+    if entry:
+        _journal("agent", f"staged `{entry['path']}` {entry['old']} -> {entry['new']}",
+                 reason=a.get("reason") or "(no reason given)", paths=[entry["path"]])
+    return {"staged": True, "pending": tray["count"], "entry": entry,
             "note": "staged in SM's Review tray; nothing reached the chip. Call apply_to_live to write."}
 
 
@@ -125,24 +167,46 @@ def t_apply_to_live(_a: dict) -> Any:
     sm = _sm()
     if _seen is None:
         return {"applied": False, "note": "call tray first -- apply writes only what you have seen"}
-    chip = _ok(*sm.get("/api/agent/chip"))
+    chip = _chip_facts()
+    if chip.get("live_diverged"):
+        return {"applied": False, "refused": {"conflict": "stale_live"},
+                "how": "the chip's live files moved outside SM (a node wrote them?). Nothing was written. "
+                       "If the tray holds only your edits: undo, take_live, re-stage. Otherwise ask the human."}
     if int(chip.get("pending") or 0) == 0:
         _seen = 0
         return {"applied": False, "note": "nothing staged"}
     declared = _seen
+    try:
+        tray_before = _ok(*sm.get("/api/agent/tray")).get("entries") or []
+    except ToolError:
+        tray_before = []
     code, body = sm.post_form("/state/apply-to-live",
                               {"seen_changes": declared, "expect_chip": chip.get("chip_token") or None})
     if code == 409:
         _seen = None                        # the picture changed; look again before pressing
+        if isinstance(body, dict) and body.get("conflict") == "stale_live":
+            return {"applied": False, "refused": body,
+                    "how": "nothing was written: the live files changed since SM last synced. "
+                           "undo, take_live, re-stage -- or ask the human to merge in the SM window."}
         return {"applied": False, "refused": body,
                 "how": "a human edited the chip in the SM window since you last looked (paths above). "
                        "Call tray to read the full list, then apply_to_live again if you accept ALL of it, "
                        "or undo yours. Never force."}
     _ok(code, body)
-    after = _ok(*sm.get("/api/agent/chip"))
+    if not isinstance(body, dict):
+        # an htmx fragment on 200 is the window's rendering, not a verdict --
+        # believe only the chip's own count
+        pass
+    after = _chip_facts()
+    if int(after.get("pending") or 0) != 0:
+        _seen = None
+        return {"applied": False, "note": "SM did not clear the tray -- it refused in a way this bridge "
+                                          "cannot read; look at the SM window", "pending": after.get("pending")}
     _seen = 0
+    paths = [e["path"] for e in (tray_before or [])]
+    _journal("sm", f"applied {len(paths)} edit(s) to the chip", paths=paths)
     return {"applied": True, "pending_after": after.get("pending"), "live_diverged": after.get("live_diverged"),
-            "declared_seen": declared}
+            "declared_seen": declared, "wrote": paths}
 
 
 def t_versions(a: dict) -> Any:
@@ -210,9 +274,13 @@ TOOLS: dict[str, tuple[dict, Any]] = {
                       "Value may be a number, string, bool, null, list or dict. A 409 offer (type fix, FSP "
                       "amplitude compensation) is returned for you to answer via type_fix / fsp_ack.",
                       path={"type": "string", "required": True}, value={"required": True},
+                      reason={"type": "string", "description": "why this value -- goes into the human's journal"},
                       type_fix={"type": "string", "enum": ["convert", "keep"]},
                       fsp_ack={"type": "string", "enum": ["comp", "solo"]}), t_state_edit),
-    "tray": (_s("The staged edits waiting in SM's Review tray."), t_tray),
+    "tray": (_s("The staged edits waiting in SM's Review tray (each with its actor: agent or human)."), t_tray),
+    "take_live": (_s("Pull the chip's live state.json/wiring.json into SM after a node wrote them. Only with an "
+                     "EMPTY tray; refuses otherwise. sm_status / state_get say live_diverged when this is needed."),
+                  t_take_live),
     "undo": (_s("Undo the most recent staged group (the same Ctrl+Z the human has)."), t_undo),
     "apply_to_live": (_s("Write the staged tray to the live state.json/wiring.json through SM's one door. "
                          "Refuses if a human edited something in the SM window you have not seen; never forces."),
@@ -272,7 +340,9 @@ def handle(msg: dict) -> None:
                        "instructions": ("QUAM State Manager: the chip's state, runs, figures and history, and the "
                                         "ONE safe door to write state. Read with state_get/runs/run; stage with "
                                         "state_edit; write with apply_to_live; keep the human's journal with "
-                                        "journal_append (reason required) before every node you run.")})
+                                        "journal_append (reason required) before every node you run. After a "
+                                        "node wrote state.json itself, call take_live before reading again; "
+                                        "run check_fit on every finished run.")})
     elif method == "notifications/initialized" or (method or "").startswith("notifications/"):
         return
     elif method == "ping":
@@ -287,6 +357,8 @@ def handle(msg: dict) -> None:
             return
         try:
             result = TOOLS[name][1](args)
+            if isinstance(result, dict) and "chip" not in result and _chip:
+                result = {"chip": _chip, **result}
             text = json.dumps(result, indent=1, default=str)
             _respond(mid, {"content": [{"type": "text", "text": text}], "isError": False})
         except ToolError as exc:

@@ -102,12 +102,14 @@ def candidate_urls(instance_path: Path | None = None) -> list[str]:
 class SMLink:
     """A tiny HTTP client that speaks to one SM window."""
 
-    def __init__(self, base_url: str, timeout: float = 30.0):
+    def __init__(self, base_url: str, timeout: float = 30.0, agent_id: str = "mcp"):
         self.base = base_url.rstrip("/")
         self.timeout = timeout
+        self.agent_id = agent_id            # X-SM-Agent: SM stamps the actor from this
 
     def _headers(self, extra: dict | None = None) -> dict:
-        h = {"Origin": self.base, "Accept": "application/json", "User-Agent": "sm-agent-link"}
+        h = {"Origin": self.base, "Accept": "application/json", "User-Agent": "sm-agent-link",
+             "X-SM-Agent": self.agent_id}
         if extra:
             h.update(extra)
         return h
@@ -155,6 +157,19 @@ def _decode(raw: bytes, ctype: str):
         except ValueError:
             return text
     return text
+
+
+def fire_event(instance_path: Path | None, rec: dict, timeout: float = 0.3) -> bool:
+    """The hook's one POST: newest live window, no liveness probe (that GET
+    re-checks the live hash -- too heavy for every tool call), a short
+    timeout. False means SM was not there; the jsonl on disk is the record."""
+    for url in candidate_urls(instance_path)[:1]:
+        try:
+            code, _ = SMLink(url, timeout=timeout, agent_id="hook").post_json("/api/agent/event", rec)
+            return code == 200
+        except (urllib.error.URLError, OSError, ValueError):
+            return False
+    return False
 
 
 def connect(instance_path: Path | None = None, timeout: float = 30.0) -> SMLink | None:

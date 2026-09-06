@@ -49,15 +49,17 @@ class FakeLink:
         return a(data) if callable(a) else a
 
 
-CHIP = (200, {"ok": True, "loaded": True, "name": "c", "chip_token": "tok", "pending": 0})
+CHIP = (200, {"ok": True, "loaded": True, "name": "c", "chip_token": "tok", "pending": 0, "live_diverged": False})
 
 
 @pytest.fixture
 def link(monkeypatch):
     fl = FakeLink({("GET", "/api/agent/chip"): CHIP,
-                   ("GET", "/api/agent/tray"): (200, {"ok": True, "count": 0, "seen_changes": 0, "entries": []})})
+                   ("GET", "/api/agent/tray"): (200, {"ok": True, "count": 0, "seen_changes": 0, "entries": []}),
+                   ("POSTJ", "/api/agent/journal"): (200, {"ok": True})})
     monkeypatch.setattr(mcp, "_link", fl)
     monkeypatch.setattr(mcp, "_seen", None)
+    monkeypatch.setattr(mcp, "_chip", None)
     return fl
 
 
@@ -75,9 +77,15 @@ class TestSeenGate:
         link.answers[("GET", "/api/agent/chip")] = (200, {**CHIP[1], "pending": 2})
         link.answers[("GET", "/api/agent/tray")] = (200, {"ok": True, "count": 2, "seen_changes": 2,
                                                          "entries": [{"path": "a"}, {"path": "b"}]})
-        link.answers[("POST", "/state/apply-to-live")] = lambda d: (
-            (409, {"unseen_changes": True, "paths": ["b"], "seen": d["seen_changes"], "have": 2})
-            if int(d["seen_changes"]) < 2 else (200, "ok"))
+        applied = {"done": False}
+
+        def _apply(d):
+            if int(d["seen_changes"]) < 2:
+                return 409, {"unseen_changes": True, "paths": ["b"], "seen": d["seen_changes"], "have": 2}
+            applied["done"] = True
+            link.answers[("GET", "/api/agent/chip")] = (200, {**CHIP[1], "pending": 0})
+            return 200, "<div>fragment</div>"
+        link.answers[("POST", "/state/apply-to-live")] = _apply
         r = mcp.t_apply_to_live({})
         assert r["applied"] is False and r["refused"]["paths"] == ["b"]
         sent = [c for c in link.calls if c[1] == "/state/apply-to-live"][-1][2]
@@ -88,16 +96,76 @@ class TestSeenGate:
         assert r["applied"] is False and "tray first" in r["note"]
         mcp.t_tray({})
         r = mcp.t_apply_to_live({})
-        assert r["applied"] is True and r["declared_seen"] == 2
+        assert r["applied"] is True and r["declared_seen"] == 2 and r["wrote"] == ["a", "b"]
+        assert any(c[1] == "/api/agent/journal" and "applied 2 edit" in c[2]["text"] for c in link.calls), \
+            "the bridge journals what it wrote"
 
-    def test_state_edit_counts_as_looking(self, link):
+    def test_state_edit_counts_as_looking_and_journals_with_its_reason(self, link):
         link.answers[("POST", "/field/edit")] = (200, {"ok": True})
         link.answers[("GET", "/api/agent/tray")] = (200, {"ok": True, "count": 1, "seen_changes": 1,
-                                                         "entries": [{"path": "a", "new": 1}]})
-        r = mcp.t_state_edit({"path": "a", "value": 1})
+                                                         "entries": [{"path": "a", "old": 0, "new": 1}]})
+        r = mcp.t_state_edit({"path": "a", "value": 1, "reason": "rabi says so"})
         assert r["staged"] is True and mcp._seen == 1
         form = [c for c in link.calls if c[1] == "/field/edit"][0][2]
         assert form["dot_path"] == "a" and form["value"] == "1" and form["expect_chip"] == "tok"
+        j = [c for c in link.calls if c[1] == "/api/agent/journal"][-1][2]
+        assert "staged `a` 0 -> 1" in j["text"] and j["reason"] == "rabi says so" and j["paths"] == ["a"]
+
+    def test_an_apply_that_did_not_clear_the_tray_is_not_reported_as_applied(self, link):
+        """The window answers a conflict FRAGMENT with 200; the bridge believes
+        only the chip's own pending count."""
+        link.answers[("GET", "/api/agent/tray")] = (200, {"ok": True, "count": 1, "seen_changes": 1, "entries": [{"path": "a"}]})
+        mcp.t_tray({})
+        link.answers[("GET", "/api/agent/chip")] = (200, {**CHIP[1], "pending": 1})
+        link.answers[("POST", "/state/apply-to-live")] = (200, '<div id="pending-tray" class="pending-tray pending-tray-conflict">')
+        r = mcp.t_apply_to_live({})
+        assert r["applied"] is False and mcp._seen is None
+
+    def test_a_stale_live_conflict_is_named_and_apply_refuses_a_known_divergence(self, link):
+        link.answers[("GET", "/api/agent/tray")] = (200, {"ok": True, "count": 1, "seen_changes": 1, "entries": [{"path": "a"}]})
+        mcp.t_tray({})
+        link.answers[("GET", "/api/agent/chip")] = (200, {**CHIP[1], "pending": 1})
+        link.answers[("POST", "/state/apply-to-live")] = (409, {"ok": False, "conflict": "stale_live"})
+        r = mcp.t_apply_to_live({})
+        assert r["applied"] is False and r["refused"]["conflict"] == "stale_live" and "take_live" in r["how"]
+        mcp.t_tray({})
+        link.answers[("GET", "/api/agent/chip")] = (200, {**CHIP[1], "pending": 1, "live_diverged": True})
+        r = mcp.t_apply_to_live({})
+        assert r["applied"] is False and r["refused"]["conflict"] == "stale_live"
+        assert not any(c[1] == "/state/apply-to-live" and c is link.calls[-1] for c in link.calls[-1:]), \
+            "a known divergence is refused before the door is even tried"
+
+
+class TestTakeLive:
+    def test_refuses_with_a_non_empty_tray_and_when_nothing_moved(self, link):
+        link.answers[("GET", "/api/agent/chip")] = (200, {**CHIP[1], "pending": 2, "live_diverged": True})
+        r = mcp.t_take_live({})
+        assert r["taken"] is False and "tray is not empty" in r["note"]
+        link.answers[("GET", "/api/agent/chip")] = (200, {**CHIP[1], "pending": 0, "live_diverged": False})
+        assert mcp.t_take_live({})["taken"] is False
+        assert not any(c[1] == "/state/sync" for c in link.calls)
+
+    def test_pulls_with_mode_discard_and_journals(self, link):
+        link.answers[("GET", "/api/agent/chip")] = (200, {**CHIP[1], "pending": 0, "live_diverged": True})
+        link.answers[("POST", "/state/sync")] = (200, {"status": "ok"})
+        r = mcp.t_take_live({})
+        assert r["taken"] is True
+        sync = [c for c in link.calls if c[1] == "/state/sync"][0][2]
+        assert sync["mode"] == "discard"
+        assert any(c[1] == "/api/agent/journal" and "took the live files" in c[2]["text"] for c in link.calls)
+
+
+class TestAnswersCarryTheChip:
+    def test_every_dict_answer_names_the_chip(self, link, capsys):
+        mcp.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "sm_status", "arguments": {}}})
+        mcp.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "tray", "arguments": {}}})
+        out = [json.loads(l) for l in capsys.readouterr().out.splitlines() if l.strip()]
+        body = json.loads(out[1]["result"]["content"][0]["text"])
+        assert body["chip"] == "c"
+
+    def test_the_bridge_header_names_the_actor(self):
+        assert agent_link.SMLink("http://127.0.0.1:1")._headers()["X-SM-Agent"] == "mcp"
+        assert agent_link.SMLink("http://127.0.0.1:1", agent_id="hook")._headers()["X-SM-Agent"] == "hook"
 
     def test_a_409_offer_is_handed_back_not_answered(self, link):
         link.answers[("POST", "/field/edit")] = (409, {"error": "numeric text", "type_fix_offer": True})
@@ -143,7 +211,7 @@ class TestProtocolOverStdio:
         assert replies[1]["result"]["serverInfo"]["name"] == "quam-state-manager"
         assert replies[1]["result"]["protocolVersion"] == "2025-06-18"
         names = [t["name"] for t in replies[2]["result"]["tools"]]
-        assert {"sm_status", "state_get", "state_edit", "apply_to_live", "journal_append", "check_fit"} <= set(names)
+        assert {"sm_status", "state_get", "state_edit", "apply_to_live", "journal_append", "check_fit", "take_live"} <= set(names)
         # no SM is running in this tmp instance: a tool error, not a crash
         assert replies[3]["result"]["isError"] is True and "not running" in replies[3]["result"]["content"][0]["text"]
         assert replies[4]["error"]["code"] == -32601

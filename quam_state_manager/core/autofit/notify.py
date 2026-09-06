@@ -29,7 +29,8 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-EVENTS = ("plan_done", "target_halted", "plan_stopped", "needs_human")
+EVENTS = ("plan_done", "target_halted", "plan_stopped", "needs_human",
+          "agent_failure", "agent_apply_refused", "agent_stalled")   # docs/172
 _SETTINGS_FILE = "autofit_notify.json"
 _QUEUE_FILE = "autofit_notifications.json"
 _QUEUE_CAP = 200

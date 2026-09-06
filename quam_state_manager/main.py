@@ -154,6 +154,16 @@ def _start_server(app: Flask, port: int) -> threading.Thread:
 
 def main() -> None:
     """Entry point: create app, start server, open native window."""
+    # docs/172: the frozen exe has no `python -m`; the two out-of-process
+    # helpers ride the same entry point so a Claude Code hook / MCP config can
+    # name `quam-manager.exe --hook` / `--mcp` on an install without Python.
+    if "--mcp" in sys.argv[1:]:
+        from quam_state_manager.mcp import main as _mcp_main
+        _mcp_main()
+        return
+    if "--hook" in sys.argv[1:]:
+        from quam_state_manager.hook import main as _hook_main
+        sys.exit(_hook_main())
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",

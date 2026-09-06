@@ -61,6 +61,9 @@ class ChangeEntry:
     # create+delete+retargets) so a single Ctrl+Z undoes them atomically.
     # None ⇒ a standalone edit that undoes on its own.
     group_id: str | None = None
+    # docs/172: who staged it -- "human" from the window, "agent" through the
+    # MCP bridge. The tray shows it; a human's Apply names the agent's share.
+    actor: str = "human"
 
 
 @dataclass

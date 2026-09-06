@@ -140,7 +140,7 @@ class TestWithAChip:
 
 class TestJournalDoor:
     def test_an_agent_entry_without_a_reason_is_refused(self, client):
-        r = client.post("/api/agent/journal", json={"text": "ran x"}, headers=_H)
+        r = client.post("/api/agent/journal", json={"text": "ran x"}, headers={**_H, "X-SM-Agent": "mcp"})
         assert r.status_code == 400 and "reason" in r.get_json()["error"]
 
     def test_a_hook_entry_needs_no_reason_and_the_file_is_readable_back(self, client):
@@ -166,34 +166,153 @@ class TestJournalDoor:
         assert client.get("/api/agent/journal/root").get_json()["root"].endswith("journal")
 
 
+def _ev(client, **rec):
+    rec.setdefault("session_id", "s")
+    return client.post("/api/agent/event", json=rec, headers=_H)
+
+
 class TestTheLiveStrip:
-    def test_running_is_an_unmatched_pre_event(self, client):
-        client.post("/api/agent/event", json={"hook_event_name": "PreToolUse", "tool_name": "Bash",
-                                              "tool_use_id": "t1", "summary": "python 05_power_rabi.py",
-                                              "session_id": "s"}, headers=_H)
+    def test_ping_is_cheap_and_chipless(self, client):
+        d = client.get("/api/agent/ping").get_json()
+        assert d["ok"] and "sm_version" in d
+
+    def test_running_is_an_unmatched_pre_event_of_a_calibration_session(self, client):
+        _ev(client, hook_event_name="PreToolUse", tool_name="Bash", tool_use_id="t1", summary="python 05_power_rabi.py")
         now = client.get("/api/agent/now").get_json()
-        assert now["state"] == "running" and now["running"]["summary"] == "python 05_power_rabi.py"
-        client.post("/api/agent/event", json={"hook_event_name": "PostToolUse", "tool_name": "Bash",
-                                              "tool_use_id": "t1", "summary": "python 05_power_rabi.py"}, headers=_H)
+        assert now["state"] == "running" and now["running"]["node"] == "05_power_rabi"
+        _ev(client, hook_event_name="PostToolUse", tool_name="Bash", tool_use_id="t1", summary="python 05_power_rabi.py")
         now = client.get("/api/agent/now").get_json()
         assert now["state"] == "between" and now["running"] is None
-        client.post("/api/agent/event", json={"hook_event_name": "Stop", "summary": "Rabi looks clean."}, headers=_H)
+        _ev(client, hook_event_name="Stop", summary="Rabi looks clean.")
         now = client.get("/api/agent/now").get_json()
         assert now["last_message"] == "Rabi looks clean." and now["events_today"] == 3
         ev = client.get("/api/agent/events?n=2").get_json()
         assert ev["count"] == 2 and ev["events"][-1]["hook_event_name"] == "Stop"
 
-    def test_a_restart_replays_the_hooks_jsonl(self, tmp_path):
+    def test_a_paper_writing_session_does_not_light_the_strip(self, client):
+        _ev(client, hook_event_name="PreToolUse", tool_name="Bash", tool_use_id="t1", summary="pytest tests/", session_id="paper")
+        now = client.get("/api/agent/now").get_json()
+        assert now["state"] == "idle" and "none from a calibration session" in now["note"]
+        _ev(client, hook_event_name="PreToolUse", tool_name="mcp__sm__state_get", tool_use_id="t2", summary="{}", session_id="cal")
+        assert client.get("/api/agent/now").get_json()["session"] == "cal"
+
+    def test_a_stop_ends_the_running_state(self, client):
+        _ev(client, hook_event_name="PreToolUse", tool_name="Bash", tool_use_id="t1", summary="python 05_power_rabi.py")
+        _ev(client, hook_event_name="Stop", summary="done")
+        assert client.get("/api/agent/now").get_json()["running"] is None
+
+    def test_an_old_unmatched_pre_is_stalled_not_running(self, tmp_path):
         from quam_state_manager.web.app import create_app
         inst = tmp_path / "_inst"
         (inst / "agent_events").mkdir(parents=True)
         f = inst / "agent_events" / (datetime.now().strftime("%Y-%m-%d") + ".jsonl")
-        f.write_text(json.dumps({"ts": 1.0, "hook_event_name": "PreToolUse", "tool_name": "Bash",
-                                 "tool_use_id": "old", "summary": "python x.py"}) + "\n", encoding="utf-8")
+        import time as _t
+        f.write_text(json.dumps({"ts": _t.time() - 2 * 3600, "hook_event_name": "PreToolUse", "tool_name": "Bash",
+                                 "session_id": "s", "tool_use_id": "old", "summary": "python x.py"}) + "\n",
+                     encoding="utf-8")
         c = create_app(testing=True, instance_path=str(inst)).test_client()
         now = c.get("/api/agent/now").get_json()
         assert now["events_today"] == 1 and now["last"]["summary"] == "python x.py"
-        assert now["running"] is None, "an hour-old unmatched Pre is not 'running now'"
+        assert now["running"] is None and now["state"] == "stalled"
+
+    def test_a_restart_replays_yesterday_too(self, tmp_path):
+        from datetime import timedelta
+        from quam_state_manager.web.app import create_app
+        inst = tmp_path / "_inst"
+        (inst / "agent_events").mkdir(parents=True)
+        y = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        (inst / "agent_events" / f"{y}.jsonl").write_text(json.dumps(
+            {"ts": 2.0, "hook_event_name": "PostToolUse", "tool_name": "Bash", "session_id": "s",
+             "tool_use_id": "y1", "summary": "python 02_resonator_spectroscopy.py"}) + "\n", encoding="utf-8")
+        c = create_app(testing=True, instance_path=str(inst)).test_client()
+        assert c.get("/api/agent/events").get_json()["count"] == 1
+        text = c.get("/api/agent/journal?chip=unassigned").get_json()["text"]
+        assert "ran `02_resonator_spectroscopy`" in text, "SM derives the journal line the closed-SM night could not"
 
     def test_a_non_object_event_is_refused(self, client):
         assert client.post("/api/agent/event", json=[1, 2], headers=_H).status_code == 400
+
+
+class TestEventsBecomeJournalLines:
+    def test_a_node_run_is_journaled_once_and_read_events_never(self, client):
+        _ev(client, hook_event_name="PostToolUse", tool_name="Bash", tool_use_id="t1", ts=5.0,
+            summary="python calibrations/05_power_rabi.py --qubits q1")
+        _ev(client, hook_event_name="PostToolUse", tool_name="Bash", tool_use_id="t1", ts=5.0,
+            summary="python calibrations/05_power_rabi.py --qubits q1")     # the same event, POSTed twice
+        _ev(client, hook_event_name="PostToolUse", tool_name="Read", tool_use_id="t2", summary="a.png")
+        _ev(client, hook_event_name="PostToolUse", tool_name="Bash", tool_use_id="t3", summary="git status")
+        text = client.get("/api/agent/journal?chip=unassigned").get_json()["text"]
+        assert text.count("ran `05_power_rabi`") == 1
+        assert "a.png" not in text and "git status" not in text
+
+    def test_a_failure_is_journaled_with_its_error(self, client):
+        _ev(client, hook_event_name="PostToolUse", tool_name="Bash", tool_use_id="t1", failed=True,
+            error="KeyError: 'q9'", summary="python 05_power_rabi.py")
+        text = client.get("/api/agent/journal?chip=unassigned").get_json()["text"]
+        assert "✗ `05_power_rabi` failed: KeyError: 'q9'" in text
+        assert client.get("/api/agent/now").get_json()["failures_today"] == 1
+
+    def test_claude_says_is_opt_in(self, client):
+        _ev(client, hook_event_name="Stop", summary="I moved to Ramsey.")
+        assert "Claude:" not in client.get("/api/agent/journal?chip=unassigned").get_json()["text"]
+        client.post("/api/agent/journal/root", json={"root": "", "claude_says": "1"}, headers=_H)
+        _ev(client, hook_event_name="Stop", summary="Now Ramsey.", ts=9.0)
+        assert "Claude: Now Ramsey." in client.get("/api/agent/journal?chip=unassigned").get_json()["text"]
+
+    def test_the_chip_is_the_sessions_state_path_never_invented(self, loaded_client, synth_folder):
+        _ev(loaded_client, hook_event_name="PostToolUse", tool_name="Bash", tool_use_id="a",
+            summary="python 05_power_rabi.py", quam_state_path=str(synth_folder))
+        _ev(loaded_client, hook_event_name="PostToolUse", tool_name="Bash", tool_use_id="b",
+            summary="python 08_qubit_spectroscopy.py", quam_state_path="D:/other/OtherChip/quam_state")
+        chips = loaded_client.get("/api/agent/journal").get_json()["chips"]
+        assert "OtherChip" in chips
+        mine = loaded_client.get("/api/agent/journal").get_json()["text"]
+        assert "05_power_rabi" in mine and "08_qubit_spectroscopy" not in mine
+
+    def test_the_actor_comes_from_the_caller_not_the_payload(self, client):
+        r = client.post("/api/agent/journal", json={"text": "x", "kind": "agent", "reason": "r"}, headers=_H)
+        assert r.status_code == 200 and r.get_json()["entry"]["kind"] == "human", "no bridge header: not the agent"
+        r = client.post("/api/agent/journal", json={"text": "x", "kind": "human"}, headers={**_H, "X-SM-Agent": "mcp"})
+        assert r.status_code == 400, "the bridge cannot claim to be the human, and an agent line needs a reason"
+
+
+class TestTheDoorsKnowTheActor:
+    def test_an_agent_edit_is_marked_in_the_tray(self, loaded_client):
+        c = loaded_client
+        d = c.get("/api/agent/chip").get_json()
+        cont = c.get("/api/agent/state?path=qubits.qA1").get_json()["value"]
+        key = next(k for k, v in cont.items() if isinstance(v, (int, float)) and not isinstance(v, bool))
+        c.post("/field/edit", data={"dot_path": f"qubits.qA1.{key}", "value": "1", "expect_chip": d["chip_token"]},
+               headers={**_H, "X-SM-Agent": "mcp"})
+        c.post("/field/edit", data={"dot_path": f"qubits.qA1.{key}", "value": "2", "expect_chip": d["chip_token"]},
+               headers=_H)
+        tray = c.get("/api/agent/tray").get_json()
+        assert [e["actor"] for e in tray["entries"]] == ["agent", "human"] and tray["agent_count"] == 1
+
+    def test_state_and_tray_say_when_the_live_files_moved(self, loaded_client, synth_folder):
+        c = loaded_client
+        assert c.get("/api/agent/state?path=qubits").get_json()["live_diverged"] is False
+        p = synth_folder / "state.json"
+        st = json.loads(p.read_text(encoding="utf-8"))
+        st.setdefault("extras", {})["moved_outside_sm"] = 1
+        p.write_text(json.dumps(st, indent=2), encoding="utf-8")
+        assert c.get("/api/agent/state?path=qubits").get_json()["live_diverged"] is True
+        assert c.get("/api/agent/tray").get_json()["live_diverged"] is True
+
+    def test_apply_on_a_stale_live_is_a_json_409_for_a_machine_caller(self, loaded_client, synth_folder):
+        c = loaded_client
+        d = c.get("/api/agent/chip").get_json()
+        cont = c.get("/api/agent/state?path=qubits.qA1").get_json()["value"]
+        key = next(k for k, v in cont.items() if isinstance(v, (int, float)) and not isinstance(v, bool))
+        c.post("/field/edit", data={"dot_path": f"qubits.qA1.{key}", "value": "1", "expect_chip": d["chip_token"]},
+               headers=_H)
+        p = synth_folder / "state.json"
+        st = json.loads(p.read_text(encoding="utf-8"))
+        st.setdefault("extras", {})["moved_outside_sm"] = 1
+        p.write_text(json.dumps(st, indent=2), encoding="utf-8")
+        r = c.post("/state/apply-to-live", data={"seen_changes": "1"}, headers={**_H, "Accept": "application/json"})
+        assert r.status_code == 409, r.get_data(as_text=True)[:200]
+        assert r.get_json()["conflict"] == "stale_live"
+        r = c.post("/state/apply-to-live", data={"seen_changes": "1"}, headers=_H)
+        assert r.status_code == 200 and "pending-tray-conflict" in r.get_data(as_text=True), \
+            "the window still gets its fragment"

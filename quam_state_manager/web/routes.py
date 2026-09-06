@@ -6716,7 +6716,9 @@ def field_edit():
             # makes the two answers agree.
             raw_value = json.dumps(raw_value)
         parsed = _parse_for_target(modifier.store, target_path, raw_value)
-        modifier.set_value(target_path, parsed)
+        _entry = modifier.set_value(target_path, parsed)
+        if request.headers.get("X-SM-Agent") and hasattr(_entry, "actor"):
+            _entry.actor = "agent"            # docs/172: the bridge staged it
         _invalidate_engine_cache(ctx)
     except _tp.TypeMismatchError as e:
         return jsonify(ok=False, error=str(e), **e.as_json()), 400
@@ -15254,6 +15256,12 @@ def state_apply_to_live():
                 _before_tree = _live_merged_tree(wc)
             working_copy.apply_to_live(wc, force=force)
     except working_copy.StaleLiveError:
+        if request.headers.get("Accept", "").startswith("application/json"):
+            # docs/172: a machine caller must not read the conflict fragment
+            # as success -- nothing was written (apply_to_live raises first).
+            return jsonify(ok=False, conflict="stale_live",
+                           message="the live files changed since SM last synced; "
+                                   "nothing was written -- take live (empty tray) or let a human merge"), 409
         # stash kept for the pull choice; staged_conflict — see the sync twin
         body = render_template(
             "_state_apply_conflict.html",

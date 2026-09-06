@@ -11,8 +11,10 @@ JSON in, only JSON out -- the htmx fragments the GUI routes answer with are
 not for a machine to parse.
 
 Also here: the two ends of the LIVE strip -- ``POST /event`` (fed by the
-Claude Code hook script) and ``GET /now`` (what the agent is doing, right
-now, for the topbar).
+Claude Code hook script, which RECORDS and never interprets) and ``GET /now``
+(what the agent is doing, right now, for the topbar). SM is the ONE writer
+of the journal: a journal line is derived from an event here, on the POST or
+at the next start from the hook's jsonl, deduplicated by event identity.
 """
 
 from __future__ import annotations
@@ -20,9 +22,10 @@ from __future__ import annotations
 import collections
 import json
 import logging
+import re
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -34,8 +37,11 @@ logger = logging.getLogger(__name__)
 
 agent_bp = Blueprint("agent", __name__, url_prefix="/api/agent")
 
-_EVENT_RING = 500
+_EVENT_RING = 800
 _events_lock = threading.Lock()
+_LIVE_WINDOW_S = 15 * 60          # a session with no sign of life for this long is 'stalled'
+_NODE_RE = re.compile(r"python[^\s]*\s+(?:-m\s+\S+\s+)?(?:\"[^\"]*[\\/])?([^\s;&|\"']+)\.py\b")
+_UNASSIGNED = "unassigned"
 
 
 # ------------------------------------------------------------ small helpers
@@ -58,6 +64,32 @@ def _chip_name() -> str:
     return Path(p).name if p else "chip"
 
 
+def _live_flag() -> bool:
+    """Have the live files moved outside SM? Answered FRESH for the agent:
+    the page's refresher is throttled (30 s) and skips a dirty working copy
+    (docs/87 -- a human with staged edits gets the banner, not a pull), which
+    is exactly when an agent that just ran a node would read stale values.
+    One hash of two files per agent read is the price."""
+    r = _r()
+    ctx = r._active_ctx()
+    if not ctx:
+        return False
+    wc = ctx.get("working_copy")
+    if wc is not None:
+        try:
+            from quam_state_manager.core import working_copy as wc_mod
+            fresh = wc_mod.live_diverged_now(wc)
+            if fresh is not None:
+                return bool(fresh)
+        except Exception:  # noqa: BLE001
+            logger.debug("live_diverged_now failed", exc_info=True)
+    try:
+        r._refresh_live_diverged(ctx)
+    except Exception:  # noqa: BLE001
+        pass
+    return bool(ctx.get("live_diverged"))
+
+
 def _jsonable(v: Any) -> Any:
     if isinstance(v, float) and v != v:
         return None
@@ -76,7 +108,21 @@ def _err(msg: str, code: int = 400, **extra):
     return jsonify(ok=False, error=msg, **extra), code
 
 
+def _version() -> str:
+    try:
+        from quam_state_manager import __version__
+        return __version__
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 # ---------------------------------------------------------------- the chip
+
+@agent_bp.route("/ping")
+def ping():
+    """Cheap liveness for the hook: no chip work, no live-hash recheck."""
+    return jsonify(ok=True, sm_version=_version())
+
 
 @agent_bp.route("/chip")
 def chip():
@@ -86,26 +132,14 @@ def chip():
     ctx = r._active_ctx()
     if not store or not ctx:
         return jsonify(ok=True, loaded=False, sm_version=_version(), now=_now_state())
-    try:
-        r._refresh_live_diverged(ctx)
-    except Exception:  # noqa: BLE001
-        pass
     return jsonify(ok=True, loaded=True, sm_version=_version(),
                    path=r._active_path(), name=_chip_name(),
                    chip_token=r._active_chip_token() or "",
                    qubits=list(store.qubit_names), pairs=list(store.qubit_pair_names),
                    pending=r._change_count(),
-                   live_diverged=bool(ctx.get("live_diverged")),
+                   live_diverged=_live_flag(),
                    live_readonly=bool(ctx.get("live_readonly")),
                    now=_now_state())
-
-
-def _version() -> str:
-    try:
-        from quam_state_manager import __version__
-        return __version__
-    except Exception:  # noqa: BLE001
-        return ""
 
 
 # --------------------------------------------------------------- the state
@@ -115,15 +149,18 @@ _MAX_SUBTREE_CHARS = 60_000
 
 @agent_bp.route("/state")
 def state_get():
-    """One value (raw + pointer-resolved) or a bounded subtree."""
+    """One value (raw + pointer-resolved) or a bounded subtree. Every answer
+    says whether the live files have moved outside SM (a node's own write),
+    because the working copy never adopts that by itself on this path."""
     r = _r()
     store = r._store()
     if not store:
         return _err("no chip loaded", 409)
+    diverged = _live_flag()
     path = (request.args.get("path") or "").strip().strip(".")
     if not path:
         keys = sorted(k for k in store.merged.keys())
-        return jsonify(ok=True, path="", kind="container", keys=keys)
+        return jsonify(ok=True, path="", kind="container", keys=keys, live_diverged=diverged)
     try:
         raw = store.get_value(path)
     except (KeyError, IndexError, TypeError, ValueError):
@@ -133,10 +170,10 @@ def state_get():
         keys = list(raw.keys()) if isinstance(raw, dict) else list(range(len(raw)))
         if len(text) > _MAX_SUBTREE_CHARS:
             return jsonify(ok=True, path=path, kind="container", keys=[str(k) for k in keys],
-                           truncated=True, size_chars=len(text),
+                           truncated=True, size_chars=len(text), live_diverged=diverged,
                            hint="ask for a deeper path; this subtree is too large to return whole")
         return jsonify(ok=True, path=path, kind="container", keys=[str(k) for k in keys],
-                       value=_jsonable(raw))
+                       value=_jsonable(raw), live_diverged=diverged)
     resolved = raw
     if isinstance(raw, str) and raw.startswith("#"):
         try:
@@ -149,12 +186,14 @@ def state_get():
         src = None
     return jsonify(ok=True, path=path, kind="leaf", value=_jsonable(raw),
                    resolved=_jsonable(resolved), source_file=src,
-                   is_pointer=isinstance(raw, str) and raw.startswith("#"))
+                   is_pointer=isinstance(raw, str) and raw.startswith("#"),
+                   live_diverged=diverged)
 
 
 @agent_bp.route("/tray")
 def tray():
-    """The staged, not-yet-applied edits -- what the human sees in Review."""
+    """The staged, not-yet-applied edits -- what the human sees in Review,
+    each with who staged it."""
     r = _r()
     mod = r._modifier()
     if not mod:
@@ -162,8 +201,10 @@ def tray():
     log = mod.get_change_log()
     rows = [{"index": i, "path": c.dot_path, "old": _jsonable(c.old_value), "new": _jsonable(c.new_value),
              "source": c.source_file, "created": c.created, "deleted": c.deleted,
-             "group": c.group_id} for i, c in enumerate(log)]
-    return jsonify(ok=True, count=len(rows), seen_changes=len(rows), entries=rows)
+             "group": c.group_id, "actor": getattr(c, "actor", "human")} for i, c in enumerate(log)]
+    return jsonify(ok=True, count=len(rows), seen_changes=len(rows), entries=rows,
+                   agent_count=sum(1 for x in rows if x["actor"] == "agent"),
+                   live_diverged=_live_flag())
 
 
 # ------------------------------------------------------------- the history
@@ -295,16 +336,19 @@ def diagnostics_json():
 
 @agent_bp.route("/families")
 def families():
+    """The families SM knows. A node NAME is matched by ``family_for`` at call
+    time; there is no per-family list of node names to show (a field that
+    claimed one was empty for every family and read as 'no nodes')."""
     from quam_state_manager.core.autofit import families as fam_mod
     from quam_state_manager.core.autofit import knowledge
     out = []
     for key, fam in sorted(fam_mod.FAMILIES.items()):
-        has_manual = knowledge.pack_path(key).exists()
         out.append({"family": key, "label": getattr(fam, "label", key),
+                    "kind": getattr(fam, "kind", None),
                     "value_key": getattr(fam, "value_key", None),
-                    "nodes": list(getattr(fam, "node_names", []) or []),
-                    "manual": has_manual})
-    return jsonify(ok=True, families=out)
+                    "manual": knowledge.pack_path(key).exists()})
+    return jsonify(ok=True, families=out,
+                   note="pass a node name to check_fit / family_for; SM matches it to a family itself")
 
 
 @agent_bp.route("/manual/<family>")
@@ -388,6 +432,7 @@ def journal_get():
     text = journal_mod.read(current_app.instance_path, chip, day)
     return jsonify(ok=True, chip=chip, date=day or datetime.now().strftime("%Y-%m-%d"),
                    days=journal_mod.list_days(current_app.instance_path, chip),
+                   chips=journal_mod.list_chips(current_app.instance_path),
                    file=str(journal_mod.day_file(current_app.instance_path, chip, day)),
                    text=text)
 
@@ -395,9 +440,17 @@ def journal_get():
 @agent_bp.route("/journal", methods=["POST"])
 def journal_append():
     """The agent's own words. ``reason`` is REQUIRED for kind=agent: a log of
-    what ran without why is what the customer already has."""
+    what ran without why is what the customer already has. The actor is
+    stamped from the caller, never from the payload: a request without the
+    bridge header cannot claim to be the agent, and the agent cannot claim to
+    be the human."""
     data = request.get_json(silent=True) or request.form.to_dict()
     kind = str(data.get("kind") or "agent")
+    if request.headers.get("X-SM-Agent"):
+        if kind == "human":
+            kind = "agent"
+    elif kind == "agent":
+        kind = "human"
     text = str(data.get("text") or "").strip()
     reason = data.get("reason")
     if not text:
@@ -427,9 +480,13 @@ def journal_root():
             root = journal_mod.set_root(current_app.instance_path, data.get("root"))
         except OSError as exc:
             return _err(f"cannot use that folder: {exc}")
-        return jsonify(ok=True, root=str(root))
+        if "claude_says" in data:
+            journal_mod.set_claude_says(current_app.instance_path, str(data.get("claude_says")).lower() in ("1", "true", "on"))
+        return jsonify(ok=True, root=str(root),
+                       claude_says=journal_mod.settings(current_app.instance_path)["claude_says"])
     return jsonify(ok=True, root=str(journal_mod.root(current_app.instance_path)),
-                   default=str(Path(current_app.instance_path) / "journal"))
+                   default=str(Path(current_app.instance_path) / "journal"),
+                   claude_says=journal_mod.settings(current_app.instance_path)["claude_says"])
 
 
 # ------------------------------------------------------- the live strip
@@ -439,7 +496,8 @@ def _events() -> collections.deque:
     if ev is None:
         ev = collections.deque(maxlen=_EVENT_RING)
         current_app.config["agent_events"] = ev
-        _replay_today(ev)
+        current_app.config["agent_journaled"] = _load_journaled()
+        _replay(ev)
     return ev
 
 
@@ -447,69 +505,263 @@ def _events_dir() -> Path:
     return Path(current_app.instance_path) / "agent_events"
 
 
-def _replay_today(ev: collections.deque) -> None:
-    """After a restart, the morning-after view still knows last night: the
-    hook wrote every event to disk before it ever talked to us."""
-    f = _events_dir() / (datetime.now().strftime("%Y-%m-%d") + ".jsonl")
+def _journaled_file() -> Path:
+    return _events_dir() / "journaled.txt"
+
+
+def _load_journaled() -> set:
     try:
-        lines = f.read_text(encoding="utf-8").splitlines()[-_EVENT_RING:]
+        return set(l.strip() for l in _journaled_file().read_text(encoding="utf-8").splitlines() if l.strip())
     except OSError:
-        return
-    for line in lines:
+        return set()
+
+
+def _mark_journaled(key: str) -> None:
+    current_app.config.setdefault("agent_journaled", set()).add(key)
+    try:
+        _events_dir().mkdir(parents=True, exist_ok=True)
+        with open(_journaled_file(), "a", encoding="utf-8") as f:
+            f.write(key + "\n")
+    except OSError:
+        pass
+
+
+def _event_key(rec: dict) -> str:
+    return f"{rec.get('session_id')}|{rec.get('tool_use_id')}|{rec.get('hook_event_name')}|{rec.get('ts')}"
+
+
+def _replay(ev: collections.deque) -> None:
+    """After a restart, the morning-after view still knows last night: the
+    hook wrote every event to disk before it ever talked to us. Yesterday
+    AND today -- a session that started at 22:00 crosses midnight."""
+    today = datetime.now()
+    for day in (today - timedelta(days=1), today):
+        f = _events_dir() / (day.strftime("%Y-%m-%d") + ".jsonl")
         try:
-            ev.append(json.loads(line))
-        except ValueError:
+            lines = f.read_text(encoding="utf-8").splitlines()
+        except OSError:
             continue
+        for line in lines[-_EVENT_RING:]:
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            ev.append(rec)
+    # journal lines the hook could not write (SM was closed) -- derived now
+    for rec in list(ev):
+        try:
+            _absorb(rec, from_replay=True)
+        except Exception:  # noqa: BLE001
+            logger.debug("replay absorb failed", exc_info=True)
 
 
 def _bump() -> None:
     current_app.config["agent_seq"] = int(current_app.config.get("agent_seq") or 0) + 1
 
 
+def _chip_for_event(rec: dict) -> str:
+    """Which chip's journal an event belongs to. Named by the session's own
+    state path when it says one (matching the open chip -> the open chip's
+    name), else the open chip, else 'unassigned' -- never an invented name."""
+    r = _r()
+    active = r._active_path()
+    sp = rec.get("quam_state_path")
+    if sp:
+        try:
+            if active and Path(sp).resolve() == Path(active).resolve():
+                return _chip_name()
+        except OSError:
+            pass
+        p = Path(sp)
+        return p.parent.name if p.name.lower() in ("quam_state", "state.json") else p.name
+    return _chip_name() if active else _UNASSIGNED
+
+
+def _node_of(summary: str) -> str | None:
+    m = _NODE_RE.search(summary or "")
+    return m.group(1).split("/")[-1].split("\\")[-1] if m else None
+
+
+def _pre_ts_of(rec: dict) -> float | None:
+    tid = rec.get("tool_use_id")
+    if not tid:
+        return None
+    for e in reversed(list(current_app.config.get("agent_events") or [])):
+        if e.get("tool_use_id") == tid and e.get("hook_event_name") == "PreToolUse":
+            try:
+                return float(e.get("ts") or 0)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _newest_run_since(ts: float | None) -> int | None:
+    """The run folder that appeared after a node command started -- the
+    stamp that turns 'ran power_rabi' into 'ran power_rabi -> #2711'."""
+    if ts is None:
+        return None
+    ds = _ds()
+    if not ds:
+        return None
+    try:
+        for row in ds.list_runs()[:5]:
+            when = datetime.strptime(f"{row.get('date')} {row.get('time')}", "%Y-%m-%d %H:%M:%S").timestamp()
+            if when >= ts - 5:
+                return int(row["run_id"])
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def _journal_line(rec: dict) -> tuple[str | None, int | None]:
+    """What of an event belongs in the human's notes. A node run (with its
+    run id and failure), a .py edit, and -- opt-in -- what Claude said."""
+    h = rec.get("hook_event_name")
+    tool = rec.get("tool_name") or ""
+    s = rec.get("summary") or ""
+    if h == "Stop":
+        if s and journal_mod.settings(current_app.instance_path)["claude_says"]:
+            return "Claude: " + s.replace("\n", " ")[:600], None
+        return None, None
+    if h not in ("PostToolUse", "PostToolUseFailure"):
+        return None, None
+    failed = bool(rec.get("failed"))
+    err = (rec.get("error") or "").replace("\n", " ")[-200:]
+    if tool == "Bash":
+        node = _node_of(s)
+        if not node:
+            return None, None
+        run_id = None if failed else _newest_run_since(_pre_ts_of(rec) or (float(rec.get("ts") or 0) - 3600))
+        line = f"ran `{node}`"
+        if failed:
+            line = f"✗ `{node}` failed" + (f": {err}" if err else "")
+        return line, run_id
+    if tool in ("Edit", "Write", "MultiEdit") and s.endswith(".py"):
+        return (f"✗ edit of `{s}` failed" if failed else f"edited `{s}`"), None
+    return None, None
+
+
+def _absorb(rec: dict, *, from_replay: bool = False) -> None:
+    """Derive the journal line + notification for one event, exactly once."""
+    key = _event_key(rec)
+    done: set = current_app.config.setdefault("agent_journaled", set())
+    if key in done:
+        return
+    line, run_id = _journal_line(rec)
+    if line:
+        journal_mod.append(current_app.instance_path, _chip_for_event(rec), line, kind="hook", run_id=run_id)
+    _mark_journaled(key)
+    if rec.get("failed") and not from_replay:
+        _notify("agent_failure", {"tool": rec.get("tool_name"), "summary": rec.get("summary"),
+                                  "error": rec.get("error"), "session": rec.get("session_id")})
+
+
+def _notify(event: str, payload: dict) -> None:
+    try:
+        from quam_state_manager.core.autofit import notify
+        notify.notify(current_app.instance_path, event, payload)
+    except Exception:  # noqa: BLE001
+        logger.debug("notify failed", exc_info=True)
+
+
 @agent_bp.route("/event", methods=["POST"])
 def event_post():
-    """One hook event from the Claude Code hook script. The script has
-    already appended it to disk; this is the live wake."""
+    """One hook event. The script has already appended it to disk; here it
+    becomes the live wake, a journal line (once), and a notification."""
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return _err("json object required")
     data.setdefault("ts", time.time())
     with _events_lock:
         _events().append(data)
+    try:
+        _absorb(data)
+    except Exception:  # noqa: BLE001
+        logger.debug("absorb failed", exc_info=True)
     _bump()
     return jsonify(ok=True)
 
 
+def _relevant(session_events: list[dict]) -> bool:
+    """A Claude Code session that never touched SM or a calibration node is
+    someone's paper-writing session: it must not light the strip."""
+    for e in session_events:
+        if (e.get("tool_name") or "").startswith("mcp__sm"):
+            return True
+        if e.get("tool_name") == "Bash" and _node_of(e.get("summary") or ""):
+            return True
+    return False
+
+
+def _alive(session_events: list[dict], now: float) -> bool:
+    """Signs of life: an event inside the window, or the session's own
+    transcript file still growing (Claude Code appends to it while alive)."""
+    last = max((float(e.get("ts") or 0) for e in session_events), default=0.0)
+    if now - last < _LIVE_WINDOW_S:
+        return True
+    tp = next((e.get("transcript_path") for e in reversed(session_events) if e.get("transcript_path")), None)
+    if tp:
+        try:
+            return now - Path(tp).stat().st_mtime < _LIVE_WINDOW_S
+        except OSError:
+            return False
+    return False
+
+
 def _now_state() -> dict:
+    now = time.time()
     with _events_lock:
         ev = list(_events())
+    seq = int(current_app.config.get("agent_seq") or 0)
     if not ev:
-        return {"state": "idle", "seq": int(current_app.config.get("agent_seq") or 0)}
+        return {"state": "idle", "seq": seq, "events_today": 0, "failures_today": 0}
+    by_session: dict[str, list[dict]] = collections.defaultdict(list)
+    for e in ev:
+        by_session[str(e.get("session_id"))].append(e)
+    sessions = {sid: es for sid, es in by_session.items() if _relevant(es)}
+    day_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    failures = sum(1 for es in sessions.values() for e in es
+                   if e.get("failed") and float(e.get("ts") or 0) >= day_start)
+    if not sessions:
+        return {"state": "idle", "seq": seq, "events_today": 0, "failures_today": 0,
+                "note": "events seen, none from a calibration session"}
+    # the newest relevant session is the one the strip talks about
+    sid, es = max(sessions.items(), key=lambda kv: max(float(e.get("ts") or 0) for e in kv[1]))
     open_tools: dict[str, dict] = {}
     last_stop = None
-    last = ev[-1]
-    for e in ev:
-        h = e.get("hook_event_name") or e.get("event")
+    for e in es:
+        h = e.get("hook_event_name")
         tid = e.get("tool_use_id")
         if h == "PreToolUse" and tid:
             open_tools[tid] = e
         elif h in ("PostToolUse", "PostToolUseFailure") and tid:
             open_tools.pop(tid, None)
         elif h == "Stop":
+            open_tools.clear()            # a turn ended: nothing is running
             last_stop = e
+    alive = _alive(es, now)
     running = None
-    if open_tools:
-        e = sorted(open_tools.values(), key=lambda x: x.get("ts") or 0)[-1]
-        if time.time() - float(e.get("ts") or 0) < 3600:
-            running = {"tool": e.get("tool_name"), "summary": e.get("summary"),
-                       "since": e.get("ts"), "session": e.get("session_id")}
-    state = "running" if running else ("idle" if time.time() - float(last.get("ts") or 0) > 900 else "between")
-    return {"state": state, "running": running,
-            "last": {"tool": last.get("tool_name"), "event": last.get("hook_event_name") or last.get("event"),
-                     "summary": last.get("summary"), "ts": last.get("ts"), "session": last.get("session_id")},
+    if open_tools and alive:
+        e = sorted(open_tools.values(), key=lambda x: float(x.get("ts") or 0))[-1]
+        running = {"tool": e.get("tool_name"), "summary": e.get("summary"), "node": _node_of(e.get("summary") or ""),
+                   "since": e.get("ts"), "session": e.get("session_id")}
+    last = es[-1]
+    if running:
+        state = "running"
+    elif open_tools and not alive:
+        state = "stalled"
+    elif alive:
+        state = "between"
+    else:
+        state = "idle"
+    return {"state": state, "running": running, "session": sid, "alive": alive,
+            "last": {"tool": last.get("tool_name"), "event": last.get("hook_event_name"),
+                     "summary": last.get("summary"), "ts": last.get("ts"), "failed": bool(last.get("failed"))},
             "last_message": (last_stop or {}).get("summary") if last_stop else None,
-            "events_today": len(ev),
-            "seq": int(current_app.config.get("agent_seq") or 0)}
+            "events_today": sum(1 for e in es if float(e.get("ts") or 0) >= day_start),
+            "failures_today": failures,
+            "chip": _chip_for_event(last),
+            "seq": seq}
 
 
 @agent_bp.route("/now")

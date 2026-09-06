@@ -35,31 +35,49 @@ def config_path(instance_path) -> Path:
     return Path(instance_path) / "journal.json"
 
 
-def root(instance_path) -> Path:
-    """The journal folder: the configured one, else ``<instance>/journal``."""
+def settings(instance_path) -> dict:
+    """``{"root": str|"", "claude_says": bool}`` -- the folder, and whether the
+    turn's final message goes into the vault (off by default: model prose in
+    a person's notes is the thing the terminal user said would make them
+    disable the hook)."""
     try:
         cfg = json.loads(config_path(instance_path).read_text(encoding="utf-8"))
-        r = str(cfg.get("root") or "").strip()
-        if r:
-            return Path(r)
     except (OSError, ValueError):
-        pass
-    return Path(instance_path) / "journal"
+        cfg = {}
+    return {"root": str(cfg.get("root") or ""), "claude_says": bool(cfg.get("claude_says", False))}
+
+
+def root(instance_path) -> Path:
+    """The journal folder: the configured one, else ``<instance>/journal``."""
+    r = settings(instance_path)["root"].strip()
+    return Path(r) if r else Path(instance_path) / "journal"
+
+
+def _write_settings(instance_path, cfg: dict) -> None:
+    p = config_path(instance_path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(cfg), encoding="utf-8")
 
 
 def set_root(instance_path, folder: str | None) -> Path:
     """Point the journal at ``folder`` (blank = back to the default). The
     folder must exist or be creatable; nothing is moved."""
-    p = config_path(instance_path)
-    p.parent.mkdir(parents=True, exist_ok=True)
+    cfg = settings(instance_path)
     if folder and folder.strip():
         target = Path(folder.strip()).expanduser()
         target.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps({"root": str(target)}), encoding="utf-8")
-        return target
-    if p.exists():
-        p.unlink()
+        cfg["root"] = str(target)
+    else:
+        cfg["root"] = ""
+    _write_settings(instance_path, cfg)
     return root(instance_path)
+
+
+def set_claude_says(instance_path, on: bool) -> bool:
+    cfg = settings(instance_path)
+    cfg["claude_says"] = bool(on)
+    _write_settings(instance_path, cfg)
+    return bool(on)
 
 
 def _safe_key(name: str) -> str:
