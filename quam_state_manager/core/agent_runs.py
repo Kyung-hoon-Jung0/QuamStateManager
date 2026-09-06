@@ -467,6 +467,7 @@ class Registry:
                 "has_hook": node_info.has_hook, "targets_name": node_info.targets_name,
                 "param_overrides": dict(req.params or {}),
                 "label": f"agent: {node_info.name} ({req.actor})", "state_path": str(live),
+                "baseline_path": str(before),  # docs/174: normalize the diff baseline
             }, targets=list(req.targets))
             item_id = item["id"]
             meta["item_id"] = item_id

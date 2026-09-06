@@ -969,6 +969,10 @@ def _new_item(info: dict, targets: list | None) -> dict:
         # docs/173 S5: an agent run reads/writes a SCRATCH copy of the working copy,
         # never the chip; None = the settings' quam_state_path (a human's item)
         "state_path": info.get("state_path") or None,
+        # docs/174: an agent run also carries a baseline dir; run_experiment writes
+        # a serializer-normalized pre-node snapshot there so SM's diff cancels
+        # class-default phantom writes. None for human items (no scratch/diff).
+        "baseline_path": info.get("baseline_path") or None,
     }
 
 
@@ -1584,6 +1588,12 @@ def _run_item(instance_path, item: dict, settings: dict, runner: dict) -> dict:
         _sp = state_path_for(item, settings)
         if _sp:
             argv += ["--state-path", _sp]
+        # docs/174: an agent run hands a baseline dir so run_experiment writes a
+        # serializer-normalized pre-node snapshot there (cancels phantom default
+        # writes in SM's diff). Human runs never set this -> arg omitted, no change.
+        _bp = item.get("baseline_path")
+        if _bp:
+            argv += ["--baseline-out", str(_bp)]
         # Pin the qualibrate config so storage.location / library come from the
         # verified config, not whatever is ambient in the env.
         cfg_file = (settings.get("effective_config") or {}).get("config_file")

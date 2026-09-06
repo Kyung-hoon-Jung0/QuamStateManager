@@ -176,7 +176,8 @@ def run_report_config() -> dict:
 # run — execute one prepared node/graph copy
 # ---------------------------------------------------------------------------
 
-def run_target(target: str, state_path: str | None, config_file: str | None) -> None:
+def run_target(target: str, state_path: str | None, config_file: str | None,
+               baseline_out: str | None = None) -> None:
     """Execute a prepared node/graph ``.py`` (already overridden) via runpy.
 
     Pins the chip + config via the env so the experiment loads/saves the
@@ -205,9 +206,60 @@ def run_target(target: str, state_path: str | None, config_file: str | None) -> 
     # blocks forever on a GUI window that never opens. Force a non-interactive
     # backend before the node imports matplotlib; an operator override wins.
     os.environ.setdefault("MPLBACKEND", "Agg")
+    # docs/174: normalize the diff baseline through the SAME serializer the node's
+    # machine.save() uses, BEFORE the node runs, so class-declared default fields
+    # (materialized identically on both sides) cancel out and only genuine node
+    # writes survive the diff. Best-effort -- on any failure SM falls back to the
+    # raw before/ copy (the pre-174 behaviour).
+    if state_path and baseline_out:
+        _materialize_baseline(str(state_path), str(baseline_out))
     ns = runpy.run_path(str(target), run_name="__main__")
     if state_path:
         _persist_node_state(ns, str(state_path))
+
+
+def _load_machine(state_path: str):
+    """Load the quam machine declared by the ``__class__`` in the state.json at
+    *state_path* (that selects the customer's own Quam subclass). Best-effort:
+    returns None if quam is unavailable or the load fails."""
+    try:
+        from quam import Quam
+        return Quam.load(state_path)
+    except Exception:  # noqa: BLE001
+        try:
+            from quam.core import QuamRoot
+            return QuamRoot.load(state_path)
+        except Exception:  # noqa: BLE001
+            return None
+
+
+def _materialize_baseline(state_path: str, baseline_out: str) -> None:
+    """docs/174 (found on the real KRISS arbel run): SM diffs ``before/`` (a raw
+    copy of the working state) against the scratch AFTER the node's
+    ``machine.save()``. But ``machine.save()`` MATERIALIZES every field the quam
+    class declares that the raw state.json lacked -- e.g. the KRISS class's
+    top-level ``flux_crosstalk_max_v`` / ``require_flux_crosstalk_dc`` /
+    ``twpa_ext`` -- so an UNTOUCHED node stages them as phantom 'created' writes
+    (``twpa_ext`` even as ``None -> None``, a write that changes nothing).
+
+    Fix: run that same serializer over the PRE-node state and hand SM the result
+    as the baseline. The defaults then appear on BOTH sides of the diff and
+    cancel; only genuine node writes remain. A node that really changes one of
+    these fields still shows old->new, because the baseline carries the old
+    value. Best-effort and never fatal: on any failure the raw ``before/`` copy
+    SM already made stands (the pre-174 behaviour)."""
+    import shutil
+    try:
+        machine = _load_machine(state_path)
+        if machine is not None and hasattr(machine, "save"):
+            machine.save()   # materialize class defaults into the scratch
+        for name in ("state.json", "wiring.json"):
+            src = Path(state_path) / name
+            if src.exists():
+                shutil.copyfile(src, Path(baseline_out) / name)
+    except Exception as exc:  # noqa: BLE001
+        sys.stderr.write(
+            f"[run_experiment] baseline normalize skipped: {type(exc).__name__}: {exc}\n")
 
 
 def _persist_node_state(ns: dict, state_path: str) -> None:
@@ -349,6 +401,8 @@ def main(argv=None) -> int:
     parser.add_argument("--folder", help="calibrations folder to scan (scan mode)")
     parser.add_argument("--target", help="prepared node/graph .py to run (run mode)")
     parser.add_argument("--state-path", help="QUAM_STATE_PATH for the run (run mode)")
+    parser.add_argument("--baseline-out", help="dir to write the serializer-normalized "
+                        "pre-node baseline into, for SM's leaf diff (run mode; docs/174)")
     parser.add_argument("--config-file", help="QUALIBRATE_CONFIG_FILE for the run (run mode)")
     args = parser.parse_args(argv)
 
@@ -379,7 +433,7 @@ def main(argv=None) -> int:
                 raise ValueError("--folder is required for scan mode")
             result.update(run_scan(args.folder))
         elif args.mode == "run":
-            run_target(args.target, args.state_path, args.config_file)
+            run_target(args.target, args.state_path, args.config_file, args.baseline_out)
         result["status"] = "ok"
     except SystemExit as exc:
         # A node that calls sys.exit() is not a crash; exit code 0/None = success.
