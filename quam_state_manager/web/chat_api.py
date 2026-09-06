@@ -162,6 +162,13 @@ def _next_n(ev) -> int:
     return int(cur) + 1
 
 
+def _record_user(chip: str, text: str, who: str, backend: str) -> None:
+    """The person's own message, recorded like the agent's events so the card
+    stream survives a reload and a restart (docs/173 S6)."""
+    _record({"ts": time.time(), "hook_event_name": "User", "origin": "chat", "chip": chip, "text": text[:4000],
+             "who": who, "backend": backend, "session_id": None})
+
+
 def _facts(chip: str, mode: str, cwd: str | None) -> str:
     modes = {"auto": "writes need no approval", "ask-writes": "every write is held for the human's approval",
              "ask-all": "every node run and every write is held for the human's approval"}
@@ -335,6 +342,8 @@ def start():
     tail = f", until {datetime.fromtimestamp(until).strftime('%H:%M')}" if until else ""
     tail += ", resumed" if resume else ""
     journal_mod.append(inst, chip, f"{name} session started in SM by {actor} (mode {mode}{tail})", kind="sm")
+    if prompt:
+        _record_user(chip, prompt, actor, name)
     aa._bump()
     aa._wake()
     return jsonify(ok=True, session=st, cwd=cwd, resumed=bool(resume), away=bool(away))
@@ -362,6 +371,7 @@ def send():
     res = mgr.send(chip, text)
     if res.get("error"):
         return _err(res["error"], 409)
+    _record_user(chip, text, _r()._request_actor(), cur.backend.name)
     aa._bump()
     aa._wake()
     return jsonify(ok=True, **res, session=mgr.status(chip))

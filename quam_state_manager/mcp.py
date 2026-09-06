@@ -276,7 +276,8 @@ def t_run_node(a: dict) -> Any:
     """SM runs the node; the answer is the gate's refusal (data) or the run."""
     body = {"node": a.get("node"), "targets": a.get("targets") or [], "params": a.get("params") or {},
             "reason": a.get("reason"), "timeout_s": a.get("timeout_s"), "wait_s": a.get("wait_s"),
-            "approval_id": a.get("approval_id"), "plan_id": a.get("plan_id") or os.environ.get("SM_PLAN")}
+            "approval_id": a.get("approval_id"), "plan_id": a.get("plan_id") or os.environ.get("SM_PLAN"),
+            "step": a.get("step")}
     wait_s = float(a.get("wait_s") or 240)
     code, res = _sm().post_json("/api/agent/run-node", body, timeout=wait_s + 60)
     if code == 409 and isinstance(res, dict):
@@ -288,6 +289,19 @@ def t_run_wait(a: dict) -> Any:
     wait_s = float(a.get("wait_s") or 240)
     code, res = _sm().get(f"/api/agent/run/{a.get('key')}", {"wait_s": wait_s}, timeout=wait_s + 60)
     return _ok(code, res)
+
+
+def t_plan_propose(a: dict) -> Any:
+    body = {"title": a.get("title"), "steps": a.get("steps") or [], "why": a.get("why")}
+    code, res = _sm().post_json("/api/agent/plans", body)
+    return _ok(code, res)
+
+
+def t_plan_status(a: dict) -> Any:
+    pid = a.get("plan_id")
+    if pid:
+        return _ok(*_sm().get(f"/api/agent/plans/{pid}"))
+    return _ok(*_sm().get("/api/agent/plans"))
 
 
 def t_approvals(_a: dict) -> Any:
@@ -315,7 +329,7 @@ def _s(desc: str, **props) -> dict:
 # lists and allows only the read tools -- mechanical, the same for every CLI.
 READ_ONLY = os.environ.get("SM_MCP_MODE", "").strip().lower() == "readonly"
 WRITE_TOOLS = frozenset({"state_edit", "apply_to_live", "undo", "take_live", "note_set", "journal_append", "run_node",
-                         "run_wait", "undo_mine"})
+                         "run_wait", "undo_mine", "plan_propose"})
 
 
 def _visible_tools() -> dict:
@@ -354,7 +368,15 @@ TOOLS: dict[str, tuple[dict, Any]] = {
                     params={"type": "object", "description": "node parameter overrides (never simulate/targets)"},
                     timeout_s={"type": "number"}, wait_s={"type": "number"},
                     approval_id={"type": "string", "description": "an APPROVED run request id (mode ask-all)"},
-                    plan_id={"type": "string"}), t_run_node),
+                    plan_id={"type": "string"}, step={"type": "integer", "description": "the plan step this run is"}), t_run_node),
+    "plan_propose": (_s("Propose a PLAN CARD for the human: steps of {node, targets, params?, why}. Nothing runs "
+                        "until a person presses Start on the card; then you are told to go and call run_node "
+                        "with plan_id + step. Use this for any instruction that would run hardware.",
+                        title={"type": "string", "required": True},
+                        steps={"type": "array", "required": True, "items": {"type": "object"}},
+                        why={"type": "string"}), t_plan_propose),
+    "plan_status": (_s("A plan's card as SM records it (steps, runs, writes, approvals); no id = recent plans.",
+                       plan_id={"type": "string"}), t_plan_status),
     "run_wait": (_s("Wait (up to wait_s) for a run_node key to finish and return its result.",
                     key={"type": "string", "required": True}, wait_s={"type": "number"}), t_run_wait),
     "approvals": (_s("Writes/runs of yours waiting for a human's approval, and recent decisions."), t_approvals),

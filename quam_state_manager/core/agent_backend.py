@@ -61,7 +61,7 @@ logger = logging.getLogger(__name__)
 
 BACKENDS = ("claude", "codex")
 READ_TOOLS = ("sm_status", "state_get", "state_search", "tray", "versions", "field_history", "runs", "run",
-              "diagnostics", "check_fit", "families", "family_manual", "journal_read", "approvals")
+              "diagnostics", "check_fit", "families", "family_manual", "journal_read", "approvals", "plan_status")
 MCP_TOOL_TIMEOUT_S = 30 * 60      # run_node blocks up to wait_s (<= 60 min); both CLIs default far lower
 _LIMIT_RE = re.compile(r"(limit|quota|rate).{0,80}?(resets?|until|at)\s*(\d{1,2}:\d{2}\s*(?:am|pm)?)", re.I)
 

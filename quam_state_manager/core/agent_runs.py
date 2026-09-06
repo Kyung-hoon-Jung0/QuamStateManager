@@ -59,6 +59,7 @@ class RunRequest:
     actor: str = "by_agent"
     approval_id: str | None = None
     session_id: str | None = None
+    step: int | None = None
 
 
 @dataclass
@@ -385,6 +386,7 @@ class Registry:
                 return
             self._set(meta, status="running")
             agent_session.save(inst, chip, claimed_by_tool="run_node", run_key=key)
+            self._plan_step(req, chip, node_info, status="running", run_key=key, started=window_start)
             adapter.journal(f"running `{node_info.name}` on {' '.join(req.targets) or '(node defaults)'}",
                             kind="agent", reason=req.reason or None)
             adapter.wake()
@@ -482,6 +484,12 @@ class Registry:
                     line += " — hardware contention (the OPX is held elsewhere); not retried"
             adapter.journal(line, kind="agent", reason=None, run_id=rid,
                             paths=[w["path"] for w in writes[:20]])
+            self._plan_step(req, chip, node_info, status="done" if status == "done" else
+                            ("cancelled" if status == "cancelled" else ("skipped" if status == "skipped" else "failed")),
+                            run_key=key, run_id=result.get("run_id"), outcome=status,
+                            classification=result["classification"], n_writes=len(writes),
+                            applied=result.get("applied"), approval=(result.get("approval") or {}).get("id"),
+                            error=str(error)[:300] if error else None, ended=time.time())
             if status != "done":
                 adapter.notify("agent_failure", {"node": node_info.name, "targets": req.targets, "error": error,
                                                  "classification": result["classification"]})
@@ -543,6 +551,22 @@ class Registry:
                                params=req.params)
             result["approval"] = approvals.summary(ap)
             result["why_held"] = f"apply refused: {out.get('error')}"
+
+    def _plan_step(self, req: RunRequest, chip: str, node_info, **fields) -> None:
+        """Report to the plan card (SM's own record of progress, docs/173 S6)."""
+        if not req.plan_id:
+            return
+        try:
+            from quam_state_manager.core import agent_plans
+            rec = agent_plans.get(self.instance_path, chip, req.plan_id)
+            if rec is None:
+                return
+            st = agent_plans.step_for(rec, step=req.step, node=node_info.name, targets=req.targets)
+            if st is None:
+                return
+            agent_plans.step_update(self.instance_path, chip, req.plan_id, st["i"], **fields)
+        except Exception:  # noqa: BLE001
+            logger.debug("plan step update failed", exc_info=True)
 
     @staticmethod
     def _remove_item(scope: str, item_id: str) -> None:

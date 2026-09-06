@@ -12628,3 +12628,58 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
     background: color-mix(in srgb, #f59e0b 12%, transparent);
     border: 1px solid color-mix(in srgb, #f59e0b 40%, transparent);
 }
+
+
+/* ---- docs/173 S6: the Agent home + the floating Agent panel ---- */
+.agent-home { min-height: 60vh; }
+.ag-root { display: grid; grid-template-columns: minmax(0, 1fr) 17rem; gap: 1rem; align-items: start; }
+.ag-root.ag-compact { grid-template-columns: minmax(0, 1fr); }
+.ag-root.ag-compact .ag-now { order: -1; padding: .4rem .6rem; position: static; }
+.ag-left { min-width: 0; display: flex; flex-direction: column; gap: .5rem; }
+.ag-head { font-size: 1.05em; }
+.ag-cards { display: flex; flex-direction: column; gap: .5rem; max-height: 62vh; overflow-y: auto; padding-right: .25rem; }
+.ag-compact .ag-cards { max-height: 46vh; }
+.ag-card { border: 1px solid var(--pico-muted-border-color); border-radius: .5rem; padding: .5rem .7rem; background: var(--pico-card-background-color); }
+.ag-card.ag-user { border-style: dashed; }
+.ag-bubble .ag-who { font-weight: 600; margin-right: .5rem; }
+.ag-when { float: right; color: var(--pico-muted-color); font-size: .85em; }
+.ag-md p:last-child { margin-bottom: 0; }
+.ag-tool { font-size: .9em; }
+.ag-tool.ag-failed, .ag-err { color: var(--pico-del-color, #b00020); }
+.ag-tool.ag-stopped { color: var(--pico-muted-color); }
+.ag-steps { width: 100%; font-size: .9em; margin: .3rem 0; }
+.ag-steps td, .ag-steps th { padding: .15rem .35rem; }
+.ag-step-st { display: inline-block; min-width: 1.4em; text-align: center; border-radius: .3rem; padding: 0 .3rem; font-weight: 600; }
+.ag-st-done { color: #2e7d32; } .ag-st-failed { color: var(--pico-del-color, #b00020); } .ag-st-running { color: var(--pico-primary); }
+.ag-st-pending, .ag-st-cancelled, .ag-st-skipped, .ag-st-draft, .ag-st-stopped { color: var(--pico-muted-color); }
+.ag-plan-st { font-size: .85em; text-transform: uppercase; letter-spacing: .03em; }
+.ag-may { margin: .2rem 0 .2rem 1rem; font-size: .9em; }
+.ag-plan-acts, .ag-ap-acts, .ag-now-acts { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin-top: .4rem; }
+.ag-start { background: var(--pico-primary); color: var(--pico-primary-inverse); border-color: var(--pico-primary); }
+.ag-stop-now { border-color: var(--pico-del-color, #b00020); color: var(--pico-del-color, #b00020); }
+.ag-mode select { display: inline-block; width: auto; margin: 0; padding: .1rem .4rem; height: auto; font-size: .9em; }
+.ag-ap-rows { width: 100%; font-size: .9em; } .ag-ap-rows input { margin: 0; padding: .1rem .3rem; height: auto; font-size: .95em; }
+.ag-because { color: var(--pico-muted-color); font-size: .9em; margin: .2rem 0 0; }
+.ag-writes table, .ag-log pre { font-size: .85em; }
+.ag-form textarea { margin: 0; resize: vertical; }
+.ag-form-row { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin-top: .3rem; }
+.ag-form-row select { width: auto; margin: 0; padding: .15rem .5rem; height: auto; }
+.ag-presets .btn-sm { font-size: .8em; }
+.ag-hint { font-size: .8em; }
+.ag-now { border: 1px solid var(--pico-muted-border-color); border-radius: .5rem; padding: .6rem .8rem; font-size: .92em; display: flex; flex-direction: column; gap: .3rem; position: sticky; top: .5rem; }
+.ag-now-state { font-weight: 600; }
+.ag-now-state .agent-pill-dot { display: inline-block; width: .6em; height: .6em; border-radius: 50%; background: currentColor; margin-right: .3em; }
+.ag-armed { color: #2e7d32; font-weight: 600; }
+.ag-observer { font-size: .85em; display: inline-flex; gap: .3rem; align-items: center; margin: 0; }
+.ag-observer input { margin: 0; }
+.ag-toast { position: fixed; bottom: 1rem; right: 1rem; background: var(--pico-card-background-color); border: 1px solid var(--pico-muted-border-color); padding: .5rem .8rem; border-radius: .4rem; z-index: 60; }
+.agent-popover { position: fixed; right: 1rem; bottom: 1rem; width: min(34rem, 92vw); max-height: 80vh; overflow: auto; z-index: 55;
+  background: var(--pico-card-background-color); border: 1.5px solid var(--pico-primary); border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.25); display: flex; flex-direction: column; }
+.agent-hidden { display: none; }
+.agent-popover.agent-floating { right: auto; bottom: auto; }
+.agent-header { display: flex; justify-content: space-between; align-items: center; padding: .35rem .7rem; cursor: grab; border-bottom: 1px solid var(--pico-muted-border-color); border-radius: 8.5px 8.5px 0 0; background: var(--pico-card-sectioning-background-color, var(--pico-card-background-color)); }
+.agent-header:active { cursor: grabbing; }
+.agent-header-tools { display: flex; gap: .4rem; align-items: center; cursor: default; }
+.agent-close { background: none; border: 0; font-size: 1.2em; line-height: 1; padding: 0 .2rem; margin: 0; width: auto; color: inherit; }
+.agent-body { padding: .6rem .8rem; }
+.landing-current-project { margin: .5rem 0 1rem; }

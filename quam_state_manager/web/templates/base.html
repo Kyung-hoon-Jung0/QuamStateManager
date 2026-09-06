@@ -76,6 +76,7 @@
        folder changes — core (the new-run popup lives on every page). #}
     <script src="{{ asset_url('live-wake.js') }}"></script>
     <script src="{{ asset_url('agent-pill.js') }}"></script>
+    <script src="{{ asset_url('agent.js') }}"></script>
     {% set bundle_files = {
         'grid': ['grid-virt.js', 'bulk-edit.js', 'pair-edit.js', 'all-values.js', 'notes.js'],
         'pulses': ['pulses.js'],
@@ -328,6 +329,11 @@
                    below Settings / Calculator. Opens a movable window (manual.js)
                    with the house search box over every state.json key the
                    chip's classes can carry + the QM-docs config keys. #}
+                {# docs/173 S6: the Agent panel -- the same session as the Agent home, floating on any page #}
+                <button type="button" class="sidebar-tool agent-btn" id="agent-btn" onclick="toggleAgentPanel(this)"
+                        aria-haspopup="dialog" aria-controls="agent-popover"
+                        title="Agent — the calibration agent's chat and cards (the Agent home when the chip's home page is open)">
+                    <svg class="sidebar-tool-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8M8 13h5"/></svg><span class="sidebar-tool-label">Agent</span></button>
                 <button type="button" class="sidebar-tool manual-btn" id="manual-btn"
                         onclick="toggleConfigManual(this)" aria-haspopup="dialog"
                         aria-expanded="false" aria-controls="manual-popover"
@@ -987,6 +993,18 @@
         {# Config Manual window (2026-08-27) — body-level like the calculator:
            anchored under its sidebar button until dragged by the header, then
            fixed where the user left it. Content is rendered by manual.js. #}
+        {# docs/173 S6: the floating Agent panel (body-level like the manual; agent.js mounts the
+           same renderer as the Agent home into .agent-body on first open) #}
+        <div id="agent-popover" class="agent-popover agent-hidden" role="dialog" aria-modal="false" aria-label="Agent">
+        <div class="agent-header" id="agent-header">
+        <strong class="agent-title">Agent</strong>
+        <span class="agent-header-tools">
+        <a class="agent-home-link" href="/" hx-get="/" hx-target="#table-pane" hx-push-url="true" title="open the Agent home (full page)">home</a>
+        <button type="button" class="agent-close" onclick="toggleAgentPanel()" title="Close" aria-label="Close">&times;</button>
+        </span>
+        </div>
+        <div class="agent-body"></div>
+        </div>
         <div id="manual-popover" class="manual-popover manual-hidden" role="dialog" aria-modal="false" aria-label="Config Manual">
         <div class="manual-header" id="manual-header">
         <strong class="manual-title">Config Manual</strong>
@@ -1042,7 +1060,9 @@
                         title="Hide / show the page heading" aria-label="Toggle page heading">&#9650;</button>
                 <div id="table-pane">
                     {% block table_content %}
-                    {% if page == 'home' %}
+                    {% if page == 'agent_home' %}
+                    {% include '_agent_home.html' %}
+                    {% elif page == 'home' %}
                     {% if landing_config_exists %}
                     {% include '_landing_shell.html' %}
                     {% else %}
@@ -1143,6 +1163,7 @@
                 {"label": "Pulses",            "url": "/pulses"},
                 {"label": "State History",     "url": "/state-history"},
                 {"label": "Calibration log",   "url": "/journal"},
+                {"label": "Agent home",         "url": "/"},
                 {"label": "Param History",     "url": "/param-history"},
                 {% if experimental %}
                 {"label": "Experiment Runner", "url": "/scheduler"},

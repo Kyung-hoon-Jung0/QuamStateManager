@@ -4352,6 +4352,9 @@ def home():
     workbench iframe's entry and the most-hit route). Without a config the
     pre-lens Welcome renders verbatim."""
     config_exists = bool(qualibrate_config.tray_status().get("config_exists"))
+    if _active_path() and (_active_ctx() or {}).get("type") == "quam":
+        # docs/173 §1.2: with a chip open the home IS the Agent home
+        return render_template("base.html", **_ctx(page="agent_home", landing_config_exists=config_exists))
     session = _load_session()
     # Session values are hand-editable JSON — a type-corrupt entry (int,
     # nested list, …) must degrade to "no history", never TypeError the
@@ -4380,6 +4383,7 @@ def home():
         # True first run (no session history at all) → the landing's
         # "Getting started" manual starts expanded; any history collapses it.
         first_run=not (session.get("last_project") or resume_path or recents),
+        active_project=qualibrate_config.tray_status().get("active"),
     ))
 
 

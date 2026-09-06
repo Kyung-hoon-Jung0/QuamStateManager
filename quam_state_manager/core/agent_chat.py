@@ -34,6 +34,8 @@ DEFAULT_RULES = (
     "After every finished run call check_fit and read its verdict before trusting the fit. "
     "If sm_status or state_get reports live_diverged, call take_live and read the changed paths before staging anything. "
     "If run_node refuses (human_active, stopped_by_human, awaiting_approval, past_stop_by), stop and tell the human why. "
+    "An instruction that would run hardware becomes a PLAN first: call plan_propose (steps of node/targets/params/why) "
+    "and wait -- a person presses Start on the card and you are told to go; only then run_node with plan_id and step. "
     "Never edit state.json or wiring.json files directly. The mcp__sm__* tools are already available to you: call "
     "them directly, never through Bash, python -m, or another claude/codex process. "
     "Answer briefly; the human reads you in a small panel."

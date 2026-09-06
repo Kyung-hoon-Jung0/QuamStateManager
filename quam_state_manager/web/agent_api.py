@@ -144,6 +144,7 @@ def chip():
                    live_readonly=bool(ctx.get("live_readonly")),
                    waiting=_waiting_count(),
                    run_active=_run_active_view(),
+                   plan=_plan_brief(),
                    now=_now_state())
 
 
@@ -983,6 +984,15 @@ def session_stop():
             mgr.stop(_chip_name(), now=(mode == "now"))   # recorded first (above), killed second
         except Exception:  # noqa: BLE001
             logger.debug("chat stop failed", exc_info=True)
+    try:
+        # docs/173 S6: the plan card closes too -- "Stopped by <who>", pending steps cancelled
+        from quam_state_manager.core import agent_plans
+        running_plan = agent_plans.running(current_app.instance_path, _chip_name())
+        if running_plan is not None:
+            agent_plans.stop(current_app.instance_path, _chip_name(), running_plan["id"], who=r._request_actor(),
+                             how="stop now" if mode == "now" else "stop after this run")
+    except Exception:  # noqa: BLE001
+        logger.debug("plan stop failed", exc_info=True)
     journal_mod.append(current_app.instance_path, _chip_name(),
                        f"Stop ({'now' if mode == 'now' else 'after this run'}) pressed by {r._request_actor()}", kind="sm")
     _bump()
@@ -1251,7 +1261,8 @@ def run_node():
     req = agent_runs.RunRequest(node=node, targets=targets, params=params, reason=reason, timeout_s=timeout_s,
                                 plan_id=request.headers.get("X-SM-Plan") or data.get("plan_id") or None,
                                 actor=actor, approval_id=data.get("approval_id") or None,
-                                session_id=(session or {}).get("session_id"))
+                                session_id=(session or {}).get("session_id"),
+                                step=int(data["step"]) if str(data.get("step") or "").lstrip("-").isdigit() else None)
     pend = approvals.pending(inst, chip)
     human = adapter.human_recent(float(lim.get("human_recent_min") or 30))
     refusal = agent_runs.check_gates(req, session=session, lim=lim, settings=settings, pending=pend, human=human,
@@ -1463,3 +1474,339 @@ def live_diff():
     overlap = [c["path"] for c in changed if c["path"] in tray]
     return jsonify(ok=True, count=len(changed), changed=changed, overlap=overlap,
                    live_diverged=_live_flag(), stale_since=_stale_since())
+
+
+# ================================================================ S6: the card feed + plans
+# The Agent home and the floating panel read ONE feed: SM's own record (chat
+# events on disk, plans, runs, approvals) -- never the model's claim.
+
+def _plan_brief() -> dict | None:
+    from quam_state_manager.core import agent_plans
+    try:
+        chip = _chip_name()
+        rec = agent_plans.running(current_app.instance_path, chip) or agent_plans.latest(current_app.instance_path, chip)
+        if not rec:
+            return None
+        return {"id": rec.get("id"), "title": rec.get("title"), "status": rec.get("status"),
+                "counts": agent_plans.counts(rec), "mode": rec.get("mode")}
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _chat_card(e: dict) -> dict | None:
+    h = e.get("hook_event_name")
+    base = {"n": e.get("n"), "ts": e.get("ts"), "backend": e.get("backend")}
+    if h == "User":
+        return {**base, "kind": "user", "text": e.get("text") or "", "who": e.get("who")}
+    if h == "Text":
+        txt = e.get("text") or ""
+        try:
+            html = journal_mod.render(txt)
+        except Exception:  # noqa: BLE001
+            html = None
+        return {**base, "kind": "answer", "text": txt, "html": html}
+    if h in ("PreToolUse",):
+        tool = e.get("tool_name") or ""
+        if not (tool.startswith("mcp__sm") or tool in ("Bash", "Edit", "Write", "MultiEdit")):
+            return None
+        return {**base, "kind": "tool", "tool": tool, "summary": e.get("summary") or "", "failed": False}
+    if h in ("PostToolUseFailure",):
+        return {**base, "kind": "tool", "tool": e.get("tool_name") or "", "summary": e.get("summary") or "",
+                "failed": True, "error": e.get("error")}
+    if h == "Error":
+        return {**base, "kind": "error", "error": e.get("error"), "limited": bool(e.get("limited"))}
+    if h == "Result" and e.get("limited"):
+        return {**base, "kind": "limited", "text": (e.get("error") or e.get("summary") or "")[:200]}
+    if h == "Stop" and e.get("stopped"):
+        return {**base, "kind": "stop", "text": e.get("summary") or ""}
+    return None
+
+
+def _plan_view(rec: dict, *, with_may_change: bool = False) -> dict:
+    from quam_state_manager.core import agent_plans
+    out = dict(rec)
+    out["counts"] = agent_plans.counts(rec)
+    if with_may_change:
+        try:
+            out["may_change"] = _may_change(rec.get("steps") or [])
+        except Exception:  # noqa: BLE001
+            logger.debug("may_change failed", exc_info=True)
+            out["may_change"] = []
+    return out
+
+
+def _may_change(steps: list[dict], cap: int = 60) -> list[dict]:
+    """The values a plan may write, from the families' own update targets
+    (run-derived, docs/78 D-14) filled in per target, with the value the chip
+    holds NOW. Unknown family => nothing claimed."""
+    from quam_state_manager.core.autofit import families
+    r = _r()
+    store = r._store()
+    seen: set = set()
+    out: list[dict] = []
+    for s in steps:
+        fam = families.family_for(s.get("node") or "")
+        if not fam:
+            continue
+        params = s.get("params") or {}
+        for u in getattr(fam, "updates", None) or []:
+            tpl = getattr(u, "path", None) or getattr(u, "state_path", None)
+            if not tpl:
+                continue
+            for t in s.get("targets") or []:
+                path = str(tpl).replace("{q}", t).replace("{pair}", t).replace("{p}", t)
+                assumed = None
+                if "{operation}" in path:
+                    # the node names its operation through a run parameter (docs/78 D-14);
+                    # the step's own param first, else the node's usual default, SAID so
+                    op = params.get("operation")
+                    if not op:
+                        op, assumed = "x180", "operation x180 assumed (the node's default)"
+                    path = path.replace("{operation}", str(op))
+                if "{" in path:
+                    path = path.split("{")[0].rstrip(".") + " …"
+                key = (t, path)
+                if key in seen:
+                    continue
+                seen.add(key)
+                now = None
+                if store is not None and "…" not in path:
+                    try:
+                        now = _jsonable(store.get_value(path))
+                    except Exception:  # noqa: BLE001
+                        now = None
+                out.append({"target": t, "path": path, "now": now, "family": getattr(fam, "label", None),
+                            "label": getattr(u, "label", None) or None, "note": assumed})
+                if len(out) >= cap:
+                    return out
+    return out
+
+
+@agent_bp.route("/chat/cards")
+def chat_cards():
+    """The panel's feed: chat cards after ``after`` plus the live objects
+    (plans, runs, approvals), the session, the pill's state."""
+    from quam_state_manager.core import agent_plans, agent_session, approvals
+    r = _r()
+    chip = _chip_name() if r._active_path() else None
+    after = int(request.args.get("after") or 0)
+    cards: list[dict] = []
+    last = after
+    if chip:
+        with _events_lock:
+            ev = [e for e in _events() if e.get("origin") == "chat" and int(e.get("n") or 0) > after
+                  and e.get("chip") == chip]
+        for e in ev[-300:]:
+            c = _chat_card(e)
+            if c:
+                cards.append(c)
+            last = max(last, int(e.get("n") or 0))
+    inst = current_app.instance_path
+    live = {"plans": [], "runs": [], "approvals": []}
+    file = None
+    session = None
+    if chip:
+        plans = agent_plans.load(inst, chip)[-6:]
+        live["plans"] = [_plan_view(p, with_may_change=(p.get("status") in ("draft", "running"))) for p in plans]
+        reg = _registry()
+        runs = [_run_view(m) for m in reg.runs.values() if m.get("chip") == chip]
+        runs.sort(key=lambda x: float(x.get("since") or 0))
+        live["runs"] = runs[-20:]
+        live["approvals"] = approvals.pending(inst, chip)
+        file = agent_session.summary(agent_session.load(inst, chip))
+        mgr = current_app.config.get("agent_chat")
+        session = mgr.status(chip) if mgr else None
+    store = r._store()
+    return jsonify(ok=True, chip=chip, cards=cards, last=last, live=live, session=session, file=file,
+                   now=_now_state(), waiting=_waiting_count(), agent_seq=int(current_app.config.get("agent_seq") or 0),
+                   qubits=len(store.qubit_names) if store else None)
+
+
+@agent_bp.route("/plans", methods=["GET"])
+def plans_list():
+    from quam_state_manager.core import agent_plans
+    r = _r()
+    if not r._active_path():
+        return jsonify(ok=True, plans=[])
+    rows = agent_plans.load(current_app.instance_path, _chip_name())
+    return jsonify(ok=True, plans=[_plan_view(p) for p in rows[-20:]])
+
+
+@agent_bp.route("/plans/<pid>", methods=["GET"])
+def plan_get(pid: str):
+    from quam_state_manager.core import agent_plans
+    r = _r()
+    if not r._active_path():
+        return _err("open a chip first", 409)
+    rec = agent_plans.get(current_app.instance_path, _chip_name(), pid)
+    if rec is None:
+        return _err("unknown plan", 404)
+    return jsonify(ok=True, plan=_plan_view(rec, with_may_change=True))
+
+
+@agent_bp.route("/plans", methods=["POST"])
+def plans_add():
+    """A plan CARD: from the agent (plan_propose: title + steps + why) or
+    from a person's deterministic ``/run`` line. Nothing starts here."""
+    from quam_state_manager.core import agent_plans, agent_session, limits
+    r = _r()
+    if not r._active_path():
+        return _err("open a chip first", 409)
+    data = request.get_json(silent=True) or {}
+    inst, chip = current_app.instance_path, _chip_name()
+    actor = r._request_actor()
+    store = r._store()
+    known = set(store.qubit_names) | set(store.qubit_pair_names)
+    if data.get("run_line"):
+        parsed = agent_plans.parse_run_line(str(data["run_line"]))
+        if not parsed or parsed.get("error"):
+            return _err((parsed or {}).get("error") or "usage: /run <node> <targets...> [param=value ...]")
+        bad = [t for t in parsed["targets"] if t not in known]
+        if bad:
+            return _err(f"unknown targets {bad}", 400, known=sorted(known)[:80])
+        steps = [{"node": parsed["node"], "targets": parsed["targets"], "params": parsed["params"],
+                  "why": "typed as /run (no model involved)"}]
+        title = f"/run {parsed['node']} {' '.join(parsed['targets'])}"
+        source = "run_cmd"
+    else:
+        steps = data.get("steps")
+        title = str(data.get("title") or "").strip() or "plan"
+        source = "agent" if actor.startswith("by_") else "human"
+        try:
+            agent_plans.normalize_steps(steps)
+        except ValueError as exc:
+            return _err(str(exc))
+        bad = sorted({t for s in steps for t in (s.get("targets") or []) if t not in known})
+        if bad:
+            return _err(f"unknown targets {bad}", 400, known=sorted(known)[:80])
+    session = agent_session.load(inst, chip)
+    mode = (session or {}).get("mode") or limits.load(inst, chip).get("mode")
+    rec = agent_plans.add(inst, chip, title=title, steps=steps, mode=mode, created_by=actor, source=source,
+                          reason=data.get("why") or data.get("reason"), session_id=(session or {}).get("session_id"))
+    journal_mod.append(inst, chip, f"plan `{rec['title']}` proposed ({len(rec['steps'])} step(s)) -- waiting for Start",
+                       kind="agent" if actor.startswith("by_") else "sm",
+                       reason=(data.get("why") or None) if actor.startswith("by_") else None)
+    _bump()
+    _wake()
+    return jsonify(ok=True, plan=_plan_view(rec, with_may_change=True),
+                   how="the card is on the human's screen; nothing runs until a person presses Start. "
+                       "When told to go, call run_node step by step with plan_id and step.")
+
+
+@agent_bp.route("/plans/<pid>/mode", methods=["POST"])
+def plan_mode(pid: str):
+    from quam_state_manager.core import agent_plans, limits
+    r = _r()
+    if not r._active_path():
+        return _err("open a chip first", 409)
+    data = request.get_json(silent=True) or {}
+    inst, chip = current_app.instance_path, _chip_name()
+    rec = agent_plans.get(inst, chip, pid)
+    if rec is None:
+        return _err("unknown plan", 404)
+    mode = str(data.get("mode") or "")
+    if mode not in limits.MODES:
+        return _err(f"mode must be one of {list(limits.MODES)}")
+    rec = agent_plans.update(inst, chip, pid, mode=mode)
+    return jsonify(ok=True, plan=_plan_view(rec))
+
+
+@agent_bp.route("/plans/<pid>/start", methods=["POST"])
+def plan_start(pid: str):
+    """THE click of rule 0. A person presses Start: the session is armed, the
+    chip is snapshotted (the whole plan can be reverted to it), the plan's
+    mode is applied to the session, and the driving session is told to go --
+    started with the plan as its first message when there is none."""
+    from quam_state_manager.core import agent_plans, agent_session, limits
+    from quam_state_manager.web import chat_api
+    r = _r()
+    if not r._active_path():
+        return _err("open a chip first", 409)
+    actor = r._request_actor()
+    if actor.startswith("by_"):
+        return _err("only a person's click starts a plan (rule 0)", 403)
+    inst, chip = current_app.instance_path, _chip_name()
+    rec = agent_plans.get(inst, chip, pid)
+    if rec is None:
+        return _err("unknown plan", 404)
+    if rec.get("status") != "draft":
+        return _err(f"plan is {rec.get('status')}", 409)
+    if agent_plans.running(inst, chip):
+        return _err("another plan is running on this chip", 409)
+    data = request.get_json(silent=True) or {}
+    mode = rec.get("mode") or limits.load(inst, chip).get("mode")
+    # the mode the card shows is the mode the session runs in
+    try:
+        limits.save(inst, chip, {"mode": mode}, who=actor)
+    except limits.LimitError as exc:
+        return _err(str(exc))
+    # the snapshot the plan can be reverted to
+    pre_ts = None
+    try:
+        hm = r._history()
+        ctx = r._active_ctx()
+        meta = hm.check_and_snapshot(ctx["path"], "manual", force=True, kind="backup", actor=actor,
+                                     defer_index=not current_app.config.get("TESTING"),
+                                     project=r._scope_for(ctx["path"], ctx))
+        if meta is not None:
+            pre_ts = meta.timestamp
+            try:
+                hm.annotate_snapshot(ctx["path"], pre_ts, label=f"before plan {rec['title'][:40]}")
+            except Exception:  # noqa: BLE001
+                logger.debug("plan snapshot label failed", exc_info=True)
+    except Exception:  # noqa: BLE001
+        logger.warning("plan pre-snapshot failed", exc_info=True)
+    # arm
+    token = uuid.uuid4().hex[:12]
+    agent_session.save(inst, chip, start_token=token, armed_by=actor, armed_at=time.time(), agent_stop=None,
+                       plan_id=pid, mode=mode)
+    rec = agent_plans.update(inst, chip, pid, status="running", started_by=actor, started_at=time.time(),
+                             pre_ts=pre_ts, mode=mode)
+    # tell the agent
+    lines = [f"The human ({actor}) pressed Start on plan {pid} (\"{rec['title']}\"), mode {mode}. "
+             "Run it now, step by step, with run_node(plan_id=..., step=i, ...). After every step read the "
+             "result; on a refusal or a failure tell the human and stop unless the refusal names a wait. "
+             "When every step is done, summarize what changed."]
+    for s in rec["steps"]:
+        lines.append(f"  step {s['i']}: run_node node={s['node']} targets={s['targets']} params={s['params']}"
+                     + (f"  # {s['why']}" if s.get("why") else ""))
+    msg = "\n".join(lines)
+    mgr = chat_api._manager()
+    cur = mgr.get(chip)
+    started = False
+    try:
+        if cur is not None and cur.alive() and not cur.ended:
+            res = mgr.send(chip, msg)
+            if res.get("error"):
+                return _err(res["error"], 409)
+        else:
+            backend = str(data.get("backend") or chat_api._setup().get("default_backend") or "claude").lower()
+            b = chat_api._build_backend(backend, readonly=False, chip=chip, mode=mode, cwd=chat_api._cwd(),
+                                        model=data.get("model"))
+            mgr.start(chip, b, owner=actor, mode=mode, until=None, prompt=msg, resume=None)
+            started = True
+    except (RuntimeError, ValueError, OSError) as exc:
+        agent_plans.update(inst, chip, pid, status="draft", started_by=None, started_at=None)
+        return _err(f"could not tell the agent: {exc}", 502)
+    chat_api._record_user(chip, f"[Start] plan {rec['title']}", actor, (cur.backend.name if cur else data.get("backend") or "claude"))
+    journal_mod.append(inst, chip, f"plan `{rec['title']}` STARTED by {actor} (mode {mode}"
+                                   + (f", snapshot {pre_ts}" if pre_ts else "") + ")", kind="sm")
+    _bump()
+    _wake()
+    return jsonify(ok=True, plan=_plan_view(rec, with_may_change=True), session_started=started, pre_ts=pre_ts)
+
+
+@agent_bp.route("/plans/<pid>/cancel", methods=["POST"])
+def plan_cancel(pid: str):
+    from quam_state_manager.core import agent_plans
+    r = _r()
+    if not r._active_path():
+        return _err("open a chip first", 409)
+    inst, chip = current_app.instance_path, _chip_name()
+    rec = agent_plans.stop(inst, chip, pid, who=r._request_actor(), how="cancelled")
+    if rec is None:
+        return _err("unknown plan", 404)
+    journal_mod.append(inst, chip, f"plan `{rec.get('title')}` cancelled by {r._request_actor()}", kind="sm")
+    _bump()
+    _wake()
+    return jsonify(ok=True, plan=_plan_view(rec))

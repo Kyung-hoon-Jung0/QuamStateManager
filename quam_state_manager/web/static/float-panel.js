@@ -193,7 +193,7 @@
     /* The one place the tool windows are named. docs/141 4ac: each closer used
        to carry its own literal pair, so the third window (the Config Manual)
        was "outside" both of the others and closed them. */
-    var TOOLS_SEL = '.settings-btn, #settings-dropdown, .calc-btn, #calc-popover, .manual-btn, #manual-popover';
+    var TOOLS_SEL = '.settings-btn, #settings-dropdown, .calc-btn, #calc-popover, .manual-btn, #manual-popover, .agent-btn, #agent-popover';
     window.FloatPanel = { drag: drag, resize: resize, isFloating: isFloating,
                           unfloat: unfloat, edgeAt: edgeAt,
                           clampIntoView: clampIntoView, clampAll: clampAll,

@@ -42,6 +42,17 @@
        by default; a beforeSwap allowance routes them here — app.js) #}
     <div id="landing-open-err" class="landing-open-err" aria-live="polite"></div>
 
+    {% if active_project %}
+    {# docs/173 §1.2: no chip open -> one button for QUAlibrate's CURRENT project #}
+    <form method="post" action="/qualibrate/open" hx-post="/qualibrate/open" hx-target="#table-pane"
+          class="landing-current-project">
+        <input type="hidden" name="project" value="{{ active_project }}">
+        <button type="submit" class="btn-sm landing-current-btn"
+                title="load the chip QUAlibrate's active project points at, then the Agent home opens">
+            Open QUAlibrate's current project: {{ active_project }}</button>
+    </form>
+    {% endif %}
+
     <div id="landing-cards"
          hx-get="/landing/projects" hx-trigger="load" hx-swap="innerHTML">
         <p class="muted">loading projects&hellip;</p>

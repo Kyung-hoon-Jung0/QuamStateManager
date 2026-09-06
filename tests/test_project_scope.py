@@ -706,8 +706,13 @@ class TestLanding:
         # fresh instance, no session history at all → manual starts expanded
         body = c.get("/").get_data(as_text=True)
         assert '<details class="landing-gs" open>' in body
-        # any history (a load) collapses it on the next landing render
+        # with a chip OPEN the home is the Agent home (docs/173 §1.2) ...
         c.post("/load", data={"folder": str(scoped["chip_a"])})
+        body = c.get("/").get_data(as_text=True)
+        assert 'id="agent-home"' in body and "landing-gs" not in body
+        # ... and any history (a load) collapses the manual on the next LANDING
+        # render -- the landing shows again once no chip is open
+        c.application.config["active_context"] = None
         body = c.get("/").get_data(as_text=True)
         assert '<details class="landing-gs">' in body
         assert '<details class="landing-gs" open>' not in body
@@ -743,6 +748,10 @@ class TestLanding:
     def test_resume_card_after_a_session(self, scoped):
         c = scoped["client"]
         c.post("/load", data={"folder": str(scoped["chip_a"])})
+        # the chip is open: the home is the Agent home, not the landing (docs/173 §1.2)
+        assert 'id="agent-home"' in c.get("/").get_data(as_text=True)
+        # with no chip open (e.g. the next morning) the landing offers to resume it
+        c.application.config["active_context"] = None
         body = c.get("/").get_data(as_text=True)
         assert "landing-resume" in body
         assert "Resume" in body and "alpha" in body

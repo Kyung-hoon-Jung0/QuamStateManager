@@ -1,0 +1,7 @@
+{# docs/173 §1.2: the Agent home -- the chip's home page. The skeleton only;
+   agent.js mounts the renderer (cards + input + the "now" column) into it,
+   fed by GET /api/agent/chat/cards. #}
+<div id="agent-home" class="agent-home"
+     data-observer-hint="observer mode hides Start / Stop / approve on THIS window (an accident guard, not a permission)">
+    <p class="muted ag-loading">Loading the agent's cards&hellip;</p>
+</div>
