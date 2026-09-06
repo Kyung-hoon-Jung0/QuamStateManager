@@ -1,0 +1,108 @@
+{# The day's body: counts, unassigned lines, digest strip, cards. #}
+{% set s = story %}
+<div class="jr-counts muted" data-day="{{ s.day }}" data-chip="{{ s.chip }}">
+    {{ s.day }} · {{ s.counts.runs }} run{{ 's' if s.counts.runs != 1 }}
+    {% if s.counts.failed %} · <span class="jr-bad">✗ {{ s.counts.failed }} failed</span>{% endif %}
+    {% if s.counts.gate_fail %} · <span class="jr-bad">gate fail {{ s.counts.gate_fail }}</span>{% endif %}
+    · writes {{ s.counts.writes }}
+    {% if s.counts.biggest_write %} · largest Δ <code class="jr-path" data-path="{{ s.counts.biggest_write.path }}">{{ s.counts.biggest_write.path }}</code>
+        {{ s.counts.biggest_write.old }} → {{ s.counts.biggest_write.new }}{% endif %}
+    <span id="jr-since" class="jr-since" hidden></span>
+</div>
+
+{% if s.no_dataset %}
+<p class="jr-note warn">No dataset folder is open in SM, so runs cannot be listed — open the chip's data folder on the Datasets page. Journal lines still show below.</p>
+{% endif %}
+
+{% if s.unassigned %}
+<div class="jr-unassigned">
+    <b>{{ s.unassigned|length }} journal line{{ 's' if s.unassigned|length != 1 }} from a session that named no chip.</b>
+    <span class="muted">SM never guesses which chip they belong to.</span>
+    <button type="button" class="btn-sm outline" onclick="JournalPage.adopt('{{ s.day }}')">Move them under {{ s.chip }}</button>
+    <ul class="jr-unassigned-list">{% for e in s.unassigned[:6] %}<li class="muted">{{ e.time }} · {{ e.text }}</li>{% endfor %}
+    {% if s.unassigned|length > 6 %}<li class="muted">… and {{ s.unassigned|length - 6 }} more</li>{% endif %}</ul>
+</div>
+{% endif %}
+
+{% if s.digest %}
+<div class="jr-digest" title="per target, in time order — colour is the node's own outcome">
+    {% for target, steps in s.digest.items() %}
+    <div class="jr-digest-row"><span class="jr-digest-target">{{ target }}</span>
+        {% for st in steps %}<a class="jr-pill jr-out-{{ st.outcome or 'none' }}" href="#card-{{ st.run_id }}"
+              title="#{{ st.run_id }} · {{ st.family }} · {{ st.outcome or 'no outcome' }} · gate {{ st.gate or '?' }} · {{ st.author }}">{{ st.family }} <small>#{{ st.run_id }}</small>{% if st.outcome == 'failed' %} ✗{% elif st.outcome == 'ok' %} ✓{% endif %}</a>{% if not loop.last %}<span class="jr-arrow">→</span>{% endif %}{% endfor %}
+    </div>
+    {% endfor %}
+    <button type="button" class="btn-sm outline jr-copy" onclick="JournalPage.copyDigest(this)" title="copy the strip as text">Copy as text</button>
+</div>
+{% endif %}
+
+{% if not s.cards_shown %}
+<p class="muted jr-empty">{% if s.cards %}Nothing matches the filter.{% else %}No runs and no journal lines on {{ s.day }}.{% endif %}</p>
+{% endif %}
+
+<div class="jr-cards">
+{% for c in s.cards_shown %}
+    {% if c.kind == 'run' %}
+    <details class="jr-card jr-run jr-by-{{ (c.author or 'unknown').split(':')[0] }}" id="card-{{ c.run_id }}" data-ts="{{ c.ts or 0 }}" data-run="{{ c.run_id }}">
+        <summary>
+            <span class="jr-time">{{ c.time }}</span>
+            <span class="jr-family">{{ c.family_label or c.node }}</span>
+            <span class="jr-targets">{{ c.targets|join(' ') }}</span>
+            <span class="jr-badge jr-out-{{ c.outcome or 'none' }}" title="the node's own outcome">{% if c.outcome == 'ok' %}✓ ok{% elif c.outcome == 'failed' %}✗ failed{% elif c.outcome == 'mixed' %}mixed{% else %}no outcome{% endif %}</span>
+            {% if c.gate %}<span class="jr-badge jr-gate-{{ c.gate.verdict }}" title="deterministic gate, anchored on the run's own saved state{% if c.gate.reason %} — {{ c.gate.reason }}{% endif %}">gate {{ c.gate.verdict }}</span>{% endif %}
+            <a class="jr-run-link" href="/dataset/by-run/{{ c.run_id }}" hx-get="/dataset/by-run/{{ c.run_id }}" hx-target="#table-pane" hx-push-url="true" onclick="event.stopPropagation()">#{{ c.run_id }}</a>
+            <span class="jr-author jr-author-{{ (c.author or 'unknown').split(':')[0] }}" title="{{ c.certainty }}">{{ c.author }}</span>
+            {% if c.plan_id %}<span class="jr-plan muted" title="plan">plan {{ c.plan_id }}</span>{% endif %}
+        </summary>
+        <div class="jr-body">
+            {% if c.gate and c.gate.reason %}<p class="jr-gate-reason muted">gate: {{ c.gate.reason }}</p>{% endif %}
+            {% if c.writes %}
+            <div class="jr-sec"><b>Wrote to the chip</b>
+                <ul>{% for w in c.writes %}<li><code class="jr-path" data-path="{{ w.path }}">{{ w.path }}</code>
+                    {% if not w.is_first %}{{ w.old }} → {% endif %}{{ w.new }}</li>{% endfor %}</ul></div>
+            {% endif %}
+            {% if c.params_diff %}
+            <div class="jr-sec"><b>Parameters changed vs {% if c.prev_run_id %}#{{ c.prev_run_id }}{% else %}the previous run{% endif %}</b>
+                <ul>{% for p in c.params_diff %}<li><code>{{ p.key }}</code> {{ p.old }} → {{ p.new }}</li>{% endfor %}</ul></div>
+            {% endif %}
+            <div class="jr-sec"><b>Because</b>
+                {% if c.because %}<p class="jr-because">{{ c.because }}</p>{% else %}<p class="muted">not recorded</p>{% endif %}</div>
+            {% if c.figure and c.uid %}
+            <div class="jr-sec jr-fig"><a href="/dataset/{{ c.uid }}" hx-get="/dataset/{{ c.uid }}" hx-target="#table-pane" hx-push-url="true">
+                <img src="/dataset/{{ c.uid }}/fig/{{ c.figure }}" alt="{{ c.figure }}" loading="lazy" class="jr-thumb"></a></div>
+            {% endif %}
+            {% if c.journal %}
+            <div class="jr-sec"><b>Journal</b>
+                <ul class="jr-lines">{% for e in c.journal %}<li><span class="jr-time">{{ e.time }}</span> <span class="jr-author jr-author-{{ e.kind.split(':')[0] }}">{{ e.kind }}</span> {{ e.text }}{% if e.because %} <i class="muted">— {{ e.because }}</i>{% endif %}</li>{% endfor %}</ul></div>
+            {% endif %}
+            <div class="jr-sec jr-claim" data-run="{{ c.run_id }}">
+                {% if c.note %}<p class="jr-note-text"><b>Note:</b> {{ c.note }}</p>{% endif %}
+                <details class="jr-claim-form"><summary class="muted">{% if c.author == 'unknown' %}I ran this{% else %}Correct the author / add a note{% endif %}</summary>
+                    <label>Who <input type="text" class="jr-who" placeholder="your name"></label>
+                    <label>Note <input type="text" class="jr-note-in" placeholder="optional"></label>
+                    <button type="button" class="btn-sm" onclick="JournalPage.claim(this)">Save</button>
+                </details>
+            </div>
+            <p class="muted jr-meta">{{ c.node }} · {{ c.duration_s or '?' }} s · <span title="{{ c.folder }}">folder</span></p>
+        </div>
+    </details>
+    {% else %}
+    <details class="jr-card jr-write jr-by-{{ (c.author or 'unknown').split(':')[0] }}" data-ts="{{ c.ts or 0 }}" id="write-{{ c.id }}">
+        <summary>
+            <span class="jr-time">{{ c.time }}</span>
+            <span class="jr-family">wrote {{ c.entries|length }} value{{ 's' if c.entries|length != 1 }} to the chip</span>
+            <span class="jr-author jr-author-{{ (c.author or 'unknown').split(':')[0] }}">{{ c.author }}</span>
+            {% if c.plan_id %}<span class="jr-plan muted">plan {{ c.plan_id }}</span>{% endif %}
+            {% if c.src == 'auto' %}<span class="jr-badge" title="an armed auto session">auto</span>{% endif %}
+        </summary>
+        <div class="jr-body"><ul>{% for e in c.entries %}<li><code class="jr-path" data-path="{{ e.path }}">{{ e.path }}</code> {{ e.old }} → {{ e.new }} <span class="jr-author jr-author-{{ e.actor.split(':')[0] }}">{{ e.actor }}</span></li>{% endfor %}</ul></div>
+    </details>
+    {% endif %}
+{% endfor %}
+</div>
+
+{% if s.loose %}
+<details class="jr-card jr-loose"><summary><span class="jr-family">{{ s.loose|length }} journal line{{ 's' if s.loose|length != 1 }} not attached to a run</span></summary>
+    <ul class="jr-lines">{% for e in s.loose %}<li><span class="jr-time">{{ e.time }}</span> <span class="jr-author jr-author-{{ e.kind.split(':')[0] }}">{{ e.kind }}</span> {{ e.text }}{% if e.because %} <i class="muted">— {{ e.because }}</i>{% endif %}</li>{% endfor %}</ul>
+</details>
+{% endif %}

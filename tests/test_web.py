@@ -6807,7 +6807,7 @@ class TestSidebarIAr15:
             assert label in comp, label
         live = seg("live-edit-subnav")
         assert ">Json Tree View</a>" in live and ">Pulses</a>" in live
-        hist = seg("state-history-subnav")
+        hist = seg("journal-subnav")            # docs/173: Param History sits under Calibration log
         assert ">Param History</a>" in hist
         ds = seg("datasets-subnav")
         assert ">Collections</a>" in ds and ">Trends</a>" in ds
@@ -6818,7 +6818,7 @@ class TestSidebarIAr15:
         for ul_id, key in (
                 ("chip-components-subnav", "quam_components_nav_collapsed"),
                 ("live-edit-subnav",       "quam_liveedit_nav_collapsed"),
-                ("state-history-subnav",   "quam_statehistory_nav_collapsed"),
+                ("journal-subnav",         "quam_journal_nav_collapsed"),
                 ("datasets-subnav",        "quam_datasets_nav_collapsed")):
             assert "{ id: '%s'" % ul_id in appjs, ul_id
             assert key in appjs and key in base, key

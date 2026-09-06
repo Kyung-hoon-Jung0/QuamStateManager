@@ -1,0 +1,4 @@
+<div class="jr-raw">
+    <div class="jr-raw-head"><b>{{ file }}</b> <button type="button" class="btn-sm outline" onclick="this.closest('.jr-raw').remove()">close</button></div>
+    {% if text %}<div class="jr-md">{{ html|safe }}</div>{% else %}<p class="muted">No journal file for {{ chip }} on {{ day }}.</p>{% endif %}
+</div>

@@ -1,0 +1,34 @@
+{# Calibration log (docs/173 S2): the story of the chip, one day at a time.
+   Header + filters here; the body (digest + cards) is its own partial so a
+   day or filter change swaps only that. #}
+<div class="table-header-row jr-head">
+    <h2>Calibration log{% if project_scope %} <span class="scope-suffix">— {{ project_scope }}</span>{% endif %}
+        <small class="muted">every run, whoever ran it — what it wrote, why, and how it looked</small>
+    </h2>
+    <div class="jr-head-actions">
+        <a class="btn-sm outline" href="/journal/raw?day={{ story.day }}" hx-get="/journal/raw?day={{ story.day }}"
+           hx-target="#jr-raw" hx-swap="innerHTML" title="The day's markdown file as SM renders it">Raw .md</a>
+        <span class="muted jr-folder" title="{{ story.folder }}">{{ story.folder }}</span>
+    </div>
+</div>
+
+<form id="jr-filters" class="jr-filters" hx-get="/journal/day" hx-target="#jr-body" hx-swap="innerHTML"
+      hx-trigger="change, submit, keyup changed delay:300ms from:#jr-q">
+    <input type="hidden" name="day" id="jr-day" value="{{ story.day }}">
+    <span class="jr-daynav">
+        <button type="button" class="btn-sm outline" onclick="JournalPage.day('{{ story.prev_day }}')" title="previous day">‹</button>
+        <input type="date" name="day_pick" id="jr-day-pick" value="{{ story.day }}" onchange="JournalPage.day(this.value)">
+        <button type="button" class="btn-sm outline" onclick="JournalPage.day('{{ story.next_day }}')"
+                {% if story.is_today %}disabled{% endif %} title="next day">›</button>
+        {% if not story.is_today %}<button type="button" class="btn-sm outline" onclick="JournalPage.day('')">today</button>{% endif %}
+    </span>
+    <input type="search" name="q" id="jr-q" value="{{ story.filters.q }}" placeholder="{{ search_hint('a qubit, pair, node or path') }}"
+           title="{{ search_title('a qubit, pair, node or path') }}" class="jr-q">
+    <select name="author" id="jr-author" title="who">
+        <option value="">everyone</option>
+        {% for a in story.authors %}<option value="{{ a }}" {% if story.filters.author == a %}selected{% endif %}>{{ a }}</option>{% endfor %}
+    </select>
+</form>
+
+<div id="jr-raw"></div>
+<div id="jr-body">{% include '_journal_body.html' %}</div>

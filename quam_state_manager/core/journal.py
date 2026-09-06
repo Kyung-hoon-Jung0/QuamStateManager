@@ -145,6 +145,34 @@ def append(instance_path, chip: str, text: str, *, kind: str = "agent",
             "text": text, "reason": reason, "run_id": run_id, "paths": paths or []}
 
 
+def adopt_unassigned(instance_path, chip: str, day: str | None = None) -> int:
+    """Move the day's 'unassigned' lines under ``chip`` (a person decided).
+    Returns how many entry bullets moved. The unassigned file is removed."""
+    day = day or datetime.now().strftime("%Y-%m-%d")
+    src = day_file(instance_path, "unassigned", day)
+    try:
+        text = src.read_text(encoding="utf-8")
+    except OSError:
+        return 0
+    bullets = [l for l in text.splitlines() if l.startswith("- **")]
+    if not bullets:
+        return 0
+    body = "\n".join(l for l in text.splitlines() if not l.startswith("# ")).strip("\n") + "\n"
+    dst = day_file(instance_path, chip, day)
+    with _LOCK:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        fresh = not dst.exists() or dst.stat().st_size == 0
+        with open(dst, "a", encoding="utf-8", newline="\n") as fh:
+            if fresh:
+                fh.write(f"# {chip} — {day}\n\n")
+            fh.write(f"\n<!-- adopted from unassigned, {datetime.now().isoformat(timespec='seconds')} -->\n{body}")
+        try:
+            src.unlink()
+        except OSError:
+            pass
+    return len(bullets)
+
+
 # ---------------------------------------------------------------- renderer
 
 _RUN = re.compile(r"(?<![\w/])#(\d{1,7})\b")

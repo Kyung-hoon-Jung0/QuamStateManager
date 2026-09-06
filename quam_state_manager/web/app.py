@@ -735,5 +735,8 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     # docs/172: the JSON door for a terminal agent / the MCP bridge / the hook
     from quam_state_manager.web.agent_api import agent_bp
     app.register_blueprint(agent_bp)
+    # docs/173: the Calibration log page
+    from quam_state_manager.web.journal_routes import journal_bp
+    app.register_blueprint(journal_bp)
 
     return app

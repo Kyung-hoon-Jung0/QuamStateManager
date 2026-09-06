@@ -1754,7 +1754,7 @@ window.qualibrateSubnavToggleAll = function(btn) {
         // active child keeps context visible either way).
         { id: 'chip-components-subnav', key: 'quam_components_nav_collapsed',   def: '0' },
         { id: 'live-edit-subnav',       key: 'quam_liveedit_nav_collapsed',     def: '1' },
-        { id: 'state-history-subnav',   key: 'quam_statehistory_nav_collapsed', def: '1' },
+        { id: 'journal-subnav',         key: 'quam_journal_nav_collapsed',      def: '1' },   // docs/173: Calibration log ▾ (Param History)
         { id: 'datasets-subnav',        key: 'quam_datasets_nav_collapsed',     def: '1' },
     ];
     function apply() {

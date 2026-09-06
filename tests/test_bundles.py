@@ -21,7 +21,8 @@ CORE = {"htmx.min.js", "split.min.js", "search-query.js", "app.js", "auto-apply.
         "plot-theme.js", "calc.js", "manual.js", "undo-trail.js"}
 LAZY = {"grid-virt.js", "bulk-edit.js", "pair-edit.js", "all-values.js", "pulses.js", "topo-graph.js", "wiring-grid.js",
         "component-map.js", "chip-status.js", "generate.js", "generate_preview.js", "dataset-virtual.js",
-        "ndview.js", "scheduler.js", "autofit.js", "compare-hub.js", "diff-panes.js"}
+        "ndview.js", "scheduler.js", "autofit.js", "compare-hub.js", "diff-panes.js", "journal.js",
+        "notes.js"}   # notes.js: docs/167's bundle, never added here (red on main since); journal.js: docs/173
 
 
 def _scripts(html: str):
@@ -93,7 +94,7 @@ def test_the_manifest_names_every_lazy_file_once_and_the_page_map_covers_the_rou
         "bulk", "table", "pulses", "generate", "regenerate", "instrument", "topology", "trends", "trend",
         "qubits", "pairs", "resonators", "flux", "couplers", "qdac",
         "datasets", "dataset_detail", "dataset_compare", "collections", "fit-audit",
-        "scheduler", "autofit", "compare_hub", "diff",
+        "scheduler", "autofit", "compare_hub", "diff", "journal",
     }
     assert man["pages"]["topology"] == ["chipstatus", "components"] and man["pages"]["trends"] == ["chipstatus", "datasets"]
     # the JS path map agrees with the page map on the pages that matter

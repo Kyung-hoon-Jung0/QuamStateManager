@@ -87,6 +87,7 @@
         'scheduler': ['scheduler.js'],
         'autofit': ['autofit.js'],
         'compare': ['topo-graph.js', 'compare-hub.js', 'diff-panes.js'],
+        'journal': ['journal.js'],
     } %}
     {# docs/166: 'pulses' takes the components bundle too — its chip map
        (topo-graph + component-map) is the page's row filter. #}
@@ -102,6 +103,7 @@
         'fit-audit': ['datasets'],
         'scheduler': ['scheduler'], 'autofit': ['autofit'],
         'compare_hub': ['compare'], 'diff': ['compare'],
+        'journal': ['journal'],
     } %}
     {% set manifest = {} %}
     {% for _b, _files in bundle_files.items() %}{% for _f in _files %}{% if _f not in manifest %}{% set _ = manifest.update({_f: asset_url(_f)}) %}{% endif %}{% endfor %}{% endfor %}
@@ -551,21 +553,8 @@
                                    {% if page == 'pulses' %}class="active"{% endif %}>Pulses</a></li>
                         </ul>
                     </li>
-                    <li class="nav-with-sub">
-                        <div class="nav-sub-row">
-                            <a href="/state-history" hx-get="/state-history" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                               {% if page == 'state_history' %}class="active"{% endif %}>State History</a>
-                            <button type="button" class="nav-sub-toggle"
-                                    aria-expanded="{{ 'true' if page == 'param_history' else 'false' }}"
-                                    aria-controls="state-history-subnav" aria-label="Toggle history tools"
-                                    onclick="toggleNavSub(this, 'state-history-subnav', 'quam_statehistory_nav_collapsed')">&#9662;</button>
-                        </div>
-                        <ul class="nav-subitems{% if page != 'param_history' %} nav-subitems-collapsed{% endif %}"
-                            id="state-history-subnav">
-                            <li><a href="/param-history" hx-get="/param-history" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                                   {% if page == 'param_history' %}class="active"{% endif %}>Param History</a></li>
-                        </ul>
-                    </li>
+                    <li><a href="/state-history" hx-get="/state-history" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                           {% if page == 'state_history' %}class="active"{% endif %}>State History</a></li>
                     {# Execution trio (r15 renames — routes/page tokens unchanged):
                        Experiment Runner = queue + run nodes on hardware (docs/40);
                        Fit Replay = read-only re-check of already-saved fits (docs/50);
@@ -581,6 +570,23 @@
                            {% if page == 'autofit' %}class="active"{% endif %}>Auto Calibrate
                            <span id="autofit-nav-badge" class="autofit-nav-badge" hidden></span></a></li>
                     {% endif %}
+                    {# docs/173: the story of the chip -- every run, whoever ran it.
+                       One click (top level); Param History is its detail view. #}
+                    <li class="nav-with-sub">
+                        <div class="nav-sub-row">
+                            <a href="/journal" hx-get="/journal" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                               {% if page == 'journal' %}class="active"{% endif %}>Calibration log</a>
+                            <button type="button" class="nav-sub-toggle"
+                                    aria-expanded="{{ 'true' if page == 'param_history' else 'false' }}"
+                                    aria-controls="journal-subnav" aria-label="Toggle history tools"
+                                    onclick="toggleNavSub(this, 'journal-subnav', 'quam_journal_nav_collapsed')">&#9662;</button>
+                        </div>
+                        <ul class="nav-subitems{% if page != 'param_history' %} nav-subitems-collapsed{% endif %}"
+                            id="journal-subnav">
+                            <li><a href="/param-history" hx-get="/param-history" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                                   {% if page == 'param_history' %}class="active"{% endif %}>Param History</a></li>
+                        </ul>
+                    </li>
                 </ul>
             </nav>
             <hr class="sidebar-section-divider">
@@ -1125,6 +1131,7 @@
                 {"label": "Json Tree View",    "url": "/explorer"},
                 {"label": "Pulses",            "url": "/pulses"},
                 {"label": "State History",     "url": "/state-history"},
+                {"label": "Calibration log",   "url": "/journal"},
                 {"label": "Param History",     "url": "/param-history"},
                 {% if experimental %}
                 {"label": "Experiment Runner", "url": "/scheduler"},
