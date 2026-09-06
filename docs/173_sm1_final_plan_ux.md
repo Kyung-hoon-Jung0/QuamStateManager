@@ -1,0 +1,297 @@
+# 173 — SM 1.0 최종 플랜 v3: 사용자가 무엇을 하고, 무엇을 보고, 왜 하는가
+
+**날짜:** 2026-09-06 (v3 = v2 + 사용자 역할 8명 검증의 delta) · **상태:** 최종 검토용, 코드 없음 · **전제:** docs/172 part 1 (`6465c0e`) + §1b (`f2215d6`), 브랜치 `feat/physics-daily-flow`, 미push
+
+**먼저 읽을 세 문장 (검증 라운드의 결론)**
+
+1. v2의 원칙 2(“모든 쓰기는 보이고 되돌릴 수 있다”)는 **노드가 직접 쓰는 값에 대해서는 거짓**이었다. 노드는 `QUAM_STATE_PATH`로 live 파일을 가리키고 자기 `machine.save()`로 쓴다(`run_experiment.py:199`). 그래서 v2의 ask-writes는 정작 중요한 쓰기를 못 막고, write 카드의 [되돌리기] 뒤에는 Ctrl+Z가 없었다. v3의 한 가지 핵심 변경: **에이전트가 돌리는 노드는 working copy의 임시 사본을 가리키고, 끝나면 그 diff를 tray에 한 그룹으로 올린다.** 그때부터 원칙 2가 참이 된다.
+2. 방을 비우는 사용자 5명(중급 a, 전문가 a·b, 관리자 a·b)은 같은 벽에 부딪혔다: 사람은 에이전트로부터 보호되지만, **OPX·고아 worker·Stop·보류 값·동료의 통째 저장**은 CLAUDE.md의 문장에 맡겨져 있었다. 전부 `run_node` / `take_live` **안의 거부(데이터로 반환)**로 옮긴다.
+3. `auto` 기본값은 살아남는다. 단, **불변 규칙 0(하드웨어는 클릭으로만 시작, 문장으로는 절대 아님)**, plan 카드의 **plan별 모드 선택**, SM의 문이 모드와 무관하게 강제하는 **Limits**가 있을 때만이다. 이 셋이 없으면 관리자 둘은 auto를 금지했고 초보자 둘은 [시작]을 누르지 않았다.
+
+검증 점수(“이대로면 쓰겠는가”, 1–5): 초보 a 3 · 초보 b(관찰자) 2 · 중급 a(Codex) 3 · 중급 b(제어형) 2 · 전문가 a 3 · 전문가 b(장비 책임) 3 · 관리자 a(PI) 3 · 관리자 b(랩 매니저) 3. 읽는 절반(카드·digest·journal)은 모두 4 이상으로 읽었고, 점수를 끌어내린 것은 전부 **모는 절반**이다. v3는 그 절반을 고친다.
+
+## 0. 원칙 (v3)
+
+1. **에이전트는 자율이다.** 기본 모드 `auto`: 실험을 돌리고 칩에 쓴다. 단 **규칙 0**: 어떤 모드에서든 하드웨어의 첫 시작은 plan 카드의 [시작] 클릭이다. 문장(“q3 rabi 돌려”)은 plan 카드를 만들 뿐이다. `auto`는 [시작] 이후를 다스린다.
+2. **모든 쓰기는 같은 문을 지나 보이고 되돌릴 수 있다.** 에이전트의 `state_edit`도, 에이전트가 돌린 노드의 저장도 tray를 지난다(임시 사본 → diff → tray 그룹). `auto`면 즉시 apply(write 카드 + Ctrl+Z), `ask-writes`면 승인 카드. 사람이 QUAlibrate GUI로 돌린 노드의 저장은 지금처럼 live에 직접 가고 SM이 docs/87 방식으로 따라간다.
+3. **사람의 작업은 에이전트가 덮지 않는다.** §6의 불변 규칙.
+4. **화면의 단위는 카드다.** run 카드(누가 돌렸든), write 카드(누가 썼든). because 옆에 항상 node outcome과 gate. 없는 정보는 빈 칸.
+5. **기록은 사용자 소유의 .md.** 에이전트의 **이유 줄**(`journal_append`)은 기본 켜짐(`by_claude`/`by_codex`), 에이전트의 **턴 종료 문장**(`agent_says`)은 기본 꺼짐. 저자는 `by_claude` · `by_codex` · `human:<이름>` · `qualibrate` · `unknown` · `sm`.
+6. **권한이 아니라 귀속.** 관리자 개념은 없다. 대신 모든 모드 변경·승인·Stop·쓰기에 누가(창의 “지금 키보드 앞” 이름) 했는지가 남는다. 관찰자 창(§3.7)은 권한이 아니라 사고 방지 장치다.
+
+## 1. 메뉴와 첫 화면
+
+### 1.1 사이드바
+
+| 위치 | 이전 | 1.0.0 | 왜 |
+|---|---|---|---|
+| Projects / State Load / Generate Config / Instrument Wiring / Chip Components ▾ / Diagnostics / Chip Status / Compare / Live State Edit ▾ / Datasets ▾ | | 그대로 | |
+| State History ▾ (Param History) | | **State History** 단독 | Param History가 아래로 |
+| Experiment Runner / Fit Replay / Auto Calibrate | | **사라짐** (`SM_EXPERIMENTAL=1`에서만) | |
+| Experiment Runner 자리 | | **Calibration log ▾** (하위: Param History) | 한 번 클릭 |
+| 도구 줄 | | **Agent** 추가 (다른 페이지에서 같은 세션의 떠다니는 패널) | |
+| 상단바 | Sync pill | **Agent pill** + **“지금 키보드 앞: [이름]”** 선택기 | 귀속 |
+| Ctrl-K 팔레트 / Getting started | | 트리오 제거, Calibration log·Agent 추가 | |
+
+### 1.2 첫 화면 = Agent home (칩이 열려 있을 때)
+
+```
+┌──────────────────────────────────────────────┬─────────────────────────────┐
+│ PJ_10082026 · 20 qubits         [Agent pill]  │ 지금                         │
+│ 예약: 김OO · 14:02 → ~16:40 (auto)            │ ▶ 05_power_rabi · q4 · 3m    │
+│ ┌ 대화 ──────────────────────────────────┐    │   보통 4m · by_claude        │
+│ │ (카드: 답변 · plan · run · write · 승인) │    │ 오늘 31 runs · ✗ 2 · 쓰기 12  │
+│ │                                        │    │ 가장 큰 Δ: q17.f_01 −6.2 MHz │
+│ └────────────────────────────────────────┘    │ 승인 대기 1  ■ Stop ▾        │
+│ [ 무엇이 궁금하세요? / 무엇을 할까요?        ] │ 오늘의 digest                │
+│ [1Q bringup] [readout tuneup] [CZ tuneup]     │ q3 res✓ qspec✓ rabi✓ rams✗  │
+│ (preset은 초안만 채움 · 시작은 plan 카드에서) │ …  [Calibration log 열기]     │
+└──────────────────────────────────────────────┴─────────────────────────────┘
+```
+
+- 본문에는 **Stop·모드·대상 체크박스가 없다**(초보자·관찰자·PI 셋이 “실행 장치처럼 보여 피한다”). Stop은 오른쪽 “지금” 칼럼과 pill에, 모드는 Settings와 plan 카드에, 대상은 preset을 누른 뒤 초안 안에 “초안에 넣기”로.
+- 입력은 **질문**과 **지시** 둘 다. 질문은 **읽기 전용 호출**(별도의 짧은 세션, 읽기 도구만)로 답하고, 지시는 plan 카드가 된다. 그래서 plan이 돌고 있어도 질문은 항상 된다.
+- 칩이 없으면: 지금의 project-first 첫 화면 + 버튼 **“QUAlibrate의 현재 프로젝트 <이름> 열기”**(`POST /qualibrate/open`) + 프로젝트 불일치 amber 배지.
+- **예약 줄**: 세션이 있으면 “누가 · 언제부터 · 예상 종료 · 모드”. journal에도 한 줄. Calibration log 헤더에도.
+
+## 2. 사용자별 하루 (QUAlibrate GUI와 섞여 쓰는 하루)
+
+표기: **[한다]** · **[본다]** · **[기대]** · **[왜]**. 전부 1.0.0.
+
+### 2.1 초보자 — 한 달 된 대학원생. QUAlibrate GUI로 배우는 중
+
+**아침 (직접 돌린다)**
+1. **[한다]** QUAlibrate 웹앱에서 `02_resonator_spectroscopy` q1 실행. 그림을 본다.
+   **[본다]** (SM) Datasets “1 new”. Calibration log에 카드 `09:12 · Resonator spectroscopy · q1 · ✓ · gate pass · #1301 · unknown`. 카드 첫 줄에 family 한 줄 설명(“공진기 주파수를 찾습니다”)과 manual 링크.
+   **[왜]** 카드의 뼈대는 DatasetStore. hook도 run_node도 없는 run의 저자는 **`unknown`**(회색)이다 — `qualibrate`라고 단정하지 않는다(사람이 터미널에서 돌렸을 수도 있다). 아래 “이건 내가 돌렸어요” 한 칸을 누르면 `human:<이름>`으로 바뀌고 메모를 남길 수 있다.
+2. **[한다]** q3 그림이 이상하다. Agent home 입력창에 “q3 res spec 결과가 이상한데 뭐가 문제야?”
+   **[본다]** 답 카드(읽기 전용 호출): “**얕은 딥**입니다(manual R3). 신호 대비 잡음이 낮아요(peak_snr 2.9, 기준 4.0). 평균 횟수(`num_averages`)를 4배로 늘리거나 측정 범위(`frequency_span`)를 좁혀 보세요.” 버튼 **[plan으로 만들기]** **[내가 QUAlibrate에서 돌릴게]**.
+   **[기대]** 선배 없이 “왜”를 듣는 것. 그리고 **질문이 실험을 시작하지 않는 것**.
+   **[왜]** 규칙 0. 첫 버튼도 바로 돌리지 않고 plan 카드를 만든다. 용어 규칙: 노드 이름은 QUAlibrate 목록의 이름, 파라미터는 node.json의 키, 상태 값은 Live State Edit의 열 라벨(dot path는 툴팁). gate 이유는 manual의 평어 문장이 먼저, 지표는 괄호.
+3. **[한다]** [내가 QUAlibrate에서 돌릴게].
+   **[본다]** **체크리스트 카드**: “QUAlibrate에서 `02_resonator_spectroscopy` 열기 → targets `q3` → `num_averages` 100 → 400 → Run”. 돌리고 오면 새 카드 `#1304`가 `#1303의 후속`으로 붙고 파라미터 diff `num_averages 100 → 400`.
+   **[왜]** “에이전트가 돌리기”와 “내가 돌리기”는 같은 값의 선택이고, 후자도 SM이 따라간다.
+
+**오후 (맡긴다)**
+4. **[한다]** [1Q bringup] → 초안 “1Q bringup: q3, q4, q5 …” + “q3는 res spec 방금 했으니 qubit spec부터” 덧붙여 Enter.
+   **[본다]** **plan 카드**:
+   - 대상 × family 표. q3 res spec “건너뜀(사용자가 #1304로 완료)”.
+   - family마다 한 줄 설명 **과 “바뀔 수 있는 값”**: `q4 · Qubit frequency (f_01) · 지금 4.8098 GHz · 마지막 변경 선배 김OO 8/29`. 이 줄이 이 카드의 핵심이다.
+   - **파라미터 표**(노드별, 지난 run의 node.json으로 채움, 편집 가능).
+   - `env: cqt · simulate: OFF · timeout 30m/노드 · 예상 종료 ~16:40`.
+   - **모드 선택**: 이 칩의 기본은 `ask-writes`(새 칩의 기본; 누군가 `auto`로 바꾸기 전까지). 이 plan만 바꿀 수 있다.
+   - 버튼 **[시작 — 값 6개가 바뀔 수 있음]** **[취소]**.
+   **[기대]** 무엇이 바뀔지, 누가 만든 값인지 알고 누르는 것.
+   **[왜]** 초보자가 [시작]을 안 누르는 이유는 “씁니다”가 무엇을 쓰는지 몰라서였다. `who_changed`와 families의 update target이 그 답을 준다. 새 칩의 기본이 `ask-writes`인 이유: auto는 랩이 선택하는 것이지 물려받는 것이 아니다. 바꾼 사람과 시각은 journal `sm` 줄로 남는다.
+5. **[한다]** [시작]. 수업에 간다. 예약 줄에 “박OO · 14:02 → ~16:40”.
+   **[본다]** (돌아와서) plan 카드가 **핀 고정**된 채 `8 / 11 완료 · ✗ 0 · 건너뜀 1 · 완료 16:31`. 그 아래 run 카드 8개, 승인 카드 3개(ask-writes): “`q4 · Qubit frequency` 4.8098 → 4.8123 GHz Δ +2.5 MHz · because: … · [칩에 쓰기] [거절] [값 고쳐서 쓰기]”. 카드에 “q4의 다음 노드(rabi)는 승인 후 이어집니다”.
+   **[기대]** 내가 없는 동안 뭘 했고, 내 결정이 무엇인지.
+   **[왜]** ask-writes는 **그 대상의 체인을 멈춘다**(다른 대상은 계속). 승인은 사람의 행위라 `human:박OO`로 기록된다. 값을 고쳐 쓰면 에이전트의 값은 “거절됨”으로 남고 에이전트는 다음 run_node 전에 “사람이 q4.f_01을 X로 씀”을 통지받는다.
+6. **[한다]** 선배가 “q4 f_01 왜 바꿨어, 되돌려”.
+   **[본다]** write 카드에 “이후 #1315, #1316이 이 값 위에서 측정됨”. plan 카드 끝에 **[이 plan의 쓰기 6개 전부 되돌리기]**(plan 시작 전 Versions 스냅샷으로).
+   **[왜]** 되돌리기의 순서를 초보자가 계산하게 하지 않는다.
+7. **[한다]** (다른 날) 수업 중에 선배가 QUAlibrate GUI로 q4 T1을 돌렸다.
+   **[본다]** 대화에 카드 “QUAlibrate에서 사람이 실험을 시작해 **다음 run 후 멈췄습니다** (#1330 T1 q4)”. pill `human ran T1 · 12 min ago`. plan 카드 `Stopped by SM (human run)`. 예약 줄 해제.
+   **[왜]** §6 규칙 5: 하드웨어 충돌은 SM이 **run_node 안에서** 거부한다(`human_active`, 기본 30분). 문장이 아니라 코드다. 멈춘 뒤 재개는 사람의 클릭.
+
+### 2.2 중급자 — Codex 사용자. 낮에는 QUAlibrate GUI, 밤에는 에이전트
+
+1. **[한다]** 처음 한 번, 도구 줄 Agent → 설정. 이 PC에 이미 된 것(선배가 등록한 MCP·hook·로그인)은 ✓로 접혀 있고, 남은 것만 보인다: “실행 환경: cqt ✓ (QUAlibrate 프로젝트 PJ에서 가져옴)”, “Journal: `D:/data/PJ/journal/` (프로젝트 데이터 폴더 옆, 이 PC 계정을 쓰는 모두가 공유)”, “내 vault로 미러(선택)”.
+   **[왜]** 설정은 “아직 안 된 것만”. 기본 journal 위치는 instance가 아니라 **프로젝트 데이터 폴더 옆**(재설치에 살아남고 프로젝트를 따라간다). vault는 칩별 미러.
+2. **[한다]** 낮: QUAlibrate GUI로 q1–q10 rabi. 중간에 “지금까지 rabi 결과 요약, suspect만”.
+   **[본다]** 표 카드(SM이 `runs_summary`로 먼저 만들고 모델 문장은 뒤에): qubit · #run · outcome · gate(anchor: 그 run 폴더의 state) · 쓴 값(old → new) · 이 값이 지금 칩 값인지. “q7은 김OO이 12:31에 Live State Edit로 0.31로 바꿈(human)”.
+   **[왜]** gate는 **run의 속성**이라 run 폴더 안의 `quam_state/state.json`을 anchor로 계산해 캐시한다(지금 값으로 다시 계산하면 답이 시간에 따라 바뀐다). 저자는 SnapshotMeta와 undo unit에 찍힌 actor.
+3. **[한다]** 퇴근 전: “q11–q20 rabi부터 ramsey까지 밤새. |Δf_01| > 5 MHz면 쓰지 말고 아침에 물어봐.” plan 카드에서 모드 `auto` 확인, 파라미터 표에서 q15만 `span` 수정. [시작].
+   **[본다]** plan 카드 조건 줄 “|Δf_01| > 5 MHz → **보류(hold)**”. 예약 “이OO · 19:10 → ~03:00 (auto)”.
+   **[왜]** 조건 초과 값은 tray에 **hold 플래그**로 남고, 나머지 체인은 자기 쓰기 위에서 계속된다(ask-writes처럼 체인을 세우지 않는다). hold는 사람이 tray에서 체크하기 전에는 어떤 apply에도 실리지 않는다.
+4. **[한다]** 새벽 2시, 동료가 QUAlibrate GUI로 q3 T1을 돌린다(에이전트는 모른다).
+   **[본다]** (에이전트 쪽) 다음 run_node가 `human_active`로 거부 → plan은 “다음 run 후 멈춤” 상태. 다음 apply는 `stale_live` → `take_live` 호출 → 응답 `changed: [{qubits.q3.T1, old, new, actor: unknown, run: #1330}]`, `overlap: []`, `reverted: []`. 에이전트는 겹침이 없으니 보류 값 위에 재기저(hold는 유지)하고 상태를 기록. 하지만 `human_active`라서 **재개는 사람 몫**.
+   **[기대]** 동료의 결과가 덮이지 않고, 동료가 돌리는 동안 에이전트가 OPX를 잡지 않는 것.
+   **[왜]** take_live는 “목록”이 아니라 **판단 재료**(겹침·되돌려짐)를 준다. 동료의 통째 저장이 에이전트의 값을 예전 값으로 되돌렸다면 `reverted`로 표시되고 빨간 write 카드 “#1330(unknown)이 되돌림 · [다시 적용]”이 뜬다.
+5. **[한다]** 아침 Calibration log.
+   **[본다]** 헤더에 “예약 종료 03:00 · Stopped by SM (human run 02:11)”. 승인 대기 1(hold): `q17.f_01 Δ −6.2 MHz by_codex [칩에 쓰기] [거절] [값 고쳐서]`. 카드 사이에 동료의 `T1 · q3 · unknown` 카드. `[재개]` 버튼.
+6. **[한다]** 값 토큰 🕘로 history와 #run figure(썸네일 클릭 → 그 run의 Interactive 탭)를 보고 [칩에 쓰기].
+   **[본다]** write 카드 `human:이OO`.
+7. **[한다]** 낮에 GUI로 q17 ramsey 재확인. 카드가 붙는다.
+
+Codex 특이점(정직하게): `codex exec`는 **턴 하나**다. plan이 도는 동안 지시창은 “Codex가 턴 안에 있습니다 — 말을 걸려면 Stop after this run” 으로 잠기고, 질문은 읽기 전용 호출로 계속 된다. Claude Code는 stream-json 입력으로 턴 중에도 메시지를 줄 수 있다. 터미널 Codex의 pill은 hook 페이로드를 S4 spike에서 확인하기 전까지 `idle · 추적 안 됨` 툴팁.
+
+### 2.3 전문가 — 터미널 Claude Code, 밤새, Obsidian, 냉장고 둘
+
+1. **[한다]** 설정: 남은 것만. “두 칩(PJ, CQT)을 한 PC에서” → SM이 **칩별 mcp-config**(`SM_URL` + `SM_CHIP`)를 만들어 준다. 터미널용 전역 `claude mcp add`는 체크박스(“SM이 꺼져 있으면 에러가 납니다”). 캘리브레이션 저장소의 `.claude/settings.local.json`에 **allow 규칙**(`mcp__quam-state-manager__*`, `Bash(python *:*)`)을 미리보기·백업 후 쓴다.
+   **[왜]** 이 사람의 실제 막힘은 도구가 아니라 **허가 프롬프트**였다. 그리고 두 냉장고에서 브리지는 `SM_CHIP`이 다르면 **거부**한다.
+2. **[한다]** 랩 컨텍스트 단계. SM이 state/wiring을 읽고 묻는다: flux-tunable? tunable coupler? Purcell? SQUID 대칭/비대칭? (모름은 모름).
+   **[본다]** 문서 초안 = **소자 사실 + 규칙**만(“최근 상태 숫자”는 넣지 않는다 — 공유 저장소에 시간 지난 숫자를 박는 것은 관리자 둘과 중급자가 반대). 규칙: 시작 시 `chip_summary()` 먼저, 노드 전 `journal_append(reason)`, run 후 `check_fit`, 노드가 state를 썼으면 `take_live`, state.json 직접 편집 금지. 쓰기는 **diff 미리보기**, 칩 키가 붙은 fenced 구간(`<!-- sm:lab-context chip=… -->`)에 append, git 추적 파일 경고, 기본은 미추적 `CLAUDE.local.md`/`AGENTS.local.md`.
+3. **[한다]** 터미널에서 `claude`로 밤 작업. `run_node`를 쓰라는 규칙이 있지만 `python node.py`도 막지 않는다.
+   **[본다]** (SM) pill `running 02_resonator_spectroscopy · q3 · by_claude · 1m`. 25분짜리 T1이 돌 때도 `running · 25m · 보통 22m`(stalled 오판 없음: 살아있음 = worker/agent PID 생존 또는 run 폴더 성장).
+   **[왜]** `python node.py` 경로는 §6-5가 강제되지 않는 유일한 경로다. 문서에 그렇게 쓴다: 이 경로의 Ctrl+Z는 스냅샷 기반이고 저자는 `unknown`일 수 있다.
+4. **[한다]** 아침. vault의 `.md`.
+   **[본다]** `by_claude` 이유 줄(기본 켜짐), `hook` 줄(무엇을 돌렸고 #run), `sm` 줄(쓴 것·모드·Stop). 턴 종료 문장은 없다(`agent_says` 꺼짐; 켜면 `> ` 인용 불릿).
+   **[왜]** “다 남기고 싶다”와 “모델 산문은 싫다”는 둘 다 맞다. 이유 줄과 산문을 분리했다.
+5. **[한다]** SM 창을 닫으려 한다(노드가 도는 중).
+   **[본다]** “05_power_rabi가 돌고 있습니다. 창을 닫으면 실험이 종료됩니다. [그래도 닫기] [취소]”.
+   **[왜]** SM 창이 chassis를 죽인다(main.py). 정직하게 경고한다. “SM 꺼진 밤” 서사는 `python node.py` 경로에만 해당한다.
+6. **[한다]** Notion.
+   **[본다]** /help 한 줄: “Notion은 파일이 아닙니다. 별도의 **읽기 전용** 에이전트 세션에 Notion MCP를 붙여 하루의 journal을 옮기게 하세요(캘리브레이션 세션에는 붙이지 마세요).”
+
+### 2.4 관리자 — PI(a)와 랩 매니저(b)
+
+1. **[한다]** (PI) 22:00 첫 화면.
+   **[본다]** 예약 줄 “이OO · 19:10 → ~03:00 · auto”. “지금”: `05_power_rabi · q14 · 3m · 보통 4m`, 오늘 31 runs · ✗ 2 · 쓰기 12 · 가장 큰 Δ `q17.f_01 −6.2 MHz`, 승인 대기 1. ✗ 2를 누르면 Calibration log가 `outcome=fail|gate=fail`로 필터된 채 열린다.
+   **[한다]** “오늘 실패한 두 개?”
+   **[본다]** SM이 먼저 표(`runs_summary`), 모델 문장은 뒤에.
+2. **[한다]** (PI) Settings → **Limits**(칩별): plan당 최대 쓰기 수, family별 최대 |Δ|(pre-run anchor 대비; 초과는 **모든 모드에서 hold**), stop-loss(연속 gate fail N → 대상 정지, 총 K → plan 정지), **Stop by HH:MM**, webhook URL(plan_done / waiting / agent_failure / agent_stalled / limited).
+   **[왜]** “auto를 허용하려면 무엇이 필요한가”의 답. 백엔드·모드와 무관하게 SM의 문이 강제한다. `stoploss.py`와 `notify.py`가 이미 있다.
+3. **[한다]** (매니저) 새벽 2시 구독 한도.
+   **[본다]** pill `limited · resets 14:50`, journal `sm` 줄, plan 카드 “이 계정으로 HH:MM부터 세션”. digest에 칩·소유자별 오늘 토큰. 자동 재개는 opt-in(기본 꺼짐)이고 켜도 run_node 게이트를 전부 지난다.
+   **[왜]** 이번 세션에서 우리가 직접 겪은 상태다. 냉장고 시간을 짜려면 보여야 한다.
+4. **[한다]** (매니저) 학생 A의 세션이 도는데 학생 B가 급하다.
+   **[본다]** B의 창: 예약 줄에 A의 이름. **[Stop after this run and hand over]**. A의 PID가 죽어 있으면 [넘겨받기]. 둘 다 양쪽 이름으로 journal.
+5. **[한다]** (PI) 폰.
+   **[본다]** 동기화 폴더의 `.md`. 설정 단계에서 SM이 “이 폴더가 동기화 폴더가 아니면 폰에서는 안 보입니다”라고 미리 말한다. digest strip의 “텍스트로 복사”, `GET /chip-status/report` 링크.
+6. **[한다]** (매니저) 설정 페이지에서 무엇이 어느 파일에 써지는지 본다.
+   **[본다]** 백엔드별로 “쓴 것” 목록과 백업 경로, **[SM에서 분리]**(SM이 넣은 항목만 정확히 제거).
+
+## 3. 화면 규격
+
+### 3.1 Agent pill (우선순위 순: waiting > limited > stalled > failed > running > between > human-ran > idle)
+
+| 상태 | 표시 | 근거 |
+|---|---|---|
+| waiting | 노랑 `승인 대기 N` | hold 또는 ask 모드의 승인 카드 |
+| limited | `limited · resets HH:MM` | 백엔드 스트림의 usage/limit 결과 |
+| stalled | 주황 `no sign of life 17m` | run 진행 중 아님 **그리고** 15분 무이벤트, 또는 PID 사망 |
+| failed | 빨간 `✗ N` | 오늘 실패 수(클릭 → 필터된 log) |
+| running | 점멸 `05_power_rabi · q3 · 25m · 보통 22m` | 짝 없는 Pre 또는 run_node 진행 + (PID 생존 또는 run 폴더 성장) |
+| between | `thinking · by_claude` | 살아있고 도구 실행 중 아님 |
+| human-ran | `human ran T1 · 12 min ago` (사실, 물음표 없음) | run_watch가 본 hook/run_node 없는 run |
+| idle | 회색 `Agent` | 캘리브레이션 세션 이벤트 없음 |
+
+pill 텍스트에 현재 모드. 예약(소유자·종료 예정)은 pill 옆 줄.
+
+### 3.2 Calibration log (`/journal`, 최상위)
+
+- 헤더: 칩 · 날짜(← →, 주간 = 여러 날 .md 이어붙임) · 필터(qubit/pair) · 저자 필터 · 원본 .md · 폴더 · 예약/모드 줄 · “쓰기 오늘 12 · 가장 큰 Δ …”.
+- since-last-visit · 승인 대기(hold 포함).
+- digest strip(대상별 family pill, 색 = outcome, “텍스트로 복사”).
+- **run 카드**: 헤더 `시간 · family(QUAlibrate 이름) · 대상 · outcome · gate(anchor = 그 run의 state, 캐시) · #run · 저자 · plan_id`. 본문: family 한 줄 설명 + manual 링크 · 이 run이 쓴 값 `라벨 old → new Δ(단위)`와 그것이 지금 칩 값인지 · 이전 같은 노드(또는 `parent_id`) 대비 파라미터 diff · because(없으면 “기록 없음”) · 썸네일(클릭 → Interactive 탭) · [Run again](같은 파라미터 표) · “이건 내가 돌렸어요”/메모 · details(이벤트, 에러 꼬리). 라이브 플롯은 없다는 문구.
+- **write 카드**: `시간 · N개 · 저자 · Δ · [되돌리기] · “이후 #… 이 값 위에서 측정됨” · from #run → 플롯 열기`. 빨간 변종 `reverted by #N (unknown) · [다시 적용]`.
+- 생성 규칙: ① 뼈대 DatasetStore ② journal 부착 = `#run` 우선, 없으면 `[start−60s, end+300s]` + 대상 겹침 ③ 저자 = run_node → 그 에이전트(확정), hook 이벤트 → 그 에이전트, 둘 다 없음 → **`unknown`**(“이건 내가” 클릭으로 `human:<이름>`) ④ 바뀐 값 = 그 run 스냅샷의 change point ⑤ gate = run anchor 캐시 ⑥ `unassigned` 줄은 상단 “이 칩으로 옮기기” ⑦ 모든 run/write에 `plan_id`.
+
+### 3.3 대화
+
+- 카드: 답변(표 먼저, 숫자마다 #run, 썸네일) · plan(§2.1-4의 구성; 핀 고정 + 진행 `8/11 · ✗ · 건너뜀 · 남은 시간` + 종료 `완료 HH:MM / Stopped by <who> / agent exited (code)` + [이 plan 전부 되돌리기]) · run(승격) · write(auto) · 승인(ask 또는 hold; 행 편집 가능) · Stop 결과 · 체크리스트(“내가 GUI에서”).
+- 결정론 입력: `/run <node> <targets> k=v` 는 LLM을 거치지 않고 plan 카드를 만든다(정확한 숫자를 바꿔 말하지 않는다).
+- 질문과 [왜?]는 **읽기 전용 호출**(Claude: `-p --allowedTools` 읽기 도구만; Codex: 읽기 전용 sandbox). 모는 세션은 plan/[시작] 경로만 쓴다.
+- Stop ▾: **after this run**(= run_node가 다음 노드를 거부; Codex에도 됨) / **now**(세션 파일에 `agent_stop` → run_node가 먼저 거부 → 백엔드 프로세스 트리 종료 → chassis cancel). 문구: “클라이언트를 종료합니다. OPX는 현재 시퀀스를 끝냅니다. SM의 칩 쓰기는 원자적입니다. 현재 run 폴더는 불완전할 수 있습니다.” 남의 세션이면 소유자 이름을 보이고 한 번 확인. 모든 Stop은 journal(누가, 어느 창).
+- 세션: 칩당 하나. `agent_sessions/<chip>.json` = backend · session_id · mode · owner · started · until · pid · agent_stop. 세션은 **쓰기 도구(run_node/apply_to_live)를 처음 부를 때** 칩을 잡는다; 읽기 전용 호출은 잡지 않는다. 브리지는 `initialize`에 `(pid, SM_CHIP)`을 등록. lock 줄은 잡은 도구·소유자·시작·마지막 이벤트를 적는다.
+- 재개: `--resume` / `codex exec resume`. **고아 worker가 살아 있으면 재개 금지**(사람이 “OPX가 비었음”을 누르기 전까지). 재개 프롬프트에 “자리를 비운 사이” 블록(DatasetStore).
+
+### 3.4 에이전트 백엔드
+
+| | Claude Code 2.1.x | Codex 0.153.x |
+|---|---|---|
+| 모는 세션 | `claude -p --input-format stream-json --output-format stream-json --include-partial-messages`(턴 중 메시지 가능) | `codex exec --json`(턴 하나; 중간 입력 잠금) + `codex exec resume` |
+| 질문 | `-p --allowedTools <읽기 도구>` | 읽기 전용 sandbox |
+| SM 도구 | `--mcp-config <칩별 json> --strict-mcp-config` | `codex mcp add` / config.toml |
+| 컨텍스트 | CLAUDE(.local).md | AGENTS(.local).md |
+| 작업 디렉터리 | 캘리브레이션 폴더(파일이 실제로 읽히도록) | 동일 |
+| 사용량/한도 | 스트림 결과에서 | 동일 |
+| 터미널 모드 “지금” | hook | 0.153 hook 페이로드를 S4 spike에서 확인; 안 되면 `idle · 추적 안 됨` |
+
+**`run_node(node, targets, params, timeout_s?)`** = 권장 경로이자 유일하게 저자가 확정되는 경로. Experiment Runner의 chassis를 **realbackend의 구동 루프**로 돌린다(heartbeat `touch_ui`, 90초 UI-pause 우회, 재시작, cancel). 노드는 **working copy의 임시 사본**(`instance/agent_runs/<run>/quam_state/`)을 `--state-path`로 받고, 끝나면 사본 vs working copy diff를 tray에 **한 그룹**(actor 에이전트, plan_id)으로 올린다. `auto`: 즉시 apply. `ask-writes`: 승인 카드 + 그 대상 체인 정지. Limits 초과: hold. **거부는 데이터로**: `human_active`(N분 내 unknown/qualibrate run) · `orphan_running`(worker PID 생존 / foreign owner) · `stopped_by_human` · `awaiting_approval` · `no_start_token`(규칙 0) · `simulate_on_in_auto` · `past_stop_by`. 결과 분류에 `hardware_contention`(qm 닫힘/다른 qm 열림 시그니처) 추가 — 에이전트는 이것에 재시도하지 않는다. 편집 잠금 409 문구: “Agent가 05_power_rabi를 돌리는 중 — 편집이 잠겼습니다. Stop을 누르면 편집할 수 있습니다.”
+
+`take_live` → `{changed:[{path, old, new, actor, run}], overlap:[…], reverted:[…]}`. `undo_mine`(에이전트 그룹만). `state_get`/`runs`에 `stale_since`. `apply_to_live`는 held 그룹을 건너뛰고, 사람 그룹이 있으면 거부. 브리지는 `SM_CHIP` 불일치 시 모든 도구 거부.
+
+### 3.5 설정 (Agent → 설정; 이 PC에서 아직 안 된 것만 보임)
+
+1. **에이전트**: 감지(설치·로그인). [SM에 연결]: 칩별 mcp-config 생성, hook 등록, allow 규칙(`.claude/settings.local.json`), 전역 `claude mcp add`는 체크박스. 미리보기 · 백업 · 클릭. [SM에서 분리]. 로그인은 “터미널에서 `claude`/`codex` 한 번, 담당: <이름>”.
+   1b. **실행 환경**: QUAlibrate 프로젝트에서 env·calibrations 폴더·state 경로를 가져오고, SM의 칩과 다르면 거부(amber). simulate, timeout 표시.
+2. **Journal**: 기본 = 프로젝트 데이터 폴더 옆 `journal/`(공유 안내), 칩별 vault 미러(선택), 동기화 폴더 감지(폰 안내), Obsidian 안내(“`![[<chip>/<date>]]`로 embed, SM 파일에 직접 타이핑 금지”). 이유 줄 켜짐(고정), `agent_says` 꺼짐(선택).
+3. **랩 컨텍스트**: 질문만(§2.3-2). diff 미리보기 → fenced 구간 append → 기본 `.local.md`.
+4. **Limits**(§2.4-2) + 기본 모드(새 칩 = ask-writes; 바꾸면 journal).
+5. **테스트**: 실제 호출, 시간과 답 그대로.
+
+### 3.6 Q&A 도구
+
+기존 19개 + `run_node` · `runs_summary(since, qubit, family)`(reason·written_paths·현재값 여부 포함) · `chip_summary()` · `who_changed(path, since)`(SnapshotMeta/undo unit의 actor; 없으면 `unknown`) · `undo_mine` · `journal_read(range)`. 답변 카드는 SM이 표를 먼저 만들고 모델은 문장만.
+
+### 3.7 관찰자 창
+
+브라우저 창 단위 토글(서버 세션 쿠키). 켜지면 그 창에서 `/state/apply-to-live`·`/undo`·run_node·Stop·모드 변경·넘겨받기가 “관찰자 창”으로 거부되고 [되돌리기]는 비활성. 질문은 된다. 권한이 아니라 사고 방지.
+
+## 4. 데이터 흐름
+
+```
+사용자 ── QUAlibrate GUI ──▶ live state.json 직접 (docs/87 따라감) + run 폴더 ──▶ DatasetStore ─┐
+에이전트 ── run_node ──▶ chassis(임시 사본 state) ──▶ run 폴더 + diff ──▶ tray 그룹 ──▶ auto: apply | ask: 승인 | 초과: hold ─┤
+에이전트 ── python node.py ──hook──▶ jsonl ──▶ SM (저자: 에이전트, 문 밖 쓰기, docs/87 따라감) ────────────────────────────┤
+에이전트 ── state_edit / apply_to_live ──▶ tray ──▶ live ────────────────────────────────────────────────────────────────┤
+사용자 ── Live State Edit / 승인 카드 ──▶ tray ──▶ Apply ──▶ live (human:<이름>) ────────────────────────────────────────┤
+                                                                                                                       ▼
+                       run 카드 · write 카드 (plan_id) ──▶ Calibration log ──▶ vault/<chip>/<날짜>.md (by_claude / by_codex / human:<이름> / unknown / sm)
+```
+
+## 5. 모드
+
+| 모드 | 첫 시작 | 실험 | 노드의 쓰기 · state_edit | 누구 |
+|---|---|---|---|---|
+| auto | [시작] 클릭 | 묻지 않음 | 즉시 apply, write 카드, Ctrl+Z | 맡기는 사람 |
+| ask-writes (새 칩 기본) | [시작] 클릭 | 묻지 않음 | 승인 카드, 그 대상 체인 정지 | 값은 내가 |
+| ask-all | [시작] 클릭 | 노드마다 허가 카드 | 승인 카드 | 처음, 관찰 |
+
+어느 모드에서든: Limits 초과 값은 **hold**, 말로 준 조건(“5 MHz 넘으면”)도 hold. plan 카드에서 이 plan의 모드를 고른다(초기값 = 칩 기본).
+
+## 6. 불변 규칙 (모드·백엔드 무관)
+
+0. **하드웨어의 첫 시작은 클릭이다.** run_node는 [시작]이 발급한 start token 없이는 거부한다. 한 노드짜리 plan도 plan 카드다.
+1. tray에 사람의 그룹이 있으면 에이전트의 apply는 거부. 사람의 Apply는 보이는 전부를 쓴다.
+2. live가 SM 밖에서 바뀌면 에이전트의 apply는 `stale_live`; `take_live`는 changed/overlap/reverted를 준다. 겹치면 “재스테이징”이 아니라 “그 대상의 노드를 다시 돌려라”.
+3. 사용자 설정 파일과 저장소의 컨텍스트 파일은 설정 화면의 클릭에만, 미리보기와 백업과 함께.
+4. 사람의 Stop이 이긴다. Stop은 run_node가 먼저 본다.
+5. 칩당 세션 하나(쓰기 도구를 부를 때 잡음). OPX 동시 사용은 `human_active`·`orphan_running`·`hardware_contention`으로 run_node가 거부한다. **강제되지 않는 유일한 경로는 터미널의 `python node.py`** 이며 문서에 그렇게 쓴다.
+6. Limits는 모드와 무관하게 SM의 문이 강제한다.
+
+## 7. 빌드 순서와 시간 (전부 1.0.0)
+
+| # | 작업 | 시간 |
+|---|---|---|
+| S1 | `core/story.py`: 카드 모델(DatasetStore + journal 시간창 + change point) · SnapshotMeta/undo unit에 actor · 저자 `unknown` 규칙 · `plan_id` · gate anchor = run state, 캐시 | 6 |
+| S2 | Calibration log 페이지 + 사이드바(최상위, Param History 하위) + 팔레트/불릿 · 주간(이어붙임) · digest 복사/report 링크 · 쓰기 줄 · family 한 줄 · 메모/“내가 돌렸어요” | 6 |
+| S3 | Agent pill 8상태(우선순위) · run 진행 기반 liveness · `human ran N min ago` · `limited` · 모드 표시 · 예약 줄 | 3 |
+| S3b | **Limits + stoploss/notify 연결 + Stop-by + webhook 이벤트** | 3 |
+| S4 | 백엔드 추상화(Claude stream-json / Codex exec --json) · usage·limited 감지 · Codex 입력 잠금 · **읽기 전용 Q&A 호출** · cwd = 캘리브레이션 폴더 · 세션 파일/resume/Stop · 이벤트 정규화. **첫 시간 spike**: permission-prompt-tool 대신 SM 게이트로 가는지, 스트리밍 전송, Codex hook 페이로드, Codex 턴 중 입력 | 9 |
+| S5 | `run_node` = realbackend 구동 루프 위에: **임시 사본 state + diff → tray 그룹** · 게이트(start token / orphan / stop / human_active / awaiting_approval / simulate / stop_by) · `hardware_contention` 분류 · heartbeat 우회 · per-call timeout · **hold** · `take_live` changed/overlap/reverted · `undo_mine` · `SM_CHIP` 핀 · `stale_since` · 편집 잠금 문구 | 12 |
+| S6 | Agent home + 떠다니는 패널 + 카드 렌더러: plan 카드(바뀔 값 미리보기 · 파라미터 표 · 진행 · 전부 되돌리기 · 모드 선택) · [plan으로 만들기] · 체크리스트 카드 · 승인 행 편집 · 썸네일 → Interactive · 관찰자 토글 · 본문 제어 제거 · 용어 규칙 · `/run` 결정론 입력 · 창 닫기 경고 · 칩 없음 첫 화면 버튼 | 11 |
+| S7 | 설정: 안 된 것만 표시 · 1b 실행 환경 · 연결(+allow 규칙, 백업, 분리) · journal 기본 위치/미러/동기화 감지 · 랩 컨텍스트(질문만, diff, fenced, .local) · 테스트 · Limits/모드 | 6 |
+| S8 | journal: 이유 줄 켜짐 / `agent_says` 분리 · 백엔드 유래 저자 · `unknown`/`human:<이름>` · 모드 변경·Stop·예약 줄 · 키보드 앞 이름 선택기 | 2 |
+| S9 | 핀 + mutation + CDP 재생(2.1-1~7, 2.2-3~6 동료 run 포함, 고아/heartbeat/hold/두 인스턴스 핀) + 실 CLI ×2 + docs + 1.0.0 승격 | 11 |
+| | **합계** | **69시간 ≈ 9 작업일** |
+
+순서: S1→S2→S3→S3b(“읽는 SM”, 2.5일) → S4→S5→S6(“모는 SM”, 4일; S5가 S6보다 먼저 — plan 카드는 run_node가 강제하는 것을 그린다) → S7→S8(1일) → S9(1.5일). 늦을 때 빼는 순서: 주간 이어붙임 → 관찰자 토글 → 토큰 줄 → Codex hook. **빼지 않는 것: 채팅, Calibration log, 규칙 0, 임시 사본 쓰기 문, run_node 게이트, hold, Limits, Codex.** 플랜에서 아예 뺀 것: 랩 컨텍스트의 데이터 읽기, Notion 빌드 항목(도움말 한 줄), `human-running?` 추정, “Stop now가 state.json을 깨뜨릴 수 있다” 문구, 첫 화면 본문의 Stop/모드/체크박스.
+
+## 8. 검증
+
+- 핀: `test_story`(생성 규칙·저자·anchor 캐시·plan_id) · `test_journal_page` · `test_agent_pill`(우선순위·liveness) · `test_agent_session`(가짜 백엔드: 정규화·resume·Stop·limited·Codex 잠금) · `test_agent_tools`(run_node 게이트 전부, 임시 사본 diff → tray, hold, take_live 세 목록, undo_mine, SM_CHIP, 사람 그룹 거부) · `test_limits` · `test_agent_setup`(감지·백업·분리·allow 규칙·fenced 구간) · 관찰자 창. 전부 mutation sweep.
+- 실브라우저(CDP): 2.1-1~7, 2.2-3~6(동료 run 실제 폴더 복사), 2.4-1·4를 가짜 백엔드로 재생.
+- 실 CLI: Claude와 Codex 각각 `sm_status`·`runs_summary`·`run_node`(simulate)·`state_edit`·`apply_to_live`·`take_live` 한 바퀴(칩 사본).
+- 회귀: 사이드바/온보딩/edit·apply 문/autofit routes(273 green) + Experiment Runner 테스트(chassis 재사용이 깨뜨리지 않음).
+
+## 9. 검증 라운드에서 기각한 것 (이유와 함께)
+
+- 브라우저별 최소 모드(초보 a): 모드는 run의 속성이지 보는 사람의 속성이 아니다(두 창이 두 진실을 보임). plan별 모드 선택 + 규칙 0으로 같은 보호.
+- 관찰자·모드 변경·연결에 암호(초보 b): 공유 OS 계정에서 인증이 되지 않는다. 귀속으로 대신.
+- Agent home 대신 떠다니는 패널만(중급 b): 채팅이 1.0의 핵심이다. 위험했던 본문 제어를 뺐다.
+- Codex를 1.0에서 제외(중급 b·매니저): 범위다. 대신 정직하게: hook은 spike 확인 전엔 없음, 턴 중 입력 잠금.
+- ✗ run의 그림을 vault에 복사(PI): 동기화 충돌·용량. webhook과 SM 링크가 폰 뷰.
+- 별도 `<date>.sm.md`(전문가 a): 한 이야기 파일을 쪼갠다. embed 안내로 대신.
+- Stop now에 소유자 이름 타이핑(매니저): 인증 없는 마찰. 이름을 보이고 journal에 남기는 것이 강제 가능한 부분.
+- `human-running?` 줄 삭제(초보 a): 사실 줄로 바꿈.
+
+## 10. 남은 결정 (권고)
+
+1. 새 칩의 기본 모드 `ask-writes`(누군가 auto로 바꿀 때까지) — **권고: 채택.**
+2. journal 기본 위치 = 프로젝트 데이터 폴더 옆 `journal/` — **권고: 채택.**
+3. 저자 `unknown` 기본 + “이건 내가 돌렸어요” — **권고: 채택.**
+4. 규칙 0(문장은 절대 하드웨어를 시작하지 않음; 한 클릭 추가) — **권고: 채택.**
+5. 69시간(≈9일) 일정 — 양해 범위인지.
