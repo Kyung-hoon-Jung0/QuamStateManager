@@ -203,7 +203,8 @@ def tray():
              "source": c.source_file, "created": c.created, "deleted": c.deleted,
              "group": c.group_id, "actor": getattr(c, "actor", "human")} for i, c in enumerate(log)]
     return jsonify(ok=True, count=len(rows), seen_changes=len(rows), entries=rows,
-                   agent_count=sum(1 for x in rows if x["actor"] == "agent"),
+                   agent_count=sum(1 for x in rows if str(x["actor"]).startswith("by_")),
+                   human_count=sum(1 for x in rows if str(x["actor"]).startswith("human")),
                    live_diverged=_live_flag())
 
 

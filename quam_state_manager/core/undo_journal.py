@@ -123,6 +123,7 @@ def make_unit(entries: list[ChangeEntry], ts: float | None = None,
                 "source_file": e.source_file,
                 "created": bool(e.created),
                 "deleted": bool(e.deleted),
+                "actor": getattr(e, "actor", "human"),      # docs/173: who staged it
             }
             for e in entries
         ],

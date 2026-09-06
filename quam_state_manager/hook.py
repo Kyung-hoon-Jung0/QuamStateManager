@@ -110,11 +110,12 @@ def _state_path(ev: dict) -> str | None:
     return None
 
 
-def record(ev: dict) -> dict:
+def record(ev: dict, backend: str | None = None) -> dict:
     failed, code, err = _failure(ev)
     h = ev.get("hook_event_name")
     return {
         "ts": time.time(),
+        "backend": backend,                      # claude | codex -- from --backend in the hook command
         "hook_event_name": h,
         "session_id": ev.get("session_id"),
         "transcript_path": ev.get("transcript_path"),
@@ -142,7 +143,11 @@ def main() -> int:
         inst = agent_link.instance_dir()
     except Exception:  # noqa: BLE001
         return 0
-    rec = record(ev)
+    backend = None
+    if "--backend" in sys.argv[1:]:
+        i = sys.argv.index("--backend")
+        backend = sys.argv[i + 1].strip().lower() if i + 1 < len(sys.argv) else None
+    rec = record(ev, backend)
     # 1. disk first -- the record SM replays whether or not it was up
     try:
         d = inst / "agent_events"

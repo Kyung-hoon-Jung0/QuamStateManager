@@ -287,7 +287,8 @@ class TestTheDoorsKnowTheActor:
         c.post("/field/edit", data={"dot_path": f"qubits.qA1.{key}", "value": "2", "expect_chip": d["chip_token"]},
                headers=_H)
         tray = c.get("/api/agent/tray").get_json()
-        assert [e["actor"] for e in tray["entries"]] == ["agent", "human"] and tray["agent_count"] == 1
+        assert [e["actor"] for e in tray["entries"]] == ["by_agent", "human"]
+        assert tray["agent_count"] == 1 and tray["human_count"] == 1
 
     def test_state_and_tray_say_when_the_live_files_moved(self, loaded_client, synth_folder):
         c = loaded_client

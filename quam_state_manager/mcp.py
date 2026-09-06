@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from typing import Any
 
@@ -59,6 +60,8 @@ def _sm() -> agent_link.SMLink:
     if _link is not None and _link.alive():
         return _link
     _link = agent_link.connect()
+    if _link is not None:
+        _link.agent_id = _agent_id
     if _link is None:
         raise ToolError("State Manager is not running (or no window has been opened yet). "
                         "Start SM, open the chip, then call again. "
@@ -319,6 +322,25 @@ TOOLS: dict[str, tuple[dict, Any]] = {
 
 # -------------------------------------------------------------- protocol
 
+_agent_id = "agent"
+
+
+def _learn_client(params: dict) -> str:
+    """Which CLI is on the other end -- the actor SM stamps on every write.
+    ``clientInfo.name`` is what the MCP client says about itself."""
+    global _agent_id
+    name = str(((params or {}).get("clientInfo") or {}).get("name") or "").lower()
+    if "claude" in name:
+        _agent_id = "claude"
+    elif "codex" in name:
+        _agent_id = "codex"
+    elif name:
+        _agent_id = re.sub(r"[^a-z0-9]+", "", name)[:16] or "agent"
+    if _link is not None:
+        _link.agent_id = _agent_id
+    return _agent_id
+
+
 def _respond(msg_id, result=None, error=None) -> None:
     out: dict = {"jsonrpc": "2.0", "id": msg_id}
     if error is not None:
@@ -334,6 +356,7 @@ def handle(msg: dict) -> None:
     mid = msg.get("id")
     params = msg.get("params") or {}
     if method == "initialize":
+        _learn_client(params)
         _respond(mid, {"protocolVersion": params.get("protocolVersion") or PROTOCOL,
                        "capabilities": {"tools": {"listChanged": False}},
                        "serverInfo": SERVER,

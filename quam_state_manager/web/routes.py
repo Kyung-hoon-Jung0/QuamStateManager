@@ -512,6 +512,17 @@ def _ws() -> Workspace:
     return current_app.config["workspace"]
 
 
+def _request_actor() -> str:
+    """Who is pressing (docs/173 §0-6): the bridge names its CLI in
+    ``X-SM-Agent`` (``claude`` / ``codex`` / ``mcp``); a browser may name the
+    person at the keyboard in ``X-SM-Actor``; else plain ``human``."""
+    agent = (request.headers.get("X-SM-Agent") or "").strip().lower()
+    if agent:
+        return "by_" + (agent if agent not in ("mcp", "agent", "hook") else "agent")
+    who = (request.headers.get("X-SM-Actor") or request.cookies.get("sm_actor") or "").strip()
+    return f"human:{who}" if who else "human"
+
+
 def _active_ctx() -> dict[str, Any] | None:
     """Return the currently active context dict, or *None*."""
     name = current_app.config["active_context"]
@@ -6717,8 +6728,8 @@ def field_edit():
             raw_value = json.dumps(raw_value)
         parsed = _parse_for_target(modifier.store, target_path, raw_value)
         _entry = modifier.set_value(target_path, parsed)
-        if request.headers.get("X-SM-Agent") and hasattr(_entry, "actor"):
-            _entry.actor = "agent"            # docs/172: the bridge staged it
+        if hasattr(_entry, "actor"):
+            _entry.actor = _request_actor()   # docs/172-173: who staged it
         _invalidate_engine_cache(ctx)
     except _tp.TypeMismatchError as e:
         return jsonify(ok=False, error=str(e), **e.as_json()), 400
@@ -15062,7 +15073,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
         try:
             _hm = _history()
             _pre = _hm.check_and_snapshot(
-                ctx["path"], "auto", kind="backup",
+                ctx["path"], "auto", kind="backup", actor=_request_actor(),
                 defer_index=not current_app.config.get("TESTING"),
                 project=_scope_for(ctx["path"], ctx))
             if _pre is not None:
@@ -15195,7 +15206,8 @@ def state_apply_to_live():
         _stash_reapply(_capture_change_log_as_updates(store), ctx)
         _jrn_units = _journal_prepare(          # docs/107: outgoing log
             store, ctx,
-            meta={"src": "auto", "at": time.time()} if _auto else None)
+            meta={"src": "auto", "at": time.time(), "actor": _request_actor()} if _auto
+            else {"actor": _request_actor(), "plan_id": request.headers.get("X-SM-Plan") or None})
 
     if store.change_log:
         try:
@@ -15237,7 +15249,7 @@ def state_apply_to_live():
         try:
             _hm = _history()
             _pre = _hm.check_and_snapshot(
-                ctx["path"], "auto", kind="backup",
+                ctx["path"], "auto", kind="backup", actor=_request_actor(),
                 defer_index=not current_app.config.get("TESTING"),
                 project=_scope_for(ctx["path"], ctx))
             if _pre is not None:

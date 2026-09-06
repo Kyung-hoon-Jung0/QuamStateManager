@@ -818,6 +818,9 @@ class SnapshotMeta:
     # this via _SNAPSHOT_META_FIELDS; old snapshots without it go through
     # kind_for()'s legacy mapping. meta.json-only — no SQLite column.
     kind: str | None = None
+    # docs/173: WHO caused this snapshot -- "human:<name>", "by_claude",
+    # "by_codex", "sm", or None (recorded before actors existed -> "unknown").
+    actor: str | None = None
 
 
 # Legacy display mapping for snapshots captured before ``kind`` existed
@@ -1863,6 +1866,7 @@ class HistoryManager:
         defer_index: bool = False,
         project: str | None = None,
         kind: str | None = None,
+        actor: str | None = None,
     ) -> SnapshotMeta | None:
         """Create a snapshot if the state files changed (or if *force* is True).
 
@@ -1991,6 +1995,7 @@ class HistoryManager:
                 chip_swap_detected=swap_info,
                 project=project,
                 kind=kind,
+                actor=actor,
             )
             # Cache the new hash so subsequent calls in the same session see it,
             # and flush the sidecar so a fresh process starts hot (Phase 3 §2.3).
