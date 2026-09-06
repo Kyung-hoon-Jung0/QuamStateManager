@@ -282,7 +282,8 @@
 
 {# ── Section: Results ── #}
 <section class="ds-fv-section" data-fvsec="results">
-    {# Autofit diagnose (docs/56 GUI tier): before/after refit panel #}
+    {# Autofit diagnose (docs/56 GUI tier): before/after refit panel -- docs/172: experimental only #}
+    {% if experimental %}
     <div class="autofit-diag-bar">
         <button type="button" class="btn-sm outline"
                 hx-post="/dataset/{{ uid }}/autofit-diagnose"
@@ -293,6 +294,7 @@
         <span id="autofit-diag-busy" class="htmx-indicator muted">re-fitting in the QM env… (up to ~1 min)</span>
     </div>
     <div id="autofit-diag-slot"></div>
+    {% endif %}
     {% if run.fit_results %}
         {% for qname, qresults in run.fit_results.items() %}
         {% set qtargets = (fit_targets or {}).get(qname, {}) %}

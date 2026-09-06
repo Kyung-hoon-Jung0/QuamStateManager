@@ -1,0 +1,324 @@
+"""SM as an MCP server for a terminal agent (docs/172).
+
+    claude mcp add sm -- python -m quam_state_manager.mcp
+
+A stdio JSON-RPC server, stdlib only (the customer env has no ``mcp``
+package), that is a THIN CLIENT of the running State Manager window: every
+tool is one HTTP call to ``/api/agent/*`` or to the same routes the GUI
+presses. The window owns the working copy; this process owns nothing.
+
+What that buys the person at the terminal: every value the agent reads is
+the value SM shows, every edit lands in SM's Review tray where Ctrl+Z and
+the Versions panel already know it, and ``apply_to_live`` refuses -- with
+the paths -- when a human edited something in the window the agent never
+saw (docs/120's gate), instead of forcing.
+
+Protocol surface: initialize, notifications/initialized, ping, tools/list,
+tools/call. Newline-delimited JSON on stdio.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+from typing import Any
+
+from quam_state_manager.core import agent_link
+
+PROTOCOL = "2025-06-18"
+SERVER = {"name": "quam-state-manager", "version": "1.0.0"}
+
+_link: agent_link.SMLink | None = None
+# docs/120's rule, applied to the agent: a press means what the presser could
+# see. The tray count the agent last SAW (via tray / state_edit / undo) is
+# what apply_to_live declares -- never a fresh read the agent never looked at.
+_seen: int | None = None
+
+
+def _sm() -> agent_link.SMLink:
+    global _link
+    if _link is not None and _link.alive():
+        return _link
+    _link = agent_link.connect()
+    if _link is None:
+        raise ToolError("State Manager is not running (or no window has been opened yet). "
+                        "Start SM, open the chip, then call again. "
+                        f"Looked in {agent_link.instance_dir() / 'instances'}; set SM_URL to override.")
+    return _link
+
+
+class ToolError(Exception):
+    pass
+
+
+def _ok(code: int, body: Any, *, expect=(200,)) -> Any:
+    if code in expect:
+        return body
+    if isinstance(body, dict):
+        raise ToolError(json.dumps({"http": code, **body}, default=str))
+    text = body if isinstance(body, str) else json.dumps(body, default=str)
+    raise ToolError(f"HTTP {code}: {text[:800]}")
+
+
+# ------------------------------------------------------------------ tools
+
+def t_sm_status(_a: dict) -> Any:
+    return _ok(*_sm().get("/api/agent/chip"))
+
+
+def t_state_get(a: dict) -> Any:
+    return _ok(*_sm().get("/api/agent/state", {"path": a.get("path", "")}))
+
+
+def t_state_search(a: dict) -> Any:
+    return _ok(*_sm().get("/api/search", {"q": a["query"], "limit": int(a.get("limit") or 30)}))
+
+
+def t_state_edit(a: dict) -> Any:
+    """Stage one edit through /field/edit -- the same door as a cell edit.
+    A 409 is an OFFER (type fix, FSP compensation) that the agent answers
+    by calling again with the named ack; it is returned verbatim."""
+    sm = _sm()
+    chip = _ok(*sm.get("/api/agent/chip"))
+    if not chip.get("loaded"):
+        raise ToolError("no chip is loaded in SM")
+    value = a["value"]
+    if not isinstance(value, str):
+        value = json.dumps(value)
+    form = {"dot_path": a["path"], "value": value, "expect_chip": chip.get("chip_token") or None,
+            "type_fix": a.get("type_fix"), "fsp_ack": a.get("fsp_ack")}
+    code, body = sm.post_form("/field/edit", form)
+    if code == 409:
+        return {"staged": False, "needs_answer": True, "offer": body,
+                "how": "call state_edit again with type_fix='convert'|'keep' or fsp_ack='comp'|'solo' as the offer names"}
+    if code != 200:
+        _ok(code, body)
+    tray = _tray_seen()
+    return {"staged": True, "pending": tray["count"],
+            "entry": tray["entries"][-1] if tray["entries"] else None,
+            "note": "staged in SM's Review tray; nothing reached the chip. Call apply_to_live to write."}
+
+
+def _tray_seen() -> Any:
+    global _seen
+    tray = _ok(*_sm().get("/api/agent/tray"))
+    _seen = int(tray.get("seen_changes") or 0)
+    return tray
+
+
+def t_tray(_a: dict) -> Any:
+    return _tray_seen()
+
+
+def t_undo(_a: dict) -> Any:
+    sm = _sm()
+    code, body = sm.post_form("/undo", {})
+    _ok(code, body, expect=(200, 204))
+    return _tray_seen()
+
+
+def t_apply_to_live(_a: dict) -> Any:
+    """Push the tray to the chip. Declares what the agent has seen so a human
+    edit made in the window since is refused, never silently included."""
+    global _seen
+    sm = _sm()
+    if _seen is None:
+        return {"applied": False, "note": "call tray first -- apply writes only what you have seen"}
+    chip = _ok(*sm.get("/api/agent/chip"))
+    if int(chip.get("pending") or 0) == 0:
+        _seen = 0
+        return {"applied": False, "note": "nothing staged"}
+    declared = _seen
+    code, body = sm.post_form("/state/apply-to-live",
+                              {"seen_changes": declared, "expect_chip": chip.get("chip_token") or None})
+    if code == 409:
+        _seen = None                        # the picture changed; look again before pressing
+        return {"applied": False, "refused": body,
+                "how": "a human edited the chip in the SM window since you last looked (paths above). "
+                       "Call tray to read the full list, then apply_to_live again if you accept ALL of it, "
+                       "or undo yours. Never force."}
+    _ok(code, body)
+    after = _ok(*sm.get("/api/agent/chip"))
+    _seen = 0
+    return {"applied": True, "pending_after": after.get("pending"), "live_diverged": after.get("live_diverged"),
+            "declared_seen": declared}
+
+
+def t_versions(a: dict) -> Any:
+    return _ok(*_sm().get("/api/agent/versions", {"n": int(a.get("n") or 30)}))
+
+
+def t_field_history(a: dict) -> Any:
+    return _ok(*_sm().get("/api/agent/field-history", {"path": a["path"]}))
+
+
+def t_runs(a: dict) -> Any:
+    return _ok(*_sm().get("/api/agent/runs", {"n": int(a.get("n") or 20), "experiment": a.get("experiment"),
+                                               "qubit": a.get("qubit"), "date": a.get("date")}))
+
+
+def t_run(a: dict) -> Any:
+    return _ok(*_sm().get(f"/api/agent/run/{int(a['run_id'])}"))
+
+
+def t_diagnostics(_a: dict) -> Any:
+    return _ok(*_sm().get("/api/agent/diagnostics"))
+
+
+def t_check_fit(a: dict) -> Any:
+    return _ok(*_sm().get(f"/api/agent/check-fit/{int(a['run_id'])}"))
+
+
+def t_families(_a: dict) -> Any:
+    return _ok(*_sm().get("/api/agent/families"))
+
+
+def t_family_manual(a: dict) -> Any:
+    return _ok(*_sm().get(f"/api/agent/manual/{a['family']}"))
+
+
+def t_journal_append(a: dict) -> Any:
+    return _ok(*_sm().post_json("/api/agent/journal", {
+        "kind": "agent", "text": a["text"], "reason": a["reason"],
+        "run_id": a.get("run_id"), "paths": a.get("paths") or []}))
+
+
+def t_journal_read(a: dict) -> Any:
+    return _ok(*_sm().get("/api/agent/journal", {"date": a.get("date")}))
+
+
+def t_note_set(a: dict) -> Any:
+    return _ok(*_sm().post_json("/api/agent/note", {"subject": a["subject"], "text": a["text"],
+                                                    "author": "claude-code"}))
+
+
+def _s(desc: str, **props) -> dict:
+    req = [k for k, v in props.items() if v.pop("required", False)]
+    return {"description": desc, "inputSchema": {"type": "object", "properties": props, "required": req}}
+
+
+TOOLS: dict[str, tuple[dict, Any]] = {
+    "sm_status": (_s("What chip is open in the State Manager, its qubits/pairs, how many edits are staged, "
+                     "whether the live files drifted, and what the agent hook says is running now."), t_sm_status),
+    "state_get": (_s("Read one value (raw + pointer-resolved) or list a subtree's keys of the open state.json/wiring.json. "
+                     "Path is dotted: qubits.q1.xy.operations.x180.amplitude. Empty path = top-level keys.",
+                     path={"type": "string", "required": True}), t_state_get),
+    "state_search": (_s("Search every leaf of the open state by key/value text (space = AND, | = OR).",
+                        query={"type": "string", "required": True}, limit={"type": "integer"}), t_state_search),
+    "state_edit": (_s("STAGE one edit into SM's Review tray (nothing reaches the chip until apply_to_live). "
+                      "Value may be a number, string, bool, null, list or dict. A 409 offer (type fix, FSP "
+                      "amplitude compensation) is returned for you to answer via type_fix / fsp_ack.",
+                      path={"type": "string", "required": True}, value={"required": True},
+                      type_fix={"type": "string", "enum": ["convert", "keep"]},
+                      fsp_ack={"type": "string", "enum": ["comp", "solo"]}), t_state_edit),
+    "tray": (_s("The staged edits waiting in SM's Review tray."), t_tray),
+    "undo": (_s("Undo the most recent staged group (the same Ctrl+Z the human has)."), t_undo),
+    "apply_to_live": (_s("Write the staged tray to the live state.json/wiring.json through SM's one door. "
+                         "Refuses if a human edited something in the SM window you have not seen; never forces."),
+                      t_apply_to_live),
+    "versions": (_s("Recent state snapshots (versions) of the open chip: when, what triggered them, which run.",
+                    n={"type": "integer"}), t_versions),
+    "field_history": (_s("Change-point history of ONE dotted path across snapshots and runs.",
+                         path={"type": "string", "required": True}), t_field_history),
+    "runs": (_s("Recent experiment runs in the open dataset folder (newest first). Filter by node name, qubit, date.",
+                n={"type": "integer"}, experiment={"type": "string"}, qubit={"type": "string"},
+                date={"type": "string"}), t_runs),
+    "run": (_s("One run in full: parameters, outcomes, fit results, and the absolute paths of its figures, "
+               "node.json, data.json, ds_raw.h5 -- Read the figure PNG yourself to look at it.",
+               run_id={"type": "integer", "required": True}), t_run),
+    "diagnostics": (_s("SM's lint of the open chip: env-schema mismatches, dangling pointers, type problems, physics checks."),
+                    t_diagnostics),
+    "check_fit": (_s("Deterministic sanity gates over one saved run's fit: outcome, physical bands, raw-data feature "
+                     "presence, metric consistency. Pass/suspect/fail per target with reasons. No model involved.",
+                     run_id={"type": "integer", "required": True}), t_check_fit),
+    "families": (_s("The calibration families SM knows (node name -> family) and which have a case manual."), t_families),
+    "family_manual": (_s("The lab's case manual for a family: each figure shape's geometry, what it means, what to do. "
+                         "Qualitative by construction.", family={"type": "string", "required": True}), t_family_manual),
+    "journal_append": (_s("Write to the calibration journal SM renders for the human (a plain .md in their folder). "
+                          "Call it BEFORE running a node and AFTER deciding: text = what you did/are doing, "
+                          "reason = WHY (what you saw, what you expect). Link the run and the paths you touched.",
+                          text={"type": "string", "required": True}, reason={"type": "string", "required": True},
+                          run_id={"type": "integer"}, paths={"type": "array", "items": {"type": "string"}}),
+                       t_journal_append),
+    "journal_read": (_s("Read today's (or a given day's) journal for the open chip.",
+                        date={"type": "string", "description": "YYYY-MM-DD"}), t_journal_read),
+    "note_set": (_s("Pin a note on a qubit, pair or dotted path (shown on its row in SM), e.g. why a value was left alone.",
+                    subject={"type": "string", "required": True}, text={"type": "string", "required": True}),
+                 t_note_set),
+}
+
+
+# -------------------------------------------------------------- protocol
+
+def _respond(msg_id, result=None, error=None) -> None:
+    out: dict = {"jsonrpc": "2.0", "id": msg_id}
+    if error is not None:
+        out["error"] = error
+    else:
+        out["result"] = result
+    sys.stdout.write(json.dumps(out, default=str) + "\n")
+    sys.stdout.flush()
+
+
+def handle(msg: dict) -> None:
+    method = msg.get("method")
+    mid = msg.get("id")
+    params = msg.get("params") or {}
+    if method == "initialize":
+        _respond(mid, {"protocolVersion": params.get("protocolVersion") or PROTOCOL,
+                       "capabilities": {"tools": {"listChanged": False}},
+                       "serverInfo": SERVER,
+                       "instructions": ("QUAM State Manager: the chip's state, runs, figures and history, and the "
+                                        "ONE safe door to write state. Read with state_get/runs/run; stage with "
+                                        "state_edit; write with apply_to_live; keep the human's journal with "
+                                        "journal_append (reason required) before every node you run.")})
+    elif method == "notifications/initialized" or (method or "").startswith("notifications/"):
+        return
+    elif method == "ping":
+        _respond(mid, {})
+    elif method == "tools/list":
+        _respond(mid, {"tools": [{"name": n, **spec} for n, (spec, _) in TOOLS.items()]})
+    elif method == "tools/call":
+        name = params.get("name")
+        args = params.get("arguments") or {}
+        if name not in TOOLS:
+            _respond(mid, error={"code": -32601, "message": f"unknown tool {name!r}"})
+            return
+        try:
+            result = TOOLS[name][1](args)
+            text = json.dumps(result, indent=1, default=str)
+            _respond(mid, {"content": [{"type": "text", "text": text}], "isError": False})
+        except ToolError as exc:
+            _respond(mid, {"content": [{"type": "text", "text": str(exc)}], "isError": True})
+        except (KeyError, TypeError, ValueError) as exc:
+            _respond(mid, {"content": [{"type": "text", "text": f"bad arguments: {exc!r}"}], "isError": True})
+        except Exception as exc:  # noqa: BLE001 -- a tool crash must not kill the server
+            _respond(mid, {"content": [{"type": "text", "text": f"tool failed: {exc!r}"}], "isError": True})
+    elif mid is not None:
+        _respond(mid, error={"code": -32601, "message": f"method not found: {method}"})
+
+
+def main() -> None:
+    os.environ.setdefault("PYTHONUTF8", "1")
+    stdin = sys.stdin.buffer
+    while True:
+        line = stdin.readline()
+        if not line:
+            break
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            msg = json.loads(line.decode("utf-8"))
+        except ValueError:
+            continue
+        if isinstance(msg, list):
+            for m in msg:
+                handle(m)
+        elif isinstance(msg, dict):
+            handle(msg)
+
+
+if __name__ == "__main__":
+    main()

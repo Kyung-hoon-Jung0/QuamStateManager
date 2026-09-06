@@ -197,6 +197,7 @@
                 {# Scheduler-running badge. Hidden unless a queue is running/paused
                    (set by the global poll below). Editing is locked server-side
                    while running; this is the visible signal. #}
+                {% if experimental %}
                 <li id="scheduler-badge" class="scheduler-badge" hidden aria-live="polite">
                     <a href="/scheduler" hx-get="/scheduler" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
                        class="scheduler-badge-link" title="Experiment Runner — click to view">
@@ -205,6 +206,7 @@
                         <span class="scheduler-badge-count"></span>
                     </a>
                 </li>
+                {% endif %}
             </ul>
             <ul class="topbar-right">
                 <li class="search-box">
@@ -567,7 +569,10 @@
                     {# Execution trio (r15 renames — routes/page tokens unchanged):
                        Experiment Runner = queue + run nodes on hardware (docs/40);
                        Fit Replay = read-only re-check of already-saved fits (docs/50);
-                       Auto Calibrate = unattended run→fit→verify→apply loop (docs/56). #}
+                       Auto Calibrate = unattended run→fit→verify→apply loop (docs/56).
+                       docs/172: shown only under SM_EXPERIMENTAL=1 -- users calibrate
+                       from a terminal agent now; SM is its eyes and hands. #}
+                    {% if experimental %}
                     <li><a href="/scheduler" hx-get="/scheduler" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
                            {% if page == 'scheduler' %}class="active"{% endif %}>Experiment Runner</a></li>
                     <li><a href="/fit-audit" hx-get="/fit-audit" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
@@ -575,6 +580,7 @@
                     <li><a href="/autofit" hx-get="/autofit" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
                            {% if page == 'autofit' %}class="active"{% endif %}>Auto Calibrate
                            <span id="autofit-nav-badge" class="autofit-nav-badge" hidden></span></a></li>
+                    {% endif %}
                 </ul>
             </nav>
             <hr class="sidebar-section-divider">
@@ -1120,9 +1126,11 @@
                 {"label": "Pulses",            "url": "/pulses"},
                 {"label": "State History",     "url": "/state-history"},
                 {"label": "Param History",     "url": "/param-history"},
+                {% if experimental %}
                 {"label": "Experiment Runner", "url": "/scheduler"},
                 {"label": "Fit Replay",        "url": "/fit-audit"},
                 {"label": "Auto Calibrate",    "url": "/autofit"},
+                {% endif %}
                 {"label": "Datasets",          "url": "/datasets"},
                 {"label": "Collections",       "url": "/collections"},
                 {"label": "Trends",            "url": "/trends"}

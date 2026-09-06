@@ -604,6 +604,14 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     app.jinja_env.filters["diag_domain"] = _diagnostics.domain_of
     app.jinja_env.globals["diag_domains"] = _diagnostics.DIAG_DOMAINS
 
+    # docs/172: the execution trio (Experiment Runner / Fit Replay / Auto
+    # Calibrate) is hidden from every navigation surface unless the operator
+    # opts in. Routes stay registered -- code kept, menus gone. Read per
+    # render so a test can flip it with monkeypatch.setenv.
+    @app.context_processor
+    def _experimental_flag():
+        return {"experimental": os.environ.get("SM_EXPERIMENTAL") == "1"}
+
     # Phase 4 §3 — register CSRF origin check + defense-in-depth
     # response headers. Both are wired at the app level (not the
     # blueprint) so every route, including any future blueprints, is
@@ -724,5 +732,8 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
 
     from quam_state_manager.web.routes import bp
     app.register_blueprint(bp)
+    # docs/172: the JSON door for a terminal agent / the MCP bridge / the hook
+    from quam_state_manager.web.agent_api import agent_bp
+    app.register_blueprint(agent_bp)
 
     return app
