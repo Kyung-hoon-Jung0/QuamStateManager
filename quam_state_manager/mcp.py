@@ -265,6 +265,16 @@ def _s(desc: str, **props) -> dict:
     return {"description": desc, "inputSchema": {"type": "object", "properties": props, "required": req}}
 
 
+# docs/173 §3.3: a QUESTION never writes. With SM_MCP_MODE=readonly the bridge
+# lists and allows only the read tools -- mechanical, the same for every CLI.
+READ_ONLY = os.environ.get("SM_MCP_MODE", "").strip().lower() == "readonly"
+WRITE_TOOLS = frozenset({"state_edit", "apply_to_live", "undo", "take_live", "note_set", "journal_append", "run_node"})
+
+
+def _visible_tools() -> dict:
+    return {n: t for n, t in TOOLS.items() if not (READ_ONLY and n in WRITE_TOOLS)}
+
+
 TOOLS: dict[str, tuple[dict, Any]] = {
     "sm_status": (_s("What chip is open in the State Manager, its qubits/pairs, how many edits are staged, "
                      "whether the live files drifted, and what the agent hook says is running now."), t_sm_status),
@@ -371,11 +381,15 @@ def handle(msg: dict) -> None:
     elif method == "ping":
         _respond(mid, {})
     elif method == "tools/list":
-        _respond(mid, {"tools": [{"name": n, **spec} for n, (spec, _) in TOOLS.items()]})
+        _respond(mid, {"tools": [{"name": n, **spec} for n, (spec, _) in _visible_tools().items()]})
     elif method == "tools/call":
         name = params.get("name")
         args = params.get("arguments") or {}
-        if name not in TOOLS:
+        if name not in _visible_tools():
+            if name in TOOLS:
+                _respond(mid, {"content": [{"type": "text", "text": f"{name} is not available in a read-only session"}],
+                               "isError": True})
+                return
             _respond(mid, error={"code": -32601, "message": f"unknown tool {name!r}"})
             return
         try:

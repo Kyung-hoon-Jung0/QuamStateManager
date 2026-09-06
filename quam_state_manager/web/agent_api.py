@@ -564,6 +564,8 @@ def _chip_for_event(rec: dict) -> str:
     """Which chip's journal an event belongs to. Named by the session's own
     state path when it says one (matching the open chip -> the open chip's
     name), else the open chip, else 'unassigned' -- never an invented name."""
+    if rec.get("origin") in ("chat", "ask") and rec.get("chip") and rec.get("chip") != _UNASSIGNED:
+        return str(rec["chip"])                  # the chat knows which chip it was started on
     r = _r()
     active = r._active_path()
     sp = rec.get("quam_state_path")
@@ -621,8 +623,11 @@ def _journal_line(rec: dict) -> tuple[str | None, int | None]:
     tool = rec.get("tool_name") or ""
     s = rec.get("summary") or ""
     if h == "Stop":
+        if rec.get("stopped"):
+            return None, None                     # the human's Stop is journaled by the door that pressed it
         if s and journal_mod.settings(current_app.instance_path)["claude_says"]:
-            return "Claude: " + s.replace("\n", " ")[:600], None
+            who = "Codex" if (rec.get("backend") or "") == "codex" else "Claude"
+            return f"{who}: " + s.replace("\n", " ")[:600], None
         return None, None
     if h not in ("PostToolUse", "PostToolUseFailure"):
         return None, None
@@ -801,10 +806,9 @@ def _now_state() -> dict:
                 limited_until = e.get("limited_until") or limited_until or True
     if base["waiting"]:
         return {**base, "state": "waiting"}
-    if limited_until and (limited_until is True or float(limited_until) > now):
-        resets = None
-        if limited_until is not True:
-            resets = datetime.fromtimestamp(float(limited_until)).strftime("%H:%M")
+    lim_ts, lim_text = _limit_until(limited_until)
+    if lim_ts is True or (lim_ts and lim_ts > now):
+        resets = lim_text if lim_ts is True else datetime.fromtimestamp(lim_ts).strftime("%H:%M")
         return {**base, "state": "limited", "limited_resets": resets}
     human = _human_ran_recently(now, agent_runs, ev)
     if not sessions:
@@ -854,6 +858,23 @@ def _now_state() -> dict:
             "last_message": (last_stop or {}).get("summary") if last_stop else None,
             "events_today": sum(1 for e in es if float(e.get("ts") or 0) >= day_start),
             "human_ran": human, "chip": _chip_for_event(last)}
+
+
+def _limit_until(v):
+    """(timestamp | True | None, text). A float is a reset time; True means
+    limited with no known reset; a clock string the CLI printed is parsed,
+    and kept as text when it cannot be."""
+    if not v:
+        return None, None
+    if v is True:
+        return True, None
+    try:
+        return float(v), None
+    except (TypeError, ValueError):
+        pass
+    from quam_state_manager.core import agent_backend
+    ts = agent_backend.reset_timestamp(str(v))
+    return (ts, None) if ts else (True, str(v))
 
 
 def _waiting_count() -> int:
@@ -933,6 +954,12 @@ def session_stop():
     rec = agent_session.request_stop(current_app.instance_path, _chip_name(), who=r._request_actor(), mode=mode)
     if rec is None:
         return _err("no agent session on this chip", 409)
+    mgr = current_app.config.get("agent_chat")
+    if mgr is not None:
+        try:
+            mgr.stop(_chip_name(), now=(mode == "now"))   # recorded first (above), killed second
+        except Exception:  # noqa: BLE001
+            logger.debug("chat stop failed", exc_info=True)
     journal_mod.append(current_app.instance_path, _chip_name(),
                        f"Stop ({'now' if mode == 'now' else 'after this run'}) pressed by {r._request_actor()}", kind="sm")
     _bump()

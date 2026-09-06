@@ -295,3 +295,31 @@ pill 텍스트에 현재 모드. 예약(소유자·종료 예정)은 pill 옆 �
 3. 저자 `unknown` 기본 + “이건 내가 돌렸어요” — **권고: 채택.**
 4. 규칙 0(문장은 절대 하드웨어를 시작하지 않음; 한 클릭 추가) — **권고: 채택.**
 5. 69시간(≈9일) 일정 — 양해 범위인지.
+
+## 11. 구현 기록 (브랜치 `feat/agent-cockpit`, main은 0.9.9 그대로)
+
+### S1–S3b (커밋 afc3dd7 · c87f12b · 2262d62, 2026-09-06)
+
+- S1 `core/story.py`: run 카드 = DatasetStore 위에 journal 줄(`#run` 또는 시간창)과 undo unit·스냅샷 change point를 붙인 것. 저자 사다리 claimed > SM-ran > hook-inferred > `unknown`(qualibrate라고 짐작하지 않음). 게이트는 그 run 자신의 `quam_state/state.json`에 anchor, `GATES_REV`로 캐시. 모든 기록에 actor(`by_claude`/`by_codex`/`human:<이름>`/`human`).
+- S2 `/journal` Calibration log 페이지(사이드바 최상위, Param History가 아래), 필터·claim·adopt·raw. 실제 467 run 위에서 확인.
+- S3/S3b `agent-pill.js`(우선순위 waiting > limited > stalled > failed > running > between > human-ran > idle; 한 번의 wake = `RunWatcher.bump` + `agent_seq`), `core/agent_session.py`, `core/limits.py`(새 칩 `ask-writes`, stop_by, max_delta → hold, webhook). 실제 hook 이벤트에 266 ms.
+
+### S4 — 채팅 백엔드·세션 매니저·라우트 (2026-09-06)
+
+**들어간 것.** `core/agent_backend.py`(Claude `-p --input-format stream-json --output-format stream-json`, Codex `exec --json`; 한 가지 정규화 이벤트 모양 Init/PreToolUse/PostToolUse(Failure)/Text/Result/Stop/Error; usage·limited 감지; `AgentProcess` = 프로세스 하나 + 리더 스레드) · `core/agent_chat.py`(칩당 모는 세션 하나: Claude는 프로세스 하나가 대화 전체, Codex는 턴마다 프로세스 + `resume <thread>`, 턴 중 메시지는 큐; 읽기 전용 질문은 별도 단발 프로세스; Flask를 모름) · `web/chat_api.py`(`/api/agent/chat/backends|status|start|send|end|events|ask|ask/<id>`; 모든 이벤트는 hook이 쓰는 같은 `agent_events/<날>.jsonl`에 **디스크 먼저**, 그다음 링·journal 줄·wake 한 번) · `mcp.py` READ_ONLY 모드(`SM_MCP_MODE=readonly`: 쓰기 도구 7개가 목록에서 사라짐) · `agent_api` 변경(세션 Stop 문이 `now`면 프로세스 트리 kill, chat 이벤트는 자기 칩을 앎, `limited_until` 문자열 관용) · `tests/fake_agent_cli.py`(두 방언을 말하는 가짜 CLI: FAKE_FAIL/LIMIT/CRASH/TOOL/ECHO_STDIN/LINGER) · `test_agent_backend`(16) · `test_chat_api`(26).
+
+**실 CLI가 찾아낸 것(전부 PJ 사본 위, 실제 칩은 읽기만).**
+
+1. Windows에서 npm `.cmd` 셔임(codex) 경유, 또는 `shell=True`면 argv 원소 안의 **개행에서 명령줄 전체가 잘린다**. 측정: `["a", "line1\nline2", 'q"uote', "x"]` → 자식은 `["a", "line1"]`. Claude의 `--append-system-prompt`도 같은 길이었다. → Codex 프롬프트는 stdin(`codex exec`는 인자가 없으면 stdin을 읽는다 — 도움말 그대로), exe는 `shutil.which`로 해석해 shell 없이 실행(`.cmd`도 CreateProcess가 돈다 — 측정), 셔임이면 남은 argv의 개행을 공백으로(`resolve_command`).
+2. `-c mcp_servers.sm.env={PYTHONPATH="D:\work\…"}`: TOML basic string에서 `\w`는 **잘못된 이스케이프** → Codex는 값 전체를 raw string으로 읽고 `Error loading config.toml: invalid type: string`으로 자기 설정을 거부했다(spike는 슬래시 경로였다). → `toml_str`: 리터럴 문자열 `'…'`, 따옴표가 든 값만 basic string 이스케이프. `tomllib` 왕복 핀.
+3. Codex 프로세스는 `turn.completed` 뒤 **잠깐 더 산다**. 그 순간 보낸 메시지는 큐에 들어가고 Stop 이벤트는 이미 지나가 영원히 안 나갔다(180 s 타임아웃). → `AgentProcess.on_exit` 콜백이 큐를 배출. 가짜 CLI의 `FAKE_LINGER=1`이 그 상태를 재현.
+4. calibrations 폴더가 없을 때 cwd가 **서버의 cwd(= SM 저장소)**였다. Claude는 저장소의 CLAUDE.md를 랩의 것으로 읽고 Bash로 `claude -p`를 직접 띄우려 3분을 썼다. → 빈 `instance/agent_home`이 기본 cwd. SM 저장소는 절대 아니다.
+5. 재시작 후 링이 어제·오늘의 chat 이벤트를 **옛 `n`으로 재생**하는데 카운터는 1부터 → `after=`를 든 클라이언트에 새 이벤트가 하나도 안 보였다(세 턴이 보이지 않았다). → 카운터는 링의 최대 n에서 시작.
+6. haiku는 MCP 도구가 바로 있어도 먼저 ToolSearch/Bash로 우회를 시도한다(3회 중 3회; `python -m quam_state_manager.mcp sm_status`, `claude -p --tool …`). 규칙 한 줄 추가("mcp__sm__*는 이미 있다 — Bash·python -m·다른 claude/codex로 부르지 마라"). 완전히 사라지진 않을 것이다 — S6 카드가 Bash 우회를 눈에 띄게 보여준다.
+7. `_limited`가 돌려주는 시각 문자열("2:50pm")이 pill의 `float()`에 들어가면 500이었다 → `reset_timestamp`(오늘, 지났으면 내일) + `_limit_until`(못 읽으면 문자열 그대로 보임).
+
+**시간(실 CLI, PJ 사본, Claude haiku / Codex 기본).** Claude 1턴 16.2 s(ToolSearch → sm_status → journal_append → 한 줄 답), 2턴 2.1 s(컨텍스트 유지), 읽기 전용 질문 12–20 s(state_edit 없음을 스스로 말함). Codex 1턴 22.2 s, 2턴 `resume`으로 컨텍스트 유지, 질문 21–24 s(`--approve-for-me` + `SM_MCP_MODE=readonly`; "read tools에 제한돼 바꿀 수 없다"). end 뒤 프로세스 소멸, Stop now 뒤 Stop 이벤트 `stopped=True`. **4차(모든 수정 뒤, 실패 0):** Claude 1턴 7.9 s(Bash 우회 없이 ToolSearch → sm_status → journal_append), 2턴 1.8 s; Codex 1턴 22.2 s, 2턴 6.1 s(같은 thread로 resume, 큐 `0`); 질문 Claude 11.2 s / Codex 19.3 s. 앞의 세 실행(1–3차)이 위 결함 1–6을 하나씩 드러냈다 — 실 CLI 없이는 어느 것도 픽스처에서 나오지 않았다.
+
+**Mutation.** 1라운드 26개 중 23 RED. GREEN 셋은 모두 **픽스처가 그 상태에 못 닿은 것**(문 없이 쓰인 stop 플래그의 배출 거부, 가짜 CLI가 시스템 프롬프트를 볼 수 없었음, `claude_says` 기본 OFF라 "사람의 Stop을 에이전트 말로 적지 않는다" 핀이 공허) → 픽스처를 넣고 7/7, 종료 콜백·home 4/4, 커서 1/1. **38/38.**
+
+**S4에서 뒤로 넘긴 것.** `--include-partial-messages`(S6 패널의 글자 스트리밍) · 터미널 Codex hook 페이로드(pill 툴팁 `idle · 추적 안 됨`, S6/S8) · `agent_says` 기본 ON + `by_claude`/`by_codex` 라벨(S8; 지금은 기본 OFF, `Claude:`/`Codex:` 접두만) · 세션의 칩 점유를 쓰기 도구 첫 호출로(S5) · 남의 세션 Stop 확인 문구(S6) · PyInstaller 번들에서 MCP 서버의 python(`sys.executable`이 exe가 됨; S7 설정에서 env python으로).

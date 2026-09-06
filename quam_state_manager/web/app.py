@@ -738,5 +738,8 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     # docs/173: the Calibration log page
     from quam_state_manager.web.journal_routes import journal_bp
     app.register_blueprint(journal_bp)
+    # docs/173 S4: the chat inside SM (driving session + read-only questions)
+    from quam_state_manager.web.chat_api import chat_bp
+    app.register_blueprint(chat_bp)
 
     return app

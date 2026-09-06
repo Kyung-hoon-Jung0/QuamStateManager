@@ -192,6 +192,27 @@ class TestNoServer:
             mcp._sm()
 
 
+class TestReadOnlyMode:
+    def test_a_readonly_bridge_lists_and_allows_only_the_read_tools(self, tmp_path):
+        env = dict(os.environ, PYTHONUTF8="1", SM_INSTANCE=str(tmp_path), PYTHONPATH=str(ROOT), SM_MCP_MODE="readonly")
+        env.pop("SM_URL", None)
+        p = subprocess.Popen([sys.executable, "-m", "quam_state_manager.mcp"], stdin=subprocess.PIPE,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
+                             env=env, cwd=str(ROOT))
+        msgs = [{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+                {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+                {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "state_edit", "arguments": {"path": "a", "value": 1}}},
+                {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "apply_to_live", "arguments": {}}}]
+        out, err = p.communicate("\n".join(json.dumps(m) for m in msgs) + "\n", timeout=60)
+        assert p.returncode == 0, err
+        replies = {r["id"]: r for r in (json.loads(l) for l in out.splitlines() if l.strip())}
+        names = {t["name"] for t in replies[2]["result"]["tools"]}
+        assert "state_get" in names and "runs" in names and "check_fit" in names
+        assert not ({"state_edit", "apply_to_live", "undo", "take_live", "journal_append", "note_set"} & names)
+        for i in (3, 4):
+            assert replies[i]["result"]["isError"] is True and "read-only" in replies[i]["result"]["content"][0]["text"]
+
+
 class TestProtocolOverStdio:
     def test_initialize_list_call_and_ping(self, tmp_path):
         env = dict(os.environ, PYTHONUTF8="1", SM_INSTANCE=str(tmp_path), PYTHONPATH=str(ROOT))
