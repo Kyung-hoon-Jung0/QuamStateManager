@@ -21706,7 +21706,7 @@ def datasets_wait():
         # carries a real cursor, so the FIRST change on a fresh server (tick
         # 0 -> 1) is reported as the change it is.
         tick = w.wait(w.tick, 0.0)
-        resp = jsonify({"tick": tick, "changed": False, "roots": len(w.roots)})
+        resp = jsonify({"agent_seq": int(current_app.config.get("agent_seq") or 0), "tick": tick, "changed": False, "roots": len(w.roots)})
         resp.headers["Cache-Control"] = "no-store"
         return resp
     # docs/141 4ac (CRITICAL): bound how many of these can block at once. A
@@ -21725,7 +21725,7 @@ def datasets_wait():
     slots = _wait_slots()
     if not slots.acquire(blocking=False):
         time.sleep(min(_WAIT_SATURATED_FLOOR_S, max(0.0, timeout)))
-        resp = jsonify({"tick": w.tick, "changed": False,
+        resp = jsonify({"agent_seq": int(current_app.config.get("agent_seq") or 0), "tick": w.tick, "changed": False,
                         "roots": len(w.roots), "saturated": True})
         resp.headers["Cache-Control"] = "no-store"
         return resp
@@ -21733,7 +21733,7 @@ def datasets_wait():
         tick = w.wait(since, timeout)
     finally:
         slots.release()
-    resp = jsonify({"tick": tick, "changed": tick != since, "roots": len(w.roots)})
+    resp = jsonify({"agent_seq": int(current_app.config.get("agent_seq") or 0), "tick": tick, "changed": tick != since, "roots": len(w.roots)})
     resp.headers["Cache-Control"] = "no-store"
     return resp
 

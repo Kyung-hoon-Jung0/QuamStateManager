@@ -25,7 +25,8 @@
 {% endif %}
 
 {% if s.digest %}
-<div class="jr-digest" title="per target, in time order — colour is the node's own outcome">
+<div class="jr-digest{% if s.digest|length > 6 %} jr-digest-folded{% endif %}" title="per target, in time order — colour is the node's own outcome">
+    {% if s.digest|length > 6 %}<button type="button" class="btn-sm outline jr-digest-more" onclick="JournalPage.toggleDigest(this)">all {{ s.digest|length }} targets</button>{% endif %}
     {% for target, steps in s.digest.items() %}
     <div class="jr-digest-row"><span class="jr-digest-target">{{ target }}</span>
         {% for st in steps %}<a class="jr-pill jr-out-{{ st.outcome or 'none' }}" href="#card-{{ st.run_id }}"

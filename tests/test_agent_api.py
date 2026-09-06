@@ -194,7 +194,7 @@ class TestTheLiveStrip:
         now = client.get("/api/agent/now").get_json()
         assert now["state"] == "idle" and "none from a calibration session" in now["note"]
         _ev(client, hook_event_name="PreToolUse", tool_name="mcp__sm__state_get", tool_use_id="t2", summary="{}", session_id="cal")
-        assert client.get("/api/agent/now").get_json()["session"] == "cal"
+        assert client.get("/api/agent/now").get_json()["session_id"] == "cal"
 
     def test_a_stop_ends_the_running_state(self, client):
         _ev(client, hook_event_name="PreToolUse", tool_name="Bash", tool_use_id="t1", summary="python 05_power_rabi.py")

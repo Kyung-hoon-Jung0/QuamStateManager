@@ -36,7 +36,10 @@ function world() {
   win._answers = [];                 // queued {tick, changed} answers; a function = custom
   win._pending = [];                 // unresolved requests: {resolve, reject, signal}
   win.DatasetVirtual = { pollNow: function () { win._log.pollNow++; return true; } };
-  win.document.addEventListener('sm:runs-changed', function (e) { win._log.events.push(e.detail && e.detail.tick); });
+  win.document.addEventListener('sm:runs-changed', function (e) {
+    var d = e.detail || {};
+    win._log.events.push(d.agent_seq != null ? d.tick + ':' + d.agent_seq : d.tick);   // docs/173: the agent seq rides the wake
+  });
   win.fetch = function (url, opts) {
     win._log.urls.push(url);
     return new Promise(function (resolve, reject) {
@@ -86,9 +89,9 @@ async function main() {
   await tick(20);
   ok(win._log.events.length === 0 && win._log.pollNow === 0 && win._log.urls.length === 3, 'an unchanged answer wakes nobody and re-waits');
   // a change wakes both consumers once
-  answer(win, { tick: 8, changed: true });
+  answer(win, { tick: 8, changed: true, agent_seq: 5 });
   await tick(20);
-  ok(win._log.events.join(',') === '8' && win._log.pollNow === 1, 'a change dispatches sm:runs-changed once and calls DatasetVirtual.pollNow once');
+  ok(win._log.events.join(',') === '8:5' && win._log.pollNow === 1, 'a change dispatches sm:runs-changed once (carrying agent_seq) and calls DatasetVirtual.pollNow once');
   ok(win.LiveWake.state().wakes === 1 && win._log.urls.length === 4 && /since=8&/.test(win._log.urls[3]), 'then waits again with the new tick');
   ok(win._pending.length === 1 && win.LiveWake.state().inFlight, 'never two requests in flight');
 

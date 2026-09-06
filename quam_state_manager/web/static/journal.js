@@ -80,6 +80,14 @@ window.JournalPage = (function () {
       .catch(function () {});
   }
 
+  function toggleDigest(btn) {
+    var box = btn.closest(".jr-digest");
+    if (!box) return;
+    var folded = box.classList.toggle("jr-digest-folded");
+    btn.textContent = folded ? btn.getAttribute("data-all") || btn.textContent : "fewer";
+    if (!btn.getAttribute("data-all")) btn.setAttribute("data-all", btn.textContent);
+  }
+
   function copyDigest(btn) {
     var rows = [];
     document.querySelectorAll(".jr-digest-row").forEach(function (r) {
@@ -108,5 +116,5 @@ window.JournalPage = (function () {
   });
   if (document.readyState !== "loading") init(); else document.addEventListener("DOMContentLoaded", function () { init(); });
 
-  return { day: day, claim: claim, adopt: adopt, copyDigest: copyDigest, init: init, markSince: markSince, _seenKey: seenKey };
+  return { day: day, claim: claim, adopt: adopt, copyDigest: copyDigest, toggleDigest: toggleDigest, init: init, markSince: markSince, _seenKey: seenKey };
 })();

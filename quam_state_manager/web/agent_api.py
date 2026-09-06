@@ -260,7 +260,7 @@ def _ds():
 def _uid(ds, run) -> str | None:
     r = _r()
     try:
-        folder = getattr(ds, "data_folder", None) or getattr(ds, "root", None) or getattr(ds, "folder", None)
+        folder = getattr(ds, "folder_path", None)      # DatasetStore's own attribute (docs/173 S2 found the miss)
         if folder is None:
             return None
         return f"{r._folder_key(folder)}:{run['run_id'] if isinstance(run, dict) else run.run_id}"
@@ -680,7 +680,19 @@ def event_post():
     except Exception:  # noqa: BLE001
         logger.debug("absorb failed", exc_info=True)
     _bump()
+    _wake()
     return jsonify(ok=True)
+
+
+def _wake() -> None:
+    """One wake for the whole page: the run watcher's tick is what every
+    open tab's live-wake long-poll waits on (docs/141 §4p)."""
+    try:
+        w = current_app.config.get("run_watcher")
+        if w is not None:
+            w.bump("agent")
+    except Exception:  # noqa: BLE001
+        logger.debug("wake failed", exc_info=True)
 
 
 def _relevant(session_events: list[dict]) -> bool:
@@ -709,13 +721,71 @@ def _alive(session_events: list[dict], now: float) -> bool:
     return False
 
 
+_HUMAN_RECENT_S = 30 * 60
+
+
+def _mode_and_limits() -> dict:
+    from quam_state_manager.core import limits
+    try:
+        return limits.load(current_app.instance_path, _chip_name())
+    except Exception:  # noqa: BLE001
+        return dict(limits.DEFAULTS)
+
+
+def _session() -> dict | None:
+    from quam_state_manager.core import agent_session
+    try:
+        return agent_session.load(current_app.instance_path, _chip_name())
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _human_ran_recently(now: float, agent_runs: dict, ev: list[dict]) -> dict | None:
+    """The newest run folder with no agent origin inside the window: a person
+    (or a session SM cannot see) is on the OPX. A FACT, past tense."""
+    ds = _ds()
+    if ds is None:
+        return None
+    try:
+        rows = ds.list_runs()[:3]
+    except Exception:  # noqa: BLE001
+        return None
+    from quam_state_manager.core import story
+    for row in rows:
+        try:
+            when = datetime.strptime(f"{row.get('date')} {row.get('time')}", "%Y-%m-%d %H:%M:%S").timestamp()
+        except (TypeError, ValueError):
+            continue
+        if now - when > _HUMAN_RECENT_S:
+            continue
+        rid = int(row["run_id"])
+        if rid in agent_runs:
+            continue
+        want = story._norm(row.get("experiment_name") or "")
+        hooked = any(e.get("tool_name") == "Bash" and e.get("hook_event_name") in ("PostToolUse", "PreToolUse")
+                     and abs(float(e.get("ts") or 0) - when) < 600
+                     and (story._node_of(e.get("summary") or "") or "") and want
+                     and (story._norm(story._node_of(e.get("summary") or "")) in want) for e in ev)
+        if hooked:
+            continue
+        return {"run_id": rid, "node": row.get("experiment_name"), "ts": when,
+                "targets": list(row.get("qubits") or [])}
+    return None
+
+
 def _now_state() -> dict:
+    """The pill's one state, in the precedence order of docs/173 §3.1:
+    waiting > limited > stalled > failed > running > between > human-ran > idle."""
+    from quam_state_manager.core import agent_session, story
     now = time.time()
     with _events_lock:
         ev = list(_events())
     seq = int(current_app.config.get("agent_seq") or 0)
-    if not ev:
-        return {"state": "idle", "seq": seq, "events_today": 0, "failures_today": 0}
+    lim = _mode_and_limits()
+    sess = _session()
+    base = {"seq": seq, "mode": lim.get("mode"), "session": agent_session.summary(sess),
+            "events_today": 0, "failures_today": 0, "waiting": _waiting_count()}
+    agent_runs = story.load_agent_runs(current_app.instance_path)
     by_session: dict[str, list[dict]] = collections.defaultdict(list)
     for e in ev:
         by_session[str(e.get("session_id"))].append(e)
@@ -723,10 +793,24 @@ def _now_state() -> dict:
     day_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
     failures = sum(1 for es in sessions.values() for e in es
                    if e.get("failed") and float(e.get("ts") or 0) >= day_start)
+    base["failures_today"] = failures
+    limited_until = (sess or {}).get("limited_until")
+    for es in sessions.values():
+        for e in es:
+            if e.get("limited") and now - float(e.get("ts") or 0) < 6 * 3600:
+                limited_until = e.get("limited_until") or limited_until or True
+    if base["waiting"]:
+        return {**base, "state": "waiting"}
+    if limited_until and (limited_until is True or float(limited_until) > now):
+        resets = None
+        if limited_until is not True:
+            resets = datetime.fromtimestamp(float(limited_until)).strftime("%H:%M")
+        return {**base, "state": "limited", "limited_resets": resets}
+    human = _human_ran_recently(now, agent_runs, ev)
     if not sessions:
-        return {"state": "idle", "seq": seq, "events_today": 0, "failures_today": 0,
-                "note": "events seen, none from a calibration session"}
-    # the newest relevant session is the one the strip talks about
+        state = "human-ran" if human else "idle"
+        return {**base, "state": state, "human_ran": human,
+                "note": "events seen, none from a calibration session" if ev and not human else None}
     sid, es = max(sessions.items(), key=lambda kv: max(float(e.get("ts") or 0) for e in kv[1]))
     open_tools: dict[str, dict] = {}
     last_stop = None
@@ -738,36 +822,122 @@ def _now_state() -> dict:
         elif h in ("PostToolUse", "PostToolUseFailure") and tid:
             open_tools.pop(tid, None)
         elif h == "Stop":
-            open_tools.clear()            # a turn ended: nothing is running
+            open_tools.clear()
             last_stop = e
-    alive = _alive(es, now)
+    alive = _alive(es, now) or agent_session.alive(sess)
     running = None
     if open_tools and alive:
         e = sorted(open_tools.values(), key=lambda x: float(x.get("ts") or 0))[-1]
-        running = {"tool": e.get("tool_name"), "summary": e.get("summary"), "node": _node_of(e.get("summary") or ""),
-                   "since": e.get("ts"), "session": e.get("session_id")}
+        node = story._node_of(e.get("summary") or "")
+        running = {"tool": e.get("tool_name"), "summary": e.get("summary"), "node": node,
+                   "since": e.get("ts"), "session": e.get("session_id"), "backend": e.get("backend"),
+                   "typical_s": _typical_duration(node)}
     last = es[-1]
     if running:
         state = "running"
     elif open_tools and not alive:
         state = "stalled"
+    elif failures and now - float(last.get("ts") or 0) < 3600:
+        state = "failed"
     elif alive:
         state = "between"
+    elif human:
+        state = "human-ran"
     else:
         state = "idle"
-    return {"state": state, "running": running, "session": sid, "alive": alive,
+    if state == "running" and failures:
+        pass                                    # a running agent outranks the day's count; the count rides along
+    return {**base, "state": state, "running": running, "session_id": sid, "alive": alive,
             "last": {"tool": last.get("tool_name"), "event": last.get("hook_event_name"),
-                     "summary": last.get("summary"), "ts": last.get("ts"), "failed": bool(last.get("failed"))},
+                     "summary": last.get("summary"), "ts": last.get("ts"), "failed": bool(last.get("failed")),
+                     "backend": last.get("backend")},
             "last_message": (last_stop or {}).get("summary") if last_stop else None,
             "events_today": sum(1 for e in es if float(e.get("ts") or 0) >= day_start),
-            "failures_today": failures,
-            "chip": _chip_for_event(last),
-            "seq": seq}
+            "human_ran": human, "chip": _chip_for_event(last)}
+
+
+def _waiting_count() -> int:
+    """Held groups + approval cards (S5 fills the hold flag; 0 until then)."""
+    r = _r()
+    mod = r._modifier()
+    if not mod:
+        return 0
+    try:
+        return sum(1 for c in mod.get_change_log() if getattr(c, "hold", False))
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def _typical_duration(node: str | None) -> float | None:
+    """The family's typical run length from the archive -- for 'usually ~N min'."""
+    if not node:
+        return None
+    ds = _ds()
+    if ds is None:
+        return None
+    try:
+        rows = [r for r in ds.list_runs(experiment=node)[:12] if isinstance(r.get("duration_s"), (int, float))]
+        if len(rows) < 2:
+            return None
+        vals = sorted(float(r["duration_s"]) for r in rows)
+        return vals[len(vals) // 2]
+    except Exception:  # noqa: BLE001
+        return None
 
 
 @agent_bp.route("/now")
 def now():
     return jsonify(ok=True, **_now_state())
+
+
+@agent_bp.route("/limits", methods=["GET", "POST"])
+def limits_route():
+    """Per-chip Limits + the default mode (docs/173 S3b). A mode change is
+    journaled with who pressed it."""
+    from quam_state_manager.core import limits
+    from quam_state_manager.web import routes as r
+    chip = _chip_name()
+    if request.method == "POST":
+        data = request.get_json(silent=True) or request.form.to_dict()
+        if "max_delta" in data and isinstance(data["max_delta"], str):
+            try:
+                data["max_delta"] = json.loads(data["max_delta"] or "{}")
+            except ValueError:
+                return _err("max_delta must be JSON")
+        try:
+            cur = limits.save(current_app.instance_path, chip, data, who=r._request_actor())
+        except limits.LimitError as exc:
+            return _err(str(exc))
+        _bump()
+        _wake()
+        return jsonify(ok=True, chip=chip, limits=cur)
+    return jsonify(ok=True, chip=chip, limits=limits.load(current_app.instance_path, chip),
+                   modes=list(limits.MODES))
+
+
+@agent_bp.route("/session", methods=["GET"])
+def session_get():
+    from quam_state_manager.core import agent_session
+    rec = agent_session.load(current_app.instance_path, _chip_name())
+    return jsonify(ok=True, chip=_chip_name(), session=agent_session.summary(rec))
+
+
+@agent_bp.route("/session/stop", methods=["POST"])
+def session_stop():
+    """Stop, recorded first (docs/173 §3.3): run_node reads the flag before
+    anything else; S4 adds the process kill for 'now'."""
+    from quam_state_manager.core import agent_session
+    from quam_state_manager.web import routes as r
+    data = request.get_json(silent=True) or request.form.to_dict()
+    mode = "now" if str(data.get("mode") or "") == "now" else "after_run"
+    rec = agent_session.request_stop(current_app.instance_path, _chip_name(), who=r._request_actor(), mode=mode)
+    if rec is None:
+        return _err("no agent session on this chip", 409)
+    journal_mod.append(current_app.instance_path, _chip_name(),
+                       f"Stop ({'now' if mode == 'now' else 'after this run'}) pressed by {r._request_actor()}", kind="sm")
+    _bump()
+    _wake()
+    return jsonify(ok=True, session=agent_session.summary(rec))
 
 
 @agent_bp.route("/events")

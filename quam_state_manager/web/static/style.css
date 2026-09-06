@@ -11190,6 +11190,26 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
    differs from qualibrate's active project — informational, never a warn color */
 .qualibrate-tray-active-note { color: var(--pico-muted-color); font-size: .92em; }
 
+/* ---- Agent pill (docs/173 §3.1) ---- */
+.agent-pill { list-style: none; }
+.agent-pill-link { display: inline-flex; align-items: center; gap: .4rem; font-size: .78rem; padding: .15rem .6rem;
+    border-radius: 1rem; border: 1px solid var(--pico-muted-border-color); text-decoration: none; color: inherit; white-space: nowrap; }
+.agent-pill-dot { width: .5rem; height: .5rem; border-radius: 50%; background: var(--pico-muted-border-color); }
+.agent-pill-res { font-size: .7rem; opacity: .75; }
+.agent-idle .agent-pill-link { opacity: .6; }
+.agent-between .agent-pill-dot, .agent-running .agent-pill-dot { background: var(--pico-primary); }
+.agent-running .agent-pill-dot { animation: schedPulse 1.4s ease-in-out infinite; }
+.agent-running .agent-pill-link { border-color: var(--pico-primary); }
+.agent-stalled .agent-pill-link { border-color: var(--color-warn-border, #e6a700); }
+.agent-stalled .agent-pill-dot { background: var(--color-warn-border, #e6a700); }
+.agent-failed .agent-pill-link { border-color: var(--cell-bad-color, #d62728); color: var(--cell-bad-color, #d62728); }
+.agent-failed .agent-pill-dot { background: var(--cell-bad-color, #d62728); }
+.agent-waiting .agent-pill-link { border-color: #e6c200; }
+.agent-waiting .agent-pill-dot { background: #e6c200; }
+.agent-limited .agent-pill-link { border-color: #8b5cf6; }
+.agent-limited .agent-pill-dot { background: #8b5cf6; }
+.agent-human-ran .agent-pill-link { border-style: dashed; }
+
 /* ---- Calibration log (docs/173) ---- */
 .jr-head-actions { display: flex; gap: .6rem; align-items: center; }
 .jr-folder { font-size: .74rem; max-width: 26rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -11212,6 +11232,10 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 .jr-out-mixed { border-color: var(--color-warn-border, #e6a700); }
 .jr-arrow { opacity: .5; }
 .jr-copy { position: absolute; right: .5rem; top: .4rem; }
+.jr-digest-folded { max-height: 11.5rem; overflow: hidden; }
+.jr-digest-more { position: absolute; right: 7.2rem; top: .4rem; }
+.jr-digest-folded::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2.5rem;
+    background: linear-gradient(transparent, var(--pico-background-color)); pointer-events: none; }
 .jr-cards { display: flex; flex-direction: column; gap: .35rem; }
 .jr-card { border: 1px solid var(--pico-muted-border-color); border-left: 4px solid var(--pico-muted-border-color);
     border-radius: .4rem; padding: 0 .6rem; margin: 0; background: var(--pico-card-background-color); }

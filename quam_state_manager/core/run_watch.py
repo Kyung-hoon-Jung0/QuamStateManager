@@ -163,6 +163,17 @@ class RunWatcher:
                 self._cond.notify_all()
         return changed
 
+    def bump(self, reason: str = "") -> int:
+        """Wake every waiter now (docs/173 S3): an agent event is a change
+        the page must see, and the run watcher already owns the one wake."""
+        with self._cond:
+            import time
+            self.tick += 1
+            self.last_change_at = time.time()
+            self.last_bump_reason = reason
+            self._cond.notify_all()
+            return self.tick
+
     def wait(self, since: int, timeout_s: float) -> int:
         """Block until the tick differs from *since* (or the watcher stops),
         at most *timeout_s*; return the current tick."""

@@ -238,13 +238,14 @@ class TestWaitRoute:
         c, root, app = wake_client
         t0 = time.perf_counter()
         d = c.get("/datasets/wait?since=-1&timeout=25").get_json()
-        assert d == {"tick": 0, "changed": False, "roots": d["roots"]} and time.perf_counter() - t0 < 1.0
+        assert d == {"tick": 0, "changed": False, "roots": d["roots"], "agent_seq": d["agent_seq"]} \
+            and time.perf_counter() - t0 < 1.0          # docs/173: every answer also carries agent_seq
         (root / "2026-08-29" / "#3_x_010600").mkdir()
         _bump_mtime(root / "2026-08-29")
         d = c.get("/datasets/wait?since=0&timeout=5").get_json()
         assert d["changed"] is True and d["tick"] == 1
         d = c.get("/datasets/wait?since=-1&timeout=25").get_json()
-        assert d == {"tick": 1, "changed": False, "roots": d["roots"]}
+        assert d == {"tick": 1, "changed": False, "roots": d["roots"], "agent_seq": d["agent_seq"]}
 
     def test_one_watcher_per_app(self, wake_client):
         c, root, app = wake_client

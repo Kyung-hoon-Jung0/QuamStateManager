@@ -50,7 +50,7 @@
                 var handshake = (tick < 0);
                 var changed = !!d.changed && !handshake;
                 tick = d.tick;
-                if (changed) wake({ tick: tick });
+                if (changed) wake({ tick: tick, agent_seq: d.agent_seq });
                 schedule(d.saturated ? SATURATED_MS : 0);   // straight back to waiting
             })
             .catch(function () {

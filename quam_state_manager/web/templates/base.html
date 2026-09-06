@@ -75,6 +75,7 @@
     {# docs/141 4p: the long-poll that wakes the run polls the moment a run
        folder changes — core (the new-run popup lives on every page). #}
     <script src="{{ asset_url('live-wake.js') }}"></script>
+    <script src="{{ asset_url('agent-pill.js') }}"></script>
     {% set bundle_files = {
         'grid': ['grid-virt.js', 'bulk-edit.js', 'pair-edit.js', 'all-values.js', 'notes.js'],
         'pulses': ['pulses.js'],
@@ -199,6 +200,16 @@
                 {# Scheduler-running badge. Hidden unless a queue is running/paused
                    (set by the global poll below). Editing is locked server-side
                    while running; this is the visible signal. #}
+                {# docs/173 §3.1: the Agent pill -- what the calibration agent is doing
+                   right now, one state in a fixed precedence; click = Calibration log. #}
+                <li id="agent-pill" class="agent-pill agent-idle" hidden aria-live="polite" data-state="idle">
+                    <a href="/journal" hx-get="/journal" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                       class="agent-pill-link" title="the calibration agent — click for the Calibration log">
+                        <span class="agent-pill-dot" aria-hidden="true"></span>
+                        <span class="agent-pill-text">Agent</span>
+                        <span class="agent-pill-res" hidden></span>
+                    </a>
+                </li>
                 {% if experimental %}
                 <li id="scheduler-badge" class="scheduler-badge" hidden aria-live="polite">
                     <a href="/scheduler" hx-get="/scheduler" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
