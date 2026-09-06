@@ -267,6 +267,15 @@ class TestHome:
         m = re.search(r'<a class="agent-home-link"[^>]*>', html)
         assert m and 'href="/"' in m.group(0) and "hx-get" not in m.group(0) and "hx-target" not in m.group(0)
 
+    def test_the_setup_page_is_wired(self, c):
+        """docs/173 S7: /agent/setup renders the shell inside the shell page with
+        its own bundle; the HX form is the partial alone."""
+        html = c.get("/agent/setup").get_data(as_text=True)
+        assert 'id="agent-setup"' in html and "agent-setup.js" in html and 'id="as-body"' in html
+        assert '"agent_setup": ["agent-setup.js"]' in html and '"agent_setup": ["agent_setup"]' in html, "bundle + page table"
+        part = c.get("/agent/setup", headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert 'id="agent-setup"' in part and "<html" not in part
+
 
     def test_bridge_knows_the_plan_tools(self):
         from quam_state_manager import mcp

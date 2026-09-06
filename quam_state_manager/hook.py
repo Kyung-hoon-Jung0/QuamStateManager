@@ -141,6 +141,12 @@ def main() -> int:
     try:
         from quam_state_manager.core import agent_link
         inst = agent_link.instance_dir()
+        # docs/173 S7: SM's setup writes `--instance <dir>` into the hook line when SM
+        # runs on a custom instance dir the default rule would not find
+        if "--instance" in sys.argv[1:]:
+            j = sys.argv.index("--instance")
+            if j + 1 < len(sys.argv) and sys.argv[j + 1].strip():
+                inst = Path(sys.argv[j + 1].strip())
     except Exception:  # noqa: BLE001
         return 0
     backend = None

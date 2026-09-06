@@ -87,6 +87,20 @@ class TestDiskFirst:
                         "last_assistant_message": "Power Rabi on q1 looks clean; moving to Ramsey."})
         assert _last(tmp_path)["summary"].startswith("Power Rabi on q1")
 
+    def test_instance_flag_beats_the_env(self, tmp_path):
+        """docs/173 S7: SM's setup writes `--instance <dir>` into the hook
+        line when SM runs on a custom instance dir."""
+        other = tmp_path / "other_inst"
+        env = dict(os.environ, PYTHONUTF8="1", SM_INSTANCE=str(tmp_path), PYTHONPATH=str(ROOT))
+        env.pop("SM_URL", None)
+        r = subprocess.run([sys.executable, "-m", "quam_state_manager.hook", "--backend", "codex", "--instance", str(other)],
+                           input=json.dumps({"hook_event_name": "Stop", "session_id": "s", "last_assistant_message": "hi"}),
+                           capture_output=True, text=True, encoding="utf-8", env=env, cwd=str(ROOT), timeout=60)
+        assert r.returncode == 0
+        f = other / "agent_events" / (datetime.now().strftime("%Y-%m-%d") + ".jsonl")
+        assert f.exists() and json.loads(f.read_text(encoding="utf-8").splitlines()[-1])["backend"] == "codex"
+        assert not (tmp_path / "agent_events").exists(), "the env's dir was not used"
+
     def test_garbage_stdin_exits_zero(self, tmp_path):
         assert _run(tmp_path, "not json{").returncode == 0
         assert _run(tmp_path, "").returncode == 0
