@@ -141,6 +141,18 @@ class TestTheAuthorLadder:
         c = next(x for x in d["cards"] if x.get("run_id") == 104)
         assert c["author"] == "by_codex" and c["certainty"] == "certain" and c["plan_id"] == "p1"
 
+    def test_another_chips_run_id_never_claims_this_chips_run(self, world):
+        """review R3-2: run ids are per data folder, so chip A's agent-run #104
+        must not author chip B's #104. build_day filters the index by chip."""
+        story.record_agent_run(world["inst"], {"run_id": 104, "chip": "chipA", "backend": "codex", "node": "05_power_rabi"})
+        d = story.build_day(world["inst"], "chip", DAY, ds=world["ds"], with_gates=False)
+        c = next(x for x in d["cards"] if x.get("run_id") == 104)
+        assert c["author"] == "unknown", f"chip's #104 was claimed by chipA's index row: {c['author']}/{c['certainty']}"
+        # the SAME chip's row does author it
+        story.record_agent_run(world["inst"], {"run_id": 104, "chip": "chip", "backend": "codex", "node": "05_power_rabi"})
+        d = story.build_day(world["inst"], "chip", DAY, ds=world["ds"], with_gates=False)
+        assert next(x for x in d["cards"] if x.get("run_id") == 104)["author"] == "by_codex"
+
     def test_a_hook_event_in_the_window_infers_the_agent(self, world):
         ts = datetime.strptime(f"{DAY} 14:09:10", "%Y-%m-%d %H:%M:%S").timestamp()
         ev = [{"ts": ts, "hook_event_name": "PostToolUse", "tool_name": "Bash", "backend": "claude",

@@ -22,7 +22,7 @@ import re
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from flask import Blueprint, current_app, jsonify, request
@@ -132,7 +132,7 @@ def _record(rec: dict) -> None:
         aa._wake()
         return
     ev = aa._events()                               # initialise (and replay) BEFORE writing today's file
-    rec["n"] = current_app.config["agent_chat_n"] = _next_n(ev)
+    rec["n"] = _next_n(ev)                           # sets agent_chat_n under _N_LOCK (review R4-7)
     try:
         d = aa._events_dir()
         d.mkdir(parents=True, exist_ok=True)
@@ -150,23 +150,75 @@ def _record(rec: dict) -> None:
     aa._wake()
 
 
+_N_LOCK = threading.Lock()
+
+
 def _next_n(ev) -> int:
     """The page's cursor, monotonic ACROSS restarts: the ring replays
     yesterday's and today's chat events with their old ``n``, so a fresh
     counter starting at 1 would hide every new event behind ``after=``
-    (measured 2026-09-06: three turns invisible to a client after a restart)."""
-    cur = current_app.config.get("agent_chat_n")
-    if cur is None:
-        with aa._events_lock:
-            cur = max((int(e.get("n") or 0) for e in ev if e.get("origin") == "chat"), default=0)
-    return int(cur) + 1
+    (measured 2026-09-06: three turns invisible to a client after a restart).
+
+    review R4-7: the whole read-modify-write is under ``_N_LOCK`` -- two
+    threads recording at once (the request's User event and the process's Init)
+    otherwise read the same cur and stamp the same n, and a page holding
+    ``after=n`` never sees the loser."""
+    with _N_LOCK:
+        cur = current_app.config.get("agent_chat_n")
+        if cur is None:
+            with aa._events_lock:
+                cur = max((int(e.get("n") or 0) for e in ev if e.get("origin") == "chat"), default=0)
+            # review R3-5/R4: the ring forgets past ~800 lines / 2 days, so a burst of hook
+            # events can evict the chat events whose n we must exceed -- read the persisted
+            # high-water mark AND scan the day files directly, never just the ring.
+            cur = max(cur, _persisted_n(), _disk_max_chat_n())
+        nxt = int(cur) + 1
+        current_app.config["agent_chat_n"] = nxt
+    try:
+        d = aa._events_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "chat_n.txt").write_text(str(nxt), encoding="utf-8")
+    except OSError:
+        pass
+    return nxt
 
 
-def _record_user(chip: str, text: str, who: str, backend: str) -> None:
+def _persisted_n() -> int:
+    try:
+        return int((aa._events_dir() / "chat_n.txt").read_text(encoding="utf-8").strip() or 0)
+    except (OSError, ValueError):
+        return 0
+
+
+def _disk_max_chat_n() -> int:
+    """The highest ``n`` of a chat event on disk (today + yesterday), so an
+    evicted-from-the-ring event still lifts the counter above it."""
+    hi = 0
+    try:
+        d = aa._events_dir()
+        for k in range(2):
+            f = d / ((datetime.now() - timedelta(days=k)).strftime("%Y-%m-%d") + ".jsonl")
+            if not f.exists():
+                continue
+            for line in f.read_text(encoding="utf-8").splitlines():
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    continue
+                if e.get("origin") == "chat":
+                    hi = max(hi, int(e.get("n") or 0))
+    except OSError:
+        pass
+    return hi
+
+
+def _record_user(chip: str, text: str, who: str, backend: str, *, owner: str | None = None,
+                 mode: str | None = None) -> None:
     """The person's own message, recorded like the agent's events so the card
-    stream survives a reload and a restart (docs/173 S6)."""
+    stream survives a reload and a restart (docs/173 S6). It carries the same
+    owner/mode fields as the session's events (review R4-6)."""
     _record({"ts": time.time(), "hook_event_name": "User", "origin": "chat", "chip": chip, "text": text[:4000],
-             "who": who, "backend": backend, "session_id": None})
+             "who": who, "backend": backend, "session_id": None, "owner": owner or who, "mode": mode})
 
 
 def _facts(chip: str, mode: str, cwd: str | None) -> str:
@@ -267,15 +319,16 @@ def backends():
 @chat_bp.route("/status")
 def status():
     chip = aa._chip_name() if _r()._active_path() else None
+    key = aa._chip_key() if chip else None
     mgr = _manager()
-    rec = agent_session.load(current_app.instance_path, chip) if chip else None
+    rec = agent_session.load(current_app.instance_path, key) if chip else None
     try:
-        lim = limits.load(current_app.instance_path, chip) if chip else dict(limits.DEFAULTS)
+        lim = limits.load(current_app.instance_path, key) if chip else dict(limits.DEFAULTS)
     except Exception:  # noqa: BLE001
         lim = dict(limits.DEFAULTS)
-    live = mgr.status(chip) if chip else None
+    live = mgr.status(key) if chip else None
     foreign = bool(rec and agent_session.alive(rec) and not (live and live["alive"]))
-    return jsonify(ok=True, chip=chip, session=live, file=agent_session.summary(rec), mode=lim.get("mode"),
+    return jsonify(ok=True, chip=chip, chip_key=key, session=live, file=agent_session.summary(rec), mode=lim.get("mode"),
                    foreign_alive=foreign, resumable=bool(rec and rec.get("session_id") and not foreign),
                    agent_seq=int(current_app.config.get("agent_seq") or 0), cwd=_cwd())
 
@@ -288,6 +341,7 @@ def start():
     chip, bad = _chip_or_409()
     if bad:
         return bad
+    key = aa._chip_key()
     data = request.get_json(silent=True) or request.form.to_dict()
     inst = current_app.instance_path
     actor = _r()._request_actor()
@@ -295,21 +349,21 @@ def start():
     if name not in BACKEND_CLASSES:
         return _err(f"unknown backend {name!r} (claude | codex)")
     try:
-        lim = limits.load(inst, chip)
+        lim = limits.load(inst, key)
     except Exception:  # noqa: BLE001
         lim = dict(limits.DEFAULTS)
     mode = lim.get("mode") or limits.DEFAULTS["mode"]
     want = data.get("mode")
     if want and want != mode:
         try:
-            limits.save(inst, chip, {"mode": want}, who=actor)
+            limits.save(inst, key, {"mode": want}, who=actor)
             mode = want
         except limits.LimitError as exc:
             return _err(str(exc))
     until = _until(data.get("until"))
     mgr = _manager()
-    cur = mgr.get(chip)
-    rec = agent_session.load(inst, chip)
+    cur = mgr.get(key)
+    rec = agent_session.load(inst, key)
     if rec and agent_session.alive(rec) and not (cur and cur.alive()):
         return _err(f"another {rec.get('backend') or 'agent'} session (pid {rec.get('pid')}, "
                     f"by {rec.get('owner') or '?'}) is alive on {chip}; stop it first", 409, session=agent_session.summary(rec))
@@ -332,7 +386,7 @@ def start():
     if away:
         prompt = away + (prompt or "Continue.")
     try:
-        st = mgr.start(chip, backend, owner=actor, mode=mode, until=until, prompt=prompt, resume=resume)
+        st = mgr.start(key, backend, owner=actor, mode=mode, until=until, prompt=prompt, resume=resume, display=chip)
     except RuntimeError as exc:
         return _err(str(exc), 409)
     except ValueError as exc:
@@ -343,7 +397,7 @@ def start():
     tail += ", resumed" if resume else ""
     journal_mod.append(inst, chip, f"{name} session started in SM by {actor} (mode {mode}{tail})", kind="sm")
     if prompt:
-        _record_user(chip, prompt, actor, name)
+        _record_user(chip, prompt, actor, name, owner=actor, mode=mode)
     aa._bump()
     aa._wake()
     return jsonify(ok=True, session=st, cwd=cwd, resumed=bool(resume), away=bool(away))
@@ -358,23 +412,24 @@ def send():
     text = str(data.get("text") or "").strip()
     if not text:
         return _err("text required")
+    key = aa._chip_key()
     mgr = _manager()
-    cur = mgr.get(chip)
+    cur = mgr.get(key)
     if cur is None or (not cur.alive() and not cur.backend.one_turn_per_process) or cur.ended:
         return _err("no running session on this chip; start one", 409)
     inst = current_app.instance_path
-    rec = agent_session.load(inst, chip)
+    rec = agent_session.load(inst, key)
     if agent_session.stopped(rec):
         # a human typing again IS the resumption; the flag run_node reads is cleared first
-        agent_session.save(inst, chip, agent_stop=None)
+        agent_session.save(inst, key, agent_stop=None)
         journal_mod.append(inst, chip, f"resumed by {_r()._request_actor()} (Stop cleared)", kind="sm")
-    res = mgr.send(chip, text)
+    res = mgr.send(key, text)
     if res.get("error"):
         return _err(res["error"], 409)
-    _record_user(chip, text, _r()._request_actor(), cur.backend.name)
+    _record_user(chip, text, _r()._request_actor(), cur.backend.name, owner=cur.owner, mode=cur.mode)
     aa._bump()
     aa._wake()
-    return jsonify(ok=True, **res, session=mgr.status(chip))
+    return jsonify(ok=True, **res, session=mgr.status(key))
 
 
 @chat_bp.route("/end", methods=["POST"])
@@ -382,17 +437,18 @@ def end():
     chip, bad = _chip_or_409()
     if bad:
         return bad
+    key = aa._chip_key()
     mgr = _manager()
-    cur = mgr.get(chip)
+    cur = mgr.get(key)
     if cur is None:
         return _err("no session on this chip", 409)
-    mgr.end(chip)
+    mgr.end(key)
     inst = current_app.instance_path
-    agent_session.save(inst, chip, pid=None)
+    agent_session.save(inst, key, pid=None)
     journal_mod.append(inst, chip, f"{cur.backend.name} session ended by {_r()._request_actor()}", kind="sm")
     aa._bump()
     aa._wake()
-    return jsonify(ok=True, session=mgr.status(chip))
+    return jsonify(ok=True, session=mgr.status(key))
 
 
 @chat_bp.route("/events")
@@ -409,7 +465,7 @@ def events():
     ev = ev[-limit:]
     return jsonify(ok=True, chip=chip, events=ev, last=max((int(e.get("n") or 0) for e in ev), default=after),
                    agent_seq=int(current_app.config.get("agent_seq") or 0),
-                   session=_manager().status(chip) if chip else None)
+                   session=_manager().status(aa._chip_key()) if chip else None)
 
 
 @chat_bp.route("/ask", methods=["POST"])
@@ -425,7 +481,7 @@ def ask():
         return _err("text required")
     name = str(data.get("backend") or _setup().get("default_backend") or "claude").lower()
     try:
-        lim_mode = limits.load(current_app.instance_path, chip).get("mode")
+        lim_mode = limits.load(current_app.instance_path, aa._chip_key()).get("mode")
     except Exception:  # noqa: BLE001
         lim_mode = limits.DEFAULTS["mode"]
     try:

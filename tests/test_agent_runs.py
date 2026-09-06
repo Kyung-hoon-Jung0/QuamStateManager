@@ -120,11 +120,17 @@ def c(app, synth_folder, cal, inst):
 
 
 def _chip(c):
+    """The records' KEY (session / approvals / plans / limits): <name>-<path hash>."""
+    return c.get("/api/agent/chip").get_json()["chip_key"]
+
+
+def _name(c):
+    """The journal's name (what a person reads)."""
     return c.get("/api/agent/chip").get_json()["name"]
 
 
 def _journal(c, inst):
-    return journal_mod.read(str(inst), _chip(c), datetime.now().strftime("%Y-%m-%d")) or ""
+    return journal_mod.read(str(inst), _name(c), datetime.now().strftime("%Y-%m-%d")) or ""
 
 
 def _arm(c):
@@ -360,10 +366,21 @@ class TestGates:
         assert c.post(f"/api/agent/approvals/{aid}/approve", json={}, headers=HUMAN).get_json()["ok"]
         # nothing pending now: a bogus or foreign approval_id must still not run anything
         r = _run(c, approval_id="ap-bogus").get_json()
-        assert r["refused"] == "awaiting_approval" and "APPROVED run request" in r["how"]
+        assert r["refused"] == "awaiting_approval" and "APPROVED, not yet used, run request" in r["how"]
         r = _run(c, approval_id=aid).get_json()
         assert r["ok"] and r["status"] == "done" and r["result"]["status"] == "done"
         assert r["result"]["approval"], "ask-all: the WRITES still wait too"
+        # review R1-M2: one approval = one run; the same id cannot run the node again
+        wid = r["result"]["approval"]["id"]
+        assert c.post(f"/api/agent/approvals/{wid}/reject", json={}, headers=HUMAN).get_json()["ok"], "clear the held writes"
+        r = _run(c, approval_id=aid).get_json()
+        assert r["refused"] == "awaiting_approval" and "not yet used" in r["how"], r
+        from quam_state_manager.core import approvals as apm
+        assert apm.get(str(inst), chip, aid)["used_by_run"], "the approval names the run it allowed"
+        # and asking twice without an id files ONE request, not two
+        a1 = _run(c).get_json()["approval"]["id"]
+        a2 = _run(c).get_json()["approval"]["id"]
+        assert a1 == a2, "the same ask twice is one pending request"
 
 
 # ------------------------------------------------------------------- run
@@ -445,13 +462,19 @@ class TestRun:
         assert res["applied"] is False and res["why_held"].startswith("max_delta") and res["approval"]
 
     def test_created_keys_are_not_staged_but_named(self, c, inst, fake_run):
+        """review R1-M3: a run's writes land whole or not at all -- a key SM cannot
+        stage refuses the group, names the key, and parks the writes for a person."""
         chip = _chip(c)
         _arm(c)
         limits.save(str(inst), chip, {"mode": "auto"})
         fake_run.extra = {"brand_new_key": 1}
         res = _run(c).get_json()["result"]
-        assert res["applied"] is True
+        assert res["applied"] is False
         assert [u["path"] for u in res["unstaged"]] == ["qubits.qA1.brand_new_key"] and "new/removed key" in res["unstaged"][0]["why"]
+        assert "cannot be staged" in res["apply_error"] and "nothing was written" in res["apply_error"]
+        assert res["approval"] and "apply refused" in res["why_held"], "the writes wait for a person instead of half-landing"
+        from quam_state_manager.core import approvals as apm
+        assert [a["id"] for a in apm.pending(str(inst), chip)] == [res["approval"]["id"]]
 
     def test_stop_now_cancels_the_running_node(self, c, inst, monkeypatch):
         chip = _chip(c)

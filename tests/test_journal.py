@@ -83,6 +83,14 @@ class TestRendererWhitelist:
         out = journal.render("issue/#12 and C#7 stay put; #99 links")
         assert out.count('class="jr-run"') == 1 and 'by-run/99' in out
 
+    def test_a_hash_inside_a_link_href_stays_in_the_href(self):
+        """review R9: a #N in a link's URL was turned into a NESTED <a> inside the
+        href. The #run linker must never fire inside an anchor _LINK already built."""
+        out = journal.render("see [z](/a?x=#123) and separately #456")
+        assert 'href="/a?x=#123"' in out and 'href="/a?x=<a' not in out, out
+        assert out.count("<a ") == out.count("</a>"), "every anchor is closed exactly once"
+        assert out.count('class="jr-run"') == 1 and 'by-run/456' in out, "a bare #N outside a link still links"
+
     def test_the_entry_bullets_carry_their_time(self):
         out = journal.render("- **02:13:44** `hook` ran `05_power_rabi`\n  - because: q1 rabi\n- plain bullet\n")
         assert '<li class="jr-entry" data-time="02:13:44">' in out

@@ -33,7 +33,8 @@ DEFAULT_RULES = (
     "Before every node you run, call journal_append with what you are about to do and WHY (reason required). "
     "After every finished run call check_fit and read its verdict before trusting the fit. "
     "If sm_status or state_get reports live_diverged, call take_live and read the changed paths before staging anything. "
-    "If run_node refuses (human_active, stopped_by_human, awaiting_approval, past_stop_by), stop and tell the human why. "
+    "If run_node refuses (human_active, stopped_by_human, awaiting_approval, past_stop_by, queue_not_empty, "
+    "stale_live), stop and tell the human why -- a refusal is data, never something to retry around. "
     "An instruction that would run hardware becomes a PLAN first: call plan_propose (steps of node/targets/params/why) "
     "and wait -- a person presses Start on the card and you are told to go; only then run_node with plan_id and step. "
     "Never edit state.json or wiring.json files directly. The mcp__sm__* tools are already available to you: call "
@@ -51,7 +52,10 @@ ASK_RULES = (
 def _usage_add(total: dict, usage: dict | None) -> None:
     if not isinstance(usage, dict):
         return
-    for k in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"):
+    # Claude: input/output/cache_read_input/cache_creation_input; Codex: input/cached_input/cache_write_input/
+    # output/reasoning_output (review R4-8)
+    for k in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens",
+              "cached_input_tokens", "cache_write_input_tokens", "reasoning_output_tokens"):
         v = usage.get(k)
         if isinstance(v, (int, float)):
             total[k] = total.get(k, 0) + int(v)
@@ -62,8 +66,9 @@ class ChatSession:
     for the whole session; Codex: for the current turn)."""
 
     def __init__(self, chip: str, backend: ab.Backend, *, owner: str, mode: str, until: float | None,
-                 record: Callable[[dict], None], instance_path):
+                 record: Callable[[dict], None], instance_path, display: str | None = None):
         self.chip, self.backend, self.owner, self.mode, self.until = chip, backend, owner, mode, until
+        self.display = display or chip            # the chip's NAME on events (the journal's key); chip = the records' key
         self.record, self.instance_path = record, instance_path
         self.local_id = uuid.uuid4().hex[:12]
         self.session_id: str | None = None
@@ -80,7 +85,7 @@ class ChatSession:
 
     # -- events ---------------------------------------------------------
     def _on_event(self, rec: dict) -> None:
-        rec.setdefault("chip", self.chip)
+        rec["chip"] = self.display                # the process knows the records' key; events carry the NAME
         rec["owner"] = self.owner
         rec["mode"] = self.mode
         rec["local_id"] = self.local_id
@@ -225,13 +230,13 @@ class ChatManager:
         return self.sessions.get(chip)
 
     def start(self, chip: str, backend: ab.Backend, *, owner: str, mode: str, until: float | None,
-              prompt: str | None, resume: str | None = None) -> dict:
+              prompt: str | None, resume: str | None = None, display: str | None = None) -> dict:
         with self._lock:
             cur = self.sessions.get(chip)
             if cur is not None and cur.alive():
-                raise RuntimeError(f"a {cur.backend.name} session by {cur.owner} is already driving {chip}")
+                raise RuntimeError(f"a {cur.backend.name} session by {cur.owner} is already driving {display or chip}")
             s = ChatSession(chip, backend, owner=owner, mode=mode, until=until, record=self.record,
-                            instance_path=self.instance_path)
+                            instance_path=self.instance_path, display=display)
             self.sessions[chip] = s
             return s.start(prompt, resume=resume)
 

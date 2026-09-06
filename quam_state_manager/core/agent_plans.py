@@ -21,7 +21,7 @@ from pathlib import Path
 
 from quam_state_manager.core import journal as journal_mod
 
-STATUSES = ("draft", "running", "done", "failed", "stopped", "cancelled")
+STATUSES = ("draft", "running", "stopping", "done", "failed", "stopped", "cancelled", "skipped")
 STEP_STATUSES = ("pending", "running", "done", "failed", "skipped", "cancelled")
 MAX_STEPS = 60
 
@@ -141,12 +141,19 @@ def step_update(instance_path, chip: str, plan_id: str, step_i: int, **fields) -
 
 def _derive(rec: dict) -> None:
     steps = rec.get("steps") or []
-    if rec.get("status") in ("stopped", "cancelled"):
+    if rec.get("status") in ("stopped", "cancelled", "done", "failed", "skipped"):
         return
     if rec.get("status") == "draft":
         return
     if all(s.get("status") in ("done", "failed", "skipped", "cancelled") for s in steps):
-        rec["status"] = "failed" if any(s.get("status") == "failed" for s in steps) else "done"
+        if rec.get("status") == "stopping":
+            rec["status"] = "stopped"                      # review R2-15: the current step finished
+        elif any(s.get("status") == "failed" for s in steps):
+            rec["status"] = "failed"
+        elif any(s.get("status") == "done" for s in steps):
+            rec["status"] = "done"
+        else:
+            rec["status"] = "skipped"                      # review R3-9: nothing ran, so nothing is done
         rec["ended"] = rec.get("ended") or time.time()
         rec["summary"] = counts(rec)
 
@@ -170,11 +177,18 @@ def stop(instance_path, chip: str, plan_id: str, *, who: str, how: str) -> dict 
     rec = next((r for r in rows if r.get("id") == plan_id), None)
     if rec is None:
         return None
-    if rec.get("status") in ("running", "draft"):
-        rec["status"] = "stopped" if how != "cancelled" else "cancelled"
-        rec["ended"] = time.time()
+    if rec.get("status") in ("running", "stopping", "draft"):
+        running_step = any(s.get("status") == "running" for s in rec.get("steps") or [])
+        if how == "cancelled":
+            rec["status"] = "cancelled"
+        elif how == "stop after this run" and running_step:
+            rec["status"] = "stopping"                     # review R2-15: closes when that step ends
+        else:
+            rec["status"] = "stopped"
         rec["ended_by"] = who
         rec["note"] = how
+        if rec["status"] != "stopping":
+            rec["ended"] = time.time()
         for s in rec.get("steps") or []:
             if s.get("status") in ("pending",):
                 s["status"] = "cancelled"

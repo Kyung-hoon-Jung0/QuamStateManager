@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -89,6 +90,12 @@ def c(app, synth_folder):
 
 
 def _chip(c):
+    """The records' KEY (session / limits / the manager): <name>-<path hash>."""
+    return c.get("/api/agent/chat/status").get_json()["chip_key"]
+
+
+def _name(c):
+    """The chip's NAME (the journal, the SM_CHIP pin, the system prompt)."""
     return c.get("/api/agent/chat/status").get_json()["chip"]
 
 
@@ -102,7 +109,7 @@ def _texts(c):
 
 def _journal(c, inst):
     from quam_state_manager.core import journal as jm
-    return jm.read(str(inst), _chip(c), datetime.now().strftime("%Y-%m-%d")) or ""
+    return jm.read(str(inst), _name(c), datetime.now().strftime("%Y-%m-%d")) or ""
 
 
 # ------------------------------------------------------------------ chip
@@ -126,11 +133,15 @@ class TestClaudeDriving:
         assert r.status_code == 200, r.get_json()
         d = r.get_json()
         assert d["session"]["backend"] == "claude" and d["session"]["alive"] and d["session"]["turns"] == 1
-        assert _wait(lambda: "answer 1: calibrate q1 readout" in _texts(c))
+        # wait for the Stop, not just the Text answer: Claude emits Result+Stop
+        # right AFTER Text, so reading on the answer alone races the turn's close
+        assert _wait(lambda: any(e["hook_event_name"] == "Stop" for e in _events(c)))
+        assert "answer 1: calibrate q1 readout" in _texts(c)
         ev = _events(c)
         kinds = [e["hook_event_name"] for e in ev]
-        assert kinds[:2] == ["Init", "PreToolUse"] and "PostToolUse" in kinds and "Stop" in kinds
-        assert all(e["origin"] == "chat" and e["chip"] == _chip(c) and e["owner"] == "human" for e in ev)
+        # review R4-6: the person's own message is an event too, and it precedes the CLI's Init
+        assert kinds[:3] == ["User", "Init", "PreToolUse"] and "PostToolUse" in kinds and "Stop" in kinds
+        assert all(e["origin"] == "chat" and e["chip"] == _name(c) and e["owner"] == "human" for e in ev)
         assert all(ev[i]["n"] < ev[i + 1]["n"] for i in range(len(ev) - 1)), "the page's cursor is monotonic"
         # the session file: who / what / pid, and the CLI's own session id merged in (not overwritten)
         rec = agent_session.load(str(inst), _chip(c))
@@ -140,7 +151,7 @@ class TestClaudeDriving:
         # disk first: today's jsonl carries the same events the hook would have written
         day = inst / "agent_events" / (datetime.now().strftime("%Y-%m-%d") + ".jsonl")
         lines = [json.loads(l) for l in day.read_text(encoding="utf-8").splitlines()]
-        assert [l["hook_event_name"] for l in lines][:2] == ["Init", "PreToolUse"]
+        assert [l["hook_event_name"] for l in lines][:3] == ["User", "Init", "PreToolUse"]
         assert all(l["origin"] == "chat" for l in lines)
         # the journal names the start, the mode, the presser
         j = _journal(c, inst)
@@ -387,10 +398,10 @@ class TestAsk:
         assert a and a["answer"] == "answer 1: what is q1 f_01?" and a["failed"] is False
         assert a["tools"] == [{"tool": "mcp__sm__sm_status", "summary": '{"q": "what is q1 f_01?"}', "failed": False}]
         # the read-only MCP config + read-only allow list
-        mj = inst / "agent_mcp" / f"{_chip(c)}-claude-ro.json"
+        mj = inst / "agent_mcp" / f"{_name(c)}-claude-ro.json"
         cfg = json.loads(mj.read_text(encoding="utf-8"))
         assert cfg["mcpServers"]["sm"]["env"]["SM_MCP_MODE"] == "readonly"
-        assert cfg["mcpServers"]["sm"]["env"]["SM_CHIP"] == _chip(c)
+        assert cfg["mcpServers"]["sm"]["env"]["SM_CHIP"] == _name(c)
         # the driving door is untouched: no session, no chat events, nothing on disk, nothing in the journal
         assert c.get("/api/agent/chat/status").get_json()["session"] is None
         assert _events(c) == []
@@ -400,7 +411,7 @@ class TestAsk:
 
     def test_the_driving_config_is_not_read_only(self, c, inst):
         c.post("/api/agent/chat/start", json={"prompt": "x"})
-        cfg = json.loads((inst / "agent_mcp" / f"{_chip(c)}-claude.json").read_text(encoding="utf-8"))
+        cfg = json.loads((inst / "agent_mcp" / f"{_name(c)}-claude.json").read_text(encoding="utf-8"))
         assert "SM_MCP_MODE" not in cfg["mcpServers"]["sm"]["env"]
         assert cfg["mcpServers"]["sm"]["env"]["SM_URL"] == "http://localhost"
         assert cfg["mcpServers"]["sm"]["args"] == ["-m", "quam_state_manager.mcp"]
@@ -414,7 +425,7 @@ class TestAsk:
         drive = mgr.get(_chip(c)).proc
         assert agent_chat.ASK_RULES in askp.backend.system_prompt and "--allowedTools" in askp.cmd
         assert agent_chat.DEFAULT_RULES in drive.backend.system_prompt and "bypassPermissions" in drive.cmd
-        assert f"Chip: {_chip(c)}. Mode: ask-writes" in drive.backend.system_prompt
+        assert f"Chip: {_name(c)}. Mode: ask-writes" in drive.backend.system_prompt
 
 
 # ---------------------------------------------------------------- replay
@@ -450,3 +461,41 @@ class TestReplay:
         with app.app_context():
             assert aa._chip_for_event({"origin": "chat", "chip": "other-chip"}) == "other-chip"
             assert aa._chip_for_event({"origin": "chat", "chip": "unassigned"}) == "unassigned"
+
+    def test_the_cursor_is_unique_under_two_recording_threads(self, app):
+        """review R4-7: the request thread records the person's User event while
+        the process reader thread records Init -- both allocate n at once. The
+        read-modify-write is under a lock, so no two events share an n (a shared
+        n hides one of them behind a page's after=)."""
+        seen: list[int] = []
+        lk = threading.Lock()
+
+        def worker(k):
+            with app.app_context():
+                for i in range(400):
+                    rec = {"ts": time.time(), "origin": "chat", "chip": "X", "hook_event_name": "Text", "text": f"{k}-{i}"}
+                    chat_api._record(rec)
+                    with lk:
+                        seen.append(rec["n"])
+        ts = [threading.Thread(target=worker, args=(k,)) for k in range(3)]
+        [t.start() for t in ts]
+        [t.join() for t in ts]
+        dup = len(seen) - len(set(seen))
+        assert dup == 0, f"{dup} duplicate n out of {len(seen)} under three concurrent recorders"
+
+    def test_the_cursor_clears_the_evicted_ring(self, inst):
+        """review R4: a burst of hook events evicts the chat event whose n we must
+        exceed from the ring, so the counter is lifted off the DAY FILE, not the
+        ring -- a page holding after=<that n> still sees the next chat event."""
+        (inst / "agent_events").mkdir(parents=True)
+        day = inst / "agent_events" / (datetime.now().strftime("%Y-%m-%d") + ".jsonl")
+        lines = [json.dumps({"ts": time.time() - 3600, "origin": "chat", "chip": "X", "n": 50,
+                             "hook_event_name": "User", "text": "hi", "session_id": None})]
+        lines += [json.dumps({"ts": time.time() - 3600 + i, "hook_event_name": "PreToolUse", "tool_name": "Read",
+                              "session_id": "s1", "tool_use_id": f"t{i}", "summary": "x"}) for i in range(900)]
+        day.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        app = create_app(testing=True, instance_path=str(inst))
+        with app.app_context():
+            rec = {"ts": time.time(), "origin": "chat", "chip": "X", "hook_event_name": "User", "text": "new", "session_id": None}
+            chat_api._record(rec)
+        assert rec["n"] > 50, f"next chat n={rec['n']} did not clear the evicted event's n=50"

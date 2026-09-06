@@ -278,7 +278,8 @@ def t_run_node(a: dict) -> Any:
             "reason": a.get("reason"), "timeout_s": a.get("timeout_s"), "wait_s": a.get("wait_s"),
             "approval_id": a.get("approval_id"), "plan_id": a.get("plan_id") or os.environ.get("SM_PLAN"),
             "step": a.get("step")}
-    wait_s = float(a.get("wait_s") or 240)
+    wait_s = min(float(a.get("wait_s") or 240), _WAIT_CAP_S)   # review R4-9: under the CLI's tool timeout
+    body["wait_s"] = wait_s
     code, res = _sm().post_json("/api/agent/run-node", body, timeout=wait_s + 60)
     if code == 409 and isinstance(res, dict):
         return {k: v for k, v in res.items() if k != "ok"}
@@ -286,7 +287,7 @@ def t_run_node(a: dict) -> Any:
 
 
 def t_run_wait(a: dict) -> Any:
-    wait_s = float(a.get("wait_s") or 240)
+    wait_s = min(float(a.get("wait_s") or 240), _WAIT_CAP_S)
     code, res = _sm().get(f"/api/agent/run/{a.get('key')}", {"wait_s": wait_s}, timeout=wait_s + 60)
     return _ok(code, res)
 
@@ -418,6 +419,7 @@ TOOLS: dict[str, tuple[dict, Any]] = {
 # -------------------------------------------------------------- protocol
 
 _agent_id = "agent"
+_WAIT_CAP_S = 30 * 60 - 120          # agent_backend.MCP_TOOL_TIMEOUT_S minus a margin (review R4-9)
 
 
 def _learn_client(params: dict) -> str:
@@ -478,6 +480,8 @@ def handle(msg: dict) -> None:
             _respond(mid, error={"code": -32601, "message": f"unknown tool {name!r}"})
             return
         try:
+            if _CHIP_PIN and name != "sm_status":
+                _chip_facts()                    # review R4-1: the pin guards EVERY tool, not four
             result = TOOLS[name][1](args)
             if isinstance(result, dict) and "chip" not in result and _chip:
                 result = {"chip": _chip, **result}

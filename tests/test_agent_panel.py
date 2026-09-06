@@ -81,11 +81,17 @@ def c(app, synth_folder, cal):
 
 
 def _chip(c):
+    """The records' KEY (session / approvals / plans / limits): <name>-<path hash>."""
+    return c.get("/api/agent/chip").get_json()["chip_key"]
+
+
+def _name(c):
+    """The journal's name (what a person reads)."""
     return c.get("/api/agent/chip").get_json()["name"]
 
 
 def _journal(c, inst):
-    return journal_mod.read(str(inst), _chip(c), datetime.now().strftime("%Y-%m-%d")) or ""
+    return journal_mod.read(str(inst), _name(c), datetime.now().strftime("%Y-%m-%d")) or ""
 
 
 def _feed(c, after=0):
@@ -159,8 +165,8 @@ class TestPlans:
         p = d["plan"]
         assert p["status"] == "running" and p["started_by"] == "human:kyunghoon" and p["mode"] == "auto"
         rec = agent_session.load(str(inst), chip)
-        assert rec["start_token"] and rec["plan_id"] == pid and rec["mode"] == "auto", "Start arms and sets the mode"
-        assert limits.load(str(inst), chip)["mode"] == "auto"
+        assert rec["start_token"] and rec["plan_id"] == pid and rec["mode"] == "auto", "Start arms; the session carries the plan's mode"
+        assert limits.load(str(inst), chip)["mode"] == "ask-writes", "review R1-M4: the chip's default never changes"
         assert "STARTED by human:kyunghoon (mode auto" in _journal(c, inst)
         # the snapshot the plan can be reverted to, labelled
         with app.app_context():
@@ -252,6 +258,15 @@ class TestHome:
         assert 'id="agent-home"' not in html and 'class="landing-projects"' in html
         assert "Open QUAlibrate's current project: PJ_10082026" in html and 'name="project" value="PJ_10082026"' in html
         assert 'id="agent-popover"' in html, "the floating panel is on every page"
+
+    def test_the_floats_home_link_is_a_plain_navigation(self, c):
+        """review R2-8: the Agent home is a full page, so the float's 'home' is a
+        plain href -- an hx-get into #table-pane put the landing INSIDE a pane."""
+        import re
+        html = c.get("/").get_data(as_text=True)
+        m = re.search(r'<a class="agent-home-link"[^>]*>', html)
+        assert m and 'href="/"' in m.group(0) and "hx-get" not in m.group(0) and "hx-target" not in m.group(0)
+
 
     def test_bridge_knows_the_plan_tools(self):
         from quam_state_manager import mcp

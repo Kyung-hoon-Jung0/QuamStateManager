@@ -114,6 +114,17 @@ def read(instance_path, chip: str, day: str | None = None) -> str:
         return ""
 
 
+_RUN_TOKEN_IN_TEXT = re.compile(r"\s*·\s*run #(\d+)")
+_FORGE = re.compile(r"^\s*(?:[-*+>#|]|```|~~~|\d+[.)])")
+
+
+def _defuse(line: str) -> str:
+    """A continuation line that would start a bullet / heading / fence / table
+    row (review R3-10: an agent's text forged a `human` entry, an <h1>, and a
+    fence that swallowed every later entry) is marked as prose."""
+    return ("· " + line.lstrip()) if line and _FORGE.match(line) else line
+
+
 def append(instance_path, chip: str, text: str, *, kind: str = "agent",
            reason: str | None = None, run_id: int | None = None,
            paths: list[str] | None = None, when: datetime | None = None) -> dict:
@@ -121,8 +132,9 @@ def append(instance_path, chip: str, text: str, *, kind: str = "agent",
     if kind not in KINDS:
         kind = "agent"
     when = when or datetime.now()
-    text = (text or "").strip()
+    text = _RUN_TOKEN_IN_TEXT.sub(r" run #\1", (text or "").strip())      # review R3-10: prose never carries the token
     lines = [l.rstrip() for l in text.splitlines()] or [""]
+    lines = [lines[0]] + [_defuse(l) for l in lines[1:]]
     head = f"- **{when.strftime('%H:%M:%S')}** `{kind}` {lines[0]}"
     if run_id is not None:
         head += f" · run #{int(run_id)}"
@@ -180,7 +192,7 @@ _PATH = re.compile(r"^[A-Za-z_][\w-]*(?:\.[\w-]+)+$")
 _INLINE_CODE = re.compile(r"`([^`\n]+)`")
 _BOLD = re.compile(r"\*\*([^*\n]+)\*\*")
 _ITALIC = re.compile(r"(?<![*\w])\*([^*\n]+)\*(?!\w)")
-_LINK = re.compile(r"\[([^\]\n]+)\]\(((?:https?://|/)[^)\s]+)\)")
+_LINK = re.compile(r"\[([^\]\n]+)\]\(((?:https?://|/(?!/))[^)\s]+)\)")
 _WIKI = re.compile(r"\[\[([^\]\n|]+)(?:\|([^\]\n]+))?\]\]")
 _TIME = re.compile(r"^\*\*(\d{2}:\d{2}:\d{2})\*\*")
 
@@ -208,10 +220,19 @@ def _inline_text(s: str) -> str:
     s = _WIKI.sub(lambda m: f'<span class="jr-wiki">{m.group(2) or m.group(1)}</span>', s)
     s = _BOLD.sub(r"<strong>\1</strong>", s)
     s = _ITALIC.sub(r"<em>\1</em>", s)
-    s = _RUN.sub(lambda m: f'<a class="jr-run" href="/dataset/by-run/{m.group(1)}" '
-                           f'hx-get="/dataset/by-run/{m.group(1)}" hx-target="#table-pane" '
-                           f'hx-push-url="true">#{m.group(1)}</a>', s)
-    return s
+    # review R9: a #N inside a link's href (e.g. [z](/a?x=#123)) was turned into a
+    # NESTED <a>. Run the #run linker only on the segments OUTSIDE the anchors _LINK built.
+    return "".join(part if k % 2 else _RUN.sub(_run_link, part)
+                   for k, part in enumerate(_ANCHOR.split(s)))
+
+
+_ANCHOR = re.compile(r"(<a\b[^>]*?>.*?</a>)", re.DOTALL)
+
+
+def _run_link(m: "re.Match") -> str:
+    return (f'<a class="jr-run" href="/dataset/by-run/{m.group(1)}" '
+            f'hx-get="/dataset/by-run/{m.group(1)}" hx-target="#table-pane" '
+            f'hx-push-url="true">#{m.group(1)}</a>')
 
 
 def render(md: str) -> str:

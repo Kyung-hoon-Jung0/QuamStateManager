@@ -32,8 +32,8 @@ from quam_state_manager.core import agent_session, approvals, limits as limits_m
 logger = logging.getLogger(__name__)
 
 GATES = ("chip_mismatch", "no_env", "no_calibrations_folder", "node_not_found", "not_a_node",
-         "stopped_by_human", "past_stop_by", "no_start_token", "awaiting_approval", "human_active",
-         "orphan_running", "run_active", "simulate_on_in_auto")
+         "stopped_by_human", "past_stop_by", "no_start_token", "run_active", "queue_not_empty", "awaiting_approval",
+         "human_active", "orphan_running", "stale_live", "simulate_on_in_auto")
 CLASSES = ("ok", "hardware_contention", "node_error", "timeout", "cancelled", "skipped", "unattributed")
 DEFAULT_WAIT_S = 240.0
 MAX_WRITES = 4000
@@ -80,6 +80,7 @@ class RunAdapter:
     notify: Callable[[str, dict], None]
     queue_state: Callable[[], dict]
     own_runner_alive: Callable[[], bool]
+    live_diverged: Callable[[], Any] | None = None       # review R1-M5: the chip moved outside SM?
 
 
 # ------------------------------------------------------------------ pure
@@ -109,13 +110,20 @@ def resolve_node(folder: str | None, node: str, *, instance_path=None):
     return None, infos
 
 
+def run_mode(plan: dict | None, session: dict | None, lim: dict) -> str:
+    """The mode a run obeys: the RUNNING plan's (auto is per plan -- the user's
+    decision, review R1-M4), else the session's, else the chip's default."""
+    return (plan or {}).get("mode") or (session or {}).get("mode") or lim.get("mode") or "ask-writes"
+
+
 def check_gates(req: RunRequest, *, session: dict | None, lim: dict, settings: dict, pending: list[dict],
                 human: dict | None, queue_state: dict, own_running: bool, run_active: dict | None,
-                node_info, available: list, now: float | None = None) -> dict | None:
+                node_info, available: list, now: float | None = None, plan: dict | None = None,
+                live_diverged: bool | None = None) -> dict | None:
     """The refusal, as data, or None. Order matters: the cheapest, most
     permanent reasons first; a refusal names what would clear it."""
     now = now or time.time()
-    mode = (session or {}).get("mode") or lim.get("mode") or "ask-writes"
+    mode = run_mode(plan, session, lim)
     if not settings.get("env_python"):
         return {"refused": "no_env", "how": "pick the Python environment in Experiment Runner settings (Agent setup, S7)"}
     if not settings.get("calibrations_folder"):
@@ -142,8 +150,18 @@ def check_gates(req: RunRequest, *, session: dict | None, lim: dict, settings: d
     if run_active:
         return {"refused": "run_active", "run": {k: run_active.get(k) for k in ("key", "node", "targets", "since")},
                 "how": "one node at a time on one chip; call run_wait on that key"}
+    # review R1-C1: the chassis runs its queue FIFO -- a person's queued rows, or a leftover from a
+    # previous life, would run FIRST under the click that authorized only the agent's node
+    rows = [it for it in (queue_state.get("queue") or [])
+            if it.get("enabled", True) and it.get("status") in ("queued", "running")]
+    if rows:
+        return {"refused": "queue_not_empty",
+                "rows": [{"name": it.get("name"), "label": it.get("label"), "status": it.get("status")} for it in rows[:10]],
+                "how": "the Experiment Runner queue holds rows that would run before yours (a person's, or a leftover); "
+                       "a human clears them first (POST /api/agent/queue/clear, or the Experiment Runner page)"}
     mine = set(req.targets)
-    blocking = [approvals.summary(a) for a in pending if set(a.get("targets") or []) & mine or not a.get("targets")]
+    blocking = [approvals.summary(a) for a in pending
+                if a.get("kind") != "run" and (set(a.get("targets") or []) & mine or not a.get("targets"))]
     if mode == "ask-all":
         ap = None
         if req.approval_id:
@@ -174,6 +192,12 @@ def check_gates(req: RunRequest, *, session: dict | None, lim: dict, settings: d
         return {"refused": "orphan_running", "worker_pid": run.get("worker_pid"), "current": run.get("current_id"),
                 "how": "a node is already running on this chip (the Experiment Runner queue or a previous "
                        "session's worker); a human must confirm the OPX is free (Experiment Runner → Start clears it)"}
+    if live_diverged:
+        # review R1-M5: the node would measure against a state the chip no longer holds, and the card's
+        # "old" would lie
+        return {"refused": "stale_live",
+                "how": "the live files moved outside SM since the last sync: call take_live (empty tray) or ask the "
+                       "human to take live in the window, then run_node again"}
     if settings.get("global_simulate", True) and mode == "auto":
         return {"refused": "simulate_on_in_auto",
                 "how": "Dry run is ON in Experiment Runner settings: in auto mode a plan would report calibrated "
@@ -256,6 +280,21 @@ def classify(status: str, error: str | None, log_tail: str) -> str:
     return "node_error"
 
 
+def resized_lists(writes: list[dict]) -> set[str]:
+    """The list paths whose SHAPE changed: a created or deleted leaf under a
+    numeric segment (review R1-M6)."""
+    out: set[str] = set()
+    for w in writes:
+        if not (w.get("created") or w.get("deleted")):
+            continue
+        parts = str(w.get("path") or "").split(".")
+        for i, seg in enumerate(parts):
+            if seg.isdigit() and i > 0:
+                out.add(".".join(parts[:i]))
+                break
+    return out
+
+
 def family_key(node_name: str) -> str | None:
     try:
         from quam_state_manager.core.autofit import families
@@ -287,6 +326,47 @@ class Registry:
         self.runs: dict[str, dict] = {}
         self.plan_writes: dict[str, int] = {}
         self._cv = threading.Condition()
+        self._scan_metas()
+
+    def _scan_metas(self, keep: int = 50) -> None:
+        """review R3-7: after a restart the runs on disk are the record -- a run
+        that was in flight is INTERRUPTED (its plan step failed), the recent
+        finished ones stay visible on the cards."""
+        root = Path(self.instance_path) / "agent_runs"
+        metas = []
+        try:
+            for p in root.glob("*/meta.json"):
+                try:
+                    d = json.loads(p.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue
+                if isinstance(d, dict) and d.get("key"):
+                    metas.append(d)
+        except OSError:
+            return
+        metas.sort(key=lambda m: float(m.get("since") or 0))
+        for m in metas[-keep:]:
+            if m.get("status") in ("starting", "running"):
+                m["status"] = "interrupted"
+                m["ended"] = m.get("ended") or time.time()
+                m["result"] = {"classification": "node_error", "status": "failed", "applied": False,
+                               "error": "SM restarted while this run was in flight", "writes": []}
+                self._write_meta(m)
+                if m.get("plan_id"):
+                    try:
+                        from quam_state_manager.core import agent_plans
+                        rec = agent_plans.get(self.instance_path, m.get("chip"), m["plan_id"])
+                        if rec is not None and rec.get("status") in ("running", "stopping"):
+                            st = agent_plans.step_for(rec, step=None, node=m.get("node"), targets=m.get("targets"))
+                            if st is not None:
+                                agent_plans.step_update(self.instance_path, m.get("chip"), m["plan_id"], st["i"],
+                                                        status="failed", error="SM restarted while this step ran",
+                                                        ended=time.time())
+                            agent_plans.stop(self.instance_path, m.get("chip"), m["plan_id"], who="sm",
+                                             how="interrupted by an SM restart")
+                    except Exception:  # noqa: BLE001
+                        logger.debug("plan interrupt failed", exc_info=True)
+            self.runs[m["key"]] = m
 
     def active_for(self, chip: str) -> dict | None:
         with self._cv:
@@ -347,6 +427,10 @@ class Registry:
                 "plan_id": req.plan_id, "actor": req.actor, "session_id": req.session_id,
                 "status": "starting", "since": time.time(), "result": None, "item_id": None}
         with self._cv:
+            # review R1-M3: the gate's answer and this registration are one step under the lock
+            for m in self.runs.values():
+                if m.get("chip") == adapter.chip and m.get("status") in ("starting", "running"):
+                    raise RuntimeError("run_active")
             self.runs[key] = meta
         self._write_meta(meta)
         t = threading.Thread(target=self._drive, args=(meta, req, adapter, node_info, session, lim),
@@ -363,8 +447,17 @@ class Registry:
         timeout_s = req.timeout_s or settings.get("default_timeout_s") or 3600
         item_id = None
         window_start = time.time()
+        simulated = bool(settings.get("global_simulate", True))
+        plan = None
+        if req.plan_id:
+            try:
+                from quam_state_manager.core import agent_plans
+                plan = agent_plans.get(inst, chip, req.plan_id)
+            except Exception:  # noqa: BLE001
+                plan = None
         result: dict = {"classification": None, "status": None, "error": None, "run_id": None, "writes": [],
-                        "applied": False, "approval": None, "group_id": None, "unstaged": [], "log_tail": ""}
+                        "applied": False, "approval": None, "group_id": None, "unstaged": [], "log_tail": "",
+                        "simulated": simulated, "mode": run_mode(plan, session, lim)}
         try:
             adapter.set_lock({"key": key, "node": node_info.name, "since": window_start, "actor": req.actor,
                               "targets": list(req.targets)})
@@ -416,8 +509,17 @@ class Registry:
                 if time.time() - window_start > float(timeout_s) and cancelled_why is None:
                     cancelled_why = f"timed out after {int(timeout_s)}s (run_node timeout_s)"
                     scheduler.cancel(scope)
-                if not scheduler.is_running(scope) and it.get("status") == "running":
-                    status, error = "failed", "the worker died mid-run"
+                if cancelled_why and it.get("status") == "queued":
+                    # review R1-C2: cancel never touches a QUEUED item -- the worker will not run it, so
+                    # waiting for a terminal status would wait forever
+                    status, error = "cancelled", cancelled_why
+                    break
+                if not scheduler.is_running(scope):
+                    # review R1-C2: the worker stopped (a row ahead failed and the queue paused, or it died):
+                    # a queued item of ours will never run -- never hold the chip for it
+                    status = "failed"
+                    error = ("the worker died mid-run" if it.get("status") == "running"
+                             else "the runner stopped before this item ran (queue paused after another row?)")
                     break
                 time.sleep(1.0)
             agent_session.save(inst, chip, worker_pid=None)
@@ -447,7 +549,7 @@ class Registry:
                 result["classification"] = "unattributed" if cls == "ok" else cls
             # ---- the writes, through the door
             if writes and status == "done":
-                self._route_writes(meta, req, adapter, lim, writes, truncated, result, node_info, session)
+                self._route_writes(meta, req, adapter, lim, writes, truncated, result, node_info, session, plan)
             elif writes:
                 # a failed/cancelled node that still wrote state: never staged on its own
                 result["unstaged"] = [{"path": w["path"], "why": f"run {status}"} for w in writes[:50]]
@@ -460,7 +562,8 @@ class Registry:
                     "outcome": status, "classification": result["classification"],
                     "session_id": req.session_id, "reason": req.reason,
                     "n_writes": len(writes), "applied": result.get("applied"),
-                    "approval": (result.get("approval") or {}).get("id")})
+                    "approval": (result.get("approval") or {}).get("id"), "simulated": simulated,
+                    "mode": result.get("mode")})
             except Exception:  # noqa: BLE001
                 logger.debug("record_agent_run failed", exc_info=True)
             # ---- the journal line
@@ -490,6 +593,7 @@ class Registry:
                             classification=result["classification"], n_writes=len(writes),
                             applied=result.get("applied"), approval=(result.get("approval") or {}).get("id"),
                             error=str(error)[:300] if error else None, ended=time.time())
+            self._plan_end_restore(req, chip, lim)
             if status != "done":
                 adapter.notify("agent_failure", {"node": node_info.name, "targets": req.targets, "error": error,
                                                  "classification": result["classification"]})
@@ -514,18 +618,27 @@ class Registry:
             except Exception:  # noqa: BLE001
                 pass
 
-    def _route_writes(self, meta, req, adapter, lim, writes, truncated, result, node_info, session) -> None:
+    def _route_writes(self, meta, req, adapter, lim, writes, truncated, result, node_info, session, plan=None) -> None:
         inst, chip = self.instance_path, adapter.chip
-        mode = (session or {}).get("mode") or lim.get("mode") or "ask-writes"
+        mode = run_mode(plan, session, lim)
         fam = family_key(node_info.name)
         plan_key = req.plan_id or f"session:{req.session_id or 'none'}"
         why = None
+        resized = resized_lists(writes)
         if truncated:
             why = f"more than {MAX_WRITES} leaves changed"
+        elif resized:
+            # review R1-M6: a list that changed SHAPE cannot be staged leaf by leaf -- the overlapping cells
+            # would land as a matrix that never existed
+            why = f"list resized at {', '.join(sorted(resized)[:3])} -- SM stages leaves, not a new shape; " \
+                  "apply the run's state from Datasets → Apply to chip"
         elif mode != "auto":
             why = f"mode {mode}"
         else:
             why = limits_hold(lim, fam, writes, self.plan_writes.get(plan_key, 0))
+        if result.get("simulated"):
+            # review R1-M8: a value from a simulated run is never a calibration
+            why = "DRY RUN values (simulate ON in the run environment)" + (f"; {why}" if why else "")
         gid = f"agent:{meta['key']}"
         if why:
             ap = approvals.add(inst, chip, kind="writes", node=node_info.name, targets=req.targets, writes=writes,
@@ -552,6 +665,19 @@ class Registry:
             result["approval"] = approvals.summary(ap)
             result["why_held"] = f"apply refused: {out.get('error')}"
 
+    def _plan_end_restore(self, req: RunRequest, chip: str, lim: dict) -> None:
+        """review R1-M4: the plan's mode is the PLAN's. When it ends, the session
+        falls back to the chip's default so the next Arm never inherits auto."""
+        if not req.plan_id:
+            return
+        try:
+            from quam_state_manager.core import agent_plans
+            rec = agent_plans.get(self.instance_path, chip, req.plan_id)
+            if rec is not None and rec.get("status") in ("done", "failed", "stopped", "cancelled", "skipped"):
+                agent_session.save(self.instance_path, chip, mode=lim.get("mode") or "ask-writes")
+        except Exception:  # noqa: BLE001
+            logger.debug("plan end restore failed", exc_info=True)
+
     def _plan_step(self, req: RunRequest, chip: str, node_info, **fields) -> None:
         """Report to the plan card (SM's own record of progress, docs/173 S6)."""
         if not req.plan_id:
@@ -559,8 +685,8 @@ class Registry:
         try:
             from quam_state_manager.core import agent_plans
             rec = agent_plans.get(self.instance_path, chip, req.plan_id)
-            if rec is None:
-                return
+            if rec is None or rec.get("status") not in ("running", "stopping"):
+                return                                  # a draft or a closed plan never moves
             st = agent_plans.step_for(rec, step=req.step, node=node_info.name, targets=req.targets)
             if st is None:
                 return

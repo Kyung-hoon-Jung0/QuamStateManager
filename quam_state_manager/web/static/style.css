@@ -12656,7 +12656,7 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .ag-may { margin: .2rem 0 .2rem 1rem; font-size: .9em; }
 .ag-plan-acts, .ag-ap-acts, .ag-now-acts { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin-top: .4rem; }
 .ag-start { background: var(--pico-primary); color: var(--pico-primary-inverse); border-color: var(--pico-primary); }
-.ag-stop-now { border-color: var(--pico-del-color, #b00020); color: var(--pico-del-color, #b00020); }
+.ag-stop-now { background: var(--pico-del-color, #b00020); border-color: var(--pico-del-color, #b00020); color: #fff; font-weight: 600; }   /* review R2-7: legible in both themes */
 .ag-mode select { display: inline-block; width: auto; margin: 0; padding: .1rem .4rem; height: auto; font-size: .9em; }
 .ag-ap-rows { width: 100%; font-size: .9em; } .ag-ap-rows input { margin: 0; padding: .1rem .3rem; height: auto; font-size: .95em; }
 .ag-because { color: var(--pico-muted-color); font-size: .9em; margin: .2rem 0 0; }
@@ -12664,6 +12664,29 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .ag-form textarea { margin: 0; resize: vertical; }
 .ag-form-row { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin-top: .3rem; }
 .ag-form-row select { width: auto; margin: 0; padding: .15rem .5rem; height: auto; }
+.ag-form-row .ag-send { width: auto; margin: 0; }                       /* review R2-6: Pico's submit is width:100% */
+.ag-user-text { white-space: pre-wrap; margin: 0; }
+.ag-tbl { overflow-x: auto; max-width: 100%; }                          /* review R2-minor: a wide steps table scrolls, never the card */
+.ag-sim { font-size: .75em; text-transform: uppercase; letter-spacing: .04em; border: 1px solid var(--pico-muted-border-color); border-radius: .3rem; padding: 0 .3rem; color: var(--pico-muted-color); }
+.ag-st-interrupted, .ag-st-stopping { color: var(--pico-muted-color); }
+.ag-unreachable { font-weight: 600; }
+.ag-cancel { border-color: var(--pico-muted-border-color); color: var(--pico-muted-color); background: transparent; }
+/* docs/173 S7 -- the Agent setup page */
+.agent-setup { max-width: 62rem; }
+.as-sec { border: 1px solid var(--pico-muted-border-color); border-radius: .5rem; padding: .6rem .9rem; margin: .6rem 0; }
+.as-sec > summary { cursor: pointer; font-weight: 600; }
+.as-sec.as-done > summary { color: var(--pico-muted-color); font-weight: 500; }
+.as-sec.as-todo { border-color: var(--pico-primary); }
+.as-line { margin: .3rem 0; }
+.as-gap { color: var(--pico-muted-color); font-size: .9em; }
+.as-diff { font-size: .85em; max-height: 22rem; overflow: auto; margin: .4rem 0; padding: .4rem .6rem; border: 1px solid var(--pico-muted-border-color); border-radius: .4rem; background: var(--pico-code-background-color, var(--pico-card-sectioning-background-color)); }
+.as-diff .as-add { color: #2e7d32; } .as-diff .as-del { color: var(--pico-del-color, #b00020); } .as-diff .as-eq { color: var(--pico-muted-color); }
+.as-acts { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin-top: .4rem; }
+.as-acts button, .as-acts .btn-sm { width: auto; margin: 0; }
+.as-q { margin: .3rem 0; } .as-q input, .as-q textarea { margin: 0; }
+.as-answer { font-size: .9em; white-space: pre-wrap; }
+.as-ctx-local, .as-jroot { font-size: .9em; }
+.as-jroot input { display: inline-block; width: min(28rem, 100%); margin: 0; }
 .ag-presets .btn-sm { font-size: .8em; }
 .ag-hint { font-size: .8em; }
 .ag-now { border: 1px solid var(--pico-muted-border-color); border-radius: .5rem; padding: .6rem .8rem; font-size: .92em; display: flex; flex-direction: column; gap: .3rem; position: sticky; top: .5rem; }
@@ -12673,8 +12696,13 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .ag-observer { font-size: .85em; display: inline-flex; gap: .3rem; align-items: center; margin: 0; }
 .ag-observer input { margin: 0; }
 .ag-toast { position: fixed; bottom: 1rem; right: 1rem; background: var(--pico-card-background-color); border: 1px solid var(--pico-muted-border-color); padding: .5rem .8rem; border-radius: .4rem; z-index: 60; }
-.agent-popover { position: fixed; right: 1rem; bottom: 1rem; width: min(34rem, 92vw); max-height: 80vh; overflow: auto; z-index: 55;
+.agent-popover { position: fixed; right: 1rem; bottom: 1rem; width: min(34rem, 92vw); max-height: 80vh; min-width: 22rem; min-height: 16rem; overflow: hidden; z-index: 55;
   background: var(--pico-card-background-color); border: 1.5px solid var(--pico-primary); border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.25); display: flex; flex-direction: column; }
+/* review R2-9: the cards scroll INSIDE the panel; the form stays pinned at the bottom */
+.agent-popover .agent-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.agent-popover .ag-root.ag-compact { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; }
+.agent-popover .ag-compact .ag-left { flex: 1 1 auto; min-height: 0; }
+.agent-popover .ag-compact .ag-cards { flex: 1 1 auto; min-height: 6rem; max-height: none; }
 .agent-hidden { display: none; }
 .agent-popover.agent-floating { right: auto; bottom: auto; }
 .agent-header { display: flex; justify-content: space-between; align-items: center; padding: .35rem .7rem; cursor: grab; border-bottom: 1px solid var(--pico-muted-border-color); border-radius: 8.5px 8.5px 0 0; background: var(--pico-card-sectioning-background-color, var(--pico-card-background-color)); }

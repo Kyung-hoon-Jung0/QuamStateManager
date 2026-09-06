@@ -24858,6 +24858,10 @@ _SCHEDULER_MUTATOR_ENDPOINTS = {
     # working-copy / live writers
     "main.save", "main.state_sync", "main.state_apply_to_live",
     "main.undo", "main.discard", "main.diagnostics_apply_fix",
+    # docs/173 review R1-M7: every door that moves the working copy or the chip
+    # while the agent's node runs against a scratch copy of it
+    "main.field_create", "main.field_delete", "main.discard_all", "main.redo",
+    "main.auto_sync_pull", "main.state_baseline_reset", "main.dataset_load_state",
     # extras identity editors (audit-r10: these stage through the modifier
     # too — un-reviewed extras must not ride an autofit plan's next apply,
     # and a mid-plan chip_name flip would re-route snapshot attribution)

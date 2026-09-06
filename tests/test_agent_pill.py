@@ -87,7 +87,7 @@ class TestPrecedence:
         assert d["state"] == "running", d
 
     def test_a_recorded_worker_pid_keeps_a_long_node_alive(self, client, app):
-        agent_session.save(app.instance_path, "chip", backend="codex", owner="이OO", pid=os.getpid())
+        agent_session.save(app.instance_path, _key(client), backend="codex", owner="이OO", pid=os.getpid())
         _ev(client, hook_event_name="PreToolUse", tool_name="Bash", tool_use_id="t", summary="python 12_T1.py",
             ts=time.time() - 40 * 60)
         d = _now(client)
@@ -138,6 +138,12 @@ class TestPrecedence:
         assert d["state"] != "human-ran", d
 
 
+def _key(client):
+    """The session file's key is the chip's records key, not its name (review R3-1);
+    with no chip open the routes fall back to the bare 'chip'."""
+    return client.get("/api/agent/chip").get_json().get("chip_key") or "chip"
+
+
 def _run_folder_today(root, run_id, node, hms, *, qubits):
     from tests import test_story
     day = datetime.now().strftime("%Y-%m-%d")
@@ -180,10 +186,10 @@ class TestTheWake:
 class TestSessionAndStop:
     def test_stop_is_recorded_before_anything_is_killed(self, client, app):
         assert client.post("/api/agent/session/stop", json={}, headers=_H).status_code == 409
-        agent_session.save(app.instance_path, "chip", backend="claude", owner="김OO", pid=1)
+        agent_session.save(app.instance_path, _key(client), backend="claude", owner="김OO", pid=1)
         r = client.post("/api/agent/session/stop", json={"mode": "now"}, headers={**_H, "X-SM-Actor": "박OO"})
         assert r.status_code == 200
-        rec = agent_session.load(app.instance_path, "chip")
+        rec = agent_session.load(app.instance_path, _key(client))
         assert rec["agent_stop"]["mode"] == "now" and rec["agent_stop"]["who"] == "human:박OO"
         assert agent_session.stopped(rec)
         s = client.get("/api/agent/session").get_json()["session"]

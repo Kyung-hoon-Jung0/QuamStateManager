@@ -63,7 +63,7 @@ BACKENDS = ("claude", "codex")
 READ_TOOLS = ("sm_status", "state_get", "state_search", "tray", "versions", "field_history", "runs", "run",
               "diagnostics", "check_fit", "families", "family_manual", "journal_read", "approvals", "plan_status")
 MCP_TOOL_TIMEOUT_S = 30 * 60      # run_node blocks up to wait_s (<= 60 min); both CLIs default far lower
-_LIMIT_RE = re.compile(r"(limit|quota|rate).{0,80}?(resets?|until|at)\s*(\d{1,2}:\d{2}\s*(?:am|pm)?)", re.I)
+_LIMIT_RE = re.compile(r"(limit|quota|rate).{0,80}?(resets?|until|at)\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)", re.I)
 
 
 def _mcp_name(tool: str) -> str:
@@ -160,6 +160,16 @@ class ClaudeBackend(Backend):
                 ctx["session_id"] = ev.get("session_id") or ctx.get("session_id")
                 out.append(_mk(ctx, "Init", summary=f"model {ev.get('model')}"))
             return out
+        if t == "rate_limit_event":
+            # review R4-3: Claude says so in DATA -- {"status": allowed|allowed_warning|rejected, "resetsAt": epoch}
+            info = ev.get("rate_limit_info") or {}
+            if str(info.get("status") or "").lower() == "rejected":
+                until = info.get("resetsAt")
+                out.append(_mk(ctx, "Result", failed=True, limited=True, limited_until=until,
+                               error=f"usage limit ({info.get('rateLimitType') or 'rate'}) -- resets "
+                                     f"{datetime.fromtimestamp(float(until)).strftime('%H:%M') if until else '?'}",
+                               summary="usage limit reached"))
+            return out
         if t == "assistant":
             for b in (ev.get("message") or {}).get("content") or []:
                 bt = b.get("type")
@@ -244,7 +254,14 @@ class CodexBackend(Backend):
                 status = str(item.get("status") or "").lower()
                 failed = status in ("failed", "error", "declined") or bool(item.get("error")) \
                     or (it == "command_execution" and item.get("exit_code") not in (None, 0))
-                err = item.get("error") or (item.get("aggregated_output") or "")[-300:] if failed else None
+                err = None
+                if failed:
+                    err = item.get("error") or (item.get("aggregated_output") or "")[-300:]
+                    if not err:                  # review R4-4: an MCP isError result carries its reason in content
+                        res = item.get("result") or {}
+                        parts = res.get("content") if isinstance(res, dict) else None
+                        if isinstance(parts, list):
+                            err = " ".join(str(p.get("text") or "") for p in parts if isinstance(p, dict))[-300:]
                 out.append(_mk(ctx, "PostToolUseFailure" if failed else "PostToolUse", tool_name=name, tool_use_id=tid,
                                summary=_codex_tool_summary(item), failed=failed, error=str(err)[-300:] if err else None,
                                exit_code=item.get("exit_code")))
@@ -255,11 +272,16 @@ class CodexBackend(Backend):
             out.append(_mk(ctx, "Result", usage=ev.get("usage"), failed=False))
             out.append(_mk(ctx, "Stop", summary=ctx.get("last_text", "")))
             return out
-        if t in ("turn.failed", "error"):
-            msg = str((ev.get("error") or {}).get("message") or ev.get("message") or ev)
+        if t == "error":
+            # review R4-5: a real failure prints BOTH `error` and `turn.failed`; remember the text, emit once
+            ctx["errored"] = str(ev.get("message") or (ev.get("error") or {}).get("message") or ev)[-300:]
+            return out
+        if t == "turn.failed":
+            msg = str((ev.get("error") or {}).get("message") or ev.get("message") or ctx.get("errored") or ev)
             lim = _limited(msg)
             out.append(_mk(ctx, "Result", failed=True, error=msg[-300:], limited=bool(lim), limited_until=lim))
             out.append(_mk(ctx, "Stop", summary=msg[:400]))
+            ctx.pop("errored", None)
             return out
         return out
 
@@ -306,10 +328,13 @@ def reset_timestamp(text: str | None, now: float | None = None) -> float | None:
     time as a timestamp; None when the text names no time."""
     if not text or text is True:
         return None
-    m = re.search(r"(\d{1,2}):(\d{2})\s*(am|pm)?", str(text), re.I)
+    if isinstance(text, (int, float)) and not isinstance(text, bool):
+        return float(text) if float(text) > 1e9 else None      # an epoch (Claude's resetsAt)
+    m = re.search(r"(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b", str(text), re.I) or \
+        re.search(r"(\d{1,2}):(\d{2})\s*(am|pm)?", str(text), re.I)
     if not m:
         return None
-    h, mnt, ap = int(m.group(1)), int(m.group(2)), (m.group(3) or "").lower()
+    h, mnt, ap = int(m.group(1)), int(m.group(2) or 0), (m.group(3) or "").lower()
     if ap == "pm" and h < 12:
         h += 12
     if ap == "am" and h == 12:
@@ -328,6 +353,8 @@ def _mk(ctx: dict, kind: str, **fields) -> dict:
     rec = {"ts": time.time(), "session_id": ctx.get("session_id") or ctx.get("local_id"), "backend": ctx.get("backend"),
            "hook_event_name": kind, "seq": ctx["seq"], "origin": "chat", "chip": ctx.get("chip")}
     rec.update(fields)
+    if kind == "Result":
+        ctx["turn_open"] = False                 # the turn answered
     if kind == "Text":
         ctx["last_text"] = fields.get("text", "")
     if kind == "PreToolUse" and fields.get("tool_use_id"):
@@ -337,6 +364,19 @@ def _mk(ctx: dict, kind: str, **fields) -> dict:
 
 # ---------------------------------------------------------------- process
 
+def _vendored_exe(shim: str) -> str | None:
+    """npm's ``codex.cmd`` -> ``node_modules/@openai/codex-win32-x64/vendor/.../codex.exe`` when present."""
+    try:
+        root = Path(shim).resolve().parent / "node_modules" / "@openai"
+        for cand in sorted(root.glob("codex-win32-*/vendor/*/bin/codex.exe")):
+            return str(cand)
+        for cand in sorted(root.glob("codex/node_modules/@openai/codex-win32-*/vendor/*/bin/codex.exe")):
+            return str(cand)
+    except OSError:
+        pass
+    return None
+
+
 def resolve_command(cmd: list[str]) -> list[str]:
     """argv[0] by PATH (a .cmd shim resolves too, and CreateProcess runs it
     without the shell); through a shim every element still crosses cmd.exe,
@@ -345,6 +385,12 @@ def resolve_command(cmd: list[str]) -> list[str]:
     if not cmd:
         return cmd
     exe = shutil.which(cmd[0]) or cmd[0]
+    if os.name == "nt" and exe.lower().endswith((".cmd", ".bat")):
+        # review R4-7: through the shim cmd.exe also expands %VAR% and strips ^ -- the vendored exe
+        # the npm package ships takes argv verbatim
+        real = _vendored_exe(exe)
+        if real:
+            exe = real
     out = [exe] + list(cmd[1:])
     if os.name == "nt" and exe.lower().endswith((".cmd", ".bat")):
         out = [out[0]] + [a.replace("\r\n", " ").replace("\n", " ").replace("\r", " ") for a in out[1:]]
@@ -392,12 +438,14 @@ class AgentProcess:
         self._reader.start()
         self._err = threading.Thread(target=self._read_err, daemon=True)
         self._err.start()
+        self.stopped_by_human = False
         if prompt is not None:
             first = backend.initial_input(prompt, resume)
             if first is not None:
                 try:
                     self.proc.stdin.write(first + "\n")
                     self.proc.stdin.flush()
+                    self.ctx["turn_open"] = True
                 except (OSError, ValueError):
                     pass
             if backend.one_turn_per_process:
@@ -421,6 +469,7 @@ class AgentProcess:
         try:
             self.proc.stdin.write(enc + "\n")
             self.proc.stdin.flush()
+            self.ctx["turn_open"] = True
             return True
         except (OSError, ValueError):
             return False
@@ -432,6 +481,7 @@ class AgentProcess:
             pass
 
     def stop(self) -> None:
+        self.stopped_by_human = True             # review R2-10: the kill's exit code is not a failure
         if self.alive():
             kill_tree(self.proc.pid)
         self._emit(_mk(self.ctx, "Stop", summary="stopped by a human", stopped=True))
@@ -461,8 +511,12 @@ class AgentProcess:
         finally:
             self.returncode = self.proc.wait()
             self.ended = time.time()
-            if self.returncode not in (0, None) and not any(e.get("hook_event_name") == "Result" for e in self.events):
-                err = "\n".join(self.stderr_tail)[-400:]
+            # review R4-2: a turn still OPEN at exit (no Result since the last user send) is a crash,
+            # whatever earlier turns did; a person's Stop now is not (R2-10)
+            turn_open = self.ctx.get("turn_open", False)
+            crashed = (self.returncode not in (0, None) or turn_open) and not getattr(self, "stopped_by_human", False)
+            if crashed and not (self.returncode == 0 and not turn_open):
+                err = "\n".join(self.stderr_tail)[-400:] or self.ctx.get("errored") or ""
                 self._emit(_mk(self.ctx, "Error", failed=True, error=err or f"exit {self.returncode}",
                                limited=bool(_limited(err)), limited_until=_limited(err)))
                 self._emit(_mk(self.ctx, "Stop", summary=err[:400]))

@@ -220,14 +220,17 @@ class TestTheLiveStrip:
         from quam_state_manager.web.app import create_app
         inst = tmp_path / "_inst"
         (inst / "agent_events").mkdir(parents=True)
-        y = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        yd = datetime.now() - timedelta(days=1)
+        y = yd.strftime("%Y-%m-%d")
         (inst / "agent_events" / f"{y}.jsonl").write_text(json.dumps(
-            {"ts": 2.0, "hook_event_name": "PostToolUse", "tool_name": "Bash", "session_id": "s",
+            {"ts": yd.timestamp(), "hook_event_name": "PostToolUse", "tool_name": "Bash", "session_id": "s",
              "tool_use_id": "y1", "summary": "python 02_resonator_spectroscopy.py"}) + "\n", encoding="utf-8")
         c = create_app(testing=True, instance_path=str(inst)).test_client()
         assert c.get("/api/agent/events").get_json()["count"] == 1
-        text = c.get("/api/agent/journal?chip=unassigned").get_json()["text"]
+        # review R3-4: the derived line lands on the EVENT's day, never on the day SM happened to restart
+        text = c.get(f"/api/agent/journal?chip=unassigned&date={y}").get_json()["text"]
         assert "ran `02_resonator_spectroscopy`" in text, "SM derives the journal line the closed-SM night could not"
+        assert "02_resonator_spectroscopy" not in (c.get("/api/agent/journal?chip=unassigned").get_json()["text"] or "")
 
     def test_a_non_object_event_is_refused(self, client):
         assert client.post("/api/agent/event", json=[1, 2], headers=_H).status_code == 400
@@ -235,9 +238,11 @@ class TestTheLiveStrip:
 
 class TestEventsBecomeJournalLines:
     def test_a_node_run_is_journaled_once_and_read_events_never(self, client):
-        _ev(client, hook_event_name="PostToolUse", tool_name="Bash", tool_use_id="t1", ts=5.0,
+        import time as _t
+        t0 = _t.time()
+        _ev(client, hook_event_name="PostToolUse", tool_name="Bash", tool_use_id="t1", ts=t0,
             summary="python calibrations/05_power_rabi.py --qubits q1")
-        _ev(client, hook_event_name="PostToolUse", tool_name="Bash", tool_use_id="t1", ts=5.0,
+        _ev(client, hook_event_name="PostToolUse", tool_name="Bash", tool_use_id="t1", ts=t0,
             summary="python calibrations/05_power_rabi.py --qubits q1")     # the same event, POSTed twice
         _ev(client, hook_event_name="PostToolUse", tool_name="Read", tool_use_id="t2", summary="a.png")
         _ev(client, hook_event_name="PostToolUse", tool_name="Bash", tool_use_id="t3", summary="git status")
@@ -256,7 +261,7 @@ class TestEventsBecomeJournalLines:
         _ev(client, hook_event_name="Stop", summary="I moved to Ramsey.")
         assert "Claude:" not in client.get("/api/agent/journal?chip=unassigned").get_json()["text"]
         client.post("/api/agent/journal/root", json={"root": "", "claude_says": "1"}, headers=_H)
-        _ev(client, hook_event_name="Stop", summary="Now Ramsey.", ts=9.0)
+        _ev(client, hook_event_name="Stop", summary="Now Ramsey.")
         assert "Claude: Now Ramsey." in client.get("/api/agent/journal?chip=unassigned").get_json()["text"]
 
     def test_the_chip_is_the_sessions_state_path_never_invented(self, loaded_client, synth_folder):

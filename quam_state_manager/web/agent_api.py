@@ -65,6 +65,33 @@ def _chip_name() -> str:
     return Path(p).name if p else "chip"
 
 
+def _chip_key() -> str:
+    """The key of the open chip's MACHINE records (session, approvals, plans,
+    limits, runs): the working copy's ``<name>-<path hash>``. Review R3-1/R2-4:
+    keyed by the display NAME, a backup folder called the same shared the arm
+    token, the plans and the approvals of the live chip. The journal and the
+    SM_CHIP pin keep the name -- they are for people."""
+    r = _r()
+    p = r._active_path()
+    if not p:
+        return "chip"
+    try:
+        from quam_state_manager.core import working_copy as wc_mod
+        return wc_mod.key_for(p)
+    except Exception:  # noqa: BLE001
+        return _chip_name()
+
+
+def _lock_for(kind: str) -> threading.Lock:
+    """One lock per (kind, chip) for check-then-act routes (review R3-3 / R1-M3)."""
+    locks = current_app.config.setdefault("agent_locks", {})
+    k = f"{kind}:{_chip_key()}"
+    lk = locks.get(k)
+    if lk is None:
+        lk = locks[k] = threading.Lock()
+    return lk
+
+
 def _live_flag() -> bool:
     """Have the live files moved outside SM? Answered FRESH for the agent:
     the page's refresher is throttled (30 s) and skips a dirty working copy
@@ -135,7 +162,7 @@ def chip():
         return jsonify(ok=True, loaded=False, sm_version=_version(), now=_now_state())
     diverged = _live_flag()
     return jsonify(ok=True, loaded=True, sm_version=_version(),
-                   path=r._active_path(), name=_chip_name(),
+                   path=r._active_path(), name=_chip_name(), chip_key=_chip_key(),
                    chip_token=r._active_chip_token() or "",
                    qubits=list(store.qubit_names), pairs=list(store.qubit_pair_names),
                    pending=r._change_count(),
@@ -543,7 +570,8 @@ def _replay(ev: collections.deque) -> None:
     hook wrote every event to disk before it ever talked to us. Yesterday
     AND today -- a session that started at 22:00 crosses midnight."""
     today = datetime.now()
-    for day in (today - timedelta(days=1), today):
+    # review R3-4: a night older than yesterday was never journaled; seven days, oldest first
+    for day in [today - timedelta(days=k) for k in range(6, -1, -1)]:
         f = _events_dir() / (day.strftime("%Y-%m-%d") + ".jsonl")
         try:
             lines = f.read_text(encoding="utf-8").splitlines()
@@ -662,7 +690,12 @@ def _absorb(rec: dict, *, from_replay: bool = False) -> None:
         return
     line, run_id = _journal_line(rec)
     if line:
-        journal_mod.append(current_app.instance_path, _chip_for_event(rec), line, kind="hook", run_id=run_id)
+        when = None
+        try:
+            when = datetime.fromtimestamp(float(rec.get("ts")))   # review R3-4: the event's own time, not now
+        except (TypeError, ValueError, OSError):
+            when = None
+        journal_mod.append(current_app.instance_path, _chip_for_event(rec), line, kind="hook", run_id=run_id, when=when)
     _mark_journaled(key)
     if rec.get("failed") and not from_replay:
         _notify("agent_failure", {"tool": rec.get("tool_name"), "summary": rec.get("summary"),
@@ -739,7 +772,7 @@ _HUMAN_RECENT_S = 30 * 60
 def _mode_and_limits() -> dict:
     from quam_state_manager.core import limits
     try:
-        return limits.load(current_app.instance_path, _chip_name())
+        return limits.load(current_app.instance_path, _chip_key())
     except Exception:  # noqa: BLE001
         return dict(limits.DEFAULTS)
 
@@ -747,7 +780,7 @@ def _mode_and_limits() -> dict:
 def _session() -> dict | None:
     from quam_state_manager.core import agent_session
     try:
-        return agent_session.load(current_app.instance_path, _chip_name())
+        return agent_session.load(current_app.instance_path, _chip_key())
     except Exception:  # noqa: BLE001
         return None
 
@@ -763,6 +796,10 @@ def _human_ran_recently(now: float, agent_runs: dict, ev: list[dict]) -> dict | 
     except Exception:  # noqa: BLE001
         return None
     from quam_state_manager.core import story
+    try:
+        mine = story.unattributed_agent_runs(current_app.instance_path, _chip_key(), since=now - 6 * 3600)
+    except Exception:  # noqa: BLE001
+        mine = []
     for row in rows:
         try:
             when = datetime.strptime(f"{row.get('date')} {row.get('time')}", "%Y-%m-%d %H:%M:%S").timestamp()
@@ -772,6 +809,11 @@ def _human_ran_recently(now: float, agent_runs: dict, ev: list[dict]) -> dict | 
             continue
         rid = int(row["run_id"])
         if rid in agent_runs:
+            continue
+        # review R3-2: a run the agent made whose id arrived late is the agent's, not a person's
+        want = story._norm(row.get("experiment_name") or "")
+        if any(story._norm(m.get("node") or "") and want.startswith(story._norm(m.get("node") or ""))
+               and abs(float(m.get("ts") or 0) - when) < 900 for m in mine):
             continue
         want = story._norm(row.get("experiment_name") or "")
         hooked = any(e.get("tool_name") == "Bash" and e.get("hook_event_name") in ("PostToolUse", "PreToolUse")
@@ -797,7 +839,7 @@ def _now_state() -> dict:
     sess = _session()
     base = {"seq": seq, "mode": lim.get("mode"), "session": agent_session.summary(sess),
             "events_today": 0, "failures_today": 0, "waiting": _waiting_count()}
-    agent_runs = story.load_agent_runs(current_app.instance_path)
+    agent_runs = story.load_agent_runs(current_app.instance_path, _chip_key())
     by_session: dict[str, list[dict]] = collections.defaultdict(list)
     for e in ev:
         by_session[str(e.get("session_id"))].append(e)
@@ -891,7 +933,7 @@ def _waiting_count() -> int:
     if not _r()._active_path():
         return 0
     try:
-        return len(approvals.pending(current_app.instance_path, _chip_name()))
+        return len(approvals.pending(current_app.instance_path, _chip_key()))
     except Exception:  # noqa: BLE001
         return 0
 
@@ -975,26 +1017,42 @@ def session_stop():
     from quam_state_manager.web import routes as r
     data = request.get_json(silent=True) or request.form.to_dict()
     mode = "now" if str(data.get("mode") or "") == "now" else "after_run"
-    rec = agent_session.request_stop(current_app.instance_path, _chip_name(), who=r._request_actor(), mode=mode)
-    if rec is None:
+    key = _chip_key()
+    before = agent_session.load(current_app.instance_path, key)
+    if before is None:
         return _err("no agent session on this chip", 409)
+    already = (before.get("agent_stop") or {}).get("mode") == mode
+    rec = agent_session.request_stop(current_app.instance_path, key, who=r._request_actor(), mode=mode)
     mgr = current_app.config.get("agent_chat")
+    killed_here = False
     if mgr is not None:
         try:
-            mgr.stop(_chip_name(), now=(mode == "now"))   # recorded first (above), killed second
+            killed_here = mgr.get(key) is not None and mgr.get(key).alive()
+            mgr.stop(key, now=(mode == "now"))   # recorded first (above), killed second
         except Exception:  # noqa: BLE001
             logger.debug("chat stop failed", exc_info=True)
+    if mode == "now" and not killed_here and agent_session.pid_alive(before.get("pid")):
+        # review R3-6: the session belongs to ANOTHER SM process on this instance dir --
+        # "Stop now" from this window still means the process dies
+        try:
+            from quam_state_manager.core import agent_backend
+            agent_backend.kill_tree(int(before["pid"]))
+        except Exception:  # noqa: BLE001
+            logger.debug("cross-process kill failed", exc_info=True)
     try:
         # docs/173 S6: the plan card closes too -- "Stopped by <who>", pending steps cancelled
         from quam_state_manager.core import agent_plans
-        running_plan = agent_plans.running(current_app.instance_path, _chip_name())
+        running_plan = agent_plans.running(current_app.instance_path, key)
         if running_plan is not None:
-            agent_plans.stop(current_app.instance_path, _chip_name(), running_plan["id"], who=r._request_actor(),
+            agent_plans.stop(current_app.instance_path, key, running_plan["id"], who=r._request_actor(),
                              how="stop now" if mode == "now" else "stop after this run")
+            if mode == "now":
+                agent_session.save(current_app.instance_path, key, mode=_mode_and_limits().get("mode"))
     except Exception:  # noqa: BLE001
         logger.debug("plan stop failed", exc_info=True)
-    journal_mod.append(current_app.instance_path, _chip_name(),
-                       f"Stop ({'now' if mode == 'now' else 'after this run'}) pressed by {r._request_actor()}", kind="sm")
+    if not already:                              # review R3-8: a double click is one line
+        journal_mod.append(current_app.instance_path, _chip_name(),
+                           f"Stop ({'now' if mode == 'now' else 'after this run'}) pressed by {r._request_actor()}", kind="sm")
     _bump()
     _wake()
     return jsonify(ok=True, session=agent_session.summary(rec))
@@ -1027,7 +1085,7 @@ def _run_active_view() -> dict | None:
     try:
         if not _r()._active_path():
             return None
-        m = _registry().active_for(_chip_name())
+        m = _registry().active_for(_chip_key())          # the registry keys runs by the chip's records KEY
         return {k: m.get(k) for k in ("key", "node", "targets", "since", "actor")} if m else None
     except Exception:  # noqa: BLE001
         return None
@@ -1046,6 +1104,12 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
         return {"group_id": gid, "staged": 0, "applied": False, "error": "the chip is no longer loaded",
                 "unstaged": [{"path": w["path"], "why": "chip not loaded"} for w in writes[:50]]}
     mod, store = ctx["modifier"], ctx["store"]
+    if presser and not str(presser).startswith("by_") and store.change_log:
+        # review R1-M1: a person's approval press consents to THESE writes, never to whatever
+        # else the tray holds (another window's edit would ride along under this name)
+        return {"group_id": gid, "staged": 0, "applied": False, "unstaged": [],
+                "error": f"the tray holds {len(store.change_log)} staged edit(s); apply or discard them in the window "
+                         "first, then approve"}
     staged, unstaged = [], []
     with store._lock:
         for w in writes:
@@ -1054,16 +1118,28 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
                                                             "apply the run's state from Datasets → Apply to chip"})
                 continue
             try:
-                e = mod.set_value(w["path"], w["new"], _defer_hooks=True, group_id=gid)
+                # review R2-2: a pointer alias (x180 -> #./x180_DragCosine) is edited at its target,
+                # the way /field/edit does it
+                target = r._resolve_edit_path(store, w["path"]) or w["path"]
+                e = mod.set_value(target, w["new"], _defer_hooks=True, group_id=gid)
                 e.actor = actor
                 staged.append(e)
             except Exception as exc:  # noqa: BLE001
                 unstaged.append({"path": w["path"], "why": f"{type(exc).__name__}: {str(exc)[:160]}"})
+        if unstaged and staged:
+            # all or nothing: a partial write would put half a run on the chip
+            while store.change_log and store.change_log[-1].group_id == gid:
+                mod.undo_group()
+            staged = []
         store._clear_pointer_cache()
         if store.search_index is not None:
             for e in staged:
                 store.search_index.update_entry(e.dot_path, e.new_value)
     out = {"group_id": gid, "staged": len(staged), "unstaged": unstaged, "applied": False, "error": None}
+    if unstaged:
+        out["error"] = f"{len(unstaged)} of {len(writes)} value(s) cannot be staged ({unstaged[0]['path']}: " \
+                       f"{unstaged[0]['why'][:80]}); nothing was written"
+        return out
     if not staged or not apply:
         return out
     if r._active_ctx() is not ctx:
@@ -1128,7 +1204,8 @@ def _run_adapter():
     app = current_app._get_current_object()
     r = _r()
     ctx = r._active_ctx()
-    chip = _chip_name()
+    chip = _chip_key()                          # the records' key
+    name = _chip_name()                         # the journal's name
     live = str(ctx["path"])
     wc = ctx["working_copy"]
     scope = r._sched_inst()
@@ -1142,7 +1219,7 @@ def _run_adapter():
             try:
                 with _events_lock:
                     ev = list(_events())
-                h = _human_ran_recently(time.time(), story.load_agent_runs(inst), ev)
+                h = _human_ran_recently(time.time(), story.load_agent_runs(inst, chip), ev)
                 if h and time.time() - float(h.get("ts") or 0) <= float(window_min) * 60:
                     return h
             except Exception:  # noqa: BLE001
@@ -1169,7 +1246,7 @@ def _run_adapter():
 
     def journal(text, kind="agent", reason=None, run_id=None, paths=None):
         with app.app_context():
-            journal_mod.append(inst, chip, text, kind=kind, reason=reason, run_id=run_id, paths=paths or [])
+            journal_mod.append(inst, name, text, kind=kind, reason=reason, run_id=run_id, paths=paths or [])
 
     def wake():
         with app.app_context():
@@ -1177,7 +1254,7 @@ def _run_adapter():
             _wake()
 
     def set_lock(info):
-        app.config["agent_edit_lock"] = ({**info, "chip": chip, "path": live} if info else None)
+        app.config["agent_edit_lock"] = ({**info, "chip": name, "chip_key": chip, "path": live} if info else None)
 
     def notify(event, payload):
         with app.app_context():
@@ -1190,18 +1267,26 @@ def _run_adapter():
         with scheduler._QLOCK:
             return scheduler.load_queue(scope)
 
+    def live_diverged():
+        with app.app_context():
+            try:
+                from quam_state_manager.core import working_copy as wc_mod
+                return wc_mod.live_diverged_now(wc)
+            except Exception:  # noqa: BLE001
+                return None
+
     return agent_runs.RunAdapter(
         instance_path=inst, chip=chip, scope=scope, live_folder=live, working_folder=str(wc.working_folder),
         settings=settings, human_recent=human_recent, list_runs=list_runs, stage=stage, journal=journal,
         wake=wake, set_lock=set_lock, notify=notify,
-        queue_state=queue_state, own_runner_alive=lambda: scheduler.is_running(scope))
+        queue_state=queue_state, own_runner_alive=lambda: scheduler.is_running(scope), live_diverged=live_diverged)
 
 
 def _run_view(m: dict) -> dict:
     res = m.get("result") or {}
     out = {"key": m.get("key"), "status": m.get("status"), "node": m.get("node"), "targets": m.get("targets"),
            "since": m.get("since"), "ended": m.get("ended"), "actor": m.get("actor"), "plan_id": m.get("plan_id"),
-           "result": res}
+           "simulated": bool(m.get("simulated")), "result": res}
     if m.get("status") in ("starting", "running"):
         out["how"] = f"still running; call run_wait with key {m.get('key')}"
     elif res.get("classification") == "hardware_contention":
@@ -1221,7 +1306,7 @@ def run_node():
     """The agent's ONE way to run a calibration node. Gates answer as data
     (docs/173 §3.4); the node runs on a scratch copy; the writes go through
     the door or into an approval; the run is attributed to the agent."""
-    from quam_state_manager.core import agent_runs, agent_session, approvals, limits
+    from quam_state_manager.core import agent_plans, agent_runs, agent_session, approvals, limits
     r = _r()
     if not r._active_path():
         return _err("open a chip first", 409)
@@ -1247,11 +1332,12 @@ def run_node():
     bad = [t for t in targets if t not in known]
     if bad:
         return _err(f"unknown targets {bad}", 400, known=sorted(known)[:80])
-    inst, chip = current_app.instance_path, _chip_name()
+    inst, chip, name = current_app.instance_path, _chip_key(), _chip_name()
     adapter = _run_adapter()
     reg = _registry()
     settings = adapter.settings()
-    node_info, available = agent_runs.resolve_node(settings.get("calibrations_folder"), node, instance_path=inst)
+    with _SCAN_LOCK:                             # review R1 minor: two run_node calls raced the scan cache write
+        node_info, available = agent_runs.resolve_node(settings.get("calibrations_folder"), node, instance_path=inst)
     session = agent_session.load(inst, chip)
     lim = limits.load(inst, chip)
     try:
@@ -1265,33 +1351,77 @@ def run_node():
                                 step=int(data["step"]) if str(data.get("step") or "").lstrip("-").isdigit() else None)
     pend = approvals.pending(inst, chip)
     human = adapter.human_recent(float(lim.get("human_recent_min") or 30))
-    refusal = agent_runs.check_gates(req, session=session, lim=lim, settings=settings, pending=pend, human=human,
-                                     queue_state=adapter.queue_state(), own_running=adapter.own_runner_alive(),
-                                     run_active=reg.active_for(chip), node_info=node_info, available=available)
-    if refusal is not None:
-        if refusal.pop("file_request", False) and node_info is not None:
-            ap = approvals.add(inst, chip, kind="run", node=node_info.name, targets=targets, writes=None,
-                               reason=reason, why_held="mode ask-all", actor=actor, plan_id=req.plan_id, params=params)
-            refusal["approval"] = approvals.summary(ap)
-            journal_mod.append(inst, chip, f"asked to run `{node_info.name}` on {' '.join(targets)} -- waiting for "
-                                           f"approval (mode ask-all)", kind="agent", reason=reason)
-            _bump()
-            _wake()
-        return jsonify(ok=False, **refusal), 409
-    mode = (session or {}).get("mode") or lim.get("mode")
-    if mode == "ask-all":
-        ap = approvals.get(inst, chip, req.approval_id or "")
-        if (not ap or ap.get("status") != "approved" or ap.get("kind") != "run"
-                or ap.get("node") != node_info.name or list(ap.get("targets") or []) != targets):
-            return jsonify(ok=False, refused="awaiting_approval", needs="run",
-                           how="approval_id must name an APPROVED run request for this node and these targets"), 409
-    meta = reg.start(req, adapter, node_info=node_info, session=session, lim=lim)
+    plan = agent_plans.get(inst, chip, req.plan_id) if req.plan_id else None
+    with _lock_for("run"):                       # review R1-M3: the gates and the start are one step
+        refusal = agent_runs.check_gates(req, session=session, lim=lim, settings=settings, pending=pend, human=human,
+                                         queue_state=adapter.queue_state(), own_running=adapter.own_runner_alive(),
+                                         run_active=reg.active_for(chip), node_info=node_info, available=available,
+                                         plan=plan if plan and plan.get("status") in ("running", "stopping") else None,
+                                         live_diverged=adapter.live_diverged())
+        if refusal is not None:
+            if refusal.pop("file_request", False) and node_info is not None:
+                ap = approvals.find_pending_run(inst, chip, node=node_info.name, targets=targets, params=params)
+                if ap is None:                   # review R1-M2: the same ask twice is one request
+                    ap = approvals.add(inst, chip, kind="run", node=node_info.name, targets=targets, writes=None,
+                                       reason=reason, why_held="mode ask-all", actor=actor, plan_id=req.plan_id,
+                                       params=params)
+                    journal_mod.append(inst, name, f"asked to run `{node_info.name}` on {' '.join(targets)} -- waiting "
+                                                   f"for approval (mode ask-all)", kind="agent", reason=reason)
+                    _bump()
+                    _wake()
+                refusal["approval"] = approvals.summary(ap)
+            return jsonify(ok=False, **refusal), 409
+        mode = agent_runs.run_mode(plan if plan and plan.get("status") in ("running", "stopping") else None, session, lim)
+        ap = None
+        if mode == "ask-all":
+            ap = approvals.get(inst, chip, req.approval_id or "")
+            if (not ap or ap.get("status") != "approved" or ap.get("kind") != "run" or ap.get("used_by_run")
+                    or ap.get("node") != node_info.name or list(ap.get("targets") or []) != targets):
+                return jsonify(ok=False, refused="awaiting_approval", needs="run",
+                               how="approval_id must name an APPROVED, not yet used, run request for this node and "
+                                   "these targets"), 409
+        try:
+            meta = reg.start(req, adapter, node_info=node_info, session=session, lim=lim)
+        except RuntimeError:
+            act = reg.active_for(chip) or {}
+            return jsonify(ok=False, refused="run_active", run={k: act.get(k) for k in ("key", "node", "targets", "since")},
+                           how="one node at a time on one chip; call run_wait on that key"), 409
+        if ap is not None:
+            approvals.mark_used(inst, chip, ap["id"], meta["key"])   # review R1-M2: consumed once
     try:
         wait_s = float(data.get("wait_s") or agent_runs.DEFAULT_WAIT_S)
     except (TypeError, ValueError):
         wait_s = agent_runs.DEFAULT_WAIT_S
     m = reg.wait(meta["key"], max(0.0, min(wait_s, 3600.0)))
     return jsonify(ok=True, **_run_view(m or meta))
+
+
+_SCAN_LOCK = threading.Lock()
+
+
+@agent_bp.route("/queue/clear", methods=["POST"])
+def queue_clear():
+    """A person clears the chassis queue's non-running rows (review R1-C1:
+    run_node refuses while the queue holds anyone's rows; the Experiment
+    Runner page is hidden in 1.0, so this is the door)."""
+    from quam_state_manager.core import scheduler
+    r = _r()
+    if not r._active_path():
+        return _err("open a chip first", 409)
+    if r._request_actor().startswith("by_"):
+        return _err("only a person clears the queue", 403)
+    scope = r._sched_inst()
+    with scheduler._QLOCK:
+        st = scheduler.load_queue(scope)
+        kept = [it for it in st.get("queue") or [] if it.get("status") == "running"]
+        dropped = [{"name": it.get("name"), "label": it.get("label"), "status": it.get("status")}
+                   for it in st.get("queue") or [] if it.get("status") != "running"]
+        st["queue"] = kept
+        scheduler.save_queue(scope, st)
+    if dropped:
+        journal_mod.append(current_app.instance_path, _chip_name(),
+                           f"{r._request_actor()} cleared {len(dropped)} row(s) from the run queue", kind="sm")
+    return jsonify(ok=True, dropped=dropped, kept=len(kept))
 
 
 @agent_bp.route("/run/<key>")
@@ -1310,7 +1440,7 @@ def run_wait(key: str):
 def runs_agent():
     """This process's run_node runs, newest first (the cards read these)."""
     reg = _registry()
-    chip = _chip_name() if _r()._active_path() else None
+    chip = _chip_key() if _r()._active_path() else None
     rows = [_run_view(m) for m in reg.runs.values() if chip is None or m.get("chip") == chip]
     rows.sort(key=lambda x: float(x.get("since") or 0), reverse=True)
     return jsonify(ok=True, runs=rows[:50])
@@ -1327,11 +1457,13 @@ def session_arm():
     if actor.startswith("by_"):
         return _err("only a person's click arms a session (rule 0)", 403)
     data = request.get_json(silent=True) or request.form.to_dict()
-    inst, chip = current_app.instance_path, _chip_name()
+    inst, chip = current_app.instance_path, _chip_key()
+    before = agent_session.load(inst, chip) or {}
     token = uuid.uuid4().hex[:12]
     rec = agent_session.save(inst, chip, start_token=token, armed_by=actor, armed_at=time.time(),
-                             agent_stop=None, plan_id=data.get("plan_id") or (agent_session.load(inst, chip) or {}).get("plan_id"))
-    journal_mod.append(inst, chip, f"armed by {actor}: the agent may start hardware runs on this chip", kind="sm")
+                             agent_stop=None, plan_id=data.get("plan_id") or before.get("plan_id"))
+    if not before.get("start_token"):            # review R3-8: re-arming is not a second line
+        journal_mod.append(inst, _chip_name(), f"armed by {actor}: the agent may start hardware runs on this chip", kind="sm")
     _bump()
     _wake()
     return jsonify(ok=True, session=agent_session.summary(rec))
@@ -1343,11 +1475,13 @@ def session_disarm():
     r = _r()
     if not r._active_path():
         return _err("open a chip first", 409)
-    inst, chip = current_app.instance_path, _chip_name()
-    if agent_session.load(inst, chip) is None:
+    inst, chip = current_app.instance_path, _chip_key()
+    before = agent_session.load(inst, chip)
+    if before is None:
         return _err("no agent session on this chip", 409)
     rec = agent_session.save(inst, chip, start_token=None)
-    journal_mod.append(inst, chip, f"disarmed by {r._request_actor()}", kind="sm")
+    if before.get("start_token"):
+        journal_mod.append(inst, _chip_name(), f"disarmed by {r._request_actor()}", kind="sm")
     _bump()
     _wake()
     return jsonify(ok=True, session=agent_session.summary(rec))
@@ -1359,7 +1493,7 @@ def approvals_list():
     r = _r()
     if not r._active_path():
         return jsonify(ok=True, pending=[], recent=[])
-    rows = approvals.load(current_app.instance_path, _chip_name())
+    rows = approvals.load(current_app.instance_path, _chip_key())
     pend = [x for x in rows if x.get("status") == "pending"]
     recent = [approvals.summary(x) for x in rows if x.get("status") != "pending"][-20:]
     return jsonify(ok=True, pending=pend, recent=recent, waiting=len(pend))
@@ -1379,37 +1513,40 @@ def approvals_decide(aid: str, verb: str):
     if actor.startswith("by_"):
         return _err("only a person decides an approval", 403)
     data = request.get_json(silent=True) or {}
-    inst, chip = current_app.instance_path, _chip_name()
+    inst, chip = current_app.instance_path, _chip_key()
     writes = data.get("writes") if isinstance(data.get("writes"), list) else None
-    cur = approvals.get(inst, chip, aid)
-    if cur is None or cur.get("status") != "pending":
-        return _err("no pending approval with that id", 404)
-    out = {"ok": True}
-    if verb == "approve" and cur.get("kind") == "writes":
-        # the writes go through the door FIRST; a refusal keeps the approval pending
-        # (the human sees why, takes live, presses again) instead of recording an
-        # approval that never reached the chip
-        res = _stage_writes(current_app._get_current_object(), str(r._active_path()),
-                            writes if writes is not None else (cur.get("writes") or []),
-                            f"approved:{aid}", cur.get("actor") or "by_agent", cur.get("plan_id"), True, presser=actor)
-        out["stage"] = res
-        if not res.get("applied") and res.get("staged", 0) > 0 and not res.get("saved_in_working_copy"):
-            return jsonify(ok=False, error=res.get("error") or "not applied", stage=res,
-                           approval=approvals.summary(cur), how="the approval stays pending; take live, then approve again"), 409
-    rec = approvals.decide(inst, chip, aid, status="approved" if verb == "approve" else "rejected", who=actor,
-                           note=data.get("note"), writes=writes)
+    with _lock_for("approve"):                   # review R3-3: two presses are one decision
+        cur = approvals.get(inst, chip, aid)
+        if cur is None or cur.get("status") != "pending":
+            return _err("no pending approval with that id", 404)
+        out = {"ok": True}
+        if verb == "approve" and cur.get("kind") == "writes":
+            # the writes go through the door FIRST; a refusal keeps the approval pending
+            # (the human sees why, takes live, presses again) instead of recording an
+            # approval that never reached the chip. All or nothing (review R2-2).
+            res = _stage_writes(current_app._get_current_object(), str(r._active_path()),
+                                writes if writes is not None else (cur.get("writes") or []),
+                                f"approved:{aid}", cur.get("actor") or "by_agent", cur.get("plan_id"), True, presser=actor)
+            out["stage"] = res
+            if not res.get("applied"):
+                return jsonify(ok=False, error=res.get("error") or "not applied", stage=res,
+                               approval=approvals.summary(cur),
+                               how=("the approval stays pending; " + ("take live, then approve again"
+                                    if "stale_live" in str(res.get("error")) else "see the error"))), 409
+        rec = approvals.decide(inst, chip, aid, status="approved" if verb == "approve" else "rejected", who=actor,
+                               note=data.get("note"), writes=writes)
     out["approval"] = approvals.summary(rec)
     if verb == "approve" and rec.get("kind") == "writes":
         res = out["stage"]
         rid = rec.get("run_id")
-        journal_mod.append(inst, chip, f"approved {res.get('staged', 0)} write(s) from `{rec.get('node')}`"
+        journal_mod.append(inst, _chip_name(), f"approved {res.get('staged', 0)} write(s) from `{rec.get('node')}`"
                                        + (f" #{rid}" if rid else "") + f" -- {'applied' if res.get('applied') else 'NOT applied: ' + str(res.get('error'))}",
                            kind="sm", run_id=rid, paths=[w.get("path") for w in (rec.get("writes") or [])[:20]])
     elif verb == "approve":
-        journal_mod.append(inst, chip, f"approved the run of `{rec.get('node')}` on {' '.join(rec.get('targets') or [])}",
+        journal_mod.append(inst, _chip_name(), f"approved the run of `{rec.get('node')}` on {' '.join(rec.get('targets') or [])}",
                            kind="sm")
     else:
-        journal_mod.append(inst, chip, f"rejected {rec.get('kind')} from `{rec.get('node')}`"
+        journal_mod.append(inst, _chip_name(), f"rejected {rec.get('kind')} from `{rec.get('node')}`"
                                        + (f": {data.get('note')}" if data.get("note") else ""), kind="sm")
     _bump()
     _wake()
@@ -1483,7 +1620,7 @@ def live_diff():
 def _plan_brief() -> dict | None:
     from quam_state_manager.core import agent_plans
     try:
-        chip = _chip_name()
+        chip = _chip_key()
         rec = agent_plans.running(current_app.instance_path, chip) or agent_plans.latest(current_app.instance_path, chip)
         if not rec:
             return None
@@ -1589,14 +1726,20 @@ def chat_cards():
     from quam_state_manager.core import agent_plans, agent_session, approvals
     r = _r()
     chip = _chip_name() if r._active_path() else None
-    after = int(request.args.get("after") or 0)
+    key = _chip_key() if chip else None
+    try:
+        after = int(request.args.get("after") or 0)
+    except ValueError:
+        return _err("after must be an integer")
     cards: list[dict] = []
     last = after
+    more = False
     if chip:
         with _events_lock:
             ev = [e for e in _events() if e.get("origin") == "chat" and int(e.get("n") or 0) > after
                   and e.get("chip") == chip]
-        for e in ev[-300:]:
+        more = len(ev) > 300
+        for e in ev[:300]:                       # review R2-13: from the FRONT, so the cursor never skips
             c = _chat_card(e)
             if c:
                 cards.append(c)
@@ -1606,18 +1749,18 @@ def chat_cards():
     file = None
     session = None
     if chip:
-        plans = agent_plans.load(inst, chip)[-6:]
-        live["plans"] = [_plan_view(p, with_may_change=(p.get("status") in ("draft", "running"))) for p in plans]
+        plans = agent_plans.load(inst, key)[-6:]
+        live["plans"] = [_plan_view(p, with_may_change=(p.get("status") in ("draft", "running", "stopping"))) for p in plans]
         reg = _registry()
-        runs = [_run_view(m) for m in reg.runs.values() if m.get("chip") == chip]
+        runs = [_run_view(m) for m in reg.runs.values() if m.get("chip") == key]
         runs.sort(key=lambda x: float(x.get("since") or 0))
         live["runs"] = runs[-20:]
-        live["approvals"] = approvals.pending(inst, chip)
-        file = agent_session.summary(agent_session.load(inst, chip))
+        live["approvals"] = approvals.pending(inst, key)
+        file = agent_session.summary(agent_session.load(inst, key))
         mgr = current_app.config.get("agent_chat")
-        session = mgr.status(chip) if mgr else None
+        session = mgr.status(key) if mgr else None
     store = r._store()
-    return jsonify(ok=True, chip=chip, cards=cards, last=last, live=live, session=session, file=file,
+    return jsonify(ok=True, chip=chip, chip_key=key, cards=cards, last=last, more=more, live=live, session=session, file=file,
                    now=_now_state(), waiting=_waiting_count(), agent_seq=int(current_app.config.get("agent_seq") or 0),
                    qubits=len(store.qubit_names) if store else None)
 
@@ -1628,7 +1771,7 @@ def plans_list():
     r = _r()
     if not r._active_path():
         return jsonify(ok=True, plans=[])
-    rows = agent_plans.load(current_app.instance_path, _chip_name())
+    rows = agent_plans.load(current_app.instance_path, _chip_key())
     return jsonify(ok=True, plans=[_plan_view(p) for p in rows[-20:]])
 
 
@@ -1638,7 +1781,7 @@ def plan_get(pid: str):
     r = _r()
     if not r._active_path():
         return _err("open a chip first", 409)
-    rec = agent_plans.get(current_app.instance_path, _chip_name(), pid)
+    rec = agent_plans.get(current_app.instance_path, _chip_key(), pid)
     if rec is None:
         return _err("unknown plan", 404)
     return jsonify(ok=True, plan=_plan_view(rec, with_may_change=True))
@@ -1648,12 +1791,12 @@ def plan_get(pid: str):
 def plans_add():
     """A plan CARD: from the agent (plan_propose: title + steps + why) or
     from a person's deterministic ``/run`` line. Nothing starts here."""
-    from quam_state_manager.core import agent_plans, agent_session, limits
+    from quam_state_manager.core import agent_plans, agent_runs, agent_session, limits
     r = _r()
     if not r._active_path():
         return _err("open a chip first", 409)
     data = request.get_json(silent=True) or {}
-    inst, chip = current_app.instance_path, _chip_name()
+    inst, chip, name = current_app.instance_path, _chip_key(), _chip_name()
     actor = r._request_actor()
     store = r._store()
     known = set(store.qubit_names) | set(store.qubit_pair_names)
@@ -1664,6 +1807,18 @@ def plans_add():
         bad = [t for t in parsed["targets"] if t not in known]
         if bad:
             return _err(f"unknown targets {bad}", 400, known=sorted(known)[:80])
+        # review R2-16: the node name is checked NOW, not after a real session spun up
+        try:
+            from quam_state_manager.core import scheduler
+            folder = scheduler.load_settings(r._sched_inst()).get("calibrations_folder")
+        except Exception:  # noqa: BLE001
+            folder = None
+        with _SCAN_LOCK:
+            info, avail = agent_runs.resolve_node(folder, parsed["node"], instance_path=inst)
+        if info is None:
+            return _err(f"no node named {parsed['node']!r} in the calibrations folder", 400,
+                        available=sorted({i.name for i in avail})[:40])
+        parsed["node"] = info.name
         steps = [{"node": parsed["node"], "targets": parsed["targets"], "params": parsed["params"],
                   "why": "typed as /run (no model involved)"}]
         title = f"/run {parsed['node']} {' '.join(parsed['targets'])}"
@@ -1683,7 +1838,7 @@ def plans_add():
     mode = (session or {}).get("mode") or limits.load(inst, chip).get("mode")
     rec = agent_plans.add(inst, chip, title=title, steps=steps, mode=mode, created_by=actor, source=source,
                           reason=data.get("why") or data.get("reason"), session_id=(session or {}).get("session_id"))
-    journal_mod.append(inst, chip, f"plan `{rec['title']}` proposed ({len(rec['steps'])} step(s)) -- waiting for Start",
+    journal_mod.append(inst, name, f"plan `{rec['title']}` proposed ({len(rec['steps'])} step(s)) -- waiting for Start",
                        kind="agent" if actor.startswith("by_") else "sm",
                        reason=(data.get("why") or None) if actor.startswith("by_") else None)
     _bump()
@@ -1699,11 +1854,15 @@ def plan_mode(pid: str):
     r = _r()
     if not r._active_path():
         return _err("open a chip first", 409)
+    if r._request_actor().startswith("by_"):
+        return _err("a person chooses the plan's mode", 403)   # review R1 minor
     data = request.get_json(silent=True) or {}
-    inst, chip = current_app.instance_path, _chip_name()
+    inst, chip = current_app.instance_path, _chip_key()
     rec = agent_plans.get(inst, chip, pid)
     if rec is None:
         return _err("unknown plan", 404)
+    if rec.get("status") != "draft":
+        return _err("the mode is chosen before Start", 409)
     mode = str(data.get("mode") or "")
     if mode not in limits.MODES:
         return _err(f"mode must be one of {list(limits.MODES)}")
@@ -1725,7 +1884,20 @@ def plan_start(pid: str):
     actor = r._request_actor()
     if actor.startswith("by_"):
         return _err("only a person's click starts a plan (rule 0)", 403)
-    inst, chip = current_app.instance_path, _chip_name()
+    inst, chip, name = current_app.instance_path, _chip_key(), _chip_name()
+    lock = _lock_for("plan")
+    if not lock.acquire(timeout=5):
+        return _err("busy", 409)
+    try:
+        return _plan_start_locked(pid, actor, inst, chip, name)
+    finally:
+        lock.release()
+
+
+def _plan_start_locked(pid, actor, inst, chip, name):
+    from quam_state_manager.core import agent_plans, agent_session, limits
+    from quam_state_manager.web import chat_api
+    r = _r()
     rec = agent_plans.get(inst, chip, pid)
     if rec is None:
         return _err("unknown plan", 404)
@@ -1735,11 +1907,9 @@ def plan_start(pid: str):
         return _err("another plan is running on this chip", 409)
     data = request.get_json(silent=True) or {}
     mode = rec.get("mode") or limits.load(inst, chip).get("mode")
-    # the mode the card shows is the mode the session runs in
-    try:
-        limits.save(inst, chip, {"mode": mode}, who=actor)
-    except limits.LimitError as exc:
-        return _err(str(exc))
+    if mode not in limits.MODES:
+        return _err(f"mode must be one of {list(limits.MODES)}")
+    # review R1-M4: the mode is the PLAN's -- never written into the chip's Limits
     # the snapshot the plan can be reverted to
     pre_ts = None
     try:
@@ -1756,7 +1926,7 @@ def plan_start(pid: str):
                 logger.debug("plan snapshot label failed", exc_info=True)
     except Exception:  # noqa: BLE001
         logger.warning("plan pre-snapshot failed", exc_info=True)
-    # arm
+    # arm; the session carries the plan's mode WHILE the plan runs (restored at its end)
     token = uuid.uuid4().hex[:12]
     agent_session.save(inst, chip, start_token=token, armed_by=actor, armed_at=time.time(), agent_stop=None,
                        plan_id=pid, mode=mode)
@@ -1774,22 +1944,28 @@ def plan_start(pid: str):
     mgr = chat_api._manager()
     cur = mgr.get(chip)
     started = False
+
+    def _undo_start(why):
+        # review R1 minor: a Start the agent never heard leaves no armed session and no running plan
+        agent_plans.update(inst, chip, pid, status="draft", started_by=None, started_at=None, pre_ts=None)
+        agent_session.save(inst, chip, start_token=None, plan_id=None,
+                           mode=limits.load(inst, chip).get("mode"))
+        return _err(f"could not tell the agent: {why}", 502)
     try:
         if cur is not None and cur.alive() and not cur.ended:
             res = mgr.send(chip, msg)
             if res.get("error"):
-                return _err(res["error"], 409)
+                return _undo_start(res["error"])
         else:
             backend = str(data.get("backend") or chat_api._setup().get("default_backend") or "claude").lower()
-            b = chat_api._build_backend(backend, readonly=False, chip=chip, mode=mode, cwd=chat_api._cwd(),
+            b = chat_api._build_backend(backend, readonly=False, chip=name, mode=mode, cwd=chat_api._cwd(),
                                         model=data.get("model"))
-            mgr.start(chip, b, owner=actor, mode=mode, until=None, prompt=msg, resume=None)
+            mgr.start(chip, b, owner=actor, mode=mode, until=None, prompt=msg, resume=None, display=name)
             started = True
     except (RuntimeError, ValueError, OSError) as exc:
-        agent_plans.update(inst, chip, pid, status="draft", started_by=None, started_at=None)
-        return _err(f"could not tell the agent: {exc}", 502)
-    chat_api._record_user(chip, f"[Start] plan {rec['title']}", actor, (cur.backend.name if cur else data.get("backend") or "claude"))
-    journal_mod.append(inst, chip, f"plan `{rec['title']}` STARTED by {actor} (mode {mode}"
+        return _undo_start(exc)
+    chat_api._record_user(name, f"[Start] plan {rec['title']}", actor, (cur.backend.name if cur else data.get("backend") or "claude"))
+    journal_mod.append(inst, name, f"plan `{rec['title']}` STARTED by {actor} (mode {mode}"
                                    + (f", snapshot {pre_ts}" if pre_ts else "") + ")", kind="sm")
     _bump()
     _wake()
@@ -1802,11 +1978,11 @@ def plan_cancel(pid: str):
     r = _r()
     if not r._active_path():
         return _err("open a chip first", 409)
-    inst, chip = current_app.instance_path, _chip_name()
+    inst, chip = current_app.instance_path, _chip_key()
     rec = agent_plans.stop(inst, chip, pid, who=r._request_actor(), how="cancelled")
     if rec is None:
         return _err("unknown plan", 404)
-    journal_mod.append(inst, chip, f"plan `{rec.get('title')}` cancelled by {r._request_actor()}", kind="sm")
+    journal_mod.append(inst, _chip_name(), f"plan `{rec.get('title')}` cancelled by {r._request_actor()}", kind="sm")
     _bump()
     _wake()
     return jsonify(ok=True, plan=_plan_view(rec))

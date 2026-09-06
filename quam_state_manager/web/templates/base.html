@@ -90,6 +90,7 @@
         'autofit': ['autofit.js'],
         'compare': ['topo-graph.js', 'compare-hub.js', 'diff-panes.js'],
         'journal': ['journal.js'],
+        'agent_setup': ['agent-setup.js'],
     } %}
     {# docs/166: 'pulses' takes the components bundle too — its chip map
        (topo-graph + component-map) is the page's row filter. #}
@@ -106,6 +107,7 @@
         'scheduler': ['scheduler'], 'autofit': ['autofit'],
         'compare_hub': ['compare'], 'diff': ['compare'],
         'journal': ['journal'],
+        'agent_setup': ['agent_setup'],
     } %}
     {% set manifest = {} %}
     {% for _b, _files in bundle_files.items() %}{% for _f in _files %}{% if _f not in manifest %}{% set _ = manifest.update({_f: asset_url(_f)}) %}{% endif %}{% endfor %}{% endfor %}
@@ -999,7 +1001,7 @@
         <div class="agent-header" id="agent-header">
         <strong class="agent-title">Agent</strong>
         <span class="agent-header-tools">
-        <a class="agent-home-link" href="/" hx-get="/" hx-target="#table-pane" hx-push-url="true" title="open the Agent home (full page)">home</a>
+        <a class="agent-home-link" href="/" title="open the Agent home (full page)">home</a>
         <button type="button" class="agent-close" onclick="toggleAgentPanel()" title="Close" aria-label="Close">&times;</button>
         </span>
         </div>
@@ -1062,6 +1064,8 @@
                     {% block table_content %}
                     {% if page == 'agent_home' %}
                     {% include '_agent_home.html' %}
+                    {% elif page == 'agent_setup' %}
+                    {% include '_agent_setup.html' %}
                     {% elif page == 'home' %}
                     {% if landing_config_exists %}
                     {% include '_landing_shell.html' %}

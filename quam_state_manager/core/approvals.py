@@ -89,8 +89,29 @@ def decide(instance_path, chip: str, approval_id: str, *, status: str, who: str,
     return rec
 
 
+def mark_used(instance_path, chip: str, approval_id: str, run_key: str) -> dict | None:
+    """review R1-M2: an approved RUN request is consumed by the run it allowed."""
+    rows = load(instance_path, chip)
+    rec = next((r for r in rows if r.get("id") == approval_id), None)
+    if rec is None:
+        return None
+    rec["used_by_run"] = run_key
+    rec["used_at"] = time.time()
+    _save(instance_path, chip, rows)
+    return rec
+
+
+def find_pending_run(instance_path, chip: str, *, node: str, targets: list, params: dict | None) -> dict | None:
+    """review R1-M2: the same ask twice is one request."""
+    want = (node, list(targets or []), dict(params or {}))
+    for r in pending(instance_path, chip):
+        if r.get("kind") == "run" and (r.get("node"), list(r.get("targets") or []), dict(r.get("params") or {})) == want:
+            return r
+    return None
+
+
 def summary(rec: dict) -> dict:
     return {"id": rec.get("id"), "kind": rec.get("kind"), "node": rec.get("node"), "targets": rec.get("targets"),
             "n_writes": len(rec.get("writes") or []), "why_held": rec.get("why_held"), "reason": rec.get("reason"),
             "actor": rec.get("actor"), "created": rec.get("created"), "run_id": rec.get("run_id"),
-            "plan_id": rec.get("plan_id"), "status": rec.get("status")}
+            "plan_id": rec.get("plan_id"), "status": rec.get("status"), "used_by_run": rec.get("used_by_run")}

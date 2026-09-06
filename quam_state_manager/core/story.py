@@ -144,7 +144,11 @@ def record_agent_run(instance_path, rec: dict) -> None:
         f.write(json.dumps(rec, default=str) + "\n")
 
 
-def load_agent_runs(instance_path) -> dict[int, dict]:
+def load_agent_runs(instance_path, chip: str | None = None) -> dict[int, dict]:
+    """``{run_id: record}``; with ``chip`` only that chip's rows (review R3-2:
+    run ids are per data folder, so another chip's #104 must never claim this
+    chip's #104). Rows with no run_id are skipped here -- see
+    ``unattributed_agent_runs``."""
     out: dict[int, dict] = {}
     try:
         for line in agent_runs_index_path(instance_path).read_text(encoding="utf-8").splitlines():
@@ -152,8 +156,31 @@ def load_agent_runs(instance_path) -> dict[int, dict]:
                 r = json.loads(line)
             except ValueError:
                 continue
+            if chip is not None and r.get("chip") not in (chip, None):
+                continue
             if r.get("run_id") is not None:
                 out[int(r["run_id"])] = r
+    except OSError:
+        pass
+    return out
+
+
+def unattributed_agent_runs(instance_path, chip: str | None = None, *, since: float = 0.0) -> list[dict]:
+    """The agent's runs that produced no run id (the writeback landed late):
+    a run folder that MATCHES one of these by node + time is the agent's, not
+    a person's (review R3-2: the agent was blocking itself as human_active)."""
+    out: list[dict] = []
+    try:
+        for line in agent_runs_index_path(instance_path).read_text(encoding="utf-8").splitlines():
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            if r.get("run_id") is not None or float(r.get("ts") or 0) < since:
+                continue
+            if chip is not None and r.get("chip") not in (chip, None):
+                continue
+            out.append(r)
     except OSError:
         pass
     return out
@@ -333,7 +360,7 @@ def build_day(instance_path, chip: str, day: str, *, ds, hm=None, active_path=No
     events = events or []
     text = journal_mod.read(instance_path, chip, day)
     entries = parse_journal(text, day)
-    agent_runs = load_agent_runs(instance_path)
+    agent_runs = load_agent_runs(instance_path, chip)   # review R3-2: another chip's #104 must not claim this chip's
     claims = load_claims(instance_path, chip)
     rows = ds.list_runs(date=day) if ds is not None else []
     folder_key = _folder_key(getattr(ds, "folder_path", "")) if ds is not None else "none"
