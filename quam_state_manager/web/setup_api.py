@@ -53,6 +53,19 @@ def _cal_folder() -> str | None:
         return None
 
 
+def _global_simulate() -> bool:
+    """The Runner's ``global_simulate`` ("Dry run") for the open chip. The
+    Experiment Runner page that owns the checkbox is hidden since docs/172,
+    so this is the agent cockpit's only window onto it; the agent's run_node
+    stamps every run with it (core/agent_runs.py). Unreadable -> the
+    scheduler's own default (True: a dry run, the safe side)."""
+    try:
+        from quam_state_manager.core import scheduler
+        return bool(scheduler.load_settings(_r()._sched_inst()).get("global_simulate", True))
+    except Exception:  # noqa: BLE001
+        return True
+
+
 def _data_folder() -> str | None:
     """The chip's declared data folder (extras.data_folder) else the first
     active dataset root -- the journal's default home is beside it."""
@@ -114,6 +127,7 @@ def setup_status():
                     "suggested": str(Path(_data_folder()) / "journal") if _data_folder() else None,
                     "claude_says": journal_mod.settings(inst).get("claude_says")}
     s["data_folder"] = _data_folder()
+    s["global_simulate"] = _global_simulate()
     s["chip"] = aa._chip_name() if _r()._active_path() else None
     s["hook_command"] = st.hook_command(_python(), str(inst) if _custom_instance(inst) else None)
     todo = []

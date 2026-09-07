@@ -21,20 +21,30 @@ let status = {
   claude: { mcp: false, hooks: false, allow: false, json: 'H/.claude.json', settings: 'H/.claude/settings.json' },
   codex: { mcp: false, config: 'H/.codex/config.toml' }, context: {}, record: {}, calibrations_folder: 'D:/lab/cal',
   journal: { root: 'D:/inst/journal', configured: false, suggested: 'D:/data/PJ/journal', claude_says: false },
-  hook_command: '"py.exe" -m quam_state_manager.hook --backend claude', todo: ['connect_claude', 'allow', 'journal', 'context']
+  hook_command: '"py.exe" -m quam_state_manager.hook --backend claude', todo: ['connect_claude', 'allow', 'journal', 'context'],
+  global_simulate: true
 };
+// the Runner's settings route: what is persisted, and whether a queue is running (409)
+const BUSY_ERR = "Can't change global_simulate while the scheduler is running — pause or cancel the queue first.";
+let settingsPersisted = true, settingsBusy = false;
 const calls = [];
 global.fetch = window.fetch = function (url, opts) {
   const body = opts && opts.body ? JSON.parse(opts.body) : null;
-  calls.push({ url: String(url), method: (opts && opts.method) || 'GET', body });
-  let resp = { ok: true };
+  const method = (opts && opts.method) || 'GET';
+  calls.push({ url: String(url), method, body });
+  let resp = { ok: true }, code = 200;
   if (/\/api\/agent\/setup$/.test(url)) resp = status;
+  else if (/\/scheduler\/settings$/.test(url) && method === 'POST') {
+    if (settingsBusy) { code = 409; resp = { ok: false, error: BUSY_ERR }; }
+    else { settingsPersisted = !!body.global_simulate; resp = { ok: true, settings: { global_simulate: settingsPersisted } }; }
+  }
+  else if (/\/scheduler\/settings$/.test(url)) resp = { global_simulate: settingsPersisted, env_python: 'py' };
   else if (/\/setup\/connect/.test(url) && !body.apply) resp = { ok: true, applied: false, previews: { mcp: { file: 'H/.claude.json', exists: true, before: null, after: { command: 'py.exe' }, changed: true }, hooks: { file: 'H/.claude/settings.json', exists: true, before: { PreToolUse: [] }, after: { PreToolUse: [{ matcher: 'Bash' }] }, changed: true } }, writes: {} };
   else if (/\/setup\/connect/.test(url)) resp = { ok: true, applied: true, writes: { mcp: { file: 'H/.claude.json', backup: 'H/.claude.json.sm-backup-1' } } };
   else if (/\/setup\/context$/.test(url) && (!opts || opts.method === 'GET')) resp = { ok: true, facts: { n_qubits: 20, n_pairs: 30, bias_modes: { opx: 9 }, nodes: ['05_power_rabi'] }, questions: [{ id: 'tunable', kind: 'choice', options: ['flux-tunable', 'fixed-frequency', 'mixed'], question: 'Are the qubits flux-tunable?', detected: 'mixed', why: 'x' }, { id: 'notes', kind: 'text', question: 'Anything else?', detected: '' }] };
   else if (/\/setup\/context$/.test(url)) resp = { ok: true, applied: !!body.apply, block: 'B', previews: { claude: { file: 'D:/lab/cal/CLAUDE.local.md', exists: false, before: '', after: 'a\nb\n', changed: true } }, writes: {} };
   else if (/\/setup\/test/.test(url)) resp = { ok: true, backend: 'claude', elapsed_s: 12.3, done: true, failed: false, answer: 'PJ_10082026 is open: 20 qubits.', tools: ['mcp__sm__sm_status'] };
-  return Promise.resolve({ status: 200, json: function () { return Promise.resolve(resp); } });
+  return Promise.resolve({ status: code, json: function () { return Promise.resolve(resp); } });
 };
 vm.runInThisContext(fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'static', 'agent-setup.js'), 'utf8'), { filename: 'agent-setup.js' });
 const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
@@ -44,7 +54,42 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   A.init();
   await tick(30);
   const body = document.getElementById('as-body');
-  ok(body.querySelectorAll('details.as-sec').length === 6, 'six sections');
+  ok(body.querySelectorAll('details.as-sec').length === 7, 'seven sections (3b Hardware — Dry run joined the six)');
+  // 3b: the dry-run card -- from the payload, always open, wired to the Runner's settings route
+  {
+    const box = document.getElementById('as-dryrun-box');
+    const card = document.getElementById('as-dryrun');
+    ok(card && card.tagName === 'DETAILS' && box && card.contains(box), 'the card is #as-dryrun and the box #as-dryrun-box (two ids -- the first cut gave both the same one)');
+    ok(box && box.type === 'checkbox' && box.checked === true, 'the dry-run box is CHECKED from global_simulate: true');
+    ok(card && card.open === true && card.querySelector('summary .as-done'), 'the card is open even though ON reads as done (a switch is not a checklist item)');
+    ok(card.previousElementSibling && card.previousElementSibling.id === 'as-env', 'it sits right after 3. Run environment');
+    ok(/never written to the chip/.test(card.textContent) && /runs touch the OPX/.test(card.textContent), 'the one sentence says what ON and OFF mean');
+    ok(box.getAttribute('onchange') === 'AgentSetup.dryRun(this)', 'the box is wired to AgentSetup.dryRun');
+    // flip OFF -> POST {global_simulate:false} -> "Saved — dry run OFF"
+    calls.length = 0;
+    box.checked = false; A.dryRun(box);
+    await tick(30);
+    ok(calls[0] && calls[0].url === '/scheduler/settings' && calls[0].method === 'POST' && JSON.stringify(calls[0].body) === '{"global_simulate":false}', 'the change POSTs exactly {global_simulate:false} to /scheduler/settings');
+    ok(/Saved — dry run OFF/.test(document.getElementById('as-dryrun-msg').textContent), 'the reply shows inline: ' + document.getElementById('as-dryrun-msg').textContent);
+    ok(box.checked === false && box.disabled === false && A._state.data.global_simulate === false, 'the box and the payload copy follow the saved value');
+    // a running queue: the 409's words VERBATIM, the box back to what is persisted (re-read)
+    settingsBusy = true; calls.length = 0;
+    box.checked = true; A.dryRun(box);
+    await tick(30);
+    ok(document.getElementById('as-dryrun-msg').textContent === BUSY_ERR, 'the refusal is the server\'s error text verbatim');
+    ok(box.checked === false && box.disabled === false, 'the box went back to the persisted value (OFF)');
+    ok(calls.some(c => c.url === '/scheduler/settings' && c.method === 'GET'), 'the persisted value was re-read, not assumed');
+    ok(!calls.some(c => /\/api\/agent\/setup$/.test(c.url)), 'no page reload / status re-fetch on a refusal');
+    settingsBusy = false;
+    // a re-render from a payload saying OFF: unchecked, marked ● (runs touch the OPX), still open
+    status.global_simulate = false; A.load();
+    await tick(30);
+    const box2 = document.getElementById('as-dryrun-box'), card2 = document.getElementById('as-dryrun');
+    ok(box2.checked === false && card2.open === true && card2.querySelector('summary .as-todo') && !card2.querySelector('summary .as-done'), 'OFF renders unchecked, ● and open');
+    status.global_simulate = true; A.load();
+    await tick(30);
+    ok(document.getElementById('as-dryrun-box').checked === true, 'ON renders checked again');
+  }
   ok(document.getElementById('as-clis').open === false && document.getElementById('as-connect-claude').open === true, 'a done section is folded, an undone one open');
   ok(!document.getElementById('as-connect-codex'), 'no codex here: not asked');
   ok(/not registered as an MCP server/.test(document.getElementById('as-connect-claude').textContent), 'says what is missing');

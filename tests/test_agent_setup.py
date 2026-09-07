@@ -5,12 +5,17 @@ questions from what the state shows. Every write goes to a TEMP home."""
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
 from quam_state_manager.core import agent_setup as st
+
+_ROOT = Path(__file__).resolve().parent.parent
+_SELFCHECK = _ROOT / "tests" / "agent_setup_selfcheck.cjs"
 
 
 @pytest.fixture
@@ -155,37 +160,40 @@ class TestContext:
         assert (cal / "AGENTS.md").exists() and "codex:shared" in st.context_written(cal)
 
 
+@pytest.fixture
+def c(tmp_path, home, monkeypatch):
+    """A test app with a chip open, over a TEMP home (app.config['agent_setup_home'])
+    -- shared by the route classes below."""
+    import json as _json
+    import sys as _sys
+    from quam_state_manager.web.app import create_app
+    from quam_state_manager.web import chat_api
+    from quam_state_manager.core import scheduler
+    from tests.test_web import _make_state, _make_wiring
+    from tests.test_agent_runs import NODE_SRC
+    monkeypatch.setattr(chat_api.ab, "detect", lambda exe: {"found": exe == "claude", "version": "fake"})
+    inst = tmp_path / "_app_instance"
+    app = create_app(testing=True, instance_path=str(inst))
+    app.config["agent_setup_home"] = str(home)
+    chip = tmp_path / "chip"
+    chip.mkdir()
+    (chip / "state.json").write_text(_json.dumps(_make_state()), encoding="utf-8")
+    (chip / "wiring.json").write_text(_json.dumps(_make_wiring()), encoding="utf-8")
+    cal = tmp_path / "cal"
+    cal.mkdir()
+    (cal / "05_power_rabi.py").write_text(NODE_SRC, encoding="utf-8")
+    client = app.test_client()
+    client.post("/load", data={"folder": str(chip)})
+    with app.app_context():
+        from quam_state_manager.web import routes as r
+        scheduler.save_settings(r._sched_inst(), {"env_python": _sys.executable, "calibrations_folder": str(cal)})
+    client._cal = cal
+    client._inst = inst
+    return client
+
+
 class TestRoutes:
     """The setup routes over a TEMP home (app.config['agent_setup_home'])."""
-
-    @pytest.fixture
-    def c(self, tmp_path, home, monkeypatch):
-        import json as _json
-        import sys as _sys
-        from quam_state_manager.web.app import create_app
-        from quam_state_manager.web import chat_api
-        from quam_state_manager.core import scheduler
-        from tests.test_web import _make_state, _make_wiring
-        from tests.test_agent_runs import NODE_SRC
-        monkeypatch.setattr(chat_api.ab, "detect", lambda exe: {"found": exe == "claude", "version": "fake"})
-        inst = tmp_path / "_app_instance"
-        app = create_app(testing=True, instance_path=str(inst))
-        app.config["agent_setup_home"] = str(home)
-        chip = tmp_path / "chip"
-        chip.mkdir()
-        (chip / "state.json").write_text(_json.dumps(_make_state()), encoding="utf-8")
-        (chip / "wiring.json").write_text(_json.dumps(_make_wiring()), encoding="utf-8")
-        cal = tmp_path / "cal"
-        cal.mkdir()
-        (cal / "05_power_rabi.py").write_text(NODE_SRC, encoding="utf-8")
-        client = app.test_client()
-        client.post("/load", data={"folder": str(chip)})
-        with app.app_context():
-            from quam_state_manager.web import routes as r
-            scheduler.save_settings(r._sched_inst(), {"env_python": _sys.executable, "calibrations_folder": str(cal)})
-        client._cal = cal
-        client._inst = inst
-        return client
 
     def test_status_lists_only_what_is_not_done(self, c, home):
         d = c.get("/api/agent/setup").get_json()
@@ -264,3 +272,97 @@ class TestStatusRecord:
         st.save_record(inst, {"connected": {"claude": 1}})
         s = st.status(inst, home=home, cal_folder=str(cal), python="py", repo="R")
         assert s["claude"]["mcp"] and s["claude"]["allow"] and s["record"]["connected"] == {"claude": 1}
+
+
+class TestDryRunToggle:
+    """docs/172 hid the Experiment Runner page -- and with it the ONLY checkbox
+    for ``global_simulate``, the flag the agent's run_node stamps on every run
+    (core/agent_runs.py: a simulated run's values are DRY RUN values, never a
+    calibration). The setup page carries the switch now (3b, rendered by
+    agent-setup.js from the /api/agent/setup payload) and the Agent home says
+    it while ON. The setup page itself is a JS-rendered shell, so the
+    server-side truth is pinned on the payload here and the DOM on the jsdom
+    selfcheck below."""
+
+    @staticmethod
+    def _inst(c):
+        from quam_state_manager.web import routes as r
+        with c.application.app_context():
+            return r._sched_inst()
+
+    def test_setup_payload_mirrors_the_persisted_flag(self, c):
+        from quam_state_manager.core import scheduler
+        inst = self._inst(c)
+        assert scheduler.load_settings(inst)["global_simulate"] is True, "the scheduler's default is a dry run"
+        assert c.get("/api/agent/setup").get_json()["global_simulate"] is True
+        scheduler.save_settings(inst, {"global_simulate": False})
+        assert c.get("/api/agent/setup").get_json()["global_simulate"] is False
+        scheduler.save_settings(inst, {"global_simulate": True})
+        assert c.get("/api/agent/setup").get_json()["global_simulate"] is True
+
+    def test_post_from_the_setup_page_persists_and_the_page_follows(self, c):
+        from quam_state_manager.core import scheduler
+        inst = self._inst(c)
+        hdr = {"Origin": "http://localhost"}
+        r = c.post("/scheduler/settings", json={"global_simulate": False}, headers=hdr)
+        assert r.status_code == 200 and r.get_json()["ok"] is True
+        assert r.get_json()["settings"]["global_simulate"] is False
+        assert scheduler.load_settings(inst)["global_simulate"] is False, "persisted, not just echoed"
+        assert c.get("/api/agent/setup").get_json()["global_simulate"] is False
+        r = c.post("/scheduler/settings", json={"global_simulate": True}, headers=hdr)
+        assert r.status_code == 200 and c.get("/api/agent/setup").get_json()["global_simulate"] is True
+
+    def test_a_running_scheduler_refuses_and_the_flag_stays(self, c, monkeypatch):
+        """The refusal the page shows VERBATIM is the Runner's own 409."""
+        from quam_state_manager.core import scheduler
+        inst = self._inst(c)
+        scheduler.save_settings(inst, {"global_simulate": True})
+        monkeypatch.setattr(scheduler, "is_active", lambda _inst: True)
+        r = c.post("/scheduler/settings", json={"global_simulate": False}, headers={"Origin": "http://localhost"})
+        assert r.status_code == 409
+        body = r.get_json()
+        assert body["ok"] is False
+        assert body["error"].startswith("Can't change global_simulate while the scheduler is running")
+        assert scheduler.load_settings(inst)["global_simulate"] is True, "a refusal changes nothing"
+        assert c.get("/api/agent/setup").get_json()["global_simulate"] is True
+
+    def test_agent_home_says_dry_run_only_while_on(self, c):
+        from quam_state_manager.core import scheduler
+        inst = self._inst(c)
+        scheduler.save_settings(inst, {"global_simulate": True})
+        html = c.get("/").get_data(as_text=True)
+        assert 'id="agent-home"' in html, "with a chip open, / IS the Agent home"
+        assert 'id="ag-dryrun-note"' in html and "Dry run is ON" in html and "change in Agent setup" in html
+        assert html.index('id="ag-dryrun-note"') < html.index('id="agent-home"'), \
+            "beside the mount, never inside it -- agent.js replaces the mount's innerHTML"
+        scheduler.save_settings(inst, {"global_simulate": False})
+        html = c.get("/").get_data(as_text=True)
+        assert 'id="agent-home"' in html and 'id="ag-dryrun-note"' not in html and "Dry run is ON" not in html
+
+    def test_the_setup_js_wires_the_checkbox_to_the_runner_settings(self):
+        """The cheap always-on pin (the DOM behaviour runs in the selfcheck
+        below, which skips without jsdom): the shipped file posts the one key
+        to the Runner's settings route and exports the handler the inline
+        onchange names."""
+        js = (_ROOT / "quam_state_manager" / "web" / "static" / "agent-setup.js").read_text(encoding="utf-8")
+        assert '"/scheduler/settings"' in js and "global_simulate: want" in js
+        assert 'onchange="AgentSetup.dryRun(this)"' in js and "dryRun: dryRun" in js
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_agent_setup_selfcheck():
+    """The REAL agent-setup.js under jsdom (tests/agent_setup_selfcheck.cjs):
+    the S7 pins plus the dry-run card -- rendered from the payload, the toggle
+    POSTs the one key, the reply shows inline, a 409's words show verbatim and
+    the box goes back to the persisted value."""
+    node = shutil.which("node")
+    try:
+        subprocess.run([node, "-e", "require('jsdom')"], check=True, capture_output=True, timeout=30)
+    except Exception:
+        pytest.skip("jsdom not installed")
+    r = subprocess.run([node, str(_SELFCHECK)], capture_output=True, text=True, encoding="utf-8",
+                       timeout=180, cwd=str(_ROOT))
+    if r.returncode == 2:
+        pytest.skip("jsdom not installed")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.count("ok - ") >= 24, r.stdout

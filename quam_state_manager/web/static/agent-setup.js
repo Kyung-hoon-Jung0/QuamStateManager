@@ -1,6 +1,10 @@
 /* Agent setup page (docs/173 S7). Renders GET /api/agent/setup: only the undone
  * items expanded; every write is a PREVIEW (a diff) then a click; the one live
  * check is a real read-only question with its time and answer verbatim.
+ * The Dry-run switch (3b) is the Runner's global_simulate: the Experiment
+ * Runner page that owned it is hidden since docs/172, so this is where a
+ * person using the cockpit sees and flips it (POST /scheduler/settings; a
+ * refusal shows the server's words verbatim and the box goes back).
  * Bundle 'agent_setup' (base.html). */
 window.AgentSetup = (function () {
   "use strict";
@@ -48,8 +52,8 @@ window.AgentSetup = (function () {
     return '<pre class="as-diff">' + html.join("") + "</pre>";
   }
   function done(x) { return '<span class="as-done" title="done">✓</span>'; }
-  function sec(id, title, doneFlag, body) {
-    return '<details class="as-sec" id="as-' + id + '"' + (doneFlag ? "" : " open") + '><summary>' + (doneFlag ? done() : '<span class="as-todo">●</span>') + " " + esc(title) + "</summary><div class=\"as-body\">" + body + "</div></details>";
+  function sec(id, title, doneFlag, body, keepOpen) {
+    return '<details class="as-sec" id="as-' + id + '"' + (doneFlag && !keepOpen ? "" : " open") + '><summary>' + (doneFlag ? done() : '<span class="as-todo">●</span>') + " " + esc(title) + "</summary><div class=\"as-body\">" + body + "</div></details>";
   }
 
   function render() {
@@ -85,6 +89,13 @@ window.AgentSetup = (function () {
     parts.push(sec("env", "3. Run environment", !!d.calibrations_folder,
       "<p>calibrations folder: " + (d.calibrations_folder ? "<code>" + esc(d.calibrations_folder) + "</code>" : '<span class="ag-err">not set</span>') +
       ' <span class="muted">(Experiment Runner settings hold it: env, calibrations folder, Dry run, timeout — <a href="/scheduler" hx-get="/scheduler" hx-target="#table-pane" hx-push-url="true">open</a>)</span></p>'));
+    // 3b. hardware -- dry run. The value is the Runner's global_simulate as the
+    // server read it; OFF wears ● (runs touch the OPX) and the card never folds.
+    var dry = d.global_simulate !== false;
+    parts.push(sec("dryrun", "3b. Hardware — Dry run", dry,
+      '<label class="ag-observer"><input type="checkbox" id="as-dryrun-box"' + (dry ? " checked" : "") + ' onchange="AgentSetup.dryRun(this)"> Dry run (<code>simulate=True</code>) — no hardware</label>' +
+      '<p class="muted">ON: the agent\'s runs are simulated and their values are never written to the chip. OFF: runs touch the OPX.</p>' +
+      '<div id="as-dryrun-msg"></div>', true));
     // 4. journal
     var j = d.journal || {};
     parts.push(sec("journal", "4. Journal folder", !!j.configured,
@@ -145,6 +156,31 @@ window.AgentSetup = (function () {
     api("POST", "/api/agent/setup/journal", { root: root, claude_says: says }).then(function (r) {
       if (r.status !== 200) { alertErr(r.body.error); return; }
       load();
+    });
+  }
+  function dryRun(el) {
+    // POST the one key; the reply is shown inline. On a refusal (409 while a
+    // queue runs, or anything else) the server's error is shown VERBATIM and
+    // the box goes back to what is persisted (re-read, not assumed).
+    var want = !!el.checked, msg = document.getElementById("as-dryrun-msg");
+    el.disabled = true;
+    api("POST", "/scheduler/settings", { global_simulate: want }).then(function (r) {
+      el.disabled = false;
+      var b = r.body || {};
+      if (r.status === 200 && b.ok !== false) {
+        var v = b.settings && b.settings.global_simulate !== undefined ? !!b.settings.global_simulate : want;
+        el.checked = v;
+        if (S.data) S.data.global_simulate = v;     // a later render() keeps the saved value
+        if (msg) msg.innerHTML = '<p class="muted">Saved — dry run ' + (v ? "ON" : "OFF") + "</p>";
+        return;
+      }
+      if (msg) msg.innerHTML = '<p class="ag-err">' + esc(b.error || ("not saved (HTTP " + r.status + ")")) + "</p>";
+      api("GET", "/scheduler/settings").then(function (g) {
+        var persisted = g.status === 200 && g.body && g.body.global_simulate !== undefined
+          ? g.body.global_simulate !== false : (S.data ? S.data.global_simulate !== false : true);
+        el.checked = persisted;
+        if (S.data) S.data.global_simulate = persisted;
+      });
     });
   }
   function alertErr(msg) { var el = document.getElementById("as-body"); var p = document.createElement("p"); p.className = "ag-err"; p.textContent = msg || "failed"; el.insertBefore(p, el.firstChild); setTimeout(function () { p.remove(); }, 6000); }
@@ -221,5 +257,5 @@ window.AgentSetup = (function () {
 
   return { init: init, load: load, preview: preview, connect: connect, disconnect: disconnect, journal: journal,
            loadContext: loadContext, answer: answer, previewContext: previewContext, writeContext: writeContext,
-           test: test, diffLines: diffLines, _state: S };
+           test: test, dryRun: dryRun, diffLines: diffLines, _state: S };
 })();

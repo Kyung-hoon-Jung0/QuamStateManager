@@ -4348,6 +4348,15 @@ def calc_window():
     return render_template("calc_window.html")
 
 
+def _agent_dry_run() -> bool:
+    """Is the open chip's Runner in Dry run (``global_simulate``)? Unreadable
+    -> the scheduler's own default (True), never a crash on the home route."""
+    try:
+        return bool(scheduler.load_settings(_sched_inst()).get("global_simulate", True))
+    except Exception:  # noqa: BLE001
+        return True
+
+
 @bp.route("/")
 def home():
     """Project-first landing (docs/63): with a qualibrate config the home
@@ -4364,8 +4373,12 @@ def home():
     want_landing = (request.args.get("landing") or "") in ("1", "true", "yes")
     if (not want_landing and _active_path()
             and (_active_ctx() or {}).get("type") == "quam"):
-        # docs/173 §1.2: with a chip open the home IS the Agent home
-        return render_template("base.html", **_ctx(page="agent_home", landing_config_exists=config_exists))
+        # docs/173 §1.2: with a chip open the home IS the Agent home.
+        # agent_dry_run: the Runner's global_simulate for this chip -- the
+        # agent's run_node stamps every run with it, and the Runner page that
+        # shows the checkbox is hidden since docs/172, so the home says it.
+        return render_template("base.html", **_ctx(page="agent_home", landing_config_exists=config_exists,
+                                                   agent_dry_run=_agent_dry_run()))
     session = _load_session()
     # Session values are hand-editable JSON — a type-corrupt entry (int,
     # nested list, …) must degrade to "no history", never TypeError the
