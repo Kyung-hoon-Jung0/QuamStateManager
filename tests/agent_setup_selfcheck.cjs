@@ -26,12 +26,14 @@ let status = {
 };
 // the Runner's settings route: what is persisted, and whether a queue is running (409)
 const BUSY_ERR = "Can't change global_simulate while the scheduler is running — pause or cancel the queue first.";
-let settingsPersisted = true, settingsBusy = false;
+let settingsPersisted = true, settingsBusy = false, settingsDown = false;
 const calls = [];
 global.fetch = window.fetch = function (url, opts) {
   const body = opts && opts.body ? JSON.parse(opts.body) : null;
   const method = (opts && opts.method) || 'GET';
   calls.push({ url: String(url), method, body });
+  // the server is gone (restarting / offline): the fetch itself REJECTS, no HTTP status at all
+  if (settingsDown && /\/scheduler\/settings$/.test(url)) return Promise.reject(new TypeError('Failed to fetch'));
   let resp = { ok: true }, code = 200;
   if (/\/api\/agent\/setup$/.test(url)) resp = status;
   else if (/\/scheduler\/settings$/.test(url) && method === 'POST') {
@@ -72,6 +74,7 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
     ok(calls[0] && calls[0].url === '/scheduler/settings' && calls[0].method === 'POST' && JSON.stringify(calls[0].body) === '{"global_simulate":false}', 'the change POSTs exactly {global_simulate:false} to /scheduler/settings');
     ok(/Saved — dry run OFF/.test(document.getElementById('as-dryrun-msg').textContent), 'the reply shows inline: ' + document.getElementById('as-dryrun-msg').textContent);
     ok(box.checked === false && box.disabled === false && A._state.data.global_simulate === false, 'the box and the payload copy follow the saved value');
+    ok(card.querySelector('summary .as-todo') && !card.querySelector('summary .as-done'), 'the card marker follows the saved value without a re-render (● when OFF)');
     // a running queue: the 409's words VERBATIM, the box back to what is persisted (re-read)
     settingsBusy = true; calls.length = 0;
     box.checked = true; A.dryRun(box);
@@ -81,6 +84,18 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
     ok(calls.some(c => c.url === '/scheduler/settings' && c.method === 'GET'), 'the persisted value was re-read, not assumed');
     ok(!calls.some(c => /\/api\/agent\/setup$/.test(c.url)), 'no page reload / status re-fetch on a refusal');
     settingsBusy = false;
+    // the server is gone mid-click: the fetch REJECTS -> the box is never left disabled, the failure is said, the value goes back
+    settingsDown = true; calls.length = 0;
+    box.checked = true; A.dryRun(box);
+    await tick(30);
+    ok(box.disabled === false, 'a rejected fetch does not leave the box disabled');
+    ok(box.checked === false && A._state.data.global_simulate === false, 'a rejected fetch reverts to the last persisted value (the re-read rejected too)');
+    ok(/Failed to fetch/.test(document.getElementById('as-dryrun-msg').textContent), 'the failure is said in the browser\'s own words');
+    settingsDown = false;
+    // back ON: the marker follows again
+    box.checked = true; A.dryRun(box);
+    await tick(30);
+    ok(box.checked === true && card.querySelector('summary .as-done') && !card.querySelector('summary .as-todo'), 'the card marker follows the saved value (✓ when ON)');
     // a re-render from a payload saying OFF: unchecked, marked ● (runs touch the OPX), still open
     status.global_simulate = false; A.load();
     await tick(30);

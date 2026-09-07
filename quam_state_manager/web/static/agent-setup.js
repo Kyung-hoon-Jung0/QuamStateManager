@@ -163,24 +163,42 @@ window.AgentSetup = (function () {
     // queue runs, or anything else) the server's error is shown VERBATIM and
     // the box goes back to what is persisted (re-read, not assumed).
     var want = !!el.checked, msg = document.getElementById("as-dryrun-msg");
+    function mark(v) {
+      // the card's summary marker follows the SAVED value (✓ ON / ● OFF) without a re-render
+      var m = document.querySelector("#as-dryrun > summary .as-done, #as-dryrun > summary .as-todo");
+      if (m) m.outerHTML = v ? done() : '<span class="as-todo">●</span>';
+    }
+    function revert() {
+      // back to what is PERSISTED (re-read, not assumed); a server that cannot
+      // answer the re-read either -> the last value the page knew
+      var fallback = S.data ? S.data.global_simulate !== false : true;
+      api("GET", "/scheduler/settings").then(function (g) {
+        return g.status === 200 && g.body && g.body.global_simulate !== undefined ? g.body.global_simulate !== false : fallback;
+      }, function () { return fallback; }).then(function (persisted) {
+        el.checked = persisted;
+        el.disabled = false;
+        if (S.data) S.data.global_simulate = persisted;
+      });
+    }
     el.disabled = true;
     api("POST", "/scheduler/settings", { global_simulate: want }).then(function (r) {
-      el.disabled = false;
       var b = r.body || {};
       if (r.status === 200 && b.ok !== false) {
+        el.disabled = false;
         var v = b.settings && b.settings.global_simulate !== undefined ? !!b.settings.global_simulate : want;
         el.checked = v;
         if (S.data) S.data.global_simulate = v;     // a later render() keeps the saved value
+        mark(v);
         if (msg) msg.innerHTML = '<p class="muted">Saved — dry run ' + (v ? "ON" : "OFF") + "</p>";
         return;
       }
       if (msg) msg.innerHTML = '<p class="ag-err">' + esc(b.error || ("not saved (HTTP " + r.status + ")")) + "</p>";
-      api("GET", "/scheduler/settings").then(function (g) {
-        var persisted = g.status === 200 && g.body && g.body.global_simulate !== undefined
-          ? g.body.global_simulate !== false : (S.data ? S.data.global_simulate !== false : true);
-        el.checked = persisted;
-        if (S.data) S.data.global_simulate = persisted;
-      });
+      revert();
+    }, function (e) {
+      // the fetch itself failed (server restarting, offline): say so, never
+      // leave the box disabled, and go back to the persisted value
+      if (msg) msg.innerHTML = '<p class="ag-err">' + esc("not saved — " + ((e && e.message) || String(e))) + "</p>";
+      revert();
     });
   }
   function alertErr(msg) { var el = document.getElementById("as-body"); var p = document.createElement("p"); p.className = "ag-err"; p.textContent = msg || "failed"; el.insertBefore(p, el.firstChild); setTimeout(function () { p.remove(); }, 6000); }
