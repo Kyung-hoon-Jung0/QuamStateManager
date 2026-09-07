@@ -22,7 +22,7 @@ CORE = {"htmx.min.js", "split.min.js", "search-query.js", "app.js", "auto-apply.
 LAZY = {"grid-virt.js", "bulk-edit.js", "pair-edit.js", "all-values.js", "pulses.js", "topo-graph.js", "wiring-grid.js",
         "component-map.js", "chip-status.js", "generate.js", "generate_preview.js", "dataset-virtual.js",
         "ndview.js", "scheduler.js", "autofit.js", "compare-hub.js", "diff-panes.js", "journal.js",
-        "notes.js"}   # notes.js: docs/167's bundle, never added here (red on main since); journal.js: docs/173
+        "notes.js", "agent-setup.js"}   # notes.js: docs/167's bundle, never added here (red on main since); journal.js / agent-setup.js: docs/173
 
 
 def _scripts(html: str):
@@ -94,14 +94,15 @@ def test_the_manifest_names_every_lazy_file_once_and_the_page_map_covers_the_rou
         "bulk", "table", "pulses", "generate", "regenerate", "instrument", "topology", "trends", "trend",
         "qubits", "pairs", "resonators", "flux", "couplers", "qdac",
         "datasets", "dataset_detail", "dataset_compare", "collections", "fit-audit",
-        "scheduler", "autofit", "compare_hub", "diff", "journal",
+        "scheduler", "autofit", "compare_hub", "diff", "journal", "agent_setup",
     }
     assert man["pages"]["topology"] == ["chipstatus", "components"] and man["pages"]["trends"] == ["chipstatus", "datasets"]
     # the JS path map agrees with the page map on the pages that matter
     app_js = (_STATIC / "app.js").read_text(encoding="utf-8")
     assert "window.Bundles = (function () {" in app_js
     for token in ('["grid"]', '["pulses"]', '["generate"]', '["wiring"]', '["chipstatus", "components"]',
-                  '["components"]', '["datasets"]', '["scheduler"]', '["autofit"]', '["compare"]'):
+                  '["components"]', '["datasets"]', '["scheduler"]', '["autofit"]', '["compare"]',
+                  '["journal"]', '["agent_setup"]'):
         assert token in app_js, token
     assert 'document.addEventListener("htmx:confirm", function (evt) {' in app_js
     assert "d.issueRequest();" in app_js and "d.issueRequest(true)" not in app_js, "the skip flag would skip hx-confirm"
@@ -109,7 +110,10 @@ def test_the_manifest_names_every_lazy_file_once_and_the_page_map_covers_the_rou
     for rx in ('/^\\/bulk(', '/^\\/table(', '/^\\/pulses?(', '/^\\/(generate|regenerate)(', '/^\\/instrument(',
                '/^\\/topology(', '/^\\/chip-status(', '/^\\/wiring(', '/^\\/trends?(',
                '/^\\/(qubits|pairs|resonators|flux|couplers|qdac)(', '/^\\/(datasets?|collections|fit-audit)(',
-               '/^\\/scheduler(', '/^\\/autofit(', '/^\\/(compare-hub|compare|diff)('):
+               '/^\\/scheduler(', '/^\\/autofit(', '/^\\/(compare-hub|compare|diff)(',
+               # docs/173 partial-reached bundle pages (dry-run review round 1: the Agent home's
+               # "Setup" link swapped a shell that stayed on "Loading..." -- no entry, no script)
+               '/^\\/journal(', '/^\\/agent\\/setup('):
         assert rx in app_js, rx
 
 

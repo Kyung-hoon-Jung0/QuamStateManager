@@ -5134,6 +5134,12 @@ window.Bundles = (function () {
         [/^\/(datasets?|collections|fit-audit)(\/|$|\?)/, ["datasets"]],
         [/^\/scheduler(\/|$|\?)/, ["scheduler"]], [/^\/autofit(\/|$|\?)/, ["autofit"]],
         [/^\/(compare-hub|compare|diff)(\/|$|\?)/, ["compare"]],
+        // docs/173 pages the sidebar ("Calibration log") and the Agent home ("Setup ->",
+        // "change in Agent setup") reach as htmx PARTIALS: journal.js (JournalPage.* onclick)
+        // and agent-setup.js (mounts on htmx:afterSwap) are lazy bundles, and without a map
+        // entry the swapped shell stayed on "Loading..." forever (dry-run review round 1).
+        [/^\/journal(\/|$|\?)/, ["journal"]],
+        [/^\/agent\/setup(\/|$|\?)/, ["agent_setup"]],
     ];
     function forPath(path) {
         var out = [];

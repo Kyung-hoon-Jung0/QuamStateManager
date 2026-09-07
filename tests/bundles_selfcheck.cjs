@@ -63,6 +63,12 @@ ok(fp("/datasets") === "datasets" && fp("/dataset/abc123") === "datasets" && fp(
 ok(fp("/generate") === "generate" && fp("/regenerate") === "generate", "wizard routes");
 ok(fp("/instrument") === "wiring" && fp("/instrument/preview") === "wiring" && fp("/scheduler") === "scheduler" && fp("/autofit") === "autofit", "single-bundle pages");
 ok(fp("/compare-hub?src=a") === "compare" && fp("/diff?a=x&b=y") === "compare", "compare routes");
+ok(fp("/agent/setup") === "agent_setup" && fp("/agent/setup?x=1") === "agent_setup" && fp("/agent/setup/") === "agent_setup",
+   "/agent/setup -> agent_setup (the Agent home reaches it as an htmx partial; dry-run review round 1)");
+ok(fp("/journal") === "journal" && fp("/journal/day?day=2026-09-07") === "journal" && fp("/journal/raw") === "journal",
+   "/journal (+ its body / raw partials, whose buttons call JournalPage.*) -> journal");
+ok(fp("/agent") === "" && fp("/api/agent/setup/preview") === "" && fp("/journals") === "",
+   "the Agent home (agent.js is core), the setup API and a near-miss prefix need no bundle");
 ok(fp("http://localhost:5199/bulk?x=1") === "grid", "an absolute URL is reduced to its path");
 ok(fp("/api/progress") === "" && fp("/state/drift") === "" && fp("/undo?n=2") === "", "polls and writes need nothing");
 ok(fp("") === "" && fp(null) === "", "empty/null path is safe");
