@@ -4352,7 +4352,14 @@ def home():
     workbench iframe's entry and the most-hit route). Without a config the
     pre-lens Welcome renders verbatim."""
     config_exists = bool(qualibrate_config.tray_status().get("config_exists"))
-    if _active_path() and (_active_ctx() or {}).get("type") == "quam":
+    # The top-left title link promises "Projects landing" (its own title=):
+    # ?landing=1 keeps that promise even with a chip open (customer report:
+    # the title click landed on the Agent chat). Bare "/" keeps docs/173 §1.2
+    # -- with a chip open, home IS the Agent home; the sidebar Agent button
+    # and the float panel's home link rely on it.
+    want_landing = (request.args.get("landing") or "") in ("1", "true", "yes")
+    if (not want_landing and _active_path()
+            and (_active_ctx() or {}).get("type") == "quam"):
         # docs/173 §1.2: with a chip open the home IS the Agent home
         return render_template("base.html", **_ctx(page="agent_home", landing_config_exists=config_exists))
     session = _load_session()

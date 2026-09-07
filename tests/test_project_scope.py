@@ -768,3 +768,30 @@ class TestLanding:
                                   headers={"HX-Request": "true"})
         assert r.status_code == 200
         assert r.headers.get("HX-Redirect", "").endswith("/qubits")
+
+
+class TestTitleLinkIsTheLanding:
+    """Customer report (2026-09-07, on-site): clicking the top-left
+    'QUAM State Manager' title used to show the initial screen; with a chip
+    open it landed on the Claude/Codex chat, because the title is href="/" and
+    docs/173 §1.2 makes bare "/" the Agent home once a chip is open. The title
+    promises 'Projects landing' in its own tooltip -- ?landing=1 keeps that
+    promise; bare "/" keeps §1.2 (the sidebar Agent button relies on it)."""
+
+    def test_landing_flag_renders_the_landing_with_a_chip_open(self, scoped):
+        c = scoped["client"]
+        c.post("/load", data={"folder": str(scoped["chip_a"])})
+        body = c.get("/?landing=1").get_data(as_text=True)
+        assert "landing-gs" in body, "the projects landing did not render"
+        assert 'id="agent-home"' not in body, "the Agent chat leaked into the title's landing"
+
+    def test_bare_root_keeps_the_agent_home(self, scoped):
+        c = scoped["client"]
+        c.post("/load", data={"folder": str(scoped["chip_a"])})
+        assert 'id="agent-home"' in c.get("/").get_data(as_text=True)
+
+    def test_the_title_links_to_the_landing_flag(self, scoped):
+        c = scoped["client"]
+        c.post("/load", data={"folder": str(scoped["chip_a"])})
+        body = c.get("/").get_data(as_text=True)
+        assert 'href="/?landing=1" class="app-title-link"' in body
