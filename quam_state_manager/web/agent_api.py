@@ -998,7 +998,7 @@ def limits_route():
     journaled with who pressed it."""
     from quam_state_manager.core import limits
     from quam_state_manager.web import routes as r
-    chip = _chip_name()
+    chip, key = _chip_name(), _chip_key()      # records by KEY (what run_node reads), journal by NAME
     if request.method == "POST":
         data = request.get_json(silent=True) or request.form.to_dict()
         if "max_delta" in data and isinstance(data["max_delta"], str):
@@ -1007,13 +1007,13 @@ def limits_route():
             except ValueError:
                 return _err("max_delta must be JSON")
         try:
-            cur = limits.save(current_app.instance_path, chip, data, who=r._request_actor())
+            cur = limits.save(current_app.instance_path, key, data, who=r._request_actor(), journal_chip=chip)
         except limits.LimitError as exc:
             return _err(str(exc))
         _bump()
         _wake()
         return jsonify(ok=True, chip=chip, limits=cur)
-    return jsonify(ok=True, chip=chip, limits=limits.load(current_app.instance_path, chip),
+    return jsonify(ok=True, chip=chip, limits=limits.load(current_app.instance_path, key),
                    modes=list(limits.MODES))
 
 

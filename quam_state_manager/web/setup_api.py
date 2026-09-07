@@ -310,7 +310,7 @@ def test_call():
     t0 = time.time()
     try:
         from quam_state_manager.core import limits
-        mode = limits.load(current_app.instance_path, chip).get("mode") or "ask-writes"
+        mode = limits.load(current_app.instance_path, aa._chip_key()).get("mode") or "ask-writes"
         b = chat_api._build_backend(backend, readonly=True, chip=chip, mode=mode, cwd=chat_api._cwd(),
                                     model=data.get("model"))
         res = chat_api._manager().ask(chip, b, str(data.get("text") or "Call sm_status and answer in one line: which chip is open and how many qubits does it have?"))

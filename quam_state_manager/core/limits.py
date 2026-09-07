@@ -105,8 +105,14 @@ def validate(patch: dict) -> dict:
     return out
 
 
-def save(instance_path, chip: str, patch: dict, *, who: str = "human") -> dict:
-    """Merge a validated patch, journal a mode change with who, return the whole."""
+def save(instance_path, chip: str, patch: dict, *, who: str = "human", journal_chip: str | None = None) -> dict:
+    """Merge a validated patch, journal a mode change with who, return the whole.
+
+    ``chip`` is the machine KEY the gates read (agent_api._chip_key); the
+    journal is for people, so a mode change is written under ``journal_chip``
+    (the display name) when given. On-site 2026-09-07: the route saved under
+    the display name while run_node loaded under the key, so a lowered
+    human_recent_min never reached the gate."""
     clean = validate(patch)
     cur = load(instance_path, chip)
     before_mode = cur["mode"]
@@ -117,7 +123,8 @@ def save(instance_path, chip: str, patch: dict, *, who: str = "human") -> dict:
     tmp.write_text(json.dumps(cur, indent=1), encoding="utf-8")
     os.replace(tmp, p)
     if "mode" in clean and clean["mode"] != before_mode:
-        journal_mod.append(instance_path, chip, f"mode {before_mode} -> {clean['mode']} (set by {who})", kind="sm")
+        journal_mod.append(instance_path, journal_chip or chip,
+                           f"mode {before_mode} -> {clean['mode']} (set by {who})", kind="sm")
     return cur
 
 

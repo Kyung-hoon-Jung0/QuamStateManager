@@ -356,7 +356,7 @@ def start():
     want = data.get("mode")
     if want and want != mode:
         try:
-            limits.save(inst, key, {"mode": want}, who=actor)
+            limits.save(inst, key, {"mode": want}, who=actor, journal_chip=chip)
             mode = want
         except limits.LimitError as exc:
             return _err(str(exc))
