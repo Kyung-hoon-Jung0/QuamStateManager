@@ -544,6 +544,61 @@ def _ack_date(ack: dict) -> str:
         return ""
 
 
+def ack_key_of(rec: dict) -> str:
+    """Public name for a finding's acknowledgement identity."""
+    return _ack_key(rec)
+
+
+def finding_detail(rec: dict, env_label: str = "", *, probing: bool = False) -> str:
+    """The sentence a finding SAYS -- ONE composition shared by the
+    diagnostics table (to_diag_findings) and the Types & values card / the
+    chip-open alarm (routes), because env_ack stores the sentence the user
+    clicked on VERBATIM and lapses the acknowledgement when the sentence
+    changes: both surfaces must send, and the server must compare, exactly
+    this string. Before this, the table sent the composed sentence and the
+    server compared the RAW rec["detail"] -- equal only in fixtures with no
+    fix hint and no env label, so on a real chip every acknowledgement lapsed
+    silently (customer, on-site 2026-09-07)."""
+    detail = rec.get("detail") or ""
+    if rec.get("fix_hint"):
+        detail = f"{detail} — {rec['fix_hint']}"
+    if env_label:
+        detail = f"{detail} [env: {env_label}]"
+    if probing and rec.get("kind") == "unknown_class":
+        detail = f"{detail} — a schema probe is in flight; this resolves when it lands"
+    return detail
+
+
+def is_acknowledged(rec: dict, acknowledged: dict | None, env_label: str = "",
+                    *, probing: bool = False) -> bool:
+    """The exact test to_diag_findings applies: an acknowledgement on the
+    finding's own identity that still covers what it now says."""
+    ack = (acknowledged or {}).get(_ack_key(rec))
+    if ack is None:
+        return False
+    from quam_state_manager.core import env_ack as _ea
+    return bool(_ea.applies(ack, finding_detail(rec, env_label, probing=probing)))
+
+
+def unacknowledged_rows(rows: list, acknowledged: dict | None, env_label: str = "",
+                        *, probing: bool = False) -> tuple[list, int]:
+    """``(kept, n_acknowledged)`` for the Types & values card and the
+    chip-open alarm: an acknowledged finding drops out of the COUNT (SM stops
+    asking), and every kept row is stamped with the ``ack_key`` and
+    ``ack_detail`` its card button must send -- the same identity and the
+    same sentence the table row sends, so an acknowledgement made on either
+    surface applies on both."""
+    kept: list = []
+    n_acked = 0
+    for rec in rows or []:
+        if is_acknowledged(rec, acknowledged, env_label, probing=probing):
+            n_acked += 1
+            continue
+        kept.append({**rec, "ack_key": _ack_key(rec),
+                     "ack_detail": finding_detail(rec, env_label, probing=probing)})
+    return kept, n_acked
+
+
 def to_diag_findings(analysis: dict, env_label: str = "", *,
                      probing: bool = False, acknowledged: dict | None = None) -> list:
     """Bridge the analyzer's aggregated findings into diagnostics ``Finding``
@@ -566,17 +621,14 @@ def to_diag_findings(analysis: dict, env_label: str = "", *,
         count = rec.get("count") or 0
         suffix = f" ({count}×)" if count > 1 else ""
         examples = rec.get("example_paths") or []
-        detail = rec.get("detail") or ""
-        if rec.get("fix_hint"):
-            detail = f"{detail} — {rec['fix_hint']}"
-        if env_label:
-            detail = f"{detail} [env: {env_label}]"
+        # ONE sentence for this finding -- the same string the table button
+        # and the Types & values card send back with an acknowledgement.
+        detail = finding_detail(rec, env_label, probing=probing)
         sev = "error" if rec.get("severity") == "error" else "warning"
         msg = rec.get("detail") or rec.get("kind") or "env mismatch"
         if probing and rec.get("kind") == "unknown_class":
             sev = "warning"
             msg = f"{msg} — probing the environment…"
-            detail = f"{detail} — a schema probe is in flight; this resolves when it lands"
         # docs/168: the user can say a finding is expected. Matched on the
         # finding's OWN identity -- (kind, class, field, code), the same tuple
         # analyze_state aggregates on -- because two different findings can
@@ -587,7 +639,12 @@ def to_diag_findings(analysis: dict, env_label: str = "", *,
         ack = (acknowledged or {}).get(ack_key)
         if ack is not None:
             from quam_state_manager.core import env_ack as _ea
-            if not _ea.applies(ack, rec.get("detail") or ""):
+            # Compare the COMPOSED sentence -- the one the client stored
+            # verbatim at the click (fix hint + [env: ...] included). The raw
+            # rec["detail"] never equalled it on a real chip, so every
+            # acknowledgement lapsed silently and the finding came straight
+            # back (customer, on-site 2026-09-07).
+            if not _ea.applies(ack, detail):
                 ack = None
         if ack is not None:
             detail = (f"{detail} — acknowledged by you"

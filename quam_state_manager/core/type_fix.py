@@ -161,6 +161,10 @@ def env_items(findings: list[dict], *, cap: int = 5) -> list[dict]:
             "message": rec.get("detail") or rec.get("kind") or "env mismatch",
             "fix_hint": rec.get("fix_hint") or "",
             "example_path": examples[0] if examples else "",
+            # stamped by state_env_validate.unacknowledged_rows for the card's
+            # "This is correct" button -- blank when the caller did not stamp
+            "ack_key": rec.get("ack_key") or "",
+            "detail": rec.get("ack_detail") or "",
             "count": rec.get("count") or 0,
         })
     return out

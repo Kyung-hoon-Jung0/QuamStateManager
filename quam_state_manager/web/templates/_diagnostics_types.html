@@ -60,6 +60,7 @@
       <p class="diag-types-caption muted">
         SM will not change these — this chip and the selected environment's
         schema disagree. Decide which is right.
+        {% if types_card.env.acknowledged %}<span class="muted">{{ types_card.env.acknowledged }} acknowledged &mdash; listed, revocable, under Environment match below.</span>{% endif %}
       </p>
       <ul class="diag-types-envlist">
         {% for it in types_card.env.entries %}
@@ -70,6 +71,15 @@
           {% if it.example_path %}
           <button type="button" class="btn-xs outline diag-goto"
                   data-jump-path="{{ it.example_path }}" onclick="goToDiagField(this)">Go to field</button>
+          {% endif %}
+          {# docs/168 + on-site 2026-09-07: the same envAck() as the table row,
+             the same key and the same sentence, so an acknowledgement made
+             here applies there too. #}
+          {% if it.ack_key %}
+          <button type="button" class="btn-xs outline diag-ack"
+                  data-ack-key="{{ it.ack_key }}" data-detail="{{ it.detail }}"
+                  title="Tell SM this is expected in this environment. It stops raising the alarm here and on the badge; the row stays listed and revocable under Environment match below."
+                  onclick="envAck(this)">This is correct</button>
           {% endif %}
         </li>
         {% endfor %}

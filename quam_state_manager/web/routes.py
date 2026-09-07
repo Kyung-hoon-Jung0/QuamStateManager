@@ -3204,7 +3204,11 @@ def _type_alarm_payload(ctx: dict | None) -> dict | None:
     try:
         from quam_state_manager.core import type_fix as _tf
         memo = _type_alarm_memo(ctx)
-        if not memo["paths"] and not memo["env_findings"]:
+        # docs/168 + on-site 2026-09-07: an acknowledged env finding stops
+        # being ASKED about -- here too, or the chip-open alarm keeps saying
+        # "N don't match" after the user said they are correct.
+        env_rows, _n_acked = _env_rows_unacked(ctx, memo)
+        if not memo["paths"] and not env_rows:
             return None
         token = _active_chip_token() or ("path:" + str(ctx.get("path") or ""))
         dismissed = _load_chip_prompt_memo().get(f"{token}::typealarm") or {}
@@ -3212,13 +3216,13 @@ def _type_alarm_payload(ctx: dict | None) -> dict | None:
         # anomalies must never also silence an env mismatch (and a legacy
         # record, which carries no env_sig, reads as "env not yet dismissed").
         strnum_live = bool(memo["paths"]) and dismissed.get("sig") != memo["sig"]
-        env_live = (bool(memo["env_findings"])
+        env_live = (bool(env_rows)
                     and (dismissed.get("env_sig") or "") != memo["env_sig"])
         if not strnum_live and not env_live:
             return None
         editable = (ctx.get("origin") or "live") == "live"
         summary = _tf.alert_summary(_alarm_plan(ctx, memo) if editable else None,
-                                    memo["env_findings"], memo["paths"])
+                                    env_rows, memo["paths"])
         summary.update({
             "token": token,
             "editable": editable,
@@ -24059,6 +24063,54 @@ def config_preview():
 _DIAG_RANK = {"error": 0, "warning": 1, "info": 2}
 
 
+def _env_findings_context(store) -> tuple[dict, str, bool] | None:
+    """``(manifest, env_label, probing)`` for the SELECTED env, or None while
+    the schema cache is cold / no env. Request-path safe: the warm manifest
+    only, never a probe. ONE derivation shared by the diagnostics table, the
+    Types & values card and the chip-open alarm, so the sentence an
+    acknowledgement is compared against is composed identically everywhere."""
+    policy = getattr(store, "type_policy", None)
+    manifest = policy.manifest if policy is not None else None
+    if manifest is None:
+        return None
+    versions = manifest.get("versions") or {}
+    label = " ".join(f"{k} {v}" for k, v in sorted(versions.items())
+                     if k in ("quam", "quam_builder") and v)
+    # docs/94 fix 3: while a schema probe for the selected env is in
+    # flight, an unknown class is a not-yet-known — downgrade to warning
+    # ("probing the environment…") for the seconds the probe needs.
+    probing = False
+    try:
+        _pp = config_generator.get_selected_env(current_app.instance_path)
+        if _pp:
+            with _schema_warm_lock:
+                probing = any(k.startswith(_pp + "|")
+                              for k in _schema_warm_inflight)
+    except Exception:  # noqa: BLE001
+        probing = False
+    return manifest, label, probing
+
+
+def _env_rows_unacked(ctx: dict | None, memo: dict) -> tuple[list, int]:
+    """The memo's raw env-schema rows minus the acknowledged ones, each kept
+    row stamped with the ack_key/ack_detail its card button sends -- the same
+    identity + sentence the diagnostics table sends
+    (state_env_validate.unacknowledged_rows). Cold env -> (rows, 0)."""
+    from quam_state_manager.core import state_env_validate as _sev
+    rows = list(memo.get("env_findings") or [])
+    try:
+        store = (ctx or {}).get("store")
+        if store is None:
+            return rows, 0
+        fc = _env_findings_context(store)
+        label, probing = (fc[1], fc[2]) if fc else ("", False)
+        return _sev.unacknowledged_rows(rows, _env_acks_now(store), label,
+                                        probing=probing)
+    except Exception:  # noqa: BLE001 — must never break the alarm or the card
+        logger.debug("env acknowledgement filtering failed", exc_info=True)
+        return rows, 0
+
+
 def _env_schema_findings(store: QuamStore) -> list:
     """Env-match findings for the active chip against the SELECTED env.
 
@@ -24069,26 +24121,11 @@ def _env_schema_findings(store: QuamStore) -> list:
     """
     from quam_state_manager.core import state_env_validate
     try:
-        policy = getattr(store, "type_policy", None)
-        manifest = policy.manifest if policy is not None else None
-        if manifest is None:
+        fc = _env_findings_context(store)
+        if fc is None:
             return []
+        manifest, label, probing = fc
         analysis = state_env_validate.analysis_for_store(store, manifest)
-        versions = manifest.get("versions") or {}
-        label = " ".join(f"{k} {v}" for k, v in sorted(versions.items())
-                         if k in ("quam", "quam_builder") and v)
-        # docs/94 fix 3: while a schema probe for the selected env is in
-        # flight, an unknown class is a not-yet-known — downgrade to warning
-        # ("probing the environment…") for the seconds the probe needs.
-        probing = False
-        try:
-            _pp = config_generator.get_selected_env(current_app.instance_path)
-            if _pp:
-                with _schema_warm_lock:
-                    probing = any(k.startswith(_pp + "|")
-                                  for k in _schema_warm_inflight)
-        except Exception:  # noqa: BLE001
-            probing = False
         return state_env_validate.to_diag_findings(
             analysis, env_label=label, probing=probing,
             acknowledged=_env_acks_now(store))
@@ -24224,8 +24261,9 @@ def _types_card_state(ctx: dict | None) -> dict | None:
         store = ctx["store"]
         memo = _type_alarm_memo(ctx)
         editable = (ctx.get("origin") or "live") == "live"
-        card = _tf.alert_summary(_alarm_plan(ctx, memo),
-                                 memo["env_findings"], memo["paths"])
+        env_rows, n_acked = _env_rows_unacked(ctx, memo)
+        card = _tf.alert_summary(_alarm_plan(ctx, memo), env_rows, memo["paths"])
+        card["env"]["acknowledged"] = n_acked
         card["editable"] = editable
         card["strnum"]["first"] = memo["paths"][0] if memo["paths"] else ""
         policy = getattr(store, "type_policy", None)

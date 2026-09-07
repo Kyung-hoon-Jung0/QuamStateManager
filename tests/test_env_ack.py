@@ -224,3 +224,68 @@ class TestTheDoor:
         assert "window.envAckRevoke = function" in js
         # the sentence the user agreed with must travel with the press
         assert 'b.append("detail"' in js
+
+
+
+class TestOneSentenceOnBothSurfaces:
+    """Customer, on-site (2026-09-07): 'This is correct' did nothing visible on
+    a real chip. The table button stores the COMPOSED sentence it shows (raw
+    detail + fix hint + '[env: ...]'), but to_diag_findings compared the
+    stored sentence against the RAW rec['detail'] -- equal only in fixtures
+    with neither, so on a real chip every acknowledgement lapsed silently and
+    the finding came straight back. Now finding_detail() is the one sentence:
+    sent by the table row AND the Types & values card, compared by the
+    server; and the card / chip-open alarm drop acknowledged rows from their
+    COUNT (SM stops asking) while the table row stays, marked and revocable."""
+
+    _LABEL = "quam 0.6.0 quam_builder 0.4.0"
+    _REC = {"kind": "unknown_field", "class": "quam_config.my_quam.Quam",
+            "field": "twpa_ext", "code": "", "severity": "error",
+            "detail": "'twpa_ext' is not a field of the selected env's Quam",
+            "fix_hint": "select that env or migrate the state",
+            "count": 1, "example_paths": ["twpa_ext"]}
+
+    def _ack(self, tmp_path, rec):
+        env_ack.acknowledge(tmp_path, _ENV, kind=rec["kind"],
+                            class_path=rec["class"], field=rec["field"],
+                            code=rec["code"],
+                            detail=state_env_validate.finding_detail(rec, self._LABEL))
+        return env_ack.resolve(tmp_path, _ENV)
+
+    def test_the_composed_sentence_is_what_the_row_shows(self):
+        f = state_env_validate.to_diag_findings(
+            {"findings": [self._REC]}, env_label=self._LABEL)[0]
+        assert f.detail == state_env_validate.finding_detail(self._REC, self._LABEL)
+        assert "[env: quam 0.6.0" in f.detail and "migrate the state" in f.detail
+
+    def test_an_ack_stored_with_the_shown_sentence_applies(self, tmp_path):
+        acks = self._ack(tmp_path, self._REC)          # what the button sends
+        acked = state_env_validate.to_diag_findings(
+            {"findings": [self._REC]}, env_label=self._LABEL, acknowledged=acks)
+        assert acked[0].acknowledged, "the acknowledgement lapsed against its own sentence"
+        assert diagnostics.summarize(acked)["issues"] == 0
+
+    def test_is_acknowledged_mirrors_to_diag_findings(self, tmp_path):
+        acks = self._ack(tmp_path, self._REC)
+        assert state_env_validate.is_acknowledged(self._REC, acks, self._LABEL)
+        changed = {**self._REC, "detail": "'twpa_ext' is not a field (2 places)"}
+        assert not state_env_validate.is_acknowledged(changed, acks, self._LABEL)
+
+    def test_the_card_drops_acknowledged_rows_and_stamps_the_rest(self, tmp_path):
+        other = {**self._REC, "field": "flux_crosstalk_max_v",
+                 "detail": "'flux_crosstalk_max_v' is not a field"}
+        acks = self._ack(tmp_path, self._REC)
+        kept, n = state_env_validate.unacknowledged_rows(
+            [self._REC, other], acks, self._LABEL)
+        assert n == 1 and [r["field"] for r in kept] == ["flux_crosstalk_max_v"]
+        assert kept[0]["ack_key"] == state_env_validate.ack_key_of(other)
+        assert kept[0]["ack_detail"] == state_env_validate.finding_detail(other, self._LABEL)
+        from quam_state_manager.core import type_fix
+        items = type_fix.env_items(kept)
+        assert items[0]["ack_key"] == kept[0]["ack_key"]
+        assert items[0]["detail"] == kept[0]["ack_detail"]
+
+    def test_nothing_acknowledged_keeps_every_row_and_stamps_it(self):
+        kept, n = state_env_validate.unacknowledged_rows(
+            [self._REC], {}, self._LABEL)
+        assert n == 0 and len(kept) == 1 and kept[0]["ack_key"]
