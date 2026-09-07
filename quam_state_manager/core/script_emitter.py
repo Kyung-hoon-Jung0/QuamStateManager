@@ -79,6 +79,7 @@ _RUNTIME_FUNCS = (
     "_band_for", "_delay_for_band", "_apply_lf_delay",
     "_set_port_lo", "_set_channel_lo", "_operation",
     "_apply_resonator", "_apply_qubit", "_apply_flux", "_apply_pulses",
+    "_twpa_of", "_apply_twpa",
     "_make_cz_gate", "_apply_pairs", "apply_populate",
     "_apply_dual_upconverters", "_pin_cores",
     "_pulse_class", "_cz_variant_pulses", "_seed_cz_variant",

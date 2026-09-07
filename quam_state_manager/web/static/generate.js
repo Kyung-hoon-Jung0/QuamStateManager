@@ -1597,13 +1597,24 @@
       input.value = twpa.id || "";
       input.placeholder = "twpaA";
       input.addEventListener("input", function () {
-        twpa.id = input.value.trim();
+        var oldId = twpa.id, newId = input.value.trim();
+        twpa.id = newId;
+        // populate.twpa is keyed by TWPA id (not qubit id — so it is
+        // deliberately NOT in applyQubitIdMap's / prunePopulate's lists,
+        // which would delete every TWPA bucket). Follow a rename.
+        var pt = (state.spec.populate || {}).twpa;
+        if (pt && oldId && newId && oldId !== newId && pt[oldId] && !pt[newId]) {
+          pt[newId] = pt[oldId];
+          delete pt[oldId];
+        }
       });
       var del = document.createElement("button");
       del.type = "button";
       del.className = "gen-row-del";
       del.textContent = "×";
       del.addEventListener("click", function () {
+        var pt = (state.spec.populate || {}).twpa;
+        if (pt) delete pt[twpa.id];
         state.spec.twpas.splice(idx, 1);
         renderTwpas();
       });
@@ -4040,6 +4051,35 @@
       options: ["", "dc", "med", "high"] },
     { field: "settle_time", label: "settle", unit: "ns" }
   ];
+  // TWPA pump tone + calibration seeds (the quam_builder >= 0.4.0 TWPA
+  // dataclass: pump_frequency / pump_amplitude / settling_time / isolation_* /
+  // *_attenuation, plus the pump channel's RF/LO/FSP/pulse length). Fixed unit
+  // labels where the class fixes them: settling_time is an int in ns, the
+  // attenuations are dB. The tones ride the stage-wide freq selector like
+  // every RF/LO. pump_amplitude is the amplitude_scale initialize() plays the
+  // pump with — a plain number, NEVER dim:"amp" (fspForAmp would read the
+  // QUBIT table's FSP for a twpa row and mis-convert in dBm mode). FSP carries
+  // its own unit label so colHeader never rewrites it to "(dBm · auto)":
+  // nothing allocates a TWPA's FSP, so it must stay hand-typed in every mode.
+  // Cells write spec.populate.twpa[<twpa id>] (the default popBucket path);
+  // run_build.apply_populate -> _apply_twpa seeds the built entity,
+  // hasattr-gated per field so an older-fork TWPA class degrades, never raises.
+  var POP_TWPA_COLS = [
+    { field: "pump_frequency", label: "pump RF", dim: "freq" },
+    { field: "LO_frequency", label: "pump LO", dim: "freq",
+      noBulk: "Each pump port has its own LO" },
+    { field: "band", label: "band", kind: "select",
+      options: ["", "1", "2", "3"],
+      noBulk: "Band follows the pump port's LO unless overridden" },
+    { field: "full_scale_power_dbm", label: "FSP", unit: "dBm" },
+    { field: "pump_amplitude", label: "pump amp (scale)" },
+    { field: "pump_length", label: "pump len", dim: "time" },
+    { field: "settling_time", label: "settling", unit: "ns" },
+    { field: "isolation_frequency", label: "isolation RF", dim: "freq" },
+    { field: "isolation_amplitude", label: "isolation amp (scale)" },
+    { field: "pumpline_attenuation", label: "pump-line att.", unit: "dB" },
+    { field: "signalline_attenuation", label: "signal-line att.", unit: "dB" }
+  ];
   // Per-pair 2Q-gate seed values. The columns shown depend on the chip's gate
   // (step 4): a CZ chip tunes the flux pulse + its variant; a CR chip tunes the
   // cross-resonance drive/cancel scaling + the ZI/IZ correction phases. The
@@ -4311,10 +4351,12 @@
     rr:      { group: "resonator", cols: POP_RESONATOR_COLS },
     rr_in:   { group: "resonator", cols: POP_RESONATOR_COLS },
     z:       { group: "flux",      cols: POP_FLUX_COLS },
-    coupler: { group: "pairs",     cols: POP_PAIR_COLS }
+    coupler: { group: "pairs",     cols: POP_PAIR_COLS },
+    twpa_pump: { group: "twpa",    cols: POP_TWPA_COLS }
   };
   var POP_GROUP_ROLES = {
-    qubit: ["xy"], resonator: ["rr", "rr_in"], flux: ["z"], pairs: ["coupler"]
+    qubit: ["xy"], resonator: ["rr", "rr_in"], flux: ["z"], pairs: ["coupler"],
+    twpa: ["twpa_pump", "twpa_ro", "twpa_in"]
   };
 
   // Write one populate cell's value into `bucket`, converting display units
@@ -4409,7 +4451,7 @@
     // Absolute power mode: FSP is allocated from the pulse powers, never
     // hand-typed — the cell shows the derived value read-only.
     if (col.field === "full_scale_power_dbm" &&
-        state.powerMode === "absolute") {
+        state.powerMode === "absolute" && group !== "twpa") {
       input.disabled = true;
       input.title = "Auto-allocated from the pulse powers " +
         "(absolute power mode — switch Power input back to FSP + amplitude " +
@@ -5087,6 +5129,7 @@
     if (group === "flux") return POP_FLUX_COLS;
     if (group === "pulses") return POP_PULSE_FIELDS;
     if (group === "qdac") return POP_QDAC_COLS;
+    if (group === "twpa") return POP_TWPA_COLS;
     if (group === "pairs") return pairPopCols();
     return [];
   }
@@ -6217,13 +6260,20 @@
     var secPulses    = document.getElementById("gen-pop-sec-pulses");
     var secPairs     = document.getElementById("gen-pop-sec-pairs");
     var secQdac      = document.getElementById("gen-pop-sec-qdac");
+    var secTwpa      = document.getElementById("gen-pop-sec-twpa");
     var qdacQubits   = qubits.filter(isQdacBiased);
+    // Pump lines are MW hardware only (deriveLines) — same gate as Qubit /
+    // Resonator. Rows are the step-4 TWPAs by id.
+    var twpaIds      = mw ? (state.spec.twpas || [])
+                              .map(function (t) { return typeof t === "string" ? t : (t && t.id); })
+                              .filter(Boolean) : [];
     if (secQubit)     secQubit.hidden     = !mw;
     if (secResonator) secResonator.hidden = !mw;
     if (secFlux)      secFlux.hidden      = !wantFlux;
     if (secPulses)    secPulses.hidden    = !mw;
     if (secPairs)     secPairs.hidden     = !pairs.length;
     if (secQdac)      secQdac.hidden      = !qdacQubits.length;
+    if (secTwpa)      secTwpa.hidden      = !twpaIds.length;
 
     // Show a note listing which sections are hidden and why.
     var hiddenNote = document.getElementById("gen-pop-hidden-note");
@@ -6263,6 +6313,14 @@
       setPopHost("gen-pop-qdac",
         buildPopTable("qdac", qdacQubits, POP_QDAC_COLS, "Qubit"),
         noQubits);
+    }
+    if (twpaIds.length) {
+      // Deliberately NOT in the gen-pop-hidden-note list: most chips have no
+      // TWPA and the no-TWPA render must stay byte-identical (section stays
+      // hidden from the template, host never touched).
+      setPopHost("gen-pop-twpa",
+        buildPopTable("twpa", twpaIds, POP_TWPA_COLS, "TWPA"),
+        "No TWPAs defined.");
     }
     if (pairs.length) {
       setPopHost("gen-pop-pairs",
@@ -8200,6 +8258,9 @@
       maybeFollowScriptsPath: maybeFollowScriptsPath,
       POP_QUBIT_COLS: POP_QUBIT_COLS,
       POP_QDAC_COLS: POP_QDAC_COLS,
+      POP_TWPA_COLS: POP_TWPA_COLS,
+      renderPopulateTables: renderPopulateTables,
+      renderTwpas: renderTwpas,
       popBucketRead: popBucketRead,
       popBucketWrite: popBucketWrite,
       presetRowIds: presetRowIds,

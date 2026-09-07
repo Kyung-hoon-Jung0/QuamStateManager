@@ -395,6 +395,41 @@ def _extract_populate(state: dict, root: dict) -> dict:
         if pairv:
             pop_pairs[_populate_pair_key(pid, pair, root)] = pairv
 
+    # --- TWPAs: pump tone + calibration seeds (inverts run_build._apply_twpa)
+    # so the Populate step re-opens PREFILLED on a re-generate instead of
+    # blank. The customer's chip keeps pump_frequency null and the tone on the
+    # pump channel's RF_frequency, so the channel is the fallback.
+    pop_t: dict = {}
+    twpas = state.get("twpas")
+    for tid, tw in (twpas.items() if isinstance(twpas, dict) else ()):
+        if not isinstance(tw, dict):
+            continue
+        tv: dict = {}
+        pump = tw.get("pump") if isinstance(tw.get("pump"), dict) else {}
+        rf = tw.get("pump_frequency")
+        if not _num(rf):
+            rf = pump.get("RF_frequency")
+        if _num(rf):
+            tv["pump_frequency"] = rf
+        p_out = _resolve_ptr(root, pump.get("opx_output"))
+        if isinstance(p_out, dict):
+            if _num(p_out.get("upconverter_frequency")):
+                tv["LO_frequency"] = p_out["upconverter_frequency"]
+            if _num(p_out.get("full_scale_power_dbm")):
+                tv["full_scale_power_dbm"] = p_out["full_scale_power_dbm"]
+            if _num(p_out.get("band")):
+                tv["band"] = p_out["band"]
+        op = (pump.get("operations") or {}).get("pump")
+        if isinstance(op, dict) and _num(op.get("length")):
+            tv["pump_length"] = op["length"]
+        for k in ("pump_amplitude", "settling_time", "isolation_frequency",
+                  "isolation_amplitude", "pumpline_attenuation",
+                  "signalline_attenuation"):
+            if _num(tw.get(k)):
+                tv[k] = tw[k]
+        if tv:
+            pop_t[tid] = tv
+
     out: dict = {}
     if pop_q:
         out["qubit"] = pop_q
@@ -406,6 +441,8 @@ def _extract_populate(state: dict, root: dict) -> dict:
         out["pulses"] = pop_p
     if pop_pairs:
         out["pairs"] = pop_pairs
+    if pop_t:
+        out["twpa"] = pop_t
     return out
 
 

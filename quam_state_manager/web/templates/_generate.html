@@ -276,8 +276,8 @@
       <div class="gen-band">
         <div class="gen-band-head"><span class="gen-band-title">TWPAs</span> <span class="muted">&mdash; optional</span></div>
         <p class="muted gen-oneline"
-           title="TWPA entries are saved with your spec and will be included automatically once quam_builder adds TWPA wiring support (the current 0.2.0 does not yet generate them).">
-          Saved with the spec &mdash; generated once quam_builder supports TWPA wiring.</p>
+           title="Built natively on quam_builder 0.4.0+ (Connectivity.add_twpa_lines); an older builder skips them with a warning. The pump tone and calibration seeds are entered on the Populate step.">
+          Built with the chip on quam_builder 0.4.0+ &mdash; pump tone and calibration seeds are on the Populate step.</p>
         <div id="gen-twpa-list" class="gen-twpa-list"></div>
         <button type="button" class="outline btn-sm" id="gen-add-twpa">
           + Add TWPA</button>
@@ -441,6 +441,15 @@
       <div id="gen-pop-sec-qdac" hidden>
         <h4>QDAC-II bias <span class="muted">&mdash; the DC operating point and how it steps</span></h4>
         <div id="gen-pop-qdac" class="gen-pop-host"></div>
+      </div>
+
+      {# TWPA pump tone + calibration seeds. Rows are the step-4 TWPAs; cells
+         write spec.populate.twpa[<id>] and run_build._apply_twpa seeds the
+         built twpas.<id> entity (hasattr-gated per field). Hidden when the
+         spec has no TWPA — the no-TWPA render is byte-identical. #}
+      <div id="gen-pop-sec-twpa" hidden>
+        <h4>TWPA <span class="muted">&mdash; pump tone and calibration seeds</span></h4>
+        <div id="gen-pop-twpa" class="gen-pop-host"></div>
       </div>
 
       <div id="gen-pop-sec-pulses">

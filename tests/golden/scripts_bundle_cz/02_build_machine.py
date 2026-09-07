@@ -353,6 +353,65 @@ def _apply_pulses(machine, vals):
             if "saturation_amplitude" in q_vals:
                 saturation.amplitude = q_vals["saturation_amplitude"]
 
+def _twpa_of(machine, tid):
+    """The built TWPA a spec id names. qualang_tools renders the element as
+    f"twpa{id}" and build_connectivity strips a redundant prefix first, so
+    "1" / "A" / "twpa1" / "twpaA" all land on machine.twpas["twpa1"/"twpaA"]
+    (the same normalization as regen_merge._norm_twpa_id). None if unbuilt —
+    a pre-TWPA builder leaves machine.twpas empty and already warned."""
+    twpas = getattr(machine, "twpas", None) or {}
+    if tid in twpas:
+        return twpas[tid]
+
+    def _norm(s):
+        s = str(s)
+        return (s[4:] if (s.lower().startswith("twpa") and len(s) > 4) else s).lower()
+
+    for key, tw in twpas.items():
+        if _norm(key) == _norm(tid):
+            return tw
+    return None
+
+def _apply_twpa(twpa, vals):
+    """Seed a built TWPA from populate['twpa'][<id>]. Every write is
+    hasattr-gated: the TWPA dataclass differs by quam_builder generation
+    (0.4.0: pump_frequency / pump_amplitude / isolation_* / settling_time /
+    *_attenuation; an older lab fork carried max_avg_gain / spectroscopy
+    instead) — a field the class lacks is skipped, never invented."""
+    pump = getattr(twpa, "pump", None)
+    pump_ = getattr(twpa, "pump_", None)
+    if "pump_frequency" in vals:
+        rf = vals["pump_frequency"]
+        if hasattr(twpa, "pump_frequency"):
+            twpa.pump_frequency = rf
+        for ch in (pump, pump_):            # mirror _apply_qubit: f_01 + xy.RF_frequency
+            if ch is not None and hasattr(ch, "RF_frequency"):
+                ch.RF_frequency = rf
+    if pump is not None:                    # pump and pump_ share ONE port
+        band = vals.get("band")             # the <select> ships a string
+        try:
+            band = int(band) if band not in (None, "") else None
+        except (TypeError, ValueError):
+            band = None
+        if "LO_frequency" in vals:
+            _set_channel_lo(pump, vals["LO_frequency"], band)
+        elif band is not None:
+            _set_channel_band(pump, band)
+        if "full_scale_power_dbm" in vals:
+            out = getattr(pump, "opx_output", None)
+            if out is not None and hasattr(out, "full_scale_power_dbm"):
+                out.full_scale_power_dbm = vals["full_scale_power_dbm"]
+    if "pump_length" in vals:
+        for ch in (pump, pump_):
+            op = _operation(ch, "pump") if ch is not None else None
+            if op is not None:
+                op.length = vals["pump_length"]
+    for attr in ("pump_amplitude", "settling_time", "isolation_frequency",
+                 "isolation_amplitude", "pumpline_attenuation",
+                 "signalline_attenuation"):
+        if attr in vals and hasattr(twpa, attr):
+            setattr(twpa, attr, vals[attr])
+
 def _make_cz_gate(cz_gate_cls, pulse_id, moving):
     """Construct a CZGate with ``moving_qubit`` only when the class accepts it.
 
@@ -489,6 +548,14 @@ def apply_populate(machine, populate, handle_pairs=True):
         # QdacBiasLine (no such field) without importing quam_config here.
         if z is not None and hasattr(z, "independent_offset"):
             _apply_flux(z, vals)
+
+    # TWPAs (docs/175): keyed by the wizard's twpa id; a pre-TWPA builder
+    # leaves machine.twpas empty (build_connectivity already warned), so this
+    # is a no-op there rather than a crash.
+    for tid, vals in (populate.get("twpa") or {}).items():
+        tw = _twpa_of(machine, tid)
+        if tw is not None and isinstance(vals, dict):
+            _apply_twpa(tw, vals)
 
     _apply_pulses(machine, populate.get("pulses") or {})
 

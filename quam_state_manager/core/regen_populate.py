@@ -327,6 +327,34 @@ def protect_paths(changed: list[tuple[str, str, str]], spec_populate: Any,
             found = _qdac.bias_line_of((new_state.get("qubits") or {}).get(rid))
             if found and fname in _qdac.QDAC_FIELDS:
                 add(f"qubits.{rid}.{found[0]}.{fname}")
+        elif group == "twpa":
+            # docs/175 — an in-wizard TWPA seed must beat tier-1 carry, or the
+            # merge silently reverts it to the source chip's value. Mirrors
+            # _apply_twpa's write set exactly; `add` finds no path on a
+            # degraded (TWPA-less) rebuild and protects nothing, which is right.
+            tw = (new_state.get("twpas") or {}).get(rid)
+            base = f"twpas.{rid}"
+            if fname == "pump_frequency":
+                add(f"{base}.pump_frequency")
+                add(f"{base}.pump.RF_frequency")
+                add(f"{base}.pump_.RF_frequency")
+            elif fname == "pump_length":
+                add(f"{base}.pump.operations.pump.length")
+                add(f"{base}.pump_.operations.pump.length")
+            elif fname in ("LO_frequency", "band", "full_scale_power_dbm"):
+                pp = _chan_port_path(new_root, tw, "pump")
+                if pp:
+                    if fname == "LO_frequency":
+                        add(f"{pp}.upconverter_frequency")
+                        add(f"{pp}.band")
+                    elif fname == "band":
+                        add(f"{pp}.band")
+                    else:
+                        add(f"{pp}.full_scale_power_dbm")
+            elif fname in ("pump_amplitude", "settling_time",
+                           "isolation_frequency", "isolation_amplitude",
+                           "pumpline_attenuation", "signalline_attenuation"):
+                add(f"{base}.{fname}")
         elif group == "flux":
             base = f"qubits.{rid}.z"
             if fname in ("independent_offset", "joint_offset", "min_offset",

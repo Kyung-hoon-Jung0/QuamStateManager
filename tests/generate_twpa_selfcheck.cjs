@@ -164,6 +164,52 @@ var isoLine = state.spec.lines.filter(function (l) { return l.element === 'twpaB
 ok(isoLine.channel.out_port === 4 && isoLine.channel.in_port === 6,
   'T7: twpa_isolation spec line channel follows the drag (out=' + isoLine.channel.out_port + ', in=' + isoLine.channel.in_port + ')');
 
+
+// T8: the Populate step grows a TWPA section (docs/175, customer report: the
+// wizard created the TWPA line but Populate had no TWPA fields at all). Rows
+// are the step-4 TWPAs by id; the table is the same buildPopTable every
+// section uses. A harness-state gap must REPORT, not crash the run.
+var doc = win.document;
+try {
+  T.renderPopulateTables();
+  var secTwpa = doc.getElementById('gen-pop-sec-twpa');
+  ok(!!secTwpa && secTwpa.hidden === false, 'T8: #gen-pop-sec-twpa is shown when the spec has TWPAs');
+  var twpaRids = Array.prototype.slice.call(doc.querySelectorAll('#gen-pop-twpa [data-group="twpa"]'))
+    .map(function (el) { return el.getAttribute('data-rid'); })
+    .filter(function (v, i, a) { return v && a.indexOf(v) === i; });
+  ok(twpaRids.indexOf('twpaA') >= 0 && twpaRids.indexOf('twpaB') >= 0,
+    'T8: twpaA + twpaB rows render in the TWPA table (got ' + JSON.stringify(twpaRids) + ')');
+} catch (e) {
+  ok(false, 'T8 threw: ' + (e && e.message));
+}
+
+// T9: unit honesty at the column definition (the docs/136 lesson — dwell is s
+// and settle_time is ns on ONE component): settling_time is a FIXED ns label,
+// never a stage-unit dim; pump_amplitude is a scale, never dim:"amp" (that
+// would read the QUBIT table's FSP for a twpa row); the FSP column owns its
+// own unit label so colHeader can never rewrite it to "(dBm · auto)".
+var colBy = {}; T.POP_TWPA_COLS.forEach(function (c) { colBy[c.field] = c; });
+ok(!!colBy.settling_time && colBy.settling_time.unit === 'ns' && !colBy.settling_time.dim,
+  'T9: settling_time is a fixed ns label, not a dim');
+ok(!!colBy.pump_amplitude && !colBy.pump_amplitude.dim,
+  'T9: pump_amplitude carries no dim (never amp/dBm-converted)');
+ok(!!colBy.full_scale_power_dbm && colBy.full_scale_power_dbm.unit === 'dBm',
+  'T9: the TWPA FSP column owns its unit label');
+
+// T10: degrade-only — a spec with no TWPAs hides the section and never touches
+// the host, so the no-TWPA Populate render stays byte-identical.
+try {
+  var savedTwpas = T.state.spec.twpas;
+  T.state.spec.twpas = [];
+  var twpaHost = doc.getElementById('gen-pop-twpa'); twpaHost.innerHTML = '';
+  T.renderPopulateTables();
+  ok(doc.getElementById('gen-pop-sec-twpa').hidden === true, 'T10: no TWPAs -> section hidden');
+  ok(twpaHost.innerHTML === '', 'T10: no TWPAs -> host untouched');
+  T.state.spec.twpas = savedTwpas;
+} catch (e) {
+  ok(false, 'T10 threw: ' + (e && e.message));
+}
+
 if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
 console.log('generate_twpa_selfcheck: all checks passed');
 process.exit(0);
