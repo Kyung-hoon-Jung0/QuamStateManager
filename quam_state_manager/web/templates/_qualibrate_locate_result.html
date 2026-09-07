@@ -4,7 +4,7 @@
 {% macro found_row(c, note=None) %}
 <div class="locate-result locate-ok">
     <span class="locate-ok-mark">&#10003;</span>
-    <code class="locate-path">{{ c.path }}</code> &mdash;
+    <code class="locate-path">{{ c.path }}</code>{% if c.config_name and c.config_name != 'config.toml' %} <span class="muted">/ <b>{{ c.config_name }}</b></span>{% endif %} &mdash;
     {{ c.n_projects }} project{{ 's' if c.n_projects != 1 }}{% if c.active %},
     active: <b>{{ c.active }}</b>{% endif %}
     {% if c.versions_supported is sameas false %}
@@ -14,8 +14,8 @@
     <form hx-post="/qualibrate/use-location"
           hx-target="#qualibrate-locate-result" hx-swap="innerHTML"
           class="locate-use-form">
-        <input type="hidden" name="path" value="{{ c.path }}">
-        <button type="submit" class="btn-sm">Use this folder</button>
+        <input type="hidden" name="path" value="{{ c.config_file or c.path }}">
+        <button type="submit" class="btn-sm">Use this location</button>
     </form>
 </div>
 {% endmacro %}
@@ -26,10 +26,11 @@
         {{ found_row(result) }}
     {% elif result.exists %}
         <p class="locate-result locate-warn">Folder exists but holds no
-            <code>config.toml</code>: <code class="locate-path">{{ result.path }}</code></p>
+            <code>{{ result.config_name or 'config.toml' }}</code>:
+            <code class="locate-path">{{ result.path }}</code></p>
     {% else %}
         <p class="locate-result locate-warn">Not found:
-            <code class="locate-path">{{ result.path }}</code></p>
+            <code class="locate-path">{{ result.config_file or result.path }}</code></p>
     {% endif %}
 {% endif %}
 {% for s in suggestions %}

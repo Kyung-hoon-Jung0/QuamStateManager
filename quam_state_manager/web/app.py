@@ -418,7 +418,10 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
         loc_file = Path(app.instance_path) / "qualibrate_location.json"
         if loc_file.exists():
             data = json.loads(loc_file.read_text(encoding="utf-8"))
-            val = data.get("config_dir") if isinstance(data, dict) else None
+            # Prefer the resolved root FILE (honors a custom-named
+            # .qualibrate_config.toml); fall back to the dir for old memos.
+            val = (data.get("config_file") or data.get("config_dir")
+                   if isinstance(data, dict) else None)
             if isinstance(val, str) and val.strip():
                 chosen = val
     except Exception:  # noqa: BLE001 — a corrupt memo must never block startup

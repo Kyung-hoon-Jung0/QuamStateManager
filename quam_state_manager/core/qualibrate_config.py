@@ -55,12 +55,59 @@ except ModuleNotFoundError:  # pragma: no cover - older interpreters
 # both env vars: an environment variable is deployment-level intent (and the
 # test suite's isolation relies on it winning).
 _dir_override: Path | None = None
+# When the chosen/typed location is a custom-named root config FILE (a lab that
+# keeps e.g. ``.qualibrate_config.toml`` instead of ``config.toml``), remember
+# its basename so every ROOT read hits the real file, not a hardcoded name.
+_file_override: Path | None = None
 
 
 def set_dir_override(value: str | Path | None) -> None:
-    """Install (or clear, with None) the UI-chosen config directory."""
-    global _dir_override
-    _dir_override = Path(value) if value else None
+    """Install (or clear, with None) the UI-chosen config location.
+
+    Accepts a DIRECTORY **or** a direct ``.toml`` FILE (qualibrate's own
+    ``QUALIBRATE_CONFIG_FILE`` is dir-or-file too). A file value pins that
+    exact file as the root config and its parent as the config dir, so a
+    custom-named root config (``.qualibrate_config.toml``) is honored instead
+    of being silently replaced by ``<dir>/config.toml``."""
+    global _dir_override, _file_override
+    if not value:
+        _dir_override = None
+        _file_override = None
+        return
+    p = Path(value)
+    if p.suffix == ".toml" or (p.exists() and p.is_file()):
+        _file_override = p
+        _dir_override = p.parent
+    else:
+        _dir_override = p
+        _file_override = None
+
+
+def _root_name() -> str:
+    """Basename of the ROOT config file — ``config.toml`` unless a
+    custom-named file is pinned. Mirrors ``_config_dir``'s precedence exactly
+    (env file > env dir > UI override > default) so the dir and the filename
+    can never come from two different sources. Project overlays are always
+    ``config.toml`` (qualibrate's own layout); only the root file may differ."""
+    ev = os.environ.get("QUALIBRATE_CONFIG_FILE")
+    if ev:
+        p = Path(ev)
+        return p.name if p.suffix == ".toml" else "config.toml"
+    if os.environ.get("QUALIBRATE_CONFIG_DIR"):
+        return "config.toml"
+    if _file_override is not None:
+        return _file_override.name
+    return "config.toml"
+
+
+def root_config_path(cfg_dir: Path | None = None) -> Path:
+    """The ROOT config FILE (honors a custom-named root config).
+
+    Everything that used to read ``cfg_dir / "config.toml"`` for the ROOT
+    config goes through here so a lab's ``.qualibrate_config.toml`` is read as
+    the real file. ``cfg_dir`` defaults to the resolved config dir."""
+    d = cfg_dir if cfg_dir is not None else _config_dir()
+    return d / _root_name()
 
 
 def config_source() -> dict[str, Any]:
@@ -123,7 +170,7 @@ def resolve_live_state_path() -> Path | None:
         return Path(own)
 
     cfg_dir = _config_dir()
-    global_cfg = _load_toml(cfg_dir / "config.toml")
+    global_cfg = _load_toml(root_config_path(cfg_dir))
 
     # The ACTIVE project's EFFECTIVE config is live truth — the same
     # global⊕overlay deep-merge qualibrate itself performs (docs/55): a
@@ -318,7 +365,7 @@ def effective_config(project: str, *, root_cfg: dict | None = None,
     overlay can never rename the active project)."""
     cfg_dir = cfg_dir or _config_dir()
     if root_cfg is None:
-        root_cfg = _load_toml_retry(cfg_dir / "config.toml")
+        root_cfg = _load_toml_retry(root_config_path(cfg_dir))
     overlay = _load_toml_retry(cfg_dir / "projects" / project / "config.toml")
     merged = _deep_merge(root_cfg, overlay)
     merged.setdefault("qualibrate", {})
@@ -365,12 +412,13 @@ def project_storage(project: str, cfg_dir: Path | None = None) -> dict[str, Any]
 def active_project(cfg_dir: Path | None = None) -> str | None:
     """The root config's ``[qualibrate].project``, or None."""
     cfg_dir = cfg_dir or _config_dir()
-    root_cfg = _load_toml_retry(cfg_dir / "config.toml")
+    root_cfg = _load_toml_retry(root_config_path(cfg_dir))
     project = (root_cfg.get("qualibrate") or {}).get("project")
     return str(project) if project else None
 
 
-def list_projects(cfg_dir: Path | None = None) -> dict[str, Any]:
+def list_projects(cfg_dir: Path | None = None,
+                  root_file: Path | None = None) -> dict[str, Any]:
     """Everything the Projects sidebar/page needs, in one READ-ONLY pass.
 
     Returns::
@@ -389,7 +437,9 @@ def list_projects(cfg_dir: Path | None = None) -> dict[str, Any]:
     explicit ``state_path = ""`` override).
     """
     cfg_dir = cfg_dir or _config_dir()
-    root_path = cfg_dir / "config.toml"
+    # ``root_file`` lets a probe point at a specific candidate (a custom-named
+    # .toml); otherwise the resolved/active root config is used.
+    root_path = Path(root_file) if root_file else root_config_path(cfg_dir)
     root_cfg = _load_toml_retry(root_path)
     active = (root_cfg.get("qualibrate") or {}).get("project")
 
@@ -496,7 +546,7 @@ def tray_status(cfg_dir: Path | None = None) -> dict[str, Any]:
     "state_exists"}``. READ-ONLY, never raises; existence is re-stat-ed every
     call (a folder can appear/vanish without any config edit)."""
     cfg_dir = cfg_dir or _config_dir()
-    root_path = cfg_dir / "config.toml"
+    root_path = root_config_path(cfg_dir)
     try:
         root_m = root_path.stat().st_mtime_ns
     except OSError:
@@ -559,7 +609,7 @@ def project_state_paths(cfg_dir: Path | None = None) -> dict[str, Any]:
     (root deep-merged with its overlay; explicit ``""`` override → None) in
     this process's path dialect. READ-ONLY, never raises."""
     cfg_dir = cfg_dir or _config_dir()
-    root_path = cfg_dir / "config.toml"
+    root_path = root_config_path(cfg_dir)
     try:
         root_m = root_path.stat().st_mtime_ns
     except OSError:

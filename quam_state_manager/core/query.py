@@ -1069,21 +1069,30 @@ class QueryEngine:
         for twpa_name, tw in wiring_twpas.items():
             t = (root.get("twpas") or {}).get(twpa_name) or {}
             spec_state = t.get("spectroscopy") or {}
-            pump_ref = _get_nested(tw, "pump", "opx_output")
+            # The wiring keys the pump line by the TERSE role ``p`` (what the
+            # allocator/wizard write — generate.js), not ``pump``; accept both
+            # (mirrors couplers' ``c``/``coupler`` + CR's ``cr`` above). The
+            # ``or`` short-circuits, so a chip carrying both reads one ref.
+            pump_ref = (_get_nested(tw, "pump", "opx_output")
+                        or _get_nested(tw, "p", "opx_output"))
             if pump_ref:
                 add_assignment(pump_ref, "twpa_pump", twpa_name, {
                     "pump_frequency": t.get("pump_frequency"),
                     "pump_amplitude": t.get("pump_amplitude"),
                     "max_avg_gain": t.get("max_avg_gain"),
                 })
-            spec_out_ref = _get_nested(tw, "spectroscopy", "opx_output")
+            # Terse ``i`` is the readout/isolation line (generate.js maps it to
+            # twpa_ro / twpa_in by output-vs-input).
+            spec_out_ref = (_get_nested(tw, "spectroscopy", "opx_output")
+                            or _get_nested(tw, "i", "opx_output"))
             if spec_out_ref:
                 add_assignment(spec_out_ref, "twpa_ro", twpa_name, {
                     "rf_frequency": _resolve(self.store, spec_state.get("f_01"), ("twpas", twpa_name, "spectroscopy", "f_01")),
                     "depletion_time": spec_state.get("depletion_time"),
                     "time_of_flight": spec_state.get("time_of_flight"),
                 })
-            spec_in_ref = _get_nested(tw, "spectroscopy", "opx_input")
+            spec_in_ref = (_get_nested(tw, "spectroscopy", "opx_input")
+                           or _get_nested(tw, "i", "opx_input"))
             if spec_in_ref:
                 add_assignment(spec_in_ref, "twpa_in", twpa_name, {
                     "rf_frequency": _resolve(self.store, spec_state.get("f_01"), ("twpas", twpa_name, "spectroscopy", "f_01")),

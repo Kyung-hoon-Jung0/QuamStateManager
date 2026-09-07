@@ -4802,31 +4802,67 @@ def _qualibrate_location_file() -> Path:
 def _normalize_config_input(text: str) -> Path:
     """User-typed config location → a Path in THIS host's dialect.
 
-    Accepts a directory or a direct ``config.toml`` path (the env var's
-    dir-or-file semantics), ``~``, both slash kinds, Explorer's quoted
+    Accepts a directory **or** a direct ``.toml`` FILE path — the file is kept
+    AS a file (any name, e.g. a lab's ``.qualibrate_config.toml``) so a
+    custom-named root config is honored, not silently replaced by
+    ``<dir>/config.toml``. Also ``~``, both slash kinds, Explorer's quoted
     copy-as-path form, and cross-dialect spellings (``/mnt/d/…`` on Windows,
-    ``D:\\…`` under WSL). Pure — existence is the caller's question."""
+    ``D:\\…`` under WSL). Pure — existence and file-vs-dir are the caller's
+    question (see ``_resolve_root_config``)."""
     raw = (text or "").strip().strip('"').strip("'")
     p = Path(raw).expanduser()
-    if p.suffix == ".toml":
-        p = p.parent
     # no wsl_root here: a bare /home/… typed on Windows stays as-is and the
     # locate route offers distro-anchored suggestions instead of guessing.
     return qualibrate_config._to_native(str(p), os.name)
 
 
-def _classify_config_location(p: Path) -> dict:
-    """READ-ONLY probe of a candidate config dir. Never raises."""
-    out = {"path": str(p), "exists": False, "has_config": False,
-           "n_projects": 0, "active": None, "versions_supported": None}
+def _resolve_root_config(p: Path) -> Path:
+    """The ROOT config FILE for a normalized user input (a file OR a folder).
+
+    A ``.toml`` path is that exact file. A directory resolves to its
+    conventional ``config.toml``, else a known custom name
+    (``.qualibrate_config.toml``), else a lone ``*.toml`` if unambiguous — and
+    otherwise falls back to ``config.toml`` so a 'not found' message names the
+    conventional file. Pure; existence is the caller's question."""
+    if p.suffix == ".toml" or p.is_file():
+        return p
+    conv = p / "config.toml"
+    if conv.is_file():
+        return conv
+    dotname = p / ".qualibrate_config.toml"
+    if dotname.is_file():
+        return dotname
     try:
-        if not p.is_dir():
+        tomls = sorted(f for f in p.iterdir()
+                       if f.suffix == ".toml" and f.is_file())
+    except OSError:
+        tomls = []
+    if len(tomls) == 1:
+        return tomls[0]
+    return conv
+
+
+def _classify_config_location(p: Path) -> dict:
+    """READ-ONLY probe of a candidate config location — a DIRECTORY (its
+    ``config.toml`` or a known custom-named ``.toml``) OR a direct ``.toml``
+    FILE. Never raises.
+
+    ``path`` is the config DIR, ``config_file`` the exact root file probed and
+    ``config_name`` its basename (``config.toml`` unless the lab renamed it)."""
+    config_file = _resolve_root_config(p)
+    cfg_dir = config_file.parent
+    out = {"path": str(cfg_dir), "config_file": str(config_file),
+           "config_name": config_file.name, "exists": False,
+           "has_config": False, "n_projects": 0, "active": None,
+           "versions_supported": None}
+    try:
+        if not cfg_dir.is_dir():
             return out
         out["exists"] = True
-        if not (p / "config.toml").is_file():
+        if not config_file.is_file():
             return out
         out["has_config"] = True
-        listing = qualibrate_config.list_projects(p)
+        listing = qualibrate_config.list_projects(cfg_dir, root_file=config_file)
         out["n_projects"] = len(listing.get("projects") or [])
         out["active"] = listing.get("active")
         out["versions_supported"] = bool(
@@ -4943,10 +4979,13 @@ def qualibrate_use_location():
     if not res["has_config"]:
         return render_template("_qualibrate_locate_result.html", result=res,
                                suggestions=[], message=None)
-    safe_io.atomic_write_json(_qualibrate_location_file(),
-                              {"config_dir": str(p)})
-    qualibrate_config.set_dir_override(str(p))
-    logger.info("qualibrate config location chosen: %s", p)
+    # Persist the resolved root FILE (honors a custom-named .toml); config_dir
+    # is kept for back-compat + display. set_dir_override handles file-or-dir.
+    safe_io.atomic_write_json(
+        _qualibrate_location_file(),
+        {"config_dir": res["path"], "config_file": res["config_file"]})
+    qualibrate_config.set_dir_override(res["config_file"])
+    logger.info("qualibrate config location chosen: %s", res["config_file"])
     if _is_htmx():
         resp = make_response()
         resp.headers["HX-Refresh"] = "true"   # every cache keys on cfg_dir

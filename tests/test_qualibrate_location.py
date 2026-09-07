@@ -183,7 +183,7 @@ class TestLocateRoutes:
         cfg = _mini_tree(unpinned["tmp"])
         body = unpinned["client"].post(
             "/qualibrate/locate", data={"path": str(cfg)}).get_data(as_text=True)
-        assert "Use this folder" in body
+        assert "Use this location" in body
         assert "2 projects" in body
         assert "alpha" in body
 
@@ -192,14 +192,14 @@ class TestLocateRoutes:
         body = unpinned["client"].post(
             "/qualibrate/locate",
             data={"path": str(cfg / "config.toml")}).get_data(as_text=True)
-        assert "Use this folder" in body
+        assert "Use this location" in body
 
     def test_locate_dir_without_config(self, unpinned):
         d = unpinned["tmp"] / "empty"
         d.mkdir()
         body = unpinned["client"].post(
             "/qualibrate/locate", data={"path": str(d)}).get_data(as_text=True)
-        assert "holds no" in body and "Use this folder" not in body
+        assert "holds no" in body and "Use this location" not in body
 
     def test_locate_missing_path(self, unpinned):
         body = unpinned["client"].post(
@@ -319,10 +319,79 @@ class TestLandingLocateBlock:
 
 
 class TestNormalizeInput:
-    def test_strips_quotes_and_toml_suffix(self):
+    def test_strips_quotes_and_keeps_the_toml_file(self):
+        # quotes stripped; a .toml path is KEPT as that file (a custom-named
+        # root config must not be silently replaced by <dir>/config.toml —
+        # customer bug, see TestCustomNamedRootConfig)
         p = routes_mod._normalize_config_input('"/some/dir/config.toml"')
-        assert str(p) == str(Path("/some/dir"))
+        assert str(p) == str(Path("/some/dir/config.toml"))
+        assert p.name == "config.toml"
 
     def test_expands_user(self):
         p = routes_mod._normalize_config_input("~/.qualibrate")
         assert str(p) == str(Path.home() / ".qualibrate")
+
+
+class TestCustomNamedRootConfig:
+    """A lab that keeps a custom-named root config (a leading-dot
+    ``.qualibrate_config.toml``) instead of ``config.toml`` — the picker must
+    accept a FOLDER or a direct ``.toml`` FILE, and every ROOT read must hit
+    the real file, not a hardcoded name (customer bug: 'Check' said not found
+    for a ``.qualibrate_config.toml`` path)."""
+
+    def _named_tree(self, base: Path, fname: str = ".qualibrate_config.toml",
+                    active: str = "alpha") -> Path:
+        cfg = base / ".qualibrate"
+        chip = base / "chips" / "c1"
+        chip.mkdir(parents=True, exist_ok=True)
+        (chip / "state.json").write_text('{"qubits": {}}', encoding="utf-8")
+        _write(cfg / fname, f'[qualibrate]\nproject = "{active}"\nversion = 5\n'
+               f'[quam]\nstate_path = "{chip.as_posix()}"\nversion = 3\n')
+        _write(cfg / "projects" / active / "config.toml",
+               f'[quam]\nstate_path = "{chip.as_posix()}"\n')
+        return cfg / fname
+
+    def test_normalize_keeps_a_toml_file(self):
+        # a .toml path is kept AS a file (not stripped to its parent dir)
+        p = routes_mod._normalize_config_input(
+            str(Path("lab") / ".qualibrate_config.toml"))
+        assert p.suffix == ".toml" and p.name == ".qualibrate_config.toml"
+
+    def test_classify_a_direct_file_path(self, tmp_path):
+        f = self._named_tree(tmp_path)
+        res = routes_mod._classify_config_location(f)
+        assert res["has_config"] is True
+        assert res["config_name"] == ".qualibrate_config.toml"
+        assert res["config_file"] == str(f)
+        assert res["path"] == str(f.parent)
+        assert res["active"] == "alpha" and res["n_projects"] == 1
+
+    def test_classify_a_folder_discovers_the_named_file(self, tmp_path):
+        f = self._named_tree(tmp_path)
+        res = routes_mod._classify_config_location(f.parent)
+        assert res["has_config"] and res["config_name"] == ".qualibrate_config.toml"
+
+    def test_override_with_a_file_reads_the_real_file(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("QUALIBRATE_CONFIG_FILE", raising=False)
+        monkeypatch.delenv("QUALIBRATE_CONFIG_DIR", raising=False)
+        f = self._named_tree(tmp_path)
+        qc.set_dir_override(str(f))
+        assert qc._root_name() == ".qualibrate_config.toml"
+        assert qc.root_config_path().name == ".qualibrate_config.toml"
+        lp = qc.list_projects()
+        assert lp["ok"] and lp["active"] == "alpha" and len(lp["projects"]) == 1
+        assert qc.resolve_live_state_path() is not None
+
+    def test_env_var_honors_a_custom_named_file(self, tmp_path, monkeypatch):
+        f = self._named_tree(tmp_path)
+        monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(f))
+        assert qc._root_name() == ".qualibrate_config.toml"
+        assert qc.root_config_path() == f
+        assert qc.active_project() == "alpha"
+
+    def test_missing_named_file_is_not_found_not_crash(self, tmp_path):
+        # the dir exists but the named file does not -> has_config False, no raise
+        (tmp_path / ".qualibrate").mkdir()
+        res = routes_mod._classify_config_location(
+            tmp_path / ".qualibrate" / ".qualibrate_config.toml")
+        assert res["exists"] is True and res["has_config"] is False

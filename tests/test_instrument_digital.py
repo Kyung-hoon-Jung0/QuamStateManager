@@ -327,3 +327,56 @@ class TestInstrumentRoutes:
         r = client.get("/instrument")
         assert r.status_code == 200
         assert b"digital_ports" in r.data
+
+
+# ---------------------------------------------------------------------------
+# TWPA pump line — the terse ``p`` role alias (customer 5Q chip, docs/174 era)
+# ---------------------------------------------------------------------------
+
+
+class TestTwpaCollection:
+    """The TWPA pump line must render even when the wiring keys it by the
+    terse role ``p`` (what the allocator/wizard write — generate.js) rather
+    than ``pump``. The customer's 5Q chip put its TWPA on con1/FEM3/port7 as
+    ``wiring.twpas.twpa1.p.opx_output`` and the diagram dropped it entirely."""
+
+    def _state(self) -> dict:
+        return {"twpas": {"twpa1": {
+            "pump_frequency": 6.5e9, "pump_amplitude": 0.3, "max_avg_gain": 20,
+        }}}
+
+    def _wiring(self, role: str = "p") -> dict:
+        return {
+            "wiring": {"twpas": {"twpa1": {
+                role: {"opx_output": "#/ports/mw_outputs/con1/3/7"},
+            }}},
+            "ports": {"mw_outputs": {"con1": {"3": {"7": {"band": 1}}}}},
+        }
+
+    def test_terse_p_role_places_the_pump_port(self):
+        out = _engine(self._state(), self._wiring("p")).get_instrument_wiring()
+        op = out["controllers"]["con1"]["fems"]["3"]["output_ports"]
+        assert "7" in op, "twpa pump port missing from the rack"
+        (a,) = op["7"]
+        assert a["role"] == "twpa_pump"
+        assert a["element"] == "twpa1"
+        assert a["port_type"] == "mw_outputs"
+        assert a["pump_frequency"] == 6.5e9
+
+    def test_verbose_pump_role_still_places(self):
+        """The wizard/older shape keyed ``pump`` is unchanged."""
+        out = _engine(self._state(), self._wiring("pump")).get_instrument_wiring()
+        (a,) = out["controllers"]["con1"]["fems"]["3"]["output_ports"]["7"]
+        assert a["role"] == "twpa_pump" and a["element"] == "twpa1"
+
+    def test_placed_once_when_only_p_present(self):
+        out = _engine(self._state(), self._wiring("p")).get_instrument_wiring()
+        assert len(out["controllers"]["con1"]["fems"]["3"]["output_ports"]["7"]) == 1
+
+    def test_no_twpa_is_degrade_only(self):
+        """A chip with no ``wiring.twpas`` gets no twpa ports at all."""
+        state = {"qubits": {"q1": {}}}
+        wiring = {"wiring": {"qubits": {}},
+                  "ports": {"mw_outputs": {"con1": {"1": {"1": {"band": 1}}}}}}
+        out = _engine(state, wiring).get_instrument_wiring()
+        assert "twpa" not in json.dumps(out)
