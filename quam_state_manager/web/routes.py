@@ -24145,7 +24145,7 @@ def _env_ack_key_now(store) -> str:
     from quam_state_manager.core import state_env_baseline as _seb
     try:
         _manifest, versions = _env_manifest_and_versions(store)
-        return _seb.env_key(versions) if versions else ""
+        return _seb.ack_env_key(versions) if versions else ""
     except Exception:  # noqa: BLE001 — never break /diagnostics over this
         logger.debug("env ack key unavailable", exc_info=True)
         return ""
@@ -24154,7 +24154,10 @@ def _env_ack_key_now(store) -> str:
 def _env_acks_now(store) -> dict:
     from quam_state_manager.core import env_ack as _ea
     try:
-        return _ea.resolve(current_app.instance_path, _env_ack_key_now(store))
+        # versions, not a key: the lookup also reaches legacy commit-keyed
+        # records for the same versions (env_ack.resolve_for_versions).
+        return _ea.resolve_for_versions(current_app.instance_path,
+                                        _env_manifest_and_versions(store)[1])
     except Exception:  # noqa: BLE001
         logger.debug("env acknowledgements unavailable", exc_info=True)
         return {}
@@ -24203,11 +24206,12 @@ def env_ack_revoke():
     store = (ctx or {}).get("store")
     if store is None:
         return jsonify(ok=False, error="No state loaded"), 400
-    env_key = _env_ack_key_now(store)
     key = (request.form.get("ack_key") or "").strip()
     if not key:
         return jsonify(ok=False, error="ack_key required"), 400
-    gone = _ea.revoke(current_app.instance_path, env_key, key)
+    # by versions: a revoke must reach a legacy commit-keyed record too
+    gone = _ea.revoke_for_versions(current_app.instance_path,
+                                   _env_manifest_and_versions(store)[1], key)
     return jsonify(ok=True, revoked=gone)
 
 

@@ -10,11 +10,16 @@
      a band-edge headroom nudge — surfaced as a distinct "Recommendation" tier
      WITHOUT lowering its warning severity) · info (a "suggestion"). #}
 
-{%- set ns = namespace(e=0, w=0, a=0, i=0) -%}
+{%- set ns = namespace(e=0, w=0, a=0, i=0, k=0) -%}
 {%- set groups = {} -%}
 {%- for f in findings -%}
   {%- set bucket = 'error' if f.severity == 'error' else ('info' if f.severity == 'info' else ('advisory' if f.advisory else 'warning')) -%}
-  {%- if bucket == 'error' -%}{%- set ns.e = ns.e + 1 -%}
+  {#- docs/168 + on-site 2026-09-07: an acknowledged finding is not COUNTED
+      anywhere on this page -- not the pills, not the domain badges -- so a
+      chip whose every finding was confirmed reads as healthy here too. It
+      stays LISTED (collapsed, revocable): nothing is hidden. -#}
+  {%- if f.acknowledged -%}{%- set ns.k = ns.k + 1 -%}
+  {%- elif bucket == 'error' -%}{%- set ns.e = ns.e + 1 -%}
   {%- elif bucket == 'warning' -%}{%- set ns.w = ns.w + 1 -%}
   {%- elif bucket == 'advisory' -%}{%- set ns.a = ns.a + 1 -%}
   {%- else -%}{%- set ns.i = ns.i + 1 -%}{%- endif -%}
@@ -25,11 +30,15 @@
 <div class="diag-summary" id="diag-filter-bar">
   {% if diag_summary.total == 0 %}
     <span class="diag-ok">&#10003; No structural issues found</span>
+  {% elif ns.e + ns.w + ns.a + ns.i == 0 and ns.k %}
+    <span class="diag-ok">&#10003; No active issues</span>
+    <span class="muted">&middot; {{ ns.k }} acknowledged by you &mdash; listed below, revocable</span>
   {% else %}
     {% if ns.e %}<button type="button" class="diag-pill diag-error" data-bucket="error" aria-pressed="true" title="Show/hide errors (would crash a node run)">{{ ns.e }} error{{ 's' if ns.e != 1 }}</button>{% endif %}
     {% if ns.w %}<button type="button" class="diag-pill diag-warning" data-bucket="warning" aria-pressed="true" title="Show/hide warnings">{{ ns.w }} warning{{ 's' if ns.w != 1 }}</button>{% endif %}
     {% if ns.a %}<button type="button" class="diag-pill diag-advisory" data-bucket="advisory" aria-pressed="true" title="Show/hide optional recommendations">{{ ns.a }} recommendation{{ 's' if ns.a != 1 }}</button>{% endif %}
     {% if ns.i %}<button type="button" class="diag-pill diag-info" data-bucket="info" aria-pressed="true" title="Show/hide suggestions">{{ ns.i }} suggestion{{ 's' if ns.i != 1 }}</button>{% endif %}
+    {% if ns.k %}<span class="diag-mini diag-acknowledged" title="acknowledged by you — not counted">{{ ns.k }} acknowledged</span>{% endif %}
     <span class="diag-shown-count muted"></span>
   {% endif %}
 </div>
@@ -39,10 +48,14 @@
 {% for dkey, dlabel in diag_domains %}
   {% set rows = groups.get(dkey, []) %}
   {% if rows %}
-    {% set se = rows | selectattr('severity', 'equalto', 'error') | list | length %}
-    {% set sa = rows | selectattr('advisory') | selectattr('severity', 'equalto', 'warning') | list | length %}
-    {% set sw = (rows | selectattr('severity', 'equalto', 'warning') | list | length) - sa %}
-    {% set si = rows | selectattr('severity', 'equalto', 'info') | list | length %}
+    {# acknowledged rows are listed (collapsed, revocable) but never counted #}
+    {% set active = rows | rejectattr('acknowledged') | list %}
+    {% set acked = rows | selectattr('acknowledged') | list %}
+    {% set sk = acked | length %}
+    {% set se = active | selectattr('severity', 'equalto', 'error') | list | length %}
+    {% set sa = active | selectattr('advisory') | selectattr('severity', 'equalto', 'warning') | list | length %}
+    {% set sw = (active | selectattr('severity', 'equalto', 'warning') | list | length) - sa %}
+    {% set si = active | selectattr('severity', 'equalto', 'info') | list | length %}
     {# Open by default any domain with a crash-class error or a real (non-
        advisory) warning; advisory-only / info-only domains start collapsed so
        by-design recommendations don't shout on load. #}
@@ -54,6 +67,7 @@
           {% if sw %}<span class="diag-mini diag-warning" title="{{ sw }} warning(s)">{{ sw }}</span>{% endif %}
           {% if sa %}<span class="diag-mini diag-advisory" title="{{ sa }} recommendation(s)">{{ sa }}</span>{% endif %}
           {% if si %}<span class="diag-mini diag-info" title="{{ si }} suggestion(s)">{{ si }}</span>{% endif %}
+          {% if sk %}<span class="diag-mini diag-acknowledged" title="{{ sk }} acknowledged by you — not counted">{{ sk }} acknowledged</span>{% endif %}
         </span>
       </summary>
       <table class="diag-table">
@@ -61,14 +75,20 @@
           <tr><th>Severity</th><th>Location</th><th>Issue</th>{% if allow_jump %}<th></th>{% endif %}</tr>
         </thead>
         <tbody>
-        {% for f in rows %}
+        {% for f in active + acked %}
+          {% if acked and loop.index0 == active | length %}
+          <tr class="diag-acked-toggle"><td colspan="{{ 4 if allow_jump else 3 }}">
+            <button type="button" class="btn-xs outline diag-acked-btn" data-n="{{ acked | length }}"
+                    onclick="toggleAckedRows(this)">{{ acked | length }} acknowledged &mdash; show</button></td></tr>
+          {% endif %}
           {% set bucket = 'error' if f.severity == 'error' else ('info' if f.severity == 'info' else ('advisory' if f.advisory else 'warning')) %}
-          <tr class="diag-row diag-row-{{ f.severity }}{% if f.advisory %} diag-row-advisory{% endif %}{% if f.acknowledged %} diag-row-acknowledged{% endif %}" data-bucket="{{ bucket }}">
+          <tr class="diag-row diag-row-{{ f.severity }}{% if f.advisory %} diag-row-advisory{% endif %}{% if f.acknowledged %} diag-row-acknowledged diag-row-collapsed{% endif %}" data-bucket="{{ bucket }}">
             <td>
               {% if f.advisory %}
                 <span class="diag-badge diag-advisory">Recommendation</span>
               {% else %}
-                <span class="diag-badge diag-{{ f.severity }}">{{ 'suggestion' if f.severity == 'info' else f.severity }}</span>
+                {% if f.acknowledged %}<span class="diag-badge diag-acknowledged" title="Acknowledged by you — expected in this environment; Un-acknowledge to count it again">acknowledged</span>
+                {% else %}<span class="diag-badge diag-{{ f.severity }}">{{ 'suggestion' if f.severity == 'info' else f.severity }}</span>{% endif %}
               {% endif %}
             </td>
             <td><code class="diag-loc">{{ f.location }}</code></td>

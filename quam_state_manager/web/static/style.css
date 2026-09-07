@@ -12718,3 +12718,12 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .agent-close { background: none; border: 0; font-size: 1.2em; line-height: 1; padding: 0 .2rem; margin: 0; width: auto; color: inherit; }
 .agent-body { padding: .6rem .8rem; }
 .landing-current-project { margin: .5rem 0 1rem; }
+
+/* docs/168 + on-site 2026-09-07: an acknowledged finding reads as settled --
+   muted rail + badge, collapsed under an "N acknowledged" toggle, never red.
+   Appended last so the muted rail outranks .diag-row-error's at equal
+   specificity (source order decides). */
+.diag-badge.diag-acknowledged, .diag-mini.diag-acknowledged { color: var(--pico-muted-color); border-color: var(--pico-muted-border-color); }
+.diag-row-acknowledged td:first-child { box-shadow: inset 3px 0 0 var(--pico-muted-border-color); }
+tr.diag-row-collapsed { display: none; }
+.diag-acked-toggle td { padding: 0.3rem 0.5rem; }

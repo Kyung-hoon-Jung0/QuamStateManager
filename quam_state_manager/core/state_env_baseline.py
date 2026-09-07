@@ -83,6 +83,22 @@ def env_key(versions: dict | None) -> str:
     return f"{safe}__{digest}"
 
 
+def ack_env_key(versions: dict | None) -> str:
+    """The environment identity an ACKNOWLEDGEMENT is keyed on: the package
+    versions only -- never ``quam_builder_commit``.
+
+    The two manifest objects SM attaches to a store (the pristine env
+    manifest and the verdict overlay) disagree on the commit (None vs the
+    hash), so a key that hashed it flipped between the click and the next
+    restart and every acknowledgement silently vanished (customer, on-site
+    2026-09-07). A schema that really changed is still caught: env_ack.applies
+    lapses a record whose SENTENCE changed. Equals ``env_key`` for a
+    commit-less manifest, so records written under that key resolve as-is."""
+    v = dict(versions or {})
+    v.pop("quam_builder_commit", None)
+    return env_key(v)
+
+
 def env_label(versions: dict | None) -> str:
     """Human name for an environment — what the popup and the chips show."""
     v = versions or {}

@@ -185,3 +185,41 @@ def applies(record: dict, detail: str) -> bool:
     if not stored:
         return True          # recorded before details were kept: trust it
     return stored == detail
+
+
+def resolve_for_versions(instance_path: Any, versions: dict | None) -> dict:
+    """Acknowledgements in force for an environment named by its package
+    VERSIONS -- the stable identity (state_env_baseline.ack_env_key) plus a
+    reach into LEGACY records stored under a commit-bearing key for the SAME
+    versions: a warm process used to hash ``quam_builder_commit`` into the
+    key, a fresh one did not, and everything acknowledged in between was
+    orphaned on restart (customer, on-site 2026-09-07). Stable records win on
+    a duplicate finding key; other version sets never leak in."""
+    from quam_state_manager.core import state_env_baseline as _seb
+    if not versions:
+        return {}
+    stable = _seb.ack_env_key(versions)
+    prefix = stable.rsplit("__", 1)[0] + "__"
+    envs = load_store(instance_path)
+    out: dict = {}
+    for ek, recs in envs.items():
+        if ek != stable and ek.startswith(prefix) and isinstance(recs, dict):
+            out.update(recs)
+    out.update(envs.get(stable) or {})
+    return out
+
+
+def revoke_for_versions(instance_path: Any, versions: dict | None, key: str) -> bool:
+    """Un-acknowledge under the stable key, else under any legacy key for the
+    same versions -- a revoke must reach the record wherever it was stored."""
+    from quam_state_manager.core import state_env_baseline as _seb
+    if not versions:
+        return False
+    stable = _seb.ack_env_key(versions)
+    if revoke(instance_path, stable, key):
+        return True
+    prefix = stable.rsplit("__", 1)[0] + "__"
+    for ek in list(load_store(instance_path)):
+        if ek != stable and ek.startswith(prefix) and revoke(instance_path, ek, key):
+            return True
+    return False

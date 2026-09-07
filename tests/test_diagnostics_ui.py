@@ -79,3 +79,42 @@ class TestDiagnosticsListRender:
         html = _render([])
         assert "No structural issues found" in html
         assert 'class="diag-pill' not in html
+
+
+class TestAcknowledgedRowsReadAsSettled:
+    """docs/168 + on-site 2026-09-07: after every env finding was confirmed the
+    page still showed "3 errors", "Environment match (3)" and red Error chips --
+    only the header badge went healthy. Acknowledged findings are now LISTED
+    (collapsed under an "N acknowledged" toggle, revocable) but never COUNTED:
+    no pill, no domain badge, a muted "acknowledged" chip instead of red."""
+
+    def _acked(self, loc):
+        from quam_state_manager.core.diagnostics import Finding
+        return Finding(severity="error", category="env_unknown_field", location=loc,
+                       message="not a field", detail="x -- acknowledged by you on 2026-09-07",
+                       jump_path=loc, acknowledged={"at": 1}, ack_key="k|" + loc)
+
+    def _active(self, loc):
+        from quam_state_manager.core.diagnostics import Finding
+        return Finding(severity="error", category="env_unknown_field", location=loc,
+                       message="not a field", jump_path=loc)
+
+    def test_all_acknowledged_reads_healthy(self):
+        html = _render([self._acked("Quam.twpa_ext"), self._acked("Quam.flux_crosstalk_max_v")])
+        assert "No active issues" in html and "2 acknowledged by you" in html
+        assert "diag-pill diag-error" not in html              # no "2 errors" pill
+        assert 'class="diag-mini diag-error"' not in html       # no red domain badge
+        assert html.count("diag-badge diag-acknowledged") == 2
+        assert "diag-badge diag-error" not in html
+        assert html.count("diag-row-collapsed") == 2
+        assert "2 acknowledged &mdash; show" in html
+
+    def test_mixed_counts_only_the_active_and_lists_it_first(self):
+        html = _render([self._acked("Quam.twpa_ext"), self._active("Quam.other")])
+        assert "1 error" in html and "2 errors" not in html
+        assert "1 acknowledged" in html
+        assert html.index("Quam.other") < html.index("diag-acked-toggle") < html.index("Quam.twpa_ext")
+
+    def test_unacknowledged_render_carries_none_of_it(self):
+        html = _render([self._active("Quam.x")])
+        assert "diag-acked-toggle" not in html and "acknowledged" not in html

@@ -289,3 +289,53 @@ class TestOneSentenceOnBothSurfaces:
         kept, n = state_env_validate.unacknowledged_rows(
             [self._REC], {}, self._LABEL)
         assert n == 0 and len(kept) == 1 and kept[0]["ack_key"]
+
+
+
+class TestTheKeySurvivesARestart:
+    """Customer, on-site (2026-09-07): every acknowledgement vanished after SM
+    restarted. env_key() hashes quam_builder_commit, and the two manifest
+    objects a store carries disagree on it (pristine: None; warm cache: the
+    hash), so the key flipped between the click and the next process and the
+    records were orphaned. The ack identity is now the package VERSIONS only,
+    a lookup also reaches legacy commit-bearing keys for the same versions,
+    and Un-acknowledge reaches a legacy record too."""
+
+    V_NONE = {"quam": "0.6.0", "quam_builder": "0.4.0", "qualang_tools": "0.23.0",
+              "qm": "1.4.0", "quam_builder_commit": None}
+    V_HASH = {**V_NONE, "quam_builder_commit": "71fffe7f309df61eb184560f752f7d29db80aae3"}
+
+    def test_the_commit_does_not_change_the_ack_key(self):
+        from quam_state_manager.core import state_env_baseline as seb
+        assert seb.ack_env_key(self.V_NONE) == seb.ack_env_key(self.V_HASH)
+        assert seb.env_key(self.V_NONE) != seb.env_key(self.V_HASH)  # baselines still differ
+        assert seb.ack_env_key(self.V_NONE) == seb.env_key(self.V_NONE)  # commit-less records resolve as-is
+
+    def test_legacy_commit_keyed_acks_still_resolve(self, tmp_path):
+        from quam_state_manager.core import state_env_baseline as seb
+        legacy = seb.env_key(self.V_HASH)                   # what a warm process used to write
+        env_ack.acknowledge(tmp_path, legacy, kind="unknown_field", class_path="Quam",
+                            field="twpa_ext", code="unknown_field", detail="s")
+        got = env_ack.resolve_for_versions(tmp_path, self.V_NONE)   # a fresh process
+        assert "unknown_field|Quam|twpa_ext|unknown_field" in got
+
+    def test_stable_wins_and_other_versions_never_leak(self, tmp_path):
+        from quam_state_manager.core import state_env_baseline as seb
+        env_ack.acknowledge(tmp_path, seb.ack_env_key(self.V_NONE), kind="k",
+                            class_path="C", field="f", code="", detail="stable")
+        env_ack.acknowledge(tmp_path, seb.env_key(self.V_HASH), kind="k",
+                            class_path="C", field="f", code="", detail="legacy")
+        other = {**self.V_NONE, "quam": "0.5.0"}
+        env_ack.acknowledge(tmp_path, seb.ack_env_key(other), kind="k",
+                            class_path="C", field="g", code="", detail="other")
+        got = env_ack.resolve_for_versions(tmp_path, self.V_HASH)
+        assert got["k|C|f|"]["detail_at_decision"] == "stable"
+        assert "k|C|g|" not in got
+
+    def test_revoke_reaches_a_legacy_record(self, tmp_path):
+        from quam_state_manager.core import state_env_baseline as seb
+        env_ack.acknowledge(tmp_path, seb.env_key(self.V_HASH), kind="k",
+                            class_path="C", field="f", code="", detail="legacy")
+        assert env_ack.revoke_for_versions(tmp_path, self.V_NONE, "k|C|f|")
+        assert not env_ack.resolve_for_versions(tmp_path, self.V_NONE)
+        assert not env_ack.revoke_for_versions(tmp_path, self.V_NONE, "k|C|f|")

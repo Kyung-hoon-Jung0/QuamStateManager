@@ -4030,6 +4030,17 @@ window.TypeAlert = (function () {
         return _ackPost("/env-ack", b, btn);
     };
 
+    /* Acknowledged rows sit collapsed under their domain (listed, never
+       counted); this reveals / re-hides them. A CSS class, not the hidden
+       attribute, so the severity filter pills cannot un-collapse them. */
+    window.toggleAckedRows = function (btn) {
+        var table = btn.closest("table"); if (!table) return;
+        var rows = table.querySelectorAll("tr.diag-row-acknowledged");
+        var show = rows.length && rows[0].classList.contains("diag-row-collapsed");
+        for (var i = 0; i < rows.length; i++) rows[i].classList.toggle("diag-row-collapsed", !show);
+        btn.textContent = (btn.getAttribute("data-n") || rows.length) + " acknowledged \u2014 " + (show ? "hide" : "show");
+    };
+
     window.envAckRevoke = function (btn) {
         var b = new URLSearchParams();
         b.append("ack_key", btn.getAttribute("data-ack-key") || "");
@@ -16524,7 +16535,9 @@ document.addEventListener('click', function(evt) {
                 var marks = (d.value_spec || []).concat(d.connectivity || []);
                 for (var i = 0; i < marks.length; i++) {
                     var f = marks[i];
-                    if (!f.jump_path) continue;
+                    // docs/168 + on-site 2026-09-07: an acknowledged finding
+                    // no longer marks the tree row -- the user said it is right.
+                    if (!f.jump_path || f.acknowledged) continue;
                     var cid = f.jump_path.indexOf('wiring.') === 0
                         ? 'explorer-tree-wiring' : 'explorer-tree-state';
                     markTreePath(cid, f.jump_path, f.message);
@@ -16545,7 +16558,10 @@ document.addEventListener('click', function(evt) {
     }
     function _maxLevel(arr) {
         var hasErr = false, has = false;
-        (arr || []).forEach(function(f) { has = true; if (f.severity === 'error') hasErr = true; });
+        (arr || []).forEach(function(f) {
+            if (f.acknowledged) return;          // not counted: no sidebar dot for it
+            has = true; if (f.severity === 'error') hasErr = true;
+        });
         return hasErr ? 'error' : (has ? 'warn' : null);
     }
 
