@@ -617,8 +617,6 @@ one** (docs/136, 137).
 - **The manual never supplies an absolute number** — enforced when the pack
   loads, and it has refused real cases twice.
 
-## Unreleased
-
 ### Calculator
 
 - **The Calculator opens as its own browser window** — the ↗ in the popover
@@ -688,3 +686,57 @@ one** (docs/136, 137).
   its RF-mirror twin, an FSP change without its compensating amplitudes). The
   re-apply now keeps each gesture whole, so one Ctrl+Z takes the whole gesture
   off the chip (docs/160 §5e).
+
+## v1.0.0 (2026-09-07)
+
+SM becomes the **cockpit for a terminal calibration agent**. Users already run
+Claude Code in a terminal against the qualibrate repo and `state.json` and let
+it calibrate — often overnight. SM stops competing with that and becomes its
+**eyes** (figures, tables, diffs, history a terminal cannot show) and its
+**hands** (the one safe door to `state.json`) (docs/172, 173).
+
+### The agent, inside SM
+
+- **An Agent home and chat** drive one Claude Code session per chip: run a node,
+  read the figure, apply or hold. SM runs the node; the fit **gates answer as
+  data**, not a picture; a held write waits in the Review tray for your press.
+- **Every agent write goes through the working copy → Review tray →
+  apply-to-live** — the same door your own edits use. Ctrl+Z, Versions and the
+  journal know every write the agent makes; nothing it does is invisible or
+  un-undoable.
+
+### The calibration log
+
+- A **Calibration log** page (sidebar, one click): every run, fit verdict and
+  state write as a story, with **the actor on every record** — you, or the
+  agent, by name. A name picker sets who you are; the journal stays honest with
+  two sessions at once (docs/173).
+
+### Connect this PC
+
+- A **setup page** connects the terminal agent on this machine to SM — preview,
+  then click; the MCP door opens and the agent gets SM's tools. **Limits** bound
+  what it may do before it needs your press. The **Agent pill** and a floating
+  panel keep the session one glance away on every page.
+
+### The experimental trio
+
+- Experiment Runner, Fit Replay and Auto Calibrate move **off the menus** (behind
+  `SM_EXPERIMENTAL=1`, not deleted). The parts a terminal agent does not already
+  have survive as **tools**: the deterministic fit gates and the per-family case
+  manuals (docs/129–133).
+
+### A run never writes live
+
+- Found on real cloud hardware: `machine.save()` materialized three
+  class-default fields the customer's chip never had, and they reached the live
+  file and diverged the **next** node. Fixed at the source — the diff baseline is
+  serializer-normalized, phantom root keys are stripped after save, and the
+  qualibrate config's `state_path` is repointed at a per-run scratch so a node
+  can **never write live directly** (docs/174).
+
+### Verified
+
+- On real **IQCC cloud hardware**, the chatbot brought up qA1 from
+  time-of-flight through Ramsey, checking every fit before the next step
+  (docs/173 S9).
