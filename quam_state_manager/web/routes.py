@@ -4973,8 +4973,12 @@ def qualibrate_locate_candidates():
 def qualibrate_use_location():
     """Adopt a config directory: persist the choice (instance memo only —
     the chosen tree is never written) + install the process-wide override."""
-    src = qualibrate_config.config_source()
-    if src["source"] == "env":
+    # Refuse only when the env-pinned location actually RESOLVES to a config.
+    # A QUALIBRATE_CONFIG_FILE naming a file that is not there (customer,
+    # on-site: a stale `set` copied from a config's own header comment) must
+    # not turn the picker into a dead end -- then the user's explicit click
+    # wins (qualibrate_config resolves override-over-unreadable-env).
+    if qualibrate_config.env_pins_config():
         return render_template(
             "_qualibrate_locate_result.html", result=None, suggestions=[],
             message=("An environment variable (QUALIBRATE_CONFIG_FILE / "

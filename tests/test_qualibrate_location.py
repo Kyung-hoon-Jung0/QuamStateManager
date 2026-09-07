@@ -60,6 +60,9 @@ class TestOverridePrecedence:
     def test_env_wins_over_override(self, tmp_path, monkeypatch):
         envd = tmp_path / "envd"
         envd.mkdir()
+        # env wins when it RESOLVES to a config; an env naming a location with
+        # no config yields to an explicit choice (TestUnreadableEnv below).
+        _write(envd / "config.toml", '[qualibrate]\nproject = "p"\n')
         monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(envd))
         qc.set_dir_override(tmp_path / "chosen")
         assert qc._config_dir() == envd
@@ -221,8 +224,14 @@ class TestLocateRoutes:
         cards = unpinned["client"].get("/landing/projects").get_data(as_text=True)
         assert "alpha" in cards and "beta" in cards
 
-    def test_use_location_rejected_when_env_pinned(self, tmp_path):
-        # conftest's autouse env pin is still in force for this app
+    def test_use_location_rejected_when_env_pinned(self, tmp_path, monkeypatch):
+        # An env var that RESOLVES to a config outranks a choice (docs/63 §B).
+        # One that resolves to nothing no longer does -- that was the on-site
+        # dead end, pinned the other way in TestUnreadableEnv. (This used to
+        # ride conftest's pin at a NONEXISTENT path, i.e. it asserted the
+        # dead end itself.)
+        envcfg = _mini_tree(tmp_path / "envside")
+        monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(envcfg / "config.toml"))
         app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
         cfg = _mini_tree(tmp_path)
         body = app.test_client().post(
@@ -395,3 +404,71 @@ class TestCustomNamedRootConfig:
         res = routes_mod._classify_config_location(
             tmp_path / ".qualibrate" / ".qualibrate_config.toml")
         assert res["exists"] is True and res["has_config"] is False
+
+
+class TestUnreadableEnv:
+    """CRITICAL, customer on-site (2026-09-07): QUALIBRATE_CONFIG_FILE named
+    ``<dir>/.qualibrate_config.toml`` -- a file that is not there (a stale
+    ``set`` copied from a config's own header comment) while ``<dir>`` holds a
+    real ``config.toml``. The custom-name support trusted the env's basename,
+    so SM read nothing ('No config found ... (via env)'), and 'Use this
+    location' was refused because env outranks a choice -- a dead end with no
+    way out. Now the root name is found by EXISTENCE inside the env's dir, and
+    an env that resolves to nothing yields to an explicit choice -- but never
+    to ~/.qualibrate (isolation)."""
+
+    def test_env_naming_a_missing_custom_file_reads_the_dirs_config_toml(
+            self, tmp_path, monkeypatch):
+        cfg = _mini_tree(tmp_path)                       # <dir>/config.toml exists
+        monkeypatch.setenv("QUALIBRATE_CONFIG_FILE",
+                           str(cfg / ".qualibrate_config.toml"))
+        qc.set_dir_override(None)
+        assert qc._config_dir() == cfg
+        assert qc._root_name() == "config.toml"
+        assert qc.root_config_path().is_file()
+        assert qc.active_project() == "alpha"
+        assert qc.env_pins_config() is True
+
+    def test_env_pointing_at_nothing_does_not_fall_to_the_default(
+            self, tmp_path, monkeypatch):
+        # isolation: the suite itself pins the env at a nonexistent path
+        nowhere = tmp_path / "nowhere" / ".qualibrate_config.toml"
+        monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(nowhere))
+        qc.set_dir_override(None)
+        assert qc._config_dir() == nowhere.parent
+        assert qc.config_source()["source"] == "env"
+        assert qc.env_pins_config() is False
+        assert not qc.root_config_path().exists()
+
+    def test_unreadable_env_yields_to_an_explicit_choice(self, tmp_path, monkeypatch):
+        nowhere = tmp_path / "nowhere" / ".qualibrate_config.toml"
+        monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(nowhere))
+        chosen = _mini_tree(tmp_path)
+        qc.set_dir_override(str(chosen))
+        assert qc._config_dir() == chosen
+        src = qc.config_source()
+        assert src["source"] == "override"
+        assert src["env_ignored"] == str(nowhere.parent)
+        assert qc.active_project() == "alpha"
+
+    def test_use_location_succeeds_when_env_resolves_to_nothing(
+            self, unpinned, monkeypatch):
+        nowhere = unpinned["tmp"] / "nowhere" / ".qualibrate_config.toml"
+        monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(nowhere))
+        cfg = _mini_tree(unpinned["tmp"])
+        r = unpinned["client"].post("/qualibrate/use-location",
+                                    data={"path": str(cfg)})
+        assert r.status_code in (200, 302)
+        assert "outranks a chosen folder" not in r.get_data(as_text=True)
+        assert qc.config_source()["source"] == "override"
+        assert (unpinned["inst"] / "qualibrate_location.json").exists()
+
+    def test_use_location_still_refused_when_env_resolves(
+            self, unpinned, monkeypatch):
+        envcfg = _mini_tree(unpinned["tmp"] / "envside")
+        monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(envcfg / "config.toml"))
+        other = _mini_tree(unpinned["tmp"] / "otherside")
+        body = unpinned["client"].post(
+            "/qualibrate/use-location", data={"path": str(other)}
+        ).get_data(as_text=True)
+        assert "outranks a chosen folder" in body

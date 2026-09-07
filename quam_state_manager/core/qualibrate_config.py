@@ -83,21 +83,90 @@ def set_dir_override(value: str | Path | None) -> None:
         _file_override = None
 
 
-def _root_name() -> str:
-    """Basename of the ROOT config file — ``config.toml`` unless a
-    custom-named file is pinned. Mirrors ``_config_dir``'s precedence exactly
-    (env file > env dir > UI override > default) so the dir and the filename
-    can never come from two different sources. Project overlays are always
-    ``config.toml`` (qualibrate's own layout); only the root file may differ."""
-    ev = os.environ.get("QUALIBRATE_CONFIG_FILE")
-    if ev:
-        p = Path(ev)
-        return p.name if p.suffix == ".toml" else "config.toml"
-    if os.environ.get("QUALIBRATE_CONFIG_DIR"):
+def _discover_root_name(d: Path, preferred: str | None) -> str:
+    """The root config's basename inside ``d``, decided by EXISTENCE.
+
+    ``preferred`` (the file an env var or a UI choice NAMED) if it is there,
+    else the conventional ``config.toml``, else a known custom name, else a
+    lone ``*.toml``; when nothing exists, ``preferred`` (or ``config.toml``)
+    so a not-found message names what was looked for. Never leaves ``d``: an
+    env location holding nothing must not fall through to ``~/.qualibrate``
+    (the test suite pins the env at a nonexistent path for exactly that
+    isolation). The customer case (2026-09-07, on-site, CRITICAL):
+    ``QUALIBRATE_CONFIG_FILE`` named ``<dir>/.qualibrate_config.toml`` -- a
+    file that was not there -- while ``<dir>/config.toml`` was; trusting the
+    env's basename read nothing and the landing said "No config found"."""
+    if preferred and (d / preferred).is_file():
+        return preferred
+    if (d / "config.toml").is_file():
         return "config.toml"
-    if _file_override is not None:
-        return _file_override.name
-    return "config.toml"
+    if (d / ".qualibrate_config.toml").is_file():
+        return ".qualibrate_config.toml"
+    try:
+        tomls = sorted(f.name for f in d.iterdir()
+                       if f.suffix == ".toml" and f.is_file())
+    except OSError:
+        tomls = []
+    if len(tomls) == 1:
+        return tomls[0]
+    return preferred or "config.toml"
+
+
+def _env_location() -> tuple[Path, str | None] | None:
+    """``(dir, preferred_name)`` from QUAlibrate's own variable --
+    ``QUALIBRATE_CONFIG_FILE`` is dir-OR-file (qualibrate_config/vars.py: a
+    file value points at the config.toml itself) -- or SM's legacy
+    ``QUALIBRATE_CONFIG_DIR`` alias; None when neither is set."""
+    official = os.environ.get("QUALIBRATE_CONFIG_FILE")
+    if official:
+        p = Path(official)
+        if p.suffix == ".toml" or p.is_file():
+            return p.parent, p.name
+        return p, None
+    legacy = os.environ.get("QUALIBRATE_CONFIG_DIR")
+    if legacy:
+        return Path(legacy), None
+    return None
+
+
+def env_pins_config() -> bool:
+    """True when an env var names a location whose root config actually
+    EXISTS -- only then does it outrank a UI choice (docs/63 §B: an env var is
+    deployment-level intent). An env pointing at nothing (a stale ``set``
+    copied from a config's own header comment) must not turn the picker into
+    a dead end where 'Use this location' is refused with no way out."""
+    loc = _env_location()
+    if loc is None:
+        return False
+    d, preferred = loc
+    return (d / _discover_root_name(d, preferred)).is_file()
+
+
+def _resolved_source() -> tuple[str, Path, str]:
+    """ONE decision for provenance + dir + root filename, so the dir and the
+    name can never come from two different sources. A RESOLVING env wins; an
+    env that resolves to nothing still beats the default (isolation) but
+    yields to an explicit UI choice; then the UI choice; then
+    ``~/.qualibrate``. Returns ``(source, dir, root_name)`` with source in
+    ``env`` | ``override`` | ``default``."""
+    loc = _env_location()
+    if loc is not None:
+        d, preferred = loc
+        name = _discover_root_name(d, preferred)
+        if _dir_override is None or (d / name).is_file():
+            return "env", d, name
+    if _dir_override is not None:
+        preferred = _file_override.name if _file_override is not None else None
+        return "override", _dir_override, _discover_root_name(_dir_override, preferred)
+    default = Path.home() / ".qualibrate"
+    return "default", default, _discover_root_name(default, None)
+
+
+def _root_name() -> str:
+    """Basename of the ROOT config file -- ``config.toml`` unless the resolved
+    location keeps a custom-named one. Project overlays are always
+    ``config.toml`` (qualibrate's own layout); only the root file may differ."""
+    return _resolved_source()[2]
 
 
 def root_config_path(cfg_dir: Path | None = None) -> Path:
@@ -106,43 +175,32 @@ def root_config_path(cfg_dir: Path | None = None) -> Path:
     Everything that used to read ``cfg_dir / "config.toml"`` for the ROOT
     config goes through here so a lab's ``.qualibrate_config.toml`` is read as
     the real file. ``cfg_dir`` defaults to the resolved config dir."""
-    d = cfg_dir if cfg_dir is not None else _config_dir()
-    return d / _root_name()
+    _src, d, name = _resolved_source()
+    return (cfg_dir if cfg_dir is not None else d) / name
 
 
 def config_source() -> dict[str, Any]:
     """Where the config dir comes from: ``{"dir": str, "source":
-    "env" | "override" | "default"}`` — surfaced in the UI so a user can see
-    WHY a given tree is (not) being read."""
-    if os.environ.get("QUALIBRATE_CONFIG_FILE") or os.environ.get(
-            "QUALIBRATE_CONFIG_DIR"):
-        return {"dir": str(_config_dir()), "source": "env"}
-    if _dir_override is not None:
-        return {"dir": str(_config_dir()), "source": "override"}
-    return {"dir": str(_config_dir()), "source": "default"}
+    "env" | "override" | "default"}`` -- surfaced in the UI so a user can see
+    WHY a given tree is (not) being read. ``env_ignored`` names the env
+    location when it was set but held no config and a UI choice took over."""
+    src, d, _name = _resolved_source()
+    out: dict[str, Any] = {"dir": str(d), "source": src}
+    loc = _env_location()
+    if src != "env" and loc is not None:
+        out["env_ignored"] = str(loc[0])
+    return out
 
 
 def _config_dir() -> Path:
-    """The qualibrate config ROOT directory.
+    """The qualibrate config ROOT directory -- see ``_resolved_source``.
 
-    Honors QUAlibrate's own variable first: ``QUALIBRATE_CONFIG_FILE`` is
-    dir-OR-file (qualibrate_config/vars.py — a file value points at the
-    config.toml itself). SM's historical ``QUALIBRATE_CONFIG_DIR`` stays as a
-    legacy alias — before this fix a user who redirected qualibrate via its
-    official variable was invisible to SM (docs/55). Below the env vars sits
-    the UI-chosen override (docs/63 §B), then the ``~/.qualibrate`` default.
-    """
-    official = os.environ.get("QUALIBRATE_CONFIG_FILE")
-    if official:
-        p = Path(official)
-        # dir-or-file semantics: a file path means "this IS config.toml"
-        return p.parent if (p.suffix == ".toml" or p.is_file()) else p
-    override = os.environ.get("QUALIBRATE_CONFIG_DIR")
-    if override:
-        return Path(override)
-    if _dir_override is not None:
-        return _dir_override
-    return Path.home() / ".qualibrate"
+    Honors QUAlibrate's own variable first (``QUALIBRATE_CONFIG_FILE``,
+    dir-or-file; before docs/55 a user who redirected qualibrate via its
+    official variable was invisible to SM), SM's legacy
+    ``QUALIBRATE_CONFIG_DIR`` alias, then the UI-chosen override (docs/63
+    §B), then ``~/.qualibrate``."""
+    return _resolved_source()[1]
 
 
 def _load_toml(path: Path) -> dict[str, Any]:
@@ -443,9 +501,13 @@ def list_projects(cfg_dir: Path | None = None,
     root_cfg = _load_toml_retry(root_path)
     active = (root_cfg.get("qualibrate") or {}).get("project")
 
-    src = ("env:QUALIBRATE_CONFIG_FILE" if os.environ.get("QUALIBRATE_CONFIG_FILE")
-           else "env:QUALIBRATE_CONFIG_DIR" if os.environ.get("QUALIBRATE_CONFIG_DIR")
-           else "sm-override" if _dir_override is not None
+    # Provenance follows the RESOLVED source: an env that held no config and
+    # was overridden by a UI choice must not claim "env:..." on the page.
+    kind = _resolved_source()[0]
+    src = ("env:QUALIBRATE_CONFIG_FILE"
+           if kind == "env" and os.environ.get("QUALIBRATE_CONFIG_FILE")
+           else "env:QUALIBRATE_CONFIG_DIR" if kind == "env"
+           else "sm-override" if kind == "override"
            else "default")
     q_ver = (root_cfg.get("qualibrate") or {}).get("version")
     m_ver = (root_cfg.get("quam") or {}).get("version")

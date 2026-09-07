@@ -20,6 +20,14 @@
         <div class="landing-cfg-body">
             {% include '_qualibrate_locate.html' %}
             {% if qualibrate_source and qualibrate_source.source == 'override' %}
+            {# An env var that named a location holding NO config yielded to the
+               chosen one (qualibrate_config._resolved_source) -- say so, or the
+               user sees "override" where they set an env and cannot tell why. #}
+            {% if qualibrate_source.env_ignored %}
+            <p class="muted locate-result locate-warn">QUALIBRATE_CONFIG_FILE / _DIR points at
+                <code>{{ qualibrate_source.env_ignored }}</code> but no config was found there
+                &mdash; using the chosen location instead. Fix or unset the variable to let it apply.</p>
+            {% endif %}
             <form hx-post="/qualibrate/use-default-location" class="locate-use-form"
                   hx-confirm="Forget the chosen folder and go back to the default/env resolution?">
                 <button type="submit" class="btn-sm">Reset to default location</button>
