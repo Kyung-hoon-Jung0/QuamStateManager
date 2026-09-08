@@ -6462,8 +6462,9 @@ window.renderFilterTags = function(inputEl, containerEl) {
                 var parts = _splitQueryTokens(inputEl.value || "");
                 parts.splice(idx, 1);
                 inputEl.value = parts.join(" ");
-                if (window.autoGrowNote) autoGrowNote(inputEl);  // shrink back as pills go
+                if (window.autoGrowNote) window.autoGrowNote(inputEl);  // shrink back as pills go (docs/125: guard and call the same name)
                 renderFilterTags(inputEl, containerEl);
+                if (window.sidebarKwSync) window.sidebarKwSync();       // a removed pill unlights its chip
                 // 'input', matching the box's hx-trigger (docs/126 #20).
                 htmx.trigger(inputEl, "input");
             };
@@ -6472,6 +6473,75 @@ window.renderFilterTags = function(inputEl, containerEl) {
         })(i);
     }
 };
+
+/* Sidebar keyword chips (customer feedback 2026-09-08): the chips under the
+ * experiment filter TOGGLE a token in the box -- one click adds it (AND with
+ * whatever is typed), a second click removes it; typing keeps the chips in
+ * sync (a chip lights when its token is in the box). "…" reveals the extra
+ * keywords and remembers the choice. Delegated on document: the chips live
+ * outside #sidebar-tree, so tree swaps never rebuild them. */
+window.sidebarKwSync = function() {
+    var host = document.getElementById('sidebar-kw');
+    if (!host) return;
+    var input = document.getElementById(host.getAttribute('data-for') || 'sidebar-filter-input');
+    var have = {};
+    if (input) _splitQueryTokens(input.value || '').forEach(function(t) { have[t.toLowerCase()] = true; });
+    host.querySelectorAll('.sb-kw-chip[data-kw]').forEach(function(ch) {
+        var on = !!have[String(ch.getAttribute('data-kw')).toLowerCase()];
+        ch.classList.toggle('active', on);
+        ch.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+};
+window.sidebarKwToggle = function(kw) {
+    var host = document.getElementById('sidebar-kw');
+    var input = document.getElementById((host && host.getAttribute('data-for')) || 'sidebar-filter-input');
+    if (!input || !kw) return;
+    var parts = _splitQueryTokens(input.value || '');
+    var low = String(kw).toLowerCase();
+    var kept = parts.filter(function(t) { return t.toLowerCase() !== low; });
+    if (kept.length === parts.length) kept.push(kw);            // absent -> add; present -> the filter dropped it
+    input.value = kept.join(' ');
+    // guard AND call through window (docs/125: a bare call behind a window guard is the harness trap)
+    if (window.autoGrowNote) window.autoGrowNote(input);
+    if (window.renderFilterTags) window.renderFilterTags(input, document.getElementById('filter-tags'));
+    window.sidebarKwSync();
+    // the box's own hx-trigger ('input changed delay:250ms') refetches the tree
+    if (window.htmx) htmx.trigger(input, 'input');
+    else input.dispatchEvent(new Event('input', {bubbles: true}));
+};
+(function() {
+    document.addEventListener('click', function(e) {
+        var t = e.target && e.target.closest ? e.target.closest('.sb-kw-chip') : null;
+        if (!t) return;
+        e.preventDefault();
+        if (t.classList.contains('sb-kw-more')) {
+            var extra = document.getElementById(t.getAttribute('aria-controls') || 'sidebar-kw-extra');
+            if (!extra) return;
+            extra.hidden = !extra.hidden;
+            t.setAttribute('aria-expanded', extra.hidden ? 'false' : 'true');
+            t.classList.toggle('active', !extra.hidden);
+            try { localStorage.setItem('quam_sidebar_kw_more', extra.hidden ? '0' : '1'); } catch (err) {}
+            return;
+        }
+        window.sidebarKwToggle(t.getAttribute('data-kw'));
+    });
+    document.addEventListener('input', function(e) {
+        if (e.target && e.target.id === 'sidebar-filter-input') window.sidebarKwSync();
+    });
+    function boot() {
+        var more = document.getElementById('sidebar-kw-more');
+        var extra = document.getElementById('sidebar-kw-extra');
+        var remembered = null;
+        try { remembered = localStorage.getItem('quam_sidebar_kw_more'); } catch (err) {}
+        if (more && extra && remembered === '1') {
+            extra.hidden = false;
+            more.setAttribute('aria-expanded', 'true');
+            more.classList.add('active');
+        }
+        window.sidebarKwSync();
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
 
 // The sidebar filter is an auto-grow <textarea>, so it grows by width-wrapping,
 // NOT by Enter. Swallow Enter so it never injects a blank line (which would also

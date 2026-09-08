@@ -1578,6 +1578,18 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
    pinned to the bottom). Sibling of #sidebar-tree, so it survives HTMX tree swaps. */
 .sidebar-scroll-spacer { height: 60vh; flex: 0 0 auto; }
 .filter-tags { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.2rem; }
+/* customer feedback 2026-09-08: keyword chips under the experiment filter -- the
+   Live Edit quick-chip look (.av-chip); .active = the token is in the box */
+.sb-kw { display: flex; flex-direction: column; gap: .2rem; margin: .3rem 0 .15rem; }
+.sb-kw-group { display: flex; flex-wrap: wrap; gap: .22rem; }
+.sb-kw-group + .sb-kw-group { padding-top: .2rem; border-top: 1px dashed color-mix(in srgb, var(--pico-muted-border-color) 60%, transparent); }
+.sb-kw-chip { width: auto; margin: 0; font-size: .7rem; padding: .08rem .5rem; border-radius: 999px; line-height: 1.35;
+    cursor: pointer; background: transparent; border: 1px solid var(--pico-muted-border-color); color: var(--pico-muted-color); }
+.sb-kw-chip:hover, .sb-kw-chip:focus { color: var(--pico-color); border-color: var(--pico-muted-color); }
+.sb-kw-chip.active { color: var(--pico-primary);
+    border-color: color-mix(in srgb, var(--pico-primary) 45%, transparent);
+    background: color-mix(in srgb, var(--pico-primary) 8%, transparent); }
+.sb-kw-more { font-weight: 700; letter-spacing: .1em; padding: .08rem .45rem; }
 .filter-tag {
     display: inline-flex; align-items: center; gap: 0.15rem;
     font-size: 0.75em; font-family: var(--font-mono);

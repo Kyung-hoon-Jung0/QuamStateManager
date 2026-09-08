@@ -729,6 +729,32 @@
                         </table>
                     </div>
                     <div class="filter-tags" id="filter-tags"></div>
+                    {# customer feedback 2026-09-08: keyword chips for the filter, like the
+                       Live Edit / Json Tree quick chips -- one click ADDS the token (AND with
+                       what is typed), a second click REMOVES it. The open chip's qubits and
+                       pairs are always shown; six everyday keywords are shown by default;
+                       the rest sit behind "…" (app.js: sidebar keyword chips). #}
+                    <div class="sb-kw" id="sidebar-kw" data-for="sidebar-filter-input">
+                        {% if sidebar_kw_qubits %}
+                        <div class="sb-kw-group sb-kw-qubits" title="runs on this qubit">
+                            {% for q in sidebar_kw_qubits %}<button type="button" class="sb-kw-chip" data-kw="{{ q }}">{{ q }}</button>{% endfor %}
+                        </div>
+                        {% endif %}
+                        {% if sidebar_kw_pairs %}
+                        <div class="sb-kw-group sb-kw-pairs" title="runs on this pair">
+                            {% for p in sidebar_kw_pairs %}<button type="button" class="sb-kw-chip" data-kw="{{ p }}">{{ p }}</button>{% endfor %}
+                        </div>
+                        {% endif %}
+                        <div class="sb-kw-group sb-kw-words" title="click to add the word to the filter, click again to remove it">
+                            {% for k in ['res', 'flux', 'qubit', 'iq', 'rabi', 'ramsey'] %}<button type="button" class="sb-kw-chip" data-kw="{{ k }}">{{ k }}</button>{% endfor %}
+                            <button type="button" class="sb-kw-chip sb-kw-more" id="sidebar-kw-more" aria-expanded="false"
+                                    aria-controls="sidebar-kw-extra" title="more keywords">&hellip;</button>
+                        </div>
+                        <div class="sb-kw-group sb-kw-extra" id="sidebar-kw-extra" hidden>
+                            {% for k in ['spec', 'time_of_flight', 'readout', 'power', 'drag', 'echo', 'T1', 'T2', 'cz', 'chevron', 'twpa', 'crosstalk', 'coupler'] %}<button type="button" class="sb-kw-chip" data-kw="{{ k }}">{{ k }}</button>{% endfor %}
+                            <button type="button" class="sb-kw-chip" data-kw="status:error" title="only failed runs (status:error)">failed</button>
+                        </div>
+                    </div>
                 </div>
                 <div class="sidebar-tree-toolbar" role="group" aria-label="Experiment list controls">
                     <span class="toolbar-label">rows</span>

@@ -3700,6 +3700,11 @@ def _ctx(**extra: Any) -> dict[str, Any]:
     has_resonator, has_flux, has_coupler, has_qdac = _chip_channel_flags(store)
     return {
         "active_path": path,
+        # customer feedback 2026-09-08: the sidebar filter's clickable keyword
+        # chips -- the open chip's qubits and pairs (a bare token matches a run's
+        # qubit list exactly / a pair by substring in _entry_matches)
+        "sidebar_kw_qubits": list(store.qubit_names) if store else [],
+        "sidebar_kw_pairs": list(store.qubit_pair_names) if store else [],
         # The chip-level name (shared across per-experiment loads), not the
         # raw parent-folder name. None when no quam chip is active.
         "active_name": ident["name"] if ident else None,
