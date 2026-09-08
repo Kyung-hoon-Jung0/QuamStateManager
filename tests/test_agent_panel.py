@@ -330,6 +330,14 @@ class TestHome:
         assert ".ag-toolgroup > summary" in blk and ".ag-card.ag-in-group .ag-body" in blk
         assert re.search(r"\.ag-plan-st, \.ag-step-st \{[^}]*border-radius: 999px", blk)
         assert ".ag-card.ag-approval .ag-body { border-left: 3px solid var(--ag-accent, #d98c00); }" in blk
+        # review round 1: the accent is defined (it never was), and it is a BORDER colour --
+        # as pill TEXT the bare #d98c00 measured 2.7:1 on the light card, so the waiting pill
+        # mixes it towards the theme's own foreground; no `color:` in the block may use it bare
+        assert ".ag-root { --ag-accent: #d98c00; }" in blk
+        assert re.search(r"\.ag-st-waiting \{ color: color-mix\(in srgb, var\(--ag-accent, #d98c00\) \d+%, var\(--pico-color\)\); \}", blk)
+        for m in re.finditer(r"(?<![-\w])color:\s*([^;}]+)", blk):
+            v = m.group(1).strip()
+            assert "#d98c00" not in v or v.startswith("color-mix("), f"the accent used bare as a text colour: {m.group(0)}"
         assert re.search(r"\.ag-md h1, \.ag-md h2, \.ag-md h3[^{]*\{ font-size: 1em; font-weight: 700;", blk)
         # Pico's width:100% never reaches a button / input / select inside the page
         assert (".ag-root button, .ag-root [type=submit], .ag-root [type=button], .ag-root select, "
@@ -357,6 +365,45 @@ class TestHome:
         assert "plan_propose" in mcp.WRITE_TOOLS and "plan_status" not in mcp.WRITE_TOOLS
         props = mcp.TOOLS["run_node"][0]["inputSchema"]["properties"]
         assert "step" in props and "plan_id" in props
+
+
+class TestReviewRound1:
+    """The review of the 2026-09-08 redesign, three confirmed issues."""
+
+    def test_the_pane_height_covers_the_banners_above_the_layout(self):
+        """The composer was pinned to a pane sized `100vh - topbar`, but the banner slots
+        between the bar and .app-layout (the docs/80 two-window banner, live-diverged, the
+        type alarm, GC, diagnostics) push the layout down -- measured in real Chrome: a
+        1000px viewport, a 1070px document, the composer's form row below the fold. The
+        published number is now the layout's own document-relative top, and the observer
+        watches every in-flow sibling above it. jsdom computes no layout, so the effect is
+        measured in Chrome; this pins the mechanism."""
+        js = (_ROOT / "quam_state_manager" / "web" / "static" / "app.js").read_text(encoding="utf-8")
+        blk = js.split("window.TopbarHeight = (function () {", 1)[1][:3000]
+        # measure = .app-layout's top in DOCUMENT coordinates (sticky bar or not, scrolled or not)
+        measure = blk.split("function measure() {", 1)[1].split("function publish", 1)[0]
+        assert "querySelector('.app-layout')" in measure
+        assert re.search(r"lr\.top \+ \(window\.pageYOffset \|\| 0\)", measure)
+        # the bar-only path survives as the fallback (test_web pins the hidden-bar zero on it)
+        assert "classList.contains('topbar-hidden')) return 0" in measure
+        # the ResizeObserver covers every sibling before the layout, not only the bar
+        above = blk.split("function aboveLayout() {", 1)[1].split("function start", 1)[0]
+        assert "previousElementSibling" in above
+        start = blk.split("function start() {", 1)[1]
+        assert "aboveLayout().forEach(function (el) { if (seen.indexOf(el) < 0) { seen.push(el); ro.observe(el); } })" in start
+        assert "MutationObserver" in start and "{ childList: true }" in start
+
+    def test_the_strip_is_not_a_live_region_and_keeps_the_focus(self):
+        """role=status on the whole strip re-announced state, counts and every button label
+        on every poll; the wholesale innerHTML dropped the focus to <body>. The executed
+        pins live in agent_panel_selfcheck.cjs (jsdom asserts document.activeElement); this
+        guards the markup for an environment without node."""
+        js = (_ROOT / "quam_state_manager" / "web" / "static" / "agent.js").read_text(encoding="utf-8")
+        assert '<div class="ag-now"></div>' in js and '"ag-now" role=' not in js
+        assert '<span class="ag-now-sr visually-hidden" role="status"></span>' in js
+        assert "if (sr && sr.textContent !== srText) sr.textContent = srText;" in js
+        assert "function swapHtml(el, html)" in js and "el.__agHtml === html) return false" in js
+        assert "again.focus()" in js
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")

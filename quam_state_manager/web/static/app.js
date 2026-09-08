@@ -18652,11 +18652,30 @@ window.StateVersions = (function () {
  *    or absent bar must publish 0 here rather than leave a stale number.
  *  - writes are gated on an actual change, because this runs from a
  *    ResizeObserver and re-publishing the same value would loop.
+ *
+ * Review round 1 of the Agent page (2026-09-08): the bar is not the only thing
+ * above the layout. The banner slots between it and .app-layout (the docs/80
+ * two-window banner, live-diverged, the type alarm, GC, diagnostics) push the
+ * layout down by their height, and every calc(100vh - topbar) panel then ran
+ * past the viewport by exactly that -- measured in real Chrome: viewport 1000,
+ * document 1070 with the two-window banner up, the Agent page's pinned
+ * composer below the fold. So the number published is the offset of
+ * EVERYTHING above the layout -- .app-layout's own document-relative top --
+ * and the ResizeObserver watches every in-flow sibling before the layout, not
+ * just the bar. A hidden bar collapses to 0px in flow, so it still publishes 0
+ * (plus whatever banner is up); the bar-only path is the fallback for a
+ * document without .app-layout.
  */
 window.TopbarHeight = (function () {
     'use strict';
     var _last = null;
     function measure() {
+        // everything ABOVE the layout (bar + banner slots), see the note above
+        var lay = document.querySelector('.app-layout');
+        if (lay) {
+            var lr = lay.getBoundingClientRect();
+            if (lr.width > 0) return Math.max(0, Math.round(lr.top + (window.pageYOffset || 0)));
+        }
         var tb = document.querySelector('.topbar');
         if (!tb || document.documentElement.classList.contains('topbar-hidden')) return 0;
         var r = tb.getBoundingClientRect();
@@ -18669,14 +18688,30 @@ window.TopbarHeight = (function () {
         document.documentElement.style.setProperty('--topbar-height', h + 'px');
         return h;
     }
+    function aboveLayout() {
+        // the bar and every in-flow sibling before .app-layout (the banner slots)
+        var lay = document.querySelector('.app-layout');
+        var out = [], el = lay ? lay.previousElementSibling : document.querySelector('.topbar');
+        while (el) { out.push(el); el = el.previousElementSibling; }
+        return out;
+    }
     function start() {
         publish();
-        var tb = document.querySelector('.topbar');
-        if (tb && window.ResizeObserver) {
-            try { new ResizeObserver(function () { publish(); }).observe(tb); }
-            catch (e) { /* older engine — the resize listener below still runs */ }
-        }
         window.addEventListener('resize', publish);
+        if (window.ResizeObserver) {
+            try {
+                var ro = new ResizeObserver(function () { publish(); });
+                var seen = [];
+                var observeAbove = function () {
+                    aboveLayout().forEach(function (el) { if (seen.indexOf(el) < 0) { seen.push(el); ro.observe(el); } });
+                };
+                observeAbove();
+                // a banner inserted as a NEW sibling (not swapped into a slot) is picked up as it appears
+                if (window.MutationObserver && document.body) {
+                    new MutationObserver(function () { observeAbove(); publish(); }).observe(document.body, { childList: true });
+                }
+            } catch (e) { /* older engine — the resize listener above still runs */ }
+        }
         // The bar's contents change with the chip (badges, project chip, the
         // Auto-Sync pill), and htmx swaps them in without a resize event.
         // Bound to `document`, not `document.body`: app.js is loaded in <head>

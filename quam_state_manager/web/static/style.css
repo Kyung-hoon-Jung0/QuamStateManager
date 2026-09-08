@@ -12718,6 +12718,9 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .ag-dryrun-note { margin: 0 0 .3rem; font-size: .9em; flex: 0 0 auto; }
 .agent-home { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .ag-root { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; gap: .4rem; font-size: .93em; }
+/* the approval accent: a BORDER colour (3px, both themes); as TEXT it is mixed towards the
+   theme's foreground below -- bare #d98c00 on the light card measures 2.7:1 (review round 1) */
+.ag-root { --ag-accent: #d98c00; }
 /* Pico stretches buttons, inputs and selects to 100%: never inside the Agent page */
 .ag-root button, .ag-root [type=submit], .ag-root [type=button], .ag-root select, .ag-root input:not([type=checkbox]) { width: auto; margin: 0; }
 .ag-root .btn-sm { font-size: .85em; padding: .18rem .55rem; line-height: 1.35; }
@@ -12804,7 +12807,11 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
   padding: 0 .55em; border-radius: 999px; background: color-mix(in srgb, currentColor 12%, transparent); color: var(--pico-muted-color); white-space: nowrap; vertical-align: .1em; }
 .ag-step-st { min-width: 1.7em; text-align: center; }
 .ag-st-done { color: #2e7d32; } .ag-st-failed { color: var(--pico-del-color, #b00020); } .ag-st-running { color: var(--pico-primary); }
-.ag-st-draft { color: var(--pico-primary); } .ag-st-waiting { color: var(--ag-accent, #d98c00); }
+.ag-st-draft { color: var(--pico-primary); }
+/* waiting: the accent pulled 55% towards the theme's own text colour -- darker on the light
+   card, lighter on the dark one. Measured in Chrome on the pill's own tinted ground: 4.93:1
+   light / 6.83:1 dark (5.8 / 8.6 on the bare card); the bare accent was 2.7:1 on light */
+.ag-st-waiting { color: color-mix(in srgb, var(--ag-accent, #d98c00) 45%, var(--pico-color)); }
 .ag-st-pending, .ag-st-cancelled, .ag-st-skipped, .ag-st-stopped, .ag-st-interrupted, .ag-st-stopping { color: var(--pico-muted-color); }
 .ag-steps { display: flex; flex-direction: column; gap: .1rem; margin: .3rem 0; font-size: .92em; }
 .ag-step { display: flex; flex-wrap: wrap; align-items: center; gap: .15rem .45rem; }

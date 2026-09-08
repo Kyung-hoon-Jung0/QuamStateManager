@@ -372,6 +372,33 @@ window.AgentPanel = (function () {
   }
 
   // ---------------------------------------------------------- the "now"
+  // review round 1 (2026-09-08): the strip used to be rebuilt wholesale on EVERY poll
+  // (4 s while a run is active), so the focus on Stop now / the observer box dropped
+  // to <body> exactly while a person was tabbing to it, and -- with role=status on the
+  // whole strip -- every poll re-announced state, counts and button labels. Now each
+  // part is replaced only when its HTML changed, a control that held the focus gets it
+  // back on its successor (matched by what it IS, then by position), and the one live
+  // region is the visually-hidden .ag-now-sr, whose text is the state alone and is
+  // written only when that text changes.
+  var STRIP_FOCUSABLE = "button, input, select, a[href]";
+  function focusKeyOf(el) { return el.tagName + "|" + (el.className || "") + "|" + (el.textContent || "").trim(); }
+  function swapHtml(el, html) {
+    if (!el || el.__agHtml === html) return false;
+    var act = document.activeElement, key = null, idx = -1;
+    if (act && act !== document.body && el.contains(act)) {
+      key = focusKeyOf(act);
+      idx = Array.prototype.indexOf.call(el.querySelectorAll(STRIP_FOCUSABLE), act);
+    }
+    el.innerHTML = html;
+    el.__agHtml = html;
+    if (key !== null) {
+      var all = Array.prototype.slice.call(el.querySelectorAll(STRIP_FOCUSABLE)), again = null;
+      for (var i = 0; i < all.length; i++) { if (focusKeyOf(all[i]) === key) { again = all[i]; break; } }
+      if (!again && all.length) again = all[Math.min(idx < 0 ? 0 : idx, all.length - 1)];   // the control went away (Disarm after a disarm): its successor at the same place
+      if (again) { try { again.focus(); } catch (e) { /* ignore */ } }
+    }
+    return true;
+  }
   function renderNow(m) {
     var host = m.root.querySelector(".ag-now");
     if (!host) return;
@@ -409,10 +436,27 @@ window.AgentPanel = (function () {
     acts.push('<label class="ag-observer" title="observer: this window shows but never starts, stops or approves (an accident guard, not a permission)"><input type="checkbox" ' + (S.observer ? "checked" : "") + ' onchange="AgentPanel.setObserver(this.checked)"> observer' + (S.observer ? ' <span class="ag-observing">— observing</span>' : "") + "</label>");
     acts.push('<span class="ag-now-links"><a href="/journal" hx-get="/journal" hx-target="#table-pane" hx-push-url="true">Calibration log →</a>' +
       ' · <a class="ag-setup-link" href="/agent/setup" hx-get="/agent/setup" hx-target="#table-pane" hx-push-url="true" title="connect Claude / Codex to SM, the journal folder, the lab context file">Setup →</a></span>');
-    var runLine = d.running ? '<div class="ag-now-run">▶ <code>' + esc(d.running.node || d.running.tool || "") + "</code> " + esc(fmtAgo(d.running.since)) +
-      (d.running.typical_s ? ' <span class="muted">usually ~' + Math.round(d.running.typical_s / 60) + "m</span>" : "") + "</div>" : "";
-    host.innerHTML = '<div class="ag-now-main">' + seg.join('<span class="ag-now-sep">·</span>') + "</div>" +
-      '<div class="ag-now-acts">' + acts.join(" ") + "</div>" + runLine;
+    var runHtml = d.running ? "▶ <code>" + esc(d.running.node || d.running.tool || "") + "</code> " + esc(fmtAgo(d.running.since)) +
+      (d.running.typical_s ? ' <span class="muted">usually ~' + Math.round(d.running.typical_s / 60) + "m</span>" : "") : "";
+    if (!host.__agParts) {
+      // the three parts are made ONCE; from then on each is swapped only when it changed
+      host.innerHTML = '<span class="ag-now-sr visually-hidden" role="status"></span><div class="ag-now-main"></div><div class="ag-now-acts"></div>';
+      host.__agParts = true;
+    }
+    var sr = host.querySelector(".ag-now-sr");
+    // the announced text is the state WITHOUT its ticking duration ("· 32s", "· 3m ago"),
+    // so a run in progress is said once, not every poll
+    var srText = String(v.text || "").replace(/^Agent: /, "").replace(/ (· )?\d+(\.\d+)?[smh]\b( ago)?/g, "") + (S.unreachable ? " · " + UNREACHABLE : "");
+    if (sr && sr.textContent !== srText) sr.textContent = srText;            // written only when the STATE changes
+    swapHtml(host.querySelector(".ag-now-main"), seg.join('<span class="ag-now-sep">·</span>'));
+    swapHtml(host.querySelector(".ag-now-acts"), acts.join(" "));
+    var runEl = host.querySelector(".ag-now-run");
+    if (runHtml) {
+      if (!runEl) { runEl = document.createElement("div"); runEl.className = "ag-now-run"; host.appendChild(runEl); }
+      swapHtml(runEl, runHtml);                                            // the ticking "32s ago" touches only this row, which holds no control
+    } else if (runEl) {
+      runEl.remove();
+    }
   }
 
   function renderAll(force) {
@@ -632,7 +676,7 @@ window.AgentPanel = (function () {
     // mounts; the compact float only changes what the CSS does with it.
     return '<div class="ag-root' + (compact ? " ag-compact" : "") + '">' +
       '<div class="ag-head"><span class="ag-chip"></span> <span class="ag-qubits"></span></div>' +
-      '<div class="ag-now" role="status"></div>' +
+      '<div class="ag-now"></div>' +
       '<div class="ag-cards" aria-live="polite"></div>' +
       '<form class="ag-form ag-composer" onsubmit="return AgentPanel.submit(event)">' +
       '<textarea class="ag-input" rows="1" onkeydown="return AgentPanel.key(event)" oninput="AgentPanel.grow(this)" placeholder="Ask, or tell the agent what to do…  (Enter sends · Shift+Enter newline · /run <node> <targets>)"></textarea>' +

@@ -400,6 +400,61 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   P.togglePresets(tog);
   ok(popRoot.querySelector('.ag-presets').classList.contains('open') && tog.getAttribute('aria-expanded') === 'true', 'the compact preset toggle opens the chips');
 
+  // ------------------------------------------------ review round 1 (2026-09-08): the strip under polling
+  // The strip was rebuilt wholesale on every poll: the focus on Stop now / the observer box
+  // dropped to <body> every 4 s during a run, and role=status on the whole strip re-announced
+  // everything each time. Now: an unchanged part keeps its DOM, a changed part hands the focus
+  // back to the control that held it (or its successor at the same place), the ticking run row
+  // is swapped on its own, and the ONE live region is the hidden .ag-now-sr (the state alone).
+  feed.now.state = 'between'; delete feed.now.running; feed.file.armed = false;
+  feed.session = { alive: true, busy: false, backend: 'claude', ended: null };
+  await P.poll(true); await tick();
+  const sActs = strip.querySelector('.ag-now-acts'), sMain = strip.querySelector('.ag-now-main');
+  ok(sActs && sMain && sActs.querySelector('.ag-arm') && /not armed/.test(sMain.textContent), 'precondition: strip parts, Arm offered, not armed');
+  const actsFirst = sActs.firstElementChild, mainFirst = sMain.firstElementChild;
+  await P.poll(true); await tick();
+  ok(sActs.firstElementChild === actsFirst && sMain.firstElementChild === mainFirst && strip.querySelector('.ag-now-acts') === sActs, 'a poll that changes nothing leaves the strip\'s DOM alone (no wholesale innerHTML)');
+  ok(!strip.hasAttribute('role') && !strip.hasAttribute('aria-live'), 'the strip itself is no live region');
+  const sr = strip.querySelector('.ag-now-sr[role="status"]');
+  ok(sr && sr.textContent === 'thinking · by_claude · ask-writes' && sr.textContent === strip.querySelector('.ag-now-state').textContent && sr.classList.contains('visually-hidden'), 'one hidden status node carries the state text alone: ' + (sr && sr.textContent));
+  const srNode = sr.firstChild;
+  feed.now.events_today = 6;
+  await P.poll(true); await tick();
+  ok(/today 6 events/.test(sMain.textContent) && sr.firstChild === srNode, 'a changed count re-renders the line but does not rewrite the status node (nothing re-announced)');
+  // the focus survives a re-render of the part that holds it
+  const obs = strip.querySelector('.ag-observer input');
+  obs.focus();
+  ok(document.activeElement === obs, 'precondition: the observer box holds the focus');
+  feed.file.armed = true;                                   // Arm -> Disarm: the acts part is rebuilt
+  await P.poll(true); await tick();
+  const obs2 = strip.querySelector('.ag-observer input');
+  ok(!sActs.querySelector('.ag-arm') && /Disarm/.test(sActs.textContent) && obs2 !== obs, 'precondition: the acts were rebuilt (Disarm now)');
+  ok(document.activeElement === obs2 && strip.contains(document.activeElement), 'the focus comes back to the observer box after the rebuild (not <body>)');
+  // a control that went away hands the focus to its successor at the same place
+  const disarm = Array.from(sActs.querySelectorAll('button')).find(b => b.textContent === 'Disarm');
+  disarm.focus();
+  feed.file.armed = false;                                  // Disarm -> Arm at the same slot
+  await P.poll(true); await tick();
+  ok(document.activeElement === sActs.querySelector('.ag-arm'), 'Disarm pressed and gone: the focus lands on Arm, its successor, not on <body>');
+  // the ticking run row is its own part: a Stop now that holds the focus is not even touched
+  feed.now.state = 'running'; feed.now.running = { node: '05_power_rabi', since: now - 30, typical_s: 300 };
+  await P.poll(true); await tick();
+  const stopNow = sActs.querySelector('.ag-stop-now');
+  const stateTxt = strip.querySelector('.ag-now-state').textContent;
+  ok(stopNow && strip.querySelector('.ag-now-run') && /^05_power_rabi · by_claude · ask-writes$/.test(sr.textContent) && /05_power_rabi · \d+s · by_claude/.test(stateTxt), 'a run starts: the status node says the state WITHOUT the ticking duration (' + sr.textContent + ' | ' + stateTxt + ')');
+  const srNode2 = sr.firstChild;
+  stopNow.focus();
+  const runRow = strip.querySelector('.ag-now-run'), runTextBefore = runRow.textContent;
+  feed.now.running.since = now - 200;                       // "30s ago" -> "3m ago": only the run row changes
+  await P.poll(true); await tick();
+  ok(strip.querySelector('.ag-now-run') === runRow && runRow.textContent !== runTextBefore && /3m ago/.test(runRow.textContent), 'the run row ticked in place');
+  ok(document.activeElement === stopNow && sActs.querySelector('.ag-stop-now') === stopNow, 'and Stop now is the SAME node, still focused (the acts part was not rebuilt for a tick)');
+  ok(sr.firstChild === srNode2 && strip.querySelector('.ag-now-state').textContent !== stateTxt, 'the tick changed the state text on screen but not the status node (no re-announcement)');
+  stopNow.blur();
+  feed.now.state = 'between'; delete feed.now.running;
+  await P.poll(true); await tick();
+  ok(!strip.querySelector('.ag-now-run') && sr.textContent === 'thinking · by_claude · ask-writes', 'the run ends: the row goes, the status node says so');
+
   console.log(`\n${passes} passed, ${fails} failed`);
   process.exit(fails ? 1 : 0);
 })();
