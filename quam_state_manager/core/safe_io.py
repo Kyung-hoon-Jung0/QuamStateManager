@@ -37,6 +37,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -389,6 +390,13 @@ def _replace_into_place(tmp: Path, dst: Path) -> None:
         except OSError as exc:
             last_exc = exc
             logger.debug("replace %s attempt %d failed: %s", dst.name, attempt + 1, exc)
+            if not tmp.exists():
+                # the SOURCE is gone (a sibling writer took it before temp files
+                # were per-writer; an antivirus quarantine takes it today). No
+                # number of retries brings it back -- say so once, at once.
+                raise LiveFileError(
+                    f"Could not write {dst}: the temporary file {tmp.name} disappeared "
+                    f"before it could be moved into place ({exc})") from exc
             if attempt + 1 < _WRITE_ATTEMPTS:
                 time.sleep(_WRITE_BACKOFF_S * (attempt + 1))
 
@@ -401,10 +409,39 @@ def _replace_into_place(tmp: Path, dst: Path) -> None:
     )
 
 
+_TMP_SEQ = 0
+_TMP_SEQ_LOCK = threading.Lock()
+
+
+def _tmp_for(path: Path) -> Path:
+    """A ``.tmp`` sibling of *path* that is THIS writer's alone.
+
+    Customer, on-site 2026-09-09 -- a warning on their own console:
+
+        listing cache save for ...\\KH_202608_CZ failed
+        LiveFileError: Could not write ...\\workspace_cache\\ws_....json
+        after 3 attempts: [WinError 2] The system cannot find the file specified
+
+    The temp file used to be a fixed ``<file>.tmp``, so two writers of the
+    SAME file shared one temp -- docs/142 saves the listing cache from the
+    request path AND from the background verify thread. The first replace
+    moved the temp away; the second found no source and failed with
+    ERROR_FILE_NOT_FOUND, then retried twice more for a file that could never
+    come back. The pid keeps two SM windows apart, the thread id two threads
+    of one window, the counter two writes of one thread (the caller above us
+    retries).
+    """
+    global _TMP_SEQ
+    with _TMP_SEQ_LOCK:
+        _TMP_SEQ += 1
+        n = _TMP_SEQ
+    return path.with_suffix("%s.%d.%x.%d.tmp" % (path.suffix, os.getpid(), threading.get_ident(), n))
+
+
 def _write_tmp_json(path: Path, data, *, compact: bool = False) -> Path:
     """Write *data* as pretty JSON to a ``.tmp`` sibling of *path* (flushed +
     fsync'd) and return the tmp path. The caller swaps it into place."""
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp = _tmp_for(path)
     with open(tmp, "w", encoding="utf-8") as f:
         if compact:      # docs/171: a 10 MB store cache is not for reading
             json.dump(data, f, separators=(",", ":"), ensure_ascii=False)
@@ -421,7 +458,7 @@ def _write_tmp_bytes(path: Path, data: bytes) -> Path:
 
     Used to restore a file to EXACT prior bytes (a rollback), where re-serialising
     a parsed dict could reorder/reformat it."""
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp = _tmp_for(path)
     with open(tmp, "wb") as f:
         f.write(data)
         f.flush()

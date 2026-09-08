@@ -342,3 +342,79 @@ def test_atomic_write_fsyncs_parent_dir(tmp_path, monkeypatch):
 
 def test_fsync_dir_missing_dir_is_noop(tmp_path):
     safe_io._fsync_dir(tmp_path / "does_not_exist")   # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Customer, on-site 2026-09-09: `qsm serve` logged
+#   listing cache save for ...\KH_202608_CZ failed
+#   LiveFileError: Could not write ...\workspace_cache\ws_....json after 3
+#   attempts: [WinError 2] The system cannot find the file specified
+# The temp file was named `<file>.tmp` for everyone, so two writers of the SAME
+# file (docs/142 saves the listing cache from the request path AND from the
+# background verify thread) shared one temp: the first replace moved it, the
+# second had no source left. Every write gets its own temp now.
+# ---------------------------------------------------------------------------
+
+
+class TestTwoWritersOfOneFile:
+    def test_the_temp_name_is_this_writers_alone(self, tmp_path):
+        p = tmp_path / "ws_cache.json"
+        a, b = safe_io._tmp_for(p), safe_io._tmp_for(p)
+        assert a != b, "two writes never share a temp file"
+        for t in (a, b):
+            assert t.parent == p.parent and t.name.startswith(p.name) and t.suffix == ".tmp"
+            assert str(os.getpid()) in t.name, "the pid keeps two SM windows apart"
+        names = []
+        def collect():
+            names.append(safe_io._tmp_for(p).name)
+        ts = [threading.Thread(target=collect) for _ in range(6)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+        assert len(set(names)) == 6, "and two threads never share one either"
+
+    def test_concurrent_writes_of_one_file_all_land(self, tmp_path):
+        """The customer's shape, driven: the request path and the background
+        verify thread save the same cache at the same moment. Both must
+        succeed and the file must end as valid JSON written by ONE of them --
+        never a LiveFileError, never a torn file. (Deliberately TWO writers,
+        the situation docs/142 creates; a dozen threads hammering one
+        destination would be testing Windows' ReplaceFileW, not this fix.)"""
+        p = tmp_path / "ws_cache.json"
+        errors, ok = [], []
+        barrier = threading.Barrier(2)
+
+        def writer(i):
+            try:
+                barrier.wait(timeout=10)
+                for _ in range(3):
+                    atomic_write_json(p, {"writer": i, "entries": list(range(50))})
+                ok.append(i)
+            except Exception as exc:      # noqa: BLE001 -- the point of the test
+                errors.append(f"{i}: {type(exc).__name__}: {exc}")
+
+        ts = [threading.Thread(target=writer, args=(i,)) for i in range(2)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join(30)
+        assert not errors, errors
+        assert len(ok) == 2
+        d = json.loads(p.read_text(encoding="utf-8"))
+        assert d["entries"] == list(range(50)) and d["writer"] in range(8)
+        assert not list(tmp_path.glob("*.tmp")), "no temp file is left behind"
+
+    def test_a_vanished_temp_fails_at_once_and_says_why(self, tmp_path, monkeypatch):
+        """A source that disappeared (antivirus, a foreign cleaner) cannot come
+        back, so the three retries were three wasted seconds and a message that
+        blamed the destination."""
+        p = tmp_path / "x.json"
+        tmp = safe_io._write_tmp_json(p, {"a": 1})
+        tmp.unlink()
+        sleeps = []
+        monkeypatch.setattr(safe_io.time, "sleep", lambda s: sleeps.append(s))
+        with pytest.raises(safe_io.LiveFileError) as ei:
+            safe_io._replace_into_place(tmp, p)
+        assert "disappeared" in str(ei.value) and tmp.name in str(ei.value)
+        assert sleeps == [], "no retry waits for a file that is gone"
