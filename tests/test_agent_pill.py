@@ -11,12 +11,17 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
+import subprocess
 import threading
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
+
+_ROOT = Path(__file__).resolve().parents[1]
 
 from quam_state_manager.core import agent_session, story
 from quam_state_manager.core.dataset import DatasetStore
@@ -196,3 +201,50 @@ class TestSessionAndStop:
         assert s["stopped"] is True and s["owner"] == "김OO"
         from quam_state_manager.core import journal
         assert "Stop (now) pressed by human:박OO" in journal.read(app.instance_path, "chip")
+
+
+class TestThePillFitsANarrowWindow:
+    """Customer feedback 2026-09-09 (screenshot): on a narrow window everything
+    after the Agent pill was clipped and the page scrolled sideways. Measured in
+    Chrome before the fix: the pill was 366 px wide and the document 1195 px
+    inside an 885 px viewport. The pill gives way now -- owner, then mode, then
+    the state text truncates -- and the bar itself never pushes past the window.
+    The widths are CSS, so they are pinned as rules; what they DO was measured in
+    a real browser at 1500 / 1280 / 1100 / 980 / 900 px."""
+
+    def test_the_markup_carries_the_mode_chip(self, client):
+        html = client.get("/").get_data(as_text=True)
+        i = html.index('id="agent-pill"')
+        pill = html[i:i + 700]
+        for cls in ("agent-pill-dot", "agent-pill-text", "agent-pill-mode", "agent-pill-res"):
+            assert cls in pill, cls
+        assert pill.index("agent-pill-mode") < pill.index("agent-pill-res")
+
+    def test_the_pill_and_the_bar_give_way(self):
+        css = (_ROOT / "quam_state_manager" / "web" / "static" / "style.css").read_text(encoding="utf-8")
+        i = css.index(".agent-pill { list-style: none;")
+        blk = css[i:i + 2200]
+        # the pill has a ceiling, truncates, and sheds its secondary parts first
+        assert re.search(r"\.agent-pill-link \{[^}]*max-width: min\(20rem, 26vw\);[^}]*overflow: hidden;", blk, re.S)
+        assert re.search(r"\.agent-pill-text \{[^}]*text-overflow: ellipsis;", blk)
+        assert re.search(r"@media \(max-width: 1400px\) \{ \.agent-pill-res \{ display: none; \} \}", blk)
+        assert re.search(r"@media \(max-width: 1150px\) \{ \.agent-pill-mode \{ display: none; \} \}", blk)
+        assert re.search(r"@media \(max-width: 1000px\) \{ \.agent-pill-link \{ max-width: 11rem; \} \}", blk)
+        # the left group shrinks and wraps INSIDE its row; wrapping the whole nav
+        # put the tools on a third row and doubled the bar's height (measured)
+        assert ".topbar > nav > ul { flex-wrap: wrap; min-width: 0; }" in blk
+        assert ".topbar > nav > ul:first-child { flex: 1 1 auto; }" in blk
+        assert ".topbar > nav > ul.topbar-right { flex: 0 0 auto; }" in blk
+        assert ".topbar > nav { flex-wrap: wrap; }" not in css
+        # the 280 px search box shrinks before the left group is pushed to a new row
+        assert re.search(r"@media \(max-width: 1000px\) \{ \.topbar \.search-box \{ flex: 0 1 8rem; \} \}", blk)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_agent_pill_selfcheck():
+    """The compact form is executed against the REAL agent-pill.js."""
+    proc = subprocess.run(["node", str(_ROOT / "tests" / "agent_pill_selfcheck.cjs")],
+                          capture_output=True, text=True, cwd=str(_ROOT), timeout=120)
+    if proc.returncode == 2 and "jsdom not installed" in (proc.stderr or ""):
+        pytest.skip("jsdom not installed")
+    assert proc.returncode == 0, f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"

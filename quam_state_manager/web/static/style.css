@@ -11203,11 +11203,34 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 .qualibrate-tray-active-note { color: var(--pico-muted-color); font-size: .92em; }
 
 /* ---- Agent pill (docs/173 §3.1) ---- */
-.agent-pill { list-style: none; }
-.agent-pill-link { display: inline-flex; align-items: center; gap: .4rem; font-size: .78rem; padding: .15rem .6rem;
-    border-radius: 1rem; border: 1px solid var(--pico-muted-border-color); text-decoration: none; color: inherit; white-space: nowrap; }
-.agent-pill-dot { width: .5rem; height: .5rem; border-radius: 50%; background: var(--pico-muted-border-color); }
-.agent-pill-res { font-size: .7rem; opacity: .75; }
+/* customer feedback 2026-09-09: on a 980 px window the pill was 366 px wide and
+   pushed the search box and the tool row off the screen (measured: document
+   1195 px inside an 885 px viewport). It gives way now -- first the owner, then
+   the mode, then the state text truncates -- and the whole sentence is the
+   tooltip, so nothing is lost. */
+.agent-pill { list-style: none; min-width: 0; }
+.agent-pill-link { display: inline-flex; align-items: center; gap: .35rem; font-size: .78rem; padding: .15rem .55rem;
+    border-radius: 1rem; border: 1px solid var(--pico-muted-border-color); text-decoration: none; color: inherit;
+    white-space: nowrap; max-width: min(20rem, 26vw); min-width: 0; overflow: hidden; }
+.agent-pill-dot { width: .5rem; height: .5rem; border-radius: 50%; background: var(--pico-muted-border-color); flex: 0 0 auto; }
+.agent-pill-text { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.agent-pill-mode { font-size: .68rem; opacity: .7; border-left: 1px solid var(--pico-muted-border-color); padding-left: .35rem; flex: 0 0 auto; }
+.agent-pill-mode[hidden] { display: none; }
+.agent-pill-res { font-size: .7rem; opacity: .75; flex: 0 0 auto; }
+@media (max-width: 1400px) { .agent-pill-res { display: none; } }
+@media (max-width: 1150px) { .agent-pill-mode { display: none; } }
+@media (max-width: 1000px) { .agent-pill-link { max-width: 11rem; } }
+/* ...and the bar itself never pushes past the window: the LEFT group shrinks and
+   wraps inside its own row (the right group keeps its place -- wrapping the nav
+   itself pushed the tools onto a third row and doubled the bar's height) */
+.topbar > nav > ul { flex-wrap: wrap; min-width: 0; }
+.topbar > nav > ul:first-child { flex: 1 1 auto; }
+.topbar > nav > ul.topbar-right { flex: 0 0 auto; }
+.topbar > nav > ul > li { min-width: 0; max-width: 100%; }
+/* on a narrow window the 280 px search box was pushing the left group onto a
+   third row; the box shrinks first (its placeholder is a reminder, not a label) */
+@media (max-width: 1150px) { .topbar .search-box { flex: 0 1 11rem; } }
+@media (max-width: 1000px) { .topbar .search-box { flex: 0 1 8rem; } }
 .agent-idle .agent-pill-link { opacity: .6; }
 .agent-between .agent-pill-dot, .agent-running .agent-pill-dot { background: var(--pico-primary); }
 .agent-running .agent-pill-dot { animation: schedPulse 1.4s ease-in-out infinite; }

@@ -12,7 +12,7 @@ let fails = 0, passes = 0;
 function ok(c, m) { if (!c) { console.error('FAIL: ' + m); fails++; } else { passes++; console.log('ok - ' + m); } }
 
 const dom = new JSDOM('<!doctype html><html><body><ul><li id="agent-pill" class="agent-pill agent-idle" hidden data-state="idle">'
-  + '<a class="agent-pill-link"><span class="agent-pill-dot"></span><span class="agent-pill-text">Agent</span><span class="agent-pill-res" hidden></span></a></li></ul></body></html>',
+  + '<a class="agent-pill-link"><span class="agent-pill-dot"></span><span class="agent-pill-text">Agent</span><span class="agent-pill-mode" hidden></span><span class="agent-pill-res" hidden></span></a></li></ul></body></html>',
   { url: 'http://localhost/', pretendToBeVisual: true });
 const { window } = dom;
 global.window = window; global.document = window.document;
@@ -48,6 +48,27 @@ const now = Date.now() / 1000;
   ok(el.querySelector('.agent-pill-res').hidden === false && /김OO → \d\d:\d\d/.test(el.querySelector('.agent-pill-res').textContent), 'the reservation line renders');
   window.AgentPill.render({ state: 'idle' });
   ok(el.querySelector('.agent-pill-res').hidden === true, 'no session, no reservation line');
+
+  // customer feedback 2026-09-09: in the TOPBAR the sentence was 366 px wide and
+  // pushed the search box and the tools off a 980 px window. The pill shows a
+  // COMPACT form; the full sentence stays in describe().text and in the title.
+  const lim = D({ state: 'limited', limited_resets: '14:00', mode: 'ask-writes' });
+  ok(lim.short === 'limited → 14:00', 'the pill says the state in as few words as carry it: ' + lim.short);
+  ok(lim.text === 'Agent: limited · resets 14:00 · ask-writes', 'and the full sentence is untouched (the Agent page reads it)');
+  ok(D({ state: 'waiting', waiting: 3 }).short === '3 waiting'
+     && D({ state: 'failed', failures_today: 2 }).short === '✗ 2 today'
+     && D({ state: 'between', session: { backend: 'claude' } }).short === 'thinking · by_claude'
+     && D({ state: 'idle' }).short === 'Agent', 'every state has its short form');
+  ok(/^05_power_rabi q1 · 2m$/.test(D({ state: 'running', running: { node: '05_power_rabi', targets: 'q1', since: now - 130, backend: 'codex' }, mode: 'auto' }).short),
+     'a running pill drops the backend and the mode from the label (they are the chip and the title)');
+  window.AgentPill.render({ state: 'limited', limited_resets: '14:00', mode: 'ask-writes', session: { owner: 'human' } });
+  ok(el.querySelector('.agent-pill-text').textContent === 'limited → 14:00', 'the pill renders the SHORT form');
+  ok(el.querySelector('.agent-pill-mode').hidden === false && el.querySelector('.agent-pill-mode').textContent === 'ask-writes',
+     'the mode rides its own chip (CSS drops it on a narrow window)');
+  ok(/Agent: limited · resets 14:00 · ask-writes/.test(el.title) && /Calibration log/.test(el.title),
+     'nothing is lost: the whole sentence is the tooltip: ' + el.title);
+  window.AgentPill.render({ state: 'idle' });
+  ok(el.querySelector('.agent-pill-mode').hidden === true, 'no mode, no chip');
 
   // a live-wake wake with a new agent_seq re-fetches; the same seq does not
   fetches.length = 0;

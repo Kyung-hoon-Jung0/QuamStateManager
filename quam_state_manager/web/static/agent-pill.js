@@ -49,7 +49,23 @@ window.AgentPill = (function () {
       title = (title ? title + " · " : "") + "reserved by " + s.owner + (s.until ? " until " + fmtClock(s.until) : "") + (s.stopped ? " · STOPPED" : "");
     }
     if (d.failures_today && st !== "failed") title = (title ? title + " · " : "") + "✗ " + d.failures_today + " today";
-    return { state: st, text: text, title: title };
+    return { state: st, text: text, title: title, short: shortText(st, d, r, who) };
+  }
+
+  // customer feedback 2026-09-09: in the TOPBAR the full sentence was 366 px wide
+  // ("Agent: limited · resets 14:00 · ask-writes human") and pushed the search box
+  // and the tool row off a 980 px window. The pill says the state in as few words
+  // as carry it; the full sentence stays in `text` (the Agent page's own strip) and
+  // in the pill's title. The mode rides its own chip, which CSS drops when narrow.
+  function shortText(st, d, r, who) {
+    if (st === "waiting") { return (d.waiting || 0) + " waiting"; }
+    if (st === "limited") { return "limited → " + (d.limited_resets || "?"); }
+    if (st === "stalled") { return "no sign " + fmtSince(d.last && d.last.ts); }
+    if (st === "failed") { return "✗ " + (d.failures_today || 0) + " today"; }
+    if (st === "running") { return (r.node || r.tool || "running") + (r.targets ? " " + r.targets : "") + " · " + fmtSince(r.since); }
+    if (st === "between") { return "thinking" + (who || ""); }
+    if (st === "human-ran") { return "human ran " + (d.human_ran && d.human_ran.node || "a node"); }
+    return "Agent";
   }
 
   function render(d) {
@@ -59,8 +75,14 @@ window.AgentPill = (function () {
     p.className = "agent-pill agent-" + v.state;
     p.hidden = false;
     var t = p.querySelector(".agent-pill-text");
-    if (t) t.textContent = v.text;
-    p.title = v.title || "the calibration agent — click for the Calibration log";
+    if (t) t.textContent = v.short;                      // the compact form; the full one is the title
+    // the whole sentence is the tooltip, so nothing is lost by the short label
+    p.title = v.text + (v.title ? " · " + v.title : "") + " — click for the Calibration log";
+    var modeEl = p.querySelector(".agent-pill-mode");
+    if (modeEl) {
+      if (d && d.mode) { modeEl.hidden = false; modeEl.textContent = d.mode; }
+      else modeEl.hidden = true;
+    }
     var res = p.querySelector(".agent-pill-res");
     if (res) {
       var s = d && d.session;

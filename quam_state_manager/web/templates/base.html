@@ -210,6 +210,9 @@
                        class="agent-pill-link" title="the calibration agent — click for the Calibration log">
                         <span class="agent-pill-dot" aria-hidden="true"></span>
                         <span class="agent-pill-text">Agent</span>
+                        {# the mode and the owner are secondary: CSS drops them on a narrow
+                           window before the state text ever truncates (2026-09-09) #}
+                        <span class="agent-pill-mode" hidden></span>
                         <span class="agent-pill-res" hidden></span>
                     </a>
                 </li>
