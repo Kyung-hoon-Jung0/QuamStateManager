@@ -293,3 +293,126 @@ class TestDomainRegistration:
         assert diagnostics._relational_findings(store.merged) == []
         store = QuamStore.from_dicts({"ports": {}}, {"wiring": {}})
         assert diagnostics._relational_findings(store.merged) == []
+
+
+# ---------------------------------------------------------------------------
+# Natural order (customer rule 2026-09-09) — q2 before q10, everywhere
+# ---------------------------------------------------------------------------
+
+def _pointer_pulse(length=40):
+    return {"length": length, "amplitude": 0.2, "axis_angle": 0,
+            "__class__": "quam.components.pulses.DragCosinePulse"}
+
+
+def _wide_state(n=12, *, t1=1.0e-5, t2r=3.0e-5, freqs=None, pairs=(),
+                share_port=()):
+    """n qubits named q1..qn — the ids that read q1, q10, q11, q12, q2 in
+    byte order. Every qubit violates T2 <= 2*T1 unless ``t2r`` says otherwise.
+    """
+    qubits = {}
+    for i in range(1, n + 1):
+        qid = f"q{i}"
+        qubits[qid] = {
+            "id": qid,
+            "f_01": (freqs or {}).get(qid, 5.0e9 + i * 0.5e9),
+            "T1": t1, "T2ramsey": t2r, "T2echo": 1.0e-5,
+            "xy": {"operations": {"x180_DragCosine": _pointer_pulse(),
+                                  "x180": "#./x180_DragCosine"},
+                   "opx_output":
+                       f"#/ports/mw_outputs/con1/1/{1 if qid in share_port else i}"},
+        }
+    state = {
+        "qubits": qubits,
+        "qubit_pairs": {
+            pid: {"id": pid,
+                  "qubit_control": f"#/qubits/{a}",
+                  "qubit_target": f"#/qubits/{b}"}
+            for pid, a, b in pairs
+        },
+        "ports": {"mw_outputs": {"con1": {"1": {
+            str(i): {"upconverter_frequency": 6.0e9} for i in range(1, n + 1)
+        }}}},
+    }
+    return state
+
+
+def _wide_wiring(n=12):
+    return {"wiring": {"qubits": {f"q{i}": {} for i in range(1, n + 1)}}}
+
+
+def _wide_findings(state, fn=diagnostics._relational_findings):
+    store = QuamStore.from_dicts(state, _wide_wiring())
+    return fn(store.merged)
+
+
+class TestNaturalOrder:
+    """A findings list is READ top to bottom, and ``_ordered`` is a STABLE
+    sort by severity — so the order each check appends in is the order the
+    Diagnostics page shows. Byte order put q10, q11, q12 above q2.
+    """
+
+    def test_the_coherence_findings_are_listed_q2_before_q10(self):
+        got = [f for f in _wide_findings(_wide_state())
+               if f.category == "physics_coherence_bound"]
+        assert [f.jump_path for f in got] == \
+            [f"qubits.q{i}.T2ramsey" for i in range(1, 13)]
+
+    def test_an_addressability_finding_names_the_lower_qubit_first(self):
+        # q2 and q10 are 5 MHz apart and coupled. The pair KEY is what the
+        # message says and what it jumps to, so both halves count the same way.
+        state = _wide_state(freqs={"q2": 5.000e9, "q10": 5.005e9},
+                            pairs=(("q2-10", "q2", "q10"),))
+        got = [f for f in _wide_findings(state)
+               if f.category == "physics_addressability"]
+        assert len(got) == 1
+        assert got[0].message.startswith("q2 and q10 ")
+        assert got[0].jump_path == "qubits.q2.f_01"
+
+    def test_two_addressability_findings_come_out_in_number_order(self):
+        # The two KEYS are ("q2","q3") and ("q10","q11"): byte order puts the
+        # q10 pair first, number order puts q2's first. (A q2/q10 pair against
+        # a q3/q4 pair would NOT distinguish them -- "q2" < "q3" either way.)
+        state = _wide_state(
+            freqs={"q2": 5.000e9, "q3": 5.005e9,
+                   "q10": 6.000e9, "q11": 6.005e9},
+            pairs=(("q2-3", "q2", "q3"), ("q10-11", "q10", "q11")))
+        got = [f for f in _wide_findings(state)
+               if f.category == "physics_addressability"]
+        assert [f.jump_path for f in got] == \
+            ["qubits.q2.f_01", "qubits.q10.f_01"]
+
+    def test_the_shared_port_mechanism_names_them_the_same_way(self):
+        # The OTHER place a pair key is built: two qubits driven through one
+        # xy output port, with no declared coupling.
+        state = _wide_state(freqs={"q2": 5.000e9, "q10": 5.005e9},
+                            share_port=("q2", "q10"))
+        got = [f for f in _wide_findings(state)
+               if f.category == "physics_addressability"]
+        assert len(got) == 1
+        assert "one xy output port" in got[0].message
+        assert got[0].message.startswith("q2 and q10 ")
+        assert got[0].jump_path == "qubits.q2.f_01"
+
+    def test_the_unphysical_checks_walk_the_qubits_in_number_order(self):
+        # A confusion matrix that is not row-stochastic, on every qubit.
+        state = _wide_state()
+        for q in state["qubits"].values():
+            q["resonator"] = {"confusion_matrix": [[0.5, 0.2], [0.1, 0.3]]}
+        got = [f for f in _wide_findings(
+            state, diagnostics._unphysical_findings)
+            if f.category == "value_unphysical"]
+        assert [f.location for f in got] == \
+            [f"qubits.q{i}.resonator.confusion_matrix" for i in range(1, 13)]
+
+    def test_a_pairs_gate_fidelity_findings_follow_the_pair_numbers(self):
+        state = _wide_state(n=2)
+        state["qubit_pairs"] = {
+            f"q1-{i}": {"id": f"q1-{i}",
+                        "macros": {"CZ": {"fidelity": {"InterleavedRB": 1.5}}}}
+            for i in (2, 3, 10, 11)
+        }
+        got = [f for f in _wide_findings(
+            state, diagnostics._unphysical_findings)
+            if f.category == "value_unphysical"]
+        assert [f.location.split(".")[1] for f in got] == \
+            ["q1-2", "q1-3", "q1-10", "q1-11"]

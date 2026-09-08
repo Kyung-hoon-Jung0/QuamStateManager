@@ -3062,3 +3062,69 @@ class TestRunIngestConcurrency:
         wiring = json.loads((snap_dir / "wiring.json").read_text(
             encoding="utf-8"))
         assert wiring != {}                       # the fallback, not empty
+
+
+# ---------------------------------------------------------------------------
+# Natural order (customer rule 2026-09-09): q2 before q10, 101 before 1009
+# ---------------------------------------------------------------------------
+
+def _many_qubit_state(n=12, t1=30e-6):
+    """A chip whose qubit ids span one and two digits — the shape where a
+    byte-order sort reads q1, q10, q11, q12, q2, …"""
+    return {
+        "qubits": {
+            f"q{i}": {"id": f"q{i}", "T1": t1 + i * 1e-6,
+                      "T2ramsey": 22e-6, "grid_location": f"0,{i}"}
+            for i in range(1, n + 1)
+        },
+        "qubit_pairs": {},
+    }
+
+
+@pytest.fixture
+def many_qubit_path(tmp_path: Path) -> Path:
+    path = tmp_path / "exp_many" / "quam_state"
+    _write_quam_state(path, _many_qubit_state(), _base_wiring())
+    return path
+
+
+class TestNaturalOrder:
+    """One rule for the whole product: q2 sorts before q10.
+
+    ``extract_property_history`` hands back one bucket per (qubit, property)
+    and the caller RENDERS them in that order — and past
+    ``_TRENDS_MAX_SERIES`` the order also decides which series survive the
+    cap. Both of its feeds order the qubit by bytes (SQL's ``ORDER BY qubit``
+    and the change-point fast path's ``sorted``), so the ordering is settled
+    once, on the result.
+    """
+
+    def test_trend_buckets_count_qubits_the_way_the_customer_counts(
+            self, hm, many_qubit_path):
+        hm.check_and_snapshot(many_qubit_path, "save")
+        rows = hm.extract_property_history(many_qubit_path, ["T1"])
+        assert [r["qubit"] for r in rows] == [f"q{i}" for i in range(1, 13)]
+
+    def test_the_change_point_fast_path_agrees(self, hm, many_qubit_path):
+        # compress="changes" with no filter reads the cp companion, a
+        # different feed with its own sort — it must land in the same order.
+        hm.check_and_snapshot(many_qubit_path, "save")
+        rows = hm.extract_property_history(many_qubit_path, ["T1"],
+                                           compress="changes")
+        assert [r["qubit"] for r in rows] == [f"q{i}" for i in range(1, 13)]
+
+    def test_a_multi_property_read_stays_qubit_major(self, hm, many_qubit_path):
+        # The pre-fix structure was qubit-major / property-minor; only the
+        # comparison changed, so that grouping must survive.
+        hm.check_and_snapshot(many_qubit_path, "save")
+        rows = hm.extract_property_history(many_qubit_path,
+                                           ["T1", "T2ramsey"])
+        assert [(r["qubit"], r["property"]) for r in rows[:4]] == [
+            ("q1", "T1"), ("q1", "T2ramsey"),
+            ("q2", "T1"), ("q2", "T2ramsey")]
+
+    def test_a_chip_historys_qubit_list_is_naturally_ordered(
+            self, hm, many_qubit_path):
+        hm.check_and_snapshot(many_qubit_path, "save")
+        entry = next(c for c in hm.list_chip_histories() if c["qubits"])
+        assert entry["qubits"] == [f"q{i}" for i in range(1, 13)]

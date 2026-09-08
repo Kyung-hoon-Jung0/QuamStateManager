@@ -312,6 +312,79 @@ class TestPagingBySnapshot:
         assert [g["timestamp"] for g in groups] == ["20260101_000000"]
 
 
+def _weights_chip(n=1012):
+    """One qubit whose readout carries an n-element integration-weight array.
+
+    The customer's 2026-09-09 screenshot is exactly this shape: the last segment
+    of the dot path is a LIST INDEX, and 1,012 of them is what a real 1 µs
+    readout weight vector looks like.
+    """
+    return {"qubits": {"qA1": {
+        "id": "qA1", "grid_location": "0,0",
+        "resonator": {"operations": {"readout": {
+            "weights_imag": [i * 1e-6 for i in range(n)]}}}}},
+        "active_qubit_names": ["qA1"]}
+
+
+_W = "qubits.qA1.resonator.operations.readout.weights_imag"
+
+
+class TestNaturalOrdering:
+    """101 < 1009 < 1010 < 1011 — the customer's rule for the whole product.
+
+    The reported symptom was a live-diff list reading ``weights_imag.1009``,
+    then ``.101``, then ``.1011``. Every ordering here shares the cause: the
+    last segment of a dot path is a number and SQLite compares it as bytes.
+    Each of these pins goes red if its sort is put back to the string form.
+    """
+
+    def test_a_snapshots_change_rows_are_indexed_in_number_order(self, conn):
+        _ingest(conn, "20260101_000000", _weights_chip())
+        g = li.changes_by_snapshot(conn, limit_snaps=5, rows_per_snap=25)[0]
+        # Byte order offered .0 .1 .10 .100 .1000 .1001 …; number order offers
+        # the first 25 INDICES, which is what "the first rows_per_snap of its
+        # rows" was always meant to mean.
+        assert [r["path"].rsplit(".", 1)[1] for r in g["rows"]] == \
+            [str(i) for i in range(25)]
+        assert g["total"] == 1012 and g["shown"] == 25   # the count is untouched
+
+    def test_the_reported_triple_reads_the_way_the_customer_counts(self, conn):
+        _ingest(conn, "20260101_000000", _weights_chip())
+        rows = li.changes_by_snapshot(conn, limit_snaps=1,
+                                      rows_per_snap=5000)[0]["rows"]
+        at = {r["path"]: i for i, r in enumerate(rows)}
+        assert at[f"{_W}.101"] < at[f"{_W}.1009"] < at[f"{_W}.1010"] \
+            < at[f"{_W}.1011"]
+
+    def test_the_flat_feed_tie_breaks_inside_one_snapshot_numerically(self, conn):
+        # s.id DESC stays SQL's job (an integer); the path is the tie-break
+        # WITHIN one snapshot, and that is what byte order got wrong.
+        _ingest(conn, "20260101_000000", _weights_chip(n=12))
+        rows = li.recent_changes(conn, limit=100, prefix=_W)
+        assert [r["path"].rsplit(".", 1)[1] for r in rows] == \
+            [str(i) for i in range(12)]
+
+    def test_the_typeahead_offers_the_first_indices_not_the_first_bytes(self, conn):
+        # Every path here has the same change count, so the tie-break decides
+        # both the ORDER and — through the cap — WHICH paths are offered at all.
+        _ingest(conn, "20260101_000000", _weights_chip())
+        hits = li.search_paths(conn, "weights_imag", limit=5)
+        assert [h["path"].rsplit(".", 1)[1] for h in hits] == \
+            ["0", "1", "2", "3", "4"]
+
+    def test_ranking_by_change_count_still_wins_over_the_path(self, conn):
+        # The natural key is only the TIE-BREAK: a path that moved more often
+        # still sorts first, however late its index reads.
+        _ingest(conn, "20260101_000000", _weights_chip(n=12))
+        moved = _weights_chip(n=12)
+        moved["qubits"]["qA1"]["resonator"]["operations"]["readout"][
+            "weights_imag"][11] = 9.0
+        _ingest(conn, "20260101_000100", moved)
+        hits = li.search_paths(conn, "weights_imag", limit=3)
+        assert hits[0]["path"] == f"{_W}.11" and hits[0]["changes"] == 2
+        assert [h["path"] for h in hits[1:]] == [f"{_W}.0", f"{_W}.1"]
+
+
 class TestThroughTheHistoryManager:
     """The capture path writes it, the read path heals it."""
 

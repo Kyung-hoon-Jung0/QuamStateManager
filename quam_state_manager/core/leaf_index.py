@@ -75,6 +75,8 @@ import logging
 import sqlite3
 from typing import Any, Iterable
 
+from quam_state_manager.core.loader import natural_key
+
 logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 1
@@ -614,14 +616,22 @@ def changes_by_snapshot(conn: sqlite3.Connection, *, limit_snaps: int = 20,
 
     out: list[dict] = []
     for sid, ts, trigger, run_id, experiment, folder, n in snaps:
+        # A dot path's last segment is often a LIST INDEX (``weights_imag.1009``),
+        # so SQLite's byte order reads 1009 before 101 -- the customer-reported
+        # 2026-09-09 ordering bug. SQL cannot compare digit runs numerically, so
+        # the snapshot's rows are pulled and ordered with the house helper here;
+        # ``rows_per_snap`` then takes the natural-order first N, which is what
+        # the docstring above always meant. ``total`` is the outer query's COUNT,
+        # so the reported count is untouched.
         rows = conn.execute(
             "SELECT p.path, l.value, l.path_id "
             "  FROM leaf_cp l JOIN leaf_paths p ON p.id = l.path_id "
             f" WHERE l.snap_id = ? AND l.kind IN ({KIND_NUM}, {KIND_PTR_NUM})"
-            + (" AND p.path LIKE ? ESCAPE '\\'" if prefix else "")
-            + " ORDER BY p.path LIMIT ?",
+            + (" AND p.path LIKE ? ESCAPE '\\'" if prefix else ""),
             ([sid] + ([prefix.replace("%", r"\%").replace("_", r"\_") + "%"]
-                      if prefix else []) + [int(rows_per_snap)])).fetchall()
+                      if prefix else []))).fetchall()
+        rows.sort(key=lambda r: natural_key(r[0]))
+        rows = rows[:int(rows_per_snap)]
         items = []
         for path, value, pid in rows:
             prev = conn.execute(
@@ -666,6 +676,12 @@ def recent_changes(conn: sqlite3.Connection, *, limit: int = 200,
         "  JOIN leaf_snaps s ON s.id = l.snap_id "
         f" WHERE {' AND '.join(where)} "
         " ORDER BY s.id DESC, p.path ASC LIMIT ?", params).fetchall()
+    # Newest snapshot first stays SQL's job (``s.id`` is an integer, and the
+    # LIMIT must stay in SQL -- this table is the whole history). The path is
+    # only the tie-break WITHIN one snapshot, and a dot path's last segment is
+    # often a list index, so that tie-break is re-decided here with the house
+    # natural key (``weights_imag.101`` before ``.1009``).
+    rows = sorted(rows, key=lambda r: (-r[8], natural_key(r[0])))
     out: list[dict] = []
     for path, ts, value, trigger, run_id, experiment, folder, pid, sid in rows:
         prev = conn.execute(
@@ -711,6 +727,15 @@ def search_paths(conn: sqlite3.Connection, query: str, *,
         "SELECT p.path, COUNT(l.snap_id) AS n "
         "  FROM leaf_paths p LEFT JOIN leaf_cp l ON l.path_id = p.id "
         " WHERE " + " AND ".join(clauses) +
-        " GROUP BY p.id ORDER BY n DESC, p.path ASC LIMIT ?",
-        (*params, int(limit))).fetchall()
-    return [{"path": r[0], "changes": r[1]} for r in rows]
+        " GROUP BY p.id",
+        params).fetchall()
+    # Most-moved first, then the path itself. A typeahead over one array
+    # (``...weights_imag.*``) hands back hundreds of paths with the SAME change
+    # count, so the tie-break decides both the order AND -- through the cap --
+    # WHICH paths the user is offered. Byte order offered .1, .10, .100, .1000;
+    # the house natural key offers .1, .2, .3 (customer rule 2026-09-09). The
+    # LIMIT is applied after the sort for exactly that reason; the pull is
+    # bounded by the path table (thousands of rows on a real chip), not by the
+    # change-point table.
+    rows.sort(key=lambda r: (-r[1], natural_key(r[0])))
+    return [{"path": r[0], "changes": r[1]} for r in rows[:int(limit)]]

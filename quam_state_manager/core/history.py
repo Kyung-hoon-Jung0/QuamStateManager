@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 
 from quam_state_manager.core import dir_sample, leaf_index, safe_io
 from quam_state_manager.core.differ import DiffEntry, Differ
-from quam_state_manager.core.loader import QuamStore
+from quam_state_manager.core.loader import QuamStore, natural_key
 from quam_state_manager.core.query import (
     QueryEngine, _assignment_fidelity, _assignment_fidelity_n,
 )
@@ -4292,6 +4292,16 @@ class HistoryManager:
                 bucket["values"] = [p for p in bucket["values"] if p["timestamp"] in kept_ts]
             results.append(bucket)
 
+        # One bucket per (qubit, property), in the order the caller RENDERS
+        # them -- and, past _TRENDS_MAX_SERIES, the order that decides which
+        # series survive the cap. Both feeds above (the change-point fast path's
+        # sorted() and the SQL "ORDER BY qubit, property") order a qubit id by
+        # bytes, which reads q1, q10, q11, ..., q2 on a 20-qubit chip. The
+        # qubit-major / property-minor structure is unchanged; only the
+        # comparison is (customer rule 2026-09-09).
+        results.sort(key=lambda b: (natural_key(b["qubit"]),
+                                    natural_key(b["property"])))
+
         with self._lock:
             self._extract_history_cache[cache_key] = (current_version, results)
             self._extract_history_cache.move_to_end(cache_key)
@@ -4619,7 +4629,11 @@ class HistoryManager:
                     "display": self.display_name_for_dir(d.name),
                     "snapshot_count": snap_count,
                     "latest_timestamp": max_ts[0] if max_ts and max_ts[0] else "",
-                    "qubits": [q[0] for q in qubit_rows],
+                    # SQL's ORDER BY is byte order (q1, q10, q2). Today only the
+                    # LENGTH of this list is rendered, but it is a list of qubit
+                    # ids on a public result -- order it the way the product
+                    # counts (customer rule 2026-09-09).
+                    "qubits": sorted((q[0] for q in qubit_rows), key=natural_key),
                 })
             except Exception:
                 logger.warning("Could not read chip history %s", d.name, exc_info=True)

@@ -32,7 +32,7 @@ from quam_state_manager.core import (
     spec_constraints,
     waveform_synth,
 )
-from quam_state_manager.core.loader import _walk
+from quam_state_manager.core.loader import _walk, natural_key
 from quam_state_manager.core.mw_fem import MW_MAX_ABS_IF_HZ
 from quam_state_manager.core import units as _units
 from quam_state_manager.core.query import _parse_port_ref, _resolve
@@ -1728,7 +1728,7 @@ def _unphysical_findings(root: dict) -> list[Finding]:
 
     # ── readout confusion matrices: each row is a probability vector ─────
     qubits = root.get("qubits") if isinstance(root.get("qubits"), dict) else {}
-    for qn, q in sorted(qubits.items()):
+    for qn, q in sorted(qubits.items(), key=lambda kv: natural_key(kv[0])):
         res = q.get("resonator") if isinstance(q, dict) else None
         if not isinstance(res, dict):
             continue
@@ -1755,7 +1755,7 @@ def _unphysical_findings(root: dict) -> list[Finding]:
 
     # ── 2Q gate fidelity rows: a fidelity lives in (0, 1] ────────────────
     pairs = root.get("qubit_pairs") if isinstance(root.get("qubit_pairs"), dict) else {}
-    for pn, pair in sorted(pairs.items()):
+    for pn, pair in sorted(pairs.items(), key=lambda kv: natural_key(kv[0])):
         macros = pair.get("macros") if isinstance(pair, dict) else None
         if not isinstance(macros, dict):
             continue
@@ -1866,7 +1866,7 @@ def _coherence_bound_findings(root: dict) -> list[Finding]:
     if not isinstance(qubits, dict):
         return findings
 
-    for qn, q in sorted(qubits.items()):
+    for qn, q in sorted(qubits.items(), key=lambda kv: natural_key(kv[0])):
         if not isinstance(q, dict):
             continue
         t1 = q.get("T1")
@@ -1941,7 +1941,7 @@ def _addressability_findings(root: dict) -> list[Finding]:
     freq: dict[str, float] = {}
     length: dict[str, float] = {}
     by_port: dict[str, list[str]] = {}
-    for qn in sorted(qubits):
+    for qn in sorted(qubits, key=natural_key):
         if not isinstance(qubits.get(qn), dict):
             continue
         f01 = resolve_field_target(root, f"qubits.{qn}.f_01").get("resolved_value")
@@ -1964,22 +1964,27 @@ def _addressability_findings(root: dict) -> list[Finding]:
     reason: dict[tuple[str, str], str] = {}
     pairs = root.get("qubit_pairs")
     if isinstance(pairs, dict):
-        for pid, pair in sorted(pairs.items()):
+        for pid, pair in sorted(pairs.items(), key=lambda kv: natural_key(kv[0])):
             if not isinstance(pair, dict):
                 continue
             a = qubit_ref_name(root, pair.get("qubit_control"))
             b = qubit_ref_name(root, pair.get("qubit_target"))
             if a and b and a != b:
-                reason[tuple(sorted((a, b)))] = f"coupled as {pid}"
+                reason[tuple(sorted((a, b), key=natural_key))] = f"coupled as {pid}"
     for shared in by_port.values():
         if len(shared) < 2:
             continue
         for i, a in enumerate(shared):
             for b in shared[i + 1:]:
-                reason.setdefault(tuple(sorted((a, b))),
+                reason.setdefault(tuple(sorted((a, b), key=natural_key)),
                                   "driven through one xy output port")
 
-    for (a, b), why in sorted(reason.items()):
+    # The pair key is also what the finding SAYS ("q2 and q10 are ... apart") and
+    # what it jumps to, so both halves count the house way; so does the order the
+    # findings come out in (customer rule 2026-09-09).
+    for (a, b), why in sorted(reason.items(),
+                              key=lambda kv: (natural_key(kv[0][0]),
+                                              natural_key(kv[0][1]))):
         if a not in freq or b not in freq or a not in length or b not in length:
             continue
         delta = abs(freq[a] - freq[b])
@@ -2163,7 +2168,10 @@ def _qdac_findings(root: dict) -> list[Finding]:
     # ── per-qubit fields ─────────────────────────────────────────────────
     lo, hi = _QDAC_CHANNELS
     by_channel: dict[Any, list[str]] = {}
-    for qid in sorted(biased, key=lambda q: (len(q), q)):
+    # Was a hand-rolled (len, str) shortlex -- right for a uniform "q<N>" naming
+    # scheme, wrong the moment a lab mixes widths ("qA1" vs "q10"). The house
+    # helper is the one that counts q2 before q10 everywhere in the product.
+    for qid in sorted(biased, key=natural_key):
         found = _qdac.bias_line_of(qubits.get(qid) or {})
         if found is None:                     # pragma: no cover - biased() found it
             continue
@@ -2210,7 +2218,12 @@ def _qdac_findings(root: dict) -> list[Finding]:
 
     # ── the cabling: a port and an ext are two names for one cable ───────
     groups = _qdac.ext_groups(root)
-    for (con, slot, port), entry in sorted(groups.items()):
+    # ``ext_groups`` keys are three STRINGS (con, slot, port), so byte order put
+    # fem10 before fem2 and p10 before p2 -- and this is the order the trigger
+    # findings are listed in.
+    for (con, slot, port), entry in sorted(
+            groups.items(),
+            key=lambda kv: tuple(natural_key(s) for s in kv[0])):
         where = f"{con}/fem{slot}/p{port}"
         if entry["conflict"]:
             findings.append(Finding(
@@ -2237,7 +2250,10 @@ def _qdac_findings(root: dict) -> list[Finding]:
                 f"{ext} is fed from {len(set(ports))} different digital outputs",
                 detail="A QDAC-II ext input takes ONE cable. Two OPX outputs "
                        "claiming the same input describes hardware that cannot "
-                       "be patched: " + ", ".join(sorted(set(ports))) + ".",
+                       # "con1/fem1/p10" is a displayed port list with real
+                       # two-digit port numbers on it.
+                       "be patched: "
+                       + ", ".join(sorted(set(ports), key=natural_key)) + ".",
                 jump_path="wiring.qubits"))
 
     return findings

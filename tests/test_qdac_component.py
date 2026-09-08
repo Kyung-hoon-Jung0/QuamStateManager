@@ -1689,3 +1689,51 @@ class TestTheProbeLooksWhereTheClassIsDEFINED:
         monkeypatch.setattr(P, "_QPU_ROOT_HOMES", (("pkg_ghost", "Ghost"),))
         roots = P.qpu_roots()          # must not raise
         assert roots[0]["bias_tee"] is None
+
+
+# ---------------------------------------------------------------------------
+# Natural order in the QDAC findings (customer rule 2026-09-09)
+# ---------------------------------------------------------------------------
+
+class TestQdacFindingsNaturalOrder:
+    """``_qdac_findings`` is read top to bottom on the Diagnostics page, and
+    two of the things it orders carry numbers in the middle of a string: the
+    qubit id and the physical port ``con1/fem5/p10``.
+    """
+
+    @staticmethod
+    def _findings(chip):
+        from quam_state_manager.core import diagnostics
+        return diagnostics._qdac_findings(chip)
+
+    def test_the_per_qubit_walk_counts_q1a_before_q2(self):
+        # The loop used to be a hand-rolled ``(len(q), q)`` shortlex, which is
+        # right only while every id is the same shape: it sorts the SHORTER
+        # id first, so a lab that splits qubit 1 into q1a/q1b read q2, q1a,
+        # q1b. Every qubit here has an out-of-range channel, so each emits one
+        # finding in walk order.
+        chip = _chip(qdac_q=[("q2", 99, "ext1", 1),
+                             ("q1a", 98, "ext2", 2),
+                             ("q1b", 97, "ext3", 3)])
+        got = [f for f in self._findings(chip)
+               if f.category == "connectivity_qdac_channel"]
+        assert [f.location for f in got] == ["q1a", "q1b", "q2"]
+
+    def test_two_cables_are_reported_p2_before_p10(self):
+        # Each physical port carries two qubits declaring DIFFERENT exts --
+        # the conflict finding. The group key is three STRINGS, so byte order
+        # read fem5/p10 before fem5/p2.
+        chip = _chip(qdac_q=[("q1", 1, "ext1", 2), ("q2", 2, "ext2", 2),
+                             ("q3", 3, "ext3", 10), ("q4", 4, "ext4", 10)])
+        got = [f for f in self._findings(chip)
+               if f.category == "connectivity_qdac_trigger"
+               and "two different QDAC trigger inputs" in f.message]
+        assert [f.location for f in got] == ["con1/fem5/p2", "con1/fem5/p10"]
+
+    def test_the_port_list_in_a_finding_reads_p2_before_p10(self):
+        # One ext input fed from two digital outputs: the detail NAMES them.
+        chip = _chip(qdac_q=[("q1", 1, "ext1", 10), ("q2", 2, "ext1", 2)])
+        got = [f for f in self._findings(chip)
+               if "different digital outputs" in f.message]
+        assert len(got) == 1
+        assert "con1/fem5/p2, con1/fem5/p10" in got[0].detail
