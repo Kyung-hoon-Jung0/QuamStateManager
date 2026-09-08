@@ -35,6 +35,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from quam_state_manager.core import safe_io
+from quam_state_manager.core.loader import natural_key
 
 logger = logging.getLogger(__name__)
 
@@ -367,7 +368,7 @@ def validate_spec(spec) -> list[str]:
         str(ln.get("element")) for ln in lines
         if isinstance(ln, dict) and ln.get("line") == "flux"
     }
-    for qid in sorted(qdac_tee_ids - flux_elements, key=lambda q: (len(q), q)):
+    for qid in sorted(qdac_tee_ids - flux_elements, key=natural_key):
         errors.append(
             f"qdac.qubits[{qid!r}].bias_tee: declared, but this qubit has no "
             "OPX flux line — a bias tee is a QDAC DC bias AND an LF-FEM pulse "
@@ -383,7 +384,7 @@ def validate_spec(spec) -> list[str]:
         if isinstance(ln, dict) and ln.get("line") == "resonator" and ln.get("group"):
             g = str(ln["group"])
             feedline_counts[g] = feedline_counts.get(g, 0) + 1
-    for g, n in sorted(feedline_counts.items()):
+    for g, n in sorted(feedline_counts.items(), key=lambda kv: natural_key(kv[0])):
         if n > 8:
             errors.append(
                 f"lines: readout feedline '{g}' multiplexes {n} qubits — the "

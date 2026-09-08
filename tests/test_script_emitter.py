@@ -271,3 +271,33 @@ def test_build_route_no_scripts_dir_no_export(client, tmp_path):
     body = r.get_json()
     assert body["ok"] is True
     assert "scripts" not in body and "scripts_error" not in body
+
+
+def _tee_spec(ids):
+    """A bias-tee chip whose ids span two banks — the case ``(len(q), q)``
+    (the old sort key) reads as qA2, qB1, qA10."""
+    return _base(
+        qubits=list(ids),
+        qubit_pairs=[],
+        lines=[{"element": q, "line": "resonator", "group": "feedline1",
+                "channel": None} for q in ids]
+        + [{"element": q, "line": "drive", "channel": None} for q in ids]
+        + [{"element": q, "line": "flux", "channel": None} for q in ids],
+        populate={"qubit": {q: {"RF_freq": 5.2e9} for q in ids}},
+        qdac={"communication_type": "Ethernet", "ip_address": "1.2.3.5",
+              "port": 5025, "usb_device": None, "lib": "@py",
+              "qubits": {q: {"channel": 13, "dc_offset": 0.0,
+                             "trigger_port": "ext1", "bias_tee": True}
+                         for q in ids}},
+    )
+
+
+class TestReadmeNaturalOrder:
+    """Customer rule 2026-09-09 — the README's bias-tee roster is read by a
+    person, so q2 comes before q10 even across two id banks."""
+
+    def test_the_bias_tee_roster_is_natural_ordered(self):
+        ids = ("qA2", "qA10", "qB1")
+        readme = script_emitter.emit_bundle(
+            _tee_spec(ids), None, {}, "chip", STAMP)["README.md"]
+        assert "(qA2, qA10, qB1)" in readme

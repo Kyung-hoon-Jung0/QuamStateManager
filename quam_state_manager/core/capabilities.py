@@ -29,6 +29,7 @@ sync with validation. See ``docs/52_env_capabilities.md``.
 """
 
 from __future__ import annotations
+from quam_state_manager.core.loader import natural_key
 
 from typing import Any
 
@@ -587,7 +588,7 @@ def bias_tee_check(spec: dict, manifest: Any) -> dict | None:
         return None
     probed = isinstance(manifest, dict) and manifest.get("qpu_roots") is not None
     shape = bias_tee_class(manifest)
-    ids = ", ".join(sorted(tee, key=lambda q: (len(q), q)))
+    ids = ", ".join(sorted(tee, key=natural_key))
     if shape:
         detail = (f"{shape.get('cls', '?')} (bias line on `{shape.get('field', '?')}`, "
                   f"z stays {shape.get('z_type', '?')}) — {ids}")

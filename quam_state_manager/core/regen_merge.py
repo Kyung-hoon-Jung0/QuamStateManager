@@ -23,6 +23,7 @@ compiles to a valid QUA config that is a superset of the original. See
 """
 
 from __future__ import annotations
+from quam_state_manager.core.loader import natural_key
 
 import copy
 from dataclasses import dataclass, field
@@ -385,7 +386,7 @@ def _prune_redundant_graft_ops(merged: dict, dangling: list[str]) -> tuple[list[
         _del_path(merged, op)
     pruned = set(prunable)
     remaining = [p for p in dangling if _enclosing_op(p) not in pruned]
-    return sorted(prunable), remaining
+    return sorted(prunable, key=natural_key), remaining
 
 
 def _norm_twpa_id(tid: str) -> str:
@@ -536,8 +537,13 @@ def merge_states(old_state: dict, new_state: dict,
     new_state = _reconcile_pair_ids(old_state, new_state,
                                     old_wiring, new_wiring)   # align pair ids first
     merged = _merge(old_state, new_state, "", stats, class_schemas, protect_paths)
-    stats.schema_dropped.sort()
-    stats.populate_protected.sort()
+    # Every one of these lists is a set of dot-paths shown to the user in
+    # the build-result transparency panel, TRUNCATED to the first 80/200
+    # (regenerate.py) — so the sort decides both the order and WHICH paths
+    # are shown. Natural order: q2 before q10, .101 before .1009
+    # (customer rule 2026-09-09).
+    stats.schema_dropped.sort(key=natural_key)
+    stats.populate_protected.sort(key=natural_key)
 
     merged_paths = {p for p, _ in _iter_leaves(merged)}
     old_scalars = [(p, v) for p, v in _iter_leaves(old_state)
@@ -559,8 +565,8 @@ def merge_states(old_state: dict, new_state: dict,
         # pointer ancestor => superseded; a missing key => truly lost.
         (stats.superseded if _has_pointer_ancestor(merged, p)
          else stats.residual_lost).append(p)
-    stats.superseded.sort()
-    stats.residual_lost.sort()
+    stats.superseded.sort(key=natural_key)
+    stats.residual_lost.sort(key=natural_key)
 
     grafted_prefixes = [p for p, _ in stats.graft_subtrees]
     dangling: list[str] = []

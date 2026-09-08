@@ -39,6 +39,7 @@ the evidence. Nothing here imports quam, and nothing here writes.
 """
 
 from __future__ import annotations
+from quam_state_manager.core.loader import natural_key
 
 from typing import Any, Iterator
 
@@ -285,7 +286,7 @@ def ext_groups(merged: Any) -> dict[tuple[str, str, str], dict]:
             entry["conflict"].add(entry["ext"])
             entry["conflict"].add(ref["ext"])
     for entry in groups.values():
-        entry["qubits"].sort(key=lambda q: (len(q), q))
+        entry["qubits"].sort(key=natural_key)
     return groups
 
 

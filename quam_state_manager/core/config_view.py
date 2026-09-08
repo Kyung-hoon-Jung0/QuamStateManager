@@ -36,6 +36,8 @@ from __future__ import annotations
 import re
 from typing import Any, Iterable
 
+from quam_state_manager.core.loader import natural_key
+
 
 # ---------------------------------------------------------------------------
 # Top-level slice
@@ -94,7 +96,7 @@ def _pulse_names_referenced_by(elements: dict, element_keys: Iterable[str]) -> l
             for pulse_name in ops.values():
                 if isinstance(pulse_name, str):
                     out.add(pulse_name)
-    return sorted(out)
+    return sorted(out, key=natural_key)
 
 
 def _waveform_names_referenced_by(pulses: dict, pulse_names: Iterable[str]) -> list[str]:
@@ -109,7 +111,7 @@ def _waveform_names_referenced_by(pulses: dict, pulse_names: Iterable[str]) -> l
                     out.add(wname)
         elif isinstance(wfs, str):
             out.add(wfs)
-    return sorted(out)
+    return sorted(out, key=natural_key)
 
 
 def slice_for(config: dict, target_prefix: str) -> dict:
@@ -160,9 +162,11 @@ def slice_for(config: dict, target_prefix: str) -> dict:
             n: waveforms_dict[n] for n in waveform_names if n in waveforms_dict
         },
         "integration_weights": {
-            n: integration_dict[n] for n in sorted(iw_names) if n in integration_dict
+            n: integration_dict[n]
+            for n in sorted(iw_names, key=natural_key) if n in integration_dict
         },
-        "mixers": {n: mixers_dict[n] for n in sorted(mixer_names) if n in mixers_dict},
+        "mixers": {n: mixers_dict[n]
+                   for n in sorted(mixer_names, key=natural_key) if n in mixers_dict},
     }
 
 
@@ -510,7 +514,7 @@ def pair_slice_for(
 
     dedicated, op_entries = _resolve_pair_elements_ops(
         config, control, target, pair_name)
-    pulse_names = sorted({p for _e, _o, p in op_entries if p})
+    pulse_names = sorted({p for _e, _o, p in op_entries if p}, key=natural_key)
     waveform_names = _waveform_names_referenced_by(pulses_dict, pulse_names)
 
     iw_names: set[str] = set()
@@ -529,7 +533,8 @@ def pair_slice_for(
             n: waveforms_dict[n] for n in waveform_names if n in waveforms_dict
         },
         "integration_weights": {
-            n: integration_dict[n] for n in sorted(iw_names) if n in integration_dict
+            n: integration_dict[n]
+            for n in sorted(iw_names, key=natural_key) if n in integration_dict
         },
         "mixers": {},
         "operation_count": len(op_entries),
@@ -563,7 +568,11 @@ def all_pair_gate_operations(config: dict) -> list[dict]:
                     "op_name": opn,
                     "pulse": pulse if isinstance(pulse, str) else None,
                 })
-    return sorted(out, key=lambda e: (e["element"], e["op_name"]))
+    # Natural order: the gallery lists q2's ops before q10's, and x90 before
+    # x180 — a lexicographic sort read q1, q10, q11, q2 on a 20-qubit chip
+    # (customer rule 2026-09-09).
+    return sorted(out, key=lambda e: (natural_key(e["element"]),
+                                      natural_key(e["op_name"])))
 
 
 def waveform_for_element_op(config: dict, element: str, op_name: str) -> dict | None:

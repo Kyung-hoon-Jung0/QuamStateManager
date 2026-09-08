@@ -381,3 +381,44 @@ class TestRewriteReferrerPointer:
             "#./x180_DragCosine", f"{XY}.x180",
             f"{XY}.x180_DragCosine", f"{XY}.renamed")
         assert out == "#./renamed"
+
+
+# ---------------------------------------------------------------------------
+# Natural order (customer rule 2026-09-09)
+# ---------------------------------------------------------------------------
+
+class TestUsedByNaturalOrder:
+    """The Pulses page prints ``used_by`` verbatim, one referrer per row. A
+    referrer path carries qubit numbers and list indices, and those are
+    NUMBERS: q2 before q10, ``.101`` before ``.1009``."""
+
+    @pytest.fixture
+    def shared(self) -> dict:
+        src = "#/qubits/q1/resonator/operations/readout/length"
+        qubits: dict = {
+            "q1": {"resonator": {"operations": {
+                "readout": {"length": 1000, "amplitude": 0.01,
+                            "__class__": QC + "SquareReadoutPulse"}}}},
+        }
+        for n in (2, 3, 9, 10, 11, 101, 1009):
+            qubits[f"q{n}"] = {"resonator": {"operations": {
+                "readout": {"length": src, "amplitude": 0.01,
+                            "__class__": QC + "SquareReadoutPulse"}}}}
+        return {"qubits": qubits}
+
+    EXPECTED = [f"qubits.q{n}.resonator.operations.readout.length"
+                for n in (2, 3, 9, 10, 11, 101, 1009)]
+
+    def test_used_by_counts_qubit_numbers_as_numbers(self, shared):
+        assert used_by(shared, "qubits.q1.resonator.operations.readout") \
+            == self.EXPECTED
+
+    def test_the_whole_chip_pass_orders_the_same_way(self, shared):
+        from quam_state_manager.core.pulse_index import build_op_referrers
+        refs = build_op_referrers(build_reverse_pointer_index(shared))
+        assert refs["qubits.q1.resonator.operations.readout"] == self.EXPECTED
+
+    def test_the_row_the_page_renders_carries_that_order(self, shared):
+        rows = {r["path"]: r for r in list_pulses(shared)}
+        assert rows["qubits.q1.resonator.operations.readout"]["used_by"] \
+            == self.EXPECTED

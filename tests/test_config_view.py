@@ -343,3 +343,116 @@ class TestPairResolution:
         assert wf is not None
         assert wf["traces"][0]["constant_value"] == 0.03
         assert len(wf["traces"][0]["y"]) == 48
+
+
+# ---------------------------------------------------------------------------
+# Natural order (customer rule 2026-09-09): a number inside a name is a
+# NUMBER — q2 before q10, x90 before x180, iw2 before iw10. Every list here
+# is rendered verbatim (the Config Viewer prints the slice dicts as JSON in
+# insertion order; the wizard's preview gallery lists the ops in order).
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def nat_config():
+    return {
+        "version": 1,
+        "elements": {
+            "q1.xy": {
+                "mixInputs": {"mixer": "octave_octave1_10"},
+                "operations": {"x180": "q1.xy.x180.pulse",
+                               "x90": "q1.xy.x90.pulse"},
+            },
+            "q1.resonator": {
+                "mixInputs": {"mixer": "octave_octave1_2"},
+                "operations": {"readout": "q1.resonator.readout.pulse"},
+            },
+            # two flux lines carrying 2Q ops — the gallery spans every element
+            "q2.z": {"operations": {"cz_pulse_q10": "cz_q2_q10.pulse",
+                                    "cz_pulse_q2": "cz_q2_q2.pulse"}},
+            "q10.z": {"operations": {"cz_pulse_q2": "cz_q10_q2.pulse"}},
+        },
+        "pulses": {
+            "q1.xy.x180.pulse": {"length": 40,
+                                 "waveforms": {"I": "q1.xy.x180.wf.I"}},
+            "q1.xy.x90.pulse": {"length": 40,
+                                "waveforms": {"I": "q1.xy.x90.wf.I"}},
+            "q1.resonator.readout.pulse": {
+                "length": 1000, "waveforms": {"single": "q1.res.readout.wf"},
+                "integration_weights": {"cos": "q1.resonator.readout.iw10",
+                                        "sin": "q1.resonator.readout.iw2"}},
+            "cz_q2_q10.pulse": {"length": 60, "waveforms": {"single": "cz.wf"}},
+            "cz_q2_q2.pulse": {"length": 60, "waveforms": {"single": "cz.wf"}},
+            "cz_q10_q2.pulse": {"length": 60, "waveforms": {"single": "cz.wf"}},
+        },
+        "waveforms": {
+            "q1.xy.x180.wf.I": {"type": "constant", "sample": 0.1},
+            "q1.xy.x90.wf.I": {"type": "constant", "sample": 0.05},
+            "q1.res.readout.wf": {"type": "constant", "sample": 0.01},
+            "cz.wf": {"type": "constant", "sample": 0.2},
+        },
+        "integration_weights": {
+            "q1.resonator.readout.iw2": {"cosine": [(1.0, 1000)]},
+            "q1.resonator.readout.iw10": {"cosine": [(0.0, 1000)]},
+        },
+        "mixers": {"octave_octave1_2": [], "octave_octave1_10": []},
+    }
+
+
+@pytest.fixture
+def nat_pair_config():
+    return {
+        "elements": {
+            "q1-2.coupler": {"operations": {
+                "cz_180": "q1-2.coupler.cz_180.pulse",
+                "cz_90": "q1-2.coupler.cz_90.pulse"}},
+        },
+        "pulses": {
+            # the integration_weights here are synthetic (a real 2Q pulse has
+            # none) — they exist to drive the pair slice's OWN iw sort, which
+            # is a separate statement from the qubit slice's.
+            "q1-2.coupler.cz_180.pulse": {
+                "length": 60, "waveforms": {"single": "q1-2.cz_180.wf"},
+                "integration_weights": {"a": "q1-2.iw10"}},
+            "q1-2.coupler.cz_90.pulse": {
+                "length": 60, "waveforms": {"single": "q1-2.cz_90.wf"},
+                "integration_weights": {"a": "q1-2.iw2"}},
+        },
+        "waveforms": {"q1-2.cz_180.wf": {"type": "constant", "sample": 0.2},
+                      "q1-2.cz_90.wf": {"type": "constant", "sample": 0.1}},
+        "integration_weights": {"q1-2.iw2": {"cosine": [(1.0, 60)]},
+                                "q1-2.iw10": {"cosine": [(0.0, 60)]}},
+    }
+
+
+class TestNaturalOrder:
+    def test_qubit_slice_lists_x90_before_x180(self, nat_config):
+        sl = config_view.slice_for(nat_config, "q1")
+        assert list(sl["pulses"]) == [
+            "q1.resonator.readout.pulse",
+            "q1.xy.x90.pulse",
+            "q1.xy.x180.pulse",
+        ]
+        assert list(sl["waveforms"]) == [
+            "q1.res.readout.wf", "q1.xy.x90.wf.I", "q1.xy.x180.wf.I",
+        ]
+
+    def test_qubit_slice_counts_iw_and_mixer_numbers_as_numbers(self, nat_config):
+        sl = config_view.slice_for(nat_config, "q1")
+        assert list(sl["integration_weights"]) == [
+            "q1.resonator.readout.iw2", "q1.resonator.readout.iw10"]
+        assert list(sl["mixers"]) == ["octave_octave1_2", "octave_octave1_10"]
+
+    def test_pair_slice_lists_cz_90_before_cz_180(self, nat_pair_config):
+        sl = config_view.pair_slice_for(nat_pair_config, "q1", "q2", "q1-2")
+        assert list(sl["pulses"]) == ["q1-2.coupler.cz_90.pulse",
+                                      "q1-2.coupler.cz_180.pulse"]
+        assert list(sl["integration_weights"]) == ["q1-2.iw2", "q1-2.iw10"]
+
+    def test_preview_gallery_lists_q2_before_q10(self, nat_config):
+        """The wizard's 2Q-pulse gallery — element order AND op order."""
+        ops = config_view.all_pair_gate_operations(nat_config)
+        assert [(o["element"], o["op_name"]) for o in ops] == [
+            ("q2.z", "cz_pulse_q2"),
+            ("q2.z", "cz_pulse_q10"),
+            ("q10.z", "cz_pulse_q2"),
+        ]

@@ -34,6 +34,7 @@ quam_builder idiom instead so it runs with just the QM stack, no
 ``quam_config`` template repo needed).
 """
 from __future__ import annotations
+from quam_state_manager.core.loader import natural_key
 
 import importlib.util
 import inspect
@@ -704,7 +705,7 @@ def _emit_readme(spec: dict, versions: dict, chip: str, stamp: str) -> str:
     qdac_qubits = (spec.get("qdac") or {}).get("qubits") or {}
     if qdac_qubits:
         tees = sorted((q for q, f in qdac_qubits.items() if (f or {}).get("bias_tee")),
-                      key=lambda q: (len(str(q)), str(q)))
+                      key=natural_key)
         out += [
             f"- QDAC-II DC bias on {len(qdac_qubits)} qubit(s)"
             + (f", {len(tees)} through a bias tee ({', '.join(tees)})" if tees else ""),

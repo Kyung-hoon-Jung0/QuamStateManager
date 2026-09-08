@@ -11,6 +11,7 @@ A key neither source describes is listed with its type and default only —
 "no description" is stated, never filled in.
 """
 from __future__ import annotations
+from quam_state_manager.core.loader import natural_key
 
 import re
 from typing import Any
@@ -187,7 +188,10 @@ def manual_entries(state: Any, wiring: Any, manifest: dict | None,
     covered: set[tuple[str, str]] = set()
     for cls_path in sorted(merged, key=lambda c: (_category_of(c, merged[c]), _leaf(c).lower())):
         entry = merged[cls_path]
-        paths = sorted(occ.get(cls_path, []))      # deterministic examples
+        # Natural order (customer rule 2026-09-09) — the examples shown are
+        # the FIRST _MAX_EXAMPLES of this list, so a lexicographic sort both
+        # scrambled them and picked q1/q10/q11 as the three "first" qubits.
+        paths = sorted(occ.get(cls_path, []), key=natural_key)
         leaf = _leaf(cls_path)
         category = _category_of(cls_path, entry)
         if not isinstance(entry, dict) or not entry.get("importable") or not isinstance(entry.get("fields"), dict):

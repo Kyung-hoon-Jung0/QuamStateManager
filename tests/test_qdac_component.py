@@ -1737,3 +1737,39 @@ class TestQdacFindingsNaturalOrder:
                if "different digital outputs" in f.message]
         assert len(got) == 1
         assert "con1/fem5/p2, con1/fem5/p10" in got[0].detail
+class TestNaturalOrderedQubitLists:
+    """Customer rule 2026-09-09. These three lists are read by a person, and
+    the old key was ``(len(q), q)`` — a length-first stand-in that happens to
+    read right only while every id shares one prefix of one width. A chip with
+    two feedline banks (qA1…qA10, qB1…) breaks it: it puts qB1 between qA2 and
+    qA10. ``natural_key`` compares the digit runs as numbers instead."""
+
+    IDS = ("qA2", "qA10", "qB1")          # (len, q) reads these qA2, qB1, qA10
+
+    def test_the_qubits_on_one_trigger_cable_are_listed_in_order(self):
+        chip = _chip(qdac_q=tuple((q, 13, "ext1", 1) for q in self.IDS))
+        assert qdac.ext_groups(chip)[("con1", "5", "1")]["qubits"] \
+            == list(self.IDS)
+
+    def test_the_bias_tee_validation_error_names_them_in_order(self):
+        from quam_state_manager.core import config_generator as cg
+        spec = _spec(qdac_qubits={q: _q(bias_tee=True) for q in self.IDS})
+        spec["qubits"] = list(self.IDS)          # declare them (no flux lines)
+        spec["lines"] = [{"element": q, "line": "resonator", "group": "f1"}
+                         for q in self.IDS] \
+            + [{"element": q, "line": "drive"} for q in self.IDS]
+        named = [e.split("[")[1].split("]")[0].strip("'")
+                 for e in cg.validate_spec(spec)
+                 if "bias_tee" in e and "no OPX flux line" in e]
+        assert named == list(self.IDS)
+
+    def test_the_capability_row_names_them_in_order(self):
+        from quam_state_manager.core import capabilities as cap
+        row = cap.bias_tee_check(
+            _spec(qdac_qubits={q: _q(bias_tee=True) for q in self.IDS},
+                  flux_for=self.IDS), self._NO_TEE)
+        assert "qA2, qA10, qB1" in row["detail"]
+
+    _NO_TEE = {"capabilities": {"x": {"available": True}}, "versions": {},
+               "qpu_roots": [{"path": "p.Q", "importable": True,
+                              "holds_qdac": True, "bias_tee": None}]}

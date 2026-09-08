@@ -377,3 +377,74 @@ def test_package_versions_stamp_always_new():
     assert "__package_versions__" not in r2.merged
     assert r2.stats.schema_dropped == []
     assert r2.stats.residual_lost == []
+
+
+# ---------------------------------------------------------------------------
+# Natural order (customer rule 2026-09-09). Every one of these lists is shown
+# in the build-result transparency panel AND truncated there (regenerate.py
+# slices them to 80/200), so the sort decides both the order the user reads
+# and WHICH paths survive the cut. q2 before q10; a numeric port segment is a
+# number, so ".2" before ".10".
+# ---------------------------------------------------------------------------
+
+class TestNaturalOrderedStats:
+    _FTG = "quam_builder.architecture.components.pulses.FlatTopGaussianPulse"
+
+    def test_residual_lost_counts_qubit_numbers_as_numbers(self):
+        old = {"qubits": {f"q{n}": {"f_01": 5.1e9}
+                          for n in (1, 2, 3, 9, 10, 11)}}
+        new = {"qubits": {"q1": {"f_01": 0.0}}}
+        r = merge_states(old, new)
+        assert r.stats.residual_lost == [f"qubits.q{n}.f_01"
+                                         for n in (2, 3, 9, 10, 11)]
+
+    def test_residual_lost_counts_port_numbers_as_numbers(self):
+        old = {"ports": {"mw_outputs": {"con1": {"1": {
+            str(p): {"full_scale_power_dbm": -11} for p in (2, 3, 10, 11)}}}}}
+        new = {"ports": {"mw_outputs": {}}}
+        r = merge_states(old, new)
+        assert r.stats.residual_lost == [
+            f"ports.mw_outputs.con1.1.{p}.full_scale_power_dbm"
+            for p in (2, 3, 10, 11)]
+
+    def test_schema_dropped_counts_qubit_numbers_as_numbers(self):
+        def _op(**extra):
+            return {"z": {"operations": {"cz": dict(
+                {"__class__": self._FTG, "amplitude": 0.1}, **extra)}}}
+        qs = (2, 3, 10)
+        old = {"qubits": {f"q{n}": _op(sigma=1.0) for n in qs}}
+        new = {"qubits": {f"q{n}": _op() for n in qs}}
+        r = merge_states(old, new, class_schemas={self._FTG: ["amplitude"]})
+        assert r.stats.schema_dropped == [
+            f"qubits.q{n}.z.operations.cz.sigma" for n in qs]
+
+    def test_populate_protected_counts_qubit_numbers_as_numbers(self):
+        qs = (2, 3, 10)
+        old = {"qubits": {f"q{n}": {"f_01": 5.1e9} for n in qs}}
+        new = {"qubits": {f"q{n}": {"f_01": 6.0e9} for n in qs}}
+        protect = {f"qubits.q{n}.f_01" for n in qs}
+        r = merge_states(old, new, protect_paths=protect)
+        assert r.stats.populate_protected == [f"qubits.q{n}.f_01" for n in qs]
+
+    def test_superseded_counts_qubit_numbers_as_numbers(self):
+        qs = (2, 3, 10)
+        old = {"qubits": {f"q{n}": {"z": {"operations": {
+            "cz": {"amplitude": 0.1}}}} for n in qs}}
+        new = {"qubits": {f"q{n}": {"z": {"operations": {
+            "cz": "#/shared/cz"}}} for n in qs},
+            "shared": {"cz": {"amplitude": 0.0}}}
+        r = merge_states(old, new)
+        assert r.stats.superseded == [
+            f"qubits.q{n}.z.operations.cz.amplitude" for n in qs]
+        assert r.stats.residual_lost == []
+
+    def test_pruned_ops_counts_qubit_numbers_as_numbers(self):
+        qs = (2, 3, 10)
+        old = {"qubits": {f"q{n}": {"z": {"operations": {"cz_broken": {
+            "length": "#/qubit_pairs/p/macros/cz/flux/length"}}}} for n in qs},
+            "qubit_pairs": {"p": {"macros": {}}}}
+        new = {"qubits": {f"q{n}": {"z": {"operations": {}}} for n in qs},
+               "qubit_pairs": {"p": {"macros": {}}}}
+        r = merge_states(old, new)
+        assert r.stats.pruned_ops == [
+            f"qubits.q{n}.z.operations.cz_broken" for n in qs]

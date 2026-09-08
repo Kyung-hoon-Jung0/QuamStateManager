@@ -26,6 +26,7 @@ from typing import Any
 
 from quam_state_manager.core import qdac
 from quam_state_manager.core.loader import _walk
+from quam_state_manager.core.loader import natural_key
 from quam_state_manager.core.pointer_path import pointer_to_abs, resolve_field_target
 from quam_state_manager.core.pointer_resolver import is_pointer
 from quam_state_manager.core.pulse_catalog import (
@@ -103,7 +104,10 @@ def used_by(merged: dict, op_path: str,
             if holder == op_path or holder.startswith(prefix):
                 continue  # internal self-reference
             referrers.append(holder)
-    return sorted(set(referrers))
+    # Natural order (customer rule 2026-09-09): a referrer path's list
+    # indices and qubit numbers are NUMBERS — q2 before q10, .101 before
+    # .1009 — not the lexicographic order a plain sorted() gives.
+    return sorted(set(referrers), key=natural_key)
 
 
 def _op_path_of(target: str) -> str | None:
@@ -144,7 +148,7 @@ def build_op_referrers(reverse_index: dict[str, list[str]]) -> dict[str, list[st
             if h == op or h.startswith(prefix):
                 continue
             out.setdefault(op, set()).add(h)
-    return {k: sorted(v) for k, v in out.items()}
+    return {k: sorted(v, key=natural_key) for k, v in out.items()}
 
 
 # ---------------------------------------------------------------------------

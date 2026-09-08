@@ -335,3 +335,26 @@ class TestReviewRound4l:
         d = key_manual.manual_entries({}, {}, manifest)
         rows = {c["cls"]: c for c in d["classes"]}
         assert rows["BasePort"]["abstract"] is True and rows["SquarePulse"]["abstract"] is False
+
+
+class TestNaturalOrderExamples:
+    """Customer rule 2026-09-09: the manual's "where it is used" examples are
+    the FIRST three occurrence paths, so a lexicographic sort both scrambled
+    the list and chose qA1/qA10/qA11 as the three "first" qubits of a chip
+    that has qA1, qA2, qA3, … — q2 before q10."""
+
+    @staticmethod
+    def _state_with(qids):
+        return {"qubits": {q: {"__class__": "lab.Transmon",
+                               "z": {"__class__": FL, "joint_offset": 0.1}}
+                           for q in qids}}
+
+    def test_examples_are_the_first_three_in_natural_order(self):
+        d = key_manual.manual_entries(
+            self._state_with(["qA1", "qA2", "qA3", "qA10", "qA11"]),
+            {}, _manifest())
+        jo = {e["id"]: e for e in d["entries"]}["FluxLine.joint_offset"]
+        assert jo["present_in"] == 5
+        assert jo["examples"] == ["qubits.qA1.z.joint_offset",
+                                  "qubits.qA2.z.joint_offset",
+                                  "qubits.qA3.z.joint_offset"]

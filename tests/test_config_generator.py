@@ -1340,3 +1340,23 @@ class TestProbeCommitProvenance:
         r3 = config_generator.probe_capabilities("py", tmp_path)
         assert r3["cached"] is False
         assert deep_probes["count"] == 2
+
+
+class TestValidateSpecNaturalOrder:
+    """Customer rule 2026-09-09: the error list a person reads counts numbers
+    as numbers — feedline2 before feedline10, not the lexicographic
+    feedline10, feedline2, feedline3."""
+
+    def test_over_full_feedlines_are_reported_in_natural_order(self):
+        groups = ("feedline2", "feedline3", "feedline10")
+        spec = _valid_spec()
+        spec["qubits"] = [f"q{g}_{i}" for g in (2, 3, 10) for i in range(9)]
+        spec["qubit_pairs"] = []
+        spec["lines"] = [
+            {"element": f"q{g}_{i}", "line": "resonator",
+             "group": f"feedline{g}", "channel": None}
+            for g in (2, 3, 10) for i in range(9)
+        ]
+        named = [e.split("'")[1] for e in validate_spec(spec)
+                 if "multiplexes 9" in e]
+        assert named == list(groups)
