@@ -319,9 +319,28 @@ class TestDiffAcceptsStores:
 
 class TestDiffSorted:
     def test_entries_sorted_by_path(self, differ, folder_a, folder_b_modified):
+        from quam_state_manager.core.loader import natural_key
         entries = differ.diff(folder_a, folder_b_modified)
         paths = [e.dot_path for e in entries]
-        assert paths == sorted(paths)
+        assert paths == sorted(paths, key=natural_key)
+
+    def test_a_list_index_is_a_number(self, tmp_path):
+        """Customer report 2026-09-09 (screenshot of the live-diff review): a
+        readout weights list read `…weights_imag.1009`, `.101`, `.1011` --
+        a string sort. An index is a NUMBER: 101 comes before 1009."""
+        from quam_state_manager.core.loader import natural_key
+
+        base = "qubits.q1.resonator.operations.readout.weights_imag."
+        idx = [1, 2, 9, 10, 99, 100, 101, 1009, 1010, 1011]
+        def side(vals):
+            return ({"qubits": {"q1": {"resonator": {"operations": {"readout": {
+                "weights_imag": {str(i): v for i, v in zip(idx, vals)}}}}}}}, {})
+        entries = Differ().diff(side([0.0] * len(idx)), side([float(i) for i in idx]))
+        got = [e.dot_path[len(base):] for e in entries if e.dot_path.startswith(base)]
+        assert got == [str(i) for i in idx], got
+        assert got != sorted(got), "the fixture must be one a string sort gets wrong"
+        # and the same key orders qubit ids the way a lab writes them
+        assert sorted(["q10", "q2", "q1"], key=natural_key) == ["q1", "q2", "q10"]
 
 
 # ---------------------------------------------------------------------------

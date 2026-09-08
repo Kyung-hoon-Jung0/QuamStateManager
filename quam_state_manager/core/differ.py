@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from quam_state_manager.core.experiment_data import ExperimentContext
-from quam_state_manager.core.loader import QuamStore, flatten
+from quam_state_manager.core.loader import QuamStore, flatten, natural_key
 from quam_state_manager.core.query import QueryEngine
 
 logger = logging.getLogger(__name__)
@@ -79,7 +79,7 @@ class Differ:
 
         entries: list[DiffEntry] = []
 
-        for key in sorted(keys_b - keys_a):
+        for key in sorted(keys_b - keys_a, key=natural_key):
             if _leaf_key(key) in ignore:
                 continue
             entries.append(DiffEntry(
@@ -89,7 +89,7 @@ class Differ:
                 change_type="added",
             ))
 
-        for key in sorted(keys_a - keys_b):
+        for key in sorted(keys_a - keys_b, key=natural_key):
             if _leaf_key(key) in ignore:
                 continue
             entries.append(DiffEntry(
@@ -99,7 +99,7 @@ class Differ:
                 change_type="removed",
             ))
 
-        for key in sorted(keys_a & keys_b):
+        for key in sorted(keys_a & keys_b, key=natural_key):
             if _leaf_key(key) in ignore:
                 continue
             val_a = flat_a[key]
@@ -113,7 +113,11 @@ class Differ:
                 change_type="modified",
             ))
 
-        entries.sort(key=lambda e: e.dot_path)
+        # customer report 2026-09-09: a list index is a NUMBER, so the rows
+        # read 1009 · 101 · 1011 under a plain string sort. Every ordered
+        # display of paths in SM goes through natural_key (q10 after q2,
+        # weights_imag.101 before .1009).
+        entries.sort(key=lambda e: natural_key(e.dot_path))
         return entries
 
     @staticmethod
@@ -202,7 +206,7 @@ class Differ:
         for flat in flats:
             all_keys.update(flat.keys())
         rows: list[dict[str, Any]] = []
-        for key in sorted(all_keys):
+        for key in sorted(all_keys, key=natural_key):
             if _leaf_key(key) in ignore:
                 continue
             present = [key in flat for flat in flats]
@@ -283,7 +287,8 @@ class Differ:
                 all_qubits.add(name)
             qubit_dicts.append(qd)
 
-        target_qubits = sorted(qubit_filter) if qubit_filter else sorted(all_qubits)
+        target_qubits = (sorted(qubit_filter, key=natural_key) if qubit_filter
+                         else sorted(all_qubits, key=natural_key))
 
         results: list[dict[str, Any]] = []
         for qubit in target_qubits:
@@ -362,7 +367,7 @@ class Differ:
             for k in ctx.parameters:
                 if k not in all_keys:
                     all_keys.append(k)
-        all_keys.sort()
+        all_keys.sort(key=natural_key)
 
         rows: list[dict[str, Any]] = []
         for key in all_keys:
@@ -402,8 +407,9 @@ class Differ:
                 all_qubits.add(qname)
                 all_props.update(qvals.keys())
 
-        target_qubits = sorted(qubit_filter) if qubit_filter else sorted(all_qubits)
-        sorted_props = sorted(all_props)
+        target_qubits = (sorted(qubit_filter, key=natural_key) if qubit_filter
+                         else sorted(all_qubits, key=natural_key))
+        sorted_props = sorted(all_props, key=natural_key)
 
         rows: list[dict[str, Any]] = []
         for qubit in target_qubits:
