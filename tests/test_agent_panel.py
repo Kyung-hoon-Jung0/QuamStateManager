@@ -347,7 +347,13 @@ class TestHome:
                 assert lit not in v or v.startswith("color-mix("), f"a literal used bare as a text colour: {m.group(0)}"
         # the strip is ONE row at a normal width: the state text truncates, the doors stay
         assert re.search(r"\.ag-now-main \{[^}]*flex: 1 1 0;[^}]*white-space: nowrap;[^}]*flex-wrap: nowrap;", blk, re.S)
-        assert re.search(r"\.ag-now-main > \* \{[^}]*text-overflow: ellipsis;", blk)
+        # ...and only the STATE text gives way: "armed" and the counts are short and
+        # load-bearing, so a per-segment ellipsis ("ar…", "today 9 ev…") is the wrong cut
+        assert ".ag-now-main > * { flex: 0 0 auto; }" in blk
+        assert re.search(r"\.ag-now-main > \.ag-now-state \{[^}]*text-overflow: ellipsis;", blk)
+        # ...but the FLOAT is narrow by design: there the strip wraps rather than clipping
+        # its links off the panel edge (seen in the round-2 screenshots)
+        assert ".ag-compact .ag-now-main, .ag-compact .ag-now-acts { flex-wrap: wrap; white-space: normal; }" in blk
         assert re.search(r"\.ag-now-acts \{[^}]*flex-wrap: nowrap;[^}]*flex: 0 0 auto;", blk)
         # the float's own minimum keeps strip + composer on screen (the customer's first
         # complaint reproduced at the panel's smallest size): the feed absorbs the squeeze

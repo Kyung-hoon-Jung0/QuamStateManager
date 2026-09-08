@@ -12731,7 +12731,10 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
   padding: .3rem .55rem; font-size: .9em; border: 1px solid var(--pico-muted-border-color); border-radius: .4rem; background: var(--pico-card-background-color); }
 .ag-now-main { display: flex; align-items: center; gap: .15rem .4rem; flex: 1 1 0; min-width: 0; overflow: hidden;
     white-space: nowrap; flex-wrap: nowrap; }                            /* round 2: the strip is ONE row -- the state text truncates, it never wraps the buttons away */
-.ag-now-main > * { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* only the STATE text gives way: "armed", the counts and the session are short and
+   load-bearing, so they stay whole while the node name in the state truncates */
+.ag-now-main > * { flex: 0 0 auto; }
+.ag-now-main > .ag-now-state { flex: 0 1 auto; min-width: 5rem; overflow: hidden; text-overflow: ellipsis; }
 .ag-now-sep { color: var(--pico-muted-color); }
 .ag-now-state { font-weight: 600; white-space: nowrap; }
 .ag-now-state .agent-pill-dot { display: inline-block; width: .6em; height: .6em; border-radius: 50%; background: var(--pico-muted-border-color); margin-right: .4em; vertical-align: 0; }
@@ -12743,6 +12746,10 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .ag-now-state.ag-limited .agent-pill-dot { background: #8b5cf6; }
 .ag-now-line { white-space: nowrap; }
 .ag-now-acts { display: flex; flex-wrap: nowrap; align-items: center; gap: .4rem; margin-left: auto; flex: 0 0 auto; }
+/* the float is narrow by design: there the strip WRAPS instead of clipping its links */
+.ag-compact .ag-now-main, .ag-compact .ag-now-acts { flex-wrap: wrap; white-space: normal; }
+.ag-compact .ag-now-main { flex: 1 1 100%; }
+.ag-compact .ag-now-acts { margin-left: 0; flex: 1 1 100%; }
 .ag-now-links { font-size: .92em; white-space: nowrap; }
 .ag-now-run { flex-basis: 100%; }                                       /* the one allowed second row: a run in progress */
 .ag-armed { color: color-mix(in srgb, #2e7d32 55%, var(--pico-color)); font-weight: 600; }   /* round 2: 2.98:1 on the dark card -> mixed toward the text colour */
