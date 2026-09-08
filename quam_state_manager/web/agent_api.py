@@ -33,6 +33,7 @@ from typing import Any
 from flask import Blueprint, current_app, jsonify, request
 
 from quam_state_manager.core import journal as journal_mod
+from quam_state_manager.core.loader import natural_key
 
 logger = logging.getLogger(__name__)
 
@@ -1346,7 +1347,7 @@ def run_node():
     known = set(store.qubit_names) | set(store.qubit_pair_names)
     bad = [t for t in targets if t not in known]
     if bad:
-        return _err(f"unknown targets {bad}", 400, known=sorted(known)[:80])
+        return _err(f"unknown targets {bad}", 400, known=sorted(known, key=natural_key)[:80])
     inst, chip, name = current_app.instance_path, _chip_key(), _chip_name()
     adapter = _run_adapter()
     reg = _registry()
@@ -1616,7 +1617,10 @@ def live_diff():
         tray = {c.dot_path for c in store.change_log}
     live, _ = json_diff.flatten({**live_state, **live_wiring}, cap=250_000)
     changed = []
-    for p in sorted(set(work) | set(live)):
+    # A list index is a NUMBER: a plain sort reads weights_imag.1009 before
+    # .101, and the 300-row cap below then reports the WRONG 300 paths
+    # (customer report 2026-09-09).
+    for p in sorted(set(work) | set(live), key=natural_key):
         a, b = work.get(p, "<absent>"), live.get(p, "<absent>")
         if a == b and type(a) is type(b):
             continue
@@ -1821,7 +1825,7 @@ def plans_add():
             return _err((parsed or {}).get("error") or "usage: /run <node> <targets...> [param=value ...]")
         bad = [t for t in parsed["targets"] if t not in known]
         if bad:
-            return _err(f"unknown targets {bad}", 400, known=sorted(known)[:80])
+            return _err(f"unknown targets {bad}", 400, known=sorted(known, key=natural_key)[:80])
         # review R2-16: the node name is checked NOW, not after a real session spun up
         try:
             from quam_state_manager.core import scheduler
@@ -1832,7 +1836,8 @@ def plans_add():
             info, avail = agent_runs.resolve_node(folder, parsed["node"], instance_path=inst)
         if info is None:
             return _err(f"no node named {parsed['node']!r} in the calibrations folder", 400,
-                        available=sorted({i.name for i in avail})[:40])
+                        available=sorted({i.name for i in avail},
+                                         key=natural_key)[:40])
         parsed["node"] = info.name
         steps = [{"node": parsed["node"], "targets": parsed["targets"], "params": parsed["params"],
                   "why": "typed as /run (no model involved)"}]
@@ -1846,9 +1851,10 @@ def plans_add():
             agent_plans.normalize_steps(steps)
         except ValueError as exc:
             return _err(str(exc))
-        bad = sorted({t for s in steps for t in (s.get("targets") or []) if t not in known})
+        bad = sorted({t for s in steps for t in (s.get("targets") or []) if t not in known},
+                     key=natural_key)
         if bad:
-            return _err(f"unknown targets {bad}", 400, known=sorted(known)[:80])
+            return _err(f"unknown targets {bad}", 400, known=sorted(known, key=natural_key)[:80])
     session = agent_session.load(inst, chip)
     mode = (session or {}).get("mode") or limits.load(inst, chip).get("mode")
     rec = agent_plans.add(inst, chip, title=title, steps=steps, mode=mode, created_by=actor, source=source,

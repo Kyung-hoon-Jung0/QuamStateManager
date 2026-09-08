@@ -87,7 +87,7 @@ from quam_state_manager.core.history import (
     chip_name_for,
     kind_for,
 )
-from quam_state_manager.core.loader import QuamStore
+from quam_state_manager.core.loader import QuamStore, natural_key
 from quam_state_manager.core.modifier import Modifier
 # Curated property/column specs (pure data) — extracted to core.param_specs
 # (docs/49 Compare-hub redesign, A8) so core/compare.py can use them without
@@ -4767,7 +4767,7 @@ def qualibrate_subnav():
     listing["projects"] = sorted(
         listing["projects"],
         key=lambda p: (not p["active"], p["name"] != scope,
-                       p["name"].lower()))
+                       natural_key(p["name"])))
     return render_template("_qualibrate_subnav.html",
                            listing=listing, project_scope=scope)
 
@@ -4935,8 +4935,8 @@ def _wsl_distros() -> list[str]:
     if os.name != "nt":
         return []
     try:
-        return sorted(d.name for d in Path(r"\\wsl.localhost").iterdir()
-                      if d.is_dir())
+        return sorted((d.name for d in Path(r"\\wsl.localhost").iterdir()
+                       if d.is_dir()), key=natural_key)
     except OSError:
         return []
 
@@ -5161,7 +5161,7 @@ def load():
         try:
             base = Path(folder)
             if base.is_dir():
-                for child in sorted(base.iterdir()):
+                for child in sorted(base.iterdir(), key=lambda c: natural_key(c.name)):
                     try:
                         if child.is_dir() and (child / "state.json").exists():
                             candidates.append(str(child))
@@ -5374,12 +5374,16 @@ def qdac_page():
     store = _store()
     root = store.merged if store else {}
     groups = []
-    for (con, slot, port), entry in sorted(qdac_mod.ext_groups(root).items()):
+    # slot/port are STRINGS: a plain sort reads fem10 before fem2 (customer
+    # rule 2026-09-09 — every displayed order counts numerically).
+    for (con, slot, port), entry in sorted(
+            qdac_mod.ext_groups(root).items(),
+            key=lambda kv: tuple(natural_key(s) for s in kv[0])):
         groups.append({
             "port": f"{con}/fem{slot}/p{port}",
             "ext": entry["ext"],
             "qubits": entry["qubits"],
-            "conflict": sorted(entry["conflict"]),
+            "conflict": sorted(entry["conflict"], key=natural_key),
         })
     return _channel_scoped_qubits_page(
         has_key="has_qdac", page_name="qdac", template_stub="qdac",
@@ -7593,7 +7597,7 @@ def bulk_column_history():
     uid_roots = _uid_roots()
     with store._lock:
         merged_now = store.merged
-    for row_id in sorted(path_map):
+    for row_id in sorted(path_map, key=natural_key):
         dp = path_map[row_id]
         current = None
         editable = True
@@ -8572,9 +8576,10 @@ def pairs():
         pair_vocab = "cr" if kinds == {"cr"} else "mixed"
     if pair_vocab == "cr":
         pair_data.sort(key=lambda p: (
-            tuple(sorted((str(p.get("qubit_control") or ""),
-                          str(p.get("qubit_target") or "")))),
-            str(p.get("qubit_control") or "")))
+            tuple(natural_key(q) for q in sorted(
+                (str(p.get("qubit_control") or ""),
+                 str(p.get("qubit_target") or "")), key=natural_key)),
+            natural_key(str(p.get("qubit_control") or ""))))
 
     page = _int_arg("page", 1, minimum=1)
     per_page = _int_arg("per_page", _DEFAULT_PER_PAGE, minimum=1)
@@ -16021,7 +16026,7 @@ def _diff_run_figures(src) -> tuple[list[str], str]:
     except Exception:  # noqa: BLE001 -- fall through to the folder listing
         names = []
     try:
-        for f in sorted(folder.iterdir()):
+        for f in sorted(folder.iterdir(), key=lambda p: natural_key(p.name)):
             if f.is_file() and f.suffix.lower() in _DIFF_FIG_EXT and f.name not in names:
                 names.append(f.name)
     except OSError:
@@ -17128,7 +17133,7 @@ def browse_directory():
                      # Dot-dirs surface only when the TYPED segment starts with
                      # "." (…/.qual → ~/.qualibrate) — otherwise stay hidden.
                      and (prefix.startswith(".") or not c.name.startswith("."))),
-                    key=str.casefold,   # display order only — paths untouched
+                    key=natural_key,    # display order only — paths untouched
                 )
             except PermissionError:
                 dirs, err = [], "Permission denied"
@@ -17170,7 +17175,7 @@ def browse_directory():
         children = sorted(
             (str(c) for c in p.iterdir()
              if c.is_dir() and (show_dot or not c.name.startswith("."))),
-            key=str.casefold,   # display order only — paths untouched
+            key=natural_key,    # display order only — paths untouched
         )
     except PermissionError:
         children, err = [], "Permission denied"
@@ -17232,7 +17237,7 @@ def browse_directory():
             toml_files = sorted(
                 (str(c) for c in p.iterdir()
                  if c.is_file() and c.suffix.lower() == ".toml"),
-                key=str.casefold,
+                key=natural_key,
             )
         except OSError:
             pass
@@ -17491,7 +17496,7 @@ def _load_compare_stores(paths_raw: list[str]):
         for qn in s.qubit_names:
             if qn not in all_qubit_names:
                 all_qubit_names.append(qn)
-    all_qubit_names.sort()
+    all_qubit_names.sort(key=natural_key)
 
     return stores, contexts, labels, all_qubit_names
 
@@ -18626,8 +18631,9 @@ def _hub_map_view(view: dict) -> None:
     probably aren't the same design"."""
     m = view.get("mapping") or {}
     pairs = m.get("pairs") or {}
-    ref_names = sorted(set(pairs) | set(m.get("unmatched_a") or []))
-    other_names = sorted(set(pairs.values()) | set(m.get("unmatched_b") or []))
+    ref_names = sorted(set(pairs) | set(m.get("unmatched_a") or []), key=natural_key)
+    other_names = sorted(set(pairs.values()) | set(m.get("unmatched_b") or []),
+                         key=natural_key)
     view["map_editor"] = {"ref_names": ref_names,
                           "other_names": other_names, "pairs": pairs}
     total = max(len(ref_names), len(other_names))
@@ -19247,17 +19253,20 @@ def param_history():
     else:
         try:
             conn = hm._open_index(target_path)
-            all_qubits = [r[0] for r in conn.execute(
-                "SELECT DISTINCT qubit FROM param_history ORDER BY qubit"
-            ).fetchall()]
+            # SQLite's ORDER BY is BYTE order (q10 before q2); the displayed
+            # list counts numerically (customer rule 2026-09-09).
+            all_qubits = sorted(
+                (r[0] for r in conn.execute(
+                    "SELECT DISTINCT qubit FROM param_history").fetchall()),
+                key=natural_key)
             conn.close()
         except Exception:
-            all_qubits = sorted({r["qubit"] for r in rows})
+            all_qubits = sorted({r["qubit"] for r in rows}, key=natural_key)
 
     if qubits_selected:
-        qubits = sorted(qubits_selected)
+        qubits = sorted(qubits_selected, key=natural_key)
     else:
-        qubits = [] if none_qubits else sorted(all_qubits)   # docs/158
+        qubits = [] if none_qubits else sorted(all_qubits, key=natural_key)   # docs/158
     by_cell = {(r["qubit"], r["property"]): r for r in rows}
 
     # Current-value overlay: only meaningful when viewing the loaded chip.
@@ -20117,7 +20126,7 @@ def _record_project_roots(project: str, roots: list[str]) -> None:
             pass                                   # user said "stop asking" — merge
         else:
             known = set((entry or {}).get("new", [])) if isinstance(entry, dict) else set()
-            merged_new = sorted(known | set(fresh))
+            merged_new = sorted(known | set(fresh), key=natural_key)
             if set(merged_new) != known:
                 pend[project] = {"new": merged_new}
                 _save_pending_roots(pend)
@@ -20821,7 +20830,7 @@ def _dataset_candidate_folders(*, fast: bool = False) -> list[Path]:
             continue
         if cand.is_dir():
             candidates.add(cand)
-    result = sorted(candidates)
+    result = sorted(candidates, key=lambda p: natural_key(str(p)))
     # Stored even when ``token is None`` (a fast rebuild, or a slow one whose
     # token could not be computed): the entry is keyed by ``ws.version``, and
     # every tree rebind in the scanner bumps that version, so a version-matched
@@ -21129,7 +21138,7 @@ def _datasets_view(view_mode: str):
     rows.sort(key=lambda r: (r.get("date") or "", r.get("time") or "", r.get("id") or 0),
               reverse=True)
 
-    all_tags = sorted(tags_set)
+    all_tags = sorted(tags_set, key=natural_key)
     collection_tags: list[str] = []
     if is_collections:
         # Only runs that carry >=1 tag belong in Collections.
@@ -21138,15 +21147,20 @@ def _datasets_view(view_mode: str):
         rest = [t for t in all_tags if t != FAVORITE_TAG]
         collection_tags = ([FAVORITE_TAG] if FAVORITE_TAG in all_tags else []) + rest
 
-    experiments = sorted(experiments_set)
+    # Node names carry numeric prefixes (05_power_rabi, 15h_…) and qubit ids
+    # double digits — every displayed list counts numerically (2026-09-09).
+    experiments = sorted(experiments_set, key=natural_key)
     dates = sorted(dates_set, reverse=True)
     # Merge per-folder experiment categories preserving the canonical order.
     _CANON = ["Readout", "2Q", "Coupler", "Qubit Flux", "1Q", "Other"]
-    exp_categories = [{"label": lbl, "experiments": sorted(cat_map[lbl])}
+    exp_categories = [{"label": lbl,
+                       "experiments": sorted(cat_map[lbl], key=natural_key)}
                       for lbl in _CANON if cat_map.get(lbl)]
     for lbl in cat_map:  # defensive: any non-canonical label
         if lbl not in _CANON:
-            exp_categories.append({"label": lbl, "experiments": sorted(cat_map[lbl])})
+            exp_categories.append(
+                {"label": lbl,
+                 "experiments": sorted(cat_map[lbl], key=natural_key)})
     stats = {
         "total_runs": total,
         "date_range": f"{dates[-1]} - {dates[0]}" if dates else "",
@@ -21174,7 +21188,8 @@ def _datasets_view(view_mode: str):
             "date": latest_day,
             "total": len(day_rows),
             "failed": len(failed_rows),
-            "qubit_fail": sorted(qubit_fail.items(), key=lambda kv: (-kv[1], kv[0]))[:8],
+            "qubit_fail": sorted(qubit_fail.items(),
+                                 key=lambda kv: (-kv[1], natural_key(kv[0])))[:8],
         }
     # Folder-set signature for dataset-virtual.js: when the active-folder SET
     # changes (folder added/removed), the client clears its compare-checkbox
@@ -21898,8 +21913,9 @@ def _notes_state() -> dict:
     store = _store()
     merged = store.merged if store and isinstance(store.merged, dict) else None
     items = entity_notes.classify(merged, raw)
-    ordered = sorted(items.values(), key=lambda r: (r.get("entity") or "",
-                                                    r.get("subject") or ""))
+    ordered = sorted(items.values(),
+                     key=lambda r: (natural_key(r.get("entity") or ""),
+                                    natural_key(r.get("subject") or "")))
     # With no readable chip nothing is stamped, so `orphan` is absent and every
     # note lands in `present` -- the honest reading of "we cannot tell".
     present = [r for r in ordered if not r.get("orphan")]
@@ -22787,7 +22803,7 @@ def datasets_all_tags():
     tags_set: set[str] = set()
     for fol in _active_dataset_stores():
         tags_set.update(fol["store"].list_all_tags())
-    return jsonify({"tags": sorted(tags_set)})
+    return jsonify({"tags": sorted(tags_set, key=natural_key)})
 
 
 @bp.route("/dataset/<uid>/bookmark", methods=["POST"])
@@ -22968,8 +22984,8 @@ def trends():
                          key=lambda f: max(f["store"].dates or [""]))
             trend_scope_keys = [newest["key"]]
     return render_template(template, **_ctx(page="trends"),
-                           experiments=sorted(experiments),
-                           qubits=sorted(qubits),
+                           experiments=sorted(experiments, key=natural_key),
+                           qubits=sorted(qubits, key=natural_key),
                            folders=folders,
                            scope_project=scope_project,
                            trend_scope_keys=trend_scope_keys,
@@ -23377,7 +23393,7 @@ def _build_output_guard(output_path: str) -> dict | None:
         p.relative_to(out).as_posix() for p in out.rglob("*.json")
         if not any(part.startswith(".") for part in p.relative_to(out).parts)
         and p.relative_to(out).as_posix() not in ("state.json", "wiring.json")
-    })
+    }, key=natural_key)
     existing_chip = (out / "state.json").exists()
     if not stray and not existing_chip:
         return None
