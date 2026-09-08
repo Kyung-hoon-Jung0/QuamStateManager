@@ -121,17 +121,22 @@ class TestThePage:
 
 
 class TestTheSidebar:
-    def test_calibration_log_is_top_level_with_param_history_beneath(self, world):
+    def test_calibration_log_is_top_level_with_both_histories_beneath(self, world):
+        """Customer feedback 2026-09-08: the Agent entry sits right above the
+        Calibration log, and State History + Param History are its sub-items
+        (State History used to stand alone above it)."""
         html = world["client"].get("/").get_data(as_text=True)
         i_sub = html.index('id="journal-subnav"')
         above = html[i_sub - 2500:i_sub]          # the sidebar just above the Calibration log entry
-        below = html[i_sub:i_sub + 900]           # its own sub-list
-        assert 'href="/journal"' in above and 'href="/state-history"' in above, \
-            "State History (standalone) sits above the Calibration log entry"
-        assert above.index('href="/state-history"') < above.index('href="/journal"')
-        assert 'href="/param-history"' in below, "Param History is the Calibration log's sub-item"
+        below = html[i_sub:i_sub + 1200]          # its own sub-list
+        assert 'href="/journal"' in above and 'href="/agent"' in above, "the Agent entry is right above the Calibration log"
+        assert above.index('href="/agent"') < above.index('href="/journal"')
+        assert 'href="/state-history"' not in above, "State History no longer stands alone above the Calibration log"
+        assert 'href="/state-history"' in below and 'href="/param-history"' in below, "both histories are its sub-items"
+        assert below.index('href="/state-history"') < below.index('href="/param-history"')
         assert 'id="state-history-subnav"' not in html
         assert html.count(">Calibration log</a>") == 1
+        assert (above + below).count('href="/state-history"') == 1, "State History appears once in the nav around the Calibration log"
         pal = re.search(r'<script id="cmd-palette-data"[^>]*>(.*?)</script>', html, re.S).group(1)
         labels = [e["label"] for e in json.loads(pal)["pages"]]
         assert "Calibration log" in labels

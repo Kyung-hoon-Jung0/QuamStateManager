@@ -4380,6 +4380,33 @@ def home():
         return render_template("base.html", **_ctx(page="agent_home", landing_config_exists=config_exists,
                                                    agent_dry_run=_agent_dry_run()))
     session = _load_session()
+    return _home_landing(config_exists, session)
+
+
+@bp.route("/agent")
+def agent_page():
+    """The Agent as a DESTINATION (customer feedback 2026-09-08): the sidebar
+    entry right above the Calibration log opens the Agent home in the pane
+    like every other page, instead of a floating panel off the tool row. A
+    full load of /agent renders what `/` renders with a chip open; without a
+    chip the pane says so (the Agent works on the open chip)."""
+    chip_open = bool(_active_path() and (_active_ctx() or {}).get("type") == "quam")
+    if _is_htmx():
+        if not chip_open:
+            return render_template("_status.html", level="info",
+                                   message="Open a chip first — the Agent works on the open chip "
+                                           "(Projects or State Load in the sidebar).")
+        return render_template("_agent_home.html", agent_dry_run=_agent_dry_run())
+    if not chip_open:
+        return redirect(url_for("main.home", landing=1))
+    config_exists = bool(qualibrate_config.tray_status().get("config_exists"))
+    return render_template("base.html", **_ctx(page="agent_home", landing_config_exists=config_exists,
+                                               agent_dry_run=_agent_dry_run()))
+
+
+def _home_landing(config_exists, session):
+    """The Projects landing half of home() (split out so /agent can share the
+    chip-open branch without duplicating the landing)."""
     # Session values are hand-editable JSON — a type-corrupt entry (int,
     # nested list, …) must degrade to "no history", never TypeError the
     # most-hit route out of Path().

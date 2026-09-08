@@ -331,11 +331,10 @@
                    below Settings / Calculator. Opens a movable window (manual.js)
                    with the house search box over every state.json key the
                    chip's classes can carry + the QM-docs config keys. #}
-                {# docs/173 S6: the Agent panel -- the same session as the Agent home, floating on any page #}
-                <button type="button" class="sidebar-tool agent-btn" id="agent-btn" onclick="toggleAgentPanel(this)"
-                        aria-haspopup="dialog" aria-controls="agent-popover"
-                        title="Agent — the calibration agent's chat and cards (the Agent home when the chip's home page is open)">
-                    <svg class="sidebar-tool-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8M8 13h5"/></svg><span class="sidebar-tool-label">Agent</span></button>
+                {# docs/173 S6 gave the tool row an Agent button that floated a panel; customer
+                   feedback 2026-09-08 ("the floating panel's place is awkward"): the Agent is a
+                   DESTINATION now -- a nav entry right above the Calibration log (below). The
+                   floating panel (#agent-popover) stays for toggleAgentPanel() callers. #}
                 <button type="button" class="sidebar-tool manual-btn" id="manual-btn"
                         onclick="toggleConfigManual(this)" aria-haspopup="dialog"
                         aria-expanded="false" aria-controls="manual-popover"
@@ -572,8 +571,6 @@
                                    {% if page == 'pulses' %}class="active"{% endif %}>Pulses</a></li>
                         </ul>
                     </li>
-                    <li><a href="/state-history" hx-get="/state-history" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                           {% if page == 'state_history' %}class="active"{% endif %}>State History</a></li>
                     {# Execution trio (r15 renames — routes/page tokens unchanged):
                        Experiment Runner = queue + run nodes on hardware (docs/40);
                        Fit Replay = read-only re-check of already-saved fits (docs/50);
@@ -589,19 +586,26 @@
                            {% if page == 'autofit' %}class="active"{% endif %}>Auto Calibrate
                            <span id="autofit-nav-badge" class="autofit-nav-badge" hidden></span></a></li>
                     {% endif %}
+                    {# customer feedback 2026-09-08: the Agent is a page, right above the
+                       Calibration log (it used to be a tool-row button floating a panel). #}
+                    <li><a href="/agent" hx-get="/agent" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                           id="nav-agent" {% if page == 'agent_home' %}class="active"{% endif %}>Agent</a></li>
                     {# docs/173: the story of the chip -- every run, whoever ran it.
-                       One click (top level); Param History is its detail view. #}
+                       One click (top level); State History and Param History are its
+                       detail views (customer feedback 2026-09-08: both beneath it). #}
                     <li class="nav-with-sub">
                         <div class="nav-sub-row">
                             <a href="/journal" hx-get="/journal" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
                                {% if page == 'journal' %}class="active"{% endif %}>Calibration log</a>
                             <button type="button" class="nav-sub-toggle"
-                                    aria-expanded="{{ 'true' if page == 'param_history' else 'false' }}"
+                                    aria-expanded="{{ 'true' if page in ('param_history', 'state_history') else 'false' }}"
                                     aria-controls="journal-subnav" aria-label="Toggle history tools"
                                     onclick="toggleNavSub(this, 'journal-subnav', 'quam_journal_nav_collapsed')">&#9662;</button>
                         </div>
-                        <ul class="nav-subitems{% if page != 'param_history' %} nav-subitems-collapsed{% endif %}"
+                        <ul class="nav-subitems{% if page not in ('param_history', 'state_history') %} nav-subitems-collapsed{% endif %}"
                             id="journal-subnav">
+                            <li><a href="/state-history" hx-get="/state-history" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                                   {% if page == 'state_history' %}class="active"{% endif %}>State History</a></li>
                             <li><a href="/param-history" hx-get="/param-history" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
                                    {% if page == 'param_history' %}class="active"{% endif %}>Param History</a></li>
                         </ul>
@@ -1167,7 +1171,7 @@
                 {"label": "Pulses",            "url": "/pulses"},
                 {"label": "State History",     "url": "/state-history"},
                 {"label": "Calibration log",   "url": "/journal"},
-                {"label": "Agent home",         "url": "/"},
+                {"label": "Agent home",         "url": "/agent"},
                 {"label": "Param History",     "url": "/param-history"},
                 {% if experimental %}
                 {"label": "Experiment Runner", "url": "/scheduler"},

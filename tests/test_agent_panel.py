@@ -9,6 +9,7 @@ click starts a plan, and that click arms, snapshots and tells the agent.
 from __future__ import annotations
 
 import json
+import re
 import sys
 import time
 from datetime import datetime
@@ -248,8 +249,28 @@ class TestPlans:
 class TestHome:
     def test_home_is_the_agent_home_when_a_chip_is_open(self, c):
         html = c.get("/").get_data(as_text=True)
-        assert 'id="agent-home"' in html and 'id="agent-popover"' in html and 'class="sidebar-tool agent-btn"' in html
-        assert "agent.js" in html and '"label": "Agent home"' in html
+        assert 'id="agent-home"' in html and 'id="agent-popover"' in html
+        # customer feedback 2026-09-08: no tool-row Agent button any more -- the Agent is a
+        # nav entry (id nav-agent, above the Calibration log) that opens /agent in the pane
+        assert 'class="sidebar-tool agent-btn"' not in html and 'id="nav-agent"' in html
+        assert re.search(r'href="/agent"[^>]*hx-get="/agent"[^>]*hx-target="#table-pane"', html)
+        assert re.search(r'id="nav-agent" class="active"', html), "with a chip open, / IS the Agent home: the entry is active"
+        assert "agent.js" in html and '"label": "Agent home"' in html and '"url": "/agent"' in html
+
+    def test_agent_is_a_page_in_the_pane_and_a_full_page(self, c):
+        # htmx (the sidebar click): the partial only -- the mount point, no shell
+        part = c.get("/agent", headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert 'id="agent-home"' in part and "<aside" not in part and 'id="sidebar"' not in part
+        # a full load (F5 on /agent): the whole page with the entry active
+        full = c.get("/agent").get_data(as_text=True)
+        assert 'id="agent-home"' in full and 'id="sidebar"' in full and re.search(r'id="nav-agent" class="active"', full)
+
+    def test_agent_without_a_chip_says_so(self, app):
+        cl = app.test_client()
+        part = cl.get("/agent", headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert "Open a chip first" in part and 'id="agent-home"' not in part
+        r = cl.get("/agent")
+        assert r.status_code == 302 and "landing=1" in r.headers["Location"]
 
     def test_home_without_a_chip_is_the_landing_with_the_current_project_button(self, app, monkeypatch):
         from quam_state_manager.core import qualibrate_config

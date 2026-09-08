@@ -6791,10 +6791,15 @@ class TestSidebarIAr15:
                 < base.index(">Chip Status</a>")
                 < base.index(">Compare</a>")
                 < base.index(">Live State Edit</a>")
-                < base.index(">State History</a>")
                 < base.index(">Experiment Runner</a>")
                 < base.index(">Fit Replay</a>")
-                < base.index(">Auto Calibrate"))
+                < base.index(">Auto Calibrate")
+                # customer feedback 2026-09-08: Agent right above the Calibration log,
+                # State History + Param History beneath it
+                < base.index(">Agent</a>")
+                < base.index(">Calibration log</a>")
+                < base.index(">State History</a>")
+                < base.index(">Param History</a>"))
 
     def test_group_memberships(self):
         base = self._base()
@@ -6807,8 +6812,8 @@ class TestSidebarIAr15:
             assert label in comp, label
         live = seg("live-edit-subnav")
         assert ">Json Tree View</a>" in live and ">Pulses</a>" in live
-        hist = seg("journal-subnav")            # docs/173: Param History sits under Calibration log
-        assert ">Param History</a>" in hist
+        hist = seg("journal-subnav")            # docs/173: Param History sits under Calibration log; 2026-09-08: State History too
+        assert ">Param History</a>" in hist and ">State History</a>" in hist
         ds = seg("datasets-subnav")
         assert ">Collections</a>" in ds and ">Trends</a>" in ds
 
