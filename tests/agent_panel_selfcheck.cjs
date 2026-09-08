@@ -294,7 +294,9 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
      'the strip: the state on the left, the doors + observer + links on the right');
   ok(/thinking · by_claude/.test(strip.querySelector('.ag-now-state').textContent) && !/Agent: /.test(strip.querySelector('.ag-now-state').textContent),
      'the strip says "thinking · by_claude" without the topbar pill\'s "Agent:" prefix');
-  ok(/today 5 events/.test(strip.textContent) && /waiting 1/.test(strip.textContent) && /claude session · human:kyunghoon · not armed/.test(strip.textContent), 'session + today\'s counts sit in the strip');
+  // round 2: "claude session · human:…" became "claude · human:…" -- the word "session" cost
+  // a row on the customer's own strip and says nothing the backend name does not
+  ok(/today 5 events/.test(strip.textContent) && /waiting 1/.test(strip.textContent) && /claude · human:kyunghoon · not armed/.test(strip.textContent), 'session + today\'s counts sit in the strip');
   ok(!strip.querySelector('.ag-now-run'), 'no run in progress: no second row');
   feed.now.state = 'running'; feed.now.running = { node: '05_power_rabi', since: now - 30, typical_s: 300 };
   await P.poll(true); await tick();
@@ -454,6 +456,55 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   feed.now.state = 'between'; delete feed.now.running;
   await P.poll(true); await tick();
   ok(!strip.querySelector('.ag-now-run') && sr.textContent === 'thinking · by_claude · ask-writes', 'the run ends: the row goes, the status node says so');
+
+  // --- round 2 (measured in Chrome): the strip said the same thing twice and grew to three rows
+  feed.now.state = 'human-ran';
+  feed.now.human_ran = { node: '17a_ramsey_vs_flux_calibration', ts: now - 32, run_id: 251 };
+  await P.poll(true); await tick();
+  const mainTxt = strip.querySelector('.ag-now-main').textContent;
+  ok(/human ran 17a_ramsey_vs_flux_calibration/.test(mainTxt), 'the state text names the human run');
+  ok(mainTxt.match(/17a_ramsey_vs_flux_calibration/g).length === 1,
+     'and it is said ONCE -- no duplicate "human ran" line beside it: ' + JSON.stringify(mainTxt));
+  feed.now.state = 'between';                       // the state is about something else now
+  await P.poll(true); await tick();
+  ok(/human ran/.test(strip.querySelector('.ag-now-main').textContent),
+     'when the state is NOT the human run, the human-ran line is still there');
+  delete feed.now.human_ran;
+  await P.poll(true); await tick();
+
+  // --- round 2: the clamp is decided by the rendered HEIGHT, not the character count
+  // (a 1,243-char paragraph rendered 174px tall wore a fade over nothing). jsdom has no
+  // layout, so the two boxes are given the heights a browser would report.
+  // the heights are stamped on the CARD, and the prototype getters read them from there:
+  // setHtml replaces the card's innerHTML, so a getter defined on the .ag-md instance
+  // would die with the element it was defined on (that is what a browser's live layout
+  // gives us for free, and what the first cut of this pin got wrong).
+  Object.defineProperty(window.HTMLElement.prototype, 'clientHeight', {
+    configurable: true, get() { var c = this.closest && this.closest('.ag-card'); return (c && c.__fakeH) ? c.__fakeH[0] : 0; } });
+  Object.defineProperty(window.HTMLElement.prototype, 'scrollHeight', {
+    configurable: true, get() { var c = this.closest && this.closest('.ag-card'); return (c && c.__fakeH) ? c.__fakeH[1] : 0; } });
+  function layout(el, client, scroll) {
+    var card = el.closest('.ag-card');
+    card.__fakeH = [client, scroll];
+  }
+  const bigText = 'x'.repeat(1300);
+  feed.cards.push({ n: 900, ts: t0 + 20, kind: 'answer', text: bigText, html: '<p>' + bigText + '</p>', backend: 'claude' });
+  feed.cards.push({ n: 901, ts: t0 + 21, kind: 'answer', text: bigText, html: '<p>' + bigText + '</p>', backend: 'claude' });
+  feed.last = 901; P._state.after = 0;
+  await P.poll(true); await tick();
+  const fits = feedEl.querySelector('[data-card="answer:900"]'), cut = feedEl.querySelector('[data-card="answer:901"]');
+  ok(fits && fits.querySelector('.ag-md.ag-clamp') && fits.querySelector('.ag-more'),
+     'a long answer is a clamp CANDIDATE on the first render (no layout to measure yet)');
+  layout(fits.querySelector('.ag-md'), 174, 174);            // it all fits: nothing is cut off
+  layout(cut.querySelector('.ag-md'), 328, 900);             // genuinely cut off
+  feed.cards[feed.cards.length - 2].html += ' ';
+  feed.cards[feed.cards.length - 1].html += ' ';
+  P._state.after = 0;
+  await P.poll(true); await tick();
+  ok(!fits.querySelector('.ag-md.ag-clamp') && !fits.querySelector('.ag-more'),
+     'a candidate whose box does NOT overflow loses the clamp and the show-more');
+  ok(cut.querySelector('.ag-md.ag-clamp') && cut.querySelector('.ag-more'),
+     'an answer whose box DOES overflow keeps the clamp and the link');
 
   console.log(`\n${passes} passed, ${fails} failed`);
   process.exit(fails ? 1 : 0);

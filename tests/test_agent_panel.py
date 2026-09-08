@@ -338,6 +338,21 @@ class TestHome:
         for m in re.finditer(r"(?<![-\w])color:\s*([^;}]+)", blk):
             v = m.group(1).strip()
             assert "#d98c00" not in v or v.startswith("color-mix("), f"the accent used bare as a text colour: {m.group(0)}"
+        # review round 2, measured from Chrome's computed colours: the same trap in three
+        # more places -- #2e7d32 as TEXT is 2.98:1 on the dark card, #8b5cf6 likewise. Any
+        # literal green/violet used as a text colour must be mixed towards the foreground.
+        for m in re.finditer(r"(?<![-\w])color:\s*([^;}]+)", blk):
+            v = m.group(1).strip()
+            for lit in ("#2e7d32", "#8b5cf6"):
+                assert lit not in v or v.startswith("color-mix("), f"a literal used bare as a text colour: {m.group(0)}"
+        # the strip is ONE row at a normal width: the state text truncates, the doors stay
+        assert re.search(r"\.ag-now-main \{[^}]*flex: 1 1 0;[^}]*white-space: nowrap;[^}]*flex-wrap: nowrap;", blk, re.S)
+        assert re.search(r"\.ag-now-main > \* \{[^}]*text-overflow: ellipsis;", blk)
+        assert re.search(r"\.ag-now-acts \{[^}]*flex-wrap: nowrap;[^}]*flex: 0 0 auto;", blk)
+        # the float's own minimum keeps strip + composer on screen (the customer's first
+        # complaint reproduced at the panel's smallest size): the feed absorbs the squeeze
+        assert ".agent-popover .ag-compact .ag-cards { min-height: 0; }" in blk
+        assert re.search(r"\.agent-popover \{[^}]*min-height: (2[4-9]|[3-9]\d)rem;", blk, re.S)
         assert re.search(r"\.ag-md h1, \.ag-md h2, \.ag-md h3[^{]*\{ font-size: 1em; font-weight: 700;", blk)
         # Pico's width:100% never reaches a button / input / select inside the page
         assert (".ag-root button, .ag-root [type=submit], .ag-root [type=button], .ag-root select, "
@@ -386,9 +401,12 @@ class TestReviewRound1:
         assert re.search(r"lr\.top \+ \(window\.pageYOffset \|\| 0\)", measure)
         # the bar-only path survives as the fallback (test_web pins the hidden-bar zero on it)
         assert "classList.contains('topbar-hidden')) return 0" in measure
-        # the ResizeObserver covers every sibling before the layout, not only the bar
+        # the ResizeObserver covers every sibling before the layout, not only the bar.
+        # Round 2 caught this assert being vacuous: the SEEDING line already contains
+        # "previousElementSibling", so a walk cut to one element passed. Pin the WALK.
         above = blk.split("function aboveLayout() {", 1)[1].split("function start", 1)[0]
-        assert "previousElementSibling" in above
+        assert re.search(r"while \(el\)\s*\{[^}]*out\.push\(el\)[^}]*el = el\.previousElementSibling", above), \
+            "aboveLayout must WALK up the siblings, not take only the one before the layout"
         start = blk.split("function start() {", 1)[1]
         assert "aboveLayout().forEach(function (el) { if (seen.indexOf(el) < 0) { seen.push(el); ro.observe(el); } })" in start
         assert "MutationObserver" in start and "{ childList: true }" in start

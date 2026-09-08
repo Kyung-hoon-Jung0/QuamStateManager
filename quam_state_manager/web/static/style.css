@@ -12729,7 +12729,9 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 /* the status strip: state · session · today's counts | the doors, observer, links */
 .ag-now { position: sticky; top: 0; z-index: 2; flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .6rem;
   padding: .3rem .55rem; font-size: .9em; border: 1px solid var(--pico-muted-border-color); border-radius: .4rem; background: var(--pico-card-background-color); }
-.ag-now-main { display: flex; flex-wrap: wrap; align-items: center; gap: .15rem .4rem; flex: 1 1 auto; min-width: 0; }
+.ag-now-main { display: flex; align-items: center; gap: .15rem .4rem; flex: 1 1 0; min-width: 0; overflow: hidden;
+    white-space: nowrap; flex-wrap: nowrap; }                            /* round 2: the strip is ONE row -- the state text truncates, it never wraps the buttons away */
+.ag-now-main > * { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ag-now-sep { color: var(--pico-muted-color); }
 .ag-now-state { font-weight: 600; white-space: nowrap; }
 .ag-now-state .agent-pill-dot { display: inline-block; width: .6em; height: .6em; border-radius: 50%; background: var(--pico-muted-border-color); margin-right: .4em; vertical-align: 0; }
@@ -12740,10 +12742,10 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .ag-now-state.ag-stalled .agent-pill-dot { background: var(--color-warn-border, #e6a700); }
 .ag-now-state.ag-limited .agent-pill-dot { background: #8b5cf6; }
 .ag-now-line { white-space: nowrap; }
-.ag-now-acts { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin-left: auto; }
+.ag-now-acts { display: flex; flex-wrap: nowrap; align-items: center; gap: .4rem; margin-left: auto; flex: 0 0 auto; }
 .ag-now-links { font-size: .92em; white-space: nowrap; }
 .ag-now-run { flex-basis: 100%; }                                       /* the one allowed second row: a run in progress */
-.ag-armed { color: #2e7d32; font-weight: 600; }
+.ag-armed { color: color-mix(in srgb, #2e7d32 55%, var(--pico-color)); font-weight: 600; }   /* round 2: 2.98:1 on the dark card -> mixed toward the text colour */
 .ag-observer { font-size: .9em; display: inline-flex; gap: .3rem; align-items: center; margin: 0; white-space: nowrap; }
 .ag-observer input { margin: 0; }
 .ag-unreachable { font-weight: 600; }
@@ -12785,7 +12787,7 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .ag-tool { font-size: .88em; color: var(--pico-muted-color); line-height: 1.5; }
 .ag-tool code { font-size: .95em; }
 .ag-tool.ag-failed, .ag-err { color: var(--pico-del-color, #b00020); }
-.ag-tool.ag-limited { color: #8b5cf6; }
+.ag-tool.ag-limited { color: color-mix(in srgb, #8b5cf6 60%, var(--pico-color)); }
 .ag-tool.ag-stopped { color: var(--pico-muted-color); }
 /* consecutive tool events fold into one row that opens to the lines (members stay
    direct children of the feed, hidden while the group is closed) */
@@ -12806,7 +12808,7 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .ag-plan-st, .ag-step-st { display: inline-block; font-size: .72em; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; line-height: 1.6;
   padding: 0 .55em; border-radius: 999px; background: color-mix(in srgb, currentColor 12%, transparent); color: var(--pico-muted-color); white-space: nowrap; vertical-align: .1em; }
 .ag-step-st { min-width: 1.7em; text-align: center; }
-.ag-st-done { color: #2e7d32; } .ag-st-failed { color: var(--pico-del-color, #b00020); } .ag-st-running { color: var(--pico-primary); }
+.ag-st-done { color: color-mix(in srgb, #2e7d32 55%, var(--pico-color)); } .ag-st-failed { color: var(--pico-del-color, #b00020); } .ag-st-running { color: var(--pico-primary); }
 .ag-st-draft { color: var(--pico-primary); }
 /* waiting: the accent pulled 55% towards the theme's own text colour -- darker on the light
    card, lighter on the dark one. Measured in Chrome on the pill's own tinted ground: 4.93:1
@@ -12857,7 +12859,7 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .ag-compact .ag-presets:not(.open) .ag-preset { display: none; }
 /* the journal's author labels (by_claude / by_codex / human / unknown) */
 .jr-entry[data-author^="by_"] > code:first-of-type { color: var(--pico-primary); }
-.jr-entry[data-author="human"] > code:first-of-type, .jr-entry[data-author^="human:"] > code:first-of-type { color: #2e7d32; }
+.jr-entry[data-author="human"] > code:first-of-type, .jr-entry[data-author^="human:"] > code:first-of-type { color: color-mix(in srgb, #2e7d32 55%, var(--pico-color)); }
 .jr-entry[data-author="unknown"] > code:first-of-type { color: var(--pico-muted-color); }
 /* docs/173 S7 -- the Agent setup page */
 .agent-setup { max-width: 62rem; }
@@ -12868,7 +12870,7 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .as-line { margin: .3rem 0; }
 .as-gap { color: var(--pico-muted-color); font-size: .9em; }
 .as-diff { font-size: .85em; max-height: 22rem; overflow: auto; margin: .4rem 0; padding: .4rem .6rem; border: 1px solid var(--pico-muted-border-color); border-radius: .4rem; background: var(--pico-code-background-color, var(--pico-card-sectioning-background-color)); }
-.as-diff .as-add { color: #2e7d32; } .as-diff .as-del { color: var(--pico-del-color, #b00020); } .as-diff .as-eq { color: var(--pico-muted-color); }
+.as-diff .as-add { color: color-mix(in srgb, #2e7d32 55%, var(--pico-color)); } .as-diff .as-del { color: var(--pico-del-color, #b00020); } .as-diff .as-eq { color: var(--pico-muted-color); }
 .as-acts { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin-top: .4rem; }
 .as-acts button, .as-acts .btn-sm { width: auto; margin: 0; }
 .as-q { margin: .3rem 0; } .as-q input, .as-q textarea { margin: 0; }
@@ -12876,12 +12878,12 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .as-ctx-local, .as-jroot { font-size: .9em; }
 .as-jroot input { display: inline-block; width: min(28rem, 100%); margin: 0; }
 .ag-toast { position: fixed; bottom: 1rem; right: 1rem; background: var(--pico-card-background-color); border: 1px solid var(--pico-muted-border-color); padding: .5rem .8rem; border-radius: .4rem; z-index: 60; }
-.agent-popover { position: fixed; right: 1rem; bottom: 1rem; width: min(34rem, 92vw); max-height: 80vh; min-width: 22rem; min-height: 16rem; overflow: hidden; z-index: 55;
+.agent-popover { position: fixed; right: 1rem; bottom: 1rem; width: min(34rem, 92vw); max-height: 80vh; min-width: 22rem; min-height: 24rem; overflow: hidden; z-index: 55;
   background: var(--pico-card-background-color); border: 1.5px solid var(--pico-primary); border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.25); display: flex; flex-direction: column; }
 /* review R2-9: the cards scroll INSIDE the panel; the composer stays pinned at the bottom */
 .agent-popover .agent-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .agent-popover .ag-root.ag-compact { flex: 1 1 auto; min-height: 0; }
-.agent-popover .ag-compact .ag-cards { min-height: 6rem; }
+.agent-popover .ag-compact .ag-cards { min-height: 0; }   /* round 2: at the panel's min size a 6rem floor pushed the composer out -- the feed absorbs the squeeze */
 .agent-hidden { display: none; }
 .agent-popover.agent-floating { right: auto; bottom: auto; }
 .agent-header { display: flex; justify-content: space-between; align-items: center; padding: .35rem .7rem; cursor: grab; border-bottom: 1px solid var(--pico-muted-border-color); border-radius: 8.5px 8.5px 0 0; background: var(--pico-card-sectioning-background-color, var(--pico-card-background-color)); }

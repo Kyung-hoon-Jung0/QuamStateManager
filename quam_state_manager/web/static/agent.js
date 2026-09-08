@@ -154,6 +154,7 @@ window.AgentPanel = (function () {
     el.__agHtml = html;
     el.__agStale = null;
     syncExpanded(el);
+    confirmClamp(el);        // the rendered height, not the character count, decides the clamp
     return true;
   }
   // customer feedback 2026-09-08: the feed is a TIMELINE -- every row is a monospace
@@ -172,6 +173,20 @@ window.AgentPanel = (function () {
   function syncExpanded(el) {
     var b = el.querySelector ? el.querySelector(".ag-more") : null;
     if (b) b.textContent = el.getAttribute("data-expanded") === "1" ? "show less" : "show more";
+  }
+  // round 2, measured in Chrome: the clamp was decided by CHARACTER count while the
+  // clamp itself is a HEIGHT, so a 1,243-char paragraph that rendered 174px tall --
+  // nothing hidden -- still wore the fade and a "show more" that revealed nothing.
+  // isLong() is only the candidate now; the rendered box decides. No layout (jsdom,
+  // a detached node) leaves the candidate verdict exactly as it was.
+  function confirmClamp(el) {
+    var md = el.querySelector ? el.querySelector(".ag-md.ag-clamp") : null;
+    if (!md || el.getAttribute("data-expanded") === "1") return;
+    if (!md.clientHeight) return;                       // nothing is laid out: keep the heuristic
+    if (md.scrollHeight > md.clientHeight + 4) return;  // genuinely cut off: the clamp stands
+    md.classList.remove("ag-clamp");
+    var b = el.querySelector(".ag-more");
+    if (b) b.remove();
   }
   function toggleMore(btn) {
     var card = btn && btn.closest ? btn.closest(".ag-card") : null;
@@ -415,13 +430,19 @@ window.AgentPanel = (function () {
     var seg = [];
     seg.push('<span class="ag-now-state ag-' + esc(v.state) + '"' + (v.title ? ' title="' + esc(v.title) + '"' : "") + '><span class="agent-pill-dot"></span>' + esc(String(v.text || "").replace(/^Agent: /, "")) + "</span>");
     if (file && file.owner) {
-      seg.push('<span class="ag-now-line">' + esc(file.backend || "") + " session · " + esc(file.owner) + (file.until ? " → " + esc(fmtClock(file.until)) : "") + (file.stopped ? ' · <span class="ag-err">stopped</span>' : "") +
+      seg.push('<span class="ag-now-line">' + esc(file.backend || "") + " · " + esc(file.owner) + (file.until ? " → " + esc(fmtClock(file.until)) : "") + (file.stopped ? ' · <span class="ag-err">stopped</span>' : "") +
         (armed ? ' · <span class="ag-armed" title="a person pressed Arm: the agent may start hardware runs">armed</span>' : ' · <span class="muted">not armed</span>') + "</span>");
     } else {
       seg.push('<span class="ag-now-line muted">no agent session on this chip</span>');
     }
     seg.push('<span class="ag-now-line">today ' + (d.events_today || 0) + " events" + (d.failures_today ? ' · <span class="ag-err">' + d.failures_today + " failed</span>" : "") + (d.waiting ? ' · <strong>waiting ' + d.waiting + "</strong>" : "") + "</span>");
-    if (d.human_ran) seg.push('<span class="ag-now-line">human ran <code>' + esc(d.human_ran.node || "") + "</code> " + esc(fmtAgo(d.human_ran.ts)) + "</span>");
+    // customer feedback 2026-09-08 (round 2, measured in Chrome): the strip read
+    // "human ran X · 32s ago · … · human ran X 32s ago" -- the pill's own state text
+    // ALREADY says it, so the separate line is a duplicate that pushed the strip to
+    // three rows. It renders only when the state is about something else.
+    if (d.human_ran && v.state !== "human-ran") {
+      seg.push('<span class="ag-now-line">human ran <code>' + esc(d.human_ran.node || "") + "</code> " + esc(fmtAgo(d.human_ran.ts)) + "</span>");
+    }
     if (S.unreachable) seg.push('<span class="ag-now-line ag-err ag-unreachable">' + esc(UNREACHABLE) + "</span>");
     var acts = [];
     if (!S.observer) {
