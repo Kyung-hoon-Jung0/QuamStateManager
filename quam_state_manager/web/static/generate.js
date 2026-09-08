@@ -3438,7 +3438,12 @@
         (groups[key(primary[q])] || (groups[key(primary[q])] = [])).push(q);
       });
       Object.keys(groups).forEach(function (gk) {
-        var qs = groups[gk].sort();
+        // The message lists these ids to the user, so order them naturally
+        // (q2 before q10) — a plain .sort() read them character-by-character.
+        var qs = groups[gk].sort(function (a, b) {
+          return String(a).localeCompare(String(b), undefined,
+                                         { numeric: true, sensitivity: "base" });
+        });
         var sec = {};
         qs.forEach(function (q) { if (secondary[q]) sec[key(secondary[q])] = 1; });
         if (Object.keys(sec).length > 1) {
@@ -8266,6 +8271,9 @@
       presetRowIds: presetRowIds,
       POP_RESONATOR_COLS: POP_RESONATOR_COLS,
       setPopValue: setPopValue,
+      // step-5 wiring rules — the harness reads the ISSUE MESSAGES, which is
+      // the text renderWiringIssues puts on screen (tests/nat_order_client)
+      validateWiring: validateWiring,
       state: state
     }
   };

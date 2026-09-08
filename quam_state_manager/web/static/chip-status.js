@@ -1043,7 +1043,12 @@ window.ChipStatus.mount = function (opts) {
             Object.keys(n.metrics || {}).forEach(function(k) { seen[k] = 1; });
         });
         if ((topo.edges || []).length) seen['cz_fidelity'] = 1;
-        return Object.keys(seen).sort();
+        // Listed in the tile settings panel — natural order, so a chip whose
+        // metric names carry numbers reads f_01, f_02, f_10 (not f_01, f_10, f_02).
+        return Object.keys(seen).sort(function(a, b) {
+            return String(a).localeCompare(String(b), undefined,
+                                           { numeric: true, sensitivity: 'base' });
+        });
     }
     var _ovScrollBound = false;
     function _ovWire(container) {

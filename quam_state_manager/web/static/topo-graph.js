@@ -679,7 +679,14 @@ window.TopoGraph = (function () {
     }
     // spatial slot order: buses sorted ACROSS the dominant axis (a landscape
     // chip's feedlines stack vertically -> sort by mean y), ties by label
-    buses.sort(function (a, b) { return a.mean - b.mean || (a.label < b.label ? -1 : 1); });
+    // ...ties by NATURAL label order (feedline_2 before feedline_10) — the
+    // slot a bus lands in picks its colour, so this is a displayed order.
+    buses.sort(function (a, b) {
+      return a.mean - b.mean
+          || String(a.label).localeCompare(String(b.label), undefined,
+                                           { numeric: true, sensitivity: 'base' })
+          || (a.label < b.label ? -1 : 1);
+    });
     var feedSlotById = {};
     for (var bi = 0; bi < buses.length; bi++) {
       var bus = buses[bi];

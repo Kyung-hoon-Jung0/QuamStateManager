@@ -204,8 +204,12 @@ function stored(win) { return win.localStorage.getItem('quam_overview_tiles_v1')
     ok(!!pop, 'C4: ghost tile opens the popover');
     const keySel = pop.querySelector('#ov-pop-key');
     const keys = Array.prototype.map.call(keySel.options, function (o) { return o.value; });
-    ok(JSON.stringify(keys) === JSON.stringify(['T1', 'anharmonicity', 'cz_fidelity', 'gate_fidelity_avg']),
-      'C4: metric list = the real metric-record keys + cz (got ' + JSON.stringify(keys) + ')');
+    // Order is NATURAL since the 2026-09-09 customer rule (x90_amplitude before
+    // x180_amplitude): the house comparator is case-insensitive at the primary
+    // level, so 'T1' now sorts with the t's instead of ahead of every lowercase
+    // key. Same folding as core.loader.natural_key, which lower-cases text runs.
+    ok(JSON.stringify(keys) === JSON.stringify(['anharmonicity', 'cz_fidelity', 'gate_fidelity_avg', 'T1']),
+      'C4: metric list = the real metric-record keys + cz, naturally ordered (got ' + JSON.stringify(keys) + ')');
     keySel.value = 'anharmonicity';
     pop.querySelector('#ov-pop-add').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
     const added = tileById(win, 'custom:0');

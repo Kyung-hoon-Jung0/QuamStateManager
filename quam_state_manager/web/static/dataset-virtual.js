@@ -31,6 +31,16 @@
     // Keep in sync with FAVORITE_TAG in core/dataset.py + app.js.
     var FAVORITE_TAG = 'favorite';
 
+    // Natural (human) string order — the ONE comparator every displayed list on
+    // this page orders by (customer rule 2026-09-09: 101 < 1009 < 1010 < 1011,
+    // and q2 < q10). Same idiom as app.js's sortable-table handler and the two
+    // Live-Edit grids; `numeric: true` is what makes a digit run compare as a
+    // number instead of character-by-character.
+    var _NAT = { numeric: true, sensitivity: 'base' };
+    function natCmp(a, b) {
+        return String(a).localeCompare(String(b), undefined, _NAT);
+    }
+
     // Persisted across init() calls so date-tab / Rescan / sidebar-nav-back
     // don't wipe the user's compare checkboxes. The previous behaviour
     // re-created ``state.selected`` on every init (which fires on every
@@ -860,7 +870,9 @@
             band.appendChild(span('ds-digest-ok', 'all OK'));
         }
         var qs = Object.keys(qfail).sort(function (x, y) {
-            return (qfail[y] - qfail[x]) || (x < y ? -1 : 1);
+            // Count desc; ties by NATURAL qubit order (q2 before q10 — a tie is
+            // the normal case here, one failure each).
+            return (qfail[y] - qfail[x]) || natCmp(x, y);
         }).slice(0, 8);
         qs.forEach(function (q) {
             var b = document.createElement('button');
@@ -994,7 +1006,12 @@
                 return na ? 1 : -1;                              // missing sinks LAST in both directions
             }
             if (va === vb) return rows[a].id - rows[b].id;       // value tie → stable by id
-            var cmp = (va < vb) ? -1 : 1;
+            // A STRING column (Qubits, Experiment, Folder) orders naturally:
+            // q2 before q10, 05_… before 15h_…. Plain `<` is a character-by-
+            // character compare and put q10 above q2 (customer rule 2026-09-09).
+            var cmp = (typeof va === 'string' && typeof vb === 'string')
+                ? (natCmp(va, vb) || (va < vb ? -1 : 1))
+                : ((va < vb) ? -1 : 1);
             return desc ? -cmp : cmp;
         });
     }
@@ -1752,7 +1769,7 @@
             if (ca !== cb) return ca ? -1 : 1;         // curated before the rest
             var na = state.fitCounts[a] || 0, nb = state.fitCounts[b] || 0;
             if (na !== nb) return nb - na;             // then by coverage count
-            return a < b ? -1 : (a > b ? 1 : 0);       // then A–Z
+            return natCmp(a, b);                       // then A–Z, digits as numbers
         });
     }
     function _caret() { return state.sortDesc ? ' ▼' : ' ▲'; }
@@ -1818,7 +1835,7 @@
         keys.sort(function (a, b) {
             var na = state.paramKeyCount[a] || 0, nb = state.paramKeyCount[b] || 0;
             if (na !== nb) return nb - na;                // key coverage desc
-            return a < b ? -1 : (a > b ? 1 : 0);          // then A–Z
+            return natCmp(a, b);                          // then A–Z, digits as numbers
         });
         return keys;
     }
@@ -1860,7 +1877,10 @@
             var vals = state.paramFacets[key];
             var ordered = Object.keys(vals).sort(function (a, b) {
                 if (vals[a] !== vals[b]) return vals[b] - vals[a];
-                return a < b ? -1 : (a > b ? 1 : 0);
+                // Facet values are STRINGS even when they read as numbers (a key
+                // is only "numeric" when EVERY value is a number, so one "none"
+                // sends 100/20/1000 down this branch): order them naturally.
+                return natCmp(a, b);
             });
             body = '<div class="param-group-body">' + ordered.map(function (val) {
                 var on = _paramActive(key, val);
@@ -2048,14 +2068,10 @@
         _buildSortBanner();
     }
     // ── Qubit filter picker (checkbox dropdown on the "Qubits" control) ──────
-    function _qubitCmp(a, b) {
-        var na = a.match(/(\d+)\s*$/), nb = b.match(/(\d+)\s*$/);
-        if (na && nb) {
-            var pa = a.slice(0, na.index), pb = b.slice(0, nb.index);
-            if (pa === pb) return parseInt(na[1], 10) - parseInt(nb[1], 10);   // q2 < q10
-        }
-        return a < b ? -1 : (a > b ? 1 : 0);
-    }
+    // Was a hand-rolled trailing-digit comparator that fell back to a plain
+    // character compare whenever the digits were not last ("q1_lo" vs "q10_lo").
+    // One comparator for the whole page now — natCmp gets q2 < q10 either way.
+    var _qubitCmp = natCmp;
     function _updateQubitSummary() {
         var sum = document.getElementById('sort-qubit-summary');
         if (sum) {
@@ -2099,7 +2115,7 @@
             }
         });
     }
-    // ── Qubit-PAIR filter picker — mirror of the qubit picker (pairs sort plainly) ──
+    // ── Qubit-PAIR filter picker — mirror of the qubit picker (same natural order) ──
     function _updatePairSummary() {
         var sum = document.getElementById('sort-pair-summary');
         if (sum) {
@@ -2110,7 +2126,9 @@
     function _buildPairPicker() {
         var menu = document.getElementById('sort-pair-menu');
         if (!menu) return;
-        var pairs = Array.from(state.knownPairs).sort();
+        // NATURAL, like the qubit picker: q1-q2 before q1-q10 (a plain .sort()
+        // read the ids character-by-character and listed q1-q10 first).
+        var pairs = Array.from(state.knownPairs).sort(natCmp);
         var html = '<div class="bulk-colvis-actions"><button type="button" class="btn-xs" data-pair-action="clear">Clear</button>' +
                    '<span class="muted" style="font-size:.72em;align-self:center">AND — runs with all checked</span></div>';
         if (!pairs.length) html += '<div class="muted sort-fit-empty" style="padding:.2rem .3rem">no qubit pairs</div>';
