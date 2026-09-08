@@ -102,6 +102,37 @@ class TestCardsFromTheStore:
         assert by[103]["prev_run_id"] == 102
         assert by[103]["params_diff"] == [{"key": "num_averages", "old": 100, "new": 400}]
 
+    def test_timeline_merges_consecutive_runs_of_one_family(self, world):
+        """Customer feedback 2026-09-08: the per-target strip named every run in
+        full; the timeline names a family ONCE per consecutive run of it and
+        carries the runs as steps with their outcome."""
+        from quam_state_manager.core import story
+        d = story.build_day(world["inst"], "chip", DAY, ds=world["ds"], with_gates=False)
+        assert list(d["timeline"]) == list(d["digest"]), "same targets, same order as the digest"
+        q3 = d["timeline"]["q3"]
+        assert [s["run_id"] for seg in q3 for s in seg["steps"]] == [x["run_id"] for x in d["digest"]["q3"]], \
+            "every digest step is in the timeline, in time order"
+        for seg in q3:
+            assert seg["family"] and seg["full"] and seg["steps"]
+        # merging: two consecutive runs of one family are ONE segment
+        cards = [{"kind": "run", "run_id": 1, "family": "power_rabi", "family_label": "Power Rabi", "node": "11_power_rabi",
+                  "family_short": "Rabi", "targets": ["q1"], "outcome": "ok", "gate": {"verdict": "pass"}, "author": "human"},
+                 {"kind": "run", "run_id": 2, "family": "power_rabi", "family_label": "Power Rabi", "node": "11_power_rabi",
+                  "family_short": "Rabi", "targets": ["q1"], "outcome": "failed", "gate": None, "author": "human"},
+                 {"kind": "run", "run_id": 3, "family": None, "family_label": "01_time_of_flight_mw_fem", "node": "01_time_of_flight_mw_fem",
+                  "family_short": "ToF", "targets": ["q1"], "outcome": None, "gate": None, "author": "unknown"},
+                 {"kind": "write", "entries": []}]
+        tl = story._timeline(cards)
+        assert [(seg["family"], [s["run_id"] for s in seg["steps"]]) for seg in tl["q1"]] == [("Rabi", [1, 2]), ("ToF", [3])]
+        assert tl["q1"][0]["steps"][1]["outcome"] == "failed" and tl["q1"][0]["full"] == "Power Rabi"
+
+    def test_short_family_names(self):
+        from quam_state_manager.core import story
+        assert story._short_family("resonator_spectroscopy_vs_power", "Resonator spectroscopy vs power", "05_x") == "Res/power"
+        assert story._short_family(None, "01_time_of_flight_mw_fem", "01_time_of_flight_mw_fem") == "ToF"
+        assert story._short_family(None, None, "15h_readout_freq_amp_optimization") == "RO freq"
+        assert story._short_family(None, None, "99_some_very_long_custom_node_name_here") == "some very long cu…"
+
     def test_digest_groups_by_target_in_time_order(self, world):
         d = story.build_day(world["inst"], "chip", DAY, ds=world["ds"], with_gates=False)
         assert list(d["digest"]) == ["q1", "q3", "q4"]

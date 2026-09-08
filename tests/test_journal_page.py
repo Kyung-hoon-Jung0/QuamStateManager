@@ -52,6 +52,24 @@ class TestThePage:
         part = c.get(f"/journal?day={DAY}", headers={"HX-Request": "true"}).get_data(as_text=True)
         assert "<html" not in part and 'id="jr-body"' in part
 
+    def test_the_page_reads_at_a_glance(self, world):
+        """Customer feedback 2026-09-08 ('is this readable by a person?'): the
+        tagline no longer sits inside the h2, the day's numbers are stat pills,
+        the strip is segments of numbered chips under a blue section header,
+        and each run row is a grid of cells."""
+        c = world["client"]
+        html = c.get(f"/journal?day={DAY}").get_data(as_text=True)
+        h2 = re.search(r"<h2>(.*?)</h2>", html, re.S).group(1)
+        assert "every run, whoever ran it" not in h2 and 'class="muted jr-tagline">every run, whoever ran it' in html
+        body = c.get(f"/journal/day?day={DAY}").get_data(as_text=True)
+        assert 'class="jr-stat jr-stat-day">' in body and re.search(r'<span class="jr-stat"><b>2</b> runs</span>', body)
+        assert "Per-target timeline" in body and 'class="jr-sec-title"' in body
+        assert re.search(r'<a class="jr-pill jr-out-\w+" href="#card-104"[^>]*>104</a>', body), "a run is a numbered chip"
+        assert '<span class="jr-seg-fam">' in body, "the family is named once per segment"
+        assert '<span class="jr-sec-title">Runs <span class="jr-sec-count">2</span>' in body
+        card = body[body.index('id="card-104"'):]
+        assert '<span class="jr-pills">' in card and '<span class="jr-who-cell">' in card, "the row is cells in columns"
+
     def test_the_because_section_exists_apart_from_the_journal_lines(self, world):
         html = world["client"].get(f"/journal/day?day={DAY}").get_data(as_text=True)
         assert re.search(r'<p class="jr-because">\s*rabi left-biased\s*</p>', html)

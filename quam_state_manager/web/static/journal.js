@@ -93,6 +93,20 @@ window.JournalPage = (function () {
     var rows = [];
     document.querySelectorAll(".jr-digest-row").forEach(function (r) {
       var t = r.querySelector(".jr-digest-target").textContent;
+      var segs = r.querySelectorAll(".jr-seg");
+      if (segs.length) {
+        // the segmented strip (2026-09-08): "Res spec #159✗ #160✗ · ToF #165✓"
+        var parts = Array.prototype.map.call(segs, function (s) {
+          var fam = (s.querySelector(".jr-seg-fam") || {}).textContent || "";
+          var runs = Array.prototype.map.call(s.querySelectorAll(".jr-pill"), function (p) {
+            var mark = p.classList.contains("jr-out-failed") ? "✗" : (p.classList.contains("jr-out-ok") ? "✓" : "");
+            return "#" + p.textContent.trim() + mark;
+          });
+          return fam.trim() + " " + runs.join(" ");
+        });
+        rows.push(t + ": " + parts.join(" · "));
+        return;
+      }
       var pills = Array.prototype.map.call(r.querySelectorAll(".jr-pill"), function (p) { return p.textContent.replace(/\s+/g, " ").trim(); });
       rows.push(t + ": " + pills.join(" -> "));
     });

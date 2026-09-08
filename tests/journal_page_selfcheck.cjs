@@ -16,7 +16,11 @@ const now = Date.now() / 1000;
 const dom = new JSDOM('<!doctype html><html><body>'
   + '<form id="jr-filters"><input type="hidden" name="day" id="jr-day" value="2026-09-06"><input type="date" id="jr-day-pick" value="2026-09-06"></form>'
   + '<div id="jr-body"><div class="jr-counts" data-chip="PJ" data-day="2026-09-06"><span id="jr-since" hidden></span></div>'
-  + '<div class="jr-digest"><div class="jr-digest-row"><span class="jr-digest-target">q3</span><a class="jr-pill">res spec <small>#1</small> ✓</a><span class="jr-arrow">→</span><a class="jr-pill">rabi <small>#2</small> ✗</a></div></div>'
+  + '<div class="jr-digest"><div class="jr-digest-row"><span class="jr-digest-target">q3</span><a class="jr-pill">res spec <small>#1</small> ✓</a><span class="jr-arrow">→</span><a class="jr-pill">rabi <small>#2</small> ✗</a></div>'
+  // the segmented strip (2026-09-08): family once, runs as numbered chips coloured by outcome
+  + '<div class="jr-digest-row"><span class="jr-digest-target">q4</span><span class="jr-digest-segs">'
+  + '<span class="jr-seg"><span class="jr-seg-fam">Res spec</span><a class="jr-pill jr-out-failed">159</a><a class="jr-pill jr-out-ok">160</a></span>'
+  + '<span class="jr-seg"><span class="jr-seg-fam">ToF</span><a class="jr-pill jr-out-none">165</a></span></span></div></div>'
   + '<details class="jr-card" data-ts="' + (now - 10) + '"><summary>new</summary><div class="jr-claim" data-run="2"><input class="jr-who"><input class="jr-note-in" value="n"><button class="claim-btn">Save</button></div></details>'
   + '<details class="jr-card" data-ts="' + (now - 100000) + '"><summary>old</summary><code class="jr-path" data-path="qubits.q4.f_01">qubits.q4.f_01</code></details>'
   + '</div></body></html>', { url: 'http://localhost/journal', pretendToBeVisual: true });
@@ -62,7 +66,8 @@ window.JournalPage.init();   // what htmx:afterSwap does on the real page (jsdom
   ok(submits.length === 2, 'and the body re-fetches after a claim');
 
   const text = window.JournalPage.copyDigest(document.createElement('button'));
-  ok(text === 'q3: res spec #1 ✓ -> rabi #2 ✗', 'copyDigest reads the strip as text: ' + JSON.stringify(text));
+  ok(text.split('\n')[0] === 'q3: res spec #1 ✓ -> rabi #2 ✗', 'copyDigest reads the legacy strip as text: ' + JSON.stringify(text));
+  ok(text.split('\n')[1] === 'q4: Res spec #159✗ #160✓ · ToF #165', 'copyDigest reads the segmented strip: family once, runs with their outcome mark');
 
   console.log(fails ? ('FAILED ' + fails) : ('all checks passed (' + passes + ' assertions)'));
   process.exit(fails ? 1 : 0);

@@ -1,12 +1,14 @@
 {# The day's body: counts, unassigned lines, digest strip, cards. #}
 {% set s = story %}
-<div class="jr-counts muted" data-day="{{ s.day }}" data-chip="{{ s.chip }}">
-    {{ s.day }} · {{ s.counts.runs }} run{{ 's' if s.counts.runs != 1 }}
-    {% if s.counts.failed %} · <span class="jr-bad">✗ {{ s.counts.failed }} failed</span>{% endif %}
-    {% if s.counts.gate_fail %} · <span class="jr-bad">gate fail {{ s.counts.gate_fail }}</span>{% endif %}
-    · writes {{ s.counts.writes }}
-    {% if s.counts.biggest_write %} · largest Δ <code class="jr-path" data-path="{{ s.counts.biggest_write.path }}">{{ s.counts.biggest_write.path }}</code>
-        {{ s.counts.biggest_write.old }} → {{ s.counts.biggest_write.new }}{% endif %}
+{# customer feedback 2026-09-08: the day's numbers as stat pills, one glance #}
+<div class="jr-counts" data-day="{{ s.day }}" data-chip="{{ s.chip }}">
+    <span class="jr-stat jr-stat-day">{{ s.day }}</span>
+    <span class="jr-stat"><b>{{ s.counts.runs }}</b> run{{ 's' if s.counts.runs != 1 }}</span>
+    {% if s.counts.failed %}<span class="jr-stat jr-stat-bad"><b>{{ s.counts.failed }}</b> failed</span>{% endif %}
+    {% if s.counts.gate_fail %}<span class="jr-stat jr-stat-bad">gate fail <b>{{ s.counts.gate_fail }}</b></span>{% endif %}
+    <span class="jr-stat"><b>{{ s.counts.writes }}</b> write{{ 's' if s.counts.writes != 1 }}</span>
+    {% if s.counts.biggest_write %}<span class="jr-stat muted">largest Δ <code class="jr-path" data-path="{{ s.counts.biggest_write.path }}">{{ s.counts.biggest_write.path }}</code>
+        {{ s.counts.biggest_write.old }} → {{ s.counts.biggest_write.new }}</span>{% endif %}
     <span id="jr-since" class="jr-since" hidden></span>
 </div>
 
@@ -24,36 +26,64 @@
 </div>
 {% endif %}
 
-{% if s.digest %}
-<div class="jr-digest{% if s.digest|length > 6 %} jr-digest-folded{% endif %}" title="per target, in time order — colour is the node's own outcome">
-    {% if s.digest|length > 6 %}<button type="button" class="btn-sm outline jr-digest-more" onclick="JournalPage.toggleDigest(this)">all {{ s.digest|length }} targets</button>{% endif %}
-    {% for target, steps in s.digest.items() %}
-    <div class="jr-digest-row"><span class="jr-digest-target">{{ target }}</span>
-        {% for st in steps %}<a class="jr-pill jr-out-{{ st.outcome or 'none' }}" href="#card-{{ st.run_id }}"
-              title="#{{ st.run_id }} · {{ st.family }} · {{ st.outcome or 'no outcome' }} · gate {{ st.gate or '?' }} · {{ st.author }}">{{ st.family }} <small>#{{ st.run_id }}</small>{% if st.outcome == 'failed' %} ✗{% elif st.outcome == 'ok' %} ✓{% endif %}</a>{% if not loop.last %}<span class="jr-arrow">→</span>{% endif %}{% endfor %}
+{% if s.timeline %}
+{# customer feedback 2026-09-08: the per-target strip used to be a wall of full-name
+   pills with arrows (one screen per target). Now: consecutive runs of ONE family
+   are one segment -- the family named once, the runs as small numbered chips
+   coloured by the node's own outcome; SM-blue section header. #}
+<section class="jr-section jr-digest{% if s.timeline|length > 6 %} jr-digest-folded{% endif %}">
+    <div class="jr-sec-head">
+        <span class="jr-sec-title">Per-target timeline</span>
+        <span class="jr-sec-note muted">time order · a run's colour is the node's own outcome · click a run to jump</span>
+        <span class="jr-sec-tools">
+            {% if s.timeline|length > 6 %}<button type="button" class="btn-sm outline jr-digest-more" onclick="JournalPage.toggleDigest(this)">all {{ s.timeline|length }} targets</button>{% endif %}
+            <button type="button" class="btn-sm outline jr-copy" onclick="JournalPage.copyDigest(this)" title="copy the strip as text">Copy as text</button>
+        </span>
     </div>
+    {% for target, segs in s.timeline.items() %}
+    <div class="jr-digest-row"><span class="jr-digest-target">{{ target }}</span><span class="jr-digest-segs">
+        {%- for seg in segs -%}
+        <span class="jr-seg" title="{{ seg.full }}"><span class="jr-seg-fam">{{ seg.family }}</span>
+            {%- for st in seg.steps -%}
+            <a class="jr-pill jr-out-{{ st.outcome or 'none' }}" href="#card-{{ st.run_id }}"
+               title="#{{ st.run_id }} · {{ st.family }} · {{ st.outcome or 'no outcome' }} · gate {{ st.gate or '?' }} · {{ st.author }}">{{ st.run_id }}</a>
+            {%- endfor -%}
+        </span>
+        {%- endfor -%}
+    </span></div>
     {% endfor %}
-    <button type="button" class="btn-sm outline jr-copy" onclick="JournalPage.copyDigest(this)" title="copy the strip as text">Copy as text</button>
-</div>
+</section>
 {% endif %}
 
 {% if not s.cards_shown %}
 <p class="muted jr-empty">{% if s.cards %}Nothing matches the filter.{% else %}No runs and no journal lines on {{ s.day }}.{% endif %}</p>
 {% endif %}
 
+{% if s.cards_shown %}
+<div class="jr-sec-head jr-runs-head">
+    <span class="jr-sec-title">Runs <span class="jr-sec-count">{{ s.cards_shown|length }}</span></span>
+    <span class="jr-sec-note muted">time · node · targets · outcome · gate · run · who — click a row for what it wrote and why</span>
+</div>
+{% endif %}
 <div class="jr-cards">
 {% for c in s.cards_shown %}
     {% if c.kind == 'run' %}
     <details class="jr-card jr-run jr-by-{{ (c.author or 'unknown').split(':')[0] }}" id="card-{{ c.run_id }}" data-ts="{{ c.ts or 0 }}" data-run="{{ c.run_id }}">
+        {# the row is a GRID (customer feedback 2026-09-08): time · node · targets · pills · run · who,
+           every cell in its column, so the eye scans down instead of hunting pills left and right #}
         <summary>
             <span class="jr-time">{{ c.time }}</span>
-            <span class="jr-family">{{ c.family_label or c.node }}</span>
+            <span class="jr-family" title="{{ c.node }}">{{ c.family_label or c.node }}</span>
             <span class="jr-targets">{{ c.targets|join(' ') }}</span>
-            <span class="jr-badge jr-out-{{ c.outcome or 'none' }}" title="the node's own outcome">{% if c.outcome == 'ok' %}✓ ok{% elif c.outcome == 'failed' %}✗ failed{% elif c.outcome == 'mixed' %}mixed{% else %}no outcome{% endif %}</span>
-            {% if c.gate %}<span class="jr-badge jr-gate-{{ c.gate.verdict }}" title="deterministic gate, anchored on the run's own saved state{% if c.gate.reason %} — {{ c.gate.reason }}{% endif %}">gate {{ c.gate.verdict }}</span>{% endif %}
+            <span class="jr-pills">
+                <span class="jr-badge jr-out-{{ c.outcome or 'none' }}" title="the node's own outcome">{% if c.outcome == 'ok' %}✓ ok{% elif c.outcome == 'failed' %}✗ failed{% elif c.outcome == 'mixed' %}mixed{% else %}no outcome{% endif %}</span>
+                {% if c.gate %}<span class="jr-badge jr-gate-{{ c.gate.verdict }}" title="deterministic gate, anchored on the run's own saved state{% if c.gate.reason %} — {{ c.gate.reason }}{% endif %}">gate {{ c.gate.verdict }}</span>{% endif %}
+            </span>
             <a class="jr-run-link" href="/dataset/by-run/{{ c.run_id }}" hx-get="/dataset/by-run/{{ c.run_id }}" hx-target="#table-pane" hx-push-url="true" onclick="event.stopPropagation()">#{{ c.run_id }}</a>
-            <span class="jr-author jr-author-{{ (c.author or 'unknown').split(':')[0] }}" title="{{ c.certainty }}">{{ c.author }}</span>
-            {% if c.plan_id %}<span class="jr-plan muted" title="plan">plan {{ c.plan_id }}</span>{% endif %}
+            <span class="jr-who-cell">
+                <span class="jr-author jr-author-{{ (c.author or 'unknown').split(':')[0] }}" title="{{ c.certainty }}">{{ c.author }}</span>
+                {% if c.plan_id %}<span class="jr-plan muted" title="plan">plan {{ c.plan_id }}</span>{% endif %}
+            </span>
         </summary>
         <div class="jr-body">
             {% if c.gate and c.gate.reason %}<p class="jr-gate-reason muted">gate: {{ c.gate.reason }}</p>{% endif %}
@@ -92,9 +122,13 @@
         <summary>
             <span class="jr-time">{{ c.time }}</span>
             <span class="jr-family">wrote {{ c.entries|length }} value{{ 's' if c.entries|length != 1 }} to the chip</span>
-            <span class="jr-author jr-author-{{ (c.author or 'unknown').split(':')[0] }}">{{ c.author }}</span>
-            {% if c.plan_id %}<span class="jr-plan muted">plan {{ c.plan_id }}</span>{% endif %}
-            {% if c.src == 'auto' %}<span class="jr-badge" title="an armed auto session">auto</span>{% endif %}
+            <span class="jr-targets"></span>
+            <span class="jr-pills">{% if c.src == 'auto' %}<span class="jr-badge" title="an armed auto session">auto</span>{% endif %}</span>
+            <span class="jr-run-link muted"></span>
+            <span class="jr-who-cell">
+                <span class="jr-author jr-author-{{ (c.author or 'unknown').split(':')[0] }}">{{ c.author }}</span>
+                {% if c.plan_id %}<span class="jr-plan muted">plan {{ c.plan_id }}</span>{% endif %}
+            </span>
         </summary>
         <div class="jr-body"><ul>{% for e in c.entries %}<li><code class="jr-path" data-path="{{ e.path }}">{{ e.path }}</code> {{ e.old }} → {{ e.new }} <span class="jr-author jr-author-{{ e.actor.split(':')[0] }}">{{ e.actor }}</span></li>{% endfor %}</ul></div>
     </details>

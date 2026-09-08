@@ -342,6 +342,60 @@ def _writes_for_run(hm, active_path, run_id: int) -> list[dict]:
     return rows
 
 
+_SHORT_FAMILY = {
+    "time_of_flight": "ToF", "resonator_spectroscopy": "Res spec", "resonator_spectroscopy_vs_power": "Res/power",
+    "resonator_spectroscopy_vs_flux": "Res/flux", "qubit_spectroscopy": "Qubit spec",
+    "qubit_spectroscopy_vs_power": "Qubit/power", "qubit_spectroscopy_vs_flux": "Qubit/flux", "power_rabi": "Rabi",
+    "ramsey": "Ramsey", "t1": "T1", "echo": "Echo", "readout_frequency_optimization": "RO freq",
+    "readout_power_optimization": "RO power", "iq_blobs": "IQ blobs", "chevron_11_02": "CZ chevron",
+    "cz_conditional_phase": "CZ phase", "drag": "DRAG",
+}
+_SHORT_BY_NODE = [
+    ("time_of_flight", "ToF"), ("readout_freq", "RO freq"), ("readout_frequency", "RO freq"), ("readout_weights", "RO weights"),
+    ("readout_power", "RO power"), ("readout_amp", "RO amp"), ("twpa", "TWPA"), ("ramsey_vs_flux", "Ramsey/flux"),
+    ("rabi_chevron", "Rabi chevron"), ("cz_chevron", "CZ chevron"), ("crosstalk", "Crosstalk"), ("drag", "DRAG"),
+    ("iq_blob", "IQ blobs"), ("t2echo", "Echo"), ("echo", "Echo"), ("t1", "T1"), ("cz", "CZ"), ("rabi", "Rabi"),
+    ("ramsey", "Ramsey"), ("qubit_spec", "Qubit spec"), ("resonator_spec", "Res spec"),
+]
+
+
+def _short_family(fam_key: str | None, label: str | None, node: str | None) -> str:
+    """The family's SHORT name for the per-target timeline (customer feedback
+    2026-09-08: the strip named every run in full and became a wall). A known
+    family maps to a fixed short form; a node no family knows yet is matched
+    by its own name; anything else drops the numeric prefix and is cut at 18."""
+    if fam_key and fam_key in _SHORT_FAMILY:
+        return _SHORT_FAMILY[fam_key]
+    low = str(node or label or "").lower()
+    for needle, short in _SHORT_BY_NODE:
+        if needle in low:
+            return short
+    s = str(label or node or "").strip()
+    s = re.sub(r"^\d+[a-z]?_", "", s).replace("_", " ")
+    return s if len(s) <= 18 else s[:17] + "…"
+
+
+def _timeline(cards: list[dict]) -> dict[str, list[dict]]:
+    """Per target, in time order: consecutive runs of ONE family merged into a
+    segment ``{family (short), full, steps}`` so the strip reads
+    ``Res spec 159 160 161 · ToF 165 166`` instead of one pill per run."""
+    out: dict[str, list[dict]] = {}
+    for c in cards:
+        if c.get("kind") != "run":
+            continue
+        short = c.get("family_short") or _short_family(c.get("family"), c.get("family_label"), c.get("node"))
+        full = c.get("family_label") or c.get("node") or ""
+        step = {"run_id": c["run_id"], "family": full, "outcome": c.get("outcome"),
+                "gate": (c.get("gate") or {}).get("verdict"), "author": c.get("author")}
+        for t in c.get("targets") or []:
+            segs = out.setdefault(t, [])
+            if segs and segs[-1]["family"] == short:
+                segs[-1]["steps"].append(step)
+            else:
+                segs.append({"family": short, "full": full, "steps": [step]})
+    return dict(sorted(out.items()))
+
+
 def _family_label(name: str) -> tuple[str | None, str]:
     try:
         from quam_state_manager.core.autofit import families as fam_mod
@@ -399,6 +453,7 @@ def build_day(instance_path, chip: str, day: str, *, ds, hm=None, active_path=No
             "kind": "run", "run_id": rid, "uid": (uid_of(run) if uid_of else None),
             "ts": start, "time": run.get("time"), "duration_s": run.get("duration_s"),
             "node": run.get("experiment_name"), "family": fam_key, "family_label": fam_label,
+            "family_short": _short_family(fam_key, fam_label, run.get("experiment_name")),
             "targets": targets, "outcome": _outcome(run.get("outcomes")), "outcomes": run.get("outcomes") or {},
             "status": run.get("status"), "gate": gate,
             "author": author, "certainty": certainty,
@@ -422,7 +477,7 @@ def build_day(instance_path, chip: str, day: str, *, ds, hm=None, active_path=No
     cards.sort(key=lambda c: (c.get("ts") or 0))
     unassigned = parse_journal(journal_mod.read(instance_path, "unassigned", day), day)
     return {"chip": chip, "day": day, "cards": cards, "loose": loose, "digest": _digest(cards),
-            "unassigned": unassigned, "counts": _counts(cards)}
+            "timeline": _timeline(cards), "unassigned": unassigned, "counts": _counts(cards)}
 
 
 def _mentions_any_target(e: dict) -> bool:
