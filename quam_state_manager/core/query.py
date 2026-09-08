@@ -15,7 +15,7 @@ import math
 from typing import Any
 
 from quam_state_manager.core import chip_health, cr_semantics, qdac
-from quam_state_manager.core.loader import QuamStore
+from quam_state_manager.core.loader import QuamStore, natural_key
 from quam_state_manager.core.pointer_resolver import is_pointer, is_self_ref
 
 logger = logging.getLogger(__name__)
@@ -115,7 +115,8 @@ class QueryEngine:
         seq = self.store.mutation_seq
         qubits = self.store.merged.get("qubits", {})
         if name not in qubits:
-            raise KeyError(f"Qubit {name!r} not found (available: {sorted(qubits.keys())})")
+            raise KeyError(f"Qubit {name!r} not found "
+                           f"(available: {sorted(qubits.keys(), key=natural_key)})")
 
         q = qubits[name]
         root = self.store.merged
@@ -250,7 +251,8 @@ class QueryEngine:
         seq = self.store.mutation_seq   # see get_qubit: guard the fill against races
         pairs = self.store.merged.get("qubit_pairs", {})
         if name not in pairs:
-            raise KeyError(f"Qubit pair {name!r} not found (available: {sorted(pairs.keys())})")
+            raise KeyError(f"Qubit pair {name!r} not found "
+                           f"(available: {sorted(pairs.keys(), key=natural_key)})")
 
         p = pairs[name]
         if not isinstance(p, dict):

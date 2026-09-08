@@ -528,3 +528,98 @@ class TestSharedGrammarOr:
         assert idx.search("|", limit=10) == []
         assert ({r.dot_path for r in idx.search("t1 |", limit=50)}
                 == {r.dot_path for r in idx.search("t1", limit=50)})
+
+
+# ---------------------------------------------------------------------------
+# Natural order (customer rule 2026-09-09)
+# ---------------------------------------------------------------------------
+
+
+class TestNaturalOrderTieBreak:
+    """The result list's tie-break is a dot path, and dot paths carry numbers.
+
+    ``_score``'s buckets are coarse (100/90/70/60/40/20/10), so equal scores
+    are the norm: the tie-break decides both the order the reader sees AND
+    which ``limit`` rows survive.  A plain string compare listed
+    ``weights_imag.1009`` before ``weights_imag.101`` (the customer's
+    screenshot) and ``qubits.q10`` before ``qubits.q2`` (measured on the real
+    ``AS_10TQ9TC`` chip, which numbers its qubits q1..q10).
+    """
+
+    @staticmethod
+    def _merged() -> dict:
+        """q1/q2/q10, each with a readout weight list long enough to cross a
+        decimal boundary — the two shapes the customer reported."""
+        return {
+            "qubits": {
+                q: {
+                    "resonator": {
+                        "operations": {
+                            "readout": {
+                                "amplitude": 0.01,
+                                # indices 0..1011, so .101/.1009/.1010/.1011 exist
+                                "weights_imag": [0.0] * 1012,
+                            }
+                        }
+                    }
+                }
+                for q in ("q1", "q2", "q10")
+            }
+        }
+
+    def _idx(self) -> SearchIndex:
+        return SearchIndex.build(self._merged())
+
+    def test_list_indices_count_as_numbers(self):
+        idx = self._idx()
+        prefix = "qubits.q1.resonator.operations.readout.weights_imag."
+        tails = [int(r.dot_path[len(prefix):])
+                 for r in idx.search("q1", limit=100_000)
+                 if r.dot_path.startswith(prefix)]
+        assert len(tails) == 1012          # the fixture really does reach 1011
+        assert tails == sorted(tails), (
+            "list indices must count 101 < 1009 < 1010 < 1011, not sort as text")
+        at = {t: n for n, t in enumerate(tails)}
+        assert at[101] < at[1009] < at[1010] < at[1011]
+
+    def test_q10_sorts_after_q2(self):
+        idx = self._idx()
+        assert [r.dot_path for r in idx.search("amplitude", limit=100)] == [
+            "qubits.q1.resonator.operations.readout.amplitude",
+            "qubits.q2.resonator.operations.readout.amplitude",
+            "qubits.q10.resonator.operations.readout.amplitude",
+        ]
+
+    def test_the_limit_cut_follows_the_natural_order(self):
+        """Truncation is the sharp edge: with limit=2 the reader must SEE
+        q1 and q2 — under a string sort q10 stole q2's slot."""
+        idx = self._idx()
+        assert [r.dot_path for r in idx.search("amplitude", limit=2)] == [
+            "qubits.q1.resonator.operations.readout.amplitude",
+            "qubits.q2.resonator.operations.readout.amplitude",
+        ]
+
+    def test_the_search_page_itself_lists_them_in_order(self, tmp_path):
+        """The rendered surface, not just the engine: `/search` prints one
+        `<code class="dot-path">` per row, in the order the reader reads."""
+        import json as _json
+        import re as _re
+
+        from quam_state_manager.web.app import create_app
+
+        folder = tmp_path / "natorder_state"
+        folder.mkdir()
+        (folder / "state.json").write_text(
+            _json.dumps(self._merged()), encoding="utf-8")
+        (folder / "wiring.json").write_text("{}", encoding="utf-8")
+        app = create_app(testing=True,
+                         instance_path=str(tmp_path / "_app_instance"))
+        client = app.test_client()
+        assert client.post("/load", data={"folder": str(folder)}).status_code < 400
+        html = client.get("/search?q=amplitude&limit=3").data.decode()
+        rows = _re.findall(r'<code class="dot-path">([^<]+)</code>', html)
+        assert rows == [
+            "qubits.q1.resonator.operations.readout.amplitude",
+            "qubits.q2.resonator.operations.readout.amplitude",
+            "qubits.q10.resonator.operations.readout.amplitude",
+        ]

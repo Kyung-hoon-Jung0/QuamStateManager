@@ -424,3 +424,84 @@ class TestCouplerPortChain:
         assert not any("opx_output" in c["key"] for c in cols)
         # the rest of the coupler band is untouched
         assert any(c["key"].endswith("decouple_offset") for c in cols)
+
+
+# ── natural order (customer rule 2026-09-09) ─────────────────────────────────
+
+def _state_double_digit_lab() -> dict:
+    """A lab whose qubits are numbered q1..q10 (AS_10TQ9TC is one, on disk),
+    carrying the two shapes real chips actually put NUMBERS into a pair's
+    template path:
+
+    * ``macros.<gate>.spectator_qubits_control.<qubit id>.<leaf>`` and
+      ``…spectator_qubits_phase_shift.<qubit id>`` — verbatim from the
+      KRISS / arbel chips, where the segment is a qubit id;
+    * ``extras.<group>.confusion_<n>q`` — the n-qubit joint readout matrices,
+      which reach 3q/4q/5q today and count past 9 on a bigger group.
+    """
+    return {"qubit_pairs": {"coupler_q9_q10": {
+        "id": "coupler_q9_q10", "__class__": "Pair",
+        "detuning": 1.0e6, "confusion": None, "coupler": None,
+        "macros": {"cz": {
+            "__class__": "CZGate",
+            "spectator_qubits_control": {
+                "q2": {"amplitude": 0.11, "length": 20},
+                "q9": {"amplitude": 0.19, "length": 28},
+                "q10": {"amplitude": 0.10, "length": 30},
+            },
+            "spectator_qubits_phase_shift": {"q2": 0.1, "q9": 0.9, "q10": 0.2},
+        }},
+        "extras": {"grp": {
+            "confusion_3q": [[1.0]], "confusion_4q": [[1.0]],
+            "confusion_10q": [[1.0]],
+        }},
+    }}}
+
+
+class TestNaturalColumnOrder:
+    """Column order is a sort on the template DOT PATH, and real pair paths
+    carry numbers. A string compare put ``q10`` left of ``q2`` and
+    ``confusion_10q`` left of ``confusion_3q`` (customer rule 2026-09-09:
+    101 < 1009 < 1010 < 1011, and q2 < q10)."""
+
+    @staticmethod
+    def _tail_order(cols, marker: str) -> list[str]:
+        """The last path token of every column whose key names *marker*,
+        in the order the grid renders them."""
+        return [c["key"].rsplit("_", 1)[-1] if marker == "confusion"
+                else c["key"] for c in cols if marker in c["key"]]
+
+    def test_a_qubit_id_segment_counts_as_a_number(self):
+        cols, _ = _derive(_state_double_digit_lab())
+        got = [c["label"] for c in cols
+               if "spectator_qubits_phase_shift" in c["key"]]
+        assert got == ["spectator_qubits_phase_shift · q2",
+                       "spectator_qubits_phase_shift · q9",
+                       "spectator_qubits_phase_shift · q10"]
+
+    def test_a_qubit_id_mid_path_counts_too(self):
+        cols, _ = _derive(_state_double_digit_lab())
+        got = [c["label"] for c in cols
+               if "spectator_qubits_control" in c["key"]]
+        assert got == [
+            "spectator_qubits_control · q2 · amplitude",
+            "spectator_qubits_control · q2 · length",
+            "spectator_qubits_control · q9 · amplitude",
+            "spectator_qubits_control · q9 · length",
+            "spectator_qubits_control · q10 · amplitude",
+            "spectator_qubits_control · q10 · length",
+        ]
+
+    def test_an_n_qubit_confusion_name_counts_too(self):
+        cols, _ = _derive(_state_double_digit_lab())
+        got = [c["label"] for c in cols if "confusion_" in c["key"]]
+        assert got == ["grp · confusion_3q", "grp · confusion_4q",
+                       "grp · confusion_10q"]
+
+    def test_the_path_map_still_addresses_every_column(self):
+        """Only the COMPARISON changed: the same columns, the same real paths."""
+        cols, path_map = _derive(_state_double_digit_lab())
+        keys = {c["key"] for c in cols}
+        assert set(path_map["coupler_q9_q10"]) == keys
+        # 6 control + 3 phase + 3 confusion + the General band's `detuning`
+        assert len(keys) == 13

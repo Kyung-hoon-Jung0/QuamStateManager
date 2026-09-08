@@ -18,7 +18,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from quam_state_manager.core.loader import _walk
+from quam_state_manager.core.loader import _walk, natural_key
 
 logger = logging.getLogger(__name__)
 
@@ -202,7 +202,12 @@ class SearchIndex:
             score = self._score(idx, terms)
             scored.append((score, idx))
 
-        scored.sort(key=lambda x: (-x[0], self.entries[x[1]].dot_path))
+        # Tie-break on the dot path NATURALLY (customer rule 2026-09-09):
+        # the score buckets are coarse, so ties are the norm and this key
+        # decides both the printed order AND which `limit` results survive.
+        # A plain string compare read `weights_imag.1009` before `.101` and
+        # `qubits.q10` before `qubits.q2` (measured on the AS_10TQ9TC chip).
+        scored.sort(key=lambda x: (-x[0], natural_key(self.entries[x[1]].dot_path)))
         results: list[SearchResult] = []
         for score, idx in scored[:limit]:
             e = self.entries[idx]

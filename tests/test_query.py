@@ -970,3 +970,39 @@ class TestLargeRealData:
         chains = {n["chain"] for n in topo["nodes"]}
         assert "A" in chains
         assert "B" in chains
+
+
+# ---------------------------------------------------------------------------
+# Natural order (customer rule 2026-09-09)
+# ---------------------------------------------------------------------------
+
+
+class TestNotFoundListsIdsNaturally:
+    """`get_qubit`/`get_pair`'s "not found" message PRINTS every available id
+    — the CLI shows it (`console.print(f"[red]Error:[/red] {e}")`) and
+    `/api/qubit/<name>` returns it as a 404 body. On a q1..q10 lab
+    (`AS_10TQ9TC` is one, on disk) a string sort read q1, q10, q2."""
+
+    @staticmethod
+    def _engine(tmp_path: Path) -> QueryEngine:
+        folder = tmp_path / "double_digit_lab"
+        folder.mkdir()
+        state = {
+            "qubits": {q: {"id": q} for q in
+                       ("q1", "q2", "q9", "q10", "q11")},
+            "qubit_pairs": {p: {"id": p} for p in
+                            ("q1-2", "q2-3", "q9-10", "q10-11")},
+        }
+        (folder / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        (folder / "wiring.json").write_text("{}", encoding="utf-8")
+        return QueryEngine(QuamStore(folder))
+
+    def test_the_qubit_list_counts(self, tmp_path):
+        with pytest.raises(KeyError) as exc:
+            self._engine(tmp_path).get_qubit("qZZZ")
+        assert ("['q1', 'q2', 'q9', 'q10', 'q11']") in str(exc.value)
+
+    def test_the_pair_list_counts(self, tmp_path):
+        with pytest.raises(KeyError) as exc:
+            self._engine(tmp_path).get_pair("qZZ-ZZ")
+        assert ("['q1-2', 'q2-3', 'q9-10', 'q10-11']") in str(exc.value)

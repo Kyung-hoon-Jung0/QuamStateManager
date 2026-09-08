@@ -43,6 +43,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from quam_state_manager.core.loader import natural_key
 from quam_state_manager.core.pointer_resolver import is_pointer, is_self_ref
 
 # Identity / non-editable structural keys — never become columns.
@@ -263,7 +264,13 @@ def _order_key(group: str, headline: bool, tmpl_segs: list[str],
         base = 900
     else:
         base = 500
-    return (base, 0 if headline else 1, ".".join(tmpl_segs))
+    # The within-band tie-break is a DOT PATH, and real pair paths carry
+    # qubit ids as segments (`macros.<g>.spectator_qubits.qB5`,
+    # `...spectator_qubits_control.qC4.amplitude`) plus n-qubit names
+    # (`confusion_3q` … `confusion_5q`). A string compare puts q10 before
+    # q2 and confusion_10q before confusion_3q; `natural_key` counts the
+    # digit runs (customer rule 2026-09-09).
+    return (base, 0 if headline else 1, natural_key(".".join(tmpl_segs)))
 
 
 def derive_pair_columns(store) -> tuple[list[dict], dict[str, dict[str, tuple]]]:
