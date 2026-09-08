@@ -46,6 +46,7 @@ from __future__ import annotations
 from pprint import pformat
 from typing import Any
 
+from quam_state_manager.core.loader import natural_key
 from quam_state_manager.core import qdac
 
 __all__ = ["SNIPPET", "BUILDER_FILENAME", "GENERATOR_FILENAME",
@@ -523,7 +524,7 @@ def _cabling(spec: dict, allocation: dict) -> tuple[dict, dict]:
     cabling: dict = {}
     per_qubit: dict = {}
     biased = qdac.spec_biased_qubits(spec)
-    for qid in sorted(biased, key=lambda q: (len(q), q)):
+    for qid in sorted(biased, key=natural_key):
         fields = biased[qid]
         ext = fields.get("trigger_port") or f"ext_{qid}"
         per_qubit[qid] = ext

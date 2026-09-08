@@ -45,6 +45,7 @@ import re
 from typing import Any
 from weakref import WeakKeyDictionary
 
+from quam_state_manager.core.loader import natural_key
 from quam_state_manager.core import qdac
 from quam_state_manager.core.param_specs import _BULK_COLUMNS_SPEC
 from quam_state_manager.core.pair_columns import _SEG_SHORT, _humanize, _unit_of
@@ -303,7 +304,7 @@ def _order_key(col: dict, chan_order: dict[str, int]) -> tuple:
         base = 800
     else:                     # extras
         base = 900
-    return (base, col["tmpl"])
+    return (base, natural_key(col["tmpl"]))
 
 
 def _derive(store) -> tuple[list[dict], set[str]]:

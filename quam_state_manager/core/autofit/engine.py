@@ -35,6 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
+from quam_state_manager.core.loader import natural_key
 from quam_state_manager.core import safe_io
 from quam_state_manager.core.autofit import families as fam_mod
 from quam_state_manager.core.autofit import gates as gates_mod
@@ -578,11 +579,11 @@ class PlanEngine:
                      label=f"wide verification of {step.id}",
                      params=vparams, retry_max=0,
                      criticality=step.criticality,
-                     only_targets=tuple(sorted(discovered)),
+                     only_targets=tuple(sorted(discovered, key=natural_key)),
                      verify_of=step.id, inserted_by="verify_wide")
         queue.appendleft(vstep)
         self._ledger("verify_wide_inserted", step=step.id,
-                     targets=sorted(discovered), params=vparams)
+                     targets=sorted(discovered, key=natural_key), params=vparams)
 
     # ---- adaptation ladder (docs/56 v2) ----------------------------------
 

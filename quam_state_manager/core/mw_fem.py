@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 from typing import Any, Optional
+from quam_state_manager.core.loader import natural_key
 
 # Inclusive Hz range per band (QM docs, user-confirmed).
 BANDS: dict[int, tuple[float, float]] = {
@@ -182,11 +183,11 @@ def fsp_compensation_plan(merged: dict, resolved_fsp_path: str,
 
     amps: list[dict] = []
     skipped: list[dict] = []
-    for chan in sorted(channels):
+    for chan in sorted(channels, key=natural_key):
         ops = _walk_dots(merged, chan + ".operations")
         if not isinstance(ops, dict):
             continue
-        for op_name, op_val in sorted(ops.items()):
+        for op_name, op_val in sorted(ops.items(), key=lambda kv: natural_key(kv[0])):
             if isinstance(op_val, str):
                 continue                     # alias op → target compensated once
             if not isinstance(op_val, dict) or "amplitude" not in op_val:

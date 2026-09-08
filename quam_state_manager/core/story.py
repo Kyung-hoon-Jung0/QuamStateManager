@@ -33,6 +33,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
+from quam_state_manager.core.loader import natural_key
 from quam_state_manager.core import journal as journal_mod
 
 logger = logging.getLogger(__name__)
@@ -393,7 +394,7 @@ def _timeline(cards: list[dict]) -> dict[str, list[dict]]:
                 segs[-1]["steps"].append(step)
             else:
                 segs.append({"family": short, "full": full, "steps": [step]})
-    return dict(sorted(out.items()))
+    return dict(sorted(out.items(), key=lambda kv: natural_key(kv[0])))
 
 
 def _family_label(name: str) -> tuple[str | None, str]:
@@ -523,7 +524,7 @@ def _digest(cards: list[dict]) -> dict[str, list[dict]]:
             out.setdefault(t, []).append({"run_id": c["run_id"], "family": c.get("family_label") or c.get("node"),
                                           "outcome": c.get("outcome"), "gate": (c.get("gate") or {}).get("verdict"),
                                           "author": c.get("author")})
-    return dict(sorted(out.items()))
+    return dict(sorted(out.items(), key=lambda kv: natural_key(kv[0])))
 
 
 def _counts(cards: list[dict]) -> dict:

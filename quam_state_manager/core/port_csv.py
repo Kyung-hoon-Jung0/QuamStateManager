@@ -214,7 +214,7 @@ def parse_port_label_csv(text: str) -> dict:
 
     controllers = [{"con": con, "fems": [{"slot": s, "fem": "mw"}
                                          for s in sorted(slots)]}
-                   for con, slots in sorted(fems.items())]
+                   for con, slots in sorted(fems.items())]   # the keys are INTS (dict[int, set[int]]): already numeric
 
     return {
         "ok": True,

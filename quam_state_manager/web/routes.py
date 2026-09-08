@@ -9471,7 +9471,7 @@ def comparison_table():
             # or any non-number sorts in a SEPARATE bucket after, so a column mixing
             # str and float can't raise TypeError → 500 the HTMX-swapped table.
             num = isinstance(v, (int, float)) and not isinstance(v, bool)
-            return (v is None, not num, v if num else str(v))
+            return (v is None, not num, v if num else natural_key(str(v)))
         rows.sort(key=_sort_key, reverse=(sort_dir == "desc"))
 
     # col_stats computed on ALL filtered rows (before pagination) for accurate min/max
@@ -10787,7 +10787,7 @@ def _compare_diff_ports(sets: list[dict]) -> list[dict]:
     for s in sets:
         all_keys.update(s.keys())
     diff: list[dict] = []
-    for k in sorted(all_keys):
+    for k in sorted(all_keys, key=natural_key):
         sigs = {tuple(s.get(k, [])) for s in sets}
         if len(sigs) > 1:
             ctrl, fem, port, io = k.split("/")

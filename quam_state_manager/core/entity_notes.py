@@ -60,6 +60,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from quam_state_manager.core.loader import natural_key
 from quam_state_manager.core import safe_io
 
 logger = logging.getLogger(__name__)
@@ -231,7 +232,7 @@ def touches(subjects, changed_paths) -> list[str]:
         for subject in subjects:
             if p == subject or p.startswith(subject + ".") or subject.startswith(p + "."):
                 hits.add(subject)
-    return sorted(hits)
+    return sorted(hits, key=natural_key)
 
 
 def save(instance_path, live_folder, subject: str, text: str, *,

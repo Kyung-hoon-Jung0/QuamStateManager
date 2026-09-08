@@ -685,7 +685,7 @@ window.TopoGraph = (function () {
       return a.mean - b.mean
           || String(a.label).localeCompare(String(b.label), undefined,
                                            { numeric: true, sensitivity: 'base' })
-          || (a.label < b.label ? -1 : 1);
+          || a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: 'base' });
     });
     var feedSlotById = {};
     for (var bi = 0; bi < buses.length; bi++) {

@@ -23,6 +23,7 @@ from collections import OrderedDict
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from quam_state_manager.core.loader import natural_key
 from quam_state_manager.core import safe_io
 
 logger = logging.getLogger(__name__)
@@ -276,7 +277,7 @@ def scan_folder(folder: Path | str, *, instance_path=None) -> list[NodeInfo]:
     if not folder.is_dir():
         return []
     try:
-        files = sorted(folder.glob("*.py"))
+        files = sorted(folder.glob("*.py"), key=lambda p: natural_key(p.name))
     except OSError:
         return []
     disk = _load_disk_cache(instance_path) if instance_path is not None else {}

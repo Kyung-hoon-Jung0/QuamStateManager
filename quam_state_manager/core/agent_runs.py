@@ -27,6 +27,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from quam_state_manager.core.loader import natural_key
 from quam_state_manager.core import agent_session, approvals, limits as limits_mod, story
 
 logger = logging.getLogger(__name__)
@@ -241,7 +242,7 @@ def diff_states(before_folder: Path, after_folder: Path, *, cap: int = MAX_WRITE
     b, _ = json_diff.flatten(_merged(after_folder), cap=250_000)
     out: list[dict] = []
     truncated = False
-    for path in sorted(set(a) | set(b)):
+    for path in sorted(set(a) | set(b), key=natural_key):
         if path in a and path in b:
             if a[path] == b[path] and type(a[path]) is type(b[path]):
                 continue
