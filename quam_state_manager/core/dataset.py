@@ -25,6 +25,7 @@ from typing import Any
 from quam_state_manager.core import dir_sample
 from quam_state_manager.core import safe_io
 from quam_state_manager.core import units
+from quam_state_manager.core.loader import natural_key
 from quam_state_manager.core.scanner import _with_pair_qubits
 
 logger = logging.getLogger(__name__)
@@ -253,7 +254,7 @@ def build_trend_data(runs, qubit=None, metrics=None, folder_key_of=None) -> dict
             if isinstance(qvals, dict):
                 all_metrics.update(qvals.keys())
     target_metrics = metrics or sorted(all_metrics - {"success"})
-    target_qubits = [qubit] if qubit else sorted(all_qubits)
+    target_qubits = [qubit] if qubit else sorted(all_qubits, key=natural_key)
 
     runs_info = []
     for r in matching:
@@ -982,11 +983,11 @@ class DatasetStore:
             self._date_fp = merged_fp
             self.dates = sorted(set(self.dates) | dates_set, reverse=True)
             self.experiment_types = sorted(
-                set(self.experiment_types) | experiments_set)
+                set(self.experiment_types) | experiments_set, key=natural_key)
         else:
             self._date_fp = fresh_date_fp
             self.dates = sorted(dates_set, reverse=True)
-            self.experiment_types = sorted(experiments_set)
+            self.experiment_types = sorted(experiments_set, key=natural_key)
         # Sorted run-id index for O(log n) previous/next-run lookups (the
         # prev-state diff). Rebuilt here whenever self.runs changes.
         self._run_ids_sorted = sorted(self.runs.keys())
@@ -1118,7 +1119,8 @@ class DatasetStore:
         self._date_fp = date_fp
         self._run_ids_sorted = sorted(runs)
         self.dates = sorted({r.date for r in runs.values()}, reverse=True)
-        self.experiment_types = sorted({r.experiment_name for r in runs.values()})
+        self.experiment_types = sorted({r.experiment_name for r in runs.values()},
+                                       key=natural_key)
         self._cache_saved = True
         self.cache_hit_runs = len(runs)
         logger.info("DatasetStore %s: %d runs from the store cache, verifying",
@@ -1446,7 +1448,9 @@ class DatasetStore:
         elif sort == "date":
             results.sort(key=lambda r: (r["date"], r["time"]), reverse=desc)
         elif sort == "experiment":
-            results.sort(key=lambda r: r["experiment_name"], reverse=desc)
+            # Node names carry numeric prefixes (05_power_rabi, 15h_...):
+            # compare the digit runs as numbers (customer rule 2026-09-09).
+            results.sort(key=lambda r: natural_key(r["experiment_name"]), reverse=desc)
 
         return results
 
@@ -1638,7 +1642,7 @@ class DatasetStore:
                     all_metrics.update(qvals.keys())
 
         target_metrics = metrics or sorted(all_metrics - {"success"})
-        target_qubits = [qubit] if qubit else sorted(all_qubits)
+        target_qubits = [qubit] if qubit else sorted(all_qubits, key=natural_key)
 
         runs_info = [
             {"run_id": r.run_id, "date": r.date, "time": r.time}
@@ -2450,7 +2454,7 @@ class DatasetStore:
         all_tags = set()
         for tags in self._tags_data.get("tags", {}).values():
             all_tags.update(tags)
-        return sorted(all_tags)
+        return sorted(all_tags, key=natural_key)
 
     # ------------------------------------------------------------------
     # Key metric extraction
@@ -2462,9 +2466,11 @@ class DatasetStore:
         if not run.fit_results:
             return ""
 
-        # Get first qubit's results
+        # Get first qubit's results. natural_key (customer rule 2026-09-09):
+        # of {q2, q10} a string sort calls q10 "first", so the browser table
+        # showed q10's number where the reader assumes the lowest qubit.
         first_qubit_results = None
-        for qname in sorted(run.fit_results.keys()):
+        for qname in sorted(run.fit_results.keys(), key=natural_key):
             val = run.fit_results[qname]
             if isinstance(val, dict):
                 first_qubit_results = val
@@ -2524,7 +2530,9 @@ class DatasetStore:
             return {}
         first_val: dict[str, float] = {}
         all_vals: dict[str, list[float]] = {}
-        for qname in sorted(fit.keys()):
+        # natural order: ``first_val`` means "the first qubit's value",
+        # and q10 is not the first of {q2, q10}.
+        for qname in sorted(fit.keys(), key=natural_key):
             qvals = fit[qname]
             if not isinstance(qvals, dict):
                 continue
@@ -2602,7 +2610,7 @@ class DatasetStore:
             "total_runs": len(self.runs),
             "date_range": f"{self.dates[-1]} - {self.dates[0]}" if self.dates else "",
             "experiment_types": len(self.experiment_types),
-            "unique_qubits": sorted(all_qubits),
+            "unique_qubits": sorted(all_qubits, key=natural_key),
         }
 
     def categorize_experiments(self) -> list[dict]:

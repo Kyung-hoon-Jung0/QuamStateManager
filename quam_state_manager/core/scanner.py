@@ -22,7 +22,7 @@ import hashlib
 import json
 
 from quam_state_manager.core import safe_io
-from quam_state_manager.core.loader import QuamStore
+from quam_state_manager.core.loader import QuamStore, natural_key
 
 # Phase 3 §2.1 — cold-scan parallelism. The per-folder ``node.json`` parse
 # is pure I/O on local disk; running it across a small ThreadPoolExecutor
@@ -940,10 +940,15 @@ def build_nested_tree(root: Path, entries: list[ExperimentEntry]) -> list[dict]:
 
     def _finish(node: dict) -> tuple[list[dict], int]:
         kids = list(node["children"].values())
+        # natural_key (customer rule 2026-09-09): a folder level is a real
+        # directory name a person reads -- "chip2" comes before "chip10", not
+        # after it. ``is_date`` is a SEARCH, so a suffixed date dir
+        # ("2026-09-09_batch2" / "..._batch10") lands in the date bucket too;
+        # for a bare zero-padded ISO name the key is order-identical.
         dates = sorted((k for k in kids if k["is_date"]),
-                       key=lambda n: n["name"], reverse=True)
+                       key=lambda n: natural_key(n["name"]), reverse=True)
         others = sorted((k for k in kids if not k["is_date"]),
-                        key=lambda n: n["name"].lower())
+                        key=lambda n: natural_key(n["name"]))
         ordered = dates + others
         total = len(node["entries"])
         # Newest first: run_id desc, timestamp desc; run-less (standalone)

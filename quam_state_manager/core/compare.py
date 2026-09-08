@@ -44,7 +44,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import threading
 import time
 from collections import OrderedDict
@@ -59,7 +58,7 @@ from quam_state_manager.core.compare_sources import (
     DEFAULT_POOL,
     _PoolEntry,
 )
-from quam_state_manager.core.loader import QuamStore, _walk
+from quam_state_manager.core.loader import QuamStore, _walk, natural_key
 from quam_state_manager.core.pair_columns import derive_pair_columns, _strip_pair_suffix
 from quam_state_manager.core.param_specs import (
     _BULK_COLUMNS_SPEC,
@@ -351,7 +350,8 @@ def _instruments(merged: dict) -> list[str]:
                    if qdac.bias_mode(q) == "bias_tee")
         if tees:
             out.add(f"qdac/{tees} bias-tee")
-    return sorted(out)
+    # Controller names are numbered (con1 ... con10) -- natural order.
+    return sorted(out, key=_nat_key)
 
 
 def _chip_type(merged: dict) -> str:
@@ -484,7 +484,9 @@ def build_snapshot(store: QuamStore, content_hash_: str,
             pair_gates[pname] = _pair_gate_info(pobj)
 
     qubits_d = merged.get("qubits")
-    qubits = sorted(qubits_d.keys()) if isinstance(qubits_d, dict) else []
+    # Natural order -- snap.qubits IS the topology card's row order.
+    qubits = (sorted(qubits_d.keys(), key=_nat_key)
+              if isinstance(qubits_d, dict) else [])
     grid = {}
     for q in qubits:
         gl = qubits_d[q].get("grid_location") if isinstance(qubits_d[q], dict) else None
@@ -502,8 +504,10 @@ def build_snapshot(store: QuamStore, content_hash_: str,
     structure = {
         "n_qubits": len(qubits),
         "n_pairs": len(pair_endpoints),
-        "active_qubits": sorted(active_q) if isinstance(active_q, list) else [],
-        "active_pairs": sorted(active_p) if isinstance(active_p, list) else [],
+        "active_qubits": (sorted(active_q, key=_nat_key)
+                          if isinstance(active_q, list) else []),
+        "active_pairs": (sorted(active_p, key=_nat_key)
+                         if isinstance(active_p, list) else []),
         "grid_bbox": bbox,
         "chip_type": _chip_type(merged),
         "gates": gates,
@@ -666,25 +670,27 @@ def auto_map_qubits(snap_a: ComparisonSnapshot,
                     conf["mapped"] = len(pairs)
                     return MappingResult(
                         pairs=pairs, method="grid", status="auto",
-                        unmatched_a=sorted(a_names - set(pairs)),
-                        unmatched_b=sorted(b_names - set(pairs.values())),
+                        unmatched_a=sorted(a_names - set(pairs), key=_nat_key),
+                        unmatched_b=sorted(b_names - set(pairs.values()),
+                                           key=_nat_key),
                         confidence=conf)
                 # variantb⊂LabA: confident-WRONG grid map → distrust → names.
 
     inter = a_names & b_names
     conf["intersection"] = len(inter)
     if inter:
-        pairs = {n: n for n in sorted(inter)}
+        pairs = {n: n for n in sorted(inter, key=_nat_key)}
         conf["mapped"] = len(pairs)
         return MappingResult(
             pairs=pairs, method="name", status="suggested",
-            unmatched_a=sorted(a_names - inter),
-            unmatched_b=sorted(b_names - inter),
+            unmatched_a=sorted(a_names - inter, key=_nat_key),
+            unmatched_b=sorted(b_names - inter, key=_nat_key),
             confidence=conf)
     conf["mapped"] = 0
     return MappingResult(pairs={}, method="none", status="manual-needed",
-                         unmatched_a=sorted(a_names),
-                         unmatched_b=sorted(b_names), confidence=conf)
+                         unmatched_a=sorted(a_names, key=_nat_key),
+                         unmatched_b=sorted(b_names, key=_nat_key),
+                         confidence=conf)
 
 
 _MOVING_SWAP = {"control": "target", "target": "control"}
@@ -742,8 +748,8 @@ def derive_pair_map(snap_a: ComparisonSnapshot, snap_b: ComparisonSnapshot,
             "roles_agree": (_moving_roles_agree(snap_a, pa, snap_b, pb)
                             if flipped else True),
         }
-    unmatched_b = sorted(set(snap_b.pair_endpoints) - used_b)
-    return {"matches": matches, "unmatched_a": sorted(unmatched_a),
+    unmatched_b = sorted(set(snap_b.pair_endpoints) - used_b, key=_nat_key)
+    return {"matches": matches, "unmatched_a": sorted(unmatched_a, key=_nat_key),
             "unmatched_b": unmatched_b,
             "orphans_a": dict(snap_a.pair_orphans),
             "orphans_b": dict(snap_b.pair_orphans)}
@@ -1101,11 +1107,11 @@ def _classify_row(key: str, views: list[_View], ref: int, bucket: int,
 _INFRA_TOPS = {"wiring", "ports", "octaves", "mixers"}
 _SECTION_ORDER = {"Qubits": 0, "Pairs": 1, "Infrastructure": 2, "Other": 3}
 
-_NAT_RE = re.compile(r"(\d+)")
-
-
-def _nat_key(s: str) -> tuple:
-    return tuple(int(t) if t.isdigit() else t for t in _NAT_RE.split(s))
+#: Natural order is ONE implementation app-wide (``loader.natural_key``):
+#: digit runs compare as numbers (q2 before q10, 101 before 1009), text runs
+#: case-insensitively, the raw string breaks ties. The private name stays as
+#: the local alias every call site in this module already uses.
+_nat_key = natural_key
 
 
 def _section_entity(key: str) -> tuple[str, str, str]:
@@ -1272,8 +1278,9 @@ def compare(
             m = dict(qubit_map)
             mapping_res = MappingResult(
                 pairs=m, method="manual", status="confirmed",
-                unmatched_a=sorted(set(snaps[ref].qubits) - set(m)),
-                unmatched_b=sorted(set(snaps[other].qubits) - set(m.values())),
+                unmatched_a=sorted(set(snaps[ref].qubits) - set(m), key=_nat_key),
+                unmatched_b=sorted(set(snaps[other].qubits) - set(m.values()),
+                                   key=_nat_key),
                 confidence={"mapped": len(m)})
         pair_map = derive_pair_map(snaps[ref], snaps[other], mapping_res.pairs)
 
@@ -1386,7 +1393,10 @@ def compare(
 
     # ---- bulk-dangling coalescing (A6: variantb's 60 optional defaults) --
     bulk_groups: list[dict] = []
-    unresolved_rows = [rows_by_key[k] for k in sorted(class_keys[CLS_UNRESOLVED])
+    # natural_key: these dot paths reach the screen as ``g['keys'][:8]`` in the
+    # Attention block, so the order decides WHICH eight a person sees.
+    unresolved_rows = [rows_by_key[k]
+                       for k in sorted(class_keys[CLS_UNRESOLVED], key=_nat_key)
                        if k in rows_by_key]
     by_sig: dict[tuple, list[dict]] = {}
     for row in unresolved_rows:
@@ -1467,6 +1477,12 @@ def compare(
         key=lambda g: (_SECTION_ORDER.get(g["section"], 9), _nat_key(g["entity"])))
     for g in ordered:
         g["rows"].sort(key=lambda r: _nat_key(r["key"]))
+        # The collapsed lists render above those rows and inherited
+        # ``union_sorted``'s LEXICOGRAPHIC order, which _collapse_keys needs for
+        # its prefix bisect and must keep. Order them here instead, so all three
+        # of a group's lists read the same way (customer rule 2026-09-09).
+        g["collapsed"].sort(key=lambda c: _nat_key(c["root"]))
+        g["equal_collapsed"].sort(key=lambda c: _nat_key(c["root"]))
     result["groups"] = ordered
 
     # ---- headline (U5/U3), bucket-aware ------------------------------

@@ -49,6 +49,7 @@ import h5py
 import numpy as np
 
 from quam_state_manager.core.dataset import _h5_lock_for
+from quam_state_manager.core.loader import natural_key
 
 logger = logging.getLogger(__name__)
 
@@ -506,7 +507,11 @@ def probe_file(h5_path: Path) -> dict:
                     })
                 # Data variables first, fit-coord vars after (the shell auto-
                 # opens the first card — it should be real data, not a coord).
-                out["vars"].sort(key=lambda v: (v["is_coord_var"], v["name"]))
+                # natural_key on the name (customer rule 2026-09-09): a
+                # variable name carries indices (state_2 before state_10), and
+                # this IS the card order the shell auto-opens the first of.
+                out["vars"].sort(key=lambda v: (v["is_coord_var"],
+                                                natural_key(v["name"])))
                 for k, v in r.root_attrs().items():
                     if isinstance(v, (str, int, float, np.integer, np.floating)):
                         out["attrs"][str(k)] = (float(v) if isinstance(v, (np.integer, np.floating))
@@ -1129,7 +1134,10 @@ def list_h5_files(run_folder: Path) -> list[str]:
     """Every *.h5 in the run folder (containment-checked by the caller) — the
     old ds_raw/ds_fit whitelist hid ds_proc/ds_survey files entirely."""
     try:
-        return sorted(p.name for p in run_folder.iterdir()
-                      if p.suffix.lower() in _ALLOWED_H5_SUFFIXES and p.is_file())
+        # natural_key: the file picker is a displayed list and these names
+        # carry numbers (ds_proc_2.h5 before ds_proc_10.h5).
+        return sorted((p.name for p in run_folder.iterdir()
+                       if p.suffix.lower() in _ALLOWED_H5_SUFFIXES and p.is_file()),
+                      key=natural_key)
     except OSError:
         return []

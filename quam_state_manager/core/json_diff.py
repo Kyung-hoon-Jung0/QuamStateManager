@@ -35,6 +35,7 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 from quam_state_manager.core import value_delta
+from quam_state_manager.core.loader import natural_key
 
 # Change classes.
 CHANGED = "changed"       # both sides have the leaf, values differ
@@ -95,13 +96,18 @@ def _sort_key(row: dict) -> tuple:
     frequency matters more than a 1 ns change in a delay. Rows without a
     numeric delta (added, removed, text) sort after every numeric one — they
     are structure, not measurement.
+
+    The path is the TIE-BREAK, and a plain string compare there is the bug the
+    customer photographed on 2026-09-09: a whole added/removed array shares one
+    (1, 0.0, 0.0) rank, so ``…weights_imag.1009`` listed before ``…weights_imag.101``.
+    ``natural_key`` compares the digit runs as numbers — 101 < 1009 < 1011.
     """
     d = row.get("delta")
     if not d:
-        return (1, 0.0, 0.0, row["path"])
+        return (1, 0.0, 0.0, natural_key(row["path"]))
     pct = abs(d.get("pct") or 0.0)
     mag = abs(d.get("delta") or 0.0)
-    return (0, -pct, -mag, row["path"])
+    return (0, -pct, -mag, natural_key(row["path"]))
 
 
 def diff_rows(a_doc: Any, b_doc: Any, *, cap: int = ROW_CAP) -> dict:
@@ -177,7 +183,10 @@ def diff_rows_n(docs: list[Any], *, cap: int = ROW_CAP) -> dict:
     same = 0
     differing = 0
     one_sided = 0
-    for p in sorted(paths):
+    # Natural order: a list index is a NUMBER, so ``…weights_imag.101`` comes
+    # before ``…weights_imag.1009`` and ``qubits.q2`` before ``qubits.q10``
+    # (customer rule 2026-09-09). This IS the render order of /diff/versions.
+    for p in sorted(paths, key=natural_key):
         present = [p in f for f in flats]
         vals = [f.get(p) for f in flats]
         # docs/141 4ac: compare each present value against EVERY representative

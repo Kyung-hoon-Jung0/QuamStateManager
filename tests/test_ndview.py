@@ -260,6 +260,11 @@ class TestH5SuffixMatching:
         (tmp_path / "ds_fit.h5").write_bytes(b"")
         (tmp_path / "notes.txt").write_text("x", encoding="utf-8")
         (tmp_path / "sub.h5dir").mkdir()   # directory — never listed
+        # Order is `natural_key` since the 2026-09-09 natural-order round:
+        # text runs compare case-INSENSITIVELY (the same rule as the house JS
+        # idiom's `sensitivity: 'base'`), so DS_RAW no longer jumps the queue
+        # on the ASCII accident that 'D' < 'd'. Membership — what this case is
+        # about — is unchanged.
         assert ndview.list_h5_files(tmp_path) == [
-            "DS_RAW.H5", "ds_fit.h5", "ds_proc.hdf5",
+            "ds_fit.h5", "ds_proc.hdf5", "DS_RAW.H5",
         ]
