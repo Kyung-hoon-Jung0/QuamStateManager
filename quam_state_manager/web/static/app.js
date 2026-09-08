@@ -2048,6 +2048,12 @@ document.addEventListener('click', function(evt) {
         });
         el.classList.add('tree-entry-active');
         window._markActiveTreeBranch(el);
+        // Keep the keyboard ON the entry that was clicked (a tabindex=0 span
+        // is not focused by a click in every browser): the ↑/↓ run navigation
+        // below is gated on a focused run entry, so click → ↓ → ↓ just works.
+        if (typeof el.focus === 'function' && document.activeElement !== el) {
+            try { el.focus({preventScroll: true}); } catch (e) { el.focus(); }
+        }
         _dsMarkSlowLoad(target, el.getAttribute('data-run-id'));
         // CRITICAL: pass `source` so htmx reads the target's hx-sync and queues
         // the request on the TARGET, not document.body. Without it every dataset
@@ -2127,8 +2133,16 @@ window.dsNavRun = function(dir) {
     if (tgt === idx) return;
     var next = entries[tgt];
     if (!next) { serverNeighbor(); return; }        // tree end — folder may have more
+    // A run inside a CLOSED date group (a closed <details> still lays its rows
+    // out, so the visibility filter above keeps them): open the group first,
+    // so the row the keyboard just moved to is on screen, not only its detail.
+    var closed = next.closest('details:not([open])');
+    while (closed) {
+        closed.open = true;
+        closed = closed.parentElement ? closed.parentElement.closest('details:not([open])') : null;
+    }
     next.scrollIntoView({block: 'nearest'});
-    next.click();
+    next.click();   // the delegated click handler opens it AND puts the keyboard on it
 };
 
 /* docs/126 r3: the run-number jump lives on the Prev State comparison bar
@@ -2162,6 +2176,23 @@ document.addEventListener('keydown', function(evt) {
     if (!document.getElementById('ds-detail-root')) return;
     evt.preventDefault();
     window.dsNavRun(evt.key === '[' ? -1 : 1);
+});
+
+/* ↑ / ↓ = previous / next run while the keyboard is ON a run entry of the left
+ * list (the entry you clicked keeps focus — see the click handler above — so
+ * the flow is click → ↓ → ↓ …, one run per press, the detail following each).
+ * PageUp / PageDown step 10. Anywhere else the arrows keep scrolling the page
+ * and the table as before; the [ ] keys above stay the anywhere-shortcut.
+ * Customer feedback 2026-09-08: explore the data by keyboard alone. */
+document.addEventListener('keydown', function(evt) {
+    var step = {ArrowDown: 1, ArrowUp: -1, PageDown: 10, PageUp: -10}[evt.key];
+    if (!step) return;
+    if (evt.ctrlKey || evt.metaKey || evt.altKey || evt.shiftKey) return;
+    var a = document.activeElement;
+    if (!a || !a.closest || !a.closest('.tree-entry-click[data-uid]')) return;
+    if (!document.getElementById('ds-detail-root')) return;   // a detail is open
+    evt.preventDefault();
+    window.dsNavRun(step);
 });
 
 /* "⤢ Open as a full page": render this run's detail into the main #table-pane
