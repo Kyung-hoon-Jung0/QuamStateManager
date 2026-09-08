@@ -434,6 +434,15 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     # <script> body. Replaces the older `| safe` filter on those sites.
     app.jinja_env.filters["script_json"] = _script_json_filter
 
+    # `natsort` — Jinja's `|sort` compares strings character by character, so
+    # `q10` lands between `q1` and `q2` and a dot path's list index reads
+    # `.1009` before `.101`. Customer rule 2026-09-09: anywhere SM orders
+    # something for a human, a digit run counts as a NUMBER. This filter is the
+    # display-side spelling of the one helper the rest of the app already sorts
+    # ids and paths with (`core.loader.natural_key`) — never a second one.
+    from quam_state_manager.core.loader import natural_key as _natural_key
+    app.jinja_env.filters["natsort"] = lambda seq: sorted(seq, key=_natural_key)
+
     # `qty` — physical-unit display filter (single source of truth in
     # core/units.py). Converts raw stored SI values to fixed human units per
     # field (T1->µs, f_01->GHz, …). mode 'num' (default) emits the scaled

@@ -38,6 +38,11 @@
             <tr><th>Parameter</th><th>Value</th></tr>
         </thead>
         <tbody>
+        {# Plain `sort` on purpose: these are node PARAMETER names, not ids.
+           Measured over the customer archive (8,084 node.json), 0 of the
+           parameter dicts order differently under natural order — while
+           natsort's case folding WOULD move `N_max` below `amp_range` in 63 of
+           them. Same for the fit-property keys below. #}
         {% for key in exp_ctx.parameters | sort %}
         {% set val = exp_ctx.parameters[key] %}
         {% set ref_val = ref_ctx.parameters.get(key) if ref_ctx is defined and ref_ctx.parameters else none %}
@@ -65,7 +70,10 @@
 {% if exp_ctx is defined and exp_ctx.fit_results %}
 <details class="compare-section">
     <summary>Fit Results <small class="muted">({{ exp_ctx.fit_results | length }} qubits)</small></summary>
-    {% for qname in exp_ctx.fit_results | sort %}
+    {# natsort, not sort: these are qubit / pair / coupler ids (q10, q18-19,
+       coupler_q9_q10 on the customer's own 20Q chip). Plain string order puts
+       q10 between q1 and q2 — customer rule 2026-09-09. #}
+    {% for qname in exp_ctx.fit_results | natsort %}
     {% set qvals = exp_ctx.fit_results[qname] %}
     {% set ref_qvals = ref_ctx.fit_results.get(qname, {}) if ref_ctx is defined else {} %}
     <h4 class="compare-qubit-heading">{{ qname }}
