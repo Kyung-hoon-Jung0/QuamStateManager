@@ -278,6 +278,128 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   P.toggleFloat();
   ok(pop.classList.contains('agent-hidden'), 'toggling again hides it');
 
+  // ------------------------------------------------ customer feedback 2026-09-08: the compact redesign
+  // One column, a status strip, a timeline feed, the composer pinned at the bottom. Whether a
+  // button is STRETCHED (Pico's width:100%) or where the composer lands on screen are layout
+  // facts jsdom does not compute -- those are measured in real Chrome; the CSS pin in
+  // test_agent_panel.py guards that the rules exist.
+  const home2 = document.createElement('div'); home2.id = 'agent-home'; home2.className = 'agent-home';
+  document.body.appendChild(home2);
+  P.init();
+  await tick(30);
+  const h2 = home2.querySelector('.ag-root');
+  ok(h2 && !h2.querySelector('.ag-left') && !h2.querySelector('aside'), 'one column: no left / right split any more');
+  const strip = h2.querySelector('.ag-now');
+  ok(strip && strip.querySelector('.ag-now-main .ag-now-state') && strip.querySelector('.ag-now-acts .ag-observer') && strip.querySelector('.ag-now-acts a.ag-setup-link'),
+     'the strip: the state on the left, the doors + observer + links on the right');
+  ok(/thinking · by_claude/.test(strip.querySelector('.ag-now-state').textContent) && !/Agent: /.test(strip.querySelector('.ag-now-state').textContent),
+     'the strip says "thinking · by_claude" without the topbar pill\'s "Agent:" prefix');
+  ok(/today 5 events/.test(strip.textContent) && /waiting 1/.test(strip.textContent) && /claude session · human:kyunghoon · not armed/.test(strip.textContent), 'session + today\'s counts sit in the strip');
+  ok(!strip.querySelector('.ag-now-run'), 'no run in progress: no second row');
+  feed.now.state = 'running'; feed.now.running = { node: '05_power_rabi', since: now - 30, typical_s: 300 };
+  await P.poll(true); await tick();
+  ok(strip.querySelector('.ag-now-run') && /05_power_rabi/.test(strip.querySelector('.ag-now-run').textContent) && /usually ~5m/.test(strip.querySelector('.ag-now-run').textContent), 'a run in progress is the one allowed second row');
+  feed.now.state = 'between'; delete feed.now.running;
+  await P.poll(true); await tick();
+  ok(strip.querySelector('.ag-now-state').classList.contains('ag-between'), 'the dot carries the state as a class');
+  ok(h2.querySelector('.ag-head .ag-chip') && h2.querySelector('.ag-head').nextElementSibling === strip && strip.nextElementSibling.classList.contains('ag-cards'), 'lead, strip, feed -- in that order');
+
+  // the composer: one growing row, then backend · name · presets · Send, pinned after the feed
+  const comp = h2.querySelector('form.ag-composer');
+  const ta2 = comp && comp.querySelector('textarea.ag-input');
+  ok(comp && ta2 && ta2.getAttribute('rows') === '1' && comp.previousElementSibling.classList.contains('ag-cards') && comp.nextElementSibling.id === 'ag-toast', 'the composer is a one-row textarea right after the feed (the last thing in the column)');
+  ok(/^Ask, or tell the agent what to do…/.test(ta2.placeholder) && /Enter sends · Shift\+Enter newline · \/run <node> <targets>/.test(ta2.placeholder), 'the shortened placeholder: ' + ta2.placeholder);
+  const rowEl = comp.querySelector('.ag-form-row');
+  const rowKids = Array.from(rowEl.children);
+  ok(rowKids[0].classList.contains('ag-backend') && rowKids[1].classList.contains('ag-actor-wrap') && rowKids[2].classList.contains('ag-presets') && rowEl.lastElementChild.classList.contains('ag-send'), 'the row: backend · name · presets · Send last');
+  const pres = comp.querySelector('.ag-presets');
+  ok(pres.getAttribute('title') === "a preset fills a draft; nothing starts before a plan card's Start" && !h2.querySelector('.ag-hint'), 'the preset sentence is a tooltip on the group, not visible text');
+  ok(pres.querySelectorAll('.ag-preset').length === 3 && pres.querySelector('.ag-presets-toggle') && pres.querySelectorAll('.ag-preset')[0].textContent === '1Q bringup', 'three preset chips and the compact toggle');
+  let sh = 60;
+  Object.defineProperty(ta2, 'scrollHeight', { configurable: true, get: () => sh });
+  P.grow(ta2);
+  ok(ta2.style.height === '60px' && ta2.style.overflowY === 'hidden', 'the composer grows to its draft');
+  sh = 900; P.grow(ta2);
+  ok(parseInt(ta2.style.height, 10) < 900 && parseInt(ta2.style.height, 10) > 60 && ta2.style.overflowY === 'auto', 'and stops at ~6 rows, scrolling inside: ' + ta2.style.height);
+  sh = 0; ta2.value = 'sent'; calls.length = 0;
+  P.submit({ preventDefault() {}, target: ta2 });
+  await tick(30);
+  ok(ta2.value === '' && ta2.style.height === '', 'a sent line resets the box to one row');
+
+  // the feed is a timeline: a time gutter, then the content
+  const feedEl = h2.querySelector('.ag-cards');
+  const u1 = feedEl.querySelector('[data-card="user:1"]');
+  ok(u1.querySelector(':scope > .ag-t') && /^\d\d:\d\d$/.test(u1.querySelector('.ag-t').textContent) && u1.querySelector(':scope > .ag-body .ag-bubble.ag-user'), 'a chat row: a time gutter, then the content; the person\'s message is a bubble');
+  ok(!feedEl.querySelector('.ag-when'), 'no floating clock inside the content any more');
+  const a3 = feedEl.querySelector('[data-card="answer:3"]');
+  ok(a3.querySelector('.ag-body .ag-who').textContent === 'by_claude' && !a3.querySelector('.ag-bubble') && !a3.querySelector('.ag-more') && !a3.querySelector('.ag-md').classList.contains('ag-clamp'), 'an answer: an author label, no box, no show-more when short');
+  const plan2 = feedEl.querySelector('[data-card="plan:pl-1"]');
+  ok(plan2.querySelector(':scope > .ag-t') && plan2.querySelector('.ag-plan-head').firstElementChild.classList.contains('ag-plan-st'), 'a plan card: a time gutter, a framed body whose header leads with the status pill');
+  ok(!plan2.querySelector('table.ag-steps') && plan2.querySelector('div.ag-steps .ag-step code').textContent === '05_power_rabi' && /rabi first/.test(plan2.querySelector('.ag-step .ag-step-why').textContent), 'steps are compact rows, not a table');
+  ok(/^q1 · amplitude$/.test(plan2.querySelector('.ag-may strong').textContent) && !plan2.querySelector('.ag-may-path') && /q1 · amplitude\s+now 0\.12/.test(plan2.querySelector('.ag-may li').textContent), 'a may-change row reads "q1 · amplitude   now 0.12" (the dot path rides the title)');
+  ok(plan2.querySelector('.ag-may-wrap').open && !feedEl.querySelector('[data-card="plan:pl-3"] .ag-may-wrap').open, '"values that may change" is open only on a draft');
+  ok(plan2.querySelector('.ag-plan-acts').lastElementChild.classList.contains('ag-cancel') && plan2.querySelector('.ag-plan-acts .ag-mode'), 'mode on the left of the footer, the doors at its end');
+  const ap2 = feedEl.querySelector('[data-card="approval:ap-1"]');
+  ok(ap2.querySelector('.ag-body .ag-ap-head .ag-plan-st') && ap2.querySelector('table.ag-ap-rows') && /^because: /.test(ap2.querySelector('.ag-because').textContent), 'an approval: a status pill, compact rows, the because line');
+
+  // consecutive tool events fold into ONE row; a failed one breaks the run and stands alone
+  const t0 = now + 10;
+  ['sm_status', 'take_live', 'journal_append', 'run_node', 'check_fit'].forEach((t, i) => feed.cards.push({ n: 10 + i, ts: t0 + i, kind: 'tool', tool: 'mcp__sm__' + t, summary: '{"a": 1}', failed: false }));
+  feed.last = 14;
+  await P.poll(true); await tick();
+  let groups = feedEl.querySelectorAll(':scope > .ag-toolgroup');
+  ok(groups.length === 1, 'five consecutive tool events make ONE group row: ' + groups.length);
+  const g1 = groups[0];
+  ok(/⚙ 5 tool calls · sm\.sm_status, sm\.take_live, sm\.journal_append, …/.test(g1.textContent), 'the row counts the calls and names the first tools: ' + g1.textContent.trim());
+  const members = Array.from(feedEl.querySelectorAll(':scope > .ag-card.ag-tool.ag-in-group'));
+  ok(members.length === 5 && members.every(e => e.hidden) && !g1.open, 'the lines are folded away (closed by default), still direct children of the feed');
+  ok(g1.nextElementSibling === members[0] && members[4].getAttribute('data-card') === 'tool:14' && g1.getAttribute('data-ts') === members[0].getAttribute('data-ts'), 'the group row sits right before its first member, at its time');
+  const lone = feedEl.querySelector('[data-card="tool:2"]');
+  ok(!lone.classList.contains('ag-in-group') && !lone.hidden, 'a lone tool event is not a group');
+  P.toggleGroup(g1.querySelector('summary'));
+  ok(g1.open && members.every(e => !e.hidden), 'opening the group shows the lines');
+  await P.poll(true); await tick();
+  ok(feedEl.querySelector(':scope > .ag-toolgroup') === g1 && g1.open && members.every(e => !e.hidden), 'the open state survives the poll (the group element is reused)');
+  feed.cards.push({ n: 15, ts: t0 + 5, kind: 'tool', tool: 'mcp__sm__run_node', summary: '{}', failed: true, error: 'human_active' });
+  feed.cards.push({ n: 16, ts: t0 + 6, kind: 'tool', tool: 'mcp__sm__journal_append', summary: '', failed: false });
+  feed.cards.push({ n: 17, ts: t0 + 7, kind: 'tool', tool: 'mcp__sm__sm_status', summary: '', failed: false });
+  feed.last = 17;
+  await P.poll(true); await tick();
+  groups = feedEl.querySelectorAll(':scope > .ag-toolgroup');
+  const failedEl = feedEl.querySelector('[data-card="tool:15"]');
+  ok(groups.length === 2 && /⚙ 2 tool calls · sm\.journal_append, sm\.sm_status$/.test(groups[1].textContent.trim()), 'a failed tool splits the run: a second group of 2 after it');
+  ok(failedEl && !failedEl.classList.contains('ag-in-group') && !failedEl.hidden && failedEl.querySelector('.ag-tool.ag-failed') && /human_active/.test(failedEl.textContent), 'the failed tool stands on its own, in the error style');
+  ok(groups[0] === g1 && g1.open && groups[1].nextElementSibling.getAttribute('data-card') === 'tool:16', 'the first group is untouched; the second sits before its first member');
+  P.toggleGroup(g1.querySelector('summary'));
+  ok(!g1.open && members.every(e => e.hidden), 'closing folds the lines away again');
+
+  // a long answer is clamped behind "show more"; the state lives on the card and survives a re-render
+  const longText = Array.from({ length: 20 }, (_, i) => 'line ' + i + ' of a long answer').join('\n');
+  feed.cards.push({ n: 18, ts: t0 + 8, kind: 'answer', text: longText, html: '<p>' + longText.replace(/\n/g, '<br>') + '</p>', backend: 'claude' });
+  feed.cards.push({ n: 19, ts: t0 + 9, kind: 'answer', text: 'x'.repeat(1200), html: '<p>' + 'x'.repeat(1200) + '</p>', backend: 'claude' });
+  feed.last = 19;
+  await P.poll(true); await tick();
+  const a18 = feedEl.querySelector('[data-card="answer:18"]'), a19 = feedEl.querySelector('[data-card="answer:19"]');
+  ok(a18.querySelector('.ag-md.ag-clamp') && a18.querySelector('.ag-more').textContent === 'show more', 'an answer over ~14 lines is clamped with a show-more link');
+  ok(a19.querySelector('.ag-md.ag-clamp') && a19.querySelector('.ag-more'), 'so is one over ~1,100 characters');
+  P.toggleMore(a18.querySelector('.ag-more'));
+  ok(a18.getAttribute('data-expanded') === '1' && a18.querySelector('.ag-more').textContent === 'show less', 'show more opens the card (the state lives on the card)');
+  feed.cards[feed.cards.length - 2].html += ' ';
+  P._state.after = 0;
+  await P.poll(true); await tick();
+  ok(a18.getAttribute('data-expanded') === '1' && a18.querySelector('.ag-more').textContent === 'show less' && a18.querySelector('.ag-md').innerHTML.endsWith(' '), 'the open state survives a re-render of the card, and the link follows it');
+  P.toggleMore(a18.querySelector('.ag-more'));
+  ok(!a18.hasAttribute('data-expanded') && a18.querySelector('.ag-more').textContent === 'show more', 'and toggles back');
+
+  // the compact float carries the same strip + composer; its presets sit behind one toggle
+  const popRoot = document.getElementById('agent-popover').querySelector('.ag-root.ag-compact');
+  ok(popRoot.querySelector('.ag-now .ag-now-acts') && popRoot.querySelector('form.ag-composer textarea.ag-input[rows="1"]') && popRoot.querySelector('.ag-presets[title] .ag-presets-toggle'), 'the compact float has the same strip, composer and preset toggle');
+  ok(popRoot.querySelectorAll(':scope > .ag-cards > .ag-toolgroup').length === 2 && popRoot.querySelector('[data-card="answer:18"] .ag-more'), 'and the same folded tool runs and clamp');
+  ok(popRoot.querySelector('.ag-input').placeholder === 'Ask, or tell the agent what to do…  (Enter sends)' && /\/run <node>/.test(h2.querySelector('.ag-input').placeholder), 'the float\'s one-row box carries the short hint; the home keeps the /run form');
+  const tog = popRoot.querySelector('.ag-presets-toggle');
+  P.togglePresets(tog);
+  ok(popRoot.querySelector('.ag-presets').classList.contains('open') && tog.getAttribute('aria-expanded') === 'true', 'the compact preset toggle opens the chips');
+
   console.log(`\n${passes} passed, ${fails} failed`);
   process.exit(fails ? 1 : 0);
 })();

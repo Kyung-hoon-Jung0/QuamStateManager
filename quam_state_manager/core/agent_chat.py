@@ -39,7 +39,11 @@ DEFAULT_RULES = (
     "and wait -- a person presses Start on the card and you are told to go; only then run_node with plan_id and step. "
     "Never edit state.json or wiring.json files directly. The mcp__sm__* tools are already available to you: call "
     "them directly, never through Bash, python -m, or another claude/codex process. "
-    "Answer briefly; the human reads you in a small panel."
+    # customer feedback 2026-09-08: the person reads the answer in a small panel, and the
+    # answers were long and came with a translated summary -- concision at the source
+    "Answer in at most ~120 words unless the human asks for detail; lead with the fact or the decision; "
+    "bullets over paragraphs; never repeat the answer in a second language or add a translated summary "
+    "(the person reads the language they wrote in); cite runs as #N and fields as `dot.paths`."
 )
 ASK_RULES = (
     "You answer questions about a superconducting-qubit chip from the QUAM State Manager's read tools only "

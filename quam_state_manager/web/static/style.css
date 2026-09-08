@@ -12704,50 +12704,150 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 }
 
 
-/* ---- docs/173 S6: the Agent home + the floating Agent panel ---- */
-.agent-home { min-height: 60vh; }
-.ag-root { display: grid; grid-template-columns: minmax(0, 1fr) 17rem; gap: 1rem; align-items: start; }
-.ag-root.ag-compact { grid-template-columns: minmax(0, 1fr); }
-.ag-root.ag-compact .ag-now { order: -1; padding: .4rem .6rem; position: static; }
-.ag-left { min-width: 0; display: flex; flex-direction: column; gap: .5rem; }
-.ag-head { font-size: 1.05em; }
-.ag-cards { display: flex; flex-direction: column; gap: .5rem; max-height: 62vh; overflow-y: auto; padding-right: .25rem; }
-.ag-compact .ag-cards { max-height: 46vh; }
-.ag-card { border: 1px solid var(--pico-muted-border-color); border-radius: .5rem; padding: .5rem .7rem; background: var(--pico-card-background-color); }
-.ag-card.ag-user { border-style: dashed; }
-.ag-bubble .ag-who { font-weight: 600; margin-right: .5rem; }
-.ag-when { float: right; color: var(--pico-muted-color); font-size: .85em; }
-.ag-md p:last-child { margin-bottom: 0; }
-.ag-tool { font-size: .9em; }
-.ag-tool.ag-failed, .ag-err { color: var(--pico-del-color, #b00020); }
-.ag-tool.ag-stopped { color: var(--pico-muted-color); }
-.ag-steps { width: 100%; font-size: .9em; margin: .3rem 0; }
-.ag-steps td, .ag-steps th { padding: .15rem .35rem; }
-.ag-step-st { display: inline-block; min-width: 1.4em; text-align: center; border-radius: .3rem; padding: 0 .3rem; font-weight: 600; }
-.ag-st-done { color: #2e7d32; } .ag-st-failed { color: var(--pico-del-color, #b00020); } .ag-st-running { color: var(--pico-primary); }
-.ag-st-pending, .ag-st-cancelled, .ag-st-skipped, .ag-st-draft, .ag-st-stopped { color: var(--pico-muted-color); }
-.ag-plan-st { font-size: .85em; text-transform: uppercase; letter-spacing: .03em; }
-.ag-may { margin: .2rem 0 .2rem 1rem; font-size: .9em; }
-.ag-plan-acts, .ag-ap-acts, .ag-now-acts { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin-top: .4rem; }
-.ag-start { background: var(--pico-primary); color: var(--pico-primary-inverse); border-color: var(--pico-primary); }
-.ag-stop-now { background: var(--pico-del-color, #b00020); border-color: var(--pico-del-color, #b00020); color: #fff; font-weight: 600; }   /* review R2-7: legible in both themes */
-.ag-mode select { display: inline-block; width: auto; margin: 0; padding: .1rem .4rem; height: auto; font-size: .9em; }
-.ag-ap-rows { width: 100%; font-size: .9em; } .ag-ap-rows input { margin: 0; padding: .1rem .3rem; height: auto; font-size: .95em; }
-.ag-because { color: var(--pico-muted-color); font-size: .9em; margin: .2rem 0 0; }
-.ag-writes table, .ag-log pre { font-size: .85em; }
-.ag-form textarea { margin: 0; resize: vertical; }
-.ag-form-row { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin-top: .3rem; }
-.ag-form-row select { width: auto; margin: 0; padding: .15rem .5rem; height: auto; }
-.ag-form-row .ag-send { width: auto; margin: 0; }                       /* review R2-6: Pico's submit is width:100% */
-.ag-user-text { white-space: pre-wrap; margin: 0; }
-.ag-tbl { overflow-x: auto; max-width: 100%; }                          /* review R2-minor: a wide steps table scrolls, never the card */
-.ag-sim { font-size: .75em; text-transform: uppercase; letter-spacing: .04em; border: 1px solid var(--pico-muted-border-color); border-radius: .3rem; padding: 0 .3rem; color: var(--pico-muted-color); }
-.ag-st-interrupted, .ag-st-stopping { color: var(--pico-muted-color); }
+/* ---- docs/173 S6: the Agent home + the floating Agent panel ----
+   Redesigned 2026-09-08 (customer feedback: "hard to read; a modern, compact, concise
+   concept"): ONE column -- a muted lead, a sticky one-line STATUS STRIP (.ag-now), a
+   timeline FEED that scrolls inside the pane, and the COMPOSER pinned at the bottom.
+   Chat rows carry a monospace time gutter; only plan / run / approval cards keep a
+   frame, because they carry actions. Both mounts (#agent-home and the compact float)
+   render the same markup; the .ag-compact rules at the end are the only difference. */
+/* the pane becomes a flex column so the feed takes the remaining height (a :has() rule
+   -- the partial's dry-run note is a sibling, so the wrapper cannot be styled directly);
+   without :has() the feed falls back to the capped height below and the pane scrolls */
+#table-pane:has(> .agent-home) { display: flex; flex-direction: column; overflow: hidden; }
+.ag-dryrun-note { margin: 0 0 .3rem; font-size: .9em; flex: 0 0 auto; }
+.agent-home { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.ag-root { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; gap: .4rem; font-size: .93em; }
+/* Pico stretches buttons, inputs and selects to 100%: never inside the Agent page */
+.ag-root button, .ag-root [type=submit], .ag-root [type=button], .ag-root select, .ag-root input:not([type=checkbox]) { width: auto; margin: 0; }
+.ag-root .btn-sm { font-size: .85em; padding: .18rem .55rem; line-height: 1.35; }
+.ag-head { font-size: .85em; color: var(--pico-muted-color); flex: 0 0 auto; }
+.ag-head .ag-chip { font-weight: 600; }
+/* the status strip: state · session · today's counts | the doors, observer, links */
+.ag-now { position: sticky; top: 0; z-index: 2; flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .6rem;
+  padding: .3rem .55rem; font-size: .9em; border: 1px solid var(--pico-muted-border-color); border-radius: .4rem; background: var(--pico-card-background-color); }
+.ag-now-main { display: flex; flex-wrap: wrap; align-items: center; gap: .15rem .4rem; flex: 1 1 auto; min-width: 0; }
+.ag-now-sep { color: var(--pico-muted-color); }
+.ag-now-state { font-weight: 600; white-space: nowrap; }
+.ag-now-state .agent-pill-dot { display: inline-block; width: .6em; height: .6em; border-radius: 50%; background: var(--pico-muted-border-color); margin-right: .4em; vertical-align: 0; }
+.ag-now-state.ag-between .agent-pill-dot, .ag-now-state.ag-running .agent-pill-dot { background: var(--pico-primary); }
+.ag-now-state.ag-running .agent-pill-dot { animation: schedPulse 1.4s ease-in-out infinite; }
+.ag-now-state.ag-waiting .agent-pill-dot { background: #e6c200; }
+.ag-now-state.ag-failed .agent-pill-dot { background: var(--cell-bad-color, #d62728); }
+.ag-now-state.ag-stalled .agent-pill-dot { background: var(--color-warn-border, #e6a700); }
+.ag-now-state.ag-limited .agent-pill-dot { background: #8b5cf6; }
+.ag-now-line { white-space: nowrap; }
+.ag-now-acts { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin-left: auto; }
+.ag-now-links { font-size: .92em; white-space: nowrap; }
+.ag-now-run { flex-basis: 100%; }                                       /* the one allowed second row: a run in progress */
+.ag-armed { color: #2e7d32; font-weight: 600; }
+.ag-observer { font-size: .9em; display: inline-flex; gap: .3rem; align-items: center; margin: 0; white-space: nowrap; }
+.ag-observer input { margin: 0; }
 .ag-unreachable { font-weight: 600; }
-.ag-cancel { border-color: var(--pico-muted-border-color); color: var(--pico-muted-color); background: transparent; }
+/* the feed: a timeline -- a monospace time gutter, then the content */
+.ag-cards { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: .45rem; padding-right: .25rem; max-height: 62vh; }
+#table-pane:has(> .agent-home) .ag-cards, .agent-popover .ag-cards { max-height: none; }
+/* a row is an <article> (Pico paints every article as a shadowed card): reset it to a bare grid */
+.ag-card { display: grid; grid-template-columns: 3.2rem minmax(0, 1fr); gap: 0 .45rem; align-items: start;
+  background: none; border: 0; border-radius: 0; box-shadow: none; padding: 0; margin: 0; }
+/* the collapsibles inside cards are <details> (Pico spaces + chevrons them): kept tight */
+.ag-root details { margin: 0; padding: 0; border: 0; }
+.ag-root details[open] > summary { margin-bottom: .1rem; }
+.ag-t { font-family: var(--pico-font-family-monospace, ui-monospace, Menlo, Consolas, monospace); font-size: .78em; color: var(--pico-muted-color); text-align: right; padding-top: .35em; white-space: nowrap; line-height: 1.3; }
+.ag-body { min-width: 0; }
+.ag-who { display: block; font-size: .8em; color: var(--pico-muted-color); margin-bottom: .05rem; }
+/* a person's message: a tinted bubble on the right */
+.ag-card.ag-user .ag-body { display: flex; justify-content: flex-end; }
+.ag-bubble.ag-user { max-width: 78%; padding: .35rem .65rem; border-radius: .6rem .6rem .15rem .6rem;
+  background: color-mix(in srgb, var(--pico-primary) 10%, transparent); border: 1px solid color-mix(in srgb, var(--pico-primary) 30%, transparent); }
+.ag-user-text { white-space: pre-wrap; margin: 0; }
+/* the agent's answer: no box, tight typography; headings read as bold text */
+.ag-md { font-size: .95em; line-height: 1.45; }
+.ag-md p { margin: .3rem 0; } .ag-md ul, .ag-md ol { padding-left: 1.2rem; margin: .2rem 0; } .ag-md li { margin: .1rem 0; }
+.ag-md h1, .ag-md h2, .ag-md h3, .ag-md h4, .ag-md h5, .ag-md h6 { font-size: 1em; font-weight: 700; margin: .45rem 0 .15rem; line-height: 1.3; }
+.ag-md pre { margin: .3rem 0; padding: .35rem .55rem; font-size: .9em; }
+.ag-md table { font-size: .92em; margin: .3rem 0; } .ag-md td, .ag-md th { padding: .1rem .4rem; }
+.ag-md blockquote { margin: .3rem 0; padding: .1rem .6rem; }
+.ag-md hr { margin: .4rem 0; }
+.ag-md > :first-child { margin-top: 0; } .ag-md > :last-child { margin-bottom: 0; }
+/* a long answer is clamped (~14 lines) with a fade and a show-more link; the state is the
+   card's data-expanded, which a re-render of the card's innerHTML never touches */
+.ag-md.ag-clamp { max-height: 20.5em; overflow: hidden; position: relative; }
+.ag-md.ag-clamp::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 3.5em; pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--pico-background-color)); }
+.ag-card[data-expanded="1"] .ag-md.ag-clamp { max-height: none; }
+.ag-card[data-expanded="1"] .ag-md.ag-clamp::after { display: none; }
+.ag-root .ag-more { background: none; border: 0; padding: 0; margin: .1rem 0 0; color: var(--pico-primary); font-size: .85em; cursor: pointer; line-height: 1.4; }
+/* tool / error / limited / stop events: one compact line each */
+.ag-tool { font-size: .88em; color: var(--pico-muted-color); line-height: 1.5; }
+.ag-tool code { font-size: .95em; }
+.ag-tool.ag-failed, .ag-err { color: var(--pico-del-color, #b00020); }
+.ag-tool.ag-limited { color: #8b5cf6; }
+.ag-tool.ag-stopped { color: var(--pico-muted-color); }
+/* consecutive tool events fold into one row that opens to the lines (members stay
+   direct children of the feed, hidden while the group is closed) */
+.ag-toolgroup { display: block; margin: 0; padding: 0; border: 0; background: none; }
+.ag-toolgroup > summary { display: grid; grid-template-columns: 3.2rem minmax(0, 1fr); gap: 0 .45rem; align-items: start; list-style: none;
+  cursor: pointer; padding: 0; margin: 0; font-size: 1em; }
+.ag-toolgroup > summary::-webkit-details-marker { display: none; }
+.ag-toolgroup > summary::after { content: none; }                        /* Pico draws a chevron on every summary */
+.ag-toolgroup-sum { font-size: .88em; color: var(--pico-muted-color); line-height: 1.5; }
+.ag-toolgroup[open] .ag-toolgroup-sum { color: var(--pico-color); }
+.ag-card.ag-in-group .ag-body { padding-left: .6rem; border-left: 2px solid var(--pico-muted-border-color); }
+/* plan / run / approval: a frame, because they carry actions -- denser than before */
+.ag-card.ag-plan .ag-body, .ag-card.ag-run .ag-body, .ag-card.ag-approval .ag-body { border: 1px solid var(--pico-muted-border-color); border-radius: .4rem; padding: .35rem .6rem; background: var(--pico-card-background-color); }
+.ag-card.ag-approval .ag-body { border-left: 3px solid var(--ag-accent, #d98c00); }
+.ag-plan-head, .ag-ap-head, .ag-run-line { display: flex; flex-wrap: wrap; align-items: center; gap: .15rem .4rem; }
+.ag-plan-head .muted, .ag-ap-head .muted, .ag-run-line .muted { font-size: .9em; }
+/* status pills: ONE style, the only uppercase text on the page */
+.ag-plan-st, .ag-step-st { display: inline-block; font-size: .72em; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; line-height: 1.6;
+  padding: 0 .55em; border-radius: 999px; background: color-mix(in srgb, currentColor 12%, transparent); color: var(--pico-muted-color); white-space: nowrap; vertical-align: .1em; }
+.ag-step-st { min-width: 1.7em; text-align: center; }
+.ag-st-done { color: #2e7d32; } .ag-st-failed { color: var(--pico-del-color, #b00020); } .ag-st-running { color: var(--pico-primary); }
+.ag-st-draft { color: var(--pico-primary); } .ag-st-waiting { color: var(--ag-accent, #d98c00); }
+.ag-st-pending, .ag-st-cancelled, .ag-st-skipped, .ag-st-stopped, .ag-st-interrupted, .ag-st-stopping { color: var(--pico-muted-color); }
+.ag-steps { display: flex; flex-direction: column; gap: .1rem; margin: .3rem 0; font-size: .92em; }
+.ag-step { display: flex; flex-wrap: wrap; align-items: center; gap: .15rem .45rem; }
+.ag-step-why { font-size: .92em; }
+.ag-may-wrap { margin: .2rem 0; font-size: .92em; } .ag-may-wrap > summary { color: var(--pico-muted-color); cursor: pointer; padding: 0; margin: 0; }
+.ag-may { margin: .15rem 0 .15rem .9rem; padding: 0; } .ag-may li { margin: .05rem 0; list-style: none; }
+.ag-may-none { margin: .1rem 0; }
+.ag-plan-prog { font-size: .9em; color: var(--pico-muted-color); margin-top: .2rem; }
+.ag-plan-acts, .ag-ap-acts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .4rem; align-items: center; margin-top: .35rem; }
+.ag-plan-acts .ag-mode, .ag-plan-acts .ag-mode-ro { margin-right: auto; font-size: .9em; color: var(--pico-muted-color); }
+.ag-mode select { display: inline-block; width: auto; margin: 0 0 0 .2rem; padding: .05rem 1.6rem .05rem .4rem; height: auto; font-size: .92em; }
+.ag-root .ag-start, .ag-root .ag-approve { background: var(--pico-primary); color: var(--pico-primary-inverse); border-color: var(--pico-primary); font-weight: 600; }
+.ag-root .ag-stop-now { background: var(--pico-del-color, #b00020); border-color: var(--pico-del-color, #b00020); color: #fff; font-weight: 600; }   /* review R2-7: legible in both themes */
+.ag-root .ag-cancel, .ag-root .ag-reject { border-color: var(--pico-muted-border-color); color: var(--pico-muted-color); background: transparent; }
+.ag-ap-rows { width: 100%; font-size: .9em; margin: .2rem 0; } .ag-ap-rows td, .ag-ap-rows th { padding: .1rem .35rem; }
+.ag-root .ag-ap-rows input { width: 100%; margin: 0; padding: .05rem .3rem; height: auto; font-size: .95em; }
+.ag-ap-note { margin: .2rem 0; font-size: .9em; }
+.ag-because { color: var(--pico-muted-color); font-size: .9em; margin: .2rem 0 0; }
+.ag-writes, .ag-log { font-size: .9em; margin: .2rem 0; } .ag-writes > summary, .ag-log > summary { cursor: pointer; padding: 0; margin: 0; color: var(--pico-muted-color); }
+.ag-writes table { font-size: .9em; margin: .2rem 0; } .ag-writes td { padding: .05rem .35rem; } .ag-log pre { font-size: .85em; margin: .2rem 0; }
+.ag-how { font-size: .9em; }
+.ag-tbl { overflow-x: auto; max-width: 100%; }                          /* review R2-minor: a wide table scrolls, never the card */
+.ag-sim { font-size: .72em; text-transform: uppercase; letter-spacing: .04em; border: 1px solid var(--pico-muted-border-color); border-radius: 999px; padding: 0 .45em; color: var(--pico-muted-color); }
+.ag-revert { font-size: .85em; }
+/* the composer, pinned at the bottom: one growing row, then backend · name · presets · Send */
+.ag-composer { flex: 0 0 auto; border-top: 1px solid var(--pico-muted-border-color); padding-top: .4rem; margin: 0; }
+.ag-root .ag-input { display: block; width: 100%; margin: 0; resize: none; line-height: 1.4; padding: .4rem .6rem; min-height: 0; height: auto; font-size: 1em; overflow-y: hidden; }
+.ag-form-row { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin-top: .35rem; }
+.ag-root .ag-backend { font-size: .88em; padding-top: .15rem; padding-bottom: .15rem; height: auto; }
 /* docs/173 S8: the name picker in front of the keyboard */
 .ag-actor-wrap { display: inline-flex; align-items: center; gap: .25rem; font-size: .85em; color: var(--pico-muted-color); }
-.ag-actor { width: 8rem; margin: 0; padding: .15rem .4rem; height: auto; font-size: .9em; }
+.ag-root .ag-actor { width: 7rem; padding: .15rem .4rem; height: auto; font-size: .9em; }
+.ag-presets { display: inline-flex; flex-wrap: wrap; gap: .3rem; align-items: center; cursor: help; }
+.ag-root .ag-preset { font-size: .78em; padding: .08rem .55rem; border-radius: 999px; background: transparent; color: var(--pico-muted-color); border: 1px solid var(--pico-muted-border-color); cursor: pointer; }
+.ag-root .ag-preset:hover { color: var(--pico-primary); border-color: var(--pico-primary); }
+.ag-presets-toggle { display: none; }
+.ag-form-row .ag-send { margin-left: auto; }
+.ag-root .ag-send { background: var(--pico-primary); color: var(--pico-primary-inverse); border-color: var(--pico-primary); font-weight: 600; padding: .2rem .85rem; }
+/* compact (the float): the strip wraps, the preset chips sit behind one small toggle */
+.ag-compact .ag-now { font-size: .86em; padding: .25rem .45rem; }
+.ag-compact .ag-now-acts { margin-left: 0; }
+.ag-root.ag-compact .ag-presets-toggle { display: inline-block; font-size: .78em; padding: .08rem .5rem; border-radius: 999px; background: transparent; color: var(--pico-muted-color); border: 1px solid var(--pico-muted-border-color); }
+.ag-compact .ag-presets:not(.open) .ag-preset { display: none; }
 /* the journal's author labels (by_claude / by_codex / human / unknown) */
 .jr-entry[data-author^="by_"] > code:first-of-type { color: var(--pico-primary); }
 .jr-entry[data-author="human"] > code:first-of-type, .jr-entry[data-author^="human:"] > code:first-of-type { color: #2e7d32; }
@@ -12768,22 +12868,13 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .as-answer { font-size: .9em; white-space: pre-wrap; }
 .as-ctx-local, .as-jroot { font-size: .9em; }
 .as-jroot input { display: inline-block; width: min(28rem, 100%); margin: 0; }
-.ag-presets .btn-sm { font-size: .8em; }
-.ag-hint { font-size: .8em; }
-.ag-now { border: 1px solid var(--pico-muted-border-color); border-radius: .5rem; padding: .6rem .8rem; font-size: .92em; display: flex; flex-direction: column; gap: .3rem; position: sticky; top: .5rem; }
-.ag-now-state { font-weight: 600; }
-.ag-now-state .agent-pill-dot { display: inline-block; width: .6em; height: .6em; border-radius: 50%; background: currentColor; margin-right: .3em; }
-.ag-armed { color: #2e7d32; font-weight: 600; }
-.ag-observer { font-size: .85em; display: inline-flex; gap: .3rem; align-items: center; margin: 0; }
-.ag-observer input { margin: 0; }
 .ag-toast { position: fixed; bottom: 1rem; right: 1rem; background: var(--pico-card-background-color); border: 1px solid var(--pico-muted-border-color); padding: .5rem .8rem; border-radius: .4rem; z-index: 60; }
 .agent-popover { position: fixed; right: 1rem; bottom: 1rem; width: min(34rem, 92vw); max-height: 80vh; min-width: 22rem; min-height: 16rem; overflow: hidden; z-index: 55;
   background: var(--pico-card-background-color); border: 1.5px solid var(--pico-primary); border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.25); display: flex; flex-direction: column; }
-/* review R2-9: the cards scroll INSIDE the panel; the form stays pinned at the bottom */
+/* review R2-9: the cards scroll INSIDE the panel; the composer stays pinned at the bottom */
 .agent-popover .agent-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-.agent-popover .ag-root.ag-compact { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; }
-.agent-popover .ag-compact .ag-left { flex: 1 1 auto; min-height: 0; }
-.agent-popover .ag-compact .ag-cards { flex: 1 1 auto; min-height: 6rem; max-height: none; }
+.agent-popover .ag-root.ag-compact { flex: 1 1 auto; min-height: 0; }
+.agent-popover .ag-compact .ag-cards { min-height: 6rem; }
 .agent-hidden { display: none; }
 .agent-popover.agent-floating { right: auto; bottom: auto; }
 .agent-header { display: flex; justify-content: space-between; align-items: center; padding: .35rem .7rem; cursor: grab; border-bottom: 1px solid var(--pico-muted-border-color); border-radius: 8.5px 8.5px 0 0; background: var(--pico-card-sectioning-background-color, var(--pico-card-background-color)); }

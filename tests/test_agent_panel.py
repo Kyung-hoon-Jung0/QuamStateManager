@@ -10,12 +10,17 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
 
 import pytest
+
+_ROOT = Path(__file__).resolve().parents[1]
+_SELFCHECK = _ROOT / "tests" / "agent_panel_selfcheck.cjs"
 
 from quam_state_manager.core import agent_plans, agent_session, limits, scheduler
 from quam_state_manager.core import journal as journal_mod
@@ -299,9 +304,77 @@ class TestHome:
         assert 'id="agent-setup"' in part and "<html" not in part
 
 
+    def test_the_agent_css_carries_the_strip_the_timeline_and_the_pinned_composer(self):
+        """customer feedback 2026-09-08 ("hard to read"): one column, a sticky status strip,
+        a timeline feed that scrolls inside the pane, the composer pinned at the bottom.
+        Layout is CSS, so the rules are pinned by text; what they DO on screen (the composer
+        never cut off, buttons never stretched) was measured in real Chrome."""
+        css = (_ROOT / "quam_state_manager" / "web" / "static" / "style.css").read_text(encoding="utf-8")
+        start = css.index("docs/173 S6: the Agent home")
+        blk = css[start:css.index("/* docs/168 + on-site 2026-09-07", start)]
+        # one column: the pane is a flex column, the feed fills it, the old two-column grid is gone
+        assert "#table-pane:has(> .agent-home) { display: flex; flex-direction: column; overflow: hidden; }" in blk
+        assert ".ag-root { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; gap: .4rem; font-size: .93em; }" in blk
+        assert "grid-template-columns: minmax(0, 1fr) 17rem" not in css and ".ag-left" not in css
+        assert re.search(r"\.ag-now \{[^}]*position: sticky; top: 0;", blk)
+        assert re.search(r"\.ag-cards \{[^}]*flex: 1 1 auto; min-height: 0; overflow-y: auto;", blk)
+        assert "#table-pane:has(> .agent-home) .ag-cards, .agent-popover .ag-cards { max-height: none; }" in blk
+        assert re.search(r"\.ag-composer \{[^}]*flex: 0 0 auto; border-top:", blk)
+        # timeline rows: a 3.2rem monospace gutter; the person's bubble tinted from the primary colour
+        assert re.search(r"\.ag-card \{ display: grid; grid-template-columns: 3\.2rem minmax\(0, 1fr\)", blk)
+        assert re.search(r"\.ag-t \{[^}]*monospace", blk)
+        assert "color-mix(in srgb, var(--pico-primary) 10%, transparent)" in blk and "max-width: 78%" in blk
+        # the clamp, the tool group, one pill style, the approval accent
+        assert re.search(r"\.ag-md\.ag-clamp \{ max-height: [\d.]+em; overflow: hidden;", blk)
+        assert '.ag-card[data-expanded="1"] .ag-md.ag-clamp { max-height: none; }' in blk
+        assert ".ag-toolgroup > summary" in blk and ".ag-card.ag-in-group .ag-body" in blk
+        assert re.search(r"\.ag-plan-st, \.ag-step-st \{[^}]*border-radius: 999px", blk)
+        assert ".ag-card.ag-approval .ag-body { border-left: 3px solid var(--ag-accent, #d98c00); }" in blk
+        assert re.search(r"\.ag-md h1, \.ag-md h2, \.ag-md h3[^{]*\{ font-size: 1em; font-weight: 700;", blk)
+        # Pico's width:100% never reaches a button / input / select inside the page
+        assert (".ag-root button, .ag-root [type=submit], .ag-root [type=button], .ag-root select, "
+                ".ag-root input:not([type=checkbox]) { width: auto; margin: 0; }") in blk
+        # the only uppercase text on the page: the status pills and the simulated flag
+        upper = [ln for ln in blk.splitlines() if "text-transform: uppercase" in ln]
+        assert len(upper) == 2 and all(ln.startswith((".ag-plan-st, .ag-step-st", ".ag-sim")) for ln in upper), upper
+        # both themes: no hard-coded surface colour in the block -- every background is a var(),
+        # a color-mix of one, none/transparent, or the state DOT's literal (the topbar pill's
+        # own accents, .agent-pill-dot, already shown in both themes)
+        # (judged per DECLARATION -- a rule whose border is a var() must not excuse its background)
+        for rule in blk.split("}"):
+            if "{" not in rule:
+                continue
+            sel, decl = rule.rsplit("{", 1)
+            for val in re.findall(r"background:\s*([^;]+)", decl):
+                v = val.strip()
+                if v.startswith(("var(", "color-mix(", "linear-gradient(", "none", "transparent")) or ".agent-pill-dot" in sel:
+                    continue
+                raise AssertionError(f"a background that ignores the theme: {sel.strip().splitlines()[-1]} -> {v}")
+
     def test_bridge_knows_the_plan_tools(self):
         from quam_state_manager import mcp
         assert "plan_propose" in mcp.TOOLS and "plan_status" in mcp.TOOLS
         assert "plan_propose" in mcp.WRITE_TOOLS and "plan_status" not in mcp.WRITE_TOOLS
         props = mcp.TOOLS["run_node"][0]["inputSchema"]["properties"]
         assert "step" in props and "plan_id" in props
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_agent_panel_selfcheck():
+    """The REAL agent.js under jsdom (tests/agent_panel_selfcheck.cjs): the S6/S8 pins plus
+    the 2026-09-08 redesign -- the status strip, the timeline rows, consecutive tool events
+    folding into one row (a failed one breaks it), the show-more clamp whose state survives a
+    re-render, the pinned composer in both mounts. Whether Pico still STRETCHES a button or
+    where the composer lands on screen are layout facts jsdom does not compute: measured in
+    real Chrome instead."""
+    node = shutil.which("node")
+    try:
+        subprocess.run([node, "-e", "require('jsdom')"], check=True, capture_output=True, timeout=30)
+    except Exception:
+        pytest.skip("jsdom not installed")
+    r = subprocess.run([node, str(_SELFCHECK)], capture_output=True, text=True, encoding="utf-8",
+                       timeout=180, cwd=str(_ROOT))
+    if r.returncode == 2:
+        pytest.skip("jsdom not installed")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.count("ok - ") >= 90, r.stdout

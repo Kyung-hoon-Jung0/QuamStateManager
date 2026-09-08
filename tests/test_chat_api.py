@@ -426,6 +426,20 @@ class TestAsk:
         assert agent_chat.DEFAULT_RULES in drive.backend.system_prompt and "bypassPermissions" in drive.cmd
         assert f"Chip: {_name(c)}. Mode: ask-writes" in drive.backend.system_prompt
 
+    def test_the_driving_rules_end_with_the_concision_rule(self):
+        """customer feedback 2026-09-08: the person reads the agent in a small panel, and the
+        answers were long and came with a translated summary. The rule is prompt text, so a
+        string pin is the pin -- and it is the LAST thing the model reads."""
+        from quam_state_manager.core import agent_chat
+        r = agent_chat.DEFAULT_RULES
+        assert "Answer in at most ~120 words unless the human asks for detail" in r
+        assert "lead with the fact or the decision; bullets over paragraphs" in r
+        assert ("never repeat the answer in a second language or add a translated summary "
+                "(the person reads the language they wrote in)") in r
+        assert "cite runs as #N and fields as `dot.paths`" in r
+        assert "reads you in a small panel" not in r and "Answer briefly" not in r
+        assert r.rstrip().endswith("`dot.paths`.")
+
 
 # ---------------------------------------------------------------- replay
 

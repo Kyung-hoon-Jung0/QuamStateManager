@@ -15,6 +15,12 @@
  * autoscrolls only when the reader is already at the bottom; Enter sends and
  * Shift+Enter breaks a line; a refused /run keeps its text; a server that
  * cannot be reached says so instead of failing silently.
+ *
+ * Customer feedback 2026-09-08 ("hard to read"): ONE column. A one-line status
+ * STRIP replaces the side column, the feed is a TIMELINE (time gutter + content,
+ * boxes only where there are actions), consecutive tool events fold into one
+ * row, a long answer is clamped behind "show more", and the composer is pinned
+ * at the bottom of the pane. Same markup in the home and the compact float.
  */
 window.AgentPanel = (function () {
   "use strict";
@@ -147,34 +153,114 @@ window.AgentPanel = (function () {
     el.innerHTML = html;
     el.__agHtml = html;
     el.__agStale = null;
+    syncExpanded(el);
     return true;
+  }
+  // customer feedback 2026-09-08: the feed is a TIMELINE -- every row is a monospace
+  // time gutter and its content; only plan / run / approval cards keep a frame
+  function clockHtml(ts) { return esc(fmtClock(ts)).replace(" ", "<br>"); }    // another day: the date above the time
+  function gutter(ts) { return '<span class="ag-t">' + clockHtml(ts) + "</span>"; }
+  function row(ts, body) { return gutter(ts) + '<div class="ag-body">' + body + "</div>"; }
+  // a long answer is clamped with a fade and a show-more link; the open/closed state
+  // lives on the CARD (data-expanded), which a re-render of its innerHTML never touches
+  var CLAMP_CHARS = 1100, CLAMP_LINES = 14;
+  function isLong(c) {
+    var t = String(c.text || "");
+    if (!t && c.html) t = String(c.html).replace(/<[^>]+>/g, "");
+    return t.length > CLAMP_CHARS || t.split("\n").length > CLAMP_LINES;
+  }
+  function syncExpanded(el) {
+    var b = el.querySelector ? el.querySelector(".ag-more") : null;
+    if (b) b.textContent = el.getAttribute("data-expanded") === "1" ? "show less" : "show more";
+  }
+  function toggleMore(btn) {
+    var card = btn && btn.closest ? btn.closest(".ag-card") : null;
+    if (!card) return false;
+    if (card.getAttribute("data-expanded") === "1") card.removeAttribute("data-expanded"); else card.setAttribute("data-expanded", "1");
+    syncExpanded(card);
+    return false;
   }
   function renderChatCard(m, c) {
     var el = cardFor(m, c.kind, c.n, c.ts);
     if (!el) return;
-    var when = '<span class="ag-when">' + esc(fmtClock(c.ts)) + "</span>";
     var html;
     if (c.kind === "user") {
-      html = '<div class="ag-bubble ag-user"><span class="ag-who">' + esc(c.who || "you") + "</span>" + when + '<p class="ag-user-text">' + esc(c.text) + "</p></div>";
+      html = '<div class="ag-bubble ag-user"><span class="ag-who">' + esc(c.who || "you") + '</span><p class="ag-user-text">' + esc(c.text) + "</p></div>";
     } else if (c.kind === "answer") {
-      html = '<div class="ag-bubble ag-answer"><span class="ag-who">' + esc(c.backend ? "by_" + c.backend : "agent") + "</span>" + when +
-        '<div class="ag-md">' + (c.html || "<p>" + esc(c.text) + "</p>") + "</div></div>";
+      var long = isLong(c);
+      html = '<div class="ag-answer"><span class="ag-who">' + esc(c.backend ? "by_" + c.backend : "agent") + "</span>" +
+        '<div class="ag-md' + (long ? " ag-clamp" : "") + '">' + (c.html || "<p>" + esc(c.text) + "</p>") + "</div>" +
+        (long ? '<button type="button" class="ag-more" onclick="return AgentPanel.toggleMore(this)">show more</button>' : "") + "</div>";
     } else if (c.kind === "tool") {
       var t = String(c.tool || "").replace(/^mcp__sm__/, "sm.");
       var sum = String(c.summary || "").trim();
       if (sum === "{}" || sum === "[]") sum = "";                 // review R2-minor: an empty argument list says nothing
       html = '<div class="ag-tool' + (c.failed ? " ag-failed" : "") + '"><code>' + esc(t) + "</code>" + (sum ? ' <span class="muted">' + esc(sum.slice(0, 140)) + "</span>" : "") +
-        (c.failed ? ' <span class="ag-err">' + esc((c.error || "failed").slice(0, 160)) + "</span>" : "") + when + "</div>";
+        (c.failed ? ' <span class="ag-err">' + esc((c.error || "failed").slice(0, 160)) + "</span>" : "") + "</div>";
     } else if (c.kind === "error") {
-      html = '<div class="ag-tool ag-failed"><strong>agent exited</strong> <span class="ag-err">' + esc((c.error || "").slice(0, 200)) + "</span>" + when + "</div>";
+      html = '<div class="ag-tool ag-failed"><strong>agent exited</strong> <span class="ag-err">' + esc((c.error || "").slice(0, 200)) + "</span></div>";
     } else if (c.kind === "limited") {
-      html = '<div class="ag-tool ag-limited"><strong>usage limit</strong> <span class="muted">' + esc(c.text || "") + "</span>" + when + "</div>";
+      html = '<div class="ag-tool ag-limited"><strong>usage limit</strong> ' + esc(c.text || "") + "</div>";
     } else if (c.kind === "stop") {
-      html = '<div class="ag-tool ag-stopped"><strong>Stopped</strong> <span class="muted">' + esc(c.text || "") + "</span>" + when + "</div>";
+      html = '<div class="ag-tool ag-stopped"><strong>Stopped</strong> ' + esc(c.text || "") + "</div>";
     } else {
-      html = '<div class="ag-tool muted">' + esc(c.kind) + " " + esc(c.text || c.summary || "") + when + "</div>";
+      html = '<div class="ag-tool">' + esc(c.kind) + " " + esc(c.text || c.summary || "") + "</div>";
     }
-    setHtml(el, html);
+    setHtml(el, row(c.ts, html));
+  }
+  // Consecutive TOOL events fold into ONE muted row -- "⚙ 5 tool calls · sm.take_live, …" --
+  // that opens to the lines. The member cards stay direct children of the feed (the
+  // time-order insertion in cardFor keeps working; nothing is moved), hidden while the
+  // group is closed. A FAILED tool breaks the run and stands on its own, in the error
+  // colour. Group elements are reused by their first member, so open/closed survives a poll.
+  function toolName(el) { var c = el.querySelector("code"); return c ? c.textContent : ""; }
+  function groupMembers(g) {
+    var out = [], n = g.nextElementSibling;
+    while (n && n.classList.contains("ag-in-group")) { out.push(n); n = n.nextElementSibling; }
+    return out;
+  }
+  function toggleGroup(s) {
+    var g = s && s.closest ? s.closest(".ag-toolgroup") : null;
+    if (!g) return false;
+    var open = !g.open;
+    if (open) g.setAttribute("open", ""); else g.removeAttribute("open");
+    groupMembers(g).forEach(function (el) { el.hidden = !open; });
+    return false;
+  }
+  function groupTools(host) {
+    if (!host) return;
+    var groups = host.__agGroups || (host.__agGroups = {});
+    var used = {}, run = [];
+    function flush() {
+      if (run.length >= 2) {
+        var key = run[0].getAttribute("data-card");
+        var g = groups[key];
+        if (!g) {
+          g = document.createElement("details");
+          g.className = "ag-card ag-toolgroup";
+          g.setAttribute("data-group", key);
+          g.innerHTML = '<summary onclick="return AgentPanel.toggleGroup(this)"><span class="ag-t"></span><span class="ag-toolgroup-sum"></span></summary>';
+          groups[key] = g;
+        }
+        g.setAttribute("data-ts", run[0].getAttribute("data-ts") || "0");
+        var names = [], seen = {};
+        run.forEach(function (el) { var n = toolName(el); if (n && !seen[n]) { seen[n] = 1; names.push(n); } });
+        g.querySelector(".ag-t").innerHTML = clockHtml(Number(run[0].getAttribute("data-ts")) || 0);
+        g.querySelector(".ag-toolgroup-sum").textContent = "⚙ " + run.length + " tool calls · " + names.slice(0, 3).join(", ") + (names.length > 3 ? ", …" : "");
+        if (g.parentNode !== host || g.nextElementSibling !== run[0]) host.insertBefore(g, run[0]);
+        run.forEach(function (el) { el.classList.add("ag-in-group"); el.hidden = !g.open; });
+        used[key] = 1;
+      } else {
+        run.forEach(function (el) { if (el.classList.contains("ag-in-group")) { el.classList.remove("ag-in-group"); el.hidden = false; } });
+      }
+      run = [];
+    }
+    Array.prototype.slice.call(host.children).forEach(function (el) {
+      if (el.classList.contains("ag-toolgroup")) return;          // a summary from the last pass: judged by `used` below
+      if (el.classList.contains("ag-tool") && !el.querySelector(".ag-failed")) run.push(el); else flush();
+    });
+    flush();
+    Object.keys(groups).forEach(function (k) { if (!used[k]) { var g = groups[k]; if (g.parentNode) g.parentNode.removeChild(g); delete groups[k]; } });
   }
 
   var STEP_GLYPH = { pending: "·", running: "▶", done: "✓", failed: "✗", skipped: "skip", cancelled: "—", interrupted: "⏹" };
@@ -191,24 +277,26 @@ window.AgentPanel = (function () {
     if (!el) return;
     var c = p.counts || {};
     var may = p.may_change || [];
+    // compact step rows: glyph · node · targets · run · writes · why (a div, not a table)
     var rows = (p.steps || []).map(function (s) {
-      return "<tr>" + "<td>" + stepBadge(s) + "</td><td><code>" + esc(s.node) + "</code>" + simBadge(s.simulated) + "</td><td>" + esc((s.targets || []).join(" ")) + "</td>" +
-        "<td>" + (s.run_id ? runLink(s.run_id) : "") + (s.classification && s.classification !== "ok" ? ' <span class="ag-err">' + esc(s.classification) + "</span>" : "") + "</td>" +
-        "<td>" + (s.n_writes ? s.n_writes + (s.applied ? " applied" : (s.approval ? " waiting" : "")) : "") + "</td>" +
-        "<td class=\"muted\">" + esc(s.why || "") + "</td></tr>";
+      return '<div class="ag-step">' + stepBadge(s) + " <code>" + esc(s.node) + "</code>" + simBadge(s.simulated) +
+        ' <span class="ag-step-t">' + esc((s.targets || []).join(" ")) + "</span>" +
+        (s.run_id ? " " + runLink(s.run_id) : "") + (s.classification && s.classification !== "ok" ? ' <span class="ag-err">' + esc(s.classification) + "</span>" : "") +
+        (s.n_writes ? ' <span class="ag-step-w">' + s.n_writes + (s.applied ? " applied" : (s.approval ? " waiting" : "")) + "</span>" : "") +
+        (s.why ? ' <span class="muted ag-step-why">' + esc(s.why) + "</span>" : "") + "</div>";
     }).join("");
+    // "q1 · amplitude   now 0.12" -- the dot path rides the title
     var mayHtml = may.length
       ? "<ul class=\"ag-may\">" + may.map(function (x) {
           return "<li><strong title=\"" + esc(x.path) + "\">" + esc(x.target ? x.target + " · " : "") + esc(x.label || pathLabel(x.path)) + "</strong>" +
-            ' <span class="muted ag-may-path">' + esc(x.path) + "</span>" +
             (x.now !== undefined && x.now !== null ? ' <span class="muted">now ' + esc(fmtNum(x.now)) + "</span>" : ' <span class="muted">now: not set</span>') +
             (x.note ? ' <span class="muted">(' + esc(x.note) + ")</span>" : "") +
             (x.last ? ' <span class="muted">· last ' + esc(x.last.actor || "?") + " " + esc(x.last.when || "") + "</span>" : "") + "</li>";
         }).join("") + "</ul>"
       : '<p class="muted ag-may-none">no earlier run of these nodes on these targets -- what changes is not known in advance</p>';
     var origin = p.source === "run_cmd" ? "/run typed by " + (p.created_by || "a person") : "proposed by " + (p.created_by || "the agent");
-    var head = '<div class="ag-plan-head"><strong>' + esc(p.title) + '</strong> <span class="ag-plan-st ag-st-' + esc(p.status) + '">' + esc(PLAN_STATUS_TEXT[p.status] || p.status) + "</span>" +
-      ' <span class="muted">' + esc(origin) + " · " + esc(fmtClock(p.created)) + "</span></div>";
+    var head = '<div class="ag-plan-head"><span class="ag-plan-st ag-st-' + esc(p.status) + '">' + esc(PLAN_STATUS_TEXT[p.status] || p.status) + "</span>" +
+      " <strong>" + esc(p.title) + "</strong>" + ' <span class="muted">' + esc(origin) + " · " + esc(fmtClock(p.created)) + "</span></div>";
     var prog = "";
     if (p.status !== "draft") {
       prog = '<div class="ag-plan-prog">' + (c.done || 0) + " / " + (c.total || 0) + " done" + (c.failed ? " · ✗ " + c.failed : "") + (c.skipped ? " · skipped " + c.skipped : "") +
@@ -218,7 +306,7 @@ window.AgentPanel = (function () {
     var modeSel = p.status === "draft"
       ? '<label class="ag-mode">mode <select' + (S.observer ? " disabled" : "") + ' onchange="AgentPanel.setPlanMode(\'' + esc(p.id) + '\', this.value)">' +
         ["auto", "ask-writes", "ask-all"].map(function (x) { return '<option value="' + x + '"' + (x === mode ? " selected" : "") + ">" + x + "</option>"; }).join("") + "</select></label>"
-      : '<span class="muted">mode ' + esc(mode) + "</span>";
+      : '<span class="muted ag-mode-ro">mode ' + esc(mode) + "</span>";
     var acts = "";
     if (!S.observer) {
       if (p.status === "draft") {
@@ -234,10 +322,10 @@ window.AgentPanel = (function () {
     if (p.pre_ts) {
       acts += ' <a class="btn-sm ag-revert" href="/state-history" hx-get="/state-history" hx-target="#table-pane" hx-push-url="true" title="the chip as it was right before this plan started (State History → restore)">state before this plan</a>';
     }
-    var html = head + '<div class="ag-tbl"><table class="ag-steps"><thead><tr><th></th><th>node</th><th>targets</th><th>run</th><th>writes</th><th>why</th></tr></thead><tbody>' + rows + "</tbody></table></div>" +
-      '<details class="ag-may-wrap"' + (p.status === "draft" ? " open" : "") + "><summary>values that may change</summary>" + mayHtml + "</details>" +
+    var html = head + '<div class="ag-steps">' + rows + "</div>" +
+      '<details class="ag-may-wrap"' + (p.status === "draft" ? " open" : "") + "><summary>values that may change" + (may.length ? " (" + may.length + ")" : "") + "</summary>" + mayHtml + "</details>" +
       prog + '<div class="ag-plan-acts">' + modeSel + " " + acts + "</div>";
-    setHtml(el, html, force);
+    setHtml(el, row(p.created, html), force);
   }
 
   function renderRun(m, r, force) {
@@ -245,11 +333,12 @@ window.AgentPanel = (function () {
     if (!el) return;
     var res = r.result || {};
     var st = r.status;
-    var line = "<strong><code>" + esc(r.node) + "</code></strong> " + esc((r.targets || []).join(" ")) +
-      ' <span class="ag-step-st ag-st-' + esc(st === "ended" ? (res.status || "ended") : st) + '">' + esc(st === "ended" ? (res.status || "ended") : st) + "</span>" +
+    var stTxt = st === "ended" ? (res.status || "ended") : st;
+    var line = '<span class="ag-step-st ag-st-' + esc(stTxt) + '">' + esc(stTxt) + "</span>" +
+      " <strong><code>" + esc(r.node) + "</code></strong> " + esc((r.targets || []).join(" ")) +
       simBadge(res.simulated || r.simulated) +
       (res.classification && res.classification !== "ok" ? ' <span class="ag-err">' + esc(res.classification) + "</span>" : "") +
-      (res.run_id ? " " + runLink(res.run_id) : "") + ' <span class="ag-when">' + esc(fmtClock(r.since)) + "</span>";
+      (res.run_id ? " " + runLink(res.run_id) : "") + ' <span class="muted">' + esc(fmtClock(r.since)) + "</span>";
     var writes = "";
     if (res.writes && res.writes.length) {
       writes = '<details class="ag-writes"><summary>' + res.writes.length + " write(s) " + (res.applied ? "applied to the chip" : (res.approval ? "waiting for approval" : "not staged")) + "</summary><div class=\"ag-tbl\"><table>" +
@@ -259,7 +348,7 @@ window.AgentPanel = (function () {
     var err = res.error ? '<div class="ag-err">' + esc(String(res.error).slice(0, 300)) + "</div>" : "";
     var how = r.how ? '<div class="muted ag-how">' + esc(r.how) + "</div>" : "";
     var log = res.log_tail ? '<details class="ag-log"><summary>log tail</summary><pre>' + esc(res.log_tail.slice(-1500)) + "</pre></details>" : "";
-    setHtml(el, '<div class="ag-run-line">' + line + "</div>" + err + writes + how + log, force);
+    setHtml(el, row(r.since, '<div class="ag-run-line">' + line + "</div>" + err + writes + how + log), force);
   }
 
   function renderApproval(m, a, force) {
@@ -274,12 +363,12 @@ window.AgentPanel = (function () {
     var acts = S.observer ? '<span class="muted">observing</span>' :
       '<button type="button" class="btn-sm ag-approve" onclick="AgentPanel.approve(\'' + esc(a.id) + '\', this)">' + (isRun ? "Allow run" : "Write to chip") + "</button> " +
       '<button type="button" class="btn-sm ag-reject" onclick="AgentPanel.reject(\'' + esc(a.id) + '\')">Reject</button>';
-    var html = '<div class="ag-ap-head"><strong>' + (isRun ? "run request" : "approval") + "</strong> <code>" + esc(a.node || "") + "</code> " + esc((a.targets || []).join(" ")) +
+    var html = '<div class="ag-ap-head"><span class="ag-plan-st ag-st-waiting">' + (isRun ? "run request" : "approval") + "</span> <strong><code>" + esc(a.node || "") + "</code></strong> " + esc((a.targets || []).join(" ")) +
       (a.run_id ? " " + runLink(a.run_id) : "") + ' <span class="muted">' + esc(a.why_held || "") + " · " + esc(fmtClock(a.created)) + "</span></div>" +
-      (isRun ? '<p class="muted">the agent asks to RUN this node on these targets (mode ask-all); nothing runs before Allow</p>' :
+      (isRun ? '<p class="muted ag-ap-note">the agent asks to RUN this node on these targets (mode ask-all); nothing runs before Allow</p>' :
         '<div class="ag-tbl"><table class="ag-ap-rows"><thead><tr><th>value</th><th>now</th><th>proposed (editable)</th></tr></thead><tbody>' + rows + "</tbody></table></div>") +
       (a.reason ? '<p class="ag-because">because: ' + esc(a.reason) + "</p>" : "") + '<div class="ag-ap-acts">' + acts + "</div>";
-    setHtml(el, html, force);
+    setHtml(el, row(a.created, html), force);
   }
 
   // ---------------------------------------------------------- the "now"
@@ -293,18 +382,20 @@ window.AgentPanel = (function () {
     var live = s.session || null;
     var alive = !!(live && live.alive);
     var armed = !!(file && file.armed);
-    var lines = [];
-    if (S.unreachable) lines.push('<div class="ag-now-line ag-err ag-unreachable">' + esc(UNREACHABLE) + "</div>");
-    lines.push('<div class="ag-now-state ag-' + esc(v.state) + '"><span class="agent-pill-dot"></span> ' + esc(v.text) + "</div>");
+    // customer feedback 2026-09-08: the "now" column became a ONE-LINE status strip --
+    // state · session · today's counts on the left, the doors + links on the right; a
+    // second row only for a run in progress (and on a narrow pane, where the strip wraps)
+    var seg = [];
+    seg.push('<span class="ag-now-state ag-' + esc(v.state) + '"' + (v.title ? ' title="' + esc(v.title) + '"' : "") + '><span class="agent-pill-dot"></span>' + esc(String(v.text || "").replace(/^Agent: /, "")) + "</span>");
     if (file && file.owner) {
-      lines.push('<div class="ag-now-line">' + esc(file.backend || "") + " session · " + esc(file.owner) + (file.until ? " → " + esc(fmtClock(file.until)) : "") + (file.stopped ? ' · <span class="ag-err">stopped</span>' : "") +
-        (armed ? ' · <span class="ag-armed" title="a person pressed Arm: the agent may start hardware runs">armed</span>' : ' · <span class="muted">not armed</span>') + "</div>");
+      seg.push('<span class="ag-now-line">' + esc(file.backend || "") + " session · " + esc(file.owner) + (file.until ? " → " + esc(fmtClock(file.until)) : "") + (file.stopped ? ' · <span class="ag-err">stopped</span>' : "") +
+        (armed ? ' · <span class="ag-armed" title="a person pressed Arm: the agent may start hardware runs">armed</span>' : ' · <span class="muted">not armed</span>') + "</span>");
     } else {
-      lines.push('<div class="ag-now-line muted">no agent session on this chip</div>');
+      seg.push('<span class="ag-now-line muted">no agent session on this chip</span>');
     }
-    if (d.running) lines.push('<div class="ag-now-line">▶ <code>' + esc(d.running.node || d.running.tool || "") + "</code> " + esc(fmtAgo(d.running.since)) + (d.running.typical_s ? ' <span class="muted">usually ~' + Math.round(d.running.typical_s / 60) + "m</span>" : "") + "</div>");
-    lines.push('<div class="ag-now-line">today: ' + (d.events_today || 0) + " events" + (d.failures_today ? ' · <span class="ag-err">✗ ' + d.failures_today + "</span>" : "") + (d.waiting ? ' · <strong>waiting ' + d.waiting + "</strong>" : "") + "</div>");
-    if (d.human_ran) lines.push('<div class="ag-now-line">human ran <code>' + esc(d.human_ran.node || "") + "</code> " + esc(fmtAgo(d.human_ran.ts)) + "</div>");
+    seg.push('<span class="ag-now-line">today ' + (d.events_today || 0) + " events" + (d.failures_today ? ' · <span class="ag-err">' + d.failures_today + " failed</span>" : "") + (d.waiting ? ' · <strong>waiting ' + d.waiting + "</strong>" : "") + "</span>");
+    if (d.human_ran) seg.push('<span class="ag-now-line">human ran <code>' + esc(d.human_ran.node || "") + "</code> " + esc(fmtAgo(d.human_ran.ts)) + "</span>");
+    if (S.unreachable) seg.push('<span class="ag-now-line ag-err ag-unreachable">' + esc(UNREACHABLE) + "</span>");
     var acts = [];
     if (!S.observer) {
       if (file && file.owner && !armed) acts.push('<button type="button" class="btn-sm ag-arm" onclick="AgentPanel.arm()" title="rule 0: hardware starts only by this click">Arm</button>');
@@ -316,10 +407,12 @@ window.AgentPanel = (function () {
       if (alive) acts.push('<button type="button" class="btn-sm" onclick="AgentPanel.endSession()">End session</button>');
     }
     acts.push('<label class="ag-observer" title="observer: this window shows but never starts, stops or approves (an accident guard, not a permission)"><input type="checkbox" ' + (S.observer ? "checked" : "") + ' onchange="AgentPanel.setObserver(this.checked)"> observer' + (S.observer ? ' <span class="ag-observing">— observing</span>' : "") + "</label>");
-    lines.push('<div class="ag-now-acts">' + acts.join(" ") + "</div>");
-    lines.push('<div class="ag-now-line"><a href="/journal" hx-get="/journal" hx-target="#table-pane" hx-push-url="true">Calibration log →</a>' +
-      ' · <a class="ag-setup-link" href="/agent/setup" hx-get="/agent/setup" hx-target="#table-pane" hx-push-url="true" title="connect Claude / Codex to SM, the journal folder, the lab context file">Setup →</a></div>');
-    host.innerHTML = lines.join("");
+    acts.push('<span class="ag-now-links"><a href="/journal" hx-get="/journal" hx-target="#table-pane" hx-push-url="true">Calibration log →</a>' +
+      ' · <a class="ag-setup-link" href="/agent/setup" hx-get="/agent/setup" hx-target="#table-pane" hx-push-url="true" title="connect Claude / Codex to SM, the journal folder, the lab context file">Setup →</a></span>');
+    var runLine = d.running ? '<div class="ag-now-run">▶ <code>' + esc(d.running.node || d.running.tool || "") + "</code> " + esc(fmtAgo(d.running.since)) +
+      (d.running.typical_s ? ' <span class="muted">usually ~' + Math.round(d.running.typical_s / 60) + "m</span>" : "") + "</div>" : "";
+    host.innerHTML = '<div class="ag-now-main">' + seg.join('<span class="ag-now-sep">·</span>') + "</div>" +
+      '<div class="ag-now-acts">' + acts.join(" ") + "</div>" + runLine;
   }
 
   function renderAll(force) {
@@ -363,6 +456,7 @@ window.AgentPanel = (function () {
     });
     if (typeof d.last === "number" && d.last > S.after) S.after = d.last;
     renderAll();
+    S.mounts.forEach(function (m) { groupTools(cardsHost(m)); });   // after every insert: runs of tool rows fold
     S.mounts.forEach(function (m, i) {
       var host = cardsHost(m);
       if (!host) return;
@@ -428,7 +522,7 @@ window.AgentPanel = (function () {
     var backend = (sel && sel.value) || S.defaultBackend;
     ta.disabled = true;
     // review R2-16: a refused line stays in the box for the person to fix
-    var done = function (ok) { ta.disabled = false; if (ok) ta.value = ""; ta.focus(); poll(true); };
+    var done = function (ok) { ta.disabled = false; if (ok) { ta.value = ""; grow(ta); } ta.focus(); poll(true); };
     if (text.indexOf("/run") === 0) {
       api("POST", "/api/agent/plans", { run_line: text }).then(function (r) {
         var ok = r.status === 200;
@@ -451,7 +545,27 @@ window.AgentPanel = (function () {
     var pr = PRESETS[i];
     if (!pr) return;
     var ta = root.querySelector(".ag-input");
-    if (ta) { ta.value = pr[1]; ta.focus(); ta.setSelectionRange(pr[1].indexOf("<"), pr[1].indexOf(">") + 1); }
+    if (ta) { ta.value = pr[1]; grow(ta); ta.focus(); ta.setSelectionRange(pr[1].indexOf("<"), pr[1].indexOf(">") + 1); }
+  }
+  function togglePresets(btn) {
+    // compact (the float): the preset chips sit behind one small toggle
+    var g = btn && btn.closest ? btn.closest(".ag-presets") : null;
+    if (!g) return;
+    var open = !g.classList.contains("open");
+    g.classList.toggle("open", open);
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+  function grow(ta) {
+    // the composer is ONE row and grows with the draft to ~6 rows, then scrolls inside
+    if (!ta || !ta.style) return;
+    ta.style.height = "auto";
+    var cs = window.getComputedStyle ? window.getComputedStyle(ta) : null;
+    var lh = (cs && parseFloat(cs.lineHeight)) || 22;
+    var pad = cs ? ((parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0) + (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0)) : 14;
+    var max = Math.round(lh * 6 + pad);
+    var h = ta.scrollHeight || 0;
+    if (h > max) { ta.style.height = max + "px"; ta.style.overflowY = "auto"; }
+    else { ta.style.height = h ? h + "px" : ""; ta.style.overflowY = "hidden"; }
   }
   function startPlan(id) {
     if (S.observer) return;
@@ -513,16 +627,22 @@ window.AgentPanel = (function () {
 
   // -------------------------------------------------------------- mount
   function skeleton(compact) {
+    // customer feedback 2026-09-08: ONE column -- a muted lead, the status STRIP, the feed
+    // (scrolls inside the pane), the COMPOSER pinned at the bottom. Same markup for both
+    // mounts; the compact float only changes what the CSS does with it.
     return '<div class="ag-root' + (compact ? " ag-compact" : "") + '">' +
-      '<div class="ag-left"><div class="ag-head"><strong class="ag-chip"></strong> <span class="ag-qubits muted"></span></div>' +
+      '<div class="ag-head"><span class="ag-chip"></span> <span class="ag-qubits"></span></div>' +
+      '<div class="ag-now" role="status"></div>' +
       '<div class="ag-cards" aria-live="polite"></div>' +
-      '<form class="ag-form" onsubmit="return AgentPanel.submit(event)">' +
-      '<textarea class="ag-input" rows="2" onkeydown="return AgentPanel.key(event)" placeholder="What do you want to know, or what should the agent do?   Enter sends, Shift+Enter breaks a line   (/run <node> <targets> k=v makes a plan card directly)"></textarea>' +
-      '<div class="ag-form-row"><select class="ag-backend" title="which CLI drives"></select> <button type="submit" class="btn-sm ag-send">Send</button> ' +
-      '<label class="ag-actor-wrap" title="who is at the keyboard — the person SM records for Arm / Stop / mode / “I ran it”">⌨ <input class="ag-actor" list="ag-actor-list" placeholder="your name" autocomplete="off" spellcheck="false" oninput="AgentPanel.setActor(this.value)"><datalist id="ag-actor-list"></datalist></label> ' +
-      '<span class="ag-presets">' + PRESETS.map(function (p, i) { return '<button type="button" class="btn-sm ag-preset" onclick="AgentPanel.preset(' + i + ', this.closest(\'.ag-root\'))">' + esc(p[0]) + "</button>"; }).join(" ") + "</span>" +
-      '<span class="muted ag-hint">a preset fills a draft; nothing starts before a plan card\'s Start</span></div></form></div>' +
-      '<aside class="ag-now"></aside><div id="ag-toast" class="ag-toast" hidden></div></div>';
+      '<form class="ag-form ag-composer" onsubmit="return AgentPanel.submit(event)">' +
+      '<textarea class="ag-input" rows="1" onkeydown="return AgentPanel.key(event)" oninput="AgentPanel.grow(this)" placeholder="Ask, or tell the agent what to do…  (Enter sends · Shift+Enter newline · /run <node> <targets>)"></textarea>' +
+      '<div class="ag-form-row"><select class="ag-backend" title="which CLI drives"></select>' +
+      '<label class="ag-actor-wrap" title="who is at the keyboard — the person SM records for Arm / Stop / mode / “I ran it”">⌨ <input class="ag-actor" list="ag-actor-list" placeholder="your name" autocomplete="off" spellcheck="false" oninput="AgentPanel.setActor(this.value)"><datalist id="ag-actor-list"></datalist></label>' +
+      '<span class="ag-presets" title="a preset fills a draft; nothing starts before a plan card\'s Start">' +
+      '<button type="button" class="btn-sm ag-presets-toggle" onclick="AgentPanel.togglePresets(this)" aria-expanded="false">presets ▾</button>' +
+      PRESETS.map(function (p, i) { return '<button type="button" class="btn-sm ag-preset" onclick="AgentPanel.preset(' + i + ', this.closest(\'.ag-root\'))">' + esc(p[0]) + "</button>"; }).join("") + "</span>" +
+      '<button type="submit" class="btn-sm ag-send">Send</button></div></form>' +
+      '<div id="ag-toast" class="ag-toast" hidden></div></div>';
   }
   function mount(root, opts) {
     opts = opts || {};
@@ -548,6 +668,11 @@ window.AgentPanel = (function () {
     });
     var actorEl = m.root.querySelector(".ag-actor");
     if (actorEl) { actorEl.value = actorName(); }
+    if (m.compact) {
+      // one row in a narrow float cannot hold the whole hint; the /run form is in the home's box
+      var taEl = m.root.querySelector(".ag-input");
+      if (taEl) taEl.placeholder = "Ask, or tell the agent what to do…  (Enter sends)";
+    }
     var dl = m.root.querySelector("#ag-actor-list");
     if (dl) dl.innerHTML = actorRecents().map(function (x) { return '<option value="' + esc(x) + '">'; }).join("");
     S.after = 0;
@@ -598,5 +723,6 @@ window.AgentPanel = (function () {
   return { mount: mount, poll: poll, submit: submit, key: key, preset: preset, startPlan: startPlan, cancelPlan: cancelPlan,
            setPlanMode: setPlanMode, approve: approve, reject: reject, stop: stop, arm: arm, disarm: disarm,
            endSession: endSession, setObserver: setObserver, setActor: setActor, actorName: actorName,
-           toggleFloat: toggleFloat, init: init, absorb: absorb, _state: S, fmtNum: fmtNum, fmtClock: fmtClock };
+           toggleFloat: toggleFloat, init: init, absorb: absorb, _state: S, fmtNum: fmtNum, fmtClock: fmtClock,
+           grow: grow, toggleMore: toggleMore, toggleGroup: toggleGroup, togglePresets: togglePresets };
 })();
