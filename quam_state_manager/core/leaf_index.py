@@ -72,6 +72,7 @@ Not indexed, deliberately: booleans (``True`` is not a parameter) and strings.
 from __future__ import annotations
 
 import logging
+import re
 import sqlite3
 from typing import Any, Iterable
 
@@ -739,3 +740,85 @@ def search_paths(conn: sqlite3.Connection, query: str, *,
     # change-point table.
     rows.sort(key=lambda r: (-r[1], natural_key(r[0])))
     return [{"path": r[0], "changes": r[1]} for r in rows[:int(limit)]]
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Families — grouped and counted IN SQL
+# ──────────────────────────────────────────────────────────────────────────
+#
+# A "family" is one (scope, tail) over an entity root: every pair's copy of
+# `macros.cz.phase_shift_target` is ONE family, whose entity count is how many
+# pairs one press of that badge charts.
+#
+# That count used to be folded from `search_paths(..., limit=N)` — a LIMITed
+# row list — so it was simply wrong wherever the chip had more indexed paths
+# than the display limit. Measured on a real chip: 9,793 indexed paths of which
+# 5,224 are pair-scoped, against a 4,000-row pull. The badge's "· N pairs" is
+# the only claim a badge makes about how much one press charts, and it was
+# under-counting every family on the chip this feature was built for. Grouped
+# in SQL the count is exact regardless of any display limit; a limit applied
+# AFTER the GROUP BY trims families, which is a display choice rather than a
+# wrong number attached to the families that are shown.
+_FAMILY_ROOT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _family_split_sql(roots: Iterable[str]) -> tuple[str, str, str]:
+    """``(scope, entity, tail)`` SQL expressions over ``leaf_paths.path``.
+
+    ``roots`` are identifiers from the caller's own constant table and are
+    regex-gated before they reach the statement; every VALUE still travels as
+    a bound parameter.
+    """
+    scope, ent, tail = ["CASE "], ["CASE "], ["CASE "]
+    for r in roots:
+        if not _FAMILY_ROOT_RE.match(str(r or "")):
+            raise ValueError(f"not a path root: {r!r}")
+        rest = f"substr(path, {len(r) + 2})"
+        cond = f"path LIKE '{r}.%.%' AND instr({rest}, '.') > 1"
+        scope.append(f"WHEN {cond} THEN '{r}' ")
+        ent.append(f"WHEN {cond} THEN substr({rest}, 1, instr({rest}, '.') - 1) ")
+        tail.append(f"WHEN {cond} THEN substr({rest}, instr({rest}, '.') + 1) ")
+    return ("".join(scope) + "ELSE '' END",
+            "".join(ent) + "ELSE '' END",
+            "".join(tail) + "ELSE path END")
+
+
+def path_families(conn: sqlite3.Connection, query: str = "", *,
+                  roots: Iterable[str] = ("qubits", "qubit_pairs"),
+                  limit: int | None = None) -> list[dict]:
+    """One row per ``(scope, tail)`` FAMILY, counted exactly.
+
+    ``{path: "<scope>.*.<tail>", label: tail, scope, n: <distinct entities>,
+    changes: <total change points>}``. A path under no entity root stays a
+    single row (``scope: ""``, ``n: 1``) — there is no family behind it.
+
+    ``query`` is the shared search grammar (docs/96: space = AND, a standalone
+    ``|`` = OR), identical to :func:`search_paths`; an empty query means every
+    indexed path. Ranked by total change points — what moved most is what a
+    trends page is for — then by ``natural_key(tail)``, so q2 sorts before q10
+    (house rule 2026-09-09).
+    """
+    from quam_state_manager.core.search_query import groups as _sq_groups
+
+    clauses: list[str] = []
+    params: list[str] = []
+    for g in _sq_groups(query or ""):
+        clauses.append("(" + " OR ".join([r"path LIKE ? ESCAPE '\'"] * len(g)) + ")")
+        params.extend("%" + t.replace("%", r"\%").replace("_", r"\_") + "%"
+                      for t in g)
+    if (query or "").strip() and not clauses:
+        return []
+    scope_x, ent_x, tail_x = _family_split_sql(roots)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    rows = conn.execute(
+        "SELECT t.scope, t.tail, COUNT(DISTINCT t.ent) AS n, "
+        "       COUNT(l.snap_id) AS changes "
+        "  FROM (SELECT id, " + scope_x + " AS scope, " + ent_x + " AS ent, "
+        + tail_x + " AS tail FROM leaf_paths" + where + ") t "
+        "  LEFT JOIN leaf_cp l ON l.path_id = t.id "
+        " GROUP BY t.scope, t.tail", params).fetchall()
+    out = [{"path": (f"{r[0]}.*.{r[1]}" if r[0] else r[1]), "label": r[1],
+            "scope": r[0], "n": int(r[2] or 0), "changes": int(r[3] or 0)}
+           for r in rows]
+    out.sort(key=lambda d: (-d["changes"], natural_key(d["label"])))
+    return out[:int(limit)] if limit else out

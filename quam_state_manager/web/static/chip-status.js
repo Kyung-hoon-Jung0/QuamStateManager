@@ -4026,6 +4026,18 @@ window.ChipTrends = (function () {
         var i = _pathOrder.indexOf(p);
         if (i >= 0) _pathOrder.splice(i, 1);
         if (on) _pathOrder.unshift(p);
+        if (!on) {
+            /* A badge the SEARCH BOX is driving could never be turned off.
+               The server marks a badge active when its path is in the MERGED
+               set of ?path= (the box) and ?paths= (the badges), and this
+               function only ever manipulated the badge set — so with the same
+               family in the box the press removed one copy, the box sent the
+               other, and the badge came back lit. Reproduced with real DOM
+               clicks in headless Chrome. Turning something off has to clear
+               every source that is holding it on. */
+            var el = document.getElementById('topo-trend-path');
+            if (el && el.value.trim() === String(p)) el.value = '';
+        }
         _reload();
     }
     function _esc(s) {

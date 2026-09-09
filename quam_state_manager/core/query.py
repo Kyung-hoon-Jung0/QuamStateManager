@@ -1396,6 +1396,42 @@ def _rb_level(metric: Any) -> str | None:
 # spellings different labs use for the same quantity.
 _FIDELITY_FIELDS = ("value", "average_gate_fidelity", "Fidelity", "fidelity")
 
+#: Field names that carry an ERROR rather than a fidelity. `epc`/`epg` are the
+#: lab shorthands for error-per-Clifford / error-per-gate; `error_per_*` is the
+#: spelling the RB fitters write.
+_ERROR_FIELD_PREFIXES = ("error_per", "epc", "epg")
+
+
+def fidelity_field_kind(name: Any) -> str | None:
+    """What a field inside a pair's ``fidelity`` block actually CARRIES.
+
+    ``"fidelity"`` / ``"decay"`` / ``"error"`` / ``"load_id"`` / ``None``.
+
+    THE one vocabulary. Three separate rules used to live here and be
+    re-implemented elsewhere with string prefixes:
+    :func:`_extract_pair_gate_fidelities` skips ``*_load_id`` (docs/138 — a run
+    id "rendered as e.g. 529.0000" under a fidelity heading), :func:`_rb_level`
+    maps ``*_alpha`` to ``decay`` so an exponential's decay base is never shown
+    as a percentage, and :data:`_FIDELITY_FIELDS` names the fields that carry
+    the fidelity itself. Anything that wants to ask "may I label this number a
+    fidelity?" asks HERE — a second spelling of the question is how a run
+    identifier ended up charted as "2Q gate fidelity" on the Trends badge row.
+    """
+    if not isinstance(name, str) or not name:
+        return None
+    if name.endswith("_load_id"):
+        return "load_id"
+    low = name.lower()
+    if _rb_level(name) == "decay" or low == "alpha":
+        return "decay"
+    if low.startswith(_ERROR_FIELD_PREFIXES) or low.endswith(("_epc", "_epg")) \
+            or "error" in low:
+        return "error"
+    if low in {f.lower() for f in _FIDELITY_FIELDS} \
+            or low == "fidelity" or low.endswith("_fidelity"):
+        return "fidelity"
+    return None
+
 
 def _gate_fidelity_row(entry: dict) -> dict:
     """Apply the (0,1] physical bound to one pair-fidelity row.
@@ -1460,7 +1496,9 @@ def _extract_pair_gate_fidelities(macros: dict) -> list[dict]:
         for metric_name, metric_val in fid.items():
             # The *_load_id keys are provenance, not a measurement — don't emit
             # them as their own "fidelity" rows (they rendered as e.g. "529.0000").
-            if isinstance(metric_name, str) and metric_name.endswith("_load_id"):
+            # Asked through the shared classifier, so this rule and the Trends
+            # badge row's cannot drift apart again.
+            if fidelity_field_kind(metric_name) == "load_id":
                 continue
             if isinstance(metric_val, dict):
                 entry = {"gate": gate_name, "metric": metric_name}

@@ -95,6 +95,12 @@
             </div>
             {% if c.series %}
             <div class="topo-trend-chart" id="topo-trend-{{ loop.index0 }}"></div>
+            {% elif c.note %}
+            {# One point per entity is not a trend. Drawing it hands Plotly a
+               single timestamp, which auto-ranges the x axis to a ~2 ms window
+               — an axis implying a measurement over time that was never made.
+               The value IS recorded, so this is not "nothing recorded". #}
+            <p class="muted topo-trend-empty">{{ c.note }}</p>
             {% else %}
             {# Never an empty axis pretending to be a plot. #}
             <p class="muted topo-trend-empty">Nothing recorded for {% if c.typed %}<code>{{ c.typed }}</code>{% else %}this metric{% endif %} yet. It appears here once a run or a save writes it.</p>

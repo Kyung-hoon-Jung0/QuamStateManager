@@ -253,6 +253,47 @@ setTimeout(function () {
        + 'reactivation sorts behind the presses that outlived it ('
        + order.join(',') + ')');
 
+    // ── 5. a badge the SEARCH BOX is driving can be turned off ────────────
+    // The server marks a badge active when its path is in the MERGED set of
+    // ?path= (the box) and ?paths= (the badges). togglePath only ever
+    // manipulated the badge set, so with the same family in the box the press
+    // removed one copy, the box sent the other, and the badge came back lit —
+    // a control that cannot be switched off. Reproduced with real DOM clicks
+    // in headless Chrome before this pin was written.
+    const w6 = world();
+    const T6 = w6.ChipTrends;
+    const BOXED = 'qubit_pairs.*.coupler.interaction_offset';
+    const b6 = w6.document.querySelector(
+      '.topo-trend-badge[data-trend-path="' + BOXED + '"]');
+    const box6 = w6.document.getElementById('topo-trend-path');
+    // the state the server renders when the box holds that family: the box
+    // carries the path AND the badge is marked active by the merged set
+    box6.value = BOXED;
+    b6.classList.add('active');
+    b6.setAttribute('aria-pressed', 'true');
+    T6.togglePath(BOXED);
+    const u6 = w6.urls[w6.urls.length - 1] || '';
+    ok(b6.getAttribute('aria-pressed') === 'false',
+       'pressing a box-driven badge un-presses it');
+    ok(box6.value === '',
+       'and CLEARS the box, which was the other thing holding it on ('
+       + JSON.stringify(box6.value) + ')');
+    ok(u6.indexOf('path=') < 0,
+       'so the reload asks for neither copy (' + u6 + ')');
+
+    // Turning it off must not clear a box holding something ELSE.
+    const w7 = world();
+    const T7 = w7.ChipTrends;
+    const box7 = w7.document.getElementById('topo-trend-path');
+    box7.value = 'qubits.q1.f_01';
+    T7.togglePath('qubit_pairs.*.gate_fidelity');   // on
+    T7.togglePath('qubit_pairs.*.gate_fidelity');   // off again
+    ok(box7.value === 'qubits.q1.f_01',
+       'an unrelated typed family survives a badge being turned off ('
+       + box7.value + ')');
+    ok((w7.urls[w7.urls.length - 1] || '').indexOf('path=qubits.q1.f_01') > 0,
+       'and still travels');
+
     process.exit(fails ? 1 : 0);
   }, 30);
 }, 300);
