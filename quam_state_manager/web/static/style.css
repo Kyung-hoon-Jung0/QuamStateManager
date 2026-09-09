@@ -12414,17 +12414,35 @@ td.vc-cell-takeable:focus-within .vc-take,
    choice, and the only width at which a 20-line chart is readable. 2 and 3
    are opt-in via the badges above, which write --trends-cols on this element.
 
-   NOTE THE ASYMMETRY, it is the whole reason the narrow case works: the badge
-   writes an inline CUSTOM PROPERTY, which only feeds the `repeat(var(...))`
-   below, while the media query sets grid-template-columns ITSELF. A stylesheet
-   rule on the property beats an inline value that merely feeds it, so a narrow
-   pane collapses to one column no matter which badge is armed — and the badge
-   keeps its state for when the pane is wide again. */
+   The badge sets a CAP, not a promise, and the cap is measured against the
+   GRID'S OWN WIDTH. Review round 2 measured why both halves of that matter.
+
+   (a) A media query keys on the VIEWPORT, and the box that decides whether
+   three charts fit is `#table-pane` — user-resizable (Split.js,
+   `quam_split_sizes`), and the sidebar collapse changes its width without
+   moving the viewport at all. Measured in real Chrome: badge 3 armed at a
+   1500x1000 viewport with the pane dragged to 620 px still computed three
+   ~194 px tracks, with the x-tick labels visibly colliding.
+
+   (b) A @container query keys on the right box but still needs a threshold,
+   and `rem` here is not 16 px — this app scales its root font (measured
+   20 px), so the 64rem that rule inherited from the media query is 1280 px,
+   and it collapsed a perfectly wide 1139 px pane to one column. A breakpoint
+   in rem cannot be right for both scales.
+
+   So the rule is arithmetic rather than a breakpoint: every track asks for
+   the width N columns would give it, but never less than 15rem, and
+   `auto-fit` lays down as many as actually fit. THE FLOOR IS WHAT MAKES IT
+   COLLAPSE — without it the asked-for width is a pure percentage of the grid,
+   so N tracks always fit at any size. Measured in real Chrome at a 20 px
+   root: a 1139 px grid honours 1/2/3, a 945 px grid honours 1/2/3, a 745 px
+   grid gives a 3-armed badge two tracks, and the 565 px grid of that 620 px
+   pane gives ONE whichever badge is armed — and the badge keeps its state for
+   when the pane is wide again. */
 .topo-trends-grid { display: grid; gap: .9rem;
-    grid-template-columns: repeat(var(--trends-cols, 1), minmax(0, 1fr)); }
-@media (max-width: 64rem) {
-    .topo-trends-grid { grid-template-columns: 1fr; }
-}
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, max(15rem,
+        calc((100% - (var(--trends-cols, 1) - 1) * .9rem)
+             / var(--trends-cols, 1)))), 1fr)); }
 .topo-trend-box { border: 1px solid var(--pico-muted-border-color);
     border-radius: .45rem; padding: .5rem .6rem .3rem;
     background: var(--pico-card-background-color); min-width: 0; }

@@ -14642,10 +14642,11 @@ function paramHistoryRenderDrawerChart(data, currentValue) {
     };
     // Which run this snapshot came from — ONE answer for both lines below.
     // `p.run`/`p.node` are stamped server-side from the snapshot provenance
-    // map (the leaf change-point index, which is also where the uid is
-    // minted); `p.run_id`/`p.experiment` are the curated param_history
-    // columns, which are legitimately NULL for a snapshot whose meta names a
-    // run. Reading the two lines from two tiers is what printed "open dataset
+    // map (the snapshot METAS, which are also where the uid is minted --
+    // round 2 moved that read off the leaf change-point index, whose rows are
+    // built from the same metas); `p.run_id`/`p.experiment` are the curated
+    // param_history columns, which are legitimately NULL for a snapshot whose
+    // meta names a run. Reading the two lines from two tiers printed "open dataset
     // #null" and let one line deny a run while the other offered to open it.
     var runOf  = function(p) { return (p.run  != null && p.run  !== '') ? p.run
                                     : ((p.run_id != null && p.run_id !== '') ? p.run_id : null); };

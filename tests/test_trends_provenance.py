@@ -35,9 +35,14 @@ _WIRING = {"network": {"host": "3.3.3.3", "cluster_name": "C9"},
            "ports": {"mw_outputs": {"con1": {"1": {"2": {"band": 1}}}}}}
 
 
-def _state(f01=6.0e9, t1=2.0e-5):
-    return {"qubits": {"qA1": {"id": "qA1", "f_01": f01, "T1": t1}},
-            "qubit_pairs": {}, "active_qubit_names": ["qA1"]}
+def _state(f01=6.0e9, t1=2.0e-5, marker=None):
+    """*marker* moves a leaf NO curated metric charts, so the snapshot exists
+    and the page never draws it — the shape a filtered map must drop."""
+    s = {"qubits": {"qA1": {"id": "qA1", "f_01": f01, "T1": t1}},
+         "qubit_pairs": {}, "active_qubit_names": ["qA1"]}
+    if marker is not None:
+        s["extras"] = {"marker": marker}
+    return s
 
 
 def _write_chip(folder: Path, state: dict):
@@ -114,9 +119,21 @@ class TestTheMapShape:
         the fragment nothing could read, and MORE than the ~4.1 KB the
         per-point spelling would have cost there. So the pin is both bounds,
         not the one that happened to hold for the fixture.
+
+        THE FIXTURE IS THE PIN (review round 2). Its first cut wrote five
+        snapshots that each moved BOTH metrics, so every snapshot was drawn,
+        `len(snaps) <= len(charted)` held identically filtered or not, and the
+        pin stayed GREEN under both mutations of the filter it exists to guard
+        (dropping `only=charted` at the call site; neutering the `ts not in
+        only` test). The marker snapshots below move a leaf no requested metric
+        charts, which is what makes `charted` strictly smaller than the chip —
+        and the guard under them is there so the fixture can never silently
+        regress to the vacuous shape.
         """
         for i in range(5):
             _snap(env, _state(f01=6.0e9 + i * 1e6, t1=2.0e-5 + i * 1e-7))
+        for i in range(3):                  # snapshots the page never draws
+            _snap(env, _state(f01=6.0e9 + 4e6, t1=2.0e-5 + 4e-7, marker=i + 1))
         body = env["client"].get(
             "/topology/trends?metrics=f_01,T1").get_data(as_text=True)
         snaps = _snaps(body)
@@ -125,6 +142,9 @@ class TestTheMapShape:
         drawn = sum(len(s["points"]) for c in charts for s in c["series"])
         assert drawn > len(charted), \
             "fixture must draw the same snapshot id on both metrics"
+        assert len(charted) < len(env["hm"].list_snapshots(env["live"])), \
+            "fixture must hold snapshots the page never draws, or the first " \
+            "bound below cannot fail"
         assert len(snaps) <= len(charted), \
             "never more entries than distinct ids the page draws"
         assert len(snaps) <= len(env["hm"].list_snapshots(env["live"])), \
@@ -156,11 +176,12 @@ class TestTheMapShape:
         ).get_data(as_text=True)
         assert not _snaps(body), "no drawn point ⇒ no provenance to ship"
 
-    def test_the_curated_tier_answers_for_a_snapshot_the_leaf_index_lacks(self, env):
-        """The leaf change-point index is the source of truth (it is the only
-        tier that records the run FOLDER), but the curated `param_history`
-        table reaches snapshots it may not have ingested. That fallback is the
-        ONLY thing this pin can see, so it is driven directly."""
+    def test_the_curated_tier_answers_for_a_snapshot_the_metas_lack(self, env):
+        """The snapshot METAS are the source of truth (the only place that
+        records the run FOLDER, and what the leaf index is itself built from),
+        but the curated `param_history` table reaches timestamps with no meta
+        left on disk. That fallback is the ONLY thing this pin can see, so it
+        is driven directly."""
         import sqlite3
         _snap(env, _state(f01=6.0e9))
         hm, live = env["hm"], env["live"]
@@ -193,6 +214,76 @@ class TestTheMapShape:
             for s in c["series"]:
                 for p in s["points"]:
                     assert p[0] in snaps, f"{p[0]} has no provenance entry"
+
+
+class TestTheReadStaysOffTheIndexWriteLock:
+    """Review round 2. Reading provenance through the leaf change-point index
+    meant keeping that index FRESH first, which put a multi-second rebuild
+    under ``BEGIN IMMEDIATE`` on two READ-ONLY user routes that never touched
+    the leaf tier before. Measured on a copy of the real 233-snapshot chip:
+    warm 0.011 s either way, but with the index ONE snapshot behind — the
+    state after every run or save, i.e. this cadence's normal case — the old
+    read took 1.414 s against the new read's 0.020 s, and held the index write
+    lock against a second window's readers for all of it. The metas answer the
+    same question: 195 of 233 carry BOTH run_id and folder, exactly the 195
+    ``leaf_snaps`` has, and the two row sets agreed on every field.
+    """
+
+    def _spy(self, hm, monkeypatch):
+        calls = []
+        real = hm._ensure_leaf_index_fresh
+        monkeypatch.setattr(hm, "_ensure_leaf_index_fresh",
+                            lambda p: (calls.append(str(p)), real(p))[1])
+        return calls
+
+    def test_provenance_never_freshens_the_leaf_index(self, env, monkeypatch):
+        calls = self._spy(env["hm"], monkeypatch)
+        _snap(env, _state(f01=6.0e9))
+        _snap(env, _state(f01=6.1e9), trigger="experiment",
+              experiment_name="06_ramsey", run_id=31)
+        assert env["hm"].snapshot_provenance(env["live"])
+        assert calls == [], \
+            "the provenance read must not take the leaf index's write path"
+
+    def test_neither_route_freshens_the_leaf_index(self, env, monkeypatch):
+        """The two surfaces this feature added — Trends and the 🕘 drawer."""
+        _snap(env, _state(f01=6.0e9))
+        _snap(env, _state(f01=6.1e9), trigger="experiment",
+              experiment_name="06_ramsey", run_id=31)
+        calls = self._spy(env["hm"], monkeypatch)
+        c = env["client"]
+        assert c.get("/topology/trends?metrics=f_01").status_code == 200
+        assert c.get("/param-history/expand?qubit=qA1&prop=f_01").status_code == 200
+        assert calls == [], \
+            f"a read route rebuilt the leaf index: {calls}"
+
+    def test_a_snapshot_the_leaf_index_lacks_still_names_its_run(self, env):
+        """And the answer is not merely cheaper — it is strictly more
+        complete. ``leaf_snaps`` is BUILT from these metas, so it can only ever
+        hold a subset: a snapshot not yet ingested is absent there while its
+        meta already names the run."""
+        import sqlite3
+        c, data_root = env["client"], env["tmp"] / "data"
+        run = _seed_run(data_root, 31)
+        c.post("/workspace/add", data={"folder": str(data_root)})
+        _snap(env, _state(f01=6.0e9))
+        meta = _snap(env, _state(f01=6.1e9), trigger="experiment",
+                     experiment_name="03_resonator_spectroscopy_single",
+                     run_id=31, experiment_folder_path=str(run))
+        hm, live = env["hm"], env["live"]
+        assert hm.snapshot_provenance(live)          # index exists by now
+        conn = sqlite3.connect(hm._index_path(Path(live)))
+        try:                                         # un-ingest it entirely
+            conn.execute("DELETE FROM leaf_cp")
+            conn.execute("DELETE FROM leaf_snaps")
+            conn.commit()
+        finally:
+            conn.close()
+        rows = {r["ts"]: r for r in hm.snapshot_provenance(live)}
+        assert meta.timestamp in rows, \
+            "a meta the leaf index has not ingested still knows where it came from"
+        got = rows[meta.timestamp]
+        assert got["run_id"] == 31 and got["folder"] == str(run)
 
 
 class TestARunSnapshot:
@@ -320,16 +411,44 @@ class TestTheColumnControl:
             assert f"ChipTrends.setCols({n})" in head.group(0)
         assert 'aria-pressed="true"' in head.group(0)
 
+    @staticmethod
+    def _grid_rule() -> str:
+        css = (Path(routes_mod.__file__).parent / "static" / "style.css").read_text(
+            encoding="utf-8")
+        m = re.search(r"\.topo-trends-grid \{(.*?)\}", css, re.S)
+        assert m, "the trends grid must have a rule"
+        return " ".join(m.group(1).split())
+
     def test_one_column_is_the_default(self, env):
         """A stylesheet default of 1, so a page with JS disabled still stacks
         straight down."""
+        assert "var(--trends-cols, 1)" in self._grid_rule()
+
+    def test_a_narrow_PANE_collapses_it_not_only_a_narrow_window(self, env):
+        """Review round 2, measured in real Chrome: with badge 3 armed at a
+        1500x1000 viewport and the pane dragged to 620 px, the grid still
+        computed three ~194 px tracks. `#table-pane` is user-resizable
+        (Split.js) and the sidebar collapse changes its width without moving
+        the viewport, so a VIEWPORT breakpoint measures the wrong box — and a
+        @container breakpoint measures the right box with the wrong number,
+        because this app scales its root font (measured 20 px), making the
+        inherited 64rem 1280 px and collapsing a 1139 px pane.
+
+        The cap is arithmetic instead: `auto-fit` over tracks that ask for
+        their 1/N share but never less than a rem floor. The floor is the
+        collapsing half — a pure percentage share always fits N times.
+        """
+        rule = self._grid_rule()
+        assert "repeat(auto-fit," in rule, \
+            "auto-fit is what drops a track the grid's own width cannot hold"
+        assert re.search(r"max\(\s*1[0-9]rem\s*,", rule), \
+            "…and the rem FLOOR is what makes it drop; a share of 100% always fits"
+        assert "min(100%" in rule, "one track must still be allowed to be the grid"
         css = (Path(routes_mod.__file__).parent / "static" / "style.css").read_text(
             encoding="utf-8")
-        assert "repeat(var(--trends-cols, 1), minmax(0, 1fr))" in css
-        # ...and a narrow pane overrides the PROPERTY, which an inline custom
-        # property value can never beat.
-        assert re.search(r"@media \(max-width: 64rem\) \{\s*"
-                         r"\.topo-trends-grid \{ grid-template-columns: 1fr; \}", css)
+        assert not re.search(r"@(media|container)[^{]*\{\s*\.topo-trends-grid\s*\{"
+                             r"[^}]*grid-template-columns", css), \
+            "a breakpoint override would beat the arithmetic and bring the bug back"
 
 
 class TestTheParamHistoryDrawerUid:
@@ -358,8 +477,9 @@ class TestTheParamHistoryDrawerUid:
     def test_the_run_travels_with_the_uid_across_the_tier_split(self, env):
         """Review round 1, seen in a real browser: "click → open dataset #null".
 
-        The uid is minted from the LEAF change-point index (the only tier that
-        records the run folder); the point's own ``run_id`` is the CURATED
+        The uid is minted from the snapshot META (the only place that records
+        the run FOLDER — round 2 moved this off the leaf index, which is built
+        from those metas anyway); the point's own ``run_id`` is the CURATED
         ``param_history`` column, and that column is legitimately NULL for a
         snapshot whose meta names a run — the docs/132 reverse-order case,
         annotated by ``_enrich_run_fields`` after the rows were written. On the
@@ -376,8 +496,8 @@ class TestTheParamHistoryDrawerUid:
                      experiment_name="03_resonator_spectroscopy_single",
                      run_id=31, experiment_folder_path=str(run))
         hm, live = env["hm"], env["live"]
-        # Populate the leaf tier FIRST, then strip the curated columns — the
-        # exact divergence the customer's index is in.
+        # The meta already names the run; strip the curated columns to
+        # reproduce the exact divergence the customer's index is in.
         assert hm.snapshot_provenance(live)
         conn = sqlite3.connect(hm._index_path(Path(live)))
         try:
@@ -395,7 +515,7 @@ class TestTheParamHistoryDrawerUid:
         pt = {p["timestamp"]: p for p in row["values"]}[meta.timestamp]
         assert pt["run_id"] is None, "fixture must reproduce the tier split"
         assert pt["uid"] == f"{routes_mod._folder_key(data_root)}:31", \
-            "the leaf tier still mints the uid"
+            "the meta still mints the uid"
         assert pt["run"] == 31, \
             "…and the number the hint prints must come from the same tier"
         assert pt["node"] == "03_resonator_spectroscopy_single"

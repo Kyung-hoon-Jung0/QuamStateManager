@@ -532,20 +532,13 @@ def series(conn: sqlite3.Connection, path: str) -> list[tuple]:
         " WHERE p.path = ? ORDER BY s.ts", (path,))]
 
 
-def snapshot_provenance(conn: sqlite3.Connection) -> list[tuple]:
-    """``(ts, trigger, run_id, experiment, folder)`` for EVERY indexed snapshot.
-
-    :func:`series` already returns these five columns joined onto each change
-    point, which is how a per-field popover names the run behind a value. A
-    chip-wide chart needs the same answer for every point on the page at once,
-    and provenance is a property of the SNAPSHOT, not of the leaf — so asking
-    for it per point ships the same handful of strings once per (path, point)
-    instead of once per snapshot. One row per snapshot is O(snapshots): 161 on
-    a real chip, against tens of thousands of drawn points.
-    """
-    return [tuple(r) for r in conn.execute(
-        "SELECT ts, trigger, run_id, experiment, folder FROM leaf_snaps "
-        "ORDER BY ts")]
+# NOTE (review round 2): a chip-wide `snapshot_provenance(conn)` reader used to
+# live here, and `HistoryManager.snapshot_provenance` is its only consumer. It
+# was removed rather than left dead, because reading this tier means keeping
+# the leaf index FRESH first, and that put a multi-second rebuild under
+# BEGIN IMMEDIATE on two read-only user routes. `leaf_snaps` is built from the
+# snapshot metas (see `_leaf_load_snapshot`), so the metas answer the same
+# question — strictly more completely, and without the index write lock.
 
 
 def snapshot_count(conn: sqlite3.Connection) -> int:

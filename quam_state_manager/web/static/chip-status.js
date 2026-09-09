@@ -3984,11 +3984,13 @@ window.ChipTrends = (function () {
         Put the column control right next to the 'Trends' title as badge
         buttons -- (Column: 1 2 3) -- so I choose how many columns."
 
-       The badge writes a CSS custom property on the grid; the stylesheet's
-       `repeat(var(--trends-cols, 1), minmax(0, 1fr))` reads it, and a narrow
-       pane's media query overrides grid-template-columns outright (see
-       style.css — a rule on the property beats an inline value that only
-       feeds it). Persisted per browser, defaulting to 1. */
+       The badge writes a CSS custom property on the grid and the stylesheet's
+       `repeat(auto-fit, ...)` reads it as a CAP: N tracks where N fit, fewer
+       where they do not. Round 2 replaced a viewport media query with that
+       arithmetic — see style.css for the measurements, including why a rem
+       breakpoint cannot be right at this app's scaled root font. So a press
+       is always recorded and persisted even when the pane is too narrow to
+       honour it right now. Persisted per browser, defaulting to 1. */
     var COLS_KEY = 'quam_trends_cols';
     var COLS_MAX = 3;
     function _clampCols(n) {
