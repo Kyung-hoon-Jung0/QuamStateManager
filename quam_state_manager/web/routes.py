@@ -10171,7 +10171,8 @@ def _snapshot_run_uid(folder: Any, run_id: Any,
     return None
 
 
-def _snapshot_provenance_map(hm, path: Path) -> dict[str, dict]:
+def _snapshot_provenance_map(hm, path: Path,
+                             only: set[str] | None = None) -> dict[str, dict]:
     """``{snapshot id: {run, node, short, why, uid}}`` — ONE map per response.
 
     Provenance is a property of the SNAPSHOT, and every series on the Trends
@@ -10181,6 +10182,18 @@ def _snapshot_provenance_map(hm, path: Path) -> dict[str, dict]:
     field per point measured 61 bytes/point and up to 2.3 MB of HTML for a
     single section on a 419-snapshot chip, and this page fans a chart out over
     every qubit, which multiplies the point count again.
+
+    *only* narrows it to the snapshot ids the response actually needs, and it
+    is not an optimisation detail — WITHOUT it the O(snapshots) argument above
+    inverts on a sparse chip. Review round 1 measured the default Trends
+    request on a real 5-qubit chip: 35 drawn points over 8 distinct snapshot
+    ids, against 228 map entries / 27.6 KB, i.e. 78% of the fragment was
+    provenance for snapshots nothing on the page could look up — more than the
+    ~4.1 KB the per-point shape would have cost there. Filtered, the map is
+    ``min(O(snapshots), O(distinct drawn ids))``, which is <= both shapes on
+    every chip. It also skips the per-row ``Path.resolve()`` the uid mint does,
+    so a chip with hundreds of snapshots stops paying hundreds of stat calls
+    for rows it will not ship.
 
     Honest by construction: a snapshot with no run carries ``run``/``uid`` null
     and a ``why`` sentence naming what SM actually knows; a run whose folder is
@@ -10199,6 +10212,8 @@ def _snapshot_provenance_map(hm, path: Path) -> dict[str, dict]:
     for r in rows:
         ts = str(r.get("ts") or "")
         if not ts:
+            continue
+        if only is not None and ts not in only:
             continue
         rid = r.get("run_id")
         node = str(r.get("experiment") or "")
@@ -10423,10 +10438,16 @@ def topology_trends():
     # the same number shows real values as "IQ Blob (%)" elsewhere).
     metric_labels = {m: chip_health.metric_meta(m)["label"] for m in curated}
     metric_labels.update(_TREND_LABEL_OVERRIDES)
+    # Only the snapshots this response actually DRAWS. The charts are change
+    # points (``compress="changes"``), so a chip can hold hundreds of snapshots
+    # behind a handful of drawn ids — shipping the whole vocabulary made the
+    # map 78% of the fragment for entries nothing could look up, and a typed
+    # path that matched no series shipped the entire map for ZERO points.
+    charted = {str(p[0]) for c in charts for s in c["series"] for p in s["points"]}
     return render_template("_topo_trends.html", charts=charts, curated=curated,
                            selected=sel, extra=extra, no_chip=False,
                            metric_labels=metric_labels,
-                           snaps=_snapshot_provenance_map(hm, path),
+                           snaps=_snapshot_provenance_map(hm, path, only=charted),
                            snapshots=len(hm.list_snapshots(path)))
 
 
@@ -19712,14 +19733,32 @@ def param_history_expand():
     # curated table does not store, and the live dataset-root set, which the
     # browser cannot know), so it is computed here through the same one helper
     # the Trends hover uses. Null uid ⇒ the point is simply not clickable.
+    #
+    # The RUN travels with the uid, and that pairing is the round-1 fix. The
+    # two facts come from different tiers: the uid is minted from the leaf
+    # change-point index (the only tier that records the run FOLDER) while the
+    # point's own ``run_id`` is the curated ``param_history`` column, and that
+    # column is legitimately NULL for a snapshot whose META names a run — the
+    # docs/132 reverse-order case, where a run's fit values were applied before
+    # the ingest saw the run, so the content landed in a save/manual snapshot
+    # that ``_enrich_run_fields`` annotated afterwards without rewriting the
+    # index rows. Gating the hover's click hint on one tier while numbering it
+    # from the other printed "open dataset #null" on 26 of 230 real points and
+    # let the same tooltip deny a run happened and offer to open it. One map,
+    # both fields, so the two lines can never name different runs.
+    points = [p for p in (row.get("values") or []) if isinstance(p, dict)]
     try:
-        prov = _snapshot_provenance_map(hm, Path(target_path))
+        prov = _snapshot_provenance_map(
+            hm, Path(target_path),
+            only={str(p.get("timestamp") or "") for p in points})
     except Exception:  # noqa: BLE001
         logger.debug("drawer provenance unavailable", exc_info=True)
         prov = {}
-    for p in row.get("values") or []:
-        if isinstance(p, dict):
-            p["uid"] = (prov.get(str(p.get("timestamp") or "")) or {}).get("uid")
+    for p in points:
+        _pv = prov.get(str(p.get("timestamp") or "")) or {}
+        p["uid"] = _pv.get("uid")
+        p["run"] = _pv.get("run")
+        p["node"] = _pv.get("node") or None
 
     current_value = None
     if is_loaded:

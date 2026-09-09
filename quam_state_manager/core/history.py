@@ -4801,9 +4801,18 @@ class HistoryManager:
                     if idx.exists():
                         conn = sqlite3.connect(str(idx), timeout=10.0)
                         try:
+                            # The COLUMN is `experiment` (see the CREATE TABLE
+                            # above); `experiment_name` is the SnapshotMeta
+                            # field. Naming the meta field here made every
+                            # enrichment raise "no such column" into the
+                            # best-effort except below, so the index rows this
+                            # block exists to fill stayed NULL forever — which
+                            # is precisely the tier split that later printed
+                            # "open dataset #null" in the 🕘 drawer, the leaf
+                            # index knowing a run the curated row denied.
                             conn.execute(
                                 "UPDATE param_history SET run_id = ?, "
-                                "experiment_name = ? WHERE timestamp = ?",
+                                "experiment = ? WHERE timestamp = ?",
                                 (run_id, getattr(entry, "experiment_name", None),
                                  snap.timestamp))
                             conn.commit()

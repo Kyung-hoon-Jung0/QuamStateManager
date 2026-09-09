@@ -391,6 +391,15 @@ world.push((function () {
         run_id: 34, experiment: '06_ramsey', uid: 'a1b2c3d4:34' },
       { timestamp: '20260901_010200', value: 6.2e9, trigger: 'experiment',
         run_id: 99, experiment: '06_ramsey', uid: null },
+      // Review round 1, seen in a real browser: the CURATED param_history row
+      // carries no run for a snapshot the LEAF index ties to run 64 (the
+      // docs/132 reverse-order case). The hint was gated on the uid and
+      // numbered from run_id, so it printed "open dataset #null" — and the
+      // line above it denied a run had happened while this one offered to
+      // open one. Both now read the server's `run`.
+      { timestamp: '20260901_010300', value: 6.3e9, trigger: 'save',
+        run_id: null, experiment: null, run: 64,
+        node: '03_resonator_spectroscopy_single', uid: 'a1b2c3d4:64' },
     ],
   }, null);
   return until(win, function () { return chart.__renders === 1
@@ -414,6 +423,23 @@ world.push((function () {
     win._htmxCalls.length = 0;
     fireIt(noUid);
     ok(win._htmxCalls.length === 0, '6f a run with no uid does nothing');
+    // 6g-6j — the tier split: uid from the leaf index, run_id NULL in the
+    // curated row. Neither line may print the word "null", and they may not
+    // contradict each other.
+    const save = chart.data.filter(function (t) { return t.name === 'Save'; })[0];
+    const split = save && save.customdata[0];
+    ok(split && split[4] === 'a1b2c3d4:64', '6g the tier-split point keeps its uid');
+    ok(split && /click .* open dataset #64/.test(split[3]),
+       '6h the hint numbers itself from the run the uid opens');
+    ok(split && split.every(function (v) { return !/null/.test(String(v)); }),
+       '6i no line prints the literal word "null"');
+    ok(split && /#64/.test(split[2]),
+       '6j ...and the context line names the same run instead of denying one');
+    win._htmxCalls.length = 0;
+    fireIt(split);
+    ok(win._htmxCalls.length === 1
+       && win._htmxCalls[0][1] === '/dataset/a1b2c3d4:64',
+       '6k the tier-split point opens the run the hint promised');
   });
 })());
 

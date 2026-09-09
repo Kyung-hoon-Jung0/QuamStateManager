@@ -104,18 +104,57 @@ class TestTheMapShape:
                 assert len(p) == 2, \
                     "provenance rides the snapshot map, never the point"
 
-    def test_the_map_is_o_snapshots_not_o_points(self, env):
-        """The whole argument for the shape: entries scale with SNAPSHOTS."""
+    def test_the_map_is_bounded_by_both_shapes(self, env):
+        """The shape argument, as review round 1 corrected it.
+
+        Entries must scale with SNAPSHOTS rather than with drawn POINTS — but
+        the map only beats the per-point shape once it is also narrowed to the
+        ids the response can actually look up. Measured unfiltered on a real
+        5-qubit chip: 228 entries / 27.6 KB against 8 charted ids, i.e. 78% of
+        the fragment nothing could read, and MORE than the ~4.1 KB the
+        per-point spelling would have cost there. So the pin is both bounds,
+        not the one that happened to hold for the fixture.
+        """
         for i in range(5):
             _snap(env, _state(f01=6.0e9 + i * 1e6, t1=2.0e-5 + i * 1e-7))
         body = env["client"].get(
             "/topology/trends?metrics=f_01,T1").get_data(as_text=True)
         snaps = _snaps(body)
-        drawn = sum(len(s["points"]) for c in _charts(body) for s in c["series"])
-        n_snapshots = len(env["hm"].list_snapshots(env["live"]))
-        assert len(snaps) == n_snapshots
-        assert len(snaps) < drawn, \
-            "two metrics draw more points than there are snapshots"
+        charts = _charts(body)
+        charted = {p[0] for c in charts for s in c["series"] for p in s["points"]}
+        drawn = sum(len(s["points"]) for c in charts for s in c["series"])
+        assert drawn > len(charted), \
+            "fixture must draw the same snapshot id on both metrics"
+        assert len(snaps) <= len(charted), \
+            "never more entries than distinct ids the page draws"
+        assert len(snaps) <= len(env["hm"].list_snapshots(env["live"])), \
+            "and never more than the chip has snapshots"
+
+    def test_a_snapshot_the_page_never_draws_is_not_shipped(self, env):
+        """The charts are CHANGE POINTS, so a chip holds far more snapshots
+        than the ids on the page — exactly the gap that made the map most of
+        the real fragment. A ts nothing can look up must not travel."""
+        _snap(env, _state(f01=6.0e9, t1=2.0e-5))
+        for i in range(4):                      # T1 moves, f_01 does not
+            _snap(env, _state(f01=6.0e9, t1=2.0e-5 + (i + 1) * 1e-7))
+        _snap(env, _state(f01=6.4e9, t1=2.5e-5))
+        body = env["client"].get(
+            "/topology/trends?metrics=f_01").get_data(as_text=True)
+        charted = {p[0] for c in _charts(body) for s in c["series"]
+                   for p in s["points"]}
+        all_ts = {m.timestamp for m in env["hm"].list_snapshots(env["live"])}
+        assert len(all_ts) > len(charted), "fixture must hold undrawn snapshots"
+        assert set(_snaps(body)) <= charted, \
+            "the map must not carry a snapshot nothing on the page can read"
+
+    def test_a_typed_path_that_charts_nothing_ships_no_map(self, env):
+        """The worst unfiltered case: zero points, whole vocabulary anyway."""
+        for i in range(4):
+            _snap(env, _state(f01=6.0e9 + i * 1e6))
+        body = env["client"].get(
+            "/topology/trends?metrics=&path=qubits.qA1.not_a_leaf"
+        ).get_data(as_text=True)
+        assert not _snaps(body), "no drawn point ⇒ no provenance to ship"
 
     def test_the_curated_tier_answers_for_a_snapshot_the_leaf_index_lacks(self, env):
         """The leaf change-point index is the source of truth (it is the only
@@ -315,6 +354,79 @@ class TestTheParamHistoryDrawerUid:
         assert all("uid" in p for p in row["values"]), \
             "every point declares its uid, even when that uid is null"
         assert by_run[None]["uid"] is None
+
+    def test_the_run_travels_with_the_uid_across_the_tier_split(self, env):
+        """Review round 1, seen in a real browser: "click → open dataset #null".
+
+        The uid is minted from the LEAF change-point index (the only tier that
+        records the run folder); the point's own ``run_id`` is the CURATED
+        ``param_history`` column, and that column is legitimately NULL for a
+        snapshot whose meta names a run — the docs/132 reverse-order case,
+        annotated by ``_enrich_run_fields`` after the rows were written. On the
+        real 5-qubit chip 26 of 230 points on q1/f_01 sat in exactly that
+        state. Gating the hint on one tier and numbering it from the other is
+        what printed the word "null", so the run must ride WITH the uid.
+        """
+        import sqlite3
+        c, data_root = env["client"], env["tmp"] / "data"
+        run = _seed_run(data_root, 31)
+        c.post("/workspace/add", data={"folder": str(data_root)})
+        _snap(env, _state(f01=6.0e9))
+        meta = _snap(env, _state(f01=6.1e9), trigger="experiment",
+                     experiment_name="03_resonator_spectroscopy_single",
+                     run_id=31, experiment_folder_path=str(run))
+        hm, live = env["hm"], env["live"]
+        # Populate the leaf tier FIRST, then strip the curated columns — the
+        # exact divergence the customer's index is in.
+        assert hm.snapshot_provenance(live)
+        conn = sqlite3.connect(hm._index_path(Path(live)))
+        try:
+            conn.execute("UPDATE param_history SET run_id = NULL,"
+                         " experiment = NULL, trigger = 'save'"
+                         " WHERE timestamp = ?", (meta.timestamp,))
+            conn.commit()
+        finally:
+            conn.close()
+        html = c.get("/param-history/expand?qubit=qA1&prop=f_01").get_data(as_text=True)
+        m = re.search(r'id="phd-data" type="application/json">(.*?)</script>', html, re.S)
+        assert m
+        row = json.loads(m.group(1).replace("\\u003c", "<").replace("\\u003e", ">")
+                         .replace("\\u0026", "&"))
+        pt = {p["timestamp"]: p for p in row["values"]}[meta.timestamp]
+        assert pt["run_id"] is None, "fixture must reproduce the tier split"
+        assert pt["uid"] == f"{routes_mod._folder_key(data_root)}:31", \
+            "the leaf tier still mints the uid"
+        assert pt["run"] == 31, \
+            "…and the number the hint prints must come from the same tier"
+        assert pt["node"] == "03_resonator_spectroscopy_single"
+
+    def test_enrichment_reaches_the_curated_index_rows(self, env):
+        """Root cause of that split: ``_enrich_run_fields``' UPDATE named the
+        SnapshotMeta FIELD (``experiment_name``) where the table has a column
+        called ``experiment``, so every enrichment raised "no such column" into
+        its own best-effort except and the rows it exists to fill stayed NULL.
+        """
+        import sqlite3
+        from types import SimpleNamespace
+        c, data_root = env["client"], env["tmp"] / "data"
+        run = _seed_run(data_root, 77)
+        c.post("/workspace/add", data={"folder": str(data_root)})
+        meta = _snap(env, _state(f01=6.2e9), trigger="save")
+        hm, live = env["hm"], env["live"]
+        target = hm.resolve_chip_dir(live)[0]
+        assert hm._enrich_run_fields(
+            target, meta.state_hash,
+            SimpleNamespace(run_id=77, experiment_name="06_ramsey",
+                            folder_path=str(run))), "the meta must be annotated"
+        conn = sqlite3.connect(hm._index_path(Path(live)))
+        try:
+            got = conn.execute(
+                "SELECT DISTINCT run_id, experiment FROM param_history"
+                " WHERE timestamp = ?", (meta.timestamp,)).fetchall()
+        finally:
+            conn.close()
+        assert got and all(r == (77, "06_ramsey") for r in got), \
+            f"the enrichment never reached the curated rows: {got}"
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not on PATH")
