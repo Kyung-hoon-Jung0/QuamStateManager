@@ -137,7 +137,32 @@
      which is not cheap enough to ride the Chip Status page render.
      ═══════════════════════════════════════════════════════════════════ -->
 <div class="topo-section" data-topo-section="trends">
-    <h3 class="topo-section-title">Trends</h3>
+    {# Customer feedback 2026-09-09: "make the Trends columns default to ONE
+       column, stacked straight down, and put the column control right next to
+       the 'Trends' title as badge buttons". It lives HERE, not in the fetched
+       fragment, because the fragment is re-swapped on every metric toggle —
+       a control inside it would be rebuilt (and its state re-derived) each
+       time, and it is a property of the section, not of the data. #}
+    <div class="topo-trends-head">
+        <h3 class="topo-section-title">Trends</h3>
+        {# Deliberately NOT role="group": Pico lays a [role=group] out as a
+           segmented control (`> *` gets flex:1), so the three pills stretched
+           into a full-width three-segment bar across the pane — measured in
+           real Chrome. Each button carries its own aria-label instead, because
+           "1" alone tells a screen reader nothing. #}
+        <span class="topo-trends-cols">
+            <span class="muted topo-trends-label">Columns</span>
+            <button type="button" class="topo-trend-chip active" data-trend-cols="1"
+                    aria-label="One column" aria-pressed="true"
+                    onclick="ChipTrends.setCols(1)">1</button>
+            <button type="button" class="topo-trend-chip" data-trend-cols="2"
+                    aria-label="Two columns" aria-pressed="false"
+                    onclick="ChipTrends.setCols(2)">2</button>
+            <button type="button" class="topo-trend-chip" data-trend-cols="3"
+                    aria-label="Three columns" aria-pressed="false"
+                    onclick="ChipTrends.setCols(3)">3</button>
+        </span>
+    </div>
     <div id="topo-trends" class="topo-trends"></div>
 </div>
 

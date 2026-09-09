@@ -3979,6 +3979,78 @@ window.ChipTrends = (function () {
         if (s) s.hidden = true;
         _reload();
     }
+    /* ── Columns (customer feedback 2026-09-09) ────────────────────────────
+       "Make the Trends columns default to ONE column, stacked straight down.
+        Put the column control right next to the 'Trends' title as badge
+        buttons -- (Column: 1 2 3) -- so I choose how many columns."
+
+       The badge writes a CSS custom property on the grid and the stylesheet's
+       `repeat(auto-fit, ...)` reads it as a CAP: N tracks where N fit, fewer
+       where they do not. Round 2 replaced a viewport media query with that
+       arithmetic — see style.css for the measurements, including why a rem
+       breakpoint cannot be right at this app's scaled root font. So a press
+       is always recorded and persisted even when the pane is too narrow to
+       honour it right now. Persisted per browser, defaulting to 1. */
+    var COLS_KEY = 'quam_trends_cols';
+    var COLS_MAX = 3;
+    function _clampCols(n) {
+        n = parseInt(n, 10);
+        return (n >= 1 && n <= COLS_MAX) ? n : 1;
+    }
+    /* A private window throws on localStorage ACCESS, not just on write, and a
+       stored value can be anything (hand-edited, or written by a future
+       build). Either way the page must still render: fall back to 1. */
+    function _storedCols() {
+        try { return _clampCols(window.localStorage.getItem(COLS_KEY)); }
+        catch (e) { return 1; }
+    }
+    function _applyCols(n) {
+        n = _clampCols(n);
+        var grid = document.querySelector('.topo-trends-grid');
+        if (grid) grid.style.setProperty('--trends-cols', String(n));
+        var btns = document.querySelectorAll('.topo-trends-cols [data-trend-cols]');
+        Array.prototype.forEach.call(btns, function (b) {
+            var on = String(b.getAttribute('data-trend-cols')) === String(n);
+            b.classList.toggle('active', on);
+            b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
+        return n;
+    }
+    /* PlotHost observes the grid, so a container resize is already watched —
+       but the observer fires on the next frame at best and not at all where
+       ResizeObserver is missing. The width change is the whole point of the
+       press, so make it instant, and never throw when Plotly is not loaded
+       (the section can be open with every chart empty).
+
+       Deferred one frame ON PURPOSE. Resizing synchronously inside the press
+       lands in the same frame as PlotHost's own ResizeObserver callback (the
+       grid just changed width), and Chrome then logs "ResizeObserver loop
+       completed with undelivered notifications" — measured in real headless
+       Chrome: zero console messages on render, exactly this one after a badge
+       press, none after the rAF. Nothing is lost either way (the deferred
+       notifications arrive next frame), but a warning nobody can act on is
+       noise in the one place a user goes to read console output. */
+    function _resizeTrendCharts() {
+        var go = function () {
+            if (!window.Plotly || !window.Plotly.Plots || !window.Plotly.Plots.resize) return;
+            var els = document.querySelectorAll('.topo-trend-chart');
+            Array.prototype.forEach.call(els, function (el) {
+                if (!el || !el._fullLayout) return;  // never drawn: nothing to resize
+                try { window.Plotly.Plots.resize(el); } catch (e) { /* one chart must not lose the rest */ }
+            });
+        };
+        if (typeof window.requestAnimationFrame === 'function') {
+            window.requestAnimationFrame(go);
+        } else {
+            go();
+        }
+    }
+    function setCols(n) {
+        n = _applyCols(n);
+        try { window.localStorage.setItem(COLS_KEY, String(n)); } catch (e) { /* private window */ }
+        _resizeTrendCharts();
+    }
+
     var _sugTimer = null;
     function suggest(q) {
         clearTimeout(_sugTimer);
@@ -4049,6 +4121,105 @@ window.ChipTrends = (function () {
         try { window._plotlyRender(host, svg, layout, config); } catch (e) { /* nothing left to try */ }
     }
 
+    /* ── Provenance (customer feedback 2026-09-09) ─────────────────────────
+       "When I hover a point on a Trends chart, show the run number plus a
+        short experiment name... If the value did not come from a run --
+        manual, or from somewhere outside -- just say modified externally.
+        That way a person can go look at the actual measurement."
+
+       The server ships ONE map keyed by snapshot id (see _topo_trends.html);
+       the per-point strings are built HERE, in browser memory, so the payload
+       stays O(snapshots) instead of O(points). No map, or a map that will not
+       parse, degrades to exactly the pre-2026-09-09 hover: the chart is the
+       thing that must not break. */
+    function _snaps() {
+        var el = document.getElementById('topo-trends-snaps');
+        if (!el) return null;
+        try {
+            var m = JSON.parse(el.textContent);
+            return (m && typeof m === 'object') ? m : null;
+        } catch (e) { return null; }
+    }
+    /* Plotly renders a hovertemplate as HTML, and both halves of this line come
+       from a state file / a lab's own node names. */
+    function _esc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+        });
+    }
+    /* "#34 · Res spec" for a run; the why-sentence otherwise. Never both, and
+       never a fabricated run number: a chip with no run provenance at all (a
+       freshly-generated one) shows only why, which is the true answer. */
+    function _provLine(info) {
+        if (!info) return '';
+        if (info.run) {
+            return '#' + _esc(info.run) + (info.short ? ' · ' + _esc(info.short) : '');
+        }
+        return info.why ? _esc(info.why) : '';
+    }
+    function _hintLine(info) {
+        return (info && info.uid)
+            ? '<i style="opacity:.7">click to open the dataset</i>' : '';
+    }
+
+    function _openSnapDataset(evt) {
+        try {
+            if (!evt || !evt.points || !evt.points.length) return;
+            var cd = evt.points[0].customdata;
+            var sid = (cd && cd.length !== undefined && typeof cd !== 'string') ? cd[0] : cd;
+            if (!sid) return;
+            var map = _snaps();
+            var info = map && map[String(sid)];
+            // No uid => the point is not clickable and the hover has already
+            // said why. Doing NOTHING is the contract: no navigation to a 404,
+            // no error.
+            if (!info || !info.uid) return;
+            var url = '/dataset/' + info.uid;
+            if (window.htmx && window.htmx.ajax) {
+                // `source` is not optional: htmx reads the SOURCE element's
+                // hx-sync, and without one every dataset load shares body's
+                // single timeout-0 queue, so one stalled load wedges every
+                // later click (the "Datasets frozen" dead-clicks, app.js:2058).
+                // There is deliberately no pushUrl here -- htmx 2 has no such
+                // ajax option (the bundled htmx.min.js contains the string
+                // zero times), so passing it only looked like history support.
+                window.htmx.ajax('GET', url, { source: '#table-pane',
+                                               target: '#table-pane',
+                                               swap: 'innerHTML' });
+            } else {
+                window.location.href = url;
+            }
+        } catch (e) { /* a click must never break the chart */ }
+    }
+    function _bindPointClicks(host) {
+        if (!host || typeof host.on !== 'function') return;
+        try {
+            // Idempotent: render() runs again on every metric toggle and on the
+            // late-response fallback, and Plotly.react keeps the element (and
+            // its listeners) alive. Rebinding without this stacked one handler
+            // per render, so the fourth toggle opened the dataset four times.
+            if (typeof host.removeAllListeners === 'function') {
+                host.removeAllListeners('plotly_click');
+                host.removeAllListeners('plotly_hover');
+                host.removeAllListeners('plotly_unhover');
+            }
+            host.on('plotly_click', _openSnapDataset);
+            host.on('plotly_hover', function (evt) {
+                try {
+                    if (!evt || !evt.points || !evt.points.length) return;
+                    var cd = evt.points[0].customdata;
+                    var sid = (cd && cd.length !== undefined && typeof cd !== 'string') ? cd[0] : cd;
+                    var map = _snaps();
+                    var info = map && sid && map[String(sid)];
+                    host.style.cursor = (info && info.uid) ? 'pointer' : '';
+                } catch (e) { /* cursor only */ }
+            });
+            host.on('plotly_unhover', function () {
+                try { host.style.cursor = ''; } catch (e) {}
+            });
+        } catch (e) { /* an un-bindable host still draws */ }
+    }
+
     function _axisFor(series) {
         var allDated = true;
         series.forEach(function (s) {
@@ -4057,7 +4228,14 @@ window.ChipTrends = (function () {
         return allDated ? 'date' : 'category';
     }
     function render(charts) {
+        // FIRST, and outside every early return: the section is lazily fetched
+        // and re-fetched on every metric toggle, so the grid element is BRAND
+        // NEW each time and a column choice applied once is lost on the next
+        // swap. Re-applying it here is what makes the badge stick.
+        _applyCols(_storedCols());
         if (!window._plotlyRender || !charts) return;
+        // One map for the whole page (see _snaps): provenance is per snapshot.
+        var snaps = _snaps();
         // One budget per render pass, spent by the first genuinely dense chart.
         _glBudget = 1;
         charts.forEach(function (c, idx) {
@@ -4117,7 +4295,7 @@ window.ChipTrends = (function () {
                 }
             }
             var traces = c.series.map(function (s) {
-                return {
+                var tr = {
                     x: s.points.map(function (p) {
                         return axisType === 'date' ? _iso(p[0]) : p[0]; }),
                     y: s.points.map(function (p) { return p[1]; }),
@@ -4131,6 +4309,20 @@ window.ChipTrends = (function () {
                                  + '<br><span style="font-size:.85em">%{customdata}</span>'
                                  + '<extra></extra>',
                 };
+                if (!snaps) return tr;      // no map => byte-identical to before
+                // [snapshot id, provenance line, click hint] — joined in
+                // BROWSER memory, so the wire still carries 2-tuples.
+                tr.customdata = s.points.map(function (p) {
+                    var info = snaps[String(p[0])];
+                    return [p[0], _provLine(info), _hintLine(info)];
+                });
+                tr.hovertemplate =
+                    '%{fullData.name}<br>%{x}<br>%{y}'
+                    + '<br>%{customdata[1]}'
+                    + '<br><span style="font-size:.85em">%{customdata[0]}</span>'
+                    + '<br>%{customdata[2]}'
+                    + '<extra></extra>';
+                return tr;
             });
             var layout = {
                 margin: { l: 58, r: 12, t: 8, b: 64 },
@@ -4177,9 +4369,14 @@ window.ChipTrends = (function () {
             if (drawn && typeof drawn.then === 'function') {
                 drawn.then(function () {
                     _healIfBlank(host, traces, layout, cfg);
+                    // Only a drawn host is a Plotly EventEmitter, so binding
+                    // waits for the render the same way the Param History
+                    // drawer's does.
+                    if (snaps) _bindPointClicks(host);
                     setTimeout(function () { _healIfBlank(host, traces, layout, cfg); }, 250);
                 });
             } else {
+                if (snaps) _bindPointClicks(host);
                 setTimeout(function () { _healIfBlank(host, traces, layout, cfg); }, 250);
             }
         });
@@ -4195,5 +4392,6 @@ window.ChipTrends = (function () {
             if (grid) window.PlotHost.observe(grid);
         }
     }
-    return { toggle: toggle, setPath: setPath, suggest: suggest, render: render };
+    return { toggle: toggle, setPath: setPath, suggest: suggest, render: render,
+             setCols: setCols };
 })();

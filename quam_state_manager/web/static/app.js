@@ -14640,23 +14640,48 @@ function paramHistoryRenderDrawerChart(data, currentValue) {
         return ts.slice(0,4) + '-' + ts.slice(4,6) + '-' + ts.slice(6,8)
              + ' ' + ts.slice(9,11) + ':' + ts.slice(11,13) + ':' + ts.slice(13,15);
     };
+    // Which run this snapshot came from — ONE answer for both lines below.
+    // `p.run`/`p.node` are stamped server-side from the snapshot provenance
+    // map (the snapshot METAS, which are also where the uid is minted --
+    // round 2 moved that read off the leaf change-point index, whose rows are
+    // built from the same metas); `p.run_id`/`p.experiment` are the curated
+    // param_history columns, which are legitimately NULL for a snapshot whose
+    // meta names a run. Reading the two lines from two tiers printed "open dataset
+    // #null" and let one line deny a run while the other offered to open it.
+    var runOf  = function(p) { return (p.run  != null && p.run  !== '') ? p.run
+                                    : ((p.run_id != null && p.run_id !== '') ? p.run_id : null); };
+    var nodeOf = function(p) { return p.node || p.experiment || ''; };
     // Build a context line per point — used in hovertemplate.
     var contextLine = function(p) {
         var t = p.trigger || 'auto';
+        var run = runOf(p), node = nodeOf(p);
         if (t === 'experiment') {
-            // Prefer "#<run_id> <experiment_name>" for experiment-driven snapshots
+            // Prefer "#<run> <node name>" for experiment-driven snapshots
             var bits = [];
-            if (p.run_id) bits.push('#' + p.run_id);
-            if (p.experiment) bits.push(p.experiment);
-            if (bits.length) return 'Experiment: ' + bits.join(' ');
-            return TRIGGER_LABELS.experiment;
+            if (run != null) bits.push('#' + run);
+            if (node) bits.push(node);
+            return bits.length ? 'Experiment: ' + bits.join(' ')
+                               : TRIGGER_LABELS.experiment;
         }
-        return TRIGGER_LABELS[t] || t;
+        if (run == null) return TRIGGER_LABELS[t] || t;
+        // "After #N" is the house word for a run attributed to a snapshot the
+        // user captured themselves (the Versions row already says it): the
+        // save is how the snapshot exists, the run is where the values came
+        // from, and both are true. Saying only the trigger here while the line
+        // below offered the run's dataset was the contradiction round 1 read.
+        return (TRIGGER_LABELS[t] || t) + ' · after #' + run
+             + (node ? ' ' + node : '');
     };
+    // The hint is gated on the UID, not on the run id: a run id alone does not
+    // open anything (see the click handler below), so offering the click where
+    // the server could not mint a uid promises a panel that will 404. The
+    // NUMBER comes from the same place the uid does — never from the curated
+    // column the gate does not read.
     var clickHintLine = function(p) {
-        return p.run_id
-            ? '<i style="opacity:0.7">click → open dataset #' + p.run_id + '</i>'
-            : '';
+        if (!p.uid) return '';
+        var run = runOf(p);
+        return '<i style="opacity:0.7">click → open dataset'
+             + (run != null ? ' #' + run : '') + '</i>';
     };
 
     // Statistics layer first (band renders BENEATH the trigger markers, and
@@ -14673,13 +14698,18 @@ function paramHistoryRenderDrawerChart(data, currentValue) {
 
     var traces = triggers.map(function(t) {
         var subset = pts.filter(function(p) { return p.trigger === t; });
-        // customdata = [run_id, experiment, contextLine, clickHint] for hovertemplate
+        // customdata = [run_id, experiment, contextLine, clickHint, uid] for
+        // hovertemplate + the click. The uid is the ONLY thing that opens a
+        // dataset — "/dataset/<folder_key>:<run_id>" — and it is minted server
+        // side, because it needs the run folder and the live dataset roots.
         var customdata = subset.map(function(p) {
+            var run = runOf(p);
             return [
-                p.run_id || 0,
-                p.experiment || '',
+                run != null ? run : 0,
+                nodeOf(p),
                 contextLine(p),
                 clickHintLine(p),
+                p.uid || '',
             ];
         });
         return {
@@ -14734,23 +14764,31 @@ function paramHistoryRenderDrawerChart(data, currentValue) {
                 var pt = evt.points[0];
                 var cd = pt.customdata;
                 if (!cd) return;
-                var runId = cd[0];
-                if (!runId) return;
+                var uid = cd[4];
+                // A BARE run id is not a dataset uid: `_split_dataset_uid`
+                // refuses anything without a colon, so "/dataset/34" has always
+                // rendered the not-found panel. No uid ⇒ do nothing; the hover
+                // already withheld the click hint.
+                if (!uid) return;
                 // Use HTMX so the dataset detail loads inside the main pane
-                var url = '/dataset/' + runId;
+                var url = '/dataset/' + uid;
                 if (window.htmx) {
+                    // See chip-status.js's twin: `source` for hx-sync queueing,
+                    // and no pushUrl -- htmx 2 has no such ajax option.
                     window.htmx.ajax('GET', url, {
-                        target: '#table-pane', swap: 'innerHTML', pushUrl: 'true',
+                        source: '#table-pane', target: '#table-pane',
+                        swap: 'innerHTML',
                     });
                 } else {
                     window.location.href = url;
                 }
             });
-            // Cursor: pointer for clickable points (run_id present)
+            // Cursor: pointer for clickable points (a uid, i.e. a run that
+            // actually opens — not merely a recorded run number)
             plotDiv.on('plotly_hover', function(evt) {
                 if (!evt.points || !evt.points.length) return;
                 var cd = evt.points[0].customdata;
-                if (cd && cd[0]) {
+                if (cd && cd[4]) {
                     plotDiv.style.cursor = 'pointer';
                 }
             });

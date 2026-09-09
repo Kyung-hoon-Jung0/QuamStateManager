@@ -112,6 +112,7 @@ from quam_state_manager.core.query import QueryEngine
 from quam_state_manager.core.saver import Saver
 from quam_state_manager.core.scanner import Workspace
 from quam_state_manager.core.search_index import SearchIndex
+from quam_state_manager.core.story import node_label
 from quam_state_manager.core.units import group_digits
 
 logger = logging.getLogger(__name__)
@@ -10130,6 +10131,112 @@ def _trend_points(values: list[dict]) -> list[tuple]:
     return out
 
 
+# Why a snapshot exists when NO run produced it — the customer's words for the
+# one that matters ("modified externally") plus the three others SM genuinely
+# knows. Flattening all four into "modified externally" would be a lie about the
+# three: a save through the app is not something that happened behind your back.
+_SNAPSHOT_WHY: dict[str, str] = {
+    "auto":    "Modified externally",
+    "save":    "Saved in the app",
+    "manual":  "Manual snapshot",
+    "restore": "Restored from history",
+}
+
+
+def _snapshot_run_uid(folder: Any, run_id: Any,
+                   roots: list[tuple[Path, str]]) -> str | None:
+    """A dataset uid for a run folder, or None when the click would not open.
+
+    A run's DatasetStore is keyed on the run folder's GRANDPARENT (the same
+    identity ``_ds_entry_uid`` mints for the sidebar), and ``_resolve_run``
+    only resolves a key that is currently one of ``_dataset_candidate_folders``
+    — so a uid whose grandparent is not registered lands on the 404 panel. The
+    membership test is therefore the whole point: a point is offered as
+    clickable only when the click actually opens something.
+
+    Every path operation is guarded. ``folder`` is a string recorded by a past
+    snapshot; it can be malformed, or name a drive that has since gone away,
+    and computing a hover hint must never 500 the section.
+    """
+    if not folder or run_id is None:
+        return None
+    try:
+        gp = Path(folder).parent.parent.resolve()
+        rid = int(run_id)
+    except (OSError, ValueError, TypeError):
+        return None
+    for root, key in roots:
+        if gp == root:
+            return _dataset_uid(key, rid)
+    return None
+
+
+def _snapshot_provenance_map(hm, path: Path,
+                             only: set[str] | None = None) -> dict[str, dict]:
+    """``{snapshot id: {run, node, short, why, uid}}`` — ONE map per response.
+
+    Provenance is a property of the SNAPSHOT, and every series on the Trends
+    page shares one snapshot vocabulary, so this is O(snapshots) — 161 entries
+    on a real chip — where four more fields per POINT would be O(points).
+    ``_trend_points``' docstring records what that costs: one extra derived
+    field per point measured 61 bytes/point and up to 2.3 MB of HTML for a
+    single section on a 419-snapshot chip, and this page fans a chart out over
+    every qubit, which multiplies the point count again.
+
+    *only* narrows it to the snapshot ids the response actually needs, and it
+    is not an optimisation detail — WITHOUT it the O(snapshots) argument above
+    inverts on a sparse chip. Review round 1 measured the default Trends
+    request on a real 5-qubit chip: 35 drawn points over 8 distinct snapshot
+    ids, against 228 map entries / 27.6 KB, i.e. 78% of the fragment was
+    provenance for snapshots nothing on the page could look up — more than the
+    ~4.1 KB the per-point shape would have cost there. Filtered, the map is
+    ``min(O(snapshots), O(distinct drawn ids))``, which is <= both shapes on
+    every chip. It also skips the per-row ``Path.resolve()`` the uid mint does,
+    so a chip with hundreds of snapshots stops paying hundreds of stat calls
+    for rows it will not ship.
+
+    Honest by construction: a snapshot with no run carries ``run``/``uid`` null
+    and a ``why`` sentence naming what SM actually knows; a run whose folder is
+    not a live dataset root keeps its run number and loses only the uid.
+    """
+    try:
+        rows = hm.snapshot_provenance(path)
+    except Exception:  # noqa: BLE001
+        logger.debug("snapshot provenance unavailable", exc_info=True)
+        return {}
+    try:
+        roots = _uid_roots()
+    except Exception:  # noqa: BLE001
+        roots = []
+    out: dict[str, dict] = {}
+    for r in rows:
+        ts = str(r.get("ts") or "")
+        if not ts:
+            continue
+        if only is not None and ts not in only:
+            continue
+        rid = r.get("run_id")
+        node = str(r.get("experiment") or "")
+        trig = str(r.get("trigger") or "")
+        try:
+            run = int(rid) if rid is not None else None
+        except (TypeError, ValueError):
+            run = None
+        entry: dict[str, Any] = {
+            "run": run,
+            "node": node,
+            "short": node_label(node),
+            "why": None,
+            "uid": None,
+        }
+        if entry["run"] is None:
+            entry["why"] = _SNAPSHOT_WHY.get(trig, trig)
+        else:
+            entry["uid"] = _snapshot_run_uid(r.get("folder"), rid, roots)
+        out[ts] = entry
+    return out
+
+
 def _trend_unit(metric: str) -> str:
     """The unit the grid already prints beside this very number.
 
@@ -10331,9 +10438,16 @@ def topology_trends():
     # the same number shows real values as "IQ Blob (%)" elsewhere).
     metric_labels = {m: chip_health.metric_meta(m)["label"] for m in curated}
     metric_labels.update(_TREND_LABEL_OVERRIDES)
+    # Only the snapshots this response actually DRAWS. The charts are change
+    # points (``compress="changes"``), so a chip can hold hundreds of snapshots
+    # behind a handful of drawn ids — shipping the whole vocabulary made the
+    # map 78% of the fragment for entries nothing could look up, and a typed
+    # path that matched no series shipped the entire map for ZERO points.
+    charted = {str(p[0]) for c in charts for s in c["series"] for p in s["points"]}
     return render_template("_topo_trends.html", charts=charts, curated=curated,
                            selected=sel, extra=extra, no_chip=False,
                            metric_labels=metric_labels,
+                           snaps=_snapshot_provenance_map(hm, path, only=charted),
                            snapshots=len(hm.list_snapshots(path)))
 
 
@@ -19611,6 +19725,40 @@ def param_history_expand():
         qubit_filter=[qubit], downsample=None,
     )
     row = rows[0] if rows else {"qubit": qubit, "property": prop, "raw_pointer": None, "values": []}
+
+    # The drawer's click has always built "/dataset/<run_id>" from the bare run
+    # id, and `_split_dataset_uid` refuses a uid with no colon — so every one of
+    # those clicks has landed on the "Run N not found" panel since the day it
+    # shipped. The uid is a SERVER fact (it needs the run FOLDER, which the
+    # curated table does not store, and the live dataset-root set, which the
+    # browser cannot know), so it is computed here through the same one helper
+    # the Trends hover uses. Null uid ⇒ the point is simply not clickable.
+    #
+    # The RUN travels with the uid, and that pairing is the round-1 fix. The
+    # two facts come from different tiers: the uid is minted from the leaf
+    # change-point index (the only tier that records the run FOLDER) while the
+    # point's own ``run_id`` is the curated ``param_history`` column, and that
+    # column is legitimately NULL for a snapshot whose META names a run — the
+    # docs/132 reverse-order case, where a run's fit values were applied before
+    # the ingest saw the run, so the content landed in a save/manual snapshot
+    # that ``_enrich_run_fields`` annotated afterwards without rewriting the
+    # index rows. Gating the hover's click hint on one tier while numbering it
+    # from the other printed "open dataset #null" on 26 of 230 real points and
+    # let the same tooltip deny a run happened and offer to open it. One map,
+    # both fields, so the two lines can never name different runs.
+    points = [p for p in (row.get("values") or []) if isinstance(p, dict)]
+    try:
+        prov = _snapshot_provenance_map(
+            hm, Path(target_path),
+            only={str(p.get("timestamp") or "") for p in points})
+    except Exception:  # noqa: BLE001
+        logger.debug("drawer provenance unavailable", exc_info=True)
+        prov = {}
+    for p in points:
+        _pv = prov.get(str(p.get("timestamp") or "")) or {}
+        p["uid"] = _pv.get("uid")
+        p["run"] = _pv.get("run")
+        p["node"] = _pv.get("node") or None
 
     current_value = None
     if is_loaded:

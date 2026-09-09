@@ -532,6 +532,15 @@ def series(conn: sqlite3.Connection, path: str) -> list[tuple]:
         " WHERE p.path = ? ORDER BY s.ts", (path,))]
 
 
+# NOTE (review round 2): a chip-wide `snapshot_provenance(conn)` reader used to
+# live here, and `HistoryManager.snapshot_provenance` is its only consumer. It
+# was removed rather than left dead, because reading this tier means keeping
+# the leaf index FRESH first, and that put a multi-second rebuild under
+# BEGIN IMMEDIATE on two read-only user routes. `leaf_snaps` is built from the
+# snapshot metas (see `_leaf_load_snapshot`), so the metas answer the same
+# question — strictly more completely, and without the index write lock.
+
+
 def snapshot_count(conn: sqlite3.Connection) -> int:
     try:
         return conn.execute("SELECT COUNT(*) FROM leaf_snaps").fetchone()[0]

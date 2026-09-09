@@ -3783,6 +3783,76 @@ class HistoryManager:
             conn.close()
         return out
 
+    def snapshot_provenance(self, quam_state_path: str | Path) -> list[dict]:
+        """Where each snapshot CAME FROM — one dict per snapshot, both tiers.
+
+        ``{"ts", "trigger", "run_id", "experiment", "folder"}``, oldest first.
+
+        The source of truth is the snapshot METAS, not either SQLite tier.
+        Review round 2 measured why: this is a READ on two user-facing routes
+        (Trends, the 🕘 drawer), and reading it through the leaf change-point
+        index meant calling ``_ensure_leaf_index_fresh`` — whose own docstring
+        records the cost it exists to avoid: with the index ONE snapshot behind
+        (the state after every run or save, i.e. this cadence's normal case) the
+        call took 2.399 s on a 233-snapshot chip, under ``BEGIN IMMEDIATE``,
+        holding the index write lock against a second window's readers. From
+        the metas the same answer is 0.046 s cold / 0.003 s warm.
+
+        It is also strictly MORE complete, not a cheaper approximation:
+        ``leaf_snaps`` is BUILT from these metas (``_leaf_load_snapshot`` copies
+        trigger / run_id / experiment_name / experiment_folder_path verbatim),
+        so it can only ever hold a subset — a snapshot not yet ingested is
+        absent there, and ``_enrich_run_fields`` writes the run onto the
+        meta first and updates the index rows only best-effort.
+
+        The curated ``param_history`` table stays the fallback for a timestamp
+        with no meta (a pruned snapshot dir whose curated rows survive) — those
+        rows carry no folder, so they can name the run without pretending it
+        can be opened.
+
+        Never invents a row: a timestamp nothing knows is simply absent, and
+        the caller renders the honest "nothing recorded" it already has.
+        """
+        out: dict[str, dict] = {}
+        try:
+            metas = self.list_snapshots(quam_state_path)
+        except Exception:  # noqa: BLE001
+            logger.debug("snapshot metas unavailable", exc_info=True)
+            metas = []
+        for m in metas:
+            ts = str(getattr(m, "timestamp", "") or "")
+            if not ts:
+                continue
+            out[ts] = {"ts": ts,
+                       "trigger": getattr(m, "trigger", None),
+                       "run_id": getattr(m, "run_id", None),
+                       "experiment": getattr(m, "experiment_name", None),
+                       "folder": getattr(m, "experiment_folder_path", None)}
+        try:
+            conn = self._open_index(Path(quam_state_path))
+        except sqlite3.Error:
+            return [out[k] for k in sorted(out)]
+        try:
+            try:
+                # DISTINCT can still yield several rows for one timestamp (one
+                # per differing trigger/run pairing). Ordering run-bearing rows
+                # first makes the first-wins pick deterministic AND the most
+                # informative one, rather than whichever the planner emitted.
+                rows = conn.execute(
+                    "SELECT DISTINCT timestamp, trigger, run_id, experiment "
+                    "  FROM param_history "
+                    " ORDER BY timestamp, (run_id IS NULL), run_id")
+                for ts, trig, rid, exp in rows:
+                    if str(ts) in out:
+                        continue
+                    out[str(ts)] = {"ts": str(ts), "trigger": trig, "run_id": rid,
+                                    "experiment": exp, "folder": None}
+            except sqlite3.Error:
+                logger.debug("curated snapshot provenance unavailable", exc_info=True)
+        finally:
+            conn.close()
+        return [out[k] for k in sorted(out)]
+
     def leaf_changes(self, quam_state_path: str | Path, *, limit: int = 200,
                      prefix: str | None = None,
                      before_ts: str | None = None) -> list[dict]:
@@ -4754,9 +4824,18 @@ class HistoryManager:
                     if idx.exists():
                         conn = sqlite3.connect(str(idx), timeout=10.0)
                         try:
+                            # The COLUMN is `experiment` (see the CREATE TABLE
+                            # above); `experiment_name` is the SnapshotMeta
+                            # field. Naming the meta field here made every
+                            # enrichment raise "no such column" into the
+                            # best-effort except below, so the index rows this
+                            # block exists to fill stayed NULL forever — which
+                            # is precisely the tier split that later printed
+                            # "open dataset #null" in the 🕘 drawer, the leaf
+                            # index knowing a run the curated row denied.
                             conn.execute(
                                 "UPDATE param_history SET run_id = ?, "
-                                "experiment_name = ? WHERE timestamp = ?",
+                                "experiment = ? WHERE timestamp = ?",
                                 (run_id, getattr(entry, "experiment_name", None),
                                  snap.timestamp))
                             conn.commit()
