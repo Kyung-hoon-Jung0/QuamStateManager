@@ -5,11 +5,18 @@
    Chip Status where ALL qubits' T1 appear in a SINGLE plot. A multiple-line
    plot, legend = all qubits."
 
-   So: one chart per metric, one LINE per qubit, legend = the qubit ids. The
+   So: one chart per metric, one LINE per entity, legend = the entity ids. The
    rendering follows _trend_chart.html's existing convention (group by property,
    one trace per entity, UI_CONFIG.plotly.colorway — which app.js documents as
    being exactly for "each qubit's line"), and the data comes from the history
    index rather than from a hand-picked basket of snapshots.
+
+   Customer feedback 2026-09-09: "Trends should carry a badge for at least the
+   numbers the Overview panel has — 2Q fidelity is missing right now. …It
+   should plot ALL pairs / ALL qubits by default. …Whatever the entity is,
+   qubit or pair, the default is: plot them all." Hence the second chip group
+   (2Q / pairs, built from the chip's own pair families) and the fan-out that
+   makes one badge press chart every entity.
 
    Honesty: a selected metric with nothing recorded still gets a slot that SAYS
    so. Dropping it would make a chip with no T1 history look like a chip with
@@ -19,7 +26,7 @@
     <p class="muted">No chip is open.</p>
 {% else %}
     <div class="topo-trends-controls">
-        <span class="muted topo-trends-label">Metrics</span>
+        <span class="muted topo-trends-label">Qubits</span>
         <span class="topo-trends-chips">
         {% for m in curated %}
             <button type="button" class="topo-trend-chip{% if m in selected %} active{% endif %}"
@@ -33,7 +40,7 @@
            offering it. #}
         <span class="topo-trends-any">
             <input type="search" id="topo-trend-path" class="topo-trend-path"
-                   placeholder="…or any parameter: x180 amplitude, full_scale_power…"
+                   placeholder="…or any parameter: x180 amplitude, interleaved, coupler offset…"
                    value="{{ extra }}" autocomplete="off"
                    oninput="ChipTrends.suggest(this.value)"
                    onkeydown="if(event.key==='Enter'){ChipTrends.setPath(this.value);}">
@@ -44,22 +51,46 @@
         {% endif %}
     </div>
 
+    {# The 2Q group. A separate row, because these are PAIR numbers and the row
+       above is qubit numbers — the Overview panel makes the same split. Each
+       chip is a template path (tier 2: the docs/83 leaf index already holds
+       every pair's copy, so no new index is needed), and pressing one charts
+       every pair at once. #}
+    {% if pair_chips %}
+    <div class="topo-trends-controls topo-trends-2q">
+        <span class="muted topo-trends-label">2Q / pairs</span>
+        <span class="topo-trends-chips">
+        {% for p in pair_chips %}
+            <button type="button" class="topo-trend-chip topo-trend-badge{% if p.active %} active{% endif %}"
+                    data-trend-path="{{ p.path }}" aria-pressed="{{ 'true' if p.active else 'false' }}"
+                    title="{{ p.path }}"
+                    onclick="ChipTrends.togglePath(this.getAttribute('data-trend-path'))">{{ p.label }}{% if p.n %}<span class="muted"> · {{ p.n }}</span>{% endif %}</button>
+        {% endfor %}
+        </span>
+    </div>
+    {% endif %}
+
+    {% if trim_note %}
+    {# Never a silent trim: a cap that quietly drops families is
+       indistinguishable from a badge that does not work. #}
+    <p class="muted topo-trend-trim">{{ trim_note }}</p>
+    {% endif %}
+
     {% if not charts %}
     <p class="muted">Pick a metric above.</p>
     {% endif %}
 
     <div class="topo-trends-grid">
     {% for c in charts %}
-        <div class="topo-trend-box" data-trend-metric="{{ c.metric }}">
-            <div class="topo-trend-title">{{ (metric_labels or {}).get(c.metric, c.metric) }}
-                {% if c.n_entities %}<span class="muted">· {{ c.n_entities }} qubit{{ '' if c.n_entities == 1 else 's' }}</span>{% endif %}
+        <div class="topo-trend-box" data-trend-metric="{{ c.metric }}" data-trend-kind="{{ c.kind }}">
+            <div class="topo-trend-title">{{ c.label or (metric_labels or {}).get(c.metric, c.metric) }}
+                {% if c.n_entities %}<span class="muted">· {{ c.n_entities }} {{ 'pair' if c.kind == 'pair' else 'qubit' }}{{ '' if c.n_entities == 1 else 's' }}</span>{% endif %}
             </div>
             {% if c.series %}
             <div class="topo-trend-chart" id="topo-trend-{{ loop.index0 }}"></div>
             {% else %}
             {# Never an empty axis pretending to be a plot. #}
-            <p class="muted topo-trend-empty">Nothing recorded for this metric yet.
-               It appears here once a run or a save writes it.</p>
+            <p class="muted topo-trend-empty">Nothing recorded for {% if c.typed %}<code>{{ c.typed }}</code>{% else %}this metric{% endif %} yet. It appears here once a run or a save writes it.</p>
             {% endif %}
         </div>
     {% endfor %}

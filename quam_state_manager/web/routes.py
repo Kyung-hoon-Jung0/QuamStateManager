@@ -10187,41 +10187,264 @@ def _trend_metrics_with_data(hm, path: Path, curated: list[str]) -> set[str]:
                    for p in (r.get("values") or []))}
 
 
-def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str]) -> list[dict]:
+# ── customer feedback 2026-09-09: one click charts EVERY entity ───────────
+#
+# "If I search 'interleaved' in the search box I have to click it again for
+#  every single qubit before the trend appears. It should plot ALL pairs / ALL
+#  qubits by default -- the user can toggle series on and off in Plotly
+#  afterwards, which is enough. Whatever the entity is, qubit or pair, the
+#  default is: plot them all."
+#
+# The qubit fan-out was already here; the PAIR fan-out was not, and a pair leaf
+# fell into the "nothing to fan out over" branch and drew exactly one line. On a
+# real 20-qubit chip the change-point index holds 3,735 leaves in 151 families,
+# 46 of them pair-scoped with 30 pairs each -- so on that chip the complaint was
+# 30 clicks per family, and none of the 30 charts said it was one of 30.
+_TREND_ENTITY_ROOTS = {"qubits": "qubit", "qubit_pairs": "pair"}
+
+
+def _trend_family_of(dot_path: str) -> tuple[str, str] | None:
+    """``(scope, tail)`` for an entity-scoped leaf, else None.
+
+    ``qubits.q3.xy.operations.x180.amplitude`` -> ``("qubits", "xy.…")`` and
+    ``qubit_pairs.q1-q2.coupler.interaction_offset`` ->
+    ``("qubit_pairs", "coupler.interaction_offset")``. The entity segment may
+    already be the wildcard ``*`` (what the typeahead now offers), which names
+    the family directly rather than through one arbitrary member of it.
+    """
+    parts = str(dot_path or "").split(".")
+    if len(parts) >= 3 and parts[0] in _TREND_ENTITY_ROOTS and parts[1]:
+        return parts[0], ".".join(parts[2:])
+    return None
+
+
+def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str],
+                       pairs: list[str] | None = None) -> list[dict]:
     """Any numeric leaf, via the docs/83 change-point index.
 
-    A path names ONE qubit (``qubits.q3.xy.operations.x180.amplitude``); the
-    point of this page is every qubit at once, so the qubit segment is swapped
-    across the chip and each concrete path queried. A qubit that never carried
-    the leaf simply contributes no line — absence is not an error.
+    A path names ONE entity (``qubits.q3.xy.operations.x180.amplitude``, or
+    ``qubit_pairs.q1-q2.coupler.interaction_offset``); the point of this page is
+    every entity at once, so the entity segment is swapped across the chip and
+    each concrete path queried. An entity that never carried the leaf simply
+    contributes no line — absence is not an error.
     """
-    parts = dot_path.split(".")
+    fam = _trend_family_of(dot_path)
     out: list[dict] = []
-    if len(parts) >= 3 and parts[0] == "qubits":
-        tmpl, label = parts[:], ".".join(parts[2:])
-        # ONE connection for the whole fan-out. Per-qubit calls spent their time
+    if fam:
+        scope, label = fam
+        kind = _TREND_ENTITY_ROOTS[scope]
+        entities = list(qubits) if scope == "qubits" else list(pairs or [])
+        # ONE connection for the whole fan-out. Per-entity calls spent their time
         # opening and closing SQLite rather than querying it (measured 458 ms
-        # for 20 qubits, scaling with qubit count), which is half a second of a
+        # for 20 qubits, scaling with entity count), which is half a second of a
         # synchronous worker for a page whose whole point is this tier.
-        by_q = {}
-        for q in qubits:
-            tmpl[1] = q
-            by_q[".".join(tmpl)] = q
-        got = hm.leaf_field_series_many(path, list(by_q))
-        for dp, q in by_q.items():
+        by_e = {}
+        for e in entities:
+            by_e[".".join((scope, e, label))] = e
+        got = hm.leaf_field_series_many(path, list(by_e))
+        for dp, e in by_e.items():
             pts = [(r[0], r[1]) for r in (got.get(dp) or [])
                    if isinstance(r[1], (int, float))]
             if pts:
-                out.append({"metric": label, "entity": q, "points": pts})
+                out.append({"metric": label, "entity": e, "kind": kind,
+                            "points": pts})
         return out
-    # Not qubit-scoped (a port, a pair leaf, a top-level key) — one line, and
-    # the path itself is the legend, because there is nothing to fan out over.
+    # Not entity-scoped (a port, a top-level key) — one line, and the path
+    # itself is the legend, because there is nothing to fan out over.
     rows = hm.leaf_field_series(path, dot_path)
     pts = [(r[0], r[1]) for r in (rows or [])
            if isinstance(r[1], (int, float))]
     if pts:
-        out.append({"metric": dot_path, "entity": dot_path.split(".")[-1], "points": pts})
+        out.append({"metric": dot_path, "entity": dot_path.split(".")[-1],
+                    "kind": "", "points": pts})
     return out
+
+
+# How many leaf rows the family grouping pulls before folding them up. The
+# typeahead used to return 25 CONCRETE leaves, so "interleaved" on a 30-pair
+# chip returned 25 rows differing only by pair id and the 26th..30th pairs were
+# invisible; grouping needs every member of a family to count its entities, and
+# the pull is bounded by the path table (thousands of rows on a real chip), not
+# by the change-point table.
+_TRENDS_PATH_SCAN = 4000
+_TRENDS_MAX_FAMILIES = 8        # charted at once; see the trim note
+
+
+def _trend_group_families(hits: list[dict]) -> list[dict]:
+    """Fold concrete leaf hits into one row per (scope, tail) FAMILY.
+
+    ``{path: "qubit_pairs.*.<tail>", label, scope, n: <entities>,
+    changes: <total change points>}``. A non-entity path stays a single row
+    (``scope: ""``, ``n: 1``), because there is no family behind it.
+
+    Ranked by total change points — what moved most is what a trends page is
+    for — then by ``natural_key(tail)``, so q2 sorts before q10 and 101 before
+    1009 wherever a tail carries a number (house rule 2026-09-09).
+    """
+    fams: dict[tuple[str, str], dict] = {}
+    for h in hits or []:
+        p = h.get("path") if isinstance(h, dict) else str(h)
+        if not p:
+            continue
+        n_changes = int((h.get("changes") or 0) if isinstance(h, dict) else 0)
+        fam = _trend_family_of(p)
+        if fam:
+            scope, tail = fam
+            key = (scope, tail)
+            row = fams.setdefault(key, {"path": f"{scope}.*.{tail}", "label": tail,
+                                        "scope": scope, "n": 0, "changes": 0,
+                                        "_seen": set()})
+            ent = p.split(".")[1]
+            if ent not in row["_seen"]:
+                row["_seen"].add(ent)
+                row["n"] += 1
+            row["changes"] += n_changes
+        else:
+            fams.setdefault(("", p), {"path": p, "label": p, "scope": "",
+                                      "n": 1, "changes": n_changes,
+                                      "_seen": set()})
+    rows = list(fams.values())
+    for r in rows:
+        r.pop("_seen", None)
+    rows.sort(key=lambda r: (-r["changes"], natural_key(r["label"])))
+    return rows
+
+
+# The Overview's 2Q vocabulary, as SEGMENT tests over a family tail. Substring
+# matching would have made "rb" hit half the chip, so each rule names whole
+# dot-segments; the spellings are the ones the chip files really use
+# (``fidelity.value``, ``gate_fidelity.averaged``,
+# ``macros.<gate>.fidelity.StandardRB.average_gate_fidelity``).
+_TREND_2Q_RB_TOKENS = {"rb", "srb", "irb", "standardrb", "interleavedrb",
+                       "epc", "epg", "alpha"}
+
+
+def _is_fidelity_tail(tail: str) -> bool:
+    """Does this family tail carry a gate/state FIDELITY, in any spelling?"""
+    for seg in str(tail or "").split("."):
+        s = seg.lower()
+        if s == "fidelity" or s.endswith("_fidelity") or s.startswith("fidelity"):
+            return True
+        if s in ("average_gate_fidelity", "averaged") and "fidelity" in tail.lower():
+            return True
+    return False
+
+
+def _is_2q_measurement(tail: str) -> bool:
+    """A 2Q number the Overview REPORTS — fidelity in any spelling, a Bell
+    state, XEB, a Clifford/RB figure. As opposed to a knob that was set."""
+    if _is_fidelity_tail(tail):
+        return True
+    for seg in str(tail or "").split("."):
+        s = seg.lower()
+        if "bell" in s or "xeb" in s or "clifford" in s:
+            return True
+        if "interleaved" in s or "standard" in s:
+            return True
+        if s in _TREND_2Q_RB_TOKENS or s.endswith("_epc") or s.endswith("_epg") \
+                or s.endswith("_alpha"):
+            return True
+    return False
+
+
+def _is_2q_knob(tail: str) -> bool:
+    """A CZ macro knob a real chip carries — set, not measured."""
+    segs = [s.lower() for s in str(tail or "").split(".")]
+    for s in segs:
+        if s.startswith("phase_shift") or s.startswith("mutual_flux_bias"):
+            return True
+        if s.endswith("_offset") and "coupler" in segs:
+            return True
+    return False
+
+
+def _is_2q_vocabulary(tail: str) -> bool:
+    """The Overview's 2Q vocabulary: what it reports, plus the knobs behind it."""
+    return _is_2q_measurement(tail) or _is_2q_knob(tail)
+
+
+# Labels for the 2Q chips. Reused, never invented: the RB titles are the
+# Overview tiles' own ("2Q Clifford fid. (SRB)" / "2Q gate fid. (IRB)", pinned
+# against chip-status.js), the level classification is query._RB_LEVEL's, and
+# everything else falls back to chip_health.METRIC_META — the same map the hero
+# map and the threshold editor read, which is what stops a second label
+# mismatch of the kind the customer already reported once.
+_TREND_2Q_FIDELITY_LABEL = "2Q gate fidelity"
+_TREND_2Q_LEVEL_LABELS = {
+    "clifford": "2Q Clifford fid. (SRB)",
+    "gate": "2Q gate fid. (IRB)",
+    "state": "2Q Bell state fid.",
+    "decay": "RB decay α",
+}
+# The template path offered when the chip has recorded no 2Q fidelity at all.
+# It charts nothing and renders the same honest "Nothing recorded" slot a
+# curated metric with no data renders — the vocabulary stays complete, and the
+# chip says what it has not measured instead of hiding the question.
+_TREND_2Q_FIDELITY_TEMPLATE = "qubit_pairs.*.gate_fidelity"
+
+
+def _trend_pair_label(tail: str) -> str:
+    """What a PAIR family chip/chart is called."""
+    from quam_state_manager.core.query import _rb_level
+
+    segs = str(tail or "").split(".")
+    for seg in reversed(segs):
+        lvl = _rb_level(seg)
+        if lvl and lvl in _TREND_2Q_LEVEL_LABELS:
+            return _TREND_2Q_LEVEL_LABELS[lvl]
+    for i in range(len(segs) - 1, -1, -1):
+        meta = chip_health.METRIC_META.get(segs[i])
+        if meta:
+            # A LIST leaf is one family per element (`mutual_flux_bias.0`,
+            # `.1`) and they are different numbers — dropping the index would
+            # put two identically labelled badges side by side.
+            rest = segs[i + 1:]
+            if rest and all(s.isdigit() for s in rest):
+                return meta["label"] + " [" + ".".join(rest) + "]"
+            return meta["label"]
+    if _is_fidelity_tail(tail):
+        return _TREND_2Q_FIDELITY_LABEL
+    # No name for it — the tail itself, minus the container word. `macros.` is
+    # where a CZ gate lives, not what the number is, and on a chip with five CZ
+    # variants it was seven characters repeated across every badge in the row.
+    # The full dot-path stays on the element's `title`, so nothing is lost.
+    return tail[len("macros."):] if tail.startswith("macros.") else tail
+
+
+def _trend_pair_chips(hm, path: Path, active: list[str]) -> list[dict]:
+    """The 2Q / pair badge group, built from what this chip itself has.
+
+    ONE scan of the same index the typeahead uses, folded into families, kept
+    where the tail speaks the Overview's 2Q vocabulary. A 2Q gate-fidelity chip
+    is offered ALWAYS: pointed at the chip's own best fidelity family when it
+    has one, and at the honest empty template when it has none.
+    """
+    try:
+        hits = hm.leaf_search(path, "qubit_pairs", limit=_TRENDS_PATH_SCAN)
+    except Exception:  # noqa: BLE001
+        logger.debug("pair-family scan failed", exc_info=True)
+        hits = []
+    fams = [f for f in _trend_group_families(hits)
+            if f["scope"] == "qubit_pairs" and _is_2q_vocabulary(f["label"])]
+    # What the Overview REPORTS comes before what was SET. Ranked by change
+    # points alone, a chip with five CZ variants filled the whole row with
+    # phase-shift knobs and pushed its own RB numbers off the end — which is
+    # the opposite of the ask ("a badge for at least the numbers the Overview
+    # panel has"). Stable, so the change-point order survives inside each half.
+    fams.sort(key=lambda f: 0 if _is_2q_measurement(f["label"]) else 1)
+    best = next((f for f in fams if _is_fidelity_tail(f["label"])), None)
+    chips = [{"path": best["path"] if best else _TREND_2Q_FIDELITY_TEMPLATE,
+              "label": _TREND_2Q_FIDELITY_LABEL,
+              "n": best["n"] if best else 0}]
+    for f in fams:
+        if f is best:
+            continue
+        chips.append({"path": f["path"], "label": _trend_pair_label(f["label"]),
+                      "n": f["n"]})
+    chips = chips[:10]
+    for c in chips:
+        c["active"] = c["path"] in active
+    return chips
 
 
 # Trends-only display-name overrides (chip_health.METRIC_META's "Readout
@@ -10249,8 +10472,26 @@ def topology_trends():
     path = Path(ctx["path"])
     store = _store()
     qubits = list(store.qubit_names) if store else []
+    pairs = list(store.qubit_pair_names) if store else []
 
     curated = list(DEFAULT_TRACKED_PROPERTIES)
+    # ONE ?path= could never carry a badge AND something typed at the same
+    # time, so the 2Q badges below (which are template paths, tier 2, needing
+    # no new index) would each have evicted whatever was in the box. ?paths= is
+    # the comma-separated form; ?path= keeps working and means exactly a
+    # one-element ?paths=, so every existing link and pin still resolves.
+    extras: list[str] = []
+    for chunk in (request.args.get("paths") or "", request.args.get("path") or ""):
+        for p in chunk.split(","):
+            p = p.strip()
+            if p and p not in extras:
+                extras.append(p)
+    families_trimmed = 0
+    if len(extras) > _TRENDS_MAX_FAMILIES:
+        families_trimmed = len(extras) - _TRENDS_MAX_FAMILIES
+        extras = extras[:_TRENDS_MAX_FAMILIES]
+    # ``?path=`` is ALSO what the search box shows: the badges ride ``?paths=``,
+    # so a badge press can never evict what the user typed (and vice versa).
     extra = (request.args.get("path") or "").strip()
     sel = [m for m in (request.args.get("metrics") or "").split(",") if m.strip()]
     # Default only on a BARE request. Turning every chip off is a choice, and
@@ -10273,54 +10514,88 @@ def topology_trends():
     sel = [m for m in sel if m in curated][:8]
 
     series = _trend_series_curated(hm, path, sel) if sel else []
-    extra_series = _trend_series_leaf(hm, path, extra, qubits) if extra else []
-    series += extra_series
+    for _s in series:
+        _s.setdefault("kind", "qubit")
+    extra_series_by_path: dict[str, list[dict]] = {}
+    for _p in extras:
+        _es = _trend_series_leaf(hm, path, _p, qubits, pairs)
+        extra_series_by_path[_p] = _es
+        series += _es
 
-    # The same parameter must appear ONCE per qubit. A typed path like
+    # The same parameter must appear ONCE per entity. A typed path like
     # `qubits.q1.f_01` derives the label `f_01`, which is also a curated metric
     # name, so the two tiers landed in one bucket and the chart drew every qubit
     # twice and titled itself "f_01 · 40 qubits" on a 20-qubit chip. The curated
     # tier is the denser series, so it wins; the leaf tier fills what it lacks.
+    # The KIND is part of the identity: a qubit-scoped and a pair-scoped family
+    # can share a tail (`gate_fidelity.averaged` exists on both), and folding
+    # 20 qubits and 30 pairs into one chart is a different lie from the one
+    # this dedupe was written to stop.
     _seen_series: set = set()
     _deduped = []
     for _s in series:
-        _k = (_s.get("metric"), _s.get("entity"))
+        _k = (_s.get("metric"), _s.get("kind"), _s.get("entity"))
         if _k in _seen_series:
             continue
         _seen_series.add(_k)
         _deduped.append(_s)
     series = _deduped
 
+    series_trimmed = 0
     if len(series) > _TRENDS_MAX_SERIES:
+        series_trimmed = len(series) - _TRENDS_MAX_SERIES
         series = series[:_TRENDS_MAX_SERIES]
 
-    # Group into one chart per metric, preserving the requested order so the
-    # page does not reshuffle as data arrives.
-    order: list[str] = []
-    by_metric: dict[str, list[dict]] = {}
+    # Group into one chart per (metric, kind), preserving the requested order so
+    # the page does not reshuffle as data arrives.
+    order: list[tuple[str, str]] = []
+    by_metric: dict[tuple[str, str], list[dict]] = {}
     for s in series:
-        by_metric.setdefault(s["metric"], [])
-        if s["metric"] not in order:
-            order.append(s["metric"])
-        by_metric[s["metric"]].append(s)
-    charts = [{"metric": m, "series": by_metric[m],
-               "n_entities": len(by_metric[m]), "unit": _trend_unit(m)} for m in order]
+        key = (s["metric"], s.get("kind") or "")
+        by_metric.setdefault(key, [])
+        if key not in order:
+            order.append(key)
+        by_metric[key].append(s)
+
+    def _chart(metric: str, kind: str, rows: list[dict], typed: str = "") -> dict:
+        return {"metric": metric, "kind": kind, "series": rows,
+                "n_entities": len(rows), "unit": _trend_unit(metric),
+                "label": _trend_pair_label(metric) if kind == "pair" else "",
+                "typed": typed}
+
+    charts = [_chart(m, k, by_metric[(m, k)]) for (m, k) in order]
     # A selected metric with NO series still gets a chart slot so the page can
     # say "nothing recorded yet" for it, instead of quietly showing fewer
     # charts than the user asked for.
     for m in sel:
-        if m not in by_metric:
-            charts.append({"metric": m, "series": [], "n_entities": 0,
-                           "unit": _trend_unit(m)})
-    # ...and the same courtesy for a TYPED path. A path the index cannot chart
-    # produced no series, so nothing was appended and the section came back
+        if (m, "qubit") not in by_metric:
+            charts.append(_chart(m, "qubit", []))
+    # ...and the same courtesy for a TYPED path — including a 2Q badge on a chip
+    # that has recorded no 2Q fidelity. A path the index cannot chart produced
+    # no series, so nothing was appended and the section came back
     # byte-identical: no chart, no message, no error, the box still holding what
     # the user typed. An empty slot renders the template's honest "Nothing
-    # recorded" line against the path itself, which at least distinguishes
+    # recorded" line against WHAT WAS TYPED, which at least distinguishes
     # "asked and found nothing" from "the box ignored you".
-    if extra and not extra_series:
-        charts.append({"metric": extra, "series": [], "n_entities": 0,
-                       "unit": _trend_unit(extra)})
+    for _p in extras:
+        if extra_series_by_path.get(_p):
+            continue
+        _fam = _trend_family_of(_p)
+        _kind = _TREND_ENTITY_ROOTS[_fam[0]] if _fam else ""
+        charts.append(_chart(_fam[1] if _fam else _p, _kind, [], typed=_p))
+
+    # Whatever was trimmed, the section SAYS it was trimmed. A cap that quietly
+    # drops families is indistinguishable from a badge that does not work.
+    trim_note = ""
+    if families_trimmed:
+        trim_note = (f"Charting the first {_TRENDS_MAX_FAMILIES} parameter "
+                     f"families — {families_trimmed} more "
+                     f"{'was' if families_trimmed == 1 else 'were'} left off. "
+                     f"Deselect one to make room.")
+    if series_trimmed:
+        trim_note = ((trim_note + " ") if trim_note else "") + (
+            f"Showing the first {_TRENDS_MAX_SERIES} lines — "
+            f"{series_trimmed} more are not drawn.")
 
     # Display labels for the metric pills + chart titles — the raw property
     # key stays the data.trend-metric/JS-toggle value (SQLite column name,
@@ -10331,21 +10606,35 @@ def topology_trends():
     # the same number shows real values as "IQ Blob (%)" elsewhere).
     metric_labels = {m: chip_health.metric_meta(m)["label"] for m in curated}
     metric_labels.update(_TREND_LABEL_OVERRIDES)
+    # The 2Q / pair group. Built from the chip's own pair families, so a chip
+    # that records XEB or a Bell state gets those badges by itself; the gate
+    # fidelity chip is always there, empty slot included.
+    pair_chips = _trend_pair_chips(hm, path, extras) if pairs else []
     return render_template("_topo_trends.html", charts=charts, curated=curated,
                            selected=sel, extra=extra, no_chip=False,
-                           metric_labels=metric_labels,
+                           metric_labels=metric_labels, pair_chips=pair_chips,
+                           trim_note=trim_note,
                            snapshots=len(hm.list_snapshots(path)))
 
 
 @bp.route("/topology/trends/paths")
 def topology_trends_paths():
-    """Typeahead over every numeric leaf the chip has ever recorded."""
+    """Typeahead over every numeric leaf the chip has ever recorded — offered
+    as FAMILIES, not as instances.
+
+    Customer, 2026-09-09: *"if I search 'interleaved' in the search box I have
+    to click it again for every single qubit before the trend appears."* The
+    old shape is why: 25 concrete leaves came back, differing only by the pair
+    id, so the list was 25 rows of the same parameter and each one charted one
+    line. One row per ``(scope, tail)`` family, carrying how many entities it
+    covers, makes the click charting ALL of them the only click there is.
+    """
     q = (request.args.get("q") or "").strip()
     ctx = _active_ctx()
     if not q or not ctx or not ctx.get("path"):
         return jsonify([])
-    hits = _history().leaf_search(Path(ctx["path"]), q, limit=25)
-    return jsonify(hits)
+    hits = _history().leaf_search(Path(ctx["path"]), q, limit=_TRENDS_PATH_SCAN)
+    return jsonify(_trend_group_families(hits)[:25])
 
 
 # ── docs/120 item 10 — the working-state version, from the top bar ────────

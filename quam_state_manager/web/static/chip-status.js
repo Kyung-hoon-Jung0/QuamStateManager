@@ -3908,15 +3908,26 @@ window.ChipStatus.liveDetection = function () {
  * line"), so the chip-wide view matches every other multi-qubit surface.
  */
 window.ChipTrends = (function () {
+    /* Three independent selections travel together: the curated qubit chips
+       (?metrics=), the 2Q/pair badges (?paths=, comma-separated) and whatever
+       is typed in the box (?path=). They are separate parameters on purpose —
+       one ?path= could not carry a badge AND a typed family at once, so a badge
+       press would have evicted the box and vice versa. */
     function _params() {
         var box = document.getElementById('topo-trends');
-        var sel = [];
+        var sel = [], paths = [];
         if (box) {
             Array.prototype.slice.call(box.querySelectorAll('.topo-trend-chip.active'))
-                .forEach(function (b) { sel.push(b.getAttribute('data-trend-metric')); });
+                .forEach(function (b) {
+                    var m = b.getAttribute('data-trend-metric');
+                    if (m) { sel.push(m); return; }
+                    var p = b.getAttribute('data-trend-path');
+                    if (p && paths.indexOf(p) < 0) paths.push(p);
+                });
         }
         var pathEl = document.getElementById('topo-trend-path');
         var q = 'metrics=' + encodeURIComponent(sel.join(','));
+        if (paths.length) q += '&paths=' + encodeURIComponent(paths.join(','));
         if (pathEl && pathEl.value.trim()) q += '&path=' + encodeURIComponent(pathEl.value.trim());
         return q;
     }
@@ -3979,7 +3990,31 @@ window.ChipTrends = (function () {
         if (s) s.hidden = true;
         _reload();
     }
+    /* A 2Q/pair badge. Same shape as toggle(), but the selection travels as a
+       PATH — the badges are template paths over the docs/83 leaf index, so they
+       need no curated property and no new index. */
+    function togglePath(p) {
+        if (!p) return;
+        var b = document.querySelector(
+            '.topo-trend-badge[data-trend-path="' + String(p).replace(/"/g, '\\"') + '"]');
+        if (b) {
+            var on = b.classList.toggle('active');
+            b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        }
+        _reload();
+    }
+    function _esc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+        });
+    }
     var _sugTimer = null;
+    /* The suggester offers FAMILIES. It used to offer up to 25 concrete leaves,
+       which on a 30-pair chip meant 25 rows of the same parameter differing
+       only by the pair id — and each click charted one line, which is exactly
+       the "click it again for every single qubit" the customer reported. Each
+       row now says how many entities it covers, and clicking it charts them
+       all. */
     function suggest(q) {
         clearTimeout(_sugTimer);
         var box = document.getElementById('topo-trend-suggest');
@@ -3991,12 +4026,19 @@ window.ChipTrends = (function () {
                 .then(function (rows) {
                     if (!rows || !rows.length) { box.hidden = true; return; }
                     box.innerHTML = rows.map(function (r) {
-                        var p = (typeof r === 'string') ? r : (r.path || r.dot_path || '');
+                        var isStr = (typeof r === 'string');
+                        var p = isStr ? r : (r.path || r.dot_path || '');
+                        var label = isStr ? r : (r.label || p);
+                        var n = isStr ? 0 : (r.n || 0);
+                        var noun = (!isStr && r.scope === 'qubit_pairs') ? 'pair' : 'qubit';
+                        var count = (n > 1)
+                            ? '<span class="topo-trend-sug-n"> · ' + n + ' '
+                              + noun + (n === 1 ? '' : 's') + '</span>'
+                            : '';
                         return '<button type="button" class="topo-trend-sug"'
-                             + ' onclick="ChipTrends.setPath(this.textContent)">'
-                             + p.replace(/[&<>"]/g, function (c) {
-                                 return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
-                               }) + '</button>';
+                             + ' data-path="' + _esc(p) + '" title="' + _esc(p) + '"'
+                             + ' onclick="ChipTrends.setPath(this.getAttribute(\'data-path\'))">'
+                             + _esc(label) + count + '</button>';
                     }).join('');
                     box.hidden = false;
                 })
@@ -4065,8 +4107,15 @@ window.ChipTrends = (function () {
             // older generation would draw into whatever now sits at that index.
             // Prefer the box that carries this chart's own metric and fall back
             // to the index only when the markup predates that attribute.
-            var box = c.metric && document.querySelector(
-                '.topo-trend-box[data-trend-metric="' + String(c.metric).replace(/"/g, '\\"') + '"]');
+            // ...and the KIND is part of that identity since the pair fan-out
+            // shipped: a qubit family and a pair family can share a tail, and
+            // the metric alone would draw the pairs into the qubits' box.
+            var _mSel = c.metric && ('.topo-trend-box[data-trend-metric="'
+                        + String(c.metric).replace(/"/g, '\\"') + '"]');
+            var box = _mSel && (
+                (c.kind && document.querySelector(
+                    _mSel + '[data-trend-kind="' + String(c.kind).replace(/"/g, '\\"') + '"]'))
+                || document.querySelector(_mSel));
             var host = (box && box.querySelector('.topo-trend-chart'))
                     || document.getElementById('topo-trend-' + idx);
             if (!host || !c.series || !c.series.length) return;
@@ -4195,5 +4244,6 @@ window.ChipTrends = (function () {
             if (grid) window.PlotHost.observe(grid);
         }
     }
-    return { toggle: toggle, setPath: setPath, suggest: suggest, render: render };
+    return { toggle: toggle, togglePath: togglePath, setPath: setPath,
+             suggest: suggest, render: render };
 })();
