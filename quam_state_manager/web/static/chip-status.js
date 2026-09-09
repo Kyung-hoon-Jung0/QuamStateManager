@@ -4034,9 +4034,22 @@ window.ChipTrends = (function () {
                family in the box the press removed one copy, the box sent the
                other, and the badge came back lit. Reproduced with real DOM
                clicks in headless Chrome. Turning something off has to clear
-               every source that is holding it on. */
+               every source that is holding it on.
+
+               The box holds a LIST: `topology_trends` splits `?path=` on
+               commas, so `?path=A,B` is a supported, shareable URL and the
+               template renders it into the field verbatim. Comparing the whole
+               field to the one path missed exactly that case — with two
+               families typed, both badges rendered pressed and NEITHER could
+               be turned off. So remove the element, keep the rest. */
             var el = document.getElementById('topo-trend-path');
-            if (el && el.value.trim() === String(p)) el.value = '';
+            if (el) {
+                var parts = String(el.value || '').split(',').map(function (s) {
+                    return s.trim();
+                }).filter(function (s) { return !!s; });
+                var kept = parts.filter(function (s) { return s !== String(p); });
+                if (kept.length !== parts.length) el.value = kept.join(',');
+            }
         }
         _reload();
     }

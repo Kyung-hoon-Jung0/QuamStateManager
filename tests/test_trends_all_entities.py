@@ -1011,8 +1011,15 @@ class TestReviewRound3:
         there were always enough of them to fill every slot — so
         `coupler.*_offset`, `mutual_flux_bias.*` and `phase_shift_*`, the three
         the ask named, reached the row on no such chip."""
-        from quam_state_manager.web.routes import (_TREND_2Q_KNOB_SLOTS,
-                                                   _TREND_2Q_MAX_CHIPS,
+        THREE = 3           # the ask named three knob families, LITERALLY.
+        # Review round 3.2: this pin used to assert `len(knobs) >=
+        # _TREND_2Q_KNOB_SLOTS` while IMPORTING that constant from the module
+        # under test, so the threshold moved with the code — mutating SLOTS to
+        # 0 removed the reservation, the row dropped to ONE knob, and the
+        # assertion became `1 >= 0` and passed. A pin may not measure the code
+        # against its own constant. So: the literal, and the three families the
+        # ask named BY NAME.
+        from quam_state_manager.web.routes import (_TREND_2Q_MAX_CHIPS,
                                                    _is_2q_measurement)
         c, _ = _rb_chip(tmp_path, "reserve", extra={
             "macros.cz.fidelity.Bell_State.Fidelity": 0.96,
@@ -1027,8 +1034,11 @@ class TestReviewRound3:
         knobs = [p for p in paths
                  if not _is_2q_measurement(p.split(".*.", 1)[1])
                  and not p.endswith(".gate_fidelity")]
-        assert len(knobs) >= _TREND_2Q_KNOB_SLOTS, \
-            f"the knobs got no slots: {badges}"
+        assert len(knobs) >= THREE, f"the knobs got no slots: {badges}"
+        assert any("mutual_flux_bias" in p for p in knobs), badges
+        assert any("phase_shift" in p for p in knobs), badges
+        assert any(p.endswith("_offset") and "coupler" in p for p in knobs), \
+            badges
         # and the measurements did not lose the row either
         meas = [p for p in paths if "StandardRB" in p or "Bell_State" in p]
         assert meas, badges
@@ -1286,6 +1296,115 @@ class TestReviewRound31:
             paths
         # ...and the measurements did not lose the row either
         assert any("StandardRB" in p for p in paths), paths
+
+
+class TestReviewRound32:
+    """Round 3.2 — what the review of round 3.1 found, plus the two findings it
+    re-raised that measurement REFUTED (pinned so they stay closed)."""
+
+    # ⑥ (browser) The badge row was clean and the CHART TITLE still called a
+    #    run identifier a Clifford fidelity.
+
+    def test_a_nested_run_id_is_never_titled_a_fidelity(self):
+        """`_TREND_2Q_KIND_LABELS` had entries for decay / error / measured and
+        NONE for `load_id`, so `_trend_pair_label` fell through to the RB
+        LEVEL's own label. No badge offers a run id — `_is_2q_measurement`
+        refuses the whole `*_id` family — but the SEARCH BOX charts whatever the
+        typeahead offers, and the typeahead is the raw leaf index."""
+        from quam_state_manager.web.routes import (_TREND_2Q_LEVEL_LABELS,
+                                                   _trend_pair_label)
+        for leaf in ("run_id", "load_id", "dataset_id", "id"):
+            for rb, lvl in (("StandardRB", "clifford"),
+                            ("InterleavedRB", "gate")):
+                lbl = _trend_pair_label(f"macros.cz.fidelity.{rb}.{leaf}")
+                assert not lbl.startswith(_TREND_2Q_LEVEL_LABELS[lvl]), lbl
+                assert "fid" not in lbl.lower(), lbl
+                assert leaf in lbl, lbl
+
+    def test_the_route_titles_a_charted_run_id_honestly(self, tmp_path):
+        """…and through the REAL route, which is the surface the customer
+        complaint was about ("if I search interleaved in the search box…")."""
+        c, _ = _chip_with(tmp_path, "runid", PAIRS,
+                          {"macros.cz.fidelity.StandardRB.run_id": 2272.0})
+        p = "qubit_pairs.*.macros.cz.fidelity.StandardRB.run_id"
+        body = c.get("/topology/trends?metrics=&path=" + p).get_data(as_text=True)
+        charts = _charts(body)
+        assert len(charts) == 1, charts
+        assert charts[0]["series"], "the box still charts what was typed"
+        assert "fid" not in charts[0]["label"].lower(), charts[0]["label"]
+        assert "run_id" in charts[0]["label"], charts[0]["label"]
+        # ...and it is still not offered as a badge
+        assert not [b for b, _ in _badges(body) if "run_id" in b], _badges(body)
+
+    # ⑤ (review) REFUTED at this commit — round 3.1's "measured" kind already
+    #    closed it. Pinned so it stays closed.
+
+    def test_an_unnamed_RB_leaf_never_borrows_the_fidelity_title(self):
+        """The review said an unclassified sibling of the fidelity
+        (`num_averages`, `timestamp`, `average_gates_per_clifford`) inherits the
+        FIDELITY title. Measured at 97ba34c: it renders "RB number (SRB) · …" —
+        the `measured` kind round 3.1 added. It is a real 2Q number, it is
+        charted, and it says which run produced it without claiming to be a
+        fidelity."""
+        from quam_state_manager.web.routes import _trend_pair_label
+        for leaf in ("num_averages", "timestamp",
+                     "average_gates_per_clifford", "purity_thing"):
+            lbl = _trend_pair_label(f"macros.cz.fidelity.StandardRB.{leaf}")
+            assert "fid" not in lbl.lower(), lbl
+            assert lbl.endswith("· " + leaf), lbl
+
+    # ③ (review) The badges were unique and the TRIM NOTE still named a family
+    #    by a string that appears on no badge.
+
+    def test_the_trim_note_names_the_family_the_way_the_row_does(self, tmp_path):
+        """The note promises "everything named here is a badge they can see and
+        deselect". It called `_trend_pair_label` directly — the RAW label — so
+        on a chip with two CZ variants of the same StandardRB number it said
+        "2Q Clifford fid. (SRB) was left off" while the row and the charts read
+        "· cz_bipolar" / "· cz_unipolar"."""
+        # A trimmed family that is NOT on the badge row is the state that
+        # proves it: two CZ variants of `detuning` both label "Detuning" and
+        # neither speaks the 2Q vocabulary, so neither gets a badge and the map
+        # only learns the trimmed one if the caller PUTS it there. (With an RB
+        # family the badge row happens to carry the trimmed tail already, so
+        # that fixture cannot tell the two halves of this fix apart.)
+        c, _ = _chip_with(tmp_path, "trimlbl", PAIRS,
+                          {"macros.cz_bipolar.detuning": 0.11,
+                           "macros.cz_unipolar.detuning": 0.22})
+        det = "qubit_pairs.*.macros.{g}.detuning"
+        want = ([det.format(g="cz_bipolar")]
+                + [f"qubit_pairs.*.filler{i}" for i in range(7)]
+                + [det.format(g="cz_unipolar")])
+        body = c.get("/topology/trends?metrics=&paths="
+                     + ",".join(want)).get_data(as_text=True)
+        note = re.search(r"Charting the first 8 parameter families[^<]*", body)
+        assert note, body[body.find("topo-trend-box") - 600:][:900]
+        note = note.group(0)
+        assert "cz_unipolar" in note, note
+        # …and it is NOT the charted variant's own title
+        titles = _titles(body)
+        assert any("cz_bipolar" in t for t in titles), titles
+        assert "cz_bipolar" not in note, (note, titles)
+        # the two names really are different strings on the same page
+        assert note.split("families — ")[1].split(" was")[0] not in titles, (
+            note, titles)
+
+    # ② (review) The single-point rule's OTHER edge: no series at all.
+
+    def test_a_chart_with_NO_series_says_nothing_recorded(self, tmp_path):
+        """`if not rows or any(...)` — drop the `not rows` half and a family the
+        index has never seen renders "One value recorded … on 0 pairs", which is
+        a different and false claim from "Nothing recorded". The two sentences
+        are the whole difference between 'it exists and has not moved' and 'it
+        was never written'."""
+        c, _ = _chip_with(tmp_path, "noseries", PAIRS, {"detuning": 0.1})
+        p = "qubit_pairs.*.macros.cz.nothing_ever_wrote_this"
+        body = c.get("/topology/trends?metrics=&paths=" + p).get_data(as_text=True)
+        charts = _charts(body)
+        assert len(charts) == 1 and charts[0]["series"] == [], charts
+        assert not charts[0].get("note"), charts[0]
+        assert "Nothing recorded for" in body
+        assert "One value recorded" not in body, body[-1500:]
 
 
 class TestNothingOldBroke:

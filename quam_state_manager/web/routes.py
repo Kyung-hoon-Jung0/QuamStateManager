@@ -10444,7 +10444,19 @@ _TREND_2Q_KIND_LABELS = {"decay": "RB decay α", "error": "RB error",
                          # A number in the block that no map can NAME. It is
                          # charted (it is a real 2Q measurement) and it says
                          # so, but it never borrows a fidelity's title.
-                         "measured": "RB number"}
+                         "measured": "RB number",
+                         # PROVENANCE, and it needs a label of its own even
+                         # though no badge offers it. `_is_2q_measurement`
+                         # refuses the whole `*_id` family, so a run id reaches
+                         # the row on no chip — but the SEARCH BOX charts
+                         # anything the typeahead offers, and the typeahead is
+                         # the raw leaf index. With no entry here the walk fell
+                         # through to the RB LEVEL's label and one click on
+                         # `…fidelity.StandardRB.run_id` drew run identifiers
+                         # 2272–2276 titled "2Q Clifford fid. (SRB) · run_id":
+                         # the badge row was clean and the chart title still
+                         # called a run id a Clifford fidelity.
+                         "load_id": "RB run id"}
 # ...and the same, for a fidelity block that carries no RB name at all
 # (`macros.cz.fidelity.Purity`).
 _TREND_2Q_BLOCK_LABEL = "2Q fidelity block"
@@ -10654,14 +10666,25 @@ def _trend_pair_labels(tails: list[str]) -> dict[str, str]:
     return out
 
 
-def _trend_family_display(dot_path: str) -> str:
+def _trend_family_display(dot_path: str,
+                          labels: dict[str, str] | None = None) -> str:
     """What a charted family is CALLED, for a message about it.
 
     The same name the badge and the chart title carry, so a trim note names
-    something the user can actually find on screen.
+    something the user can actually find on screen — which means it must read
+    the caller's COLLISION-BROKEN map, not the raw label. With the raw one, a
+    chip carrying two CZ variants of the same StandardRB number got a trim note
+    saying "…2Q Clifford fid. (SRB) was left off" while the row's two badges
+    read "…· cz_bipolar" and "…· cz_unipolar": the note named a string that
+    appears on no badge, contradicting its own promise that everything it names
+    is a badge the reader can see and deselect.
     """
     fam = _trend_family_of(dot_path)
-    return _trend_pair_label(fam[1]) if fam else str(dot_path or "")
+    if not fam:
+        return str(dot_path or "")
+    if labels and fam[1] in labels:
+        return labels[fam[1]]
+    return _trend_pair_label(fam[1])
 
 
 def _trend_pair_chips(hm, path: Path, active: list[str]) -> tuple[list[dict], int]:
@@ -10980,9 +11003,17 @@ def topology_trends():
     # so a collision broken on the row is broken the same way on the chart —
     # and a badge's label IS its chart's title, whether one of the colliding
     # pair was pressed or both.
+    # ...and the TRIMMED families are in the map too, even though they have
+    # neither a badge nor a chart: the trim note names one of them, and a note
+    # naming a family by a string that appears nowhere on the row is the same
+    # defect one message further out.
+    _trimmed_fams = [f[1] for f in
+                     (_trend_family_of(p) for p in trimmed_paths)
+                     if f and f[0] == "qubit_pairs"]
     _pair_labels = _trend_pair_labels(
         [c.get("fam") or "" for c in pair_chips if c.get("fam")]
-        + [c["metric"] for c in charts if c.get("kind") == "pair"])
+        + [c["metric"] for c in charts if c.get("kind") == "pair"]
+        + _trimmed_fams)
     for c in pair_chips:
         if c.get("fam") in _pair_labels:
             c["label"] = _pair_labels[c["fam"]]
@@ -11026,7 +11057,7 @@ def topology_trends():
         # guessing which three, and the answer is not the one they typed —
         # that one now wins the cap, so everything named here is a badge they
         # can see and deselect.
-        _first = _trend_family_display(trimmed_paths[0])
+        _first = _trend_family_display(trimmed_paths[0], _pair_labels)
         _rest = (f" and {families_trimmed - 1} more"
                  if families_trimmed > 1 else "")
         trim_note = (f"Charting the first {_TRENDS_MAX_FAMILIES} parameter "

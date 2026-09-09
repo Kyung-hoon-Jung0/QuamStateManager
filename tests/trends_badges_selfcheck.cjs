@@ -271,6 +271,11 @@ setTimeout(function () {
     box6.value = BOXED;
     b6.classList.add('active');
     b6.setAttribute('aria-pressed', 'true');
+    // A SECOND badge is pressed, so the reload really carries `paths=`. Without
+    // it the assert below cannot tell `?path=` from `?paths=` — 'path=' is a
+    // substring of 'paths=', and with no paths parameter present the loose
+    // spelling passed for the wrong reason.
+    T6.togglePath('qubit_pairs.*.gate_fidelity');
     T6.togglePath(BOXED);
     const u6 = w6.urls[w6.urls.length - 1] || '';
     ok(b6.getAttribute('aria-pressed') === 'false',
@@ -278,8 +283,45 @@ setTimeout(function () {
     ok(box6.value === '',
        'and CLEARS the box, which was the other thing holding it on ('
        + JSON.stringify(box6.value) + ')');
-    ok(u6.indexOf('path=') < 0,
+    // Review round 3.2 claimed the old `indexOf('path=') < 0` could not tell
+    // `?path=` from `?paths=`. MEASURED FALSE: `'paths='.includes('path=')` is
+    // false — the `s` sits between `path` and `=` — so the old assert was
+    // already reading the right parameter, and this URL now carries a real
+    // `paths=` (a second badge is pressed above) to prove it. The regex is
+    // kept as the spelling that says WHICH parameter, anchored on `?`/`&`.
+    ok(!/[?&]path=/.test(u6),
        'so the reload asks for neither copy (' + u6 + ')');
+
+    // …and the box holds a LIST. `?path=A,B` is a supported, shareable URL
+    // (topology_trends splits on commas) and the template renders it verbatim,
+    // so a whole-value comparison missed it: with two families typed, BOTH
+    // badges rendered pressed and NEITHER could be turned off. Reproduced with
+    // real DOM clicks in headless Chrome.
+    const w6b = world();
+    const T6b = w6b.ChipTrends;
+    const A = 'qubit_pairs.*.coupler.interaction_offset';
+    const B = 'qubit_pairs.*.gate_fidelity';
+    const box6b = w6b.document.getElementById('topo-trend-path');
+    box6b.value = A + ',' + B;
+    ['a', 'b'].forEach(function (_, i) {
+      const el = w6b.document.querySelector(
+        '.topo-trend-badge[data-trend-path="' + [A, B][i] + '"]');
+      el.classList.add('active');
+      el.setAttribute('aria-pressed', 'true');
+    });
+    T6b.togglePath(A);
+    const bA = w6b.document.querySelector(
+      '.topo-trend-badge[data-trend-path="' + A + '"]');
+    ok(bA.getAttribute('aria-pressed') === 'false',
+       'a badge in a MULTI-path box un-presses');
+    ok(box6b.value === B,
+       'and only its own path leaves the box, the other stays ('
+       + JSON.stringify(box6b.value) + ')');
+    const u6b = w6b.urls[w6b.urls.length - 1] || '';
+    ok(/[?&]path=/.test(u6b)
+       && decodeURIComponent(/[?&]path=([^&]*)/.exec(u6b)[1]).indexOf(A) < 0,
+       'so the reload carries the survivor and not the un-pressed one ('
+       + u6b + ')');
 
     // Turning it off must not clear a box holding something ELSE.
     const w7 = world();
