@@ -14653,8 +14653,11 @@ function paramHistoryRenderDrawerChart(data, currentValue) {
         }
         return TRIGGER_LABELS[t] || t;
     };
+    // The hint is gated on the UID, not on the run id: a run id alone does not
+    // open anything (see the click handler below), so offering the click where
+    // the server could not mint a uid promises a panel that will 404.
     var clickHintLine = function(p) {
-        return p.run_id
+        return p.uid
             ? '<i style="opacity:0.7">click → open dataset #' + p.run_id + '</i>'
             : '';
     };
@@ -14673,13 +14676,17 @@ function paramHistoryRenderDrawerChart(data, currentValue) {
 
     var traces = triggers.map(function(t) {
         var subset = pts.filter(function(p) { return p.trigger === t; });
-        // customdata = [run_id, experiment, contextLine, clickHint] for hovertemplate
+        // customdata = [run_id, experiment, contextLine, clickHint, uid] for
+        // hovertemplate + the click. The uid is the ONLY thing that opens a
+        // dataset — "/dataset/<folder_key>:<run_id>" — and it is minted server
+        // side, because it needs the run folder and the live dataset roots.
         var customdata = subset.map(function(p) {
             return [
                 p.run_id || 0,
                 p.experiment || '',
                 contextLine(p),
                 clickHintLine(p),
+                p.uid || '',
             ];
         });
         return {
@@ -14734,10 +14741,14 @@ function paramHistoryRenderDrawerChart(data, currentValue) {
                 var pt = evt.points[0];
                 var cd = pt.customdata;
                 if (!cd) return;
-                var runId = cd[0];
-                if (!runId) return;
+                var uid = cd[4];
+                // A BARE run id is not a dataset uid: `_split_dataset_uid`
+                // refuses anything without a colon, so "/dataset/34" has always
+                // rendered the not-found panel. No uid ⇒ do nothing; the hover
+                // already withheld the click hint.
+                if (!uid) return;
                 // Use HTMX so the dataset detail loads inside the main pane
-                var url = '/dataset/' + runId;
+                var url = '/dataset/' + uid;
                 if (window.htmx) {
                     window.htmx.ajax('GET', url, {
                         target: '#table-pane', swap: 'innerHTML', pushUrl: 'true',
@@ -14746,11 +14757,12 @@ function paramHistoryRenderDrawerChart(data, currentValue) {
                     window.location.href = url;
                 }
             });
-            // Cursor: pointer for clickable points (run_id present)
+            // Cursor: pointer for clickable points (a uid, i.e. a run that
+            // actually opens — not merely a recorded run number)
             plotDiv.on('plotly_hover', function(evt) {
                 if (!evt.points || !evt.points.length) return;
                 var cd = evt.points[0].customdata;
-                if (cd && cd[0]) {
+                if (cd && cd[4]) {
                     plotDiv.style.cursor = 'pointer';
                 }
             });

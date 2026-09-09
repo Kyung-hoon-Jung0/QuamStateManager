@@ -431,6 +431,25 @@ def _short_family(fam_key: str | None, label: str | None, node: str | None) -> s
     return s if len(s) <= 18 else s[:17] + "…"
 
 
+def short_node_name(node: str | None) -> str:
+    """The public, one-argument spelling of :func:`_short_family`.
+
+    Every node in the archive is numbered, so a few words is enough to say WHICH
+    measurement produced a value — ``03_resonator_spectroscopy_single`` reads as
+    ``Res spec``. Trends' point hover wants exactly that and knows nothing about
+    families, so it gets a name it can call instead of a second shortener: there
+    is ONE table of short names in this codebase and this is the door to it.
+
+    A node name that is absent or empty returns ``""``: a point with no
+    experiment recorded has no short name, and the string "None" would be a lie
+    in three characters. That falls out of ``_short_family``'s own
+    ``str(label or node or "")`` fallback rather than being re-guarded here — a
+    second guard measured as dead code, and dead code claims a protection it is
+    not providing.
+    """
+    return _short_family(None, None, node)
+
+
 def _timeline(cards: list[dict]) -> dict[str, list[dict]]:
     """Per target, in time order: consecutive runs of ONE family merged into a
     segment ``{family (short), full, steps}`` so the strip reads

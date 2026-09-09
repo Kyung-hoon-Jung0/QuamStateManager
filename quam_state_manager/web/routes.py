@@ -112,6 +112,7 @@ from quam_state_manager.core.query import QueryEngine
 from quam_state_manager.core.saver import Saver
 from quam_state_manager.core.scanner import Workspace
 from quam_state_manager.core.search_index import SearchIndex
+from quam_state_manager.core.story import short_node_name
 from quam_state_manager.core.units import group_digits
 
 logger = logging.getLogger(__name__)
@@ -10130,6 +10131,97 @@ def _trend_points(values: list[dict]) -> list[tuple]:
     return out
 
 
+# Why a snapshot exists when NO run produced it — the customer's words for the
+# one that matters ("modified externally") plus the three others SM genuinely
+# knows. Flattening all four into "modified externally" would be a lie about the
+# three: a save through the app is not something that happened behind your back.
+_SNAPSHOT_WHY: dict[str, str] = {
+    "auto":    "Modified externally",
+    "save":    "Saved in the app",
+    "manual":  "Manual snapshot",
+    "restore": "Restored from history",
+}
+
+
+def _snapshot_run_uid(folder: Any, run_id: Any,
+                   roots: list[tuple[Path, str]]) -> str | None:
+    """A dataset uid for a run folder, or None when the click would not open.
+
+    A run's DatasetStore is keyed on the run folder's GRANDPARENT (the same
+    identity ``_ds_entry_uid`` mints for the sidebar), and ``_resolve_run``
+    only resolves a key that is currently one of ``_dataset_candidate_folders``
+    — so a uid whose grandparent is not registered lands on the 404 panel. The
+    membership test is therefore the whole point: a point is offered as
+    clickable only when the click actually opens something.
+
+    Every path operation is guarded. ``folder`` is a string recorded by a past
+    snapshot; it can be malformed, or name a drive that has since gone away,
+    and computing a hover hint must never 500 the section.
+    """
+    if not folder or run_id is None:
+        return None
+    try:
+        gp = Path(folder).parent.parent.resolve()
+        rid = int(run_id)
+    except (OSError, ValueError, TypeError):
+        return None
+    for root, key in roots:
+        if gp == root:
+            return _dataset_uid(key, rid)
+    return None
+
+
+def _snapshot_provenance_map(hm, path: Path) -> dict[str, dict]:
+    """``{snapshot id: {run, node, short, why, uid}}`` — ONE map per response.
+
+    Provenance is a property of the SNAPSHOT, and every series on the Trends
+    page shares one snapshot vocabulary, so this is O(snapshots) — 161 entries
+    on a real chip — where four more fields per POINT would be O(points).
+    ``_trend_points``' docstring records what that costs: one extra derived
+    field per point measured 61 bytes/point and up to 2.3 MB of HTML for a
+    single section on a 419-snapshot chip, and this page fans a chart out over
+    every qubit, which multiplies the point count again.
+
+    Honest by construction: a snapshot with no run carries ``run``/``uid`` null
+    and a ``why`` sentence naming what SM actually knows; a run whose folder is
+    not a live dataset root keeps its run number and loses only the uid.
+    """
+    try:
+        rows = hm.snapshot_provenance(path)
+    except Exception:  # noqa: BLE001
+        logger.debug("snapshot provenance unavailable", exc_info=True)
+        return {}
+    try:
+        roots = _uid_roots()
+    except Exception:  # noqa: BLE001
+        roots = []
+    out: dict[str, dict] = {}
+    for r in rows:
+        ts = str(r.get("ts") or "")
+        if not ts:
+            continue
+        rid = r.get("run_id")
+        node = str(r.get("experiment") or "")
+        trig = str(r.get("trigger") or "")
+        try:
+            run = int(rid) if rid is not None else None
+        except (TypeError, ValueError):
+            run = None
+        entry: dict[str, Any] = {
+            "run": run,
+            "node": node,
+            "short": short_node_name(node),
+            "why": None,
+            "uid": None,
+        }
+        if entry["run"] is None:
+            entry["why"] = _SNAPSHOT_WHY.get(trig, trig)
+        else:
+            entry["uid"] = _snapshot_run_uid(r.get("folder"), rid, roots)
+        out[ts] = entry
+    return out
+
+
 def _trend_unit(metric: str) -> str:
     """The unit the grid already prints beside this very number.
 
@@ -10334,6 +10426,7 @@ def topology_trends():
     return render_template("_topo_trends.html", charts=charts, curated=curated,
                            selected=sel, extra=extra, no_chip=False,
                            metric_labels=metric_labels,
+                           snaps=_snapshot_provenance_map(hm, path),
                            snapshots=len(hm.list_snapshots(path)))
 
 
@@ -19611,6 +19704,22 @@ def param_history_expand():
         qubit_filter=[qubit], downsample=None,
     )
     row = rows[0] if rows else {"qubit": qubit, "property": prop, "raw_pointer": None, "values": []}
+
+    # The drawer's click has always built "/dataset/<run_id>" from the bare run
+    # id, and `_split_dataset_uid` refuses a uid with no colon — so every one of
+    # those clicks has landed on the "Run N not found" panel since the day it
+    # shipped. The uid is a SERVER fact (it needs the run FOLDER, which the
+    # curated table does not store, and the live dataset-root set, which the
+    # browser cannot know), so it is computed here through the same one helper
+    # the Trends hover uses. Null uid ⇒ the point is simply not clickable.
+    try:
+        prov = _snapshot_provenance_map(hm, Path(target_path))
+    except Exception:  # noqa: BLE001
+        logger.debug("drawer provenance unavailable", exc_info=True)
+        prov = {}
+    for p in row.get("values") or []:
+        if isinstance(p, dict):
+            p["uid"] = (prov.get(str(p.get("timestamp") or "")) or {}).get("uid")
 
     current_value = None
     if is_loaded:

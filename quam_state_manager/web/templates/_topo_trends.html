@@ -66,6 +66,12 @@
     </div>
 
     <script type="application/json" id="topo-trends-data">{{ charts | tojson }}</script>
+    {# Provenance is per SNAPSHOT, so it ships ONCE as a map keyed by snapshot
+       id — not as four more fields on every point (routes._trend_points
+       measured that shape at 61 bytes/point and up to 2.3 MB for one section).
+       O(snapshots): ~161 entries on a real chip. The client joins it to the
+       points in browser memory. #}
+    <script type="application/json" id="topo-trends-snaps">{{ snaps | default({}, true) | tojson }}</script>
     <script>
       (function () {
         var el = document.getElementById('topo-trends-data');

@@ -3783,6 +3783,53 @@ class HistoryManager:
             conn.close()
         return out
 
+    def snapshot_provenance(self, quam_state_path: str | Path) -> list[dict]:
+        """Where each snapshot CAME FROM — one dict per snapshot, both tiers.
+
+        ``{"ts", "trigger", "run_id", "experiment", "folder"}``, oldest first.
+        The leaf change-point index is the source of truth: it is the only tier
+        that records the run FOLDER, which is what turns a run id into an
+        openable dataset. The curated ``param_history`` table is a fallback for
+        a timestamp the leaf index has not ingested (it reaches snapshots the
+        leaf tier may not have) — those rows carry no folder, so they can name
+        the run without pretending it can be opened.
+
+        Never invents a row: a timestamp neither table knows is simply absent,
+        and the caller renders the honest "nothing recorded" it already has.
+        """
+        try:
+            self._ensure_leaf_index_fresh(Path(quam_state_path))
+            conn = self._open_index(Path(quam_state_path))
+        except sqlite3.Error:
+            return []
+        out: dict[str, dict] = {}
+        try:
+            try:
+                for ts, trig, rid, exp, folder in leaf_index.snapshot_provenance(conn):
+                    out[str(ts)] = {"ts": str(ts), "trigger": trig, "run_id": rid,
+                                    "experiment": exp, "folder": folder}
+            except sqlite3.Error:
+                logger.debug("leaf snapshot provenance unavailable", exc_info=True)
+            try:
+                # DISTINCT can still yield several rows for one timestamp (one
+                # per differing trigger/run pairing). Ordering run-bearing rows
+                # first makes the first-wins pick deterministic AND the most
+                # informative one, rather than whichever the planner emitted.
+                rows = conn.execute(
+                    "SELECT DISTINCT timestamp, trigger, run_id, experiment "
+                    "  FROM param_history "
+                    " ORDER BY timestamp, (run_id IS NULL), run_id")
+                for ts, trig, rid, exp in rows:
+                    if str(ts) in out:
+                        continue
+                    out[str(ts)] = {"ts": str(ts), "trigger": trig, "run_id": rid,
+                                    "experiment": exp, "folder": None}
+            except sqlite3.Error:
+                logger.debug("curated snapshot provenance unavailable", exc_info=True)
+        finally:
+            conn.close()
+        return [out[k] for k in sorted(out)]
+
     def leaf_changes(self, quam_state_path: str | Path, *, limit: int = 200,
                      prefix: str | None = None,
                      before_ts: str | None = None) -> list[dict]:

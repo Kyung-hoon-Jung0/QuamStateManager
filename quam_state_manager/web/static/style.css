@@ -12400,9 +12400,31 @@ td.vc-cell-takeable:focus-within .vc-take,
     cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .topo-trend-sug:hover { background: var(--pico-primary); color: var(--pico-primary-inverse); }
 
-/* Charts: two-up on a wide pane, one-up when narrow. Big is the point. */
+/* The column control, beside the "Trends" heading (customer feedback
+   2026-09-09). Reuses .topo-trend-chip so the badges read identically to the
+   metric pills — including .active, which is theme-parameterised, so both
+   themes carry it. */
+.topo-trends-head { display: flex; align-items: baseline; gap: .6rem;
+    flex-wrap: wrap; margin-bottom: .5rem; }
+.topo-trends-head .topo-section-title { margin: 0; }
+.topo-trends-cols { display: flex; align-items: center; gap: .3rem; }
+.topo-trends-cols .topo-trend-chip { min-width: 1.9rem; text-align: center; }
+
+/* Charts: ONE column by default, stacked straight down — the customer's
+   choice, and the only width at which a 20-line chart is readable. 2 and 3
+   are opt-in via the badges above, which write --trends-cols on this element.
+
+   NOTE THE ASYMMETRY, it is the whole reason the narrow case works: the badge
+   writes an inline CUSTOM PROPERTY, which only feeds the `repeat(var(...))`
+   below, while the media query sets grid-template-columns ITSELF. A stylesheet
+   rule on the property beats an inline value that merely feeds it, so a narrow
+   pane collapses to one column no matter which badge is armed — and the badge
+   keeps its state for when the pane is wide again. */
 .topo-trends-grid { display: grid; gap: .9rem;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 30rem), 1fr)); }
+    grid-template-columns: repeat(var(--trends-cols, 1), minmax(0, 1fr)); }
+@media (max-width: 64rem) {
+    .topo-trends-grid { grid-template-columns: 1fr; }
+}
 .topo-trend-box { border: 1px solid var(--pico-muted-border-color);
     border-radius: .45rem; padding: .5rem .6rem .3rem;
     background: var(--pico-card-background-color); min-width: 0; }
