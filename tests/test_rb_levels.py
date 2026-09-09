@@ -401,3 +401,45 @@ class TestTheRouteHelperThatResolvesTheRun:
         out = routes._topology_with_derived_rb(Engine())
         assert out["edges"][0]["gate_fidelities"][0]["derived_gate_fidelity"] == 0.99
         assert "derived_gate_fidelity" not in cached["edges"][0]["gate_fidelities"][0]
+
+
+class TestOneVocabularyRegardlessOfCase:
+    """Review round 3: routes' own 2Q segment set is lowercased throughout
+    ("standardrb", "irb", "bell_state") while this table's keys are the
+    archive's most common spellings ("StandardRB"). An exact-case lookup made
+    a chip that spells the node `standardrb` a 2Q measurement to one half of
+    the app and level-unknown to the other -- a Trends badge that knew the
+    number mattered but not what to call it, and, here, a fidelity row that
+    skipped the (0,1] physical bound. That bound exists because a real donor
+    chip carried IRB = 1.5345 and the Overview reported 107% (docs/138), so
+    losing it to a capitalisation is the same defect wearing a different hat.
+    """
+
+    def test_the_lookup_ignores_case(self):
+        from quam_state_manager.core.query import rb_level
+        assert rb_level("standardrb") == "clifford"
+        assert rb_level("STANDARDRB") == "clifford"
+        assert rb_level("interleavedrb") == "gate"
+        assert rb_level("irb") == "gate"
+        assert rb_level("bell_state") == "state"
+        assert rb_level("standardrb_ALPHA") == "decay"
+        # ...and still says nothing about a metric nobody has classified.
+        assert rb_level("SomeLabsOwnMetric") is None
+
+    def test_the_private_name_is_the_same_function(self):
+        """One vocabulary means one BODY. Two functions that agree today are
+        how the two spellings happened in the first place."""
+        from quam_state_manager.core.query import rb_level, _rb_level
+        assert _rb_level is rb_level
+
+    def test_a_lowercase_rb_row_still_gets_the_physical_bound(self):
+        """The end-to-end consequence: an unphysical fidelity under a
+        lowercase RB name must lose its `value`, exactly as the exact-case
+        spelling does."""
+        from quam_state_manager.core.query import _extract_pair_gate_fidelities
+        rows = _extract_pair_gate_fidelities(
+            {"cz": {"fidelity": {"standardrb": {"average_gate_fidelity": 1.5345}}}})
+        assert len(rows) == 1
+        assert rows[0]["level"] == "clifford"
+        assert "value" not in rows[0], "an unphysical fidelity keeps no value"
+        assert rows[0]["raw_value"] == 1.5345

@@ -3903,6 +3903,27 @@ class HistoryManager:
         finally:
             conn.close()
 
+    def leaf_families(self, quam_state_path: str | Path, query: str = "", *,
+                      roots: tuple[str, ...] = ("qubits", "qubit_pairs"),
+                      limit: int | None = None) -> list[dict]:
+        """Indexed paths folded into ``(scope, tail)`` FAMILIES, counted in SQL.
+
+        The entity count a caller renders ("· 30 pairs") is exact whatever the
+        display limit is — folding it from a LIMITed row list under-counted
+        every family on a chip with more indexed paths than the pull.
+        """
+        try:
+            conn = self._open_index(Path(quam_state_path))
+        except sqlite3.Error:
+            return []
+        try:
+            return leaf_index.path_families(conn, query, roots=roots, limit=limit)
+        except sqlite3.Error:
+            logger.debug("family grouping failed", exc_info=True)
+            return []
+        finally:
+            conn.close()
+
     def leaf_stats(self, quam_state_path: str | Path) -> dict:
         empty = {"snapshots": 0, "paths": 0, "rows": 0,
                  "dirty": False, "truncated": False, "version": None}

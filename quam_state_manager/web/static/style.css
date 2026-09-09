@@ -12384,6 +12384,22 @@ td.vc-cell-takeable:focus-within .vc-take,
     font-weight: 600; }
 .topo-trends-count { font-size: .74rem; margin-left: auto; }
 
+/* customer feedback 2026-09-09 -- the 2Q / pair badge row. A SEPARATE row from
+   the qubit chips, because these are pair numbers and the Overview panel makes
+   the same split; the badges are template paths over the docs/83 leaf index, so
+   one press charts every pair. Colours come from the same --pico-* tokens as
+   the qubit chips, so both themes read without a second definition. */
+.topo-trends-2q { margin-top: -.35rem; margin-bottom: .7rem; }
+.topo-trend-badge .muted { font-family: var(--font-sans, inherit); }
+.topo-trend-chip.active .muted { color: inherit; opacity: .8; }
+.topo-trend-trim { font-size: .74rem; margin: -.35rem 0 .7rem; line-height: 1.4; }
+/* What the badge row could not fit. Muted and inline with the chips, because
+   it is a statement about the row, not a control -- but never absent, or the
+   row is indistinguishable from a chip that has nothing else to offer. */
+.topo-trends-more { font-size: .72rem; line-height: 1.35; }
+.topo-trend-sug-n { color: var(--pico-muted-color); font-family: var(--font-sans, inherit); }
+.topo-trend-sug:hover .topo-trend-sug-n { color: inherit; opacity: .85; }
+
 /* The any-parameter typeahead: a real dropdown, not a page-shoving list. */
 .topo-trends-any { position: relative; flex: 1 1 16rem; min-width: 12rem; }
 .topo-trend-path { width: 100%; margin: 0; padding: .2rem .5rem;

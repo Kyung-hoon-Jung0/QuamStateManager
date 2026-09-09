@@ -328,6 +328,12 @@ class TestARunSnapshot:
         c, data_root = env["client"], env["tmp"] / "data"
         run = _seed_run(data_root, 31)
         c.post("/workspace/add", data={"folder": str(data_root)})
+        # Two DIFFERING snapshots, deliberately: since review round 3 a
+        # family whose every series holds one point draws no axis (one point
+        # is not a trend), and the provenance map carries only what the page
+        # DRAWS. On one snapshot this pin would assert against a chart that
+        # no longer exists.
+        _snap(env, _state(f01=6.0e9))
         meta = _snap(env, _state(f01=6.1e9), trigger="experiment",
                      experiment_name="03_resonator_spectroscopy_single",
                      run_id=31, experiment_folder_path=str(run))
@@ -358,6 +364,12 @@ class TestASnapshotWithNoRun:
     def test_auto_says_modified_externally(self, env):
         """The customer's own words for the one that matters — an mtime change
         from outside SM."""
+        # Two DIFFERING snapshots, deliberately: since review round 3 a
+        # family whose every series holds one point draws no axis (one point
+        # is not a trend), and the provenance map carries only what the page
+        # DRAWS. On one snapshot this pin would assert against a chart that
+        # no longer exists.
+        _snap(env, _state(f01=5.9e9))
         meta = _snap(env, _state(f01=6.0e9), trigger="auto")
         got = _snaps(env["client"].get("/topology/trends?metrics=f_01")
                      .get_data(as_text=True))[meta.timestamp]
@@ -394,6 +406,12 @@ class TestTheUidIsOnlyOfferedWhenItOpens:
         c = env["client"]
         elsewhere = env["tmp"] / "elsewhere" / "2026-09-01" / "#99_x_010000"
         elsewhere.mkdir(parents=True)
+        # Two DIFFERING snapshots, deliberately: since review round 3 a
+        # family whose every series holds one point draws no axis (one point
+        # is not a trend), and the provenance map carries only what the page
+        # DRAWS. On one snapshot this pin would assert against a chart that
+        # no longer exists.
+        _snap(env, _state(f01=6.1e9))
         meta = _snap(env, _state(f01=6.2e9), trigger="experiment",
                      experiment_name="06_ramsey", run_id=99,
                      experiment_folder_path=str(elsewhere))
@@ -405,6 +423,12 @@ class TestTheUidIsOnlyOfferedWhenItOpens:
     def test_a_malformed_folder_string_does_not_raise(self, env):
         """A folder recorded by an old snapshot can be junk, or name a drive
         that is gone. Computing a hover hint must never 500 the section."""
+        # Two DIFFERING snapshots, deliberately: since review round 3 a
+        # family whose every series holds one point draws no axis (one point
+        # is not a trend), and the provenance map carries only what the page
+        # DRAWS. On one snapshot this pin would assert against a chart that
+        # no longer exists.
+        _snap(env, _state(f01=6.2e9))
         meta = _snap(env, _state(f01=6.3e9), trigger="experiment",
                      experiment_name="06_ramsey", run_id=7,
                      experiment_folder_path="\x00://not/a/path\x00")

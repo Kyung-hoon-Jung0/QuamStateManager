@@ -271,11 +271,13 @@ class TestTheReviewFindings:
         from quam_state_manager.web import routes as R
         src = Path(R.__file__).read_text(encoding="utf-8")
         i = src.index("def _trend_series_leaf")
-        body = src[i:i + 1800]
+        body = src[i:i + 2200]
         assert "leaf_field_series_many" in body
-        # the FAN-OUT must be batched; the non-qubit-scoped fallback below it
+        # the FAN-OUT must be batched; the non-entity-scoped fallback below it
         # charts a single path and correctly still uses the singular form
-        fanout = body[:body.index("# Not qubit-scoped")]
+        # (customer feedback 2026-09-09 generalized "qubit" to "entity" here —
+        # pairs fan out the same way now)
+        fanout = body[:body.index("# Not entity-scoped")]
         assert "hm.leaf_field_series(" not in fanout
 
 

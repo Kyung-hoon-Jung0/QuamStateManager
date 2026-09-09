@@ -3908,15 +3908,46 @@ window.ChipStatus.liveDetection = function () {
  * line"), so the chip-wide view matches every other multi-qubit surface.
  */
 window.ChipTrends = (function () {
+    /* Three independent selections travel together: the curated qubit chips
+       (?metrics=), the 2Q/pair badges (?paths=, comma-separated) and whatever
+       is typed in the box (?path=). They are separate parameters on purpose —
+       one ?path= could not carry a badge AND a typed family at once, so a badge
+       press would have evicted the box and vice versa. */
+    /* Badge press order, NEWEST FIRST. The server keeps the first
+       _TRENDS_MAX_FAMILIES of what it receives, so emitting the badges in DOM
+       order made the cap discard whichever badges sit last in the row — the
+       user pressed one, it came back `aria-pressed="false"`, and pressing it
+       again reproduced exactly the same trim forever. Emitted newest-first, the
+       press that just happened is always kept and the OLDEST selection is what
+       the trim note names — something the user can see and deselect. The chart
+       for the badge just pressed also lands directly under the badge row.
+       Survives the section's outerHTML swap because it lives in the module, not
+       in the DOM; a path the list has never seen (a full page reload, a badge
+       the server rendered active) falls back to DOM order behind the known
+       ones, so nothing is ever dropped from the request. */
+    var _pathOrder = [];
     function _params() {
         var box = document.getElementById('topo-trends');
-        var sel = [];
+        var sel = [], paths = [];
         if (box) {
             Array.prototype.slice.call(box.querySelectorAll('.topo-trend-chip.active'))
-                .forEach(function (b) { sel.push(b.getAttribute('data-trend-metric')); });
+                .forEach(function (b) {
+                    var m = b.getAttribute('data-trend-metric');
+                    if (m) { sel.push(m); return; }
+                    var p = b.getAttribute('data-trend-path');
+                    if (p && paths.indexOf(p) < 0) paths.push(p);
+                });
         }
+        paths.sort(function (a, b) {
+            var ia = _pathOrder.indexOf(a), ib = _pathOrder.indexOf(b);
+            if (ia < 0 && ib < 0) return 0;      // both unknown: keep DOM order
+            if (ia < 0) return 1;                // unknown sorts behind known
+            if (ib < 0) return -1;
+            return ia - ib;
+        });
         var pathEl = document.getElementById('topo-trend-path');
         var q = 'metrics=' + encodeURIComponent(sel.join(','));
+        if (paths.length) q += '&paths=' + encodeURIComponent(paths.join(','));
         if (pathEl && pathEl.value.trim()) q += '&path=' + encodeURIComponent(pathEl.value.trim());
         return q;
     }
@@ -4051,7 +4082,61 @@ window.ChipTrends = (function () {
         _resizeTrendCharts();
     }
 
+    /* A 2Q/pair badge. Same shape as toggle(), but the selection travels as a
+       PATH — the badges are template paths over the docs/83 leaf index, so they
+       need no curated property and no new index. */
+    function togglePath(p) {
+        if (!p) return;
+        var b = document.querySelector(
+            '.topo-trend-badge[data-trend-path="' + String(p).replace(/"/g, '\\"') + '"]');
+        var on = true;
+        if (b) {
+            on = b.classList.toggle('active');
+            b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        }
+        // Record the press so the newest one survives the families cap.
+        var i = _pathOrder.indexOf(p);
+        if (i >= 0) _pathOrder.splice(i, 1);
+        if (on) _pathOrder.unshift(p);
+        if (!on) {
+            /* A badge the SEARCH BOX is driving could never be turned off.
+               The server marks a badge active when its path is in the MERGED
+               set of ?path= (the box) and ?paths= (the badges), and this
+               function only ever manipulated the badge set — so with the same
+               family in the box the press removed one copy, the box sent the
+               other, and the badge came back lit. Reproduced with real DOM
+               clicks in headless Chrome. Turning something off has to clear
+               every source that is holding it on.
+
+               The box holds a LIST: `topology_trends` splits `?path=` on
+               commas, so `?path=A,B` is a supported, shareable URL and the
+               template renders it into the field verbatim. Comparing the whole
+               field to the one path missed exactly that case — with two
+               families typed, both badges rendered pressed and NEITHER could
+               be turned off. So remove the element, keep the rest. */
+            var el = document.getElementById('topo-trend-path');
+            if (el) {
+                var parts = String(el.value || '').split(',').map(function (s) {
+                    return s.trim();
+                }).filter(function (s) { return !!s; });
+                var kept = parts.filter(function (s) { return s !== String(p); });
+                if (kept.length !== parts.length) el.value = kept.join(',');
+            }
+        }
+        _reload();
+    }
+    function _esc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+        });
+    }
     var _sugTimer = null;
+    /* The suggester offers FAMILIES. It used to offer up to 25 concrete leaves,
+       which on a 30-pair chip meant 25 rows of the same parameter differing
+       only by the pair id — and each click charted one line, which is exactly
+       the "click it again for every single qubit" the customer reported. Each
+       row now says how many entities it covers, and clicking it charts them
+       all. */
     function suggest(q) {
         clearTimeout(_sugTimer);
         var box = document.getElementById('topo-trend-suggest');
@@ -4063,12 +4148,19 @@ window.ChipTrends = (function () {
                 .then(function (rows) {
                     if (!rows || !rows.length) { box.hidden = true; return; }
                     box.innerHTML = rows.map(function (r) {
-                        var p = (typeof r === 'string') ? r : (r.path || r.dot_path || '');
+                        var isStr = (typeof r === 'string');
+                        var p = isStr ? r : (r.path || r.dot_path || '');
+                        var label = isStr ? r : (r.label || p);
+                        var n = isStr ? 0 : (r.n || 0);
+                        var noun = (!isStr && r.scope === 'qubit_pairs') ? 'pair' : 'qubit';
+                        var count = (n > 1)
+                            ? '<span class="topo-trend-sug-n"> · ' + n + ' '
+                              + noun + (n === 1 ? '' : 's') + '</span>'
+                            : '';
                         return '<button type="button" class="topo-trend-sug"'
-                             + ' onclick="ChipTrends.setPath(this.textContent)">'
-                             + p.replace(/[&<>"]/g, function (c) {
-                                 return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
-                               }) + '</button>';
+                             + ' data-path="' + _esc(p) + '" title="' + _esc(p) + '"'
+                             + ' onclick="ChipTrends.setPath(this.getAttribute(\'data-path\'))">'
+                             + _esc(label) + count + '</button>';
                     }).join('');
                     box.hidden = false;
                 })
@@ -4243,8 +4335,15 @@ window.ChipTrends = (function () {
             // older generation would draw into whatever now sits at that index.
             // Prefer the box that carries this chart's own metric and fall back
             // to the index only when the markup predates that attribute.
-            var box = c.metric && document.querySelector(
-                '.topo-trend-box[data-trend-metric="' + String(c.metric).replace(/"/g, '\\"') + '"]');
+            // ...and the KIND is part of that identity since the pair fan-out
+            // shipped: a qubit family and a pair family can share a tail, and
+            // the metric alone would draw the pairs into the qubits' box.
+            var _mSel = c.metric && ('.topo-trend-box[data-trend-metric="'
+                        + String(c.metric).replace(/"/g, '\\"') + '"]');
+            var box = _mSel && (
+                (c.kind && document.querySelector(
+                    _mSel + '[data-trend-kind="' + String(c.kind).replace(/"/g, '\\"') + '"]'))
+                || document.querySelector(_mSel));
             var host = (box && box.querySelector('.topo-trend-chart'))
                     || document.getElementById('topo-trend-' + idx);
             if (!host || !c.series || !c.series.length) return;
@@ -4392,6 +4491,6 @@ window.ChipTrends = (function () {
             if (grid) window.PlotHost.observe(grid);
         }
     }
-    return { toggle: toggle, setPath: setPath, suggest: suggest, render: render,
-             setCols: setCols };
+    return { toggle: toggle, togglePath: togglePath, setPath: setPath,
+             suggest: suggest, render: render, setCols: setCols };
 })();

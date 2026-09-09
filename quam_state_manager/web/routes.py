@@ -10294,41 +10294,655 @@ def _trend_metrics_with_data(hm, path: Path, curated: list[str]) -> set[str]:
                    for p in (r.get("values") or []))}
 
 
-def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str]) -> list[dict]:
+# ── customer feedback 2026-09-09: one click charts EVERY entity ───────────
+#
+# "If I search 'interleaved' in the search box I have to click it again for
+#  every single qubit before the trend appears. It should plot ALL pairs / ALL
+#  qubits by default -- the user can toggle series on and off in Plotly
+#  afterwards, which is enough. Whatever the entity is, qubit or pair, the
+#  default is: plot them all."
+#
+# The qubit fan-out was already here; the PAIR fan-out was not, and a pair leaf
+# fell into the "nothing to fan out over" branch and drew exactly one line. On a
+# real 20-qubit chip the change-point index holds 3,735 leaves in 151 families,
+# 46 of them pair-scoped with 30 pairs each -- so on that chip the complaint was
+# 30 clicks per family, and none of the 30 charts said it was one of 30.
+_TREND_ENTITY_ROOTS = {"qubits": "qubit", "qubit_pairs": "pair"}
+
+
+def _trend_family_of(dot_path: str) -> tuple[str, str] | None:
+    """``(scope, tail)`` for an entity-scoped leaf, else None.
+
+    ``qubits.q3.xy.operations.x180.amplitude`` -> ``("qubits", "xy.…")`` and
+    ``qubit_pairs.q1-q2.coupler.interaction_offset`` ->
+    ``("qubit_pairs", "coupler.interaction_offset")``. The entity segment may
+    already be the wildcard ``*`` (what the typeahead now offers), which names
+    the family directly rather than through one arbitrary member of it.
+    """
+    parts = str(dot_path or "").split(".")
+    if len(parts) >= 3 and parts[0] in _TREND_ENTITY_ROOTS and parts[1]:
+        return parts[0], ".".join(parts[2:])
+    return None
+
+
+def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str],
+                       pairs: list[str] | None = None) -> list[dict]:
     """Any numeric leaf, via the docs/83 change-point index.
 
-    A path names ONE qubit (``qubits.q3.xy.operations.x180.amplitude``); the
-    point of this page is every qubit at once, so the qubit segment is swapped
-    across the chip and each concrete path queried. A qubit that never carried
-    the leaf simply contributes no line — absence is not an error.
+    A path names ONE entity (``qubits.q3.xy.operations.x180.amplitude``, or
+    ``qubit_pairs.q1-q2.coupler.interaction_offset``); the point of this page is
+    every entity at once, so the entity segment is swapped across the chip and
+    each concrete path queried. An entity that never carried the leaf simply
+    contributes no line — absence is not an error.
     """
-    parts = dot_path.split(".")
+    fam = _trend_family_of(dot_path)
     out: list[dict] = []
-    if len(parts) >= 3 and parts[0] == "qubits":
-        tmpl, label = parts[:], ".".join(parts[2:])
-        # ONE connection for the whole fan-out. Per-qubit calls spent their time
+    if fam:
+        scope, label = fam
+        kind = _TREND_ENTITY_ROOTS[scope]
+        entities = list(qubits) if scope == "qubits" else list(pairs or [])
+        # ONE connection for the whole fan-out. Per-entity calls spent their time
         # opening and closing SQLite rather than querying it (measured 458 ms
-        # for 20 qubits, scaling with qubit count), which is half a second of a
+        # for 20 qubits, scaling with entity count), which is half a second of a
         # synchronous worker for a page whose whole point is this tier.
-        by_q = {}
-        for q in qubits:
-            tmpl[1] = q
-            by_q[".".join(tmpl)] = q
-        got = hm.leaf_field_series_many(path, list(by_q))
-        for dp, q in by_q.items():
+        by_e = {}
+        for e in entities:
+            by_e[".".join((scope, e, label))] = e
+        got = hm.leaf_field_series_many(path, list(by_e))
+        for dp, e in by_e.items():
             pts = [(r[0], r[1]) for r in (got.get(dp) or [])
                    if isinstance(r[1], (int, float))]
             if pts:
-                out.append({"metric": label, "entity": q, "points": pts})
+                out.append({"metric": label, "entity": e, "kind": kind,
+                            "points": pts})
         return out
-    # Not qubit-scoped (a port, a pair leaf, a top-level key) — one line, and
-    # the path itself is the legend, because there is nothing to fan out over.
+    # Not entity-scoped (a port, a top-level key) — one line, and the path
+    # itself is the legend, because there is nothing to fan out over.
     rows = hm.leaf_field_series(path, dot_path)
     pts = [(r[0], r[1]) for r in (rows or [])
            if isinstance(r[1], (int, float))]
     if pts:
-        out.append({"metric": dot_path, "entity": dot_path.split(".")[-1], "points": pts})
+        out.append({"metric": dot_path, "entity": dot_path.split(".")[-1],
+                    "kind": "", "points": pts})
     return out
+
+
+# The family grouping is done IN SQL (`leaf_index.path_families`), never by
+# folding a LIMITed row list. The old shape pulled 4,000 leaf rows and counted
+# the families inside them, so the badge row's "· N pairs" — the only claim a
+# badge makes about how many entities one press charts — was simply wrong on
+# any chip with more indexed paths than the pull: measured, a real chip's index
+# holds 9,793 paths of which 5,224 are pair-scoped. A cap on FAMILIES is a
+# display choice; a cap that silently changes a count is a wrong number.
+_TRENDS_MAX_FAMILIES = 8        # charted at once; see the trim note
+
+
+# The Overview's 2Q vocabulary, as WHOLE-SEGMENT tests over a family tail.
+#
+# The previous spelling tested substrings (`"standard" in s`, `"bell" in s`)
+# while its own docstring and its pin — named
+# `test_the_2Q_vocabulary_is_segment_matched_not_substring_matched` — claimed
+# segments. The pin passed anyway, because every whole-segment example it fed
+# also satisfies a substring test: a green pin proved nothing about the claim
+# in its own name. These are the spellings the chip files really use
+# (``fidelity.value``, ``gate_fidelity.averaged``,
+# ``macros.<gate>.fidelity.StandardRB.average_gate_fidelity``).
+_TREND_2Q_MEASURED_SEGMENTS = frozenset({
+    "rb", "srb", "irb", "standardrb", "interleavedrb", "randomized_benchmarking",
+    "xeb", "bell", "bell_state", "clifford", "cliffords", "epc", "epg",
+})
+# Suffix forms of the same words — `cz_xeb`, `gate_epc`, `InterleavedRB_alpha`.
+# "alpha" ALONE is not here: `alpha` is the RB exponential's decay base only
+# under an RB parent (`…fidelity.StandardRB.alpha`), and a bare `alpha` segment
+# anywhere else on a chip means nothing of the sort.
+_TREND_2Q_MEASURED_SUFFIXES = ("_rb", "_xeb", "_epc", "_epg", "_alpha",
+                               "_clifford", "_cliffords")
+# Generic scalar field names that carry a fidelity ONLY under a fidelity-naming
+# parent. `macros.cz.xeb.value` is an XEB number, not a fidelity.
+_TREND_FID_CONTEXT_FIELDS = frozenset({"value", "averaged"})
+# The field that IS the level's headline number, so the badge needs no suffix.
+_TREND_FID_HEADLINE = frozenset({"value", "averaged", "fidelity",
+                                 "average_gate_fidelity"})
+
+
+def _names_fidelity(seg: str) -> bool:
+    """Does this ONE segment name a fidelity by itself?"""
+    s = str(seg or "").lower()
+    return s == "fidelity" or s.endswith("_fidelity")
+
+
+def _trend_leaf_kind(tail: str) -> str:
+    """What the LEAF of a family tail carries: ``fidelity`` / ``decay`` /
+    ``error`` / ``load_id`` / ``measured`` / ``""``.
+
+    ONE vocabulary, and it is ``core.query``'s: the leaf name is resolved
+    through :func:`query.fidelity_field_kind`, the same classifier
+    ``_extract_pair_gate_fidelities`` skips run ids with and ``_rb_level``
+    reads the decay base from.
+
+    A tail is judged by what its FINAL segment is, never by whether the word
+    "fidelity" appears anywhere above it. Measured on a real chip's own
+    spellings, the old any-segment test said all three of these were a
+    fidelity: ``macros.cz.fidelity.StandardRB_load_id`` is a RUN IDENTIFIER
+    (values 129 / 457 / 529 / 666), ``…StandardRB.alpha`` is the RB
+    exponential's decay base, ``…StandardRB.error_per_clifford`` is an ERROR.
+    All three were charted, and labelled, as "2Q gate fidelity".
+    """
+    from quam_state_manager.core.query import _rb_level, fidelity_field_kind
+
+    segs = [s for s in str(tail or "").split(".") if s]
+    if not segs:
+        return ""
+    # A list element (`gate_fidelity.0`) carries whatever its parent names.
+    while len(segs) > 1 and segs[-1].isdigit():
+        segs.pop()
+    leaf = segs[-1]
+    above = segs[:-1]
+    kind = fidelity_field_kind(leaf)
+    if kind == "fidelity":
+        # A self-naming field is one anywhere; a generic one needs the context.
+        if _names_fidelity(leaf) or any(_names_fidelity(s) for s in above):
+            return "fidelity"
+        return ""
+    if kind:
+        return kind          # decay / error / load_id — none of them a fidelity
+    if _rb_level(leaf) in ("gate", "clifford", "state"):
+        # `macros.cz.fidelity.InterleavedRB` — the RB name IS the leaf and the
+        # value under it is the fidelity (query's bare-float branch).
+        return "fidelity" if any(_names_fidelity(s) for s in above) else ""
+    if leaf.lower() in _TREND_FID_CONTEXT_FIELDS \
+            and any(_names_fidelity(s) for s in above):
+        return "fidelity"
+    if any(_names_fidelity(s) for s in above):
+        # A NUMBER INSIDE A FIDELITY BLOCK IS A 2Q MEASUREMENT even when no map
+        # knows its leaf name. Narrowing the vocabulary to "the FINAL segment is
+        # a KNOWN fidelity field" fixed the run-id defect and dropped a real
+        # class of 2Q number out of the row entirely: `macros.cz.fidelity.Purity`
+        # got no badge, was not a knob either, and so was not even counted in
+        # the "+N more pair parameters" note — while `query`'s own
+        # `_extract_pair_gate_fidelities` surfaces it as an Overview row and
+        # `core/compare.py` names Purity a 2Q fidelity by hand. It is a
+        # measurement; it is simply not a fidelity anyone here can NAME, so it
+        # is charted and never wears a fidelity title.
+        return "measured"
+    return ""
+
+
+def _is_fidelity_tail(tail: str) -> bool:
+    """Does this family tail's LEAF carry a gate/state FIDELITY?"""
+    return _trend_leaf_kind(tail) == "fidelity"
+
+
+def _trend_rb_segment(tail: str) -> tuple[int, str] | None:
+    """``(index, level)`` of the segment that names an RB experiment, or None.
+
+    ``query.rb_level`` is case-insensitive, which matters here: this module's
+    own segment set is lowercased throughout, so an exact-case lookup made a
+    chip spelling ``standardrb`` a 2Q measurement with no RB level — a badge
+    that knew the number mattered and not what to call it.
+    """
+    from quam_state_manager.core.query import rb_level
+
+    segs = [s for s in str(tail or "").split(".") if s]
+    for i in range(len(segs) - 1, -1, -1):
+        lvl = rb_level(segs[i])
+        if lvl and lvl in _TREND_2Q_LEVEL_LABELS:
+            return i, lvl
+    return None
+
+
+def _is_2q_measurement(tail: str) -> bool:
+    """A 2Q number the Overview REPORTS — a fidelity in any spelling, a Bell
+    state, XEB, a Clifford/RB figure (including the RB decay base and the RB
+    error, which ARE measured, they are simply not fidelities). As opposed to a
+    knob that was set — and as opposed to a RUN IDENTIFIER, which is not a
+    measurement at all.
+    """
+    segs = [s for s in str(tail or "").split(".") if s]
+    if not segs:
+        return False
+    kind = _trend_leaf_kind(tail)
+    if kind == "load_id":
+        # query.py has skipped these since docs/138 ("they rendered as e.g.
+        # 529.0000"); a trend chart of run ids 129 / 457 / 529 / 666 under the
+        # heading "2Q gate fidelity" is the same defect with an axis on it.
+        # The classifier rejects the whole `*_id` FAMILY, so a nested
+        # `load_id` / `run_id` / `dataset_id` is refused here too.
+        return False
+    if kind in ("fidelity", "measured"):
+        return True
+    for seg in segs:
+        s = seg.lower()
+        if s in _TREND_2Q_MEASURED_SEGMENTS or s.endswith(_TREND_2Q_MEASURED_SUFFIXES):
+            return True
+    if _trend_rb_segment(tail):
+        return True
+    return False
+
+
+def _is_2q_knob(tail: str) -> bool:
+    """A CZ macro knob a real chip carries — set, not measured."""
+    segs = [s.lower() for s in str(tail or "").split(".")]
+    for s in segs:
+        if s.startswith("phase_shift") or s.startswith("mutual_flux_bias"):
+            return True
+        if s.endswith("_offset") and "coupler" in segs:
+            return True
+    return False
+
+
+def _is_2q_vocabulary(tail: str) -> bool:
+    """The Overview's 2Q vocabulary: what it reports, plus the knobs behind it."""
+    return _is_2q_measurement(tail) or _is_2q_knob(tail)
+
+
+# Labels for the 2Q chips. Reused, never invented: the RB titles are the
+# Overview tiles' own ("2Q Clifford fid. (SRB)" / "2Q gate fid. (IRB)", pinned
+# against chip-status.js), the level classification is query._RB_LEVEL's, and
+# everything else falls back to chip_health.METRIC_META — the same map the hero
+# map and the threshold editor read, which is what stops a second label
+# mismatch of the kind the customer already reported once.
+_TREND_2Q_FIDELITY_LABEL = "2Q gate fidelity"
+_TREND_2Q_LEVEL_LABELS = {
+    "clifford": "2Q Clifford fid. (SRB)",
+    "gate": "2Q gate fid. (IRB)",
+    "state": "2Q Bell state fid.",
+    "decay": "RB decay α",
+}
+# What a badge says a number IS when it is not a fidelity. An RB run reports a
+# fidelity, a decay base and an error, and all three live under the same
+# `fidelity.<RB>` parent — labelling the last two "2Q Clifford fid. (SRB)" is
+# not a near-miss, it is three badges claiming to be the same number.
+_TREND_2Q_KIND_LABELS = {"decay": "RB decay α", "error": "RB error",
+                         # A number in the block that no map can NAME. It is
+                         # charted (it is a real 2Q measurement) and it says
+                         # so, but it never borrows a fidelity's title.
+                         "measured": "RB number",
+                         # PROVENANCE, and it needs a label of its own even
+                         # though no badge offers it. `_is_2q_measurement`
+                         # refuses the whole `*_id` family, so a run id reaches
+                         # the row on no chip — but the SEARCH BOX charts
+                         # anything the typeahead offers, and the typeahead is
+                         # the raw leaf index. With no entry here the walk fell
+                         # through to the RB LEVEL's label and one click on
+                         # `…fidelity.StandardRB.run_id` drew run identifiers
+                         # 2272–2276 titled "2Q Clifford fid. (SRB) · run_id":
+                         # the badge row was clean and the chart title still
+                         # called a run id a Clifford fidelity.
+                         "load_id": "RB run id"}
+# ...and the same, for a fidelity block that carries no RB name at all
+# (`macros.cz.fidelity.Purity`).
+_TREND_2Q_BLOCK_LABEL = "2Q fidelity block"
+# Short names for the RB experiment a number came from, so a non-fidelity badge
+# can still say WHICH run produced it. The tags are the Overview tiles' own.
+_TREND_2Q_RB_SHORT = {"standardrb": "SRB", "srb": "SRB",
+                      "interleavedrb": "IRB", "irb": "IRB",
+                      "bell_state": "Bell", "bell": "Bell"}
+# The template path offered when the chip has recorded no 2Q fidelity at all.
+# It charts nothing and renders the same honest "Nothing recorded" slot a
+# curated metric with no data renders — the vocabulary stays complete, and the
+# chip says what it has not measured instead of hiding the question.
+_TREND_2Q_FIDELITY_TEMPLATE = "qubit_pairs.*.gate_fidelity"
+# How many chips the 2Q row shows. Whatever it drops, it SAYS it dropped
+# (docs/94: "a tripped cap now renders a visible note") — the first cut sliced
+# silently at 10 and a real chip lost `mutual_flux_bias.*`, one of the knob
+# families the ask named, with nothing on screen to say so.
+#
+# NEVER OFFER MORE BADGES THAN CAN BE CHARTED. At 10 against a chart cap of 8,
+# pressing every badge in the row brought two back `aria-pressed="false"` — the
+# press looked ignored, pressing again reproduced exactly the same trim, and the
+# note told the user to "deselect one to make room" while naming a badge that
+# already rendered as deselected. One slot is left for the search box, which
+# wins the cap by design (it is the most recent deliberate act on the page), so
+# a full row plus a typed family is always exactly chartable.
+_TREND_2Q_MAX_CHIPS = _TRENDS_MAX_FAMILIES - 1
+# …of which this many are RESERVED for the CZ knobs when the chip has any.
+# The ask named `coupler.*_offset`, `mutual_flux_bias.*` and `phase_shift_*`
+# explicitly, and on a chip with RB data they reached the row on no chip at
+# all: measurements were emitted first and unconditionally, and there were
+# always enough of them (several of which were false positives — a run id, an
+# alpha, an error_per_*) to fill every slot. Unused reserved slots go back to
+# the measurements, so a chip with many real 2Q numbers and no knobs is
+# unchanged.
+_TREND_2Q_KNOB_SLOTS = 3
+
+
+def _trend_is_gate_fidelity(tail: str) -> bool:
+    """Is this family THE 2Q gate fidelity, or a Clifford / state / decay number?
+
+    `query._RB_LEVEL`'s own doctrine, applied to a badge: a StandardRB average
+    is a fidelity per CLIFFORD (over 5+ 2Q gates on a real chip, docs/138), so
+    labelling its badge "2Q gate fidelity" names a quantity the chip never
+    measured — the exact Trends/Overview label mismatch a customer already
+    reported once. A tail with no RB level and a plain fidelity spelling IS the
+    gate fidelity, which is what the empty template stands for.
+    """
+    if not _is_fidelity_tail(tail):
+        return False        # a decay base, an error, a run id: not the question
+    rb = _trend_rb_segment(tail)
+    return rb[1] == "gate" if rb else True
+
+
+def _trend_knob_group(tail: str) -> str:
+    """Which KNOB a 2Q knob family is, ignoring which CZ variant carries it.
+
+    A chip with five CZ macro variants carries five copies of
+    `phase_shift_control` and five of `phase_shift_target`, ALL with identical
+    change counts — so a flat cap spent every slot on two knobs and dropped
+    `mutual_flux_bias.*` off the end. Grouping shares the cap out one knob at a
+    time; the PATHS are never merged, because five variants are five different
+    numbers and charting them as one would be the same lie the (metric, kind)
+    dedupe was written to stop.
+    """
+    segs = str(tail or "").split(".")
+    keep = [s for i, s in enumerate(segs)
+            if i == len(segs) - 1 or not s.lower().startswith("cz")]
+    return ".".join(keep)
+
+
+# The three knob FAMILIES the customer ask named, in the order they get a
+# reserved slot, with everything else last. This is a priority over families,
+# not over groups: `coupler.arbitrary_offset`, `coupler.decouple_offset` and
+# `coupler.interaction_offset` are three different groups but ONE family, and
+# letting them take the three reserved slots is exactly how the two other
+# named families kept missing the row.
+_TREND_KNOB_FAMILY_ORDER = ("mutual_flux_bias", "phase_shift",
+                            "coupler_offset", "")
+
+
+def _trend_knob_family(tail: str) -> str:
+    """Which of the ask's three named knob families this is (or ``""``)."""
+    segs = [s.lower() for s in str(tail or "").split(".")]
+    for s in segs:
+        if s.startswith("mutual_flux_bias"):
+            return "mutual_flux_bias"
+    for s in segs:
+        if s.startswith("phase_shift"):
+            return "phase_shift"
+    for s in segs:
+        if s.endswith("_offset") and "coupler" in segs:
+            return "coupler_offset"
+    return ""
+
+
+def _trend_rb_short(seg: str) -> str:
+    """``StandardRB`` -> ``SRB``. An unknown RB name keeps its own spelling."""
+    s = str(seg or "")
+    return _TREND_2Q_RB_SHORT.get(s.lower(), s)
+
+
+def _trend_pair_label(tail: str) -> str:
+    """What a PAIR family chip/chart is called.
+
+    The walk used to stop at the RB-level segment and ignore everything below
+    it, so on a real 21-qubit chip ``StandardRB.alpha``,
+    ``StandardRB.average_gate_fidelity``, ``StandardRB.error_per_2q_layer`` and
+    ``StandardRB.error_per_clifford`` all rendered as one string — six of seven
+    badges in the row carried IDENTICAL labels, and a row of badges you cannot
+    tell apart is a broken control. So the tail below the RB name is part of
+    the name, and a decay base or an error is labelled as what it is rather
+    than as a fidelity.
+    """
+    segs = [s for s in str(tail or "").split(".") if s]
+    if not segs:
+        return str(tail or "")
+    rb = _trend_rb_segment(tail)
+    if rb:
+        i, lvl = rb
+        rest = segs[i + 1:]
+        kind = _trend_leaf_kind(tail)
+        if not rest:
+            # The RB name IS the leaf: `…fidelity.InterleavedRB_alpha` is that
+            # run's decay base, and the run is in the name.
+            if lvl == "decay" and segs[i].lower().endswith("_alpha"):
+                return (_TREND_2Q_KIND_LABELS["decay"] + " ("
+                        + _trend_rb_short(segs[i][:-len("_alpha")]) + ")")
+            return _TREND_2Q_LEVEL_LABELS[lvl]
+        leaf = ".".join(rest)
+        head = _TREND_2Q_KIND_LABELS.get(kind)
+        if head:
+            # "RB decay α (SRB)" / "RB error (SRB) · error_per_clifford" — never
+            # the fidelity title, because neither number is a fidelity.
+            base = head + " (" + _trend_rb_short(segs[i]) + ")"
+            # `…StandardRB.alpha` — the head already says "decay α"; anything
+            # else (`error_per_clifford`, `error_per_2q_layer`) names itself.
+            return base if leaf.lower() == "alpha" else base + " · " + leaf
+        base = _TREND_2Q_LEVEL_LABELS[lvl]
+        if kind == "fidelity" and rest[-1].lower() in _TREND_FID_HEADLINE:
+            return base            # the level's own headline number
+        return base + " · " + leaf
+    if _trend_leaf_kind(tail) == "measured":
+        # Named by its OWN leaf, never by a fidelity title: the block says
+        # what it is, and the leaf says which number in it this is.
+        return _TREND_2Q_BLOCK_LABEL + " · " + segs[-1]
+    for i in range(len(segs) - 1, -1, -1):
+        meta = chip_health.METRIC_META.get(segs[i])
+        if meta:
+            # A LIST leaf is one family per element (`mutual_flux_bias.0`,
+            # `.1`) and they are different numbers — dropping the index would
+            # put two identically labelled badges side by side.
+            rest = segs[i + 1:]
+            if rest and all(s.isdigit() for s in rest):
+                return meta["label"] + " [" + ".".join(rest) + "]"
+            return meta["label"]
+    if _is_fidelity_tail(tail):
+        return _TREND_2Q_FIDELITY_LABEL
+    # No name for it — the tail itself, minus the container word. `macros.` is
+    # where a CZ gate lives, not what the number is, and on a chip with five CZ
+    # variants it was seven characters repeated across every badge in the row.
+    # The full dot-path stays on the element's `title`, so nothing is lost.
+    return tail[len("macros."):] if tail.startswith("macros.") else tail
+
+
+def _trend_pair_labels(tails: list[str]) -> dict[str, str]:
+    """``{tail: label}`` for a whole set of pair families at once, with every
+    collision broken — THE one place a pair family is named.
+
+    Round 3 gave the BADGE ROW a uniqueness guarantee and stopped there, so the
+    CHARTS still collided: pressing two CZ variants of the same StandardRB
+    number opened two charts both titled "2Q Clifford fid. (SRB) · 5 pairs",
+    carrying different data (964–968m vs 973–974m) and distinguishable only by
+    the rotated y-axis text — and neither title matched the badge that opened
+    it. The complaint the guarantee answers ("two controls you cannot tell
+    apart") had simply moved one layer down, to where the numbers are read.
+
+    So the map is computed ONCE over every pair family the page mentions —
+    badges and charted metrics together — and both surfaces look up the same
+    string. A collision is broken by what actually DIFFERS between the
+    colliding tails, never by a counter.
+    """
+    uniq: list[str] = []
+    for t in tails:
+        if t not in uniq:
+            uniq.append(t)
+    base = {t: _trend_pair_label(t) for t in uniq}
+    groups: dict[str, list[str]] = {}
+    for t in uniq:
+        groups.setdefault(base[t], []).append(t)
+    out: dict[str, str] = {}
+    for lbl, ts in groups.items():
+        if len(ts) < 2:
+            out[ts[0]] = lbl
+            continue
+        segs = {t: [s for s in t.split(".") if s] for t in ts}
+        shared = set(segs[ts[0]]).intersection(*[set(segs[t]) for t in ts[1:]])
+        for t in ts:
+            extra = [s for s in segs[t] if s not in shared]
+            out[t] = lbl + " · " + (".".join(extra) if extra else t)
+    # ...and if a tail was a SUBSET of its rival's it has no distinguishing
+    # segment at all, so the whole tail settles it.
+    seen: set[str] = set()
+    for t in uniq:
+        if out[t] in seen:
+            out[t] = out[t] + " · " + t
+        seen.add(out[t])
+    return out
+
+
+def _trend_family_display(dot_path: str,
+                          labels: dict[str, str] | None = None) -> str:
+    """What a charted family is CALLED, for a message about it.
+
+    The same name the badge and the chart title carry, so a trim note names
+    something the user can actually find on screen — which means it must read
+    the caller's COLLISION-BROKEN map, not the raw label. With the raw one, a
+    chip carrying two CZ variants of the same StandardRB number got a trim note
+    saying "…2Q Clifford fid. (SRB) was left off" while the row's two badges
+    read "…· cz_bipolar" and "…· cz_unipolar": the note named a string that
+    appears on no badge, contradicting its own promise that everything it names
+    is a badge the reader can see and deselect.
+    """
+    fam = _trend_family_of(dot_path)
+    if not fam:
+        return str(dot_path or "")
+    if labels and fam[1] in labels:
+        return labels[fam[1]]
+    return _trend_pair_label(fam[1])
+
+
+def _trend_pair_chips(hm, path: Path, active: list[str]) -> tuple[list[dict], int]:
+    """The 2Q / pair badge group, built from what this chip itself has.
+
+    ONE scan of the same index the typeahead uses, folded into families, kept
+    where the tail speaks the Overview's 2Q vocabulary. Returns
+    ``(chips, dropped)`` — a badge row that trims says how much it trimmed,
+    exactly as the chart grid does.
+
+    A 2Q gate-fidelity chip is offered ALWAYS: as the chip's own family when it
+    HAS one, under that family's true name, and as the honest empty template
+    otherwise. Naming a Clifford or Bell-state number "2Q gate fidelity" would
+    be the label mismatch this whole group exists to avoid.
+    """
+    try:
+        # Grouped and counted IN SQL: "· N pairs" is exact, whatever any
+        # display limit is. Folding a LIMITed row list under-counted every
+        # family on a chip with more indexed paths than the pull.
+        rows = hm.leaf_families(path, "qubit_pairs", roots=("qubit_pairs",))
+    except Exception:  # noqa: BLE001
+        logger.debug("pair-family scan failed", exc_info=True)
+        rows = []
+    fams = [f for f in rows
+            if f["scope"] == "qubit_pairs" and _is_2q_vocabulary(f["label"])]
+    # What the Overview REPORTS comes before what was SET. Ranked by change
+    # points alone, a chip with five CZ variants filled the whole row with
+    # phase-shift knobs and pushed its own RB numbers off the end — which is
+    # the opposite of the ask ("a badge for at least the numbers the Overview
+    # panel has").
+    measured = [f for f in fams if _is_2q_measurement(f["label"])]
+    knobs = [f for f in fams if not _is_2q_measurement(f["label"])]
+
+    def _chip(f: dict) -> dict:
+        # `fam` is the family TAIL, carried so the caller can name this badge
+        # out of the same map it names the CHARTS out of — a badge and the
+        # chart it opens must read as the same string.
+        return {"path": f["path"], "fam": f["label"],
+                "label": _trend_pair_label(f["label"]), "n": f["n"]}
+
+    # Whether the QUESTION is answered is a property of the whole row, not of
+    # whichever fidelity family happens to have moved most. Ranked by change
+    # points, a chip running BOTH StandardRB and InterleavedRB — the normal case
+    # for a lab that measures a 2Q gate fidelity at all — made the SRB family
+    # `best`, and SRB is Clifford-level, so the empty template was appended
+    # while the chip's real IRB gate fidelity rendered two badges later in the
+    # SAME row: "Nothing recorded" standing beside the recording. So: ask every
+    # measured fidelity family whether ANY of them is gate-level, and lead the
+    # row with that one when it exists.
+    fids = [f for f in measured if _is_fidelity_tail(f["label"])]
+    gate = next((f for f in fids if _trend_is_gate_fidelity(f["label"])), None)
+    best = gate or (fids[0] if fids else None)
+    chips: list[dict] = []
+    if best:
+        chips.append(_chip(best))
+    if gate is None:
+        # The QUESTION stays on the row even when the chip answers it with
+        # nothing: pressing this charts the same "Nothing recorded" slot a
+        # curated metric with no data renders.
+        chips.append({"path": _TREND_2Q_FIDELITY_TEMPLATE,
+                      "fam": _TREND_2Q_FIDELITY_TEMPLATE.split(".*.", 1)[1],
+                      "label": _TREND_2Q_FIDELITY_LABEL, "n": 0})
+    chips += [_chip(f) for f in measured if f is not best]
+    # The knobs share the cap out one KNOB NAME at a time. Ten identical-change
+    # `cz_<variant>.phase_shift_*` families would otherwise take every slot and
+    # `mutual_flux_bias.*` — named in the ask — would never appear.
+    groups: dict[str, list[dict]] = {}
+    for f in knobs:
+        groups.setdefault(_trend_knob_group(f["label"]), []).append(f)
+    # ...and the round-robin is TWO-LEVEL, because sharing the cap out one
+    # knob NAME at a time is not the same as sharing it out one knob FAMILY at
+    # a time. Measured on the real 30-pair chip: every knob family has the
+    # identical change count (30), so the family order collapses to
+    # alphabetical and the first three groups were `coupler.arbitrary_offset`,
+    # `coupler.decouple_offset`, `coupler.interaction_offset` — they took all
+    # three reserved slots, and `mutual_flux_bias.*` and `phase_shift_*`, two
+    # of the three families the ask named BY NAME, still reached the row on no
+    # chip that also has RB data. The reservation was real; it was being spent
+    # three times on one family.
+    fam_queues: dict[str, list[list[dict]]] = {}
+    for k, g in groups.items():
+        fam_queues.setdefault(_trend_knob_family(k), []).append(g)
+
+    def _round_robin(seqs: list[list]) -> list:
+        out: list = []
+        seqs = [list(s) for s in seqs]
+        while any(seqs):
+            for s in seqs:
+                if s:
+                    out.append(s.pop(0))
+        return out
+
+    knob_chips: list[dict] = [
+        _chip(f) for f in _round_robin(
+            [_round_robin(fam_queues[fam])
+             for fam in _TREND_KNOB_FAMILY_ORDER if fam in fam_queues])]
+
+    # One path, one badge. `togglePath` resolves the button it lights by
+    # `[data-trend-path="…"]`, so two badges sharing a path means pressing the
+    # second flips the FIRST one's state and the pressed badge visibly does
+    # nothing — a dead control. The gate-level rule above removes the case that
+    # produced one (a bare `gate_fidelity` tail IS the template's path); this
+    # keeps any future overlap from reaching the row.
+    _seen_paths: set[str] = set()
+
+    def _fresh(seq: list[dict]) -> list[dict]:
+        return [c for c in seq
+                if not (c["path"] in _seen_paths or _seen_paths.add(c["path"]))]
+
+    chips = _fresh(chips)
+    knob_chips = _fresh(knob_chips)
+
+    # THE KNOBS GET RESERVED SLOTS. "Measured before set" is the right ORDER,
+    # but as a strict one it was also a strict exclusion: measured families are
+    # emitted first and unconditionally, so on a chip with RB data there were
+    # always enough of them to fill every slot and `coupler.*_offset`,
+    # `mutual_flux_bias.*` and `phase_shift_*` — the three the ask named by
+    # name — reached the row on no such chip. So the measured group is CAPPED
+    # while any knob is waiting, and whatever the knobs do not use is given
+    # straight back to the measurements.
+    offered = chips + knob_chips
+    # The reservation is FLAT and the backfill is what gives an unused slot
+    # back. Sizing it as `min(len(knob_chips), SLOTS)` instead reads as the
+    # same rule and makes the backfill unreachable — dead code that a mutation
+    # cannot move, which is a pin that proves nothing.
+    reserve = _TREND_2Q_KNOB_SLOTS
+    head = chips[:max(0, _TREND_2Q_MAX_CHIPS - reserve)]
+    took = knob_chips[:max(0, _TREND_2Q_MAX_CHIPS - len(head))]
+    shown = head + took
+    left = chips[len(head):] + knob_chips[len(took):]
+    shown += left[:max(0, _TREND_2Q_MAX_CHIPS - len(shown))]
+    dropped = max(0, len(offered) - len(shown))
+
+    # NO TWO BADGES MAY READ THE SAME. On a real 21-qubit chip six of seven
+    # badges carried identical labels, because the label walk stopped at the
+    # RB-level segment: a row of controls you cannot tell apart is broken
+    # whatever each one charts. The GUARANTEE is still needed — a chip with
+    # five CZ variants carries five StandardRB blocks whose tails differ only
+    # in the variant — but it now lives in `_trend_pair_labels`, which the
+    # CALLER runs over the badges and the charted metrics TOGETHER: the badge
+    # row was unique while the two charts it opened were both titled
+    # "2Q Clifford fid. (SRB)", so the defect had only moved down a layer.
+    for c in shown:
+        c["active"] = c["path"] in active
+    return shown, dropped
 
 
 # Trends-only display-name overrides (chip_health.METRIC_META's "Readout
@@ -10338,6 +10952,20 @@ _TREND_LABEL_OVERRIDES: dict[str, str] = {
     "assignment_fidelity": "Readout Fidelity (GE)",
     "assignment_fidelity_gef": "Readout Fidelity (GEF)",
 }
+
+
+def _trend_metric_label(metric: str | None) -> str:
+    """What a CURATED metric is called on this page — the same string the pill
+    and the chart title carry, so a message about a chart names the chart."""
+    m = str(metric or "")
+    if not m:
+        return ""
+    if m in _TREND_LABEL_OVERRIDES:
+        return _TREND_LABEL_OVERRIDES[m]
+    try:
+        return chip_health.metric_meta(m)["label"]
+    except Exception:  # noqa: BLE001
+        return m
 
 
 @bp.route("/topology/trends")
@@ -10356,8 +10984,41 @@ def topology_trends():
     path = Path(ctx["path"])
     store = _store()
     qubits = list(store.qubit_names) if store else []
+    pairs = list(store.qubit_pair_names) if store else []
 
     curated = list(DEFAULT_TRACKED_PROPERTIES)
+    # ONE ?path= could never carry a badge AND something typed at the same
+    # time, so the 2Q badges below (which are template paths, tier 2, needing
+    # no new index) would each have evicted whatever was in the box. ?paths= is
+    # the comma-separated form; ?path= keeps working and means exactly a
+    # one-element ?paths=, so every existing link and pin still resolves.
+    #
+    # The BOX IS READ FIRST, deliberately. Read the other way round, eight
+    # badges pressed minutes ago filled the cap and the family the user had
+    # just typed and pressed Enter on was the one discarded — while the box
+    # still displayed it and the note told them to deselect something. A typed
+    # query is the most recent deliberate act on this page, so it wins the tie
+    # and a BADGE is what gets named in the trim note.
+    extras: list[str] = []
+    for chunk in (request.args.get("path") or "", request.args.get("paths") or ""):
+        for p in chunk.split(","):
+            p = p.strip()
+            if p and p not in extras:
+                extras.append(p)
+    families_trimmed = 0
+    trimmed_paths: list[str] = []
+    if len(extras) > _TRENDS_MAX_FAMILIES:
+        trimmed_paths = extras[_TRENDS_MAX_FAMILIES:]
+        families_trimmed = len(trimmed_paths)
+        extras = extras[:_TRENDS_MAX_FAMILIES]
+    # The 2Q / pair group. Built from the chip's own pair families, so a chip
+    # that records XEB or a Bell state gets those badges by itself; the gate
+    # fidelity chip is always there, empty slot included. Built HERE, before
+    # the charts, so both can be named out of ONE label map below.
+    pair_chips, pair_chips_more = (
+        _trend_pair_chips(hm, path, extras) if pairs else ([], 0))
+    # ``?path=`` is ALSO what the search box shows: the badges ride ``?paths=``,
+    # so a badge press can never evict what the user typed (and vice versa).
     extra = (request.args.get("path") or "").strip()
     sel = [m for m in (request.args.get("metrics") or "").split(",") if m.strip()]
     # Default only on a BARE request. Turning every chip off is a choice, and
@@ -10380,54 +11041,146 @@ def topology_trends():
     sel = [m for m in sel if m in curated][:8]
 
     series = _trend_series_curated(hm, path, sel) if sel else []
-    extra_series = _trend_series_leaf(hm, path, extra, qubits) if extra else []
-    series += extra_series
+    for _s in series:
+        _s.setdefault("kind", "qubit")
+    extra_series_by_path: dict[str, list[dict]] = {}
+    for _p in extras:
+        _es = _trend_series_leaf(hm, path, _p, qubits, pairs)
+        extra_series_by_path[_p] = _es
+        series += _es
 
-    # The same parameter must appear ONCE per qubit. A typed path like
+    # The same parameter must appear ONCE per entity. A typed path like
     # `qubits.q1.f_01` derives the label `f_01`, which is also a curated metric
     # name, so the two tiers landed in one bucket and the chart drew every qubit
     # twice and titled itself "f_01 · 40 qubits" on a 20-qubit chip. The curated
     # tier is the denser series, so it wins; the leaf tier fills what it lacks.
+    # The KIND is part of the identity: a qubit-scoped and a pair-scoped family
+    # can share a tail (`gate_fidelity.averaged` exists on both), and folding
+    # 20 qubits and 30 pairs into one chart is a different lie from the one
+    # this dedupe was written to stop.
     _seen_series: set = set()
     _deduped = []
     for _s in series:
-        _k = (_s.get("metric"), _s.get("entity"))
+        _k = (_s.get("metric"), _s.get("kind"), _s.get("entity"))
         if _k in _seen_series:
             continue
         _seen_series.add(_k)
         _deduped.append(_s)
     series = _deduped
 
+    series_trimmed = 0
     if len(series) > _TRENDS_MAX_SERIES:
+        series_trimmed = len(series) - _TRENDS_MAX_SERIES
         series = series[:_TRENDS_MAX_SERIES]
 
-    # Group into one chart per metric, preserving the requested order so the
-    # page does not reshuffle as data arrives.
-    order: list[str] = []
-    by_metric: dict[str, list[dict]] = {}
+    # Group into one chart per (metric, kind), preserving the requested order so
+    # the page does not reshuffle as data arrives.
+    order: list[tuple[str, str]] = []
+    by_metric: dict[tuple[str, str], list[dict]] = {}
     for s in series:
-        by_metric.setdefault(s["metric"], [])
-        if s["metric"] not in order:
-            order.append(s["metric"])
-        by_metric[s["metric"]].append(s)
-    charts = [{"metric": m, "series": by_metric[m],
-               "n_entities": len(by_metric[m]), "unit": _trend_unit(m)} for m in order]
+        key = (s["metric"], s.get("kind") or "")
+        by_metric.setdefault(key, [])
+        if key not in order:
+            order.append(key)
+        by_metric[key].append(s)
+
+    def _chart(metric: str, kind: str, rows: list[dict], typed: str = "") -> dict:
+        return {"metric": metric, "kind": kind, "series": rows,
+                "n_entities": len(rows), "unit": _trend_unit(metric),
+                "label": _trend_pair_label(metric) if kind == "pair" else "",
+                "typed": typed}
+
+    charts = [_chart(m, k, by_metric[(m, k)]) for (m, k) in order]
     # A selected metric with NO series still gets a chart slot so the page can
     # say "nothing recorded yet" for it, instead of quietly showing fewer
     # charts than the user asked for.
     for m in sel:
-        if m not in by_metric:
-            charts.append({"metric": m, "series": [], "n_entities": 0,
-                           "unit": _trend_unit(m)})
-    # ...and the same courtesy for a TYPED path. A path the index cannot chart
-    # produced no series, so nothing was appended and the section came back
+        if (m, "qubit") not in by_metric:
+            charts.append(_chart(m, "qubit", []))
+    # ...and the same courtesy for a TYPED path — including a 2Q badge on a chip
+    # that has recorded no 2Q fidelity. A path the index cannot chart produced
+    # no series, so nothing was appended and the section came back
     # byte-identical: no chart, no message, no error, the box still holding what
     # the user typed. An empty slot renders the template's honest "Nothing
-    # recorded" line against the path itself, which at least distinguishes
+    # recorded" line against WHAT WAS TYPED, which at least distinguishes
     # "asked and found nothing" from "the box ignored you".
-    if extra and not extra_series:
-        charts.append({"metric": extra, "series": [], "n_entities": 0,
-                       "unit": _trend_unit(extra)})
+    for _p in extras:
+        if extra_series_by_path.get(_p):
+            continue
+        _fam = _trend_family_of(_p)
+        _kind = _TREND_ENTITY_ROOTS[_fam[0]] if _fam else ""
+        charts.append(_chart(_fam[1] if _fam else _p, _kind, [], typed=_p))
+
+    # ONE NAME FOR ONE FAMILY, on the badge and on the chart it opens. The
+    # map is computed over the badges and the charted pair metrics TOGETHER,
+    # so a collision broken on the row is broken the same way on the chart —
+    # and a badge's label IS its chart's title, whether one of the colliding
+    # pair was pressed or both.
+    # ...and the TRIMMED families are in the map too, even though they have
+    # neither a badge nor a chart: the trim note names one of them, and a note
+    # naming a family by a string that appears nowhere on the row is the same
+    # defect one message further out.
+    _trimmed_fams = [f[1] for f in
+                     (_trend_family_of(p) for p in trimmed_paths)
+                     if f and f[0] == "qubit_pairs"]
+    _pair_labels = _trend_pair_labels(
+        [c.get("fam") or "" for c in pair_chips if c.get("fam")]
+        + [c["metric"] for c in charts if c.get("kind") == "pair"]
+        + _trimmed_fams)
+    for c in pair_chips:
+        if c.get("fam") in _pair_labels:
+            c["label"] = _pair_labels[c["fam"]]
+    for c in charts:
+        if c.get("kind") == "pair" and c["metric"] in _pair_labels:
+            c["label"] = _pair_labels[c["metric"]]
+
+    # ONE POINT IS NOT A TREND. Measured through this route on a real 5-qubit
+    # chip: `qubit_pairs.*.mutual_flux_bias.0` and
+    # `qubit_pairs.*.macros.cz_bipolar.phase_shift_control` each return 4 series
+    # of exactly 1 point, all four at the same snapshot and all at 0.0 — and
+    # Plotly, handed that, auto-ranges x to a ~2 ms window and draws a time axis
+    # spanning two milliseconds. That reads as a broken plot, and it is worse
+    # than nothing: it IMPLIES a measurement over time that was never made. So
+    # the slot says what is true — the value exists, it just has not moved. The
+    # badge is never hidden for it: the family is real, and hiding it would
+    # answer a question the user did not ask.
+    for c in charts:
+        rows = c.get("series") or []
+        if not rows or any(len(r.get("points") or []) > 1 for r in rows):
+            continue
+        c["series"] = []
+        # Name it the way the TITLE above it names it, so the note is about
+        # something the reader can see (`assignment_fidelity` renders as
+        # "Readout Fidelity (GE)" and a note calling it by its column name
+        # would read as being about a different number).
+        _what = (c.get("label") or _trend_metric_label(c.get("metric"))
+                 or c.get("typed") or "")
+        _n = len(rows)
+        _word = ("pair" if c.get("kind") == "pair" else
+                 "qubit" if c.get("kind") == "qubit" else "entity")
+        c["note"] = (f"One value recorded for {_what} on {_n} "
+                     f"{_word}{'' if _n == 1 else 's'} — no trend yet. "
+                     "A second, different value draws the line.")
+
+    # Whatever was trimmed, the section SAYS it was trimmed. A cap that quietly
+    # drops families is indistinguishable from a badge that does not work.
+    trim_note = ""
+    if families_trimmed:
+        # NAME the first one dropped. "3 more were left off" leaves the user
+        # guessing which three, and the answer is not the one they typed —
+        # that one now wins the cap, so everything named here is a badge they
+        # can see and deselect.
+        _first = _trend_family_display(trimmed_paths[0], _pair_labels)
+        _rest = (f" and {families_trimmed - 1} more"
+                 if families_trimmed > 1 else "")
+        trim_note = (f"Charting the first {_TRENDS_MAX_FAMILIES} parameter "
+                     f"families — {_first}{_rest} "
+                     f"{'was' if families_trimmed == 1 else 'were'} left off. "
+                     f"Deselect one to make room.")
+    if series_trimmed:
+        trim_note = ((trim_note + " ") if trim_note else "") + (
+            f"Showing the first {_TRENDS_MAX_SERIES} lines — "
+            f"{series_trimmed} more are not drawn.")
 
     # Display labels for the metric pills + chart titles — the raw property
     # key stays the data.trend-metric/JS-toggle value (SQLite column name,
@@ -10436,7 +11189,7 @@ def topology_trends():
     # already uses for this exact metric — a customer-reported mismatch
     # ("assignment_fidelity" read as a broken/empty metric on Trends while
     # the same number shows real values as "IQ Blob (%)" elsewhere).
-    metric_labels = {m: chip_health.metric_meta(m)["label"] for m in curated}
+    metric_labels = {m: _trend_metric_label(m) for m in curated}
     metric_labels.update(_TREND_LABEL_OVERRIDES)
     # Only the snapshots this response actually DRAWS. The charts are change
     # points (``compress="changes"``), so a chip can hold hundreds of snapshots
@@ -10446,20 +11199,32 @@ def topology_trends():
     charted = {str(p[0]) for c in charts for s in c["series"] for p in s["points"]}
     return render_template("_topo_trends.html", charts=charts, curated=curated,
                            selected=sel, extra=extra, no_chip=False,
-                           metric_labels=metric_labels,
+                           metric_labels=metric_labels, pair_chips=pair_chips,
+                           pair_chips_more=pair_chips_more,
+                           trim_note=trim_note,
                            snaps=_snapshot_provenance_map(hm, path, only=charted),
                            snapshots=len(hm.list_snapshots(path)))
 
 
 @bp.route("/topology/trends/paths")
 def topology_trends_paths():
-    """Typeahead over every numeric leaf the chip has ever recorded."""
+    """Typeahead over every numeric leaf the chip has ever recorded — offered
+    as FAMILIES, not as instances.
+
+    Customer, 2026-09-09: *"if I search 'interleaved' in the search box I have
+    to click it again for every single qubit before the trend appears."* The
+    old shape is why: 25 concrete leaves came back, differing only by the pair
+    id, so the list was 25 rows of the same parameter and each one charted one
+    line. One row per ``(scope, tail)`` family, carrying how many entities it
+    covers, makes the click charting ALL of them the only click there is.
+    """
     q = (request.args.get("q") or "").strip()
     ctx = _active_ctx()
     if not q or not ctx or not ctx.get("path"):
         return jsonify([])
-    hits = _history().leaf_search(Path(ctx["path"]), q, limit=25)
-    return jsonify(hits)
+    # Grouped in SQL, so each row's entity count is exact and the 25 is a limit
+    # on FAMILIES rather than on the rows a count was folded from.
+    return jsonify(_history().leaf_families(Path(ctx["path"]), q, limit=25))
 
 
 # ── docs/120 item 10 — the working-state version, from the top bar ────────
