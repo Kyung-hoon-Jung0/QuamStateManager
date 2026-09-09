@@ -352,11 +352,66 @@ _SHORT_FAMILY = {
     "cz_conditional_phase": "CZ phase", "drag": "DRAG",
 }
 _SHORT_BY_NODE = [
-    ("time_of_flight", "ToF"), ("readout_freq", "RO freq"), ("readout_frequency", "RO freq"), ("readout_weights", "RO weights"),
-    ("readout_power", "RO power"), ("readout_amp", "RO amp"), ("twpa", "TWPA"), ("ramsey_vs_flux", "Ramsey/flux"),
-    ("rabi_chevron", "Rabi chevron"), ("cz_chevron", "CZ chevron"), ("crosstalk", "Crosstalk"), ("drag", "DRAG"),
-    ("iq_blob", "IQ blobs"), ("t2echo", "Echo"), ("echo", "Echo"), ("t1", "T1"), ("cz", "CZ"), ("rabi", "Rabi"),
-    ("ramsey", "Ramsey"), ("qubit_spec", "Qubit spec"), ("resonator_spec", "Res spec"),
+    # Scanned IN ORDER, first match wins, so every SPECIFIC family sits above
+    # the generic one it would otherwise be swallowed by. The list is derived
+    # from the 165 distinct node names this app has actually recorded across
+    # the archives on this machine -- not invented. Before the specific rows
+    # existed, five different resonator families all read "Res spec" and an
+    # interleaved two-qubit RB run read "CZ", which is exactly the information
+    # a Trends hover exists to give.
+    ("time_of_flight", "ToF"),
+    # -- spectroscopy: the sweep variants before the plain ones
+    ("resonator_spectroscopy_vs_coupler_flux", "Res/coupler"),
+    ("resonator_spectroscopy_vs_power", "Res/power"),
+    ("resonator_spectroscopy_vs_flux", "Res/flux"),
+    ("qubit_spectroscopy_vs_coupler_flux", "Qubit/coupler"),
+    ("qubit_spectroscopy_vs_power", "Qubit/power"),
+    ("qubit_spectroscopy_vs_flux", "Qubit/flux"),
+    ("qubit_spectroscopy_e_to_f", "Qubit spec ef"),
+    ("qubit_spectroscopy_ef", "Qubit spec ef"),
+    # -- readout
+    ("readout_freq", "RO freq"), ("readout_frequency", "RO freq"),
+    ("readout_weights", "RO weights"), ("readout_power", "RO power"),
+    ("readout_amp", "RO amp"), ("readout_chain", "RO chain"),
+    ("iq_blob", "IQ blobs"), ("twpa", "TWPA"),
+    ("fullscale_dbm", "FSP adjust"),
+    # -- benchmarking. "interleaved" before "standard" before the bare word,
+    # and all three above ("cz", "CZ") -- an interleaved CZ RB run is an RB
+    # measurement, not a CZ calibration.
+    ("two_qubit_interleaved", "2Q IRB"), ("interleaved_cz_rb", "2Q IRB"),
+    ("two_qubit_standard_rb", "2Q SRB"),
+    ("two_qubit_confusion", "2Q confusion"), ("2q_confusion", "2Q confusion"),
+    ("single_qubit_randomized_benchmarking_interleaved", "1Q IRB"),
+    ("single_qubit_randomized_benchmarking", "1Q RB"),
+    ("rb_success_exit", "RB exit"), ("standard_rb", "SRB"),
+    ("xeb", "XEB"), ("bell_state", "Bell state"), ("all_xy", "AllXY"),
+    # -- coherence, sweep variants first
+    ("t1_vs_flux", "T1/flux"), ("t2star_vs_flux", "T2*/flux"),
+    ("echo_vs_flux", "Echo/flux"),
+    ("ramsey_vs_coupler_flux", "Ramsey/coupler"), ("ramsey_vs_flux", "Ramsey/flux"),
+    # -- flux / distortion / delays
+    ("cryoscope", "Cryoscope"),
+    ("coupler_flux_long_distortion", "Coupler flux long"),
+    ("coupler_flux_short_distortion", "Coupler flux short"),
+    ("flux_long_distortion", "Flux long"), ("flux_short_distortion", "Flux short"),
+    ("flux_amplitude_to_frequency", "Flux to freq"),
+    ("coupler_zero_point", "Coupler zero"),
+    ("xy_coupler_delay", "XY-coupler delay"), ("xyz_delay", "XYZ delay"),
+    # -- two-qubit gate work
+    ("rabi_chevron", "Rabi chevron"), ("cz_chevron", "CZ chevron"),
+    ("chevron_11_02", "CZ chevron"), ("chevron_1102", "CZ chevron"),
+    ("leakage", "Leakage"), ("jazz", "JAZZ"), ("snz", "SNZ"), ("zz_off", "ZZ off"),
+    ("phase_compensation", "CZ phase comp"),
+    ("conditional_phase", "CZ phase"),
+    # -- cross-resonance: these carry "rabi" in their names and were reading
+    # as plain Rabi runs, which is a different experiment on a different chip.
+    ("cr_hamiltonian", "CR tomography"), ("cr_correction", "CR phase"),
+    ("cr_pulse_rabi", "CR rabi"), ("cr_time_rabi", "CR rabi"),
+    ("crosstalk", "Crosstalk"), ("drag", "DRAG"),
+    # -- the generic tail
+    ("t2echo", "Echo"), ("echo", "Echo"), ("t1", "T1"), ("cz", "CZ"),
+    ("rabi", "Rabi"), ("ramsey", "Ramsey"),
+    ("qubit_spec", "Qubit spec"), ("resonator_spec", "Res spec"),
 ]
 
 

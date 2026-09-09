@@ -262,3 +262,58 @@ class TestWriteCards:
         # cards interleave by time: the 14:22 write sits after the 14:05 run
         order = [(c["kind"], c.get("run_id") or c.get("id")) for c in d["cards"]]
         assert order.index(("run", 104)) < order.index(("write", writes[0]["id"]))
+
+
+class TestTheHoverNamesTheRightExperiment:
+    """The short node name a Trends hover shows must not collapse two different
+    experiments into one word.
+
+    Every name below is a real node name taken from the archives on the
+    machine this shipped from (165 distinct ones were enumerated). Before the
+    specific rows were added to ``_SHORT_BY_NODE``, the five resonator
+    families all read "Res spec", the four qubit-spectroscopy families all read
+    "Qubit spec", and an interleaved two-qubit RB run read "CZ" -- which is a
+    different experiment on a different pair of qubits. The list is scanned in
+    order and the first needle wins, so this pins the ORDER, not just the
+    vocabulary: each assertion below fails if its row is moved beneath the
+    generic one it sits above.
+    """
+
+    def test_the_sweep_variants_are_not_the_plain_run(self):
+        f = story._short_family
+        assert f(None, None, "03_resonator_spectroscopy_single") == "Res spec"
+        assert f(None, None, "05_resonator_spectroscopy_vs_power") == "Res/power"
+        assert f(None, None, "06_resonator_spectroscopy_vs_flux") == "Res/flux"
+        assert f(None, None, "07_resonator_spectroscopy_vs_coupler_flux") == "Res/coupler"
+        assert f(None, None, "08_qubit_spectroscopy") == "Qubit spec"
+        assert f(None, None, "08b_qubit_spectroscopy_vs_power") == "Qubit/power"
+        assert f(None, None, "09_qubit_spectroscopy_vs_flux") == "Qubit/flux"
+        assert f(None, None, "10_qubit_spectroscopy_vs_coupler_flux") == "Qubit/coupler"
+        assert f(None, None, "10b_ramsey_vs_coupler_flux") == "Ramsey/coupler"
+        assert f(None, None, "17a_ramsey_vs_flux_calibration") == "Ramsey/flux"
+        assert f(None, None, "25b_T1_vs_flux") == "T1/flux"
+        assert f(None, None, "26b_echo_vs_flux") == "Echo/flux"
+
+    def test_a_benchmarking_run_is_not_a_gate_calibration(self):
+        f = story._short_family
+        # These four all contain "cz" or "rb" and used to land on the generic row.
+        assert f(None, None, "37b_two_qubit_interleaved_cz_rb") == "2Q IRB"
+        assert f(None, None, "37_two_qubit_standard_rb") == "2Q SRB"
+        assert f(None, None, "27_single_qubit_randomized_benchmarking") == "1Q RB"
+        assert f(None, None, "27b_single_qubit_randomized_benchmarking_interleaved") == "1Q IRB"
+        # The vocabulary the customer named for Trends badges (2026-09-09).
+        assert f(None, None, "24_Bell_State_Tomography") == "Bell state"
+        assert f(None, None, "71a_XEB_charge_stabilized") == "XEB"
+        assert f(None, None, "34_two_qubit_confusion_matrix") == "2Q confusion"
+        # A cross-resonance run carries "rabi" in its name and is not a Rabi.
+        assert f(None, None, "33_CR_pulse_rabi_QST") == "CR rabi"
+        assert f(None, None, "31a_CR_hamiltonian_tomography_vs_amp") == "CR tomography"
+        # ...while a plain Rabi still reads as one.
+        assert f(None, None, "11_power_rabi") == "Rabi"
+        assert f(None, None, "11b_rabi_chevron") == "Rabi chevron"
+
+    def test_an_unknown_node_still_degrades_honestly(self):
+        f = story._short_family
+        # No needle matches: drop the numeric prefix, never guess a family.
+        assert f(None, None, "44_something_nobody_has_shipped") == "something nobody …"
+        assert f(None, None, None) == ""
