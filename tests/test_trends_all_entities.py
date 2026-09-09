@@ -202,27 +202,44 @@ class TestTheTypeaheadOffersFamilies:
         """The grouping is SQL now (`leaf_index.path_families`), so this drives
         a real index rather than a pure fold — same contract: one row per
         (scope, tail), ranked by total change points then naturally, a
-        non-entity path staying a single row."""
+        non-entity path staying a single row.
+
+        The natural half of that claim needs a TIE to be visible at all. The
+        first spelling of this pin used labels 'a' / 'b' / 'ports.con1.offset'
+        with change counts 9 / 4 / 2, so the change-point key alone fully
+        ordered every row and `natural_key` was never reached: mutating it to a
+        plain byte sort came back GREEN. So two families now carry numbers in
+        their labels AND the same change count, which is the only shape that
+        can tell the two orders apart (byte order puts `.10` before `.2`).
+        """
         import sqlite3
 
         from quam_state_manager.core import leaf_index
 
         conn = sqlite3.connect(":memory:")
         leaf_index.ensure_schema(conn)
-        for i, (p, n) in enumerate([("qubits.q10.a", 1), ("qubits.q2.a", 1),
-                                    ("qubits.q1.b", 9),
-                                    ("ports.con1.offset", 4)]):
+        for i, (p, n) in enumerate([
+                ("qubits.q10.a", 1), ("qubits.q2.a", 1),
+                ("qubits.q1.b", 9),
+                ("ports.con1.offset", 4),
+                # tied at 2, and only natural order puts .2 before .10
+                ("qubit_pairs.p1.mutual_flux_bias.10", 2),
+                ("qubit_pairs.p1.mutual_flux_bias.2", 2)]):
             conn.execute("INSERT INTO leaf_paths (id, path) VALUES (?, ?)", (i, p))
             for s in range(n):
                 conn.execute("INSERT INTO leaf_cp (path_id, snap_id, value)"
                              " VALUES (?, ?, ?)", (i, s, float(s)))
         rows = leaf_index.path_families(conn)
         assert [r["path"] for r in rows] == [
-            "qubits.*.b", "ports.con1.offset", "qubits.*.a"]
-        assert [r["n"] for r in rows] == [1, 1, 2]
+            "qubits.*.b", "ports.con1.offset", "qubits.*.a",
+            "qubit_pairs.*.mutual_flux_bias.2",
+            "qubit_pairs.*.mutual_flux_bias.10"], [r["path"] for r in rows]
+        assert [r["n"] for r in rows] == [1, 1, 2, 1, 1]
         assert rows[2]["changes"] == 2, "a family's changes are its members' sum"
         assert rows[1]["scope"] == "", "a non-entity path stays a single row"
         assert rows[1]["n"] == 1
+        # the tie is real, so the ORDER of the last two is decided by the key
+        assert rows[3]["changes"] == rows[4]["changes"] == 2, rows[3:]
         conn.close()
 
     def test_an_empty_query_still_returns_nothing(self, client):
@@ -1099,6 +1116,176 @@ class TestReviewRound3:
         assert pts[0] == 1 and pts[-1] > 1, pts
         assert charts[0]["series"], "one moving pair is still a trend"
         assert "no trend yet" not in body
+
+
+class TestReviewRound31:
+    """Round 3.1: what the review of round 3's own fixes found.
+
+    Every one of these was reproduced against the shipped code before its fix
+    (or, for the two pin-gap findings, against a mutation of it).
+    """
+
+    # ① The badge row was unique; the CHARTS still collided.
+
+    def test_two_variants_open_two_charts_that_read_APART(self, tmp_path):
+        """Round 3 gave the BADGES a uniqueness guarantee and stopped there.
+        Pressing both CZ variants of the same StandardRB number opened two
+        charts BOTH titled '2Q Clifford fid. (SRB)', carrying different data
+        and distinguishable only by the rotated y-axis text — the complaint
+        ('two controls you cannot tell apart') had moved one layer down, to
+        where the numbers are actually read."""
+        c, _ = _rb_chip(tmp_path, "twochart",
+                        gates=("cz_bipolar", "cz_unipolar"))
+        badges = _rb_badges = _badges(c.get("/topology/trends").get_data(
+            as_text=True))
+        srb = [(p, lbl) for p, lbl in _rb_badges
+               if p.endswith("StandardRB.average_gate_fidelity")]
+        assert len(srb) == 2, badges
+        body = c.get("/topology/trends?metrics=&paths="
+                     + ",".join(p for p, _ in srb)).get_data(as_text=True)
+        titles = _titles(body)
+        assert len(titles) == 2, titles
+        assert titles[0] != titles[1], titles
+        # ...and each chart is titled EXACTLY what its badge said.
+        assert sorted(titles) == sorted(lbl for _, lbl in srb), (titles, srb)
+
+    def test_one_pressed_variant_still_matches_its_badge(self, tmp_path):
+        """The badge/chart agreement cannot depend on how many of the colliding
+        pair happen to be pressed: the label map is computed over the badges and
+        the charted metrics TOGETHER, so one press reads the same as two."""
+        c, _ = _rb_chip(tmp_path, "onechart",
+                        gates=("cz_bipolar", "cz_unipolar"))
+        badges = _badges(c.get("/topology/trends").get_data(as_text=True))
+        one = next((p, lbl) for p, lbl in badges
+                   if p.endswith("cz_bipolar.fidelity.StandardRB"
+                                 ".average_gate_fidelity"))
+        body = c.get("/topology/trends?metrics=&paths=" + one[0]).get_data(
+            as_text=True)
+        assert _titles(body) == [one[1]], (_titles(body), one)
+        assert "cz_bipolar" in one[1], one
+
+    # ③ Finding 1 was closed for ONE spelling of an identifier.
+
+    def test_every_id_key_in_a_fidelity_block_is_provenance(self):
+        """`*_load_id` was the one spelling the gate knew. A lab that NESTS the
+        RB block writes `load_id`, `run_id` and `dataset_id` beside the
+        fidelity, and all three were badged and charted (529/530/531,
+        2271/2272/2273) under the Clifford-fidelity title — the CRITICAL
+        finding's own defect, one key name away."""
+        from quam_state_manager.core.query import fidelity_field_kind
+        for name in ("load_id", "run_id", "dataset_id", "node_id", "id",
+                     "StandardRB_load_id"):
+            assert fidelity_field_kind(name) == "load_id", name
+
+    def test_no_badge_charts_a_NESTED_run_id(self, tmp_path):
+        """Through the REAL route, on the shape a lab that nests the RB block
+        writes."""
+        root = "macros.cz.fidelity.StandardRB"
+        c, _ = _chip_with(tmp_path, "nestedid", PAIRS, {
+            f"{root}.average_gate_fidelity": 0.97,
+            f"{root}.load_id": 529.0,
+            f"{root}.run_id": 2271.0,
+            f"{root}.dataset_id": 88.0,
+        })
+        badges = _badges(c.get("/topology/trends").get_data(as_text=True))
+        bad = [b for b in badges
+               if any(k in b[0] for k in ("load_id", "run_id", "dataset_id"))]
+        assert not bad, f"provenance offered as a 2Q number: {bad}"
+        # ...and the fidelity itself is still there
+        assert any(p.endswith(".average_gate_fidelity") for p, _ in badges), \
+            badges
+
+    def test_query_s_own_rows_drop_a_nested_id_too(self):
+        """The widening is in the ONE vocabulary, so the Overview's gate-
+        fidelity rows stop carrying a run id as a numeric field of the
+        fidelity."""
+        from quam_state_manager.core.query import _extract_pair_gate_fidelities
+        rows = _extract_pair_gate_fidelities({"cz": {"fidelity": {
+            "StandardRB": {"average_gate_fidelity": 0.97, "run_id": 2271,
+                           "dataset_id": 88},
+            "StandardRB_load_id": 529}}})
+        assert len(rows) == 1, rows
+        assert "run_id" not in rows[0] and "dataset_id" not in rows[0], rows[0]
+        assert rows[0]["value"] == 0.97, rows[0]
+
+    # ④ The narrowing dropped a real class of 2Q number out of the row.
+
+    def test_an_unnamed_number_in_a_fidelity_block_still_gets_a_badge(
+            self, tmp_path):
+        """`macros.cz.fidelity.Purity` is a 2Q measurement: `query`'s own
+        `_extract_pair_gate_fidelities` surfaces it as an Overview row and
+        `core/compare.py` names Purity a 2Q fidelity by hand. Round 3's
+        narrowing to 'the FINAL segment is a KNOWN fidelity field' made it
+        neither a measurement nor a knob, so it got no badge and was not even
+        counted in the '+N more pair parameters' note."""
+        c, _ = _chip_with(tmp_path, "purity", PAIRS,
+                          {"macros.cz.fidelity.Purity": 0.94})
+        badges = _badges(c.get("/topology/trends").get_data(as_text=True))
+        hit = [lbl for p, lbl in badges
+               if p == "qubit_pairs.*.macros.cz.fidelity.Purity"]
+        assert hit, badges
+        # ...and it never borrows a fidelity's title, because nobody here can
+        # say WHICH fidelity it is.
+        assert "2Q gate fidelity" not in hit[0], hit
+        assert "2Q Clifford fid." not in hit[0], hit
+        assert "Purity" in hit[0], hit
+
+    def test_the_unnamed_number_is_still_not_a_run_id(self):
+        """The widening must not re-open what finding 1 closed."""
+        from quam_state_manager.web.routes import _is_2q_measurement
+        assert _is_2q_measurement("macros.cz.fidelity.Purity")
+        assert not _is_2q_measurement("macros.cz.fidelity.StandardRB.run_id")
+        assert not _is_2q_measurement("macros.cz.fidelity.load_id")
+
+    # ⑤ The one-point rule's BOUNDARY was unpinned.
+
+    def test_TWO_recorded_values_are_a_trend_and_draw_the_chart(self, tmp_path):
+        """Two snapshots is the minimum real trend and the most common state of
+        a chip early in bring-up. Mutating the rule's `> 1` to `> 2` suppressed
+        every such chart and replaced it with 'One value recorded … no trend
+        yet' — a false statement — and came back GREEN against the whole
+        file."""
+        c = _chip_with(tmp_path, "twopts", PAIRS, {"detuning": 0.1},
+                       steps=2)[0]
+        body = c.get("/topology/trends?metrics=&paths="
+                     "qubit_pairs.*.detuning").get_data(as_text=True)
+        charts = _charts(body)
+        assert len(charts) == 1, charts
+        assert charts[0]["series"], "two values per pair IS a trend"
+        assert sorted(len(s["points"]) for s in charts[0]["series"]) == \
+            [2] * len(PAIRS), [len(s["points"]) for s in charts[0]["series"]]
+        assert 'class="topo-trend-chart"' in body, "the chart element renders"
+        assert "topo-trend-empty" not in body, body[-1200:]
+        assert "no trend yet" not in body
+
+    # ⑥ The reserved slots were spent three times on ONE knob family.
+
+    def test_all_THREE_named_knob_families_reach_an_RB_chip_s_row(
+            self, tmp_path):
+        """Measured on the real 30-pair chip: every knob family has the
+        identical change count, so the order collapses to alphabetical and
+        `coupler.arbitrary_offset` / `coupler.decouple_offset` /
+        `coupler.interaction_offset` took all three reserved slots —
+        `mutual_flux_bias.*` and `phase_shift_*`, two of the three families the
+        ask named BY NAME, still reached the row on no chip with RB data."""
+        from quam_state_manager.web.routes import _TREND_2Q_MAX_CHIPS
+        c, _ = _rb_chip(tmp_path, "knobfam", extra={
+            "coupler.arbitrary_offset": 0.1,
+            "coupler.decouple_offset": 0.2,
+            "coupler.interaction_offset": 0.3,
+            "mutual_flux_bias.0": 0.4,
+            "macros.cz.phase_shift_control": 0.5,
+            "macros.cz.phase_shift_target": 0.6,
+        })
+        paths = [p for p, _ in
+                 _badges(c.get("/topology/trends").get_data(as_text=True))]
+        assert len(paths) == _TREND_2Q_MAX_CHIPS, paths
+        assert any("mutual_flux_bias" in p for p in paths), paths
+        assert any("phase_shift" in p for p in paths), paths
+        assert any(p.endswith("_offset") and "coupler" in p for p in paths), \
+            paths
+        # ...and the measurements did not lose the row either
+        assert any("StandardRB" in p for p in paths), paths
 
 
 class TestNothingOldBroke:

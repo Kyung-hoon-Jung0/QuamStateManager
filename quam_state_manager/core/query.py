@@ -1419,9 +1419,17 @@ def fidelity_field_kind(name: Any) -> str | None:
     """
     if not isinstance(name, str) or not name:
         return None
-    if name.endswith("_load_id"):
-        return "load_id"
     low = name.lower()
+    # AN ID IS PROVENANCE, NEVER A MEASUREMENT — and that is a FAMILY of key
+    # names, not the one spelling `*_load_id`. Closing the rule on that single
+    # spelling left the identical defect one key name away: a lab that NESTS
+    # the RB block writes `load_id`, `run_id` and `dataset_id` beside the
+    # fidelity, and all three were charted (values 529/530/531, 2271/2272/2273)
+    # under the heading "2Q Clifford fid. (SRB)" exactly as `StandardRB_load_id`
+    # once was. A key ending in `_id` inside a fidelity block is what produced
+    # the number, not the number.
+    if low == "id" or low.endswith("_id"):
+        return "load_id"
     if _rb_level(name) == "decay" or low == "alpha":
         return "decay"
     if low.startswith(_ERROR_FIELD_PREFIXES) or low.endswith(("_epc", "_epg")) \
@@ -1503,7 +1511,11 @@ def _extract_pair_gate_fidelities(macros: dict) -> list[dict]:
             if isinstance(metric_val, dict):
                 entry = {"gate": gate_name, "metric": metric_name}
                 for k, v in metric_val.items():
-                    if isinstance(v, (int, float)):
+                    # ...and the same rule one level down: a NESTED `run_id` /
+                    # `dataset_id` is provenance too, and was riding into the
+                    # row as a numeric field of the fidelity.
+                    if isinstance(v, (int, float)) \
+                            and fidelity_field_kind(k) != "load_id":
                         entry[k] = v
                 # Canonical scalar so the UI has one fidelity value regardless of
                 # schema: older data stored a bare float (caught by the elif
