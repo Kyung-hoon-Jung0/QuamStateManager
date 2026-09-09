@@ -288,6 +288,15 @@ world.push((function () {
     ok(win._htmxCalls.length === 1, '4b a uid point issues one request');
     ok(win._htmxCalls[0][0] === 'GET' && win._htmxCalls[0][1] === '/dataset/a1b2c3d4:34',
        '4c ...to /dataset/<folder_key>:<run_id>, never a bare run id');
+    // htmx 2 has NO `pushUrl` ajax option -- the bundled htmx.min.js contains
+    // the string zero times -- so passing one only looked like history support.
+    // `source` on the other hand is load-bearing: htmx reads the source
+    // element's hx-sync, and without one every dataset load shares body's
+    // single timeout-0 queue, so one stalled load wedges every later click.
+    ok(!('pushUrl' in win._htmxCalls[0][2]) && !('pushURL' in win._htmxCalls[0][2]),
+       '4c1 the click passes no dead pushUrl option');
+    ok(win._htmxCalls[0][2].source === '#table-pane',
+       '4c2 the click names a source element so hx-sync queues on the pane');
     ok(win._htmxCalls[0][2].target === '#table-pane',
        '4d ...into the main pane');
 
