@@ -317,3 +317,57 @@ class TestTheHoverNamesTheRightExperiment:
         # No needle matches: drop the numeric prefix, never guess a family.
         assert f(None, None, "44_something_nobody_has_shipped") == "something nobody …"
         assert f(None, None, None) == ""
+
+
+class TestTheNumberIsTheIdentity:
+    """A Trends hover names ONE run, so it carries the node number.
+
+    Customer, 2026-09-09: "the node number is the unique feature -- 05 Res
+    Power, 37b 2Q IRB -- that is how a user pins the experiment down to
+    exactly one." A calibration set holds five resonator families and four
+    qubit-spectroscopy families; the family word alone says the KIND, the
+    number says WHICH.
+    """
+
+    def test_the_label_leads_with_the_node_number(self):
+        n = story.node_label
+        assert n("05_resonator_spectroscopy_vs_power") == "05 Res/power"
+        assert n("06_resonator_spectroscopy_vs_flux") == "06 Res/flux"
+        assert n("08b_qubit_spectroscopy_vs_power") == "08b Qubit/power"
+        assert n("37b_two_qubit_interleaved_cz_rb") == "37b 2Q IRB"
+        assert n("33_CR_pulse_rabi_QST") == "33 CR rabi"
+        assert n("24_Bell_State_Tomography") == "24 Bell state"
+        assert n("71a_XEB_charge_stabilized") == "71a XEB"
+        assert n("03_resonator_spectroscopy_single") == "03 Res spec"
+
+    def test_a_scope_prefix_is_kept_but_never_said_twice(self):
+        n = story.node_label
+        # A lab that namespaces its one-qubit nodes keeps the namespace...
+        assert n("1Q_03_resonator_spectroscopy_single") == "1Q 03 Res spec"
+        # ...but the family name already says "2Q", so the token is not repeated.
+        assert n("2Q_37b_two_qubit_interleaved_cz_rb") == "37b 2Q IRB"
+
+    def test_a_node_with_no_number_invents_none(self):
+        n = story.node_label
+        assert n("standard_rb") == "SRB"
+        assert n("IQ_blobs") == "IQ blobs"
+        assert n("CZ_bipolar_retune") == "CZ"
+        assert n(None) == "" and n("") == ""
+
+    def test_the_journal_strip_keeps_the_family_only_form(self):
+        """The number belongs to the hover, NOT to the journal timeline.
+
+        ``_timeline`` merges consecutive runs of one family into a single
+        segment. Give it the numbered label and every run becomes its own
+        segment -- the wall this shortener was written to remove.
+        """
+        cards = [
+            {"kind": "run", "run_id": 159, "node": "03_resonator_spectroscopy_single",
+             "targets": ["q1"], "outcome": "ok", "gate": None, "author": "human"},
+            {"kind": "run", "run_id": 160, "node": "03_resonator_spectroscopy_single",
+             "targets": ["q1"], "outcome": "ok", "gate": None, "author": "human"},
+        ]
+        segs = story._timeline(cards)["q1"]
+        assert len(segs) == 1, "two runs of one family must stay one segment"
+        assert segs[0]["family"] == "Res spec"
+        assert [s["run_id"] for s in segs[0]["steps"]] == [159, 160]

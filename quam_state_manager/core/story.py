@@ -431,6 +431,45 @@ def _short_family(fam_key: str | None, label: str | None, node: str | None) -> s
     return s if len(s) <= 18 else s[:17] + "…"
 
 
+# A node's leading id segments: a number with an optional letter (``05``,
+# ``08b``, ``71a``) or a one-qubit / two-qubit scope token some labs prefix.
+_ID_SEG = re.compile(r"^(?:\d+[a-z]?|[12]Q)$", re.IGNORECASE)
+
+
+def node_label(node: str | None) -> str:
+    """``"05_resonator_spectroscopy_vs_power"`` -> ``"05 Res/power"``.
+
+    THE NUMBER IS THE IDENTITY (customer, 2026-09-09). A calibration set holds
+    five resonator families and four qubit-spectroscopy families; the short
+    family name alone says which KIND of measurement a point came from, and the
+    number is what says WHICH ONE -- so a hover that means to send a person to
+    the actual run has to carry it.
+
+    Deliberately NOT :func:`_short_family` itself. That one feeds the journal's
+    per-target strip, which merges consecutive runs of one family into
+    ``Res spec 159 160 161``; give it the number and every run becomes its own
+    segment and the strip is a wall again, which is the exact complaint that
+    created it the day before. Two readers, two labels, one family vocabulary.
+
+    Only a LEADING id counts, and a scope token the family name already says is
+    dropped (``2Q_37b_two_qubit_interleaved_cz_rb`` -> ``37b 2Q IRB``, not
+    ``2Q 37b 2Q IRB``). A node with no number keeps just its family name --
+    invented numbering would be worse than none.
+    """
+    if not node:
+        return ""
+    fam = _short_family(None, None, node)
+    ident: list[str] = []
+    for seg in str(node).split("_"):
+        if _ID_SEG.match(seg):
+            ident.append(seg)
+        else:
+            break
+    while ident and fam.lower().startswith(ident[0].lower()):
+        ident.pop(0)
+    return (" ".join(ident) + " " + fam).strip() if ident else fam
+
+
 def _timeline(cards: list[dict]) -> dict[str, list[dict]]:
     """Per target, in time order: consecutive runs of ONE family merged into a
     segment ``{family (short), full, steps}`` so the strip reads
