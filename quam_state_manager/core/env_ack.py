@@ -4,7 +4,7 @@ Customer, 2026-09-05: *"SM says the type is wrong. It cannot know that I
 introduced this key on purpose — but I must be able to tell it, and after that
 the check should pass it as healthy."*
 
-Measured on their own 20-qubit chip, with a real probe of the `cqt` env:
+Measured on their own 20-qubit chip, with a real probe of the test env:
 
     summary {'errors': 4, 'warnings': 0, 'checked_nodes': 847}
       error unimportable_class QdacBiasedFixedFrequencyTransmon  x11

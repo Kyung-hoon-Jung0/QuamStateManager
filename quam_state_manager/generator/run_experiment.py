@@ -199,7 +199,7 @@ def run_target(target: str, state_path: str | None, config_file: str | None,
     if state_path:
         os.environ["QUAM_STATE_PATH"] = str(state_path)
     if config_file:
-        # docs/174 amended II (found on the real KRISS arbel chain): the qualibrate
+        # docs/174 amended II (found on a real customer's cloud chain): the qualibrate
         # config's ``[quam] state_path`` wins over the QUAM_STATE_PATH env for the
         # framework's own machine save, so a node whose config points at the LIVE
         # chip writes LIVE directly mid-run -- bypassing the scratch entirely and
@@ -211,7 +211,7 @@ def run_target(target: str, state_path: str | None, config_file: str | None,
         # stands.
         eff_config = _config_pinned_to_scratch(config_file, state_path) if state_path else config_file
         os.environ["QUALIBRATE_CONFIG_FILE"] = str(eff_config)
-    # docs/173 S9 (found on the real KRISS env): a node's plot action calls
+    # docs/173 S9 (found on a real customer env): a node's plot action calls
     # plt.show(), and the customer env's default matplotlib backend is the
     # INTERACTIVE tkagg (tkinter present) -- so a headless Scheduler subprocess
     # blocks forever on a GUI window that never opens. Force a non-interactive
@@ -221,7 +221,7 @@ def run_target(target: str, state_path: str | None, config_file: str | None,
     # while the scratch is still the byte-for-byte make_scratch copy of the chip.
     # ``machine.save()`` later materializes EVERY field the quam class declares,
     # adding class-default ROOT keys the customer's state.json never had
-    # (flux_crosstalk_max_v / require_flux_crosstalk_dc / twpa_ext on the KRISS
+    # (flux_crosstalk_max_v / require_flux_crosstalk_dc / twpa_ext on that
     # class). Knowing the original roots lets _persist strip exactly those, so the
     # scratch SM reads back is the chip + the node's real writes and nothing else.
     original_roots = _state_root_keys(state_path) if state_path else None
@@ -272,9 +272,9 @@ def _state_root_keys(state_path: str) -> set | None:
 
 
 def _strip_phantom_roots(state_path: str, original_roots: set | None, updates: dict) -> None:
-    """docs/174 (amended -- the real fix, found on the real KRISS arbel chain):
+    """docs/174 (amended -- the real fix, found on a real customer's cloud chain):
     ``machine.save()`` writes back EVERY field the quam class declares, so it adds
-    top-level ROOT keys the customer's state.json never had (the KRISS class's
+    top-level ROOT keys the customer's state.json never had (that lab's class's
     ``flux_crosstalk_max_v`` / ``require_flux_crosstalk_dc`` / ``twpa_ext``). The
     first docs/174 fix only cancelled these in SM's DIFF; but SM's post-run adopt
     copies the scratch's FULL state into the working copy (byte-identical, then to
@@ -314,7 +314,7 @@ def _strip_phantom_roots(state_path: str, original_roots: set | None, updates: d
 
 
 def _persist_node_state(ns: dict, state_path: str, original_roots: set | None = None) -> None:
-    """docs/173 S9 (found on the real KRISS arbel cloud): a qualibrate node NEVER
+    """docs/173 S9 (found on a real customer cloud backend): a qualibrate node NEVER
     rewrites the state.json at QUAM_STATE_PATH. In a non-interactive run its
     ``record_state_updates()`` either applies the calibration to the in-memory
     machine and records nothing (interactive_only=True, the customer default),
