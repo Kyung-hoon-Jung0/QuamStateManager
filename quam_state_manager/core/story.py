@@ -431,9 +431,12 @@ def _short_family(fam_key: str | None, label: str | None, node: str | None) -> s
     return s if len(s) <= 18 else s[:17] + "…"
 
 
-# A node's leading id segments: a number with an optional letter (``05``,
-# ``08b``, ``71a``) or a one-qubit / two-qubit scope token some labs prefix.
-_ID_SEG = re.compile(r"^(?:\d+[a-z]?|[12]Q)$", re.IGNORECASE)
+# A node's leading id segments: a number with an optional letter -- ``05``,
+# ``08b``, ``71a``. The ``1Q`` / ``2Q`` scope token some labs prefix is the
+# SAME shape (a digit and a letter), so it needs no alternative of its own;
+# a branch spelling it out separately was dead, and case-insensitivity is
+# what makes the token match at all.
+_ID_SEG = re.compile(r"^\d+[a-z]?$", re.IGNORECASE)
 
 
 def node_label(node: str | None) -> str:
@@ -451,7 +454,9 @@ def node_label(node: str | None) -> str:
     segment and the strip is a wall again, which is the exact complaint that
     created it the day before. Two readers, two labels, one family vocabulary.
 
-    Only a LEADING id counts, and a scope token the family name already says is
+    Only a LEADING id counts -- the scan stops at the first segment that is
+    not one, so ``13_drag_calibration_180_minus_180`` is ``13 DRAG`` and not
+    ``13 180 180 DRAG``. A scope token the family name already says is
     dropped (``2Q_37b_two_qubit_interleaved_cz_rb`` -> ``37b 2Q IRB``, not
     ``2Q 37b 2Q IRB``). A node with no number keeps just its family name --
     invented numbering would be worse than none.

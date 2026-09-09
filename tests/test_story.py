@@ -340,6 +340,22 @@ class TestTheNumberIsTheIdentity:
         assert n("71a_XEB_charge_stabilized") == "71a XEB"
         assert n("03_resonator_spectroscopy_single") == "03 Res spec"
 
+    def test_only_a_leading_number_counts(self):
+        """The scan stops at the first non-id segment.
+
+        Real node names carry numbers in the MIDDLE -- a DRAG calibration
+        named for its angles, a chevron named for its levels. Collecting
+        those turns the label into "13 180 180 DRAG", which identifies
+        nothing. Two consecutive leading ids are kept, though: this lab
+        ships both `38_snz_b_over_a` and `38_2_snz_b_over_a`, and the `2`
+        is the only thing that tells them apart.
+        """
+        n = story.node_label
+        assert n("13_drag_calibration_180_minus_180") == "13 DRAG"
+        assert n("31_chevron_11_02") == "31 CZ chevron"
+        assert n("38_snz_b_over_a") == "38 SNZ"
+        assert n("38_2_snz_b_over_a") == "38 2 SNZ"
+
     def test_a_scope_prefix_is_kept_but_never_said_twice(self):
         n = story.node_label
         # A lab that namespaces its one-qubit nodes keeps the namespace...
