@@ -265,7 +265,12 @@ class TestSeveralFamiliesAtOnce:
         charts = _charts(body)
         assert len(charts) == _TRENDS_MAX_FAMILIES, \
             "the cap trims, so a wide chip cannot render hundreds of series"
-        assert "3 more were left off" in body, "and the section SAYS it trimmed"
+        # It NAMES the first one dropped, not just a count — "3 more were left
+        # off" leaves the user guessing which three.
+        dropped = f"made_up_{_TRENDS_MAX_FAMILIES}"
+        assert dropped in body, f"the note names what it dropped: {body[-2000:]}"
+        assert "and 2 more were left off" in body, \
+            "and how many others went with it"
 
     def test_no_trim_note_when_nothing_was_trimmed(self, client, tmp_path):
         _versions(client, tmp_path / "quam_state")
@@ -427,6 +432,204 @@ class TestTheTwoQBadges:
         c.post("/load", data={"folder": str(folder)})
         body = c.get("/topology/trends").get_data(as_text=True)
         assert "2Q / pairs" not in body
+
+
+# ── review round 1 (2026-09-09) — five confirmed defects, five pins ────────
+#
+# Each of these drives the REAL route, and each was RED before its fix. The
+# fixture had to grow first in three of the five: the shipped fixture has 3
+# pairs and a handful of families, so it could not reach the >25-entity
+# truncation, the >10-family badge cap, or the two-knob crowding at all.
+
+
+def _badges(body: str) -> list[tuple[str, str]]:
+    """(path, label) for every 2Q badge, in the order they render."""
+    return [(p, lbl.strip()) for p, lbl in
+            re.findall(r'data-trend-path="([^"]+)"[^>]*>([^<]*)', body)]
+
+
+def _titles(body: str) -> list[str]:
+    return [t.strip() for t in
+            re.findall(r'class="topo-trend-title">\s*([^<\n]+)', body)]
+
+
+def _chip_with(tmp_path, name: str, pairs, leaves, steps=3, qubits=QUBITS):
+    """A chip whose pairs carry `leaves` (dot-tail -> starting value), archived
+    `steps` times with every leaf moved. Returns (client, folder)."""
+    folder = tmp_path / name
+    folder.mkdir(parents=True, exist_ok=True)
+    state = {"qubits": {q: {"id": q, "f_01": 6.0e9} for q in qubits},
+             "qubit_pairs": {}, "active_qubit_names": list(qubits)}
+
+    def _put(d, tail, val):
+        cur = d
+        segs = tail.split(".")
+        for s in segs[:-1]:
+            cur = cur.setdefault(s, {})
+        cur[segs[-1]] = val
+
+    for j, p in enumerate(pairs):
+        node = {"id": p}
+        for tail, v0 in leaves.items():
+            _put(node, tail, v0 + j * 1e-3)
+        state["qubit_pairs"][p] = node
+    (folder / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    (folder / "wiring.json").write_text(json.dumps(
+        {"network": {"host": "9.9.9.9"}, "wiring": {"qubits": {}}}),
+        encoding="utf-8")
+    app = create_app(testing=True, instance_path=str(tmp_path / ("_i_" + name)))
+    c = app.test_client()
+    c.post("/load", data={"folder": str(folder)})
+    for step in range(steps):
+        doc = json.loads((folder / "state.json").read_text(encoding="utf-8"))
+        for j, p in enumerate(doc["qubit_pairs"]):
+            for tail, v0 in leaves.items():
+                _put(doc["qubit_pairs"][p], tail, v0 + j * 1e-3 + (step + 1) * 1e-5)
+        (folder / "state.json").write_text(json.dumps(doc), encoding="utf-8")
+        c.post("/state/archive", data={"tag": f"s{step}"})
+        time.sleep(1.05)
+    return c, folder
+
+
+class TestReviewRound1:
+    """The five confirmed defects of the first review round."""
+
+    # ① The always-offered chip named a quantity the chip never measured.
+
+    def test_an_SRB_badge_says_SRB_not_gate_fidelity(self, tmp_path):
+        """A StandardRB average is a fidelity per CLIFFORD — over five 2Q gates
+        on a real chip (docs/138). The badge used to hardcode "2Q gate
+        fidelity" for whatever family it resolved to, so the badge and the
+        chart it opens disagreed: the exact Trends/Overview label mismatch a
+        customer already reported once."""
+        c, _ = _chip_with(
+            tmp_path, "srb", PAIRS,
+            {"macros.cz.fidelity.StandardRB.average_gate_fidelity": 0.97})
+        body = c.get("/topology/trends").get_data(as_text=True)
+        srb = [(p, lbl) for p, lbl in _badges(body) if "StandardRB" in p]
+        assert len(srb) == 1, _badges(body)
+        assert srb[0][1] == "2Q Clifford fid. (SRB)", \
+            f"the badge names what the number IS: {srb[0]}"
+        # ...and the chart it opens agrees, character for character.
+        chart_body = c.get("/topology/trends?metrics=&paths="
+                           + srb[0][0]).get_data(as_text=True)
+        assert srb[0][1] in _titles(chart_body), _titles(chart_body)
+
+    def test_the_gate_fidelity_QUESTION_survives_an_SRB_chip(self, tmp_path):
+        """A Clifford number is not a gate number and neither is derived from
+        the other (`query._RB_LEVEL`'s doctrine), so a chip that recorded only
+        SRB has still not measured a 2Q gate fidelity — and the row says so
+        with the same honest empty template a chip with nothing gets."""
+        c, _ = _chip_with(
+            tmp_path, "srbq", PAIRS,
+            {"macros.cz.fidelity.StandardRB.average_gate_fidelity": 0.97})
+        body = c.get("/topology/trends").get_data(as_text=True)
+        assert ('qubit_pairs.*.gate_fidelity', '2Q gate fidelity') in _badges(body)
+
+    def test_an_IRB_chip_needs_no_empty_template(self, tmp_path):
+        """InterleavedRB IS the gate fidelity, so offering an empty "2Q gate
+        fidelity" beside it would ask a question the chip already answered."""
+        c, _ = _chip_with(
+            tmp_path, "irb", PAIRS,
+            {"macros.cz.fidelity.InterleavedRB.average_gate_fidelity": 0.99})
+        paths = [p for p, _ in _badges(
+            c.get("/topology/trends").get_data(as_text=True))]
+        assert "qubit_pairs.*.gate_fidelity" not in paths, paths
+
+    # ② The badge row's cap was silent, and it dropped a named family.
+
+    def test_the_badge_row_SAYS_what_it_could_not_fit(self, tmp_path):
+        """13 vocabulary families, a row of 10. docs/94's rule — "a tripped cap
+        now renders a visible note" — was applied to the chart grid in the same
+        commit and not to this row."""
+        from quam_state_manager.web.routes import _TREND_2Q_MAX_CHIPS
+        leaves = {}
+        for v in ("bipolar", "flattop", "flattop_erf", "snz", "unipolar"):
+            leaves[f"macros.cz_{v}.phase_shift_control"] = 0.1
+            leaves[f"macros.cz_{v}.phase_shift_target"] = 0.2
+        leaves["mutual_flux_bias.0"] = 0.3
+        leaves["mutual_flux_bias.1"] = 0.4
+        leaves["coupler.interaction_offset"] = 0.5
+        c, _ = _chip_with(tmp_path, "wide", PAIRS, leaves)
+        body = c.get("/topology/trends").get_data(as_text=True)
+        badges = _badges(body)
+        assert len(badges) == _TREND_2Q_MAX_CHIPS, badges
+        # 13 families + the always-offered fidelity template = 14 chips.
+        assert "+4 more pair parameters" in body, \
+            f"the row says what it left off: {body[body.find('2Q / pairs'):][:1200]}"
+
+    def test_the_cap_is_shared_out_one_KNOB_at_a_time(self, tmp_path):
+        """Five CZ variants carry ten near-identical `phase_shift_*` families
+        with IDENTICAL change counts, so a flat cap spent every slot on two
+        knobs and `mutual_flux_bias.*` — a family the ask named — never
+        appeared. The paths are never merged (five variants are five different
+        numbers); only the cap is shared out."""
+        leaves = {}
+        for v in ("bipolar", "flattop", "flattop_erf", "snz", "unipolar"):
+            leaves[f"macros.cz_{v}.phase_shift_control"] = 0.1
+            leaves[f"macros.cz_{v}.phase_shift_target"] = 0.2
+        leaves["mutual_flux_bias.0"] = 0.3
+        leaves["mutual_flux_bias.1"] = 0.4
+        c, _ = _chip_with(tmp_path, "knobs", PAIRS, leaves)
+        paths = [p for p, _ in _badges(
+            c.get("/topology/trends").get_data(as_text=True))]
+        assert "qubit_pairs.*.mutual_flux_bias.0" in paths, paths
+        assert "qubit_pairs.*.mutual_flux_bias.1" in paths, paths
+        # and the ten variants did not all get in, which is the crowding
+        assert sum(1 for p in paths if "phase_shift" in p) < 10, paths
+
+    # ③ The widened path scan — mechanism 2's headline claim — was unpinned.
+
+    def test_a_family_wider_than_the_old_cap_is_counted_WHOLE(self, tmp_path):
+        """The typeahead used to pull 25 CONCRETE leaves. Grouping them into
+        one family row means the pull has to reach every member, or a 30-pair
+        family reports 25 and the badge under-counts what one press charts.
+        The shipped fixture has 3 pairs, so nothing could reach this."""
+        from quam_state_manager.web.routes import _TRENDS_PATH_SCAN
+        assert _TRENDS_PATH_SCAN > 30, _TRENDS_PATH_SCAN
+        qubits = tuple(f"q{i}" for i in range(1, 32))
+        pairs = tuple(f"q{i}-q{i + 1}" for i in range(1, 31))
+        assert len(pairs) == 30
+        c, _ = _chip_with(tmp_path, "wide30", pairs,
+                          {"macros.cz.phase_shift_target": 0.2,
+                           "coupler.interaction_offset": 0.5},
+                          steps=2, qubits=qubits)
+        rows = c.get("/topology/trends/paths?q=phase_shift_target").get_json()
+        fam = [r for r in rows if r["label"] == "macros.cz.phase_shift_target"]
+        assert len(fam) == 1, rows
+        assert fam[0]["n"] == 30, f"every pair counted, not the first 25: {fam}"
+        # the badge row reads the same scan, so it under-counts identically
+        badges = _badges(c.get("/topology/trends").get_data(as_text=True))
+        assert any("phase_shift_target" in p for p, _ in badges), badges
+        body = c.get("/topology/trends").get_data(as_text=True)
+        assert " · 30<" in body, "the badge says how many pairs one press charts"
+        # and one press really does chart all thirty
+        charts = _charts(c.get("/topology/trends?metrics=&paths="
+                               + fam[0]["path"]).get_data(as_text=True))
+        assert charts[0]["n_entities"] == 30
+
+    # ④ The families cap discarded the TYPED family in preference to badges.
+
+    def test_the_box_wins_the_cap_over_the_badges(self, client, tmp_path):
+        """`?paths=` (badges) was read before `?path=` (the box), so a full row
+        of badges silently discarded the family the user had just typed and
+        pressed Enter on — while the box still displayed it and the note told
+        them to deselect something. The typed query is the most recent
+        deliberate act on the page."""
+        from quam_state_manager.web.routes import _TRENDS_MAX_FAMILIES
+        _versions(client, tmp_path / "quam_state")
+        badges = [f"qubit_pairs.*.made_up_{i}"
+                  for i in range(_TRENDS_MAX_FAMILIES)]
+        typed = "qubit_pairs.*.coupler.interaction_offset"
+        body = client.get("/topology/trends?metrics=&paths=" + ",".join(badges)
+                          + "&path=" + typed).get_data(as_text=True)
+        charts = _charts(body)
+        typed_chart = [c for c in charts
+                       if c["metric"] == "coupler.interaction_offset"]
+        assert typed_chart, [c["metric"] for c in charts]
+        assert typed_chart[0]["n_entities"] == 3, "and it charted every pair"
+        # a BADGE is what went, and the note names it
+        assert f"made_up_{_TRENDS_MAX_FAMILIES - 1}" in body, body[-1500:]
 
 
 class TestNothingOldBroke:

@@ -12393,6 +12393,10 @@ td.vc-cell-takeable:focus-within .vc-take,
 .topo-trend-badge .muted { font-family: var(--font-sans, inherit); }
 .topo-trend-chip.active .muted { color: inherit; opacity: .8; }
 .topo-trend-trim { font-size: .74rem; margin: -.35rem 0 .7rem; line-height: 1.4; }
+/* What the badge row could not fit. Muted and inline with the chips, because
+   it is a statement about the row, not a control -- but never absent, or the
+   row is indistinguishable from a chip that has nothing else to offer. */
+.topo-trends-more { font-size: .72rem; line-height: 1.35; }
 .topo-trend-sug-n { color: var(--pico-muted-color); font-family: var(--font-sans, inherit); }
 .topo-trend-sug:hover .topo-trend-sug-n { color: inherit; opacity: .85; }
 

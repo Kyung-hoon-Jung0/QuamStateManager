@@ -10381,6 +10381,47 @@ _TREND_2Q_LEVEL_LABELS = {
 # curated metric with no data renders — the vocabulary stays complete, and the
 # chip says what it has not measured instead of hiding the question.
 _TREND_2Q_FIDELITY_TEMPLATE = "qubit_pairs.*.gate_fidelity"
+# How many chips the 2Q row shows. Whatever it drops, it SAYS it dropped
+# (docs/94: "a tripped cap now renders a visible note") — the first cut sliced
+# silently at 10 and a real chip lost `mutual_flux_bias.*`, one of the knob
+# families the ask named, with nothing on screen to say so.
+_TREND_2Q_MAX_CHIPS = 10
+
+
+def _trend_is_gate_fidelity(tail: str) -> bool:
+    """Is this family THE 2Q gate fidelity, or a Clifford / state / decay number?
+
+    `query._RB_LEVEL`'s own doctrine, applied to a badge: a StandardRB average
+    is a fidelity per CLIFFORD (over 5+ 2Q gates on a real chip, docs/138), so
+    labelling its badge "2Q gate fidelity" names a quantity the chip never
+    measured — the exact Trends/Overview label mismatch a customer already
+    reported once. A tail with no RB level and a plain fidelity spelling IS the
+    gate fidelity, which is what the empty template stands for.
+    """
+    from quam_state_manager.core.query import _rb_level
+
+    for seg in reversed(str(tail or "").split(".")):
+        lvl = _rb_level(seg)
+        if lvl:
+            return lvl == "gate"
+    return _is_fidelity_tail(tail)
+
+
+def _trend_knob_group(tail: str) -> str:
+    """Which KNOB a 2Q knob family is, ignoring which CZ variant carries it.
+
+    A chip with five CZ macro variants carries five copies of
+    `phase_shift_control` and five of `phase_shift_target`, ALL with identical
+    change counts — so a flat cap spent every slot on two knobs and dropped
+    `mutual_flux_bias.*` off the end. Grouping shares the cap out one knob at a
+    time; the PATHS are never merged, because five variants are five different
+    numbers and charting them as one would be the same lie the (metric, kind)
+    dedupe was written to stop.
+    """
+    segs = str(tail or "").split(".")
+    keep = [s for i, s in enumerate(segs)
+            if i == len(segs) - 1 or not s.lower().startswith("cz")]
+    return ".".join(keep)
 
 
 def _trend_pair_label(tail: str) -> str:
@@ -10411,13 +10452,28 @@ def _trend_pair_label(tail: str) -> str:
     return tail[len("macros."):] if tail.startswith("macros.") else tail
 
 
-def _trend_pair_chips(hm, path: Path, active: list[str]) -> list[dict]:
+def _trend_family_display(dot_path: str) -> str:
+    """What a charted family is CALLED, for a message about it.
+
+    The same name the badge and the chart title carry, so a trim note names
+    something the user can actually find on screen.
+    """
+    fam = _trend_family_of(dot_path)
+    return _trend_pair_label(fam[1]) if fam else str(dot_path or "")
+
+
+def _trend_pair_chips(hm, path: Path, active: list[str]) -> tuple[list[dict], int]:
     """The 2Q / pair badge group, built from what this chip itself has.
 
     ONE scan of the same index the typeahead uses, folded into families, kept
-    where the tail speaks the Overview's 2Q vocabulary. A 2Q gate-fidelity chip
-    is offered ALWAYS: pointed at the chip's own best fidelity family when it
-    has one, and at the honest empty template when it has none.
+    where the tail speaks the Overview's 2Q vocabulary. Returns
+    ``(chips, dropped)`` — a badge row that trims says how much it trimmed,
+    exactly as the chart grid does.
+
+    A 2Q gate-fidelity chip is offered ALWAYS: as the chip's own family when it
+    HAS one, under that family's true name, and as the honest empty template
+    otherwise. Naming a Clifford or Bell-state number "2Q gate fidelity" would
+    be the label mismatch this whole group exists to avoid.
     """
     try:
         hits = hm.leaf_search(path, "qubit_pairs", limit=_TRENDS_PATH_SCAN)
@@ -10430,21 +10486,41 @@ def _trend_pair_chips(hm, path: Path, active: list[str]) -> list[dict]:
     # points alone, a chip with five CZ variants filled the whole row with
     # phase-shift knobs and pushed its own RB numbers off the end — which is
     # the opposite of the ask ("a badge for at least the numbers the Overview
-    # panel has"). Stable, so the change-point order survives inside each half.
-    fams.sort(key=lambda f: 0 if _is_2q_measurement(f["label"]) else 1)
-    best = next((f for f in fams if _is_fidelity_tail(f["label"])), None)
-    chips = [{"path": best["path"] if best else _TREND_2Q_FIDELITY_TEMPLATE,
-              "label": _TREND_2Q_FIDELITY_LABEL,
-              "n": best["n"] if best else 0}]
-    for f in fams:
-        if f is best:
-            continue
-        chips.append({"path": f["path"], "label": _trend_pair_label(f["label"]),
-                      "n": f["n"]})
-    chips = chips[:10]
+    # panel has").
+    measured = [f for f in fams if _is_2q_measurement(f["label"])]
+    knobs = [f for f in fams if not _is_2q_measurement(f["label"])]
+
+    def _chip(f: dict) -> dict:
+        return {"path": f["path"], "label": _trend_pair_label(f["label"]),
+                "n": f["n"]}
+
+    best = next((f for f in measured if _is_fidelity_tail(f["label"])), None)
+    chips: list[dict] = []
+    if best:
+        chips.append(_chip(best))
+    if not best or not _trend_is_gate_fidelity(best["label"]):
+        # The QUESTION stays on the row even when the chip answers it with
+        # nothing: pressing this charts the same "Nothing recorded" slot a
+        # curated metric with no data renders.
+        chips.append({"path": _TREND_2Q_FIDELITY_TEMPLATE,
+                      "label": _TREND_2Q_FIDELITY_LABEL, "n": 0})
+    chips += [_chip(f) for f in measured if f is not best]
+    # The knobs share the cap out one KNOB NAME at a time. Ten identical-change
+    # `cz_<variant>.phase_shift_*` families would otherwise take every slot and
+    # `mutual_flux_bias.*` — named in the ask — would never appear.
+    groups: dict[str, list[dict]] = {}
+    for f in knobs:
+        groups.setdefault(_trend_knob_group(f["label"]), []).append(f)
+    while any(groups.values()):
+        for k in list(groups):
+            if groups[k]:
+                chips.append(_chip(groups[k].pop(0)))
+
+    dropped = max(0, len(chips) - _TREND_2Q_MAX_CHIPS)
+    chips = chips[:_TREND_2Q_MAX_CHIPS]
     for c in chips:
         c["active"] = c["path"] in active
-    return chips
+    return chips, dropped
 
 
 # Trends-only display-name overrides (chip_health.METRIC_META's "Readout
@@ -10480,15 +10556,24 @@ def topology_trends():
     # no new index) would each have evicted whatever was in the box. ?paths= is
     # the comma-separated form; ?path= keeps working and means exactly a
     # one-element ?paths=, so every existing link and pin still resolves.
+    #
+    # The BOX IS READ FIRST, deliberately. Read the other way round, eight
+    # badges pressed minutes ago filled the cap and the family the user had
+    # just typed and pressed Enter on was the one discarded — while the box
+    # still displayed it and the note told them to deselect something. A typed
+    # query is the most recent deliberate act on this page, so it wins the tie
+    # and a BADGE is what gets named in the trim note.
     extras: list[str] = []
-    for chunk in (request.args.get("paths") or "", request.args.get("path") or ""):
+    for chunk in (request.args.get("path") or "", request.args.get("paths") or ""):
         for p in chunk.split(","):
             p = p.strip()
             if p and p not in extras:
                 extras.append(p)
     families_trimmed = 0
+    trimmed_paths: list[str] = []
     if len(extras) > _TRENDS_MAX_FAMILIES:
-        families_trimmed = len(extras) - _TRENDS_MAX_FAMILIES
+        trimmed_paths = extras[_TRENDS_MAX_FAMILIES:]
+        families_trimmed = len(trimmed_paths)
         extras = extras[:_TRENDS_MAX_FAMILIES]
     # ``?path=`` is ALSO what the search box shows: the badges ride ``?paths=``,
     # so a badge press can never evict what the user typed (and vice versa).
@@ -10588,8 +10673,15 @@ def topology_trends():
     # drops families is indistinguishable from a badge that does not work.
     trim_note = ""
     if families_trimmed:
+        # NAME the first one dropped. "3 more were left off" leaves the user
+        # guessing which three, and the answer is not the one they typed —
+        # that one now wins the cap, so everything named here is a badge they
+        # can see and deselect.
+        _first = _trend_family_display(trimmed_paths[0])
+        _rest = (f" and {families_trimmed - 1} more"
+                 if families_trimmed > 1 else "")
         trim_note = (f"Charting the first {_TRENDS_MAX_FAMILIES} parameter "
-                     f"families — {families_trimmed} more "
+                     f"families — {_first}{_rest} "
                      f"{'was' if families_trimmed == 1 else 'were'} left off. "
                      f"Deselect one to make room.")
     if series_trimmed:
@@ -10609,10 +10701,12 @@ def topology_trends():
     # The 2Q / pair group. Built from the chip's own pair families, so a chip
     # that records XEB or a Bell state gets those badges by itself; the gate
     # fidelity chip is always there, empty slot included.
-    pair_chips = _trend_pair_chips(hm, path, extras) if pairs else []
+    pair_chips, pair_chips_more = (
+        _trend_pair_chips(hm, path, extras) if pairs else ([], 0))
     return render_template("_topo_trends.html", charts=charts, curated=curated,
                            selected=sel, extra=extra, no_chip=False,
                            metric_labels=metric_labels, pair_chips=pair_chips,
+                           pair_chips_more=pair_chips_more,
                            trim_note=trim_note,
                            snapshots=len(hm.list_snapshots(path)))
 

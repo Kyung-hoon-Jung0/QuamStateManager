@@ -67,6 +67,13 @@
                     onclick="ChipTrends.togglePath(this.getAttribute('data-trend-path'))">{{ p.label }}{% if p.n %}<span class="muted"> · {{ p.n }}</span>{% endif %}</button>
         {% endfor %}
         </span>
+        {# The badge row caps too, and a cap that quietly drops families is
+           indistinguishable from a chip that simply has none (docs/94). The
+           dropped ones are still reachable: the search box offers them as
+           family rows. #}
+        {% if pair_chips_more %}
+        <span class="muted topo-trends-more">+{{ pair_chips_more }} more pair parameter{{ '' if pair_chips_more == 1 else 's' }} — search for {{ 'it' if pair_chips_more == 1 else 'them' }} above</span>
+        {% endif %}
     </div>
     {% endif %}
 
