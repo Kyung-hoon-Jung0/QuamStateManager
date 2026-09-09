@@ -539,9 +539,9 @@ class TestReviewRound1:
     # ② The badge row's cap was silent, and it dropped a named family.
 
     def test_the_badge_row_SAYS_what_it_could_not_fit(self, tmp_path):
-        """13 vocabulary families, a row of 10. docs/94's rule — "a tripped cap
-        now renders a visible note" — was applied to the chart grid in the same
-        commit and not to this row."""
+        """13 vocabulary families against a row that cannot hold them.
+        docs/94's rule — "a tripped cap now renders a visible note" — was
+        applied to the chart grid in the same commit and not to this row."""
         from quam_state_manager.web.routes import _TREND_2Q_MAX_CHIPS
         leaves = {}
         for v in ("bipolar", "flattop", "flattop_erf", "snz", "unipolar"):
@@ -555,7 +555,7 @@ class TestReviewRound1:
         badges = _badges(body)
         assert len(badges) == _TREND_2Q_MAX_CHIPS, badges
         # 13 families + the always-offered fidelity template = 14 chips.
-        assert "+4 more pair parameters" in body, \
+        assert f"+{14 - _TREND_2Q_MAX_CHIPS} more pair parameters" in body, \
             f"the row says what it left off: {body[body.find('2Q / pairs'):][:1200]}"
 
     def test_the_cap_is_shared_out_one_KNOB_at_a_time(self, tmp_path):
@@ -632,6 +632,149 @@ class TestReviewRound1:
         assert f"made_up_{_TRENDS_MAX_FAMILIES - 1}" in body, body[-1500:]
 
 
+def _hot_cold_chip(tmp_path, name: str, hot: dict, cold: dict, steps=4,
+                   pairs=PAIRS):
+    """A chip whose `hot` pair leaves move on EVERY archive and whose `cold`
+    ones move only on the first — so the families rank by change points in a
+    known order.
+
+    `_chip_with` moves every leaf every step, which ties every family's change
+    count and lets natural_key decide; three of round 2's findings only appear
+    when a NON-gate fidelity family outranks the gate one, so the tie has to be
+    breakable.
+    """
+    folder = tmp_path / name
+    folder.mkdir(parents=True, exist_ok=True)
+
+    def _put(d, tail, val):
+        cur = d
+        segs = tail.split(".")
+        for s in segs[:-1]:
+            cur = cur.setdefault(s, {})
+        cur[segs[-1]] = val
+
+    state = {"qubits": {q: {"id": q, "f_01": 6.0e9} for q in QUBITS},
+             "qubit_pairs": {}, "active_qubit_names": list(QUBITS)}
+    for j, p in enumerate(pairs):
+        node = {"id": p}
+        for tail, v0 in list(hot.items()) + list(cold.items()):
+            _put(node, tail, v0 + j * 1e-3)
+        state["qubit_pairs"][p] = node
+    (folder / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    (folder / "wiring.json").write_text(json.dumps(
+        {"network": {"host": "9.9.9.9"}, "wiring": {"qubits": {}}}),
+        encoding="utf-8")
+    app = create_app(testing=True, instance_path=str(tmp_path / ("_i_" + name)))
+    c = app.test_client()
+    c.post("/load", data={"folder": str(folder)})
+    for step in range(steps):
+        doc = json.loads((folder / "state.json").read_text(encoding="utf-8"))
+        for j, p in enumerate(doc["qubit_pairs"]):
+            for tail, v0 in hot.items():
+                _put(doc["qubit_pairs"][p], tail, v0 + j * 1e-3 + (step + 1) * 1e-5)
+            if step == 0:
+                for tail, v0 in cold.items():
+                    _put(doc["qubit_pairs"][p], tail, v0 + j * 1e-3 + 1e-5)
+        (folder / "state.json").write_text(json.dumps(doc), encoding="utf-8")
+        c.post("/state/archive", data={"tag": f"s{step}"})
+        time.sleep(1.05)
+    return c
+
+
+SRB_TAIL = "macros.cz.fidelity.StandardRB.average_gate_fidelity"
+IRB_TAIL = "macros.cz.fidelity.InterleavedRB.average_gate_fidelity"
+
+
+class TestReviewRound2:
+    """The three confirmed defects of the second review round — all reproduced
+    through the real route before a line was changed."""
+
+    # ① "Nothing recorded" was claimed beside the recording.
+
+    def test_a_chip_that_measured_a_2Q_gate_fidelity_offers_no_empty_template(
+            self, tmp_path):
+        """A lab that measures a 2Q gate fidelity at all normally runs BOTH
+        StandardRB and InterleavedRB. Ranked by change points, SRB won `best`,
+        SRB is Clifford-level, so the empty "2Q gate fidelity" template was
+        appended — while the chip's REAL IRB gate fidelity rendered two badges
+        later in the same row. Pressing the empty one said "Nothing recorded for
+        qubit_pairs.*.gate_fidelity yet" about a quantity this chip measured.
+        """
+        c = _hot_cold_chip(tmp_path, "mixedrb", {SRB_TAIL: 0.97}, {IRB_TAIL: 0.99})
+        badges = _badges(c.get("/topology/trends").get_data(as_text=True))
+        paths = [p for p, _ in badges]
+        assert any("InterleavedRB" in p for p in paths), badges
+        assert any("StandardRB" in p for p in paths), badges
+        assert "qubit_pairs.*.gate_fidelity" not in paths, \
+            f"the question is answered — do not ask it again: {badges}"
+
+    def test_the_gate_level_family_LEADS_the_row_even_when_SRB_moved_more(
+            self, tmp_path):
+        """`best` is the badge the row opens with. What the Overview reports as
+        "2Q fidelity" is the GATE number, so a chip that has one leads with it —
+        change counts rank the rest, they do not decide which question the row
+        answers first."""
+        c = _hot_cold_chip(tmp_path, "leadrb", {SRB_TAIL: 0.97}, {IRB_TAIL: 0.99})
+        badges = _badges(c.get("/topology/trends").get_data(as_text=True))
+        assert "InterleavedRB" in badges[0][0], badges
+        assert badges[0][1] == "2Q gate fid. (IRB)", badges
+
+    def test_an_SRB_ONLY_chip_still_gets_the_question(self, tmp_path):
+        """The fix must not delete the empty template — a Clifford number is not
+        a gate number and neither is derived from the other (`_RB_LEVEL`)."""
+        c, _ = _chip_with(tmp_path, "srbonly", PAIRS, {SRB_TAIL: 0.97})
+        badges = _badges(c.get("/topology/trends").get_data(as_text=True))
+        assert ("qubit_pairs.*.gate_fidelity", "2Q gate fidelity") in badges, badges
+
+    # ② Two badges, one path, and the second one was a dead control.
+
+    def test_no_two_badges_share_a_data_trend_path(self, tmp_path):
+        """`_TREND_2Q_FIDELITY_TEMPLATE` IS `qubit_pairs.*.gate_fidelity`, so a
+        chip carrying a bare `gate_fidelity` pair leaf plus a higher-change
+        non-gate fidelity family emitted the template AND that family's own
+        identical path. `togglePath` resolves its button with
+        `[data-trend-path="…"]`, so pressing the second flipped the FIRST one's
+        state and the pressed badge visibly did nothing."""
+        c = _hot_cold_chip(tmp_path, "dupe", {SRB_TAIL: 0.97},
+                           {"gate_fidelity": 0.985})
+        badges = _badges(c.get("/topology/trends").get_data(as_text=True))
+        paths = [p for p, _ in badges]
+        assert "qubit_pairs.*.gate_fidelity" in paths, badges
+        assert len(paths) == len(set(paths)), f"one path, one badge: {badges}"
+
+    # ③ The last badges in the row could never be turned on.
+
+    def test_every_badge_the_row_offers_can_actually_be_charted(self, tmp_path):
+        """`_TREND_2Q_MAX_CHIPS` was 10 against a chart cap of 8, and the route
+        hands `_trend_pair_chips` the ALREADY-TRIMMED selection — so pressing
+        every badge brought the last two back `aria-pressed="false"`, pressing
+        again reproduced the same trim forever, and the note told the user to
+        deselect something while naming a badge that already rendered as
+        deselected."""
+        from quam_state_manager.web.routes import _TRENDS_MAX_FAMILIES
+        leaves = {}
+        for v in ("bipolar", "flattop", "flattop_erf", "snz", "unipolar"):
+            leaves[f"macros.cz_{v}.phase_shift_control"] = 0.1
+            leaves[f"macros.cz_{v}.phase_shift_target"] = 0.2
+        leaves["mutual_flux_bias.0"] = 0.3
+        leaves["mutual_flux_bias.1"] = 0.4
+        leaves["coupler.interaction_offset"] = 0.5
+        c, _ = _chip_with(tmp_path, "allpress", PAIRS, leaves)
+        offered = [p for p, _ in
+                   _badges(c.get("/topology/trends").get_data(as_text=True))]
+        # one slot is left for the search box, which wins the cap by design
+        assert 0 < len(offered) < _TRENDS_MAX_FAMILIES, offered
+        body = c.get("/topology/trends?metrics=&paths="
+                     + ",".join(offered)).get_data(as_text=True)
+        pressed = re.findall(
+            r'data-trend-path="([^"]+)"[^>]*?aria-pressed="(\w+)"', body)
+        assert pressed and len(pressed) == len(offered), pressed
+        off = [p for p, a in pressed if a != "true"]
+        assert not off, f"pressed and came back un-pressed: {off}"
+        assert "Charting the first" not in body, \
+            "a full row of badges must not trip the families cap on its own"
+
+
 class TestNothingOldBroke:
     def test_the_curated_chips_keep_their_data_values(self, client):
         """localStorage/selection continuity: `data-trend-metric` values must
@@ -655,8 +798,13 @@ class TestNothingOldBroke:
     def test_the_client_sends_the_three_selections_separately(self):
         js = Path("quam_state_manager/web/static/chip-status.js").read_text(
             encoding="utf-8")
+        # Slice the WHOLE function, never a character budget: a 900-char window
+        # expired the moment `_params` grew a press-order sort, and a distance
+        # grep that stops matching reads as a regression it is not (docs/155
+        # §10a's lesson, applied before it could bite twice).
         i = js.index("function _params()")
-        body = js[i:i + 900]
+        body = js[i:js.index("\n    function ", i + 1)]
+        assert "return q;" in body, "the slice really is the whole function"
         assert "'&paths=' + encodeURIComponent(paths.join(','))" in body
         assert "'&path=' + encodeURIComponent(pathEl.value.trim())" in body
         assert "data-trend-path" in body

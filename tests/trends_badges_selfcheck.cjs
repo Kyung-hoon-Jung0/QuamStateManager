@@ -173,6 +173,86 @@ setTimeout(function () {
                                                                ['20260102_000000', 2]] }] }]);
     ok(win.eval('window.__lastHost') === 'topo-trend-0', 'and a qubit chart in the qubit box');
 
+    // ── 4. the NEWEST press wins the families cap ─────────────────────────
+    // The server keeps the first N of what it receives. Emitted in DOM order,
+    // the cap discarded whichever badges sit LAST in the row — the user pressed
+    // one, it came back aria-pressed="false", and pressing it again reproduced
+    // exactly the same trim forever. Newest-first, the press that just happened
+    // is always kept and the OLDEST selection is what the trim note names.
+    const w4 = world();
+    const row = w4.document.querySelector('.topo-trends-2q .topo-trends-chips');
+    ['aa', 'bb', 'cc', 'dd'].forEach(function (t) {
+      const b = w4.document.createElement('button');
+      b.className = 'topo-trend-chip topo-trend-badge';
+      b.setAttribute('data-trend-path', 'qubit_pairs.*.' + t);
+      row.appendChild(b);
+    });
+    const T4 = w4.ChipTrends;
+    const sent = () => {
+      const u = w4.urls[w4.urls.length - 1] || '';
+      const m = /[?&]paths=([^&]*)/.exec(u);
+      return m ? decodeURIComponent(m[1]).split(',') : [];
+    };
+    // pressed in DOM order; the row renders them in that same order
+    ['qubit_pairs.*.aa', 'qubit_pairs.*.bb', 'qubit_pairs.*.cc'].forEach(T4.togglePath);
+    let order = sent();
+    ok(order.join('|') === 'qubit_pairs.*.cc|qubit_pairs.*.bb|qubit_pairs.*.aa',
+       'the badges travel NEWEST FIRST, so the server trims the oldest ('
+       + order.join(',') + ')');
+    ok(order[0] === 'qubit_pairs.*.cc',
+       'and the badge pressed LAST is the one that cannot be trimmed');
+
+    T4.togglePath('qubit_pairs.*.bb');           // un-press the middle one
+    order = sent();
+    ok(order.join('|') === 'qubit_pairs.*.cc|qubit_pairs.*.aa',
+       'un-pressing removes it from the order too (' + order.join(',') + ')');
+    T4.togglePath('qubit_pairs.*.bb');           // press it again — now newest
+    order = sent();
+    ok(order[0] === 'qubit_pairs.*.bb',
+       're-pressing makes it the newest again (' + order.join(',') + ')');
+
+    // A path the order has never seen (a fresh page whose badge the SERVER
+    // rendered active) must still be sent — behind the known ones, never lost.
+    const unknown = w4.document.querySelector(
+      '.topo-trend-badge[data-trend-path="qubit_pairs.*.dd"]');
+    unknown.classList.add('active');
+    T4.togglePath('qubit_pairs.*.cc');           // any press to force a reload
+    T4.togglePath('qubit_pairs.*.cc');
+    order = sent();
+    ok(order.indexOf('qubit_pairs.*.dd') === order.length - 1,
+       'an unrecorded active badge sorts behind the known ones, never dropped ('
+       + order.join(',') + ')');
+    ok(order.length === 4, 'and every active badge is still sent (' + order.length + ')');
+
+    // An UN-PRESS leaves the order, so a badge the server later renders active
+    // again cannot claim the position it held before the user turned it off.
+    // The newest deliberate act on that path was switching it OFF; coming back
+    // from the server it is news to this page, and news sorts behind.
+    const w5 = world();
+    ['ee', 'ff', 'gg'].forEach(function (t) {
+      const b = w5.document.createElement('button');
+      b.className = 'topo-trend-chip topo-trend-badge';
+      b.setAttribute('data-trend-path', 'qubit_pairs.*.' + t);
+      w5.document.querySelector('.topo-trends-2q .topo-trends-chips').appendChild(b);
+    });
+    const T5 = w5.ChipTrends;
+    const sent5 = () => {
+      const m = /[?&]paths=([^&]*)/.exec(w5.urls[w5.urls.length - 1] || '');
+      return m ? decodeURIComponent(m[1]).split(',') : [];
+    };
+    ['qubit_pairs.*.ee', 'qubit_pairs.*.ff', 'qubit_pairs.*.gg'].forEach(T5.togglePath);
+    T5.togglePath('qubit_pairs.*.gg');           // …and turn the newest back off
+    const gg = w5.document.querySelector(
+      '.topo-trend-badge[data-trend-path="qubit_pairs.*.gg"]');
+    gg.classList.add('active');                  // the SERVER renders it active
+    T5.toggle('T2echo'); T5.toggle('T2echo');    // a reload that touches no badge
+    order = sent5();
+    ok(order.join('|')
+         === 'qubit_pairs.*.ff|qubit_pairs.*.ee|qubit_pairs.*.gg',
+       'an un-pressed path loses its old position, so a server-rendered '
+       + 'reactivation sorts behind the presses that outlived it ('
+       + order.join(',') + ')');
+
     process.exit(fails ? 1 : 0);
   }, 30);
 }, 300);

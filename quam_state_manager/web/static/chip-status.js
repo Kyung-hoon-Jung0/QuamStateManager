@@ -3913,6 +3913,19 @@ window.ChipTrends = (function () {
        is typed in the box (?path=). They are separate parameters on purpose —
        one ?path= could not carry a badge AND a typed family at once, so a badge
        press would have evicted the box and vice versa. */
+    /* Badge press order, NEWEST FIRST. The server keeps the first
+       _TRENDS_MAX_FAMILIES of what it receives, so emitting the badges in DOM
+       order made the cap discard whichever badges sit last in the row — the
+       user pressed one, it came back `aria-pressed="false"`, and pressing it
+       again reproduced exactly the same trim forever. Emitted newest-first, the
+       press that just happened is always kept and the OLDEST selection is what
+       the trim note names — something the user can see and deselect. The chart
+       for the badge just pressed also lands directly under the badge row.
+       Survives the section's outerHTML swap because it lives in the module, not
+       in the DOM; a path the list has never seen (a full page reload, a badge
+       the server rendered active) falls back to DOM order behind the known
+       ones, so nothing is ever dropped from the request. */
+    var _pathOrder = [];
     function _params() {
         var box = document.getElementById('topo-trends');
         var sel = [], paths = [];
@@ -3925,6 +3938,13 @@ window.ChipTrends = (function () {
                     if (p && paths.indexOf(p) < 0) paths.push(p);
                 });
         }
+        paths.sort(function (a, b) {
+            var ia = _pathOrder.indexOf(a), ib = _pathOrder.indexOf(b);
+            if (ia < 0 && ib < 0) return 0;      // both unknown: keep DOM order
+            if (ia < 0) return 1;                // unknown sorts behind known
+            if (ib < 0) return -1;
+            return ia - ib;
+        });
         var pathEl = document.getElementById('topo-trend-path');
         var q = 'metrics=' + encodeURIComponent(sel.join(','));
         if (paths.length) q += '&paths=' + encodeURIComponent(paths.join(','));
@@ -3997,10 +4017,15 @@ window.ChipTrends = (function () {
         if (!p) return;
         var b = document.querySelector(
             '.topo-trend-badge[data-trend-path="' + String(p).replace(/"/g, '\\"') + '"]');
+        var on = true;
         if (b) {
-            var on = b.classList.toggle('active');
+            on = b.classList.toggle('active');
             b.setAttribute('aria-pressed', on ? 'true' : 'false');
         }
+        // Record the press so the newest one survives the families cap.
+        var i = _pathOrder.indexOf(p);
+        if (i >= 0) _pathOrder.splice(i, 1);
+        if (on) _pathOrder.unshift(p);
         _reload();
     }
     function _esc(s) {

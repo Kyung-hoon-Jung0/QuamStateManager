@@ -10385,7 +10385,15 @@ _TREND_2Q_FIDELITY_TEMPLATE = "qubit_pairs.*.gate_fidelity"
 # (docs/94: "a tripped cap now renders a visible note") — the first cut sliced
 # silently at 10 and a real chip lost `mutual_flux_bias.*`, one of the knob
 # families the ask named, with nothing on screen to say so.
-_TREND_2Q_MAX_CHIPS = 10
+#
+# NEVER OFFER MORE BADGES THAN CAN BE CHARTED. At 10 against a chart cap of 8,
+# pressing every badge in the row brought two back `aria-pressed="false"` — the
+# press looked ignored, pressing again reproduced exactly the same trim, and the
+# note told the user to "deselect one to make room" while naming a badge that
+# already rendered as deselected. One slot is left for the search box, which
+# wins the cap by design (it is the most recent deliberate act on the page), so
+# a full row plus a typed family is always exactly chartable.
+_TREND_2Q_MAX_CHIPS = _TRENDS_MAX_FAMILIES - 1
 
 
 def _trend_is_gate_fidelity(tail: str) -> bool:
@@ -10494,11 +10502,22 @@ def _trend_pair_chips(hm, path: Path, active: list[str]) -> tuple[list[dict], in
         return {"path": f["path"], "label": _trend_pair_label(f["label"]),
                 "n": f["n"]}
 
-    best = next((f for f in measured if _is_fidelity_tail(f["label"])), None)
+    # Whether the QUESTION is answered is a property of the whole row, not of
+    # whichever fidelity family happens to have moved most. Ranked by change
+    # points, a chip running BOTH StandardRB and InterleavedRB — the normal case
+    # for a lab that measures a 2Q gate fidelity at all — made the SRB family
+    # `best`, and SRB is Clifford-level, so the empty template was appended
+    # while the chip's real IRB gate fidelity rendered two badges later in the
+    # SAME row: "Nothing recorded" standing beside the recording. So: ask every
+    # measured fidelity family whether ANY of them is gate-level, and lead the
+    # row with that one when it exists.
+    fids = [f for f in measured if _is_fidelity_tail(f["label"])]
+    gate = next((f for f in fids if _trend_is_gate_fidelity(f["label"])), None)
+    best = gate or (fids[0] if fids else None)
     chips: list[dict] = []
     if best:
         chips.append(_chip(best))
-    if not best or not _trend_is_gate_fidelity(best["label"]):
+    if gate is None:
         # The QUESTION stays on the row even when the chip answers it with
         # nothing: pressing this charts the same "Nothing recorded" slot a
         # curated metric with no data renders.
@@ -10515,6 +10534,16 @@ def _trend_pair_chips(hm, path: Path, active: list[str]) -> tuple[list[dict], in
         for k in list(groups):
             if groups[k]:
                 chips.append(_chip(groups[k].pop(0)))
+
+    # One path, one badge. `togglePath` resolves the button it lights by
+    # `[data-trend-path="…"]`, so two badges sharing a path means pressing the
+    # second flips the FIRST one's state and the pressed badge visibly does
+    # nothing — a dead control. The gate-level rule above removes the case that
+    # produced one (a bare `gate_fidelity` tail IS the template's path); this
+    # keeps any future overlap from reaching the row.
+    _seen_paths: set[str] = set()
+    chips = [c for c in chips
+             if not (c["path"] in _seen_paths or _seen_paths.add(c["path"]))]
 
     dropped = max(0, len(chips) - _TREND_2Q_MAX_CHIPS)
     chips = chips[:_TREND_2Q_MAX_CHIPS]
