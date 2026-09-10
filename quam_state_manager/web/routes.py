@@ -5620,6 +5620,38 @@ def _pair_grid_cached(store: QuamStore, modified: dict) -> tuple:
     return grid
 
 
+def _extra_grids_cached(store: QuamStore, modified: dict, doc: str) -> list[dict]:
+    """One built grid per DISCOVERED collection, memoized like the other two.
+
+    The memo matters for the same reason the pair grid's does (docs/141 4ad):
+    ``/bulk/cells?grid=e_twpas`` runs a moment after the page render and has to
+    fill cells from the very dicts the page was rendered from.
+    """
+    from quam_state_manager.core import bulk_virt, entity_grids
+    ctx = _active_ctx() or {}
+    key = (_bulk_grid_key(store, set()), doc)
+    hit = ctx.get("extra_grid_cache")
+    if hit and hit.get("key") == key and hit.get("store") is store:
+        return hit["grids"]
+    out: list[dict] = []
+    for spec in entity_grids.discover(store.merged, doc):
+        cols, groups, rows = _entity_bulk_grid(
+            store, spec["root"], spec["ids"], modified, spec["expand_ports"])
+        if not cols or not rows:
+            continue          # a collection with nothing settable renders nothing
+        out.append({"key": spec["key"], "root": spec["root"],
+                    "label": spec["label"], "columns": cols,
+                    "column_groups": groups, "rows": rows})
+    ctx["extra_grid_cache"] = {"key": key, "store": store, "grids": out}
+    return out
+
+
+def _bulk_doc(raw: str | None) -> str:
+    """``state`` unless the page asked for ``wiring`` -- anything else is
+    state, so a stale or hand-typed link can never render a blank page."""
+    return "wiring" if (raw or "").strip().lower() == "wiring" else "state"
+
+
 @bp.route("/bulk")
 def bulk_edit():
     """Bulk-tune panel: rows = qubits, columns = the high-churn fields, every cell
@@ -5639,9 +5671,20 @@ def bulk_edit():
     # are silently ignored (the chip may have changed under a saved set).
     _dyn_hidden = {k for k in (request.args.get("dynhide") or "").split(",") if k}
     modified = _modified_map()
-    g = _bulk_grid_cached(store, _dyn_hidden, modified)
-    columns, rows, column_groups = g["columns"], g["rows"], g["column_groups"]
-    dyn_cols, dyn_truncated, qubit_meta = g["dyn_cols"], g["dyn_truncated"], g["qubit_meta"]
+    # Customer, 2026-09-10: "live state edit에서도 wiring.json 할수있게."
+    # The two badges beside the title pick which DOCUMENT this page edits.
+    # wiring.json has no qubits/pairs grid of its own -- its collections are
+    # discovered like every other one, so the switch is which set of grids
+    # renders, not a second page.
+    doc = _bulk_doc(request.args.get("doc"))
+    if doc == "wiring":
+        columns, rows, column_groups = [], [], []
+        dyn_cols, dyn_truncated = [], False
+        qubit_meta = []
+    else:
+        g = _bulk_grid_cached(store, _dyn_hidden, modified)
+        columns, rows, column_groups = g["columns"], g["rows"], g["column_groups"]
+        dyn_cols, dyn_truncated, qubit_meta = g["dyn_cols"], g["dyn_truncated"], g["qubit_meta"]
     merged = store.merged
 
     # docs/141 4n: columns past the client's look-ahead window (the same
@@ -5655,7 +5698,8 @@ def bulk_edit():
     # Pair grid (stacked below the qubit table): columns are DERIVED from the chip's
     # real pair leaves — lab-flexible, no hardcoded gate/leaf names. Same cell
     # pipeline + commit path. Empty for chips with no pairs / no editable pair leaves.
-    pair_columns, pair_groups, pair_rows = _pair_grid_cached(store, modified)
+    pair_columns, pair_groups, pair_rows = (
+        ([], [], []) if doc == "wiring" else _pair_grid_cached(store, modified))
     # docs/141 4ad: and it is virtualized the same way. On the PJ 20Q chip this
     # table was 1.49 MB of a 2.81 MB document — 53%, the largest single block
     # left after §4n — while the qubit grid beside it had been slimmed to a
@@ -5666,6 +5710,16 @@ def bulk_edit():
     pair_cold_map = (bulk_virt.cold_map(pair_columns, pair_rows, pair_cold_keys)
                      if pair_cold_keys else None)
 
+    # docs: entity_grids -- every collection this chip HAS, not the two this
+    # code used to know about. Each is planned for cold columns by the same
+    # planner; a small collection trips none of its gates and renders whole.
+    extra_grids = []
+    for eg in _extra_grids_cached(store, modified, doc):
+        ck = bulk_virt.plan(eg["columns"], len(eg["rows"]), request.args.get("vw"))
+        extra_grids.append(dict(
+            eg, cold_keys=ck,
+            cold_map=(bulk_virt.cold_map(eg["columns"], eg["rows"], ck) if ck else None)))
+
     band_meta = {"bands": {str(b): list(r) for b, r in mw_fem.BANDS.items()}}
     # Client model for the Properties menu + search hint: key/label/section/
     # unit/kind only — never the per-qubit tmpl values (the server re-derives
@@ -5673,7 +5727,8 @@ def bulk_edit():
     # docs/120 item 4 — validated against BOTH grids, because they share the
     # one #bulk-search box, so a chip must not go dead just because its columns
     # live in the pair table.
-    filter_chips = _bulk_filter_chips(columns, pair_columns)
+    filter_chips = _bulk_filter_chips(
+        columns, pair_columns + [c for eg in extra_grids for c in eg["columns"]])
     template = "_bulkedit.html" if _is_htmx() else "bulkedit.html"
     # docs/167: one dict per grid, built once. Row heads are ~20-100 elements
     # and grid-virt.js never selects them (every selector there is
@@ -5695,6 +5750,7 @@ def bulk_edit():
                                             pair_cold_map=pair_cold_map,
                                             note_rows=note_rows,
                                             pair_note_rows=pair_note_rows,
+                                            extra_grids=extra_grids, bulk_doc=doc,
                                             **_notes_state()))
     # docs/103: this is the app's largest response by an order of magnitude
     # (measured 10.0 MB / 6.5 MB HTML on real 21Q/10Q chips — docs/85 ships
@@ -5747,10 +5803,24 @@ def bulk_cells():
     # macro. Anything else (absent, "qubit") is the qubit grid, so an older
     # page's request means exactly what it always did.
     which = (request.args.get("grid") or "qubit").strip().lower()
-    if which not in ("qubit", "pair"):
-        return jsonify({"ok": False, "error": f"unknown grid {which!r}"}), 400
     macros = current_app.jinja_env.get_template("_bulk_cell_macros.html").module
-    if which == "pair":
+    # A DISCOVERED collection answers to its own key (`e_twpas`, `w_qubits`).
+    # An unknown grid is still a 400 and never a fallback -- serving one grid's
+    # cells into another's rows would put wrong numbers on screen, which is the
+    # one failure this mechanism must not have (docs/141 4ad).
+    _extra = None
+    if which not in ("qubit", "pair"):
+        _doc = "wiring" if which.startswith("w_") else "state"
+        for eg in _extra_grids_cached(store, _modified_map(), _doc):
+            if eg["key"] == which:
+                _extra = eg
+                break
+        if _extra is None:
+            return jsonify({"ok": False, "error": f"unknown grid {which!r}"}), 400
+    if _extra is not None:
+        columns, rows = _extra["columns"], _extra["rows"]
+        render = lambda cell, col, rid: str(macros.pair_cell(cell, col, rid))  # noqa: E731
+    elif which == "pair":
         columns, _groups, rows = _pair_grid_cached(store, _modified_map())
         render = lambda cell, col, rid: str(macros.pair_cell(cell, col, rid))  # noqa: E731
     else:
@@ -5996,15 +6066,29 @@ def _pair_bulk_grid(store: QuamStore, modified: dict
     the chip's real pair leaves via ``pair_columns.derive_pair_columns``; each cell
     resolves through the SAME ``_build_bulk_cell`` pipeline as the qubit grid, so
     edits ride the existing ``/field/edit-batch`` path with no new mutation code."""
-    from quam_state_manager.core.pair_columns import derive_pair_columns
-    columns, path_map = derive_pair_columns(store)
+    return _entity_bulk_grid(store, "qubit_pairs", None, modified)
+
+
+def _entity_bulk_grid(store: QuamStore, root: str, ids: list[str] | None,
+                      modified: dict, expand_ports: bool = True
+                      ) -> tuple[list[dict], list[dict], list[dict]]:
+    """The pair grid's builder, over ANY collection (docs: entity_grids).
+
+    ``root`` is a collection's dot path (``"qubit_pairs"``, ``"twpas"``,
+    ``"wiring.qubits"``). Every cell still resolves through
+    ``_build_bulk_cell``, so a TWPA pump amplitude commits down exactly the
+    path a qubit's does, with no new mutation code -- which is the whole reason
+    this is a parameter and not a second builder.
+    """
+    from quam_state_manager.core.pair_columns import derive_entity_columns
+    columns, path_map = derive_entity_columns(store, root, ids, expand_ports)
     if not columns:
         return [], [], []
 
     port_info: dict[tuple, dict[str, Any]] = {}
     with store._lock:
         merged = store.merged
-        pair_ids = list(store.qubit_pair_names)
+        pair_ids = list(path_map.keys())
         grid: dict[str, list[dict[str, Any]]] = {}
         for pid in pair_ids:
             pm = path_map.get(pid, {})

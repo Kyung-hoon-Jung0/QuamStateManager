@@ -19,12 +19,23 @@
 (function () {
     'use strict';
 
+    /* One implementation, instantiated per grid (customer, 2026-09-10 -- their
+       chip's `twpas` had no grid because the page had exactly two, hardcoded).
+       `cfg` carries only what differs: the element-id prefix, the storage keys,
+       the ?grid= token the cell-hydration route answers to, the row attribute,
+       and the noun the confirms use. Everything below was already module-scoped,
+       so each instance gets its own COLS / sort / widths / virtualization state
+       -- which is required, not incidental: both grids scroll inside ONE
+       #table-pane, and docs/141 §4ad is the round where a shared flag between
+       them cost a day. */
+    function makeGrid(cfg) {
+    var P = cfg.prefix;
+    var HIDE_KEY = cfg.hideKey;
     // r17 one-time reset — see the twin note in bulk-edit.js. The pair grid
     // hid the most (99 of 141 columns on a real 31-pair chip), so a persisted
     // pre-r17 set would have kept almost all of it invisible forever.
-    var HIDE_KEY = 'quam_bulk_hidden_cols_pair_v2';
-    try { localStorage.removeItem('quam_bulk_hidden_cols_pair'); } catch (e) {}
-    var WIDTH_KEY = 'quam_bulk_col_widths_pair';
+    if (cfg.legacyHideKey) { try { localStorage.removeItem(cfg.legacyHideKey); } catch (e) {} }
+    var WIDTH_KEY = cfg.widthKey;
     var SEARCH_KEY = 'quam_bulk_search';   // shared with the qubit grid
     var COLS = [];
     var sortKey = null, sortDir = 1;
@@ -49,14 +60,14 @@
                 return document.getElementById('table-pane')
                     || t.closest('.bulk-table-wrap') || t.parentElement;
             },
-            styleId: 'bulk-pair-virt-width-style',
-            noteId: 'bulk-pair-virt-note',
-            mapId: 'bulk-pair-cold-map',
-            tableSel: '#bulk-pair-table',
-            rowAttr: 'data-pair',
+            styleId: P + '-virt-width-style',
+            noteId: P + '-virt-note',
+            mapId: P + '-cold-map',
+            tableSel: '#' + P + '-table',
+            rowAttr: cfg.rowAttr,
             colWidths: function () { return _colWidths; },
             urlParams: function () {
-                var q = '&grid=pair';
+                var q = '&grid=' + encodeURIComponent(cfg.gridParam);
                 var tok = window.__bulkChipKey || '';
                 if (tok) q += '&chip=' + encodeURIComponent(tok);
                 return q;
@@ -75,13 +86,13 @@
         // table's server-cold columns stay blank forever, so say so.
         if (!gv) {
             _pvirt = null;
-            if (window.GridVirtMissingNote) window.GridVirtMissingNote(table(), 'bulk-pair-virt-note');
+            if (window.GridVirtMissingNote) window.GridVirtMissingNote(table(), P + '-virt-note');
             return;
         }
         gv.init();
     }
 
-    function table() { return document.getElementById('bulk-pair-table'); }
+    function table() { return document.getElementById(P + '-table'); }
     function _cells(scope) { return Array.prototype.slice.call(scope.querySelectorAll('.bulk-cell')); }
     function _rows() { var t = table(); return t ? Array.prototype.slice.call(t.querySelectorAll('tbody tr')) : []; }
     function _isDirty(c) { return c.value !== c.getAttribute('data-orig'); }
@@ -154,7 +165,7 @@
 
     // ── Property-Selection menu ──────────────────────────────────────────────
     function _buildColMenu() {
-        var menu = document.getElementById('bulk-pair-colvis-menu');
+        var menu = document.getElementById(P + '-colvis-menu');
         if (!menu) return;
         var hide = _hiddenSet();
         var bySection = {}, order = [];
@@ -330,9 +341,9 @@
             r.classList.toggle('bulk-row-hidden', !vis);
             if (vis) shown++;
         });
-        var cnt = document.getElementById('bulk-pair-search-count');
+        var cnt = document.getElementById(P + '-search-count');
         if (cnt) cnt.textContent = q ? (shown + ' of ' + rows.length + ' pairs') : '';
-        _emptySearchNote(t, 'bulk-pair-empty-search', shown, rows.length, q);
+        _emptySearchNote(t, P + '-empty-search', shown, rows.length, q);
         // docs/141 4ae A2: a narrowed grid puts columns ON SCREEN that were
         // cold when it was wide -- and a reveal (the Properties menu, the
         // docs/85 "N hidden columns match — Show" chip, Show all, Reset) does
@@ -453,11 +464,11 @@
     function _refreshGlobal() {
         var t = table(); if (!t) return;
         var n = _dirtyCount(t);
-        var cnt = document.getElementById('bulk-pair-dirty-count');
+        var cnt = document.getElementById(P + '-dirty-count');
         if (cnt) cnt.textContent = n ? (n + ' un-applied ' + (n === 1 ? 'edit' : 'edits')) : '';
-        var all = document.getElementById('bulk-pair-apply-all'); if (all) all.disabled = n === 0;
-        var aps = document.getElementById('bulk-pair-apply-sync'); if (aps) aps.disabled = n === 0;
-        var rst = document.getElementById('bulk-pair-reset'); if (rst) rst.disabled = n === 0;
+        var all = document.getElementById(P + '-apply-all'); if (all) all.disabled = n === 0;
+        var aps = document.getElementById(P + '-apply-sync'); if (aps) aps.disabled = n === 0;
+        var rst = document.getElementById(P + '-reset'); if (rst) rst.disabled = n === 0;
     }
 
     function _applyCells(cells, tr, silent, seenGlobal) {
@@ -663,8 +674,8 @@
     function _loadColWidths() { try { _colWidths = JSON.parse(localStorage.getItem(WIDTH_KEY) || '{}') || {}; } catch (e) { _colWidths = {}; } }
     function _saveColWidths() { try { localStorage.setItem(WIDTH_KEY, JSON.stringify(_colWidths)); } catch (e) {} }
     function _colWidthStyleEl() {
-        var el = document.getElementById('bulk-pair-col-width-style');
-        if (!el) { el = document.createElement('style'); el.id = 'bulk-pair-col-width-style'; document.head.appendChild(el); }
+        var el = document.getElementById(P + '-col-width-style');
+        if (!el) { el = document.createElement('style'); el.id = P + '-col-width-style'; document.head.appendChild(el); }
         return el;
     }
     function _applyColWidthStyle() {
@@ -673,9 +684,9 @@
             var w = _colWidths[k];
             var ek = (window.CSS && CSS.escape) ? CSS.escape(k) : k;
             var wpx = w + 'px;min-width:' + w + 'px;max-width:' + w + 'px';
-            css += '#bulk-pair-table th.bulk-col-head[data-col-key="' + ek + '"]{width:' + wpx + ';overflow:hidden}';
-            css += '#bulk-pair-table td[data-col-key="' + ek + '"]{width:' + wpx + ';overflow:hidden}';
-            css += '#bulk-pair-table td[data-col-key="' + ek + '"] .bulk-cell{width:' + w + 'px!important;min-width:' + w + 'px;max-width:' + w + 'px}';
+            css += '#' + P + '-table th.bulk-col-head[data-col-key="' + ek + '"]{width:' + wpx + ';overflow:hidden}';
+            css += '#' + P + '-table td[data-col-key="' + ek + '"]{width:' + wpx + ';overflow:hidden}';
+            css += '#' + P + '-table td[data-col-key="' + ek + '"] .bulk-cell{width:' + w + 'px!important;min-width:' + w + 'px;max-width:' + w + 'px}';
         }
         _colWidthStyleEl().textContent = css;
     }
@@ -752,7 +763,7 @@
             // focusout; the stamp lets focusout skip its click-away row commit so
             // Reset stays a discard and Apply all's button isn't disabled by the
             // racing commit before mouseup (the "needs two presses" bug).
-            ['bulk-pair-reset', 'bulk-pair-apply-all', 'bulk-pair-apply-sync'].forEach(function (bid) {
+            [P + '-reset', P + '-apply-all', P + '-apply-sync'].forEach(function (bid) {
                 var b = document.getElementById(bid);
                 if (b && !b._toolbarGuardBound) {
                     b._toolbarGuardBound = true;
@@ -821,7 +832,7 @@
                 // Let an "Apply all" / "Apply to live" button commit the whole set;
                 // and never let a click on Reset commit the focused row (discard intent).
                 if (BulkPairEdit._toolbarPressTs && (Date.now() - BulkPairEdit._toolbarPressTs) < 1000) return;
-                if (to && to.closest && to.closest('#bulk-pair-apply-all, #bulk-pair-apply-sync, #bulk-pair-reset')) return;
+                if (to && to.closest && to.closest('#' + P + '-apply-all, #' + P + '-apply-sync, #' + P + '-reset')) return;
                 var b = row && row.querySelector('.bulk-row-apply');
                 if (b && !b.disabled) BulkPairEdit.applyRow(b);
             });
@@ -862,7 +873,7 @@
                         // r16 ⓪-2: UndoNav stashed the typing — no discard here.
                         if (window._undoNavAt
                             && Date.now() - window._undoNavAt < 4000) return;
-                        if (!window.confirm('You have unapplied pair edits in Live State Edit. Leave and discard them?')) {
+                        if (!window.confirm('You have unapplied ' + cfg.noun + ' edits in Live State Edit. Leave and discard them?')) {
                             ev.preventDefault();
                         }
                     }
@@ -890,12 +901,12 @@
             var rows = _rows().filter(function (tr) { return _cells(tr).some(_isDirty); });
             if (!rows.length) return;
             var n = _dirtyCount(t);
-            if (!window.confirm('Apply ' + n + ' pair edit' + (n === 1 ? '' : 's') + ' across ' + rows.length +
-                ' pair' + (rows.length === 1 ? '' : 's') +
+            if (!window.confirm('Apply ' + n + ' ' + cfg.noun + ' edit' + (n === 1 ? '' : 's')
+                + ' across ' + rows.length + ' ' + cfg.noun + (rows.length === 1 ? '' : 's') +
                 (syncAfter ? ' and push to the live chip?' : ' to the working state?'))) return;
-            var all = document.getElementById('bulk-pair-apply-all');
+            var all = document.getElementById(P + '-apply-all');
             if (all) { all.disabled = true; all.textContent = 'Applying…'; }
-            var apsBtn = document.getElementById('bulk-pair-apply-sync'); if (apsBtn) apsBtn.disabled = true;
+            var apsBtn = document.getElementById(P + '-apply-sync'); if (apsBtn) apsBtn.disabled = true;
             var i = 0, failures = 0, succeeded = 0, lastTray = null, firstFailRow = null;
             var seenGlobal = {};
             function next() {
@@ -905,7 +916,7 @@
                         try { window._swapPendingTray(lastTray); }
                         finally { window._bulkSelfEdit = false; }
                     }
-                    if (all) all.textContent = failures ? ('Apply all (' + failures + ' failed)') : 'Apply all (pairs)';
+                    if (all) all.textContent = failures ? ('Apply all (' + failures + ' failed)') : ('Apply all (' + cfg.nounPlural + ')');
                     _refreshGlobal(); _recomputeStats();
                     if (failures) {
                         var msg = succeeded + ' applied, ' + failures + ' failed — see the red row' + (failures === 1 ? '' : 's');
@@ -1198,5 +1209,33 @@
     // had `BulkEdit._syncApplied` since §4n for the same reason.
     BulkPairEdit._syncApplied = _syncAppliedAcrossTable;
 
-    window.BulkPairEdit = BulkPairEdit;
+    return BulkPairEdit;
+    }
+
+    // The pair grid, with exactly the literals that were hardcoded here before
+    // -- so its behaviour is unchanged and every existing pin still describes it.
+    window.BulkPairEdit = makeGrid({
+        prefix: 'bulk-pair',
+        hideKey: 'quam_bulk_hidden_cols_pair_v2',
+        legacyHideKey: 'quam_bulk_hidden_cols_pair',
+        widthKey: 'quam_bulk_col_widths_pair',
+        gridParam: 'pair', rowAttr: 'data-pair',
+        noun: 'pair', nounPlural: 'pairs',
+    });
+    // ...and the same implementation for every DISCOVERED collection
+    // (core/entity_grids.py). `window.EntityGrids[<key>]` is one instance per
+    // grid on the page; the template mounts them.
+    window.EntityGrids = window.EntityGrids || {};
+    window.makeEntityGrid = function (key, label) {
+        var g = makeGrid({
+            prefix: 'bulk-' + key,
+            hideKey: 'quam_bulk_hidden_cols_' + key,
+            legacyHideKey: null,
+            widthKey: 'quam_bulk_col_widths_' + key,
+            gridParam: key, rowAttr: 'data-entity',
+            noun: (label || key), nounPlural: (label || key),
+        });
+        window.EntityGrids[key] = g;
+        return g;
+    };
 })();

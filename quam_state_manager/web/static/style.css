@@ -11752,6 +11752,26 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 .bulk-col-head:hover .bulk-col-hist, .bulk-col-hist:focus-visible { opacity: .6; }
 .bulk-col-hist:hover { opacity: 1; }
 
+/* ── state.json | wiring.json, beside the Live State Edit title ─────── */
+/* Customer, 2026-09-10: "badge 형태로 ... 깔끔하게 살짝 SM 블루 boundary로."
+   A thin shared boundary, one segment lit — the same reading as the Table/Flat
+   segmented control beside it, at badge weight rather than button weight. */
+/* flex:0 0 auto -- .bulk-toolbar-title is a flex row and a bare inline-flex
+   child stretched the pair across the whole width (real Chrome, 2026-09-10). */
+.bulk-docbadges { display: inline-flex; align-items: stretch; margin-left: .5rem;
+    flex: 0 0 auto; align-self: center; width: auto;
+    border: 1px solid var(--pico-primary); border-radius: 7px; overflow: hidden; }
+.bulk-docbadge { display: inline-flex; align-items: center; padding: .12rem .5rem;
+    flex: 0 0 auto;
+    font-family: var(--font-mono); font-size: .72rem; line-height: 1.5;
+    color: var(--color-text-muted); text-decoration: none; background: transparent;
+    white-space: nowrap; transition: background .12s, color .12s; }
+.bulk-docbadge + .bulk-docbadge { border-left: 1px solid var(--pico-primary); }
+.bulk-docbadge:hover { color: var(--pico-primary);
+    background: color-mix(in srgb, var(--pico-primary) 10%, transparent); }
+.bulk-docbadge.active { color: #fff; background: var(--pico-primary); font-weight: 600; }
+.bulk-docbadge.active:hover { color: #fff; }
+
 /* ── FSP → amplitude compensation popup (docs/20 r12-B) ─────────────── */
 /* 940, not 760: on a ten-row plan the Δ column (difference + percent) was
    clipped off the right edge and read as "+0" — customer screenshot,

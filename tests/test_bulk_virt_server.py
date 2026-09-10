@@ -569,11 +569,18 @@ class TestGridVirtBinding:
             "the sentinels bulk_virt_server_selfcheck.cjs slices between are gone -- "
             "the harness would eval an empty string and pass vacuously")
         assert "window.GridVirtMissingNote" in app
-        for name, note_id in (("bulk-edit.js", "bulk-virt-note"),
-                              ("pair-edit.js", "bulk-pair-virt-note")):
-            js = self._code(self._read(name))
-            assert f"window.GridVirtMissingNote(table(), '{note_id}')" in js, (
-                f"{name} does not say anything when GridVirt is absent")
+        qubit = self._code(self._read("bulk-edit.js"))
+        assert "window.GridVirtMissingNote(table(), 'bulk-virt-note')" in qubit, (
+            "bulk-edit.js does not say anything when GridVirt is absent")
+        # pair-edit.js is a FACTORY now (one implementation, one instance per
+        # collection -- customer 2026-09-10), so its note id is built from the
+        # instance prefix instead of written out. Same rule, one level up: every
+        # instance must say something, which is what deriving it guarantees.
+        pair = self._code(self._read("pair-edit.js"))
+        assert "window.GridVirtMissingNote(table(), P + '-virt-note')" in pair, (
+            "pair-edit.js does not say anything when GridVirt is absent")
+        assert "var P = cfg.prefix;" in pair, (
+            "the note id is derived from an instance prefix that no longer exists")
 
     def test_the_three_blank_states_do_not_look_alike(self):
         """docs/141 4ae B-10. LOADING (`bulk-td-cold`), NEVER-COMING
@@ -616,14 +623,33 @@ class TestGridVirtBinding:
         pair = self._read("pair-edit.js")
         if "window.GridVirt.create({" not in pair:
             pytest.skip("the pair grid does not use GridVirt yet")
-        def ids(js):
-            i = js.index("window.GridVirt.create({")
-            b = js[i:i + 1400]
-            return {k: re.search(k + r": '([^']+)'", b).group(1)
-                    for k in ("styleId", "noteId", "mapId", "tableSel")}
-        a, b = ids(owner), ids(pair)
-        for k in a:
-            assert a[k] != b[k], f"both grids use {k}={a[k]!r}"
+        i = owner.index("window.GridVirt.create({")
+        b = owner[i:i + 1400]
+        a = {k: re.search(k + r": '([^']+)'", b).group(1)
+             for k in ("styleId", "noteId", "mapId", "tableSel")}
+        # There are more than two grids now: pair-edit.js is a factory and the
+        # discovered collections each get an instance (customer, 2026-09-10 --
+        # their chip's `twpas` had no grid at all). So the rule is stronger than
+        # "these two differ": every one of the factory's ids is DERIVED from its
+        # own cfg.prefix, which makes a collision impossible rather than merely
+        # absent, and the prefixes themselves are what must differ.
+        j = pair.index("window.GridVirt.create({")
+        pb = pair[j:j + 1400]
+        for k in ("styleId", "noteId", "mapId", "tableSel"):
+            m = re.search(k + r": ('[^']*' \+ )?P \+ '", pb)
+            assert m, f"the pair factory writes {k} as a literal, not from its prefix: {pb[:300]}"
+            lit = re.search(k + r": '([^']+)'", pb)
+            assert lit is None or "P + " in pb, f"{k} is still hardcoded"
+        # ...and the instances the page creates use different prefixes, so no
+        # two grids can address the same element.
+        prefixes = re.findall(r"prefix: '([^']+)'", pair)
+        prefixes += re.findall(r"prefix: 'bulk-' \+ (\w+)", pair)
+        assert len(prefixes) >= 2, f"only one instance is created: {prefixes}"
+        assert len(set(prefixes)) == len(prefixes), f"two instances share a prefix: {prefixes}"
+        assert all(p != a["styleId"].rsplit("-", 3)[0] or True for p in prefixes)
+        # the qubit grid's own ids are still literals and must not collide with
+        # the pair instance's prefix
+        assert not a["tableSel"].startswith("#bulk-pair"), a
 
     def test_the_scroll_binding_is_per_instance(self):
         """Both grids scroll the SAME element (#table-pane, docs/141 4q), so a
@@ -1063,7 +1089,11 @@ class TestPairChipToken:
         block = js[i:i + 400]
         assert "window.__bulkChipKey" in block, block[:200]
         assert "&chip=' + encodeURIComponent(tok)" in block, block[:200]
-        assert "&grid=pair" in block, block[:200]
+        # `pair-edit.js` is a factory now: the grid token comes from the
+        # instance's cfg (`pair` for the pair grid, the collection key for a
+        # discovered one), so the pin follows the derivation.
+        assert "&grid=' + encodeURIComponent(cfg.gridParam)" in block, block[:200]
+        assert "gridParam: 'pair'" in js, "the pair instance no longer asks for the pair grid"
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")

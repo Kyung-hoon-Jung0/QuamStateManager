@@ -16,6 +16,22 @@
     {# Title row: just the title + the help (ⓘ) toggle beside it. #}
     <div class="bulk-toolbar bulk-toolbar-title">
         <h2 style="white-space:nowrap;margin:0">Live State Edit</h2>
+        {# Customer, 2026-09-10: "live state edit에서도 wiring.json 할수있게.
+           Live state edit 오른쪽에 badge 형태로, state.json | wiring.json
+           이렇게 두개 버튼... 깔끔하게 살짝 SM 블루 boundary로."
+           Which DOCUMENT this page edits. wiring.json has no qubit or pair
+           grid of its own; its collections are discovered like every other,
+           so this switches which grids render, not which page you are on. #}
+        <div class="bulk-docbadges" role="group" aria-label="Document">
+            <a class="bulk-docbadge{% if bulk_doc != 'wiring' %} active{% endif %}"
+               href="/bulk" hx-get="/bulk" hx-target="#table-pane" hx-push-url="true"
+               {% if bulk_doc != 'wiring' %}aria-current="true"{% endif %}
+               title="Edit state.json — qubits, pairs and every other component">state.json</a>
+            <a class="bulk-docbadge{% if bulk_doc == 'wiring' %} active{% endif %}"
+               href="/bulk?doc=wiring" hx-get="/bulk?doc=wiring" hx-target="#table-pane" hx-push-url="true"
+               {% if bulk_doc == 'wiring' %}aria-current="true"{% endif %}
+               title="Edit wiring.json — which physical port each channel is cabled to">wiring.json</a>
+        </div>
         {# aria-pressed toggle buttons (audit P2): the full WAI-ARIA tab contract
            (aria-selected + tabpanel + arrow roving) wasn't implemented, so a broken-
            contract role=tablist/tab is worse than honest pressed-toggle buttons; switchPane
@@ -48,14 +64,17 @@
                 (must share a band with its peer)</span>.
             </div>
         </details>
+        {% if rows %}
         <details class="bulk-colvis">
             <summary class="btn-sm outline" title="Choose which property columns to show">&#9776; Properties</summary>
             <div class="bulk-colvis-menu" id="bulk-colvis-menu" role="menu"></div>
         </details>
+        {% endif %}
         {# ⚏ Qubits — which ROWS are shown. Mirror of the Properties picker:
            chip-map (from grid_location, row 0 = bottom) + grouped checkbox
            list, per-chip persisted HIDDEN set (new qubits default visible).
            A row with an unsaved edit can never be hidden. #}
+        {% if rows %}
         <details class="bulk-colvis bulk-qubitvis">
             <summary class="btn-sm outline" title="Choose which qubits (rows) are shown">&#9871; Qubits</summary>
             <div class="bulk-colvis-menu bulk-qubitvis-menu" id="bulk-qubitvis-menu" role="menu"></div>
@@ -63,6 +82,7 @@
         <button type="button" class="bulk-qubit-pill" id="bulk-qubit-pill" hidden
                 onclick="BulkEdit.showAllQubits()"
                 title="Some qubits are hidden by the &#9871; Qubits selection — click to show all"></button>
+        {% endif %}
         {% if pair_rows %}
         {# docs/141 4s (user-directed): the same picker for the PAIR grid's rows —
            per-chip persisted hidden set, a pair with an unsaved edit can never
@@ -92,6 +112,7 @@
         </span>
         <span class="bulk-band-warn" id="bulk-band-warn" aria-live="polite" hidden></span>
         <span class="bulk-dirty-count" id="bulk-dirty-count" aria-live="polite"></span>
+        {% if rows %}
         <button type="button" class="btn-sm" id="bulk-apply-all" onclick="BulkEdit.applyAll()" disabled
                 title="Apply these edits to the working state (the live chip stays untouched — review in the tray, then apply to live).">Apply all</button>
         {% if chip_origin != 'dataset_archive' %}
@@ -100,10 +121,13 @@
         {% endif %}
         <button type="button" class="btn-sm outline" id="bulk-reset" onclick="BulkEdit.resetDirty()" disabled
                 title="Discard the unsaved (not-yet-applied) edits in this table">Reset</button>
+        {% endif %}
+        {% if rows %}
         <label class="bulk-freqsync-ctl"
                title="When on, editing a qubit/readout frequency mirrors its f₀₁↔RF twin — but only when the two are currently equal. RF_frequency is what the hardware actually plays (the config's IF is inferred from it); f_01 is bookkeeping the calibration keeps equal to it. An already-detuned pair is left untouched. Turn off to detune one deliberately.">
             <input type="checkbox" id="bulk-freq-sync" checked onchange="BulkEdit.setFreqSync(this.checked)">
             &#128279;&nbsp;Sync f&#8320;&#8321;&#8596;RF</label>
+        {% endif %}
     </div>
     {# ── docs/120 item 4: quick-filter chips ────────────────────────────────
        The readability cluster (Aa · S M L · B · letter spacing) that used to
@@ -156,6 +180,7 @@
     {% if dyn_truncated %}
     <p class="muted bulk-dyn-truncated" style="margin:.15rem 0 .3rem;font-size:.78em">&#9888; {{ dyn_truncated }}</p>
     {% endif %}
+    {% if rows %}
     <div class="bulk-table-wrap">
         <table class="bulk-table" id="bulk-table">
             <thead>
@@ -218,83 +243,32 @@
        hardcoded. Same .bulk-* markup + commit path as the qubit table; driven by
        the isolated pair-edit.js. Read-only cells: runtime self-refs (⟳), list/
        confusion badges (↗ to inspector), and blanks for columns a pair lacks. #}
-    {% if pair_rows %}
-    <div class="bulk-pair-divider" id="bulk-pair-divider">
-        <span class="bulk-pair-divider-label">⇩ Qubit&nbsp;Pairs
-            <small class="muted">— gate macros, flux &amp; coupler pulses (columns derived from this chip)</small></span>
-        <span class="bulk-pair-tools">
-            <details class="bulk-colvis bulk-pair-colvis">
-                <summary class="btn-sm outline" title="Choose which pair property columns to show">&#9776; Pair properties</summary>
-                <div class="bulk-colvis-menu" id="bulk-pair-colvis-menu" role="menu"></div>
-            </details>
-            <span class="bulk-search-count muted" id="bulk-pair-search-count" aria-live="polite"></span>
-            <span class="bulk-dirty-count" id="bulk-pair-dirty-count" aria-live="polite"></span>
-            <button type="button" class="btn-sm" id="bulk-pair-apply-all" onclick="BulkPairEdit.applyAll()" disabled
-                    title="Apply these pair edits to the working state (the live chip stays untouched).">Apply all (pairs)</button>
-            {% if chip_origin != 'dataset_archive' %}
-            <button type="button" class="btn-sm btn-apply-live" id="bulk-pair-apply-sync" onclick="BulkPairEdit.applyAll(true)" disabled
-                    title="One click — apply these pair edits to the live chip now (writes state.json / wiring.json), skipping the review step."><span aria-hidden="true">&#9889;</span> Apply to live now</button>
-            {% endif %}
-            <button type="button" class="btn-sm outline" id="bulk-pair-reset" onclick="BulkPairEdit.resetDirty()" disabled
-                    title="Discard the unsaved (not-yet-applied) pair edits">Reset</button>
-        </span>
-    </div>
-    <div class="bulk-table-wrap bulk-pair-table-wrap">
-        <table class="bulk-table bulk-pair-table" id="bulk-pair-table">
-            <thead>
-                <tr class="bulk-group-row">
-                    <th class="bulk-corner" rowspan="2" scope="col" data-col-key="__id__"
-                        title="Click to sort by pair name">pair
-                        <span class="bulk-sort-caret" aria-hidden="true"></span></th>
-                    {% for g in pair_groups %}
-                    <th class="bulk-group-head{% if g.group_start %} bulk-col-group-start{% endif %}{% if g.visible == 0 %} bulk-col-hidden{% endif %}"
-                        data-group="{{ g.section }}" colspan="{{ g.visible if g.visible else 1 }}"
-                        scope="colgroup">{{ g.label }}</th>
-                    {% endfor %}
-                    <th class="bulk-apply-col" rowspan="2" scope="col"></th>
-                </tr>
-                <tr class="bulk-head-row">
-                    {% for c in pair_columns %}
-                    <th scope="col" class="bulk-col-head ck-{{ loop.index0 }}{% if not c.default_on %} bulk-col-hidden{% endif %}{% if c.group_start %} bulk-col-group-start{% endif %}"
-                        data-col-key="{{ c.key }}" data-section="{{ c.section }}" data-maxlen="{{ c.maxlen }}"
-                        title="{{ c.section }} · click to sort · drag the right edge to resize">
-                        <span class="bulk-col-label">{{ c.label }}</span>{% if c.unit %} <span class="bulk-col-unit unit">({{ c.unit }})</span>{% endif %}<span class="bulk-sort-caret" aria-hidden="true"></span>
-                        <span class="bulk-col-stats muted" data-col-stats="{{ c.key }}"></span>
-                        <button type="button" class="bulk-col-hist" data-grid="pair"
-                                data-label="{{ c.label }}" data-unit="{{ c.unit or '' }}"
-                                onclick="ColumnHistory.open(this)"
-                                title="Column history — this parameter across every pair over the recent runs">&#128344;</button>
-                        <button type="button" class="key-help-btn" tabindex="-1"
-                                data-help-q="{{ c.key.rsplit('.', 1)[-1] }}"
-                                title="Config Manual — what this key means, what values it takes">?</button>
-                        <span class="bulk-resize-handle" data-col-key="{{ c.key }}" title="Drag to resize · double-click to auto-fit" aria-hidden="true"></span>
-                    </th>
-                    {% endfor %}
-                </tr>
-            </thead>
-            <tbody>
-                {% for row in pair_rows %}
-                <tr data-qubit="{{ row.id }}" data-pair="{{ row.id }}">
-                    <th class="bulk-rowhead{% if row.id in pair_note_rows %} bulk-rowhead-note{% endif %}" scope="row" data-col-key="__id__"{% if row.id in pair_note_rows %} title="{{ pair_note_rows[row.id] }}"{% endif %}>{{ row.id }}{% if row.id in pair_note_rows %}<span class="bulk-note-mark" aria-label="has a note">&#128221;</span>{% endif %}</th>
-                    {%- for cell in row.cells -%}
-                    {%- set col = pair_columns[loop.index0] -%}
-                    <td class="bulk-td ck-{{ loop.index0 }}{% if not col.default_on %} bulk-col-hidden{% endif %}{% if col.group_start %} bulk-col-group-start{% endif %}{% if cell.kind in ('runtime','list','missing') %} bulk-td-ro{% endif %}{% if cell.is_pointer and cell.kind == 'scalar' %} bulk-td-pointer{% endif %}{% if cell.lo and cell.lo.peer_qubit %} bulk-td-lo{% endif %}{% if col.key in pair_cold_keys %} bulk-td-cold{% endif %}" data-col-key="{{ col.key }}">
-                        {#- docs/141 4ad: a server-cold column ships an EMPTY td (its value
-                            rides #bulk-pair-cold-map below); the client fills it from
-                            GET /bulk/cells?grid=pair through this same macro. -#}
-                        {%- if col.key not in pair_cold_keys %}{{ cells.pair_cell(cell, col, row.id) }}{% endif -%}
-                    </td>
-                    {%- endfor %}
-                    <td class="bulk-apply-col">
-                        <button type="button" class="btn-xs bulk-row-apply" onclick="BulkPairEdit.applyRow(this)" disabled>Apply</button>
-                        <span class="bulk-row-error" hidden></span>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
     {% endif %}
+    {% if pair_rows %}
+    {% with gid='bulk-pair', js='BulkPairEdit', label='Qubit Pairs',
+            sub='gate macros, flux & coupler pulses (columns derived from this chip)',
+            rowattr='data-pair', rowlabel='pair', hist_grid='pair',
+            columns=pair_columns, groups=pair_groups, rows=pair_rows,
+            cold_keys=pair_cold_keys, notes=pair_note_rows %}
+        {% include '_bulk_entity_grid.html' %}
+    {% endwith %}
+    {% endif %}
+
+    {# Every OTHER collection this chip carries — twpas today, qdac tomorrow,
+       and whatever the next component is. Discovered, never named here
+       (core/entity_grids.py); on the wiring document these are its own
+       collections instead. #}
+    {% for eg in (extra_grids or []) %}
+    {% with gid='bulk-' ~ eg.key, js="EntityGrids['" ~ eg.key ~ "']", label=eg.label,
+            sub=('port wiring — the pointer is the value' if bulk_doc == 'wiring'
+                 else 'columns derived from this chip'),
+            rowattr='data-entity', rowlabel='id', hist_grid=None,
+            columns=eg.columns, groups=eg.column_groups, rows=eg.rows,
+            cold_keys=eg.cold_keys, notes=None %}
+        {% include '_bulk_entity_grid.html' %}
+    {% endwith %}
+    <script type="application/json" id="bulk-{{ eg.key }}-cold-map">{{ eg.cold_map | script_json }}</script>
+    {% endfor %}
     </div>{# /pane: grid #}
 
     {# ── Pane 2: All values — every leaf of state+wiring, virtual-scrolled ─────
@@ -415,6 +389,12 @@
 <script>
     window.__bulkChipKey = {{ ((active_chip_key if active_chip_key is defined else '') or '') | tojson }};
     if (window.BulkEdit && BulkEdit.mount) BulkEdit.mount({{ columns | script_json }}, {{ band_meta | script_json }}, {{ (dyn_cols or []) | script_json }}, {{ {'chip': active_name or '', 'chipKey': (active_chip_key if active_chip_key is defined else '') or '', 'qubits': qubit_meta or []} | script_json }});
+    {% for eg in (extra_grids or []) %}
+    if (window.makeEntityGrid) {
+        var _g{{ loop.index0 }} = window.makeEntityGrid({{ eg.key | tojson }}, {{ eg.label | tojson }});
+        if (_g{{ loop.index0 }} && _g{{ loop.index0 }}.mount) _g{{ loop.index0 }}.mount({{ eg.columns | script_json }});
+    }
+    {% endfor %}
     {% if pair_rows %}
     if (window.BulkPairEdit && BulkPairEdit.mount) BulkPairEdit.mount({{ pair_columns | script_json }});
     {% endif %}

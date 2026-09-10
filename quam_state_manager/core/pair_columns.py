@@ -115,8 +115,17 @@ def _strip_pair_suffix(key: str, pair_id: str) -> str:
     return key[: -len(suffix)] if key.endswith(suffix) else key
 
 
-def _group_of(tmpl_segs: list[str]) -> tuple[str, str]:
+def _group_of(tmpl_segs: list[str], generic: bool = False) -> tuple[str, str]:
     head = tmpl_segs[0]
+    if generic:
+        # A collection this code has never seen has no macro vocabulary to
+        # recognise, so the honest grouping is the component the leaf lives
+        # under -- `pump`, `p`, `rr` -- with a top-level scalar in General.
+        if len(tmpl_segs) == 1:
+            return "general", "General"
+        if head == "extras":
+            return "extras", "Extras"
+        return "c:" + head, _humanize(head)
     if head == "macros" and len(tmpl_segs) >= 2:
         return "gate:" + tmpl_segs[1], _humanize(tmpl_segs[1])
     if head == "cross_resonance":
@@ -136,7 +145,12 @@ def _group_of(tmpl_segs: list[str]) -> tuple[str, str]:
 
 def _unit_of(leaf_name: str) -> str:
     n = leaf_name.lower()
-    if "frequency" in n or n.endswith("_if") or n == "if" or "_lo" in n:
+    # `_lo` is ANCHORED. An unanchored substring made `grid_location` an Hz
+    # column the moment a collection outside qubit_pairs was rendered
+    # (customer, 2026-09-10: the TWPA grid's first paint) -- no pair leaf
+    # happened to contain the letters, so the guess had never been wrong here.
+    if ("frequency" in n or n.endswith("_if") or n == "if"
+            or n == "lo" or n.endswith("_lo") or n.startswith("lo_")):
         return "Hz"
     if n == "detuning":
         return "Hz"
@@ -166,7 +180,8 @@ def _col_key(group: str, tmpl_segs: list[str]) -> str:
     return re.sub(r"[^A-Za-z0-9_]+", "_", raw)
 
 
-def _leaf(pair_id: str, real_segs: list[str], tmpl_segs: list[str], value: Any) -> dict:
+def _leaf(pair_id: str, real_segs: list[str], tmpl_segs: list[str], value: Any,
+          root: str = "qubit_pairs") -> dict:
     leaf_name = real_segs[-1]
     if isinstance(value, list):
         kind = "list"
@@ -174,10 +189,10 @@ def _leaf(pair_id: str, real_segs: list[str], tmpl_segs: list[str], value: Any) 
         kind = "runtime"          # #./inferred_* — editing would break inference
     else:
         kind = "edit"             # scalar, None, or cross-ref pointer (value-mode edit)
-    group, group_label = _group_of(tmpl_segs)
+    group, group_label = _group_of(tmpl_segs, generic=root != "qubit_pairs")
     return {
         "tmpl_segs": tmpl_segs,
-        "real_path": "qubit_pairs." + pair_id + "." + ".".join(real_segs),
+        "real_path": root + "." + pair_id + "." + ".".join(real_segs),
         "group": group,
         "group_label": group_label,
         "kind": kind,
@@ -189,7 +204,8 @@ def _leaf(pair_id: str, real_segs: list[str], tmpl_segs: list[str], value: Any) 
 
 
 def _port_leaves(pair_id: str, real_segs: list[str], tmpl_segs: list[str],
-                 merged: dict, leaves: list[dict]) -> None:
+                 merged: dict, leaves: list[dict],
+                 root: str = "qubit_pairs") -> None:
     """Enumerate a wired port's scalar + list leaves through the pointer chain.
 
     Mirrors ``qubit_columns._port_leaves`` (docs/94): the channel's
@@ -204,7 +220,7 @@ def _port_leaves(pair_id: str, real_segs: list[str], tmpl_segs: list[str],
         _walk as _walk_abs, resolve_field_target)
     try:
         ft = resolve_field_target(
-            merged, "qubit_pairs." + pair_id + "." + ".".join(real_segs))
+            merged, root + "." + pair_id + "." + ".".join(real_segs))
     except Exception:  # noqa: BLE001 — a broken wiring pointer yields no columns
         return
     if not ft.get("resolvable"):
@@ -217,14 +233,15 @@ def _port_leaves(pair_id: str, real_segs: list[str], tmpl_segs: list[str],
     for k, v in port.items():
         if k in _SKIP_KEYS or isinstance(v, dict):
             continue          # nested dicts (multi-DUC upconverters) never become columns
-        lf = _leaf(pair_id, real_segs + [k], tmpl_segs + [k], v)
+        lf = _leaf(pair_id, real_segs + [k], tmpl_segs + [k], v, root)
         lf["label"] = _IO_SHORT.get(io, io) + " · " + k
         leaves.append(lf)
 
 
 def _walk_pair(pair_id: str, node: Any, real_segs: list[str],
                tmpl_segs: list[str], leaves: list[dict],
-               merged: dict | None = None) -> None:
+               merged: dict | None = None, root: str = "qubit_pairs",
+               expand_ports: bool = True) -> None:
     """Recurse one pair object, appending leaf descriptors.
 
     Guards ``None`` / non-dict at every level (real data has explicit nulls for
@@ -242,15 +259,15 @@ def _walk_pair(pair_id: str, node: Any, real_segs: list[str],
         tk = _strip_pair_suffix(k, pair_id) if parent == "operations" else k
         r2 = real_segs + [k]
         t2 = tmpl_segs + [tk]
-        if (merged is not None and k in _IO_KEYS
+        if (expand_ports and merged is not None and k in _IO_KEYS
                 and is_pointer(v) and not is_self_ref(v)):
-            _port_leaves(pair_id, r2, t2, merged, leaves)
+            _port_leaves(pair_id, r2, t2, merged, leaves, root)
             continue
         if isinstance(v, dict):
             if v:
-                _walk_pair(pair_id, v, r2, t2, leaves, merged)
+                _walk_pair(pair_id, v, r2, t2, leaves, merged, root, expand_ports)
             continue          # empty dict → no leaf
-        leaves.append(_leaf(pair_id, r2, t2, v))
+        leaves.append(_leaf(pair_id, r2, t2, v, root))
 
 
 def _order_key(group: str, headline: bool, tmpl_segs: list[str],
@@ -293,14 +310,44 @@ def derive_pair_columns(store) -> tuple[list[dict], dict[str, dict[str, tuple]]]
     is ``"edit"`` | ``"runtime"`` | ``"list"``.  A pair missing a column has no
     entry (→ blank cell).
     """
+    return derive_entity_columns(store, "qubit_pairs")
+
+
+def derive_entity_columns(store, root: str, entity_ids: list[str] | None = None,
+                          expand_ports: bool = True
+                          ) -> tuple[list[dict], dict[str, dict[str, tuple]]]:
+    """The same derivation over ANY collection of entities.
+
+    ``root`` is the collection's dot path — ``"qubit_pairs"``, ``"twpas"``,
+    ``"wiring.qubits"``. ``entity_ids`` defaults to the collection's own keys in
+    natural order. ``expand_ports=False`` keeps a channel's ``opx_output``
+    POINTER as the column instead of expanding the resolved port's leaves: on a
+    wiring grid the pointer IS the value the file holds.
+
+    Customer, 2026-09-10: their chip carries a `twpas` collection whose pump
+    amplitude and RF frequency existed on no grid at all, and QDAC is coming.
+    A second walker is how the two would drift, so this is the SAME one with
+    the root parameterised — `derive_pair_columns` is now a call to it.
+    """
     with store._lock:
         merged = store.merged
-        pairs = merged.get("qubit_pairs") or {}
-        pair_ids = list(store.qubit_pair_names)
+        coll: Any = merged
+        for seg in root.split("."):
+            coll = (coll or {}).get(seg) if isinstance(coll, dict) else None
+        coll = coll if isinstance(coll, dict) else {}
+        if entity_ids is None:
+            if root == "qubit_pairs":
+                entity_ids = list(store.qubit_pair_names)
+            elif root == "qubits":
+                entity_ids = list(store.qubit_names)
+            else:
+                entity_ids = sorted(coll.keys(), key=natural_key)
+        pair_ids = list(entity_ids)
         per_pair: dict[str, list[dict]] = {}
         for pid in pair_ids:
             leaves: list[dict] = []
-            _walk_pair(pid, pairs.get(pid) or {}, [], [], leaves, merged)
+            _walk_pair(pid, coll.get(pid) or {}, [], [], leaves, merged, root,
+                       expand_ports)
             per_pair[pid] = leaves
 
     cols: dict[str, dict] = {}

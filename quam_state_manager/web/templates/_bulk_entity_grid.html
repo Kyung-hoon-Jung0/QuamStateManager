@@ -1,0 +1,97 @@
+{#- One stacked grid, for any collection the chip has.
+
+    Customer, 2026-09-10: Live State Edit rendered exactly two grids, one per
+    HARDCODED collection, so their chip's `twpas` had no grid and the search
+    could not find a TWPA pump amplitude at all. The collections are discovered
+    now (core/entity_grids.py) and every one of them renders through THIS
+    partial -- including Qubit Pairs, so the markup cannot drift between the
+    grid the project has had for a year and the ones it grows tomorrow.
+
+    Parameters:
+      gid      element-id prefix ('bulk-pair', 'bulk-e_twpas') -- must match the
+               JS instance's cfg.prefix, since that is how it finds its own ids
+      js       the JS instance expression ('BulkPairEdit', "EntityGrids['e_twpas']")
+      label    heading text            sub      muted heading subtitle
+      rowattr  the row id attribute ('data-pair' | 'data-entity')
+      columns / groups / rows / cold_keys / notes / colvis_id
+-#}
+{%- import '_bulk_cell_macros.html' as cells -%}
+{%- set cold_keys = cold_keys or [] -%}
+{%- set notes = notes or {} -%}
+<div class="bulk-pair-divider" id="{{ gid }}-divider">
+    <span class="bulk-pair-divider-label">&#8681; {{ label }}
+        {%- if sub %} <small class="muted">— {{ sub }}</small>{% endif %}</span>
+    <span class="bulk-pair-tools">
+        <details class="bulk-colvis bulk-pair-colvis">
+            <summary class="btn-sm outline" title="Choose which columns to show">&#9776; Properties</summary>
+            <div class="bulk-colvis-menu" id="{{ gid }}-colvis-menu" role="menu"></div>
+        </details>
+        <span class="bulk-search-count muted" id="{{ gid }}-search-count" aria-live="polite"></span>
+        <span class="bulk-dirty-count" id="{{ gid }}-dirty-count" aria-live="polite"></span>
+        <button type="button" class="btn-sm" id="{{ gid }}-apply-all" onclick="{{ js }}.applyAll()" disabled
+                title="Apply these edits to the working state (the live chip stays untouched).">Apply all</button>
+        {% if chip_origin != 'dataset_archive' %}
+        <button type="button" class="btn-sm btn-apply-live" id="{{ gid }}-apply-sync" onclick="{{ js }}.applyAll(true)" disabled
+                title="One click — apply these edits to the live chip now (writes state.json / wiring.json), skipping the review step."><span aria-hidden="true">&#9889;</span> Apply to live now</button>
+        {% endif %}
+        <button type="button" class="btn-sm outline" id="{{ gid }}-reset" onclick="{{ js }}.resetDirty()" disabled
+                title="Discard the unsaved (not-yet-applied) edits">Reset</button>
+    </span>
+</div>
+<div class="bulk-table-wrap bulk-pair-table-wrap">
+    <table class="bulk-table bulk-pair-table" id="{{ gid }}-table">
+        <thead>
+            <tr class="bulk-group-row">
+                <th class="bulk-corner" rowspan="2" scope="col" data-col-key="__id__"
+                    title="Click to sort by name">{{ rowlabel or 'id' }}
+                    <span class="bulk-sort-caret" aria-hidden="true"></span></th>
+                {% for g in groups %}
+                <th class="bulk-group-head{% if g.group_start %} bulk-col-group-start{% endif %}{% if g.visible == 0 %} bulk-col-hidden{% endif %}"
+                    data-group="{{ g.section }}" colspan="{{ g.visible if g.visible else 1 }}"
+                    scope="colgroup">{{ g.label }}</th>
+                {% endfor %}
+                <th class="bulk-apply-col" rowspan="2" scope="col"></th>
+            </tr>
+            <tr class="bulk-head-row">
+                {% for c in columns %}
+                <th scope="col" class="bulk-col-head ck-{{ loop.index0 }}{% if not c.default_on %} bulk-col-hidden{% endif %}{% if c.group_start %} bulk-col-group-start{% endif %}"
+                    data-col-key="{{ c.key }}" data-section="{{ c.section }}" data-maxlen="{{ c.maxlen }}"
+                    title="{{ c.section }} · click to sort · drag the right edge to resize">
+                    <span class="bulk-col-label">{{ c.label }}</span>{% if c.unit %} <span class="bulk-col-unit unit">({{ c.unit }})</span>{% endif %}<span class="bulk-sort-caret" aria-hidden="true"></span>
+                    <span class="bulk-col-stats muted" data-col-stats="{{ c.key }}"></span>
+                    {% if hist_grid %}
+                    <button type="button" class="bulk-col-hist" data-grid="{{ hist_grid }}"
+                            data-label="{{ c.label }}" data-unit="{{ c.unit or '' }}"
+                            onclick="ColumnHistory.open(this)"
+                            title="Column history — this parameter across every row over the recent runs">&#128344;</button>
+                    {% endif %}
+                    <button type="button" class="key-help-btn" tabindex="-1"
+                            data-help-q="{{ c.key.rsplit('.', 1)[-1] }}"
+                            title="Config Manual — what this key means, what values it takes">?</button>
+                    <span class="bulk-resize-handle" data-col-key="{{ c.key }}" title="Drag to resize · double-click to auto-fit" aria-hidden="true"></span>
+                </th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in rows %}
+            <tr data-qubit="{{ row.id }}" {{ rowattr }}="{{ row.id }}">
+                <th class="bulk-rowhead{% if row.id in notes %} bulk-rowhead-note{% endif %}" scope="row" data-col-key="__id__"{% if row.id in notes %} title="{{ notes[row.id] }}"{% endif %}>{{ row.id }}{% if row.id in notes %}<span class="bulk-note-mark" aria-label="has a note">&#128221;</span>{% endif %}</th>
+                {%- for cell in row.cells -%}
+                {%- set col = columns[loop.index0] -%}
+                <td class="bulk-td ck-{{ loop.index0 }}{% if not col.default_on %} bulk-col-hidden{% endif %}{% if col.group_start %} bulk-col-group-start{% endif %}{% if cell.kind in ('runtime','list','missing') %} bulk-td-ro{% endif %}{% if cell.is_pointer and cell.kind == 'scalar' %} bulk-td-pointer{% endif %}{% if cell.lo and cell.lo.peer_qubit %} bulk-td-lo{% endif %}{% if col.key in cold_keys %} bulk-td-cold{% endif %}" data-col-key="{{ col.key }}">
+                    {#- docs/141 4ad: a server-cold column ships an EMPTY td (its value
+                        rides the cold map below); the client fills it from
+                        GET /bulk/cells?grid=<key> through this same macro. -#}
+                    {%- if col.key not in cold_keys %}{{ cells.pair_cell(cell, col, row.id) }}{% endif -%}
+                </td>
+                {%- endfor %}
+                <td class="bulk-apply-col">
+                    <button type="button" class="btn-xs bulk-row-apply" onclick="{{ js }}.applyRow(this)" disabled>Apply</button>
+                    <span class="bulk-row-error" hidden></span>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
