@@ -440,9 +440,27 @@ class TestTheAxisSaysWhatItMeans:
         assert '"unit": "Hz"' in body
 
     def test_ticks_use_si_prefixes_and_the_title_carries_the_unit(self):
+        """4.3B is not a physics unit -- but `~s` was the wrong cure.
+
+        This pin used to assert the literal ``tickformat: '~s'``, i.e. the
+        workaround rather than the property. A customer then reported the
+        cost: `~s` puts an SI prefix on a DIMENSIONLESS value, so a 0.996
+        fidelity axis read "996m", and it caps a d3 label at 6 significant
+        digits, so a zoomed axis drew three ticks reading one string. The
+        thing actually wanted is ``exponentformat: 'SI'`` -- Plotly's default
+        is 'B', and that is what writes 4.9e9 as "4.9B".
+
+        So the pin now asks for the PROPERTY: the chart takes its number
+        format from the one shared rule, and spells no format of its own.
+        The rule itself, and both surfaces applying it, are driven under
+        jsdom in tests/plot_axis_selfcheck.cjs.
+        """
         from pathlib import Path as _P
         src = _P("quam_state_manager/web/static/chip-status.js").read_text(encoding="utf-8")
-        assert "tickformat: '~s'" in src, "4.3B is not a physics unit"
+        assert "PlotTheme.axisNumberFormat(" in src, \
+            "the chart must ask the one shared axis rule"
+        assert "tickformat: '~s'" not in src, \
+            "the retired workaround must not come back"
         assert "c.metric + (c.unit ? ' (' + c.unit + ')' : '')" in src
 
     def test_a_constant_series_is_not_drawn_against_zero(self):
