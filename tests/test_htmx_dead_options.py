@@ -79,8 +79,21 @@ class TestTheOneSiteWhereItMattered:
             "it must push the URL it navigated to, not something else"
         # After the swap, not before: pushing first would leave the address
         # bar ahead of the pane if the request failed.
-        assert re.search(r"\.then\(\s*_push\s*,\s*_push\s*\)", block), \
-            "the push must be chained onto the ajax promise"
+        #
+        # The GUARD is pinned together with what it feeds. A pin that only
+        # greps for ".then(_push, _push)" stays green under
+        # "if (false) { _done.then(_push, _push); }" -- this project has
+        # recorded that exact vacuity before (docs/148), and this commit's own
+        # mutation sweep caught it again before the pin was written this way.
+        assert re.search(
+            r"if\s*\(\s*_done\s*&&\s*typeof\s+_done\.then\s*===\s*"
+            r"['\"]function['\"]\s*\)\s*\{\s*"
+            r"_done\.then\(\s*_push\s*,\s*_push\s*\)", block), \
+            "the push must be chained onto the ajax promise, under a live guard"
+        # ...and a synchronous return still pushes, or an htmx that does not
+        # hand back a promise would silently stop navigating.
+        assert re.search(r"else\s*\{\s*_push\(\)\s*;?\s*\}", block), \
+            "a non-promise return must still push"
 
     def test_the_two_noisy_sites_pass_a_source_instead(self):
         """Where there was no history entry to add, the fix is `source`.
