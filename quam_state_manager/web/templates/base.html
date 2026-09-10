@@ -685,7 +685,7 @@
                            version-bump refetch can never land after a newer keystroke
                            and freeze the tree on a stale query. #}
                         <textarea rows="1" placeholder="{{ search_hint() }}"
-                                  title="{{ search_title('name:', 'date:', 'status:', 'run:', '-' ~ 'negate') }}"
+                                  title="{{ search_title('name:', 'date:', 'status:', 'run:', 'param:', '-' ~ 'negate') }}"
                                   id="sidebar-filter-input" aria-label="Filter experiments"
                                   class="search-help-input" data-search-help="sidebar-search-help"
                                   hx-get="/workspace/tree" hx-trigger="input changed delay:250ms"
@@ -722,6 +722,8 @@
                                     <td>Status contains it (<code>st:</code>)</td></tr>
                                 <tr><td><button class="ds-help-example search-help-example" data-search-help-input="sidebar-filter-input" data-example="id:108">id:108</button></td>
                                     <td>Run id contains it (<code>run:</code>)</td></tr>
+                                <tr><td><button class="ds-help-example search-help-example" data-search-help-input="sidebar-filter-input" data-example="multiplexed=true">multiplexed=true</button></td>
+                                    <td>Runs whose <b>node parameter</b> <code>multiplexed</code> = <code>true</code> (also <code>param:</code>/<code>p:</code>). The key matches by part, the value exactly.</td></tr>
                                 <tr><td><button class="ds-help-example search-help-example" data-search-help-input="sidebar-filter-input" data-example="-status:error">-status:error</button></td>
                                     <td>Prefix <code>-</code> to exclude a scope</td></tr>
                                 <tr><td><button class="ds-help-example search-help-example" data-search-help-input="sidebar-filter-input" data-example='name:"power rabi"'>name:"power rabi"</button></td>

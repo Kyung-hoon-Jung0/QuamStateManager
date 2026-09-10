@@ -1645,14 +1645,45 @@
         if (phys) td.insertBefore(el, phys); else td.appendChild(el);
         return el;
     }
+    // Every cell of one LO pair: this port's band and frequency, and the peer
+    // port's. At most four, and they are what the verdict is ABOUT.
+    function _loCellsIn(group) {
+        var t = table();
+        if (!group || !t) return [];
+        var esc = (window.CSS && CSS.escape) ? CSS.escape(group) : group;
+        return Array.prototype.slice.call(
+            t.querySelectorAll('.bulk-cell[data-lo-group="' + esc + '"]'));
+    }
+    // The LIVE value of one LO field, read from the cell that owns it.
+    // `data-band` / `data-freq` / `data-peer-band` are what the SERVER rendered
+    // and nothing writes to them, so from the first edit onwards they describe
+    // a chip that no longer exists -- which is why fixing every conflicting
+    // band left every conflict on screen (customer, 2026-09-10). Returns null
+    // when that cell is not on the page (a hidden column, an unhydrated one)
+    // and the caller falls back to the server's attribute.
+    function _loLive(cell, portKey, field) {
+        if (!portKey) return null;
+        var cells = _loCellsIn(cell.getAttribute('data-lo-group'));
+        for (var i = 0; i < cells.length; i++) {
+            if (cells[i].getAttribute('data-lo-port') === portKey
+                && cells[i].getAttribute('data-lo-field') === field) {
+                var v = String(cells[i].value).trim();
+                return v === '' ? null : v;
+            }
+        }
+        return null;
+    }
     function _validateBand(cell) {
         var field = cell.getAttribute('data-lo-field');
         var td = cell.closest('.bulk-td');
         var msgEl = td && td.querySelector('.bulk-band-msg');
         if (!field) return false;
+        var myPort = cell.getAttribute('data-lo-port');
+        var peerPort = cell.getAttribute('data-lo-peer-port');
         var msg = '';
         if (field === 'freq') {
-            var band = cell.getAttribute('data-band');
+            var band = _loLive(cell, myPort, 'band');
+            if (band === null) band = cell.getAttribute('data-band');
             var rng = BANDS[band];
             var f = _num(cell.value);
             if (rng && f !== null && (f < rng[0] || f > rng[1])) {
@@ -1660,9 +1691,11 @@
             }
         } else if (field === 'band') {
             var nb = String(_num(cell.value) != null ? _num(cell.value) : cell.value.trim());
-            var peerBand = cell.getAttribute('data-peer-band');
+            var peerBand = _loLive(cell, peerPort, 'band');
+            if (peerBand === null) peerBand = cell.getAttribute('data-peer-band');
             var peer = cell.getAttribute('data-peer');
-            var freq = _num(cell.getAttribute('data-freq'));
+            var freqRaw = _loLive(cell, myPort, 'freq');
+            var freq = _num(freqRaw === null ? cell.getAttribute('data-freq') : freqRaw);
             if (peerBand && !_bandsCompatible(nb, peerBand)) {
                 msg = 'Band ' + nb + ' conflicts with LO peer ' + (peer || '') + ' (band ' + peerBand + ')';
             }
@@ -1674,6 +1707,18 @@
         if (msg && !msgEl && td) msgEl = _ensureBandMsg(td);
         if (msgEl) { msgEl.textContent = msg; msgEl.hidden = !msg; }
         return !!msg;
+    }
+    // One band edit changes the verdict at BOTH ends of the pair, and on the
+    // frequency cells judged against it. So the whole group is re-judged --
+    // four cells, already on the page, nothing fetched and no diagnostics run.
+    // (The report: "conflict된 것을 수정하면 그때는 그것만 access해서 상태를
+    // 업데이트하자.")
+    function _validateBandGroup(cell) {
+        var cells = _loCellsIn(cell.getAttribute('data-lo-group'));
+        if (!cells.length) return _validateBand(cell);
+        var warned = false;
+        cells.forEach(function (c) { if (_validateBand(c)) warned = true; });
+        return warned;
     }
     function _updateBandWarnCount() {
         var t = table(); if (!t) return;
@@ -1723,7 +1768,7 @@
             if (s.value !== v) s.value = v;
             s.classList.remove('bulk-cell-bad');   // editing reconciles a divergent group
             _markCellDirty(s);
-            if (s.hasAttribute('data-lo-field')) _validateBand(s);
+            if (s.hasAttribute('data-lo-field')) _validateBandGroup(s);
             _refreshRow(_rowOf(s));
         });
     }
@@ -3127,7 +3172,7 @@
                 _softMirrorFreq(cell);   // f_01 ↔ RF_frequency (soft, coupled-at-focus)
                 _refreshRow(_rowOf(cell));
                 _refreshGlobal();
-                if (cell.hasAttribute('data-lo-field')) { _validateBand(cell); _updateBandWarnCount(); }
+                if (cell.hasAttribute('data-lo-field')) { _validateBandGroup(cell); _updateBandWarnCount(); }
             });
             // f_01/RF coupling is decided at focus (see _freqFocus) and the 🔗 mark
             // shows only while a coupled freq cell is focused.

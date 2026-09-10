@@ -299,12 +299,22 @@ def _attach_lo_meta(cell: dict, port_info: dict) -> None:
         me = port_info.get((kind, con, fem, port), {})
         peer = mw_fem.lo_peer(kind, port)
         peer_info = port_info.get((peer[0], con, fem, peer[1]), {}) if peer else {}
+        # An LO verdict is about four numbers spread over up to four cells, and
+        # every one of them is editable. Naming the port each cell belongs to,
+        # and the pair the two ports form, is what lets the client re-read them
+        # from the page instead of trusting these attributes, which are a
+        # snapshot of render time and go stale on the first edit.
+        my_key = "%s/%s/%s:%s" % (con, fem, kind, port)
+        peer_key = ("%s/%s/%s:%s" % (con, fem, peer[0], peer[1])) if peer else None
         cell["lo"] = {
             "field": "band" if field == "band" else "freq",
             "band": me.get("band"),
             "freq": me.get("freq"),
             "peer_qubit": peer_info.get("qubit"),
             "peer_band": peer_info.get("band"),
+            "port": my_key,
+            "peer_port": peer_key,
+            "group": "|".join(sorted([my_key, peer_key])) if peer_key else None,
         }
 
 

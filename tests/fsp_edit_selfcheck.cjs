@@ -107,6 +107,16 @@ ok(editNote().style.display === 'none', 'A4: no "edited" note before any edit');
 ok(warn().style.display === 'none', 'A5: no clip warning when nothing clips');
 
 /* ── B. an untouched plan serialises exactly as before ───────────────── */
+{
+  // A caller that never opened the popup: no row was ever displayed, so there
+  // is no `shown` and the raw computed value is what goes out — byte-identical
+  // to before this dialog existed.
+  const bare = mkPlan();
+  const bareUps = window._fspCompUpdates(bare);
+  ok(bareUps[0].value === String(bare.amps[0].new)
+     && bareUps[1].value === String(bare.amps[1].new),
+     'B0: a plan the popup never rendered serialises from a.new, unchanged');
+}
 let ups = window._fspCompUpdates(plan);
 ok(ups.length === 2 && ups[0].value === '0.4' && ups[1].value === '0.2',
   'B1: un-edited plan yields the computed values (byte-identical legacy)');
@@ -247,15 +257,35 @@ ok(Array.from(card().querySelectorAll('.fsp-amp-reset'))
 ok(!/edited/i.test(compBtn().title || ''),
   'L3: the apply button does not claim edits either');
 ups = window._fspCompUpdates(plan);
-ok(ups[0].value === String(EXACT0) && ups[1].value === String(EXACT1),
-  'L4: an untouched row writes the EXACT computed amplitude, not the '
-  + '6-figure seed (' + ups[0].value + ')');
+ok(ups[0].value === inputs()[0].value && ups[1].value === inputs()[1].value,
+  'L4: an untouched row writes the number the dialog SHOWED it ('
+  + ups[0].value + '), not a seventeen-digit product it never displayed');
+ok(ups[0].value !== String(EXACT0),
+  'L4b: ...and those two really are different strings (' + String(EXACT0) + ')');
+
+/* The Δ column has to describe the value that will actually be WRITTEN. The
+ * box shows a rounding; `_rowValue` hands the exact number to the Δ paint and
+ * to the clip check for exactly that reason, so a row reading "+0.053857"
+ * while 0.05385693517469345 goes to disk would be a second, quieter version of
+ * the same lie the note was telling. (Sections A-K cannot see this either:
+ * their 0.4 IS its own rendering.) */
+const dcell = card().querySelectorAll('.fsp-delta')[0];
+const dExact = window.ValueDelta.compute(plan.amps[0].old, EXACT0).text;
+const dShown = window.ValueDelta.compute(plan.amps[0].old, Number(inputs()[0].value)).text;
+ok(dExact !== dShown,
+  'L7: the two candidate deltas really are different strings ('
+  + dExact + ' vs ' + dShown + ')');
+ok(dcell.textContent.indexOf(dShown) === 0,
+  'L8: Δ describes the amplitude the dialog shows AND writes: ' + dcell.textContent);
+ok(dcell.textContent.length < dExact.length + 10,
+  'L9: ...which is also why the column fits — the exact product is '
+  + dExact.length + ' characters and pushed ↺ off the card');
 
 /* Retyping what is already in the box is not an override either. */
 type(inputs()[0], inputs()[0].value);
 ok(editNote().style.display === 'none', 'L5: retyping the seed is not an edit');
-ok(window._fspCompUpdates(plan)[0].value === String(EXACT0),
-  'L6: ...and still writes the exact value');
+ok(window._fspCompUpdates(plan)[0].value === inputs()[0].value,
+  'L6: ...and still writes what is in the box');
 
 /* ── M. what an override says, once there IS one ──────────────────────
  * The old sentence restated the identity, which is what the customer read

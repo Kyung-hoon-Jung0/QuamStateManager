@@ -12219,7 +12219,8 @@ window._openFspPopup = (function () {
             return Number(raw) === Number(r.seed);
         }
         function _rowValue(r) {
-            if (_isSeed(r)) return Number(r.a.new);   // EXACT, never the rounding
+            // The SHOWN value, which is also the written one — see `a.shown`.
+            if (_isSeed(r)) return Number(r.seed);
             var v = Number(String(r.input.value).trim());
             return isFinite(v) ? v : NaN;
         }
@@ -12373,7 +12374,12 @@ window._openFspPopup = (function () {
             var rTd = _el("td");
             rTd.appendChild(reset);
             tr.appendChild(rTd);
-            rows.push({ a: a, seed: _ampStr(a.new), input: inp, dTd: dTd,
+            // What this dialog PUT on screen, and therefore what an untouched
+            // row writes. Six significant figures is ~1e-5 dB — finer than the
+            // DAC resolves — so this is the answer, not a rounding of it, and
+            // the card stops claiming one number while sending another.
+            a.shown = _ampStr(a.new);
+            rows.push({ a: a, seed: a.shown, input: inp, dTd: dTd,
                         mark: mark, reset: reset });
             tbody.appendChild(tr);
         });
@@ -12439,6 +12445,13 @@ window._fspCompUpdates = function (plan) {
     return (plan && plan.amps ? plan.amps : []).map(function (a) {
         var v = (a.userNew === undefined || a.userNew === null
                  || !isFinite(a.userNew)) ? a.new : a.userNew;
+        // `a.shown` is set only by the popup, and only for a row the user was
+        // shown and did not override: write the number that was on screen.
+        // A caller that never opened the popup has no `shown` and serialises
+        // byte-identically to before.
+        if (a.userNew === undefined || a.userNew === null || !isFinite(a.userNew)) {
+            if (a.shown !== undefined && a.shown !== null) v = a.shown;
+        }
         return { dot_path: a.path, value: String(v) };
     });
 };

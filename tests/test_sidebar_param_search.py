@@ -215,6 +215,21 @@ class TestTheTwoSearchBoxesAgree:
         assert routes._SIDEBAR_PARAM_EQ.pattern == r"^([A-Za-z][\w.\-]*)=(.+)$"
 
 
+class TestTheSidebarSaysTheScopeExists:
+    """A capability nobody is told about is one a user has to guess at, and the
+    report that started this was a user guessing."""
+
+    def test_the_help_panel_and_the_tooltip_name_it(self):
+        base = (Path(__file__).resolve().parents[1] / "quam_state_manager"
+                / "web" / "templates" / "base.html").read_text(encoding="utf-8")
+        panel = base.split('id="sidebar-search-help"', 1)[1].split("</table>", 1)[0]
+        assert "multiplexed=true" in panel
+        assert "<code>param:</code>" in panel and "<code>p:</code>" in panel
+        tip = base.split('id="sidebar-filter-input"', 1)[0]
+        tip = tip[tip.rfind("search_title("):]
+        assert "'param:'" in tip
+
+
 # ── on the customer's own archive ───────────────────────────────────────────
 _REAL = Path("D:/work/Customer_Codes/dataset/KH_202608_CZ")
 
