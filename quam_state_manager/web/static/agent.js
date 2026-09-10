@@ -735,6 +735,16 @@ window.AgentPanel = (function () {
     return Array.prototype.slice.call(document.querySelectorAll("[data-ag-wire]"));
   }
 
+  /* What the CLI printed, as a version. The two say it differently --
+     claude: "2.1.267 (Claude Code)", codex: "codex-cli 0.153.4" -- so the
+     NUMBER is taken and prefixed, and anything with no number in it is shown
+     verbatim rather than dressed up as one. (Prefixing "v" onto the raw string
+     gave `vcodex-cli 0.153.4`, seen in the browser.) */
+  function shortVersion(v) {
+    var m = /\d+(?:\.\d+)+/.exec(String(v || ""));
+    return m ? "v" + m[0] : String(v || "");
+  }
+
   function wireBadge(el, text, kind) {
     var b = el.querySelector(".ag-wire-badge");
     if (!b) return;
@@ -751,7 +761,7 @@ window.AgentPanel = (function () {
            + esc(name) + " — not on PATH</span>";
     }
     var bits = [];
-    if (!compact && b.version) bits.push("v" + esc(b.version));
+    if (!compact && b.version) bits.push(esc(shortVersion(b.version)));
     if (reg.mcp) bits.push('<span class="ag-wire-ok" title="SM is registered as an MCP server named quam-state-manager in this CLI\'s own config">MCP \u2713</span>');
     if (reg.hooks) bits.push('<span class="ag-wire-ok" title="a hook in the CLI\'s settings reports each run back to SM">hooks \u2713</span>');
     if (reg.allow === true) bits.push('<span class="ag-wire-ok" title="SM\'s tools are pre-allowed in this calibrations folder">allow \u2713</span>');
@@ -962,6 +972,7 @@ window.AgentPanel = (function () {
 
   return { mount: mount, poll: poll, submit: submit, key: key, preset: preset, startPlan: startPlan, cancelPlan: cancelPlan,
            wireHelp: wireHelp, wirePaint: wirePaint, wireLoad: wireLoad, _wire: WIRE,
+           shortVersion: shortVersion,
            setPlanMode: setPlanMode, approve: approve, reject: reject, stop: stop, arm: arm, disarm: disarm,
            endSession: endSession, setObserver: setObserver, setActor: setActor, actorName: actorName,
            toggleFloat: toggleFloat, init: init, absorb: absorb, _state: S, fmtNum: fmtNum, fmtClock: fmtClock,

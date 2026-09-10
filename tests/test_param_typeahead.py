@@ -517,6 +517,28 @@ class TestBothSearchBoxesReadTheTokenTheSameWay:
             assert js_sel == _select(tok), (tok, js_sel, _select(tok))
 
 
+class TestThePanelFitsWhatItShows:
+    """Measured in real Chrome on the customer's archive: the panel was 460 px
+    and the widest real row needed 473 px, so `operation_amplitude_factor`'s
+    meta read "198 ru…" behind a horizontal scrollbar."""
+
+    def test_the_key_is_never_the_thing_that_gets_cut(self):
+        css = (_ROOT / "quam_state_manager" / "web" / "static"
+               / "style.css").read_text(encoding="utf-8")
+        blk = css[css.index(".sm-typeahead {"):css.index(".path-suggestions")]
+        # a horizontal scrollbar inside a typeahead is never the answer — and
+        # it appears for free, since `overflow-y: auto` alone makes the other
+        # axis compute to `auto`
+        assert "overflow-x: hidden" in blk
+        assert "26rem" in blk
+        lab = blk[blk.index(".sm-th-label {"):]
+        lab = lab[:lab.index("}")]
+        meta = blk[blk.index(".sm-th-meta {"):]
+        meta = meta[:meta.index("}")]
+        assert "flex: 0 0 auto" in lab and "text-overflow" not in lab
+        assert "text-overflow: ellipsis" in meta and "min-width: 0" in meta
+
+
 class TestThePreviewCannotPrintACountItCannotDeliver:
     """The load-bearing equivalence of the whole range feature.
 

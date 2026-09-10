@@ -1622,8 +1622,13 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
    docs/141 §4s, it made every bar its own stacking context. */
 .sm-typeahead { position: absolute; z-index: 130; margin: 0; padding: .2rem 0;
     list-style: none; min-width: 15rem;
-    width: max(var(--sidebar-width, 300px), 23rem); max-width: 92vw;
-    max-height: 17rem; overflow-y: auto; overscroll-behavior: contain;
+    /* 26rem, because the widest real row measured 473 px against a 460 px
+       panel (`operation_amplitude_factor`, on the customer's own archive).
+       overflow-x is stated: `overflow-y: auto` alone makes the other axis
+       compute to `auto`, which put a horizontal scrollbar inside a typeahead. */
+    width: max(var(--sidebar-width, 300px), 26rem); max-width: 92vw;
+    max-height: 17rem; overflow-y: auto; overflow-x: hidden;
+    overscroll-behavior: contain;
     background: var(--color-surface, var(--pico-card-background-color));
     border: 1px solid var(--pico-primary); border-radius: 8px;
     box-shadow: 0 8px 24px rgba(0,0,0,.35); }
@@ -1631,11 +1636,14 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
     padding: .2rem .55rem; cursor: pointer; }
 .sm-th-row:hover, .sm-th-row.active {
     background: color-mix(in srgb, var(--pico-primary) 16%, transparent); }
+/* The key is the IDENTITY: it is never the thing that gets cut. */
 .sm-th-label { font-family: var(--font-mono); font-size: .8rem;
-    color: var(--pico-color); white-space: nowrap; }
+    color: var(--pico-color); white-space: nowrap; flex: 0 0 auto; }
 .sm-th-row.active .sm-th-label { color: var(--pico-primary); font-weight: 600; }
+/* …so when a row is still too wide, the meta is what gives way. */
 .sm-th-meta { margin-left: auto; font-size: .68rem;
-    color: var(--color-text-muted); white-space: nowrap; }
+    color: var(--color-text-muted); white-space: nowrap;
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* An honest row, never selectable: the vocabulary is still being read, or
    there are more values than the panel shows. */
 .sm-th-note { cursor: default; color: var(--color-text-muted);

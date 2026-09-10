@@ -624,5 +624,16 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
      'W16 …so there is exactly one line per backend, not one per paint: '
      + wire.querySelectorAll('.ag-wire-cli').length);
 
+  /* The two CLIs print their version differently, and the strip is beside a
+     word that already names them — found by looking at the real page, where it
+     read `claude v2.1.267 (Claude Code)` and `codex vcodex-cli 0.153.4`. */
+  ok(P.shortVersion('2.1.267 (Claude Code)') === 'v2.1.267',
+     'W17 claude\'s product name is not part of its version: ' + P.shortVersion('2.1.267 (Claude Code)'));
+  ok(P.shortVersion('codex-cli 0.153.4') === 'v0.153.4',
+     'W18 …and codex does not become `vcodex-cli`: ' + P.shortVersion('codex-cli 0.153.4'));
+  ok(P.shortVersion('nightly') === 'nightly',
+     'W19 …and something with no number in it is shown as it came, never '
+     + 'dressed up as a version: ' + P.shortVersion('nightly'));
+
   process.exit(fails ? 1 : 0);
 })();
