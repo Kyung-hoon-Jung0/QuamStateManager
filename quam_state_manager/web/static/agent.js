@@ -709,6 +709,176 @@ window.AgentPanel = (function () {
       '<button type="submit" class="btn-sm ag-send">Send</button></div></form>' +
       '<div id="ag-toast" class="ag-toast" hidden></div></div>';
   }
+
+  /* ── the wiring strip ───────────────────────────────────────────────────
+   *
+   * "어떻게 이게 MCP처럼 작동하지?" — the mechanism is the answer, so the strip
+   * states it: SM registers itself as an MCP server in the CLI's own config,
+   * and a hook reports each run back.
+   *
+   * Three words, and their order is the whole design:
+   *   installed   the binary answered `--version`
+   *   registered  SM's entry is in that CLI's config file
+   *   answered    a real read-only call from SM to it succeeded — PAST TENSE
+   *
+   * There is deliberately no fourth word. SM's whole probe is a `--version`
+   * exit code, which succeeds on a logged-out CLI, and nothing in this app
+   * reads a credential — so it cannot know whether anyone is logged in, and
+   * saying so would be exactly the kind of confidently-wrong light the report
+   * was about. On a failure it does not classify either: an auth failure and a
+   * network failure look identical from here, so the CLI's own words are shown
+   * verbatim instead of a guess.
+   */
+  var WIRE = { data: null, inflight: null, setup: null };
+
+  function wireEls() {
+    return Array.prototype.slice.call(document.querySelectorAll("[data-ag-wire]"));
+  }
+
+  function wireBadge(el, text, kind) {
+    var b = el.querySelector(".ag-wire-badge");
+    if (!b) return;
+    b.textContent = text;
+    b.className = "ag-wire-badge ag-wire-" + kind;
+  }
+
+  /* One backend's line. `reg` is the registration this CLI needs; `b` is what
+     the probe found; `t` is the record of the last real call. */
+  function wireCli(name, b, reg, t, compact) {
+    var found = !!(b && b.found);
+    if (!found) {
+      return '<span class="ag-wire-cli ag-wire-off" title="install it, then log in once in a terminal — SM never sees your login">'
+           + esc(name) + " — not on PATH</span>";
+    }
+    var bits = [];
+    if (!compact && b.version) bits.push("v" + esc(b.version));
+    if (reg.mcp) bits.push('<span class="ag-wire-ok" title="SM is registered as an MCP server named quam-state-manager in this CLI\'s own config">MCP \u2713</span>');
+    if (reg.hooks) bits.push('<span class="ag-wire-ok" title="a hook in the CLI\'s settings reports each run back to SM">hooks \u2713</span>');
+    if (reg.allow === true) bits.push('<span class="ag-wire-ok" title="SM\'s tools are pre-allowed in this calibrations folder">allow \u2713</span>');
+    var line = '<span class="ag-wire-cli"><b>' + esc(name) + "</b> " + bits.join(" \u00b7 ");
+    if (!reg.mcp) {
+      line += ' <span class="ag-wire-warn">not registered as an MCP server</span>'
+            + ' <a class="ag-wire-fix" href="/agent/setup" hx-get="/agent/setup" hx-target="#table-pane" hx-push-url="true">Connect \u2192</a>';
+    } else if (t && t.ok) {
+      // past tense, and the title says why it is past tense
+      line += ' \u00b7 <span class="ag-wire-tested" title="a real read-only call from SM to this CLI succeeded then — not a live login check">answered SM'
+            + (t.elapsed_s ? " in " + fmtNum(t.elapsed_s) + " s" : "")
+            + (t.at ? " \u00b7 " + esc(fmtClock(t.at)) : "") + "</span>";
+    } else if (t && t.at) {
+      line += ' \u00b7 <span class="ag-wire-warn" title="' + esc(String(t.error || "no reason recorded"))
+            + '">last test failed</span>';
+    } else if (!compact) {
+      line += ' \u00b7 <span class="muted">never tested</span>';
+    }
+    return line + "</span>";
+  }
+
+  function wirePaint() {
+    var els = wireEls();
+    if (!els.length) return;
+    var d = WIRE.data, su = WIRE.setup;
+    els.forEach(function (el) {
+      var compact = el.classList.contains("ag-wire-compact");
+      // the server's own reading, when this copy of the strip carries one
+      var reg = {
+        claude: { mcp: el.getAttribute("data-claude-mcp") === "1",
+                  hooks: el.getAttribute("data-claude-hooks") === "1",
+                  allow: el.getAttribute("data-claude-allow") === ""
+                         ? null : el.getAttribute("data-claude-allow") === "1" },
+        codex: { mcp: el.getAttribute("data-codex-mcp") === "1", hooks: false, allow: null },
+      };
+      if (su) {
+        reg.claude = { mcp: !!su.claude.mcp, hooks: !!su.claude.hooks,
+                       allow: su.calibrations_folder ? !!su.claude.allow : null };
+        reg.codex = { mcp: !!su.codex.mcp, hooks: false, allow: null };
+      }
+      if (!d) {
+        // no probe yet: say only what the files said, never a CLI claim
+        wireBadge(el, "CHECKING", "static");
+        return;
+      }
+      var names = Object.keys(d.backends || {});
+      if (!names.length) names = ["claude", "codex"];
+      var anyFound = names.some(function (n) { return d.backends[n] && d.backends[n].found; });
+      var anyReg = names.some(function (n) { return reg[n] && reg[n].mcp; });
+      wireBadge(el, !anyFound ? "NO CLI" : (anyReg ? "CONNECTED" : "NOT CONNECTED"),
+                !anyFound ? "static" : (anyReg ? "ok" : "warn"));
+      var tested = ((su && su.record && su.record.tested) || {});
+      var html = names.map(function (n) {
+        var r = reg[n] || { mcp: false, hooks: false, allow: null };
+        if (compact && n !== d["default"]) {
+          var b = d.backends[n];
+          return '<span class="ag-wire-cli' + (b && b.found && r.mcp ? "" : " ag-wire-off") + '">'
+               + esc(n) + (b && b.found && r.mcp ? " \u2713" : " \u2014") + "</span>";
+        }
+        return wireCli(n, d.backends[n], r, tested[n], compact);
+      }).join('<span class="ag-wire-sep" aria-hidden="true">\u2502</span>');
+      // The wrapper FIRST: after the first paint the placeholder selector
+      // also matches a line inside it, and replacing that nests one wrapper in
+      // the next -- every repaint then duplicated every backend line.
+      var wrap = el.querySelector(".ag-wire-clis");
+      if (wrap) {
+        wrap.innerHTML = html;
+      } else {
+        var host = el.querySelector(".ag-wire-cli");
+        if (host) {
+          wrap = document.createElement("span");
+          wrap.className = "ag-wire-clis";
+          wrap.innerHTML = html;
+          host.parentNode.replaceChild(wrap, host);
+        }
+      }
+      // The setup door counts what is left to do — from the server's own list,
+      // never re-derived here.
+      var link = el.querySelector(".ag-wire-setup");
+      if (link && su && su.todo) {
+        link.textContent = su.todo.length
+          ? (su.todo.length + (su.todo.length === 1 ? " setup step \u2192" : " setup steps \u2192"))
+          : "Setup \u2192";
+        link.classList.toggle("ag-wire-todo", su.todo.length > 0);
+      }
+    });
+  }
+
+  /* One request per session for the setup record, shared by every mount and
+     re-used across htmx swaps: a re-mount repaints from WIRE, and only an
+     explicit refresh probes again. */
+  function wireLoad(force) {
+    if (WIRE.inflight && !force) return WIRE.inflight;
+    // No `?refresh=1` here: only /api/agent/chat/backends honours it, and a
+    // query parameter this route ignores would read as a refresh that is not
+    // happening. Both routes serve the same _detect_all cache, so they cannot
+    // disagree; re-probing is the setup page's own button.
+    WIRE.inflight = api("GET", "/api/agent/setup").then(function (r) {
+      if (r.status === 200) { WIRE.setup = r.body; if (r.body.clis) WIRE.data = { backends: r.body.clis, "default": (WIRE.data || {})["default"] }; }
+      wirePaint();
+      return r;
+    });
+    return WIRE.inflight;
+  }
+
+  function wireHelp(btn) {
+    var p = document.getElementById("ag-wire-help-pop");
+    if (p && p.parentNode) { p.parentNode.removeChild(p); return; }
+    p = document.createElement("div");
+    p.id = "ag-wire-help-pop";
+    p.className = "ag-wire-pop";
+    p.innerHTML =
+      "<p>SM registers itself as an MCP server named <code>quam-state-manager</code> "
+      + "in <code>~/.claude.json</code>, and a hook in <code>~/.claude/settings.json</code> "
+      + "reports each run back.</p>"
+      + "<p>The CLI runs on your machine under your own login \u2014 SM never sees your "
+      + "credentials, so it cannot show a login state.</p>";
+    document.body.appendChild(p);
+    if (window._anchorPopover) { try { window._anchorPopover(p, btn); } catch (e) {} }
+    var off = function (ev) {
+      if (p.contains(ev.target) || ev.target === btn) return;
+      if (p.parentNode) p.parentNode.removeChild(p);
+      document.removeEventListener("pointerdown", off, true);
+    };
+    document.addEventListener("pointerdown", off, true);
+  }
+
   function mount(root, opts) {
     opts = opts || {};
     if (!root || root.getAttribute("data-ag-mounted")) return;
@@ -730,6 +900,11 @@ window.AgentPanel = (function () {
       }
       var chipEl = m.root.querySelector(".ag-chip");
       if (chipEl) chipEl.textContent = r.body.chip || "no chip open";
+      // The strip's CLI half rides this same response — no extra request for
+      // the thing the customer wants to see immediately.
+      WIRE.data = { backends: S.backends, "default": S.defaultBackend };
+      wirePaint();
+      wireLoad(false);
     });
     var actorEl = m.root.querySelector(".ag-actor");
     if (actorEl) { actorEl.value = actorName(); }
@@ -782,10 +957,11 @@ window.AgentPanel = (function () {
     var home = document.getElementById("agent-home");
     if (home) mount(home, { id: "home" });
   }
-  document.addEventListener("htmx:afterSwap", function () { init(); });
+  document.addEventListener("htmx:afterSwap", function () { init(); wirePaint(); });
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init); else init();
 
   return { mount: mount, poll: poll, submit: submit, key: key, preset: preset, startPlan: startPlan, cancelPlan: cancelPlan,
+           wireHelp: wireHelp, wirePaint: wirePaint, wireLoad: wireLoad, _wire: WIRE,
            setPlanMode: setPlanMode, approve: approve, reject: reject, stop: stop, arm: arm, disarm: disarm,
            endSession: endSession, setObserver: setObserver, setActor: setActor, actorName: actorName,
            toggleFloat: toggleFloat, init: init, absorb: absorb, _state: S, fmtNum: fmtNum, fmtClock: fmtClock,

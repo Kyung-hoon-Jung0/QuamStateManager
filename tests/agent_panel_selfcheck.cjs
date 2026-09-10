@@ -12,7 +12,13 @@ try { ({ JSDOM } = require('jsdom')); } catch (e) { console.error('jsdom not ins
 let fails = 0, passes = 0;
 function ok(c, m) { if (!c) { console.error('FAIL: ' + m); fails++; } else { passes++; console.log('ok - ' + m); } }
 
-const dom = new JSDOM('<!doctype html><html><body><div id="agent-home"></div>'
+const WIRE_HTML = '<div class="ag-wire" data-ag-wire="1" data-claude-mcp="1" '
+  + 'data-claude-hooks="1" data-claude-allow="" data-codex-mcp="0">'
+  + '<span class="ag-wire-badge ag-wire-static">CHECKING</span>'
+  + '<span class="ag-wire-cli muted">looking&hellip;</span>'
+  + '<span class="ag-wire-tail"><button type="button" class="ag-wire-help">?</button>'
+  + '<a class="ag-wire-setup" href="/agent/setup">Setup</a></span></div>';
+const dom = new JSDOM('<!doctype html><html><body>' + WIRE_HTML + '<div id="agent-home"></div>'
   + '<div id="agent-popover" class="agent-popover agent-hidden"><div class="agent-header"></div><div class="agent-body"></div></div></body></html>',
   { url: 'http://localhost/', pretendToBeVisual: true });
 const { window } = dom;
@@ -40,12 +46,22 @@ let feed = {
   file: { owner: 'human:kyunghoon', backend: 'claude', armed: false, stopped: false },
   now: { state: 'between', session: { backend: 'claude' }, events_today: 5, failures_today: 0, waiting: 1, mode: 'ask-writes' }
 };
+let setupBody = {
+  ok: true,
+  clis: { claude: { found: true, version: '2.1.263' }, codex: { found: false } },
+  claude: { mcp: true, hooks: true, allow: false },
+  codex: { mcp: false },
+  calibrations_folder: null,          // so `allow` means nothing and is not claimed
+  record: { tested: { claude: { ok: true, at: now - 3600, elapsed_s: 2.1 } } },
+  todo: ['calibrations_folder', 'journal'],
+};
 const calls = [];
 global.fetch = window.fetch = function (url, opts) {
   calls.push({ url: String(url), method: (opts && opts.method) || 'GET', body: opts && opts.body ? JSON.parse(opts.body) : null, headers: opts && opts.headers });
   let body = {};
   if (/\/chat\/cards/.test(url)) body = feed;
-  else if (/\/chat\/backends/.test(url)) body = { ok: true, chip: 'PJ', default: 'claude', backends: { claude: { found: true }, codex: { found: false } } };
+  else if (/\/chat\/backends/.test(url)) body = { ok: true, chip: 'PJ', default: 'claude', backends: { claude: { found: true, version: '2.1.263' }, codex: { found: false } } };
+  else if (/\/api\/agent\/setup$/.test(url)) body = setupBody;
   else body = { ok: true, plan: { id: 'pl-2' } };
   return Promise.resolve({ status: 200, json: function () { return Promise.resolve(body); } });
 };
@@ -507,5 +523,106 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
      'an answer whose box DOES overflow keeps the clamp and the link');
 
   console.log(`\n${passes} passed, ${fails} failed`);
+  /* ── W. the wiring strip ────────────────────────────────────────────
+   *
+   * Customer, on site: "agent를 눌러도 어떻게 이게 MCP처럼 작동하지? 하는
+   * 의문이 생겨. 직관적이지 않거든."
+   *
+   * The mechanism is the answer, so the strip states the registration. What it
+   * must never state is a login: SM's whole probe is a `--version` exit code,
+   * which succeeds on a logged-out CLI. */
+  const wire = document.querySelector('[data-ag-wire]');
+  ok(!!wire, 'W0 the strip is in the DOM');
+  await tick(30);
+  const badge = () => wire.querySelector('.ag-wire-badge').textContent;
+  ok(badge() === 'CONNECTED',
+     'W1 a CLI that is installed AND registered reads CONNECTED: ' + badge());
+  ok(/2\.1\.263/.test(wire.textContent), 'W2 …with the version it reported');
+  ok(/MCP \u2713/.test(wire.textContent) && /hooks \u2713/.test(wire.textContent),
+     'W3 …and WHY it is connected — the registration is the answer to the '
+     + 'question that was asked: ' + wire.textContent);
+  ok(!/allow \u2713/.test(wire.textContent),
+     'W4 `allow` is NOT claimed with no calibrations folder — the file it '
+     + 'reads lives inside one: ' + wire.textContent);
+  ok(/answered SM in 2\.1 s/.test(wire.textContent),
+     'W5 the only real evidence, in the past tense: ' + wire.textContent);
+  ok(/2 setup steps/.test(wire.querySelector('.ag-wire-setup').textContent),
+     'W6 the door counts what is left, from the server\'s own list: '
+     + wire.querySelector('.ag-wire-setup').textContent);
+  ok(!/logged in|logged-in|authenticated|signed in/i.test(wire.textContent),
+     'W7 nothing anywhere on the strip claims a login: ' + wire.textContent);
+
+  /* The strip is a SIBLING of #agent-home, and mount() replaces that node's
+     innerHTML — inside it, everything above would be destroyed on first feed. */
+  ok(document.getElementById('agent-home').querySelector('[data-ag-wire]') === null,
+     'W8 …and it is not inside the element mount() empties');
+  const before = wire.textContent;
+  P.mount(document.getElementById('agent-home'), { id: 'again' });
+  await tick(20);
+  ok(document.querySelector('[data-ag-wire]').textContent === before,
+     'W9 a re-mount does not wipe it');
+
+  /* One request per session, not one per MOUNT. There are two mount points --
+     the Agent home and the sidebar float -- and on a page where both open, a
+     per-mount request would ask the same question twice.
+     (The earlier assertions already prove the request HAPPENED: `answered SM
+     in 2.1 s` and `2 setup steps` can only come from its response. `calls` is
+     cleared by nine earlier sections, so it is cleared here too and what is
+     counted is what happens NEXT.) */
+  calls.length = 0;
+  // A FRESH mount point: the float was already mounted by the toggleFloat
+  // section above, and mount() returns at once on an element that carries
+  // data-ag-mounted -- so re-mounting it would have proved nothing.
+  const float2 = document.createElement('div');
+  document.body.appendChild(float2);
+  P.mount(float2, { id: 'float2', compact: true });
+  document.body.dispatchEvent(new window.Event('htmx:afterSwap', { bubbles: true }));
+  await tick(40);
+  const again = calls.filter(c => /\/api\/agent\/setup/.test(c.url)).length;
+  ok(again === 0,
+     'W10 a second mount reuses the record rather than asking again: ' + again);
+  ok(document.querySelectorAll('[data-ag-wire]').length >= 1
+     && /claude/.test(document.querySelector('[data-ag-wire]').textContent),
+     'W10b …and the strip is still painted from it');
+
+  /* The states the badge must be able to say. */
+  P._wire.setup = { clis: { claude: { found: false }, codex: { found: false } },
+                    claude: { mcp: false, hooks: false, allow: false },
+                    codex: { mcp: false }, calibrations_folder: null,
+                    record: { tested: {} }, todo: ['install'] };
+  P._wire.data = { backends: { claude: { found: false }, codex: { found: false } }, 'default': 'claude' };
+  P.wirePaint();
+  ok(badge() === 'NO CLI' && /not on PATH/.test(wire.textContent),
+     'W11 nothing installed: NO CLI, and it says where to look: ' + wire.textContent);
+  P._wire.setup.claude = { mcp: false, hooks: false, allow: false };
+  P._wire.data = { backends: { claude: { found: true, version: '9' }, codex: { found: false } }, 'default': 'claude' };
+  P._wire.setup.clis = P._wire.data.backends;
+  P.wirePaint();
+  ok(badge() === 'NOT CONNECTED' && /not registered as an MCP server/.test(wire.textContent),
+     'W12 installed but not registered is its OWN state, with the fix beside '
+     + 'it: ' + wire.textContent);
+  ok(!!wire.querySelector('.ag-wire-fix'), 'W13 …and that fix is a link to Setup');
+
+  /* A failure is reported, never diagnosed: SM cannot tell an auth failure
+     from a network one, and a confidently wrong diagnosis is the complaint. */
+  P._wire.setup.claude = { mcp: true, hooks: true, allow: false };
+  P._wire.setup.record = { tested: { claude: { ok: false, at: now - 10, error: 'ECONNRESET while streaming' } } };
+  P.wirePaint();
+  ok(/last test failed/.test(wire.textContent)
+     && /ECONNRESET/.test(wire.querySelector('.ag-wire-warn').getAttribute('title') || ''),
+     'W14 a failure shows the CLI\'s OWN words and no classification: '
+     + wire.innerHTML);
+
+  /* Repainting is not appending. The strip repaints on every htmx swap, so a
+     paint that nests its own wrapper multiplies every backend line -- which is
+     what it did, and only reading the assert MESSAGES showed it. */
+  P.wirePaint(); P.wirePaint(); P.wirePaint();
+  ok(wire.querySelectorAll('.ag-wire-clis').length === 1,
+     'W15 a repaint replaces the lines, it does not nest a new wrapper: '
+     + wire.querySelectorAll('.ag-wire-clis').length + ' wrappers');
+  ok(wire.querySelectorAll('.ag-wire-cli').length === 2,
+     'W16 …so there is exactly one line per backend, not one per paint: '
+     + wire.querySelectorAll('.ag-wire-cli').length);
+
   process.exit(fails ? 1 : 0);
 })();

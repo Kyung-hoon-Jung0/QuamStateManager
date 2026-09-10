@@ -4364,6 +4364,69 @@ def calc_window():
     return render_template("calc_window.html")
 
 
+# ── what SM has actually wired up, and what it cannot know ────────────────
+#
+# Customer, on site: "지금은, agent를 눌러도 어떻게 이게 MCP처럼 작동하지? 하는
+# 의문이 생겨. 직관적이지 않거든."
+#
+# The honest answer is the registration itself -- SM registers itself as an MCP
+# server in the CLI's own config, and a hook reports each run back -- so that is
+# what the strip says, at first paint, from four small file reads.
+#
+# What it must NEVER say is whether anyone is logged in. `agent_backend.detect`
+# is `subprocess.run([exe, "--version"])` and `found = returncode == 0`, which
+# succeeds on a logged-out CLI; nothing in this repo reads a credential, and
+# nothing should. The vocabulary is therefore installed -> registered ->
+# ANSWERED, and the last one is past tense: it means a real read-only call from
+# SM to that CLI succeeded at a stated time, not that it would succeed now.
+_WIRE_MEMO: dict = {"key": None, "value": None}
+
+
+def _agent_wiring():
+    """The registration booleans for the strip, or None.
+
+    Four file reads (measured on this machine: median 1.1 ms, p95 3.0 ms), but
+    ``GET /`` is the most-hit route and its own docstring records that it
+    deliberately pays no such I/O -- and ``~/.claude.json`` is 95 KB here and
+    grows with the CLI's own history. So the answer is memoized on those files'
+    mtimes: a re-render costs four stats, and an edit is picked up at once.
+
+    NEVER calls ``_detect()`` / ``_detect_all()``: those spawn the CLIs. The
+    version and the last test arrive later, from the request agent.js already
+    makes.
+    """
+    from quam_state_manager.core import agent_setup as A
+    try:
+        cal = scheduler.load_settings(_sched_inst()).get("calibrations_folder") or None
+    except Exception:  # noqa: BLE001
+        cal = None
+    try:
+        paths = [A.claude_json_path(), A.claude_settings_path(), A.codex_config_path()]
+        key = (cal, tuple((p.stat().st_mtime_ns, p.stat().st_size)
+                          if p.exists() else None for p in paths))
+    except OSError:
+        key = None
+    if key is not None and _WIRE_MEMO["key"] == key:
+        return _WIRE_MEMO["value"]
+    try:
+        out = {
+            "claude_mcp": A.claude_mcp_registered() is not None,
+            "claude_hooks": A.claude_hooks_registered(),
+            # `allow` reads a file INSIDE the calibrations folder, so with no
+            # folder set the boolean means nothing and is not claimed.
+            "claude_allow": A.allow_registered(cal) if cal else None,
+            "codex_mcp": A.codex_registered(),
+            "cal_folder": cal,
+        }
+    except Exception:  # noqa: BLE001
+        # The strip renders its shell and hydrates from the client. An
+        # unreadable config is not a reason to lose the page, and it is
+        # certainly not a reason to claim something is not registered.
+        out = None
+    _WIRE_MEMO.update(key=key, value=out)
+    return out
+
+
 def _agent_dry_run() -> bool:
     """Is the open chip's Runner in Dry run (``global_simulate``)? Unreadable
     -> the scheduler's own default (True), never a crash on the home route."""
@@ -4394,7 +4457,8 @@ def home():
         # agent's run_node stamps every run with it, and the Runner page that
         # shows the checkbox is hidden since docs/172, so the home says it.
         return render_template("base.html", **_ctx(page="agent_home", landing_config_exists=config_exists,
-                                                   agent_dry_run=_agent_dry_run()))
+                                                   agent_dry_run=_agent_dry_run(),
+                                                   agent_wiring=_agent_wiring()))
     session = _load_session()
     return _home_landing(config_exists, session)
 
@@ -4412,12 +4476,14 @@ def agent_page():
             return render_template("_status.html", level="info",
                                    message="Open a chip first — the Agent works on the open chip "
                                            "(Projects or State Load in the sidebar).")
-        return render_template("_agent_home.html", agent_dry_run=_agent_dry_run())
+        return render_template("_agent_home.html", agent_dry_run=_agent_dry_run(),
+                               agent_wiring=_agent_wiring())
     if not chip_open:
         return redirect(url_for("main.home", landing=1))
     config_exists = bool(qualibrate_config.tray_status().get("config_exists"))
     return render_template("base.html", **_ctx(page="agent_home", landing_config_exists=config_exists,
-                                               agent_dry_run=_agent_dry_run()))
+                                               agent_dry_run=_agent_dry_run(),
+                                               agent_wiring=_agent_wiring()))
 
 
 def _home_landing(config_exists, session):

@@ -363,9 +363,15 @@ class TestHome:
         # Pico's width:100% never reaches a button / input / select inside the page
         assert (".ag-root button, .ag-root [type=submit], .ag-root [type=button], .ag-root select, "
                 ".ag-root input:not([type=checkbox]) { width: auto; margin: 0; }") in blk
-        # the only uppercase text on the page: the status pills and the simulated flag
+        # The only uppercase text on the page is a STATUS PILL: the plan/step
+        # states, the simulated flag, and the wiring strip's CONNECTED /
+        # NOT CONNECTED / NO CLI badge — which is the same kind of thing and
+        # deliberately wears the same shape. Anything else shouting in capitals
+        # is the defect this pin exists to catch.
         upper = [ln for ln in blk.splitlines() if "text-transform: uppercase" in ln]
-        assert len(upper) == 2 and all(ln.startswith((".ag-plan-st, .ag-step-st", ".ag-sim")) for ln in upper), upper
+        assert len(upper) == 3 and all(
+            ln.startswith((".ag-plan-st, .ag-step-st", ".ag-sim", ".ag-wire-badge"))
+            for ln in upper), upper
         # both themes: no hard-coded surface colour in the block -- every background is a var(),
         # a color-mix of one, none/transparent, or the state DOT's literal (the topbar pill's
         # own accents, .agent-pill-dot, already shown in both themes)

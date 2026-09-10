@@ -1,6 +1,9 @@
 {# docs/173 §1.2: the Agent home -- the chip's home page. The skeleton only;
    agent.js mounts the renderer (cards + input + the "now" column) into it,
    fed by GET /api/agent/chat/cards. #}
+{# The wiring strip goes FIRST — it is the answer to "how is this an MCP?",
+   and it is a sibling of #agent-home for the same reason the dry-run note is. #}
+{% with wiring = agent_wiring, compact = False %}{% include "_agent_wire.html" %}{% endwith %}
 {# The Runner's Dry run, said where the person actually is: agent.js replaces
    #agent-home's innerHTML on mount, so this line lives BESIDE it, not inside.
    Rendered only while ON (the state a person can mistake for a calibration). #}

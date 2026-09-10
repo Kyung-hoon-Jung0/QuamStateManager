@@ -12932,6 +12932,52 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
    without :has() the feed falls back to the capped height below and the pane scrolls */
 #table-pane:has(> .agent-home) { display: flex; flex-direction: column; overflow: hidden; }
 .ag-dryrun-note { margin: 0 0 .3rem; font-size: .9em; flex: 0 0 auto; }
+/* The wiring strip (customer: "codex/claude login 이라는 게 agent누르면 바로
+   상단에 compact하게 깔끔하게 SM스타일로"). Modelled on .pulse-env-strip, which
+   is the closest existing intent — "did discovery work, and against what" — so
+   the two read as one house style. `flex: 0 0 auto` because #table-pane:has(>
+   .agent-home) is a flex column and the strip must not be squeezed. */
+.ag-wire {
+    flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap;
+    gap: .2rem .5rem; margin: 0 0 .3rem; padding: .22rem .5rem;
+    border: 1px solid var(--pico-muted-border-color); border-radius: .4rem;
+    background: var(--pico-card-sectioning-background-color);
+    font-size: .82em;
+}
+.ag-wire-badge { font-size: .78em; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: .08em .5em; border-radius: .6em; border: 1px solid var(--pico-muted-border-color); color: var(--pico-muted-color); flex: none; }
+.ag-wire-ok   { color: var(--color-success-text); border-color: var(--color-success-border); }
+.ag-wire-warn { color: var(--color-warning-text); border-color: var(--color-warning-text); }
+.ag-wire-static { color: var(--pico-muted-color); }
+.ag-wire-clis { display: flex; align-items: center; flex-wrap: wrap; gap: .2rem .45rem; min-width: 0; }
+.ag-wire-cli { white-space: nowrap; }
+.ag-wire-cli b { font-weight: 600; }
+.ag-wire-off { color: var(--pico-muted-color); }
+.ag-wire-sep { color: var(--pico-muted-border-color); }
+.ag-wire-tested { color: var(--color-success-text); }
+/* a span, not a badge: inside a line of prose an outlined pill reads as a
+   second status */
+.ag-wire-clis .ag-wire-ok, .ag-wire-clis .ag-wire-warn { border: 0; padding: 0; font-weight: 600; }
+.ag-wire-tail { margin-left: auto; display: flex; align-items: center; gap: .4rem; flex: none; }
+.ag-wire-help {
+    border: 1px solid var(--pico-muted-border-color); background: transparent;
+    color: var(--pico-muted-color); border-radius: 50%;
+    width: 1.25em; height: 1.25em; line-height: 1; padding: 0;
+    font-size: .95em; cursor: pointer;
+}
+.ag-wire-help:hover { color: var(--pico-primary); border-color: var(--pico-primary); }
+.ag-wire-setup, .ag-wire-fix { white-space: nowrap; }
+.ag-wire-todo { color: var(--color-warning-text); font-weight: 600; }
+/* the float has one narrow row: no versions, no test, no help circle */
+.ag-wire-compact { margin: 0 .4rem .3rem; font-size: .78em; }
+.ag-wire-compact .ag-wire-help { display: none; }
+.ag-wire-pop {
+    position: absolute; z-index: 140; max-width: 28rem; padding: .5rem .7rem;
+    background: var(--color-surface, var(--pico-card-background-color));
+    border: 1px solid var(--pico-primary); border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.35); font-size: .85em;
+}
+.ag-wire-pop p { margin: 0 0 .4rem; }
+.ag-wire-pop p:last-child { margin: 0; }
 .agent-home { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .ag-root { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; gap: .4rem; font-size: .93em; }
 /* the approval accent: a BORDER colour (3px, both themes); as TEXT it is mixed towards the

@@ -1060,6 +1060,12 @@
         <button type="button" class="agent-close" onclick="toggleAgentPanel()" title="Close" aria-label="Close">&times;</button>
         </span>
         </div>
+        {# The sidebar Agent button opens this float on any page, and "agent를
+           누르면" means both doors — so the same strip renders here, compact
+           (no versions, no Test: there is no room). It is rendered from the
+           SHELL, so it is present on every page the float can open over; the
+           registration facts are hydrated by agent.js like the rest. #}
+        {% with wiring = None, compact = True %}{% include "_agent_wire.html" %}{% endwith %}
         <div class="agent-body"></div>
         </div>
         <div id="manual-popover" class="manual-popover manual-hidden" role="dialog" aria-modal="false" aria-label="Config Manual">

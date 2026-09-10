@@ -366,3 +366,145 @@ def test_agent_setup_selfcheck():
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout + r.stderr
     assert r.stdout.count("ok - ") >= 24, r.stdout
+
+
+class TestTheWiringStrip:
+    """The strip that answers "how is this an MCP?" — and the one thing it must
+    never claim.
+
+    Customer, on site: "지금은, agent를 눌러도 어떻게 이게 MCP처럼 작동하지? 하는
+    의문이 생겨. 직관적이지 않거든. codex/claude login 이라는 게 agent누르면 바로
+    상단에 compact하게 깔끔하게 SM스타일로 뜨게 하자."
+    """
+
+    _ROOT = Path(__file__).resolve().parent.parent
+    _TPL = _ROOT / "quam_state_manager" / "web" / "templates"
+
+    def test_it_never_says_anyone_is_logged_in(self):
+        """SM's whole probe is `<cli> --version`, whose exit code is 0 on a
+        logged-out CLI, and nothing in this app reads a credential. A login
+        light here would be confidently wrong — which is the complaint being
+        answered, not a new instance of it."""
+        import re as _re
+        bad = _re.compile(r"logg?ed[ -]?in|authenticated|signed[ -]?in|not logged",
+                          _re.I)
+        for rel in ("quam_state_manager/web/templates/_agent_wire.html",
+                    "quam_state_manager/web/static/agent.js"):
+            text = (self._ROOT / rel).read_text(encoding="utf-8")
+            # the module comment is allowed to explain WHY the words are absent
+            body = "\n".join(l for l in text.splitlines()
+                              if "cannot" not in l and "never" not in l
+                              and "not a live login check" not in l)
+            assert not bad.search(body), (rel, bad.search(body).group(0))
+
+    def test_the_three_words_and_their_order(self):
+        js = (self._ROOT / "quam_state_manager/web/static/agent.js").read_text(encoding="utf-8")
+        blk = js[js.index("var WIRE = {"):js.index("function mount(root, opts)")]
+        # past tense, because it is a record of a call that already happened
+        assert "answered SM" in blk
+        assert "not registered as an MCP server" in blk
+        assert "not on PATH" in blk
+        assert r"MCP \u2713" in blk and r"hooks \u2713" in blk
+
+    def test_the_strip_is_a_sibling_of_the_mount_point(self):
+        """agent.js's mount() does `root.innerHTML = skeleton(...)`, so anything
+        inside #agent-home is destroyed the moment the feed renders."""
+        home = (self._TPL / "_agent_home.html").read_text(encoding="utf-8")
+        i_wire = home.index("_agent_wire.html")
+        i_note = home.index('id="ag-dryrun-note"')
+        i_mount = home.index('id="agent-home"')
+        assert i_wire < i_note < i_mount
+
+    def test_the_float_carries_it_too(self):
+        """"agent를 누르면" means both doors: the sidebar button floats the
+        panel on any page."""
+        base = (self._TPL / "base.html").read_text(encoding="utf-8")
+        blk = base[base.index('id="agent-popover"'):base.index('id="manual-popover"')]
+        assert "_agent_wire.html" in blk
+        assert blk.index("_agent_wire.html") < blk.index('class="agent-body"')
+        assert "compact = True" in blk
+
+    def test_allow_is_not_claimed_without_a_calibrations_folder(self):
+        """`allow_registered` reads a file INSIDE that folder; with no folder
+        the boolean is about a path that does not exist."""
+        from quam_state_manager.web import routes
+        src = routes._agent_wiring.__doc__ or ""
+        code = (self._ROOT / "quam_state_manager/web/routes.py").read_text(encoding="utf-8")
+        blk = code[code.index("def _agent_wiring("):code.index("def _agent_dry_run(")]
+        assert 'A.allow_registered(cal) if cal else None' in blk
+        tpl = (self._TPL / "_agent_wire.html").read_text(encoding="utf-8")
+        assert "wiring.claude_allow is none" in tpl
+
+    def test_the_server_half_never_spawns_a_cli(self):
+        """Four file reads. `_detect()` runs `<cli> --version` as a subprocess,
+        and GET / is the most-hit route in the app.
+
+        Comments are stripped before the scan: the function's own docstring
+        says WHY it never calls `_detect`, and a pin that trips on its own
+        explanation is a pin that has to be weakened to pass — which is how a
+        real one gets deleted."""
+        import io as _io
+        import tokenize as _tok
+        code = (self._ROOT / "quam_state_manager/web/routes.py").read_text(encoding="utf-8")
+        blk = code[code.index("def _agent_wiring("):code.index("def _agent_dry_run(")]
+        kept = []
+        for t in _tok.generate_tokens(_io.StringIO(blk + "\n").readline):
+            if t.type in (_tok.COMMENT, _tok.STRING):
+                continue
+            kept.append(t.string)
+        body = " ".join(kept)
+        for forbidden in ("_detect", "subprocess", "agent_backend", "chat_api"):
+            assert forbidden not in body, forbidden
+        # …and the rule the strip depends on: only the four readers
+        assert "claude_mcp_registered" in body and "codex_registered" in body
+
+    def test_a_broken_config_renders_the_shell_not_a_claim(self, tmp_path, monkeypatch):
+        from quam_state_manager.web import routes
+        from quam_state_manager.core import agent_setup as A
+        routes._WIRE_MEMO.update(key=None, value=None)
+        monkeypatch.setattr(A, "claude_mcp_registered",
+                            lambda *a, **k: (_ for _ in ()).throw(OSError("boom")))
+        app = _app_for_wiring(tmp_path)
+        with app.test_request_context("/"):
+            assert routes._agent_wiring() is None
+        routes._WIRE_MEMO.update(key=None, value=None)
+
+    def test_the_reading_is_memoized_on_the_files_mtimes(self, tmp_path, monkeypatch):
+        """GET / deliberately pays no config I/O (its own docstring says so),
+        and ~/.claude.json grows with the CLI's history — 95 KB on the machine
+        this was measured on (median 1.1 ms, p95 3.0 ms for the four reads).
+
+        Counted, not read from the source: a pin that greps for `st_mtime_ns`
+        stays green with the early return deleted."""
+        from quam_state_manager.web import routes
+        from quam_state_manager.core import agent_setup as A
+        home = tmp_path / "home"
+        (home / ".claude").mkdir(parents=True)
+        cfg = home / ".claude.json"
+        cfg.write_text("{}", encoding="utf-8")
+        (home / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+        reads = []
+        real = A.claude_mcp_registered
+        monkeypatch.setattr(A, "claude_mcp_registered",
+                            lambda *a, **k: (reads.append(1), real(*a, **k))[1])
+        routes._WIRE_MEMO.update(key=None, value=None)
+        app = _app_for_wiring(tmp_path)
+        with app.test_request_context("/"):
+            first = routes._agent_wiring()
+            routes._agent_wiring()
+            routes._agent_wiring()
+            assert len(reads) == 1, "the memo did not hold"
+            # …and an edit to the config is picked up, or the strip would go
+            # on claiming a registration the user just removed
+            cfg.write_text('{"mcpServers": {"quam-state-manager": {"type": "stdio"}}}',
+                           encoding="utf-8")
+            second = routes._agent_wiring()
+            assert len(reads) == 2
+            assert first["claude_mcp"] is False and second["claude_mcp"] is True
+        routes._WIRE_MEMO.update(key=None, value=None)
+
+
+def _app_for_wiring(tmp_path):
+    from quam_state_manager.web.app import create_app
+    return create_app(testing=True, instance_path=str(tmp_path / "_i"))

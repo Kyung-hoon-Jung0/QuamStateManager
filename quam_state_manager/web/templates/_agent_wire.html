@@ -1,0 +1,39 @@
+{# What SM has wired up to the terminal agents — and what it cannot know.
+
+   Customer, on site: "지금은, agent를 눌러도 어떻게 이게 MCP처럼 작동하지? 하는
+   의문이 생겨. 직관적이지 않거든. codex/claude login 이라는 게 agent누르면 바로
+   상단에 compact하게 깔끔하게 SM스타일로 뜨게 하자."
+
+   The mechanism IS the answer, so it is what this says: SM registers itself as
+   an MCP server in the CLI's own config, and a hook reports each run back.
+
+   The one thing it must never say is that anyone is LOGGED IN. SM's whole probe
+   is `<cli> --version`, which succeeds on a logged-out CLI, and nothing here
+   reads a credential. So the vocabulary is installed → registered → answered,
+   and the last is past tense: a real read-only call from SM to that CLI
+   succeeded at a stated time. A confidently wrong login light is exactly the
+   kind of thing the report is complaining about.
+
+   It is a SIBLING of #agent-home, never a child: agent.js's mount() replaces
+   that element's innerHTML (the .ag-dryrun-note beside it is here for the same
+   reason, and tests/test_agent_setup.py pins the order).
+
+   Registration comes from the server (four small file reads, memoized on their
+   mtimes); versions and the last test arrive from the request agent.js already
+   makes on mount. #}
+<div class="ag-wire{{ ' ag-wire-compact' if compact else '' }}" role="status" aria-live="polite"
+     data-ag-wire="1"
+     {% if wiring %}data-claude-mcp="{{ 1 if wiring.claude_mcp else 0 }}"
+     data-claude-hooks="{{ 1 if wiring.claude_hooks else 0 }}"
+     data-claude-allow="{{ '' if wiring.claude_allow is none else (1 if wiring.claude_allow else 0) }}"
+     data-codex-mcp="{{ 1 if wiring.codex_mcp else 0 }}"{% endif %}>
+    <span class="ag-wire-badge ag-wire-static">CHECKING</span>
+    <span class="ag-wire-cli muted">looking for the CLIs on this machine&hellip;</span>
+    <span class="ag-wire-tail">
+        <button type="button" class="ag-wire-help" aria-label="How does this work?"
+                title="How does SM reach the CLI?"
+                onclick="AgentPanel &amp;&amp; AgentPanel.wireHelp(this)">?</button>
+        <a class="ag-wire-setup" href="/agent/setup" hx-get="/agent/setup"
+           hx-target="#table-pane" hx-push-url="true">Setup &rarr;</a>
+    </span>
+</div>
