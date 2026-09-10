@@ -62,6 +62,13 @@
        never registered and clicking the chip did nothing but clear it. #}
     <script src="{{ asset_url('sync-badge.js') }}"></script>
     <script src="{{ asset_url('app.js') }}"></script>
+    {# The search-box typeahead (customer, 2026-09-10). AFTER app.js: it calls
+       window._anchorPopover, which is the one body-level popup placement this
+       app has — `position:absolute` is clipped by #sidebar's overflow-y:auto,
+       and an in-flow list pushed the run tree down the page (docs/120 item 3).
+       Its own file, not an append to app.js: it is a widget several boxes will
+       use, and a separate file is what makes it drivable under jsdom. #}
+    <script src="{{ asset_url('sidebar-typeahead.js') }}"></script>
     {# docs/117: the auto-apply flusher — kept out of app.js so its
        behaviour is testable in isolation under jsdom. #}
     <script src="{{ asset_url('auto-apply.js') }}"></script>
@@ -847,6 +854,10 @@
                         fetch('/workspace/tree/poll', ctrl ? { signal: ctrl.signal } : undefined)
                           .then(function(r){ return r.json(); }).then(function(d){
                             if (!d || typeof d.v === 'undefined') return;
+                            // The typeahead's vocabulary follows the same
+                            // version this poll already knows. A no-op when it
+                            // has not moved; the route answers 204 anyway.
+                            if (window.SidebarTypeahead) window.SidebarTypeahead.refresh(d.v);
                             if (lastV === null) {
                                 lastV = d.v;
                                 // r16 ⑦ D-C: the baseline poll's own staleness

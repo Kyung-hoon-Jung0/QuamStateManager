@@ -1614,6 +1614,34 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
 .hidden-submit { position: absolute; width: 0; height: 0; padding: 0; margin: 0; border: none; overflow: hidden; }
 
 /* Path autocomplete suggestions */
+/* ── search-box typeahead (customer, 2026-09-10) ────────────────── */
+/* Body-level and anchored in viewport coords by _anchorPopover: #sidebar is
+   overflow-y:auto (style.css:1504) so an absolutely-positioned child is
+   clipped, and an in-flow list pushed the run tree down (docs/120 item 3).
+   Wider than the sidebar on purpose — parameter keys are long. NO will-change:
+   docs/141 §4s, it made every bar its own stacking context. */
+.sm-typeahead { position: absolute; z-index: 130; margin: 0; padding: .2rem 0;
+    list-style: none; min-width: 15rem;
+    width: max(var(--sidebar-width, 300px), 23rem); max-width: 92vw;
+    max-height: 17rem; overflow-y: auto; overscroll-behavior: contain;
+    background: var(--color-surface, var(--pico-card-background-color));
+    border: 1px solid var(--pico-primary); border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+.sm-th-row { display: flex; align-items: baseline; gap: .5rem;
+    padding: .2rem .55rem; cursor: pointer; }
+.sm-th-row:hover, .sm-th-row.active {
+    background: color-mix(in srgb, var(--pico-primary) 16%, transparent); }
+.sm-th-label { font-family: var(--font-mono); font-size: .8rem;
+    color: var(--pico-color); white-space: nowrap; }
+.sm-th-row.active .sm-th-label { color: var(--pico-primary); font-weight: 600; }
+.sm-th-meta { margin-left: auto; font-size: .68rem;
+    color: var(--color-text-muted); white-space: nowrap; }
+/* An honest row, never selectable: the vocabulary is still being read, or
+   there are more values than the panel shows. */
+.sm-th-note { cursor: default; color: var(--color-text-muted);
+    font-size: .7rem; font-style: italic; }
+.sm-th-note:hover { background: transparent; }
+
 .path-suggestions {
     display: none;
     position: absolute; top: 100%; left: 0; right: 0;

@@ -106,6 +106,72 @@ window.SearchQuery = (function () {
         return true;
     }
 
+    /* The same character class Python's str.isspace() uses for the characters
+       a query can actually carry. NOT /\s/: Python calls U+0085 whitespace and
+       JS does not, so a regex here would split a pasted query differently on
+       the two sides of the wire. */
+    function _isSep(ch) {
+        return ch === ' ' || ch === ',' || ch === '\t' || ch === '\n'
+            || ch === '\r' || ch === '\f' || ch === '\v'
+            || ch === '\u001c' || ch === '\u001d' || ch === '\u001e'
+            || ch === '\u001f' || ch === '\u0085' || ch === '\u00a0'
+            || ch === '\u1680' || (ch >= '\u2000' && ch <= '\u200a')
+            || ch === '\u2028' || ch === '\u2029' || ch === '\u202f'
+            || ch === '\u205f' || ch === '\u3000';
+    }
+
+    /* Every token as [rawStart, rawEnd, text] — the twin of
+       core.search_query.scoped_spans. The span is RAW (it covers the quote
+       characters the text drops), because a caller splicing into an input's
+       value needs offsets into what the user can see. */
+    function scopedSpans(text) {
+        var out = [], cur = '', start = -1, inQ = false;
+        text = String(text == null ? '' : text);
+        for (var i = 0; i < text.length; i++) {
+            var ch = text.charAt(i);
+            if (ch === '"') {
+                if (start < 0) start = i;
+                inQ = !inQ;
+                continue;
+            }
+            if (!inQ && _isSep(ch)) {
+                if (cur) out.push([start, i, cur]);
+                cur = ''; start = -1;
+                continue;
+            }
+            if (start < 0) start = i;
+            cur += ch;
+        }
+        if (cur) out.push([start, text.length, cur]);
+        return out;
+    }
+
+    function scopedTokens(text) {
+        return scopedSpans(text).map(function (s) { return s[2]; });
+    }
+
+    /* The token the caret is FINISHING, or null. Refuses the two states where
+       completing would move text the user did not mean: a token not begun (the
+       caret at 0 or straight after a separator), and an unbalanced quote (past
+       an open quote the scan finds no separator, so the span runs to the end of
+       the box). */
+    function caretSpan(text, caret) {
+        text = String(text == null ? '' : text);
+        if (caret == null || caret <= 0 || caret > text.length) return null;
+        var q = 0;
+        for (var i = 0; i < caret; i++) if (text.charAt(i) === '"') q++;
+        if (q % 2) return null;
+        // No separator test: `spans[j][0] < caret` below already excludes a
+        // caret on one. Measured redundant over 219,344 (text, caret) pairs.
+        var spans = scopedSpans(text);
+        for (var j = 0; j < spans.length; j++) {
+            if (spans[j][0] < caret && caret <= spans[j][1]) return spans[j];
+        }
+        return null;
+    }
+
     return { tokens: tokens, groupBy: groupBy, groups: groups,
-             matchesHay: matchesHay };
+             matchesHay: matchesHay,
+             scopedSpans: scopedSpans, scopedTokens: scopedTokens,
+             caretSpan: caretSpan };
 })();

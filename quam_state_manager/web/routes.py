@@ -17485,22 +17485,14 @@ def _tokenize_query(text: str) -> list[str]:
     two surfaces that claim to mirror each other. Additive: a comma-carrying
     token matched nothing here before (no tree field contains a comma).
     """
-    out: list[str] = []
-    cur: list[str] = []
-    in_q = False
-    for ch in text:
-        if ch == '"':
-            in_q = not in_q
-            continue
-        if not in_q and (ch.isspace() or ch == ","):
-            if cur:
-                out.append("".join(cur))
-                cur = []
-            continue
-        cur.append(ch)
-    if cur:
-        out.append("".join(cur))
-    return out
+    # The scan itself lives in core.search_query, which is the module that IS
+    # the one grammar and carries an executing JS parity pin. It grew offsets
+    # so the sidebar typeahead can replace the token under the caret
+    # (customer, 2026-09-10); this call is what keeps the number of places
+    # that spell the scan at one.
+    from quam_state_manager.core.search_query import scoped_tokens
+
+    return scoped_tokens(text)
 
 
 def _parse_tree_query(text: str) -> list[dict]:
@@ -17558,14 +17550,11 @@ def _group_tree_conds(conds: list[dict]) -> list[list[dict]]:
     )
 
 
-def _param_norm(v) -> str:
-    """A param value as the search sees it. ``True`` is the string ``true`` --
-    the user types what the Parameters facet shows them, not Python syntax."""
-    if v is True:
-        return "true"
-    if v is False:
-        return "false"
-    return str(v).lower()
+# The spelling lives in core.param_vocab, because the typeahead's suggestions
+# must be the values THIS function will match -- and the two languages disagree
+# about numbers (`str(1e-05)` is '1e-05' in Python, '0.00001' in JS), so a
+# vocabulary built in the browser would offer values the server can never hit.
+from quam_state_manager.core.param_vocab import param_norm as _param_norm
 
 
 def _param_hit(params: dict, value: str) -> bool:
@@ -17929,6 +17918,58 @@ def workspace_tree_poll():
     # the first poll used to adopt its own version bump as the baseline and
     # never render what it just discovered.
     return jsonify(v=ws.version, rescanned=rescanned)
+
+
+# The sidebar typeahead's vocabulary, memoized on the workspace version.
+# ONE slot: the sidebar shows one workspace, and a second entry would only ever
+# hold a version nobody is asking for. Serialized once and cached as the STRING,
+# so a re-serve is a dict lookup rather than 16 KB of json.dumps.
+_PARAM_VOCAB_MEMO: dict[str, Any] = {"ws": None, "v": None, "json": None}
+
+
+@bp.route("/workspace/param-vocab")
+def workspace_param_vocab():
+    """Every parameter key and value in the workspace, with run counts.
+
+    Deliberately does NOT call ``ws.rescan_if_stale()``. ``/workspace/tree`` and
+    ``/workspace/tree/poll`` own the staleness probe; adding a third caller
+    would re-stat every root's spine on a request whose whole job is to be
+    cheap. This route reads what the last scan already put in RAM.
+
+    ``?v=<version>`` is a conditional request: the same version answers 204, so
+    the client's periodic re-check costs one integer comparison.
+
+    Measured on the customer's archive: 1,766 runs, 210 keys, 4.5 ms to build,
+    16.7 KB. At 20,000 runs the payload is still ~13 KB -- a vocabulary does not
+    grow with the archive the way an index does.
+    """
+    from quam_state_manager.core import param_vocab
+
+    ws = _ws()
+    if not ws:
+        return jsonify(v=0, keys=[], n_runs=0, omitted=0, hydrating=False)
+    # Read the version BEFORE the walk: stamping a newer version onto an older
+    # read would make the client cache a vocabulary it thinks is current.
+    ver = ws.version
+    if request.args.get("v") == str(ver):
+        return ("", 204)
+    memo = _PARAM_VOCAB_MEMO
+    if memo["ws"] is ws and memo["v"] == ver and memo["json"] is not None:
+        body = memo["json"]
+    else:
+        payload = param_vocab.to_payload(param_vocab.build_vocab(ws.tree))
+        payload["v"] = ver
+        # docs/142: on a listing-first scan the entries are STUBS whose
+        # filter_params is empty until the background hydration lands. Say so,
+        # so the panel can show "indexing runs…" instead of an empty list that
+        # reads as "this chip has no parameters".
+        payload["hydrating"] = bool(getattr(ws, "hydrating_roots", lambda: ())())
+        body = json.dumps(payload, separators=(",", ":"))
+        memo.update(ws=ws, v=ver, json=body)
+    resp = make_response(body)
+    resp.mimetype = "application/json"
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @bp.route("/workspace/refresh", methods=["POST"])
