@@ -1641,6 +1641,9 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
 .sm-th-note { cursor: default; color: var(--color-text-muted);
     font-size: .7rem; font-style: italic; }
 .sm-th-note:hover { background: transparent; }
+/* The note is a sentence, not a label: it carries the true value count, the
+   extent, and the one mention of the range operator. */
+.sm-th-note .sm-th-label { white-space: normal; }
 /* A GUESS must not be able to look like a match (customer's typo round). The
    separator says so in words; the row says so again in three ways that survive
    a glance -- a leading approximately-equal, italics, and the warning colour

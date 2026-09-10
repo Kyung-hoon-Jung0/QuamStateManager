@@ -32,9 +32,24 @@ from __future__ import annotations
 import re
 from typing import Any
 
-# Mirrors ``routes._SIDEBAR_PARAM_EQ`` -- the shape a BARE ``key=value`` token
-# must have to be routed to the param facet rather than to free text.
+# Mirrors ``routes._SIDEBAR_PARAM_OP`` -- the shape a BARE ``key<op>value``
+# token must have to be routed to the param facet rather than to free text.
 _BARE_KEY = re.compile(r"^[A-Za-z][\w.\-]*$")
+
+# What counts as a number for the panel's own purposes. Deliberately stricter
+# than ``float()``: this rejects ``inf``, ``nan`` and hex by construction, and
+# an extent printed from one of those would be nonsense on screen.
+_NUM_RE = re.compile(r"^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$")
+
+# A single run that recorded nothing must not cost a key its numeric nature.
+# Measured on the customer archive: ``readout_amplitude_in_dBm`` (12 values) and
+# ``load_data_id`` (20) are each demoted by exactly ONE ``None`` -- and the
+# first of those is precisely the "amp" key the report named.
+_NULLISH = {"none", "null", ""}
+
+# The operators a token body may carry. ``>=`` before ``>`` matters in the
+# regex; here the set is only used to validate what a caller asks for.
+_OPS = (">=", "<=", ">", "<", "=")
 
 # Per-key value cap. 30 is the widest real key measured (num_shots); 200 leaves
 # an order of magnitude of headroom while bounding a pathological chip.
@@ -55,8 +70,8 @@ def param_norm(v: Any) -> str:
 
 
 def insert_token(key: str, value: str, force_scope: str = "",
-                 negate: str = "") -> str | None:
-    """The search-box text that filters to ``key == value``, or ``None``.
+                 negate: str = "", op: str = "=") -> str | None:
+    """The search-box text that filters to ``key <op> value``, or ``None``.
 
     ``None`` means the grammar cannot express this pair, and the caller must
     not offer it:
@@ -85,7 +100,9 @@ def insert_token(key: str, value: str, force_scope: str = "",
     if not value:
         return None
 
-    token = "%s%s%s=%s" % (negate, scope, key, value)
+    if op not in _OPS:
+        return None
+    token = "%s%s%s%s%s" % (negate, scope, key, op, value)
     # A whitespace or comma anywhere in the token would split it in two, so the
     # WHOLE token is quoted -- quotes are consumed wherever they appear, so
     # `"k=a b"` is one param condition while `k=a b` is measurably two tokens.
@@ -149,7 +166,28 @@ def to_payload(built: dict) -> dict:
             offerable = offerable[:MAX_VALUES_PER_KEY]
         if not offerable and not more:
             omitted += 0
-        keys.append({"k": k, "n": sum(by.values()), "v": offerable, "more": more})
+        d = {"k": k, "n": sum(by.values()), "v": offerable, "more": more}
+        # Three additive fields for the keys a LIST cannot serve. The panel
+        # prints the extent from `min`/`max` VERBATIM as this function spells
+        # them, so nothing it shows can disagree with what a token would match.
+        nums = [float(v) for v, _n in offerable if _NUM_RE.match(v)]
+        skipped = sum(1 for v, _n in offerable
+                      if not _NUM_RE.match(v) and v not in _NULLISH)
+        if len(nums) >= 2 and not skipped:
+            d["num"] = 1
+            lo = min(nums)
+            hi = max(nums)
+            # the value's own spelling, not a re-formatted float
+            d["min"] = next(v for v, _n in offerable
+                            if _NUM_RE.match(v) and float(v) == lo)
+            d["max"] = next(v for v, _n in offerable
+                            if _NUM_RE.match(v) and float(v) == hi)
+        # The value ORDER is deliberately unchanged (count-descending).
+        # Magnitude-ascending was considered and rejected by measurement:
+        # `num_shots=8000` is 538 of 1,782 runs and would land at row 27 of 30,
+        # outside an 8-row panel. "Recognise my own run" is the dominant intent;
+        # the answer to breadth is the operator, not a re-sort.
+        keys.append(d)
     # Coverage first: the key most runs carry is the one most likely wanted.
     keys.sort(key=lambda d: (-d["n"], d["k"]))
     return {"keys": keys, "n_runs": built.get("n_runs", 0), "omitted": omitted}

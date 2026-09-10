@@ -44,6 +44,15 @@ const VOCAB = {
     { k: 'min_wait_time_in_ns', n: 40, v: [['16', 40]], more: 0 },
     { k: 'max_amp_factor', n: 30, v: [['1.5', 20], ['2.0', 10]], more: 3 },
     { k: 'reset_type', n: 80, v: [['thermal', 60], ['active', 20]], more: 0 },
+    // The shape `to_payload` emits for a numeric key: `num`, and the extent as
+    // the VALUE SPELLINGS, never a re-formatted float.
+    { k: 'wait_ns', n: 70, num: 1, min: '16', max: '2000', more: 0,
+      v: [['16', 30], ['100', 20], ['500', 15], ['2000', 5]] },
+    // Eleven values on a panel that shows eight: the case the customer named,
+    // and the one where the old note said nothing at all about the other three.
+    { k: 'amp_factor', n: 60, num: 1, min: '0.1', max: '2.0', more: 0,
+      v: [['0.1', 11], ['0.2', 10], ['0.3', 9], ['0.4', 8], ['0.5', 7],
+          ['0.6', 6], ['0.7', 5], ['0.8', 4], ['0.9', 3], ['1.0', 2], ['2.0', 1]] },
   ],
 };
 
@@ -150,8 +159,8 @@ function keydown(win, id, key) {
   type(win, 'sidebar-filter-input', 'm');
   ok(rows(win)[0] === 'multiplexed',
      'A4 `m` puts the PREFIX match first, not merely a substring one: ' + rows(win));
-  // four of the five fixture keys contain an m; reset_type does not.
-  ok(rows(win).length === 4, 'A5 …and lists every m key: ' + rows(win));
+  // five of the seven fixture keys contain an m; reset_type and wait_ns do not.
+  ok(rows(win).length === 5, 'A5 …and lists every m key: ' + rows(win));
   ok(rows(win).indexOf('num_shots') > rows(win).indexOf('multiplexed'),
      'A5b …with the substring-only match BELOW the prefix ones: ' + rows(win));
   ok(win.fetches.length === 1, 'A6 typing costs no further request');
@@ -371,6 +380,80 @@ function keydown(win, id, key) {
   ok(t2 && t2.sampling_rate > 0,
      'L4 a container mounting LATER is read — the cache key was the first '
      + 'model alone, so the wiring keys never appeared: ' + Object.keys(t2 || {}));
+
+  /* ── M. the value ladder ───────────────────────────────────────────
+   *
+   * Customer, on site: "multiplexed를 선택해싿고 하자, 그러면 거기엔 True,
+   * False가 있어. 이걸 사용자가 입력하게 두는건 잔인해. bad UX야. … 그런데 amp
+   * 같은 경우는 value도 많고 범위도 많기 때문에 까다로워."
+   *
+   * Three rungs, and which one you get is decided by the key's own shape:
+   * one value -> finish it; a few -> the list; many -> the operator. */
+  type(win, 'sidebar-filter-input', 'num_sho');
+  const m1 = win.Typeahead._state().items[0];
+  ok(/^= 2000 · /.test(m1.meta || ''),
+     'M1 a single-valued key SHOWS its one value before you pick it: ' + m1.meta);
+  ok(m1.wholeInsert === 'num_shots=2000' && m1.wholeFire === true,
+     'M2 …and Enter finishes the token outright — 121 of the customer\'s 210 '
+     + 'keys have exactly one value: ' + JSON.stringify(m1));
+  ok(m1.insert === 'num_shots=' && m1.fire === false,
+     'M3 …while Tab still leaves `key=` for a value of your own: ' + m1.insert);
+
+  type(win, 'sidebar-filter-input', 'num_sho');
+  keydown(win, 'sidebar-filter-input', 'ArrowDown');
+  keydown(win, 'sidebar-filter-input', 'Enter');
+  ok(win.document.getElementById('sidebar-filter-input').value === 'num_shots=2000',
+     'M4 …in one keypress, end to end: '
+     + win.document.getElementById('sidebar-filter-input').value);
+
+  type(win, 'sidebar-filter-input', 'wait_n');
+  ok(/4 values · 16 … 2000 · 70 runs/.test(win.Typeahead._state().items[0].meta || ''),
+     'M5 a numeric key states its EXTENT before you commit to it: '
+     + win.Typeahead._state().items[0].meta);
+
+  /* The note is the honest line: it used to hide the overflow entirely, and it
+     is also the only place the operator is taught — nobody types a syntax they
+     do not know exists. */
+  type(win, 'sidebar-filter-input', 'wait_ns=');
+  const note = marked(win).filter(function (r) { return / \(note\)/.test(r); }).join(' ');
+  ok(/type >= <= or 100\.\.1000 for a range/.test(note),
+     'M6 …and the panel says how to ask for a range: ' + note);
+  ok(/16 … 2000/.test(note), 'M7 …and how far the key reaches: ' + note);
+
+  // The overflow itself: eleven values, eight rows. It used to say nothing.
+  type(win, 'sidebar-filter-input', 'amp_factor=');
+  const note2 = marked(win).filter(function (r) { return / \(note\)/.test(r); }).join(' ');
+  ok(/8 of 11 values/.test(note2),
+     'M7b the panel says how many of the key\'s values it is NOT showing — 22 '
+     + 'of 30 used to be silently invisible: ' + note2);
+
+  /* The range preview: what it will select, before it runs. */
+  type(win, 'sidebar-filter-input', 'wait_ns>=100');
+  const head = win.Typeahead._state().items[0];
+  ok(head.label === 'wait_ns >= 100' && head.insert === 'wait_ns>=100',
+     'M8 the first row IS the range: ' + JSON.stringify(head));
+  ok(head.meta === '3 of 4 values · 40 runs',
+     'M9 …counted from the vocabulary already in the browser — no request: '
+     + head.meta);
+  ok(marked(win).indexOf('2000') >= 0 && marked(win).indexOf('16') < 0,
+     'M10 …with the covered values under it, so nothing about the filter is '
+     + 'blind: ' + marked(win));
+
+  type(win, 'sidebar-filter-input', 'wait_ns>=99999');
+  const empty = win.Typeahead._state().items[0];
+  ok(empty.insert == null && /no recorded value/.test(empty.meta || ''),
+     'M11 a range nothing satisfies is NOT offered as a token: '
+     + JSON.stringify(empty));
+
+  type(win, 'sidebar-filter-input', 'wait_ns=100..2000');
+  ok(win.Typeahead._state().items[0].insert === 'wait_ns=100..2000',
+     'M12 the `lo..hi` form is the same rung: '
+     + JSON.stringify(win.Typeahead._state().items[0]));
+
+  /* A comparison whose right side is not a number is not a comparison. */
+  ok(win.__paramVocabInsert('k', '1', '>=') === 'k>=1'
+     && win.__paramVocabInsert('k', '1', '!=') === null,
+     'M13 the insert rule carries the operator and refuses the rest');
 
   if (fails === 0) console.log('all checks passed (' + asserts + ' assertions)');
   process.exit(fails ? 1 : 0);

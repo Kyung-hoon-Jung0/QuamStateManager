@@ -120,19 +120,23 @@ class TestTheEntryKnowsItsParameters:
 class TestTheSidebarParsesTheParamToken:
     def test_bare_key_equals_value_is_a_param(self):
         from quam_state_manager.web import routes
-        assert routes._parse_tree_query("multiplexed=true") == [
-            {"field": "param", "value": "multiplexed=true", "negate": False}]
+        c, = routes._parse_tree_query("multiplexed=true")
+        assert (c["field"], c["value"], c["negate"]) == ("param", "multiplexed=true", False)
+        # …and the token is parsed ONCE here, not per entry per condition
+        assert (c["key"], c["op"], c["want"]) == ("multiplexed", "=", "true")
 
     def test_the_scope_and_its_alias(self):
         from quam_state_manager.web import routes
         for q in ("param:multiplexed=true", "p:multiplexed=true"):
-            assert routes._parse_tree_query(q) == [
-                {"field": "param", "value": "multiplexed=true", "negate": False}], q
+            c, = routes._parse_tree_query(q)
+            assert (c["field"], c["value"], c["negate"]) \
+                == ("param", "multiplexed=true", False), q
+            assert (c["key"], c["op"], c["want"]) == ("multiplexed", "=", "true"), q
 
     def test_negation(self):
         from quam_state_manager.web import routes
-        assert routes._parse_tree_query("-multiplexed=true") == [
-            {"field": "param", "value": "multiplexed=true", "negate": True}]
+        c, = routes._parse_tree_query("-multiplexed=true")
+        assert (c["field"], c["value"], c["negate"]) == ("param", "multiplexed=true", True)
 
     def test_a_bare_word_is_still_free_text(self):
         """``multiplexed`` alone stays a name/date/status search on BOTH
@@ -209,10 +213,15 @@ class TestTheTwoSearchBoxesAgree:
         assert routes._SIDEBAR_SCOPE_ALIASES.get("p") == "param"
 
     def test_both_route_a_bare_key_equals_value(self):
+        """One token means one thing on both boxes — including the operator.
+
+        `>=` MUST precede `>` in the alternation on both sides, or the single
+        character matches first and the value becomes "=1000"."""
         from quam_state_manager.web import routes
         js = (_STATIC / "dataset-virtual.js").read_text(encoding="utf-8")
-        assert "body.match(/^([A-Za-z][\\w.\\-]*)=(.+)$/)" in js
-        assert routes._SIDEBAR_PARAM_EQ.pattern == r"^([A-Za-z][\w.\-]*)=(.+)$"
+        pat = r"^([A-Za-z][\w.\-]*)(>=|<=|>|<|=)(.+)$"
+        assert "body.match(/" + pat + "/)" in js
+        assert routes._SIDEBAR_PARAM_OP.pattern == pat
 
 
 class TestTheSidebarSaysTheScopeExists:

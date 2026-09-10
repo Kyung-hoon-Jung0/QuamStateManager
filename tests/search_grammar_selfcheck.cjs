@@ -236,15 +236,25 @@ async function pairChecks() {
 
 /* ── 6. Datasets table ─────────────────────────────────────────────────── */
 async function datasetChecks() {
+    // `pm` is the run's indexed parameters — the facet/`key=value` axis. The
+    // null on run 3 is deliberate: ONE run that recorded nothing must not cost
+    // `num_shots` its numeric nature (measured on the customer archive, where a
+    // single None demoted `readout_amplitude_in_dBm` and `load_data_id`).
     const rows = [
-        { id: 1, f: 'f1', exp: 'power_rabi', q: ['q0'], p: [], tags: ['good'], date: '2026-08-09', status: 'finished' },
-        { id: 2, f: 'f1', exp: 'ramsey', q: ['q1'], p: [], tags: ['wip'], date: '2026-08-09', status: 'finished' },
-        { id: 3, f: 'f1', exp: 'iq_blobs', q: ['q2'], p: [], tags: [], date: '2026-08-09', status: 'finished' },
+        { id: 1, f: 'f1', exp: 'power_rabi', q: ['q0'], p: [], tags: ['good'], date: '2026-08-09', status: 'finished',
+          pm: { num_shots: 100, reset_type: 'thermal', span: 500.0, multiplexed: true,
+                sci: 1e-05 } },
+        { id: 2, f: 'f1', exp: 'ramsey', q: ['q1'], p: [], tags: ['wip'], date: '2026-08-09', status: 'finished',
+          pm: { num_shots: 1000, reset_type: 'active_gef', span: 250.0, multiplexed: false } },
+        { id: 3, f: 'f1', exp: 'iq_blobs', q: ['q2'], p: [], tags: [], date: '2026-08-09', status: 'finished',
+          pm: { num_shots: null, reset_type: 'thermal', span: 500.0, multiplexed: true } },
     ];
     const dom = new JSDOM('<!doctype html><html><body>' +
         '<script type="application/json" id="ds-rows-data" data-now="1000">' +
         JSON.stringify(rows) + '</script>' +
         '<input id="dataset-search"><span id="dataset-filter-count"></span>' +
+        '<input id="sort-param-filter" value="num_shots">' +
+        '<div id="sort-param-badges"></div><div id="sort-fit-badges"></div>' +
         '<div id="datasets-scroll" style="height:400px"><table><tbody id="datasets-tbody"></tbody></table></div>' +
         '</body></html>', { url: 'http://localhost/datasets', runScripts: 'outside-only', pretendToBeVisual: true });
     const w = dom.window;
@@ -270,6 +280,39 @@ async function datasetChecks() {
     ok(await count('tag:good | tag:wip') === 2, 'datasets: scoped OR');
     ok(await count('-tag:wip') === 2, 'datasets: negation unchanged (singleton group)');
     ok(await count('rabi q0') === 1, 'datasets: plain AND unchanged');
+
+    /* ── the range operator, on the box the customer would type it into ──
+     *
+     * "amp같은 경우는 value도 많고 범위도 많기 때문에 까다로워." One token has
+     * to mean the same thing here as it does on the sidebar; the twelve-token
+     * agreement is pinned in tests/test_param_typeahead.py, and this is the
+     * end-to-end half — the real parser, the real matcher, real rows. */
+    ok(await count('num_shots>=1000') === 1, 'datasets: >= selects by magnitude');
+    ok(await count('num_shots>=100') === 2, 'datasets: …and includes its own end');
+    ok(await count('num_shots>100') === 1, 'datasets: > excludes it');
+    ok(await count('num_shots=100..1000') === 2, 'datasets: a range covers both');
+    ok(await count('span=500') === 2,
+       'datasets: a hand-typed 500 finds a run storing 500.0');
+    // The cross-language case, and the reason the numeric branch exists at all:
+    // `str(1e-05)` is '1e-05' in Python and '0.00001' in JavaScript, so the
+    // value the SIDEBAR offers is spelled the Python way. Without the numeric
+    // comparison the identical token finds nothing here.
+    ok(await count('sci=1e-05') === 1,
+       'datasets: the value the sidebar offers works on this box too');
+    ok(await count('sci=0.00001') === 1,
+       'datasets: …and so does the way JavaScript would print it');
+    ok(await count('multiplexed>0') === 0,
+       'datasets: a bool is not a magnitude');
+    ok(await count('num_shots=1000') === 1, 'datasets: equality is unchanged');
+    ok(await count('reset=active') === 0,
+       'datasets: …and still exact — active must not find active_gef');
+
+    /* One null is no evidence: the key keeps its range control. */
+    const pg = w.document.querySelector('[data-param-range="num_shots"]');
+    ok(!!pg, 'datasets: a numeric key with ONE null still offers min/max, not '
+             + 'a list of value chips');
+    ok(/data: 100 … 1000/.test(pg ? pg.textContent : ''),
+       'datasets: …over the values it does have: ' + (pg && pg.textContent));
     ok(await count('rabi | ramsey q1') === 1,
        'datasets: tight binding — (rabi|ramsey) AND q1');
 }

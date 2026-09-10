@@ -189,15 +189,26 @@
             var tok = tokens[i];
             var negate = false;
             var body = tok;
-            if (body.length > 1 && body.charAt(0) === '-' && (body.indexOf(':') > 0 || body.indexOf('=') > 0)) {
+            if (body.length > 1 && body.charAt(0) === '-'
+                && /[:=<>]/.test(body.slice(1))) {
                 negate = true;
                 body = body.slice(1);
             }
             // Bare key=value → a param facet filter (e.g. reset=active). Handled
             // before the key:value scope match since `=` is not a scope separator.
-            var eqm = body.match(/^([A-Za-z][\w.\-]*)=(.+)$/);
-            if (eqm) {
+            // `key>=value` is the same facet with a comparison; `>=` must precede
+            // `>` in the alternation or the value becomes "=1000".
+            var eqm = body.match(/^([A-Za-z][\w.\-]*)(>=|<=|>|<|=)(.+)$/);
+            if (eqm && (eqm[2] === '=' || _num(eqm[3]) != null)) {
                 scoped.push({key: 'param', value: body.toLowerCase(), negate: negate});
+                // …and into `items`, which is what `applyFilters` actually
+                // evaluates. Without this the token contributed NO condition
+                // and every row passed -- measured: `num_shots=1000` reported
+                // "Showing 2 of 2" over rows holding 100 and 1000. Only the
+                // long spelling (`param:num_shots=1000`) ever filtered, because
+                // the scope branch below pushes both.
+                items.push({kind: 'scope', key: 'param',
+                            value: body.toLowerCase(), negate: negate});
                 continue;
             }
             var m = body.match(/^([a-zA-Z]+):(.*)$/);
@@ -242,6 +253,48 @@
         return {freeText: freeText, scoped: scoped, unknown: unknown, groups: groups};
     }
 
+    /* A finite number, or null.
+       The boolean rejection is written out even though it is UNREACHABLE here
+       (a boolean is not `typeof 'number'`, so it goes through `String(v)` and
+       `Number('true')` is NaN) -- measured under mutation, which is why this
+       note exists rather than a pin. It is load-bearing in the Python twin,
+       where `float(True)` is 1.0 and `multiplexed>0` really would select every
+       multiplexed run while claiming to be arithmetic. The two implementations
+       are read side by side; a guard present in one and absent in the other
+       reads as a disagreement about the rule. */
+    function _num(v) {
+        if (typeof v === 'boolean' || v == null || v === '') return null;
+        var f = typeof v === 'number' ? v : Number(String(v).trim());
+        return (typeof f === 'number' && isFinite(f)) ? f : null;
+    }
+
+    /* One param token body -> the form the matcher uses, or null when the
+       token carries no operator. The twin of routes._param_cond.
+
+       The key pattern here is PERMISSIVE, matching the server's scoped form: a
+       bare token was already validated against the strict pattern when it was
+       routed to this facet, and a `param:`-scoped one deliberately has no key
+       pattern at all (that is how `_leading=7` is searchable). */
+    function _paramCond(body) {
+        var m = String(body).match(/^([^=<>]+)(>=|<=|>|<|=)(.+)$/);
+        if (!m) return null;
+        var key = m[1].toLowerCase(), op = m[2], want = m[3];
+        if (op === '=') {
+            var dd = want.indexOf('..');
+            if (dd >= 0) {
+                var a = _num(want.slice(0, dd)), b = _num(want.slice(dd + 2));
+                if (a != null && b != null) {
+                    return { key: key, op: '..', want: want, wnum: null,
+                             lo: Math.min(a, b), hi: Math.max(a, b) };
+                }
+            }
+            return { key: key, op: '=', want: want, wnum: _num(want), lo: null, hi: null };
+        }
+        var w = _num(want);
+        if (w == null) return null;      // `q1>q2` is free text, as it always was
+        return { key: key, op: op, want: want, wnum: w, lo: null, hi: null };
+    }
+
     function matchScope(row, key, value) {
         // Returns true iff the row matches a single scoped filter. Caller XORs
         // with the negate flag.
@@ -282,22 +335,43 @@
             case 'note':
                 return (row.note || '').toLowerCase().indexOf(value) !== -1;
             case 'param': {
-                // value is `key=val` (bare reset=active / param:reset=active) or a
-                // bare key/value substring. Key matches by substring (reset →
-                // reset_type); for key=val the value is matched EXACTLY (so
-                // `active` ≠ `active_gef`); without `=`, substring over keys+values.
+                // value is `key=val` / `key>=val` / `key=lo..hi` (bare or
+                // param:-scoped), or a bare key/value substring. Key matches by
+                // substring (reset → reset_type); for key=val the value is
+                // matched EXACTLY (so `active` ≠ `active_gef`); for a comparison
+                // the stored value must be a magnitude; without an operator,
+                // substring over keys+values.
+                //
+                // The twin of routes._param_hit. Kept transcribed rather than
+                // shared because the two languages spell numbers differently --
+                // and pinned against it, token for token.
                 if (!row.pm) return false;
-                var eq = value.indexOf('=');
+                var c = _paramCond(value);
                 var _norm = function (v) { return (v === true ? 'true' : v === false ? 'false' : String(v)).toLowerCase(); };
-                if (eq >= 0) {
-                    var pk = value.slice(0, eq), pv = value.slice(eq + 1);
-                    for (var pkey in row.pm) {
-                        if (pkey.toLowerCase().indexOf(pk) !== -1 && _norm(row.pm[pkey]) === pv) return true;
+                if (!c) {
+                    for (var pk2 in row.pm) {
+                        if (pk2.toLowerCase().indexOf(value) !== -1 || _norm(row.pm[pk2]).indexOf(value) !== -1) return true;
                     }
                     return false;
                 }
-                for (var pk2 in row.pm) {
-                    if (pk2.toLowerCase().indexOf(value) !== -1 || _norm(row.pm[pk2]).indexOf(value) !== -1) return true;
+                for (var pkey in row.pm) {
+                    if (pkey.toLowerCase().indexOf(c.key) === -1) continue;
+                    var raw = row.pm[pkey];
+                    if (c.op === '=') {
+                        if (_norm(raw) === c.want) return true;          // the legacy path first
+                        if (c.wnum != null) {
+                            var ne = _num(raw);
+                            if (ne != null && ne === c.wnum) return true; // 500 finds 500.0
+                        }
+                        continue;
+                    }
+                    var n = _num(raw);
+                    if (n == null) continue;
+                    if (c.op === '..') { if (n >= c.lo && n <= c.hi) return true; }
+                    else if (c.op === '>=') { if (n >= c.wnum) return true; }
+                    else if (c.op === '>') { if (n > c.wnum) return true; }
+                    else if (c.op === '<=') { if (n <= c.wnum) return true; }
+                    else if (c.op === '<') { if (n < c.wnum) return true; }
                 }
                 return false;
             }
@@ -1805,7 +1879,17 @@
                 var v = r.pm[k];
                 var isNum = (typeof v === 'number' && isFinite(v));
                 if (allNum[k] === undefined) allNum[k] = true;
-                if (!isNum) allNum[k] = false;
+                // (that initialisation is its own statement: chained onto the
+                // test below it, a key's FIRST value never reaches min/max)
+                //
+                // A run that recorded NOTHING is not evidence that the key is
+                // non-numeric. Measured on the customer archive: exactly one
+                // `None` demoted `readout_amplitude_in_dBm` (12 values) and
+                // `load_data_id` (20) -- and the first is the "amp" key the
+                // report named. `core/param_vocab.to_payload` applies the same
+                // tolerance, so the two pages classify a key identically.
+                if (v == null || v === '') { /* no evidence either way */ }
+                else if (!isNum) allNum[k] = false;
                 else {
                     if (mins[k] === undefined || v < mins[k]) mins[k] = v;
                     if (maxs[k] === undefined || v > maxs[k]) maxs[k] = v;
@@ -1819,7 +1903,9 @@
         for (var kk in facets) {
             var s = 0; for (var vv in facets[kk]) s += facets[kk][vv];
             keyCount[kk] = s;
-            if (allNum[kk]) { numeric[kk] = true; minmax[kk] = [mins[kk], maxs[kk]]; }
+            if (allNum[kk] && mins[kk] !== undefined) {
+                numeric[kk] = true; minmax[kk] = [mins[kk], maxs[kk]];
+            }
         }
         state.paramFacets = facets;
         state.paramKeyCount = keyCount;
@@ -1896,9 +1982,10 @@
             var vals = state.paramFacets[key];
             var ordered = Object.keys(vals).sort(function (a, b) {
                 if (vals[a] !== vals[b]) return vals[b] - vals[a];
-                // Facet values are STRINGS even when they read as numbers (a key
-                // is only "numeric" when EVERY value is a number, so one "none"
-                // sends 100/20/1000 down this branch): order them naturally.
+                // Facet values are STRINGS even when they read as numbers
+                // (a key reaches this branch when any RECORDED value is not a
+                // number -- a null is no evidence either way, since 2026-09-11):
+                // order them naturally.
                 return natCmp(a, b);
             });
             body = '<div class="param-group-body">' + ordered.map(function (val) {

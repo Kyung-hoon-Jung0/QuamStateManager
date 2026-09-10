@@ -84,12 +84,25 @@ window.Typeahead = (function () {
         var m = /^(param|p):/i.exec(body);
         if (m) { scope = m[0]; body = body.slice(m[0].length); }
         else if (body.indexOf(':') >= 0) return null;   // some other scope
-        var eq = body.indexOf('=');
+        // The FIRST of `= > <`, scanned rather than regexed, because the
+        // scope form carries keys the bare-key pattern deliberately rejects
+        // (`p:_foo=bar`) and a key regex here would send them to the wrong
+        // stage. `>=` and `<=` are two characters; `=` is one.
+        var oi = -1, op = '';
+        for (var ci = 0; ci < body.length; ci++) {
+            var ch = body.charAt(ci);
+            if (ch === '=' || ch === '>' || ch === '<') {
+                oi = ci; op = ch;
+                if (ch !== '=' && body.charAt(ci + 1) === '=') op = ch + '=';
+                break;
+            }
+        }
         return {
             start: span[0], end: span[1], neg: neg, scope: scope,
-            stage: eq >= 0 ? 'value' : 'key',
-            key: eq >= 0 ? body.slice(0, eq) : '',
-            stem: eq >= 0 ? body.slice(eq + 1) : body
+            stage: oi >= 0 ? 'value' : 'key',
+            op: oi >= 0 ? op : '',
+            key: oi >= 0 ? body.slice(0, oi) : '',
+            stem: oi >= 0 ? body.slice(oi + op.length) : body
         };
     }
 
@@ -104,7 +117,10 @@ window.Typeahead = (function () {
         var span = SQ.caretSpan(text, caret);
         if (!span) return null;
         if (text.slice(span[0], span[1]).indexOf('"') >= 0) return null;
-        return { start: span[0], end: span[1], neg: '', scope: '',
+        // Deliberately NOT the operator split: on a box whose grammar is
+        // AND-ed words, `a>=b` is one word, and completing "values of a" would
+        // be a different query from the one being typed.
+        return { start: span[0], end: span[1], neg: '', scope: '', op: '',
                  stage: 'key', key: '', stem: span[2] };
     }
 
@@ -322,7 +338,7 @@ window.Typeahead = (function () {
                     // tick stays deferred while the box has focus, which is what
                     // stops a tree swap landing mid-selection.
                     ev.preventDefault();
-                    _accept(Number(this.getAttribute('data-i')));
+                    _accept(Number(this.getAttribute('data-i')), true);
                 });
             }
             p.appendChild(li);
@@ -362,21 +378,28 @@ window.Typeahead = (function () {
         return st.active;
     }
 
-    function _accept(i) {
+    /* `whole` is Enter or a click -- a commit gesture. On a key that has only
+       ONE value there is nothing to choose, so those finish the token outright
+       (121 of the customer's 210 keys are single-valued). Tab still inserts
+       `key=` alone, for anyone typing a value of their own. */
+    function _accept(i, whole) {
         if (!_open) return;
         var st = _open, it = st.items[i];
-        if (!it || it.note || it.insert == null) return;
+        if (!it || it.note) return;
+        var ins = (whole && it.wholeInsert != null) ? it.wholeInsert : it.insert;
+        var fire = (whole && it.wholeInsert != null) ? !!it.wholeFire : !!it.fire;
+        if (ins == null) return;
         var inp = st.input, v = inp.value;
-        inp.value = v.slice(0, st.span.start) + it.insert + v.slice(st.span.end);
-        var caret = st.span.start + it.insert.length;
+        inp.value = v.slice(0, st.span.start) + ins + v.slice(st.span.end);
+        var caret = st.span.start + ins.length;
         try { inp.setSelectionRange(caret, caret); } catch (e) {}
         _close();
-        if (it.fire) {
+        if (fire) {
             // A complete token: let the box's own listeners run the search, and
             // do NOT re-open on it. The re-render would suggest the very value
             // just accepted, so the panel sat there after the search had run
             // (measured in real Chrome). Same mechanism Escape uses.
-            st.cfg.dismissed = it.insert;
+            st.cfg.dismissed = ins;
             inp.dispatchEvent(new Event('input', { bubbles: true }));
         } else {
             // A key accept leaves `key=` — an intermediate state that matches
@@ -453,7 +476,7 @@ window.Typeahead = (function () {
                 // exactly what it meant yesterday. That costs one keystroke
                 // versus VS Code and is the price of not redefining Enter.
                 if (st.active < 0) { if (k === 'Tab') _close(); return; }
-                _accept(st.active); e.preventDefault();
+                _accept(st.active, k === 'Enter'); e.preventDefault();
             }
         });
         document.addEventListener('focusout', function (e) {
@@ -544,7 +567,36 @@ window.SidebarTypeahead = (function () {
         load(true);
     }
 
-    function suggest(stage, key, stem) {
+    /* A finite number, or null -- the twin of routes._as_number and of
+       dataset-virtual's `_num`. A boolean is not a magnitude. */
+    function _num(v) {
+        if (typeof v === 'boolean' || v == null || v === '') return null;
+        var f = typeof v === 'number' ? v : Number(String(v).trim());
+        return (typeof f === 'number' && isFinite(f)) ? f : null;
+    }
+
+    /* The predicate `op`+`want` names, or null when it cannot be evaluated yet
+       (nothing typed after the operator, or a right side that is not a number).
+       The SAME rules routes._param_hit applies, so the count this panel prints
+       is the count the search will return. */
+    function _pred(op, want) {
+        if (op === '=' && String(want).indexOf('..') >= 0) {
+            var dd = String(want).indexOf('..');
+            var a = _num(String(want).slice(0, dd)), b = _num(String(want).slice(dd + 2));
+            if (a == null || b == null) return null;
+            var lo = Math.min(a, b), hi = Math.max(a, b);
+            return function (n) { return n >= lo && n <= hi; };
+        }
+        var w = _num(want);
+        if (w == null) return null;
+        if (op === '>=') return function (n) { return n >= w; };
+        if (op === '>') return function (n) { return n > w; };
+        if (op === '<=') return function (n) { return n <= w; };
+        if (op === '<') return function (n) { return n < w; };
+        return null;
+    }
+
+    function suggest(stage, key, stem, st) {
         if (!vocab) {
             load(false);
             return { items: [{ label: 'loading parameters…', note: true }] };
@@ -555,11 +607,19 @@ window.SidebarTypeahead = (function () {
             var c = window.Typeahead.compose(r, function (k) {
                 var d = byKey[k];
                 var nv = d.v.length + (d.more || 0);
-                return {
-                    label: k,
-                    meta: nv + (nv === 1 ? ' value · ' : ' values · ') + d.n + ' runs',
-                    insert: k + '=', fire: false
-                };
+                var it = { label: k, insert: k + '=', fire: false };
+                if (nv === 1 && d.v.length === 1) {
+                    // Nothing to choose. Enter (or a click) finishes the token;
+                    // Tab still leaves `key=` for a value of your own.
+                    var whole = PV ? PV(d.k, d.v[0][0]) : (d.k + '=' + d.v[0][0]);
+                    it.meta = '= ' + d.v[0][0] + ' · ' + d.n + ' runs';
+                    if (whole) { it.wholeInsert = whole; it.wholeFire = true; }
+                } else {
+                    it.meta = nv + ' values · '
+                            + (d.num ? d.min + ' … ' + d.max + ' · ' : '')
+                            + d.n + ' runs';
+                }
+                return it;
             });
             if (!c.items.length) {
                 return vocab.hydrating
@@ -582,6 +642,46 @@ window.SidebarTypeahead = (function () {
             d._counts = {};
             d.v.forEach(function (p) { d._counts[p[0]] = p[1]; });
         }
+        var op = (st && st.op) || '=';
+
+        /* A RANGE, previewed before it is run.
+         *
+         * Customer, on site: "amp같은 경우는 value도 많고 범위도 많기 때문에
+         * 까다로워." Picking one value from a list is only an answer while the
+         * list is short; on the eleven keys with more than twelve values it is
+         * not. So the operator gets a first row that says what it will select,
+         * counted from the vocabulary already in the browser -- still no
+         * request per keystroke -- with the covered values listed underneath,
+         * so nothing about the filter is blind. */
+        var pred = _pred(op, stem);
+        if (pred) {
+            var covered = [], runs = 0;
+            for (var i = 0; i < d.v.length; i++) {
+                var nv = _num(d.v[i][0]);
+                if (nv != null && pred(nv)) { covered.push(d.v[i]); runs += d.v[i][1]; }
+            }
+            var tok = PV ? PV(d.k, stem, op === '..' ? '=' : op)
+                         : (d.k + op + stem);
+            var head = {
+                label: d.k + ' ' + op + ' ' + stem,
+                meta: covered.length + ' of ' + d.v.length + ' values · ' + runs + ' runs',
+                insert: tok, fire: true
+            };
+            if (!covered.length) {
+                head.meta = 'no recorded value is ' + op + ' ' + stem;
+                head.insert = null;         // offering it would find nothing
+            }
+            var rows = [head];
+            for (var j = 0; j < covered.length && rows.length < 8; j++) {
+                rows.push({
+                    label: covered[j][0], meta: covered[j][1] + ' runs',
+                    insert: PV ? PV(d.k, covered[j][0]) : (d.k + '=' + covered[j][0]),
+                    fire: true
+                });
+            }
+            return { items: rows,
+                     note: d.more ? ('…and ' + d.more + ' more values not listed') : '' };
+        }
         var rr = window.Typeahead.rank(d._vals, stem, 'sb-vals:' + vocab.v + ':' + d.k);
         var cc = window.Typeahead.compose(rr, function (val) {
             return {
@@ -590,10 +690,18 @@ window.SidebarTypeahead = (function () {
             };
         });
         if (!cc.items.length) return null;
-        return {
-            items: cc.items,
-            note: d.more ? ('…and ' + d.more + ' more values') : ''
-        };
+        /* The note tells the truth about the whole key, not about the eight
+           rows on screen -- 22 of 30 values used to be silently invisible --
+           and on a numeric key it is also the one place the operator is taught,
+           because nobody types a syntax they do not know exists. */
+        var shown = cc.items.filter(function (x) { return !x.note; }).length;
+        var total = d.v.length + (d.more || 0);
+        var note = shown < total ? (shown + ' of ' + total + ' values') : '';
+        if (d.num) {
+            if (!d.more) note += (note ? ' · ' : '') + d.min + ' … ' + d.max;
+            note += (note ? ' · ' : '') + 'type >= <= or 100..1000 for a range';
+        }
+        return { items: cc.items, note: note };
     }
 
     function init() {
@@ -609,16 +717,18 @@ window.SidebarTypeahead = (function () {
    against it. Kept tiny and beside its only caller: a value the grammar cannot
    carry never reaches the client (the server omits it), so this only has to
    reproduce the SHAPE. */
-window.__paramVocabInsert = function (key, value) {
+window.__paramVocabInsert = function (key, value, op) {
     if (key == null || value == null) return null;
     key = String(key); value = String(value);
+    op = op == null ? '=' : String(op);
+    if (['>=', '<=', '>', '<', '='].indexOf(op) < 0) return null;
     if (!key || key.indexOf('"') >= 0 || value.indexOf('"') >= 0) return null;
     if (key.indexOf('=') >= 0 || key.indexOf(':') >= 0) return null;
     var bare = /^[A-Za-z][\w.\-]*$/.test(key);
     var scope = bare ? '' : 'p:';
     if (scope && value !== value.replace(/^\s+|\s+$/g, '')) return null;
     if (!value) return null;
-    var tok = scope + key + '=' + value;
+    var tok = scope + key + op + value;
     if (/[\s,]/.test(tok)) tok = '"' + tok + '"';
     return tok;
 };

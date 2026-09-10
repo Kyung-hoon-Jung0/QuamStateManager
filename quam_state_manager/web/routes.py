@@ -17471,7 +17471,77 @@ _SIDEBAR_KNOWN_SCOPES = {"name", "date", "status", "id", "qubit", "pair", "param
 # Bare ``key=value`` is a param filter, not free text (``multiplexed=true``) --
 # the same shape dataset-virtual.js:198 routes to the param facet, so one token
 # means one thing on both search boxes.
-_SIDEBAR_PARAM_EQ = re.compile(r"^([A-Za-z][\w.\-]*)=(.+)$")
+#
+# And ``key>=value`` is a RANGE, because picking one value from a list is only
+# an answer while the list is short. Customer, on site: "amp같은 경우는 value도
+# 많고 범위도 많기 때문에 까다로워." Measured on their archive: 121 of 210 keys
+# carry exactly ONE value, ~78 carry 2-12, and 11 carry more than 12 --
+# frequency_span_in_mhz 31, num_shots 30, max_wait_time_in_ns 21, load_data_id
+# 20, min/max_amp_factor 19 each. Those eleven are exactly the keys the report
+# named, and they are the ones a list cannot serve.
+#
+# The operator lives INSIDE a param token's body, so it is invisible to every
+# other search box in the app: ``search_query.tokens()`` is
+# ``q.lower().strip().split()`` and never inspects ``=``, and ``caret_span``
+# scans quotes and commas only. No parity harness moves for this.
+#
+# ``>=`` before ``>`` and ``<=`` before ``<``, or the alternation matches the
+# single character first and the value becomes "=1000".
+_SIDEBAR_PARAM_OP = re.compile(r"^([A-Za-z][\w.\-]*)(>=|<=|>|<|=)(.+)$")
+
+# Inside an explicit ``p:`` / ``param:`` scope there is NO key pattern -- that
+# is the whole reason the scope form exists, and it is how a key like
+# ``_leading`` (which the bare form cannot carry) is searched at all.
+_SCOPED_PARAM_OP = re.compile(r"^([^=<>]+)(>=|<=|>|<|=)(.+)$")
+
+
+def _as_number(v):
+    """*v* as a finite float, or None. None means "not a magnitude", and every
+    comparison then simply does not hit -- never a guess, never a crash.
+
+    A bool is deliberately NOT a number here. Python would rank ``True > 0`` as
+    true, so ``multiplexed>0`` would select every multiplexed run while claiming
+    to be an arithmetic comparison."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v) if math.isfinite(v) else None
+    try:
+        f = float(str(v).strip())
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) else None
+
+
+def _param_cond(body: str, scoped: bool = False):
+    """Parse one param token body into the form ``_param_hit`` matches with,
+    or None when this token is not a param condition at all.
+
+    Parsed ONCE, at query-parse time, because the alternative is running this
+    regex and a float parse per condition per entry over the whole tree.
+
+    A comparison is only a comparison when its right side is a finite number:
+    ``q1>q2`` stays free text, exactly as it does today.
+    """
+    m = (_SCOPED_PARAM_OP if scoped else _SIDEBAR_PARAM_OP).match(body)
+    if not m:
+        return None
+    key, op, want = m.group(1).lower(), m.group(2), m.group(3)
+    if op == "=":
+        lo = hi = None
+        if ".." in want:                       # key=100..1000, both ends included
+            a, _, b = want.partition("..")
+            an, bn = _as_number(a), _as_number(b)
+            if an is not None and bn is not None:
+                lo, hi = (an, bn) if an <= bn else (bn, an)
+                return {"key": key, "op": "..", "want": want,
+                        "wnum": None, "lo": lo, "hi": hi}
+        return {"key": key, "op": "=", "want": want,
+                "wnum": _as_number(want), "lo": None, "hi": None}
+    w = _as_number(want)
+    if w is None:
+        return None                            # not a comparison -> free text
+    return {"key": key, "op": op, "want": want, "wnum": w, "lo": None, "hi": None}
 
 
 def _tokenize_query(text: str) -> list[str]:
@@ -17510,21 +17580,28 @@ def _parse_tree_query(text: str) -> list[dict]:
         # Guard shape kept identical to dataset-virtual.js:154 -- the JS side
         # accepts `=` because of the `key=value` param facets, and since the
         # sidebar reads the same `filter_params` map, so does this one.
-        if len(body) > 1 and body[0] == "-" and (":" in body[1:] or "=" in body[1:]):
+        # `<` and `>` join the set for the same reason `=` is in it: today
+        # `-k>=1000` negates and `-k>1000` does not, which is one grammar
+        # answering two ways to the same question.
+        if len(body) > 1 and body[0] == "-" and any(c in body[1:] for c in ":=<>"):
             negate = True
             body = body[1:]
         # Bare `key=value` -> param, BEFORE the scope match (`=` is not a scope
         # separator, and `multiplexed=true` has no colon to find).
-        eqm = _SIDEBAR_PARAM_EQ.match(body)
-        if eqm:
-            conds.append({"field": "param", "value": body.lower(), "negate": negate})
+        pc = _param_cond(body.lower())
+        if pc is not None:
+            conds.append(dict(pc, field="param", value=body.lower(), negate=negate))
             continue
         if ":" in body:
             key, _, value = body.partition(":")
             key = _SIDEBAR_SCOPE_ALIASES.get(key.strip().lower(), key.strip().lower())
             value = value.strip().lower()
             if key in _SIDEBAR_KNOWN_SCOPES and value:
-                conds.append({"field": key, "value": value, "negate": negate})
+                c = {"field": key, "value": value, "negate": negate}
+                if key == "param":
+                    # `p:num_shots>=1000` means what `num_shots>=1000` means.
+                    c.update(_param_cond(value, scoped=True) or {})
+                conds.append(c)
                 continue
         # Bare / unknown token → free-text with the ORIGINAL token (negation
         # needs a consumable scope, so a bare leading '-' stays literal —
@@ -17557,22 +17634,68 @@ def _group_tree_conds(conds: list[dict]) -> list[list[dict]]:
 from quam_state_manager.core.param_vocab import param_norm as _param_norm
 
 
-def _param_hit(params: dict, value: str) -> bool:
+def _param_hit(params: dict, cond) -> bool:
     """Does *params* satisfy one ``param:`` condition?
 
     Transcribed from dataset-virtual.js:284-303 so the two search boxes cannot
     drift: with an ``=`` the KEY matches by substring and the VALUE exactly
     (``reset=active`` finds ``reset_type`` and never ``active_gef``); without
-    one, it is a substring over keys AND values. A run carrying no indexed
-    params matches nothing -- silence, never a false hit."""
+    one, it is a substring over keys AND values; with a comparison, the value
+    must be a magnitude. A run carrying no indexed params matches nothing --
+    silence, never a false hit.
+
+    *cond* is the dict ``_parse_tree_query`` built. A bare string is still
+    accepted and parsed here, because that is how every existing caller and
+    pin spells it."""
     if not params:
         return False
-    key, eq, want = value.partition("=")
-    if eq:
-        return any(key in str(k).lower() and _param_norm(v) == want
-                   for k, v in params.items())
-    return any(value in str(k).lower() or value in _param_norm(v)
-               for k, v in params.items())
+    if isinstance(cond, str):
+        # A bare string reaches here from a direct caller, where there is no
+        # bare-versus-scoped distinction to make -- so the permissive form
+        # is tried too, and `p:_leading=7` behaves as it always has.
+        cond = dict(_param_cond(cond) or _param_cond(cond, scoped=True) or {},
+                    value=cond)
+    op = cond.get("op") or ""
+    if not op:
+        v = cond.get("value") or ""
+        return any(v in str(k).lower() or v in _param_norm(x)
+                   for k, x in params.items())
+    key, want = cond["key"], cond["want"]
+    for k, v in params.items():
+        if key not in str(k).lower():
+            continue
+        if op == "=":
+            # The legacy string comparison FIRST, so every value that matched
+            # yesterday still matches byte-identically.
+            if _param_norm(v) == want:
+                return True
+            # …then the numeric one, which is a real fix: `param_norm` spells a
+            # value through Python's `str()`, so `frequency_span_in_mhz=500`
+            # matched NOTHING on a run storing 500.0.
+            if cond.get("wnum") is not None:
+                n = _as_number(v)
+                if n is not None and n == cond["wnum"]:
+                    return True
+            continue
+        n = _as_number(v)
+        if n is None:
+            continue                     # a comparison needs a magnitude
+        if op == "..":
+            if cond["lo"] <= n <= cond["hi"]:
+                return True
+        elif op == ">=":
+            if n >= cond["wnum"]:
+                return True
+        elif op == ">":
+            if n > cond["wnum"]:
+                return True
+        elif op == "<=":
+            if n <= cond["wnum"]:
+                return True
+        elif op == "<":
+            if n < cond["wnum"]:
+                return True
+    return False
 
 
 def _entry_matches(entry, conds: list[dict]) -> bool:
@@ -17613,7 +17736,7 @@ def _entry_matches(entry, conds: list[dict]) -> bool:
         if field == "pair":
             return any(value in p for p in pairs)        # substring
         if field == "param":
-            return _param_hit(params, value)
+            return _param_hit(params, c)
         return False
 
     for group in _group_tree_conds(conds):

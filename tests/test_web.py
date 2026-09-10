@@ -5932,7 +5932,9 @@ class TestDatasetParamFilter:
         assert "'param'" in dvs                # KNOWN_SCOPES
         assert "p: 'param'" in dvs             # alias
         assert "if (row.pm)" in dvs            # free-text haystack includes params
-        assert "=(.+)$" in dvs                 # bare key=value parsing
+        # bare key=value AND key>=value parsing — the operator alternation
+        # is pinned against the server's in test_sidebar_param_search
+        assert "(>=|<=|>|<|=)(.+)$" in dvs
         # Grouped / numeric-range additions (round 8).
         assert "_paramGroupHtml" in dvs and "paramRangeFilter" in dvs
         assert "_rowMatchesParamRanges" in dvs
