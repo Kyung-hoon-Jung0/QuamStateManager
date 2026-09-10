@@ -92,6 +92,16 @@ function swap(win, url, okFlag) {
        '1f the swap pushes the entry');
     ok(win._navSyncs >= 1,
        '1g ...and re-syncs the sidebar (a raw pushState fires no htmx event)');
+    /* A bare pushState does not move htmx's private currentPathForHistory, so
+       its next save files the on-screen content under the OLD url. This app
+       already has the repair for that (docs/139): PaneState stamps the pane
+       with the content's own route and _historyCheck purges the poisoned
+       cache when a restored pane disagrees with the address. The repair is
+       only armed if the stamp is TRUE after our push -- which it is because
+       we push from the swap, the same event that stamps. */
+    ok(win.document.getElementById('table-pane')
+          .getAttribute('data-pane-route') === '/param-history',
+       '1h the pane is stamped with the route we pushed (arms the cache repair)');
 })();
 
 /* 2. a pick that FAILS must not move the address bar */
