@@ -141,9 +141,18 @@
         var c = el('ndv-controls');
         if (!c || !state || !state.cube || !state.cube.ok) { if (c) c.hidden = true; return; }
         var cube = state.cube, html = '';
+        // An overlay is DRAWN as one trace per value on a 1-D plot, so it needs
+        // no chips there. A heatmap has nowhere to overlay to: the render pins
+        // the dim at state.sel and draws one slice, so without chips the other
+        // slices are unreachable (customer, 2026-09-10 -- a four-panel node
+        // figure whose Raw Data tab reached two). Offer them exactly when the
+        // view has a second axis, i.e. when the overlay is not being drawn.
+        var _view = effectiveView(cube);
+        var _pinnedOverlay = !!_view.y;
         cube.dims.forEach(function (d, di) {
             if (d.size <= 1) return;
             var role = roleOf(d.name);
+            if (role === 'overlay' && _pinnedOverlay) role = 'slider';
             if (role === 'entity' || role === 'slider') {
                 var chips = '';
                 for (var i = 0; i < d.size; i++) {
@@ -168,7 +177,7 @@
         // docs/122 item 1 — offered only when there IS a second axis to trade
         // with. It names both dims so the button says what it will do rather
         // than leaving the user to find out by pressing it.
-        var _ev = effectiveView(cube);
+        var _ev = _view;
         if (_ev.y) {
             html += '<div class="ndv-ctl"><span class="ndv-ctl-label">axes</span>' +
                 '<button type="button" class="ndv-chip ndv-swap"' +

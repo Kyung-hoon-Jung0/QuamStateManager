@@ -506,6 +506,81 @@ async function main() {
     ok(pax.layout.xaxis.title.text === 'flux bias [V]',
        'cosmetic-only long_name difference stays single: ' + pax.layout.xaxis.title.text);
 
+    /* ══ an overlay the plot cannot draw must be SELECTABLE ═══════════
+       Customer, 2026-09-10, run #1461: the node's own figure has four
+       panels (prep |10> / |11>, mover / static) and the Raw Data tab
+       reached two. `state_mover` is
+       qubit_pair x prep x flux_dv x pulse_duration; the view puts two
+       sweeps on the axes and classifies `prep` as an OVERLAY. On a 1-D
+       plot that is honest -- one line per value. On a HEATMAP there is
+       nowhere to overlay to, so the render pins the dim at
+       state.sel[dim] || 0 and draws one slice; renderControls offered
+       prepChips only for 'entity' and 'slider', so the pin existed and
+       nothing could move it. Half the measurement, unreachable, with no
+       line on the page saying so. */
+    const pairScan = {
+        ok: true, var: 'state_mover', units: null, long_name: null,
+        scalar: undefined,
+        dims: [
+            { name: 'prep', size: 2, kind: 'sweep', coord: ['10', '11'], units: null, decimated: false },
+            { name: 'flux_dv', size: 2, kind: 'sweep', coord: [-0.19, -0.18], units: 'V', decimated: false },
+            { name: 'pulse_duration', size: 3, kind: 'sweep', coord: [20, 40, 60], units: 'ns', decimated: false },
+        ],
+        // prep 10 -> 1..6, prep 11 -> 101..106, so a wrong slice is obvious
+        data: [
+            [[1, 2, 3], [4, 5, 6]],
+            [[101, 102, 103], [104, 105, 106]],
+        ],
+        kept: null, aux_axes: [], iq_partner: null,
+        default_view: { x: 'pulse_duration', y: 'flux_dv', entity: null,
+                        overlay: ['prep'], sliders: {} },
+    };
+    feedCube(pairScan);
+    card.setAttribute('data-var', 'state_mover');
+    card.click();
+    await sleep(40);
+
+    let ph = plots[plots.length - 1];
+    ok(ph.data.length === 1 && ph.data[0].type === 'heatmap',
+       'a two-sweep view draws ONE heatmap, not overlaid traces');
+    ok(JSON.stringify(ph.data[0].z) === JSON.stringify([[1, 2, 3], [4, 5, 6]]),
+       'it draws the first prep slice: ' + JSON.stringify(ph.data[0].z));
+
+    const grp = Array.prototype.find.call(
+        document.querySelectorAll('#ndv-controls .ndv-ctl'),
+        function (g) {
+            const l = g.querySelector('.ndv-ctl-label');
+            return l && l.textContent.trim() === 'prep';
+        });
+    ok(!!grp, 'the pinned overlay dim gets a control group of its own');
+    const prepChips = grp ? grp.querySelectorAll('.ndv-chip') : [];
+    ok(prepChips.length === 2, 'one chip per prep value, got ' + prepChips.length);
+    ok(prepChips.length === 2 && prepChips[0].classList.contains('active'),
+       'the drawn slice is the marked one');
+
+    if (prepChips.length === 2) {
+        prepChips[1].click();
+        await sleep(40);
+        ph = plots[plots.length - 1];
+        ok(JSON.stringify(ph.data[0].z) === JSON.stringify([[101, 102, 103], [104, 105, 106]]),
+           'pressing the second chip draws the OTHER prep: ' + JSON.stringify(ph.data[0].z));
+    }
+
+    /* ...and a 1-D view still OVERLAYS rather than growing prepChips, or the
+       ds_fit contrast chart would lose its two lines. */
+    const ramsey2 = JSON.parse(JSON.stringify(ramsey));
+    ramsey2.var = 'I_again';
+    feedCube(ramsey2);
+    card.setAttribute('data-var', 'I_again');   // a NEW key: the cube cache is per var
+    card.click();
+    await sleep(40);
+    const lineP = plots[plots.length - 1];
+    ok(lineP.data.length === 2, 'a 1-D view still draws the overlay as traces');
+    const stillNoChips = !Array.prototype.some.call(
+        document.querySelectorAll('#ndv-controls .ndv-ctl-label'),
+        function (l) { return l.textContent.trim() === 'detuning_signs'; });
+    ok(stillNoChips, 'a DRAWN overlay grows no prepChips (it is already on screen)');
+
     console.log(fails ? ('FAILURES: ' + fails) : 'ALL OK');
     process.exit(fails ? 1 : 0);
 }

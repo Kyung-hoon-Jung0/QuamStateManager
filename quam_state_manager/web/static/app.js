@@ -15657,8 +15657,14 @@ document.addEventListener('click', function(evt) {
                     return !got || got.split('?')[0] === _url.split('?')[0];
                 };
                 var _off = function () {
-                    document.body.removeEventListener('htmx:afterSwap', _onSwap);
-                    document.body.removeEventListener('htmx:afterRequest', _onDone);
+                    // `document`, never document.body: app.js is evaluated in
+                    // <head>, and a blanket pin forbids the body form because a
+                    // TOP-LEVEL one would throw against a null body. These are
+                    // added at click time so body exists -- but every htmx event
+                    // bubbles to document anyway, and PaneState's own listeners
+                    // live there, so this is the house spelling.
+                    document.removeEventListener('htmx:afterSwap', _onSwap);
+                    document.removeEventListener('htmx:afterRequest', _onDone);
                 };
                 var _onSwap = function (evt) {
                     if (!evt.target || evt.target.id !== 'table-pane') return;
@@ -15675,8 +15681,8 @@ document.addEventListener('click', function(evt) {
                     if (evt.detail && evt.detail.successful) return;   // the swap decides
                     _off();
                 };
-                document.body.addEventListener('htmx:afterSwap', _onSwap);
-                document.body.addEventListener('htmx:afterRequest', _onDone);
+                document.addEventListener('htmx:afterSwap', _onSwap);
+                document.addEventListener('htmx:afterRequest', _onDone);
                 htmx.ajax('GET', _url,
                     {source: '#table-pane', target: '#table-pane', swap: 'innerHTML'});
             } else {

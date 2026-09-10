@@ -82,7 +82,7 @@ class TestTheOneSiteWhereItMattered:
         """
         src = _STATIC.joinpath("app.js").read_text(encoding="utf-8")
         i = src.index("_pushRecent(entry);")
-        block = src[i:i + 3600]
+        block = src[i:i + 5200]   # the branch grew a comment; keep the window past it
         assert "history.pushState" in block,             "the palette's navigation branch must add the history entry itself"
         assert "htmx:afterSwap" in block,             "it must hang the entry off the SWAP, not off the ajax promise"
         assert "syncSidebarNavActive" in block,             "a raw pushState fires no htmx event -- the sidebar needs telling"
