@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -231,6 +233,25 @@ class TestCellsGoOnlyToTheirOwnGrid:
         html = c.get("/bulk", headers={"HX-Request": "true"}).get_data(as_text=True)
         assert "bulk-e_twpas-table" not in html
         assert c.get("/bulk/cells?grid=e_twpas&cols=x").status_code == 400
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not on PATH")
+def test_entity_grid_selfcheck_passes():
+    """Two instances against ONE #bulk-search box, under jsdom.
+
+    The factory's own regression: the mount guarded its listener with a single
+    `search._pairBound` flag on the SHARED search element, so whichever grid
+    mounted first silenced every other one. A source grep would not catch it --
+    the flag was there, it was simply the wrong scope -- so this harness mounts
+    two grids and types.
+    """
+    r = subprocess.run(
+        ["node", str(_ROOT / "tests" / "entity_grid_selfcheck.cjs")],
+        capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
+    if r.returncode == 2:
+        pytest.skip("jsdom not installed (run `npm install jsdom`)")
+    assert r.returncode == 0, (r.stdout + r.stderr)
+    assert "all checks passed" in r.stdout, (r.stdout + r.stderr)
 
 
 class TestOneImplementationManyInstances:

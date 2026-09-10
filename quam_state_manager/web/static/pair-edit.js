@@ -342,7 +342,7 @@
             if (vis) shown++;
         });
         var cnt = document.getElementById(P + '-search-count');
-        if (cnt) cnt.textContent = q ? (shown + ' of ' + rows.length + ' pairs') : '';
+        if (cnt) cnt.textContent = q ? (shown + ' of ' + rows.length + ' ' + cfg.nounPlural) : '';
         _emptySearchNote(t, P + '-empty-search', shown, rows.length, q);
         // docs/141 4ae A2: a narrowed grid puts columns ON SCREEN that were
         // cold when it was wide -- and a reveal (the Properties menu, the
@@ -845,8 +845,15 @@
             // listener — the two un-debounced full-table scans per keystroke were
             // the reported "typing in Live Edit is slow".
             var search = document.getElementById('bulk-search');
-            if (search && !search._pairBound) {
-                search._pairBound = true;
+            // PER INSTANCE. `#bulk-search` is ONE element shared by every grid on
+            // the page, so a single `_pairBound` flag on it let whichever grid
+            // mounted first silence all the others -- measured in real Chrome the
+            // moment a discovered collection mounted before the pair grid
+            // (customer, 2026-09-10). Exactly the shape grid-virt.js already
+            // guards with `'_virtScrollBound_' + styleId`, at a different element.
+            var _searchFlag = '_searchBound_' + P;
+            if (search && !search[_searchFlag]) {
+                search[_searchFlag] = true;
                 search.addEventListener('input', function () {
                     if (_pairSearchTimer) clearTimeout(_pairSearchTimer);
                     _pairSearchTimer = setTimeout(applySearch, window.__bulkSearchDebounce || 200);   // same pause as the qubit grid (user-directed 200, 2026-08-28)
@@ -856,8 +863,11 @@
             try { if (search && localStorage.getItem(SEARCH_KEY)) applySearch(); } catch (e) {}
 
             // nav guard for unapplied PAIR edits (the qubit guard only sees its table)
-            if (!window._bulkPairNavGuard) {
-                window._bulkPairNavGuard = true;
+            // Same reason: one flag on `window` meant one grid's unapplied edits
+            // were guarded and every other grid's were not.
+            var _guardFlag = '_bulkNavGuard_' + P;
+            if (!window[_guardFlag]) {
+                window[_guardFlag] = true;
                 window.addEventListener('beforeunload', function (ev) {
                     var tt = table();
                     if (tt && _cells(tt).some(_isDirty)) { ev.preventDefault(); ev.returnValue = ''; return ''; }
