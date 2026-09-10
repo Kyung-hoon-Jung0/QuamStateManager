@@ -123,45 +123,36 @@
         });
     }
 
-    /** The tick format for an axis whose largest magnitude is `maxAbs`.
+    /** How every SM chart axis writes its numbers.
      *
-     * AN SI PREFIX IS A UNIT PREFIX (customer, 2026-09-10). Plotly's default
-     * writes 4.9e9 as "4.9B" -- US billions -- so the Trends charts set
-     * `~s` to get 4.9G instead. That fixed the frequencies and broke every
-     * DIMENSIONLESS metric: measured in real Chrome on a real chip,
-     * `gate_fidelity_avg` drew ticks reading 991m 992m ... 996m for values
-     * 0.991..0.996, and `readout_amplitude` read "150m". Milli-what? There is
-     * no unit to prefix, so the prefix says nothing and the reader has to
-     * undo it.
+     * Plotly's DEFAULT exponentformat is 'B', so a 4.9 GHz qubit frequency
+     * draws as "4.9B" -- US billions, on an axis whose only other label is the
+     * bare metric name. The first fix for that set tickformat '~s', which cured
+     * the frequencies and broke everything DIMENSIONLESS: measured in real
+     * Chrome on a real chip, `gate_fidelity_avg` drew 991m..996m for
+     * 0.991..0.996 and `readout_amplitude` read "150m". Milli-what? There is no
+     * unit to prefix. And `~s` caps a label at 6 significant digits, so a
+     * zoomed axis collapsed three ticks onto one string.
      *
-     * No single format serves both -- also measured, on those same charts:
+     * 'SI' is the setting that was actually wanted, and it is not a tickformat
+     * at all. Measured on the same charts, full range and zoomed tight:
      *
-     *     format   fidelity     f_01         T1           amplitude
-     *     ~s       991m    X    4.9G   ok    20u    ok    150m   X
-     *     ''       0.991   ok   4.9B   X     20u    ok    0.15   ok
-     *     .4~g     0.991   ok   4.9e+9       0.00002  X   0.15   ok
-     *     .3~f     0.991   ok   4800000000 X 0 0 0    X   0.15   ok
+     *     setting              fidelity     f_01       zoomed ticks
+     *     ~s                   991m    X    4.8G  ok   3 -> 1 distinct  X
+     *     '' + SI              0.991   ok   4.8G  ok   3 -> 3 distinct  ok
+     *     ~s + SI              991m    X    4.8G  ok   3 -> 1 distinct  X
      *
-     * So the choice is per axis and it is about MAGNITUDE. The band is
-     * siFormat's own, one function above: inside it a person reads the number
-     * unaided, outside it the scaled form earns its keep. An empty tickformat
-     * is Plotly's default rather than "plain decimal" -- it still writes 2k
-     * for 2000, which is unambiguous, and 4.9B for 4.9e9, which is not; the
-     * >= 1e5 arm is what keeps the B away.
-     *
-     * Pass the LARGEST magnitude, never the smallest: ticks are placed by the
-     * axis range, so one tiny outlier must not drag the whole axis into
-     * prefixes. `readout_amplitude` spans 0.0007..0.22 and its ticks are
-     * 0.05..0.2 -- keyed on the smallest value those rendered as 50m..200m.
+     * So: no per-axis decision, no magnitude gate, no prefix on a bare ratio,
+     * G rather than B on a frequency, and a zoomed axis that still says which
+     * tick is which. Spread into a layout's yaxis (or xaxis).
      */
-    function axisTickFormat(maxAbs) {
-        if (!(maxAbs > 0) || !isFinite(maxAbs)) return '';
-        return (maxAbs < 1e5 && maxAbs >= 1e-4) ? '' : '~s';
+    function axisNumberFormat() {
+        return { tickformat: '', exponentformat: 'SI' };
     }
 
     window.PlotTheme = {
         houseLayout: houseLayout,
-        axisTickFormat: axisTickFormat,
+        axisNumberFormat: axisNumberFormat,
         houseConfig: houseConfig,
         siFormat: siFormat,
         palette: palette,

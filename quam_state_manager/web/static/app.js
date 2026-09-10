@@ -14746,30 +14746,40 @@ function paramHistoryRenderDrawerChart(data, currentValue) {
           it, prefix, which is what turns 4.9e9 into 4.9G instead of 4.9B.
        2. A parameter that has not moved gets a range around ITS OWN value,
           not one spanning the last bits of a float. */
-    var _maxAbs = 0, _lo = Infinity, _hi = -Infinity;
+    var _lo = Infinity, _hi = -Infinity;
     pts.forEach(function(p) {
         var v = p.value;
         if (typeof v === 'number' && isFinite(v)) {
             if (v < _lo) _lo = v;
             if (v > _hi) _hi = v;
-            if (Math.abs(v) > _maxAbs) _maxAbs = Math.abs(v);
         }
     });
-    var _tickFmt = (window.PlotTheme && PlotTheme.axisTickFormat)
-                 ? PlotTheme.axisTickFormat(_maxAbs) : '';
+    var _numFmt = (window.PlotTheme && PlotTheme.axisNumberFormat)
+                ? PlotTheme.axisNumberFormat() : {};
     var _flat = null;
     if (isFinite(_lo) && isFinite(_hi)) {
         var _span = _hi - _lo, _scale = Math.max(Math.abs(_lo), Math.abs(_hi));
         if (_scale > 0 && _span <= _scale * 1e-9) {
             var _pad = _scale * 0.05;
             _flat = [_lo - _pad, _hi + _pad];
+            // The dotted "current value" line is a SHAPE, and a fixed range is
+            // not expanded to fit one the way an autorange is -- so a current
+            // value further than the pad from a dead-flat history vanished off
+            // the chart. The guard exists to stop an axis spanning float noise;
+            // it must not hide the one value the drawer is opened to compare
+            // against.
+            if (typeof currentValue === 'number' && isFinite(currentValue)) {
+                _flat = [Math.min(_flat[0], currentValue - _pad),
+                         Math.max(_flat[1], currentValue + _pad)];
+            }
         }
     }
     var layout = {
         margin: {l: 50, r: 15, t: 10, b: 50},
         xaxis: {title: '', tickfont: {size: 10}},
         yaxis: {title: data.property, tickfont: {size: 10},
-                tickformat: _tickFmt,
+                tickformat: _numFmt.tickformat,
+                exponentformat: _numFmt.exponentformat,
                 range: _flat || undefined, autorange: _flat ? false : true},
         legend: {orientation: 'h', y: -0.25},
         plot_bgcolor: 'transparent', paper_bgcolor: 'transparent',
@@ -15599,13 +15609,66 @@ document.addEventListener('click', function(evt) {
             // resolves when the swap is done, so the history entry is ours to
             // add, after it.
             if (window.htmx) {
-                var _done = htmx.ajax('GET', entry.url,
-                    {source: '#table-pane', target: '#table-pane', swap: 'innerHTML'});
+                // `source` for hx-sync queueing, and no pushUrl -- htmx 2 has
+                // no such ajax option (the bundled htmx.min.js contains the
+                // string zero times).
+                //
+                // The history entry hangs off the SWAP, not off the ajax
+                // promise. That promise settles the same way whether the pane
+                // changed or not: htmx resolves it on a 404, and resolves it
+                // IMMEDIATELY when Bundles' htmx:confirm handler cancels the
+                // request to wait for a page bundle. Pushing from it moved the
+                // address bar to pages that never loaded. A swap is the event
+                // that means "the pane now shows this URL" -- the same order
+                // htmx's own hx-push-url uses.
+                var _url = entry.url;
+                var _pushed = false;
                 var _push = function () {
-                    try { window.history.pushState({}, '', entry.url); } catch (e) { /* file:// */ }
+                    if (_pushed) return;
+                    _pushed = true;
+                    try {
+                        // PaneState's skip path pushes its own {htmx:true}
+                        // entry for a KEEP route synchronously; a second entry
+                        // for the SAME address would make the first Back do
+                        // nothing a person can see.
+                        if (window.location.pathname + window.location.search !== _url) {
+                            window.history.pushState({ htmx: true }, '', _url);
+                        }
+                    } catch (e) { /* file:// */ }
+                    // A raw pushState fires none of the events the sidebar's
+                    // active-item sync listens to (htmx:pushedIntoHistory,
+                    // popstate). PaneState's own skip push calls this for the
+                    // same reason.
+                    if (window.syncSidebarNavActive) window.syncSidebarNavActive();
                 };
-                if (_done && typeof _done.then === 'function') { _done.then(_push, _push); }
-                else { _push(); }
+                var _same = function (d) {
+                    var got = (d && d.pathInfo
+                               && (d.pathInfo.finalRequestPath || d.pathInfo.requestPath)) || '';
+                    return !got || got.split('?')[0] === _url.split('?')[0];
+                };
+                var _off = function () {
+                    document.body.removeEventListener('htmx:afterSwap', _onSwap);
+                    document.body.removeEventListener('htmx:afterRequest', _onDone);
+                };
+                var _onSwap = function (evt) {
+                    if (!evt.target || evt.target.id !== 'table-pane') return;
+                    if (!_same(evt.detail)) return;
+                    _off();
+                    _push();
+                };
+                var _onDone = function (evt) {
+                    // Cleanup, so a pick that never swapped (404, abort, a
+                    // cancelled request nothing re-issues) cannot leave a
+                    // listener that fires on somebody else's later swap.
+                    if (!evt.target || evt.target.id !== 'table-pane') return;
+                    if (!_same(evt.detail)) return;
+                    if (evt.detail && evt.detail.successful) return;   // the swap decides
+                    _off();
+                };
+                document.body.addEventListener('htmx:afterSwap', _onSwap);
+                document.body.addEventListener('htmx:afterRequest', _onDone);
+                htmx.ajax('GET', _url,
+                    {source: '#table-pane', target: '#table-pane', swap: 'innerHTML'});
             } else {
                 window.location.href = entry.url;
             }
@@ -17308,7 +17371,13 @@ window.FieldHistory = (function () {
             height: 128,
             margin: { l: 46, r: 8, t: 6, b: 30 },
             xaxis: { type: "date", tickfont: { size: 9 } },
-            yaxis: { tickfont: { size: 9 }, exponentformat: "SI" },
+            // Same rule as the Trends charts and the drawer, asked for
+            // rather than spelled again -- this chart had reached the
+            // right answer on its own, which is how a rule ends up with
+            // three copies that can drift apart.
+            yaxis: Object.assign({ tickfont: { size: 9 } },
+                (window.PlotTheme && PlotTheme.axisNumberFormat)
+                    ? PlotTheme.axisNumberFormat() : {}),
             showlegend: false,
             paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
             font: { color: muted },

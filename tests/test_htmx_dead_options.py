@@ -70,30 +70,22 @@ class TestTheOneSiteWhereItMattered:
     """
 
     def test_the_palette_pushes_the_history_entry_itself(self):
+        """The BEHAVIOUR is pinned next door.
+
+        Review round: the first replacement for the dead option pushed from
+        the ajax PROMISE, which settles the same way whether a swap happened
+        or not -- so a failed pick moved the address bar to a page that never
+        loaded. That class of defect is not visible to a source grep at all,
+        so it is pinned by driving the real palette in
+        ``tests/palette_nav_selfcheck.cjs``. What is left here is the one
+        thing a grep is good for: that the dead option has not come back.
+        """
         src = _STATIC.joinpath("app.js").read_text(encoding="utf-8")
         i = src.index("_pushRecent(entry);")
-        block = src[i:i + 2200]
-        assert "history.pushState" in block, \
-            "the palette's navigation branch must add the history entry itself"
-        assert "entry.url" in block.split("history.pushState")[1][:80], \
-            "it must push the URL it navigated to, not something else"
-        # After the swap, not before: pushing first would leave the address
-        # bar ahead of the pane if the request failed.
-        #
-        # The GUARD is pinned together with what it feeds. A pin that only
-        # greps for ".then(_push, _push)" stays green under
-        # "if (false) { _done.then(_push, _push); }" -- this project has
-        # recorded that exact vacuity before (docs/148), and this commit's own
-        # mutation sweep caught it again before the pin was written this way.
-        assert re.search(
-            r"if\s*\(\s*_done\s*&&\s*typeof\s+_done\.then\s*===\s*"
-            r"['\"]function['\"]\s*\)\s*\{\s*"
-            r"_done\.then\(\s*_push\s*,\s*_push\s*\)", block), \
-            "the push must be chained onto the ajax promise, under a live guard"
-        # ...and a synchronous return still pushes, or an htmx that does not
-        # hand back a promise would silently stop navigating.
-        assert re.search(r"else\s*\{\s*_push\(\)\s*;?\s*\}", block), \
-            "a non-promise return must still push"
+        block = src[i:i + 3600]
+        assert "history.pushState" in block,             "the palette's navigation branch must add the history entry itself"
+        assert "htmx:afterSwap" in block,             "it must hang the entry off the SWAP, not off the ajax promise"
+        assert "syncSidebarNavActive" in block,             "a raw pushState fires no htmx event -- the sidebar needs telling"
 
     def test_the_two_noisy_sites_pass_a_source_instead(self):
         """Where there was no history entry to add, the fix is `source`.

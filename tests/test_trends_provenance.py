@@ -628,3 +628,23 @@ def test_plot_axis_selfcheck_passes():
         pytest.skip("jsdom not installed (run `npm install jsdom`)")
     assert r.returncode == 0, (r.stdout + r.stderr)
     assert "all checks passed" in r.stdout, (r.stdout + r.stderr)
+
+
+_PALETTE_SELFCHECK = _ROOT / "tests" / "palette_nav_selfcheck.cjs"
+
+
+def test_palette_nav_selfcheck_passes():
+    """A palette pick is a navigation: the address bar follows the PANE.
+
+    Driven against the real app.js, because the defect this replaces was
+    invisible to a source grep -- pushing from the ajax promise looks right
+    and fires on a 404.
+    """
+    r = subprocess.run(
+        ["node", str(_PALETTE_SELFCHECK)],
+        capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT), timeout=180,
+    )
+    if r.returncode == 2:
+        pytest.skip("jsdom not installed (run `npm install jsdom`)")
+    assert r.returncode == 0, (r.stdout + r.stderr)
+    assert "all checks passed" in r.stdout, (r.stdout + r.stderr)

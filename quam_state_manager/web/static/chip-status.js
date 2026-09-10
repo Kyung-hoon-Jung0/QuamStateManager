@@ -4387,13 +4387,13 @@ window.ChipTrends = (function () {
                     }
                 });
             });
-            /* The tick format is PlotTheme's rule (see axisTickFormat there):
-               an SI prefix is a unit prefix, so it is earned by magnitude, and
-               the magnitude that matters is the largest. No local fallback --
+            /* Numbers on the axis are PlotTheme's decision (axisNumberFormat
+               there): Plotly's default writes 4.9e9 as "4.9B", and the earlier
+               cure for that put an SI prefix on bare ratios. No local copy --
                a second spelling of a rule is how this surface got a second
                fidelity vocabulary earlier the same week. */
-            var _tickFmt = (window.PlotTheme && PlotTheme.axisTickFormat)
-                         ? PlotTheme.axisTickFormat(_maxAbs) : '';
+            var _numFmt = (window.PlotTheme && PlotTheme.axisNumberFormat)
+                        ? PlotTheme.axisNumberFormat() : {};
             var _flat = null;
             if (isFinite(_lo) && isFinite(_hi)) {
                 var _span = _hi - _lo;
@@ -4443,7 +4443,8 @@ window.ChipTrends = (function () {
                          tickfont: { size: 9 }, automargin: true },
                 yaxis: { title: { text: c.metric + (c.unit ? ' (' + c.unit + ')' : ''),
                                   font: { size: 11 } },
-                         tickformat: _tickFmt,
+                         tickformat: _numFmt.tickformat,
+                         exponentformat: _numFmt.exponentformat,
                          tickfont: { size: 10 }, automargin: true,
                          range: _flat || undefined,
                          autorange: _flat ? false : true },
