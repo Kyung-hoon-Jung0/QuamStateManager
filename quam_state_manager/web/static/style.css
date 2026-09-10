@@ -11760,17 +11760,24 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
    child stretched the pair across the whole width (real Chrome, 2026-09-10). */
 .bulk-docbadges { display: inline-flex; align-items: stretch; margin-left: .5rem;
     flex: 0 0 auto; align-self: center; width: auto;
-    border: 1px solid var(--pico-primary); border-radius: 7px; overflow: hidden; }
+    border: 1px solid color-mix(in srgb, var(--pico-primary) 45%, transparent);
+    border-radius: 7px; overflow: hidden; }
 .bulk-docbadge { display: inline-flex; align-items: center; padding: .12rem .5rem;
     flex: 0 0 auto;
     font-family: var(--font-mono); font-size: .72rem; line-height: 1.5;
     color: var(--color-text-muted); text-decoration: none; background: transparent;
     white-space: nowrap; transition: background .12s, color .12s; }
-.bulk-docbadge + .bulk-docbadge { border-left: 1px solid var(--pico-primary); }
+.bulk-docbadge + .bulk-docbadge {
+    border-left: 1px solid color-mix(in srgb, var(--pico-primary) 30%, transparent); }
 .bulk-docbadge:hover { color: var(--pico-primary);
-    background: color-mix(in srgb, var(--pico-primary) 10%, transparent); }
-.bulk-docbadge.active { color: #fff; background: var(--pico-primary); font-weight: 600; }
-.bulk-docbadge.active:hover { color: #fff; }
+    background: color-mix(in srgb, var(--pico-primary) 8%, transparent); }
+/* "살짝 SM 블루" — a tint and blue text, not a solid block. Deliberately the
+   same expression the Table/Flat control beside it uses, so two controls in one
+   row read as one language rather than competing for attention. */
+.bulk-docbadge.active { color: var(--pico-primary); font-weight: 600;
+    background: color-mix(in srgb, var(--pico-primary) 14%, transparent); }
+.bulk-docbadge.active:hover {
+    background: color-mix(in srgb, var(--pico-primary) 20%, transparent); }
 
 /* ── FSP → amplitude compensation popup (docs/20 r12-B) ─────────────── */
 /* 940, not 760: on a ten-row plan the Δ column (difference + percent) was
