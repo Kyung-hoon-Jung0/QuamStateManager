@@ -4376,14 +4376,24 @@ window.ChipTrends = (function () {
             // line at 0 on a -0.5..1 axis, which reads as "this is zero".
             // Give a constant series a range around ITS OWN value instead.
             var _lo = Infinity, _hi = -Infinity;
+            var _maxAbs = 0;          // largest magnitude, for the tick format
             c.series.forEach(function (s2) {
                 s2.points.forEach(function (p) {
                     if (typeof p[1] === 'number' && isFinite(p[1])) {
                         if (p[1] < _lo) _lo = p[1];
                         if (p[1] > _hi) _hi = p[1];
+                        var a = Math.abs(p[1]);
+                        if (a > _maxAbs) _maxAbs = a;
                     }
                 });
             });
+            /* The tick format is PlotTheme's rule (see axisTickFormat there):
+               an SI prefix is a unit prefix, so it is earned by magnitude, and
+               the magnitude that matters is the largest. No local fallback --
+               a second spelling of a rule is how this surface got a second
+               fidelity vocabulary earlier the same week. */
+            var _tickFmt = (window.PlotTheme && PlotTheme.axisTickFormat)
+                         ? PlotTheme.axisTickFormat(_maxAbs) : '';
             var _flat = null;
             if (isFinite(_lo) && isFinite(_hi)) {
                 var _span = _hi - _lo;
@@ -4433,11 +4443,7 @@ window.ChipTrends = (function () {
                          tickfont: { size: 9 }, automargin: true },
                 yaxis: { title: { text: c.metric + (c.unit ? ' (' + c.unit + ')' : ''),
                                   font: { size: 11 } },
-                         // SI prefixes, not US-billions: a 4.333 GHz qubit read
-                         // "4.3B" on an axis whose only other label was the bare
-                         // metric name. `~s` gives 4.3G, and the unit now sits
-                         // in the title, so the axis says what it means.
-                         tickformat: '~s',
+                         tickformat: _tickFmt,
                          tickfont: { size: 10 }, automargin: true,
                          range: _flat || undefined,
                          autorange: _flat ? false : true },

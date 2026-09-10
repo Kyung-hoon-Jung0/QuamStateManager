@@ -14732,10 +14732,45 @@ function paramHistoryRenderDrawerChart(data, currentValue) {
     }).filter(function(tr) { return tr.x.length > 0; });
     traces = statTraces.concat(traces);
 
+    /* The same two axis rules the Trends charts use (ChipTrends.render), for
+       the same reason: this drawer plots the same metrics off the same index.
+       Measured here in real Chrome before they existed -- `f_01` drew ticks
+       reading 4.8B 4.9B 5B for a 4.9 GHz qubit (US billions, which is what
+       Plotly's default writes), and `gate_fidelity_avg`, a value that had not
+       moved all week, drew two ticks reading 0.9942053178797723 and
+       0.9942053178797722: Plotly auto-ranging across floating-point noise and
+       printing the whole double.
+
+       1. An SI prefix is a UNIT prefix, so it is earned by MAGNITUDE. Inside
+          the band a person reads unaided, let Plotly write the number; outside
+          it, prefix, which is what turns 4.9e9 into 4.9G instead of 4.9B.
+       2. A parameter that has not moved gets a range around ITS OWN value,
+          not one spanning the last bits of a float. */
+    var _maxAbs = 0, _lo = Infinity, _hi = -Infinity;
+    pts.forEach(function(p) {
+        var v = p.value;
+        if (typeof v === 'number' && isFinite(v)) {
+            if (v < _lo) _lo = v;
+            if (v > _hi) _hi = v;
+            if (Math.abs(v) > _maxAbs) _maxAbs = Math.abs(v);
+        }
+    });
+    var _tickFmt = (window.PlotTheme && PlotTheme.axisTickFormat)
+                 ? PlotTheme.axisTickFormat(_maxAbs) : '';
+    var _flat = null;
+    if (isFinite(_lo) && isFinite(_hi)) {
+        var _span = _hi - _lo, _scale = Math.max(Math.abs(_lo), Math.abs(_hi));
+        if (_scale > 0 && _span <= _scale * 1e-9) {
+            var _pad = _scale * 0.05;
+            _flat = [_lo - _pad, _hi + _pad];
+        }
+    }
     var layout = {
         margin: {l: 50, r: 15, t: 10, b: 50},
         xaxis: {title: '', tickfont: {size: 10}},
-        yaxis: {title: data.property, tickfont: {size: 10}},
+        yaxis: {title: data.property, tickfont: {size: 10},
+                tickformat: _tickFmt,
+                range: _flat || undefined, autorange: _flat ? false : true},
         legend: {orientation: 'h', y: -0.25},
         plot_bgcolor: 'transparent', paper_bgcolor: 'transparent',
         font: {color: getComputedStyle(document.documentElement).getPropertyValue('--pico-color').trim() || '#222'},
@@ -14890,8 +14925,16 @@ function _paramHistoryPollBackfill() {
                 _paramHistoryMarkSessionAttempt();
                 setTimeout(function() {
                     if (window.htmx) {
+                        // No pushUrl: htmx 2's ajax has no such option (the
+                        // bundled htmx.min.js contains the string zero times),
+                        // and this is the panel redrawing ITSELF at the address
+                        // the user is already on -- there is no history entry to
+                        // add. `source` is what was actually missing: htmx reads
+                        // the source element's hx-sync, and without one this
+                        // shares body's single timeout-0 queue.
                         window.htmx.ajax('GET', '/param-history',
-                            {target: '#param-history-root', swap: 'outerHTML', pushUrl: 'true'});
+                            {source: '#param-history-root',
+                             target: '#param-history-root', swap: 'outerHTML'});
                     } else {
                         location.reload();
                     }
@@ -15549,9 +15592,20 @@ document.addEventListener('click', function(evt) {
                 window.location.href = entry.url;
             }
         } else {
-            // Page navigation via HTMX so push-url works
+            // A palette pick is a NAVIGATION, and this line said so while not
+            // doing it: `pushUrl` is not an htmx 2 ajax option, so the pane
+            // changed and the address bar did not -- Back then left the app
+            // instead of returning to the page the user came from. htmx.ajax
+            // resolves when the swap is done, so the history entry is ours to
+            // add, after it.
             if (window.htmx) {
-                htmx.ajax('GET', entry.url, {target: '#table-pane', swap: 'innerHTML', pushUrl: true});
+                var _done = htmx.ajax('GET', entry.url,
+                    {source: '#table-pane', target: '#table-pane', swap: 'innerHTML'});
+                var _push = function () {
+                    try { window.history.pushState({}, '', entry.url); } catch (e) { /* file:// */ }
+                };
+                if (_done && typeof _done.then === 'function') { _done.then(_push, _push); }
+                else { _push(); }
             } else {
                 window.location.href = entry.url;
             }

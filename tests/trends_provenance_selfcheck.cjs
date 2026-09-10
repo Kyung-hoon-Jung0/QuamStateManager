@@ -379,7 +379,7 @@ world.push((function () {
   win.Plotly = {
     newPlot: function (id, data, layout) {
       const el = win.document.getElementById(id);
-      el.data = data; el.__renders = (el.__renders || 0) + 1;
+      el.data = data; el.layout = layout; el.__renders = (el.__renders || 0) + 1;
       el.__handlers = {};
       el.on = function (n, fn) { (el.__handlers[n] = el.__handlers[n] || []).push(fn); };
       return win.Promise.resolve(el);

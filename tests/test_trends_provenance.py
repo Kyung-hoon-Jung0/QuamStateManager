@@ -607,3 +607,24 @@ def test_trends_provenance_selfcheck_passes():
         pytest.skip("jsdom not installed (run `npm install jsdom`)")
     assert r.returncode == 0, (r.stdout + r.stderr)
     assert "all checks passed" in r.stdout, (r.stdout + r.stderr)
+
+
+_AXIS_SELFCHECK = _ROOT / "tests" / "plot_axis_selfcheck.cjs"
+
+
+def test_plot_axis_selfcheck_passes():
+    """The axis tick-format rule, driven against the REAL plot-theme.js.
+
+    Customer, 2026-09-10: a Trends fidelity axis read "996m" for 0.996. The
+    rule lives in ONE place now (PlotTheme.axisTickFormat) and both chart
+    surfaces ask it, which the selfcheck also pins -- a second spelling of one
+    rule is how this app grew a second fidelity vocabulary the same week.
+    """
+    r = subprocess.run(
+        ["node", str(_AXIS_SELFCHECK)],
+        capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT), timeout=180,
+    )
+    if r.returncode == 2:
+        pytest.skip("jsdom not installed (run `npm install jsdom`)")
+    assert r.returncode == 0, (r.stdout + r.stderr)
+    assert "all checks passed" in r.stdout, (r.stdout + r.stderr)
