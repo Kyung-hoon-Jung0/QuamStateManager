@@ -19560,3 +19560,78 @@ document.addEventListener('htmx:afterSettle', function(e) {
 document.addEventListener('DOMContentLoaded', function() {
     window.GateInspector.init(document);
 });
+
+/* ── SM storage guard (customer, 2026-09-11) ────────────────────────────────
+ *
+ * "최소한 유저에게 일정 용량되면(20GB정도?) 알려줘서 삭제하든 옮기든 알려주자."
+ *
+ * The three verbs the banner and the /disk page share. Reclaim deletes ONLY the
+ * folders the server classifies as rebuildable — the server refuses anything
+ * else by name, so a bug here cannot cost a snapshot.
+ */
+/* One spelling of a size. The confirm() said "0.09 GB" while the button beside
+   it said "88 MB" -- two spellings of one number, in the dialog whose entire job
+   is telling you what is about to be deleted. Matches the templates' macro. */
+window.diskGuardSize = function (b) {
+    b = Number(b) || 0;
+    if (b >= 1073741824) return (b / 1073741824).toFixed(2) + ' GB';
+    if (b >= 1048576) return Math.round(b / 1048576) + ' MB';
+    return Math.round(b / 1024) + ' KB';
+};
+
+window.diskGuardMsg = function (text, bad) {
+    var el = document.getElementById('disk-msg');
+    if (el) { el.textContent = text || ''; el.classList.toggle('disk-msg-bad', !!bad); }
+    else if (text && window.showToast) window.showToast(text, bad ? 'warning' : '');
+};
+
+window.diskGuardRefresh = function () {
+    var slot = document.getElementById('disk-guard-slot');
+    if (slot && window.htmx) window.htmx.ajax('GET', '/disk/banner', { target: slot, swap: 'innerHTML' });
+    var pane = document.getElementById('table-pane');
+    if (pane && window.htmx && /(^|\/)disk$/.test(location.pathname)) {
+        window.htmx.ajax('GET', '/disk', { target: pane, swap: 'innerHTML' });
+    }
+};
+
+window.diskGuardReclaim = function () {
+    fetch('/disk/status').then(function (r) { return r.json(); }).then(function (d) {
+        var names = (d.dirs || []).filter(function (x) { return x.rebuildable && x.bytes > 0; })
+                                  .map(function (x) { return x.name; });
+        if (!names.length) { diskGuardMsg('Nothing rebuildable to clear.'); return; }
+        var size = window.diskGuardSize(d.reclaimable_bytes);
+        if (!window.confirm('Delete ' + names.length + ' rebuildable cache folder'
+            + (names.length === 1 ? '' : 's') + ' (' + size + ')?\n\n'
+            + names.join(', ') + '\n\nSnapshots and unapplied edits are NOT touched.')) return;
+        diskGuardMsg('Clearing…');
+        return fetch('/disk/reclaim', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ names: names })
+        }).then(function (r) { return r.json(); }).then(function (out) {
+            diskGuardMsg(out.ok
+                ? ('Freed ' + window.diskGuardSize(out.freed_bytes) + ' — '
+                   + (out.removed.join(', ') || 'nothing'))
+                : ('Refused: ' + (out.refused || []).join(', ')), !out.ok);
+            diskGuardRefresh();
+        });
+    }).catch(function (e) { diskGuardMsg('Could not clear: ' + e, true); });
+};
+
+window.diskGuardMute = function (on) {
+    var body = (on === false) ? { unmute: true } : { mute: true };
+    fetch('/disk/settings', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+    }).then(function () { diskGuardRefresh(); })
+      .catch(function (e) { diskGuardMsg('Could not save: ' + e, true); });
+};
+
+window.diskGuardLimit = function (gb) {
+    fetch('/disk/settings', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limit_gb: gb })
+    }).then(function (r) { return r.json(); }).then(function (d) {
+        diskGuardMsg(d.ok ? ('Warning above ' + d.limit_gb + ' GB') : (d.error || 'failed'), !d.ok);
+        diskGuardRefresh();
+    }).catch(function (e) { diskGuardMsg('Could not save: ' + e, true); });
+};

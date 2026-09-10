@@ -17972,6 +17972,89 @@ def workspace_param_vocab():
     return resp
 
 
+# ── SM's own folder, and when to say something about it ────────────────────
+#
+# Customer, 2026-09-11, after a machine-wide temp audit turned up 28.79 GB:
+# "이거 자동으로 정리하게 하거나, 최소한 유저에게 일정 용량되면(20GB정도?)
+#  알려줘서 삭제하든 옮기든 알려주자."
+#
+# Measured before building: that 28.79 GB was browser-automation profiles, not
+# SM -- the live instance on the same machine was 0.19 GB. But nothing in SM
+# ever deletes a snapshot (DEFAULT_MAX_SNAPSHOTS is 100,000, so _prune never
+# fires) and the busiest chip here grew 1,309 snapshot files in 3 days, about
+# 56 MB a day. So the guard measures and SAYS; it never prunes history itself.
+
+
+@bp.route("/disk/status")
+def disk_status():
+    """The instance-folder measurement + the verdict a banner renders."""
+    from quam_state_manager.core import instance_disk
+    return jsonify(instance_disk.status(current_app.instance_path,
+                                        force=bool(request.args.get("force"))))
+
+
+@bp.route("/disk/banner")
+def disk_banner():
+    """The lazily-fetched slot. `ok` renders an empty string, so a healthy
+    instance costs one request that returns nothing."""
+    from quam_state_manager.core import instance_disk
+    return render_template("_disk_guard_banner.html",
+                           disk=instance_disk.status(current_app.instance_path))
+
+
+@bp.route("/disk")
+def disk_page():
+    """What is using the space, and what is safe to remove."""
+    from quam_state_manager.core import instance_disk
+    d = instance_disk.status(current_app.instance_path, force=True)
+    tpl = "_disk_page.html" if _is_htmx() else "disk_page.html"
+    return render_template(tpl, **_ctx(page="disk", disk=d,
+                                       rebuildable=instance_disk.REBUILDABLE,
+                                       precious=instance_disk.PRECIOUS))
+
+
+@bp.route("/disk/reclaim", methods=["POST"])
+def disk_reclaim():
+    """Delete the named REBUILDABLE folders. A request naming anything else is
+    REFUSED by name -- answering "done" to a caller who asked to delete
+    `history` would be a lie about the thing the guard exists to protect."""
+    from quam_state_manager.core import instance_disk
+    data = request.get_json(silent=True) or {}
+    names = data.get("names")
+    if not isinstance(names, list):
+        names = [n for n in (request.form.get("names") or "").split(",") if n]
+    out = instance_disk.reclaim(current_app.instance_path, names)
+    if out["removed"]:
+        # the listing cache was one of them; drop the in-process handles that
+        # would otherwise keep serving from a folder that is gone
+        current_app.config.pop("dataset_store", None)
+    code = 200 if out["ok"] else 400
+    return jsonify(out), code
+
+
+@bp.route("/disk/settings", methods=["POST"])
+def disk_settings():
+    """The limit, and the "not now" that comes back when it grows further."""
+    from quam_state_manager.core import instance_disk
+    data = request.get_json(silent=True) or request.form or {}
+    kw = {}
+    if data.get("limit_gb") not in (None, ""):
+        try:
+            kw["limit_gb"] = float(data.get("limit_gb"))
+        except (TypeError, ValueError):
+            return jsonify(ok=False, error="limit_gb must be a number"), 400
+    if str(data.get("mute") or "").lower() in ("1", "true", "yes"):
+        # Mute UNTIL IT GROWS: a dismissal must not be able to hide a problem
+        # that is still getting worse, so the level it is muted at is recorded
+        # and the banner returns above it.
+        cur = instance_disk.status(current_app.instance_path)
+        kw["muted_until_gb"] = round(cur["gb"] * 1.25 + 0.5, 3)
+    elif str(data.get("unmute") or "").lower() in ("1", "true", "yes"):
+        kw["muted_until_gb"] = None
+    cfg = instance_disk.write_settings(current_app.instance_path, **kw)
+    return jsonify(ok=True, **cfg)
+
+
 @bp.route("/workspace/refresh", methods=["POST"])
 def workspace_refresh():
     """Force-rescan all workspace roots and return the updated sidebar tree."""

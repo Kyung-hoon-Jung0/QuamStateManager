@@ -11807,6 +11807,43 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 .bulk-col-head:hover .bulk-col-hist, .bulk-col-hist:focus-visible { opacity: .6; }
 .bulk-col-hist:hover { opacity: 1; }
 
+/* ── SM storage guard (customer, 2026-09-11) ─────────────────── */
+/* The banner rides the existing .topo-change-banner shell so it reads as one of
+   SM's own strips rather than a new kind of alarm. Amber at `warn`, red only
+   once it is genuinely past the limit -- an amber that never escalates teaches
+   people to ignore it, and a red that arrives early teaches the same thing. */
+.disk-guard-banner { border-left: 3px solid var(--color-warning-text, #d9a441); }
+.disk-guard-banner.disk-guard-over { border-left-color: var(--color-error-text); }
+.disk-guard-banner code { font-size: .85em; }
+
+.disk-page { padding: .2rem 0 1rem; }
+.disk-bar { height: 10px; border-radius: 5px; overflow: hidden; margin: 0 0 .6rem;
+    background: color-mix(in srgb, var(--pico-muted-color) 22%, transparent); }
+.disk-bar-fill { height: 100%; background: var(--pico-primary);
+    transition: width .2s; }
+.disk-bar-fill.disk-bar-warn { background: var(--color-warning-text, #d9a441); }
+.disk-bar-fill.disk-bar-over { background: var(--color-error-text); }
+.disk-actions { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
+    margin-bottom: .7rem; }
+.disk-limit { font-size: .82em; color: var(--color-text-muted); display: inline-flex;
+    align-items: center; gap: .3rem; margin: 0; }
+.disk-limit input { width: 5.5rem; margin: 0; padding: .1rem .35rem; font-size: .85em;
+    height: auto; }
+.disk-msg-bad { color: var(--color-error-text); }
+.disk-table { width: 100%; font-size: .86em; border-collapse: collapse; }
+.disk-table th, .disk-table td { padding: .22rem .45rem; text-align: left;
+    border-bottom: 1px solid var(--pico-muted-border-color); }
+.disk-table th.num, .disk-table td.num { text-align: right;
+    font-variant-numeric: tabular-nums; white-space: nowrap; }
+.disk-table code { font-size: .95em; }
+/* A cache row is visibly the removable kind; a record row is not. The row does
+   not SHOUT -- the tag carries the meaning, so a long list stays readable. */
+.disk-row-cache code { color: var(--pico-primary); }
+.disk-tag { display: inline-block; padding: 0 .3rem; border-radius: 3px;
+    font-size: .78em; font-weight: 600; }
+.disk-tag-cache { color: var(--pico-primary);
+    background: color-mix(in srgb, var(--pico-primary) 14%, transparent); }
+
 /* ── state.json | wiring.json, beside the Live State Edit title ─────── */
 /* Customer, 2026-09-10: "badge 형태로 ... 깔끔하게 살짝 SM 블루 boundary로."
    A thin shared boundary, one segment lit — the same reading as the Table/Flat

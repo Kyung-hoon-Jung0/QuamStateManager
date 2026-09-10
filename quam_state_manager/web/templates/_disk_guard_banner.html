@@ -1,0 +1,49 @@
+{# SM's own instance folder is getting large (customer, 2026-09-11).
+
+   Nothing here deletes a snapshot. The one-click action removes only what SM
+   can rebuild -- listing caches, story cards, env probes -- and the rest is
+   named so the person can decide: a snapshot is their record of what the chip
+   was, and a tool that quietly threw one away would be worse than a full disk.
+
+   Rendered only at `warn` (80% of the limit) or `over`. `ok` renders NOTHING,
+   so a healthy instance costs one empty div. #}
+{%- macro sz(b) -%}
+{%- if b >= 1073741824 %}{{ '%.1f'|format(b / 1073741824) }} GB
+{%- elif b >= 1048576 %}{{ '%.0f'|format(b / 1048576) }} MB
+{%- else %}{{ '%.0f'|format(b / 1024) }} KB{% endif -%}
+{%- endmacro -%}
+{# Below this there is nothing worth a button: a "Clear 0.00 GB" offer is noise
+   that teaches people to ignore the banner. #}
+{%- set RECLAIM_FLOOR = 52428800 -%}{# 50 MB #}
+{% if disk and disk.level in ('warn', 'over') %}
+<div class="topo-change-banner disk-guard-banner{% if disk.level == 'over' %} disk-guard-over{% endif %}"
+     id="disk-guard-banner" role="status">
+    <span class="topo-change-banner-text">
+        {% if disk.level == 'over' %}&#128190;{% else %}&#9888;&#65039;{% endif %}
+        SM's own folder is <b>{{ sz(disk.bytes) }}</b>
+        {%- if disk.level == 'over' %} — past the {{ '%g'|format(disk.limit_gb) }} GB you set
+        {%- else %} — {{ (disk.ratio * 100) | round | int }}% of the
+            {{ '%g'|format(disk.limit_gb) }} GB you set{% endif %}.
+        {% if disk.dirs %}
+        <span class="muted">Biggest:
+            {%- for d in disk.dirs[:3] %}
+            <code>{{ d.name }}</code> {{ sz(d.bytes) }}{{ ',' if not loop.last }}
+            {%- endfor %}.</span>
+        {% endif %}
+        {% if disk.reclaimable_bytes >= RECLAIM_FLOOR %}
+        <span class="muted">{{ sz(disk.reclaimable_bytes) }} of that is rebuildable cache.</span>
+        {% endif %}
+    </span>
+    <span class="topo-change-banner-actions">
+        {% if disk.reclaimable_bytes >= RECLAIM_FLOOR %}
+        <button type="button" class="btn-sm" onclick="window.diskGuardReclaim && diskGuardReclaim()"
+                title="Delete only the caches SM rebuilds by itself — snapshots and unapplied edits are never touched">
+            Clear {{ sz(disk.reclaimable_bytes) }} of cache</button>
+        {% endif %}
+        <a class="btn-sm outline" href="/disk" hx-get="/disk" hx-target="#table-pane" hx-push-url="true"
+           title="What is using the space, and what is safe to remove">What is using it?</a>
+        <button type="button" class="btn-sm outline" onclick="window.diskGuardMute && diskGuardMute()"
+                title="Stop warning until it grows past this size">Not now</button>
+    </span>
+</div>
+{% endif %}

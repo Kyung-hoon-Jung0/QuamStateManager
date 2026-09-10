@@ -1,0 +1,72 @@
+{%- macro sz(b) -%}
+{%- if b >= 1073741824 %}{{ '%.2f'|format(b / 1073741824) }} GB
+{%- elif b >= 1048576 %}{{ '%.1f'|format(b / 1048576) }} MB
+{%- else %}{{ '%.0f'|format(b / 1024) }} KB{% endif -%}
+{%- endmacro -%}
+{%- set RECLAIM_FLOOR = 52428800 -%}
+{# What SM's own folder is using, and what of it is safe to remove.
+
+   The split is the whole point: REBUILDABLE things SM can make again, and the
+   user's RECORD, which is never offered as a one-click delete. A snapshot is
+   someone's copy of what their chip was; the only thing worse than a full disk
+   is a tool that quietly threw away the version they needed. #}
+<div class="disk-page">
+    <h2 style="margin:0 0 .2rem">SM storage
+        <span class="muted" style="font-size:.6em">— {{ disk.root }}</span></h2>
+    <p class="muted" style="margin:0 0 .6rem;font-size:.85em">
+        <b>{{ sz(disk.bytes) }}</b> in {{ '{:,}'.format(disk.files) }} files.
+        Warning at <b>{{ '%g'|format(disk.limit_gb) }} GB</b>.
+        {%- if disk.free_bytes %} {{ '%.1f'|format(disk.free_bytes / 1073741824) }} GB free on this drive.{% endif %}
+        {%- if disk.muted_until_gb %} <span class="muted">Muted until it passes
+            {{ '%.1f'|format(disk.muted_until_gb) }} GB —
+            <a href="#" onclick="diskGuardMute(false);return false">warn me again</a>.</span>{% endif %}
+    </p>
+
+    <div class="disk-bar" role="img"
+         aria-label="{{ '%.2f'|format(disk.gb) }} GB of a {{ '%g'|format(disk.limit_gb) }} GB budget">
+        <div class="disk-bar-fill{% if disk.level != 'ok' %} disk-bar-{{ disk.level }}{% endif %}"
+             style="width: {{ [disk.ratio * 100, 100] | min | round(1) }}%"></div>
+    </div>
+
+    <div class="disk-actions">
+        <button type="button" class="btn-sm" onclick="diskGuardReclaim()"
+                {% if disk.reclaimable_bytes < RECLAIM_FLOOR %}disabled{% endif %}
+                title="Deletes only the caches SM rebuilds by itself">
+            Clear rebuildable cache{% if disk.reclaimable_bytes >= RECLAIM_FLOOR %}
+            ({{ sz(disk.reclaimable_bytes) }}){% endif %}</button>
+        <label class="disk-limit">Warn me above
+            <input type="number" id="disk-limit-gb" min="0.5" step="0.5"
+                   value="{{ '%g'|format(disk.limit_gb) }}"
+                   onchange="diskGuardLimit(this.value)"> GB</label>
+        <button type="button" class="btn-sm outline" onclick="diskGuardRefresh()">Re-measure</button>
+        <span class="muted" id="disk-msg" aria-live="polite"></span>
+    </div>
+
+    <table class="disk-table">
+        <thead><tr><th>Folder</th><th class="num">Size</th><th class="num">Files</th><th>What it is</th></tr></thead>
+        <tbody>
+            {% for d in disk.dirs %}
+            <tr class="{{ 'disk-row-cache' if d.rebuildable else 'disk-row-keep' }}">
+                <td><code>{{ d.name }}</code></td>
+                <td class="num">{{ sz(d.bytes) }}</td>
+                <td class="num">{{ '{:,}'.format(d.files) }}</td>
+                <td class="muted">
+                    {%- if d.rebuildable %}<span class="disk-tag disk-tag-cache">rebuildable</span> {% endif -%}
+                    {{ d.why or '—' }}</td>
+            </tr>
+            {% endfor %}
+            {% if not disk.dirs %}
+            <tr><td colspan="4" class="muted">Nothing here yet.</td></tr>
+            {% endif %}
+        </tbody>
+    </table>
+
+    {# The honest part: what SM will NOT delete for you, and where you do it. #}
+    <p class="muted" style="margin-top:.6rem;font-size:.82em">
+        Snapshots are never deleted automatically — they are your record of what the
+        chip was. To reclaim that space, prune from
+        <a href="/state-history" hx-get="/state-history" hx-target="#table-pane" hx-push-url="true">State
+        History</a>, where you can see what each one holds first. Pinned and labelled
+        snapshots are exempt from pruning.
+    </p>
+</div>

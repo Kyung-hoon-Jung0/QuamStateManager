@@ -286,6 +286,15 @@
        template's context) and refreshed only from events the app already
        fires: no new poller, and the strip clears itself once the other window
        is gone and anything here moves. #}
+    {# SM's own folder getting large (customer, 2026-09-11). Lazily fetched
+       like the multi-instance strip above -- the measurement is a directory
+       walk, so it does not belong in every template's context -- and refreshed
+       only from events the app already fires. No new poller. A healthy
+       instance renders an empty string. #}
+    <div id="disk-guard-slot"
+         hx-get="/disk/banner"
+         hx-trigger="load delay:4s, stateRestored from:body"
+         hx-swap="innerHTML"></div>
     <div id="multi-instance-slot"
          hx-get="/instances/banner"
          hx-trigger="load, stateRestored from:body, liveDriftChanged from:body"
