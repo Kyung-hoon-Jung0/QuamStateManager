@@ -248,8 +248,11 @@ class TestSidebarDriftFixes:
         # sidebar had no params and this fell through to the literal token;
         # the guard was kept in JS parity waiting for the capability, and the
         # capability is what the customer asked for.)
-        conds = _parse_tree_query("-reset=active")
-        assert conds == [{"field": "param", "value": "reset=active", "negate": True}]
+        c, = _parse_tree_query("-reset=active")
+        assert (c["field"], c["value"], c["negate"]) == ("param", "reset=active", True)
+        # …and since docs/175 the token is PARSED once here rather than per
+        # entry per condition, so the cond carries the parts too
+        assert (c["key"], c["op"], c["want"]) == ("reset", "=", "active")
         # a bare leading `-` with nothing consumable is still literal, on both
         # surfaces -- that half of the guard did not move.
         assert _parse_tree_query("-rabi") == [

@@ -55,8 +55,23 @@ class TestTheServerLearnedNothing:
             assert op not in body, f"parse_value must not learn {op}"
 
     def test_the_edit_routes_are_untouched(self):
-        routes = self._src("web/routes.py")
-        assert "arith" not in routes.lower(), (
+        """The rule is about CODE, so the scan is over code.
+
+        This pin went red on docs/175's `_param_cond`, whose comment explains
+        that `multiplexed>0` "would be an arithmetic comparison" — a search
+        filter, nothing to do with a cell's relative expression. A substring
+        pin that trips on prose about itself is the fourth of this shape in
+        this project; the rule it holds is real, so it keeps the rule and
+        drops the prose.
+        """
+        import io
+        import tokenize
+        src = self._src("web/routes.py")
+        code = " ".join(
+            t.string for t in tokenize.generate_tokens(io.StringIO(src).readline)
+            if t.type not in (tokenize.COMMENT, tokenize.STRING)
+        )
+        assert "arith" not in code.lower(), (
             "the arithmetic is client-side; a server mention means a relative "
             "expression can reach a live write path"
         )
