@@ -38,7 +38,12 @@ def test_the_window_and_script_ship_in_the_shell(tmp_path):
 
 def test_per_key_help_affordances_exist():
     bulk = (_TPL / "_bulkedit.html").read_text(encoding="utf-8")
-    assert bulk.count('class="key-help-btn"') >= 2, "qubit + pair column headers"
+    # One per grid template: the qubit grid here, every entity grid (pairs,
+    # twpas, the wiring collections) in the shared partial they all render
+    # through since 2026-09-10.
+    entity = (_TPL / "_bulk_entity_grid.html").read_text(encoding="utf-8")
+    assert bulk.count('class="key-help-btn"') >= 1, "qubit column headers"
+    assert entity.count('class="key-help-btn"') >= 1, "every entity grid's headers"
     q = (_TPL / "_qubit_detail.html").read_text(encoding="utf-8")
     assert 'class="key-help-btn"' in q and 'data-help-path="{{ p.dot_path }}"' in q,         "a data attribute, never an inline onclick string (a key with a quote would end the script)"
     assert "openConfigManual({path: '" not in q and "openConfigManual({q: '" not in bulk

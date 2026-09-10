@@ -242,11 +242,18 @@ class TestSidebarDriftFixes:
 
     def test_eq_guard_matches_the_js_shape(self):
         from quam_state_manager.web.routes import _parse_tree_query
-        # `-x=y`: the guard fires (JS parity) but the sidebar has no param
-        # facets, so it falls through to the ORIGINAL literal token — exactly
-        # the unknown-scope fallthrough on both surfaces.
+        # `-x=y`: the guard fires, and since 2026-09-10 the sidebar HAS param
+        # facets, so it means on this surface exactly what it means on the
+        # Datasets table -- a negated param condition. (Until that day the
+        # sidebar had no params and this fell through to the literal token;
+        # the guard was kept in JS parity waiting for the capability, and the
+        # capability is what the customer asked for.)
         conds = _parse_tree_query("-reset=active")
-        assert conds == [{"field": None, "value": "-reset=active", "negate": False}]
+        assert conds == [{"field": "param", "value": "reset=active", "negate": True}]
+        # a bare leading `-` with nothing consumable is still literal, on both
+        # surfaces -- that half of the guard did not move.
+        assert _parse_tree_query("-rabi") == [
+            {"field": None, "value": "-rabi", "negate": False}]
 
     def test_scoped_negation_still_negates(self):
         assert not self._m("-status:finished")

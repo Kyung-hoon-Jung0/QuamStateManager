@@ -46,8 +46,17 @@ def test_tree_search_list_selfcheck():
 def test_the_trail_ships_and_the_grid_hides_columns_by_class():
     base = (_ROOT / "quam_state_manager" / "web" / "templates" / "base.html").read_text(encoding="utf-8")
     assert "undo-trail.js" in base
-    bulk = (_ROOT / "quam_state_manager" / "web" / "templates" / "_bulkedit.html").read_text(encoding="utf-8")
-    assert bulk.count("ck-{{ loop.index0 }}") == 4, "th + td of both grids carry the column index class"
+    # The rule: EVERY grid's header cell and body cell carry the column-index
+    # class, because that is what the search's static stylesheet hides by.
+    # Counted across the templates that render a grid -- the pair grid moved
+    # into the shared `_bulk_entity_grid.html` partial when the discovered
+    # collections got grids (2026-09-10), so "twice in _bulkedit.html" stopped
+    # being a proxy for "on both". This form holds for a third grid too.
+    _tpl = _ROOT / "quam_state_manager" / "web" / "templates"
+    bulk = (_tpl / "_bulkedit.html").read_text(encoding="utf-8")
+    entity = (_tpl / "_bulk_entity_grid.html").read_text(encoding="utf-8")
+    assert bulk.count("ck-{{ loop.index0 }}") == 2, "the qubit grid's th + td"
+    assert entity.count("ck-{{ loop.index0 }}") == 2, "every entity grid's th + td"
     js = (_STATIC / "bulk-edit.js").read_text(encoding="utf-8")
     # docs/141 4d: the class rules are static (one per column index, written
     # once) and a keystroke toggles only `sh-N` on the table for the delta
