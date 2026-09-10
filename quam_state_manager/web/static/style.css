@@ -1641,6 +1641,15 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
 .sm-th-note { cursor: default; color: var(--color-text-muted);
     font-size: .7rem; font-style: italic; }
 .sm-th-note:hover { background: transparent; }
+/* A GUESS must not be able to look like a match (customer's typo round). The
+   separator says so in words; the row says so again in three ways that survive
+   a glance -- a leading approximately-equal, italics, and the warning colour
+   this app already uses for "true, but read it twice". */
+.sm-th-fuzzsep { border-top: 1px solid var(--pico-muted-border-color);
+    margin-top: .15rem; padding-top: .25rem; }
+.sm-th-fuzzy .sm-th-label { font-style: italic; }
+.sm-th-fuzzy .sm-th-label::before { content: "\2248\00a0";
+    font-style: normal; color: var(--color-warning-text); }
 
 .path-suggestions {
     display: none;

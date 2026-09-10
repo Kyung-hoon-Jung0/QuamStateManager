@@ -107,6 +107,23 @@ function rows(win) {
          + (r.classList.contains('active') ? ' <=' : '');
   });
 }
+/* The rows, with the marks that say "this is a guess". A fuzzy row's label
+   text is the EXACT key (the approximately-equal sign is a CSS ::before), which
+   is the property that lets accepting one insert something real. */
+function marked(win) {
+  const p = win.document.getElementById('sm-typeahead');
+  if (!p || p.hidden) return [];
+  return Array.prototype.map.call(p.querySelectorAll('.sm-th-row'), function (r) {
+    return r.querySelector('.sm-th-label').textContent
+         + (r.classList.contains('sm-th-fuzzsep') ? ' (sep)' : '')
+         + (r.classList.contains('sm-th-fuzzy') ? ' (fuzzy)' : '')
+         + (r.classList.contains('sm-th-note') ? ' (note)' : '');
+  });
+}
+function inserts(win) {
+  const st = win.Typeahead._state();
+  return st ? st.items.map(function (i) { return i.insert == null ? null : i.insert; }) : [];
+}
 function keydown(win, id, key) {
   const ev = new win.KeyboardEvent('keydown', { key: key, bubbles: true, cancelable: true });
   win.document.getElementById(id).dispatchEvent(ev);
@@ -257,6 +274,103 @@ function keydown(win, id, key) {
      'H1 anchored through _anchorPopover, never positioned by hand');
   ok(win.document.getElementById('sm-typeahead').parentElement === win.document.body,
      'H2 …and it lives on <body>: #sidebar is overflow-y:auto and would clip it');
+
+  /* ── K. a typo still finds the key ─────────────────────────────────
+   *
+   * Customer, 2026-09-10: "특히 파라미터를 입력하면 사실 많은 사람들이
+   * multiplzed...뭐 이런식으로 오타 나잖아?"
+   *
+   * That word is the whole reason the algorithm is what it is, so it is the
+   * fixture. Everything else in this section exists to stop the guess from
+   * being mistaken for a match. */
+  type(win, 'sidebar-filter-input', 'multiplzed');
+  const k = marked(win);
+  ok(k.indexOf('multiplexed (fuzzy)') >= 0,
+     'K1 the customer\'s own typo finds the key: ' + k);
+  ok(k.filter(function (r) { return / \(sep\)/.test(r); }).length === 1
+     && k.indexOf('multiplexed (fuzzy)') > k.findIndex(function (r) { return / \(sep\)/.test(r); }),
+     'K2 …under a separator that says it is a guess, never mixed in: ' + k);
+  ok(inserts(win).indexOf('multiplexed=') >= 0,
+     'K3 accepting a guess inserts the REAL key, never the typo: ' + inserts(win));
+  ok('multiplexed'.indexOf('z') < 0,
+     'K4 the reason it cannot be a subsequence matcher: there is no z in the target');
+
+  // the gates, called directly -- the vocabulary here is too small to reach
+  // three honest hits on a four-character stem any other way
+  // `wiat_time` is the near miss: one transposition from the stem, and NOT a
+  // substring hit — so it is a thing the pass would offer if the gate let it.
+  const GATE = ['wait_a', 'wait_b', 'wait_c', 'wiat_time'];
+  ok(win.Typeahead.rank(GATE, 'wait').fuzz.length === 0,
+     'K5 with three honest hits, nothing is guessed — a guess is for when the '
+     + 'box would otherwise be empty');
+  ok(win.Typeahead.rank(['wait_a', 'wiat_time'], 'wait').fuzz.join() === 'wiat_time',
+     'K5b …and with only one honest hit, the same near miss IS offered — '
+     + 'which is what makes K5 a test of the gate and not of the fixture');
+  const r5 = win.Typeahead.rank(['amplitude'], 'amplitide');
+  ok(r5.fuzz.length === 1 && r5.pre.length === 0 && r5.sub.length === 0,
+     'K6 …and with none, the near miss is offered: ' + JSON.stringify(r5));
+  const r6 = win.Typeahead.rank(['multiplexed'], 'mul');
+  ok(r6.fuzz.length === 0,
+     'K7 below four characters a miss is a miss — a three-letter stem is not a typo');
+  const r7 = win.Typeahead.rank(['multiplexed'], 'zzzzzzzzzz');
+  ok(r7.fuzz.length === 0, 'K8 a word with nothing in common is not "close"');
+
+  ok(win.Typeahead.prefixDist('multiplzed', 'multiplexed', 2) === 2,
+     'K9 distance 2 — which is why a distance-1 cap misses the reported word');
+  ok(win.Typeahead.prefixDist('mutliplexed', 'multiplexed', 2) === 1,
+     'K10 a transposition is ONE edit (OSA), not two');
+  ok(win.Typeahead.prefixDist('multi', 'multiplexed', 2) === 0,
+     'K11 distance is to a PREFIX, so a stem mid-typing is not penalised for '
+     + 'the rest of the name');
+  ok([0, 1, 6, 7, 10].map(function (n) { return win.Typeahead.maxEdits(n); })
+       .join(',') === '0,0,1,2,2',
+     'K12 the edit budget grows with the stem: '
+     + [0, 1, 6, 7, 10].map(function (n) { return win.Typeahead.maxEdits(n); }));
+
+  /* Arrow keys must not stop on the separator — it is a line of prose. */
+  type(win, 'sidebar-filter-input', 'multiplzed');
+  keydown(win, 'sidebar-filter-input', 'ArrowDown');
+  const st = win.Typeahead._state();
+  ok(st && st.active >= 0 && !st.items[st.active].note,
+     'K13 ArrowDown lands on something selectable, never on the separator');
+
+  /* The value stage gets it too — a value is as typo-prone as a key. */
+  type(win, 'sidebar-filter-input', 'multiplexed=flase');
+  ok(marked(win).indexOf('false (fuzzy)') >= 0,
+     'K14 a mistyped VALUE finds the real one: ' + marked(win));
+
+  /* …and so do the two plain boxes. */
+  type(win, 'explorer-search', 'amplitide');
+  ok(marked(win).indexOf('amplitude (fuzzy)') >= 0,
+     'K15 the Json Tree box guesses too: ' + marked(win));
+  type(win, 'bulk-search', 'amplitide');
+  ok(marked(win).indexOf('amplitude (fuzzy)') >= 0,
+     'K16 …and Live State Edit: ' + marked(win));
+
+  /* ── L. the two per-keystroke defects (A) put weight on ─────────────── */
+  const b1 = win.BulkTypeahead.vocab();
+  const b2 = win.BulkTypeahead.vocab();
+  ok(b1 === b2,
+     'L1 the grid vocabulary is CACHED — it was a querySelectorAll plus a '
+     + 'regex split per header on every keystroke, at up to 1,200 headers');
+  win.document.body.dispatchEvent(new win.Event('htmx:afterSwap', { bubbles: true }));
+  ok(win.BulkTypeahead.vocab() !== b1,
+     'L2 …and dropped when the grid is re-rendered, or it goes stale');
+
+  // The tree's cache keyed on the FIRST container alone, so a wiring container
+  // that mounted after the state one kept serving a state-only vocabulary.
+  const wiring = win.document.getElementById('explorer-tree-wiring');
+  const wdata = wiring._treeData;
+  delete wiring._treeData;
+  win.document.getElementById('explorer-tree-state')._treeData =
+    { qubits: { q1: { xy: { amplitude: 1 } } } };
+  const t1 = win.TreeTypeahead.vocab();
+  ok(t1 && t1.sampling_rate === undefined, 'L3 (setup) wiring is not mounted yet');
+  wiring._treeData = wdata;
+  const t2 = win.TreeTypeahead.vocab();
+  ok(t2 && t2.sampling_rate > 0,
+     'L4 a container mounting LATER is read — the cache key was the first '
+     + 'model alone, so the wiring keys never appeared: ' + Object.keys(t2 || {}));
 
   if (fails === 0) console.log('all checks passed (' + asserts + ' assertions)');
   process.exit(fails ? 1 : 0);

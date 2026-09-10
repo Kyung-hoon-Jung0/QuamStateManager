@@ -108,21 +108,183 @@ window.Typeahead = (function () {
                  stage: 'key', key: '', stem: span[2] };
     }
 
+    /* ── a typo still finds the key ────────────────────────────────────
+     *
+     * Customer, 2026-09-10: "특히 파라미터를 입력하면 사실 많은 사람들이
+     * multiplzed...뭐 이런식으로 오타 나잖아? 이렇게 오타로 해도 vscode나
+     * 유투브는 알아서 비슷한거 유사한거 리스팅을 해주던데?"
+     *
+     * The customer's own example settles the algorithm. `multiplzed` is NOT a
+     * subsequence of `multiplexed` -- there is no `z` in the target -- so any
+     * subsequence matcher returns zero rows on the very word that was asked
+     * about. Damerau-Levenshtein(multiplzed, multiplexed) is 2, so a
+     * distance-1 cap misses it too. What is needed is edit distance with k=2.
+     *
+     * Distance to a PREFIX of the candidate, not to the whole name, because
+     * typing is a forward process: the stem is a prefix in progress. That also
+     * makes the cost O(stem x band) -- independent of how long the candidate
+     * name is -- where a whole-string similarity would pay for the name and
+     * would score `multz` against `multiplexed` as barely related.
+     *
+     * OSA transposition is one line in the inner loop and turns `mutliplexed`
+     * and `wiat_time` into distance 1 instead of 2, which matters because at
+     * k=2 a single transposition would otherwise rank level with a genuine
+     * two-edit neighbour.
+     *
+     * These are the constants a different lab's key set might want retuned,
+     * which is why each is named: */
+    var FUZZ_MIN_STEM = 4;   // below 4 characters a miss IS a miss
+    var FUZZ_TRIGGER = 3;    // guess only while the honest hits are this few
+    function _maxEdits(n) { return n < FUZZ_MIN_STEM ? 0 : (n < 7 ? 1 : 2); }
+
+    /* A 32-bit character-presence set. Bucket collisions (`'0'` and `'p'` both
+       land on bit 16) only WEAKEN the filter -- they can never make it reject a
+       real match, which is the only property that matters here. */
+    function _mask(l) {
+        var m = 0;
+        for (var i = 0; i < l.length; i++) m |= 1 << (l.charCodeAt(i) & 31);
+        return m;
+    }
+
+    function _popcount(x) {
+        x = x - ((x >> 1) & 0x55555555);
+        x = (x & 0x33333333) + ((x >> 2) & 0x33333333);
+        x = (x + (x >> 4)) & 0x0f0f0f0f;
+        return (x * 0x01010101) >> 24;
+    }
+
+    /* Banded prefix-OSA distance: the cheapest way to turn `s` into ANY prefix
+       of `t`, capped at k. Returns k+1 for "further than k", so the caller
+       never has to distinguish "expensive" from "impossible". */
+    function _prefixDist(s, t, k) {
+        var m = s.length;
+        var n = Math.min(t.length, m + k);
+        var INF = k + 1;
+        if (n < m - k) return INF;
+        var prev2 = null, prev = new Array(n + 1), cur = new Array(n + 1);
+        for (var j = 0; j <= n; j++) prev[j] = j <= k ? j : INF;
+        for (var i = 1; i <= m; i++) {
+            var from = i - k > 1 ? i - k : 1;
+            var to = i + k < n ? i + k : n;
+            for (var z = 0; z <= n; z++) cur[z] = INF;
+            cur[0] = i <= k ? i : INF;
+            var best = INF;
+            for (var j = from; j <= to; j++) {
+                var d = prev[j - 1] + (s.charCodeAt(i - 1) === t.charCodeAt(j - 1) ? 0 : 1);
+                var a = prev[j] + 1; if (a < d) d = a;
+                var b = cur[j - 1] + 1; if (b < d) d = b;
+                if (i > 1 && j > 1 && prev2
+                    && s.charCodeAt(i - 1) === t.charCodeAt(j - 2)
+                    && s.charCodeAt(i - 2) === t.charCodeAt(j - 1)) {
+                    var tr = prev2[j - 2] + 1; if (tr < d) d = tr;
+                }
+                if (d > INF) d = INF;
+                cur[j] = d;
+                if (d < best) best = d;
+            }
+            if (best >= INF) return INF;      // the whole row is over budget
+            var tmp = prev2; prev2 = prev; prev = cur;
+            cur = tmp || new Array(n + 1);
+        }
+        var out = INF, lo = m - k > 0 ? m - k : 0;
+        for (var j2 = lo; j2 <= n; j2++) if (prev[j2] < out) out = prev[j2];
+        return out;
+    }
+
+    /* Lower-cased names + their character masks, computed once per vocabulary
+       rather than once per keystroke. `cacheKey` is the caller's own statement
+       of when its vocabulary changed; without one nothing is remembered. */
+    var _preps = {}, _prepN = 0;
+    function prepare(names, cacheKey) {
+        if (cacheKey != null && _preps[cacheKey]
+            && _preps[cacheKey].names === names) return _preps[cacheKey];
+        var lower = new Array(names.length), mask = new Array(names.length);
+        for (var i = 0; i < names.length; i++) {
+            var l = String(names[i]).toLowerCase();
+            lower[i] = l; mask[i] = _mask(l);
+        }
+        var p = { names: names, lower: lower, mask: mask };
+        if (cacheKey != null) {
+            if (_prepN > 8) { _preps = {}; _prepN = 0; }
+            _preps[cacheKey] = p; _prepN++;
+        }
+        return p;
+    }
+
     /* Prefix hits first, then the rest by substring — "m을 치면 m으로 시작하는"
        is the ask, and a substring-only rank would bury `multiplexed` under
-       every key that merely contains an m. */
-    function rank(names, stem) {
+       every key that merely contains an m. `fuzz` is a THIRD bin, never mixed
+       into the first two: a guess must not be able to look like a match. */
+    function rank(names, stem, cacheKey) {
         var lo = String(stem || '').toLowerCase();
-        var pre = [], sub = [];
+        var prep = prepare(names, cacheKey);
+        var pre = [], sub = [], hit = null;
         for (var i = 0; i < names.length; i++) {
             var n = String(names[i]);
-            var l = n.toLowerCase();
             if (!lo) { pre.push(n); continue; }
-            var at = l.indexOf(lo);
+            var at = prep.lower[i].indexOf(lo);
             if (at === 0) pre.push(n);
             else if (at > 0) sub.push(n);
+            else continue;
+            if (!hit) hit = {};
+            hit[i] = 1;
         }
-        return { pre: pre, sub: sub };
+        var fuzz = [];
+        if (lo.length >= FUZZ_MIN_STEM && (pre.length + sub.length) < FUZZ_TRIGGER) {
+            fuzz = _fuzzy(prep, lo, hit);
+        }
+        return { pre: pre, sub: sub, fuzz: fuzz };
+    }
+
+    function _fuzzy(prep, lo, hit) {
+        var k = _maxEdits(lo.length);
+        if (!k) return [];
+        var want = _mask(lo), out = [];
+        for (var i = 0; i < prep.lower.length; i++) {
+            if (hit && hit[i]) continue;                    // already an honest hit
+            var l = prep.lower[i];
+            // Two rejections, both LOWER BOUNDS on the real distance, so
+            // neither can throw away a true match:
+            if (l.length < lo.length - k) continue;         // too short to reach
+            if (_popcount(want & ~prep.mask[i]) > k) continue;  // characters it has not got
+            var d = _prefixDist(lo, l, k);
+            if (d <= k) out.push({ n: String(prep.names[i]), d: d, i: i, len: l.length });
+        }
+        // distance, then the shorter name, then the order the caller gave --
+        // which for the sidebar is coverage-descending, so the tie-break is a
+        // frequency ordering for free.
+        out.sort(function (a, b) {
+            return (a.d - b.d) || (a.len - b.len) || (a.i - b.i);
+        });
+        return out.map(function (o) { return o.n; });
+    }
+
+    /* The one place a guessed block is described, so every box says the same
+       thing. It never claims the guess is a match. */
+    function fuzzNote(honest) {
+        return honest ? 'closest, in case of a typo' : 'nothing matched — closest:';
+    }
+
+    /* Honest rows, then -- only if there is room left -- a separator and the
+       guesses beneath it. Every box composes its panel through here, so no box
+       can accidentally present a guess as a match. */
+    function compose(r, mk) {
+        var honest = r.pre.concat(r.sub);
+        var picked = honest.slice(0, MAX_ROWS);
+        var items = [];
+        for (var i = 0; i < picked.length; i++) items.push(mk(picked[i]));
+        var room = MAX_ROWS - items.length - 1;   // -1 for the separator itself
+        if (room > 0 && r.fuzz && r.fuzz.length) {
+            items.push({ label: fuzzNote(picked.length), note: true, cls: 'sm-th-fuzzsep' });
+            var g = r.fuzz.slice(0, room);
+            for (var j = 0; j < g.length; j++) {
+                var it = mk(g[j]);
+                it.cls = 'sm-th-fuzzy';
+                it.title = 'the closest thing to what you typed — not an exact match';
+                items.push(it);
+            }
+        }
+        return { items: items, hidden: honest.length - picked.length };
     }
 
     function _row(text, meta, cls) {
@@ -148,8 +310,10 @@ window.Typeahead = (function () {
         var items = st.items;
         for (var i = 0; i < items.length; i++) {
             var it = items[i];
-            var li = _row(it.label, it.meta, it.note ? 'sm-th-note' : '');
+            var li = _row(it.label, it.meta,
+                          (it.note ? 'sm-th-note' : '') + (it.cls ? ' ' + it.cls : ''));
             li.id = PANEL_ID + '-' + i;
+            if (it.title) li.title = it.title;
             if (!it.note) {
                 li.setAttribute('data-i', String(i));
                 li.addEventListener('mousedown', function (ev) {
@@ -182,6 +346,20 @@ window.Typeahead = (function () {
         } else {
             st.input.removeAttribute('aria-activedescendant');
         }
+    }
+
+    /* Arrow navigation SKIPS note rows. Since the fuzzy block sits under its
+       own separator, a note is no longer only a trailing line -- landing on one
+       would be a keypress that does nothing. */
+    function _step(st, dir) {
+        var i = st.active;
+        for (var n = 0; n < st.items.length; n++) {
+            i += dir;
+            if (i < 0) return -1;
+            if (i >= st.items.length) return st.active;
+            if (!st.items[i].note) return i;
+        }
+        return st.active;
     }
 
     function _accept(i) {
@@ -260,13 +438,12 @@ window.Typeahead = (function () {
             if (!_open) return;
             if (!e.target || e.target.id !== inputId) return;
             if (e.ctrlKey || e.metaKey || e.altKey) return;   // Ctrl+K still opens the palette
-            var st = _open, last = st.items.length - 1;
-            while (last >= 0 && st.items[last].note) last--;
+            var st = _open;
             if (k === 'ArrowDown') {
-                st.active = Math.min(st.active + 1, last);
+                st.active = _step(st, +1);
                 _paintActive(st); e.preventDefault();
             } else if (k === 'ArrowUp') {
-                st.active = Math.max(st.active - 1, -1);
+                st.active = _step(st, -1);
                 _paintActive(st); e.preventDefault();
             } else if (k === 'Escape') {
                 cfg.dismissed = st.input.value.slice(st.span.start, st.span.end);
@@ -316,7 +493,9 @@ window.Typeahead = (function () {
         window.addEventListener('resize', _close);
     }
 
-    return { attach: attach, classify: classify, classifyPlain: classifyPlain, rank: rank,
+    return { attach: attach, classify: classify, classifyPlain: classifyPlain,
+             rank: rank, prepare: prepare, fuzzNote: fuzzNote, compose: compose,
+             prefixDist: _prefixDist, maxEdits: _maxEdits, MAX_ROWS: MAX_ROWS,
              close: _close, panelId: PANEL_ID,
              _state: function () { return _open; } };
 })();
@@ -328,9 +507,16 @@ window.SidebarTypeahead = (function () {
     var byKey = null;
     var loading = false;
 
+    var names = [];
     function _index() {
         byKey = {};
-        (vocab && vocab.keys ? vocab.keys : []).forEach(function (d) { byKey[d.k] = d; });
+        names = [];
+        (vocab && vocab.keys ? vocab.keys : []).forEach(function (d) {
+            byKey[d.k] = d; names.push(d.k);
+        });
+        // Held, not rebuilt per keystroke: `Typeahead.prepare` remembers the
+        // lower-cased names and their character masks against THIS array's
+        // identity, and a fresh `.map()` every call would never hit that cache.
     }
 
     function load(force) {
@@ -365,24 +551,23 @@ window.SidebarTypeahead = (function () {
         }
         var PV = window.__paramVocabInsert;   // the insert rule, mirrored below
         if (stage === 'key') {
-            var names = vocab.keys.map(function (d) { return d.k; });
-            var r = window.Typeahead.rank(names, stem);
-            var picked = r.pre.concat(r.sub).slice(0, 8);
-            if (!picked.length) {
+            var r = window.Typeahead.rank(names, stem, 'sb-keys:' + vocab.v);
+            var c = window.Typeahead.compose(r, function (k) {
+                var d = byKey[k];
+                var nv = d.v.length + (d.more || 0);
+                return {
+                    label: k,
+                    meta: nv + (nv === 1 ? ' value · ' : ' values · ') + d.n + ' runs',
+                    insert: k + '=', fire: false
+                };
+            });
+            if (!c.items.length) {
                 return vocab.hydrating
                     ? { items: [{ label: '⌛ indexing runs — parameters are still being read', note: true }] }
                     : null;
             }
             return {
-                items: picked.map(function (k) {
-                    var d = byKey[k];
-                    var nv = d.v.length + (d.more || 0);
-                    return {
-                        label: k,
-                        meta: nv + (nv === 1 ? ' value · ' : ' values · ') + d.n + ' runs',
-                        insert: k + '=', fire: false
-                    };
-                }),
+                items: c.items,
                 note: vocab.hydrating ? '⌛ still indexing — more may appear' : ''
             };
         }
@@ -392,19 +577,21 @@ window.SidebarTypeahead = (function () {
             return x.k.toLowerCase() === String(key).toLowerCase();
         })[0];
         if (!d) return null;
-        var vals = d.v.map(function (p) { return p[0]; });
-        var rr = window.Typeahead.rank(vals, stem);
-        var order = rr.pre.concat(rr.sub).slice(0, 8);
-        if (!order.length) return null;
-        var counts = {};
-        d.v.forEach(function (p) { counts[p[0]] = p[1]; });
+        if (!d._vals) {                       // held on the vocabulary entry itself
+            d._vals = d.v.map(function (p) { return p[0]; });
+            d._counts = {};
+            d.v.forEach(function (p) { d._counts[p[0]] = p[1]; });
+        }
+        var rr = window.Typeahead.rank(d._vals, stem, 'sb-vals:' + vocab.v + ':' + d.k);
+        var cc = window.Typeahead.compose(rr, function (val) {
+            return {
+                label: val, meta: d._counts[val] + ' runs',
+                insert: PV ? PV(d.k, val) : (d.k + '=' + val), fire: true
+            };
+        });
+        if (!cc.items.length) return null;
         return {
-            items: order.map(function (val) {
-                return {
-                    label: val, meta: counts[val] + ' runs',
-                    insert: PV ? PV(d.k, val) : (d.k + '=' + val), fire: true
-                };
-            }),
+            items: cc.items,
             note: d.more ? ('…and ' + d.more + ' more values') : ''
         };
     }
@@ -463,9 +650,22 @@ window.BulkTypeahead = (function () {
        Counted over the column HEADERS, which exist for every column including
        the server-cold ones, so the vocabulary does not depend on how far the
        grid has been scrolled. */
-    function vocab() {
-        var counts = {};
+    /* Cached against the header row itself. Without this the whole scan ran
+       ON EVERY KEYSTROKE -- a querySelectorAll plus a querySelector, an
+       attribute read and a regex split per header, at 309 headers on the
+       customer's 20Q chip and up to MAX_DYNAMIC_COLUMNS = 1200. The grid is
+       re-rendered wholesale rather than header by header, so identity of the
+       first header plus the count is a sufficient key, and an htmx swap drops
+       it anyway. */
+    var _cache = null, _cacheFor = null, _cacheN = -1;
+    if (window.document) {
+        document.addEventListener('htmx:afterSwap', function () { _cache = null; });
+    }
+
+    function _prepared() {
         var heads = document.querySelectorAll('#table-pane th.bulk-col-head');
+        if (_cache && _cacheN === heads.length && _cacheFor === heads[0]) return _cache;
+        var counts = {};
         for (var i = 0; i < heads.length; i++) {
             var lab = heads[i].querySelector('.bulk-col-label');
             var text = (lab ? lab.textContent : '') + ' '
@@ -480,26 +680,29 @@ window.BulkTypeahead = (function () {
                 counts[word] = (counts[word] || 0) + 1;
             }
         }
-        return counts;
+        _cache = { counts: counts, names: Object.keys(counts), n: heads.length };
+        _cacheFor = heads[0]; _cacheN = heads.length;
+        return _cache;
     }
+
+    /* The counts, which is what this has always returned. */
+    function vocab() { return _prepared().counts; }
 
     function suggest(stage, key, stem) {
         if (!stem) return null;
-        var v = vocab();
-        var names = Object.keys(v);
-        if (!names.length) return null;
-        var r = window.Typeahead.rank(names, stem);
-        var all = r.pre.concat(r.sub);
-        var picked = all.slice(0, 8);
-        if (!picked.length) return null;
+        var vc = _prepared();
+        var v = vc.counts;
+        if (!vc.names.length) return null;
+        var r = window.Typeahead.rank(vc.names, stem, 'bulk:' + vc.n);
+        var c = window.Typeahead.compose(r, function (n) {
+            return { label: n,
+                     meta: v[n] + (v[n] === 1 ? ' column' : ' columns'),
+                     insert: n, fire: true };
+        });
+        if (!c.items.length) return null;
         return {
-            items: picked.map(function (n) {
-                return { label: n,
-                         meta: v[n] + (v[n] === 1 ? ' column' : ' columns'),
-                         insert: n, fire: true };
-            }),
-            note: all.length > picked.length
-                ? ('…and ' + (all.length - picked.length) + ' more') : ''
+            items: c.items,
+            note: c.hidden > 0 ? ('…and ' + c.hidden + ' more') : ''
         };
     }
 
@@ -520,7 +723,7 @@ window.BulkTypeahead = (function () {
  */
 window.TreeTypeahead = (function () {
     var INPUT = 'explorer-search';
-    var _cacheFor = null, _cache = null;
+    var _cacheFor = null, _cache = null, _seq = 0;
 
     /* The Json Tree View renders state and wiring into TWO containers
        (app.js:16805-16807), so the vocabulary is the union -- a wiring key is a
@@ -536,11 +739,18 @@ window.TreeTypeahead = (function () {
         return out;
     }
 
-    function vocab() {
+    function _prepared() {
         var ms = _models();
         if (!ms.length) return null;
-        var tag = ms.length + ':' + (ms[0] === _cacheFor);
-        if (_cacheFor === ms[0] && _cache) return _cache;
+        // Element-wise, and the whole list is kept. Keying on `ms[0]` alone
+        // meant a wiring container mounting AFTER the state one kept serving
+        // the state-only vocabulary for ever (the tag computed beside it was
+        // never actually used).
+        if (_cache && _cacheFor && _cacheFor.length === ms.length) {
+            var same = true;
+            for (var q = 0; q < ms.length; q++) if (_cacheFor[q] !== ms[q]) { same = false; break; }
+            if (same) return _cache;
+        }
         var counts = {};
         var stack = ms.slice(), guard = 0;
         while (stack.length && guard++ < 400000) {
@@ -558,27 +768,28 @@ window.TreeTypeahead = (function () {
                 }
             }
         }
-        _cacheFor = ms[0]; _cache = counts;
-        return counts;
+        _cacheFor = ms.slice();
+        _cache = { counts: counts, names: Object.keys(counts), n: _seq++ };
+        return _cache;
     }
+
+    function vocab() { var p = _prepared(); return p ? p.counts : null; }
 
     function suggest(stage, key, stem) {
         if (!stem) return null;
-        var v = vocab();
-        if (!v) return null;
-        var names = Object.keys(v);
-        if (!names.length) return null;
-        var r = window.Typeahead.rank(names, stem);
-        var all = r.pre.concat(r.sub);
-        var picked = all.slice(0, 8);
-        if (!picked.length) return null;
+        var vc = _prepared();
+        if (!vc) return null;
+        var v = vc.counts;
+        if (!vc.names.length) return null;
+        var r = window.Typeahead.rank(vc.names, stem, 'tree:' + vc.n);
+        var c = window.Typeahead.compose(r, function (n) {
+            return { label: n, meta: v[n] + (v[n] === 1 ? ' place' : ' places'),
+                     insert: n, fire: true };
+        });
+        if (!c.items.length) return null;
         return {
-            items: picked.map(function (n) {
-                return { label: n, meta: v[n] + (v[n] === 1 ? ' place' : ' places'),
-                         insert: n, fire: true };
-            }),
-            note: all.length > picked.length
-                ? ('…and ' + (all.length - picked.length) + ' more keys') : ''
+            items: c.items,
+            note: c.hidden > 0 ? ('…and ' + c.hidden + ' more keys') : ''
         };
     }
 
