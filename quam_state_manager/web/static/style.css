@@ -11753,7 +11753,12 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 .bulk-col-hist:hover { opacity: 1; }
 
 /* ── FSP → amplitude compensation popup (docs/20 r12-B) ─────────────── */
-.fsp-card { width: min(760px, 94vw); }
+/* 860, not 760: the Δ column (Δ + percent) was being clipped off the
+   right edge on a ten-row plan — customer screenshot, 2026-09-10. */
+.fsp-card { width: min(860px, 94vw); }
+.fsp-old { font-family: var(--font-mono); font-size: .78rem;
+    font-variant-numeric: tabular-nums; }
+.fsp-delta { white-space: nowrap; }
 .fsp-line { margin: .1rem 0; font-family: var(--font-mono);
     font-variant-numeric: tabular-nums; }
 .fsp-note { margin: .15rem 0; font-size: .78rem; color: var(--color-text-muted); }

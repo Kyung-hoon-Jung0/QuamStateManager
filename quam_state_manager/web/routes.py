@@ -17372,8 +17372,12 @@ def diff_data():
 # Datasets-page search (web/static/dataset-virtual.js: tokenize/parseQuery).
 # Scopes map to the fields a tree entry actually has.
 _SIDEBAR_SCOPE_ALIASES = {"e": "name", "exp": "name", "d": "date", "st": "status",
-                          "run": "id", "q": "qubit", "qp": "pair"}
-_SIDEBAR_KNOWN_SCOPES = {"name", "date", "status", "id", "qubit", "pair"}
+                          "run": "id", "q": "qubit", "qp": "pair", "p": "param"}
+_SIDEBAR_KNOWN_SCOPES = {"name", "date", "status", "id", "qubit", "pair", "param"}
+# Bare ``key=value`` is a param filter, not free text (``multiplexed=true``) --
+# the same shape dataset-virtual.js:198 routes to the param facet, so one token
+# means one thing on both search boxes.
+_SIDEBAR_PARAM_EQ = re.compile(r"^([A-Za-z][\w.\-]*)=(.+)$")
 
 
 def _tokenize_query(text: str) -> list[str]:
@@ -17417,15 +17421,18 @@ def _parse_tree_query(text: str) -> list[dict]:
     for tok in _tokenize_query(text):
         negate = False
         body = tok
-        # Guard shape kept identical to dataset-virtual.js:154 (the other
-        # drift the audit caught — the JS side also accepts `=` because the
-        # Datasets table has `key=value` param facets). The sidebar has no
-        # params, so a negated `-x=y` falls through to the SAME place an
-        # unknown scope does on both surfaces: the original token, literal.
-        # The divergence that remains is capability, not grammar.
+        # Guard shape kept identical to dataset-virtual.js:154 -- the JS side
+        # accepts `=` because of the `key=value` param facets, and since the
+        # sidebar reads the same `filter_params` map, so does this one.
         if len(body) > 1 and body[0] == "-" and (":" in body[1:] or "=" in body[1:]):
             negate = True
             body = body[1:]
+        # Bare `key=value` -> param, BEFORE the scope match (`=` is not a scope
+        # separator, and `multiplexed=true` has no colon to find).
+        eqm = _SIDEBAR_PARAM_EQ.match(body)
+        if eqm:
+            conds.append({"field": "param", "value": body.lower(), "negate": negate})
+            continue
         if ":" in body:
             key, _, value = body.partition(":")
             key = _SIDEBAR_SCOPE_ALIASES.get(key.strip().lower(), key.strip().lower())
@@ -17457,6 +17464,34 @@ def _group_tree_conds(conds: list[dict]) -> list[list[dict]]:
     )
 
 
+def _param_norm(v) -> str:
+    """A param value as the search sees it. ``True`` is the string ``true`` --
+    the user types what the Parameters facet shows them, not Python syntax."""
+    if v is True:
+        return "true"
+    if v is False:
+        return "false"
+    return str(v).lower()
+
+
+def _param_hit(params: dict, value: str) -> bool:
+    """Does *params* satisfy one ``param:`` condition?
+
+    Transcribed from dataset-virtual.js:284-303 so the two search boxes cannot
+    drift: with an ``=`` the KEY matches by substring and the VALUE exactly
+    (``reset=active`` finds ``reset_type`` and never ``active_gef``); without
+    one, it is a substring over keys AND values. A run carrying no indexed
+    params matches nothing -- silence, never a false hit."""
+    if not params:
+        return False
+    key, eq, want = value.partition("=")
+    if eq:
+        return any(key in str(k).lower() and _param_norm(v) == want
+                   for k, v in params.items())
+    return any(value in str(k).lower() or value in _param_norm(v)
+               for k, v in params.items())
+
+
 def _entry_matches(entry, conds: list[dict]) -> bool:
     """True iff *entry* satisfies the parsed query — AND across groups, OR
     within one (``q1 | q2``), negation as before (always a singleton group)."""
@@ -17466,6 +17501,7 @@ def _entry_matches(entry, conds: list[dict]) -> bool:
     rid = "" if entry.run_id is None else str(entry.run_id)
     qubits = [str(q).lower() for q in (getattr(entry, "qubits", None) or [])]
     pairs = [str(p).lower() for p in (getattr(entry, "qubit_pairs", None) or [])]
+    params = getattr(entry, "filter_params", None) or {}
 
     def _hit(c: dict) -> bool:
         field, value = c["field"], c["value"]
@@ -17493,6 +17529,8 @@ def _entry_matches(entry, conds: list[dict]) -> bool:
             return value in qubits                       # exact
         if field == "pair":
             return any(value in p for p in pairs)        # substring
+        if field == "param":
+            return _param_hit(params, value)
         return False
 
     for group in _group_tree_conds(conds):

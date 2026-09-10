@@ -26,7 +26,9 @@ from quam_state_manager.core import dir_sample
 from quam_state_manager.core import safe_io
 from quam_state_manager.core import units
 from quam_state_manager.core.loader import natural_key
-from quam_state_manager.core.scanner import _with_pair_qubits
+from quam_state_manager.core.scanner import (
+    _PARAM_SKIP_KEYS, _with_pair_qubits, extract_filter_params, node_parameters,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -628,12 +630,8 @@ class DatasetStore:
         metadata = node_data.get("metadata", {})
         data_section = node_data.get("data", {})
         params_raw = data_section.get("parameters", {})
-        if isinstance(params_raw, dict):
-            params_model = params_raw.get("model", {})
-            parameters = dict(params_model) if params_model else dict(params_raw)
-        else:
-            params_model = {}
-            parameters = {}
+        parameters = node_parameters(data_section)
+        params_model = params_raw.get("model", {}) if isinstance(params_raw, dict) else {}
 
         qubits = params_model.get("qubits") or parameters.get("qubits") or []
         if isinstance(qubits, str):
@@ -2552,42 +2550,18 @@ class DatasetStore:
             out[k] = first_val[k] if mx == mn else [first_val[k], mx, mn]
         return out
 
-    # Param keys never useful as facets — orchestration/sim plumbing, not physics
-    # knobs. Dropped from filter_params so the Parameters picker stays focused.
-    _PARAM_SKIP_KEYS = frozenset({
-        "simulate", "simulation_duration_ns", "use_waveform_report", "timeout",
-        "load_data_id", "update_state_from_GUI",
-    })
+    # The skip list and the extractor itself live in core.scanner: the sidebar
+    # tree needs the same map off the same node.json, and dataset.py already
+    # imports from scanner (the other direction would be a cycle). Kept as a
+    # class attribute because callers reference it through DatasetStore.
+    _PARAM_SKIP_KEYS = _PARAM_SKIP_KEYS
 
     @staticmethod
     def _extract_filter_params(run: "RunInfo") -> dict:
         """Sparse map of categorical / low-cardinality params for the Sort-banner
-        Parameters facet filter. Keeps only scalar bool / short-string / int values
-        (e.g. reset_type, use_state_discrimination, operation, multiplexed,
-        num_shots); skips floats (high-cardinality sweep knobs — exact-match
-        useless), None, lists (qubits/sweeps) and dicts. The client builds key=value
-        facets from this and applies its own cardinality cap, so shipping every
-        qualifying int is fine. Cheap + per-run (mirrors _extract_sort_scalars)."""
-        params = run.parameters
-        if not isinstance(params, dict):
-            return {}
-        out: dict[str, Any] = {}
-        for k, v in params.items():
-            if k in DatasetStore._PARAM_SKIP_KEYS:
-                continue
-            if type(v) is bool:
-                out[k] = v
-            elif isinstance(v, str):
-                if 0 < len(v) <= 40:        # enum-like; skip empty + long free text
-                    out[k] = v
-            elif isinstance(v, (int, float)):   # bool already handled above
-                # numeric → client shows a min/max RANGE filter (not per-value
-                # facets) for high-cardinality keys; float kept for that.
-                if isinstance(v, float) and not math.isfinite(v):
-                    continue
-                out[k] = v
-            # None / list / dict → skipped
-        return out
+        Parameters facet filter and the `param:` search scope. ONE spelling,
+        shared with the sidebar tree — see `scanner.extract_filter_params`."""
+        return extract_filter_params(run.parameters)
 
     # ------------------------------------------------------------------
     # Properties

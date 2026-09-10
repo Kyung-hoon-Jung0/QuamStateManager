@@ -12203,15 +12203,78 @@ window._openFspPopup = (function () {
            value forever so "reset" has something to return to; the user's
            override rides alongside as `a.userNew` (read back by
            _fspCompUpdates). Blank means "use the computed one" — deleting the
-           contents is not a request to write nothing. */
-        function _rowValue(r) {
+           contents is not a request to write nothing.
+
+           `r.seed` is what the dialog TYPED into the box: `_ampStr(a.new)`, a
+           6-significant-figure rendering, because the raw product of a float
+           multiply overflows the field. So "is this row overridden?" has to be
+           asked against the seed, never against the exact number — asking the
+           exact one made 0.123057 !== 0.12305687… and every row read as a
+           hand-edit the moment the dialog opened (customer, 2026-09-10: the
+           warning showed with nothing typed, every ↺ was armed, and Apply
+           wrote the ROUNDING instead of SM's own computed amplitude). */
+        function _isSeed(r) {
             var raw = String(r.input.value).trim();
-            if (raw === "") return Number(r.a.new);
-            var v = Number(raw);
+            if (raw === "") return true;          // blank = use the computed one
+            return Number(raw) === Number(r.seed);
+        }
+        function _rowValue(r) {
+            if (_isSeed(r)) return Number(r.a.new);   // EXACT, never the rounding
+            var v = Number(String(r.input.value).trim());
             return isFinite(v) ? v : NaN;
         }
+        /* What an override costs, in the unit the port is set in. `a.new` is by
+           construction the amplitude that holds the output power constant, so
+           the shift is just the ratio against it. */
+        function _dbShift(v, computed) {
+            if (!isFinite(v) || !isFinite(computed) || computed === 0) return null;
+            if (v === 0) return -Infinity;
+            return 20 * Math.log10(Math.abs(v) / Math.abs(computed));
+        }
+        function _dbStr(d) {
+            return (d >= 0 ? "+" : "−") + Math.abs(d).toFixed(2) + " dB";
+        }
+        /* Say what happens, not which identity stopped holding. The header
+           already promises "to keep every pulse's real output power constant";
+           this is the sentence that says which pulses no longer will. */
+        function _editNoteText(list) {
+            var lo = null, hi = null, silent = 0, flipped = 0, one = null;
+            list.forEach(function (e) {
+                var computed = Number(e.r.a.new);
+                var d = _dbShift(e.v, computed);
+                if ((e.v < 0) !== (computed < 0)) flipped++;
+                if (d === -Infinity) { silent++; return; }
+                if (d === null) return;
+                if (lo === null || d < lo) lo = d;
+                if (hi === null || d > hi) hi = d;
+            });
+            if (list.length === 1) one = list[0];
+            var head;
+            if (one) {
+                var label = (one.r.a.channel || "") + " · " + (one.r.a.op || "");
+                var d1 = _dbShift(one.v, Number(one.r.a.new));
+                head = "You typed a different amplitude for " + label + ": it will come out "
+                    + (d1 === -Infinity ? "silent (amplitude 0)"
+                       : d1 === null || Math.abs(d1) < 0.005 ? "at the same power after all"
+                       : _dbStr(d1) + (d1 > 0 ? " louder" : " quieter") + " than it is now")
+                    + ", instead of unchanged.";
+            } else {
+                head = "You typed different amplitudes for " + list.length + " pulses: "
+                    + "their output power will not stay where it is"
+                    + (lo === null ? ""
+                       : lo === hi ? " (" + _dbStr(hi) + ")"
+                       : " (" + _dbStr(lo) + " to " + _dbStr(hi) + ")")
+                    + (silent ? ", and " + silent + " will be silent (amplitude 0)" : "")
+                    + ".";
+            }
+            if (flipped) {
+                head += " " + (flipped === 1 ? "One" : String(flipped))
+                    + " changed sign, which inverts the pulse.";
+            }
+            return head + " ↺ puts back the amplitude that keeps the power identical.";
+        }
         function _recount() {
-            var clips = 0, bad = 0, edited = 0;
+            var clips = 0, bad = 0, edited = [];
             rows.forEach(function (r) {
                 var v = _rowValue(r);
                 var raw = String(r.input.value).trim();
@@ -12227,10 +12290,11 @@ window._openFspPopup = (function () {
                     if (window.ValueDelta) window.ValueDelta.paint(r.dTd, r.a.old, v);
                 }
                 r.input.classList.toggle("fsp-amp-clip", isFinite(v) && Math.abs(v) > 1.0);
-                // "edited" means differs from the computed value, not merely
-                // non-empty — retyping the same number is not an override.
-                var isEdit = raw !== "" && Number(raw) !== Number(r.a.new);
-                if (isEdit) edited++;
+                // "edited" means the box no longer holds what we seeded it with
+                // — retyping the same number, or clearing the box, is not an
+                // override.
+                var isEdit = !_isSeed(r);
+                if (isEdit && isFinite(v)) edited.push({ r: r, v: v });
                 r.reset.style.visibility = isEdit ? "visible" : "hidden";
                 r.a.userNew = isEdit && isFinite(v) ? v : undefined;
             });
@@ -12249,15 +12313,26 @@ window._openFspPopup = (function () {
             bComp.disabled = !rows.length || bad > 0;
             bComp.title = bad
                 ? bad + " amplitude" + (bad === 1 ? " is" : "s are") + " not a number"
-                : (edited ? edited + " amplitude" + (edited === 1 ? "" : "s")
-                            + " edited from the computed value" : "");
-            editNote.style.display = edited ? "" : "none";
+                : (edited.length ? edited.length + " amplitude"
+                                   + (edited.length === 1 ? "" : "s")
+                                   + " edited from the computed value" : "");
+            if (edited.length) {
+                editNote.textContent = _editNoteText(edited);
+                editNote.style.display = "";
+            } else {
+                editNote.style.display = "none";
+            }
         }
 
         (plan.amps || []).forEach(function (a) {
             var tr = document.createElement("tr");
             tr.appendChild(_el("td", "fsp-pulse", (a.channel || "") + " · " + (a.op || "")));
-            tr.appendChild(_el("td", null, _fmt(a.old)));
+            var oldTd = _el("td", "fsp-old", _ampStr(a.old));
+            // The exact stored number, one hover away — the column is for
+            // comparing with the compensated value beside it, and the raw float
+            // (0.011220184543019634) pushed Δ off the card's right edge.
+            if (_ampStr(a.old) !== String(a.old)) oldTd.title = String(a.old);
+            tr.appendChild(oldTd);
             tr.appendChild(_el("td", "fsp-arrow", "→"));
             // docs/120 item 7: an input, not text. The customer had only
             // accept-all or discard-all; they want to nudge an amplitude and
@@ -12298,7 +12373,8 @@ window._openFspPopup = (function () {
             var rTd = _el("td");
             rTd.appendChild(reset);
             tr.appendChild(rTd);
-            rows.push({ a: a, input: inp, dTd: dTd, mark: mark, reset: reset });
+            rows.push({ a: a, seed: _ampStr(a.new), input: inp, dTd: dTd,
+                        mark: mark, reset: reset });
             tbody.appendChild(tr);
         });
         table.appendChild(tbody);
@@ -12311,12 +12387,11 @@ window._openFspPopup = (function () {
                 }).join("; "));
             card.appendChild(sk);
         }
-        // Shown only once something is actually overridden — the identity is
-        // what the compensation is FOR, so departing from it should be said out
-        // loud rather than left for the user to notice later in the tray.
-        var editNote = _el("p", "fsp-note fsp-edited-note",
-            "Edited amplitudes no longer satisfy P = FSP + 20·log10|amp| — those "
-            + "pulses' output power will move. ↺ restores the computed value.");
+        // Shown only once something is actually overridden. Keeping the power
+        // constant is what the compensation is FOR, so departing from it is
+        // said out loud — in dB, filled in by _editNoteText per press, rather
+        // than as an identity the reader has to re-derive.
+        var editNote = _el("p", "fsp-note fsp-edited-note");
         editNote.style.display = "none";
         card.appendChild(editNote);
         var foot = _el("div", "fsp-actions");

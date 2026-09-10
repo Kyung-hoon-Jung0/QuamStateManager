@@ -9,6 +9,7 @@ deferred until the user explicitly selects an entry (lazy loading with bounded c
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
 import threading
@@ -91,6 +92,11 @@ class ExperimentEntry:
     # yet -- status/qubits/outcomes are placeholders until the background
     # hydration pass replaces the object. Never True on a parsed entry.
     needs_parse: bool = False
+    # Sparse {param_key: bool|str|int|float} of the run's own node parameters
+    # -- the SAME map the Datasets table ships as `pm` (see
+    # `extract_filter_params`), so `multiplexed=true` means one thing on both
+    # surfaces. Empty on a stub entry until hydration parses node.json.
+    filter_params: dict = field(default_factory=dict)
 
     @property
     def short_label(self) -> str:
@@ -157,6 +163,58 @@ def _with_pair_qubits(qubits: list, raw_pairs) -> tuple[list, list]:
                 qubits.append(m)
                 seen.add(m)
     return qubits, pairs
+
+
+# Param keys never useful as a facet or a search term -- orchestration/sim
+# plumbing, not physics knobs.
+_PARAM_SKIP_KEYS = frozenset({
+    "simulate", "simulation_duration_ns", "use_waveform_report", "timeout",
+    "load_data_id", "update_state_from_GUI",
+})
+
+
+def node_parameters(data_section) -> dict:
+    """The run's parameter dict, as every reader of node.json sees it.
+
+    A modern node nests them under ``data.parameters.model``; older ones put
+    them straight in ``data.parameters``. One spelling, so the sidebar and the
+    Datasets table can never disagree about what a run's parameters ARE."""
+    if not isinstance(data_section, dict):
+        return {}
+    raw = data_section.get("parameters", {})
+    if not isinstance(raw, dict):
+        return {}
+    model = raw.get("model")
+    if isinstance(model, dict) and model:
+        return dict(model)
+    return dict(raw)
+
+
+def extract_filter_params(params) -> dict:
+    """Sparse map of categorical / low-cardinality params, for searching.
+
+    Keeps scalar bool / short-string / number values (``reset_type``,
+    ``use_state_discrimination``, ``operation``, ``multiplexed``,
+    ``num_shots``); skips the orchestration keys above, empty and long free
+    text, None, lists (qubits/sweeps) and dicts. Cheap and per-run: the caller
+    has already parsed node.json, so this costs a dict walk."""
+    if not isinstance(params, dict):
+        return {}
+    out: dict = {}
+    for k, v in params.items():
+        if k in _PARAM_SKIP_KEYS:
+            continue
+        if type(v) is bool:
+            out[k] = v
+        elif isinstance(v, str):
+            if 0 < len(v) <= 40:        # enum-like; skip empty + long free text
+                out[k] = v
+        elif isinstance(v, (int, float)):   # bool already handled above
+            if isinstance(v, float) and not math.isfinite(v):
+                continue
+            out[k] = v
+        # None / list / dict -> skipped
+    return out
 
 
 @dataclass
@@ -345,10 +403,10 @@ class Workspace:
                         len(entries), mode)
             return entries
 
-    _LISTING_CACHE_V = 1
+    _LISTING_CACHE_V = 2
     _ENTRY_FIELDS = ("run_id", "experiment_name", "timestamp", "status",
                      "qubits", "qubit_pairs", "outcomes", "parent_ids",
-                     "date_str", "is_standalone", "run_mtime")
+                     "date_str", "is_standalone", "run_mtime", "filter_params")
 
     def _cache_path(self, root: Path) -> Path | None:
         if self.cache_dir is None:
@@ -1380,6 +1438,7 @@ def _parse_experiment_folder(quam_state_path: Path) -> ExperimentEntry:
         date_str=date_str,
         is_standalone=False,
         run_mtime=run_mtime,
+        filter_params=extract_filter_params(node_parameters(data)),
     )
 
 

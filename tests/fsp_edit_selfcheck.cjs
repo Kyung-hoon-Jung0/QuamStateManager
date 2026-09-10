@@ -200,4 +200,107 @@ ok(ajaxCalls === 0, 'K2: and never POSTs /undo behind the modal');
 ok(ev.defaultPrevented === false, 'K3: the browser keeps its native text undo');
 window.LiveEditUndo.tryUndo = realTryUndo;
 
+
+/* ── L. a value that does NOT fit six significant figures ─────────────
+ *
+ * Customer, 2026-09-10, con1/3/1, FSP 5 -> 0 dBm: the dialog opened with
+ * "Edited amplitudes no longer satisfy P = FSP + 20*log10|amp|" already
+ * showing, over a table nobody had touched. Their question -- "이미
+ * calculation이 잘 된거 아닌가?" -- was exactly right.
+ *
+ * The compensated cell is seeded with a SIX-significant-figure rendering
+ * (deliberately: 0.15848931924611134 overflowed the field), and the
+ * override test compared that rendering against the exact number. Every
+ * row whose product does not terminate therefore read as a hand-edit the
+ * instant the dialog opened -- and `_fspCompUpdates` then wrote the
+ * ROUNDING instead of the amplitude SM computed, which is the one thing
+ * this dialog exists to get right.
+ *
+ * Sections A-K all use 0.4 / 0.2, which ARE their own 6-figure rendering,
+ * so none of them could see it. */
+const F5 = Math.pow(10, 5 / 20);                 // the customer's factor
+function mkRealPlan() {
+  return {
+    port: 'con1/3/1', fsp_old: 5, fsp_new: 0, factor: F5,
+    clip_count: 0, skipped: [],
+    amps: [
+      { path: 'qubits.q1.resonator.operations.readout.amplitude',
+        old: 0.0692, new: 0.0692 * F5, channel: 'q1.resonator',
+        op: 'readout', clips: false },
+      { path: 'qubits.q2.resonator.operations.readout.amplitude',
+        old: 0.0675, new: 0.0675 * F5, channel: 'q2.resonator',
+        op: 'readout', clips: false },
+    ],
+  };
+}
+plan = mkRealPlan();
+const EXACT0 = plan.amps[0].new, EXACT1 = plan.amps[1].new;
+seen = openPopup(plan);
+ok(String(EXACT0).length > 8 && inputs()[0].value.length <= 8,
+  'L0: the fixture really is a value the box has to round (' + EXACT0
+  + ' -> ' + inputs()[0].value + ')');
+ok(editNote().style.display === 'none',
+  'L1: nothing typed, nothing accused — the note stays hidden');
+ok(Array.from(card().querySelectorAll('.fsp-amp-reset'))
+     .every(b => b.style.visibility === 'hidden'),
+  'L2: and no row arms its undo arrow');
+ok(!/edited/i.test(compBtn().title || ''),
+  'L3: the apply button does not claim edits either');
+ups = window._fspCompUpdates(plan);
+ok(ups[0].value === String(EXACT0) && ups[1].value === String(EXACT1),
+  'L4: an untouched row writes the EXACT computed amplitude, not the '
+  + '6-figure seed (' + ups[0].value + ')');
+
+/* Retyping what is already in the box is not an override either. */
+type(inputs()[0], inputs()[0].value);
+ok(editNote().style.display === 'none', 'L5: retyping the seed is not an edit');
+ok(window._fspCompUpdates(plan)[0].value === String(EXACT0),
+  'L6: ...and still writes the exact value');
+
+/* ── M. what an override says, once there IS one ──────────────────────
+ * The old sentence restated the identity, which is what the customer read
+ * as "but the arithmetic is fine". Say the consequence, in dB. */
+type(inputs()[0], '0.2');
+ok(editNote().style.display !== 'none', 'M1: a real override does say so');
+let note = editNote().textContent;
+ok(note.indexOf('q1.resonator · readout') >= 0,
+  'M2: a single override names the pulse: ' + note);
+ok(/\+4\.2\d dB louder/.test(note),
+  'M3: ...and what it costs, in dB (0.2 over ' + EXACT0.toFixed(6) + '): ' + note);
+ok(note.indexOf('log10') < 0,
+  'M4: the identity is no longer the explanation');
+ok(/keeps the power identical/.test(note),
+  'M5: and ↺ is described by what it restores');
+
+type(inputs()[0], '0.05');
+ok(/−\d\.\d\d dB quieter/.test(editNote().textContent),
+  'M6: a smaller amplitude reads as quieter: ' + editNote().textContent);
+
+type(inputs()[1], '0.05');
+note = editNote().textContent;
+ok(/2 pulses/.test(note) && /dB to /.test(note),
+  'M7: two overrides give the range, not one number: ' + note);
+
+type(inputs()[0], '-0.2'); type(inputs()[1], inputs()[1].value === '' ? '0' : '0');
+note = editNote().textContent;
+ok(/inverts the pulse/.test(note), 'M8: a sign flip is called out: ' + note);
+ok(/silent \(amplitude 0\)/.test(note), 'M9: a zeroed row is called out too: ' + note);
+
+/* ── N. the stored amplitude stays reachable ──────────────────────────
+ * `amplitude now` renders rounded so the Δ column fits on the card; the
+ * exact stored float must still be one hover away. */
+plan = mkRealPlan();
+openPopup(plan);
+const oldCell = card().querySelector('.fsp-old');
+ok(oldCell && oldCell.textContent === '0.0692',
+  'N1: the stored amplitude is shown');
+const longPlan = mkRealPlan();
+longPlan.amps[0].old = 0.011220184543019634;
+openPopup(longPlan);
+const longCell = card().querySelector('.fsp-old');
+ok(longCell.textContent.length <= 9,
+  'N2: a 20-digit stored float is rendered short: ' + longCell.textContent);
+ok(longCell.title === '0.011220184543019634',
+  'N3: ...with the exact value on hover: ' + longCell.title);
+
 process.exit(fails ? 1 : 0);
