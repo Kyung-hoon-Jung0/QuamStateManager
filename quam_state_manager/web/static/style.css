@@ -3052,6 +3052,23 @@ th.sortable.sort-desc::after { content: '\25BC'; opacity: 0.8; }
     font-size: .76em; font-weight: 600; color: var(--pico-muted-color);
 }
 .exp-filter-toggle:hover { color: var(--pico-primary); border-color: var(--pico-primary); }
+/* The Sort toggle carries a little more weight than its Experiments twin, and
+   a faint SM-blue ground (customer, 2026-09-11: "진짜 조금만 살짝 크기를 키우고
+   ... 블루칼라로 살짝만 포인트"). The band it opens is folded by default now, so
+   this button IS the way back -- docs/152 is the round where a control folded
+   behind something too quiet went unfound. A tint and a blue caret, not a
+   filled button: it sits in a toolbar beside date pills and must not shout. */
+#sort-banner-toggle {
+    padding: 3px 10px; font-size: .82em;
+    color: var(--pico-primary);
+    border-color: color-mix(in srgb, var(--pico-primary) 45%, transparent);
+    background: color-mix(in srgb, var(--pico-primary) 8%, transparent);
+}
+#sort-banner-toggle:hover {
+    background: color-mix(in srgb, var(--pico-primary) 16%, transparent);
+    border-color: var(--pico-primary);
+}
+#sort-banner-toggle .exp-filter-toggle-caret { color: var(--pico-primary); }
 .exp-filter-toggle-caret { transition: transform .12s; }
 body.exp-filter-collapsed .exp-filter-toggle-caret { transform: rotate(-90deg); }
 body.exp-filter-collapsed .exp-filter-section { display: none; }
@@ -5566,16 +5583,19 @@ input.tree-edit-input {
    The banners take their natural height; .datasets-scroll flex-grows into the
    rest and scrolls internally. min-height:0 lets it shrink; if the banners are
    very tall it bottoms out and #table-pane scrolls as a fallback. */
-.datasets-page { display: flex; flex-direction: column; height: 100%; min-height: 0; }
-/* flex:1 fills the column; the max-height is a SAFETY NET only — if height:100%
-   ever fails to resolve (no definite parent), it stops the virtual-scroll spacer
-   from ballooning the box to ~39000px. In the normal case flex wins (height is
-   well under the cap). */
-.datasets-page > .datasets-scroll { flex: 1 1 auto; min-height: 8rem; max-height: calc(100vh - 10rem); }
+/* ONE scroller (customer, 2026-09-11 — "단 하나의 global scrolling").
+   #table-pane scrolls; this page takes its natural height inside it. Before
+   this, .datasets-page was height:100% of the pane and the table box got
+   whatever the banners left — measured at 158 px on a 1000 px viewport, with a
+   second scrollbar inside it. Same move docs/141 §4q made for the two grids. */
+.datasets-page { display: flex; flex-direction: column; min-height: 0; }
+.datasets-page > .datasets-scroll { flex: 0 0 auto; min-height: 0; max-height: none; }
 .datasets-scroll {
-    max-height: calc(100vh - 22rem);
-    overflow-y: auto;
-    overflow-x: auto;   /* widen a column past the panel → horizontal scroll */
+    max-height: none;
+    /* `visible` on BOTH axes, deliberately: CSS forces a non-visible value on
+       the other axis, so `overflow-x: auto` here would silently restore the
+       vertical scrollbar this change removes. The pane scrolls sideways. */
+    overflow: visible;
     border: 1px solid var(--pico-muted-border-color);
     border-radius: 4px;
     /* MUST NOT be ``contain: strict`` — strict bundles ``contain: size``,
@@ -5584,7 +5604,9 @@ input.tree-edit-input {
        scroller renders just its overscan buffer into a 0px clipped container
        and the table looks empty. ``content`` keeps layout/paint isolation
        without the size collapse so the box grows to its max-height + scrolls. */
-    contain: content;
+    /* No `contain` now that the pane is the scroller: containment would make
+       this box the sticky header's containing block and pin the header to a box
+       that never scrolls. */
     /* The sticky <thead> overlays the top of the scroll viewport; reserve its height
        so a row scrolled into view (a "go to state" deep-link / keyboard nav) never
        parks under the header where its top band would be click-dead. */
@@ -5598,7 +5620,12 @@ input.tree-edit-input {
    table-layout:fixed makes every cell obey it, so they can never drift. */
 .datasets-table-virtual { table-layout: fixed; width: max-content; min-width: 100%; margin: 0; }
 .datasets-table-virtual thead th {
-    position: sticky; top: 0; z-index: 2;
+    /* Anchored to #table-pane WITH its padding subtracted — the same expression
+       the two grids use (docs/141 §4q). `top: 0` sticks the header at the
+       pane's content-box top and leaves the padding strip above it showing the
+       row scrolling past: measured, the row above the header was visible over
+       it once the pane became the scroller. */
+    position: sticky; top: calc(-1 * var(--table-pane-pad-v, 0px)); z-index: 2;
     background: var(--pico-background-color);
     padding: 0 .4rem; text-align: left; font-weight: 600;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

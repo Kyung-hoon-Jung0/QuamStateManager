@@ -702,9 +702,13 @@
         // bring the row into the virtual window
         if (state.scrollEl) {
             var y = _kbIdx * ROW_HEIGHT;
-            var top = state.scrollEl.scrollTop, vh = state.scrollEl.clientHeight;
-            if (y < top) state.scrollEl.scrollTop = y;
-            else if (y + ROW_HEIGHT > top + vh) state.scrollEl.scrollTop = y + ROW_HEIGHT - vh;
+            // `y` is a position in the LIST; the scroller's own coordinates
+            // are offset by wherever the list begins inside it.
+            var _m = listMetrics();
+            var base = state.scrollEl.scrollTop - _m.top;
+            var top = _m.top, vh = _m.viewport;
+            if (y < top) state.scrollEl.scrollTop = base + y;
+            else if (y + ROW_HEIGHT > top + vh) state.scrollEl.scrollTop = base + y + ROW_HEIGHT - vh;
         }
         renderWindow(true);
         _kbHighlight();
@@ -1065,11 +1069,26 @@
         });
     }
 
+    /* How far into the ROW LIST the scroller is, and how much of it is on
+       screen. The scroller is #table-pane now (customer, 2026-09-11: one
+       scrollbar), so the list starts some way down it and `scrollTop` alone is
+       no longer the answer. Measured from the tbody's own position, which is
+       self-correcting — the top spacer lives inside the tbody, so the number
+       moves with whatever was last rendered — and correct for EITHER scroller,
+       so there is no second code path to keep in step. */
+    function listMetrics() {
+        var el = state.scrollEl, tb = state.tbody;
+        var vh = el.clientHeight;
+        var delta = tb.getBoundingClientRect().top - el.getBoundingClientRect().top;
+        return { top: Math.max(0, -delta), viewport: Math.max(0, vh - Math.max(0, delta)) };
+    }
+
     function renderWindow(force) {
         if (!state.scrollEl || !state.tbody) return;
         var total = state.visible.length;
-        var scrollTop = state.scrollEl.scrollTop;
-        var viewport = state.scrollEl.clientHeight;
+        var _m = listMetrics();
+        var scrollTop = _m.top;
+        var viewport = _m.viewport;
         var first = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
         var last = Math.min(total, Math.ceil((scrollTop + viewport) / ROW_HEIGHT) + OVERSCAN);
         if (!force && first === state.lastFirst && last === state.lastLast) return;
@@ -1102,7 +1121,7 @@
         // there themselves has seen the same thing (docs/104 #3). Held runs
         // are NOT acknowledged: they are not in the table yet.
         if (state.arrivalUids && state.arrivalUids.size && !state.pendingDelta &&
-            state.scrollEl && state.scrollEl.scrollTop <= ROW_HEIGHT) {
+            state.scrollEl && listMetrics().top <= ROW_HEIGHT) {
             state.arrivalUids.clear();
             _updateNewPill();
         }
@@ -2190,7 +2209,11 @@
         applyFilters();
     };
     function _restoreSortCollapsed() {
-        var c = false; try { c = localStorage.getItem(SORT_COLLAPSE_LS) === '1'; } catch (e) {}
+        // FOLDED by default (customer, 2026-09-11). Absent preference = folded;
+        // only an explicit '0' -- the user having opened the band -- keeps it
+        // open. Reading it as `=== '1'` made an absent value mean OPEN, which
+        // is why the page arrived with every badge row showing.
+        var c = true; try { c = localStorage.getItem(SORT_COLLAPSE_LS) !== '0'; } catch (e) {}
         document.body.classList.toggle('sort-banner-collapsed', c);
         var b = document.getElementById('sort-banner-toggle');
         if (b) b.setAttribute('aria-expanded', c ? 'false' : 'true');
@@ -2295,7 +2318,12 @@
                                                        : state.folderFilter.has(v));
             });
         }
-        state.scrollEl = scroll;
+        // #table-pane is the ONE scroller (customer, 2026-09-11). The list box
+        // keeps its id and its role as the list's frame; it just does not
+        // scroll any more. Falling back to it keeps every other surface that
+        // renders this table (and the harness) working unchanged.
+        state.listEl = scroll;
+        state.scrollEl = document.getElementById('table-pane') || scroll;
         state.tbody = tbody;
         state.emptyEl = document.getElementById('datasets-empty');
         state.lastFirst = -1;
@@ -2324,7 +2352,7 @@
         // listeners on the old tbody/scroll/search nodes are GC'd along with
         // them. Re-binding on every init is correct (and idempotent on the
         // first page load — init runs exactly once before any swap).
-        scroll.addEventListener('scroll', onScroll, {passive: true});
+        state.scrollEl.addEventListener('scroll', onScroll, {passive: true});
         tbody.addEventListener('pointerdown', onTbodyPointerDown);
         // End the press freeze when the pointer lifts or the browser takes the gesture for
         // scrolling (pointercancel) — so a touch finger-scroll never leaves the table frozen
