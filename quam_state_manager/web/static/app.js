@@ -15622,10 +15622,12 @@ document.addEventListener('click', function(evt) {
                 // that means "the pane now shows this URL" -- the same order
                 // htmx's own hx-push-url uses.
                 var _url = entry.url;
-                var _pushed = false;
+                // No once-guard here: _onSwap removes both listeners BEFORE
+                // it pushes, and DOM dispatch is synchronous, so there is no
+                // second call to guard against. A flag no mutation can reach
+                // is dead code claiming a protection it is not providing --
+                // the sweep for this commit caught exactly that.
                 var _push = function () {
-                    if (_pushed) return;
-                    _pushed = true;
                     try {
                         // PaneState's skip path pushes its own {htmx:true}
                         // entry for a KEEP route synchronously; a second entry

@@ -138,6 +138,11 @@ function swap(win, url, okFlag) {
     swap(win, '/param-history');
     swap(win, '/param-history');
     ok(win._pushes.length === 1, '5a a second swap does not push again');
+    /* Two independent mechanisms hold this, and it is worth saying which:
+       _onSwap removes both listeners BEFORE it pushes, AND _push refuses an
+       address that is already current. Removing the first alone leaks a
+       listener but changes nothing observable -- measured, a GREEN mutation
+       that is a genuine no-op rather than a gap in this pin. */
 })();
 
 /* 6. an entity pick still goes to the inspector and pushes nothing */
