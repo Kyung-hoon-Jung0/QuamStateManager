@@ -801,6 +801,14 @@ window._plotlyRender = function(divId, data, layout, config) {
         if (el.data && el.data.length > 0) {
             return Plotly.react(el, data, layout, config);
         }
+        // Plotly.newPlot does NOT clear a foreign child: it appends its own
+        // .plot-container beside whatever is already in the div. Every caller
+        // that writes a placeholder first -- "loading contrast...", "No numeric
+        // values", a Plot-library-failed line -- therefore ended up with that
+        // text sitting UNDER the finished chart, on every figure (customer,
+        // 2026-09-10). This branch is the one where el.data is empty, i.e. the
+        // div holds no plot, so anything in it is a stale placeholder.
+        if (el.firstChild) el.textContent = '';
         return Plotly.newPlot(el, data, layout, config);
     }).catch(function(e) {
         try { el.innerHTML = '<p class="muted" style="padding:.5rem">Plot library failed to load.</p>'; } catch (_) {}

@@ -648,3 +648,18 @@ def test_palette_nav_selfcheck_passes():
         pytest.skip("jsdom not installed (run `npm install jsdom`)")
     assert r.returncode == 0, (r.stdout + r.stderr)
     assert "all checks passed" in r.stdout, (r.stdout + r.stderr)
+
+
+_PLACEHOLDER_SELFCHECK = _ROOT / "tests" / "plot_placeholder_selfcheck.cjs"
+
+
+def test_plot_placeholder_selfcheck_passes():
+    """A "loading …" line is not part of the plot (customer, 2026-09-10)."""
+    r = subprocess.run(
+        ["node", str(_PLACEHOLDER_SELFCHECK)],
+        capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT), timeout=180,
+    )
+    if r.returncode == 2:
+        pytest.skip("jsdom not installed (run `npm install jsdom`)")
+    assert r.returncode == 0, (r.stdout + r.stderr)
+    assert "all checks passed" in r.stdout, (r.stdout + r.stderr)
