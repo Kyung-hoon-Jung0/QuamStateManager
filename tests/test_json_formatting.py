@@ -233,11 +233,18 @@ class TestTheResyncPathToo:
         wc = working_copy.create(str(tmp_path / "_inst"), live)
         assert _indent_of(wc.working_folder / "state.json") == 2
 
-        # something outside SM writes the chip, in its own 2-space format
+        # Something outside SM rewrites the chip AND reformats it while doing
+        # so — another tool, a reformat, a hand edit. This is the case `like`
+        # exists for: the working copy already exists, so the self-sniff would
+        # keep its own stale 2-space and the next apply would rewrite the whole
+        # chip back to it. (With the formats equal, the self-sniff covers it and
+        # dropping `like` is a real no-op — which is why the first version of
+        # this pin could not see the mutation.)
         moved = json.loads(json.dumps(_STATE))
         moved["qubits"]["q2"]["T1"] = 9.9e-5
-        _write_as(live / "state.json", moved, indent=2)
+        _write_as(live / "state.json", moved, indent=4)
+        _write_as(live / "wiring.json", _WIRING, indent=4)
 
         working_copy.sync_from_live(wc)
-        assert _indent_of(wc.working_folder / "state.json") == 2, \
+        assert _indent_of(wc.working_folder / "state.json") == 4, \
             "the re-synced working copy would reformat the chip on the next apply"
