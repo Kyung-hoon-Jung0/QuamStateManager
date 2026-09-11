@@ -17,11 +17,14 @@ import math
 
 import json
 import os
+import threading
 import time
 import uuid
 from pathlib import Path
 
 from quam_state_manager.core import journal as journal_mod
+from quam_state_manager.core import safe_io
+
 
 STATUSES = ("draft", "running", "stopping", "done", "failed", "stopped", "cancelled", "skipped")
 STEP_STATUSES = ("pending", "running", "done", "failed", "skipped", "cancelled")
@@ -43,14 +46,30 @@ def load(instance_path, chip: str) -> list[dict]:
 def _save(instance_path, chip: str, rows: list[dict]) -> None:
     p = path_for(instance_path, chip)
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".json.tmp")
     # allow_nan=False: a bare NaN / Infinity is not JSON, and one that reached
     # this file made every later card feed unparseable -- silently, and across
     # a restart, because the poison was on disk. Refusing here means a bad
     # value fails the write that produced it instead of the next twenty reads.
-    tmp.write_text(json.dumps(rows[-200:], default=str, allow_nan=False),
-                   encoding="utf-8")
-    os.replace(tmp, p)
+    # (json.dumps runs BEFORE anything is written, so a bad value never gets
+    # as far as replacing the good file.)
+    text = json.dumps(rows[-200:], default=str, allow_nan=False)
+    # …and through safe_io, whose temp file is THIS writer's alone. A fixed
+    # `<file>.tmp` is shared by two concurrent writers: their bytes interleave
+    # and the mixture is moved into place, which `load()` then reads as an
+    # empty list -- every plan card on the chip gone, with no message. Measured
+    # by the two-windows round.
+    safe_io.atomic_write_json(p, json.loads(text), compact=True)
+
+
+def _lock_for(instance_path, chip: str):
+    """One lock per plan file — `safe_io.path_lock` is the one registry.
+
+    Atomic writes stop a CORRUPT file; they do not stop two read-modify-write
+    cycles erasing one another, nor (on Windows) two `ReplaceFileW` calls
+    colliding on one target. Both browser windows talk to one Flask process,
+    so a process lock is the whole of the reported case.
+    """
+    return safe_io.path_lock(path_for(instance_path, chip))
 
 
 def normalize_steps(steps) -> list[dict]:
@@ -89,9 +108,10 @@ def add(instance_path, chip: str, *, title: str, steps: list, mode: str | None, 
            "created_by": created_by, "source": source, "reason": reason, "session_id": session_id,
            "started_by": None, "started_at": None, "pre_ts": None, "ended": None, "ended_by": None,
            "summary": None, "note": None}
-    rows = load(instance_path, chip)
-    rows.append(rec)
-    _save(instance_path, chip, rows)
+    with _lock_for(instance_path, chip):
+        rows = load(instance_path, chip)
+        rows.append(rec)
+        _save(instance_path, chip, rows)
     return rec
 
 
@@ -100,12 +120,13 @@ def get(instance_path, chip: str, plan_id: str) -> dict | None:
 
 
 def update(instance_path, chip: str, plan_id: str, **fields) -> dict | None:
-    rows = load(instance_path, chip)
-    rec = next((r for r in rows if r.get("id") == plan_id), None)
-    if rec is None:
-        return None
-    rec.update(fields)
-    _save(instance_path, chip, rows)
+    with _lock_for(instance_path, chip):
+        rows = load(instance_path, chip)
+        rec = next((r for r in rows if r.get("id") == plan_id), None)
+        if rec is None:
+            return None
+        rec.update(fields)
+        _save(instance_path, chip, rows)
     return rec
 
 
@@ -133,16 +154,17 @@ def step_for(rec: dict, *, step: int | None, node: str | None, targets: list | N
 
 def step_update(instance_path, chip: str, plan_id: str, step_i: int, **fields) -> dict | None:
     """Update one step and derive the plan's own status from its steps."""
-    rows = load(instance_path, chip)
-    rec = next((r for r in rows if r.get("id") == plan_id), None)
-    if rec is None:
-        return None
-    st = next((s for s in rec.get("steps") or [] if s.get("i") == step_i), None)
-    if st is None:
-        return None
-    st.update(fields)
-    _derive(rec)
-    _save(instance_path, chip, rows)
+    with _lock_for(instance_path, chip):
+        rows = load(instance_path, chip)
+        rec = next((r for r in rows if r.get("id") == plan_id), None)
+        if rec is None:
+            return None
+        st = next((s for s in rec.get("steps") or [] if s.get("i") == step_i), None)
+        if st is None:
+            return None
+        st.update(fields)
+        _derive(rec)
+        _save(instance_path, chip, rows)
     return rec
 
 
@@ -180,27 +202,28 @@ def counts(rec: dict) -> dict:
 
 
 def stop(instance_path, chip: str, plan_id: str, *, who: str, how: str) -> dict | None:
-    rows = load(instance_path, chip)
-    rec = next((r for r in rows if r.get("id") == plan_id), None)
-    if rec is None:
-        return None
-    if rec.get("status") in ("running", "stopping", "draft"):
-        running_step = any(s.get("status") == "running" for s in rec.get("steps") or [])
-        if how == "cancelled":
-            rec["status"] = "cancelled"
-        elif how == "stop after this run" and running_step:
-            rec["status"] = "stopping"                     # review R2-15: closes when that step ends
-        else:
-            rec["status"] = "stopped"
-        rec["ended_by"] = who
-        rec["note"] = how
-        if rec["status"] != "stopping":
-            rec["ended"] = time.time()
-        for s in rec.get("steps") or []:
-            if s.get("status") in ("pending",):
-                s["status"] = "cancelled"
-        rec["summary"] = counts(rec)
-    _save(instance_path, chip, rows)
+    with _lock_for(instance_path, chip):
+        rows = load(instance_path, chip)
+        rec = next((r for r in rows if r.get("id") == plan_id), None)
+        if rec is None:
+            return None
+        if rec.get("status") in ("running", "stopping", "draft"):
+            running_step = any(s.get("status") == "running" for s in rec.get("steps") or [])
+            if how == "cancelled":
+                rec["status"] = "cancelled"
+            elif how == "stop after this run" and running_step:
+                rec["status"] = "stopping"                     # review R2-15: closes when that step ends
+            else:
+                rec["status"] = "stopped"
+            rec["ended_by"] = who
+            rec["note"] = how
+            if rec["status"] != "stopping":
+                rec["ended"] = time.time()
+            for s in rec.get("steps") or []:
+                if s.get("status") in ("pending",):
+                    s["status"] = "cancelled"
+            rec["summary"] = counts(rec)
+        _save(instance_path, chip, rows)
     return rec
 
 

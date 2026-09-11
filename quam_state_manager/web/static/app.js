@@ -4310,7 +4310,23 @@ window.PhysAmp = (function () {
         return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA'
                      || a.isContentEditable);
     }
+    /* The Agent composer is the Agent page's primary input, so "/" belongs to
+       it rather than to the topbar search — /agent has no page-level search
+       box, so "/" used to jump to the topbar, take the rest of the line and
+       replace the pane with "No results for "run …"" (measured twice). */
+    function _agentComposer() {
+        var pane = document.getElementById('table-pane');
+        var el = pane && pane.querySelector('#agent-home .ag-input');
+        if (!el || el.disabled) return null;
+        // jsdom has no layout, so offsetParent is null for everything there;
+        // only trust it when something on the page actually has layout.
+        if (el.offsetParent === null && document.body.offsetParent !== undefined
+            && pane.offsetParent !== null) return null;
+        return el;
+    }
     function _primarySearch() {
+        var agent = _agentComposer();
+        if (agent) return agent;
         var pane = document.getElementById('table-pane');
         if (pane) {
             var els = pane.querySelectorAll('input[type="search"], .tree-search');
@@ -4328,6 +4344,15 @@ window.PhysAmp = (function () {
             }
         }
         return document.getElementById('global-search');
+    }
+    function _insertAtCaret(el, ch) {
+        var s = el.selectionStart, e = el.selectionEnd, v = el.value || '';
+        if (s == null) { el.value = v + ch; }
+        else {
+            el.value = v.slice(0, s) + ch + v.slice(e);
+            try { el.setSelectionRange(s + ch.length, s + ch.length); } catch (x) {}
+        }
+        el.dispatchEvent(new Event('input', { bubbles: true }));
     }
     var SHEET_ID = 'kb-cheatsheet';
     function _sheet() { return document.getElementById(SHEET_ID); }
@@ -4440,6 +4465,12 @@ window.PhysAmp = (function () {
             var el = _primarySearch();
             if (el) { ev.preventDefault(); el.focus(); el.select && el.select(); }
         } else if (ev.key === '?') {
+            // "?" is a character someone is trying to type when the Agent
+            // composer is on screen — asking the agent a question begins with
+            // one. The cheat sheet is still one keystroke away from anywhere
+            // else in the app.
+            var comp = _agentComposer();
+            if (comp) { ev.preventDefault(); comp.focus(); _insertAtCaret(comp, '?'); return; }
             ev.preventDefault();
             window._kbToggleCheatsheet();
         }

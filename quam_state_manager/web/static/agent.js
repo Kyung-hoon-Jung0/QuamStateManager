@@ -897,9 +897,37 @@ window.AgentPanel = (function () {
       var names = Object.keys(d.backends || {});
       if (!names.length) names = ["claude", "codex"];
       var anyFound = names.some(function (n) { return d.backends[n] && d.backends[n].found; });
-      var anyReg = names.some(function (n) { return reg[n] && reg[n].mcp; });
-      wireBadge(el, !anyFound ? "NO CLI" : (anyReg ? "CONNECTED" : "NOT CONNECTED"),
-                !anyFound ? "static" : (anyReg ? "ok" : "warn"));
+
+      /* The badge describes the CLI the composer will actually send to — the
+         one in the <select> beside Send — not an OR across every CLI on the
+         machine.
+         Measured: with codex registered and claude not, the strip read
+         "CONNECTED  claude … not registered as an MCP server  Connect →"
+         while the composer was set to claude, and the setup door 40 px to its
+         right said "3 setup steps", one of them `connect_claude`. The badge
+         and that counter are painted by the same call from the same object
+         and contradicted each other, because they answered the question with
+         two different rules. They use ONE rule now: the setup list's. */
+      var main = d["default"] || names[0];
+      var mainFound = !!(d.backends[main] && d.backends[main].found);
+      var todo = (su && su.todo) || [];
+      var mainReg = todo.indexOf("connect_" + main) < 0
+                    && !!(reg[main] && reg[main].mcp);
+      var others = names.filter(function (n) { return n !== main; });
+      var otherReg = others.filter(function (n) {
+        return d.backends[n] && d.backends[n].found
+               && todo.indexOf("connect_" + n) < 0 && reg[n] && reg[n].mcp;
+      }).length;
+      var otherFound = others.filter(function (n) { return d.backends[n] && d.backends[n].found; }).length;
+      var label, kind;
+      if (!anyFound) { label = "NO CLI"; kind = "static"; }
+      else if (!mainFound) { label = main.toUpperCase() + " MISSING"; kind = "warn"; }
+      else if (!mainReg) { label = "NOT CONNECTED"; kind = "warn"; }
+      else if (otherFound && otherReg < otherFound) {
+        // honest about a machine-wide summary: never a bare CONNECTED
+        label = (1 + otherReg) + " OF " + (1 + otherFound) + " CONNECTED"; kind = "ok";
+      } else { label = "CONNECTED"; kind = "ok"; }
+      wireBadge(el, label, kind);
       var tested = ((su && su.record && su.record.tested) || {});
       var html = names.map(function (n) {
         var r = reg[n] || { mcp: false, hooks: false, allow: null };
@@ -1015,6 +1043,21 @@ window.AgentPanel = (function () {
     S.after = 0;
     poll(true);
     schedule();
+    /* Put the caret where the page expects to be typed into.
+       Measured before this: activeElement was BODY at 0 / 800 / 2500 ms and a
+       typed sentence went nowhere at all, while a leading "/" was taken by the
+       app-wide focus-search shortcut and replaced the whole page with "No
+       results". Only the FULL page does this — the float is opened on top of
+       whatever someone was doing, and stealing the caret there would be the
+       same rudeness in the other direction. And only from BODY: if the person
+       is already typing somewhere, they chose that. */
+    if (!m.compact) {
+      var ta0 = m.root.querySelector(".ag-input");
+      var ae0 = document.activeElement;
+      if (ta0 && (!ae0 || ae0 === document.body)) {
+        try { ta0.focus({ preventScroll: true }); } catch (e) { ta0.focus(); }
+      }
+    }
     return m;
   }
   function unmountMissing() {

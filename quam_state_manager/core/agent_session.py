@@ -18,6 +18,7 @@ import re
 import time
 from pathlib import Path
 
+from quam_state_manager.core import safe_io
 from quam_state_manager.core import journal as journal_mod
 
 FIELDS = ("chip", "backend", "session_id", "mode", "owner", "started", "until", "pid", "worker_pid",
@@ -45,14 +46,22 @@ def save(instance_path, chip: str, **fields) -> dict:
     """Create or update the session record (merge). Returns the record."""
     p = path_for(instance_path, chip)
     p.parent.mkdir(parents=True, exist_ok=True)
-    cur = load(instance_path, chip) or {"chip": chip, "started": time.time()}
-    for k, v in fields.items():
-        if k in FIELDS:
-            cur[k] = v
-    cur["updated"] = time.time()
-    tmp = p.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(cur, default=str), encoding="utf-8")
-    os.replace(tmp, p)
+    # One lock across the whole read -> change -> write: an atomic write stops
+    # a CORRUPT file, not two cycles erasing one another (and on Windows two
+    # `ReplaceFileW` calls on one target collide outright -- measured at 40
+    # threads). Two windows, one process: see safe_io.path_lock.
+    with safe_io.path_lock(p):
+        cur = load(instance_path, chip) or {"chip": chip, "started": time.time()}
+        for k, v in fields.items():
+            if k in FIELDS:
+                cur[k] = v
+        cur["updated"] = time.time()
+    # safe_io's temp file is THIS writer's alone. A fixed `<file>.tmp` is
+    # shared by two concurrent writers: their bytes interleave and the
+    # mixture is replaced into place, which the reader then swallows as an
+    # empty store (agent_plans._save has the measurement).
+        safe_io.atomic_write_json(p, json.loads(json.dumps(cur, default=str)),
+                                  compact=True)
     return cur
 
 

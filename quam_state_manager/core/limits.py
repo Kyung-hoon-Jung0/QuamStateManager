@@ -19,6 +19,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from quam_state_manager.core import safe_io
 from quam_state_manager.core import journal as journal_mod
 
 MODES = ("auto", "ask-writes", "ask-all")
@@ -114,14 +115,21 @@ def save(instance_path, chip: str, patch: dict, *, who: str = "human", journal_c
     the display name while run_node loaded under the key, so a lowered
     human_recent_min never reached the gate."""
     clean = validate(patch)
-    cur = load(instance_path, chip)
-    before_mode = cur["mode"]
-    cur.update(clean)
     p = path_for(instance_path, chip)
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(cur, indent=1), encoding="utf-8")
-    os.replace(tmp, p)
+    # One lock across the whole read -> change -> write: an atomic write stops
+    # a CORRUPT file, not two cycles erasing one another (and on Windows two
+    # `ReplaceFileW` calls on one target collide outright -- measured at 40
+    # threads). Two windows, one process: see safe_io.path_lock.
+    with safe_io.path_lock(p):
+        cur = load(instance_path, chip)
+        before_mode = cur["mode"]
+        cur.update(clean)
+    # safe_io's temp file is THIS writer's alone. A fixed `<file>.tmp` is
+    # shared by two concurrent writers: their bytes interleave and the
+    # mixture is replaced into place, which the reader then swallows as an
+    # empty store (agent_plans._save has the measurement).
+        safe_io.atomic_write_json(p, cur)
     if "mode" in clean and clean["mode"] != before_mode:
         journal_mod.append(instance_path, journal_chip or chip,
                            f"mode {before_mode} -> {clean['mode']} (set by {who})", kind="sm")

@@ -181,7 +181,7 @@ window.AgentSetup = (function () {
     var root = (document.getElementById("as-jroot") || {}).value || "";
     var says = !!(document.getElementById("as-jsays") || {}).checked;
     api("POST", "/api/agent/setup/journal", { root: root, claude_says: says }).then(function (r) {
-      if (r.status !== 200) { alertErr(r.body.error); return; }
+      if (r.status !== 200) { alertErr(r.body.error, "#as-journal"); return; }
       load();
     });
   }
@@ -228,7 +228,41 @@ window.AgentSetup = (function () {
       revert();
     });
   }
-  function alertErr(msg) { var el = document.getElementById("as-body"); var p = document.createElement("p"); p.className = "ag-err"; p.textContent = msg || "failed"; el.insertBefore(p, el.firstChild); setTimeout(function () { p.remove(); }, 6000); }
+  /* Say it where it happened.
+   *
+   * This used to prepend into #as-body — the root of the page — so a failure
+   * from step 4 rendered 792 px above the top of the scroller and removed
+   * itself after 6 s: the press was indistinguishable from doing nothing
+   * (measured twice, and the message itself was a good one). Seven of the
+   * page's nine error paths already answer beside their own control; this is
+   * the eighth and ninth.
+   *
+   * `near` is a selector for the section that failed. With none — or when it
+   * is not on screen — the message goes to the top AND the page is scrolled to
+   * it, because an unseen error is the whole defect.
+   */
+  function alertErr(msg, near) {
+    var text = msg || "failed";
+    var host = near && document.querySelector(near);
+    var p = document.createElement("p");
+    p.className = "ag-err";
+    p.setAttribute("role", "alert");
+    p.textContent = text;
+    if (host) {
+      var old = host.querySelector(":scope > .ag-err");
+      if (old) old.remove();
+      host.appendChild(p);
+    } else {
+      var el = document.getElementById("as-body");
+      var prev = el.querySelector(":scope > .ag-err");
+      if (prev) prev.remove();
+      el.insertBefore(p, el.firstChild);
+    }
+    // It stays until the next attempt: a message that deletes itself after six
+    // seconds is one a person can miss entirely, and this one names the exact
+    // path that could not be used.
+    try { p.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) {}
+  }
   function loadContext() {
     api("GET", "/api/agent/setup/context").then(function (r) {
       var host = document.getElementById("as-ctx");
@@ -272,7 +306,7 @@ window.AgentSetup = (function () {
   }
   function writeContext() {
     api("POST", "/api/agent/setup/context", ctxBody(true)).then(function (r) {
-      if (r.status !== 200) { alertErr(r.body.error); return; }
+      if (r.status !== 200) { alertErr(r.body.error, "#as-ctx"); return; }
       load();
     });
   }

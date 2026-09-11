@@ -466,6 +466,46 @@ def _write_tmp_bytes(path: Path, data: bytes) -> Path:
     return tmp
 
 
+# One lock per file path, for read-modify-write over a small JSON store.
+#
+# `_tmp_for` (2026-09-09) stopped two writers of one file from SHARING a temp.
+# The two-windows round then found what that does not cover: two writers
+# replacing the same target at the same moment. On Windows `ReplaceFileW`
+# collides with itself under a burst ("Could not move the replacement file to
+# the file to be replaced", measured at 40 threads), and even where the
+# replace succeeds, two read-modify-write cycles lose one another's update --
+# which is how two people pressing the same plan card wiped every card on the
+# chip.
+#
+# Callers hold this across the whole read → change → write, not just the write.
+_PATH_LOCKS: dict[str, threading.Lock] = {}
+_PATH_LOCKS_GUARD = threading.Lock()
+
+
+def path_lock(path: Path | str) -> threading.Lock:
+    r"""The lock for *path* — the same object for every caller naming it.
+
+    Keyed WITHOUT touching the filesystem. `Path.resolve()` was the obvious
+    choice and is the wrong one: on Windows it answers ``\\?\C:\...`` for a
+    path that does not exist yet and ``C:\...`` once it does, so the lock split
+    in two at the exact moment the store was first created — measured, 37 of 40
+    concurrent plans surviving instead of 40. `abspath` + `normcase` normalises
+    the same spellings (relative vs absolute, case, separators) and cannot
+    change under the caller.
+
+    Process-local by design: the stores this guards are per-instance, and every
+    window of one SM talks to one process. A second SM process on the same
+    instance dir is the existing multi-instance case (docs/80), which those
+    stores handle by ownership, not by locking.
+    """
+    key = os.path.normcase(os.path.abspath(str(path)))
+    with _PATH_LOCKS_GUARD:
+        lk = _PATH_LOCKS.get(key)
+        if lk is None:
+            lk = _PATH_LOCKS[key] = threading.Lock()
+        return lk
+
+
 def atomic_write_json(path: Path | str, data, *, compact: bool = False) -> None:
     """Write *data* as pretty JSON to *path* atomically.
 

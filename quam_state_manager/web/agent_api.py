@@ -1907,6 +1907,14 @@ def plan_mode(pid: str):
     if mode != rec.get("mode"):                   # docs/173 S8: a mode change is a journal line
         journal_mod.append(inst, _chip_name(), f"plan `{rec.get('title')}` mode set to {mode} by {r._request_actor()}", kind="sm")
     rec = agent_plans.update(inst, chip, pid, mode=mode)
+    # The other window has to SEE this. Measured by the two-windows round:
+    # 30201 / 30497 / 30315 / 29558 ms over four trials, because this was the
+    # only mutating agent route that never woke the feed — so B's screen
+    # showed "mode ask-writes" beside a live Start button while the server
+    # held "auto", and mode is what decides whether the agent writes without
+    # asking. A new card crosses in 84-236 ms; so does this now.
+    _bump()
+    _wake()
     return jsonify(ok=True, plan=_plan_view(rec))
 
 
