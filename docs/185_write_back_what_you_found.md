@@ -60,6 +60,11 @@ to end through the real routes — **one edited value is a one-line diff**, with
 size change under 40 bytes rather than +114,038, and a companion pin that the
 value really did land.
 
+**Mutation sweep: 10/10.** The tenth needed its own pin: `sync_from_live`
+rewrites the working copy from the live chip — the path a drift banner's *take
+live* and every auto-pull go through — and a working copy re-born at indent 4
+reformats the chip on the *next* apply, which a load-then-edit test cannot see.
+
 ### Recorded, not mine
 
 `tests/test_safe_io.py::test_reader_survives_concurrent_writes` fails on this

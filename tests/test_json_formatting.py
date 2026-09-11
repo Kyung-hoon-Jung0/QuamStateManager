@@ -215,3 +215,29 @@ class TestEndToEnd:
         c.post("/state/apply-to-live")
         doc = json.loads((env["live"] / "state.json").read_text(encoding="utf-8"))
         assert doc["qubits"]["q1"]["T1"] == 2.99e-5
+
+
+class TestTheResyncPathToo:
+    """`sync_from_live` rewrites the working copy from the live chip, and it is
+    the path a drift banner's "take live" and every auto-pull go through. A
+    working copy re-born at indent 4 reformats the chip on the NEXT apply, so
+    the mutation that drops `like` there is invisible to a load-then-edit test.
+    """
+
+    def test_a_resync_keeps_the_live_format(self, tmp_path):
+        from quam_state_manager.core import working_copy
+
+        live = tmp_path / "chip"
+        _write_as(live / "state.json", _STATE, indent=2)
+        _write_as(live / "wiring.json", _WIRING, indent=2)
+        wc = working_copy.create(str(tmp_path / "_inst"), live)
+        assert _indent_of(wc.working_folder / "state.json") == 2
+
+        # something outside SM writes the chip, in its own 2-space format
+        moved = json.loads(json.dumps(_STATE))
+        moved["qubits"]["q2"]["T1"] = 9.9e-5
+        _write_as(live / "state.json", moved, indent=2)
+
+        working_copy.sync_from_live(wc)
+        assert _indent_of(wc.working_folder / "state.json") == 2, \
+            "the re-synced working copy would reformat the chip on the next apply"
