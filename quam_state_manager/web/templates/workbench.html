@@ -159,8 +159,8 @@
     <div id="wb-left">
       <iframe id="wb-qb" title="Qualibrate"></iframe>
       <div id="wb-fallback">
-        <strong>Qualibrate didn't load in the frame.</strong>
-        <p>It may not be running at this URL, or a future version added a framing
+        <strong id="wb-fb-head">Qualibrate didn't load in the frame.</strong>
+        <p id="wb-fb-why">It may not be running at this URL, or a future version added a framing
            header (<code>X-Frame-Options</code> / <code>frame-ancestors</code>).
            Check the URL above, or open it directly.</p>
         <a class="btn" id="wb-fallback-link" href="#" target="_blank" rel="noopener">Open Qualibrate in a new tab</a>
@@ -213,14 +213,81 @@
       // ── Qualibrate URL / load (preserved) ──
       function currentUrl() { return ls(URL_KEY) || QB_DEFAULT; }
       var loadTimer = null;
-      function loadQb(url) {
-        input.value = url; newtab.href = url; fbLink.href = url;
-        fb.classList.remove("show");
-        clearTimeout(loadTimer);
-        loadTimer = setTimeout(function () { fb.classList.add("show"); }, 9000);
-        qb.src = url;
+      var loadSeq = 0;                      // the press this answer belongs to
+      var fbHead = document.getElementById("wb-fb-head");
+      var fbWhy = document.getElementById("wb-fb-why");
+      var FRAME_WAIT_MS = 6000;
+
+      /* Say the press landed, and say which failure it was.
+         Customer report: changing the port and pressing Reload produced NO
+         reaction at all. Measured cause: the iframe fires `load` even on a
+         failed navigation (2044 ms on a dead address — Chrome's error page is
+         a load), so the 9 s fallback timer was always cancelled and the panel
+         that exists to explain the failure never appeared. */
+      function fbShow(head, why) {
+        if (head) fbHead.textContent = head;
+        if (why) fbWhy.innerHTML = why;
+        fb.classList.add("show");
       }
-      qb.addEventListener("load", function () { clearTimeout(loadTimer); });
+      function fbHide() { fb.classList.remove("show"); }
+
+      function loadQb(url) {
+        var seq = ++loadSeq;
+        input.value = url; newtab.href = url; fbLink.href = url;
+        clearTimeout(loadTimer);
+        // 1. the press is acknowledged AT ONCE — this is the whole complaint
+        fbShow("Connecting to " + url + "…",
+               "If this stays up, nothing is serving Qualibrate there.");
+        qb.src = url;
+
+        /* 2. ASK THE ADDRESS. Only the parent can tell "nothing is listening"
+              from "something answered": the iframe cannot, and its `load`
+              event lies. `no-cors` means the answer is opaque, which is all
+              that is needed — it resolved, so something is there. */
+        var alive = null;
+        fetch(url, { mode: "no-cors", cache: "no-store" }).then(
+          function () { alive = true; },
+          function () { alive = false; }
+        ).then(function () {
+          if (seq !== loadSeq) return;                 // a later press won
+          if (alive === false) {
+            fbShow("Nothing answered at " + url,
+                   "Check the address and the port, and that Qualibrate is "
+                   + "running. <code>qualibrate start</code> serves "
+                   + "<code>http://127.0.0.1:8001</code> by default.");
+          }
+        });
+
+        /* 3. It answers but may still refuse to be framed. `load` cannot
+              settle that either, so the wait stands until the frame has had
+              its chance — and it is only cleared by a load we have reason to
+              believe (the address answered). */
+        loadTimer = setTimeout(function () {
+          if (seq !== loadSeq) return;
+          if (alive) {
+            fbShow("Qualibrate didn't load in the frame.",
+                   "The address answered, so it is probably a framing header "
+                   + "(<code>X-Frame-Options</code> / <code>frame-ancestors</code>). "
+                   + "Open it directly instead.");
+          }
+        }, FRAME_WAIT_MS);
+      }
+      qb.addEventListener("load", function () {
+        // A failed navigation fires this too, so it is NOT evidence on its
+        // own. Clear only once the address has been shown to answer.
+        var seq = loadSeq;
+        setTimeout(function () {
+          if (seq !== loadSeq) return;
+          if (qb.getAttribute("src") && fb.classList.contains("show")
+              && fbHead.textContent.indexOf("Connecting") === 0) {
+            // still on the acknowledgement and the frame loaded something:
+            // the probe decides, and if it said dead it has already spoken.
+            fetch(qb.getAttribute("src"), { mode: "no-cors", cache: "no-store" })
+              .then(function () { if (seq === loadSeq) { clearTimeout(loadTimer); fbHide(); } },
+                    function () { /* the probe above already says what is wrong */ });
+          }
+        }, 0);
+      });
       function setUrl(url) { url = (url || "").trim(); if (!url) return; lsSet(URL_KEY, url); loadQb(url); }
       document.getElementById("wb-go").addEventListener("click", function () { setUrl(input.value); });
       input.addEventListener("keydown", function (e) { if (e.key === "Enter") setUrl(input.value); });

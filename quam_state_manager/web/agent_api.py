@@ -35,6 +35,15 @@ from flask import Blueprint, current_app, jsonify, request
 from quam_state_manager.core import journal as journal_mod
 from quam_state_manager.core.loader import natural_key
 
+def _unknown_targets_msg(bad: list) -> str:
+    """"unknown targets ['q0']" was a Python list repr, brackets and quotes
+    included, shown verbatim to the person who typed it."""
+    names = ", ".join(str(b) for b in bad)
+    one = len(bad) == 1
+    return ("no qubit or pair called %s on this chip" % names if one
+            else "no qubit or pair called: %s" % names)
+
+
 def _ascii_actor(s: str) -> str:
     """A name as a header can carry it (user directive: SM works in English;
     what you SAY to the agent is the exception, and that is a JSON body)."""
@@ -1355,7 +1364,7 @@ def run_node():
     known = set(store.qubit_names) | set(store.qubit_pair_names)
     bad = [t for t in targets if t not in known]
     if bad:
-        return _err(f"unknown targets {bad}", 400, known=sorted(known, key=natural_key)[:80])
+        return _err(_unknown_targets_msg(bad), 400, known=sorted(known, key=natural_key)[:80])
     inst, chip, name = current_app.instance_path, _chip_key(), _chip_name()
     adapter = _run_adapter()
     reg = _registry()
@@ -1833,7 +1842,7 @@ def plans_add():
             return _err((parsed or {}).get("error") or "usage: /run <node> <targets...> [param=value ...]")
         bad = [t for t in parsed["targets"] if t not in known]
         if bad:
-            return _err(f"unknown targets {bad}", 400, known=sorted(known, key=natural_key)[:80])
+            return _err(_unknown_targets_msg(bad), 400, known=sorted(known, key=natural_key)[:80])
         # review R2-16: the node name is checked NOW, not after a real session spun up
         try:
             from quam_state_manager.core import scheduler
@@ -1843,7 +1852,7 @@ def plans_add():
         with _SCAN_LOCK:
             info, avail = agent_runs.resolve_node(folder, parsed["node"], instance_path=inst)
         if info is None:
-            return _err(f"no node named {parsed['node']!r} in the calibrations folder", 400,
+            return _err(f"no node called {parsed['node']} in the calibrations folder", 400,
                         available=sorted({i.name for i in avail},
                                          key=natural_key)[:40])
         parsed["node"] = info.name
@@ -1862,7 +1871,7 @@ def plans_add():
         bad = sorted({t for s in steps for t in (s.get("targets") or []) if t not in known},
                      key=natural_key)
         if bad:
-            return _err(f"unknown targets {bad}", 400, known=sorted(known, key=natural_key)[:80])
+            return _err(_unknown_targets_msg(bad), 400, known=sorted(known, key=natural_key)[:80])
     session = agent_session.load(inst, chip)
     mode = (session or {}).get("mode") or limits.load(inst, chip).get("mode")
     rec = agent_plans.add(inst, chip, title=title, steps=steps, mode=mode, created_by=actor, source=source,

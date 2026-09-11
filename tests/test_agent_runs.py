@@ -293,7 +293,13 @@ class TestGates:
         assert c.post("/api/agent/run-node", json={"node": "x", "reason": "r"}).status_code == 403
         assert _run(c, reason="").status_code == 400
         r = _run(c, targets=["nope"])
-        assert r.status_code == 400 and "unknown targets" in r.get_json()["error"]
+        # The RULE is: refused, and the offending name is in the message. The
+        # wording moved (docs/177) because "unknown targets ['nope']" was a
+        # Python list repr shown verbatim to the person who typed it.
+        body = r.get_json()
+        assert r.status_code == 400
+        assert "nope" in body["error"] and "[" not in body["error"]
+        assert body.get("known"), "the valid names ride along with the refusal"
         assert c.post("/api/agent/run-node", json={"node": "", "reason": "r"}, headers=AGENT).status_code == 400
 
     def test_no_chip(self, app):

@@ -111,7 +111,24 @@ window.AgentPanel = (function () {
       return r.json().catch(function () { return {}; }).then(function (j) { setUnreachable(false); return { status: r.status, body: j || {} }; });
     }, function () { setUnreachable(true); return { status: 0, body: { error: UNREACHABLE, unreachable: true } }; });
   }
-  function errText(r, fallback) { return (r && r.body && (r.body.error || r.body.message || r.body.how)) || fallback; }
+  /* What went wrong, AND the answer the server sent with it.
+   *
+   * A bad target ships `known` — 50 names on the customer's 20-qubit chip —
+   * and a bad node ships `available` (40 node names) in the SAME response the
+   * error came in. This function read `error` and dropped the rest, so a
+   * newcomer was told "unknown targets" by a page that was holding the list of
+   * every valid one. Measured with three different bad inputs. */
+  function errText(r, fallback) {
+    var b = (r && r.body) || {};
+    var msg = b.error || b.message || b.how || fallback;
+    var names = b.known || b.available;
+    if (names && names.length) {
+      var show = names.slice(0, 12).join("  ");
+      msg += "  —  try: " + show
+           + (names.length > 12 ? "  …and " + (names.length - 12) + " more" : "");
+    }
+    return msg;
+  }
   function setUnreachable(on) {
     if (S.unreachable === !!on) return;
     S.unreachable = !!on;
@@ -596,10 +613,69 @@ window.AgentPanel = (function () {
     if (!text) return false;
     var sel = root.querySelector(".ag-backend");
     var backend = (sel && sel.value) || S.defaultBackend;
-    ta.disabled = true;
+
+    /* OBSERVER is a safety belt, so it has to hold the one control that costs
+       money. `startPlan` / `cancelPlan` / `setPlanMode` / `arm` / `disarm` /
+       `endSession` each open with this guard; `submit` did not — and a
+       non-`/run` line here goes to POST /api/agent/chat/start, which spawns
+       the person's own logged-in claude/codex. Measured in real Chrome: with
+       the box ticked and every Start button gone, Enter still made a card and
+       still would have started a session. The tooltip promises "this window
+       shows but never starts, stops or approves". */
+    if (S.observer) {
+      toast("Observer mode is on for this window — it shows, it does not send. "
+            + "Untick “observer” to type to the agent.", "warning");
+      return false;
+    }
+
+    /* A line that begins with "/" is a COMMAND, and `/run` is the only one
+       there is. It must never be handed to the model: `/help`, `/ru …` and
+       `/RUN …` each spawned a real CLI session on the user's own login, and
+       `/runn …` was silently accepted AS `/run` (measured, one POST per line).
+       The composer's own placeholder advertises this grammar, so the grammar
+       has to answer for itself. */
+    var isRun = false;
+    if (text.charAt(0) === "/") {
+      var cmd = text.split(/\s/)[0];
+      if (cmd !== "/run") {
+        toast(cmd.toLowerCase() === "/run"
+                ? "Commands are lower-case — type /run, not " + cmd + "."
+                : "There is no " + cmd + " command. The only one is "
+                  + "/run <node> <targets> — anything that does not start "
+                  + "with / goes to the agent.",
+              "error");
+        return false;
+      }
+      isRun = true;
+    }
+
+    /* The box is NEVER disabled while a line is in flight.
+       `ta.disabled = true` means the textarea receives no key events at all,
+       and the flight is 15–29 ms on localhost — so at a normal 45 ms/char the
+       next line lost exactly one character, and the one it lost was the
+       leading "/", which turns an intended deterministic /run into a
+       model-bound chat message. Measured three times. A flag stops the double
+       send instead, and the box stays live. */
+    if (S.sending) return false;
+    S.sending = true;
+    var sentText = text;
     // review R2-16: a refused line stays in the box for the person to fix
-    var done = function (ok) { ta.disabled = false; if (ok) { ta.value = ""; grow(ta); } ta.focus(); poll(true); };
-    if (text.indexOf("/run") === 0) {
+    var done = function (ok) {
+      S.sending = false;
+      if (ok) {
+        // Remove exactly what was SENT rather than clearing: anything typed
+        // ahead during the flight is the person's next line, not ours to
+        // throw away (round 1 measured a second /run draft wiped this way).
+        var v = ta.value;
+        if (v.trim() === sentText) ta.value = "";
+        else if (v.indexOf(sentText) === 0) ta.value = v.slice(sentText.length).replace(/^[ \t]+/, "");
+        grow(ta);
+      }
+      var ae = document.activeElement;
+      if (!ae || ae === document.body || ae === ta) ta.focus();
+      poll(true);
+    };
+    if (isRun) {
       api("POST", "/api/agent/plans", { run_line: text }).then(function (r) {
         var ok = r.status === 200;
         if (!ok) toast(errText(r, "could not make the plan"), "error"); else toast("plan card ready — press Start when you mean it");

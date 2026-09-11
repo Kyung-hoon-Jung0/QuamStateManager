@@ -208,9 +208,17 @@ def parse_run_line(text: str) -> dict | None:
     """``/run <node> <targets...> [k=v ...]`` -> {node, targets, params}; the
     deterministic input that never passes through the model (docs/173 §3.3)."""
     t = (text or "").strip()
-    if not t.startswith("/run"):
+    words = t.split()
+    if not words or not words[0].startswith("/"):
         return None
-    parts = t.split()[1:]
+    if words[0] != "/run":
+        # `startswith("/run")` accepted `/runn <node> <targets>` and quietly
+        # ran it AS /run (measured: it made a plan card). A command is the
+        # whole word or it is not that command — and a `/`-line is never text
+        # for the model, so it is named here rather than falling through.
+        return {"error": "there is no %s command — the only one is "
+                         "/run <node> <targets...> [param=value ...]" % words[0]}
+    parts = words[1:]
     if not parts:
         return {"error": "usage: /run <node> <targets...> [param=value ...]"}
     node = parts[0]
