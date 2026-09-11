@@ -80,6 +80,11 @@ beside the button it belongs to.
   goes through the one door (posts `/field/edit`, declares the chip token,
   answers both 409 offers, refreshes the tray, and says the live chip is
   untouched).
+- **Mutation sweep: 14/14.** Two needed a second attempt, both the same shape —
+  a pin watching a NAME rather than the behaviour. `if (false) {` leaves every
+  word of the FSP branch inside a block that can no longer run, so the guard is
+  pinned together with what it feeds; and nothing checked what `delta_pct`
+  actually renders, only that the template called it.
 - `tests/stress_history_revert.cjs` — **15/15 in real headless Chrome**, zero
   console errors, on a copy of the customer's chip.
 

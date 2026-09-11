@@ -200,9 +200,16 @@ class TestRevertGoesThroughTheOneDoor:
         assert 'body.append("expect_chip"' in self._blk()
 
     def test_it_answers_the_fsp_offer(self):
+        """The GUARD together with what it feeds. `if (false) {` leaves every
+        one of these words inside a block that can no longer run, so a
+        presence check alone reads as green."""
         blk = self._blk()
-        assert "fsp_compensation" in blk and "_openFspPopup" in blk
+        assert "data.fsp_compensation && window._openFspPopup" in blk
         assert "fsp_ack" in blk
+
+    def test_it_answers_the_type_fix_offer_by_its_guard_too(self):
+        blk = self._blk()
+        assert "data.type_fix && window._confirmTypeFix" in blk
 
     def test_it_answers_the_type_fix_offer(self):
         blk = self._blk()
@@ -234,3 +241,41 @@ class TestRevertGoesThroughTheOneDoor:
         # …and the live chip is untouched until Apply.
         doc = json.loads((env["live"] / "state.json").read_text(encoding="utf-8"))
         assert doc["qubits"]["q1"]["T1"] == 2.0e-5
+
+
+class TestTheCompactDelta:
+    """`delta_pct` is what keeps a 23-character number from burying the button.
+    The pins above only check that the template CALLS it — this checks what it
+    renders."""
+
+    def _render(self, env, old, new):
+        from flask import render_template_string
+        tpl = ("{% from '_delta_macros.html' import delta_pct %}"
+               "{{ delta_pct(old, new, 'x') }}")
+        with env["app"].test_request_context():
+            return render_template_string(tpl, old=old, new=new)
+
+    def test_only_the_percent_is_on_screen(self, env):
+        html = self._render(env, 1.0e-5, 9.9e-5)
+        assert "%" in html
+        # the full-precision text must NOT be in the body
+        assert ">+0.0000" not in html, html
+        # (9.9e-5 - 1.0e-5) / 1.0e-5 = 8.9
+        assert ">+890%<" in html, html
+
+    def test_the_exact_number_is_one_hover_away(self, env):
+        html = self._render(env, 1.0e-5, 9.9e-5)
+        assert 'title="' in html
+        i = html.index('title="')
+        title = html[i + 7:html.index('"', i + 7)]
+        assert title.strip(), html
+
+    def test_a_meaningless_delta_still_renders_nothing(self, env):
+        """docs/76's rule survives: no fabricated zero for two strings."""
+        assert self._render(env, "a", "b").strip() == ""
+
+    def test_it_falls_back_to_the_text_when_there_is_no_percent(self, env):
+        """A change from zero has no meaningful ratio — showing an empty chip
+        would be worse than showing the number."""
+        html = self._render(env, 0, 5.0)
+        assert html.strip(), "a delta from zero rendered nothing at all"
