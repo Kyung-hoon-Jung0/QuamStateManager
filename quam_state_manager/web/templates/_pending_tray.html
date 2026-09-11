@@ -3,6 +3,11 @@
 <div id="pending-tray"
      class="pending-tray{% if not active_name and change_count == 0 and not working_dirty and not (qualibrate_tray is defined and qualibrate_tray) %} tray-empty{% endif %}"
      data-change-count="{{ change_count }}"
+     {# docs/179: the change SET this screen is showing, not just how many.
+        doStateSync and the tray's own Apply button both declare it, and the
+        gate refuses on a set that no longer matches — including one that
+        happens to be the same SIZE. #}
+     data-change-sig="{{ change_sig | default('') }}"
      data-working-dirty="{{ '1' if working_dirty else '0' }}"
      {# docs/110 #10-A: the store's mutation_seq — PaneState's freshness beacon.
         The tray renders on every page AND OOB-swaps on every mutation, so the
@@ -199,6 +204,11 @@
               hx-target="#pending-tray"
               hx-swap="outerHTML"
               hx-disabled-elt="this"
+              {# docs/179: what THIS screen is showing, which is the consent
+                 record. Without it the gate sees no opinion and never fires,
+                 and another window's staged edit reaches the instrument under
+                 a press that showed nothing. #}
+              hx-vals='{"seen_changes": "{{ change_count }}", "seen_sig": "{{ change_sig }}"}'
               hx-confirm="Apply the working state to the live chip's state.json / wiring.json now?"
               data-after-request="clearUndo"
               title="Push the working state (your saved, not-yet-applied edits) to the live chip.">

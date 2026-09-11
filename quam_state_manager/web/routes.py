@@ -6369,6 +6369,12 @@ def _applied_log_rows(ctx: dict | None = None, limit: int = 50) -> list[dict]:
     return rows
 
 
+def _change_log_sig_of(changes) -> str:
+    """The same digest, over an already-read list of ChangeEntry (docs/179)."""
+    paths = "\n".join(str(getattr(c, "dot_path", None) or "?") for c in (changes or []))
+    return hashlib.sha1(paths.encode("utf-8")).hexdigest()[:12]
+
+
 def _render_tray(*, oob: bool) -> str:
     """Render ``#pending-tray`` — the single tray renderer for both direct
     target swaps and OOB swaps.
@@ -6386,6 +6392,9 @@ def _render_tray(*, oob: bool) -> str:
         "_pending_tray.html",
         changes=changes,
         change_count=len(changes),
+        # docs/179: what this screen is SHOWING, so its own Apply button can
+        # declare it. A count cannot tell two different change sets apart.
+        change_sig=_change_log_sig_of(changes),
         working_dirty=_working_dirty(),
         # The badge's else-branch says "Working state matches the live chip" —
         # a claim about LIVE — while its verdict was built only from LOCAL edit
@@ -15605,6 +15614,7 @@ def state_review():
         summary=Differ.summary(entries),
         total=len(entries),
         unsaved=len(store.change_log),
+        change_sig=_change_log_sig(store),
         working_dirty=bool(ctx.get("working_dirty")),
         chip_origin=_active_origin(),
     )
@@ -16010,6 +16020,23 @@ def state_baseline_reset():
     return jsonify(ok=True, baseline_utc=ptr["captured_utc"], count=0)
 
 
+def _change_log_sig(store) -> str:
+    """A short digest of the change SET a screen is showing (docs/179).
+
+    The count was never what the presser saw — the paths were. Two windows
+    sharing one change log can hold the same NUMBER of pending edits while
+    holding different ones, and the count gate waves that through: A stages
+    alpha, B applies it, B stages beta, and A's press still declares the 1 it
+    is showing. Ordered dot paths, so a reordering is a different set (it is a
+    different log) while an identical set is byte-identical and never a refusal.
+
+    Callers hold ``store._lock`` where the log must not move under them.
+    """
+    paths = "\n".join(str(getattr(c, "dot_path", None) or "?")
+                       for c in (store.change_log or []))
+    return hashlib.sha1(paths.encode("utf-8")).hexdigest()[:12]
+
+
 def _unseen_edit_refusal(ctx) -> dict | None:
     """Refuse an apply that would write edits the presser never saw.
 
@@ -16034,7 +16061,8 @@ def _unseen_edit_refusal(ctx) -> dict | None:
     identical to before, so no caller that has not opted in can be refused.
     """
     seen_raw = request.values.get("seen_changes")
-    if seen_raw is None or seen_raw == "":
+    seen_sig = (request.values.get("seen_sig") or "").strip()
+    if (seen_raw is None or seen_raw == "") and not seen_sig:
         return None
     # ONE TOKEN NEVER COLLAPSES TWO GATES (docs/41). `force=1` already means
     # "overwrite live despite a staleness conflict" — a different question,
@@ -16047,18 +16075,40 @@ def _unseen_edit_refusal(ctx) -> dict | None:
     if store is None:
         return None
     try:
-        seen = int(seen_raw)
+        seen = int(seen_raw) if seen_raw not in (None, "") else None
     except (TypeError, ValueError):
+        seen = None
+    if seen is None and not seen_sig:
         return None
+
     with store._lock:
         have = len(store.change_log or [])
-        # ChangeEntry is a dataclass, not a dict.
-        paths = [str(getattr(c, "dot_path", None) or "?")
-                 for c in list(store.change_log or [])[seen:]][:8]
+        entries = list(store.change_log or [])
+        sig = _change_log_sig(store)
+        all_paths = [str(getattr(c, "dot_path", None) or "?") for c in entries]
+
+    # docs/179: the SET first. A signature that does not match means this screen
+    # was showing a different change log from the one about to be written —
+    # whether it holds more entries, fewer, or the same number of different
+    # ones. An identical set is byte-identical here and is never a refusal,
+    # which is the property docs/120 chose counting to get.
+    if seen_sig and seen_sig != sig:
+        extra = all_paths[seen:] if (seen is not None and have > seen) else all_paths
+        return {"status": "unseen_changes", "have": have,
+                "seen": seen if seen is not None else 0,
+                "paths": extra[:8],
+                "message": (
+                    "The pending edits on this screen are not the ones the "
+                    "chip is about to be written with — another State Manager "
+                    "window changed them. Applying now would write ITS edits "
+                    "to the live chip.")}
+    if seen_sig:
+        return None                      # the set matches: nothing unseen
+
     if have <= seen:
         return None
     return {"status": "unseen_changes", "have": have, "seen": seen,
-            "paths": paths,
+            "paths": all_paths[seen:][:8],
             "message": (
                 f"{have - seen} edit(s) were made in another State Manager "
                 f"window and are not shown on this screen. Applying now would "
@@ -16303,6 +16353,8 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
             "mode": "apply",
             "tray_html": render_template(
                 "_state_apply_conflict.html",
+                change_count=len(store.change_log or []),
+                change_sig=_change_log_sig(store),
                 staged_conflict=bool(ctx.get("working_dirty"))
                 and (bool(ctx.get("staged_base"))
                      or not ctx.get("pending_reapply"))),
@@ -16491,6 +16543,8 @@ def state_apply_to_live():
         # stash kept for the pull choice; staged_conflict — see the sync twin
         body = render_template(
             "_state_apply_conflict.html",
+            change_count=len(store.change_log or []),
+            change_sig=_change_log_sig(store),
             staged_conflict=bool(ctx.get("working_dirty"))
             and (bool(ctx.get("staged_base"))
                  or not ctx.get("pending_reapply")))

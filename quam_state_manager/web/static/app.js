@@ -2783,12 +2783,20 @@ window.doStateSync = function(mode, forced, ackUnseen) {
         var v = t && t.getAttribute("data-change-count");
         return (v === null || v === undefined || v === "") ? null : v;
     })();
+    // docs/179: the SET, not just how many. Two windows can hold the same
+    // NUMBER of pending edits while holding different ones, and the count gate
+    // waves that through.
+    var _seenSig = (function () {
+        var t = document.getElementById("pending-tray");
+        return (t && t.getAttribute("data-change-sig")) || "";
+    })();
     fetch("/state/sync", {
         method: "POST",
         headers: {"Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"},
         body: "mode=" + encodeURIComponent(mode) + (forced ? "&force=1" : "")
               + (ackUnseen ? "&ack_unseen=1" : "")
               + (_seen !== null ? "&seen_changes=" + encodeURIComponent(_seen) : "")
+              + (_seenSig ? "&seen_sig=" + encodeURIComponent(_seenSig) : "")
     })
         .then(function(r) { return r.json(); })
         .then(function(data) {

@@ -22,6 +22,10 @@
             hx-post="/state/apply-to-live?force=1"
             hx-target="#pending-tray"
             hx-swap="outerHTML"
+            {# docs/179: force=1 answers the STALENESS question. It has never
+               meant "and another window's edits too", so this door declares
+               its own screen like every other one. #}
+            hx-vals='{"seen_changes": "{{ change_count }}", "seen_sig": "{{ change_sig }}"}'
             hx-confirm="Overwrite the live chip with your working state? Changes written by an experiment program will be lost.">
       &#8593; Keep mine <span class="sync-btn-sub">&mdash; overwrite live</span></button>
     <button class="btn-sm outline" onclick="doStateSync('discard')"
@@ -47,6 +51,7 @@
             hx-post="/state/apply-to-live?force=1"
             hx-target="#pending-tray"
             hx-swap="outerHTML"
+            hx-vals='{"seen_changes": "{{ change_count }}", "seen_sig": "{{ change_sig }}"}'
             hx-confirm="Overwrite the live chip with your version? Changes written by an experiment program will be lost.">
       &#8593; Keep mine <span class="sync-btn-sub">&mdash; overwrite live</span></button>
   </div>
