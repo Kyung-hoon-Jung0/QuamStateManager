@@ -36,7 +36,12 @@
                     {% elif p.editable %}
                         {% set _stored = p.key | unit_hint %}
                         <form class="inline-edit fh-host" hx-post="/qubit/{{ qubit_name }}/edit" hx-target="#inspector-pane" hx-swap="innerHTML"
-                              hx-vals='js:{freq_sync: window.freqSyncFlag ? window.freqSyncFlag() : "1", expect_chip: window.__chipToken || ""}'>
+                              {# docs/183: NOT hx-vals='js:…' — htmx compiles those with
+                                 new Function, which this app's CSP forbids, and htmx
+                                 aborts the whole request while trying. One delegated
+                                 htmx:configRequest listener injects these instead
+                                 (app.js, `data-inject="chip-freq"`). #}
+                              data-inject="chip-freq">
                             <input type="hidden" name="dot_path" value="{{ p.dot_path }}">
                             <input type="text" name="value" class="edit-input{% if is_modified %} edit-input-modified{% endif %}"
                                    value="{{ p.value | groupdigits }}"

@@ -17486,6 +17486,35 @@ function _setQueryParam(path, key, value) {
     return base + (parts.length ? "?" + parts.join("&") : "") + hash;
 }
 
+/* docs/183 — the values an inspector edit has to carry, injected WITHOUT eval.
+ *
+ * These used to ride `hx-vals='js:{…}'`. htmx compiles a `js:` value with
+ * `new Function`, this app's CSP forbids `unsafe-eval`, and htmx aborts the
+ * request while evaluating — so pressing Enter in the qubit or pair inspector
+ * issued no request at all and the typed value was silently dropped. Measured
+ * on a copy of the customer's chip: 0 POSTs, tray unchanged, an EvalError at
+ * the press.
+ *
+ * Two things rode it, and only one of them was cosmetic:
+ *   freq_sync   — the toolbar's f01↔RF mirror toggle, a browser preference
+ *   expect_chip — the docs/120 chip-identity gate. With the attribute dead it
+ *                 never reached the server, so the inspector's gate was off.
+ *
+ * A separate listener rather than a branch inside the pulses one below: that
+ * handler rewrites `evt.detail.path` and returns early for everything else, and
+ * two unrelated concerns in one function is how the next one gets missed.
+ */
+document.addEventListener("htmx:configRequest", function (evt) {
+    var el = evt.detail && evt.detail.elt;
+    if (!el || !el.closest) return;
+    var host = el.closest('[data-inject~="chip-freq"]');
+    if (!host) return;
+    var p = evt.detail.parameters;
+    if (!p) return;
+    p.freq_sync = (window.freqSyncFlag ? window.freqSyncFlag() : "1");
+    p.expect_chip = window.__chipToken || "";
+});
+
 document.addEventListener("htmx:configRequest", function (evt) {
     var el = evt.detail.elt;
     if (!el) return;
