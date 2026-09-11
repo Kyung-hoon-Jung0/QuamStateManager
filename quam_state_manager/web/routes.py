@@ -71,6 +71,7 @@ from quam_state_manager.core import (
     regenerate,
     safe_io,
     scheduler,
+    search_synonyms,
     spec_thresholds,
     undo_journal,
     working_copy,
@@ -5511,7 +5512,7 @@ def _qubit_bulk_grid(store: QuamStore, dyn_hidden: set[str], modified: dict) -> 
          "unit": c.get("unit", ""), "default_on": c.get("default_on", True),
          "dyn": bool(c.get("dyn")), "multi": c.get("multi", 0),
          # the operation ids the fold hid from the header — search only
-         "search": c.get("search", "")}
+         "search": _search_text(c)}
         for c in specs
     ]
     # (kind, con, fem, port) -> {qubit (owner), band, freq} — built as cells
@@ -6134,6 +6135,37 @@ def _list_json_cell(merged: dict, path: str, modified: dict) -> dict[str, Any]:
             "old_display": "", "editable": False, "kind": "listedit"}
 
 
+def _search_text(col: dict) -> str:
+    """A column's invisible search haystack (docs/181).
+
+    Three parts, each earning its place:
+
+    * whatever the column already carried (the folded operation ids — docs/141:
+      a user who knows the chip searches for the real name, and the header
+      shows the folded one);
+    * **the template path**, which is the CHIP's own word for this column.
+      `Readout freq` addresses `qubits.{name}.resonator.f_01`; searching
+      `resonator` found nothing because the only place that word appeared was
+      a field the haystack did not read. This half needs no dictionary at all —
+      it is the chip telling us what it calls things;
+    * the synonym group terms, for the names that share no substring with each
+      other (`readout`/`resonator`/`ro`/`rr` and the three others). No substring
+      search can cross those, which is exactly the customer's report.
+
+    Derived from label/key/section/tmpl TOGETHER, so a column joins a group on
+    any of its own words.
+    """
+    base = str(col.get("search") or "")
+    tmpl = str(col.get("tmpl") or "")
+    # `{name}` is the row placeholder, never a word anyone searches for; the
+    # dots become spaces so `resonator` is a token rather than a fragment of
+    # `qubits.q1.resonator.f_01`.
+    tmpl_words = tmpl.replace("{name}", " ").replace(".", " ").replace("_", " ")
+    extra = search_synonyms.augment(
+        col.get("label"), col.get("key"), col.get("section"), base, tmpl)
+    return " ".join(p for p in (base, tmpl_words, extra) if p)
+
+
 def _pair_bulk_grid(store: QuamStore, modified: dict
                     ) -> tuple[list[dict], list[dict], list[dict]]:
     """Build the pair grid (columns, column_groups, rows). Columns are derived from
@@ -6158,6 +6190,12 @@ def _entity_bulk_grid(store: QuamStore, root: str, ids: list[str] | None,
     columns, path_map = derive_entity_columns(store, root, ids, expand_ports)
     if not columns:
         return [], [], []
+    # docs/181: the same haystack rule as the qubit grid. A pair's CZ columns
+    # live under `qubit_pairs.<p>.gates.cz.*` and its coupler under
+    # `...coupler.*`, so the template words and the coupler/cz group both
+    # matter here too.
+    for _c in columns:
+        _c["search"] = _search_text(_c)
 
     port_info: dict[tuple, dict[str, Any]] = {}
     with store._lock:
