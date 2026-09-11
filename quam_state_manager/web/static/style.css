@@ -1634,8 +1634,17 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
     box-shadow: 0 8px 24px rgba(0,0,0,.35); }
 .sm-th-row { display: flex; align-items: baseline; gap: .5rem;
     padding: .2rem .55rem; cursor: pointer; }
-.sm-th-row:hover, .sm-th-row.active {
-    background: color-mix(in srgb, var(--pico-primary) 16%, transparent); }
+/* Hover and SELECTION must not look the same. The mouse does NOT arm Enter
+   (a row under a resting cursor quietly deciding what Enter does is the worse
+   failure), so hovering gets a hint of the accent and the keyboard selection
+   keeps the full one plus a leading bar. They were measured identical, which
+   meant a person who hovered and pressed Enter got nothing while the screen
+   had told them otherwise. Clicking a hovered row still accepts it. */
+.sm-th-row:hover {
+    background: color-mix(in srgb, var(--pico-primary) 7%, transparent); }
+.sm-th-row.active {
+    background: color-mix(in srgb, var(--pico-primary) 16%, transparent);
+    box-shadow: inset 2px 0 0 var(--pico-primary); }
 /* The key is the IDENTITY: it is never the thing that gets cut. */
 .sm-th-label { font-family: var(--font-mono); font-size: .8rem;
     color: var(--pico-color); white-space: nowrap; flex: 0 0 auto; }
@@ -1649,6 +1658,17 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
 .sm-th-note { cursor: default; color: var(--color-text-muted);
     font-size: .7rem; font-style: italic; }
 .sm-th-note:hover { background: transparent; }
+/* The keys, said where the keys are used. Sticky, because the list scrolls. */
+.sm-th-keys { position: sticky; bottom: 0; cursor: default;
+    display: flex; gap: .5rem; justify-content: flex-end;
+    padding: .18rem .55rem; font-size: .64rem; letter-spacing: .01em;
+    color: var(--color-text-muted);
+    background: var(--color-surface, var(--pico-card-background-color));
+    border-top: 1px solid var(--pico-muted-border-color); }
+.sm-th-keys:hover { background: var(--color-surface, var(--pico-card-background-color)); }
+.sm-th-keys kbd { font-family: var(--font-mono); font-size: .95em;
+    padding: 0 .2em; border: 1px solid var(--pico-muted-border-color);
+    border-radius: .2em; background: transparent; color: inherit; }
 /* The note is a sentence, not a label: it carries the true value count, the
    extent, and the one mention of the range operator. */
 .sm-th-note .sm-th-label { white-space: normal; }

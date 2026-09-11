@@ -343,6 +343,7 @@ window.Typeahead = (function () {
             }
             p.appendChild(li);
         }
+        _keysRow(p, st);
         p.hidden = items.length === 0;
         if (!p.hidden && window._anchorPopover) {
             try { window._anchorPopover(p, st.input); } catch (e) {}
@@ -350,9 +351,26 @@ window.Typeahead = (function () {
         _paintActive(st);
     }
 
+    /* One muted line saying what the keys do — the customer's complaint is
+       that nobody knows how to use this, and a completion panel that never
+       names its own keys is the smallest version of that. Tab differs from
+       Enter only where a key can be completed WITHOUT its value, so the
+       two-stage boxes say so and the plain ones do not. */
+    function _keysRow(p, st) {
+        if (!p.children.length) return;
+        var li = document.createElement('li');
+        li.className = 'sm-th-keys';
+        li.setAttribute('aria-hidden', 'true');
+        var parts = ['<kbd>\u2191\u2193</kbd> choose', '<kbd>Enter</kbd> pick'];
+        if (!st.cfg.plain) parts.push('<kbd>Tab</kbd> key only');
+        parts.push('<kbd>Esc</kbd> close');
+        li.innerHTML = parts.map(function (x) { return '<span>' + x + '</span>'; }).join('');
+        p.appendChild(li);
+    }
+
     function _paintActive(st) {
         var p = _panel();
-        var rows = p.querySelectorAll('.sm-th-row');
+        var rows = p.querySelectorAll('.sm-th-row');   // the keys row is not one
         for (var i = 0; i < rows.length; i++) {
             rows[i].classList.toggle('active', i === st.active);
         }
@@ -435,6 +453,23 @@ window.Typeahead = (function () {
     function attach(inputId, cfg) {
         if (_bound.indexOf(inputId) >= 0) return;
         _bound.push(inputId);
+
+        /* The combobox roles. `aria-expanded` was already maintained, but
+           without these a screen reader is never told the box HAS a list, so
+           the whole feature is invisible to one. Set lazily, because this file
+           evaluates before the sidebar exists (docs/149). */
+        var _roled = false;
+        function _role(el) {
+            if (_roled || !el) return;
+            _roled = true;
+            el.setAttribute('role', 'combobox');
+            el.setAttribute('aria-autocomplete', 'list');
+            el.setAttribute('aria-controls', PANEL_ID);
+            el.setAttribute('aria-expanded', 'false');
+        }
+        document.addEventListener('focusin', function (e) {
+            if (e.target && e.target.id === inputId) _role(e.target);
+        });
 
         // Delegated on document: this file evaluates in <head>, before the
         // sidebar exists (docs/149 — a load-time binding here is silently dead,

@@ -455,6 +455,57 @@ function keydown(win, id, key) {
      && win.__paramVocabInsert('k', '1', '!=') === null,
      'M13 the insert rule carries the operator and refuses the rest');
 
+  /* ── N. the interaction itself ──────────────────────────────────────
+   *
+   * Measured in a real browser while answering "타이핑하면 user의 UX는 어떻게
+   * 되는거니? 화살표로 hover해서 enter?" — and the measurement found two
+   * things wrong, so they are pinned here. */
+
+  // Nothing is preselected: a bare Enter must still mean what it meant before
+  // this feature existed (run the search), not "take the first guess".
+  type(win, 'sidebar-filter-input', 'multipl');
+  ok(win.Typeahead._state().active === -1,
+     'N1 the panel opens with NOTHING selected — Enter is not redefined');
+  keydown(win, 'sidebar-filter-input', 'Enter');
+  ok(win.document.getElementById('sidebar-filter-input').value === 'multipl',
+     'N2 …so a bare Enter accepts nothing: ' + win.document.getElementById('sidebar-filter-input').value);
+  keydown(win, 'sidebar-filter-input', 'ArrowDown');
+  ok(win.Typeahead._state().active === 0, 'N3 ArrowDown selects the first row');
+  keydown(win, 'sidebar-filter-input', 'Enter');
+  ok(win.document.getElementById('sidebar-filter-input').value === 'multiplexed=',
+     'N4 …and THEN Enter takes it: ' + win.document.getElementById('sidebar-filter-input').value);
+
+  // The keys, said in the panel. The customer's complaint is that nobody
+  // knows how to use this; a completion panel that never names its own keys
+  // is the smallest version of that.
+  type(win, 'sidebar-filter-input', 'multipl');
+  var keysRow = win.document.querySelector('#sm-typeahead .sm-th-keys');
+  ok(!!keysRow, 'N5 the panel says what the keys do');
+  ok(/choose/.test(keysRow.textContent) && /pick/.test(keysRow.textContent)
+     && /close/.test(keysRow.textContent),
+     'N6 …naming choose / pick / close: ' + keysRow.textContent);
+  ok(/Tab/.test(keysRow.textContent),
+     'N7 …and Tab, which on THIS box completes the key without its value');
+  ok(keysRow.getAttribute('aria-hidden') === 'true',
+     'N8 …without being read out as an option');
+
+  // …and it is not a row the arrows can land on.
+  var beforeWalk = win.Typeahead._state().active;
+  for (var nn = 0; nn < 12; nn++) keydown(win, 'sidebar-filter-input', 'ArrowDown');
+  var st2 = win.Typeahead._state();
+  ok(!(st2.items[st2.active] || {}).note && st2.active < st2.items.length,
+     'N9 the keys row is not something ArrowDown can select: ' + st2.active
+     + ' of ' + st2.items.length);
+  void beforeWalk;
+
+  // A plain box has no two-stage grammar, so it must not claim Tab does
+  // something different there.
+  type(win, 'explorer-search', 'ampl');
+  var plainKeys = win.document.querySelector('#sm-typeahead .sm-th-keys');
+  ok(plainKeys && !/Tab/.test(plainKeys.textContent),
+     'N10 a plain box does not claim a Tab meaning it does not have: '
+     + (plainKeys && plainKeys.textContent));
+
   if (fails === 0) console.log('all checks passed (' + asserts + ' assertions)');
   process.exit(fails ? 1 : 0);
 })().catch(function (e) {

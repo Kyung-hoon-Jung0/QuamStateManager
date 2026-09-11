@@ -517,6 +517,69 @@ class TestBothSearchBoxesReadTheTokenTheSameWay:
             assert js_sel == _select(tok), (tok, js_sel, _select(tok))
 
 
+class TestHoverDoesNotLieAboutSelection:
+    """A hovered row looked exactly like a selected one, and Enter ignored it.
+
+    Measured in real Chrome: both rendered
+    `color(srgb 0.00392157 0.666667 1 / 0.16)`, while `Typeahead._state().active`
+    stayed -1 — so hovering a row and pressing Enter accepted nothing, after
+    the screen had said it would.
+
+    Hover deliberately does NOT set the selection: a row under a cursor that
+    happens to be resting there, quietly deciding what Enter does, is the worse
+    of the two failures. Clicking still accepts. So the two states have to LOOK
+    different, and that is what is pinned.
+    """
+
+    def _block(self):
+        css = (_ROOT / "quam_state_manager" / "web" / "static"
+               / "style.css").read_text(encoding="utf-8")
+        return css[css.index(".sm-typeahead {"):css.index(".path-suggestions")]
+
+    def test_the_two_states_are_not_one_rule(self):
+        blk = self._block()
+        assert ".sm-th-row:hover, .sm-th-row.active {" not in blk, (
+            "hover and selection share one declaration again")
+        assert ".sm-th-row:hover {" in blk and ".sm-th-row.active {" in blk
+
+    def test_selection_carries_something_hover_does_not(self):
+        blk = self._block()
+        hov = blk[blk.index(".sm-th-row:hover {"):]
+        hov = hov[:hov.index("}")]
+        act = blk[blk.index(".sm-th-row.active {"):]
+        act = act[:act.index("}")]
+        assert "box-shadow" in act and "box-shadow" not in hov, (hov, act)
+        # …and the accent is stronger on the selected one
+        import re as _re
+        hp = int(_re.search(r"primary\) (\d+)%", hov).group(1))
+        ap = int(_re.search(r"primary\) (\d+)%", act).group(1))
+        assert ap > hp, (hp, ap)
+
+    def test_the_keys_row_is_styled_as_a_footer_not_an_option(self):
+        blk = self._block()
+        keys = blk[blk.index(".sm-th-keys {"):]
+        keys = keys[:keys.index("}")]
+        assert "position: sticky" in keys, "the list scrolls; the hint must not"
+        assert "cursor: default" in keys, "it is not something you click"
+
+
+class TestTheBoxTellsAScreenReaderItHasAList:
+    """`aria-expanded` was maintained, but without the combobox roles a screen
+    reader is never told the box HAS a list — the whole feature is invisible to
+    one. (This project's first accessibility pins were added in docs/141 §4ae
+    for the same reason.)"""
+
+    def test_the_roles_are_set_on_focus(self):
+        js = (_ROOT / "quam_state_manager" / "web" / "static"
+              / "sidebar-typeahead.js").read_text(encoding="utf-8")
+        blk = js[js.index("function attach(inputId, cfg)"):]
+        blk = blk[:blk.index("document.addEventListener('input'")]
+        assert "'combobox'" in blk and "'aria-autocomplete', 'list'" in blk
+        assert "'aria-controls', PANEL_ID" in blk
+        # lazily, because this file evaluates before the sidebar exists
+        assert "focusin" in blk
+
+
 class TestThePanelFitsWhatItShows:
     """Measured in real Chrome on the customer's archive: the panel was 460 px
     and the widest real row needed 473 px, so `operation_amplitude_factor`'s
