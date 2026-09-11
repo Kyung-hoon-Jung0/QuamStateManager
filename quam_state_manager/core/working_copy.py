@@ -198,7 +198,10 @@ def create(instance_path: str | Path, live_folder: str | Path) -> WorkingCopy:
     # re-sync prompt, never a missed change).
     state_mt, wiring_mt = safe_io.state_wiring_mtimes(live)
     state, wiring = safe_io.read_state_wiring(live)
-    safe_io.write_state_wiring(working, state, wiring)
+    # docs/185: in the LIVE chip's own formatting. apply_to_live ships these
+    # very bytes (docs/141 (1)), so a working copy born at SM's indent rewrites
+    # every line of the customer's file on the first apply.
+    safe_io.write_state_wiring(working, state, wiring, like=live)
 
     wc = WorkingCopy(key, live, working, state_mt, wiring_mt,
                      synced_live_hash=content_hash(state, wiring))
@@ -450,7 +453,8 @@ def _try_sync(wc: WorkingCopy,
                        exc_info=True)
         if restore is not None:
             try:
-                safe_io.write_state_wiring(wc.working_folder, *restore)
+                safe_io.write_state_wiring(wc.working_folder, *restore,
+                                           like=wc.live_folder)
             except OSError:
                 logger.exception("Pre-sync pair restore failed for %s", wc.key)
         return RECONCILE_STALE
@@ -596,7 +600,8 @@ def sync_from_live(wc: WorkingCopy) -> tuple[dict, dict]:
     """
     state_mt, wiring_mt = safe_io.state_wiring_mtimes(wc.live_folder)
     state, wiring = safe_io.read_state_wiring(wc.live_folder)
-    safe_io.write_state_wiring(wc.working_folder, state, wiring)
+    safe_io.write_state_wiring(wc.working_folder, state, wiring,
+                               like=wc.live_folder)
     wc.synced_state_mtime = state_mt
     wc.synced_wiring_mtime = wiring_mt
     wc.synced_live_hash = content_hash(state, wiring)

@@ -438,16 +438,108 @@ def _tmp_for(path: Path) -> Path:
     return path.with_suffix("%s.%d.%x.%d.tmp" % (path.suffix, os.getpid(), threading.get_ident(), n))
 
 
-def _write_tmp_json(path: Path, data, *, compact: bool = False) -> Path:
+#: How much of a file to read when asking how it is formatted. The first
+#: nested line is within a few hundred bytes of the top of any real state.json.
+_FMT_SNIFF_BYTES = 8192
+
+
+def json_format_of(path: Path | str) -> dict | None:
+    """How the JSON file at *path* is formatted, or None if it is not there.
+
+    ``{"indent": int | str, "newline": str, "trailing": bool}`` -- the three
+    things SM does not own about a file it did not write (docs/185):
+
+    * **indent** -- the customer's chip is 2-space and SM wrote 4, which is
+      +26% and every line changed for one edited value;
+    * **newline** -- the KRISS chip on this machine is CRLF, and Python's text
+      mode translates by PLATFORM, so the same SM rewrites the same file
+      differently on Windows and Linux;
+    * **trailing newline** -- the KRISS chip has none and SM always appended.
+
+    Best effort by construction: anything unreadable or unrecognisable returns
+    None, and the caller then writes exactly what it writes today.
+    """
+    path = Path(path)
+    try:
+        with open_shared(path) as f:
+            head = f.read(_FMT_SNIFF_BYTES)
+        size = path.stat().st_size
+        tail = b""
+        if size:
+            with open_shared(path) as f:
+                f.seek(max(0, size - 4))
+                tail = f.read(4)
+    except OSError:
+        return None
+    if not head:
+        return None
+    try:
+        text = head.decode("utf-8", errors="replace")
+    except Exception:                       # pragma: no cover - decode is lenient
+        return None
+
+    newline = "\r\n" if "\r\n" in text else "\n"
+    indent = None
+    for line in text.split("\n")[1:]:
+        stripped = line.lstrip(" \t")
+        if not stripped or stripped in ("\r",):
+            continue
+        lead = line[:len(line) - len(stripped)]
+        if not lead:
+            continue                        # top-level key: keep looking
+        indent = "\t" if lead[0] == "\t" else len(lead)
+        break
+    if indent is None:
+        # A single-line (compact) document has no indent to copy. Say so rather
+        # than guessing 4 -- the caller keeps its own default.
+        return None
+    return {"indent": indent, "newline": newline,
+            "trailing": tail.endswith(b"\n")}
+
+
+def _write_tmp_json(path: Path, data, *, compact: bool = False,
+                    fmt: dict | None = None) -> Path:
     """Write *data* as pretty JSON to a ``.tmp`` sibling of *path* (flushed +
-    fsync'd) and return the tmp path. The caller swaps it into place."""
+    fsync'd) and return the tmp path. The caller swaps it into place.
+
+    docs/185: when the file being replaced already exists, it is written back
+    in ITS OWN formatting (indent, line endings, trailing newline) rather than
+    SM's. A file that does not exist yet -- every file SM owns, on its first
+    write -- is written exactly as before, so nothing of SM's own moves.
+
+    *fmt* overrides the sniff, for content whose bytes are destined for a
+    DIFFERENT file than the one being written (the working copy, whose bytes
+    become the live chip -- docs/141 ①).
+    """
     tmp = _tmp_for(path)
-    with open(tmp, "w", encoding="utf-8") as f:
-        if compact:      # docs/171: a 10 MB store cache is not for reading
+    if compact:          # docs/171: a 10 MB store cache is not for reading
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, separators=(",", ":"), ensure_ascii=False)
-        else:
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        return tmp
+
+    if fmt is None:
+        fmt = json_format_of(path)
+    if fmt is None:
+        # Unchanged path: text mode, platform line endings, indent 4.
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
-        f.write("\n")
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        return tmp
+
+    text = json.dumps(data, indent=fmt["indent"], ensure_ascii=False)
+    if fmt["newline"] != "\n":
+        text = text.replace("\n", fmt["newline"])
+    if fmt.get("trailing", True):
+        text += fmt["newline"]
+    # newline="" so nothing is translated underneath us -- the endings above
+    # are the file's own, not the platform's.
+    with open(tmp, "w", encoding="utf-8", newline="") as f:
+        f.write(text)
         f.flush()
         os.fsync(f.fileno())
     return tmp
@@ -521,7 +613,8 @@ def atomic_write_json(path: Path | str, data, *, compact: bool = False) -> None:
     _replace_into_place(_write_tmp_json(path, data, compact=compact), path)
 
 
-def write_state_wiring(folder: Path | str, state: dict, wiring: dict) -> None:
+def write_state_wiring(folder: Path | str, state: dict, wiring: dict,
+                       *, like: Path | str | None = None) -> None:
     """Write ``state.json`` + ``wiring.json`` into *folder* as a near-atomic pair.
 
     True 2-file atomicity isn't achievable without a transaction, but we write
@@ -536,6 +629,15 @@ def write_state_wiring(folder: Path | str, state: dict, wiring: dict) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     state_path = folder / "state.json"
     wiring_path = folder / "wiring.json"
+    # docs/185: `like` is the folder whose FORMATTING this pair should carry.
+    # The working copy passes the LIVE folder, because apply-to-live ships the
+    # working copy's bytes verbatim (docs/141 (1)) -- a working copy born at
+    # indent 4 reformats the live chip however careful the live writer is.
+    state_fmt = wiring_fmt = None
+    if like is not None:
+        like = Path(like)
+        state_fmt = json_format_of(like / "state.json")
+        wiring_fmt = json_format_of(like / "wiring.json")
     # Snapshot the OLD state bytes so we can roll back if the wiring replace fails
     # AFTER the state replace already landed — otherwise the folder is left holding
     # NEW state + OLD wiring, a torn pair ("a chip that never existed") an
@@ -548,9 +650,9 @@ def write_state_wiring(folder: Path | str, state: dict, wiring: dict) -> None:
                 old_state_bytes = f.read()
         except OSError:
             old_state_bytes = None
-    state_tmp = _write_tmp_json(state_path, state)
+    state_tmp = _write_tmp_json(state_path, state, fmt=state_fmt)
     try:
-        wiring_tmp = _write_tmp_json(wiring_path, wiring)
+        wiring_tmp = _write_tmp_json(wiring_path, wiring, fmt=wiring_fmt)
     except OSError:
         # Couldn't even stage wiring — drop the orphan state tmp, write nothing.
         try:
