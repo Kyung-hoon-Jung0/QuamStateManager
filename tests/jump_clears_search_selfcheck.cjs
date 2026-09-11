@@ -169,6 +169,25 @@ async function main() {
     'J4: with no search there is nothing to clear and nothing to announce');
   ok(shown(TARGET), 'J4: the jump still works');
 
+  // ── J4b: a hidden ANCESTOR hides its child ───────────────────────────────
+  // Constructed directly rather than through a query: today's jsonTreeSearch
+  // marks the non-matching node itself, so the ancestor walk is a guard whose
+  // state the search does not currently produce — and a guard nothing exercises
+  // is a guard nobody knows is broken. The helper's contract is what is pinned:
+  // a row under a hidden branch is not on screen, whatever marked the branch.
+  render();
+  type('');
+  await sleep(300);
+  window._jumpToTreePath('explorer-tree-state', TARGET);   // materialise it
+  await sleep(400);
+  ok(shown(TARGET), 'J4b: the target is visible to begin with');
+  const anc = node('qubits.q3');
+  ok(!!anc, 'J4b: its ancestor is in the DOM');
+  anc.classList.add('tree-search-hidden');
+  ok(!shown(TARGET),
+    'J4b: a row under a hidden branch is not on screen, even unmarked itself');
+  anc.classList.remove('tree-search-hidden');
+
   // ── J5: the box is driven, not assigned ──────────────────────────────────
   // The chip bar repaints from the box's own `input` event. Setting `.value`
   // silently would leave a chip lit for a filter that is no longer applied.
