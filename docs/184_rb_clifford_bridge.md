@@ -99,6 +99,11 @@ is recorded here so that conversation can start from a number.
   counted *and* explained, an all-broken chip renders an honest dash, a healthy
   chip is completely unchanged, and the ceiling is applied at the boundary in
   both directions.
+- **Mutation sweep: 8/8** — including the reported bug itself (the ceiling
+  removed), a ceiling loose enough to still admit an impossible EPC, one far too
+  strict, the float tolerance dropped, the excluded pair *dropped* instead of
+  counted, the aggregate going back to `computeAggregates`, the reason not said,
+  and the note naming the wrong divisor.
 - `tests/stress_rb_negative.cjs` — **8/8 in real headless Chrome**, zero console
   errors: the same inputs through the page's own `ChipStatus.mount`, with the
   rendered tile read back and checked for sideways overflow and a clipped note.
