@@ -103,6 +103,12 @@ concerns in one function is how the next one gets missed. Pinned.
   than the string `"undefined"` for an absent token — which the server would
   otherwise compare against the real chip and refuse.
 
+**Mutation sweep: 9/9.** The ninth needed a second attempt — the first version
+of it edited only a *comment*, and a mutation that does not mutate cannot fail a
+pin. Rewritten to actually move the injection inside the pulses handler (behind
+its early return, which is the real defect the design rule stands for), it goes
+red.
+
 ### Three things the driver got wrong first, all recorded
 
 - **`Input.dispatchKeyEvent` with `text` on both `keyDown` and `char`** types
