@@ -11,14 +11,31 @@ window.AgentSetup = (function () {
   var S = { data: null, root: null, previews: {}, context: null, answers: {} };
 
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
-  function actorName() { try { return localStorage.getItem("quam_actor_name") || ""; } catch (e) { return ""; } }
+  // English only, and for the same reason as in agent.js: this value goes
+  // into an HTTP header, and a non-ISO-8859-1 one makes the browser refuse
+  // the request before it is sent — which blanked this very page.
+  function actorName() {
+    try { return String(localStorage.getItem("quam_actor_name") || "").replace(/[^\x20-\x7E]/g, "").trim(); }
+    catch (e) { return ""; }
+  }
   function api(method, path, body) {
     var h = { "Accept": "application/json" };
     if (body !== undefined) h["Content-Type"] = "application/json";
     var who = actorName();
     if (who) h["X-SM-Actor"] = who;
-    return fetch(path, { method: method, headers: h, body: body === undefined ? undefined : JSON.stringify(body), credentials: "same-origin" })
-      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { status: r.status, body: j }; }); });
+    // A rejected fetch answers like a refused request (status 0), the way
+    // agent.js's api() already does. Without this the page threw an uncaught
+    // TypeError out of load() and rendered NOTHING — and this is the page a
+    // person comes to when something is already wrong.
+    var p;
+    try {
+      p = fetch(path, { method: method, headers: h, body: body === undefined ? undefined : JSON.stringify(body), credentials: "same-origin" });
+    } catch (e) { p = Promise.reject(e); }
+    return p.then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) { return { status: r.status, body: j }; });
+    }, function (e) {
+      return { status: 0, body: { error: "SM could not be reached: " + (e && e.message || e) } };
+    });
   }
   function pretty(v) { return typeof v === "string" ? v : JSON.stringify(v, null, 2); }
   // a line diff (LCS) -- enough to show what a click will change
@@ -120,7 +137,17 @@ window.AgentSetup = (function () {
   }
 
   function load() {
-    return api("GET", "/api/agent/setup").then(function (r) { if (r.status === 200) { S.data = r.body; render(); } });
+    return api("GET", "/api/agent/setup").then(function (r) {
+      if (r.status === 200) { S.data = r.body; render(); return; }
+      // Say so in the page rather than leaving it empty.
+      var root = S.root || document.getElementById("agent-setup-root");
+      if (root) {
+        root.innerHTML = '<p class="ag-err">Could not load the setup status — '
+          + esc((r.body && r.body.error) || ("HTTP " + r.status))
+          + '</p><p class="muted">The page is otherwise fine; reload once the '
+          + 'reason above is gone.</p>';
+      }
+    });
   }
 
   function preview(k) {

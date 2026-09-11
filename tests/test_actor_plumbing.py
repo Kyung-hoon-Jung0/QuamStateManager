@@ -119,3 +119,107 @@ class TestTheHookNamesItsBackend:
         f = next((tmp_path / "agent_events").glob("*.jsonl"))
         assert json.loads(f.read_text(encoding="utf-8").splitlines()[-1])["backend"] == "codex"
         assert hook.record({"hook_event_name": "Stop"}, None)["backend"] is None
+
+
+class TestTheNameBoxIsEnglishOnly:
+    """A Hangul name killed the whole Agent panel; the answer is the rule, not
+    a transport trick.
+
+    Found by the browser stress round and confirmed twice in real Chrome:
+    `agent.js` put the name straight into an HTTP header, a header value must
+    be ISO-8859-1, and Chrome refuses the whole fetch BEFORE sending —
+
+        TypeError: Failed to execute 'fetch' on 'Window': ... String contains
+        non ISO-8859-1 code point.
+
+    so the feed, plan creation, Start, Stop and approvals were all dead against
+    a healthy server, and the name lives in localStorage so it stayed dead;
+    `/agent/setup`, the page that could clear it, rendered blank.
+
+    The first fix percent-encoded the header. The user's decision (2026-09-11)
+    was the simpler one — *"한글이름 그냥 폐기해. 그냥 SM에서는 영어로만"* — so
+    the encoding is gone and SM works in English. **What you SAY to the agent
+    is the explicit exception** and is pinned as such below: that is a JSON
+    body and takes any language.
+
+    Why every earlier pin missed it: they hand the raw string to Flask's test
+    client, which is not a path a browser can take. Hence the first test here
+    pins the BROWSER's constraint, not the server's tolerance.
+    """
+
+    _ROOT = Path(__file__).resolve().parent.parent
+
+    def test_the_client_strips_a_name_a_browser_could_not_send(self):
+        js = (self._ROOT / "quam_state_manager/web/static/agent.js").read_text(encoding="utf-8")
+        assert "function asciiActor(" in js
+        # the stripper is on the READ path too, so a name saved before the rule
+        # existed cannot reach a header either
+        assert "asciiActor(localStorage.getItem(\"quam_actor_name\"))" in js
+        assert "v = asciiActor(v);" in js
+        setup = (self._ROOT / "quam_state_manager/web/static/agent-setup.js").read_text(encoding="utf-8")
+        assert "replace(/[^\\x20-\\x7E]/g" in setup
+
+    def test_nothing_percent_encodes_the_header_any_more(self):
+        """The encoding was reverted with the decision: with English-only names
+        it is a no-op, and `unquote` on the server would mangle a literal `%`
+        in a name for no gain."""
+        for rel in ("quam_state_manager/web/static/agent.js",
+                    "quam_state_manager/web/static/agent-setup.js"):
+            js = (self._ROOT / rel).read_text(encoding="utf-8")
+            assert 'h["X-SM-Actor"] = who;' in js, rel
+            assert "encodeURIComponent(who)" not in js, rel
+        rt = (self._ROOT / "quam_state_manager/web/routes.py").read_text(encoding="utf-8")
+        blk = rt[rt.index("def _request_actor("):rt.index("def _active_ctx(")]
+        assert "unquote" not in blk
+
+    def test_the_server_side_writer_follows_the_same_rule(self):
+        from quam_state_manager.web.agent_api import _ascii_actor
+        assert _ascii_actor("kyunghoon") == "kyunghoon"
+        assert _ascii_actor("정경훈") == ""
+        assert _ascii_actor("Min 정 ji") == "Min  ji".strip()
+        assert _ascii_actor("a%b") == "a%b"        # ASCII punctuation is a name
+        assert _ascii_actor(None) == ""
+
+    def test_the_writer_in_agent_api_calls_the_rule(self):
+        """`_ascii_actor` existing is not the rule; being CALLED is.
+
+        `_stage_writes` builds an `X-SM-Actor` header for the internal apply,
+        and a sweep found that reverting it to the raw value broke nothing —
+        the rule was pinned, its only server-side caller was not."""
+        import io
+        import tokenize
+        src = (self._ROOT / "quam_state_manager/web/agent_api.py").read_text(encoding="utf-8")
+        blk = src[src.index("def _stage_writes("):]
+        blk = blk[:blk.index("\ndef ", 10)]
+        code = " ".join(
+            t.string for t in tokenize.generate_tokens(io.StringIO(blk).readline)
+            if t.type not in (tokenize.COMMENT, tokenize.STRING))
+        assert "X-SM-Actor" in blk
+        assert "_ascii_actor" in code, "the header is built without the rule"
+
+    def test_a_header_a_browser_cannot_send_is_never_built(self):
+        """The property that actually broke it, stated once: whatever survives
+        the rule must be encodable as ISO-8859-1."""
+        from quam_state_manager.web.agent_api import _ascii_actor
+        for raw in ["kyunghoon", "정경훈", "kyunghoon 🙂", "박OO", "a\tb", ""]:
+            _ascii_actor(raw).encode("latin-1")
+
+    def test_but_what_you_say_to_the_agent_is_not_restricted(self, client):
+        """The named exception. A chat message is a JSON body, not a header."""
+        js = (self._ROOT / "quam_state_manager/web/static/agent.js").read_text(encoding="utf-8")
+        # the composer's text is sent as JSON, never as a header
+        assert "JSON.stringify(body)" in js
+        sent = js[js.index("function submit("):]
+        sent = sent[:2000]
+        assert "asciiActor" not in sent, "the message itself must not be stripped"
+
+    def test_the_setup_page_survives_a_refused_fetch(self):
+        """Kept from the first fix and independent of the language rule: this
+        is the page a person comes to when something is already wrong, and it
+        rendered NOTHING."""
+        js = (self._ROOT / "quam_state_manager/web/static/agent-setup.js").read_text(encoding="utf-8")
+        api = js[js.index("function api("):js.index("function pretty(")]
+        assert "status: 0" in api and "Promise.reject" in api
+        load = js[js.index("function load()"):]
+        load = load[:load.index("function preview(")]
+        assert "ag-err" in load

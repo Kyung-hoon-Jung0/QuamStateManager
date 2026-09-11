@@ -274,13 +274,35 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   // which the api() helper sends as X-SM-Actor
   const actorIn = home.querySelector('.ag-actor');
   ok(actorIn && actorIn.getAttribute('list') === 'ag-actor-list', 'the form row carries a name picker with a datalist');
+  // SM works in English (user directive, 2026-09-11). A Hangul name killed
+  // this whole panel: the value travels in an HTTP header, a header value
+  // must be ISO-8859-1, and Chrome refuses the entire fetch before sending —
+  // so the feed, Start, Stop and approvals all died against a healthy server.
+  // What you SAY to the agent is the exception (a JSON body, any language).
+  P.setActor('Park OO');
+  ok(P.actorName() === 'Park OO' && window.localStorage.getItem('quam_actor_name') === 'Park OO',
+     'the picker sets the one actor key');
+  ok(JSON.parse(window.localStorage.getItem('quam_actor_recents') || '[]')[0] === 'Park OO',
+     'the name is remembered for the datalist');
+  // a name a browser could not send is reduced to the part it can, and the
+  // panel keeps working rather than going dark
   P.setActor('박OO');
-  ok(P.actorName() === '박OO' && window.localStorage.getItem('quam_actor_name') === '박OO', 'the picker sets the one actor key');
-  ok(JSON.parse(window.localStorage.getItem('quam_actor_recents') || '[]')[0] === '박OO', 'the name is remembered for the datalist');
+  ok(P.actorName() === 'OO', 'a non-ASCII name is stripped, not stored whole');
+  P.setActor('정경훈');
+  ok(P.actorName() === '', 'a name with nothing sendable in it becomes no name');
+  P.setActor('Park OO');
   calls.length = 0;
   P.arm();
   await tick(30);
-  ok(calls[0] && calls[0].headers && calls[0].headers['X-SM-Actor'] === '박OO', 'every door press now carries the person\'s name');
+  // SM works in English (user directive 2026-09-11): the name box is
+  // stripped to ASCII, because it travels in an HTTP header and a
+  // non-ISO-8859-1 value makes the browser refuse the request outright —
+  // which killed this whole panel. What you SAY to the agent is the
+  // exception; that is a JSON body.
+  var hdr = calls[0] && calls[0].headers && calls[0].headers['X-SM-Actor'];
+  ok(hdr === 'Park OO', "every door press now carries the person's name");
+  ok(String(hdr).split('').every(function (ch) { return ch.charCodeAt(0) < 128; }),
+     '…in a form a browser will actually send');
   delete window.showToast;
 
   // the floating panel mounts compact and does not double-mount on the home

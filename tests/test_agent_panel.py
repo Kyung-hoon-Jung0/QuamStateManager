@@ -455,3 +455,55 @@ def test_agent_panel_selfcheck():
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout + r.stderr
     assert r.stdout.count("ok - ") >= 90, r.stdout
+
+
+class TestOneBadTokenCannotFreezeTheFeed:
+    """`/run 12_ramsey q2 detuning=NaN` froze the Agent panel for good.
+
+    Found by the browser stress round and confirmed twice. `_coerce` turned the
+    token into `float('nan')`, it was persisted into the plan store, and
+    `jsonify` emitted a bare `NaN` — which is not JSON. Every later
+    `GET /api/agent/chat/cards` then returned **200 with an unparseable body**:
+    the client's `r.json().catch(()=>({}))` swallowed it, so no error was shown
+    anywhere, the composer still said "plan card ready", and the feed never
+    updated again. It survived a server restart, because the poison was on
+    disk; the only escape was pushing the plan out of the last-6 window.
+    """
+
+    BAD = ["NaN", "nan", "-NaN", "inf", "-inf", "Infinity", "1e999", "-1e999"]
+
+    def test_a_non_finite_token_stays_the_word_that_was_typed(self):
+        from quam_state_manager.core import agent_plans as ap
+        for tok in self.BAD:
+            assert ap._coerce(tok) == tok, tok
+        # …and a real number is still a number
+        assert ap._coerce("12") == 12
+        assert ap._coerce("1.5") == 1.5
+        assert ap._coerce("1e3") == 1000.0
+        assert ap._coerce("true") is True and ap._coerce("none") is None
+
+    def test_the_feed_stays_parseable_after_one(self, c, inst):
+        """The property that actually matters: valid JSON on the wire."""
+        import json as _json
+        for tok in self.BAD:
+            r = c.post("/api/agent/plans",
+                       json={"run_line": "/run 05_power_rabi qA1 detuning=" + tok},
+                       headers=HUMAN)
+            assert r.status_code in (200, 400), (tok, r.status_code)
+            body = c.get("/api/agent/chat/cards").get_data(as_text=True)
+            feed = _json.loads(body)    # raises on a BARE NaN / Infinity
+            # …and the token survived as the word, quoted, which is what makes
+            # the body parseable in the first place
+            got = [st.get("params", {}).get("detuning")
+                   for pl in feed["live"]["plans"] for st in pl.get("steps", [])]
+            assert tok in got, (tok, got)
+            assert all(not isinstance(v, float) for v in got), got
+
+    def test_the_store_refuses_to_write_one_even_if_it_gets_that_far(self, inst):
+        """Defence in depth: a value from the bridge, a hand-edited file or a
+        future caller must fail the write that produced it, not the next
+        twenty reads."""
+        import pytest as _pytest
+        from quam_state_manager.core import agent_plans as ap
+        with _pytest.raises(ValueError):
+            ap._save(inst, "chipA", [{"id": "p1", "steps": [{"params": {"x": float("nan")}}]}])

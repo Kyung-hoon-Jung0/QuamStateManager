@@ -13,6 +13,8 @@ One file per chip: ``instance/agent_plans/<chip>.json`` (newest last).
 
 from __future__ import annotations
 
+import math
+
 import json
 import os
 import time
@@ -42,7 +44,12 @@ def _save(instance_path, chip: str, rows: list[dict]) -> None:
     p = path_for(instance_path, chip)
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(rows[-200:], default=str), encoding="utf-8")
+    # allow_nan=False: a bare NaN / Infinity is not JSON, and one that reached
+    # this file made every later card feed unparseable -- silently, and across
+    # a restart, because the poison was on disk. Refusing here means a bad
+    # value fails the write that produced it instead of the next twenty reads.
+    tmp.write_text(json.dumps(rows[-200:], default=str, allow_nan=False),
+                   encoding="utf-8")
     os.replace(tmp, p)
 
 
@@ -218,6 +225,15 @@ def parse_run_line(text: str) -> dict | None:
 
 
 def _coerce(v: str):
+    """One `key=value` token from a /run line, as the value it names.
+
+    A token that is not a number stays the string it was typed as -- and
+    ``NaN`` / ``inf`` are in that group deliberately. ``float()`` accepts them,
+    but the result is not a value any node takes, it is not representable in
+    JSON, and ``jsonify`` emits it as a bare ``NaN`` that no browser can parse:
+    one such token in one plan made every later card feed unreadable, silently,
+    and it stayed that way across a restart because it was written to disk.
+    """
     low = v.lower()
     if low in ("true", "false"):
         return low == "true"
@@ -228,6 +244,7 @@ def _coerce(v: str):
     except ValueError:
         pass
     try:
-        return float(v)
+        f = float(v)
     except ValueError:
         return v
+    return f if math.isfinite(f) else v

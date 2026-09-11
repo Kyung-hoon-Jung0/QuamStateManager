@@ -71,10 +71,21 @@ window.AgentPanel = (function () {
   // docs/173 S8: the name picker in front of the keyboard. One key, `quam_actor_name`,
   // is the person the door records (armed by / Stop by / mode by / "I ran it"). Empty =
   // the routes fall back to a plain "human".
-  function actorName() { try { return localStorage.getItem("quam_actor_name") || ""; } catch (e) { return ""; } }
+  /* SM works in English (user directive, 2026-09-11) and a name is no
+     exception — what you SAY to the agent is, because that travels in a JSON
+     body and takes any language.
+     The name travels in an HTTP header, and a header value must be
+     ISO-8859-1: Chrome refuses the whole fetch BEFORE sending when it is not,
+     which killed the feed, plan creation, Start, Stop and approvals against a
+     perfectly healthy server. Stripping here rather than only at the input
+     means a name already saved from before cannot do it either. */
+  function asciiActor(s) {
+    return String(s == null ? "" : s).replace(/[^\x20-\x7E]/g, "").trim();
+  }
+  function actorName() { try { return asciiActor(localStorage.getItem("quam_actor_name")); } catch (e) { return ""; } }
   function actorRecents() { try { return JSON.parse(localStorage.getItem("quam_actor_recents") || "[]"); } catch (e) { return []; } }
   function setActor(v) {
-    v = String(v || "").trim();
+    v = asciiActor(v);
     try {
       localStorage.setItem("quam_actor_name", v);
       if (v) {
@@ -702,7 +713,7 @@ window.AgentPanel = (function () {
       '<form class="ag-form ag-composer" onsubmit="return AgentPanel.submit(event)">' +
       '<textarea class="ag-input" rows="1" onkeydown="return AgentPanel.key(event)" oninput="AgentPanel.grow(this)" placeholder="Ask, or tell the agent what to do…  (Enter sends · Shift+Enter newline · /run <node> <targets>)"></textarea>' +
       '<div class="ag-form-row"><select class="ag-backend" title="which CLI drives"></select>' +
-      '<label class="ag-actor-wrap" title="who is at the keyboard — the person SM records for Arm / Stop / mode / “I ran it”">⌨ <input class="ag-actor" list="ag-actor-list" placeholder="your name" autocomplete="off" spellcheck="false" oninput="AgentPanel.setActor(this.value)"><datalist id="ag-actor-list"></datalist></label>' +
+      '<label class="ag-actor-wrap" title="who is at the keyboard — the person SM records for Arm / Stop / mode / “I ran it”. English letters only (it travels in a request header); what you SAY to the agent can be any language.">⌨ <input class="ag-actor" list="ag-actor-list" placeholder="your name" autocomplete="off" spellcheck="false" oninput="AgentPanel.setActor(this.value)"><datalist id="ag-actor-list"></datalist></label>' +
       '<span class="ag-presets" title="a preset fills a draft; nothing starts before a plan card\'s Start">' +
       '<button type="button" class="btn-sm ag-presets-toggle" onclick="AgentPanel.togglePresets(this)" aria-expanded="false">presets ▾</button>' +
       PRESETS.map(function (p, i) { return '<button type="button" class="btn-sm ag-preset" onclick="AgentPanel.preset(' + i + ', this.closest(\'.ag-root\'))">' + esc(p[0]) + "</button>"; }).join("") + "</span>" +

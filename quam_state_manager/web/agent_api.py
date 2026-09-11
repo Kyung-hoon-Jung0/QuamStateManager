@@ -35,6 +35,12 @@ from flask import Blueprint, current_app, jsonify, request
 from quam_state_manager.core import journal as journal_mod
 from quam_state_manager.core.loader import natural_key
 
+def _ascii_actor(s: str) -> str:
+    """A name as a header can carry it (user directive: SM works in English;
+    what you SAY to the agent is the exception, and that is a JSON body)."""
+    return "".join(c for c in str(s or "") if 0x20 <= ord(c) <= 0x7E).strip()
+
+
 logger = logging.getLogger(__name__)
 
 agent_bp = Blueprint("agent", __name__, url_prefix="/api/agent")
@@ -1183,7 +1189,9 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
     if str(who).startswith("by_"):
         headers["X-SM-Agent"] = str(who)[3:]
     elif ":" in str(who):
-        headers["X-SM-Actor"] = str(who).split(":", 1)[1]
+        # English only, like the browser: this is an HTTP header, and a
+        # non-ISO-8859-1 value is not sendable at all.
+        headers["X-SM-Actor"] = _ascii_actor(str(who).split(":", 1)[1])
     if plan_id:
         headers["X-SM-Plan"] = str(plan_id)
     try:
