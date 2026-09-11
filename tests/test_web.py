@@ -3535,9 +3535,16 @@ class TestGenerate:
         resp = client.get("/generate")
         assert resp.status_code == 200
         assert b"Generate Configuration Files" in resp.data
-        # The TWPA limitation is surfaced inline (step 4), not silently ignored
-        # (reworded to a non-alarming, forward-looking note — see demo polish).
-        assert b"TWPA wiring support" in resp.data
+        # TWPA. This used to assert an inline note saying TWPA entries would be
+        # "generated once quam_builder supports TWPA wiring" — a limitation that
+        # STOPPED BEING TRUE in 591d501 (2026-09-07), which built the lines
+        # natively and gave them a Populate section. The note went with it and
+        # this assertion has been red ever since, with nothing saying so
+        # (docs/155 §10a again: "pre-existing" is a measurement, not an
+        # inference — confirmed here by running it at the parent commit).
+        # Pin what is true now: the wizard seeds a TWPA, rather than apologising
+        # for not generating one.
+        assert b"gen-pop-sec-twpa" in resp.data
         # The step-5 docked wiring monitor ships in the template.
         assert b"gen-wiring-monitor" in resp.data
         # The step-6 collapsible LO-group map ships in the template.

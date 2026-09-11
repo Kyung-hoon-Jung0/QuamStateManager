@@ -117,7 +117,19 @@ class TestTheNote:
         assert "Load as working state" in html, "no snapshot row rendered"
         with env["app"].test_request_context():
             note = routes_mod._auto_push_note()
-        assert note.strip() in html
+
+        # PER ATTRIBUTE, not "somewhere in the page": the title and the confirm
+        # are two separate promises on the same button, and a page-wide search
+        # cannot tell which of them carries the warning.
+        def _attr(name: str) -> str:
+            i = html.index("Load as working state")
+            frag = html[max(0, i - 1200):i]
+            j = frag.rindex(name + '="') + len(name) + 2
+            return frag[j:frag.index('"', j)]
+
+        assert note.strip() in _attr("title"), _attr("title")
+        assert note.strip() in _attr("hx-confirm"), _attr("hx-confirm")
+
         # …and it is gone again once nothing is armed, so the warning stays
         # meaningful rather than becoming furniture.
         c.post("/auto-apply/disarm")
@@ -187,6 +199,65 @@ class TestTheLogNamesTheWholesaleWrite:
         # the too-large row offers no ✕ — there is nothing to compare and swap
         assert html.count("btn-al-revert") == 1
         assert "no per-value undo" in html
+
+
+class TestTheRealWholesaleWriteIsStamped:
+    """The end-to-end half. Every pin above builds its unit by hand, so nothing
+    ran `_wholesale_unit` — the flag it stamps was pinned only by the code that
+    reads it, and deleting the stamp changed nothing any test could see."""
+
+    def _journal_units(self, env):
+        from quam_state_manager.core import undo_journal
+        with env["app"].app_context():
+            path = undo_journal.sidecar_path(env["app"].instance_path,
+                                             routes_mod._active_ctx()["path"])
+        return undo_journal.load_state(path)[0] if path.exists() else []
+
+    def test_an_armed_stage_then_flush_stamps_and_lists_the_write(self, env):
+        c = env["client"]
+        assert c.post("/state-history/snapshot").status_code == 200
+        ts = _newest_snapshot_ts(env)
+
+        # move live away from the snapshot, so staging it is a real change
+        assert c.post("/field/edit",
+                      data={"dot_path": "qubits.qA1.T1", "value": "9e-5"}).status_code == 200
+        assert c.post("/state/apply-to-live").status_code in (200, 409)
+
+        c.post("/auto-apply/arm")
+        assert c.post(f"/state-history/{ts}/stage?force=1").status_code == 200
+        # In a browser the docs/117 observer presses this door on `working_dirty`.
+        # Here the test presses the same door; the point is what gets STAMPED.
+        assert c.post("/state/apply-to-live").status_code == 200
+
+        whole = [u for u in self._journal_units(env)
+                 if (u.get("meta") or {}).get("wholesale")]
+        assert whole, "the wholesale write journaled no unit at all"
+        meta = whole[-1]["meta"]
+        assert meta.get("auto") is True, meta
+        assert meta.get("src") == "apply-staged", \
+            "src must keep naming the gesture — story.py reads it"
+
+        with env["app"].app_context():
+            env["app"].config["process_start_ts"] = 0
+            rows = routes_mod._applied_log_rows(routes_mod._active_ctx())
+        assert any(r["id"] == whole[-1]["id"] for r in rows), \
+            "the log is still silent about the largest write it can make"
+
+    def test_the_same_stage_without_a_session_is_not_stamped(self, env):
+        c = env["client"]
+        assert c.post("/state-history/snapshot").status_code == 200
+        ts = _newest_snapshot_ts(env)
+        assert c.post("/field/edit",
+                      data={"dot_path": "qubits.qA1.T1", "value": "9e-5"}).status_code == 200
+        assert c.post("/state/apply-to-live").status_code in (200, 409)
+
+        assert c.post(f"/state-history/{ts}/stage?force=1").status_code == 200
+        assert c.post("/state/apply-to-live").status_code == 200
+
+        whole = [u for u in self._journal_units(env)
+                 if (u.get("meta") or {}).get("wholesale")]
+        assert whole
+        assert not (whole[-1]["meta"]).get("auto")
 
 
 class TestTheStageDoorsSayIt:
