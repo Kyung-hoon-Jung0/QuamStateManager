@@ -103,6 +103,9 @@ def _chip(folder: Path):
     `resonator`, its pulse is named `readout`, the drive is `xy`, flux is `z`."""
     state = {
         "qubits": {
+            "q2": {"id": "q2", "f_01": 5.2e9,
+                   "resonator": {"RF_frequency": 6.2e9},
+                   "xy": {"RF_frequency": 5.2e9}, "z": {"offset": 0.0}},
             "q1": {
                 "id": "q1", "f_01": 5.0e9, "T1": 2e-5,
                 "resonator": {"RF_frequency": 6.1e9, "depletion_time": 1000,
@@ -111,8 +114,14 @@ def _chip(folder: Path):
                 "z": {"offset": 0.0},
             }
         },
-        "qubit_pairs": {},
-        "active_qubit_names": ["q1"],
+        "qubit_pairs": {
+            "q1-q2": {
+                "id": "q1-q2",
+                "coupler": {"opx_output": {"offset": 0.0}, "decouple_offset": 0.01},
+                "gates": {"cz": {"amplitude": 0.3, "duration": 40}},
+            }
+        },
+        "active_qubit_names": ["q1", "q2"],
     }
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "state.json").write_text(json.dumps(state), encoding="utf-8")
@@ -132,6 +141,23 @@ def cols(tmp_path):
         store = routes_mod._active_ctx()["store"]
         grid = routes_mod._qubit_bulk_grid(store, set(), {})
     return grid["columns"]
+
+
+@pytest.fixture
+def pair_cols(tmp_path):
+    """The OTHER grid. It has its own builder and its own call site, and a
+    fixture with no `qubit_pairs` never reaches either — which is how a
+    mutation that switched the pair grid off stayed green."""
+    live = tmp_path / "chip"
+    _chip(live)
+    app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+    c = app.test_client()
+    assert c.post("/load", data={"folder": str(live)}).status_code in (200, 302)
+    with app.app_context():
+        store = routes_mod._active_ctx()["store"]
+        columns, _groups, rows = routes_mod._pair_bulk_grid(store, {})
+    assert rows, "the fixture built no pair rows"
+    return columns
 
 
 def _hay(c: dict) -> str:
@@ -190,9 +216,58 @@ class TestTheGridsHaystack:
         for w in ("readout", "resonator", "drive", "coupler"):
             assert w not in hay, w
 
+    def test_a_template_word_in_no_group_is_searchable(self, cols):
+        """The half that is NOT a dictionary, pinned on a word no group owns.
+
+        `RO IW angle` addresses
+        `qubits.{name}.resonator.operations.readout.integration_weights_angle`.
+        `integration` and `weights` appear nowhere but that path — so if this
+        finds the column, the template words really are in the haystack, with
+        no synonym able to account for it."""
+        iw = [c for c in cols if c["key"] == "readout_iw_angle"]
+        assert iw, "the fixture has no readout_iw_angle column"
+        hay = _hay(iw[0])
+        assert "integration" in hay and "weights" in hay
+        assert search_synonyms.extra_terms("integration", "weights") == [], \
+            "the case is only evidence while no group owns these words"
+
+    def test_the_path_words_stand_alone_in_the_haystack(self, cols):
+        """Today's matcher is substring, so `resonator` would be found inside
+        `qubits.{name}.resonator.f_01` dotted or not. A WORD-based consumer —
+        which the docs/175 typeahead vocabulary is — needs the token itself."""
+        # On a word NO group owns, so the dictionary cannot supply it as a
+        # bare token and account for the assertion (which is how this first
+        # passed against an undotted path).
+        iw = [c for c in cols if c["key"] == "readout_iw_angle"][0]
+        padded = " " + _hay(iw) + " "
+        assert " integration " in padded, _hay(iw)
+        assert " weights " in padded, _hay(iw)
+
     def test_the_row_placeholder_never_enters_the_haystack(self, cols):
         """`{name}` is the row placeholder. Searching `name` must not match
         every column on the chip."""
         for c in cols:
             assert "{name}" not in _hay(c)
         assert len(_hits(cols, "{name}")) == 0
+
+
+class TestThePairGridToo:
+    """Same rule, second grid — it has its own builder and its own call site."""
+
+    def test_the_coupler_and_cz_columns_find_each_other(self, pair_cols):
+        coupler = _hits(pair_cols, "coupler")
+        cz = _hits(pair_cols, "cz")
+        assert coupler and cz, {"coupler": sorted(coupler), "cz": sorted(cz)}
+        assert coupler & cz, "the two words still name disjoint column sets"
+
+    def test_the_pair_templates_words_are_searchable(self, pair_cols):
+        """`decouple_offset` lives at `qubit_pairs.{p}.coupler.decouple_offset`
+        — the word `coupler` is in the path, not in the label."""
+        assert _hits(pair_cols, "coupler"), "no pair column mentions the coupler"
+
+    def test_an_unrelated_pair_column_joins_nothing(self, pair_cols):
+        for c in pair_cols:
+            if "cz" in c["key"] or "coupler" in c["key"]:
+                continue
+            hay = _hay(c)
+            assert "readout" not in hay, c["key"]
