@@ -5048,7 +5048,25 @@ class TestCollectionsAndFavoriteTag:
         coll = c.get("/collections", headers=headers).get_data(as_text=True)
         dsets = c.get("/datasets", headers=headers).get_data(as_text=True)
         assert 'id="tag-filter-grid"' in coll
-        assert "tag-filter-grid" not in dsets           # not on the plain Datasets page
+        # docs/182 (customer, 2026-09-11): the tag chips are on the Datasets
+        # page too now — "experiments, sort 버튼 사이에 버튼 따로 tags라고
+        # 만들어서". They always worked there; they were simply never rendered,
+        # so a tag was something you could only type. What differs between the
+        # two pages is the DEFAULT: open on Collections, where the tags are the
+        # subject, collapsed on Datasets, where they are one filter of several.
+        assert 'id="tag-filter-grid"' in dsets
+        assert 'id="tag-filter-toggle"' in dsets and "Tags" in dsets
+        assert 'data-collections="0"' in dsets
+        assert 'data-collections="1"' in coll
+        # …and docs/141 4t still holds underneath: no tags, no row at all.
+        empty = tmp_path / "empty"
+        empty.mkdir()
+        _seed_dataset_run(empty, 31)
+        app2 = create_app(testing=True, instance_path=str(tmp_path / "_inst2"))
+        c2 = app2.test_client()
+        c2.post("/workspace/add", data={"folder": str(empty)})
+        assert "tag-filter-grid" not in c2.get(
+            "/datasets", headers=headers).get_data(as_text=True)
         import re
         m = re.search(r'data-view="collections"[^>]*>(.*?)</script>', coll, re.S)
         rows = json.loads(m.group(1))

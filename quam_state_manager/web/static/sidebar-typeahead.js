@@ -656,6 +656,24 @@ window.SidebarTypeahead = (function () {
                 }
                 return it;
             });
+            // docs/182: the words a PERSON typed, under their own heading so
+            // they can never be mistaken for a parameter key. They come LAST
+            // because a parameter key is what this box mostly completes.
+            var tagged = (window.TagVocab ? window.TagVocab.items(stem) : []);
+            if (tagged.length) {
+                // The widget caps the panel at MAX_ROWS, so without a
+                // reserved slice the person's own words would be the ones
+                // sliced off whenever the parameter list was already full —
+                // i.e. exactly on a rich archive.
+                var MR = window.Typeahead.MAX_ROWS || 8;
+                var keep = Math.max(2, MR - tagged.length - 1);
+                if (c.items.length > keep) c.items = c.items.slice(0, keep);
+                if (c.items.length) {
+                    c.items.push({ label: 'tags and notes', note: true,
+                                   cls: 'sm-th-fuzzsep' });
+                }
+                c.items = c.items.concat(tagged);
+            }
             if (!c.items.length) {
                 return vocab.hydrating
                     ? { items: [{ label: '⌛ indexing runs — parameters are still being read', note: true }] }
@@ -746,6 +764,117 @@ window.SidebarTypeahead = (function () {
     init();
     return { load: load, refresh: refresh, suggest: suggest,
              _vocab: function () { return vocab; } };
+})();
+
+/* ── the words a PERSON typed: tags and notes (docs/182) ─────────────────
+ *
+ * Customer, on-site: "제발 data tag랑 note에 사용자가 기재한 단어들도
+ * 넣어달라고 함!!!! 다만, 검색 pop up할때 뜨는건 run 번호: tag 이름 (혹은
+ * note) 이렇게 뜨도록. note는 내용이 다 담기게 하는게 아니고 그냥 note
+ * (검색어 ...) 그냥 이렇게 compact하게."
+ *
+ * The grammar could always find these — `tag:` and `note:` are in the search
+ * help — but you had to already know the word. Every other vocabulary the box
+ * completes from is machine-generated; these are the only words in the archive
+ * a person chose, which makes them exactly the ones worth being reminded of.
+ *
+ * Shared by every box that owns a typeahead, because a tag is a property of a
+ * RUN and every one of those boxes searches runs.
+ */
+window.TagVocab = (function () {
+    var data = null;            // {v, tags:[{t,n,r:[ids]}], notes:[{r,w:[words]}]}
+    var loading = false;
+
+    function load(force) {
+        if (loading) return;
+        loading = true;
+        var url = '/workspace/tag-vocab';
+        if (!force && data && data.v != null) url += '?v=' + encodeURIComponent(data.v);
+        fetch(url, { headers: { 'HX-Request': 'true' } })
+            .then(function (r) { return r.status === 204 ? null : r.json(); })
+            .then(function (j) { if (j) data = j; })
+            .catch(function () { /* a vocabulary is an accelerator, never a gate */ })
+            .then(function () { loading = false; });
+    }
+
+    /* One row per (run, tag) and one per (run, note word) — the customer asked
+     * for the run number to be visible, and a note belongs to exactly one run.
+     * Capped, and the cap is SAID rather than silently applied. */
+    var MAX_ROWS = 8;
+
+    function items(stem) {
+        if (!data) { load(false); return []; }
+        stem = String(stem || '').toLowerCase();
+        if (stem.length < 2) return [];      // one letter matches half the archive
+        var out = [], truncated = 0, unsearchable = 0;
+
+        (data.tags || []).forEach(function (d) {
+            if (String(d.t).toLowerCase().indexOf(stem) < 0) return;
+            // Accepting searches for the TAG, not the single run: the row says
+            // where the word was found, the token says what to look for.
+            // `tag:` is the grammar's own scope.
+            var tok = _scoped('tag', d.t);
+            if (tok === null) { unsearchable++; return; }   // never offer an inert row
+            var runs = d.r || [];
+            for (var i = 0; i < runs.length; i++) {
+                if (out.length >= MAX_ROWS) { truncated++; continue; }
+                out.push({
+                    label: '#' + runs[i] + ': ' + d.t,
+                    insert: tok,
+                    fire: true,
+                    meta: d.n === 1 ? 'tag' : 'tag · ' + d.n + ' runs'
+                });
+            }
+        });
+
+        (data.notes || []).forEach(function (d) {
+            var hit = null;
+            for (var i = 0; i < (d.w || []).length && !hit; i++) {
+                if (d.w[i].indexOf(stem) >= 0) hit = d.w[i];
+            }
+            if (!hit) return;
+            var ntok = _scoped('note', hit);
+            if (ntok === null) { unsearchable++; return; }
+            if (out.length >= MAX_ROWS) { truncated++; return; }
+            out.push({
+                // The note's CONTENT is deliberately not here — only the word
+                // that matched. A whole note would not fit and was explicitly
+                // not wanted.
+                label: '#' + d.r + ': note (' + hit + ')',
+                insert: ntok,
+                fire: true,
+                meta: 'note'
+            });
+        });
+
+        if (truncated) {
+            out.push({ label: '…and ' + truncated + ' more tagged or noted run'
+                              + (truncated === 1 ? '' : 's'), note: true });
+        }
+        // docs/175's rule, kept: a suggestion that finds nothing is worse than
+        // no suggestion. A word the tokenizer would mangle (it strips quotes
+        // with no escape) is not offered — and not dropped in silence either.
+        if (unsearchable) {
+            out.push({ label: unsearchable + ' contain a quote and cannot be searched',
+                       note: true });
+        }
+        return out;
+    }
+
+    /* The search grammar strips quotes with no escape, so a value carrying one
+     * could never match what it displays (the docs/175 rule: a suggestion that
+     * finds nothing is worse than no suggestion). Such a value is not offered. */
+    function _scoped(scope, value) {
+        value = String(value);
+        if (value.indexOf('"') >= 0) return null;
+        var tok = scope + ':' + value;
+        if (/[\s,]/.test(tok)) tok = scope + ':"' + value + '"';
+        return tok;
+    }
+
+    return { load: load, items: items, _scoped: _scoped,
+             _data: function () { return data; },
+             _set: function (d) { data = d; } };
 })();
 
 /* The insert rule, mirrored from core/param_vocab.insert_token and pinned

@@ -18313,6 +18313,48 @@ def workspace_param_vocab():
     return resp
 
 
+_TAG_VOCAB_MEMO: dict = {"v": None, "json": None}
+
+
+@bp.route("/workspace/tag-vocab")
+def workspace_tag_vocab():
+    """The tags and notes a PERSON typed, for the search box's typeahead.
+
+    Customer, on-site (docs/182): the grammar could already find these —
+    ``tag:flagged`` and ``note:todo`` have been in the search help for a long
+    time — but you had to already know the word. Every other vocabulary the box
+    completes from is machine-generated; these are the only words in the archive
+    someone chose, and they were the ones you could not be reminded of.
+
+    Reads ``quashboard_tags.json`` DIRECTLY, never through ``DatasetStore``:
+    that file is the source of truth, and a store would let a keystroke trigger
+    the cold run scan docs/170 spent a round bounding (31.6 s on the customer's
+    share). A vocabulary must never be able to do that.
+
+    ``?v=`` is a conditional request. The version is the tag files' size+mtime,
+    NOT the workspace version — a tag is typed without the archive changing at
+    all, and an edit between two polls has to reach the box.
+    """
+    from quam_state_manager.core import tag_vocab
+
+    folders = _dataset_candidate_folders(fast=True)
+    ver = tag_vocab.version(folders)
+    if request.args.get("v") == ver:
+        return ("", 204)
+    memo = _TAG_VOCAB_MEMO
+    if memo["v"] == ver and memo["json"] is not None:
+        body = memo["json"]
+    else:
+        payload = tag_vocab.to_payload(tag_vocab.build(folders))
+        payload["v"] = ver
+        body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+        memo.update(v=ver, json=body)
+    resp = make_response(body)
+    resp.mimetype = "application/json"
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 # ── SM's own folder, and when to say something about it ────────────────────
 #
 # Customer, 2026-09-11, after a machine-wide temp audit turned up 28.79 GB:
@@ -22690,13 +22732,16 @@ def _datasets_view(view_mode: str):
               reverse=True)
 
     all_tags = sorted(tags_set, key=natural_key)
-    collection_tags: list[str] = []
     if is_collections:
         # Only runs that carry >=1 tag belong in Collections.
         rows = [r for r in rows if r.get("tags")]
-        # Tag-filter chips: every tag, with the reserved favorite pinned first.
-        rest = [t for t in all_tags if t != FAVORITE_TAG]
-        collection_tags = ([FAVORITE_TAG] if FAVORITE_TAG in all_tags else []) + rest
+    # docs/182 (customer): the tag chips are offered on BOTH pages now. They
+    # always worked — `toggleTagFilter` is not mode-aware — they were simply
+    # never rendered outside Collections, so on Datasets a tag was something
+    # you could only type. The reserved favorite is pinned first.
+    rest = [t for t in all_tags if t != FAVORITE_TAG]
+    collection_tags: list[str] = (
+        ([FAVORITE_TAG] if FAVORITE_TAG in all_tags else []) + rest)
 
     # Node names carry numeric prefixes (05_power_rabi, 15h_…) and qubit ids
     # double digits — every displayed list counts numerically (2026-09-09).

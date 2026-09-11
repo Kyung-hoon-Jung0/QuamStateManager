@@ -188,7 +188,7 @@
     {% endif %}
 </div>
 
-{% if is_collections and collection_tags %}
+{% if collection_tags %}
 {# Tag-filter chips — multi-select (clicking a 2nd keeps the 1st), OR filter with
    match-count ranking (rows matching the most selected tags float to the top),
    handled in dataset-virtual.js. The reserved "favorite" tag is pinned first
@@ -197,10 +197,26 @@
    row was a lone "All" chip under the Experiments filter that stayed lit
    whatever experiment was picked (user screenshot). app.js already tolerates
    the grid's absence (the afterSwap re-sync clears the selection). #}
-<div class="tag-filter-sections" id="tag-filter-grid">
+<div class="tag-filter-sections" id="tag-filter-grid"
+     data-collections="{{ '1' if is_collections else '0' }}">
     <div class="tag-filter-topbar">
+        {# docs/182: the same toggle the Experiments and Sort banners carry, so
+           the three read as one row of filters — which is where the customer
+           asked for it ("experiments, sort 버튼 사이에"). The collapsed class
+           lives on <body>, exactly as the Experiments one does, so the state
+           survives an htmx swap with no per-render JS. #}
+        <button type="button" class="exp-filter-toggle" id="tag-filter-toggle"
+                onclick="toggleTagFilterCollapsed()"
+                aria-expanded="{{ 'true' if is_collections else 'false' }}"
+                aria-controls="tag-filter-grid"
+                title="Show or hide the tag filter">
+            <span class="exp-filter-toggle-caret" aria-hidden="true">&#9662;</span> Tags
+        </button>
         <span class="tag-chip active" data-tag="" onclick="toggleTagFilter('', this)"
               title="Show all tagged runs">All</span>
+        <span class="exp-filter-summary">{{ collection_tags | length }} tag{{ '' if collection_tags | length == 1 else 's' }} — click to filter</span>
+    </div>
+    <div class="tag-filter-chips">
         {% for t in collection_tags %}
         <span class="tag-chip{% if t == 'favorite' %} tag-chip-fav{% endif %}"
               data-tag="{{ t }}" onclick="toggleTagFilter({{ t | tojson }}, this)">

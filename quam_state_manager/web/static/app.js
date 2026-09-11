@@ -1667,6 +1667,47 @@ window.toggleExpFilterCollapsed = function() {
     });
 })();
 
+/**
+ * docs/182 — the Tags banner, collapsing the way the Experiments one does.
+ *
+ * The class lives on <body> for the same reason: the datasets page is swapped
+ * by htmx, and a state held on the swapped node would be rebuilt (and lost) on
+ * every render.
+ *
+ * The DEFAULT differs by page and the stored choice beats both: on Collections
+ * the tags are the subject of the page and start open; on Datasets they are one
+ * filter among several and start collapsed. The page says which it is through
+ * `#tag-filter-grid[data-collections]`, so there is no second source of truth.
+ */
+window.toggleTagFilterCollapsed = function () {
+    var collapsed = document.body.classList.toggle('tag-filter-collapsed');
+    try { localStorage.setItem('quam_tag_filter_collapsed', collapsed ? '1' : '0'); } catch (e) {}
+    var btn = document.getElementById('tag-filter-toggle');
+    if (btn) btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+};
+
+(function () {
+    function apply() {
+        var grid = document.getElementById('tag-filter-grid');
+        if (!grid) return;
+        var stored = null;
+        try { stored = localStorage.getItem('quam_tag_filter_collapsed'); } catch (e) {}
+        var collapsed = (stored === null || stored === undefined)
+            ? grid.getAttribute('data-collections') !== '1'
+            : stored === '1';
+        document.body.classList.toggle('tag-filter-collapsed', collapsed);
+        var btn = document.getElementById('tag-filter-toggle');
+        if (btn) btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', apply);
+    } else { apply(); }
+    document.addEventListener('htmx:afterSwap', function (evt) {
+        var t = evt.detail && evt.detail.target;
+        if (t && t.querySelector && t.querySelector('#tag-filter-toggle')) apply();
+    });
+})();
+
 /* ------------------------------------------------------------------ */
 /* Keyboard activation for onclick-only tab controls (role="tab")       */
 /* ------------------------------------------------------------------ */

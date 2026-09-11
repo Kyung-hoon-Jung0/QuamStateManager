@@ -3111,6 +3111,12 @@ th.sortable.sort-desc::after { content: '\25BC'; opacity: 0.8; }
 #sort-banner-toggle .exp-filter-toggle-caret { color: var(--pico-primary); }
 .exp-filter-toggle-caret { transition: transform .12s; }
 body.exp-filter-collapsed .exp-filter-toggle-caret { transform: rotate(-90deg); }
+/* docs/182 — the Tags banner collapses like the Experiments one. Scoped to the
+   tag banner's own caret so the two carets never move together. */
+body.tag-filter-collapsed #tag-filter-toggle .exp-filter-toggle-caret { transform: rotate(-90deg); }
+body.tag-filter-collapsed .tag-filter-chips { display: none; }
+body:not(.tag-filter-collapsed) #tag-filter-grid .exp-filter-summary { display: none; }
+.tag-filter-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; }
 body.exp-filter-collapsed .exp-filter-section { display: none; }
 .exp-filter-summary { font-size: .76em; color: var(--pico-muted-color); }
 body:not(.exp-filter-collapsed) .exp-filter-summary { display: none; }
