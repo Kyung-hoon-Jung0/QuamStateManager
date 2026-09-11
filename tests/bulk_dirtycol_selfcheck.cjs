@@ -82,6 +82,10 @@ function world() {
   const win = dom.window;
   global.window = win; global.document = win.document;
   win.htmx = { ajax: function () {} };
+  // The search is debounced (200 ms). Shorten it, and WAIT for it below: an
+  // assertion made before applySearch has run is an assertion about nothing,
+  // which is how three real mutations of this round first went green.
+  win.__bulkSearchDebounce = 5;
   win.fetch = function () { return Promise.reject(new Error('no fetch expected')); };
   new win.Function(GRID_VIRT_JS).call(win);
   new win.Function(BULK_JS).call(win);
@@ -113,10 +117,18 @@ function toggleCol(key, on) {
   cb.dispatchEvent(new win.Event('change', { bubbles: true }));
   return cb;
 }
-function search(q) {
+function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+async function search(q) {
   const inp = doc.getElementById('bulk-search');
   inp.value = q;
   inp.dispatchEvent(new win.Event('input', { bubbles: true }));
+  await sleep(40);              // past the debounce, so the verdict is real
+}
+function rowShown(q) {
+  const tr = doc.querySelector('tr[data-qubit="' + q + '"]');
+  return !tr.classList.contains('bulk-row-hidden')
+    && !tr.classList.contains('bulk-qubit-off')
+    && tr.style.display !== 'none';
 }
 // The property the whole round is about: nothing `applyAll` would write may sit
 // in a column the presser cannot see.
@@ -129,6 +141,7 @@ function hiddenDirty() {
     }).length;
 }
 
+async function main() {
 // ── D1: the picker still works ───────────────────────────────────────────────
 ok(!colHidden('amp'), 'D1: both columns start visible');
 toggleCol('amp', false);
@@ -156,32 +169,76 @@ ok(colHidden('amp'),
 
 // ── D4: a SEARCH cannot hide an unapplied edit either ───────────────────────
 toggleCol('amp', true);
-search('');
+await search('');
 type(cellOf('q2', 'amp'), '0.42');
-search('f 01');                       // a query that excludes the amp column
+await search('f 01');                       // a query that excludes the amp column
 ok(!colHidden('f_01'), 'D4: the searched-for column shows');
 ok(!colHidden('amp'),
   'D4: and the column with an unapplied edit is not filtered away');
 ok(hiddenDirty() === 0, 'D4: nothing Apply-all would write is off screen');
 
 // …and a column with nothing unapplied IS filtered away, so the search still
-// does its job.
+// does its job. Assert WITHOUT touching the search box: applying or resetting
+// is the moment a forced column stops being forced, and nobody types anything
+// afterwards, so the grid has to settle it by itself.
 win.BulkEdit.resetDirty();
-search('f 01');
+ok(colHidden('amp'),
+  'D4: the reset alone puts the column back under the standing query');
+await search('f 01');
 ok(colHidden('amp'), 'D4: with nothing unapplied the query filters normally');
+
+// ── D4b: the search must EVALUATE the forced column, not merely show it ────
+// `hide.has(k)` drops a hidden column's values from the row haystack too, so a
+// column that is on screen but still counted as hidden takes its own row down
+// with it: searching for the very value you just typed hides the row it is in.
+await search('');
+toggleCol('amp', false);                 // the choice: hidden
+type(cellOf('q1', 'amp'), '0.7531');     // …overridden by an unapplied edit
+await search('0.7531');
+ok(!colHidden('amp'), 'D4b: the forced column is on screen');
+ok(rowShown('q1'),
+  'D4b: and the row holding that edit survives a search for its own value');
+ok(hiddenDirty() === 0, 'D4b: nothing Apply-all would write is off screen');
+ok(JSON.parse(win.localStorage.getItem('quam_bulk_hidden_cols_v2')).join(',') === 'amp',
+  'D4b: a search does not overwrite the stored choice with the override');
+
+win.BulkEdit.resetDirty();
+await search('');
+toggleCol('amp', true);
 
 // ── D5: both layers at once ────────────────────────────────────────────────
 // checkbox-hidden AND search-hidden, then made dirty by a mirror write: the
 // stale verdict of whichever layer is not re-run must not keep it off screen.
-search('');
+await search('');
 toggleCol('amp', false);
-search('f 01');
+await search('f 01');
 ok(colHidden('amp'), 'D5: hidden by both layers');
 type(cellOf('q1', 'amp'), '0.11');
 ok(!colHidden('amp'), 'D5: an unapplied edit still brings it back through both');
 ok(hiddenDirty() === 0, 'D5: nothing Apply-all would write is off screen');
 
+// ── D5b: search-hidden while checkbox-VISIBLE, then a mirror write ────────
+// This is the only shape that leaves a STALE verdict to clear: applySearch
+// skips a checkbox-hidden column entirely, so that one never carries the class.
+// Here the column really is search-hidden when the write lands, and the core
+// pass runs alone — no query changed, so nothing re-runs the search.
+win.BulkEdit.resetDirty();
+await search('');
+toggleCol('amp', true);
+await search('f 01');
+ok(colHidden('amp'), 'D5b: checkbox-visible and hidden by the query');
+type(cellOf('q2', 'amp'), '0.99');       // a mirror write, mid-search
+ok(!colHidden('amp'),
+  'D5b: the edit clears the standing search verdict, not just the picker one');
+ok(hiddenDirty() === 0, 'D5b: nothing Apply-all would write is off screen');
+win.BulkEdit.resetDirty();
+await search('');
+
 // ── D6: the count the confirm quotes is the count on screen ────────────────
+// Two edits, one of them in a column the picker was told to hide: the confirm
+// counts both, so both have to be on screen.
+toggleCol('amp', false);
+type(cellOf('q1', 'amp'), '0.31');
 type(cellOf('q2', 'f_01'), '6000000000');
 const shown = Array.prototype.filter.call(doc.querySelectorAll('#bulk-table .bulk-cell'),
   function (c) { return c.value !== c.getAttribute('data-orig'); }).length;
@@ -191,3 +248,6 @@ ok(shown === 2 && hiddenDirty() === 0,
 console.log(fails ? 'FAILED (' + fails + ')'
   : 'bulk_dirtycol_selfcheck ok (' + asserts + ' assertions)');
 process.exit(fails ? 1 : 0);
+}
+
+main().catch(function (e) { console.error(String(e && e.stack || e)); process.exit(1); });
