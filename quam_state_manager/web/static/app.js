@@ -14372,6 +14372,93 @@ document.addEventListener('htmx:afterSwap', function(evt) {
     // the buttons' own htmx requests, so the spinner feedback, the
     // in-flight guard and the sidebar filter come along for free. Returns
     // what it pressed, so a harness can see it without a DOM full of htmx.
+    /* Keep the run list where the reader left it across a refresh.
+     *
+     * Customer: a new experiment arrives, the tree re-fetches, and the scroll
+     * position is gone. docs/144 settled the same rule for state sync; the run
+     * tree was never brought under it.
+     *
+     * The anchor is a ROW, never a pixel: runs are newest-first, so a new one
+     * is inserted ABOVE everything and keeping the raw scrollTop would push
+     * the row being read down by exactly one row. Identity is `data-uid` (the
+     * run) or `data-folder-path` (a folder), never a DOM index — the list is
+     * about to be rebuilt.
+     *
+     * Opt-in per swap: a SEARCH keystroke must still land at the top, because
+     * a fresh result list belongs there.
+     */
+    window.SidebarScroll = (function () {
+        var _armed = false, _anchor = null;
+
+        function _scroller() { return document.getElementById('sidebar'); }
+
+        function _rowsIn(root) {
+            return root ? root.querySelectorAll('[data-uid], [data-folder-path]') : [];
+        }
+
+        function _idOf(el) {
+            return el.getAttribute('data-uid') || el.getAttribute('data-folder-path') || null;
+        }
+
+        /* The first row at or below the top edge, and how far below it sits. */
+        function capture() {
+            var sc = _scroller(), tree = document.getElementById('sidebar-tree');
+            if (!sc || !tree) return null;
+            var top = sc.getBoundingClientRect().top;
+            var rows = _rowsIn(tree);
+            for (var i = 0; i < rows.length; i++) {
+                var r = rows[i].getBoundingClientRect();
+                if (r.bottom > top + 1) {
+                    var id = _idOf(rows[i]);
+                    if (id) return { id: id, offset: r.top - top, scrollTop: sc.scrollTop };
+                }
+            }
+            return { id: null, offset: 0, scrollTop: sc.scrollTop };
+        }
+
+        function restore(a) {
+            var sc = _scroller(), tree = document.getElementById('sidebar-tree');
+            if (!sc || !a) return 'no-scroller';
+            if (!a.id) { sc.scrollTop = a.scrollTop; return 'scrolltop'; }
+            var el = tree && (tree.querySelector('[data-uid="' + (window.CSS && CSS.escape ? CSS.escape(a.id) : a.id) + '"]')
+                           || tree.querySelector('[data-folder-path="' + (window.CSS && CSS.escape ? CSS.escape(a.id) : a.id) + '"]'));
+            if (!el) { sc.scrollTop = a.scrollTop; return 'anchor-gone'; }
+            var now = el.getBoundingClientRect().top - sc.getBoundingClientRect().top;
+            sc.scrollTop += (now - a.offset);
+            return 'anchored';
+        }
+
+        /* Arm the NEXT #sidebar-tree swap to keep its place. */
+        function arm() { _armed = true; }
+
+        document.addEventListener('htmx:beforeSwap', function (e) {
+            if (!_armed) return;
+            var t = e.target || (e.detail && e.detail.target);
+            if (!t || t.id !== 'sidebar-tree') return;
+            _anchor = capture();
+        });
+        document.addEventListener('htmx:afterSwap', function (e) {
+            var t = e.target || (e.detail && e.detail.target);
+            if (!t || t.id !== 'sidebar-tree') return;
+            if (!_armed) return;
+            _armed = false;
+            var a = _anchor; _anchor = null;
+            if (!a) return;
+            // after the swap settles: the rows are in, the heights are final
+            requestAnimationFrame(function () { restore(a); });
+        });
+        // The refresh button is the same gesture as an automatic refetch: the
+        // list you asked to bring up to date, not a new query.
+        document.addEventListener('click', function (ev) {
+            var b = ev.target && ev.target.closest
+                ? ev.target.closest('.btn-workspace-refresh') : null;
+            if (b) arm();
+        }, true);
+
+        return { arm: arm, capture: capture, restore: restore,
+                 _state: function () { return { armed: _armed, anchor: _anchor }; } };
+    })();
+
     window.refreshRunLists = function () {
         var did = { sidebar: false, datasets: false };
         var ws = document.querySelector('.btn-workspace-refresh');

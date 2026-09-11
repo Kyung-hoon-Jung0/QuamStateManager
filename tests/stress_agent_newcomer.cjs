@@ -1,90 +1,96 @@
-/* Newcomer round, phase 2: every string on the Agent tab + the safe controls.
- * argv[2]=out json  argv[3]=CDP  argv[4]=base  argv[5]=shot dir
+/* The newcomer round: someone who has never seen SM, told only
+ * "use the agent to calibrate".
+ *
+ * argv[2] = json out path, argv[3] = CDP port, argv[4] = base url, argv[5] = phase
  */
 const fs = require('fs');
-const { connect } = require('C:/Users/KyunghoonJung/AppData/Local/Temp/claude/D--work-statemanager/dd0fa2c3-e492-405d-8783-2c62cd30ba4a/scratchpad/cdp_lib.cjs');
-const OUT = process.argv[2], CDP = process.argv[3], BASE = process.argv[4], DIR = process.argv[5];
-const out = { steps: [] };
-function rec(k, v) { out.steps.push({ k, v }); }
+const OUT = process.argv[2];
+const CDP = process.argv[3] || '9435';
+const BASE = process.argv[4] || 'http://127.0.0.1:5435';
+const PHASE = process.argv[5] || 'A';
+
+const errors = [];
+const notes = [];
+function note(k, v) { notes.push({ k: k, v: v }); }
+
+async function connect() {
+  const targets = await (await fetch('http://127.0.0.1:' + CDP + '/json')).json();
+  const page = targets.find(t => t.type === 'page');
+  const ws = new WebSocket(page.webSocketDebuggerUrl);
+  await new Promise(res => ws.onopen = res);
+  let id = 0; const pending = new Map();
+  ws.onmessage = e => {
+    const m = JSON.parse(e.data);
+    if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); return; }
+    if (m.method === 'Runtime.exceptionThrown') {
+      const d = m.params.exceptionDetails;
+      errors.push({ kind: 'exception', text: (d.exception && (d.exception.description || d.exception.value)) || d.text });
+    }
+    if (m.method === 'Runtime.consoleAPICalled' && m.params.type === 'error') {
+      errors.push({ kind: 'console.error', text: (m.params.args || []).map(a => a.value || a.description || '').join(' ') });
+    }
+  };
+  const send = (method, params = {}) => new Promise(res => { const i = ++id; pending.set(i, res); ws.send(JSON.stringify({ id: i, method, params })); });
+  const ev = async (expr) => {
+    const rr = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true });
+    if (rr.result && rr.result.exceptionDetails) {
+      const ex = rr.result.exceptionDetails.exception;
+      throw new Error((ex && (ex.description || ex.value)) || 'eval failed: ' + expr.slice(0, 120));
+    }
+    return rr.result.result.value;
+  };
+  return { send, ev };
+}
+
+const sleep = ms => new Promise(res => setTimeout(res, ms));
 
 async function main() {
-  const c = await connect(CDP);
-  await c.send('Page.navigate', { url: BASE + '/' });
-  await c.sleep(3200);
+  const { send, ev } = await connect();
+  await send('Page.enable'); await send('Runtime.enable');
+  await send('Network.setCacheDisabled', { cacheDisabled: true });
+  await send('Emulation.setDeviceMetricsOverride', { width: 1500, height: 1000, deviceScaleFactor: 1, mobile: false });
 
-  // Every title=/aria-label= tooltip in the agent region — what a hover would say
-  out.tooltips = await c.ev(`(function(){
-    var r=document.querySelector('.ag-root')||document.body; var o=[];
-    r.querySelectorAll('[title],[aria-label]').forEach(function(e){
-      o.push({tag:e.tagName.toLowerCase(),
-              txt:(e.innerText||'').trim().replace(/\s+/g,' ').slice(0,40),
-              title:e.getAttribute('title'), aria:e.getAttribute('aria-label')});
-    }); return o;})()`);
-  out.wireTooltips = await c.ev(`(function(){
-    var r=document.querySelector('.ag-wire'); if(!r) return null; var o=[];
-    r.querySelectorAll('[title],[aria-label]').forEach(function(e){
-      o.push({txt:(e.innerText||'').trim().slice(0,40), title:e.getAttribute('title'), aria:e.getAttribute('aria-label')});});
-    return {text:r.innerText.replace(/\s+/g,' '), items:o};})()`);
+  const shot = async (name) => {
+    const s = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+    const p = OUT.replace(/\.json$/, '_' + name + '.png');
+    fs.writeFileSync(p, Buffer.from(s.result.data, 'base64'));
+    return p;
+  };
+  const shotFull = async (name) => {
+    const s = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
+    const p = OUT.replace(/\.json$/, '_' + name + '.png');
+    fs.writeFileSync(p, Buffer.from(s.result.data, 'base64'));
+    return p;
+  };
+  const nav = async (path, wait) => { await send('Page.navigate', { url: BASE + path }); await sleep(wait || 3500); };
 
-  // The "?" in the wire strip
-  const qbtn = await c.ev(`(function(){var b=document.querySelector('.ag-wire-help'); if(!b) return null; var r=b.getBoundingClientRect(); return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)};})()`);
-  rec('wire ? button box', qbtn);
-  if (qbtn) {
-    await c.click(qbtn.x, qbtn.y);
-    await c.sleep(700);
-    await c.shot(DIR + '/n02_wire_help.png');
-    rec('after clicking ?', await c.ev(`(function(){
-      var pops=[].slice.call(document.querySelectorAll('.ag-wire-pop,.sm-pop,[role=dialog],.popover'));
-      return pops.filter(function(p){var r=p.getBoundingClientRect(); return r.width>0&&r.height>0;})
-        .map(function(p){return {cls:p.className, text:p.innerText.replace(/\s+/g,' ').slice(0,900)};});})()`));
-    await c.press('Escape'); await c.sleep(300);
-  }
+  const KEYS = { Enter: 13, Tab: 9, Escape: 27, ArrowDown: 40, ArrowUp: 38, Backspace: 8 };
+  const press = async (key) => {
+    const p = { type: 'rawKeyDown', key: key, windowsVirtualKeyCode: KEYS[key], nativeVirtualKeyCode: KEYS[key] };
+    if (key === 'Enter' || key === 'Tab') { p.text = key === 'Enter' ? '\r' : '\t'; p.type = 'keyDown'; }
+    await send('Input.dispatchKeyEvent', p);
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: key, windowsVirtualKeyCode: KEYS[key] });
+  };
+  const typeChar = async (ch) => {
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', text: ch, unmodifiedText: ch, key: ch });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: ch });
+  };
+  const typeInto = async (sel, text) => {
+    await ev(`(function(){var e=document.querySelector(${JSON.stringify(sel)}); if(!e) return 0; e.focus(); if('value' in e){e.value='';} else {e.textContent='';} e.dispatchEvent(new Event('input',{bubbles:true})); return 1;})()`);
+    for (const ch of text) { await typeChar(ch); await sleep(8); }
+    await sleep(200);
+  };
 
-  // the observer checkbox: what does it say, what does toggling change
-  const obs = await c.ev(`(function(){
-    var i=[].slice.call(document.querySelectorAll('input[type=checkbox]')).filter(function(e){
-      var l=e.closest('label'); return (l&&/observer/i.test(l.innerText))||/observer/i.test((e.parentElement||{}).innerText||'');});
-    if(!i.length) return null; var e=i[0]; var r=e.getBoundingClientRect();
-    var lab=e.closest('label')||e.parentElement;
-    return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2),checked:e.checked,
-            title:e.getAttribute('title'),labTitle:lab?lab.getAttribute('title'):null,
-            labText:lab?lab.innerText.replace(/\s+/g,' '):null};})()`);
-  rec('observer checkbox', obs);
-  if (obs) {
-    const before = await c.ev(`document.querySelector('.ag-root').innerText.replace(/\s+/g,' ')`);
-    await c.click(obs.x, obs.y); await c.sleep(1200);
-    const after = await c.ev(`document.querySelector('.ag-root').innerText.replace(/\s+/g,' ')`);
-    await c.shot(DIR + '/n03_observer_on.png');
-    rec('observer toggle changed the panel?', { changed: before !== after, before: before.slice(0,400), after: after.slice(0,400) });
-    // any toast?
-    rec('toast after observer', await c.ev(`(function(){var t=document.querySelectorAll('.toast,.sm-toast,#toast'); return [].map.call(t,function(x){return x.innerText.trim().slice(0,200);}).filter(Boolean);})()`));
-    await c.click(obs.x, obs.y); await c.sleep(900);
-    rec('observer back off', await c.ev(`(function(){var i=[].slice.call(document.querySelectorAll('input[type=checkbox]')).filter(function(e){var l=e.closest('label'); return (l&&/observer/i.test(l.innerText));}); return i.length?i[0].checked:null;})()`));
-  }
+  const G = { send, ev, shot, shotFull, nav, press, typeChar, typeInto, note, sleep };
+  await require(OUT.replace(/\.json$/, '_phase' + PHASE + '.cjs'))(G);
 
-  // the composer: placeholder, hints, the model select, the "your name" box
-  out.composer = await c.ev(`(function(){
-    var ta=document.querySelector('.ag-input');
-    var sel=document.querySelector('.ag-backend');
-    var box=ta?ta.closest('form')||ta.parentElement.parentElement:null;
-    return {placeholder:ta?ta.placeholder:null,
-            selOpts:sel?[].map.call(sel.options,function(o){return o.text;}):null,
-            selTitle:sel?sel.getAttribute('title'):null,
-            footText:box?box.innerText.replace(/\s+/g,' ').slice(0,500):null,
-            inputs:[].map.call(document.querySelectorAll('.ag-root input[type=text],.ag-root input:not([type])'),function(i){
-              return {ph:i.placeholder,title:i.getAttribute('title'),val:i.value};})};})()`);
-
-  // empty main pane: is there ANY guidance for a person who has never used it
-  out.emptyPane = await c.ev(`(function(){
-    var f=document.querySelector('.ag-feed,.ag-stream,.ag-body,.ag-main');
-    if(!f){ // find the biggest empty block inside ag-root
-      var best=null; document.querySelectorAll('.ag-root *').forEach(function(e){var r=e.getBoundingClientRect();
-        if(r.height>300 && (!e.innerText||e.innerText.trim().length<40)){ if(!best||r.height>best.h) best={cls:e.className,h:Math.round(r.height),txt:(e.innerText||'').trim()};}});
-      return {found:'none', biggestEmpty:best};}
-    return {cls:f.className, h:Math.round(f.getBoundingClientRect().height), text:f.innerText.trim().slice(0,600)};})()`);
-
-  out.errors = c.errors;
-  fs.writeFileSync(OUT, JSON.stringify(out, null, 1));
+  fs.writeFileSync(OUT, JSON.stringify({ notes: notes, errors: errors }, null, 1));
+  console.log('notes: ' + notes.length + '  console errors: ' + errors.length);
+  errors.slice(0, 20).forEach(e => console.log('  ERR  ' + e.kind + ': ' + String(e.text).slice(0, 260)));
   process.exit(0);
 }
-main().catch(e => { out.fatal = String(e && e.stack || e); fs.writeFileSync(OUT, JSON.stringify(out, null, 1)); process.exit(1); });
+main().catch(e => {
+  console.error('driver error: ' + (e && e.stack || e));
+  fs.writeFileSync(OUT, JSON.stringify({ notes: notes, errors: errors, driver: String(e && e.stack || e) }, null, 1));
+  process.exit(1);
+});

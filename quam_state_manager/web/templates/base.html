@@ -841,6 +841,10 @@
                             values: { name: (f && f.value) || '' }
                         };
                         if (f) opts.source = f;
+                        // Customer: a new run must not throw away where the
+                        // reader was. A search keystroke is NOT armed — a
+                        // fresh result list belongs at the top.
+                        if (window.SidebarScroll) window.SidebarScroll.arm();
                         return htmx.ajax('GET', '/workspace/tree', opts)
                           .then(function(){ if (typeof v !== 'undefined') lastV = v; })
                           .catch(function(){});

@@ -16814,6 +16814,27 @@ _DIFF_TABS = ("figures", "state", "wiring", "node", "data")
 # docs/141 4y: up to FIVE sources side by side (a..e). More stops being readable
 # and the sidebar refuses the sixth tick; the server never truncates silently.
 _DIFF_SLOTS = "abcde"
+
+
+def _run_age_key(run: dict | None, fallback: int):
+    """Sort key that puts the OLDEST run first.
+
+    Customer, 2026-09-11: "column 순서를 old run > new run으로 항상 정렬해서
+    보여줄것." Age is the run's own ``(date, time, run_id)``; a run that cannot
+    be dated keeps its position at the END, because "SM could not resolve it"
+    is not evidence that it is old.
+    """
+    if not run:
+        return (1, "", "", 0, fallback)
+    date = str(run.get("date") or "")
+    time = str(run.get("time") or "")
+    try:
+        rid = int(run.get("run_id") or 0)
+    except (TypeError, ValueError):
+        rid = 0
+    if not date and not rid:
+        return (1, "", "", 0, fallback)
+    return (0, date, time, rid, fallback)
 _DIFF_MAX_SOURCES = 5
 _DIFF_LIST_PAGE = 300      # ranked rows per list page
 # One diff is one flatten of two documents (20-45 ms measured on real chips).
@@ -17481,8 +17502,11 @@ def diff_runs():
     chip state, so that is the tab this lands on.
     """
     uids = [u for u in (request.args.get("uids") or "").split(",") if u.strip()]
-    refs: list[str] = []
-    for uid in uids[:_DIFF_MAX_SOURCES]:
+    # OLDEST FIRST (customer, 2026-09-11): the tree is newest-first, so the
+    # tick order made the columns read new -> old, backwards from how a change
+    # is read, and it moved with the order of clicking.
+    dated: list[tuple] = []
+    for i, uid in enumerate(uids[:_DIFF_MAX_SOURCES]):
         resolved = _resolve_run(uid.strip())
         if not resolved:
             continue
@@ -17490,7 +17514,9 @@ def diff_runs():
         run = store.get_run(run_id) or {}
         folder = run.get("folder_path")
         if folder:
-            refs.append(f"run:{Path(folder) / 'quam_state'}")
+            dated.append((_run_age_key(run, i), f"run:{Path(folder) / 'quam_state'}"))
+    dated.sort(key=lambda t: t[0])
+    refs: list[str] = [r for _k, r in dated]
     if len(refs) < 2:
         return _hub_redirect("/diff")
     # docs/141 4y: 2..5 runs, figures first, and the main pane only.
@@ -18838,6 +18864,43 @@ def _compute_diff_cells(all_rows: list[dict], ref_idx: int) -> set[tuple[str, st
     return diff_cells
 
 
+def _oldest_first(paths: list[str]) -> list[str]:
+    """*paths* (each a run's ``quam_state`` folder) ordered oldest run first.
+
+    Dated from the WORKSPACE TREE, which is where these ticks came from and
+    which already carries every entry's ``run_id`` / ``date_str`` /
+    ``timestamp`` — no dataset store has to be open for this to work. A path
+    the tree does not know keeps its relative position at the END: "SM cannot
+    date it" is not evidence that it is old.
+
+    Never sorts by folder NAME. A name is a convention, and this has to be
+    right on a lab that does not follow it.
+    """
+    by_path: dict[str, Any] = {}
+    try:
+        ws = _ws()
+        for groups in (ws.tree or {}).values():
+            for g in (groups or ()):
+                for e in (getattr(g, "entries", None) or ()):
+                    for p in (getattr(e, "quam_state_path", None),
+                              getattr(e, "folder_path", None)):
+                        if p:
+                            by_path[str(p)] = e
+    except Exception:  # noqa: BLE001 -- ordering must never break the compare
+        by_path = {}
+
+    def _key(p: str, i: int):
+        e = by_path.get(str(p)) or by_path.get(str(Path(p).parent))
+        if e is None:
+            return (1, "", "", 0, i)
+        return _run_age_key({"date": getattr(e, "date_str", "") or "",
+                             "time": getattr(e, "timestamp", "") or "",
+                             "run_id": getattr(e, "run_id", None)}, i)
+
+    return [p for _k, p in sorted(((_key(p, i), p) for i, p in enumerate(paths)),
+                                  key=lambda t: t[0])]
+
+
 @bp.route("/compare", methods=["POST"])
 def compare():
     """Sidebar experiment-checkbox compare — now a deep-link adapter into
@@ -18863,6 +18926,10 @@ def compare():
             resp.headers["HX-Trigger"] = json.dumps({"sm:toast": {"message": msg, "level": "warning"}})
             return resp
         return redirect("/diff")
+    # OLDEST FIRST (customer, 2026-09-11), by the runs' own dates. A path this
+    # SM cannot resolve to a run keeps its place at the end rather than being
+    # dated by guesswork.
+    all_paths = _oldest_first(all_paths)
     toks = [_legacy_src_token(p) for p in all_paths]
     tab = "figures" if all(t.startswith("run:") for t in toks) else "state"
     qs = "&".join(f"{slot}={quote(t)}" for slot, t in zip(_DIFF_SLOTS, toks))
