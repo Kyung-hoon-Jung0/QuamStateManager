@@ -12729,7 +12729,7 @@ function _navigateToExplorerPath(dotPath) {
                     setTimeout(tryExpand, 100);
                     return;
                 }
-                _expandTreeToPath('explorer-tree-state', dotPath);
+                _jumpToTreePath('explorer-tree-state', dotPath);
             }
             tryExpand();
         });
@@ -12762,11 +12762,83 @@ function _navigateToExplorerPath(dotPath) {
 // hoists top-level declarations onto window, but eval'd/bundled contexts
 // (the jsdom selfchecks) don't. Pin it so the guard never silently no-ops.
 window._navigateToExplorerPath = _navigateToExplorerPath;
+// docs/180: exported for the same reason — the selfcheck drives it directly,
+// and a guard that names `window.X` while the code calls a bare `X` throws
+// instead of degrading (the standing rule since docs/78).
+window._jumpToTreePath = _jumpToTreePath;
+window._treePathVisible = _treePathVisible;
 
 /**
  * Expand a JSON tree to reveal a specific dot-path (e.g. "qubits.q4.resonator.time_of_flight").
  * Walks the path segments, materializing lazy nodes and expanding parents along the way.
  */
+/* docs/180 — a jump must actually SHOW the field.
+ *
+ * The tree's search survives navigation (PaneState parks the pane, docs/110;
+ * `_explorer.html` re-applies the box on a tab switch). That is right for "go
+ * back to what I was doing" and wrong for "take me to THIS field": Diagnostics'
+ * Go to field landed on a tree still filtered by the user's query, so the row
+ * it had just promised to show was not on screen and nothing said why
+ * (customer report, 2026-09-11).
+ *
+ * It lives here rather than in Diagnostics because all four jump entry points
+ * — Diagnostics, the type-fix plan, the Undo trail, the value-history Data
+ * link — come through `_navigateToExplorerPath`.
+ *
+ * The filter is cleared ONLY when it is in the way. A target the query already
+ * matches keeps it: clearing then would throw away the user's own context for
+ * nothing. And a filter that vanishes silently is its own small mystery, so
+ * when it is cleared the page says so, and says what the query was.
+ */
+function _jumpToTreePath(containerId, dotPath) {
+    _expandTreeToPath(containerId, dotPath);
+
+    var box = document.getElementById('explorer-search');
+    var q = box && box.value ? box.value : '';
+    if (!q) return;
+    if (_treePathVisible(containerId, dotPath)) return;   // the query shows it already
+
+    // Drive the box the way a person would: its own `oninput` runs the search
+    // AND the chip bar repaints from it, so nothing is left claiming a filter
+    // that is no longer applied.
+    box.value = '';
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+
+    // jsonTreeSearch debounces (200 ms) and re-renders the tree, so the expand
+    // has to happen after it, not beside it.
+    setTimeout(function () {
+        _expandTreeToPath(containerId, dotPath);
+        var msg = 'Search "' + q + '" was cleared so this field could be shown.';
+        if (window.showToast) window.showToast(msg, 'info');
+        else _showPlotClickToast(msg, null, null);
+    }, 280);
+}
+
+/* Visible = the node is in the DOM and the SEARCH is not hiding it. A filtered
+ * tree does both: a non-matching row gets `.tree-search-hidden` (display:none),
+ * and a whole branch may never have been materialised at all — so "missing" and
+ * "hidden" are the same answer here.
+ *
+ * The search's own class, not `offsetParent`, on purpose. It answers the
+ * narrower question this is actually asking ("is the FILTER in the way", not
+ * "is this on screen"), so a collapsed ancestor or an off-screen row is never
+ * mistaken for a filtered one; and it is the half a jsdom harness can execute,
+ * since jsdom has no layout and `offsetParent` is always null there. */
+function _treePathVisible(containerId, dotPath) {
+    var c = document.getElementById(containerId);
+    if (!c) return false;
+    var t = c.querySelector('.tree-node[data-path="' + dotPath + '"]');
+    if (!t) {
+        var parent = String(dotPath).split('.').slice(0, -1).join('.');
+        t = parent ? c.querySelector('.tree-node[data-path="' + parent + '"]') : null;
+    }
+    if (!t) return false;
+    for (var n = t; n && n !== c; n = n.parentElement) {
+        if (n.classList && n.classList.contains('tree-search-hidden')) return false;
+    }
+    return true;
+}
+
 function _expandTreeToPath(containerId, dotPath) {
     var container = document.getElementById(containerId);
     if (!container) return;
