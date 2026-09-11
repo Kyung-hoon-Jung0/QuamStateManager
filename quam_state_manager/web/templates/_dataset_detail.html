@@ -425,7 +425,7 @@
         <button hx-post="/dataset/{{ uid }}/load-state"
                 hx-target="#ds-load-state-result" hx-swap="innerHTML"
                 class="btn-sm outline"
-                title="Review first: stage into the open chip's working state only — the live chip is untouched until you Apply from the top bar.">Stage only</button>
+                title="Review first: stage into the open chip's working state only — the live chip is untouched until you Apply from the top bar.{{ auto_push_note }}">Stage only</button>
         <small class="muted">Apply writes the live chip now (revertible);
             Stage&nbsp;only lets you review first. With no chip open, opens read-only.</small>
         <button hx-post="/dataset/{{ uid }}/load-state?mode=archive"

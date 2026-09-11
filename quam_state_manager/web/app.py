@@ -624,6 +624,17 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     def _experimental_flag():
         return {"experimental": os.environ.get("SM_EXPERIMENTAL") == "1"}
 
+    # docs/178 — the one sentence every "stage only / live is untouched"
+    # surface owes the user while Auto-Sync push is armed. A Jinja global so a
+    # label and the route's own result message cannot drift apart.
+    @app.context_processor
+    def _auto_push_note_ctx():
+        from .routes import _auto_push_note
+        try:
+            return {"auto_push_note": _auto_push_note()}
+        except Exception:          # advisory only: never break a render
+            return {"auto_push_note": ""}
+
     # Phase 4 §3 — register CSRF origin check + defense-in-depth
     # response headers. Both are wired at the app level (not the
     # blueprint) so every route, including any future blueprints, is

@@ -22,6 +22,15 @@
     <div class="applied-log-row{% if r.reverted_by %} al-reverted{% endif %}"
          data-unit-id="{{ r.id }}">
       <div class="applied-log-vals">
+        {# docs/178: a wholesale write (a staged snapshot / a restored state
+           pushed by an armed session) past the unit cap carries no entries at
+           all. It used to be dropped from this list entirely, which made the
+           BIGGEST writes the only invisible ones. #}
+        {% if r.too_large and not r.entries %}
+        <span class="applied-log-wholesale">whole state</span>
+        <span class="applied-log-more">{{ r.too_large }} values &mdash; too many to list or revert one by one</span>
+        {% else %}
+        {% if r.wholesale %}<span class="applied-log-wholesale">whole state</span>{% endif %}
         {% set e0 = r.entries[-1] %}
         <code class="tray-change-path" title="{{ e0.path }}">{{ e0.path }}</code>
         {% if e0.created %}
@@ -35,8 +44,12 @@
           {{ delta_chip(e0.old, e0.new) }}
         {% endif %}
         {% if r.n > 1 %}<span class="applied-log-more">+{{ r.n - 1 }} more</span>{% endif %}
+        {% endif %}
       </div>
-      {% if r.reverted_by == 'undo' %}
+      {% if r.too_large and not r.entries %}
+        <span class="applied-log-reverted"
+              title="This write is recorded but too large to put back value by value — use Revert last apply, or State History.">no per-value undo</span>
+      {% elif r.reverted_by == 'undo' %}
         {# docs/160: undone on the chip by Ctrl+Z -- Ctrl+Shift+Z brings it back #}
         <span class="applied-log-reverted" title="Undone with Ctrl+Z — Ctrl+Shift+Z re-applies it">undone</span>
       {% elif r.reverted_by %}

@@ -45,8 +45,8 @@
         <button class="outline btn-sm"
                 hx-post="/state-history/{{ s.timestamp }}/stage"
                 hx-target="#state-history-detail" hx-swap="innerHTML"
-                hx-confirm="Load snapshot {{ s.timestamp | format_ts }} as the working state? You can then review the diff and Apply to live."
-                title="Mode 1 (safe): load as the working state, review, then apply">Load as working state</button>
+                hx-confirm="Load snapshot {{ s.timestamp | format_ts }} as the working state? You can then review the diff and Apply to live.{{ auto_push_note }}"
+                title="Mode 1 (safe): load as the working state, review, then apply{{ auto_push_note }}">Load as working state</button>
         <button class="outline btn-sm sh-restore-live"
                 hx-post="/state-history/{{ s.timestamp }}/restore-live"
                 hx-target="#state-history-detail" hx-swap="innerHTML"

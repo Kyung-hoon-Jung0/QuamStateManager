@@ -2397,7 +2397,15 @@ def _wholesale_unit(before: dict | None, ctx: dict, src: str,
         return None
     if not entries:
         return None
+    # docs/178: `src` keeps its own meaning ("apply-staged" / "restore-live" —
+    # story.py reads it), so whether this write happened inside an armed
+    # Auto-Sync session rides its own flag. Without it the applied-to-live log,
+    # which filters on src == "auto", listed nothing for a wholesale flush: the
+    # one surface docs/117 designates as the feedback after an auto write was
+    # silent about the largest write it can make, and offered no ✕ to undo it.
     meta = {"src": src, "wholesale": True, "owner_pid": os.getpid(), "at": time.time()}
+    if _auto_apply_state(ctx):
+        meta["auto"] = True
     if len(entries) > _WHOLESALE_UNIT_CAP:
         meta["too_large"] = len(entries)
         entries = []
@@ -6254,6 +6262,21 @@ def _auto_apply_state(ctx: dict | None = None) -> dict | None:
     return sess if (sess and sess.get("push")) else None
 
 
+def _auto_push_note(ctx: dict | None = None) -> str:
+    """The sentence a "stage only" surface owes the user while Auto-Sync push
+    is armed, else "" (docs/178).
+
+    Staging content sets `working_dirty`, and the docs/117 observer flushes on
+    exactly that — so the live chip is written within the same second. The
+    covenant is intact (the arming press licensed the session); what was broken
+    is that the button title, the confirm, the result line and the tray badge
+    all said the live chip was untouched while it was being written.
+    """
+    return (" Auto-Sync (push) is ARMED, so this will be written to the live "
+            "chip immediately — disarm it first if you wanted to review."
+            if _auto_apply_state(ctx) else "")
+
+
 def _auto_apply_armable(ctx: dict | None = None) -> tuple[bool, str]:
     """(can arm PUSH, why not). Refusals are the ones where arming would be a
     trap, not a nuisance: nothing to write to, nothing writable, or a chip that
@@ -6317,18 +6340,28 @@ def _applied_log_rows(ctx: dict | None = None, limit: int = 50) -> list[dict]:
     for idx in range(len(units) - 1, -1, -1):
         u = units[idx]
         meta = u.get("meta") or {}
-        if meta.get("src") != "auto":
+        # docs/178: a WHOLESALE unit written inside an armed session carries its
+        # own `auto` flag, because its `src` names the gesture ("apply-staged")
+        # rather than the session.
+        if meta.get("src") != "auto" and not meta.get("auto"):
             continue
         if (u.get("ts") or 0) < since:
             continue
         ents = u.get("entries") or []
-        if not ents:
+        # A wholesale unit past `_WHOLESALE_UNIT_CAP` is stored with NO entries
+        # and a `too_large` count. Dropping it here would make the biggest
+        # writes the only invisible ones — it gets a row that says how many
+        # values moved and that this one cannot be reverted per value.
+        too_large = int(meta.get("too_large") or 0)
+        if not ents and not too_large:
             continue
         rows.append({
             "id": u.get("id"),
             "ts": u.get("ts"),
-            "n": len(ents),
+            "n": len(ents) or too_large,
             "entries": ents,
+            "wholesale": bool(meta.get("wholesale")),
+            "too_large": too_large,
             "reverted_by": meta.get("reverted_by") or ("undo" if idx >= cursor else None),
         })
         if len(rows) >= limit:
@@ -10014,7 +10047,8 @@ def state_history_stage(timestamp: str):
     msg = render_template(
         "_status.html",
         message=(f"Snapshot {timestamp} loaded as the working state. Review the "
-                 "diff below, then Apply to live from the top bar."),
+                 "diff below, then Apply to live from the top bar."
+                 + _auto_push_note(ctx)),
         level="success")
     # detail-area message + OOB tray refresh (now shows working_dirty).
     # stateRestored so an inspector/pulse pane open on another menu re-reads
@@ -24212,7 +24246,10 @@ def dataset_load_state(uid):
         "_status.html",
         message=(f"Run #{run_id}'s state is now the WORKING state of "
                  f"{chip_label} — review it, then Sync / Apply to live from "
-                 "the top bar (the live chip is untouched until then)."),
+                 "the top bar"
+                 + (" (the live chip is untouched until then)."
+                    if not _auto_apply_state() else ".")
+                 + _auto_push_note()),
         level="success")
     # detail-area message + OOB tray refresh; stateRestored patches the pane
     # in place when it can (docs/144) and closes stale inspector panes only
