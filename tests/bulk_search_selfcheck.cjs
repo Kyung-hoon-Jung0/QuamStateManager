@@ -149,6 +149,13 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   await sleep(300);
 
   // F. docs/126 ③ — custom patches + stylesheet-based td hiding.
+  //
+  // Section C left an unapplied edit in q1's f_01, and since docs/177 a column
+  // holding one is never hidden — by the picker or by the query. F6 below is
+  // about the QUERY hiding a column, so the fixture has to put that edit back
+  // first; the interaction itself is pinned in bulk_dirtycol_selfcheck.cjs.
+  q1cell.value = q1cell.getAttribute('data-orig');
+  q1cell.dispatchEvent(new w.Event('input', { bubbles: true }));
   type('');
   await sleep(300);
   const barEl = w.document.getElementById('bulk-chipbar');
@@ -170,7 +177,7 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
         'value=' + JSON.stringify(search.value));
   check('F5 persisted to localStorage',
         /"cz"/.test(w.localStorage.getItem('quam_bulk_custom_chips') || ''));
-  check('F6 and it filters like any chip (cz_amp column survives)',
+  check('F6 and it filters like any chip (cz_amp survives, nothing unapplied)',
         !w.document.querySelector('th[data-col-key="cz_amp"]').classList.contains('bulk-search-hidden')
         && w.document.querySelector('th[data-col-key="f_01"]').classList.contains('bulk-search-hidden'));
 

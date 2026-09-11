@@ -61,7 +61,8 @@
     // shape as the neighbouring hidden-column chip.
     var _valRowsAll = false;       // user asked to keep the rows a value token hid
     var _valRowsQ = null;          // the query that choice belongs to
-    var _lastDirtySig = null;      // ⚏ picker refresh gate: dirty-ID set signature
+    var _lastDirtySig = null;
+    var _lastDirtyColSig = null;      // ⚏ picker refresh gate: dirty-ID set signature
     var sortKey = null, sortDir = 1;
 
     // f_01 ↔ RF_frequency column pairs (same row = same qubit). RF_frequency is the
@@ -106,14 +107,64 @@
         COLS.forEach(function (c) { if (!c.default_on) s.add(c.key); });
         return s;
     }
-    function _applyColumnVisibility() {
+    // Which columns hold an unapplied edit. `applyAll` writes every dirty cell
+    // in the table, so a dirty cell in a hidden column is a write the presser
+    // cannot see — docs/120's rule, on the write path. The ROW pickers have
+    // refused to hide an edited row since docs/141 4s ("an unsaved edit never
+    // vanishes", so "Apply all" stays "apply what you see"); this is the same
+    // rule for the column axis, which never had it.
+    //
+    // The case that matters is not someone hiding a column they just typed in.
+    // It is a MIRROR write — the coupled f_01 <-> xy.RF_frequency twin, an
+    // FSP+amplitudes bundle (docs/160 5e) — making an OFF-SCREEN column dirty
+    // on its own. A cold column cannot be dirty: its inputs are detached, and
+    // every path that writes one hydrates it first.
+    function _dirtyColKeys() {
+        var t = table(); if (!t) return {};
+        var out = {};
+        _cells(t).forEach(function (c) {
+            if (!_isDirty(c)) return;
+            var td = c.closest('td[data-col-key]');
+            var k = td && td.getAttribute('data-col-key');
+            if (k) out[k] = 1;
+        });
+        return out;
+    }
+    // The user's CHOICE minus what it would hide unapplied. `_hiddenSet` stays
+    // the choice itself — it is what the picker checkboxes show and what
+    // persists, and a forced column must not silently un-tick its own box.
+    function _effectiveHidden() {
+        var hide = _hiddenSet();
+        Object.keys(_dirtyColKeys()).forEach(function (k) { hide.delete(k); });
+        return hide;
+    }
+
+    // Core pass — NO applySearch, for the same reason the row core has none:
+    // this also runs from _refreshGlobal, and re-running the search there could
+    // hide the very row being edited the moment its value stops matching.
+    function _applyColumnVisCore() {
         var t = table(); if (!t) return;
         var hide = _hiddenSet();
+        var forced = _dirtyColKeys();
+        var idx = null;
         t.querySelectorAll('[data-col-key]').forEach(function (el) {
             var k = el.getAttribute('data-col-key');
             if (k === '__id__') return;
-            el.classList.toggle('bulk-col-hidden', hide.has(k));
+            el.classList.toggle('bulk-col-hidden', hide.has(k) && !forced[k]);
         });
+        // A forced column must not be left hidden by a STALE search verdict:
+        // while it was checkbox-hidden the search skipped it entirely, so
+        // whatever class its header carried from before is still there.
+        Object.keys(forced).forEach(function (k) {
+            var th = t.querySelector('th.bulk-col-head[data-col-key="' + _cssEsc(k) + '"]');
+            if (th) th.classList.remove('bulk-search-hidden');
+            delete _searchHiddenKeys[k];
+            if (idx === null) idx = _colIndexMap(t);
+            if (idx[k] != null) t.classList.remove('sh-' + idx[k]);
+        });
+    }
+    function _applyColumnVisibility() {
+        _applyColumnVisCore();
         applySearch();   // re-evaluate the search against the new column set
         _updateTopScroll();
     }
@@ -1027,7 +1078,10 @@
         var t = table(); if (!t) return;
         var inp = document.getElementById('bulk-search');
         var q = inp ? inp.value.trim().toLowerCase() : '';
-        var hide = _hiddenSet();
+        // The effective set, not the choice: a column holding an unapplied edit
+        // is visible, so the search must evaluate it rather than skip it.
+        var hide = _effectiveHidden();
+        var _dirtyCols = _dirtyColKeys();
         // A folded column's header shows a name the chip does not use: the
         // strip rewrote `cz_flattop_pulse_q1_q2` into `cz_flattop_pulse_q1`.
         // `search` carries the real operation ids so looking for the name you
@@ -1170,7 +1224,13 @@
 
         // decide column visibility (search layer, on top of checkbox layer)
         var colSearchHide = {};
-        visCols.forEach(function (c) { colSearchHide[c.key] = !colVisible(c.key, colHay[c.key] || []); });
+        visCols.forEach(function (c) {
+            // …and it is not hidden by the query either. A search is a question
+            // about what to LOOK at; it must not decide what a later press
+            // writes unseen.
+            colSearchHide[c.key] = !_dirtyCols[c.key]
+                && !colVisible(c.key, colHay[c.key] || []);
+        });
         // docs/126 ③ perf: the class stays on the ~460 THs (the count/offer/
         // reveal machinery reads it there), but the ~9,000 TDs are hidden by
         // ONE generated stylesheet instead of a classList.toggle each — the
@@ -1378,7 +1438,7 @@
 
     function _recomputeStats(onlyKeys) {
         var t = table(); if (!t) return;
-        var hide = _hiddenSet();
+        var hide = _effectiveHidden();   // a forced column is on screen and counts
         COLS.forEach(function (c) {
             if (onlyKeys && !onlyKeys[c.key]) return;
             // a COLD column has no cells to count: keep the server's numbers
@@ -1470,6 +1530,27 @@
             _applyQubitVisCore();
             _buildQubitMenu();
             _buildPairMenu();
+        }
+        // The same gate on the COLUMN axis. It has to be here rather than only
+        // on the picker: the write that reaches an off-screen column is a
+        // MIRROR write, which nobody clicked a picker for. Core pass only, and
+        // gated on the SET changing, so ordinary typing costs one string
+        // compare.
+        var cnow = Object.keys(_dirtyColKeys()).sort();
+        var csig = cnow.join(',');
+        if (csig !== _lastDirtyColSig) {
+            var left = (_lastDirtyColSig || '').split(',').filter(function (k) {
+                return k && cnow.indexOf(k) < 0;
+            });
+            _lastDirtyColSig = csig;
+            _applyColumnVisCore();
+            // A key LEAVING the set (applied, reset, undone) means a forced
+            // column may now go back to whatever the query says about it — and
+            // only applySearch knows that. A key ARRIVING is handled by the
+            // core pass alone, deliberately: re-running the search on the first
+            // character typed into a cell can hide the very row being edited
+            // the moment its value stops matching a value token.
+            if (left.length) applySearch();
         }
     }
 
@@ -3027,7 +3108,7 @@
             // An HTMX swap re-renders the tbody in server (default) order, so the
             // old sort no longer applies — clear it (the fresh header has no caret).
             sortKey = null; sortDir = 1;
-            _hayCache = null; _lastDirtySig = null;   // fresh DOM → fresh caches
+            _hayCache = null; _lastDirtySig = null; _lastDirtyColSig = null;   // fresh DOM → fresh caches
             if (bandMeta && bandMeta.bands) BANDS = bandMeta.bands;
             DYN = Array.isArray(dynModel) ? dynModel : [];
             if (qubitMeta && typeof qubitMeta === 'object') {
