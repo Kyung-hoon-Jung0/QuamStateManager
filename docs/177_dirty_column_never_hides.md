@@ -68,10 +68,33 @@ cannot live only on the picker's change handler — it has to sit on the same
 
 ## Verification
 
-`tests/bulk_dirtycol_selfcheck.cjs` — 16 assertions against the real shipped
-`bulk-edit.js` under jsdom, driven by `tests/test_bulk_dirty_columns.py`. The
-invariant assertion is the one to keep: *no dirty cell sits in a column the
-presser cannot see*, re-checked after each layer.
+`tests/bulk_dirtycol_selfcheck.cjs` — 24 assertions against the real shipped
+`bulk-edit.js` under jsdom, driven by `tests/test_bulk_dirty_columns.py`,
+**8/8 mutations red**. The invariant assertion is the one to keep: *no dirty
+cell sits in a column the presser cannot see*, re-checked after each layer.
+
+### The first sweep caught 5 of 8, and the three misses were one cause
+
+The search is **debounced** (200 ms) and the harness asserted synchronously, so
+every assertion about the search layer was made before `applySearch` had run at
+all. Waiting for it fixed those three — and flipped two others green, because
+the debounce-driven search was then doing work the assertions had been
+crediting to the fix. Four states the fixture still could not reach:
+
+- **The search must EVALUATE the forced column, not merely show it.**
+  `hide.has(k)` drops a hidden column's values from the ROW haystack too, so a
+  column that is on screen while still counted as hidden takes its own row down
+  with it: searching for the value you just typed hides the row it is in. Both
+  layers force the *column* on screen either way, which is why nothing about the
+  column moved and the mutation looked harmless.
+- **Applying or resetting is the moment a forced column stops being forced**,
+  and nobody types afterwards — so the assertion has to be made without touching
+  the search box, which was re-running `applySearch` and doing the work for it.
+- **A stale search verdict only exists on a checkbox-VISIBLE column.**
+  `applySearch` skips a checkbox-hidden one entirely, so that shape never
+  carries the class the cleanup exists for, and the fixture had used it.
+- **`_effectiveHidden` runs inside `applySearch`**, so "the stored choice
+  survives" has to be re-read after a search, not right after the keystroke.
 
 ### A pin whose fixture predated the rule
 
