@@ -24,6 +24,19 @@
 {%- endif -%}
 {%- endmacro %}
 
+{# Compact variant for a NARROW column — docs/186. The full-precision text of
+   a real delta can be 23 characters ("+0.000089381696370544943"), which in the
+   history panel's 99px actions column wrapped over three lines and buried the
+   button it belongs to. Same arithmetic, same title: only the PERCENT is on
+   screen, and the exact number is one hover away. Falls back to the text when
+   there is no percent (a change from zero has no meaningful ratio). #}
+{% macro delta_pct(old, new, extra_class='') -%}
+{%- set d = old | value_delta(new) -%}
+{%- if d -%}
+<span class="val-delta delta-{{ d.dir }}{% if extra_class %} {{ extra_class }}{% endif %}" title="{{ d.title }}">{{ d.pct_text or d.text }}</span>
+{%- endif -%}
+{%- endmacro %}
+
 {# Block variant for the diff/compare tables, where the Δ stacks UNDER the
    value instead of sitting beside it. Keeps the long-standing .diff-delta
    class (and its column styling) while using this file's arithmetic, so the

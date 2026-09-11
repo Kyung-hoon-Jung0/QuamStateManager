@@ -100,8 +100,11 @@
     function applyLogState() {
         var log = document.getElementById('applied-log');
         if (!log) return;
-        var open = true;
-        try { open = sessionStorage.getItem(LOG_KEY) !== '0'; } catch (e) { /* private mode */ }
+        // docs/186 (customer): an ABSENT preference used to mean OPEN, so
+        // arming auto mode and editing popped a list over the page every time.
+        // Absent means collapsed now; only a deliberate open is remembered.
+        var open = false;
+        try { open = sessionStorage.getItem(LOG_KEY) === '1'; } catch (e) { /* private mode */ }
         log.classList.toggle('applied-log-collapsed', !open);
     }
 

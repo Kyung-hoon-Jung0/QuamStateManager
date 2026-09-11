@@ -8011,6 +8011,10 @@ def field_history():
         chart.append({"t": iso, "v": f, "trigger": pt.get("trigger") or "auto"})
     return render_template("_field_history.html", hist=hist,
                            current_display=_fh_display_string(current),
+                           # docs/186: the Revert button's delta is CURRENT ->
+                           # this value -- what the press would do -- not the
+                           # delta the point introduced when it happened.
+                           current_value=current,
                            chart=chart)
 
 

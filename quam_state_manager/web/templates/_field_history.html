@@ -1,4 +1,4 @@
-{% from '_delta_macros.html' import delta_chip %}
+{% from '_delta_macros.html' import delta_chip, delta_pct %}
 {# Per-field value-history panel (the 🕘 button on Live-Edit cells and
    inspector rows). Injected into the FieldHistory floating container by
    app.js — which htmx.process()es it so the Data buttons' hx-get works.
@@ -39,6 +39,11 @@
        measured against the next row down (the value it replaced). #}
     {% set _prev = hist.points[loop.index0 + 1] if not loop.last else None %}
     <tr{% if pt.is_current %} class="fh-current"{% endif %}>
+      {# TWO deltas, because they answer two questions and conflating them is
+         how a number gets misread. `fh-delta` is what this point INTRODUCED
+         (against the value it replaced, the row below). `fh-revert-delta` is
+         what reverting to it would do NOW — the one the customer asked for,
+         rendered beside the button it belongs to. #}
       <td class="fh-val" title="{{ pt.fill }}"><code>{{ pt.display }}</code>{% if pt.is_current %} <span class="fh-now">current</span>{% endif %}{% if _prev %}{{ delta_chip(_prev.value, pt.value, 'fh-delta') }}{% endif %}</td>
       <td class="fh-ts">{{ pt.when }}</td>
       <td class="fh-src">
@@ -48,10 +53,25 @@
               title="Not from an experiment — a {{ pt.trigger or 'unknown' }} snapshot of the live folder">{{ pt.trigger or '—' }}</span>{% endif %}
       </td>
       <td class="fh-act">
-        {% if not pt.is_current %}
+        {# `pt.fill` is "" for a point whose value was not set (routes
+           ._fh_fill_string(None)). Reverting to "not set" is not the same act
+           as writing an empty string, and /field/edit would take the latter —
+           so the button is not offered, the way a suggestion that cannot work
+           is never offered (docs/175). Use is not offered either, for the same
+           reason: it would blank the box. #}
+        {% if not pt.is_current and pt.fill %}
+        {# docs/186 (customer): "이전 value와의 diff에서 revert라는 버튼이
+           있어야하는것. 그게 진짜 이것의 순기능." Revert is the primary action —
+           it stages this value through /field/edit, the one door, so the live
+           chip is untouched until Apply. Use stays for the narrower job it
+           always did (put the number in the box so I can adjust it). #}
+        <button type="button" class="fh-revert" data-value="{{ pt.fill }}"
+                data-path="{{ hist.dot_path }}"
+                onclick="FieldHistory.revertTo(this)"
+                title="Put this value back — staged as a pending edit; the live chip is untouched until you Apply.">&#8634; Revert</button>{% if current_value is not none %}{{ delta_pct(current_value, pt.value, 'fh-revert-delta') }}{% endif %}
         <button type="button" class="fh-use" data-value="{{ pt.fill }}"
                 onclick="FieldHistory.useValue(this)"
-                title="Fill the edit field with this value (press Enter there to stage it)">Use</button>
+                title="Fill the edit field with this value, without staging it (press Enter there to stage)">Use</button>
         {% endif %}
         {% if pt.uid %}
         <button type="button" class="fh-data" hx-get="/dataset/{{ pt.uid }}"

@@ -11556,20 +11556,67 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 .fh-currentline { font-size: .72rem; color: var(--color-text-muted); margin: 0 0 .3rem; }
 .fh-currentline code { font-size: .74rem; }
 .fh-empty { margin: .4rem 0; color: var(--color-text-muted); font-size: .78rem; }
-.fh-table { width: 100%; margin: 0; border-collapse: collapse; }
+/* docs/186: `width: 100%` asks the table to fit, but nothing MADE it — the
+   content's minimum is what won, and the panel scrolled sideways by 101px
+   before this round's Revert button and 183px after (measured, 498px panel).
+   `table-layout: fixed` makes the declared widths binding, and the two columns
+   that can give way do: the experiment name ellipsizes (its full text is
+   already in a title) and the actions wrap onto a second line. */
+.fh-table { width: 100%; margin: 0; border-collapse: collapse; table-layout: fixed; }
+/* Percentages, not rem: the panel is a fixed px width (min(500, vw-16)) while
+   rem follows the UI scale, so rem columns drift out of the box the moment
+   someone scales the text. The VALUE gets the largest share — it is what the
+   panel is about, and it holds numbers like 4,895,428,739.318626. */
+.fh-table th:nth-child(1) { width: 36%; }       /* Value */
+.fh-table th:nth-child(2) { width: 24%; }       /* Since — "2026-09-12 14:22" */
+.fh-table th:nth-child(3) { width: 17%; }       /* Set by (ellipsizes) */
+.fh-table th:nth-child(4) { width: 23%; }       /* actions (wraps) */
 .fh-table th { font-size: .66rem; text-transform: uppercase; letter-spacing: .04em;
     color: var(--color-text-muted); text-align: left; padding: .1rem .35rem; border: none; }
 .fh-table td { padding: .18rem .35rem; border: none;
     border-top: 1px solid var(--pico-muted-border-color); vertical-align: middle; }
+/* docs/186: a delta chip can be one unbreakable token — measured
+   "-0.0000893816963705494", 22 characters — and under `table-layout: fixed`
+   an unbreakable cell overflows the TABLE rather than widening its column.
+   That is what kept the panel scrolling sideways (101px of it before this
+   round's Revert button, 183px after). The chips are the shared docs/76
+   renderer and are not forked to shorten them; they are allowed to break. */
+.fh-val, .fh-act { overflow-wrap: anywhere; }
+.fh-delta, .fh-revert-delta { display: inline-block; max-width: 100%; }
+/* The chip is the docs/76 `.val-delta`, whose own rule is `white-space: nowrap`
+   — and nowrap defeats any break hint. Overridden HERE ONLY: the panel is 498px
+   with four columns, and on every other surface the chip sits in a wide row
+   where one line is right. The renderer and its markup are untouched. */
+.field-history-panel .val-delta { white-space: normal; overflow-wrap: anywhere; }
 .fh-val code { font-size: .78rem; background: none; padding: 0; }
 .fh-now { font-size: .62rem; background: var(--pico-primary); color: #fff;
     border-radius: .55rem; padding: 0 .35rem; margin-left: .25rem; vertical-align: middle; }
 .fh-current .fh-val { font-weight: 600; }
-.fh-ts { white-space: nowrap; font-size: .72rem; color: var(--color-text-muted); }
+/* docs/186: was `nowrap`. Under `table-layout: fixed` a nowrap cell does not
+   widen its column — it overflows the table, which is what kept the panel
+   scrolling sideways after the columns were budgeted. */
+.fh-ts { white-space: normal; font-size: .72rem; color: var(--color-text-muted); }
 .fh-src { max-width: 150px; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap; font-size: .72rem; }
 .fh-trig { color: var(--color-text-muted); }
-.fh-act { white-space: nowrap; text-align: right; }
+/* docs/186: was `nowrap`, which is what forced the row wider than the panel
+   once a second button joined Use. Two buttons and a delta wrap instead. */
+.fh-act { white-space: normal; text-align: right; }
+/* docs/186 — Revert is the PRIMARY action of this panel ("그게 진짜 이것의
+   순기능"), so it carries the accent while Use and Data stay quiet. Same size
+   and shape as its neighbours: a taller button would push the row's height
+   and the panel is already dense. */
+.fh-revert {
+    font-size: .68rem; padding: .06rem .45rem; margin: 0 0 0 .25rem; width: auto;
+    border-radius: .5rem; border: 1px solid var(--pico-primary);
+    background: color-mix(in srgb, var(--pico-primary) 13%, transparent);
+    color: var(--pico-primary); cursor: pointer; line-height: 1.3;
+    display: inline-block; white-space: nowrap;
+}
+.fh-revert:hover { background: color-mix(in srgb, var(--pico-primary) 24%, transparent); }
+.fh-revert[disabled] { opacity: .55; cursor: default; }
+/* the delta the REVERT would produce (current -> this), beside its button */
+.fh-revert-delta { font-size: .62rem; margin-left: .2rem; opacity: .85; }
 .fh-use, .fh-data {
     font-size: .68rem; padding: .06rem .45rem; margin: 0 0 0 .25rem; width: auto;
     border-radius: .5rem; border: 1px solid var(--pico-muted-border-color);

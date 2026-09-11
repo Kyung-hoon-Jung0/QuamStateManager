@@ -17612,6 +17612,8 @@ document.addEventListener("htmx:configRequest", function (evt) {
 window.FieldHistory = (function () {
     var panel = null;
     var applyInput = null;   // the edit input "Use" fills
+    var openPath = null;     // docs/186: what Revert stages, when the button
+                             // carries no data-path of its own
 
     function ensurePanel() {
         if (panel) return panel;
@@ -17673,6 +17675,7 @@ window.FieldHistory = (function () {
     function open(anchor, path, input) {
         if (!path) return;
         applyInput = input || null;
+        openPath = path;
         var p = ensurePanel();
         // The previous open's #fh-chart (responsive:true) holds a window
         // resize handler referencing the graph div — innerHTML without purge
@@ -17794,6 +17797,88 @@ window.FieldHistory = (function () {
             if (applyInput.select) applyInput.select();
         }
         close();
+    }
+
+    /* docs/186 — put a previous value back.
+     *
+     * Customer: "지난 history를 보면서 이전 값으로 되돌릴 수있는 UI가 있어야
+     * 한다 ... 그게 진짜 이것의 순기능." The applied log's ✕ undoes the LAST
+     * write, one step, this session only; this is the other thing, and the
+     * one the panel exists for.
+     *
+     * Through `/field/edit`, the SAME door the grid, tree and inspector use —
+     * so it inherits type coercion, the FSP compensation offer, the docs/120
+     * chip-identity gate, a tray row and one Ctrl+Z. Nothing reaches the live
+     * chip until an Apply press, exactly like any other edit.
+     *
+     * Unlike `Use` it needs no edit input on screen, which is the whole point:
+     * the Calibration log opens this panel with `input = null`, and there Use
+     * silently does nothing.
+     */
+    function revertTo(btn) {
+        var v = btn.getAttribute("data-value") || "";
+        var path = btn.getAttribute("data-path") || openPath;
+        if (!path) return;
+        var old = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = "…";
+        var done = function () { btn.disabled = false; btn.textContent = old; };
+
+        var post = function (extra) {
+            var body = new URLSearchParams();
+            body.append("dot_path", path);
+            body.append("value", v);
+            body.append("expect_chip", window.__chipToken || "");
+            if (extra) Object.keys(extra).forEach(function (k) { body.append(k, extra[k]); });
+            return fetch("/field/edit", {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: body.toString()
+            }).then(function (r) { return r.json(); });
+        };
+
+        post(null).then(function handle(data) {
+            // The same two offers the tree editor answers, answered the same
+            // way — a revert must not be a side door around either.
+            if (!data.ok && data.fsp_compensation && window._openFspPopup) {
+                done();
+                window._openFspPopup(data.fsp_compensation, function (mode) {
+                    if (mode === "cancel") return;
+                    btn.disabled = true; btn.textContent = "…";
+                    post({ fsp_ack: mode === "solo" ? "solo" : "comp" }).then(handle);
+                });
+                return;
+            }
+            if (!data.ok && data.type_fix && window._confirmTypeFix) {
+                var conv = window._confirmTypeFix(data.type_fix);
+                post({ type_fix: conv ? "convert" : "keep" }).then(handle);
+                return;
+            }
+            done();
+            if (!data.ok) {
+                if (window.showToast) window.showToast(data.error || "Revert failed", "error");
+                return;
+            }
+            if (data.tray_html && window._swapPendingTray) {
+                window._swapPendingTray(data.tray_html);
+                if (window._restoreTrayState) window._restoreTrayState();
+            }
+            // Say what happened and where it stopped: staged, not written.
+            if (window.showToast) {
+                window.showToast("Reverted " + path.split(".").pop() + " to "
+                                 + v + " — staged, not yet on the live chip", "info");
+            }
+            // The surfaces that show this value repaint from the one event
+            // every other edit already fires.
+            try {
+                document.body.dispatchEvent(new CustomEvent("pulses-rows-changed",
+                                            { detail: { paths: [path] } }));
+            } catch (e) { /* advisory */ }
+            close();
+        }).catch(function () {
+            done();
+            if (window.showToast) window.showToast("Revert request failed", "error");
+        });
     }
 
     function openInspector(btn) {
@@ -18015,7 +18100,7 @@ window.FieldHistory = (function () {
         if (cellBtn && e.target === cellBtn._input) _positionCellBtn();
     });
 
-    return { open: open, close: close, useValue: useValue,
+    return { open: open, close: close, useValue: useValue, revertTo: revertTo,
              openInspector: openInspector,
              _cellTextWidth: _cellTextWidth };   // r11 test seam
 })();
