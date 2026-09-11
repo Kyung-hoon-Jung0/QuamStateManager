@@ -6954,10 +6954,28 @@
         }
         var h = document.createElement("p");
         h.className = "gen-cap-head";
-        h.textContent = rep.buildable
-          ? "✓ This environment can build everything this chip needs."
-          : "✗ This environment is missing something this chip needs.";
+        // `buildable` means "nothing BLOCKS it", which is not the same as
+        // "everything". Saying "everything" directly above a list headed
+        // "Will be skipped / downgraded" — one of whose entries loses a
+        // qubit's flux component entirely — is the app contradicting itself
+        // in two adjacent lines.
+        var nSkip = (rep.warnings || []).length;
+        var rootBlock = res.root && res.root.blocker;
+        h.textContent = (!rep.buildable || rootBlock)
+          ? "✗ This environment is missing something this chip needs."
+          : (nSkip
+             ? "✓ Nothing blocks the build — but " + nSkip +
+               (nSkip === 1 ? " thing" : " things") + " will be skipped:"
+             : "✓ This environment can build everything this chip needs.");
         box.appendChild(h);
+        // The root refusal is a BLOCKER and belongs with the blockers, not
+        // only in the build's 400 half a minute later.
+        if (rootBlock) {
+          var rb = document.createElement("p");
+          rb.className = "gen-cap-blocker";
+          rb.textContent = "✗ " + res.root.blocker;
+          box.appendChild(rb);
+        }
         // Chip↔env schema-flavor mismatches (regenerate: warn BEFORE any
         // Quam.load fails in a subprocess). Shape: {level, message}.
         (res.flavor || []).forEach(function (f) {
@@ -6969,10 +6987,60 @@
         });
         _capRows(box, rep.blockers, "gen-cap-blocker", "Cannot build");
         _capRows(box, rep.warnings, "gen-cap-degrade", "Will be skipped / downgraded");
+        _rootPicker(box, res);
         _capInventory(box, rep.inventory);
         _capRecheckButton(box);
       })
       .catch(function () { box.innerHTML = ""; });
+  }
+
+  /* Which class the chip is written as.
+   *
+   * The root decides what the chip can CONTAIN and which fields it carries, and
+   * every lab that runs this wizard has its own subclass — the probe lists it
+   * first. Until now the build derived a stock root from the line types and
+   * there was no way to say otherwise, so a lab's own fields and overrides were
+   * simply not in the generated chip.
+   *
+   * "Automatic" is the default and is byte-for-byte today's behaviour: the
+   * value is only put on the spec when a person picks one.
+   */
+  function _rootPicker(box, res) {
+    var roots = res.roots || [];
+    if (!roots.length) return;
+    var wrap = document.createElement("p");
+    wrap.className = "gen-cap-root";
+    var lab = document.createElement("label");
+    lab.textContent = "Chip root class ";
+    lab.title = "The class the generated state.json declares as its __class__."
+      + " Your own subclass carries the fields and overrides your nodes rely on;"
+      + " the stock class carries only what quam-builder declares.";
+    var sel = document.createElement("select");
+    sel.id = "gen-quam-class";
+    var auto = document.createElement("option");
+    auto.value = "";
+    auto.textContent = "Automatic"
+      + (res.root && res.root.chosen ? " — " + res.root.chosen
+         : " (stock class for these lines)");
+    sel.appendChild(auto);
+    roots.forEach(function (r) {
+      var o = document.createElement("option");
+      o.value = r.path;
+      var q = String(r.qubits_type || "").replace(/^typing\.Dict\[str, /, "").replace(/\]$/, "");
+      o.textContent = r.path + (q ? "   (holds " + q.split(".").pop() + ")" : "");
+      sel.appendChild(o);
+    });
+    sel.value = (state.spec && state.spec.quam_class) || "";
+    sel.addEventListener("change", function () {
+      if (!state.spec) return;
+      if (sel.value) state.spec.quam_class = sel.value;
+      else delete state.spec.quam_class;
+      saveDraft();
+      renderCapabilityReport(box);        // the verdict depends on the root
+    });
+    lab.appendChild(sel);
+    wrap.appendChild(lab);
+    box.appendChild(wrap);
   }
 
   function _capRows(box, rows, cls, heading) {
@@ -7390,8 +7458,17 @@
       res.capability_blockers.forEach(function (b) {
         var p = document.createElement("p");
         p.className = "gen-build-err-line";
-        p.textContent = "• " + b.label + " — needs " + (b.package || "?") +
-          " · " + (b.symbol || "") + " (missing). Fix: " + (b.fix || "");
+        // TWO shapes arrive under this one key: `capabilities.assess` sends
+        // objects {label, package, symbol, fix}, and the ROOT-CLASS refusal
+        // sends one finished sentence. Rendering a sentence through the object
+        // template printed "• undefined — needs ? · (missing). Fix:" and threw
+        // away the only text that said what was wrong — measured in a real
+        // browser against the customer's own environment, where the root
+        // refusal is exactly the message the person needs.
+        p.textContent = (typeof b === "string")
+          ? "• " + b
+          : "• " + (b.label || "?") + " — needs " + (b.package || "?") +
+            " · " + (b.symbol || "") + " (missing). Fix: " + (b.fix || "");
         el.appendChild(p);
       });
     } else {
@@ -8247,6 +8324,10 @@
       qtElementsAtPort: qtElementsAtPort,
       applyQdacTriggerEdit: applyQdacTriggerEdit,
       syncSpecChannels: syncSpecChannels,
+      // docs/176 seams — the review's verdict + root picker, and the
+      // build-result renderer that has to take TWO blocker shapes.
+      renderCapabilityReport: renderCapabilityReport,
+      showBuildResult: showBuildResult,
       // r15 CG2/CG3 selfcheck seams (docs/70) — not public API
       openSlotMenu: openSlotMenu,
       hideSlotMenu: hideSlotMenu,

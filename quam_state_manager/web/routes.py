@@ -24729,9 +24729,15 @@ def generate_capabilities():
         return jsonify({"ok": False, "error": "No environment selected."}), 400
     probe = config_generator.probe_capabilities(
         python_path, current_app.instance_path, force=force)
+    # `qpu_roots` belongs in the manifest HERE too, not only at the build
+    # door: without it `qpu_root_check` sees no roots and cannot refuse, so the
+    # review promised "can build everything" for a spec the build then rejected
+    # outright (measured on the customer's env with a QDAC-biased chip).
     manifest = {"capabilities": probe.get("capabilities"),
-                "versions": probe.get("versions")}
+                "versions": probe.get("versions"),
+                "qpu_roots": probe.get("qpu_roots")}
     report = capabilities.assess(spec, manifest)
+    root = capabilities.qpu_root_check(spec, manifest)
     # Chip↔env schema-flavor findings (regenerate flows pass the source chip):
     # a CR chip written by one quam-builder generation can't even be Quam.load'ed
     # by another — warn BEFORE any subprocess load fails (docs/54).
@@ -24739,6 +24745,11 @@ def generate_capabilities():
     return jsonify({
         "ok": True, "probe_ok": probe.get("ok"), "probe_error": probe.get("error"),
         "cached": probe.get("cached"), "report": report, "flavor": flavor,
+        # The root the chip will be written with, and every root this env could
+        # hold it in — the wizard had no way to name one, so a lab with its own
+        # Quam subclass got a chip rooted at the stock class (docs/176).
+        "root": root,
+        "roots": [r for r in (probe.get("qpu_roots") or []) if r.get("importable")],
     })
 
 
