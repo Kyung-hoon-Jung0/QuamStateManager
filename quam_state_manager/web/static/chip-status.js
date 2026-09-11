@@ -772,7 +772,22 @@ window.ChipStatus.mount = function (opts) {
         var irbAgg = aggE(collect2QE(isIRB));
         // Per-edge Clifford-equivalent of the IRB gate error: epc = epg x divisor
         // (the same identity fidelity.py uses in the other direction).
-        var irbEpcE = [];
+        //
+        // docs/184 — that identity is FIRST ORDER. It holds while n*epg << 1,
+        // which is where a working gate lives, and on a bad pair it walks
+        // straight out of physics: a customer's chip showed EPG 40.45% x 5.37 =
+        // EPC 217%, printed as a Clifford fidelity of MINUS 117%.
+        //
+        // The ceiling is the RB model's own: the fit is a depolarizing decay,
+        // EPC = (d-1)/d * (1 - alpha) with alpha in [0, 1], so at d = 4 no
+        // depolarizing fit can give an EPC above (d-1)/d = 0.75. Past that the
+        // bridge has left the model, so the pair is set aside -- and SAID, the
+        // way every other out-of-range value on these tiles is (docs/94).
+        // (d-1)/d at d = 4. The epsilon is not slack in the rule: `epc` is
+        // built as (1-f)*div, so the maximally-depolarizing case reaches
+        // 0.7500000000000001 and would be refused for a rounding error.
+        var IRB_EPC_CEILING = 0.75, IRB_EPC_EPS = 1e-9;
+        var irbEpcE = [], irbEpcDiv = null;
         topo.edges.forEach(function(e) {
             if (!e.gate_fidelities) return;
             var bestF = null, div = null;
@@ -784,9 +799,21 @@ window.ChipStatus.mount = function (opts) {
                 }
                 if (typeof gf.average_gates_per_clifford === 'number') div = gf.average_gates_per_clifford;
             });
-            if (bestF != null && div) irbEpcE.push({ id: _pairId(e), v: 1 - (1 - bestF) * div });
+            if (bestF == null || !div) return;
+            var epc = (1 - bestF) * div;
+            // the divisor this tile's own bridge used, for the note below --
+            // `divNote` is the STANDARD-RB rows' one and a chip can carry
+            // interleaved runs without standard ones at all.
+            if (irbEpcDiv == null) irbEpcDiv = div;
+            // `bad` keeps the pair NAMEABLE while keeping it out of every mean,
+            // median, min/max and colour scale -- a silently smaller N is the
+            // failure this project keeps fixing.
+            irbEpcE.push(epc <= IRB_EPC_CEILING + IRB_EPC_EPS
+                ? { id: _pairId(e), v: 1 - epc }
+                : { id: _pairId(e), v: 1 - epc, bad: true });
         });
-        var irbEpcAgg = computeAggregates(irbEpcE.map(function(x) { return x.v; }));
+        var irbEpcAgg = aggE(irbEpcE);
+        var irbEpcDropped = irbEpcE.filter(function(x) { return x.bad; }).length;
 
         // Four RB tiles (user-directed, docs/139 follow-up): each protocol
         // shows BOTH its measured number and the one converted through the
@@ -877,6 +904,15 @@ window.ChipStatus.mount = function (opts) {
             metricTile('2Q gate fid. (IRB)', irbAgg, pct, fidRange, null, _ovStat('irb')), irbAgg, 'EPG', null));
         var irbCliffTile = _tid('irb_cliff', withErrLine(
             metricTile('2Q Clifford fid. (IRB×)', irbEpcAgg, pct, fidRange, null, _ovStat('irb_cliff')), irbEpcAgg, 'EPC', '×'));
+        // "excluded" alone would not say what happened. docs/184: the reason is
+        // specific and the number it replaces was nonsense, so it is named.
+        if (irbEpcDropped) {
+            irbCliffTile.sub += '<br><span class="muted">' + irbEpcDropped + ' pair'
+                + (irbEpcDropped === 1 ? '' : 's')
+                + ' too noisy for the &times;'
+                + (irbEpcDiv != null ? irbEpcDiv.toFixed(2) : (divNote || 'n'))
+                + ' bridge (epc &gt; 75%, the depolarizing limit)</span>';
+        }
 
         var tiles = [
             {id: 'chip_size', composite: true, title: 'Chip Size', value: topo.nodes.length + ' qubits, ' + topo.edges.length + ' pairs', color: '#4e79a7'},

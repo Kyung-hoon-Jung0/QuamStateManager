@@ -443,3 +443,41 @@ class TestOneVocabularyRegardlessOfCase:
         assert rows[0]["level"] == "clifford"
         assert "value" not in rows[0], "an unphysical fidelity keeps no value"
         assert rows[0]["raw_value"] == 1.5345
+
+
+# ── docs/184 — a fidelity of MINUS twenty percent ────────────────────────────
+
+_RB_BRIDGE_SELFCHECK = _ROOT / "tests" / "rb_clifford_bridge_selfcheck.cjs" \
+    if "_ROOT" in dir() else None
+
+
+@pytest.mark.skipif(__import__("shutil").which("node") is None, reason="node not on PATH")
+def test_rb_clifford_bridge_selfcheck_passes():
+    """The IRB→Clifford bridge, driven against the real chip-status.js.
+
+    Customer screenshot from the chip qualibrate was running on 8001:
+    ``2Q CLIFFORD FID. (IRB×)`` reading **-20.18%**, range -117.27%–76.90%.
+    The arithmetic is SM's own and reproduces exactly — EPG 22.38% × 5.37 =
+    EPC 120.18% — because ``epc = n·epg`` is a FIRST-ORDER identity and that
+    pair is nowhere near the regime where it holds.
+
+    The ceiling is the RB model's own, not a taste: the fit is a depolarizing
+    decay, ``EPC = (d-1)/d·(1-α)`` with α in [0,1], so at d=4 no depolarizing
+    fit yields an EPC above 0.75 — the same expression docs/138 reproduced to
+    1e-12 against both of the lab's numbers. Past it the bridge has left the
+    model, so the pair is set aside and SAID, never printed.
+
+    The harness uses the screenshot's own inputs, and pins that a healthy chip
+    is completely unaffected.
+    """
+    import subprocess
+    from pathlib import Path as _P
+    root = _P(__file__).resolve().parent.parent
+    r = subprocess.run(
+        ["node", str(root / "tests" / "rb_clifford_bridge_selfcheck.cjs")],
+        capture_output=True, text=True, encoding="utf-8", cwd=str(root), timeout=180,
+    )
+    if r.returncode == 2:
+        pytest.skip("jsdom not installed (run `npm install jsdom`)")
+    assert r.returncode == 0, (r.stdout + r.stderr)
+    assert "rb_clifford_bridge_selfcheck ok" in r.stdout, (r.stdout + r.stderr)
