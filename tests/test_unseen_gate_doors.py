@@ -102,15 +102,30 @@ class TestEveryDoorDeclaresWhatItShowed:
         """`force=1` answers the STALENESS question. It has never meant "and
         another window's edits too" — one token never collapses two gates."""
         from flask import render_template
-        with env["app"].test_request_context():
-            html = render_template("_state_apply_conflict.html",
-                                   change_count=2, change_sig="abc123",
-                                   staged_conflict=False)
-        n = html.count("apply-to-live?force=1")
-        assert n >= 1
-        assert html.count("seen_sig") == n, \
-            "a force button that declares nothing is an ungated door"
-        assert "abc123" in html
+        # BOTH branches. `staged_conflict` picks one of two mutually exclusive
+        # force buttons, so a render of one says nothing about the other -- and
+        # counting `seen_sig` against a number taken from that same render is
+        # an assertion about itself. Rendering only the else-branch is how the
+        # if-branch's button lost its declaration with every pin still green.
+        offered = 0
+        for staged in (True, False):
+            with env["app"].test_request_context():
+                html = render_template("_state_apply_conflict.html",
+                                       change_count=2, change_sig="abc123",
+                                       staged_conflict=staged)
+            n = html.count("apply-to-live?force=1")
+            assert n >= 1, (
+                "no force button rendered with staged_conflict=%r" % staged)
+            offered += n
+            assert html.count("seen_sig") == n, (
+                "a force button that declares nothing is an ungated door "
+                "(staged_conflict=%r)" % staged)
+            assert html.count("abc123") == n, (
+                "a force button declared a signature that is not this "
+                "screen's (staged_conflict=%r)" % staged)
+        assert offered >= 2, (
+            "both conflict branches must offer a force button, or this pin is "
+            "only watching one door")
 
     def test_the_review_modal_declares_the_set_not_only_the_count(self, env):
         # Through the REAL route. The template's actions only render with
@@ -194,6 +209,24 @@ class TestTheSetIsWhatCounts:
                 "/x", method="POST", data={"seen_changes": "0"}):
             ref = routes_mod._unseen_edit_refusal(_ctx(env))
         assert ref is not None and ref["have"] == 1
+
+    def test_a_signature_only_caller_is_judged_by_the_signature(self, env):
+        """The symmetric half of the rule above, and the one nothing pinned.
+
+        The count is back-compatible; the SIGNATURE is authoritative. A caller
+        that declares only the set it saw must be judged on that set alone —
+        the count rule must not get a second say, because with no count there
+        is nothing to compare and `have <= None` is a TypeError, not a verdict.
+        """
+        _stage(env, "qubits.q1.f_01", "5.1e9")
+        with env["app"].test_request_context(
+                "/x", method="POST", data={"seen_sig": self._sig(env)}):
+            assert routes_mod._unseen_edit_refusal(_ctx(env)) is None,                 "a matching set was refused when the caller declared no count"
+        with env["app"].test_request_context(
+                "/x", method="POST", data={"seen_sig": "notthesignature"}):
+            ref = routes_mod._unseen_edit_refusal(_ctx(env))
+        assert ref is not None and ref["status"] == "unseen_changes"
+        assert ref["paths"] == ["qubits.q1.f_01"], ref
 
     def test_declaring_nothing_is_still_no_opinion(self, env):
         """docs/120's rule, kept: an absent parameter cannot be refused, so no
