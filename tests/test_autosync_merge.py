@@ -308,13 +308,58 @@ class TestAReplacePullSaysSo:
             p = json.loads(r.headers["HX-Trigger"])["autoSyncPulled"]
             assert p["replaced"] is False and p["count"] == 0
 
-    def test_the_snapshot_the_message_promises_is_really_taken(self, env):
-        """The toast points at State History. If the pull did not snapshot,
-        that sentence would be a lie."""
+    def test_the_pull_still_snapshots_before_discarding(self, env):
+        """The backup is real and worth having -- it is how you get back the
+        state the chip was in before this pull."""
         before = _snap_count(env)
         self._diverge_and_pull(env, replace=True)
-        assert _snap_count(env) > before, (
-            "a discarding pull took no backup, but the message promises one")
+        assert _snap_count(env) > before, "a discarding pull took no backup"
+
+    def test_the_message_does_not_promise_a_recovery_that_does_not_exist(self, env):
+        """docs/187 2, corrected. The first version of the toast said "State
+        History can bring it back". It cannot: `check_and_snapshot` reads the
+        LIVE folder's files, and a pending edit lives in the in-memory change
+        log, so no snapshot ever holds it.
+
+        This pin is the measurement, not the wording: it asserts that NO
+        snapshot on disk contains the discarded value, and that the shipped
+        message therefore does not offer State History for it.
+        """
+        c = env["client"]
+        THE_EDIT = 9.99e-5
+        _arm(env, pull=True, push=True, replace=True)
+        _edit(env, path="qubits.qA1.T1", value=str(THE_EDIT))
+        _write_chip(env["live"], _state(f01=7.7e9))
+        with env["app"].test_request_context():
+            ctx = routes_mod._active_ctx()
+            ctx["_live_hash_checked_at"] = None
+            routes_mod._refresh_live_diverged(ctx)
+        assert c.post("/auto-sync/pull", data={"dom_dirty": "0"}).status_code == 200
+
+        hist = Path(env["app"].instance_path) / "history"
+        held = []
+        for f in hist.rglob("state.json"):
+            try:
+                doc = json.loads(f.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if doc.get("qubits", {}).get("qA1", {}).get("T1") == THE_EDIT:
+                held.append(str(f))
+        # If this ever starts failing because a snapshot DOES hold it, the
+        # product got better and the message should be revisited -- read the
+        # message, do not just flip the assert.
+        assert not held, (
+            "a snapshot holds the discarded edit after all — the toast may now "
+            "honestly offer State History: " + str(held[:2]))
+
+        js = (Path(__file__).resolve().parents[1] / "quam_state_manager" / "web"
+              / "static" / "auto-apply.js").read_text(encoding="utf-8")
+        i = js.index("document.addEventListener('autoSyncPulled'")
+        blk = js[i:i + 1400]
+        assert "State History can bring it back" not in blk, (
+            "the toast promises a recovery that was measured not to exist")
+        assert "not recoverable" in blk, "it does not say what actually happened"
+        assert "Untick" in blk, "it does not name the setting that prevents this"
 
 
     def test_typed_but_uncommitted_grid_cells_also_block_the_pull(self, env):
@@ -350,7 +395,6 @@ class TestAReplacePullSaysSo:
         i = js.index("document.addEventListener('autoSyncPulled'")
         blk = js[i:i + 900]
         assert "d.replaced" in blk, "it warns even when nothing was replaced"
-        assert "State History" in blk, "it does not name the way back"
 
 
 def _snap_count(env) -> int:

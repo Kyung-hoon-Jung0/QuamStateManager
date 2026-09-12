@@ -176,18 +176,29 @@
        person had just typed reverted under their cursor with no explanation.
 
        Not a semantic change: `replace` still means what the checkbox says.
-       This is the honesty half -- say it happened, and name the way back. The
-       pull snapshots first (kind="backup") exactly when it is discarding, so
-       State History really does have it. */
+       This is the honesty half -- say it happened.
+
+       It does NOT offer State History as the way back, because that is not
+       true and I checked: `check_and_snapshot` reads the LIVE folder's files,
+       and a pending edit lives in the in-memory change log, so the pre-pull
+       backup holds the node's write rather than the user's work. Measured --
+       typed 9.99e-05, pulled, and no snapshot on disk holds it. The comment at
+       that call site had claimed otherwise for a long time; it was only a
+       comment until this toast put it on screen.
+
+       What it names instead is the one thing that prevents a recurrence: the
+       checkbox. Whether a replace-pull SHOULD preserve the work is a decision
+       about what "replace" means, and a message is not the place to make it. */
     document.addEventListener('autoSyncPulled', function (e) {
         var d = (e && e.detail) || {};
         if (!d.replaced) return;
         var n = parseInt(d.count || 0, 10);
-        toast('Auto-Sync pulled the live chip and replaced '
+        toast('Auto-Sync pulled the live chip and discarded '
               + (n > 0 ? (n + ' unapplied edit' + (n === 1 ? '' : 's'))
                        : 'your unapplied edits')
-              + " — that is what \u201creplace\u201d does. "
-              + 'The previous state was snapshotted first: State History can bring it back.',
+              + " — that is what \u201creplace\u201d does, and "
+              + 'they are not recoverable. Untick \u201creplace\u201d in the '
+              + 'Auto-Sync panel to be asked instead.',
               'warning');
     });
 

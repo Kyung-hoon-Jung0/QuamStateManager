@@ -15343,9 +15343,20 @@ def auto_sync_pull():
                 return "", 204
             # A replace-pull discards work that exists NOWHERE else: the change
             # log is not journalled (the journal captures on save), and the redo
-            # stack self-invalidates. Snapshot first so "the live chip wins" is
-            # still recoverable from State History -- the manual /state/sync
-            # already does this, and the popup promises revertibility.
+            # stack self-invalidates.
+            #
+            # This snapshot does NOT rescue that work, and the comment here used
+            # to say it did (docs/187 2). `check_and_snapshot` reads the LIVE
+            # folder's files (history.py: `state_src = path / "state.json"`), and
+            # a pending edit is in neither those nor the working files -- so what
+            # gets captured is the OTHER writer's content. What the snapshot IS
+            # good for is the case the manual /state/sync shares: recovering the
+            # state the chip was in before this pull. Measured: typed 9.99e-05,
+            # pulled, and no snapshot on disk holds it. The toast says that
+            # plainly instead of pointing at an entry that cannot help.
+            #
+            # OPEN: making a replace-pull preserve the discarded edits is a
+            # decision about what "replace" means, deliberately not taken here.
             _pre_leaves = _leaf_snapshot(ctx)   # docs/144
             discarding = _quam_ctx_dirty(ctx) or dom_dirty
             # docs/187 (2): how many of the user's own edits this pull is about
