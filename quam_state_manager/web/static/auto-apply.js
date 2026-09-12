@@ -165,10 +165,10 @@
        `_applyInFlight` -- and doStateSync bails on a held latch, silently, so
        without the wait the merge would simply never happen. Bounded, because a
        latch that never clears must not leave a timer running for ever. */
-    function _whenLatchFree(fn, tries) {
+    function _whenLatchFree(fn, tries, onGiveUp) {
         if (!window._applyInFlight) { fn(); return; }
-        if (tries <= 0) return;
-        setTimeout(function () { _whenLatchFree(fn, tries - 1); }, 50);
+        if (tries <= 0) { if (onGiveUp) onGiveUp(); return; }
+        setTimeout(function () { _whenLatchFree(fn, tries - 1, onGiveUp); }, 50);
     }
     /* docs/187 (2) -- the armed pull ran with `replace` ticked, so it threw
        away edits the user had not applied yet. The server has always announced
@@ -220,7 +220,17 @@
         var chip = (e && e.detail && e.detail.chip) || '';
         _whenLatchFree(function () {
             if (window.doStateSync) window.doStateSync('apply', false, false, chip);
-        }, 40);           // ~2s, then give up rather than spin
+        }, 40,            // ~2s, then give up rather than spin
+        /* R9: and SAY so. The bound is right -- a timer must not outlive its
+           purpose -- but the silence was not: the server has already spent one
+           of its three tries, and the tray is still saying Auto-Sync is
+           resolving this. Leaving that on screen while nothing is happening is
+           the class of defect docs/187 exists to fix. */
+        function () {
+            toast('Auto-Sync could not merge just now — another write was '
+                  + 'still in flight. Your edits are safe; press '
+                  + '\u21c4 Pull & apply to finish it.', 'warning');
+        });
     });
     // htmx fires a plain (detail-less) event for string triggers too
     document.addEventListener('autoApplyApplied', function () { applyLogState(); });

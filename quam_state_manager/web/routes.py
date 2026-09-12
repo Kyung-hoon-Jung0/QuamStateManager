@@ -15431,6 +15431,17 @@ def auto_sync_pull():
                             logger.exception("post-pull re-persist failed")
                         ctx["live_diverged"] = True
                         return "", 204
+            # docs/187 R10: an edit can land INSIDE `sync_from_live` -- it holds
+            # no `store._lock`, which is why the re-check above exists -- and
+            # with `replace` ON that re-check does not keep it, so the rebuild
+            # below drops it. Every count was taken BEFORE the pull, so a
+            # context that was clean then reported nothing and the work
+            # vanished in silence. Fold it into what the response reports.
+            _late = ctx.get("store")
+            _late_n = len(getattr(_late, "change_log", None) or []) if _late else 0
+            if _late_n:
+                _discarded_n = max(_discarded_n, _late_n)
+                discarding = True
             ctx["_alarm_reason"] = "live-pull"
             _rebuild_after_working_copy_replaced(ctx)
             # Every other caller of the rebuild pairs it with this. Leaving the

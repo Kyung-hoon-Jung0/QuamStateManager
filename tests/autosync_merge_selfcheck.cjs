@@ -104,6 +104,23 @@ function fire(w, name, detail) {
           'a timer was still alive after the bound: ' + JSON.stringify(state.sync));
   }
 
+  /* ── C2b. review R9: giving up must not be SILENT ─────────────────── */
+  {
+    // The bound is right -- a timer must not outlive its purpose -- but the
+    // server has already spent one of its three tries, and the tray is still
+    // saying Auto-Sync is resolving this. Leaving that on screen while nothing
+    // happens is the class of defect docs/187 exists to fix.
+    const { w, state } = world();
+    w._applyInFlight = true;                 // never clears
+    fire(w, 'autoSyncMerge', { tries: 1, chip: 'CHIP-G' });
+    await sleep(2600);
+    check('C3 abandoning the merge tells the user', state.toasts.length === 1,
+          JSON.stringify(state.toasts));
+    const m = (state.toasts[0] || {}).m || '';
+    check('C4 …saying the edits are safe', /safe/.test(m), m);
+    check('C5 …and naming what finishes it', /Pull & apply/.test(m), m);
+  }
+
   /* ── D. a merge signal with no chip still works (nothing to pin) ────── */
   {
     const { w, state } = world();
