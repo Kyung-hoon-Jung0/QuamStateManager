@@ -559,3 +559,62 @@ class TestOnePillRenderer:
         moment it existed."""
         t = self._t("_auto_sync_pill.html")
         assert "import icon_bolt" in t and "icon_bolt(" in t
+
+
+class TestTheMergeDoorIsGated:
+    """docs/187 review R3/R5. The conflict tray IS `#pending-tray` while it is
+    on screen, and it published NONE of the tray's data-* contract. Measured in
+    a real browser run and not acted on at the time:
+
+        [after Enter]  auto=null  count=null  wdirty=null  conflict=true
+
+    `doStateSync` reads `_seenSig` from `data-change-sig`, so the AUTOMATIC
+    merge declared no change set and the docs/179 unseen-edit gate could not
+    fire on the one door that now presses itself.
+    """
+
+    def _conflict_html(self, env):
+        c = env["client"]
+        _arm(env, pull=True, push=True)
+        _edit(env)
+        _write_chip(env["live"], _state(f01=7.7e9))
+        return c.post("/state/apply-to-live").data.decode()
+
+    def test_the_conflict_tray_publishes_the_change_signature(self, env):
+        html = self._conflict_html(env)
+        assert 'data-change-sig="' in html, (
+            "the merge presses a live-write door declaring no change set")
+        sig = html.split('data-change-sig="', 1)[1].split('"', 1)[0]
+        assert sig, "an empty signature reads as 'no opinion' — the gate is off"
+        with env["app"].app_context():
+            assert sig == routes_mod._change_log_sig(_ctx(env)["store"])
+
+    def test_it_publishes_the_count_and_the_seq_too(self, env):
+        html = self._conflict_html(env)
+        assert 'data-change-count="' in html
+        assert 'data-working-dirty="' in html
+        assert 'data-seq="' in html, "PaneState has nothing to compare (docs/110)"
+
+    def test_it_deliberately_does_NOT_publish_the_armed_flag(self, env):
+        """Not an oversight. While this tray is up the merge (or the human) is
+        driving; a flusher that read itself as armed here would re-press the
+        door that just refused, conflict again, and burn a budget try against
+        its own merge. The pill still shows the truth because it renders from
+        `auto_sync`."""
+        html = self._conflict_html(env)
+        i = html.index('class="pending-tray pending-tray-conflict"')
+        root = html[i:html.index(">", i)]
+        assert "data-auto-apply" not in root, (
+            "the flusher will re-press the door that just refused")
+        assert "auto-apply-on" in html, (
+            "…but the pill must still say the session is on")
+
+    def test_the_gate_actually_refuses_a_stale_merge(self, env):
+        """End to end: the sig the tray published is what the gate checks, so a
+        press declaring a DIFFERENT set is refused on the merge door."""
+        self._conflict_html(env)
+        r = env["client"].post("/state/sync", data={
+            "mode": "apply", "seen_changes": "1",
+            "seen_sig": "notthesignature"})
+        assert r.status_code == 409, r.status_code
+        assert (r.get_json() or {}).get("status") == "unseen_changes", r.get_json()

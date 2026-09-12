@@ -15177,6 +15177,11 @@ def _conflict_tray(ctx, store, *, staged_conflict: bool,
         change_sig=_change_log_sig(store),
         staged_conflict=staged_conflict,
         auto_disarmed=auto_disarmed,
+        # docs/187 R3/R5: this tray IS #pending-tray while it is up, so it owes
+        # the same beacons -- the docs/179 change SET above all, which is what
+        # `doStateSync` declares when the merge presses itself.
+        working_dirty=bool(ctx.get("working_dirty")) if ctx else False,
+        mutation_seq=(getattr(store, "mutation_seq", "") if store else ""),
         auto_sync=_auto_sync_state(ctx),
         auto_apply_armable=_auto_apply_armable(ctx),
         auto_pull_armable=_auto_pull_armable(ctx),

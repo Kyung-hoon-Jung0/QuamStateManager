@@ -1,5 +1,23 @@
-{# Replaces #pending-tray when apply-to-live hits a staleness conflict. #}
-<div id="pending-tray" class="pending-tray pending-tray-conflict">
+{# Replaces #pending-tray when apply-to-live hits a staleness conflict.
+
+   docs/187 R3/R5: this element IS `#pending-tray` while it is on screen, so it
+   owes the same data-* contract. It published NONE, which switched two things
+   off silently:
+     - `doStateSync` reads `_seenSig` from `data-change-sig` (docs/179), so the
+       AUTOMATIC merge declared no change set and the unseen-edit gate could
+       not fire on the one door that now presses itself;
+     - PaneState compares `data-seq` (docs/110) and had nothing to compare.
+
+   `data-auto-apply` is deliberately ABSENT. While this tray is up, either the
+   merge or the human is driving; a flusher that read itself as armed here
+   would re-press the door that just refused, conflict again, and burn a budget
+   try against its own merge. The pill still shows the session honestly because
+   it renders from `auto_sync`, not from this attribute. #}
+<div id="pending-tray" class="pending-tray pending-tray-conflict"
+     data-change-count="{{ change_count }}"
+     data-change-sig="{{ change_sig | default('') }}"
+     data-working-dirty="{{ '1' if working_dirty else '0' }}"
+     data-seq="{{ mutation_seq | default('') }}">
   <div class="tray-bar">
     <span class="tray-indicator tray-indicator-warn">
       &#9888; The live chip changed since you loaded it

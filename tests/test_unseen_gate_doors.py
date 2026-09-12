@@ -78,6 +78,15 @@ def _stage(env, path, value):
     assert r.status_code == 200, r.data[:200]
 
 
+def _find_all(hay: str, needle: str) -> list[int]:
+    """Every start offset of *needle* in *hay* (docs/187 R3 follow-up)."""
+    out, i = [], hay.find(needle)
+    while i >= 0:
+        out.append(i)
+        i = hay.find(needle, i + 1)
+    return out
+
+
 def _tray_attr(html: str, name: str) -> str:
     m = re.search(name + r'="([^"]*)"', html)
     return m.group(1) if m else ""
@@ -113,16 +122,24 @@ class TestEveryDoorDeclaresWhatItShowed:
                 html = render_template("_state_apply_conflict.html",
                                        change_count=2, change_sig="abc123",
                                        staged_conflict=staged)
-            n = html.count("apply-to-live?force=1")
+            # Per BUTTON, not per document. docs/187 R3 made the tray ROOT
+            # publish data-change-sig too (that is how the automatic merge
+            # declares its change set), so a global count of the signature is
+            # n+1 and says nothing about the buttons.
+            btns = [html[m:] for m in _find_all(html, "apply-to-live?force=1")]
+            n = len(btns)
             assert n >= 1, (
                 "no force button rendered with staged_conflict=%r" % staged)
             offered += n
-            assert html.count("seen_sig") == n, (
-                "a force button that declares nothing is an ungated door "
-                "(staged_conflict=%r)" % staged)
-            assert html.count("abc123") == n, (
-                "a force button declared a signature that is not this "
-                "screen's (staged_conflict=%r)" % staged)
+            for b in btns:
+                # the element's own attribute block: up to its closing '>'
+                block = b[:b.index(">")]
+                assert "seen_sig" in block, (
+                    "a force button that declares nothing is an ungated door "
+                    "(staged_conflict=%r): %r" % (staged, block[:200]))
+                assert "abc123" in block, (
+                    "a force button declared a signature that is not this "
+                    "screen's (staged_conflict=%r): %r" % (staged, block[:200]))
         assert offered >= 2, (
             "both conflict branches must offer a force button, or this pin is "
             "only watching one door")
