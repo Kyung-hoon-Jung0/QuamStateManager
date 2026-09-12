@@ -316,6 +316,32 @@ class TestAReplacePullSaysSo:
         assert _snap_count(env) > before, (
             "a discarding pull took no backup, but the message promises one")
 
+
+    def test_typed_but_uncommitted_grid_cells_also_block_the_pull(self, env):
+        """The mutation sweep's finding: the outer guard looked like a
+        duplicate of the one inside the build lock, and for a SERVER-side edit
+        it is. It is not for `dom_dirty`.
+
+        A fill-down or a pasted column lives only in the DOM until Apply, so
+        `change_log` and `working_dirty` are both clean and the inner guard —
+        which asks only `_quam_ctx_dirty` — would let the pull through and wipe
+        a whole filled column with no prompt. Only the client can see that
+        work, which is why it reports it.
+        """
+        c = env["client"]
+        _arm(env, pull=True, push=True, replace=False)
+        _write_chip(env["live"], _state(f01=7.7e9))
+        with env["app"].test_request_context():
+            ctx = routes_mod._active_ctx()
+            ctx["_live_hash_checked_at"] = None
+            routes_mod._refresh_live_diverged(ctx)
+        assert not routes_mod._quam_ctx_dirty(_ctx(env)), (
+            "the fixture must be server-CLEAN or this pin proves nothing")
+
+        r = c.post("/auto-sync/pull", data={"dom_dirty": "1"})
+        assert r.status_code == 204, (
+            "the pull ran over grid cells only the browser can see")
+
     def test_somebody_listens(self):
         js = (Path(__file__).resolve().parents[1] / "quam_state_manager" / "web"
               / "static" / "auto-apply.js").read_text(encoding="utf-8")
