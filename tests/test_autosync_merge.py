@@ -422,17 +422,33 @@ class TestTheConflictTrayShowsTheSession:
         assert "tray-conflict-autosync" not in html, (
             "a user who never armed Auto-Sync was told about it")
 
-    def test_the_sync_route_conflict_carries_it_too(self, env):
+    def test_the_sync_route_conflict_carries_it_too(self, env, monkeypatch):
         """Both conflict doors go through one renderer, so neither can be the
-        one that forgets a variable."""
+        one that forgets a variable.
+
+        The first version of this pin was conditional -- `if the response was
+        a conflict, assert` -- and the fixture never produced one, so it
+        asserted nothing and the sweep found it GREEN. The write is forced to
+        fail instead, which is the only thing this pin is about: what that
+        route RENDERS when it does.
+        """
+        from quam_state_manager.core import working_copy as _wc
+
         c = env["client"]
         _arm(env, pull=True, push=True)
         _edit(env)
-        _write_chip(env["live"], _state(f01=7.7e9))
-        r = c.post("/state/sync", data={"mode": "apply", "force": "1"})
+
+        def _always_stale(*a, **k):
+            raise _wc.StaleLiveError("forced for the render")
+        monkeypatch.setattr(_wc, "apply_to_live", _always_stale)
+
+        r = c.post("/state/sync", data={"mode": "apply"})
         body = r.get_json() or {}
-        if body.get("status") == "conflict":
-            assert "auto-apply-pill" in (body.get("tray_html") or "")
+        assert body.get("status") == "conflict", body
+        html = body.get("tray_html") or ""
+        assert "pending-tray-conflict" in html
+        assert "auto-apply-pill" in html, (
+            "the sync route's conflict tray renders no Auto-Sync pill")
 
 
 class TestOnePillRenderer:

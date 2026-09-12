@@ -16627,7 +16627,6 @@ def state_apply_to_live():
         # already a finished string, which is why the tray could say nothing.
         _will_merge = bool(_auto and _auto.get("pull")
                            and _auto.get("merge_tries", 0) < _AUTO_MERGE_TRIES)
-        _will_disarm = bool(_auto) and not _will_merge
         # docs/117: nothing was written (apply_to_live raises BEFORE its write)
         # and the edit is safe in the working copy, but a background writer the
         # user may have forgotten about must never keep pushing at a chip that
@@ -16666,10 +16665,13 @@ def state_apply_to_live():
         # Pop BEFORE rendering, or the pill reads the session that is about to
         # be thrown away and paints itself ON while the line beside it says the
         # opposite. `_auto_disarm_response` pops again; it is idempotent.
-        if _will_disarm:
-            ctx.pop("auto_apply", None)
+        # Reaching here means `_auto` is armed and `_will_merge` is false, so
+        # the disarm is certain -- a `_will_disarm` variable here could only
+        # ever be True, and reads as though it might not be (the sweep caught
+        # it as a no-op mutation).
+        ctx.pop("auto_apply", None)
         body = _conflict_tray(ctx, store, staged_conflict=_staged_conflict,
-                              auto_disarmed=_will_disarm)
+                              auto_disarmed=True)
         return _auto_disarm_response(ctx, body, "conflict")
     except (OSError, ValueError) as exc:
         # docs/114 (#16): the read-only case fails HERE (the LIVE write), not
