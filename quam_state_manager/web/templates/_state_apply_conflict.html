@@ -24,13 +24,19 @@
     </span>
     <div class="tray-actions">
       <button class="btn-sm" onclick="openReview()">Review changes</button>
+    </div>
+  </div>
 {# docs/187 (3): this tray REPLACES #pending-tray, and the pill lived only
    there -- so with a conflict on screen nothing said whether Auto-Sync was on,
    nothing said it had just been turned off, and there was no control to turn
-   it back on. The pill is one partial now, rendered by both trays. #}
+   it back on. The pill is one partial now, rendered by both trays.
+
+   R6: it must be a DIRECT child of #pending-tray, exactly as in the main tray.
+   `html.topbar-hidden #pending-tray > :not(.state-status-badge):not(.auto-sync-wrap)`
+   (style.css:950) exempts direct children only, so nesting it inside
+   `.tray-bar` had the whole bar -- pill included -- hidden whenever the top bar
+   was collapsed: a tray pointing at a control nobody could click. #}
 {% include '_auto_sync_pill.html' %}
-    </div>
-  </div>
 {# ...and SAY it, where the user is looking. A toast is gone in seconds; this
    is the surface they are reading while they decide what to do. `auto_sync`
    is the session as it stands AFTER the route decided, so the two branches

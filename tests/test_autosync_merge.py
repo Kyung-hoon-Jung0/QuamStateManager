@@ -712,3 +712,53 @@ class TestTheMergeIsPinnedToItsChip:
         assert "expectChip" in head, head
         blk = js[i:i + 4000]
         assert 'expect_chip=" + encodeURIComponent(expectChip)' in blk
+
+
+class TestThePillSurvivesAHiddenTopBar:
+    """docs/187 review R6. style.css:950 exempts DIRECT children of
+    #pending-tray from the topbar-hidden hide rule:
+
+        html.topbar-hidden #pending-tray
+            > :not(.state-status-badge):not(.auto-sync-wrap) { display: none; }
+
+    The first cut nested the conflict tray's pill inside `.tray-bar`, which IS
+    a direct child and IS hidden — taking the pill with it. So with the top bar
+    collapsed the tray pointed at a control nobody could see or click.
+    """
+
+    def _conflict(self, env):
+        c = env["client"]
+        _arm(env, pull=True, push=True)
+        _edit(env)
+        _write_chip(env["live"], _state(f01=7.7e9))
+        return c.post("/state/apply-to-live").data.decode()
+
+    def test_the_wrap_is_a_direct_child_of_the_tray(self, env):
+        html = self._conflict(env)
+        i = html.index('id="pending-tray"')
+        body = html[html.index(">", i) + 1:]
+        # walk the top level: depth 0 is a direct child
+        depth, direct = 0, []
+        import re
+        for m in re.finditer(r"<(/?)(\w+)[^>]*?(/?)>", body):
+            closing, tag, selfclose = m.group(1), m.group(2), m.group(3)
+            if closing:
+                depth -= 1
+                if depth < 0:
+                    break
+                continue
+            if depth == 0:
+                direct.append(m.group(0))
+            if not selfclose and tag not in ("br", "input", "img", "hr"):
+                depth += 1
+        assert any("auto-sync-wrap" in d for d in direct), (
+            "the pill is nested, so topbar-hidden hides it with its parent: "
+            + str([d[:60] for d in direct]))
+
+    def test_the_css_rule_it_relies_on_is_still_there(self):
+        """If that selector is ever rewritten, this pin must be re-read rather
+        than the markup quietly re-nested."""
+        css = (Path(__file__).resolve().parents[1] / "quam_state_manager" / "web"
+               / "static" / "style.css").read_text(encoding="utf-8")
+        assert ("html.topbar-hidden #pending-tray > "
+                ":not(.state-status-badge):not(.auto-sync-wrap)") in css
