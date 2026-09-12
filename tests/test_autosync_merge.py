@@ -841,3 +841,76 @@ class TestAStagedPayloadIsNotMerged:
         assert "autoSyncMerge" in r.headers.get("HX-Trigger", "")
         assert _sess(env) is not None
         assert "still on and is resolving" in r.data.decode()
+
+
+class TestTheServerReportsEveryKindOfLoss:
+    """The review-round sweep found both halves of R7/R10 unpinned on the
+    SERVER side: my pins checked that the client composes an honest sentence
+    from `saved`/`stash`/`dom`, and nothing checked that the server sends them.
+    Drop those keys and the client's `more` goes falsy — a partial count
+    presented as the whole loss, which is the defect itself.
+    """
+
+    def _replace_pull(self, env):
+        with env["app"].test_request_context():
+            ctx = routes_mod._active_ctx()
+            ctx["_live_hash_checked_at"] = None
+            routes_mod._refresh_live_diverged(ctx)
+        r = env["client"].post("/auto-sync/pull", data={"dom_dirty": "0"})
+        trig = r.headers.get("HX-Trigger", "")
+        return r, (json.loads(trig).get("autoSyncPulled") if trig else None)
+
+    def test_it_reports_saved_and_stashed_work_not_just_the_change_log(self, env):
+        """A saved-but-unapplied working state is destroyed by the same pull.
+        Reporting only the change log understates the loss."""
+        c = env["client"]
+        _arm(env, pull=True, push=True, replace=True)
+        _edit(env, path="qubits.qA1.T1", value="9.99e-5")
+        assert c.post("/save").status_code in (200, 204)      # -> working_dirty + stash
+        _edit(env, path="qubits.qA1.f_01", value="5.25e9")    # -> change log too
+        ctx = _ctx(env)
+        assert ctx.get("working_dirty") and ctx.get("pending_reapply"), ctx.keys()
+        _write_chip(env["live"], _state(f01=7.7e9))
+
+        r, payload = self._replace_pull(env)
+        assert r.status_code == 200, r.status_code
+        assert payload, "no autoSyncPulled at all"
+        assert payload.get("replaced") is True, payload
+        assert "saved" in payload and "stash" in payload, (
+            "the server reports only the change log, so the client cannot "
+            "know the count is partial: %r" % payload)
+        assert payload["saved"] is True, payload
+        assert payload["stash"] >= 1, payload
+
+    def test_work_that_lands_DURING_the_pull_is_reported(self, env):
+        """R10. `sync_from_live` holds no store._lock, so an edit can land
+        inside it; with `replace` on the post-pull re-check does not keep it
+        and the rebuild drops it. Every count is taken BEFORE the pull, so
+        that work used to vanish with `replaced: false`."""
+        c = env["client"]
+        _arm(env, pull=True, push=True, replace=True)
+        _write_chip(env["live"], _state(f01=7.7e9))
+
+        real = routes_mod.working_copy.sync_from_live
+        landed = {}
+
+        def _sync_then_edit(wc, *a, **k):
+            out = real(wc, *a, **k)
+            # the race, made deterministic: an edit arrives mid-pull
+            landed["r"] = c.post("/field/edit", data={
+                "dot_path": "qubits.qA1.T1", "value": "4.44e-5"}).status_code
+            return out
+
+        routes_mod.working_copy.sync_from_live = _sync_then_edit
+        try:
+            r, payload = self._replace_pull(env)
+        finally:
+            routes_mod.working_copy.sync_from_live = real
+
+        assert landed.get("r") == 200, landed
+        assert r.status_code == 200, r.status_code
+        assert payload, "no autoSyncPulled at all"
+        assert payload.get("replaced") is True, (
+            "an edit that landed during the pull was dropped with "
+            "replaced=false — silently: %r" % payload)
+        assert payload.get("count", 0) >= 1, payload
