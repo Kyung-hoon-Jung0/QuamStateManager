@@ -762,3 +762,79 @@ class TestThePillSurvivesAHiddenTopBar:
                / "static" / "style.css").read_text(encoding="utf-8")
         assert ("html.topbar-hidden #pending-tray > "
                 ":not(.state-status-badge):not(.auto-sync-wrap)") in css
+
+
+class TestAStagedPayloadIsNotMerged:
+    """docs/187 review R4. `/state/sync?mode=apply` takes the docs/65 carve-out
+    for a staged/saved payload and delegates WITHOUT pulling — re-issuing the
+    push that just conflicted. So a merge signalled there can never succeed:
+    measured, three futile rounds and then the same disarm, while the tray
+    claimed to be resolving it, directly above its own staged branch which
+    withholds pull-and-re-apply from the human on purpose.
+    """
+
+    def _staged_conflict(self, env):
+        """A STAGED payload — `ctx['staged_base']`, set by a State-History
+        stage or a dataset Load State. This is the class the docs/65 carve-out
+        is about.
+
+        Not `/save`: that fills `pending_reapply`, and with a stash the sync
+        route pulls and replays normally, so a saved edit genuinely merges. My
+        first fixture named that shape and was measuring the wrong thing.
+        """
+        c = env["client"]
+        snap = c.post("/state-history/snapshot")
+        assert snap.status_code in (200, 204, 302), snap.status_code
+        with env["app"].app_context():
+            snaps = routes_mod._history().list_snapshots(_ctx(env)["path"])
+        assert snaps, "no snapshot to stage"
+        ts = snaps[0].timestamp
+        _arm(env, pull=True, push=True)
+        st = c.post(f"/state-history/{ts}/stage", data={"force": "1"})
+        assert st.status_code in (200, 204), st.status_code
+        ctx = _ctx(env)
+        assert ctx.get("staged_base"), (
+            "the fixture did not reach the staged class — nothing here proves "
+            "anything without it")
+        _write_chip(env["live"], _state(f01=7.7e9))
+        return c.post("/state/apply-to-live")
+
+    def test_no_merge_is_signalled_for_a_staged_payload(self, env):
+        r = self._staged_conflict(env)
+        trig = r.headers.get("HX-Trigger", "")
+        assert "autoSyncMerge" not in trig, (
+            "signalled a merge the door it presses cannot perform — three "
+            "futile rounds and then the same disarm")
+
+    def test_it_disarms_honestly_instead(self, env):
+        r = self._staged_conflict(env)
+        assert "autoApplyDisarm" in r.headers.get("HX-Trigger", "")
+        assert _sess(env) is None
+        html = r.data.decode()
+        assert "has been turned" in html, "it did not say the session was off"
+
+    def test_and_never_claims_to_be_resolving_it(self, env):
+        html = self._staged_conflict(env).data.decode()
+        assert "still on and is resolving" not in html, (
+            "the tray claimed a merge was running above the branch that "
+            "withholds that button from the human")
+
+    def test_the_resolving_line_states_a_DECISION_not_the_session(self, env):
+        """It used to be rendered from `auto_sync.pull`, so it also appeared on
+        the /state/sync conflict door where no merge had been decided."""
+        cf = (Path(__file__).resolve().parents[1] / "quam_state_manager" / "web"
+              / "templates" / "_state_apply_conflict.html").read_text(encoding="utf-8")
+        assert "{% elif auto_merging %}" in cf, cf[:200]
+        assert "auto_sync.pull" not in cf, (
+            "the line is inferred from the session again")
+
+    def test_a_plain_pending_edit_still_merges(self, env):
+        """The ordinary case — the customer's — must be untouched."""
+        c = env["client"]
+        _arm(env, pull=True, push=True)
+        _edit(env)
+        _write_chip(env["live"], _state(f01=7.7e9))
+        r = c.post("/state/apply-to-live")
+        assert "autoSyncMerge" in r.headers.get("HX-Trigger", "")
+        assert _sess(env) is not None
+        assert "still on and is resolving" in r.data.decode()

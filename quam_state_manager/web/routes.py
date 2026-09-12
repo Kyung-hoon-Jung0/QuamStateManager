@@ -15162,7 +15162,8 @@ def _auto_apply_landed(ctx) -> None:
 
 
 def _conflict_tray(ctx, store, *, staged_conflict: bool,
-                   auto_disarmed: bool = False) -> str:
+                   auto_disarmed: bool = False,
+                   auto_merging: bool = False) -> str:
     """Render the staleness-conflict tray (docs/187 3).
 
     ONE place that knows what this tray needs. It replaces ``#pending-tray``,
@@ -15177,6 +15178,10 @@ def _conflict_tray(ctx, store, *, staged_conflict: bool,
         change_sig=_change_log_sig(store),
         staged_conflict=staged_conflict,
         auto_disarmed=auto_disarmed,
+        # docs/187 R4: the tray states what was DECIDED. Inferring "a merge is
+        # running" from `auto_sync.pull` claimed it on doors where nothing had
+        # been decided and nothing would retry.
+        auto_merging=auto_merging,
         # docs/187 R3/R5: this tray IS #pending-tray while it is up, so it owes
         # the same beacons -- the docs/179 change SET above all, which is what
         # `doStateSync` declares when the merge presses itself.
@@ -16673,8 +16678,17 @@ def state_apply_to_live():
         # docs/187 (3): decide the Auto-Sync verdict BEFORE rendering, so the
         # tray can state it. The disarm used to happen after the body was
         # already a finished string, which is why the tray could say nothing.
+        # docs/187 R4: and only where the merge CAN work. `/state/sync?mode=apply`
+        # takes the docs/65 carve-out for a staged/saved payload and delegates
+        # without pulling -- re-issuing the push that just conflicted -- so
+        # signalling a merge there buys three futile rounds and then the same
+        # disarm, while the tray claims to be resolving something. For that
+        # class the honest answer is docs/117's original one: turn the session
+        # off and let the person choose, which is what the staged branch of the
+        # tray is for (it deliberately does not offer pull-and-re-apply).
         _will_merge = bool(_auto and _auto.get("pull")
-                           and _auto.get("merge_tries", 0) < _AUTO_MERGE_TRIES)
+                           and _auto.get("merge_tries", 0) < _AUTO_MERGE_TRIES
+                           and not _staged_conflict)
         # docs/117: nothing was written (apply_to_live raises BEFORE its write)
         # and the edit is safe in the working copy, but a background writer the
         # user may have forgotten about must never keep pushing at a chip that
@@ -16701,7 +16715,8 @@ def state_apply_to_live():
         if _will_merge:
             _auto["merge_tries"] = _auto.get("merge_tries", 0) + 1
             resp = make_response(_conflict_tray(
-                ctx, store, staged_conflict=_staged_conflict))
+                ctx, store, staged_conflict=_staged_conflict,
+                auto_merging=True))
             resp.headers["HX-Trigger"] = json.dumps({
                 # docs/187 R2: name the chip that conflicted. The client hands
                 # this exact token back, so a chip switch between the signal
