@@ -1,0 +1,254 @@
+# -*- coding: utf-8 -*-
+"""docs/187 — a push that finds the chip moved must MERGE, not turn itself off.
+
+Customer, on-site (2026-09-12): "live edit에서 enter를 누르면 그 다음부터
+auto sync가 깨짐", and "이유없이 pull&apply 문구가 뜬다".
+
+Their bench is the reason: SM (pid 4928, :5050) has
+``D:\\work\\Customer_Codes\\quam_states\\260907_KRS_5Q`` open, and that is
+qualibrate's own ``state_path`` — its log saves the machine there on every node
+run, every 30–60 s. So a node writes the chip between two of the user's edits
+as a matter of course, the push conflicts, and the session disarmed. Auto-Sync
+died within a minute of arming, and every later edit silently stopped reaching
+the chip while the user kept typing.
+
+The rule these pin: a session that armed PULL has already granted SM permission
+to take live changes, so the merge is the composition of two permissions the
+user gave — not a new one. Push-only sessions keep docs/117's disarm exactly.
+"""
+import json
+from pathlib import Path
+
+import pytest
+
+from quam_state_manager.web.app import create_app
+import quam_state_manager.web.routes as routes_mod
+
+_WIRING = {"network": {"host": "1.1.1.1", "cluster_name": "C1"}}
+
+
+def _state(f01=5.0e9, t1=2.0e-5):
+    return {
+        "qubits": {"qA1": {"id": "qA1", "f_01": f01, "T1": t1}},
+        "qubit_pairs": {},
+        "active_qubit_names": ["qA1"],
+    }
+
+
+def _write_chip(folder: Path, state: dict):
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    (folder / "wiring.json").write_text(json.dumps(_WIRING), encoding="utf-8")
+
+
+@pytest.fixture
+def env(tmp_path):
+    live = tmp_path / "chips" / "live"
+    _write_chip(live, _state())
+    app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+    c = app.test_client()
+    assert c.post("/load", data={"folder": str(live)}).status_code in (200, 302)
+    return {"app": app, "client": c, "live": live, "tmp": tmp_path}
+
+
+def _ctx(env):
+    with env["app"].app_context():
+        return routes_mod._active_ctx()
+
+
+def _live_f01(env) -> float:
+    doc = json.loads((env["live"] / "state.json").read_text(encoding="utf-8"))
+    return doc["qubits"]["qA1"]["f_01"]
+
+
+def _edit(env, path="qubits.qA1.f_01", value="5.1e9"):
+    return env["client"].post("/field/edit", data={"dot_path": path, "value": value})
+
+
+def _arm(env, *, pull=True, push=True, replace=False):
+    """Arm through the REAL door, the way the popup does."""
+    return env["client"].post("/auto-sync/set", data={
+        "pull": "1" if pull else "0",
+        "pull_replace": "1" if replace else "0",
+        "push": "1" if push else "0",
+    })
+
+
+def _sess(env):
+    return _ctx(env).get("auto_apply")
+
+
+class TestTheMergeReplacesTheDisarm:
+    """The reported bug, end to end through the real routes."""
+
+    def test_a_node_writing_between_two_edits_does_not_kill_the_session(self, env):
+        c = env["client"]
+        assert _arm(env, pull=True, push=True).status_code == 200
+        _edit(env)                                   # the user types + Enter
+        _write_chip(env["live"], _state(f01=7.7e9))  # a node saves the chip
+
+        r = c.post("/state/apply-to-live")
+
+        assert _sess(env) is not None, (
+            "Auto-Sync turned itself off on exactly the event the user armed "
+            "pull to handle")
+        assert "autoApplyDisarm" not in r.headers.get("HX-Trigger", "")
+        assert "autoSyncMerge" in r.headers.get("HX-Trigger", ""), (
+            "nothing told the client it may resolve this")
+        # nothing was written by the refused push — the node's value stands
+        assert _live_f01(env) == 7.7e9
+
+    def test_the_edit_is_still_there_to_be_merged(self, env):
+        c = env["client"]
+        _arm(env, pull=True, push=True)
+        _edit(env)
+        _write_chip(env["live"], _state(f01=7.7e9))
+        c.post("/state/apply-to-live")
+        ctx = _ctx(env)
+        assert ctx.get("working_dirty") or ctx.get("pending_reapply"), (
+            "the user's edit must survive the conflict to be re-applied")
+
+    def test_and_the_merge_lands_both_values(self, env):
+        """The whole point: the node's write AND the user's edit, not a choice
+        between them. This is the door the client is told to press."""
+        c = env["client"]
+        _arm(env, pull=True, push=True)
+        _edit(env, path="qubits.qA1.T1", value="1.25e-5")
+        _write_chip(env["live"], _state(f01=7.7e9))
+        c.post("/state/apply-to-live")                  # conflict -> merge signal
+
+        r = c.post("/state/sync", data={"mode": "apply"})
+        assert r.status_code == 200, r.data[:400]
+        doc = json.loads((env["live"] / "state.json").read_text(encoding="utf-8"))
+        assert doc["qubits"]["qA1"]["f_01"] == 7.7e9, "the node's write was lost"
+        assert doc["qubits"]["qA1"]["T1"] == 1.25e-5, "the user's edit was lost"
+
+
+class TestWhatDidNotChange:
+    """docs/117's disarm is still the rule everywhere it was the rule."""
+
+    def test_a_push_only_session_still_disarms(self, env):
+        c = env["client"]
+        _arm(env, pull=False, push=True)
+        _edit(env)
+        _write_chip(env["live"], _state(f01=7.7e9))
+        r = c.post("/state/apply-to-live")
+        assert "autoApplyDisarm" in r.headers.get("HX-Trigger", "")
+        assert _sess(env) is None, (
+            "without pull permission SM must not take the live change")
+        assert "autoSyncMerge" not in r.headers.get("HX-Trigger", "")
+
+    def test_the_legacy_arm_route_is_push_only_and_unchanged(self, env):
+        """`/auto-apply/arm` is the pre-docs/120 door; it grants push alone, so
+        it must keep the old behaviour byte for byte."""
+        c = env["client"]
+        c.post("/auto-apply/arm")
+        assert (_sess(env) or {}).get("pull") in (False, None)
+        _edit(env)
+        _write_chip(env["live"], _state(f01=7.7e9))
+        r = c.post("/state/apply-to-live")
+        assert "autoApplyDisarm" in r.headers.get("HX-Trigger", "")
+        assert _sess(env) is None
+
+    def test_an_unarmed_apply_is_untouched(self, env):
+        c = env["client"]
+        _edit(env)
+        _write_chip(env["live"], _state(f01=7.7e9))
+        r = c.post("/state/apply-to-live")
+        assert "pending-tray-conflict" in r.data.decode()
+        assert r.headers.get("HX-Trigger") is None or \
+            "autoSyncMerge" not in r.headers.get("HX-Trigger", "")
+        assert _live_f01(env) == 7.7e9
+
+
+class TestTheBudget:
+    """A node between two edits is ordinary. A merge that keeps conflicting is
+    not, and a background writer must never retry for ever."""
+
+    def test_it_gives_up_and_disarms_after_the_budget(self, env):
+        c = env["client"]
+        _arm(env, pull=True, push=True)
+        seen = []
+        for i in range(routes_mod._AUTO_MERGE_TRIES + 1):
+            _edit(env, value=f"5.{i}e9")
+            _write_chip(env["live"], _state(f01=7.0e9 + i))
+            r = c.post("/state/apply-to-live")
+            seen.append(r.headers.get("HX-Trigger", ""))
+            if _sess(env) is None:
+                break
+        assert _sess(env) is None, (
+            "a merge that never succeeds must not keep the session armed")
+        assert "autoApplyDisarm" in seen[-1]
+        assert sum("autoSyncMerge" in h for h in seen) == \
+            routes_mod._AUTO_MERGE_TRIES, seen
+
+    def test_an_apply_that_lands_refills_the_budget(self, env):
+        """The budget counts CONSECUTIVE failures — otherwise a long, healthy
+        session would eventually disarm on its Nth unlucky node write."""
+        c = env["client"]
+        _arm(env, pull=True, push=True)
+        _edit(env)
+        _write_chip(env["live"], _state(f01=7.7e9))
+        c.post("/state/apply-to-live")
+        assert _sess(env)["merge_tries"] == 1
+
+        # resolve it the way the client does, then a clean flush
+        c.post("/state/sync", data={"mode": "apply"})
+        _edit(env, value="5.5e9")
+        c.post("/state/apply-to-live")
+        assert _sess(env)["merge_tries"] == 0, (
+            "a landed apply proves the chip is reachable again")
+
+
+class TestTheClientPressesTheDoorItIsGiven:
+    """The decision is the server's; the client only presses. Pinned on the
+    shipped file, because a handler that never runs is the failure mode this
+    project keeps finding (docs/120 ②, docs/149)."""
+
+    def _js(self) -> str:
+        return (Path(__file__).resolve().parents[1] / "quam_state_manager"
+                / "web" / "static" / "auto-apply.js").read_text(encoding="utf-8")
+
+    def test_it_listens_for_the_servers_signal(self):
+        js = self._js()
+        assert "'autoSyncMerge'" in js
+
+    def test_it_presses_the_same_door_the_conflict_tray_offers(self):
+        js = self._js()
+        i = js.index("'autoSyncMerge'")
+        blk = js[i:i + 400]
+        assert "doStateSync" in blk and "'apply'" in blk
+
+    def test_it_waits_for_the_shared_latch(self):
+        """The signal arrives with the flush's own response, BEFORE that flush
+        releases `_applyInFlight` — and doStateSync bails on a held latch
+        silently, so without the wait the merge would simply never happen."""
+        js = self._js()
+        i = js.index("_whenLatchFree")
+        fn = js[i:js.index("document.addEventListener('autoSyncMerge'")]
+        assert "_applyInFlight" in fn, "it does not consult the latch at all"
+        i2 = js.index("document.addEventListener('autoSyncMerge'")
+        assert "_whenLatchFree" in js[i2:i2 + 300]
+
+    def test_the_wait_is_bounded(self):
+        """A latch that never clears must not leave a timer running for ever."""
+        js = self._js()
+        i = js.index("function _whenLatchFree")
+        fn = js[i:i + 320]
+        assert "tries <= 0" in fn and "return" in fn
+
+
+class TestItIsOneSessionFlag:
+    def test_a_fresh_session_starts_with_a_full_budget(self, env):
+        _arm(env, pull=True, push=True)
+        assert _sess(env)["merge_tries"] == 0
+
+    def test_re_arming_clears_a_spent_budget(self, env):
+        c = env["client"]
+        _arm(env, pull=True, push=True)
+        _edit(env)
+        _write_chip(env["live"], _state(f01=7.7e9))
+        c.post("/state/apply-to-live")
+        assert _sess(env)["merge_tries"] == 1
+        _arm(env, pull=True, push=True)
+        assert _sess(env)["merge_tries"] == 0

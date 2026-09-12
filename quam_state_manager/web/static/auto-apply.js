@@ -151,6 +151,30 @@
         var reason = (e && e.detail && e.detail.reason) || '';
         window.AutoApply._disarm(reason);
     });
+
+    /* docs/187 -- the push found the chip moved, and the server has decided
+       this session MAY resolve it, because the user armed pull as well as
+       push. Press the same door the conflict tray offers: pull the live
+       change, re-apply the pending edits on top, push.
+
+       Whether it is allowed is the server's decision (it counts the tries and
+       disarms when a merge keeps conflicting); all this does is press.
+
+       It must wait for the shared latch: this event arrives with the flush's
+       own response, which is BEFORE that flush's `done` releases
+       `_applyInFlight` -- and doStateSync bails on a held latch, silently, so
+       without the wait the merge would simply never happen. Bounded, because a
+       latch that never clears must not leave a timer running for ever. */
+    function _whenLatchFree(fn, tries) {
+        if (!window._applyInFlight) { fn(); return; }
+        if (tries <= 0) return;
+        setTimeout(function () { _whenLatchFree(fn, tries - 1); }, 50);
+    }
+    document.addEventListener('autoSyncMerge', function () {
+        _whenLatchFree(function () {
+            if (window.doStateSync) window.doStateSync('apply');
+        }, 40);           // ~2s, then give up rather than spin
+    });
     // htmx fires a plain (detail-less) event for string triggers too
     document.addEventListener('autoApplyApplied', function () { applyLogState(); });
 

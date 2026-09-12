@@ -15160,6 +15160,14 @@ def _auto_disarm_response(ctx, body: str, reason: str, status: int = 200):
     return resp
 
 
+# docs/187: how many times ONE armed session may answer a staleness conflict
+# with a pull-and-re-apply before giving up and disarming. A node writing the
+# chip between two edits is ordinary and must not cost the session; a merge
+# that conflicts again and again is not ordinary, and a background writer must
+# never retry for ever.
+_AUTO_MERGE_TRIES = 3
+
+
 def _new_auto_session(*, pull: bool, pull_replace: bool, push: bool) -> dict:
     """A fresh Auto-Sync session. NEVER persisted (docs/117): an armed session
     must not outlive the window that armed it."""
@@ -15171,6 +15179,7 @@ def _new_auto_session(*, pull: bool, pull_replace: bool, push: bool) -> dict:
         "pull": bool(pull),
         "pull_replace": bool(pull_replace),
         "push": bool(push),
+        "merge_tries": 0,      # docs/187 -- reset by every apply that lands
     }
 
 
@@ -16594,7 +16603,35 @@ def state_apply_to_live():
         # and the edit is safe in the working copy, but a background writer the
         # user may have forgotten about must never keep pushing at a chip that
         # moved. Disarm, and say so where they are looking.
-        return _auto_disarm_response(ctx, body, "conflict") if _auto else body
+        #
+        # docs/187 amends that for ONE case: a session that armed PULL has
+        # already granted SM permission to take live changes, and a push that
+        # finds live moved is precisely what pull exists to resolve. Disarming
+        # there turned the feature off on the bench it was built for -- a
+        # qualibrate node saves the chip every 30-60s, so Auto-Sync died within
+        # a minute of arming and every later edit silently stopped reaching the
+        # chip while the user kept typing (reproduced in real Chrome).
+        #
+        # The merge is the composition of the two permissions the user granted,
+        # not a new one: pull the live change, re-apply the user's edits on top,
+        # push. It is `pull_replace`-neutral -- that flag governs whether an
+        # auto-PULL may DISCARD the user's values, and this path keeps them.
+        #
+        # The client presses the same door the conflict tray offers
+        # (doStateSync('apply')); the decision of whether it MAY is made here,
+        # like every other Auto-Sync branch (docs/120 item 8).
+        if _auto is None:
+            return body
+        if _auto.get("pull") and _auto.get("merge_tries", 0) < _AUTO_MERGE_TRIES:
+            _auto["merge_tries"] = _auto.get("merge_tries", 0) + 1
+            resp = make_response(body)
+            resp.headers["HX-Trigger"] = json.dumps({
+                "autoSyncMerge": {"tries": _auto["merge_tries"]},
+            })
+            return resp
+        # No pull permission, or the merge itself keeps conflicting -- something
+        # is genuinely wrong and a background writer must not keep trying.
+        return _auto_disarm_response(ctx, body, "conflict")
     except (OSError, ValueError) as exc:
         # docs/114 (#16): the read-only case fails HERE (the LIVE write), not
         # in the working-copy save — name it where it actually happens.
@@ -16617,6 +16654,11 @@ def state_apply_to_live():
         return _body, 500
 
     _set_working_dirty(False, ctx)
+    if _auto is not None:
+        # docs/187: the budget counts CONSECUTIVE failures. An apply that lands
+        # proves the chip is reachable, so the next unlucky node write starts
+        # from a full budget rather than inheriting an old one.
+        _auto["merge_tries"] = 0
     if ctx.get("staged_base"):
         _journal_wholesale_commit(ctx, _before_tree, "apply-staged", edit_units=_jrn_units)   # docs/160 B
     ctx["staged_base"] = False   # the staged content reached live (audit-r10)
