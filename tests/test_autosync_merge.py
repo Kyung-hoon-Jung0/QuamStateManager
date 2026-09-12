@@ -199,6 +199,48 @@ class TestTheBudget:
         assert _sess(env)["merge_tries"] == 0, (
             "a landed apply proves the chip is reachable again")
 
+    def test_the_MERGE_itself_refills_the_budget(self, env):
+        """R1, from the review round: this is the one that matters, and the pin
+        above could not see it.
+
+        The budget was cleared only in /state/apply-to-live's tail, while the
+        merge the autoSyncMerge signal asks for goes through the OTHER door
+        (/state/sync?mode=apply). The pin above resolves the conflict and then
+        does an EXTRA clean apply-to-live -- the one path that resets -- so it
+        was satisfied by a door the bench never takes.
+
+        This is the bench loop: edit, a node writes, flush, merge. Nothing
+        else. On the customer's chip that is every 30-60 seconds, and with the
+        budget counting conflicts instead of failures the session disarmed on
+        the fourth node write with all three merges having LANDED.
+        """
+        c = env["client"]
+        _arm(env, pull=True, push=True)
+        landed = []
+        for i in range(routes_mod._AUTO_MERGE_TRIES + 2):
+            _edit(env, path="qubits.qA1.T1", value=f"1.{i}e-5")
+            _write_chip(env["live"], _state(f01=7.0e9 + i))   # the node
+            r = c.post("/state/apply-to-live")
+            if _sess(env) is None:
+                break
+            assert "autoSyncMerge" in r.headers.get("HX-Trigger", ""), i
+            # what the client does with that signal, and nothing more
+            m = c.post("/state/sync", data={"mode": "apply"})
+            assert m.status_code == 200, (i, m.data[:200])
+            assert (m.get_json() or {}).get("status") == "ok", (i, m.get_json())
+            doc = json.loads((env["live"] / "state.json").read_text(encoding="utf-8"))
+            landed.append(doc["qubits"]["qA1"]["T1"])
+
+        assert _sess(env) is not None, (
+            "Auto-Sync disarmed after %d merges that all LANDED — the budget is "
+            "counting conflicts, not failures, so the reported bug returns a "
+            "few edits later (values on the chip: %r)" % (len(landed), landed)
+        )
+        assert len(landed) == routes_mod._AUTO_MERGE_TRIES + 2, landed
+        assert _sess(env)["merge_tries"] == 0, _sess(env)
+        # and every one of them really reached the chip
+        assert landed == [float(f"1.{i}e-5") for i in range(len(landed))], landed
+
 
 class TestTheClientPressesTheDoorItIsGiven:
     """The decision is the server's; the client only presses. Pinned on the

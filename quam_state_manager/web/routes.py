@@ -15143,6 +15143,24 @@ def discard_all():
 # ======================================================================
 
 
+def _auto_apply_landed(ctx) -> None:
+    """A write reached the live chip: refill the merge budget (docs/187 R1).
+
+    The budget counts CONSECUTIVE failures, so it must be cleared wherever an
+    apply actually LANDS -- and there are two such doors. It was cleared only in
+    /state/apply-to-live's tail, while the merge the autoSyncMerge signal asks
+    for goes through /state/sync?mode=apply -> `_sync_pull_apply_to_live`. The
+    result was a budget that counted conflicts: three merges that all landed
+    still disarmed the session on the fourth node write, which is the reported
+    bug again a few edits later.
+
+    One helper called from both doors, so a third cannot forget it.
+    """
+    sess = ctx.get("auto_apply") if ctx else None
+    if sess is not None:
+        sess["merge_tries"] = 0
+
+
 def _conflict_tray(ctx, store, *, staged_conflict: bool,
                    auto_disarmed: bool = False) -> str:
     """Render the staleness-conflict tray (docs/187 3).
@@ -16468,6 +16486,9 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
     # cleared below, and only for a real apply (a walk step never stages one).
     if journal and ctx.get("staged_base"):
         _journal_wholesale_commit(ctx, _before_tree, "apply-staged", edit_units=_jrn_units)
+    # docs/187 R1: THIS is the door the autoSyncMerge signal presses, and it was
+    # the one that never refilled the budget.
+    _auto_apply_landed(ctx)
     ctx["staged_base"] = False   # the staged content reached live (audit-r10)
     _clear_reapply(ctx)  # edits are on the live chip now — nothing left to re-apply
     ctx["live_diverged"] = False  # live now holds the merged working content
@@ -16706,11 +16727,7 @@ def state_apply_to_live():
         return _body, 500
 
     _set_working_dirty(False, ctx)
-    if _auto is not None:
-        # docs/187: the budget counts CONSECUTIVE failures. An apply that lands
-        # proves the chip is reachable, so the next unlucky node write starts
-        # from a full budget rather than inheriting an old one.
-        _auto["merge_tries"] = 0
+    _auto_apply_landed(ctx)          # docs/187 R1 -- one helper, both doors
     if ctx.get("staged_base"):
         _journal_wholesale_commit(ctx, _before_tree, "apply-staged", edit_units=_jrn_units)   # docs/160 B
     ctx["staged_base"] = False   # the staged content reached live (audit-r10)
