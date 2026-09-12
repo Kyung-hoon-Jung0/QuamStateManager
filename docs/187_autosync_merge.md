@@ -250,3 +250,154 @@ Running total across the three parts: **29/29 mutations.**
 - `tests/repro_autosync_enter.cjs`, `…_enter2.cjs`, `…_external.cjs` — the
   three reproduction drivers, **including the two that did not reproduce**.
   They record what the shape of this bug is *not*.
+
+
+## The review round, and what it cost this fix
+
+25 agents over six dimensions — the merge decision, the client half, the
+replace-pull honesty, the templates, the pins, and data-safety/covenant — each
+finding then handed to a verifier briefed to REFUTE it, then a completeness
+critic. **18 raised, 13 survived refutation, 5 refuted.** Every confirmed one
+was a defect in *this* fix, and the two that mattered most were found by
+reviewers asking the sharp version of my own claims.
+
+### R1 — a landed merge never refilled the budget (raised 3×, independently)
+
+`merge_tries` was written in exactly ONE success path: the tail of
+`/state/apply-to-live`. The merge the signal asks for goes through the *other*
+door — `doStateSync('apply')` → `/state/sync?mode=apply` →
+`_sync_pull_apply_to_live` — whose success tail never touched the session. So
+the budget counted **conflicts, not failures**, and this document's own stated
+rule was not implemented. Measured, with the chip's value advancing each round
+to prove the merges really landed:
+
+```
+i=0 tries=1 merge->(200,'ok') live_T1=1.0e-05
+i=1 tries=2 merge->(200,'ok') live_T1=1.1e-05
+i=2 tries=3 merge->(200,'ok') live_T1=1.2e-05
+i=3 DISARM, session=None      <- the 4th edit never reached the chip
+```
+
+On the customer's bench that is **the reported bug again, about three edits
+later**. One helper (`_auto_apply_landed`) now runs at both doors. My pin could
+not see it: it resolved the conflict and then did an extra clean
+apply-to-live — the one path that reset.
+
+### R2 — the merge named no chip, and the door it presses has no chip gate
+
+`/state/sync` reads `_active_ctx()` and never consulted `expect_chip`. That was
+tolerable while a *human* pressed ⇄ Pull & apply with the chip in front of
+them; docs/187 made it a door the server asks the client to press by itself, up
+to ~2 s later, and the context registry is shared with every other window. The
+server stamps the conflicting chip's token into the signal, the client hands
+**that** token back (deliberately not `window.__chipToken` — reading the page at
+press time is the race being closed), and the door refuses a mismatch through
+the same gate `/field/edit` uses.
+
+### R3/R5 — the conflict tray owed the tray's contract and published none of it
+
+That element **is** `#pending-tray` while it is up. My own World-B run printed
+`count=null wdirty=null` and I did not act on it. Two things were silently off:
+`doStateSync` reads `_seenSig` from `data-change-sig`, so the **automatic**
+merge declared no change set and the docs/179 unseen-edit gate could not fire
+on the one live-write door that now presses itself; and PaneState had no
+`data-seq` to compare. `data-auto-apply` stays absent **by decision** — while
+that tray is up the merge or the human is driving, and a flusher reading itself
+as armed would re-press the door that just refused and burn a budget try
+against its own merge.
+
+### R4 — a merge was signalled where the door cannot pull
+
+`_will_merge` asked only "did the session arm pull", while the same branch had
+just computed `_staged_conflict` and ignored it. For a staged payload
+`/state/sync?mode=apply` takes the docs/65 carve-out and delegates *without
+pulling* — re-issuing the push that just conflicted. Measured: three futile
+rounds, then the same disarm, with the tray claiming "Auto-Sync is still on and
+is resolving this itself" directly above its own staged branch, which withholds
+that button from the human precisely because pulling would destroy the content.
+The server was auto-pressing a door it deliberately does not offer. And that
+line was inferred from `auto_sync.pull`, so it also appeared on the
+`/state/sync` door where nothing had been decided; the tray states a
+**decision** now.
+
+### R6 — the new pill is invisible whenever the top bar is hidden
+
+`style.css:950` exempts **direct children** of `#pending-tray` from the
+topbar-hidden hide rule. The main tray has `.auto-sync-wrap` as a direct child;
+I nested the conflict tray's copy inside `.tray-bar`, which *is* a direct child
+and *is* hidden — so the tray said "turn it back on with the pill above" while
+the pill was not rendered. Fixed in the markup, not in that selector (it is
+pinned literally and carries the docs/141 §4s z-order work).
+
+### R7 — the replace message could understate the loss
+
+`_quam_ctx_dirty` — the predicate that decides `discarding` — is true for three
+kinds of work, and a replace-pull destroys all of them; the count covered only
+the change log. It could say "1 unapplied edit" while a saved-but-unapplied
+working state went too, or declare a loss with count 0 for cells only the
+browser had seen. A number is given only when it **is** the whole loss.
+
+### R9/R10 — two silences
+
+An abandoned merge (the latch never freeing) gave up quietly after ~2 s having
+already spent a try, leaving a tray that claimed to be resolving something; and
+an edit landing *inside* `sync_from_live` with `replace` on was dropped
+unreported, because every count was taken before the pull. Both now speak.
+
+### And one the review corrected in me mid-round
+
+The part-② toast promised "State History can bring it back". It cannot:
+`check_and_snapshot` reads the **live** folder's files, and a pending edit lives
+in the in-memory change log. Measured — typed `9.99e-05`, pulled, and no
+snapshot on disk holds it. The comment at that call site had claimed the same
+thing for a long time; my toast was the first thing to put it on a screen.
+
+### What the round says about my pins
+
+- The four client pins were **greps over fixed character windows**, so "the
+  handler that never runs" they claimed to guard could not fail, and
+  `test_the_wait_is_bounded` **passed with an unbounded wait**. Adding one
+  comment to the source broke two of them. They are replaced by
+  `tests/autosync_merge_selfcheck.cjs`, which dispatches the real events at the
+  real file under jsdom (**29 assertions**).
+- The event **name** was pinned on neither side — a one-sided rename would kill
+  the feature green, which a reviewer demonstrated by doing exactly that
+  (`autoSyncPulledV2`). Both spellings are cross-checked now.
+- My R4 fixture named the wrong class (`/save` fills `pending_reapply`, and with
+  a stash the route pulls and replays correctly), so it measured a case that
+  genuinely merges. It drives a real State-History stage now and asserts it
+  reached `staged_base` before asserting anything else.
+
+### A process note worth more than any single finding
+
+The review ran **in this same worktree**, so its agents mutated files to test
+their findings — and one of my `git add` calls captured `autoSyncPulledV2` into
+a commit. Caught before pushing and amended; it also explains a pin that failed
+once and then passed. Two corrections: a review like this belongs in
+`isolation: "worktree"`, and `pytest … | tail && git commit` masks pytest's exit
+code behind `tail`'s, which is how a failing run still reached a commit.
+
+### Verification of the round
+
+**Mutation sweep 16/16.** Two went GREEN first and both were server-side gaps
+in my own pins -- they checked that the CLIENT composes an honest sentence from
+`saved`/`stash`/`dom`, and nothing checked that the server SENDS them; drop
+those keys and the client's `more` goes falsy, which is the R7 defect itself.
+Same shape for R10. Pinned, then 4/4 on the re-run.
+
+**Real Chrome, three worlds on the final code**, zero console errors:
+
+```
+WORLD A  pull+push  -> auto=1     pillOn=true   conflict=false
+                       q5T1 kept AND the edit landed
+WORLD B  push-only  -> auto=null  pillOff=true  saysTurnedOff=true
+                       count=0 wdirty=1   <- the beacons, visible (R3/R5)
+RE-ARM              -> 9/9: the pill opens the popup on screen and the
+                       session is genuinely armed again
+```
+
+`count=0 wdirty=1` where the pre-fix run printed `count=null wdirty=null` is
+R3/R5 showing up in the browser rather than only in a test.
+
+**Pins: 57** in `tests/test_autosync_merge.py`, plus 29 executed assertions in
+`tests/autosync_merge_selfcheck.cjs`.
