@@ -106,6 +106,60 @@ on disk: q5T1 = 3.21e-05   ← the outside write SURVIVED
 Both values on the chip, which is the whole point: the node's write and the
 user's edit, not a choice between them.
 
+## ② The other half: a replace-pull discards your edits, silently
+
+Found by asking whether ① covered the panel's **default** — all three switches
+on. It did not, and this is a second way the same complaint reaches the user.
+Measured through the real routes:
+
+```
+replace=False   pull -> 204   pending 1 -> 1   T1 still 9.99e-05   (it asks)
+replace=True    pull -> 200   pending 2 -> 0   T1 back to 2e-05    (discarded)
+```
+
+That is what the checkbox says it does, and **the semantics are unchanged
+here**. What was wrong is that the server had always announced it —
+`autoSyncPulled {"replaced": true}` — and a grep of the whole tree found **no
+consumer**: no listener, no template, nothing. So on a bench where a node
+writes every 30–60 s, a value the user had just typed reverted under their
+cursor with no explanation at all.
+
+The pull now counts what it is about to drop **before** pulling — afterwards
+there is nothing left to count, and a message that reports a replace must not
+be able to understate it — and one warning names the number and the way back.
+The way back is real: that pull already snapshots `kind="backup"` exactly when
+it is discarding, and a pin asserts the snapshot is taken so the sentence
+cannot quietly become a lie.
+
+In real Chrome, driven by the app's OWN auto-pull (not a synthetic dispatch —
+the synthetic one carried `replaced:false` and returned early, so the toast can
+only have come from the real path):
+
+```
+warning: Auto-Sync pulled the live chip and replaced 1 unapplied edit
+         — that is what "replace" does. The previous state was snapshotted
+         first: State History can bring it back.
+```
+
+## Mutation sweeps: 20/20
+
+**① 12/12.** **② 8/8** — but the eighth needed two goes, and both attempts are
+the lesson.
+
+`8 a replace-pull stops refusing without replace` went GREEN first. The outer
+guard in `/auto-sync/pull` *looks* like a duplicate of the one inside the build
+lock, and for a **server-side** edit it is. It is not for `dom_dirty`: a
+fill-down or a pasted column lives only in the DOM until Apply, so `change_log`
+and `working_dirty` are both clean, the inner guard — which asks only
+`_quam_ctx_dirty` — lets the pull through, and a whole filled column goes with
+no prompt. Only the client can see that work, which is why it reports it. My
+pin passed `dom_dirty=0` and could not see any of it.
+
+And the replacement pin **was appended after a module-level function's
+`return`**, making it a nested `def` that never ran — pytest collected 19, not
+20, and reported green. A test that does not run is the failure mode this whole
+session kept finding; it found one more in its own fix.
+
 ## Also found, not fixed here
 
 The conflict tray renders **no Auto-Sync pill at all** — `pillOn=false` *and*
@@ -118,14 +172,17 @@ customer is waiting on.
 
 ## Verification
 
-- `tests/test_autosync_merge.py` — 14 pins: the reported sequence end to end
+- `tests/test_autosync_merge.py` — **20 pins**: the reported sequence end to end
   through the real routes; that the merge lands **both** values; that a
   push-only session and the legacy arm door are unchanged; that an unarmed
   apply is untouched; the budget, its exhaustion and its refill; and four pins
   on the shipped `auto-apply.js` — it listens, it presses the right door, it
   consults the latch, and the wait is bounded. A handler that never runs is the
   failure mode this project keeps finding (docs/120 ②, docs/149), so those are
-  pinned on the file that ships.
+  pinned on the file that ships. Then ② — that a replace-pull reports how many
+  edits it dropped, that a pull dropping nothing does not claim it did, that
+  the snapshot the message promises is really taken, that somebody listens at
+  all, and the `dom_dirty` guard the sweep found unpinned.
 - `tests/repro_autosync_enter.cjs`, `…_enter2.cjs`, `…_external.cjs` — the
   three reproduction drivers, **including the two that did not reproduce**.
   They record what the shape of this bug is *not*.
