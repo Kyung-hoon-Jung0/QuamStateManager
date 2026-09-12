@@ -15326,6 +15326,12 @@ def auto_sync_pull():
             # already does this, and the popup promises revertibility.
             _pre_leaves = _leaf_snapshot(ctx)   # docs/144
             discarding = _quam_ctx_dirty(ctx) or dom_dirty
+            # docs/187 (2): how many of the user's own edits this pull is about
+            # to drop. Counted BEFORE the pull, because afterwards there is
+            # nothing left to count -- and the toast that reports it must not
+            # be able to overstate or understate what happened.
+            _st0 = ctx.get("store")
+            _discarded_n = len(getattr(_st0, "change_log", None) or []) if _st0 else 0
             if discarding:
                 try:
                     _history().check_and_snapshot(
@@ -15406,7 +15412,9 @@ def auto_sync_pull():
     resp.headers["HX-Trigger"] = _state_restored_trigger(
         ctx, _pre_leaves,
         extra={"liveDriftChanged": True,
-               "autoSyncPulled": {"replaced": bool(discarding)}})
+               "autoSyncPulled": {"replaced": bool(discarding),
+                                  "count": _discarded_n,
+                                  "dom": bool(dom_dirty)}})
     return resp
 
 

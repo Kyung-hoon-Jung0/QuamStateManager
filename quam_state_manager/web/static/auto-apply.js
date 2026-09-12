@@ -170,6 +170,27 @@
         if (tries <= 0) return;
         setTimeout(function () { _whenLatchFree(fn, tries - 1); }, 50);
     }
+    /* docs/187 (2) -- the armed pull ran with `replace` ticked, so it threw
+       away edits the user had not applied yet. The server has always announced
+       this; until now NOTHING listened, anywhere in the tree, so the value a
+       person had just typed reverted under their cursor with no explanation.
+
+       Not a semantic change: `replace` still means what the checkbox says.
+       This is the honesty half -- say it happened, and name the way back. The
+       pull snapshots first (kind="backup") exactly when it is discarding, so
+       State History really does have it. */
+    document.addEventListener('autoSyncPulled', function (e) {
+        var d = (e && e.detail) || {};
+        if (!d.replaced) return;
+        var n = parseInt(d.count || 0, 10);
+        toast('Auto-Sync pulled the live chip and replaced '
+              + (n > 0 ? (n + ' unapplied edit' + (n === 1 ? '' : 's'))
+                       : 'your unapplied edits')
+              + " — that is what \u201creplace\u201d does. "
+              + 'The previous state was snapshotted first: State History can bring it back.',
+              'warning');
+    });
+
     document.addEventListener('autoSyncMerge', function () {
         _whenLatchFree(function () {
             if (window.doStateSync) window.doStateSync('apply');

@@ -252,3 +252,83 @@ class TestItIsOneSessionFlag:
         assert _sess(env)["merge_tries"] == 1
         _arm(env, pull=True, push=True)
         assert _sess(env)["merge_tries"] == 0
+
+
+class TestAReplacePullSaysSo:
+    """docs/187 ② — `replace` discards the user's unapplied edits, and NOTHING
+    in the tree listened to the event that announced it. Measured:
+
+        replace=False  pull->204  pending 1 -> 1  (it asks)
+        replace=True   pull->200  pending 2 -> 0  (discarded, silently)
+
+    The semantics are the checkbox's and are unchanged; what is pinned here is
+    that it is SAID, and that the recovery named really exists.
+    """
+
+    def _diverge_and_pull(self, env, *, replace):
+        c = env["client"]
+        _arm(env, pull=True, push=True, replace=replace)
+        _edit(env, path="qubits.qA1.T1", value="9.99e-5")
+        _write_chip(env["live"], _state(f01=7.7e9))
+        with env["app"].test_request_context():
+            ctx = routes_mod._active_ctx()
+            ctx["_live_hash_checked_at"] = None
+            routes_mod._refresh_live_diverged(ctx)
+        return c.post("/auto-sync/pull", data={"dom_dirty": "0"})
+
+    def test_without_replace_it_refuses_and_keeps_the_edit(self, env):
+        r = self._diverge_and_pull(env, replace=False)
+        assert r.status_code == 204
+        assert len(_ctx(env)["store"].change_log or []) == 1, "the edit was dropped"
+
+    def test_with_replace_it_discards_and_reports_how_many(self, env):
+        r = self._diverge_and_pull(env, replace=True)
+        assert r.status_code == 200
+        assert len(_ctx(env)["store"].change_log or []) == 0, "nothing was replaced"
+        trig = r.headers.get("HX-Trigger", "")
+        assert "autoSyncPulled" in trig
+        payload = json.loads(trig)["autoSyncPulled"]
+        assert payload["replaced"] is True
+        assert payload["count"] >= 1, (
+            "it reported a replace of zero edits — the count is taken after the "
+            "pull, when there is nothing left to count")
+
+    def test_a_pull_that_discards_nothing_does_not_claim_it_did(self, env):
+        """No edits pending: the pull is silent, and must not raise a warning
+        about work nobody lost."""
+        c = env["client"]
+        _arm(env, pull=True, push=True, replace=True)
+        _write_chip(env["live"], _state(f01=7.7e9))
+        with env["app"].test_request_context():
+            ctx = routes_mod._active_ctx()
+            ctx["_live_hash_checked_at"] = None
+            routes_mod._refresh_live_diverged(ctx)
+        r = c.post("/auto-sync/pull", data={"dom_dirty": "0"})
+        if r.status_code == 200 and "autoSyncPulled" in r.headers.get("HX-Trigger", ""):
+            p = json.loads(r.headers["HX-Trigger"])["autoSyncPulled"]
+            assert p["replaced"] is False and p["count"] == 0
+
+    def test_the_snapshot_the_message_promises_is_really_taken(self, env):
+        """The toast points at State History. If the pull did not snapshot,
+        that sentence would be a lie."""
+        before = _snap_count(env)
+        self._diverge_and_pull(env, replace=True)
+        assert _snap_count(env) > before, (
+            "a discarding pull took no backup, but the message promises one")
+
+    def test_somebody_listens(self):
+        js = (Path(__file__).resolve().parents[1] / "quam_state_manager" / "web"
+              / "static" / "auto-apply.js").read_text(encoding="utf-8")
+        assert "document.addEventListener('autoSyncPulled'" in js, (
+            "the server announces the replace and nothing in the tree hears it")
+        i = js.index("document.addEventListener('autoSyncPulled'")
+        blk = js[i:i + 900]
+        assert "d.replaced" in blk, "it warns even when nothing was replaced"
+        assert "State History" in blk, "it does not name the way back"
+
+
+def _snap_count(env) -> int:
+    hist = Path(env["app"].instance_path) / "history"
+    if not hist.exists():
+        return 0
+    return sum(1 for p in hist.rglob("*") if p.is_dir() and (p / "state.json").exists())
