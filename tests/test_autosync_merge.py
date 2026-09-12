@@ -17,6 +17,8 @@ to take live changes, so the merge is the composition of two permissions the
 user gave — not a new one. Push-only sessions keep docs/117's disarm exactly.
 """
 import json
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -243,41 +245,66 @@ class TestTheBudget:
 
 
 class TestTheClientPressesTheDoorItIsGiven:
-    """The decision is the server's; the client only presses. Pinned on the
-    shipped file, because a handler that never runs is the failure mode this
-    project keeps finding (docs/120 ②, docs/149)."""
+    """docs/187 review R8. These were four greps over fixed character windows
+    of auto-apply.js. The review's verdict was blunt and right -- "the handler
+    that never runs they claim to guard cannot fail" -- and
+    `test_the_wait_is_bounded` passed with an UNBOUNDED wait. Adding a single
+    comment to the source broke two of them.
 
-    def _js(self) -> str:
-        return (Path(__file__).resolve().parents[1] / "quam_state_manager"
-                / "web" / "static" / "auto-apply.js").read_text(encoding="utf-8")
+    So the behaviour is EXECUTED now, against the shipped file, and what is
+    left here as text are only cross-file facts a character window cannot
+    express.
+    """
 
-    def test_it_listens_for_the_servers_signal(self):
-        js = self._js()
-        assert "'autoSyncMerge'" in js
+    def test_the_shipped_client_behaves(self):
+        """tests/autosync_merge_selfcheck.cjs: dispatches the real events at
+        the real file under jsdom and watches what it does -- that a free latch
+        presses at once, that a held latch DEFERS and then presses, that an
+        unclearable latch never presses AND the attempt is abandoned rather
+        than firing seconds late, that the chip token comes from the signal,
+        and every branch of the replace warning."""
+        root = Path(__file__).resolve().parents[1]
+        drv = root / "tests" / "autosync_merge_selfcheck.cjs"
+        assert drv.exists(), drv
+        if shutil.which("node") is None:
+            pytest.skip("node not installed")
+        if not (root / "node_modules" / "jsdom").exists():
+            pytest.skip("jsdom not installed (npm install)")
+        r = subprocess.run(["node", str(drv)], capture_output=True, text=True,
+                           errors="replace", timeout=300, cwd=str(root))
+        assert r.returncode == 0, (r.stdout or "") + (r.stderr or "")
+        assert "assertions" in (r.stdout or ""), r.stdout
 
-    def test_it_presses_the_same_door_the_conflict_tray_offers(self):
-        js = self._js()
-        i = js.index("'autoSyncMerge'")
-        blk = js[i:i + 400]
-        assert "doStateSync" in blk and "'apply'" in blk
+    def test_the_event_names_match_on_both_sides(self):
+        """The name is a CONTRACT between two files. Renaming it on one side
+        alone would kill the feature with every pin green -- which is what the
+        review demonstrated by doing exactly that (`autoSyncPulledV2`)."""
+        root = Path(__file__).resolve().parents[1] / "quam_state_manager" / "web"
+        py = (root / "routes.py").read_text(encoding="utf-8")
+        js = (root / "static" / "auto-apply.js").read_text(encoding="utf-8")
+        for name in ("autoSyncMerge", "autoSyncPulled"):
+            assert '"%s"' % name in py, (
+                "the server no longer emits %s" % name)
+            assert "'%s'" % name in js, (
+                "the client no longer listens for %s" % name)
+        # …and no near-miss spelling on either side, which is how a rename
+        # half-lands.
+        import re
+        emitted = set(re.findall(r'"(autoSync[A-Za-z]+)"', py))
+        heard = set(re.findall(r"addEventListener\('(autoSync[A-Za-z]+)'", js))
+        assert emitted == heard, (
+            "the server emits %s and the client hears %s" % (sorted(emitted), sorted(heard)))
 
-    def test_it_waits_for_the_shared_latch(self):
-        """The signal arrives with the flush's own response, BEFORE that flush
-        releases `_applyInFlight` — and doStateSync bails on a held latch
-        silently, so without the wait the merge would simply never happen."""
-        js = self._js()
-        i = js.index("_whenLatchFree")
-        fn = js[i:js.index("document.addEventListener('autoSyncMerge'")]
-        assert "_applyInFlight" in fn, "it does not consult the latch at all"
-        i2 = js.index("document.addEventListener('autoSyncMerge'")
-        assert "_whenLatchFree" in js[i2:i2 + 300]
-
-    def test_the_wait_is_bounded(self):
-        """A latch that never clears must not leave a timer running for ever."""
-        js = self._js()
-        i = js.index("function _whenLatchFree")
-        fn = js[i:i + 320]
-        assert "tries <= 0" in fn and "return" in fn
+    def test_the_door_it_presses_is_the_one_the_tray_offers(self):
+        """A cross-file fact: the automatic merge must press the SAME thing the
+        conflict tray's primary button offers a human."""
+        root = Path(__file__).resolve().parents[1] / "quam_state_manager" / "web"
+        tray = (root / "templates" / "_state_apply_conflict.html").read_text(encoding="utf-8")
+        js = (root / "static" / "auto-apply.js").read_text(encoding="utf-8")
+        assert "doStateSync('apply')" in tray, (
+            "the tray no longer offers the merge the automatic path presses")
+        i = js.index("addEventListener('autoSyncMerge'")
+        assert "doStateSync('apply'" in js[i:i + 900], js[i:i + 400]
 
 
 class TestItIsOneSessionFlag:
@@ -618,3 +645,70 @@ class TestTheMergeDoorIsGated:
             "seen_sig": "notthesignature"})
         assert r.status_code == 409, r.status_code
         assert (r.get_json() or {}).get("status") == "unseen_changes", r.get_json()
+
+
+class TestTheMergeIsPinnedToItsChip:
+    """docs/187 review R2. /state/sync reads _active_ctx() and never consulted
+    expect_chip -- tolerable while a HUMAN pressed "Pull & apply" with that
+    chip on screen. docs/187 made it a door the server asks the client to press
+    by itself, up to ~2s later, and the context registry is shared with every
+    other window. So the signal names the chip and the door holds the caller
+    to it."""
+
+    def _signal(self, env):
+        c = env["client"]
+        _arm(env, pull=True, push=True)
+        _edit(env)
+        _write_chip(env["live"], _state(f01=7.7e9))
+        r = c.post("/state/apply-to-live")
+        trig = json.loads(r.headers.get("HX-Trigger") or "{}")
+        return trig.get("autoSyncMerge") or {}
+
+    def test_the_signal_names_the_chip_that_conflicted(self, env):
+        sig = self._signal(env)
+        assert sig.get("chip"), (
+            "the merge signal names no chip, so the press cannot be held to one")
+        with env["app"].app_context():
+            assert sig["chip"] == routes_mod._active_chip_token()
+
+    def test_the_door_refuses_a_press_naming_a_different_chip(self, env):
+        self._signal(env)
+        r = env["client"].post("/state/sync", data={
+            "mode": "apply", "expect_chip": "some-other-chips-token"})
+        assert r.status_code == 409, r.status_code
+        body = r.get_json() or {}
+        assert body.get("chip_mismatch") is True, body
+
+    def test_the_right_token_is_accepted(self, env):
+        sig = self._signal(env)
+        r = env["client"].post("/state/sync", data={
+            "mode": "apply", "expect_chip": sig["chip"]})
+        assert r.status_code == 200, (r.status_code, r.data[:200])
+        assert (r.get_json() or {}).get("status") == "ok", r.get_json()
+
+    def test_a_caller_naming_nothing_is_judged_as_before(self, env):
+        """Back-compatible: every existing presser sends no token."""
+        self._signal(env)
+        r = env["client"].post("/state/sync", data={"mode": "apply"})
+        assert r.status_code == 200, r.status_code
+
+    def test_the_client_hands_back_the_signal_token_not_the_page(self):
+        """It must use e.detail.chip, not window.__chipToken -- reading the page
+        at press time is exactly the race this closes."""
+        js = (Path(__file__).resolve().parents[1] / "quam_state_manager" / "web"
+              / "static" / "auto-apply.js").read_text(encoding="utf-8")
+        i = js.index("document.addEventListener('autoSyncMerge'")
+        blk = js[i:i + 700]
+        assert "e.detail && e.detail.chip" in blk, blk[:300]
+        assert "__chipToken" not in blk, (
+            "it reads the page's current chip, which defeats the gate")
+        assert "doStateSync('apply', false, false, chip)" in blk, blk[:400]
+
+    def test_doStateSync_forwards_the_token(self):
+        js = (Path(__file__).resolve().parents[1] / "quam_state_manager" / "web"
+              / "static" / "app.js").read_text(encoding="utf-8")
+        i = js.index("window.doStateSync = function(")
+        head = js[i:i + 200]
+        assert "expectChip" in head, head
+        blk = js[i:i + 4000]
+        assert 'expect_chip=" + encodeURIComponent(expectChip)' in blk

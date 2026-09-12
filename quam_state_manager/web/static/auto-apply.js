@@ -202,9 +202,14 @@
               'warning');
     });
 
-    document.addEventListener('autoSyncMerge', function () {
+    document.addEventListener('autoSyncMerge', function (e) {
+        /* docs/187 R2: the chip the server says conflicted, carried on the
+           signal. Handing THIS back (rather than whatever the page holds when
+           the latch frees) is what makes a chip switch during the wait a
+           refusal instead of a write onto the wrong chip. */
+        var chip = (e && e.detail && e.detail.chip) || '';
         _whenLatchFree(function () {
-            if (window.doStateSync) window.doStateSync('apply');
+            if (window.doStateSync) window.doStateSync('apply', false, false, chip);
         }, 40);           // ~2s, then give up rather than spin
     });
     // htmx fires a plain (detail-less) event for string triggers too

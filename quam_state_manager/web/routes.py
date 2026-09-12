@@ -16262,6 +16262,17 @@ def state_sync():
                         "message": "This chip was opened from a dataset run "
                                    "archive (read-only) — cannot apply to live."}), 409
     if mode == "apply":
+        # docs/187 R2: this door used to be pressed only by a human looking at
+        # the chip. The autoSyncMerge signal now presses it automatically, so a
+        # caller that names a chip is held to it -- `_chip_mismatch_response`
+        # is the same gate /field/edit and the dataset apply paths use. A
+        # caller that names nothing is judged exactly as before (no token, no
+        # gate), so every existing presser is untouched.
+        _wrong_chip = _chip_mismatch_response(
+            request.values.get("expect_chip", ""),
+            request.values.get("force_chip") == "1")
+        if _wrong_chip is not None:
+            return _wrong_chip
         _unseen = _unseen_edit_refusal(ctx)
         if _unseen is not None:
             return jsonify(_unseen), 409
@@ -16692,7 +16703,13 @@ def state_apply_to_live():
             resp = make_response(_conflict_tray(
                 ctx, store, staged_conflict=_staged_conflict))
             resp.headers["HX-Trigger"] = json.dumps({
-                "autoSyncMerge": {"tries": _auto["merge_tries"]},
+                # docs/187 R2: name the chip that conflicted. The client hands
+                # this exact token back, so a chip switch between the signal
+                # and the press (the latch wait is up to ~2s, and the context
+                # registry is shared with every other window) is a refusal
+                # rather than a write onto the wrong chip.
+                "autoSyncMerge": {"tries": _auto["merge_tries"],
+                                  "chip": _active_chip_token() or ""},
             })
             return resp
         # No pull permission, or the merge itself keeps conflicting -- something

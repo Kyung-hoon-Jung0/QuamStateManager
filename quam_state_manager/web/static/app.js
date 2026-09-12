@@ -2800,7 +2800,11 @@ function _failedPathsSummary(failed) {
     return " Affected: " + shown + ".";
 }
 
-window.doStateSync = function(mode, forced, ackUnseen) {
+window.doStateSync = function(mode, forced, ackUnseen, expectChip) {
+    // docs/187 R2: `expectChip` is optional and only the automatic
+    // merge passes it -- the chip the server said conflicted, carried on
+    // the autoSyncMerge signal. Every existing caller passes nothing and
+    // is judged exactly as before (no token, no gate).
     mode = mode || "discard";
     // Double-submit guard: a second click (or a grid ⚡ + tray button double-fire)
     // while one apply/sync is in flight used to queue a second /state/sync that
@@ -2838,6 +2842,7 @@ window.doStateSync = function(mode, forced, ackUnseen) {
               + (ackUnseen ? "&ack_unseen=1" : "")
               + (_seen !== null ? "&seen_changes=" + encodeURIComponent(_seen) : "")
               + (_seenSig ? "&seen_sig=" + encodeURIComponent(_seenSig) : "")
+              + (expectChip ? "&expect_chip=" + encodeURIComponent(expectChip) : "")
     })
         .then(function(r) { return r.json(); })
         .then(function(data) {
@@ -2852,7 +2857,7 @@ window.doStateSync = function(mode, forced, ackUnseen) {
                         // `ackUnseen`, never `forced`: force=1 answers the
                         // STALENESS question and must not double as consent to
                         // another window's edits.
-                        window.doStateSync(mode, false, true);
+                        window.doStateSync(mode, false, true, expectChip);
                     }, 0);
                 } else {
                     // Refresh the tray so this screen stops lying, then show it.
@@ -2874,7 +2879,9 @@ window.doStateSync = function(mode, forced, ackUnseen) {
                 // already cleared the in-flight guard.
                 if (window.confirm((data.message || "Overwrite the working state?")
                                    + "\n\nContinue and discard it?")) {
-                    setTimeout(function() { window.doStateSync(mode, true); }, 0);
+                    setTimeout(function() {
+                        window.doStateSync(mode, true, false, expectChip);
+                    }, 0);
                 } else if (window.showToast) {
                     // r16 ⑥: a declined confirm used to end SILENTLY — the
                     // click looked accepted while nothing happened.
