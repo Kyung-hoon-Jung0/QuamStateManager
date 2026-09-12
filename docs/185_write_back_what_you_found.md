@@ -65,6 +65,38 @@ rewrites the working copy from the live chip — the path a drift banner's *take
 live* and every auto-pull go through — and a working copy re-born at indent 4
 reformats the chip on the *next* apply, which a load-then-edit test cannot see.
 
+### On the real customer chip, through the browser (2026-09-12)
+
+Re-measured after the all-day stress pass, against a **pinned copy** of the
+KRISS 5Q chip -- 1,430,011 bytes, indent 4, CRLF, no trailing newline:
+
+```
+edit qubits.q2.T1 -> apply to live
+lines before/after : 28245 / 28245
+lines that differ  : 1
+  - "T1": 1.0855366127e-05,
+  + "T1": 2.222e-05,
+wiring.json byte-identical: True
+```
+
+Indent, line endings and the absent trailing newline all survive, the one
+edited value is the one changed line, and the file SM had no reason to touch
+came back byte-for-byte.
+
+**Why "pinned copy" is load-bearing here.** The first attempt compared the
+written copy against the customer folder it was copied from, and the numbers
+would not sit still (1430006, then 1430005, then 1430012 within minutes). That
+folder is QUAlibrate's own `state_path`, and its log shows the reason:
+
+```
+19:53:54  Saving machine to active path D:\work\Customer_Codes\quam_states\260907_KRS_5Q
+```
+
+a calibration node saving every 30-60 s while the pass ran. Nothing of SM's was
+writing it -- the copy was the open chip throughout -- but a comparison against
+a reference someone else is editing proves nothing either way, which is why the
+measurement above starts by freezing one.
+
 ### Recorded, not mine
 
 `tests/test_safe_io.py::test_reader_survives_concurrent_writes` fails on this
