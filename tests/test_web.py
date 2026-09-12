@@ -223,7 +223,15 @@ class TestRound15ChromeHiding:
                 ":not(.auto-sync-wrap) { display: none; }") in css
         assert ("html.topbar-hidden #topbar-tray-slot > :not(#pending-tray)"
                 ":not(#auto-sync-pop-host) { display: none; }") in css
-        assert 'class="auto-sync-wrap"' in tray and 'id="auto-sync-pop-host"' in base
+        # docs/187 (3): the wrapper moved into `_auto_sync_pill.html`, which
+        # BOTH trays include (the conflict tray replaces #pending-tray, and
+        # used to lose the pill entirely). The rule is that the element this
+        # CSS targets is in the tray's markup — not which file spells it.
+        tray_markup = tray
+        if "_auto_sync_pill.html" in tray:
+            tray_markup += self._read("web", "templates", "_auto_sync_pill.html")
+        assert 'class="auto-sync-wrap"' in tray_markup
+        assert 'id="auto-sync-pop-host"' in base
         badge = css.split("html.topbar-hidden #pending-tray > .auto-sync-wrap {", 1)[1].split("}", 1)[0]
         assert "display: inline-flex" in badge
         # no JS relocation — the badge is never appended anywhere else

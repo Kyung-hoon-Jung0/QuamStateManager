@@ -99,30 +99,7 @@
    The popup IS the consent. While armed the pill states the MODE rather than
    just "ON", because pull and push are different promises and a user must be
    able to see which ones they granted. #}
-{% set _as = auto_sync if auto_sync is defined else None %}
-<span class="auto-sync-wrap">
-{% if _as %}
-<button type="button" class="auto-apply-pill auto-apply-on"
-        onclick="AutoSync.toggle(this)" aria-haspopup="dialog" aria-expanded="false"
-        title="Auto-Sync is ON. Click to change what it does, or turn it off.">
-  {{ icon_bolt(13) }} Auto-Sync
-  <b>{% if _as.pull and _as.push %}both{% elif _as.push %}push{% else %}pull{% endif %}</b>
-  {%- if _as.pull and not _as.pull_replace %} <span class="aa-hint">(asks before replacing)</span>{% endif %}
-  {%- if _as.flushes %} <span class="aa-count">{{ _as.flushes }}</span>{% endif %}
-  <span class="aa-power">&#9211;</span></button>
-{% elif (auto_apply_armable and auto_apply_armable[0]) or auto_pull_armable and auto_pull_armable[0] %}
-<button type="button" class="auto-apply-pill auto-apply-off"
-        onclick="AutoSync.toggle(this)" aria-haspopup="dialog" aria-expanded="false"
-        title="Turn on Auto-Sync: keep SM and the live chip in step without pressing anything.">
-  {{ icon_bolt(13) }} Auto-Sync
-  {%- if change_count > 0 %} <span class="aa-hint">({{ change_count }} pending)</span>{% endif %}
-</button>
-{% elif auto_apply_armable %}
-<span class="auto-apply-pill auto-apply-blocked" title="{{ auto_apply_armable[1] }}">
-  {{ icon_bolt(13) }} Auto-Sync</span>
-{% endif %}
-
-</span>
+{% include '_auto_sync_pill.html' %}
 {# docs/20 v2 LiveEditUndo: one ↶ = one event, exactly mirrored in the Review
    list (staged undos swap this whole tray via /undo's response; un-staged
    fill undos leave it untouched — they were never in the change_log).

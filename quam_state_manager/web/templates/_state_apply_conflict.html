@@ -6,8 +6,28 @@
     </span>
     <div class="tray-actions">
       <button class="btn-sm" onclick="openReview()">Review changes</button>
+{# docs/187 (3): this tray REPLACES #pending-tray, and the pill lived only
+   there -- so with a conflict on screen nothing said whether Auto-Sync was on,
+   nothing said it had just been turned off, and there was no control to turn
+   it back on. The pill is one partial now, rendered by both trays. #}
+{% include '_auto_sync_pill.html' %}
     </div>
   </div>
+{# ...and SAY it, where the user is looking. A toast is gone in seconds; this
+   is the surface they are reading while they decide what to do. `auto_sync`
+   is the session as it stands AFTER the route decided, so the two branches
+   cannot claim something the server did not do. #}
+{% if auto_disarmed %}
+  <p class="tray-conflict-note tray-conflict-autosync">
+    Auto-Sync has been turned <b>off</b> &mdash; it will not write to the live
+    chip again until you turn it back on with the pill above.
+  </p>
+{% elif auto_sync and auto_sync.pull %}
+  <p class="tray-conflict-note tray-conflict-autosync">
+    Auto-Sync is still on and is resolving this itself (pull, re-apply your
+    edits on top, push). Choose below only if you would rather decide.
+  </p>
+{% endif %}
   {% set _staged = staged_conflict is defined and staged_conflict %}
   {% if _staged %}
   {# docs/65: nothing in the re-apply stash — the working state IS the payload

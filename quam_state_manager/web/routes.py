@@ -15143,6 +15143,28 @@ def discard_all():
 # ======================================================================
 
 
+def _conflict_tray(ctx, store, *, staged_conflict: bool,
+                   auto_disarmed: bool = False) -> str:
+    """Render the staleness-conflict tray (docs/187 3).
+
+    ONE place that knows what this tray needs. It replaces ``#pending-tray``,
+    where the Auto-Sync pill lives, so it must carry the pill's whole context
+    (`auto_sync`, both armable verdicts, `change_count`) -- a caller that
+    forgets one makes the pill render as nothing, silently, which is exactly
+    the defect this exists to prevent.
+    """
+    return render_template(
+        "_state_apply_conflict.html",
+        change_count=len(store.change_log or []),
+        change_sig=_change_log_sig(store),
+        staged_conflict=staged_conflict,
+        auto_disarmed=auto_disarmed,
+        auto_sync=_auto_sync_state(ctx),
+        auto_apply_armable=_auto_apply_armable(ctx),
+        auto_pull_armable=_auto_pull_armable(ctx),
+    )
+
+
 def _auto_disarm_response(ctx, body: str, reason: str, status: int = 200):
     """Clear the session and hand the body back with the disarm signal.
 
@@ -16410,10 +16432,8 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
         return jsonify({
             "status": "conflict",
             "mode": "apply",
-            "tray_html": render_template(
-                "_state_apply_conflict.html",
-                change_count=len(store.change_log or []),
-                change_sig=_change_log_sig(store),
+            "tray_html": _conflict_tray(
+                ctx, store,
                 staged_conflict=bool(ctx.get("working_dirty"))
                 and (bool(ctx.get("staged_base"))
                      or not ctx.get("pending_reapply"))),
@@ -16600,13 +16620,14 @@ def state_apply_to_live():
                            message="the live files changed since SM last synced; "
                                    "nothing was written -- take live (empty tray) or let a human merge"), 409
         # stash kept for the pull choice; staged_conflict — see the sync twin
-        body = render_template(
-            "_state_apply_conflict.html",
-            change_count=len(store.change_log or []),
-            change_sig=_change_log_sig(store),
-            staged_conflict=bool(ctx.get("working_dirty"))
-            and (bool(ctx.get("staged_base"))
-                 or not ctx.get("pending_reapply")))
+        _staged_conflict = bool(ctx.get("working_dirty")) and (
+            bool(ctx.get("staged_base")) or not ctx.get("pending_reapply"))
+        # docs/187 (3): decide the Auto-Sync verdict BEFORE rendering, so the
+        # tray can state it. The disarm used to happen after the body was
+        # already a finished string, which is why the tray could say nothing.
+        _will_merge = bool(_auto and _auto.get("pull")
+                           and _auto.get("merge_tries", 0) < _AUTO_MERGE_TRIES)
+        _will_disarm = bool(_auto) and not _will_merge
         # docs/117: nothing was written (apply_to_live raises BEFORE its write)
         # and the edit is safe in the working copy, but a background writer the
         # user may have forgotten about must never keep pushing at a chip that
@@ -16629,16 +16650,26 @@ def state_apply_to_live():
         # (doStateSync('apply')); the decision of whether it MAY is made here,
         # like every other Auto-Sync branch (docs/120 item 8).
         if _auto is None:
-            return body
-        if _auto.get("pull") and _auto.get("merge_tries", 0) < _AUTO_MERGE_TRIES:
+            return _conflict_tray(ctx, store, staged_conflict=_staged_conflict)
+        if _will_merge:
             _auto["merge_tries"] = _auto.get("merge_tries", 0) + 1
-            resp = make_response(body)
+            resp = make_response(_conflict_tray(
+                ctx, store, staged_conflict=_staged_conflict))
             resp.headers["HX-Trigger"] = json.dumps({
                 "autoSyncMerge": {"tries": _auto["merge_tries"]},
             })
             return resp
         # No pull permission, or the merge itself keeps conflicting -- something
-        # is genuinely wrong and a background writer must not keep trying.
+        # is genuinely wrong and a background writer must not keep trying. The
+        # tray is rendered with the verdict, so it can SAY it was turned off
+        # rather than leaving a toast as the only mention (docs/187 3).
+        # Pop BEFORE rendering, or the pill reads the session that is about to
+        # be thrown away and paints itself ON while the line beside it says the
+        # opposite. `_auto_disarm_response` pops again; it is idempotent.
+        if _will_disarm:
+            ctx.pop("auto_apply", None)
+        body = _conflict_tray(ctx, store, staged_conflict=_staged_conflict,
+                              auto_disarmed=_will_disarm)
         return _auto_disarm_response(ctx, body, "conflict")
     except (OSError, ValueError) as exc:
         # docs/114 (#16): the read-only case fails HERE (the LIVE write), not

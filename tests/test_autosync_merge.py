@@ -358,3 +358,102 @@ def _snap_count(env) -> int:
     if not hist.exists():
         return 0
     return sum(1 for p in hist.rglob("*") if p.is_dir() and (p / "state.json").exists())
+
+
+class TestTheConflictTrayShowsTheSession:
+    """docs/187 (3). Every pre-fix snapshot of the reproduction had BOTH
+    `pillOn=false` and `pillOff=false`: the conflict tray replaces
+    `#pending-tray`, where the pill lives, so exactly while a live-write
+    conflict was on screen nothing said whether Auto-Sync was on, nothing said
+    it had just been turned off, and there was no control to turn it back on.
+    """
+
+    def _conflict(self, env, *, pull):
+        c = env["client"]
+        _arm(env, pull=pull, push=True)
+        _edit(env)
+        _write_chip(env["live"], _state(f01=7.7e9))
+        return c.post("/state/apply-to-live").data.decode()
+
+    def test_the_tray_carries_the_pill_at_all(self, env):
+        html = self._conflict(env, pull=True)
+        assert "pending-tray-conflict" in html, "not the conflict tray"
+        assert "auto-apply-pill" in html, (
+            "the conflict tray renders no Auto-Sync pill, so the session is "
+            "invisible exactly when it matters")
+
+    def test_a_surviving_session_shows_as_ON(self, env):
+        html = self._conflict(env, pull=True)
+        assert "auto-apply-on" in html
+        assert _sess(env) is not None
+
+    def test_a_disarmed_session_shows_as_OFF_and_can_be_re_armed(self, env):
+        html = self._conflict(env, pull=False)      # push-only -> disarms
+        assert _sess(env) is None
+        assert "auto-apply-on" not in html, (
+            "the pill painted itself ON while the session was being turned off")
+        assert "auto-apply-pill" in html, (
+            "after turning itself off the tray showed no pill at all")
+        # OFF (re-armable) or BLOCKED (with the reason) are both honest; ON is
+        # not, and neither is nothing.
+        assert ("auto-apply-off" in html) or ("auto-apply-blocked" in html), html[:400]
+        if "auto-apply-off" in html:
+            assert "AutoSync.toggle" in html, "the pill is not clickable"
+
+    def test_it_SAYS_it_was_turned_off(self, env):
+        """A toast is gone in seconds; this tray is what the user reads while
+        deciding what to do."""
+        html = self._conflict(env, pull=False)
+        assert "turned" in html and "off" in html
+        assert "tray-conflict-autosync" in html
+
+    def test_it_does_not_claim_a_disarm_that_did_not_happen(self, env):
+        html = self._conflict(env, pull=True)       # merges, stays armed
+        assert "has been turned" not in html, (
+            "the tray told the user Auto-Sync was off while it was still on")
+        assert "still on" in html
+
+    def test_an_unarmed_conflict_says_nothing_about_auto_sync(self, env):
+        c = env["client"]
+        _edit(env)
+        _write_chip(env["live"], _state(f01=7.7e9))
+        html = c.post("/state/apply-to-live").data.decode()
+        assert "pending-tray-conflict" in html
+        assert "tray-conflict-autosync" not in html, (
+            "a user who never armed Auto-Sync was told about it")
+
+    def test_the_sync_route_conflict_carries_it_too(self, env):
+        """Both conflict doors go through one renderer, so neither can be the
+        one that forgets a variable."""
+        c = env["client"]
+        _arm(env, pull=True, push=True)
+        _edit(env)
+        _write_chip(env["live"], _state(f01=7.7e9))
+        r = c.post("/state/sync", data={"mode": "apply", "force": "1"})
+        body = r.get_json() or {}
+        if body.get("status") == "conflict":
+            assert "auto-apply-pill" in (body.get("tray_html") or "")
+
+
+class TestOnePillRenderer:
+    """The pill is one partial. A second copy would drift from the first."""
+
+    def _t(self, name):
+        return (Path(__file__).resolve().parents[1] / "quam_state_manager"
+                / "web" / "templates" / name).read_text(encoding="utf-8")
+
+    def test_both_trays_include_the_same_partial(self):
+        for f in ("_pending_tray.html", "_state_apply_conflict.html"):
+            assert "_auto_sync_pill.html" in self._t(f), f
+
+    def test_neither_tray_still_spells_the_pill_out(self):
+        for f in ("_pending_tray.html", "_state_apply_conflict.html"):
+            assert "auto-apply-pill auto-apply-on" not in self._t(f), (
+                f + " carries its own copy of the pill")
+
+    def test_the_partial_imports_the_macro_it_uses(self):
+        """A macro imported by the INCLUDING template is not visible inside an
+        include — the second caller failed with 'icon_bolt is undefined' the
+        moment it existed."""
+        t = self._t("_auto_sync_pill.html")
+        assert "import icon_bolt" in t and "icon_bolt(" in t

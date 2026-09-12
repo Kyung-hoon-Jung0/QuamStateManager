@@ -1,0 +1,40 @@
+{# The Auto-Sync pill (docs/120 item 8), extracted in docs/187 (3).
+
+   It used to live only in `_pending_tray.html`, and the conflict tray REPLACES
+   that whole element -- so exactly when a live-write conflict was on screen,
+   nothing said whether Auto-Sync was on, nothing said it had just been turned
+   off, and there was no control to turn it back on.
+
+   One partial, two callers. A second copy would drift from the first.
+
+   Reads: `auto_sync` (the session), `auto_apply_armable`, `auto_pull_armable`,
+   `change_count`. Every caller must pass all four, or the pill silently
+   degrades to nothing -- which is the bug this partial exists to fix. -#}
+{# A macro imported by the INCLUDING template is not visible here, so the
+   partial imports its own -- the include failed with 'icon_bolt is
+   undefined' the moment the conflict tray became the second caller. -#}
+{% from '_icons.html' import icon_bolt -%}
+{% set _as = auto_sync if auto_sync is defined else None %}
+<span class="auto-sync-wrap">
+{% if _as %}
+<button type="button" class="auto-apply-pill auto-apply-on"
+        onclick="AutoSync.toggle(this)" aria-haspopup="dialog" aria-expanded="false"
+        title="Auto-Sync is ON. Click to change what it does, or turn it off.">
+  {{ icon_bolt(13) }} Auto-Sync
+  <b>{% if _as.pull and _as.push %}both{% elif _as.push %}push{% else %}pull{% endif %}</b>
+  {%- if _as.pull and not _as.pull_replace %} <span class="aa-hint">(asks before replacing)</span>{% endif %}
+  {%- if _as.flushes %} <span class="aa-count">{{ _as.flushes }}</span>{% endif %}
+  <span class="aa-power">&#9211;</span></button>
+{% elif (auto_apply_armable and auto_apply_armable[0]) or auto_pull_armable and auto_pull_armable[0] %}
+<button type="button" class="auto-apply-pill auto-apply-off"
+        onclick="AutoSync.toggle(this)" aria-haspopup="dialog" aria-expanded="false"
+        title="Turn on Auto-Sync: keep SM and the live chip in step without pressing anything.">
+  {{ icon_bolt(13) }} Auto-Sync
+  {%- if change_count > 0 %} <span class="aa-hint">({{ change_count }} pending)</span>{% endif %}
+</button>
+{% elif auto_apply_armable %}
+<span class="auto-apply-pill auto-apply-blocked" title="{{ auto_apply_armable[1] }}">
+  {{ icon_bolt(13) }} Auto-Sync</span>
+{% endif %}
+
+</span>
