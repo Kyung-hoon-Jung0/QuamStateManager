@@ -155,7 +155,50 @@ function fire(w, name, detail) {
     const m = (state.toasts[0] || {}).m || '';
     check('G1 a countless replace still warns', state.toasts.length === 1, m);
     check('G2 …without claiming a number it does not have',
-          /your unapplied edits/.test(m) && !/\b0 unapplied/.test(m), m);
+          /your unapplied work/.test(m) && !/\b0 unapplied/.test(m), m);
+  }
+
+  /* ── H. review R7: a number must cover EVERYTHING it describes ─────── */
+  {
+    // change-log edits AND a saved-but-unapplied working state: saying
+    // "1 unapplied edit" would understate a loss, which is worse than not
+    // counting at all.
+    const { w, state } = world();
+    fire(w, 'autoSyncPulled', { replaced: true, count: 1, saved: true });
+    await sleep(20);
+    const m = (state.toasts[0] || {}).m || '';
+    check('H1 a count beside other lost work is not presented as the whole loss',
+          /other unapplied work/.test(m), m);
+    check('H2 …and the count it does give is still there', /1 unapplied edit/.test(m), m);
+  }
+  {
+    // typed grid cells only this browser can see: the server's count is 0 and
+    // a bare "0" or a bogus "1" would both be lies.
+    const { w, state } = world();
+    fire(w, 'autoSyncPulled', { replaced: true, count: 0, dom: true });
+    await sleep(20);
+    const m = (state.toasts[0] || {}).m || '';
+    check('H3 dom-only work is described without inventing a number',
+          /your unapplied work/.test(m) && !/\b0 unapplied/.test(m), m);
+  }
+  {
+    // a re-apply stash is a third kind the first cut ignored entirely
+    const { w, state } = world();
+    fire(w, 'autoSyncPulled', { replaced: true, count: 2, stash: 3 });
+    await sleep(20);
+    const m = (state.toasts[0] || {}).m || '';
+    check('H4 a stash counts as other lost work too',
+          /other unapplied work/.test(m), m);
+  }
+  {
+    // the clean case must stay clean: a count that IS the whole loss reads
+    // as exactly that, with no hedging tacked on.
+    const { w, state } = world();
+    fire(w, 'autoSyncPulled', { replaced: true, count: 4 });
+    await sleep(20);
+    const m = (state.toasts[0] || {}).m || '';
+    check('H5 a complete count is stated plainly',
+          /4 unapplied edits/.test(m) && !/other unapplied work/.test(m), m);
   }
 
   if (failures) {

@@ -192,12 +192,22 @@
     document.addEventListener('autoSyncPulled', function (e) {
         var d = (e && e.detail) || {};
         if (!d.replaced) return;
+        /* R7: a number only when it covers EVERYTHING being described.
+           A replace-pull destroys three kinds of work -- change-log edits,
+           a saved-but-unapplied working state, a re-apply stash -- plus
+           cells typed in the grid that only this browser can see. Saying
+           "1 unapplied edit" while a saved working state went with it is
+           understating a loss, which is worse than not counting. */
         var n = parseInt(d.count || 0, 10);
-        toast('Auto-Sync pulled the live chip and discarded '
-              + (n > 0 ? (n + ' unapplied edit' + (n === 1 ? '' : 's'))
-                       : 'your unapplied edits')
+        var more = !!d.saved || !!d.dom || parseInt(d.stash || 0, 10) > 0;
+        var what = (n > 0 && !more)
+            ? (n + ' unapplied edit' + (n === 1 ? '' : 's'))
+            : (n > 0 ? (n + ' unapplied edit' + (n === 1 ? '' : 's')
+                          + ' and other unapplied work')
+                     : 'your unapplied work');
+        toast('Auto-Sync pulled the live chip and discarded ' + what
               + " — that is what \u201creplace\u201d does, and "
-              + 'they are not recoverable. Untick \u201creplace\u201d in the '
+              + 'it is not recoverable. Untick \u201creplace\u201d in the '
               + 'Auto-Sync panel to be asked instead.',
               'warning');
     });

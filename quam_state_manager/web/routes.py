@@ -15387,12 +15387,19 @@ def auto_sync_pull():
             # decision about what "replace" means, deliberately not taken here.
             _pre_leaves = _leaf_snapshot(ctx)   # docs/144
             discarding = _quam_ctx_dirty(ctx) or dom_dirty
-            # docs/187 (2): how many of the user's own edits this pull is about
-            # to drop. Counted BEFORE the pull, because afterwards there is
-            # nothing left to count -- and the toast that reports it must not
-            # be able to overstate or understate what happened.
+            # docs/187 (2), corrected by review R7: WHAT this pull is about to
+            # drop, by kind. Counted BEFORE the pull, because afterwards there
+            # is nothing left to count -- and a message about lost work must
+            # not be able to understate it.
+            #
+            # `_quam_ctx_dirty` is true for three different kinds and a
+            # replace-pull destroys all of them, while the first cut counted
+            # only the change log: it could say "1 unapplied edit" while a
+            # saved-but-unapplied working state went with it.
             _st0 = ctx.get("store")
             _discarded_n = len(getattr(_st0, "change_log", None) or []) if _st0 else 0
+            _discarded_saved = bool(ctx.get("working_dirty"))
+            _discarded_stash = len(ctx.get("pending_reapply") or {})
             if discarding:
                 try:
                     _history().check_and_snapshot(
@@ -15475,6 +15482,8 @@ def auto_sync_pull():
         extra={"liveDriftChanged": True,
                "autoSyncPulled": {"replaced": bool(discarding),
                                   "count": _discarded_n,
+                                  "saved": _discarded_saved,
+                                  "stash": _discarded_stash,
                                   "dom": bool(dom_dirty)}})
     return resp
 

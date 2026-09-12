@@ -428,6 +428,9 @@ class TestAReplacePullSaysSo:
         assert "State History can bring it back" not in blk, (
             "the toast promises a recovery that was measured not to exist")
         assert "not recoverable" in blk, "it does not say what actually happened"
+        # R7: a number must cover everything it describes, or not be given
+        assert "other unapplied work" in blk, (
+            "a count beside other lost work is presented as the whole loss")
         assert "Untick" in blk, "it does not name the setting that prevents this"
 
 
