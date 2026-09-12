@@ -160,19 +160,78 @@ And the replacement pin **was appended after a module-level function's
 20, and reported green. A test that does not run is the failure mode this whole
 session kept finding; it found one more in its own fix.
 
-## Also found, not fixed here
+## ③ The conflict tray showed no session at all
 
-The conflict tray renders **no Auto-Sync pill at all** — `pillOn=false` *and*
-`pillOff=false` in every pre-fix snapshot above. When SM does still disarm
-(push-only, or the budget spent) the tray says nothing about it and offers no
-way to turn it back on; only a transient toast mentions it. The pill returns as
-soon as an ordinary tray replaces the conflict one, so it is recoverable rather
-than stuck. Recorded, low severity, deliberately out of scope for a fix the
-customer is waiting on.
+Every pre-fix snapshot above carries **both** `pillOn=false` *and*
+`pillOff=false`. The conflict tray REPLACES `#pending-tray`, and the Auto-Sync
+pill lived only there — so exactly while a live-write conflict was on screen,
+nothing said whether Auto-Sync was on, nothing said it had just been turned
+off, and there was no control to turn it back on. A toast that vanishes in
+seconds was the only mention of a session that had stopped writing.
+
+The pill is **one partial** now (`_auto_sync_pill.html`), included by both
+trays. A second copy would drift from the first, which is what this project
+keeps a single-renderer rule for. The extraction is proved inert rather than
+asserted: eight pill states (armed both / push / pull, off, off-with-pending,
+blocked, absent) render **byte-for-byte identical** before and after.
+
+Both conflict render sites go through one `_conflict_tray()` helper, so neither
+can be the one that forgets a variable — a caller that omits any of
+`auto_sync`, the two armable verdicts or `change_count` makes the pill render as
+*nothing*, silently, which is the defect itself.
+
+And the tray **says** what happened, where the user is actually reading:
+
+| situation | what the tray says |
+|---|---|
+| the merge is running (pull armed) | "Auto-Sync is still on and is resolving this itself" |
+| it was turned off (push-only, or the budget spent) | "Auto-Sync has been turned **off** — it will not write to the live chip again until you turn it back on with the pill above" |
+| the user never armed it | nothing at all |
+
+Two things that required getting right: the verdict is decided **before**
+rendering (the disarm used to happen after the body was already a finished
+string, which is why the tray could not state it), and the session is popped
+before the render — otherwise the pill reads the session it is about to throw
+away and paints itself ON beside a line saying the opposite.
+
+**Verified in real Chrome**, same driver, two worlds:
+
+```
+WORLD A  pull+push armed   -> auto=1     pillOn=true   conflict=false
+                              both values on the chip (the merge, ① above)
+WORLD B  push-only         -> auto=null  pillOff=TRUE  saysTurnedOff=TRUE
+                              conflict=true, the edit safe in the working copy
+```
+
+World B is the exact inversion of what this section used to record: the pill is
+there, it reads OFF, it is clickable, and the tray says so.
+
+**Mutation sweep: 9/9** — after two GREENs that were both findings about my own
+work rather than the product:
+
+- `it claims a disarm that did not happen` was a **genuine no-op**: at that line
+  `_will_disarm` cannot be false (`_auto` is armed and `_will_merge` is false,
+  which is its definition). A variable that can only be True reads as though it
+  might not be, so it was deleted rather than pinned — no pin can fail on a
+  mutation that does not mutate.
+- `the sync route stops using the one renderer` was a **conditional pin**:
+  `if the response was a conflict, assert …`. The fixture never produced one
+  from that route, so it asserted nothing and went green against a mutation
+  that stripped the pill out of it. It forces the write to fail now, which is
+  the only thing the pin was ever about.
+
+One more trap paid: **a macro imported by the INCLUDING template is not visible
+inside an include.** The partial failed with `'icon_bolt' is undefined` the
+moment it had a second caller, and imports its own now. And `test_web`'s
+`TestRound15ChromeHiding` asserted the wrapper's presence in the tray **file**;
+it follows the include now and pins the rule — the element that CSS targets is
+in the tray's markup — rather than which file spells it.
+
+Running total across the three parts: **29/29 mutations.**
 
 ## Verification
 
-- `tests/test_autosync_merge.py` — **20 pins**: the reported sequence end to end
+- `tests/test_autosync_merge.py` — **30 pins**: the reported sequence end to end
   through the real routes; that the merge lands **both** values; that a
   push-only session and the legacy arm door are unchanged; that an unarmed
   apply is untouched; the budget, its exhaustion and its refill; and four pins
@@ -182,7 +241,12 @@ customer is waiting on.
   pinned on the file that ships. Then ② — that a replace-pull reports how many
   edits it dropped, that a pull dropping nothing does not claim it did, that
   the snapshot the message promises is really taken, that somebody listens at
-  all, and the `dom_dirty` guard the sweep found unpinned.
+  all, and the `dom_dirty` guard the sweep found unpinned. Then ③ — that the conflict
+  tray carries a pill at all, that a surviving session reads ON and a disarmed
+  one never does, that it can be re-armed, that the tray states the disarm,
+  that it never claims one that did not happen, that a user who never armed
+  Auto-Sync is told nothing, that BOTH conflict doors carry it, and that the
+  pill has exactly one renderer which imports its own macro.
 - `tests/repro_autosync_enter.cjs`, `…_enter2.cjs`, `…_external.cjs` — the
   three reproduction drivers, **including the two that did not reproduce**.
   They record what the shape of this bug is *not*.

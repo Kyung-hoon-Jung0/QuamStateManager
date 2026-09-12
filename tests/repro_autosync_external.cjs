@@ -83,6 +83,9 @@ async function main() {
                  var el=b.firstElementChild||b;
                  return !!(el.offsetParent||el.getClientRects().length);})(),
               saysHowMany:/\\d+\\s+values? differ/.test(body),
+              saysTurnedOff:/has been turned/.test(body),
+              saysStillOn:/still on and is resolving/.test(body),
+              pillBlocked:!!document.querySelector('.auto-apply-pill.auto-apply-blocked'),
               bannerText:(function(){
                  var b=document.querySelector('#live-diverged-slot');
                  return b?b.textContent.replace(/\\s+/g,' ').trim().slice(0,220):null;})()};})()`);
@@ -96,7 +99,7 @@ async function main() {
 
   await ev(`fetch('/auto-sync/set', { method: 'POST',
      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'HX-Request': 'true' },
-     body: 'pull=1&pull_replace=0&push=1' }).then(function(r){return r.status;})`);
+     body: '${process.argv[6] === 'pushonly' ? 'pull=0&pull_replace=0&push=1' : 'pull=1&pull_replace=0&push=1'}' }).then(function(r){return r.status;})`);
   await ev(`(async function () {
     var html = await (await fetch('/state/tray', { headers: { 'HX-Request': 'true' } })).text();
     var t = document.getElementById('pending-tray');
@@ -171,8 +174,8 @@ async function main() {
     console.log('   auto=' + l.ui.auto, 'pillOn=' + l.ui.pillOn, 'pillOff=' + l.ui.pillOff,
       'count=' + l.ui.count, 'wdirty=' + l.ui.wdirty);
     console.log('   conflict=' + l.ui.conflict, 'pull&apply=' + l.ui.pullApply,
-      'banner=' + l.ui.banner, 'bannerVISIBLE=' + l.ui.bannerVisible,
-      'namesHowMany=' + l.ui.saysHowMany);
+      'banner=' + l.ui.banner, 'pillBlocked=' + l.ui.pillBlocked,
+      '| saysTurnedOff=' + l.ui.saysTurnedOff, 'saysStillOn=' + l.ui.saysStillOn);
     if (l.ui.bannerText) console.log('   banner: ' + l.ui.bannerText);
   }
   console.log('on disk:', JSON.stringify(disk), '(outside write was', wrote + ')');
