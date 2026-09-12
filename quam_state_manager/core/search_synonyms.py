@@ -6,8 +6,9 @@ Customer, on-site (2026-09-11):
      예를 들어, ro, readout 만 입력해도 resonator 도 당연히 함께 나와야하는데,
      지금은 resonator를 입력하면 readout이 검색 안되고 그 vice versa 임."
 
-They are right, and the chip itself is the evidence. On the KRISS 5Q chip a
-qubit's readout object is literally named ``resonator``, its pulses are named
+They are right, and the chip itself is the evidence. On the reporting lab's
+5Q chip a qubit's readout object is literally named ``resonator``, its pulses
+are named
 ``readout`` and ``readout_GEF``, and SM's own metric labels read
 ``"Readout frequency"`` with the blurb ``"Resonator frequency used to read the
 qubit out."`` (``chip_health.py``). One object, three spellings, and a substring

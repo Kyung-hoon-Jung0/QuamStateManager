@@ -163,7 +163,15 @@ function keydown(win, id, key) {
   ok(rows(win).length === 5, 'A5 …and lists every m key: ' + rows(win));
   ok(rows(win).indexOf('num_shots') > rows(win).indexOf('multiplexed'),
      'A5b …with the substring-only match BELOW the prefix ones: ' + rows(win));
-  ok(win.fetches.length === 1, 'A6 typing costs no further request');
+  // The RULE is that a vocabulary is fetched once and cached, not that
+  // there is exactly ONE of them -- docs/182 added a second (tag-vocab),
+  // and a literal count expired the day it shipped while the rule held.
+  // Measured: 6 further keystrokes leave the count where it was.
+  var _nBefore = win.fetches.length;
+  for (var _k = 0; _k < 4; _k++) type(win, 'sidebar-filter-input', 'mu');
+  ok(win.fetches.length === _nBefore,
+     'A6 typing costs no further request: ' + JSON.stringify(win.fetches));
+  type(win, 'sidebar-filter-input', 'm');
 
   type(win, 'sidebar-filter-input', 'mult');
   ok(rows(win).length === 1 && rows(win)[0] === 'multiplexed',

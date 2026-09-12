@@ -451,10 +451,10 @@ def json_format_of(path: Path | str) -> dict | None:
 
     * **indent** -- the customer's chip is 2-space and SM wrote 4, which is
       +26% and every line changed for one edited value;
-    * **newline** -- the KRISS chip on this machine is CRLF, and Python's text
-      mode translates by PLATFORM, so the same SM rewrites the same file
+    * **newline** -- the reported chip is CRLF, and Python's text mode
+      translates by PLATFORM, so the same SM rewrites the same file
       differently on Windows and Linux;
-    * **trailing newline** -- the KRISS chip has none and SM always appended.
+    * **trailing newline** -- that chip has none and SM always appended.
 
     Best effort by construction: anything unreadable or unrecognisable returns
     None, and the caller then writes exactly what it writes today.
