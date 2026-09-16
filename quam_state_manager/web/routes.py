@@ -16834,6 +16834,24 @@ def _unseen_edit_refusal(ctx) -> dict | None:
     # which is the property docs/120 chose counting to get.
     if seen_sig and seen_sig != sig:
         extra = all_paths[seen:] if (seen is not None and have > seen) else all_paths
+        if not all_paths:
+            # docs/190 F45: the log is EMPTY and this screen's signature is
+            # stale, which happens when the other window APPLIED (or
+            # discarded) everything between this screen's last render and the
+            # press. The general sentence below is then the opposite of the
+            # truth -- it warns that applying would write the other window's
+            # edits, when that window has already written them and there is
+            # nothing left here to write -- and it named no paths, because
+            # there are none. Seen once in a simultaneous-Apply race;
+            # reproduced without one by applying from a second client
+            # between this screen's render and its press.
+            return {"status": "unseen_changes", "have": 0,
+                    "seen": seen if seen is not None else 0,
+                    "paths": [], "nothing_pending": True,
+                    "message": (
+                        "Another State Manager window has already applied "
+                        "(or discarded) the edits this screen was showing, "
+                        "so there is nothing left here to apply.")}
         return {"status": "unseen_changes", "have": have,
                 "seen": seen if seen is not None else 0,
                 "paths": extra[:8],

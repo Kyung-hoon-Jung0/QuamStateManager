@@ -134,6 +134,67 @@ ok(ajax.length === 1 && closed === 1, 'a bare stateRestored (unbracketed route) 
     ok(ajax.length === 0, 'and issues no pane re-GET');
     const leaf2 = d.querySelector('.tree-node[data-path="qubits.q1.T1"] .tree-val');
     ok(leaf2.textContent === window._treeFormatValue(1.4e-5), 'pull values landed in place');
+    // ---- docs/190 F43: a patched field's BASELINES move with it.
+    // The value was patched and `data-committed` / `defaultValue` were not, so
+    // after a pull the field showed the chip's new number while everything
+    // that judges it -- the dirty check, the click-away guard, Escape, the
+    // Pulses committed-plot cache -- still read the pre-pull one.
+    const form2 = d.createElement('form');
+    form2.className = 'inline-edit';
+    form2.innerHTML = '<input type="hidden" name="dot_path" value="qubits.q9.len">'
+        + '<input name="value" class="edit-input" data-param="length"'
+        + ' data-committed="600" value="600">';
+    d.body.appendChild(form2);
+    const fld = form2.querySelector('input[name="value"]');
+
+    window.LiveSurfacePatch.apply([{ dot_path: 'qubits.q9.len',
+        old_value_disp: '741', old_value_str: '741', old_kind: 'num', value: 741 }]);
+    ok(fld.value === '741', 'F43: the pull patches the value');
+    ok(fld.getAttribute('data-committed') === '741',
+       'F43: and data-committed follows it (got ' + fld.getAttribute('data-committed') + ')');
+    ok(fld.defaultValue === '741',
+       'F43: and the render-time attribute follows it (got ' + fld.defaultValue + ')');
+    // a field the page had marked dirty (an edit that has since been applied
+    // or undone elsewhere) is CLEAN once the pull puts the chip's value in it
+    fld.classList.add('dirty');
+    window.LiveSurfacePatch.apply([{ dot_path: 'qubits.q9.len',
+        old_value_disp: '741', old_value_str: '741', old_kind: 'num', value: 741 }]);
+    ok(!fld.classList.contains('dirty'),
+       'F43: a patched field is not left marked dirty');
+
+    // Escape restores the value the CHIP has, not the one rendered long ago.
+    // Before the fix this put back 600 and the blur COMMITTED it.
+    fld.value = '999';
+    const escEv = new window.KeyboardEvent('keydown',
+        { key: 'Escape', bubbles: true, cancelable: true });
+    fld.dispatchEvent(escEv);
+    ok(fld.value === '741',
+       'F43: Escape restores what the chip holds (got ' + fld.value + ')');
+
+    // ...and it must read `data-committed` rather than the attribute even when
+    // the two DISAGREE. They agree after a pull because the patcher moves both,
+    // so this is the state that decides the rule: the undo repaint sets
+    // `data-committed` alone (app.js's revert path), and Escape has to follow
+    // the baseline everything else follows, not the markup.
+    fld.setAttribute('data-committed', '555');
+    fld.value = '999';
+    fld.dispatchEvent(new window.KeyboardEvent('keydown',
+        { key: 'Escape', bubbles: true, cancelable: true }));
+    ok(fld.value === '555',
+       'F43: Escape follows data-committed when it differs from the markup '
+       + '(got ' + fld.value + ')');
+    fld.setAttribute('data-committed', fld.defaultValue);
+
+    // a person mid-edit keeps their own text; only the baseline moves
+    fld.focus();
+    fld.value = '12345';
+    window.LiveSurfacePatch.apply([{ dot_path: 'qubits.q9.len',
+        old_value_disp: '802', old_value_str: '802', old_kind: 'num', value: 802 }]);
+    ok(fld.value === '12345', 'F43: a typist keeps their text (got ' + fld.value + ')');
+    ok(fld.getAttribute('data-committed') === '802',
+       'F43: with the chip value underneath it');
+    ok(fld.classList.contains('dirty'), 'F43: and the field says it differs');
+
     console.log(fails ? ('FAILED: ' + fails) : 'ALL OK');
     process.exit(fails ? 1 : 0);
 })();

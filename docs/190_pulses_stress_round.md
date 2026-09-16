@@ -481,12 +481,11 @@ the URL and re-fetches the rows for exactly that query. PaneState's own
 handler ignores this case (the pane is populated and its route stamp matches),
 so the two never both act.
 
-**Still open, and recorded rather than closed:** F43 (after an Auto-Sync pull
-a detail input's value and its `data-committed` disagree) and F45 (an
-unseen-edit confirm with an empty path list, seen once in a simultaneous-Apply
-race) both need a two-window drifted-live rig this round did not rebuild.
-F56 is a rig artifact with an unconfirmed second pattern, recorded in the
-finding itself.
+**Open at the time of writing, closed in §13:** F43 (after an Auto-Sync pull a
+detail input's value and its `data-committed` disagree) and F45 (an unseen-edit
+confirm with an empty path list, seen once in a simultaneous-Apply race). F56
+is a rig artifact with an unconfirmed second pattern, recorded in the finding
+itself.
 
 ### Measured
 
@@ -512,3 +511,64 @@ claiming to assert the catalog's. I checked whether this session caused it
 rather than assuming either way: the same five fail identically at `ec665fb`,
 the commit before this round began. They have the standing `_overlay_hygiene`
 fixture now, and the wide run is down to the one documented OS-difference test.
+
+
+## 13. The two that needed two windows (2026-09-17)
+
+§12 left F43 and F45 open for want of a two-window drifted-live rig. Both are
+fixed, and both turned out to be reproducible without a race once the mechanism
+was understood.
+
+**F45 — a refusal that named nothing and said the opposite of what happened.**
+The recorded sighting was one occurrence in a simultaneous-Apply race. It needs
+no race: window A holds a change-log signature, window B APPLIES (which clears
+the log), and A presses Apply. The signature no longer matches, so the docs/179
+gate refuses — with an empty path list, because there is nothing left in the
+log to name, under a sentence warning that applying "would write ITS edits to
+the live chip" when that window has already written them and there is nothing
+left here to write. Measured: `have=0, seen=1, paths=[]`. The empty list is
+now the CORRECT shape and the sentence is the thing that changed: an emptied
+log says another window has already applied (or discarded) what this screen was
+showing. The client stops offering "Apply everything, including those?" over an
+empty list — it refreshes the tray and says what happened. Verified in real
+Chrome: zero `confirm()` calls, the honest line in the status bar, the tray back
+to 0.
+
+**F43 — a patched field kept a stale baseline, and Escape then WROTE it.** The
+reported symptom was small: after an Auto-Sync pull, a detail input's value and
+its `data-committed` disagree. The cause is in `LiveSurfacePatch._patchInputs`,
+which set the inline form's value and left both baselines alone. Everything
+that judges that field reads a baseline — the dirty check, the click-away
+guard, the Pulses committed-plot cache, and Escape — so all of them were
+reading a number the chip no longer had.
+
+Chasing it one step further found the part that is not cosmetic. Escape
+restored `defaultValue`, the value AT RENDER TIME, and the blur that follows
+Escape commits anything differing from the baseline — so after a pull, pressing
+Escape on an untouched field **staged an edit back to the pre-pull value**.
+Measured on the real chip: live 741, working copy 741, tray 0; press Escape;
+tray 1 and the working copy back at 600, a number that by then existed nowhere.
+
+Three things move together now: the patch carries `data-committed` and the
+render-time attribute with the value, Escape reads the same baseline every
+other consumer reads, and a person mid-edit keeps their own text (docs/144)
+with the chip's value placed underneath it and the field marked as differing,
+instead of being silently overwritten. Verified in real Chrome, 8/8.
+
+### Measured
+
+| | |
+|---|---|
+| browser checks (real Chrome) | 8 / 8 for F43, 1 / 1 for F45 |
+| new pins | 3 Python + 9 jsdom |
+| mutations caught | 8 of 8 |
+| jsdom selfchecks | 132 / 132 |
+| pytest (sync / apply / undo / pulses sets) | 437 passed |
+
+Two of my own pins were vacuous and the sweep found both, and both for the same
+reason — **two fixes that overlap hide each other**. The patcher now moves the
+render-time attribute too, so a pin that presses Escape after a pull passes
+whichever baseline Escape reads; the rule only has teeth where the two
+baselines DISAGREE, which is what the undo repaint produces, and that is the
+state the pin reaches now. The other was a `remove("dirty")` pinned on a field
+that never had the class.

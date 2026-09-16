@@ -435,3 +435,60 @@ class TestCtrlZDeclaresWhatItSaw:
         app_client.get("/pulses")
         app_client.get("/bulk")
         assert app_client.get("/state/drift").get_json()["edit_seq"] == d0
+
+
+class TestNothingLeftToApply:
+    """docs/190 F45 -- the gate refused with an EMPTY path list and a sentence
+    describing the opposite of what happened.
+
+    Seen once in a simultaneous-Apply race; it needs no race. Window A holds a
+    change-log signature, window B APPLIES (which clears the log), A presses
+    Apply. The signature no longer matches, so the gate refuses -- naming
+    nothing, because there is nothing left in the log to name, while warning
+    that applying would write the other window's edits to the chip. The other
+    window has already written them.
+    """
+
+    @staticmethod
+    def _sig_and_ctx(client):
+        from quam_state_manager.web import routes as routes_mod
+        with client._app.test_request_context("/"):
+            ctx = routes_mod._active_ctx()
+            return routes_mod._change_log_sig(ctx["store"]), ctx
+
+    @staticmethod
+    def _refusal(client, ctx, seen_sig, seen=1):
+        from quam_state_manager.web import routes as routes_mod
+        with client._app.test_request_context(
+                "/state/apply-to-live",
+                query_string={"seen_changes": str(seen), "seen_sig": seen_sig}):
+            return routes_mod._unseen_edit_refusal(ctx)
+
+    def test_an_emptied_log_says_what_actually_happened(self, app_client):
+        _edit(app_client, "qubits.q1.f_01", "6.2e9")
+        sig_before, ctx = self._sig_and_ctx(app_client)
+        ctx["store"].change_log.clear()                # the other window applied
+        out = self._refusal(app_client, ctx, sig_before)
+        assert out is not None
+        assert out["status"] == "unseen_changes"
+        assert out["have"] == 0 and out["paths"] == []
+        assert out["nothing_pending"] is True
+        assert "already applied" in out["message"]
+        # the general sentence is the OPPOSITE of the truth here
+        assert "would write ITS edits" not in out["message"]
+
+    def test_a_real_divergence_still_names_its_paths(self, app_client):
+        """The fix must not swallow the case the gate exists for."""
+        _edit(app_client, "qubits.q1.f_01", "6.2e9")
+        sig_before, ctx = self._sig_and_ctx(app_client)
+        _edit(app_client, "qubits.q2.f_01", "6.4e9")   # the other window edited
+        out = self._refusal(app_client, ctx, sig_before)
+        assert out is not None and out["status"] == "unseen_changes"
+        assert out["paths"], out
+        assert not out.get("nothing_pending")
+        assert "would write ITS edits" in out["message"]
+
+    def test_a_matching_signature_is_never_a_refusal(self, app_client):
+        _edit(app_client, "qubits.q1.f_01", "6.2e9")
+        sig, ctx = self._sig_and_ctx(app_client)
+        assert self._refusal(app_client, ctx, sig) is None

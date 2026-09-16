@@ -1257,7 +1257,18 @@ document.addEventListener('keydown', function(evt) {
     if (evt.key !== 'Escape') return;
     var t = evt.target;
     if (t && t.classList && t.classList.contains('edit-input')) {
-        if (t.value !== t.defaultValue) t.value = t.defaultValue;
+        // docs/190 F43: `defaultValue` is the value AT RENDER TIME, and a
+        // pull patches the field in place without re-rendering it -- so
+        // after a pull Escape restored a number the chip no longer has, and
+        // the blur below COMMITTED it (measured: tray 0 -> 1, the working
+        // copy back to the pre-pull value while the live file held the new
+        // one). `data-committed` is the baseline the click-away guard, the
+        // dirty judgement and the Pulses plot cache already read; Escape
+        // reads it too now, and falls back to the attribute where there is
+        // none.
+        var _base = t.hasAttribute('data-committed')
+            ? t.getAttribute('data-committed') : t.defaultValue;
+        if (t.value !== _base) t.value = _base;
         t.blur();
         evt.preventDefault();
         return;
@@ -3035,6 +3046,23 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip) {
         .then(function(r) { return r.json(); })
         .then(function(data) {
             if (data.status === "unseen_changes") {
+                // docs/190 F45: nothing is pending, so there is nothing to
+                // confirm. Offering "Apply everything, including those?"
+                // over an empty list asks the user to agree to no edits at
+                // all -- refresh the tray so the screen stops lying, and say
+                // what actually happened.
+                if (data.nothing_pending) {
+                    window._applyInFlight = false;
+                    if (window.htmx) {
+                        window.htmx.ajax("GET", "/state/tray",
+                                         {target: "#pending-tray", swap: "outerHTML"});
+                    }
+                    if (window.showToast) {
+                        window.showToast(data.message || "Nothing left to apply.",
+                                         "warning");
+                    }
+                    return;
+                }
                 // Never a dead end — name what would go, and let one click
                 // accept it or send the user to review it first.
                 var lines = (data.paths || []).slice(0, 6).join("\n  ");
@@ -3763,7 +3791,37 @@ window.LiveSurfacePatch = (function () {
         });
         document.querySelectorAll('input[type="hidden"][name="dot_path"][value="' + _esc(e.dot_path) + '"]').forEach(function (h) {
             var form = h.closest("form"), input = form && form.querySelector('input[name="value"]');
-            if (input) { input.value = e.old_value_str != null ? String(e.old_value_str) : ""; n++; }
+            if (!input) return;
+            var v = e.old_value_str != null ? String(e.old_value_str) : "";
+            // docs/190 F43: the VALUE was patched and its baseline was not,
+            // so after a pull the field showed the chip's new number while
+            // `data-committed` still held the pre-pull one. Everything that
+            // reads that attribute then reads a value the chip no longer has:
+            // Escape 'restores' it, the dirty judgement is wrong, and the
+            // Pulses committed-plot cache keys on it. They move together now.
+            var a = document.activeElement;
+            var typing = (a === input
+                && input.hasAttribute("data-committed")
+                && input.value !== input.getAttribute("data-committed"));
+            if (input.hasAttribute("data-committed")) {
+                input.setAttribute("data-committed", v);
+            }
+            // the render-time attribute is a baseline too (Escape used to
+            // read it, and anything else may); keep it in step rather than
+            // leaving a second, staler copy of the same fact.
+            if (input.defaultValue !== v) {
+                input.defaultValue = v;
+            }
+            // ...and a person mid-edit keeps their own text (docs/144): the
+            // baseline moves under it so the field reads as the edit it is,
+            // instead of being silently overwritten by the pull.
+            if (!typing) {
+                input.value = v;
+                input.classList.remove("dirty");
+            } else {
+                input.classList.add("dirty");
+            }
+            n++;
         });
         return n;
     }
