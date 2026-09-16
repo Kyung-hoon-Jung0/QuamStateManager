@@ -447,3 +447,234 @@ class TestRosterArithmetic:
         assert "pulse-env-strip" in html
         # with no env probed there is no roster and nothing to reconcile
         assert "of them are on the list below" not in html
+
+
+# ------------------------------------------------- F47, the half that was real
+
+_LAB = "quam_config.two_flux_gate."
+_PULSE_BASES = ["quam.components.pulses.Pulse",
+                "quam.core.quam_classes.QuamComponent"]
+
+
+def _fields(*names, length_ref=False):
+    """A probed dataclass field dump in the shape `probe_state_schema` emits
+    (the SAME shape for the class inventory and for the pulse roster)."""
+    out = {}
+    for n in names:
+        out[n] = {"type": {"base": "float"}, "has_default": True,
+                  "default": None, "default_is_reference": False}
+    if length_ref:
+        out["length"] = {"type": {"base": "int"}, "has_default": True,
+                         "default": "#./inferred_length",
+                         "default_is_reference": True}
+    return out
+
+
+def _inventory() -> dict:
+    """The shape the KRISS_CZ chip really probes to: classes the LAB wrote, a
+    lab GATE MACRO beside them, and the chip root."""
+    return {
+        _LAB + "SNZTwoFluxPulse": {
+            "importable": True, "canonical": _LAB + "SNZTwoFluxPulse",
+            "bases": _PULSE_BASES,
+            "fields": _fields("amplitude", "flat_length", "b_over_a",
+                              length_ref=True)},
+        "quam_config.gef_weights_pulse.GefWeightsReadoutPulse": {
+            "importable": True,
+            "canonical": "quam_config.gef_weights_pulse.GefWeightsReadoutPulse",
+            "bases": ["quam.components.pulses.SquareReadoutPulse",
+                      "quam.components.pulses.BaseReadoutPulse",
+                      "quam.components.pulses.Pulse"],
+            "fields": _fields("amplitude", "threshold")},
+        # a GATE macro, not a pulse -- quam's Pulse is not among its bases
+        _LAB + "CZGateTwoFlux": {
+            "importable": True, "canonical": _LAB + "CZGateTwoFlux",
+            "bases": ["quam.components.macro.qubit_pair_macros.QubitPairMacro",
+                      "quam.core.quam_classes.QuamComponent"],
+            "fields": _fields("duration", "fidelity")},
+        "quam_config.my_quam.Quam": {
+            "importable": True, "canonical": "quam_config.my_quam.Quam",
+            "bases": ["quam.core.quam_classes.QuamRoot"],
+            "fields": _fields("qubits")},
+        # quam's own, already transcribed -- must never appear twice
+        "quam.components.pulses.SquarePulse": {
+            "importable": True,
+            "canonical": "quam.components.pulses.SquarePulse",
+            "bases": _PULSE_BASES, "fields": _fields("amplitude")},
+        # probed and did NOT import
+        "lab.broken.GhostPulse": {
+            "importable": False, "canonical": "lab.broken.GhostPulse",
+            "bases": _PULSE_BASES, "fields": _fields("amplitude")},
+        # importable, but the probe brought back nothing usable
+        "lab.bare.NoFieldsPulse": {
+            "importable": True, "canonical": "lab.bare.NoFieldsPulse",
+            "bases": _PULSE_BASES, "fields": None},
+    }
+
+
+class TestTheChipsOwnPulseClasses:
+    """docs/190 F47 (the half that was real) -- the env roster walks the homes
+    QM ships, so a class the LAB wrote is in no roster and the create form
+    could not offer it. SM has held its field schema all along, in the same
+    instance folder, because the CHIP declares it."""
+
+    @pytest.fixture(autouse=True)
+    def _clean(self):
+        pulse_catalog.apply_env_overlay(None)
+        pulse_catalog.apply_chip_classes(None)
+        yield
+        pulse_catalog.apply_env_overlay(None)
+        pulse_catalog.apply_chip_classes(None)
+
+    def test_a_lab_written_pulse_class_becomes_creatable(self):
+        specs = pulse_catalog.chip_pulse_specs(_inventory())
+        assert set(specs) == {"SNZTwoFluxPulse", "GefWeightsReadoutPulse"}
+        snz = specs["SNZTwoFluxPulse"]
+        assert snz.qclass == _LAB + "SNZTwoFluxPulse"
+        assert snz.creatable and snz.group == "From this chip"
+        assert {p.name for p in snz.params} >= {"amplitude", "b_over_a"}
+
+    def test_a_gate_macro_is_not_a_pulse(self):
+        """The discriminator is STRUCTURAL -- quam's Pulse among the bases --
+        never the name. CZGateTwoFlux sits in the same lab module as the pulse
+        above it and is a macro."""
+        specs = pulse_catalog.chip_pulse_specs(_inventory())
+        assert "CZGateTwoFlux" not in specs
+        assert "Quam" not in specs
+
+    def test_a_readout_class_is_recognised_by_its_bases(self):
+        specs = pulse_catalog.chip_pulse_specs(_inventory())
+        assert specs["GefWeightsReadoutPulse"].readout is True
+        assert specs["SNZTwoFluxPulse"].readout is False
+
+    def test_an_inferred_length_is_carried(self):
+        snz = pulse_catalog.chip_pulse_specs(_inventory())["SNZTwoFluxPulse"]
+        assert snz.length_mode == "inferred"
+        assert snz.length_pointer == "#./inferred_length"
+        assert not any(p.name == "length" for p in snz.params)
+
+    def test_a_class_that_did_not_import_is_never_offered(self):
+        assert "GhostPulse" not in pulse_catalog.chip_pulse_specs(_inventory())
+
+    def test_a_class_with_no_schema_is_never_offered(self):
+        assert "NoFieldsPulse" not in pulse_catalog.chip_pulse_specs(_inventory())
+
+    def test_a_class_the_catalog_already_has_is_never_doubled(self):
+        assert "SquarePulse" not in pulse_catalog.chip_pulse_specs(_inventory())
+
+    def test_a_class_the_roster_already_has_is_never_doubled(self):
+        """One class must never appear twice under two spellings."""
+        pulse_catalog.apply_env_overlay({"SNZTwoFluxPulse": {
+            "canonical": _LAB + "SNZTwoFluxPulse",
+            "fields": _fields("amplitude")}})
+        assert "SNZTwoFluxPulse" not in pulse_catalog.chip_pulse_specs(_inventory())
+
+    def test_no_inventory_is_a_provable_no_op(self):
+        """The byte-identity fence: with nothing installed every door is what
+        it was before this existed."""
+        assert pulse_catalog.chip_pulse_specs(None) == {}
+        assert pulse_catalog.chip_pulse_specs({}) == {}
+
+    def test_the_form_offers_it_and_says_where_it_came_from(self, client):
+        pulse_catalog.apply_chip_classes(_inventory())
+        html = client.get("/pulse/new", headers={"HX-Request": "true"}
+                          ).get_data(as_text=True)
+        assert "From this chip" in html
+        assert 'value="SNZTwoFluxPulse"' in html
+        assert "Declared by this chip" in html
+
+    def test_the_form_does_not_brand_it_missing_from_the_env(self, client):
+        """It is absent from the roster BY CONSTRUCTION while the probe that
+        produced it said importable. Marking it a miss would put a confirm in
+        front of the one class we have direct evidence for."""
+        pulse_catalog.apply_env_overlay({"SquarePulse": {
+            "canonical": "quam.components.pulses.SquarePulse",
+            "fields": _fields("amplitude")}})
+        pulse_catalog.apply_chip_classes(_inventory())
+        html = client.get("/pulse/new", headers={"HX-Request": "true"}
+                          ).get_data(as_text=True)
+        island = html.split('id="pulse-catalog-data"')[1]
+        island = island.split(">", 1)[1].split("</script>")[0]
+        data = json.loads(island)
+        assert data["SNZTwoFluxPulse"]["verify"] == "env"
+        assert data["SNZTwoFluxPulse"]["env_only"] is True
+        assert "Declared by this chip" in data["SNZTwoFluxPulse"]["doc"]
+        # a class that really IS absent from the env still says so
+        assert data["GaussianPulse"]["verify"] == "missing"
+
+    def test_the_create_door_accepts_it_without_a_force(self, client):
+        pulse_catalog.apply_env_overlay({"SquarePulse": {
+            "canonical": "quam.components.pulses.SquarePulse",
+            "fields": _fields("amplitude")}})
+        pulse_catalog.apply_chip_classes(_inventory())
+        r = client.post("/api/pulse/create", data={
+            "target_kind": "qubit", "qubit": "qA1", "channel": "z",
+            "op_name": "snz_probe", "pulse_type": "SNZTwoFluxPulse",
+            "amplitude": "0.12", "flat_length": "40", "b_over_a": "0.5"})
+        assert r.status_code == 200, r.get_data(as_text=True)[:300]
+        detail = client.get(
+            "/pulse/detail?path=qubits.qA1.z.operations.snz_probe",
+            headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert "SNZTwoFluxPulse" in detail
+
+    def test_a_class_in_no_inventory_still_needs_the_force(self, client):
+        """The r15 gate is untouched for everything else."""
+        pulse_catalog.apply_env_overlay({"SquarePulse": {
+            "canonical": "quam.components.pulses.SquarePulse",
+            "fields": _fields("amplitude")}})
+        pulse_catalog.apply_chip_classes(_inventory())
+        r = client.post("/api/pulse/create", data={
+            "target_kind": "qubit", "qubit": "qA1", "channel": "z",
+            "op_name": "g_probe", "pulse_type": "GaussianPulse",
+            "amplitude": "0.12", "length": "40", "sigma": "8"})
+        assert r.status_code == 409
+        assert "not importable in the selected environment" in \
+            r.get_data(as_text=True)
+
+
+class TestTheInventoryIsActuallyInstalled:
+    """docs/190 F47 -- the specs above are only reachable if something INSTALLS
+    the chip's class inventory. `_attach_type_policy` is the request-path door
+    that already reads that manifest for the type layer; a handler nothing
+    calls is this project's recurring failure (docs/141 §4af), so the seam is
+    pinned rather than the function alone."""
+
+    @pytest.fixture(autouse=True)
+    def _clean(self):
+        pulse_catalog.apply_env_overlay(None)
+        pulse_catalog.apply_chip_classes(None)
+        yield
+        pulse_catalog.apply_env_overlay(None)
+        pulse_catalog.apply_chip_classes(None)
+
+    def test_attaching_the_type_policy_installs_the_inventory(
+            self, client, monkeypatch):
+        from quam_state_manager.core import config_generator, state_env_schema
+        from quam_state_manager.web import routes as routes_mod
+
+        inv = _inventory()
+        monkeypatch.setattr(state_env_schema, "manifest_for_store",
+                            lambda *a, **k: {"classes": inv, "pulse_roster": {},
+                                             "versions": {}})
+        monkeypatch.setattr(config_generator, "get_selected_env",
+                            lambda *a, **k: "C:/envs/lab/python.exe")
+        app = client.application
+        with app.test_request_context("/"):
+            ctx = routes_mod._active_ctx()
+            assert ctx and ctx.get("store") is not None
+            routes_mod._attach_type_policy(ctx)
+        assert pulse_catalog.chip_classes_active() is not None
+        assert "SNZTwoFluxPulse" in pulse_catalog.chip_pulse_specs()
+
+    def test_switching_env_clears_it(self, client, tmp_path):
+        """It belongs to the env+chip that produced it, so the SELECT-ENV door
+        must drop it exactly as it drops the pulse roster — driven through the
+        route, because clearing it by hand here would pin nothing."""
+        pulse_catalog.apply_chip_classes(_inventory())
+        assert "SNZTwoFluxPulse" in pulse_catalog.chip_pulse_specs()
+        fake = tmp_path / "python.exe"
+        fake.write_bytes(b"")
+        r = client.post("/generate/select-env",
+                        json={"python": str(fake)})
+        assert r.status_code in (200, 400), r.status_code
+        assert pulse_catalog.chip_pulse_specs() == {}

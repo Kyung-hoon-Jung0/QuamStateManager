@@ -1031,10 +1031,16 @@ window.PulsesPage = (function () {
                     fields.parentNode.insertBefore(envNote, fields.nextSibling);
                 }
             }
-            envNote.textContent = 'Discovered in the selected environment — ' +
-                'SM has no waveform transcription for this class, so there ' +
-                'is no live preview. Fields come from the env’s own ' +
-                'dataclass schema.';
+            // docs/190 F47: two kinds of class arrive here now -- one the
+            // selected ENVIRONMENT has and one THIS CHIP declares (the lab's
+            // own) -- and they have different answers to "where did this come
+            // from". The spec carries its own sentence; the env wording is the
+            // fallback for a catalog entry that predates the field.
+            envNote.textContent = spec.doc ||
+                ('Discovered in the selected environment — ' +
+                 'SM has no waveform transcription for this class, so there ' +
+                 'is no live preview. Fields come from the env’s own ' +
+                 'dataclass schema.');
         } else if (envNote) {
             envNote.remove();
         }

@@ -1642,6 +1642,11 @@ def _attach_type_policy(ctx, inst=None) -> None:
             # homes, false-unmodeled suppression) — global, like env selection
             from quam_state_manager.core import pulse_catalog
             pulse_catalog.apply_env_overlay(manifest["pulse_roster"])
+        if manifest is not None:
+            # docs/190 F47: and the CHIP's own classes beside it — a class the
+            # lab wrote is in no roster, so the create form could not offer it
+            from quam_state_manager.core import pulse_catalog
+            pulse_catalog.apply_chip_classes(manifest.get("classes"))
     except Exception:  # noqa: BLE001
         logger.warning("type-policy attach failed", exc_info=True)
 
@@ -1706,6 +1711,7 @@ def _warm_state_schema_async(store, inst, live_folder=None) -> None:
                 store._type_manifest_env = python_path
                 if manifest.get("pulse_roster"):
                     pulse_catalog.apply_env_overlay(manifest["pulse_roster"])
+                pulse_catalog.apply_chip_classes(manifest.get("classes"))
         except Exception:  # noqa: BLE001
             logger.warning("state-schema warm probe failed", exc_info=True)
         finally:
@@ -13450,11 +13456,17 @@ def pulse_create_form():
     # roster-only classes become creatable (synthesized specs), catalog
     # classes get an importability verdict, and the strip on top names the
     # env + class count (or says "static catalog" honestly).
-    from quam_state_manager.core.pulse_catalog import (env_creatable_specs,
+    from quam_state_manager.core.pulse_catalog import (chip_pulse_specs,
+                                                      env_creatable_specs,
                                                       env_overlay_active,
                                                       env_roster_breakdown)
     roster = env_overlay_active()
     env_specs = env_creatable_specs(roster)
+    # docs/190 F47: the classes THIS CHIP declares that no roster contains —
+    # the lab's own. SM has held their field schemas all along (the class
+    # inventory probes exactly what the chip declares); only this form never
+    # read that half, so a user could duplicate an SNZ pulse and never make one.
+    chip_specs = chip_pulse_specs()
 
     creatable = [s for s in PULSE_CATALOG.values() if s.creatable]
     groups: dict[str, list] = {}
@@ -13462,12 +13474,15 @@ def pulse_create_form():
         groups.setdefault(s.group, []).append(s)
     for s in env_specs.values():
         groups.setdefault(s.group, []).append(s)
+    for s in chip_specs.values():
+        groups.setdefault(s.group, []).append(s)
 
     # The __class__ each type would write on THIS chip (+ provenance) — the
     # form shows it (read-only since r15) with a caution when it is a guess
     # ("prefix"/"catalog") rather than evidence ("reused"/"env").
     chip_classes = {s.key: chip_qclass(store.merged, s)
-                    for s in [*creatable, *env_specs.values()]}
+                    for s in [*creatable, *env_specs.values(),
+                              *chip_specs.values()]}
 
     from quam_state_manager.core.pulse_index import PAIR_PULSE_CHANNELS, PULSE_CHANNELS
 
@@ -13602,13 +13617,22 @@ def pulse_create_form():
             if isinstance(ops, dict):
                 existing[f"pair:{pair_name}/{channel}"] = sorted(ops.keys())
 
-    def _cat_entry(s, *, env_only=False):
+    def _cat_entry(s, *, env_only=False, verified=False):
         # verify: None = no roster installed (no verdict possible);
         # "env" = the selected env imports this class; "missing" = it does
         # NOT (creating it writes a state that env can't Quam.load — the
         # form confirms before submitting, the POST 409s as backstop).
+        #
+        # docs/190 F47: a class from the CHIP's own inventory is `verified`.
+        # It is absent from the roster by construction (the roster walks quam's
+        # homes, not the lab's package) while the inventory that produced it
+        # reports `importable: True` — marking it "✗ not in this env" would
+        # put a confirm in front of the one kind of class we have direct
+        # evidence for.
         verify = None
-        if roster is not None:
+        if verified:
+            verify = "env"
+        elif roster is not None:
             verify = "env" if s.key in roster else "missing"
         d = {
             "label": s.label, "group": s.group, "doc": s.doc,
@@ -13631,6 +13655,11 @@ def pulse_create_form():
     catalog_json = json.dumps({
         **{s.key: _cat_entry(s) for s in creatable},
         **{s.key: _cat_entry(s, env_only=True) for s in env_specs.values()},
+        # docs/190 F47: the chip's own classes take the same env_only path —
+        # SM has no waveform transcription for them either, so the form
+        # suppresses the preview and says why rather than drawing nothing
+        **{s.key: _cat_entry(s, env_only=True, verified=True)
+           for s in chip_specs.values()},
     })
 
     # Optional preselection (the qubit-detail "Add pulse" button passes these
@@ -13811,6 +13840,7 @@ def api_pulse_create():
                                level="warning")
 
     from quam_state_manager.core.pulse_catalog import (PULSE_CATALOG,
+                                                       chip_pulse_specs,
                                                        env_creatable_specs,
                                                        env_overlay_active)
 
@@ -13822,6 +13852,9 @@ def api_pulse_create():
         # synthesized specs (e.g. quam_builder 0.4.0's CosineBipolarPulse).
         spec = env_creatable_specs(roster).get(pulse_type)
     if spec is None or not spec.creatable:
+        # docs/190 F47: and the chip's own classes, which are in no roster
+        spec = chip_pulse_specs().get(pulse_type)
+    if spec is None or not spec.creatable:
         hint = (" (the selected environment may have changed since this "
                 "form was opened — reload it)" if roster is not None else "")
         return render_template("_status.html",
@@ -13832,7 +13865,14 @@ def api_pulse_create():
     # a class the selected env can NOT import writes a state that env will
     # fail to Quam.load. The form pre-confirms and re-submits with force=1;
     # this 409 is the backstop for un-wired callers.
-    if (roster is not None and spec.key not in roster
+    # docs/190 F47: a class from the chip's OWN inventory is absent from the
+    # roster by construction (that walk covers quam's homes, not the lab's
+    # package) while the probe that produced it reported `importable: True` --
+    # refusing it here would demand a force for the one kind of class we have
+    # direct evidence for. Everything else keeps the r15 gate exactly.
+    from quam_state_manager.core.pulse_catalog import chip_pulse_specs as _chip_specs
+    _chip_verified = spec.key in _chip_specs()
+    if (roster is not None and spec.key not in roster and not _chip_verified
             and request.form.get("force") != "1"):
         return render_template(
             "_status.html",
@@ -25577,6 +25617,7 @@ def generate_select_env():
     # warm below re-applies the new env's roster when its probe lands.
     from quam_state_manager.core import pulse_catalog
     pulse_catalog.apply_env_overlay(None)
+    pulse_catalog.apply_chip_classes(None)      # docs/190 F47, same lifetime
     # Warm the capability manifest in the background so the review step's report
     # is instant (the deep probe imports the stack — a few seconds, then cached).
     inst = current_app.instance_path
@@ -26785,6 +26826,7 @@ def diagnostics_env_probe():
                     store._type_manifest_env = python_path
                     if manifest.get("pulse_roster"):
                         pulse_catalog.apply_env_overlay(manifest["pulse_roster"])
+                    pulse_catalog.apply_chip_classes(manifest.get("classes"))
             except Exception:  # noqa: BLE001
                 logger.warning("env probe failed", exc_info=True)
             finally:

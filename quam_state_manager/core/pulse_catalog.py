@@ -38,6 +38,9 @@ __all__ = [
     "env_leaf_verdict",
     "env_roster_breakdown",
     "env_roster_note",
+    "apply_chip_classes",
+    "chip_classes_active",
+    "chip_pulse_specs",
     "by_qclass",
     "resolve_qclass",
     "infer_spec",
@@ -638,6 +641,128 @@ def env_roster_note(b: dict) -> str:
     return ", ".join(bits[:-1]) + " and " + bits[-1]
 
 
+# ---------------------------------------------------------------------------
+# The chip's OWN pulse classes (docs/190 F47)
+# ---------------------------------------------------------------------------
+# The env roster is a subclass walk over the homes QM ships (see
+# ``probe_state_schema._dump_pulse_roster``), so a class the LAB wrote is not
+# in it -- on the KRISS_CZ chip that is four classes covering 30 pulse objects
+# (docs/189). SM already holds their full field schemas, in the same instance
+# folder, because the CHIP declares them and the class inventory probes exactly
+# what the chip declares; the create form simply never read that half. So a
+# user could duplicate an SNZ pulse and never create one.
+#
+# ``PULSE_BASE`` is the honest discriminator and it is structural, never a name
+# guess: a pulse class has quam's ``Pulse`` among its bases and a gate macro
+# (``CZGateTwoFlux``) does not.
+
+_PULSE_BASE = "quam.components.pulses.Pulse"
+_READOUT_BASES = frozenset({
+    "quam.components.pulses.BaseReadoutPulse",
+    "quam.components.pulses.ReadoutPulse",
+})
+
+_CHIP_CLASSES: dict | None = None
+_CHIP_SPECS_MEMO: tuple[int, dict] | None = None
+
+
+def apply_chip_classes(classes: dict | None) -> None:
+    """Install the probed class inventory for the OPEN chip (or clear it)."""
+    global _CHIP_CLASSES, _CHIP_SPECS_MEMO
+    _CHIP_CLASSES = classes if classes else None
+    _CHIP_SPECS_MEMO = None
+
+
+def chip_classes_active() -> dict | None:
+    return _CHIP_CLASSES
+
+
+def chip_pulse_specs(classes: dict | None = None) -> dict[str, PulseSpec]:
+    """Creatable specs for pulse classes this CHIP declares and the env roster
+    never saw — the lab's own.
+
+    Skipped: anything the catalog or the roster already offers (one class must
+    never appear twice under two spellings), a class that did not import, and
+    one with no field dump. With no inventory installed the result is ``{}``
+    and every door is byte-identical to before.
+    """
+    global _CHIP_SPECS_MEMO
+    classes = classes if classes is not None else _CHIP_CLASSES
+    if not classes:
+        return {}
+    if _CHIP_SPECS_MEMO is not None and _CHIP_SPECS_MEMO[0] == id(classes):
+        return _CHIP_SPECS_MEMO[1]
+
+    roster = _ENV_OVERLAY or {}
+    out: dict[str, PulseSpec] = {}
+    for path, rec in classes.items():
+        if not isinstance(rec, dict) or not rec.get("importable"):
+            continue
+        bases = rec.get("bases")
+        if not isinstance(bases, (list, tuple)) or _PULSE_BASE not in bases:
+            continue                       # a macro / the root / a port, not a pulse
+        leaf = str(path).rsplit(".", 1)[-1]
+        if (leaf in PULSE_CATALOG or leaf in _LEAF_ALIASES or leaf in roster
+                or leaf.startswith("_") or leaf in _ENV_SPEC_BASE_DENY):
+            continue
+        fields = rec.get("fields")
+        canonical = rec.get("canonical") or str(path)
+        if not isinstance(fields, dict) or not fields:
+            continue
+        out[leaf] = _spec_from_fields(
+            leaf, canonical, fields,
+            readout=bool(_READOUT_BASES.intersection(bases)),
+            group="From this chip",
+            doc=("Declared by this chip and defined in your own package — SM "
+                 "has no waveform transcription for it, so the preview comes "
+                 "from the generated config once it exists (docs/189)."))
+    _CHIP_SPECS_MEMO = (id(classes), out)
+    return out
+
+
+def _spec_from_fields(leaf: str, canonical: str, fields: dict, *,
+                      readout: bool, group: str, doc: str) -> PulseSpec:
+    """One synthesized :class:`PulseSpec` from a probed dataclass field dump.
+
+    The dump's shape is the same whether it came from the env's pulse ROSTER
+    (a subclass walk over quam's own homes) or from the chip's own CLASS
+    INVENTORY — both are ``probe_state_schema._dump_fields`` output — so both
+    doors build their options through this one function (docs/190 F47).
+    """
+    length_mode, length_pointer = "derived", "#./inferred_length"
+    lrec = fields.get("length")
+    if isinstance(lrec, dict):
+        ldefault = lrec.get("default")
+        if lrec.get("default_is_reference") and isinstance(ldefault, str):
+            length_mode, length_pointer = "inferred", ldefault
+        else:
+            length_mode = "explicit"
+
+    params: list[ParamSpec] = []
+    for name, frec in fields.items():
+        if not isinstance(frec, dict):
+            continue
+        if name == "length" and length_mode != "explicit":
+            continue
+        base = ((frec.get("type") or {}).get("base")
+                if isinstance(frec.get("type"), dict) else None)
+        params.append(ParamSpec(
+            name=name,
+            label=name.replace("_", " ").capitalize(),
+            kind=_ENV_KIND_MAP.get(base, "str"),
+            default=frec.get("default"),
+            required=not bool(frec.get("has_default")),
+            synth=name not in ("id", "digital_marker"),
+        ))
+
+    return PulseSpec(
+        key=leaf, qclass=canonical, label=leaf, iq="never", readout=readout,
+        channels=("xy", "z", "resonator"), params=tuple(params),
+        length_mode=length_mode, length_pointer=length_pointer,
+        creatable=True, group=group, doc=doc,
+    )
+
+
 def env_creatable_specs(roster: dict | None = None) -> dict[str, PulseSpec]:
     """Synthesized creatable specs for roster-ONLY pulse classes (r15, docs/71 §2).
 
@@ -677,49 +802,16 @@ def env_creatable_specs(roster: dict | None = None) -> dict[str, PulseSpec]:
         fields = rec.get("fields")
         canonical = rec.get("canonical")
 
-        length_mode, length_pointer = "derived", "#./inferred_length"
-        lrec = fields.get("length")
-        if isinstance(lrec, dict):
-            ldefault = lrec.get("default")
-            if lrec.get("default_is_reference") and isinstance(ldefault, str):
-                length_mode, length_pointer = "inferred", ldefault
-            else:
-                length_mode = "explicit"
-
-        params: list[ParamSpec] = []
-        for name, frec in fields.items():
-            if not isinstance(frec, dict):
-                continue
-            if name == "length" and length_mode != "explicit":
-                continue
-            base = ((frec.get("type") or {}).get("base")
-                    if isinstance(frec.get("type"), dict) else None)
-            kind = _ENV_KIND_MAP.get(base, "str")
-            has_default = bool(frec.get("has_default"))
-            params.append(ParamSpec(
-                name=name,
-                label=name.replace("_", " ").capitalize(),
-                kind=kind,
-                default=frec.get("default"),
-                required=not has_default,
-                synth=name not in ("id", "digital_marker"),
-            ))
-
-        out[leaf] = PulseSpec(
-            key=leaf,
-            qclass=canonical,
-            label=leaf,
-            iq="never",
-            readout=bool(rec.get("readout")),
-            channels=("xy", "z", "resonator"),
-            params=tuple(params),
-            length_mode=length_mode,
-            length_pointer=length_pointer,
-            creatable=True,
+        out[leaf] = _spec_from_fields(
+            leaf, canonical, fields, readout=bool(rec.get("readout")),
             group="From environment",
-            doc=("Discovered in the selected environment — SM has no waveform "
-                 "transcription for this class, so there is no live preview."),
-        )
+            # the wording the create form has shown for these since r15 --
+            # carried on the spec now so one rule renders both provenances
+            # (docs/190 F47)
+            doc=("Discovered in the selected environment — SM has no "
+                 "waveform transcription for this class, so there is no live "
+                 "preview. Fields come from the env’s own dataclass "
+                 "schema."))
 
     _ENV_SPECS_MEMO = (id(roster), out)
     return out

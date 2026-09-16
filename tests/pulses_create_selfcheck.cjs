@@ -50,7 +50,12 @@ const CATALOG = {
                default: 0.1, unit: 'V', synth: true, required: true }]
   },
   CosineBipolarPulse: {
-    label: 'CosineBipolarPulse', group: 'From environment', doc: 'env class',
+    label: 'CosineBipolarPulse', group: 'From environment',
+    // the REAL sentence env_creatable_specs puts on these (docs/190 F47) --
+    // a stub here made P3 pass against a note the product never renders
+    doc: 'Discovered in the selected environment — SM has no waveform ' +
+         'transcription for this class, so there is no live preview. Fields ' +
+         'come from the env’s own dataclass schema.',
     iq: 'never', length_mode: 'explicit', channels: ['xy', 'z', 'resonator'],
     verify: 'env', env_only: true,
     qclass: 'quam_builder.architecture.superconducting.components.pulses.CosineBipolarPulse',
@@ -349,6 +354,43 @@ gateSel.value = '__new__:cz_unipolar';
 P.createGateSelected(gateSel);
 ok(gname.validationMessage === '',
    'P12: switching pair re-judges the same word');
+
+// P13 (docs/190 F47): two kinds of class reach the no-preview note now -- one
+// the selected ENVIRONMENT has and one THIS CHIP declares (the lab's own) --
+// and "where did this come from" has a different answer for each. The spec
+// carries its own sentence; the env wording is the fallback for an entry that
+// predates the field.
+root._catalog.LabOwnPulse = {
+  label: 'LabOwnPulse', group: 'From this chip',
+  doc: 'Declared by this chip and defined in your own package — no preview.',
+  iq: 'never', length_mode: 'inferred', channels: ['xy', 'z', 'resonator'],
+  verify: 'env', env_only: true, qclass: 'quam_config.two_flux.LabOwnPulse',
+  qclass_how: 'env',
+  params: [{ name: 'amplitude', label: 'Amplitude', kind: 'float',
+             default: null, unit: '', synth: true, required: true }]
+};
+var labOpt = doc.createElement('option');
+labOpt.value = 'LabOwnPulse'; labOpt.textContent = 'LabOwnPulse';
+typeSel.appendChild(labOpt);
+typeSel.value = 'LabOwnPulse';
+P.createTypeChanged(typeSel);
+var note2 = doc.getElementById('pulse-create-envnote');
+ok(!!note2 && /Declared by this chip/.test(note2.textContent),
+   'P13: a chip class says it came from the chip');
+ok(doc.getElementById('pulse-create-plot').hidden === true,
+   'P13: and still claims no preview');
+
+// a class with no doc of its own keeps the env sentence
+typeSel.value = 'CosineBipolarPulse';
+P.createTypeChanged(typeSel);
+var envDoc = root._catalog.CosineBipolarPulse.doc;
+root._catalog.CosineBipolarPulse.doc = '';
+typeSel.value = 'SquarePulse'; P.createTypeChanged(typeSel);
+typeSel.value = 'CosineBipolarPulse'; P.createTypeChanged(typeSel);
+var note3 = doc.getElementById('pulse-create-envnote');
+ok(!!note3 && /Discovered in the selected environment/.test(note3.textContent),
+   'P13: an entry with no doc keeps the env wording');
+root._catalog.CosineBipolarPulse.doc = envDoc;
 
 if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
 console.log('ALL OK pulses_create_selfcheck');
