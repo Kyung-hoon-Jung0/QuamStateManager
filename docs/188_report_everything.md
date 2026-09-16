@@ -193,3 +193,58 @@ every chip, a `%.4f` second renderer, `topo_nodes` emptied, `topo_edges`
 emptied, the detuning column removed, a section heading removed, the drive port
 not printed, the flux port not printed, the ports section removed, and the
 readout power not derived.
+
+## 7. Verified in real headless Chrome
+
+Served on 127.0.0.1:5077 against a COPY of the customer chip and screenshotted
+at 1280x7600. The map draws, all thirteen sections render, and the RB table
+reads as intended:
+
+```
+q1-2  cz_flattop  StandardRB         2Q Clifford (SRB)  65.834%  1477
+q1-2  cz_flattop  StandardRB_alpha   RB fit (decay a)   0.5445   1477
+q1-2  cz_flattop  InterleavedRB      2Q gate (IRB)      95.696%  1477
+```
+
+It found one layout defect the HTML could not show: in the 9-column
+gate-parameter table a `#./inferred_total_length` pointer took the width and
+squeezed the first column until `q1-2` rendered as `q1-` over `2`. An entity id
+and a gate name are NAMES and now carry `.rep-id` (`white-space: nowrap`); the
+pointer is the cell that gives way (`overflow-wrap: anywhere`).
+
+## 8. The Download HTML path now RUNS, instead of being grepped for
+
+`ChipReport.buildStandalone()` is the only part of the report that is CODE
+rather than markup, and the pins only ever asserted that its SOURCE was on the
+page - the shape docs/187 named as this project's recurring failure (a handler
+that never runs). It cannot be driven under jsdom honestly: it waits for the
+ComponentMap's SVG and then FETCHES both stylesheets, so a harness would be
+testing its own stubs.
+
+`tests/report_download_probe.cjs` drives it over CDP in real headless Chrome
+against a running server (a round-verification tool, like the `cdp_*` drivers -
+not wired into pytest, which has neither a server nor a browser). 14 checks,
+all passing on the customer chip copy: the saved file is a whole document of
+866,126 characters, every `<script>` stripped, no stylesheet `<link>` left to
+404 offline, the CSS inlined as `<style>`, the drawn map baked in, the Download
+button removed (it is dead in a saved file) and Print still working - plus the
+docs/188 sections themselves, since a printout the customer archives must carry
+them and not just the live page.
+
+**Its own first sweep scored 4 of 5, and the miss was the probe's.** "The
+download no longer waits for the map" went GREEN because the probe let the SVG
+draw before calling, so deleting `whenDrawn` changed nothing it could observe.
+The wait is made observable instead: take the drawn SVG away, start the
+download, and put an SVG back after 800 ms. A serializer that waits returns
+late and carries the map; one that does not returns at once and archives the
+"Loading chip layout..." placeholder. **Re-swept: 5 of 5 RED.**
+
+## 9. A silent no-op, recorded because it nearly shipped
+
+Section 7 above was first appended with a `str.replace` whose anchor spanned a
+line break the file did not have. The replacement matched nothing, the script
+wrote the file back unchanged, and printed `ok`. Nothing was lost only because
+the next command read the tail. Every patch script in this round asserts its
+anchor count BEFORE writing; the one that did not is the one that quietly did
+nothing.
+
