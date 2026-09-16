@@ -12647,6 +12647,30 @@ def _pulse_section_ctx(store, pulse_index, path: str):
     used_by_target = pulse_index.used_by(actual_path)
     delete_used_by = (pulse_index.used_by(path) if alias_chain
                       else used_by_target)
+    # docs/189 (customer, on-site: "pulses 메뉴에서 snz 는 plotting이 안돼").
+    # A lab may write its OWN pulse classes -- the KRISS_CZ chip's CZ flux pulse
+    # is `quam_config.two_flux_gate.SNZTwoFluxPulse`, and four such classes cover
+    # 30 pulse objects on it. `waveform_synth` mirrors quam's classes only, so
+    # it answered "unrecognized pulse class ..." and the page drew NOTHING.
+    #
+    # The remedy is not to transcribe the lab's algorithm into SM: a copy goes
+    # stale the day the lab edits its module, and a wrong waveform is worse than
+    # no waveform. The generated config IS the lab's own `generate_config()`
+    # output, so it cannot disagree with what the instrument will play. Use it,
+    # and SAY that is where the curve came from.
+    synth_error = None if payload.get("ok") else payload.get("error")
+    unknown_class = (not payload.get("ok")
+                     and payload.get("reason") == "unknown_class")
+    plot = _pulse_plot_traces(payload)
+    plot_source = "synth" if payload.get("ok") else None
+    truth = {}
+    if unknown_class:
+        truth = _pulse_truth_lookup(store, actual_path)
+        if truth.get("status") == "ok":
+            plot = {"ok": True, "traces": truth["traces"]}
+            plot_source = "config"
+            synth_error = None      # answered; the label carries the provenance
+
     return {
         "path": path,
         "actual_path": actual_path,
@@ -12666,9 +12690,18 @@ def _pulse_section_ctx(store, pulse_index, path: str):
         "params": param_rows,
         "used_by": used_by_target,
         "delete_used_by": delete_used_by,
-        "synth_error": None if payload.get("ok") else payload.get("error"),
+        "synth_error": synth_error,
+        # docs/189 -- the class is the lab's own and SM cannot synthesize it.
+        "synth_unknown_class": unknown_class,
+        # where the curve on screen came from: "synth" (SM's own mirror of
+        # quam's classes) or "config" (the lab's own generate_config output).
+        # The page must never pass one off as the other.
+        "plot_source": plot_source,
+        "plot_config_at": truth.get("at") if plot_source == "config" else None,
+        "plot_config_stale": bool(truth.get("stale")) if plot_source == "config" else False,
+        "truth_status": truth.get("status") if unknown_class else None,
         "can_rename": is_qubit_op and not alias_chain,
-        "plot": _pulse_plot_traces(payload),
+        "plot": plot,
         "label": f"{row['owner']} · {row['channel']} · {row['op_name']}",
     }
 
@@ -12867,6 +12900,13 @@ def api_pulse_synth():
         "ok": payload.get("ok", False),
         "error": payload.get("error"),
         "param_errors": payload.get("param_errors") or {},
+        # docs/189 -- the CLASSIFICATION, not only the sentence. The page needs
+        # to know it is looking at a class SM cannot synthesize in-process (and
+        # which class) so it can fall back to the env's own waveform instead of
+        # leaving an empty plot behind a technical line nobody can act on.
+        "reason": payload.get("reason"),
+        "qclass": payload.get("qclass"),
+        "schema_known": payload.get("schema_known", False),
         "plot": _pulse_plot_traces(payload),
     })
 
@@ -13992,80 +14032,125 @@ def _config_op_for_pulse_path(config: dict, path: str,
     return None, None
 
 
+def _pulse_truth_lookup(store, path):
+    """The ground-truth waveform for *path* out of the cached generated config.
+
+    ONE lookup, two callers (docs/189): ``/api/pulse/ground-truth``, which adds
+    staleness and a synth-vs-truth comparison, and ``_pulse_section_ctx``,
+    which needs it when SM cannot synthesize the class at all -- a lab's own
+    pulse class. Returns ``{"status": ...}`` and, on ``"ok"``, the decimated
+    display traces. Never raises: every failure is a named status.
+    """
+    from quam_state_manager.core import config_view
+    from quam_state_manager.core.waveform_synth import decimate_minmax
+
+    if store is None:
+        return {"status": "no-state"}
+    if not _is_pulse_path(path):
+        return {"status": "bad-path"}
+    cfg = store.generated_config
+    meta = store.generated_config_meta or {}
+    if cfg is None:
+        return {"status": "absent"}
+
+    elem_or_prefix, op_name = _config_op_for_pulse_path(cfg, path, store.merged)
+    if op_name is None:
+        return {"status": "not-found"}
+
+    # The qubit-op matcher returns op_name straight from the path without
+    # consulting the config, so an op the config has never heard of would
+    # otherwise masquerade as "no-trace". Verify the element actually carries
+    # the op before deciding: absent => not-found, present-but-empty => no-trace.
+    cfg_elem = (cfg.get("elements") or {}).get(elem_or_prefix)
+    cfg_ops = cfg_elem.get("operations") if isinstance(cfg_elem, dict) else None
+    if not isinstance(cfg_ops, dict) or op_name not in cfg_ops:
+        return {"status": "not-found"}
+
+    # Qubit/flux branches return a dotted "<target>.<channel>" key; pair-drive
+    # elements (cr_q1_q2 / zz_q1_q2) are dot-less -- rpartition then yields an
+    # empty prefix, which waveform_for_operation treats as "channel IS the key".
+    prefix, _, chan = elem_or_prefix.rpartition(".")
+    truth = config_view.waveform_for_operation(cfg, prefix, op_name, channel=chan)
+    if truth is None or not truth.get("traces"):
+        return {"status": "no-trace", "operation": op_name}
+
+    # I = the single/I trace, Q = the Q trace (config_view returns one trace
+    # per waveform entry, ordered single -> I -> Q -> rest).
+    truth_i = next((t for t in truth["traces"]
+                    if t.get("label") in ("single", "I")), truth["traces"][0])
+    truth_q = next((t for t in truth["traces"] if t.get("label") == "Q"), None)
+
+    traces = [{"name": "I", "x": truth_i.get("x") or [],
+               "y": truth_i.get("y") or []}]
+    if truth_q and truth_q.get("y"):
+        traces.append({"name": "Q", "x": truth_q.get("x") or [],
+                       "y": truth_q["y"]})
+    # decimate for display parity with the synth plot
+    for trace in traces:
+        xs, ys, _ = decimate_minmax(trace["y"], _PULSE_PLOT_MAX_POINTS)
+        trace["x"], trace["y"] = xs, ys
+
+    return {
+        "status": "ok",
+        "traces": traces,
+        "raw_i": truth_i,
+        "raw_q": truth_q,
+        "element": truth.get("element"),
+        "operation": op_name,
+        "stale": _config_stale(store),
+        "at": meta.get("at"),
+        "unsaved_at_generate": bool(meta.get("unsaved_at_generate")),
+    }
+
+
+_TRUTH_STATUS_ERROR = {
+    "no-state": "No state loaded",
+    "absent": ("No config has been generated for this chip yet \u2014 "
+               "generate one to compare against."),
+    "not-found": ("This pulse isn't in the cached config \u2014 it was likely "
+                  "created/renamed/duplicated after the config was generated. "
+                  "Regenerate to include it."),
+}
+
+
 @bp.route("/api/pulse/ground-truth")
 def api_pulse_ground_truth():
     """Ground-truth waveform for a pulse from the cached generated config,
     plus staleness info and a server-side synth-vs-truth comparison."""
     store = _store()
-    if not store:
-        return jsonify({"ok": False, "status": "no-state",
-                        "error": "No state loaded"}), 400
-
     path = request.args.get("path", "").strip()
-    if not _is_pulse_path(path):
-        return jsonify({"ok": False, "status": "bad-path",
+    found = _pulse_truth_lookup(store, path)
+    status = found["status"]
+
+    if status == "no-state":
+        return jsonify({"ok": False, "status": status,
+                        "error": _TRUTH_STATUS_ERROR[status]}), 400
+    if status == "bad-path":
+        return jsonify({"ok": False, "status": status,
                         "error": f"not a pulse path: {path}"}), 404
-
-    cfg = store.generated_config
-    meta = store.generated_config_meta or {}
-    if cfg is None:
+    if status == "absent":
+        return jsonify({"ok": False, "status": status,
+                        "error": _TRUTH_STATUS_ERROR[status]}), 409
+    if status == "not-found":
+        return jsonify({"ok": False, "status": status,
+                        "error": _TRUTH_STATUS_ERROR[status]}), 404
+    if status == "no-trace":
+        op_name = found.get("operation")
         return jsonify({
-            "ok": False, "status": "absent",
-            "error": ("No config has been generated for this chip yet — "
-                      "generate one to compare against."),
-        }), 409
-
-    from quam_state_manager.core import config_view
-    from quam_state_manager.core.waveform_synth import synth_for_operation
-
-    elem_or_prefix, op_name = _config_op_for_pulse_path(cfg, path, store.merged)
-    if op_name is None:
-        return jsonify({
-            "ok": False, "status": "not-found",
-            "error": ("This pulse isn't in the cached config — it was likely "
-                      "created/renamed/duplicated after the config was generated. "
-                      "Regenerate to include it."),
-        }), 404
-
-    # The qubit-op matcher returns op_name straight from the path without
-    # consulting the config, so an op the config has never heard of would
-    # otherwise masquerade as "no-trace". Verify the element actually carries
-    # the op before deciding: absent ⇒ not-found, present-but-empty ⇒ no-trace.
-    cfg_elem = (cfg.get("elements") or {}).get(elem_or_prefix)
-    cfg_ops = cfg_elem.get("operations") if isinstance(cfg_elem, dict) else None
-    if not isinstance(cfg_ops, dict) or op_name not in cfg_ops:
-        return jsonify({
-            "ok": False, "status": "not-found",
-            "error": ("This pulse isn't in the cached config — it was likely "
-                      "created/renamed/duplicated after the config was generated. "
-                      "Regenerate to include it."),
-        }), 404
-
-    # Qubit/flux branches return a dotted "<target>.<channel>" key; pair-drive
-    # elements (cr_q1_q2 / zz_q1_q2) are dot-less — rpartition then yields an
-    # empty prefix, which waveform_for_operation treats as "channel IS the key".
-    prefix, _, chan = elem_or_prefix.rpartition(".")
-    truth = config_view.waveform_for_operation(cfg, prefix, op_name, channel=chan)
-    if truth is None or not truth.get("traces"):
-        return jsonify({
-            "ok": False, "status": "no-trace",
+            "ok": False, "status": status,
             "error": (f"{op_name!r} is in the config but carries no waveform "
                       "(e.g. a measurement op with only integration weights). "
                       "Nothing to overlay."),
         }), 404
 
-    # I = the single/I trace, Q = the Q trace (config_view returns one trace
-    # per waveform entry, ordered single → I → Q → rest).
-    truth_i = next((t for t in truth["traces"]
-                    if t.get("label") in ("single", "I")), truth["traces"][0])
-    truth_q = next((t for t in truth["traces"] if t.get("label") == "Q"), None)
+    from quam_state_manager.core.waveform_synth import synth_for_operation
 
-    # Staleness: the single shared primitive (basis = working-copy file hash
-    # at regenerate; an undo back to the generated content reads fresh again).
-    stale = _config_stale(store)
+    truth_i = found["raw_i"]
+    truth_q = found["raw_q"]
+    stale = found["stale"]
 
     # Server-side comparison against the CURRENT synth (full arrays, no
-    # display decimation) — only meaningful when the config is fresh.
+    # display decimation) -- only meaningful when the config is fresh.
     comparison = None
     synth = synth_for_operation(store, path)
     if synth.get("ok") and truth_i.get("y"):
@@ -14087,25 +14172,14 @@ def api_pulse_ground_truth():
                           "lengths_match": False,
                           "synth_len": len(i_arr), "truth_len": len(t_arr)}
 
-    traces = [{"name": "I", "x": truth_i.get("x") or [],
-               "y": truth_i.get("y") or []}]
-    if truth_q and truth_q.get("y"):
-        traces.append({"name": "Q", "x": truth_q.get("x") or [],
-                       "y": truth_q["y"]})
-    # decimate for display parity with the synth plot
-    from quam_state_manager.core.waveform_synth import decimate_minmax
-    for trace in traces:
-        xs, ys, _ = decimate_minmax(trace["y"], _PULSE_PLOT_MAX_POINTS)
-        trace["x"], trace["y"] = xs, ys
-
     return jsonify({
         "ok": True,
         "status": "stale" if stale else "fresh",
-        "plot": {"ok": True, "traces": traces},
-        "element": truth.get("element"),
-        "operation": op_name,
-        "meta": {"at": meta.get("at"), "stale": stale,
-                 "unsaved_at_generate": bool(meta.get("unsaved_at_generate"))},
+        "plot": {"ok": True, "traces": found["traces"]},
+        "element": found.get("element"),
+        "operation": found.get("operation"),
+        "meta": {"at": found.get("at"), "stale": stale,
+                 "unsaved_at_generate": found.get("unsaved_at_generate")},
         "comparison": comparison,
     })
 

@@ -22,8 +22,18 @@
 
 {% if not known and not alias_chain %}
 <div class="pulse-unknown-banner">
+    {# docs/189 -- the second half of this sentence became FALSE the moment the
+       config fallback landed: the waveform IS on screen, the lab's own code
+       drew it. A banner that contradicts the plot under it is worse than no
+       banner, so it says what is actually true of each case. #}
+    {% if plot_source == 'config' %}
+    <code>{{ qclass or '(none)' }}</code> is this lab&#39;s own pulse class, so SM
+    cannot synthesize it and shows its fields raw. The waveform below is the
+    real one, taken from this chip&#39;s generated config.
+    {% else %}
     Unrecognized pulse class <code>{{ qclass or '(none)' }}</code> &mdash;
     fields are shown raw; the synthesized preview is unavailable.
+    {% endif %}
 </div>
 {% endif %}
 
@@ -116,11 +126,35 @@
 </div>
 
 <div class="pulse-plot-bar">
+    {# docs/189 -- the label names the SOURCE of the curve. SM synthesizes the
+       classes it mirrors; for a lab's own class (KRISS_CZ's SNZTwoFluxPulse)
+       the curve is the lab's own generate_config() output, and passing that
+       off as "synthesized" would be a lie about which code drew it. #}
+    {% if plot_source == 'config' %}
+    <span class="pulse-plot-label muted">waveform from the generated config
+        &mdash; this pulse class is the lab&#39;s own, so its own code drew it{%
+        if plot_config_at %} ({{ plot_config_at }}){% endif %}</span>
+    {% if plot_config_stale %}<span class="pulse-synth-err">config is older than your
+        latest edits &mdash; regenerate to see them</span>{% endif %}
+    {% else %}
     <span class="pulse-plot-label muted">preview (synthesized)</span>
+    {% endif %}
     <span class="pulse-decimated-note muted" hidden>(decimated for display)</span>
     <span class="pulse-dirty-pill" hidden>previewing uncommitted edits &mdash; Enter commits &middot; Esc reverts</span>
     <span class="pulse-verify-note" hidden></span>
     <span class="pulse-synth-err" {% if not synth_error %}hidden{% endif %}>{{ synth_error or '' }}</span>
+    {% if synth_unknown_class and truth_status != 'ok' %}
+    <span class="pulse-plot-cta">{% if truth_status == 'absent' %}Generate this
+        chip&#39;s config and the lab&#39;s own waveform is plotted here.
+        <button type="button" class="btn-sm"
+                onclick="PulsesPage.regenerateThenVerify(this)">Generate now</button>
+        <small class="muted">(~10&ndash;30 s)</small>{% elif truth_status == 'not-found' %}This
+        pulse is newer than the cached config.
+        <button type="button" class="btn-sm"
+                onclick="PulsesPage.regenerateThenVerify(this)">Regenerate</button>{% else %}SM
+        has no in-process synthesizer for this class, and the generated config
+        carries no waveform for it either.{% endif %}</span>
+    {% endif %}
 </div>
 {# Customer ask (2026-08-27): overlays — every pulse is time × voltage, so any
    set can share one plot. The same component's companions (a CZ macro's qubit

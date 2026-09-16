@@ -79,14 +79,90 @@ window.PulsesPage = (function () {
             if (gen !== sec.cpGen || !document.body.contains(root)) return;
             if (data && data.ok && data.plot && data.plot.ok) {
                 sec.committedPlot = data.plot;
+                sec.synthErr = '';
                 if (sec.index === 0) root._committedPlot = data.plot;
                 cacheCommitted(sec, data.plot);
+                done();
+                return;
             }
+            /* docs/189 -- this branch used to be EMPTY. The server answers a
+               failed synthesis with a finished sentence ("unrecognized pulse
+               class 'quam_config.two_flux_gate.SNZTwoFluxPulse'") and the page
+               dropped it on the floor, so every later failure -- after an edit,
+               an undo, a re-link -- left the previous curve on screen with
+               nothing said. Say it, and for the one failure that HAS a remedy,
+               take the remedy. */
+            sec.committedPlot = null;
+            sec.synthErr = (data && data.error) || 'preview failed';
+            if (data && data.reason === 'unknown_class') {
+                groundTruthInto(root, sec, gen, done);
+                return;
+            }
+            publishSynthErr(root);
             done();
         }).catch(function () {
             if (gen !== sec.cpGen) return;
             done();                          // keep the last plot; never wedge the preview
         });
+    }
+
+    /* One error line for the whole detail view, aggregated over its sections --
+       another section's success never hides this one's (docs/141 4l-review). */
+    function publishSynthErr(root) {
+        showSynthErr(root, sectionsOf(root).map(function (sc) {
+            return sc.synthErr || '';
+        }).filter(Boolean).join(' \u00b7 '));
+    }
+
+    /* The waveform SM cannot compute, computed by the code that owns it.
+
+       A lab may write its own pulse classes -- KRISS_CZ's chip carries
+       `SNZTwoFluxPulse`, `GaussianNZTwoFluxPulse` and two readout-weight
+       classes, 30 pulse objects in all -- and `waveform_synth` only mirrors
+       quam's. Transcribing a lab-private algorithm into SM would mean shipping
+       a COPY that goes stale the day the lab edits its module, and a wrong
+       waveform is worse than no waveform. The generated config is the lab's
+       OWN `generate_config()` output, so it cannot disagree with the hardware.
+       It is labelled as such, never passed off as the synthesized preview. */
+    function groundTruthInto(root, sec, gen, done) {
+        fetch('/api/pulse/ground-truth?path=' + encodeURIComponent(sec.path))
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                if (gen !== sec.cpGen || !document.body.contains(root)) return;
+                if (data && data.ok && data.plot && data.plot.ok) {
+                    data.plot.fromConfig = true;
+                    sec.committedPlot = data.plot;
+                    sec.fromConfig = true;
+                    sec.synthErr = '';
+                    if (sec.index === 0) root._committedPlot = data.plot;
+                    cacheCommitted(sec, data.plot);
+                    setPlotLabel(root, 'waveform from the generated config'
+                        + ' \u2014 this class is the lab\'s own, so its own code drew it');
+                    publishSynthErr(root);
+                } else {
+                    /* No config yet is not a dead end: the button that
+                       generates one already exists for Verify. Say which class
+                       SM does not know, and offer it. */
+                    var why = esc((sec.synthErr || '').replace(/^.*?: /, ''));
+                    if (data && (data.status === 'absent' || data.status === 'not-found')) {
+                        verifyNote(root, why + ' \u2014 generate this chip\'s config'
+                            + ' and the lab\'s own waveform is plotted here.'
+                            + ' <button type="button" class="btn-sm" '
+                            + 'onclick="PulsesPage.regenerateThenVerify(this)">'
+                            + 'Generate now</button> <small>(~10\u201330 s)</small>',
+                            'warn');
+                    } else {
+                        publishSynthErr(root);
+                    }
+                }
+            })
+            .catch(function () { if (gen === sec.cpGen) publishSynthErr(root); })
+            .then(function () { if (gen === sec.cpGen) done(); });
+    }
+
+    function setPlotLabel(root, text) {
+        var el = root && root.querySelector('.pulse-plot-label');
+        if (el) el.textContent = text;
     }
     /* Re-render the whole view from the server (the honest path for a change
        the in-place repaint cannot express: a list row, a re-link, an undo at

@@ -894,7 +894,16 @@ def synth_for_operation(store, op_path: str, *,
         payload.update({"path": op_path, "alias_of": alias_of,
                         "pointer_fields": pointer_fields,
                         "resolved_params": resolved_params,
-                        "qclass": qclass})
+                        "qclass": qclass,
+                        # docs/189 -- a MACHINE-READABLE reason. "this class is
+                        # not in SM's catalog" and "this class is, but a
+                        # parameter is wrong" are different situations with
+                        # different remedies, and the only thing that told them
+                        # apart was the wording of an English sentence. A lab
+                        # that writes its own pulse class (KRISS_CZ's
+                        # SNZTwoFluxPulse) is the FIRST case, and it has a real
+                        # answer: the env's own generate_config().
+                        "reason": "unknown_class"})
         return payload
 
     # resolved_params here is the full body minus __class__, BEFORE the
