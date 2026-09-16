@@ -288,6 +288,28 @@ class TestUnmodeledFields:
         assert unmodeled_fields(PULSE_CATALOG["SquarePulse"], "#./alias") == []
 
 
+@pytest.fixture(autouse=True)
+def _overlay_hygiene():
+    """Every assertion in this file is about the NO-OVERLAY catalog.
+
+    An env overlay is process-global by design (it belongs to the selected
+    interpreter, not to a request), and any earlier test that opens a chip
+    while an env is selected installs one. Measured 2026-09-17: on a wide
+    pytest selection five tests below went red for exactly that reason, at the
+    pre-session commit as well as at HEAD -- so they were asserting the
+    overlay's behaviour while claiming to assert the catalog's. Same fixture
+    the pair-gate tests already use (`test_pulses_routes.py::TestCzGateFirst`).
+    """
+    from quam_state_manager.core import pulse_catalog as pc
+    pc.apply_env_overlay(None)
+    if hasattr(pc, "apply_chip_classes"):
+        pc.apply_chip_classes(None)
+    yield
+    pc.apply_env_overlay(None)
+    if hasattr(pc, "apply_chip_classes"):
+        pc.apply_chip_classes(None)
+
+
 class TestChipQclass:
     SQ = "SquarePulse"
 

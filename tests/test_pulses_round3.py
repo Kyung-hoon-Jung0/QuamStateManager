@@ -678,3 +678,288 @@ class TestTheInventoryIsActuallyInstalled:
                         json={"python": str(fake)})
         assert r.status_code in (200, 400), r.status_code
         assert pulse_catalog.chip_pulse_specs() == {}
+
+
+# ------------------------------------------------- F28 / F32 / F49 / F09
+
+class TestAnImpossibleLengthIsMarked:
+    """docs/190 F28 -- a resolved length is arithmetic over pointer-followed
+    fields, so it can come back as a number no waveform could have. The
+    customer case resolved to -999944 ns through a -999999 padding sentinel and
+    the LENGTH column printed it as a plain number beside real ones."""
+
+    @staticmethod
+    def _rows(length):
+        from quam_state_manager.core import pulse_index
+        state = {"qubits": {"qA1": {"id": "qA1", "xy": {"operations": {
+            "p": {"length": length, "amplitude": 0.1,
+                  "__class__": _QC + "SquarePulse"}}}}}}
+        return pulse_index.list_pulses(state, with_used_by=False)
+
+    def test_a_negative_length_is_flagged(self):
+        row = self._rows(-999944)[0]
+        assert row["length"] == -999944
+        assert row["length_implausible"] is True
+        assert "impossible" in row["summary"]
+
+    def test_zero_is_flagged_too(self):
+        """A length is a COUNT of samples; zero is not a short pulse."""
+        assert self._rows(0)[0]["length_implausible"] is True
+
+    def test_a_fractional_length_is_flagged_too(self):
+        """`resolve_length` int()s it away, so 100.5 would otherwise render as
+        a perfectly ordinary 100."""
+        row = self._rows(100.5)[0]
+        assert row["length"] == 100
+        assert row["length_implausible"] is True
+        assert "stored 100.5" in row["summary"]
+
+    def test_a_healthy_length_is_untouched(self):
+        row = self._rows(48)[0]
+        assert row["length_implausible"] is False
+        assert "impossible" not in row["summary"]
+        assert row["summary"].startswith("48 ns")
+
+    def test_a_whole_float_is_not_flagged(self):
+        """100.0 IS a whole number of nanoseconds; only a real fraction is a
+        defect, or every chip storing floats would light up."""
+        assert self._rows(100.0)[0]["length_implausible"] is False
+
+    def test_the_row_renders_the_mark(self, tmp_path):
+        """The FLAG is not the fix -- the cell has to show it. A pin that only
+        checks a healthy chip stays green with the markup deleted."""
+        st = _state()
+        st["qubits"]["qA1"]["xy"]["operations"]["bad"] = {
+            "length": 100.5, "amplitude": 0.1, "__class__": _QC + "SquarePulse"}
+        folder = tmp_path / "badchip"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "state.json").write_text(json.dumps(st), encoding="utf-8")
+        (folder / "wiring.json").write_text(json.dumps(_WIRING), encoding="utf-8")
+        app = create_app(testing=True, instance_path=str(tmp_path / "_binst"))
+        c = app.test_client()
+        c.post("/load", data={"folder": str(folder)})
+        html = c.get("/pulse/row?path=qubits.qA1.xy.operations.bad",
+                     headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert "pulse-len-bad" in html, html[:400]
+        # the TITLE must name the value as STORED. `resolve_length` int()s a
+        # fractional one away, so naming the display length would point the
+        # reader at 100 -- a number nobody typed and nothing is wrong with.
+        cell = html.split('class="pulse-len-bad"')[1].split(">")[0]
+        assert "100.5" in cell, cell
+        assert "came back as 100 " not in cell, cell
+        healthy = c.get("/pulse/row?path=qubits.qA1.xy.operations.x180",
+                        headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert "pulse-len-bad" not in healthy
+
+
+class TestOneSignRuleForEveryClass:
+    """docs/190 F32 -- the same class of bad input got three different answers
+    depending on which class you typed it into."""
+
+    @staticmethod
+    def _synth(qclass, **params):
+        from quam_state_manager.core import waveform_synth
+        return waveform_synth.synthesize(qclass, params)
+
+    def test_a_negative_padding_is_named_not_raised(self):
+        r = self._synth(_QC + "_FlatTopGaussianPulse", length=100, amplitude=0.1,
+                        flat_length=40, sigma=8, post_zero_padding_length=-20)
+        assert r["ok"] is False
+        assert r["param_errors"]["post_zero_padding_length"] == "must be non-negative"
+
+    def test_a_negative_flat_length_is_named(self):
+        r = self._synth(
+            "quam_builder.architecture.superconducting.components.pulses"
+            ".CosineBipolarPulse",
+            length=100, amplitude=0.1, flat_length=-40)
+        assert r["ok"] is False
+        assert r["param_errors"]["flat_length"] == "must be non-negative"
+
+    def test_a_zero_sample_rate_is_refused_not_swapped_for_1e9(self):
+        """It used to become 1e9 through an `or`, so a plainly wrong input was
+        previewed as if it were right."""
+        r = self._synth(
+            "quam_builder.architecture.superconducting.components.pulses"
+            ".ErfSquarePulse",
+            length=100, amplitude=0.1, flat_length=40, risetime_samples=8,
+            sample_rate=0)
+        assert r["ok"] is False
+        assert r["param_errors"]["sample_rate"] == "must be positive"
+
+    def test_a_negative_sample_rate_is_refused(self):
+        r = self._synth(
+            "quam_builder.architecture.superconducting.components.pulses"
+            ".ErfSquarePulse",
+            length=100, amplitude=0.1, flat_length=40, risetime_samples=8,
+            sample_rate=-1e9)
+        assert r["param_errors"]["sample_rate"] == "must be positive"
+
+    def test_a_legitimately_negative_value_is_never_touched(self):
+        """An amplitude, a detuning and a flux offset are negative on real
+        chips; the rule is a LIST, not a guess from the name."""
+        r = self._synth(_QC + "SquarePulse", length=40, amplitude=-0.1)
+        assert r["ok"] is True, r.get("error")
+        r2 = self._synth(_QC + "DragCosinePulse", length=40, amplitude=-0.1,
+                         alpha=-0.34, anharmonicity=-2e8, detuning=-1e6,
+                         axis_angle=-1.57)
+        assert r2["ok"] is True, r2.get("error")
+
+    def test_the_lists_hold_only_durations_counts_and_rates(self):
+        """Guarded as a LIST, so the guard is pinned as one: a parameter that
+        is legitimately negative on a real chip must never be in either set."""
+        from quam_state_manager.core import waveform_synth as ws
+        never = {"amplitude", "axis_angle", "detuning", "alpha",
+                 "anharmonicity", "threshold", "v_start", "v_end",
+                 "neg_offset_v", "phase", "rus_exit_threshold",
+                 "integration_weights_angle"}
+        assert not (ws._NON_NEGATIVE_PARAMS & never)
+        assert not (ws._POSITIVE_PARAMS & never)
+        assert not (ws._NON_NEGATIVE_PARAMS & ws._POSITIVE_PARAMS)
+
+    def test_a_healthy_pulse_is_untouched(self):
+        r = self._synth(
+            "quam_builder.architecture.superconducting.components.pulses"
+            ".ErfSquarePulse",
+            length=100, amplitude=0.1, flat_length=40, risetime_samples=8,
+            sample_rate=1e9)
+        assert r["ok"] is True, r.get("error")
+
+
+class TestNonFiniteSamplesAreGapsThatSpeak:
+    """docs/190 F32 -- the first cut of the overflow guard failed the whole
+    payload, which turned quam's own NaN into a Diagnostics finding claiming
+    generate_config would crash."""
+
+    @staticmethod
+    def _synth(qclass, **params):
+        from quam_state_manager.core import waveform_synth
+        return waveform_synth.synthesize(qclass, params)
+
+    def test_an_overflow_still_produces_a_payload(self):
+        r = self._synth(_QC + "DragCosinePulse", length=40, amplitude=1e308,
+                        alpha=1e308, anharmonicity=1e-300, detuning=0.0,
+                        axis_angle=0.0)
+        assert r["ok"] is True
+        assert any("not finite" in w for w in r["warnings"])
+
+    def test_the_unusable_samples_travel_as_null(self):
+        r = self._synth(_QC + "DragCosinePulse", length=40, amplitude=1e308,
+                        alpha=1e308, anharmonicity=1e-300, detuning=0.0,
+                        axis_angle=0.0)
+        assert any(v is None for v in r["i"])
+        assert all(v is None or isinstance(v, float) for v in r["i"])
+
+    def test_the_route_never_emits_a_bare_nan_token(self, client):
+        r = client.post("/api/pulse/synth", json={
+            "qclass": "DragCosinePulse",
+            "params": {"length": 40, "amplitude": 1e308, "alpha": 1e308,
+                       "anharmonicity": 1e-300, "detuning": 0.0,
+                       "axis_angle": 0.0}})
+        assert b"NaN" not in r.data and b"Infinity" not in r.data
+        assert any("not finite" in w for w in (r.get_json().get("warnings") or []))
+
+    def test_a_healthy_pulse_carries_no_warning(self, client):
+        r = client.post("/api/pulse/synth", json={
+            "qclass": "SquarePulse", "params": {"length": 40, "amplitude": 0.1}})
+        assert r.get_json()["warnings"] == []
+
+    def test_the_decimated_path_is_json_safe_too(self):
+        """The short path keeps the caller's Nones; the bucketed one used to
+        re-materialise them as NaN floats."""
+        from quam_state_manager.core.waveform_synth import decimate_minmax
+        vals = [0.1] * 5000 + [None] * 5000
+        _, ys, dec = decimate_minmax(vals, 200)
+        assert dec is True
+        assert any(v is None for v in ys)
+        assert not any(isinstance(v, float) and v != v for v in ys)   # no NaN
+
+
+class TestAPairGateMissSaysWhatItMeans:
+    """docs/190 F49 -- a pair-gate flux slot is matched heuristically, so a
+    miss is not evidence the pulse is new."""
+
+    def test_the_two_statuses_are_different(self):
+        from quam_state_manager.web import routes as routes_mod
+        assert "not-matched" in routes_mod._TRUTH_STATUS_ERROR
+        matched = routes_mod._TRUTH_STATUS_ERROR["not-matched"]
+        assert "created/renamed" not in matched
+        assert "could not match" in matched
+
+    def test_a_pair_gate_miss_is_not_matched(self, pairs_client):
+        """The lookup must NOT claim the pulse postdates the config."""
+        from quam_state_manager.web import routes as routes_mod
+        app = pairs_client.application
+        with app.test_request_context("/"):
+            store = routes_mod._store()
+            store.generated_config = {"elements": {}}
+            store.generated_config_meta = {"at": "2026-01-01T00:00:00+00:00"}
+            found = routes_mod._pulse_truth_lookup(
+                store, "qubit_pairs.q1-q2.macros.cz_unipolar.flux_pulse_qubit")
+        assert found["status"] == "not-matched"
+
+    def test_a_qubit_op_miss_is_still_not_found(self, pairs_client):
+        """The qubit branch reads the op name straight off the path, so a miss
+        there really does mean the config has never heard of it."""
+        from quam_state_manager.web import routes as routes_mod
+        app = pairs_client.application
+        with app.test_request_context("/"):
+            store = routes_mod._store()
+            store.generated_config = {"elements": {}}
+            store.generated_config_meta = {"at": "2026-01-01T00:00:00+00:00"}
+            found = routes_mod._pulse_truth_lookup(
+                store, "qubits.q1.xy.operations.nope_zzz")
+        assert found["status"] == "not-found"
+
+    def test_the_page_offers_the_honest_sentence(self, client):
+        """The CTA these pulses were built for (docs/189) said the same false
+        thing the API did."""
+        src = (Path(__file__).resolve().parents[1] / "quam_state_manager"
+               / "web" / "templates" / "_pulse_detail.html").read_text(encoding="utf-8")
+        assert "truth_status == 'not-matched'" in src
+        seg = src.split("truth_status == 'not-matched'")[1][:400]
+        assert "newer than the cached config" not in seg
+
+
+class TestTheConfigErrorIsExplained:
+    """docs/190 F09 -- the 502 and the collapsible traceback were right; the
+    env's own assertion was not something a user could act on."""
+
+    def test_a_length_assertion_is_translated_and_names_the_pulse(self, client):
+        from quam_state_manager.web import routes as routes_mod
+        app = client.application
+        with app.test_request_context("/"):
+            store = routes_mod._store()
+            store.merged["qubits"]["qA1"]["xy"]["operations"]["x180"]["length"] = 100.5
+            msg = routes_mod._explain_config_error(
+                "AssertionError: assert isinstance(self.length, int)", store)
+        assert "whole number of nanoseconds" in msg
+        assert "qubits.qA1.xy.operations.x180 = 100.5" in msg
+
+    def test_it_says_where_to_look_when_it_cannot_name_one(self, client):
+        from quam_state_manager.web import routes as routes_mod
+        app = client.application
+        with app.test_request_context("/"):
+            store = routes_mod._store()
+            msg = routes_mod._explain_config_error(
+                "AssertionError: assert isinstance(self.length, int)", store)
+        assert "whole number of nanoseconds" in msg
+        assert "length pointers" in msg
+
+    def test_an_error_it_cannot_explain_gets_no_invention(self, client):
+        from quam_state_manager.web import routes as routes_mod
+        app = client.application
+        with app.test_request_context("/"):
+            store = routes_mod._store()
+            assert routes_mod._explain_config_error("ConnectionRefusedError", store) == ""
+            assert routes_mod._explain_config_error("", store) == ""
+
+    def test_the_banner_renders_it_above_the_raw_line(self, client):
+        app = client.application
+        with app.app_context():
+            html = app.jinja_env.get_template("_config_status.html").render(
+                meta=None, error="assert isinstance(self.length, int)",
+                error_explained="A pulse length must be a whole number.",
+                traceback="Traceback...", config_stale=False)
+        assert "config-error-explain" in html
+        assert html.index("config-error-explain") < html.index("config-error-pre")
+        assert "assert isinstance" in html          # never INSTEAD of the raw line

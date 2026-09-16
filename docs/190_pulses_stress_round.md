@@ -394,3 +394,121 @@ comparison), the strip pin rendered a branch the route's fixture never reaches
 with no env selected (now renders the template directly, both branches), and the
 duplicate-name pin called the validator by hand and so proved nothing about the
 call site (now switches the gate and the pair, and never calls it).
+
+
+## 12. The last ten, and the three that were never bugs (2026-09-17)
+
+What was left after §11: F09, F28, F32, F37, F43, F45, F46, F49, F55, F56.
+Each was reproduced before anything was written, and three of them did not
+reproduce.
+
+**F46 — refuted, and my own re-probe was the reason it looked real.** A
+rejected edit appeared to show the same message twice. `showToast` writes a
+`.toast` INTO `#status-bar`, so a probe that counts `.toast` elements and then
+adds the status bar's own text counts one message as two. Measured properly:
+exactly one message element for one 400, and the field keeps `aria-invalid`
+and its committed value.
+
+**F55 — refuted, as the finding itself suspected.** The real control is the
+`#component-map` summary, and clicking it sets `open=false` and collapses the
+drawing. The original probe used a broad selector and pressed something else.
+
+**F09 — not reproducible in this environment, and the part that was real is
+fixed.** The recorded symptom is a 502 carrying quam's own
+`assert isinstance(self.length, int)`. Three attempts to provoke it here all
+returned 200: an int-typed field refuses a fractional value (400 at the type
+layer), a length pointed at a float field still built, and a 600.5 written
+straight into the working copy still built. So the report stands unreproduced
+on this chip and env. The 502 and the collapsible traceback are RIGHT and stay
+— what was missing is the part SM can work out for itself, because it holds
+the same chip the previewer just read: the banner now leads with a sentence in
+the user's terms and names the offending pulses. It explains nothing it cannot
+verify, because an invented explanation over a real stack line is worse than
+the stack line.
+
+**F28 — the rule, since the chip could not supply the case.** A resolved
+length is arithmetic over pointer-followed fields, so it can come back as a
+number no waveform could have; the customer case resolved to −999944 ns
+through a −999999 padding sentinel. This chip has no such value (0 of 156
+rows), so the fix is pinned on a synthetic fixture instead: a length of zero
+or below, or a fractional one, is marked in the row and named in the tooltip.
+Two things the sweep taught here — `resolve_length` int()s a fractional length
+away, so 100.5 would otherwise render as an ordinary 100, and the warning has
+to name the value AS STORED, since the display length is a number nobody typed
+and nothing is wrong with.
+
+**F32 — one sign rule, in one place.** The same class of bad input got three
+different answers depending on which class you typed it into: a negative
+`post_zero_padding_length` came back as a raw numpy "negative dimensions are
+not allowed", a negative `smoothing_length` was previewed with NO error at all,
+and `sample_rate=0` was silently replaced by 1e9 through an `or`. The sign of a
+duration, a sample count or a rate is not class-specific, so it is judged in
+one place now, in the same `param_errors` shape `length` has always used. The
+rule is a LIST, not a guess from a name suffix, and it is pinned as one: an
+amplitude, a detuning, a flux offset and a threshold are all legitimately
+negative on real chips and must never be in it.
+
+**And a regression of my own, found by the same round.** §10's non-finite guard
+(F02) failed the WHOLE payload for any inf/nan sample. But quam's own
+`BlackmanIntegralPulse` emits NaN below length 2 and raises nothing, and
+`diagnostics` reports a waveform finding only where `generate_config` WOULD
+raise — so that guard turned quam's own NaN into a red "generate_config would
+crash" finding. It had been red since `788cfeb` and a pin in
+`test_diagnostics_robustness.py` said so the whole time. The transport rule is
+what mattered and it still holds: the unusable samples are blanked to `null`,
+the payload SAYS how many, the decimator no longer re-materialises them as NaN,
+the DAC-range check skips them, and the preview line under the plot explains
+the gap. A pin that asserted the old `ok=False` was updated to the new
+contract, keeping the half that was load-bearing.
+
+**F49 — a pair-gate miss is not evidence the pulse is new.** A gate's flux
+pulses are registered in the generated config under names quam_builder
+GENERATES (`cz_SNZ_flux_pulse_q1_q2`), which SM finds by scanning and
+disambiguating on hints. A miss there is a matching failure, and the message
+told the user the pulse had "likely been created/renamed/duplicated after the
+config was generated" — about objects the chip has always carried. There are
+two statuses now with two remedies, and the qubit branch, which reads the op
+name straight off the path, keeps the original sentence because there it is
+true. The CTA these pulses were built for (docs/189) said the same false thing
+and was fixed with it.
+
+**F37 — a channel tab is a destination.** Every URL sync used `replaceState`,
+so two tab presses left ONE history entry and Back left the page. A tab pushes
+now; typing, paging and the map pick still replace, because a keystroke is not
+a destination. A pushed entry with no listener would be worse than none, so
+the restore ships beside the push: a same-page popstate sets the controls from
+the URL and re-fetches the rows for exactly that query. PaneState's own
+handler ignores this case (the pane is populated and its route stamp matches),
+so the two never both act.
+
+**Still open, and recorded rather than closed:** F43 (after an Auto-Sync pull
+a detail input's value and its `data-committed` disagree) and F45 (an
+unseen-edit confirm with an empty path list, seen once in a simultaneous-Apply
+race) both need a two-window drifted-live rig this round did not rebuild.
+F56 is a rig artifact with an unconfirmed second pattern, recorded in the
+finding itself.
+
+### Measured
+
+| | |
+|---|---|
+| browser checks (real Chrome, this group) | 9 / 9 |
+| new pins | 26 Python + 8 jsdom |
+| mutations caught | 30 of 30 |
+| jsdom selfchecks | 132 / 132 |
+| pytest (pulse / waveform / config / undo / index) | 1,670 passed, 1 pre-existing failure |
+
+Three of my own pins were vacuous and the sweep found all three: the impossible
+length was pinned only on a healthy chip, the sign-rule list was pinned by a
+mutation that could not mutate it, and the tooltip pin read the ROW's title
+rather than the CELL's, so it stayed green while the cell named the wrong
+number. The last one found a real defect in the fix it was guarding.
+
+**One more measurement worth recording.** Five `test_pulse_catalog.py` tests go
+red on a wide pytest selection because an env overlay — process-global by
+design, installed by any earlier test that opens a chip with an env selected —
+is still installed when they run, so they assert the overlay's behaviour while
+claiming to assert the catalog's. I checked whether this session caused it
+rather than assuming either way: the same five fail identically at `ec665fb`,
+the commit before this round began. They have the standing `_overlay_hygiene`
+fixture now, and the wide run is down to the one documented OS-difference test.

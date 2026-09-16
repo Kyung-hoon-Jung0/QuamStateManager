@@ -1399,7 +1399,11 @@ def _pulse_peak(store, row: dict) -> tuple[float | None, str | None]:
         peak = 0.0
         for arr in (payload.get("i"), payload.get("q")):
             if arr:
-                m = max((abs(v) for v in arr), default=0.0)
+                # docs/190 F32: a sample the synth could not make finite is
+                # transported as None (quam's own BlackmanIntegralPulse emits
+                # NaN below length 2). It has no DAC-range meaning -- skip it
+                # rather than compare it, and never let it decide the peak.
+                m = max((abs(v) for v in arr if v is not None), default=0.0)
                 if m > peak:
                     peak = m
         return peak, None

@@ -537,7 +537,14 @@ window.PulsesPage = (function () {
                     // never hides this one's (docs/141 4l-review)
                     if (data.ok && data.plot && data.plot.ok) {
                         sec.previewPlot = data.plot;
-                        sec.synthErr = '';
+                        // docs/190 F32: a preview can succeed and still have
+                        // something to say -- samples that could not be made
+                        // finite travel as gaps in the curve, and a gap nobody
+                        // explains reads as a rendering fault.
+                        sec.synthErr = (data.warnings && data.warnings.length)
+                            ? ((secs.length > 1 ? sec.label + ': ' : '')
+                               + data.warnings.join(' · '))
+                            : '';
                     } else {
                         sec.previewPlot = null;
                         sec.synthErr = (secs.length > 1 ? sec.label + ': ' : '')

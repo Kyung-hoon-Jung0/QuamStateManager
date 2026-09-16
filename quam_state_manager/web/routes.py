@@ -13210,6 +13210,11 @@ def api_pulse_synth():
         "reason": payload.get("reason"),
         "qclass": payload.get("qclass"),
         "schema_known": payload.get("schema_known", False),
+        # docs/190 F32: the preview's own caveats (a constant plotted over a
+        # default window, samples that could not be made finite) reached the
+        # payload and stopped here, so the page drew a curve with gaps in it
+        # and said nothing about them.
+        "warnings": payload.get("warnings") or [],
         "plot": _pulse_plot_traces(payload),
     })
 
@@ -14420,7 +14425,11 @@ def _pulse_truth_lookup(store, path):
 
     elem_or_prefix, op_name = _config_op_for_pulse_path(cfg, path, store.merged)
     if op_name is None:
-        return {"status": "not-found"}
+        # docs/190 F49: only the pair-GATE branch guesses. The qubit and
+        # pair-drive branches read the op name straight off the path, so a miss
+        # there really does mean the config has never heard of this pulse.
+        return {"status": "not-matched" if _PULSE_PATH_RES[1].match(path)
+                else "not-found"}
 
     # The qubit-op matcher returns op_name straight from the path without
     # consulting the config, so an op the config has never heard of would
@@ -14475,6 +14484,19 @@ _TRUTH_STATUS_ERROR = {
     "not-found": ("This pulse isn't in the cached config \u2014 it was likely "
                   "created/renamed/duplicated after the config was generated. "
                   "Regenerate to include it."),
+    # docs/190 F49: a pair-gate flux slot is matched HEURISTICALLY -- quam_builder
+    # registers it on the control qubit's z element under a generated name
+    # (`cz_SNZ_flux_pulse_q1_q2`), which SM finds by scanning every element and
+    # disambiguating on hints. So a miss there does NOT mean the pulse is new:
+    # the pristine chip's own state shows these objects pre-existing with
+    # matching ids, while the message told the user they had "likely been
+    # created/renamed after the config was generated". Two situations, two
+    # remedies, and only one of them was ever stated.
+    "not-matched": ("SM could not match this pair-gate pulse to an entry in the "
+                    "cached config. A gate's flux pulses are registered there "
+                    "under generated names, so this can mean the config predates "
+                    "the pulse OR simply that the generated name is not one SM "
+                    "recognises. Regenerating the config settles which."),
 }
 
 
@@ -14496,7 +14518,7 @@ def api_pulse_ground_truth():
     if status == "absent":
         return jsonify({"ok": False, "status": status,
                         "error": _TRUTH_STATUS_ERROR[status]}), 409
-    if status == "not-found":
+    if status in ("not-found", "not-matched"):
         return jsonify({"ok": False, "status": status,
                         "error": _TRUTH_STATUS_ERROR[status]}), 404
     if status == "no-trace":
@@ -27154,6 +27176,52 @@ def fit_audit_verdict():
                            gate_hash=(res.get("gate_hash") or ""))
 
 
+def _explain_config_error(err: str, store) -> str:
+    """One sentence in the user's terms in front of a previewer stack line.
+
+    docs/190 F09: a failed `generate_config()` came back as the env's own
+    assertion -- `assert isinstance(self.length, int)` in quam's
+    `_config_add_pulse` -- which is true, unhelpful, and says nothing about
+    WHICH pulse. The 502 and the collapsible traceback are right and stay; what
+    was missing is the part SM can work out for itself, because it holds the
+    same chip the previewer just read.
+
+    Returns "" for anything it cannot explain -- an invented explanation over a
+    real stack line would be worse than the stack line.
+    """
+    low = (err or "").lower()
+    if "isinstance(self.length, int)" not in low and "self.length, int" not in low:
+        return ""
+    try:
+        from quam_state_manager.core import pulse_index as _pi
+        root = store.merged if isinstance(getattr(store, "merged", None), dict) else {}
+        rows = _pi.list_pulses(root, with_used_by=False) if root else []
+    except Exception:  # noqa: BLE001 -- an explainer must never be the failure
+        rows = []
+    bad = []
+    for r in rows:
+        # the RAW stored value, not the row's display length: `resolve_length`
+        # int()s a float away, so 100.5 reads back as an ordinary 100 (docs/190
+        # F09 -- the first version of this explainer could never name a pulse).
+        v = (r.get("params") or {}).get("length")
+        if isinstance(v, bool) or v is None:
+            continue
+        if isinstance(v, float) and not float(v).is_integer():
+            bad.append(f"{r.get('path')} = {v}")
+        elif r.get("length_implausible") and not isinstance(v, str):
+            bad.append(f"{r.get('path')} = {v}")
+    head = ("A pulse length must be a whole number of nanoseconds; "
+            "generate_config() refuses a fractional one.")
+    if not bad:
+        return head + (" No pulse on the chip as SM reads it has a fractional "
+                       "length, so the value the previewer saw is one it "
+                       "resolved for itself \u2014 follow the length pointers of "
+                       "the pulses in the traceback.")
+    shown = ", ".join(bad[:6])
+    more = f" (and {len(bad) - 6} more)" if len(bad) > 6 else ""
+    return f"{head} On this chip: {shown}{more}."
+
+
 @bp.route("/config/regenerate", methods=["POST"])
 def config_regenerate():
     """Run the previewer subprocess and cache the result on the store."""
@@ -27226,6 +27294,9 @@ def config_regenerate():
         "_config_status.html",
         meta=store.generated_config_meta,  # keep showing the last-good info
         error=err,
+        # docs/190 F09: the env's own assertion, in the user's terms, where SM
+        # can work out what it means. Empty for everything else.
+        error_explained=_explain_config_error(err, store),
         traceback=trace,
         # Keep the export row's stale hint honest even when the refresh failed —
         # the last-good config the buttons export may predate current edits.

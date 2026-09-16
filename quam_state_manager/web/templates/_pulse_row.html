@@ -35,7 +35,9 @@
                 <span class="muted">&mdash;</span>
                 {%- endif -%}
             </td>
-            <td>{{ r.length if r.length is not none else '-' }}</td>
+            <td{% if r.length_implausible %} class="pulse-len-bad"
+                title="This length is arithmetic over pointer-followed fields and came back as {{ r.length_stored if r.length_stored is not none else r.length }} — a pulse cannot have it. Follow the length pointer to find the field that is wrong."{% endif %}>{{
+                r.length if r.length is not none else '-' }}{% if r.length_implausible %} <span aria-hidden="true">⚠</span>{% endif %}</td>
             <td>{{ "%.4g" | format(r.amplitude) if r.amplitude is not none else '-' }}</td>
             <td>{% if r.used_by %}<span class="pulse-usedby" title="{{ r.used_by | join(', ') }}">{{ r.used_by | length }}</span>{% endif %}</td>
         </tr>

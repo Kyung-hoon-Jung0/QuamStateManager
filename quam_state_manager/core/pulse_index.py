@@ -200,6 +200,8 @@ def _row_for_pulse(merged: dict, path: str, body: Any, *,
         "alias_target": None,
         "params": {},
         "length": None,
+        "length_stored": None,
+        "length_implausible": False,
         "amplitude": None,
         "summary": "",
         "used_by": (op_referrers.get(path, []) if op_referrers is not None
@@ -255,6 +257,27 @@ def _row_for_pulse(merged: dict, path: str, body: Any, *,
         else:
             resolved[fname] = fval
     row["length"] = resolve_length(spec, resolved)
+    # docs/190 F28: a resolved length is ARITHMETIC over pointer-followed
+    # fields, so it can come back as a number no waveform could have. The
+    # customer case was `length -> #./inferred_length -> pulse_length(52) +
+    # padding_length(-999999 sentinel)` = -999944, which the LENGTH column
+    # printed as a plain number beside real ones -- while SM's own diagnostics
+    # independently flags that value class as node-run-crashing. A length is a
+    # count of samples: zero or below is not a short pulse, it is an answer the
+    # arithmetic could not give.
+    _raw_len = resolved.get("length")
+    # the value AS STORED (pointers followed), which is the thing that is
+    # wrong -- `resolve_length` int()s a fractional one away, so naming the
+    # display length in the warning would point at a number nobody typed
+    row["length_stored"] = (_raw_len if isinstance(_raw_len, (int, float))
+                            and not isinstance(_raw_len, bool) else None)
+    row["length_implausible"] = bool(
+        (isinstance(row["length"], (int, float))
+         and not isinstance(row["length"], bool)
+         and row["length"] <= 0)
+        # a fractional length is impossible too, and `resolve_length` int()s it
+        # away -- 100.5 would otherwise render as a perfectly ordinary 100
+        or (isinstance(_raw_len, float) and not _raw_len.is_integer()))
     amp = resolved.get("amplitude")
     row["amplitude"] = amp if isinstance(amp, (int, float)) and not isinstance(amp, bool) else None
 
@@ -265,7 +288,9 @@ def _row_for_pulse(merged: dict, path: str, body: Any, *,
 
     bits = []
     if row["length"] is not None:
-        bits.append(f"{row['length']} ns")
+        bits.append(f"{row['length']} ns"
+                    + (f" (impossible: stored {row['length_stored']})"
+                       if row["length_implausible"] else ""))
     if row["amplitude"] is not None:
         bits.append(f"A={row['amplitude']:.4g}")
     for extra in ("alpha", "sigma", "flat_length", "t_phi_eff"):

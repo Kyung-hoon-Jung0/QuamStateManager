@@ -137,6 +137,7 @@ function pulsesDom(page, perPage, q, channel) {
         '<nav id="pulse-channel-tabs"><ul>' +
         '<li><a hx-get="/pulses?rows=1&per_page=50" class="' + (channel ? '' : 'active') + '">All</a></li>' +
         '<li><a hx-get="/pulses?rows=1&channel=xy&per_page=50" class="' + (channel === 'xy' ? 'active' : '') + '">XY</a></li>' +
+        '<li><a hx-get="/pulses?rows=1&channel=z&per_page=50" class="' + (channel === 'z' ? 'active' : '') + '">Z</a></li>' +
         '</ul></nav>' +
         '<input type="hidden" id="pulses-owner-pick" value="">' +
         '<div id="pulses-rows-wrap"><span class="page-info" data-current-page="' + page + '">Page ' + page + '</span>' +
@@ -172,6 +173,55 @@ Object.defineProperty(ev, 'target', { value: pane });
 doc.dispatchEvent(ev);
 ok(window.location.search.indexOf('page=4') >= 0,
    'a #table-pane swap re-syncs the URL (got ' + window.location.search + ')');
+
+// ---------------------- F37: a channel tab is a place you can come back from
+// Every sync used replaceState, so two tab presses left ONE history entry and
+// Back left the page. A pushed entry with no listener would be worse than
+// none, so the restore is pinned beside the push.
+pulsesDom(1, 50, '', '');
+window.history.replaceState({}, '', '/pulses');
+const tabZ = doc.querySelector('#pulse-channel-tabs a[hx-get*="channel=xy"]');
+const lenBefore = window.history.length;
+window.pulseTabActive(tabZ);
+ok(window.location.search.indexOf('channel=xy') >= 0,
+   'the tab is written to the URL (got ' + window.location.search + ')');
+ok(window.history.length > lenBefore,
+   'and a channel tab PUSHES (history ' + lenBefore + ' -> ' + window.history.length + ')');
+
+// typing is not a destination: it must still replace
+const lenAfterTab = window.history.length;
+doc.querySelector('.table-filter input[name="q"]').value = 'x180';
+window._pulsesSyncUrl();
+ok(window.history.length === lenAfterTab,
+   'typing still replaces (history ' + lenAfterTab + ' -> ' + window.history.length + ')');
+
+// pressing the SAME tab twice is one destination, not two
+const lenSame = window.history.length;
+window.pulseTabActive(tabZ);
+ok(window.history.length === lenSame,
+   'the same tab again pushes nothing (history ' + lenSame + ' -> ' + window.history.length + ')');
+
+// and a popstate restores the controls AND re-fetches for that exact query
+let restored = [];
+window.htmx.ajax = function (m, url) { restored.push(url); return Promise.resolve(); };
+window.history.replaceState({}, '', '/pulses?channel=z&q=sat&page=3');
+window._pulsesRestoreFromUrl();
+ok(doc.querySelector('.table-filter input[name="q"]').value === 'sat',
+   'Back restores the search box');
+const act = doc.querySelector('#pulse-channel-tabs a.active');
+ok(act && /channel=z/.test(act.getAttribute('hx-get') || ''),
+   'Back restores the active tab');
+ok(restored.length === 1 && /rows=1/.test(restored[0])
+   && /channel=z/.test(restored[0]) && /q=sat/.test(restored[0])
+   && /page=3/.test(restored[0]),
+   'and re-fetches the rows for that exact query (got ' + restored[0] + ')');
+
+// off the Pulses page it must do nothing at all
+restored = [];
+window.history.replaceState({}, '', '/bulk');
+window._pulsesRestoreFromUrl();
+ok(restored.length === 0, 'a popstate elsewhere fetches nothing');
+window.history.replaceState({}, '', '/pulses');
 
 // -------------------------------- F39: the URL carries the OPEN pulse
 // The address named the search, the channel, the owner pick and the page --

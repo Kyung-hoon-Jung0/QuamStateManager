@@ -33,10 +33,20 @@ class TestPulsesFilterRespectedAndPersisted:
         assert '.table-filter input[name="q"]' in _APP_JS
 
     def test_url_sync_function_exists_and_is_called(self):
-        assert "function _pulsesSyncUrl()" in _APP_JS
+        assert "function _pulsesSyncUrl(push)" in _APP_JS
         assert "history.replaceState" in _APP_JS
-        # pulseTabActive (badge click) syncs the URL.
-        assert re.search(r"a\.classList\.add\(\"active\"\);\s*_pulsesSyncUrl\(\);", _APP_JS)
+        # docs/190 F37: a channel tab PUSHES now -- it is a destination, and
+        # two presses used to leave one history entry with nothing for Back to
+        # step into. Everything else still replaces.
+        assert "history.pushState" in _APP_JS
+        # pulseTabActive (badge click) syncs the URL, and since docs/190 F37
+        # it asks for a PUSH. The wiring itself is executed rather than
+        # grepped by escape_ladder_selfcheck.cjs, which presses the tab and
+        # reads history.length -- a distance grep over these two statements
+        # would expire the next time a comment lands between them
+        # (docs/141 4l).
+        assert 'a.classList.add("active");' in _APP_JS
+        assert "_pulsesSyncUrl(true);" in _APP_JS
         # configRequest keeps the URL in sync too.
         assert "if (window._pulsesSyncUrl) window._pulsesSyncUrl();" in _APP_JS
 

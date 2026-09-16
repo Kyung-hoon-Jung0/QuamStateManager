@@ -325,7 +325,17 @@ class TestPulseSynthApi:
         assert resp.status_code == 200
         assert b"Infinity" not in resp.data and b"NaN" not in resp.data
         data = resp.get_json()
-        assert not data["ok"] and "non-finite" in data["error"]
+        # docs/190 F32: the first cut of this guard FAILED the whole payload,
+        # which turned quam's own NaN (a length-1 BlackmanIntegralPulse emits
+        # one and raises nothing) into a red Diagnostics finding claiming
+        # generate_config would crash. The transport rule is what mattered and
+        # it still holds: no bare Infinity/NaN token anywhere in the reply, the
+        # unusable samples carried as null, and the payload SAYS how many.
+        assert data["ok"]
+        assert any("not finite" in w for w in (data.get("warnings") or [])), data
+        traces = (data.get("plot") or {}).get("traces") or []
+        ys = [v for t in traces for v in (t.get("y") or [])]
+        assert ys and any(v is None for v in ys)
 
     def test_synth_raw_json_nan_length_on_an_inferred_length_class(self, loaded_client):
         # Python's json parser accepts bare NaN/Infinity tokens, so a script

@@ -13299,3 +13299,18 @@ tr.diag-row-collapsed { display: none; }
     text-decoration: underline wavy currentColor 1px;
     text-underline-offset: 2px;
 }
+
+/* docs/190 F28: a LENGTH that is arithmetic over pointer-followed fields can
+   come back as a number no pulse could have (the customer case resolved to
+   -999944 ns through a -999999 padding sentinel) and was printed as a plain
+   number beside real ones. */
+.pulse-len-bad {
+    color: var(--color-error-text);
+    font-weight: 600;
+}
+
+/* docs/190 F09: the previewer's own assertion, translated, above the raw line. */
+.config-error-explain {
+    margin: 0 0 0.35rem 0;
+    color: var(--color-error-text);
+}

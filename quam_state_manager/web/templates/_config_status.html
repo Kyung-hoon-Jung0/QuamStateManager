@@ -56,6 +56,10 @@
             <span class="config-note-glyph config-note-glyph-err" aria-hidden="true">&#9679;</span>
             <strong class="config-error-lead">Couldn't generate config</strong>
         </div>
+        {# docs/190 F09: what the previewer's own words mean, when SM can say.
+           Above the raw line, never instead of it -- the stack line is what a
+           colleague needs to reproduce it. #}
+        {% if error_explained %}<p class="config-error-explain">{{ error_explained }}</p>{% endif %}
         <pre class="config-error-pre">{{ error }}</pre>
         {% if traceback %}
         <details class="config-disclosure">

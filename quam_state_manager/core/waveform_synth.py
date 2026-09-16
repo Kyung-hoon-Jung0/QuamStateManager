@@ -604,6 +604,15 @@ def _mark_schema_known(payload: dict, qclass: Any) -> dict:
     return payload
 
 
+def _json_samples(arr) -> list:
+    """Samples as JSON-safe floats: a non-finite one becomes ``None`` (a gap in
+    the plot), never a bare ``NaN``/``Infinity`` token (docs/190 F02/F32)."""
+    out = arr.tolist()
+    if not np.all(np.isfinite(arr)):
+        out = [None if (v is None or not math.isfinite(v)) else v for v in out]
+    return out
+
+
 def _payload_error(error: str, *, spec_key: str | None = None,
                    param_errors: dict | None = None,
                    class_match: str | None = None,
@@ -622,6 +631,45 @@ def _payload_error(error: str, *, spec_key: str | None = None,
         "class_match": class_match,
         "unmodeled_fields": list(unmodeled) if unmodeled else [],
     }
+
+
+# docs/190 F32 -- the sign rules, listed rather than guessed from a name
+# suffix. A duration or a sample count is never negative; a rate divides, so a
+# zero is as wrong as a negative. Everything NOT named here keeps its own
+# class's judgement: `amplitude`, `neg_offset_v`, `detuning`, `axis_angle`,
+# `alpha`, `anharmonicity`, `threshold` and `v_start`/`v_end` are all
+# legitimately negative on real chips.
+_NON_NEGATIVE_PARAMS = frozenset({
+    "flat_length", "smoothing_length", "post_zero_padding_length",
+    "padding_length", "padding", "sigma", "risetime_samples", "t_phi_eff",
+    "transition_length",
+})
+_POSITIVE_PARAMS = frozenset({
+    "sample_rate", "gaussian_filter_frequency_mhz", "pulse_length",
+})
+
+
+def _sign_errors(spec, resolved: dict, param_errors: dict) -> None:
+    """Record a sign complaint per parameter, in the shape ``length`` uses.
+
+    Only parameters this class actually declares are judged, and only when the
+    value already parsed to a finite number -- a pointer or a missing field has
+    its own error and must not gain a second one.
+    """
+    for p in spec.params:
+        if p.name in param_errors:
+            continue
+        if p.name not in _NON_NEGATIVE_PARAMS and p.name not in _POSITIVE_PARAMS:
+            continue
+        v = resolved.get(p.name)
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            continue
+        if not math.isfinite(v):
+            continue
+        if p.name in _POSITIVE_PARAMS and v <= 0:
+            param_errors[p.name] = "must be positive"
+        elif p.name in _NON_NEGATIVE_PARAMS and v < 0:
+            param_errors[p.name] = "must be non-negative"
 
 
 def synthesize(qclass_or_key: str, params: dict[str, Any], *,
@@ -727,6 +775,16 @@ def synthesize(qclass_or_key: str, params: dict[str, Any], *,
             length = int(raw_len)
             resolved["length"] = length
 
+    # docs/190 F32: the same class of bad input used to get three different
+    # answers depending on which class you typed it into -- a negative
+    # `post_zero_padding_length` came back as a raw numpy "negative dimensions
+    # are not allowed", a negative `smoothing_length` was previewed with NO
+    # error at all (and a plot whose total length disagreed with the row), and
+    # `sample_rate=0` was silently replaced by 1e9 through an `or`. The sign of
+    # a duration, a sample count or a rate is not class-specific, so it is
+    # judged HERE, in the same `param_errors` shape `length` has always used.
+    _sign_errors(spec, resolved, param_errors)
+
     if param_errors:
         first = next(iter(param_errors.items()))
         return _payload_error(f"{first[0]}: {first[1]}", spec_key=spec.key,
@@ -792,20 +850,37 @@ def _shape_payload(spec: PulseSpec, raw: Any, length: int | None,
         is_iq = False
 
     n = len(i)
-    if not np.all(np.isfinite(i)) or (q is not None and not np.all(np.isfinite(q))):
+    bad = (~np.isfinite(i)) if q is None else ((~np.isfinite(i)) | (~np.isfinite(q)))
+    n_bad = int(bad.sum())
+    if n_bad:
         # Finite parameters can still overflow (a DRAG pulse with amplitude
-        # 1e308 and anharmonicity 1e-300 does). A sample that is inf/nan is
-        # not a waveform: it cannot be plotted, and jsonify would emit a bare
+        # 1e308 and anharmonicity 1e-300 does), and jsonify would emit a bare
         # `Infinity` token that no JSON parser accepts (stress 2026-09-16).
-        return _payload_error("waveform has non-finite samples (overflow)",
-                              spec_key=spec.key, warnings=warnings)
+        #
+        # But a non-finite sample is NOT the same as a pulse that crashes
+        # generate_config: quam's own BlackmanIntegralPulse emits NaN for a
+        # length below 2 and raises nothing, and `diagnostics` reports a
+        # waveform finding only where generate_config WOULD raise. The first
+        # cut of this guard failed the whole payload, which turned quam's own
+        # NaN into a red finding on the Diagnostics page. The samples are
+        # blanked for transport instead, and the payload SAYS how many --
+        # honest in the plot (a gap), valid as JSON, and not a crash claim.
+        i = np.where(bad, np.nan, i)
+        if q is not None:
+            q = np.where(bad, np.nan, q)
+        warnings.append(
+            f"{n_bad} of {n} samples are not finite (overflow or an "
+            "undefined value for these parameters) and are not plotted")
     payload = {
         "ok": True,
         "kind": "constant" if constant_value is not None else "arbitrary",
         "iq": is_iq,
         "x_ns": list(range(n)),
-        "i": i.tolist(),
-        "q": q.tolist() if q is not None else None,
+        # None, not NaN: `jsonify` renders a Python nan as a bare `NaN`
+        # token, which no JSON parser accepts -- the same transport problem
+        # the overflow guard above exists for (docs/190 F02/F32).
+        "i": _json_samples(i),
+        "q": _json_samples(q) if q is not None else None,
         "length": int(length) if length is not None else n,
         "constant_value": (
             {"real": constant_value.real, "imag": constant_value.imag}
@@ -971,7 +1046,11 @@ def decimate_minmax(values: list[float], max_points: int) -> tuple[list[int], li
         i_max = int(np.argmax(chunk)) + lo
         for idx in sorted({i_min, i_max}):
             xs.append(idx)
-            ys.append(float(arr[idx]))
+            v = float(arr[idx])
+            # docs/190 F32: a non-finite sample travels as None, never as a
+            # bare NaN token. The short path above keeps the caller's Nones;
+            # this one would otherwise re-materialise them as NaN floats.
+            ys.append(v if math.isfinite(v) else None)
     return xs, ys, True
 
 

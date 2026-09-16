@@ -151,6 +151,15 @@
         <small class="muted">(~10&ndash;30 s)</small>{% elif truth_status == 'not-found' %}This
         pulse is newer than the cached config.
         <button type="button" class="btn-sm"
+                onclick="PulsesPage.regenerateThenVerify(this)">Regenerate</button>{% elif truth_status == 'not-matched' %}{#
+        docs/190 F49: a pair-gate flux slot is matched heuristically, so a miss
+        here is NOT evidence the pulse is new -- and these are exactly the
+        pulses this CTA was built for (docs/189). Saying "newer than the cached
+        config" about an object the chip has always carried is a claim SM
+        cannot support. #}SM could not match this gate&#39;s flux pulse to an
+        entry in the cached config &mdash; regenerating settles whether the
+        config is simply older.
+        <button type="button" class="btn-sm"
                 onclick="PulsesPage.regenerateThenVerify(this)">Regenerate</button>{% else %}SM
         has no in-process synthesizer for this class, and the generated config
         carries no waveform for it either.{% endif %}</span>

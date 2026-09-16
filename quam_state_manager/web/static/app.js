@@ -17744,7 +17744,11 @@ window.pulseTabActive = function (a) {
     if (!nav) return;
     nav.querySelectorAll("a").forEach(function (el) { el.classList.remove("active"); });
     a.classList.add("active");
-    _pulsesSyncUrl();
+    // docs/190 F37: a channel tab is a deliberate, discrete act, and it was the
+    // one filter change with nothing for Back to step into -- every sync used
+    // replaceState, so two tab presses left ONE history entry and Back left the
+    // page. Typing and paging still replace (a keystroke is not a destination).
+    _pulsesSyncUrl(true);
 };
 
 /* Mirror the Pulses search + active channel into the browser URL (replaceState) so
@@ -17824,7 +17828,7 @@ document.addEventListener("pulses-rows-changed", function (evt) {
     if (missing) structural();
 });
 
-function _pulsesSyncUrl() {
+function _pulsesSyncUrl(push) {
     if (location.pathname.indexOf("/pulses") !== 0) return;
     var inp = document.querySelector('.table-filter input[name="q"]');
     var q = inp ? inp.value.trim() : "";
@@ -17855,11 +17859,55 @@ function _pulsesSyncUrl() {
     var det = document.querySelector("#inspector-pane #pulse-detail-root[data-pulse-path]");
     var openPath = det ? (det.getAttribute("data-pulse-path") || "") : "";
     if (openPath) parts.push("pulse=" + encodeURIComponent(openPath));
+    var url = "/pulses" + (parts.length ? "?" + parts.join("&") : "");
     try {
-        history.replaceState(history.state, "", "/pulses" + (parts.length ? "?" + parts.join("&") : ""));
+        if (push && url !== location.pathname + location.search) {
+            history.pushState(history.state, "", url);
+        } else {
+            history.replaceState(history.state, "", url);
+        }
     } catch (e) {}
 }
 window._pulsesSyncUrl = _pulsesSyncUrl;
+
+/* docs/190 F37: and Back has to MEAN something once it has somewhere to go.
+   A pushed entry with no listener would be worse than none -- the address bar
+   would say one thing and the table another. On a same-page popstate the
+   controls are set from the URL and the rows are re-fetched for exactly that
+   query; PaneState's own handler ignores this case (the pane is populated and
+   its route stamp matches), so the two never both act. */
+function _pulsesRestoreFromUrl() {
+    if (location.pathname.indexOf("/pulses") !== 0) return;
+    var wrap = document.getElementById("pulses-rows-wrap");
+    if (!wrap || !window.htmx) return;
+    var q = new URLSearchParams(location.search);
+    var want = (q.get("channel") || "").toLowerCase();
+    var inp = document.querySelector('.table-filter input[name="q"]');
+    if (inp) inp.value = q.get("q") || "";
+    var own = document.getElementById("pulses-owner-pick");
+    if (own) own.value = q.get("owner") || "";
+    var pp = document.querySelector("select[name='per_page']");
+    if (pp && q.get("per_page")) pp.value = q.get("per_page");
+    var nav = document.getElementById("pulse-channel-tabs");
+    if (nav) {
+        nav.querySelectorAll("a").forEach(function (el) {
+            var m = (el.getAttribute("hx-get") || "").match(/channel=([^&]*)/);
+            var ch = (m ? m[1] : "").toLowerCase();
+            el.classList.toggle("active", ch === want);
+        });
+    }
+    var parts = ["rows=1"];
+    ["channel", "q", "owner", "page", "per_page"].forEach(function (k) {
+        var v = q.get(k);
+        if (v) parts.push(k + "=" + encodeURIComponent(v));
+    });
+    try {
+        window.htmx.ajax("GET", "/pulses?" + parts.join("&"),
+                         { target: "#pulses-rows-wrap", swap: "innerHTML" });
+    } catch (e) {}
+}
+window.addEventListener("popstate", _pulsesRestoreFromUrl);
+window._pulsesRestoreFromUrl = _pulsesRestoreFromUrl;
 
 // docs/190 section 8: the rows swap is what changes the page number, and the
 // pagination links are not in the configRequest rewriter's element set, so the
