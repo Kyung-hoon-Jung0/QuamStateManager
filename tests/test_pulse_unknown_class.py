@@ -17,6 +17,7 @@ that is where the curve came from, rather than passing it off as the synth.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -210,3 +211,163 @@ class TestNoConfigIsNotADeadEnd:
         j = c.get("/api/pulse/ground-truth",
                   query_string={"path": SNZ_PATH}).get_json()
         assert j["comparison"] is None
+
+# ---------------------------------------------------------------------------
+# docs/189 -- and it is ready BEFORE anyone clicks
+# ---------------------------------------------------------------------------
+class TestTheConfigIsWarmedInAdvance:
+    """The customer's own question: *"이거 미리할수는 없나?"*
+
+    Generating the config costs a ~13 s subprocess in the lab's env, and the
+    result is one cached dict. Paying it once while the user is still looking
+    at the chip beats paying it the moment they click the pulse they wanted --
+    but ONLY on a chip that needs it, and never in a loop.
+    """
+
+    def test_a_chip_with_a_lab_class_asks_for_one(self, tmp_path, monkeypatch):
+        from quam_state_manager.web import routes as R
+        _, _, store = _client(tmp_path, with_config=False)
+        assert R._chip_needs_generated_config(store) is True
+
+    def test_a_chip_of_quam_classes_only_pays_nothing(self, tmp_path):
+        """The difference between a warm that helps one lab and a warm that
+        taxes every other user."""
+        from quam_state_manager.web import routes as R
+        folder = tmp_path / "plainchip"
+        folder.mkdir()
+        import json as _json
+        (folder / "state.json").write_text(_json.dumps({
+            "qubits": {"q1": {"id": "q1", "f_01": 6.1e9, "xy": {
+                "RF_frequency": 6.1e9, "operations": {"x180_DragCosine": {
+                    "__class__": ("quam_builder.architecture.superconducting"
+                                  ".components.pulses.DragCosinePulse"),
+                    "amplitude": 0.3, "length": 40, "alpha": -0.05,
+                    "anharmonicity": 2.0e8, "axis_angle": 0.0,
+                    "detuning": 0.0, "digital_marker": None}}}}},
+            "active_qubit_names": ["q1"],
+        }), encoding="utf-8")
+        (folder / "wiring.json").write_text(_json.dumps(
+            {"network": {"host": "1.2.3.4"}, "wiring": {"qubits": {}}}),
+            encoding="utf-8")
+        app = create_app(testing=True, instance_path=str(tmp_path / "_i2"))
+        c = app.test_client()
+        c.post("/load", data={"folder": str(folder)})
+        store = app.config["contexts"][app.config["active_context"]]["store"]
+        assert R._chip_needs_generated_config(store) is False
+
+    def test_it_refuses_to_run_without_an_env_the_user_picked(self, tmp_path):
+        """SM never chooses the environment; a missing one is said, not
+        guessed."""
+        from quam_state_manager.web import routes as R
+        app, _, _ = _client(tmp_path, with_config=False)
+        ctx = app.config["contexts"][app.config["active_context"]]
+        with app.app_context():
+            assert R._warm_generated_config_async(
+                ctx, app.instance_path) == "no-env"
+
+    def test_a_fresh_config_is_not_regenerated(self, tmp_path):
+        from quam_state_manager.web import routes as R
+        app, _, store = _client(tmp_path, with_config=True)
+        ctx = app.config["contexts"][app.config["active_context"]]
+        # the cached config's basis IS the current state -> provably fresh
+        store.generated_config_meta["basis_hash"] = R._config_state_hash(store)
+        with app.app_context():
+            assert R._warm_generated_config_async(
+                ctx, app.instance_path) == "already-fresh"
+
+    def test_a_failed_env_is_not_retried_at_the_same_state(self, tmp_path,
+                                                           monkeypatch):
+        """A broken env must cost one subprocess, not one per page view -- and
+        the latch is keyed on the chip's CONTENT, so a fix re-arms it."""
+        from quam_state_manager.web import routes as R
+        from quam_state_manager.core import config_generator
+        app, _, store = _client(tmp_path, with_config=False)
+        ctx = app.config["contexts"][app.config["active_context"]]
+        monkeypatch.setattr(config_generator, "get_selected_env",
+                            lambda _inst: "python")
+        calls = []
+
+        def _boom(python_path, folder):
+            calls.append(folder)
+            return {"ok": False, "error": "env exploded"}
+
+        monkeypatch.setattr(config_generator, "run_config_preview", _boom)
+        with app.app_context():
+            assert R._warm_generated_config_async(ctx, app.instance_path) == "started"
+            for _ in range(80):                      # let the daemon finish
+                if calls:
+                    break
+                time.sleep(0.05)
+            for _ in range(80):
+                with R._cfg_warm_lock:
+                    done = not R._cfg_warm_inflight
+                if done:
+                    break
+                time.sleep(0.05)
+            assert len(calls) == 1
+            assert R._warm_generated_config_async(
+                ctx, app.instance_path) == "failed-before"
+            assert len(calls) == 1                   # nothing ran a second time
+
+    def test_two_activations_never_spawn_two_subprocesses(self, tmp_path,
+                                                          monkeypatch):
+        """Opening the same chip twice in quick succession -- a reload, a
+        second window, the LRU handing the context back -- must cost ONE ~13 s
+        subprocess, not one each. The mutation sweep found this unguarded."""
+        import threading as _th
+        from quam_state_manager.web import routes as R
+        from quam_state_manager.core import config_generator
+        app, _, _ = _client(tmp_path, with_config=False)
+        ctx = app.config["contexts"][app.config["active_context"]]
+        monkeypatch.setattr(config_generator, "get_selected_env",
+                            lambda _inst: "python")
+        started, release, calls = _th.Event(), _th.Event(), []
+
+        def _slow(python_path, folder):
+            calls.append(folder)
+            started.set()
+            release.wait(10)               # stand in for the real 13 s
+            return {"ok": False, "error": "done"}
+
+        monkeypatch.setattr(config_generator, "run_config_preview", _slow)
+        with app.app_context():
+            assert R._warm_generated_config_async(ctx, app.instance_path) == "started"
+            assert started.wait(10)        # the first one is genuinely in flight
+            # the second caller must be told so, and must NOT run
+            assert R._warm_generated_config_async(ctx, app.instance_path) == "running"
+            release.set()
+            for _ in range(100):
+                with R._cfg_warm_lock:
+                    if not R._cfg_warm_inflight:
+                        break
+                time.sleep(0.05)
+        assert len(calls) == 1
+
+    def test_re_opening_a_cached_chip_still_warms(self, tmp_path, monkeypatch):
+        """`_activate_quam` returns EARLY for a chip already in the LRU, and
+        re-opening one is the commonest way to reach it. A warm placed only on
+        the cold-build path would almost never run -- measured: it did not, on
+        a real server, and this pin is that measurement."""
+        from quam_state_manager.web import routes as R
+        calls = []
+        monkeypatch.setattr(R, "_maybe_warm_generated_config",
+                            lambda ctx, inst: calls.append(ctx.get("path")))
+        _chip(tmp_path / "quam_state")
+        app = create_app(testing=True, instance_path=str(tmp_path / "_i3"))
+        c = app.test_client()
+        folder = str(tmp_path / "quam_state")
+        c.post("/load", data={"folder": folder})     # cold build
+        assert len(calls) == 1
+        c.post("/load", data={"folder": folder})     # served from the LRU
+        assert len(calls) == 2, "the cached activation path skipped the warm"
+
+    def test_the_staleness_hash_is_memoized_on_the_stores_own_counters(
+            self, tmp_path):
+        """33 ms of canonical-JSON hashing per render of a lab-class pulse.
+        The memo may never outlive a change to the thing it hashes."""
+        from quam_state_manager.web import routes as R
+        _, _, store = _client(tmp_path, with_config=False)
+        first = R._config_state_hash(store)
+        assert R._config_state_hash(store) is first        # same object: memoized
+        store.mutation_seq += 1
+        assert R._config_state_hash(store) is not first    # recomputed

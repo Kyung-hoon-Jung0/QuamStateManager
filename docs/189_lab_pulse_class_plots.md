@@ -163,3 +163,145 @@ there would be visible rather than merely unobserved. Re-swept: **12 of 12**.
 - A chip whose env has never generated a config still shows no waveform for
   these classes until the user presses the button once. That is the honest
   state: SM has no other source for them.
+
+---
+
+# Part 2 — GaussianNZ, the cost, and generating it in advance
+
+Three follow-up questions from the customer, in their words:
+
+> 그러면 GaussianNZ도 그려지는거니? 그리고 "랩 자신의 generate_config()을 쓴다"고
+> 했는데... 이거 원리가?? SM이 느려질텐데?? […] 이거 미리할수는 없나?
+
+## 7. Yes — and a correction to Part 1's numbers
+
+**GaussianNZ plots: 96 samples**, verified in real Chrome. So do both readout
+weight classes (1,200 and 1,488 samples).
+
+Part 1 said "15 of 50 rows". That was **one paginated page**, not the table.
+Re-measured through the index itself:
+
+| | |
+|---|---|
+| pulse rows on this chip | **151** |
+| do not plot in-process | **25** |
+| — `SNZTwoFluxPulse` | 12 |
+| — `ComplexWeightsReadoutPulse` | 5 |
+| — `GefWeightsReadoutPulse` | 5 |
+| — `GaussianNZTwoFluxPulse` | **3** |
+
+(The "30 objects" in Part 1 was the raw `__class__` count in `state.json`,
+which includes objects the Pulses page does not enumerate as rows. 25 is the
+number that matters.)
+
+## 8. The mechanism, and what it actually costs
+
+`generate_config()` runs **once**, in a subprocess in the lab's own env, and
+the result is **one dict cached in RAM on the store**. Nothing re-runs it per
+pulse. Measured on the customer's chip:
+
+| | |
+|---|---|
+| the subprocess | **13.0–13.3 s**, once per chip |
+| the cached config | **0.3 MB** — 17 elements, 103 pulses, 161 waveforms |
+| reading one pulse out of it | **~0 ms** |
+
+It is read-only: `generator/run_generate_config.py` loads the machine and calls
+`generate_config()`. There is no `machine.save()`; the one write it makes is
+into a temp scratch dir, for the shim that drops empty root keys. **It never
+writes the chip.**
+
+### The 33 ms that was real, and is gone
+
+The customer's instinct ("SM이 느려질텐데") was right about something, just not
+the subprocess. A lab-class pulse's detail render measured **33 ms** against
+**2 ms** for one SM synthesizes itself — and profiling put **all 33 ms in
+`_config_stale`**, which serialises the whole chip to canonical JSON and hashes
+it. That was fine while the only caller was a button press. It is not fine when
+every render of every CZ flux pulse asks for it.
+
+`_config_state_hash` is now memoized on `(store.mutation_seq,
+len(store.change_log))` — the pair `_bulk_grid_key` already trusts to decide
+which grid CELLS are current, so a hash can never outlive a change to the thing
+it hashes. **33 ms → 4 ms.**
+
+## 9. "미리할수는 없나?" — yes, and it does
+
+The best moment to pay 13 s is while the user is still looking at the chip
+list, not the moment they click the pulse they wanted to see. So
+`_activate_quam` now starts a daemon thread that decides and, if needed,
+generates:
+
+- **Gated on the chip actually needing it.** `_chip_needs_generated_config`
+  reads the pulse index's own `known` flag — the same fact the unrecognized-class
+  banner is gated on — so a chip made entirely of quam's classes starts nothing
+  and pays nothing. That is the difference between a warm that helps one lab
+  and a warm that taxes every other user.
+- **Off the request path entirely.** Even the decision runs on the thread: the
+  request pays for `Thread(...).start()` and nothing else. Measured: chip open
+  **1,021 ms → 759 ms–1,021 ms**, i.e. unchanged.
+- **Single-flight.** Two activations in quick succession — a reload, a second
+  window, the LRU handing the context back — cost ONE subprocess.
+- **Never in a loop.** A failure is latched against the chip's own content
+  hash, so a broken env costs one subprocess, not one per page view, and
+  fixing the env re-arms it.
+- **Never without an env the user picked.** SM does not choose the
+  interpreter; a missing one is said, not guessed.
+- **Idempotent.** A config that is provably fresh answers `already-fresh` and
+  starts nothing.
+
+Measured end to end on a real server, with **no click anywhere but opening the
+chip**:
+
+```
+open the chip (request)     0.76 s
+config ready                15 s later, in the background
+SNZ detail render           4 ms  — plots, with no button ever pressed
+```
+
+### The bug that only a real server showed
+
+The first cut hooked the warm onto the end of `_activate_quam` — and nothing
+ever happened on a real server. `_activate_quam` **returns early for a chip
+already in the LRU**, and re-opening a chip is the commonest way to reach it,
+so a warm on the cold-build path alone almost never runs. Both paths call it
+now, and `test_re_opening_a_cached_chip_still_warms` is that measurement.
+
+## 10. Pins
+
+`tests/test_pulse_unknown_class.py` grew to **16**, with
+`TestTheConfigIsWarmedInAdvance` covering the gate in both directions, the
+no-env refusal, the fresh-config skip, the failure latch, single-flight, the
+cached activation path, and the memo's expiry. **Mutation sweep 11 of 11 RED.**
+
+### The sweep's own second finding
+
+The first run of this sweep reported `ANCHOR x0` for four anchors that are
+demonstrably in the file, because it matched whole indented blocks and one
+`\n` had been eaten passing the script through a shell. **A sweep that cannot
+find the code it is mutating is scoring itself, not the product** — the same
+shape as docs/141 §4ad's `tail -1`. It matches unique substrings line by line
+now, and deliberately mutates BOTH sites of the failure latch (it is written in
+two branches; mutating one leaves the other honest and the pin would pass for
+the wrong reason).
+
+### The suite was the second measurement
+
+Running the pins beside `test_web.py` gave **4 failures** where the same file
+alone gives the 2 that fail identically at `efef882` (measured, not inferred).
+The extra two were this round's own daemon threads: the suite does not spawn
+subprocesses, and a thread walking the pulse index while a test mutates the
+store is interference, not coverage. `_maybe_warm_generated_config` returns
+early under `TESTING` (docs/135's conda probe is the precedent) unless a test
+sets `SM_CONFIG_WARM_IN_TESTS`. Back to **2 failed, 524 passed** — and the warm
+is re-verified on a real, non-testing server: **18 s after opening the chip,
+zero clicks**.
+
+## 11. Still open
+
+- The **row sparklines** remain blank for these 25 rows. Unchanged from Part 1,
+  and for the same reason.
+- The warm needs an env selected. On a chip whose lab env has never been
+  picked, the detail page still shows the honest line and the `Generate now`
+  button — which is correct: SM has no other source for these waveforms.
+

@@ -1363,6 +1363,12 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
             current_app.config["contexts"][ctx_name] = current
             current_app.config["active_context"] = ctx_name
             _prune_context_registry(ctx_name)
+        # docs/189 -- the CACHED path returns here, before the slow path's own
+        # warm. Re-opening a chip is the commonest way to reach this function,
+        # so a warm that only ran on a cold build would almost never run at
+        # all (measured: it did not). The call is idempotent -- a fresh config
+        # answers "already-fresh" and starts nothing.
+        _maybe_warm_generated_config(current, current_app.instance_path)
         return current
 
     # Slow path. Serialise builds for THIS folder so two threads don't
@@ -1447,11 +1453,135 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         _attach_type_policy(ctx)
         _warm_state_schema_async(ctx.get("store"), current_app.instance_path,
                                  live_folder=ctx.get("path"))
+        # docs/189 -- a chip carrying a pulse class SM cannot synthesize gets
+        # its config generated NOW, on a daemon thread, so the waveform is
+        # already in RAM by the time anyone clicks that pulse. Gated on the
+        # chip actually having one: every other chip pays nothing.
+        _maybe_warm_generated_config(ctx, current_app.instance_path)
         return ctx
 
 
 _schema_warm_inflight: set[str] = set()
 _schema_warm_lock = threading.Lock()
+
+# docs/189 -- chips whose config generation is already running, and chips whose
+# last attempt failed AT A GIVEN STATE (so a fix re-arms it, and a broken env is
+# never retried in a loop). Keyed by the chip's fs key.
+_cfg_warm_inflight: set[str] = set()
+_cfg_warm_failed: dict[str, str] = {}
+_cfg_warm_lock = threading.Lock()
+
+
+def _chip_needs_generated_config(store) -> bool:
+    """True when this chip carries a pulse class SM cannot synthesize.
+
+    The ONLY reason to spend a subprocess on a config the user did not ask
+    for. A chip made entirely of quam's own classes draws every waveform from
+    RAM and must pay nothing at all -- which is the difference between a warm
+    that helps one lab and a warm that taxes every other.
+
+    Reads the index's own ``known`` flag rather than synthesizing all 151
+    pulses: this is the same fact (`_pulse_detail.html` gates its
+    unrecognized-class banner on it) at no cost.
+    """
+    try:
+        return any(not row.get("known") for row in PulseIndex(store).rows())
+    except Exception:  # noqa: BLE001 -- a probe never breaks an activation
+        logger.debug("pulse-class probe failed", exc_info=True)
+        return False
+
+
+def _warm_generated_config_async(ctx, inst) -> str:
+    """Generate this chip's config in the background, when it is the only way
+    to draw one of its pulses (docs/189).
+
+    The customer's question was exactly right: *"이거 미리할수는 없나?"*. The
+    subprocess costs ~13 s on their 5Q chip and the result is cached in RAM, so
+    paying it ONCE while they are still looking at the chip list beats paying it
+    the moment they click the pulse they wanted to see.
+
+    Returns what it decided, as a word, so a caller (and a pin) can tell the
+    cases apart rather than inferring from a side effect.
+    """
+    store = ctx.get("store") if ctx else None
+    folder = ctx.get("path") if ctx else None
+    if store is None or not folder:
+        return "no-chip"
+    if store.generated_config is not None and not _config_stale(store):
+        return "already-fresh"
+    python_path = config_generator.get_selected_env(inst)
+    if not python_path:
+        return "no-env"          # honest: the user picks the env, never SM
+
+    key = str(folder).lower()
+    state_hash = _config_state_hash(store)
+    with _cfg_warm_lock:
+        if key in _cfg_warm_inflight:
+            return "running"
+        if _cfg_warm_failed.get(key) == state_hash:
+            return "failed-before"   # same chip content; a retry buys nothing
+        _cfg_warm_inflight.add(key)
+
+    def _run():
+        try:
+            outcome = config_generator.run_config_preview(python_path, folder)
+            result = outcome.get("result") if outcome.get("ok") else None
+            if result and result.get("config") is not None:
+                store.generated_config = result.get("config")
+                store.generated_config_meta = {
+                    "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    "versions": result.get("versions") or {},
+                    "warnings": result.get("warnings") or [],
+                    "basis_hash": state_hash,
+                    "auto": True,
+                }
+                with _cfg_warm_lock:
+                    _cfg_warm_failed.pop(key, None)
+            else:
+                with _cfg_warm_lock:
+                    _cfg_warm_failed[key] = state_hash
+                logger.info("auto config preview did not produce a config: %s",
+                            (outcome.get("error") or "")[:200])
+        except Exception:  # noqa: BLE001 -- never break the chip that is open
+            with _cfg_warm_lock:
+                _cfg_warm_failed[key] = state_hash
+            logger.warning("auto config preview failed", exc_info=True)
+        finally:
+            with _cfg_warm_lock:
+                _cfg_warm_inflight.discard(key)
+
+    threading.Thread(target=_run, daemon=True).start()
+    return "started"
+
+
+def _maybe_warm_generated_config(ctx, inst) -> None:
+    """Start the docs/189 config warm, off the request path.
+
+    `_activate_quam` runs while the user waits for a page, so everything here
+    -- including deciding WHETHER the chip needs it -- happens on the daemon
+    thread. The request pays for starting a thread and nothing else.
+    """
+    store = ctx.get("store") if ctx else None
+    if store is None or not ctx.get("path"):
+        return
+    # The house rule for every background warm (docs/135's conda probe is the
+    # precedent): the suite does not spawn subprocesses, and a daemon thread
+    # walking the pulse index while a test mutates the store is interference,
+    # not coverage. The pins drive `_warm_generated_config_async` and
+    # `_chip_needs_generated_config` directly, and the one pin about THIS
+    # function asserts it is CALLED -- which the gate below does not change.
+    if current_app.config.get("TESTING") and not current_app.config.get(
+            "SM_CONFIG_WARM_IN_TESTS"):
+        return
+
+    def _decide():
+        try:
+            if _chip_needs_generated_config(store):
+                _warm_generated_config_async(ctx, inst)
+        except Exception:  # noqa: BLE001
+            logger.debug("config warm decision failed", exc_info=True)
+
+    threading.Thread(target=_decide, daemon=True).start()
 
 
 def _attach_type_policy(ctx, inst=None) -> None:
@@ -25904,9 +26034,26 @@ def _pair_qubit_names(store: QuamStore, name: str):
 
 
 def _config_state_hash(store: QuamStore) -> str:
-    """Content hash of the store's in-memory state+wiring (canonical JSON)."""
+    """Content hash of the store's in-memory state+wiring (canonical JSON).
+
+    Memoized on the store's own mutation counters (docs/189). Serialising the
+    whole chip to canonical JSON measures **33 ms** on the customer's 5Q chip,
+    and that was fine while the only caller was a button press. It is not fine
+    now: `_pulse_section_ctx` asks for staleness on every render of a pulse
+    whose class SM cannot synthesize, which is every CZ flux pulse on a chip
+    like KRISS_CZ. The key is the pair `_bulk_grid_key` already trusts to
+    decide which CELLS are current -- a mutation bumps `mutation_seq`, a staged
+    edit lengthens the change log -- so a hash can never outlive a change to
+    the thing it hashes.
+    """
     with store._lock:
-        return working_copy.content_hash(store.state, store.wiring)
+        key = (store.mutation_seq, len(store.change_log))
+        cached = getattr(store, "_config_hash_memo", None)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        digest = working_copy.content_hash(store.state, store.wiring)
+        store._config_hash_memo = (key, digest)
+        return digest
 
 
 def _config_stale(store: QuamStore) -> bool:

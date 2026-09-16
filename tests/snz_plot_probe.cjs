@@ -32,7 +32,11 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 async function main() {
     const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'snz-probe-'));
-    const url = BASE + '/pulses?path=' + encodeURIComponent(PULSE);
+    // Filter the table to this one pulse first. The table is paginated (151
+    // rows on the customer chip) and a row on page 3 is not in the DOM to
+    // click -- which is how this probe first reported a FAIL that was its own.
+    const url = BASE + '/pulses?q=' + encodeURIComponent(PULSE.split('.').pop())
+              + '&path=' + encodeURIComponent(PULSE);
     const chrome = spawn(CHROME, [
         '--headless=new', '--disable-gpu', '--no-first-run',
         '--remote-debugging-port=' + PORT, '--remote-allow-origins=*',
