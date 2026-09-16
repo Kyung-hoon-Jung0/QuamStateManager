@@ -337,14 +337,33 @@ above it has already cleared the stack and nothing between the two moves either
 sequence. Measured with a write probe that never fired across 104 undo/redo
 tests, bursts included; it is left standing as the defence it has always been.
 
-**F47 — refuted as a gap, real as a sentence.** The env strip read "25 pulse
-classes discovered" directly above a list of 16, which reads as nine classes
-your environment has and you cannot create. All 25 are reachable: 16 are on the
-list, 4 are other NAMES for one of those, 3 are base classes and 2 are
-deprecated spellings SM still reads. The strip says so now, and the arithmetic
-comes from the same classifier the list is built with (`env_leaf_verdict`), so
-the two cannot drift apart — the load-bearing pin is that a leaf counted
-`creatable` is exactly a leaf that becomes an option, for every leaf.
+**F47 — half a wording problem, half a real gap, and I nearly shipped only
+the wording.** The env strip read "25 pulse classes discovered" directly above
+a list of 16, which reads as nine classes your environment has and you cannot
+create. Of the ROSTER's 25 all are reachable: 16 are on the list, 4 are other
+NAMES for one of those, 3 are base classes and 2 are deprecated spellings. The
+strip says so now, from the same classifier the list is built with
+(`env_leaf_verdict`), so the two cannot drift apart — the load-bearing pin is
+that a leaf counted `creatable` is exactly a leaf that becomes an option, for
+every leaf.
+
+The second half was real, and the first measurement is what found it: **the
+chip's own four lab-written classes are in no roster at all**. The roster is a
+subclass walk over the homes QM ships, so `SNZTwoFluxPulse` and its three
+siblings — 30 pulse objects on this chip, the docs/189 subject — could be
+duplicated and never created. SM has held their full field schemas the whole
+time, in the same instance folder, because the CLASS INVENTORY probes exactly
+what the chip declares; the create form simply never read that half. It does
+now, through `chip_pulse_specs`, whose discriminator is **structural, never a
+name**: quam's `Pulse` among the bases, which is why the lab's `CZGateTwoFlux`
+in the same module is correctly not offered and `GefWeightsReadoutPulse` is
+correctly marked a readout. Three seams came with it, each of which would have
+made the feature a lie — the option is not branded "✗ not in this env" (it is
+absent from the roster by construction while the probe that produced it said
+`importable: True`), the create door does not demand a `force` for it, and the
+no-preview note says it came from the chip rather than from the environment.
+Measured end to end in real Chrome: 20 options under a "From this chip" group,
+and a created pulse carrying `quam_config.two_flux_gate.SNZTwoFluxPulse`.
 
 **F48 — a name the pair already carries.** The new-gate name box was free text
 with a pattern and nothing else, so `cz_SNZ` on a pair that already has it was
@@ -357,9 +376,9 @@ the backstop and is finally pinned; it never was.
 
 | | |
 |---|---|
-| browser checks (real Chrome, this batch) | 11 / 11 |
-| new pins | 28 Python + 9 jsdom |
-| mutations caught | 24 of 25 |
+| browser checks (real Chrome, this batch) | 18 / 18 |
+| new pins | 43 Python + 12 jsdom |
+| mutations caught | 37 of 38 |
 | jsdom selfchecks | 132 / 132 |
 | pytest (pulses + undo + routes sets) | 1,474 passed, 2 pre-existing failures |
 
