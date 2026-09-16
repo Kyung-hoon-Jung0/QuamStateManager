@@ -2244,6 +2244,75 @@ document.addEventListener('keydown', function(evt) {
     window.dsNavRun(step);
 });
 
+/* Left / Right collapse and expand the folder, the way every file tree does.
+ * Customer feedback 2026-09-16: "위/아래로 실험은 잘 넘어가는데, 왼쪽/오른쪽으로
+ * 상위 폴더를 접고 펴고 할 수 있으면 좋겠다."
+ *
+ * Up/Down above move between RUNS and are gated on a detail being open (the
+ * arrows must keep scrolling the page otherwise). Collapsing a folder is not
+ * about the open run, so this gate is only "focus is inside the tree" — which
+ * also lets it work before anything has been opened.
+ *
+ * Focus in this tree sits on either a run row (`.tree-entry-click`, a leaf) or
+ * a group's `<summary>`, so both are handled:
+ *   Left   on a run            -> close its folder, focus that folder
+ *          on an OPEN folder   -> close it
+ *          on a CLOSED folder  -> step out to the parent folder
+ *   Right  on a CLOSED folder  -> open it
+ *          on an OPEN folder   -> step in to its first row
+ *          on a run            -> nothing; a leaf has nothing to open
+ *
+ * Opening through `.open = true` fires the `toggle` event, so a lazy date
+ * group (docs/142: `hx-trigger="toggle[this.open] once"`) still fetches its
+ * rows — the keyboard path must not be the one that arrives empty. */
+document.addEventListener('keydown', function (evt) {
+    if (evt.key !== 'ArrowLeft' && evt.key !== 'ArrowRight') return;
+    if (evt.ctrlKey || evt.metaKey || evt.altKey || evt.shiftKey) return;
+    var a = document.activeElement;
+    // `#sidebar-tree` is the swap target the tree renders into; `#sidebar` is
+    // its container. Accepting either keeps this working for fragments that
+    // land outside the inner div, and still refuses focus anywhere else.
+    if (!a || !a.closest || !a.closest('#sidebar-tree, #sidebar')) return;
+
+    var summary = a.closest('summary');
+    var entry = a.closest('.tree-entry-click[data-uid]');
+    if (!summary && !entry) return;
+
+    var ownSummary = function (d) { return d ? d.querySelector(':scope > summary') : null; };
+    var focus = function (el) { if (el) { el.focus(); return true; } return false; };
+    var det = summary ? summary.parentElement : (entry.closest('details'));
+    if (!det) return;
+
+    if (evt.key === 'ArrowLeft') {
+        if (summary && !det.open) {
+            // already collapsed — step out, but never past the tree itself
+            var up = det.parentElement && det.parentElement.closest('details');
+            if (!focus(ownSummary(up))) return;
+        } else {
+            det.open = false;
+            if (!focus(ownSummary(det))) return;
+        }
+        evt.preventDefault();
+        return;
+    }
+
+    if (!summary) return;            // Right on a run: a leaf opens nothing
+    if (!det.open) {
+        det.open = true;             // fires `toggle` -> a lazy group loads
+    } else {
+        // first row or nested folder INSIDE this one, in document order. The
+        // element's own <summary> is a descendant too, so skip it explicitly —
+        // a plain querySelector returns it and steps nowhere.
+        var cands = det.querySelectorAll('.tree-entry-click[data-uid], summary');
+        var first = null;
+        for (var i = 0; i < cands.length; i++) {
+            if (cands[i] !== summary) { first = cands[i]; break; }
+        }
+        if (!focus(first)) return;
+    }
+    evt.preventDefault();
+});
+
 /* "⤢ Open as a full page": render this run's detail into the main #table-pane
  * (full width — figures at real size), keeping the sidebar tree for navigation.
  * Closes the inspector copy first so the two panes never hold duplicate ids. */

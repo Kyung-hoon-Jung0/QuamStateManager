@@ -163,4 +163,75 @@ doc.getElementById('table-pane').focus();
 ev = key('[');
 ok(ev.defaultPrevented && loads[loads.length - 1] === '/dataset/u2', '[ still steps to the previous run from anywhere');
 
+/* 8. Customer feedback 2026-09-16: "위/아래로 실험은 잘 넘어가는데, 왼쪽/
+ * 오른쪽으로 상위 폴더를 접고 펴고 할 수 있으면 좋겠다." Left / Right work the
+ * way every file tree does, on the REAL handler in app.js. */
+doc.body.innerHTML =
+    '<div id="sidebar"><div id="sidebar-tree">'
+    + '<details class="tree-root" open><summary id="s-root">root</summary>'
+    + '  <details class="tree-dir" open><summary id="s-day">2026-09-16</summary>'
+    + '    <ul class="tree-entries">' + entry('k3', 3) + entry('k2', 2) + '</ul>'
+    + '  </details>'
+    + '  <details class="tree-dir" data-lazy-group="1"><summary id="s-lazy">2026-09-15</summary>'
+    + '    <ul class="tree-entries"></ul>'
+    + '  </details>'
+    + '</details></div></div>'
+    + '<div id="table-pane"></div><div id="inspector-pane"></div>';
+const S = (id) => doc.getElementById(id);
+
+// Left on a RUN closes the folder it lives in, and takes the keyboard with it
+E('k2').focus();
+ev = key('ArrowLeft');
+ok(ev.defaultPrevented, 'Left on a run entry is taken');
+ok(S('s-day').parentElement.open === false, 'Left on a run collapses its folder');
+ok(doc.activeElement === S('s-day'), '…and focus lands on that folder');
+
+// Right on a CLOSED folder opens it again
+ev = key('ArrowRight');
+ok(ev.defaultPrevented && S('s-day').parentElement.open === true,
+   'Right on a collapsed folder opens it');
+
+// Right on an OPEN folder steps INTO its first row
+ev = key('ArrowRight');
+ok(doc.activeElement === E('k3'), 'Right on an open folder steps in to the first run');
+
+// Left on an OPEN folder closes it (focus already on the summary)
+S('s-day').focus();
+key('ArrowLeft');
+ok(S('s-day').parentElement.open === false, 'Left on an open folder closes it');
+// …and Left again steps OUT to the parent folder rather than doing nothing
+ev = key('ArrowLeft');
+ok(doc.activeElement === S('s-root'), 'Left on a collapsed folder steps out to its parent');
+
+// a lazy date group must still fetch its rows when opened by keyboard
+// (docs/142: hx-trigger="toggle[this.open] once")
+let toggled = 0;
+S('s-lazy').parentElement.addEventListener('toggle', function () { toggled++; });
+S('s-lazy').focus();
+key('ArrowRight');
+ok(S('s-lazy').parentElement.open === true, 'Right opens a lazy group');
+
+// the top of the tree is not a trap: Left at the root changes nothing and is
+// NOT swallowed, so the key still reaches the page
+S('s-root').focus();
+S('s-root').parentElement.open = false;
+ev = key('ArrowLeft');
+ok(!ev.defaultPrevented, 'Left at the outermost folder is left alone, not swallowed');
+
+// Right on a RUN does nothing: a leaf has nothing to open
+S('s-root').parentElement.open = true;
+S('s-day').parentElement.open = true;
+E('k3').focus();
+ev = key('ArrowRight');
+ok(!ev.defaultPrevented, 'Right on a run entry is left alone');
+
+// and none of it fires from outside the sidebar, or with a modifier
+doc.getElementById('table-pane').setAttribute('tabindex', '0');
+doc.getElementById('table-pane').focus();
+ev = key('ArrowLeft');
+ok(!ev.defaultPrevented, 'Left outside the sidebar is left alone');
+E('k3').focus();
+ev = key('ArrowLeft', { shiftKey: true });
+ok(!ev.defaultPrevented, 'Shift+Left is left alone');
+
 process.exit(fails ? 1 : 0);
