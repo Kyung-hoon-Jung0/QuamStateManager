@@ -172,3 +172,44 @@ def test_the_page_js_under_jsdom():
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, (r.stdout + r.stderr)
     assert "all checks passed" in r.stdout, (r.stdout + r.stderr)
+
+
+class TestTheDayPickerCannotCrashThePage:
+    """docs/191 A02 -- every value the page's own date input can produce must
+    answer, not 500. Measured before the fix: 1900-01-01 and 9999-12-31 both
+    returned 500 with an OSError / OverflowError traceback."""
+
+    @pytest.mark.parametrize("day", ["0001-01-01", "1900-01-01", "1969-12-31",
+                                     "1970-01-01", "2099-01-01", "9999-12-31",
+                                     "not-a-date", ""])
+    def test_every_extreme_day_answers(self, world, day):
+        c = world["client"]
+        for url in (f"/journal?day={day}", f"/journal/day?day={day}"):
+            r = c.get(url, headers={"HX-Request": "true"})
+            assert r.status_code == 200, (url, r.status_code)
+
+    def test_the_last_day_of_the_calendar_has_no_next(self, world):
+        """`datetime.max + 1 day` has no answer; the arrow points at itself
+        rather than raising."""
+        r = world["client"].get("/journal/day?day=9999-12-31",
+                                headers={"HX-Request": "true"})
+        assert r.status_code == 200
+        assert b"9999-12-31" in r.data
+
+    def test_an_ordinary_day_still_has_both_neighbours(self, world):
+        """The clamp must only bite at the ends of the calendar. The arrows
+        live in the page shell, not in the body `/journal/day` swaps."""
+        from datetime import datetime, timedelta
+        d0 = datetime.strptime(DAY, "%Y-%m-%d")
+        prev = (d0 - timedelta(days=1)).strftime("%Y-%m-%d")
+        nxt = (d0 + timedelta(days=1)).strftime("%Y-%m-%d")
+        html = world["client"].get(f"/journal?day={DAY}",
+                                   headers={"HX-Request": "true"}
+                                   ).get_data(as_text=True)
+        assert prev in html and nxt in html, (prev, nxt)
+
+    def test_the_first_day_of_the_calendar_has_no_previous(self, world):
+        html = world["client"].get("/journal?day=0001-01-01",
+                                   headers={"HX-Request": "true"}
+                                   ).get_data(as_text=True)
+        assert "JournalPage.day('0001-01-01')" in html

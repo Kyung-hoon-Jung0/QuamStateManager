@@ -657,5 +657,34 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
      'W19 …and something with no number in it is shown as it came, never '
      + 'dressed up as a version: ' + P.shortVersion('nightly'));
 
+  /* ---- docs/191 A01: the Send button says why it does nothing.
+     `submit` bails on an empty or whitespace-only draft with a bare
+     `return false` -- no post, no card, no word. Enter on an empty box doing
+     nothing is what anyone expects; pressing a Send button that LOOKS enabled
+     and watching nothing happen is not. */
+  const root191 = document.querySelector('.ag-root');
+  const ta191 = root191 && root191.querySelector('.ag-input');
+  const send191 = root191 && root191.querySelector('.ag-send');
+  ok(!!ta191 && !!send191, 'A01: the composer and its Send button are mounted');
+  if (ta191 && send191) {
+    ok(send191.disabled === true,
+       'A01: an empty box starts unsendable');
+    ok(/type something/.test(send191.title || ''),
+       'A01: and the control says why (title: ' + send191.title + ')');
+
+    ta191.value = '     ';
+    P.grow(ta191);
+    ok(send191.disabled === true, 'A01: whitespace alone is still unsendable');
+
+    ta191.value = 'run power rabi on q1';
+    P.grow(ta191);
+    ok(send191.disabled === false, 'A01: real text enables it');
+    ok(!send191.title, 'A01: and the explanation goes away');
+
+    ta191.value = '';
+    P.grow(ta191);
+    ok(send191.disabled === true, 'A01: clearing it locks it again');
+  }
+
   process.exit(fails ? 1 : 0);
 })();

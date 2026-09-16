@@ -387,3 +387,51 @@ class TestTheNumberIsTheIdentity:
         assert len(segs) == 1, "two runs of one family must stay one segment"
         assert segs[0]["family"] == "Res spec"
         assert [s["run_id"] for s in segs[0]["steps"]] == [159, 160]
+
+
+class TestADayOutsideTheCalendar:
+    """docs/191 A02 -- the Calibration log's date picker has no bounds, and two
+    ends of the calendar crashed the page with a 500.
+
+    `datetime.timestamp()` raises `OSError [Errno 22]` on Windows for any local
+    date before the epoch (measured: `/journal/day?day=1900-01-01`), and
+    `datetime.max + 1 day` raises `OverflowError` (9999-12-31). A day outside
+    the representable range holds nothing; that is an empty answer, not an
+    error, and every one of these is a value the page's own control produces.
+    """
+
+    @pytest.mark.parametrize("day", ["0001-01-01", "1900-01-01", "1969-12-31",
+                                     "1970-01-01", "9999-12-31"])
+    def test_an_extreme_day_builds_instead_of_raising(self, world, day):
+        d = story.build_day(world["inst"], "chip", day, ds=world["ds"],
+                            with_gates=False)
+        assert isinstance(d, dict)
+        assert d["cards"] == [] or isinstance(d["cards"], list)
+
+    def test_a_nonsense_day_was_already_an_empty_answer(self, world):
+        """Not part of the fix, recorded because I assumed the opposite and
+        checked: an unparseable day has always built an empty page rather than
+        raising, so the extreme dates above are now consistent with it."""
+        d = story.build_day(world["inst"], "chip", "not-a-date",
+                            ds=world["ds"], with_gates=False)
+        assert d["cards"] == []
+
+    def test_an_ordinary_day_is_untouched(self, world):
+        d = story.build_day(world["inst"], "chip", DAY, ds=world["ds"],
+                            with_gates=False)
+        assert d["cards"], "the ordinary path must keep working"
+
+    def test_a_journal_LINE_on_a_pre_epoch_day_builds_too(self, world):
+        """The day bounds were not the only `.timestamp()` on this path: every
+        journal line's own time is parsed the same way, and that call site
+        caught `ValueError` alone. It is only reached when a journal file
+        EXISTS for the extreme day, which is what this fixture makes."""
+        from datetime import datetime as _dt
+        journal.append(world["inst"], "chip", "an old note", kind="sm",
+                       when=_dt(1900, 1, 1, 10, 30, 0))
+        # a journal line with no run attaches to nothing, so there is no card
+        # to look for -- what this pin asserts is that building the day RETURNS
+        # (measured: without the widened catch it raises OSError [Errno 22])
+        d = story.build_day(world["inst"], "chip", "1900-01-01",
+                            ds=world["ds"], with_gates=False)
+        assert isinstance(d, dict) and isinstance(d["cards"], list)

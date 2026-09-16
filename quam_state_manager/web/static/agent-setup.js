@@ -131,7 +131,15 @@ window.AgentSetup = (function () {
     parts.push(sec("test", "6. Test", !!(tested.claude && tested.claude.ok) || !!(tested.codex && tested.codex.ok),
       '<p class="muted">A real read-only question through the CLI: the time it took and the answer, verbatim.</p>' +
       '<div class="as-acts">' + ["claude", "codex"].filter(function (k) { return clis[k] && clis[k].found; }).map(function (k) { return '<button type="button" class="btn-sm" onclick="AgentSetup.test(\'' + k + '\')">Test ' + k + "</button>"; }).join(" ") + "</div>" +
-      '<div id="as-test">' + (S.lastTest || "") + "</div>"));
+      '<div id="as-test">' + (S.lastTest || "") + "</div>",
+      /* docs/191 A04: `sec` collapses a section once it is done, and a
+         successful test is what makes this one done -- so the answer arrived
+         and the section shut over it in the same breath. Measured: "asking
+         claude one read-only question…", then a bare "✓ 6. Test" with a real
+         6.8 s answer hidden inside. The result is the whole point of the
+         section ("the time it took and the answer, verbatim"), so while there
+         is one on screen the section stays open. */
+      !!S.lastTest));
     root.innerHTML = parts.join("");
     if (window.htmx) { try { window.htmx.process(root); } catch (e) { /* ignore */ } }
   }

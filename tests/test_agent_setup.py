@@ -388,14 +388,44 @@ class TestTheWiringStrip:
         import re as _re
         bad = _re.compile(r"logg?ed[ -]?in|authenticated|signed[ -]?in|not logged",
                           _re.I)
+
+        def _code_only(text):
+            """Comments EXPLAIN the doctrine; they are not what the page says.
+
+            docs/191: this scan read the whole file, so it tripped on a JS
+            comment describing what the CLI is (the person's own logged-in
+            claude/codex) and on the template's own Jinja comment stating the
+            rule -- statements about the world, not claims the UI makes, and it
+            had been failing on those. The keyword carve-outs it used instead
+            (cannot / never) are a guess at wording; removing comment SPANS is
+            the actual distinction, and a multi-line comment is a span, not a
+            set of lines that each begin with a marker.
+            """
+            out, i, n = [], 0, len(text)
+            while i < n:
+                if text.startswith("{#", i):
+                    end = text.find("#}", i + 2)
+                    i = n if end < 0 else end + 2
+                    continue
+                if text.startswith("/*", i):
+                    end = text.find("*/", i + 2)
+                    i = n if end < 0 else end + 2
+                    continue
+                if text.startswith("//", i) and (not out or out[-1].isspace()):
+                    end = text.find(chr(10), i)
+                    i = n if end < 0 else end
+                    continue
+                out.append(text[i])
+                i += 1
+            return "".join(out)
+
         for rel in ("quam_state_manager/web/templates/_agent_wire.html",
                     "quam_state_manager/web/static/agent.js"):
             text = (self._ROOT / rel).read_text(encoding="utf-8")
-            # the module comment is allowed to explain WHY the words are absent
-            body = "\n".join(l for l in text.splitlines()
-                              if "cannot" not in l and "never" not in l
-                              and "not a live login check" not in l)
-            assert not bad.search(body), (rel, bad.search(body).group(0))
+            body = _code_only(text)
+            hit = bad.search(body)
+            assert not hit, (rel, hit.group(0),
+                             body[max(0, hit.start() - 80):hit.end() + 40])
 
     def test_the_three_words_and_their_order(self):
         js = (self._ROOT / "quam_state_manager/web/static/agent.js").read_text(encoding="utf-8")

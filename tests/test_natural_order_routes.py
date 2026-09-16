@@ -131,7 +131,16 @@ class TestAgentTargetLists:
         body = r.get_json()
         assert r.status_code == 400, body
         assert body["known"][:4] == ["q1", "q2", "q10", "q11"], body["known"]
-        assert "['qZ2', 'qZ10']" in body["error"], body["error"]
+        # docs/191: this asserted the Python LIST REPR the refusal used to
+        # print -- brackets and quotes and all -- which `_unknown_targets_msg`
+        # deliberately replaced with a sentence ("no qubit or pair called:
+        # qZ2, qZ10"). The pin has been red ever since, guarding a spelling the
+        # product had stopped using. What this class is about is the ORDER, and
+        # that is what it checks now, in the wording actually shipped.
+        err = body["error"]
+        assert "qZ2" in err and "qZ10" in err, err
+        assert err.index("qZ2") < err.index("qZ10"), err
+        assert "[" not in err and "'" not in err, err
 
 
 # ---------------------------------------------------------- folder browser

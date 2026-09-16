@@ -70,7 +70,10 @@ def parse_journal(text: str, day: str) -> list[dict]:
                     body = body[:tail]
             try:
                 ts = datetime.strptime(f"{day} {hhmmss}", "%Y-%m-%d %H:%M:%S").timestamp()
-            except ValueError:
+            except (ValueError, OSError, OverflowError):
+                # docs/191 A02: `.timestamp()` raises OSError on Windows for a
+                # local date before the epoch, and every caller here already
+                # treats an unparseable time as "no time" rather than an error.
                 ts = 0.0
             cur = {"ts": ts, "time": hhmmss, "kind": kind, "text": body.strip(), "run_id": run_id,
                    "paths": paths, "because": None}
@@ -97,13 +100,13 @@ def _epoch(iso: str | None, day: str | None = None, hms: str | None = None) -> f
     if iso:
         try:
             return datetime.fromisoformat(iso).timestamp()
-        except ValueError:
-            pass
+        except (ValueError, OSError, OverflowError):
+            pass                                        # docs/191 A02
     if day and hms:
         try:
             return datetime.strptime(f"{day} {hms}", "%Y-%m-%d %H:%M:%S").timestamp()
-        except ValueError:
-            return None
+        except (ValueError, OSError, OverflowError):
+            return None                                 # docs/191 A02
     return None
 
 
@@ -596,7 +599,15 @@ def _units_of_day(instance_path, active_path, day: str) -> list[dict]:
         d0 = datetime.strptime(day, "%Y-%m-%d")
     except ValueError:
         return []
-    lo, hi = d0.timestamp(), (d0 + timedelta(days=1)).timestamp()
+    try:
+        lo, hi = d0.timestamp(), (d0 + timedelta(days=1)).timestamp()
+    except (OSError, OverflowError, ValueError):
+        # docs/191 A02: `datetime.timestamp()` raises OSError [Errno 22] on
+        # Windows for any local date before the epoch, and the Calibration
+        # log's own date picker offers them -- typing 1900-01-01 into it
+        # crashed the page with a 500. A day outside the representable range
+        # holds no units by definition; that is an empty answer, not an error.
+        return []
     out = []
     for u in units:
         ts = float(u.get("ts") or 0)

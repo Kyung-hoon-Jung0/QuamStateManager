@@ -84,8 +84,18 @@ def _build(day: str) -> dict:
     data["no_dataset"] = ds is None
     data["folder"] = str(journal_mod.root(current_app.instance_path))
     d0 = datetime.strptime(day, "%Y-%m-%d")
-    data["prev_day"] = (d0 - timedelta(days=1)).strftime("%Y-%m-%d")
-    data["next_day"] = (d0 + timedelta(days=1)).strftime("%Y-%m-%d")
+    # docs/191 A02: the day arrives from a date picker with no bounds, and the
+    # two ends of the calendar have no neighbour -- `datetime.max + 1 day`
+    # raises OverflowError and 500'd the page on 9999-12-31. A day with no
+    # next day simply has none; the arrow is left pointing at itself, which
+    # the template already renders as a dead end rather than a crash.
+    def _step(base, days):
+        try:
+            return (base + timedelta(days=days)).strftime("%Y-%m-%d")
+        except (OverflowError, OSError, ValueError):
+            return base.strftime("%Y-%m-%d")
+    data["prev_day"] = _step(d0, -1)
+    data["next_day"] = _step(d0, 1)
     data["is_today"] = day == datetime.now().strftime("%Y-%m-%d")
     data["days"] = journal_mod.list_days(current_app.instance_path, _chip_name())
     data["authors"] = sorted({c.get("author") for c in data["cards"] if c.get("author")})

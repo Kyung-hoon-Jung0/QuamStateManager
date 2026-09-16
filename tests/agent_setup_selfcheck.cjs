@@ -150,9 +150,27 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   ok(calls[0].body.apply === true, 'the write is the second click');
   // test
   calls.length = 0;
+  /* docs/191 A04: the section collapses only when the status says the test is
+     DONE, so a harness whose record is empty keeps it open for the wrong
+     reason -- the first version of the pin below passed against a section that
+     was never eligible to close. Report the success the way the server does. */
+  status.record = status.record || {};
+  status.record.tested = { claude: { ok: true, elapsed_s: 12.3 } };
   A.test('claude');
   await tick(30);
   ok(/answered in 12\.3 s/.test(document.getElementById('as-test').textContent) && /PJ_10082026 is open: 20 qubits\./.test(document.getElementById('as-test').textContent), 'the test shows the time and the answer verbatim');
+  /* docs/191 A04: showing it is not the same as the user SEEING it. A
+     successful test is what marks the section done, and `sec` collapses a done
+     section -- so the answer arrived and the section shut over it in the same
+     breath (measured in real Chrome: "asking claude one read-only question…",
+     then a bare "✓ 6. Test" with a real 6.8 s answer inside). While there is a
+     result on screen the section stays open. */
+  const testSec = document.getElementById('as-test-sec') || document.getElementById('as-test').closest('details');
+  ok(!!testSec && testSec.open,
+     'A04: the section stays OPEN over the answer it just produced');
+  ok(/✓/.test((testSec.querySelector('summary') || {}).textContent || ''),
+     'A04: and it is still marked done (summary: '
+     + ((testSec.querySelector('summary') || {}).textContent || '').trim().slice(0, 24) + ')');
   console.log(`\n${passes} passed, ${fails} failed`);
   process.exit(fails ? 1 : 0);
 })();

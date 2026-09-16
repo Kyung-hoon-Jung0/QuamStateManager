@@ -667,7 +667,7 @@ window.AgentPanel = (function () {
         // ahead during the flight is the person's next line, not ours to
         // throw away (round 1 measured a second /run draft wiped this way).
         var v = ta.value;
-        if (v.trim() === sentText) ta.value = "";
+        if (v.trim() === sentText) { ta.value = ""; syncSend(ta); }
         else if (v.indexOf(sentText) === 0) ta.value = v.slice(sentText.length).replace(/^[ \t]+/, "");
         grow(ta);
       }
@@ -692,6 +692,10 @@ window.AgentPanel = (function () {
       done(ok);
     });
     return false;
+  }
+  function syncSendIn(root) {
+    var ta = root && root.querySelector(".ag-input");
+    if (ta) syncSend(ta);
   }
   function preset(i, root) {
     var pr = PRESETS[i];
@@ -718,6 +722,21 @@ window.AgentPanel = (function () {
     var h = ta.scrollHeight || 0;
     if (h > max) { ta.style.height = max + "px"; ta.style.overflowY = "auto"; }
     else { ta.style.height = h ? h + "px" : ""; ta.style.overflowY = "hidden"; }
+    syncSend(ta);
+  }
+  /* docs/191 A01: `submit` bails on an empty (or whitespace-only) draft with a
+     bare `return false` -- no post, no card, no word. Pressing Enter on an
+     empty box doing nothing is what anyone expects; pressing a Send button
+     that LOOKS enabled and watching nothing happen is not. The control says it
+     now, which is the house pattern (the create form's validity, the plan
+     buttons' own disabled states) and needs no message at all. */
+  function syncSend(ta) {
+    var root = ta && ta.closest && ta.closest(".ag-root");
+    var btn = root && root.querySelector(".ag-send");
+    if (!btn) return;
+    var empty = !String(ta.value || "").trim();
+    btn.disabled = empty;
+    btn.title = empty ? "type something to send" : "";
   }
   function startPlan(id) {
     if (S.observer) return;
@@ -1012,6 +1031,7 @@ window.AgentPanel = (function () {
     var m = { id: opts.id || ("m" + S.mounts.length), root: root.querySelector(".ag-root"), compact: !!opts.compact, autoscroll: true };
     S.mounts.push(m);
     S.observer = observer();
+    syncSendIn(m.root);          // docs/191 A01: an empty box starts unsendable
     api("GET", "/api/agent/chat/backends").then(function (r) {
       if (r.status !== 200) return;
       S.backends = r.body.backends || {};
