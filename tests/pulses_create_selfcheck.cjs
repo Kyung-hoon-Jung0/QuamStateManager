@@ -292,6 +292,64 @@ P.createTargetKind(qubitRadio);
 ok(dragOpt.hidden === false, 'P10: filter lifted outside pair mode');
 ok(line.hidden === true, 'P10: pair line hidden outside pair mode');
 
+// P11 (docs/190 F48): a gate name the pair already carries is refused AS THE
+// USER TYPES. It was free text with a pattern and nothing else, so the only
+// answer came after the press -- from a server that already knew, and from a
+// select right above the box that already listed the taken names.
+const pairSel2 = doc.getElementById('pulse-create-pair');
+pairSel2.value = 'q1-q2';
+P.createPairSelected(pairSel2);
+gateSel.value = '__new__:cz_snz';
+P.createGateSelected(gateSel);
+const gname = doc.getElementById('pulse-create-newgate-name');
+
+gname.value = 'cz_unipolar';                 // q1-q2 already has this macro
+P.createValidateGateName();
+ok(/already exists on q1-q2/.test(gname.validationMessage),
+   'P11: a taken gate name is refused as you type');
+ok(gname.getAttribute('aria-invalid') === 'true', 'P11: and marked invalid');
+
+gname.value = 'cz_brand_new';
+P.createValidateGateName();
+ok(gname.validationMessage === '', 'P11: a free name is accepted');
+ok(gname.getAttribute('aria-invalid') === 'false', 'P11: and marked valid');
+
+// the check is PER PAIR: q2-q1 carries no macros, so the same word is free
+pairSel2.value = 'q2-q1';
+P.createPairSelected(pairSel2);
+gateSel.value = '__new__:cz_unipolar';
+P.createGateSelected(gateSel);
+gname.value = 'cz_unipolar';
+P.createValidateGateName();
+ok(gname.validationMessage === '',
+   'P11: the same name is free on a pair that does not carry it');
+
+// an EXISTING gate is chosen, not named -- the hidden box must never refuse
+pairSel2.value = 'q1-q2';
+P.createPairSelected(pairSel2);
+gateSel.value = 'cz_unipolar';
+P.createGateSelected(gateSel);
+ok(gname.hidden === true && gname.validationMessage === '',
+   'P11: a hidden name box blocks nothing');
+
+// P12: the WIRING, not just the function. Choosing the "+ new" gate has to
+// re-judge a name that is already typed -- a validator nothing calls is this
+// project's recurring failure (docs/141 §4af), and the first version of the
+// pin above called it by hand and so proved nothing about the call site.
+gname.value = 'cz_unipolar';
+gateSel.value = '__new__:cz_snz';
+P.createGateSelected(gateSel);                 // no hand-call below this line
+ok(/already exists on q1-q2/.test(gname.validationMessage),
+   'P12: choosing "+ new" re-judges a name already in the box');
+
+// and switching PAIRS re-judges it too -- q2-q1 carries no macros
+pairSel2.value = 'q2-q1';
+P.createPairSelected(pairSel2);
+gateSel.value = '__new__:cz_unipolar';
+P.createGateSelected(gateSel);
+ok(gname.validationMessage === '',
+   'P12: switching pair re-judges the same word');
+
 if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
 console.log('ALL OK pulses_create_selfcheck');
 process.exit(0);

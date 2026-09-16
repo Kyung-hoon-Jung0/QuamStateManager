@@ -286,3 +286,92 @@ found both**: the F17 pin greped the source for an assignment and passed with
 the call replaced by a constant, and its first figure-level replacement asserted
 a stagger on a fixture whose crossings are genuinely far apart. The pin now
 feeds the builder the shape the customer's chip has.
+
+## 11. The third batch, and the two that turned out not to be bugs (2026-09-17)
+
+Six findings left after §10, each reproduced in real headless Chrome before
+anything was written, and two of them refuted on the way.
+
+**F52 — the compare legend sat on the axis title.** Three pulses in view put a
+1,019 px legend band across the 61 px `time (ns)` title. The first fix moved the
+legend *down* and grew the bottom margin, which moved the title down with it —
+both are anchored to the plot area, so they travelled together and the overlap
+was unchanged (measured: legend 759–807, title 750–766). The legend is **above**
+the plot now, with the top margin grown by its own row count. Measured after:
+legend bottom 605, title top 803.
+
+**F38 — a dangling pointer badge that looked healthy.** The rule exists now
+(`.pointer-badge.pointer-dangling`), and the *finding* was already fixed when
+§10 ended; what was still wrong was my probe, which searched for the class name
+rather than comparing the colour, so it printed REPRODUCED against a page that
+was correct. Measured: dangling `rgb(245,160,168)` against a healthy
+`rgb(100,181,246)`.
+
+**F34 — the page devoted to pulses had no physical amplitude.** Every entity
+surface has shown what actually leaves the instrument since docs/109 — MW in
+dBm through `P = FSP + 20*log10|amp|`, flux in volts — and the Pulses inspector
+showed a flat `V` from the catalog, which on an MW channel is not a unit at all
+(the stored number is a scale factor). The measured line now **replaces** that
+label where the port chain resolves, and the row is byte-identical where it does
+not: two labels, one of them false, is worse than the one that was there.
+Measured on the customer chip: `-10.3 dBm` on the q1 drive, `332 mV` on the
+SNZ flux pulse, `ns` on every length untouched.
+
+**F39 — the address carried everything except the pulse.** Search, channel,
+owner pick and page number all rode the URL; the pulse actually open did not, so
+a reload, a Back, or a link to a colleague landed on the right table beside an
+empty inspector. `_pulsesSyncUrl` writes `pulse=` and the page reopens it the
+same way the sidebar's "Add pulse" opens the create form. Resolved **server
+side** against this chip's own index, so a link from another chip renders one
+muted line naming the path instead of painting a 404 over the pane, and a
+`pulse=` that is not a pulse path at all never reaches `/pulse/detail`.
+
+**F44 — a redo that died in silence.** Forking the redo timeline on a new edit
+is the rule every editor applies, but in an editor the forking edit was *yours*
+and visible on screen; here it can be another window or a running node, so the
+press did nothing and said nothing. It names the reason now. Two existing pins
+asserted the old silence (`"HX-Trigger" not in r.headers`) and were updated to
+the new contract, keeping the load-bearing half — nothing is clobbered.
+The second fork check, inside the burst loop, is **unreachable**: the check
+above it has already cleared the stack and nothing between the two moves either
+sequence. Measured with a write probe that never fired across 104 undo/redo
+tests, bursts included; it is left standing as the defence it has always been.
+
+**F47 — refuted as a gap, real as a sentence.** The env strip read "25 pulse
+classes discovered" directly above a list of 16, which reads as nine classes
+your environment has and you cannot create. All 25 are reachable: 16 are on the
+list, 4 are other NAMES for one of those, 3 are base classes and 2 are
+deprecated spellings SM still reads. The strip says so now, and the arithmetic
+comes from the same classifier the list is built with (`env_leaf_verdict`), so
+the two cannot drift apart — the load-bearing pin is that a leaf counted
+`creatable` is exactly a leaf that becomes an option, for every leaf.
+
+**F48 — a name the pair already carries.** The new-gate name box was free text
+with a pattern and nothing else, so `cz_SNZ` on a pair that already has it was
+only refused after the press — by a server that already knew, under a select
+that already listed the taken names. It is judged as the user types now, per
+pair, from the pairs-info island already in the browser. The server's 409 stays
+the backstop and is finally pinned; it never was.
+
+### Measured
+
+| | |
+|---|---|
+| browser checks (real Chrome, this batch) | 11 / 11 |
+| new pins | 28 Python + 9 jsdom |
+| mutations caught | 24 of 25 |
+| jsdom selfchecks | 132 / 132 |
+| pytest (pulses + undo + routes sets) | 1,474 passed, 2 pre-existing failures |
+
+The one mutation nothing caught is redundancy, not a gap, and it was measured
+rather than assumed: the rows-only answer is independent of `pulse=` **twice**
+— the route clears the parameter for a rows-only request, and the rows template
+has no loader to render — so no single-line mutation can break it. Reverting
+**both** guards together turns the pin red.
+
+Three of my own pins were vacuous and the sweep found all three: the rows-only
+pin asserted an absence the fixture could not make present (now a byte-identity
+comparison), the strip pin rendered a branch the route's fixture never reaches
+with no env selected (now renders the template directly, both branches), and the
+duplicate-name pin called the validator by hand and so proved nothing about the
+call site (now switches the gate and the pair, and never calls it).

@@ -17847,6 +17847,14 @@ function _pulsesSyncUrl() {
     if (cur && cur !== "1") parts.push("page=" + cur);
     var pp = document.querySelector("select[name='per_page']");
     if (pp && pp.value && pp.value !== "50") parts.push("per_page=" + pp.value);
+    // docs/190 F34/F39: the open pulse IS what the reader is looking at, and it
+    // was the one thing the URL did not carry -- a reload, a Back, or a link
+    // sent to a colleague came back to an empty inspector beside the right
+    // table. The create form and the Gaussian-CZ form carry no pulse path, so
+    // they drop the parameter rather than pinning a stale one.
+    var det = document.querySelector("#inspector-pane #pulse-detail-root[data-pulse-path]");
+    var openPath = det ? (det.getAttribute("data-pulse-path") || "") : "";
+    if (openPath) parts.push("pulse=" + encodeURIComponent(openPath));
     try {
         history.replaceState(history.state, "", "/pulses" + (parts.length ? "?" + parts.join("&") : ""));
     } catch (e) {}
@@ -17862,6 +17870,9 @@ document.addEventListener("htmx:afterSwap", function (evt) {
     // the rows partial lands in #pulses-rows-wrap (search / tab) or in
     // #table-pane (the pagination links target the whole pane)
     if (t && (t.id === "pulses-rows-wrap" || t.id === "table-pane")) _pulsesSyncUrl();
+    // docs/190 F39: opening / closing a pulse changes the URL too.
+    if (t && (t.id === "inspector-pane" || (t.closest && t.closest("#inspector-pane")))
+        && location.pathname.indexOf("/pulses") === 0) _pulsesSyncUrl();
 });
 
 // Persist the search keyword to the URL as the user types (cheap, no network).

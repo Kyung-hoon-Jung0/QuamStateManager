@@ -35,6 +35,9 @@ __all__ = [
     "PULSE_CATALOG",
     "apply_env_overlay",
     "env_overlay_active",
+    "env_leaf_verdict",
+    "env_roster_breakdown",
+    "env_roster_note",
     "by_qclass",
     "resolve_qclass",
     "infer_spec",
@@ -552,6 +555,89 @@ _ENV_KIND_MAP = {"float": "float", "int": "int", "str": "str", "bool": "bool",
 _ENV_SPECS_MEMO: tuple[int, dict] | None = None
 
 
+def env_leaf_verdict(leaf: str, rec: object) -> str:
+    """Why one roster leaf does or does not become its own creatable type.
+
+    ONE classifier, so the create form's list and the strip's arithmetic above
+    it cannot disagree (docs/190 F47: the strip read "25 pulse classes
+    discovered" directly above a list of 16, and nothing anywhere said where
+    the other 9 went -- on the KRISS_CZ env they are 3 base classes, 2
+    deprecated spellings and 4 other NAMES for a type already in the list, so
+    nothing was missing and the page had no way to say so).
+
+    Verdicts: ``creatable`` (a synthesized spec of its own) and ``offered``
+    (a catalog type already on the list) are the two the form shows; ``alias``
+    (another name for one of those), ``base`` (a base class nobody
+    instantiates), ``deprecated`` (an old spelling SM still READS), and
+    ``no_schema`` (the probe brought back no usable field dump) are the rest.
+    """
+    if not isinstance(rec, dict):
+        return "no_schema"
+    cat = PULSE_CATALOG.get(leaf)
+    if cat is not None:
+        return "offered" if cat.creatable else "deprecated"
+    if leaf in _LEAF_ALIASES:
+        return "alias"
+    if leaf in _ENV_SPEC_BASE_DENY:
+        return "base"
+    if leaf.startswith("_") or rec.get("deprecated"):
+        return "deprecated"
+    fields = rec.get("fields")
+    canonical = rec.get("canonical")
+    if not isinstance(fields, dict) or not isinstance(canonical, str) or not canonical:
+        return "no_schema"
+    return "creatable"
+
+
+def env_roster_breakdown(roster: dict | None = None) -> dict:
+    """``{verdict: count}`` over a roster, plus ``total``. The strip renders
+    its sentence from this, so the numbers come from the same classifier the
+    form's option list is built with (docs/190 F47)."""
+    roster = roster if roster is not None else _ENV_OVERLAY
+    out = {"total": 0, "creatable": 0, "offered": 0, "alias": 0,
+           "base": 0, "deprecated": 0, "no_schema": 0}
+    for leaf, rec in (roster or {}).items():
+        out["total"] += 1
+        out[env_leaf_verdict(leaf, rec)] += 1
+    # what the form actually lists from this roster, and what it does not
+    out["listed"] = out["creatable"] + out["offered"]
+    out["other"] = out["total"] - out["listed"]
+    return out
+
+
+_ROSTER_NOTE_BITS = (
+    ("alias", "other name for one of them", "other names for one of them"),
+    ("base", "base class nothing is built from",
+     "base classes nothing is built from"),
+    ("deprecated", "older spelling SM reads but will not write",
+     "older spellings SM reads but will not write"),
+    ("no_schema", "with no readable schema", "with no readable schema"),
+)
+
+
+def env_roster_note(b: dict) -> str:
+    """Where the classes that are NOT on the create list went, in one phrase.
+
+    Empty when every discovered class is on the list — the strip then says
+    nothing rather than a limp "N of them are on the list below" (docs/190
+    F47). Built here rather than in the template because the four bits need
+    singular and plural, and a count read as "1 base classes" is the kind of
+    seam that makes a true sentence look careless.
+    """
+    if not b or not b.get("other"):
+        return ""
+    bits = []
+    for key, one, many in _ROSTER_NOTE_BITS:
+        n = b.get(key) or 0
+        if n:
+            bits.append(f"{n} {one if n == 1 else many}")
+    if not bits:
+        return ""
+    if len(bits) == 1:
+        return bits[0]
+    return ", ".join(bits[:-1]) + " and " + bits[-1]
+
+
 def env_creatable_specs(roster: dict | None = None) -> dict[str, PulseSpec]:
     """Synthesized creatable specs for roster-ONLY pulse classes (r15, docs/71 §2).
 
@@ -586,15 +672,10 @@ def env_creatable_specs(roster: dict | None = None) -> dict[str, PulseSpec]:
     out: dict[str, PulseSpec] = {}
     for leaf in sorted(roster):
         rec = roster.get(leaf)
-        if (not isinstance(rec, dict) or leaf in PULSE_CATALOG
-                or leaf in _LEAF_ALIASES or leaf.startswith("_")
-                or leaf in _ENV_SPEC_BASE_DENY or rec.get("deprecated")):
+        if env_leaf_verdict(leaf, rec) != "creatable":
             continue
         fields = rec.get("fields")
         canonical = rec.get("canonical")
-        if not isinstance(fields, dict) or not isinstance(canonical, str) \
-                or not canonical:
-            continue
 
         length_mode, length_pointer = "derived", "#./inferred_length"
         lrec = fields.get("length")

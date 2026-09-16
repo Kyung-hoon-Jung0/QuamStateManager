@@ -35,6 +35,18 @@
       <code class="pulse-env-python" title="{{ env_card.selected }}">{{ env_card.selected }}</code>
       {%- for k in ("quam", "quam_builder") %}{% if env_card.versions.get(k) %}
       · <code>{{ k }} {{ env_card.versions[k] }}</code>{% endif %}{% endfor %}
+      {# docs/190 F47: this count sat directly above a list of a DIFFERENT
+         length with nothing reconciling the two, which reads as "9 classes
+         your env has that you cannot create". They are other names for a
+         type already listed, base classes, and old spellings SM still reads.
+         The arithmetic comes from the same classifier the list is built with
+         (`pulse_catalog.env_leaf_verdict`), so the two cannot drift apart. #}
+      {% set _rnote = env_roster | env_roster_note %}
+      {% if _rnote %}
+      <span class="muted pulse-env-recon">· <strong>{{ env_roster.listed }}</strong>
+        of them {{ 'is' if env_roster.listed == 1 else 'are' }} on the list
+        below; the other {{ env_roster.other }}: {{ _rnote }}.</span>
+      {% endif %}
       <span class="muted">· shared with Generate Config</span>
     </span>
   {% elif env_card.warm %}

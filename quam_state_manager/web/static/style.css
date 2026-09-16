@@ -13289,3 +13289,13 @@ tr.diag-row-collapsed { display: none; }
 #gcz-root .inspector-header-line h3 { flex: 1 1 auto; }
 #gcz-root .inspector-header-line .inspector-close { margin-left: auto; }
 #gcz-root button[type=submit].btn-sm { width: auto; }
+
+/* docs/190 F38: a pointer that resolves and one that DANGLES wore the same
+   badge -- only the title text differed, so nothing on screen said a reference
+   was broken until you hovered it. */
+.pointer-badge.pointer-dangling {
+    background: var(--color-error-bg);
+    color: var(--color-error-text);
+    text-decoration: underline wavy currentColor 1px;
+    text-underline-offset: 2px;
+}

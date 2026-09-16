@@ -173,6 +173,56 @@ doc.dispatchEvent(ev);
 ok(window.location.search.indexOf('page=4') >= 0,
    'a #table-pane swap re-syncs the URL (got ' + window.location.search + ')');
 
+// -------------------------------- F39: the URL carries the OPEN pulse
+// The address named the search, the channel, the owner pick and the page --
+// everything except the pulse a person was actually looking at, so a reload,
+// a Back, or a link to a colleague came back to an empty inspector.
+function inspectorWith(pulsePath) {
+    let insp = doc.getElementById('inspector-pane');
+    if (!insp) { insp = doc.createElement('div'); insp.id = 'inspector-pane'; doc.body.appendChild(insp); }
+    insp.innerHTML = pulsePath
+        ? '<div id="pulse-detail-root" data-pulse-path="' + pulsePath + '"></div>'
+        : '<div id="pulse-create-root"></div>';   // the create form carries none
+    return insp;
+}
+
+pulsesDom(1, 50, '', '');
+inspectorWith('qubits.q1.xy.operations.x180_DragCosine');
+window.history.replaceState({}, '', '/pulses');
+window._pulsesSyncUrl();
+ok(window.location.search.indexOf('pulse=qubits.q1.xy.operations.x180_DragCosine') >= 0,
+   'the URL carries the open pulse (got ' + window.location.search + ')');
+
+// the create form is not a pulse: the parameter must be DROPPED, not left
+// pinned to whatever was open before it
+pulsesDom(1, 50, '', '');
+inspectorWith(null);
+window._pulsesSyncUrl();
+ok(window.location.search.indexOf('pulse=') < 0,
+   'the create form drops it (got ' + window.location.search + ')');
+
+// and opening one is what re-syncs: the swap lands in #inspector-pane, which
+// is not the rows wrap and not the table pane
+pulsesDom(1, 50, '', '');
+const insp2 = inspectorWith('qubits.q2.z.operations.const');
+window.history.replaceState({}, '', '/pulses');
+const ev39 = new window.CustomEvent('htmx:afterSwap', { bubbles: true, detail: {} });
+Object.defineProperty(ev39, 'target', { value: insp2 });
+doc.dispatchEvent(ev39);
+ok(window.location.search.indexOf('pulse=qubits.q2.z.operations.const') >= 0,
+   'an inspector swap re-syncs the URL (got ' + window.location.search + ')');
+
+// a swap on another page must not rewrite that page's address
+window.history.replaceState({}, '', '/bulk');
+const ev39b = new window.CustomEvent('htmx:afterSwap', { bubbles: true, detail: {} });
+Object.defineProperty(ev39b, 'target', { value: insp2 });
+doc.dispatchEvent(ev39b);
+ok(window.location.pathname === '/bulk',
+   'a swap off the Pulses page leaves the address alone (got ' + window.location.pathname + ')');
+window.history.replaceState({}, '', '/pulses');
+inspectorWith(null);
+doc.getElementById('inspector-pane').remove();
+
 // ------------------------------------------- F21: the row click wins the race
 // A blur-commit is issued first and its response re-renders the OLD pulse, so
 // it can land after the row's own /pulse/detail and overwrite it. The row is

@@ -12,6 +12,21 @@
 <div hx-get="/pulse/new" hx-target="#inspector-pane" hx-swap="innerHTML"
      hx-trigger="load" style="display:none"></div>
 {% endif %}
+{% if open_pulse %}
+{# docs/190 F39: the URL named the search, the channel, the owner pick and the
+   page -- everything except the pulse actually open in the inspector. Reload,
+   Back, or a link sent to a colleague landed on the right table beside an empty
+   pane. `_pulsesSyncUrl` writes ?pulse= as it is opened; this opens it again,
+   the same way the sidebar's "Add pulse" entry opens the create form. #}
+<div id="pulse-open-loader"
+     hx-get="/pulse/detail?path={{ open_pulse | urlencode }}"
+     hx-target="#inspector-pane" hx-swap="innerHTML"
+     hx-trigger="load" style="display:none"></div>
+{% endif %}
+{% if open_pulse_missing %}
+<p class="muted pulse-open-missing">The address names a pulse this chip does not
+   have: <code>{{ open_pulse_missing }}</code></p>
+{% endif %}
 <div class="table-header-row">
     <h2>Pulses <small class="muted" id="pulses-total">({{ total }})</small></h2>
     <div class="table-filter">

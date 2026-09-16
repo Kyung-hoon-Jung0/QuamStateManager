@@ -310,8 +310,16 @@ class TestEditorWalk:
         c.post("/undo")
         _edit(c, 0.095)                        # foreign mutation → fork
         r = c.post("/redo")
-        assert r.status_code == 200 and "HX-Trigger" not in r.headers
+        assert r.status_code == 200
         assert _off(env) == 0.095              # nothing clobbered
+        # docs/190 F44: the press used to answer with NOTHING -- no header, no
+        # word -- which is right in an editor where the forking edit was your
+        # own and visible, and wrong here, where it can be another window or a
+        # running node. It says so now; what it must still not do is change
+        # anything, which the line above pins.
+        trig = json.loads(r.headers.get("HX-Trigger") or "{}")
+        assert (trig.get("cellsReverted") or {}).get("stopped") == "forked"
+        assert not (trig.get("cellsReverted") or {}).get("entries")
 
     def test_reload_invalidates_redo(self, env):
         c = env["client"]
@@ -319,8 +327,9 @@ class TestEditorWalk:
         c.post("/undo")
         _ctx(env)["store"].reload()            # seq bumps — dead timeline
         r = c.post("/redo")
-        assert "HX-Trigger" not in r.headers
         assert _off(env) == 0.08
+        trig = json.loads(r.headers.get("HX-Trigger") or "{}")   # docs/190 F44
+        assert (trig.get("cellsReverted") or {}).get("stopped") == "forked"
 
     def test_save_of_staged_steps_appends_units(self, env):
         """Emacs-style: saving staged journal steps journals THEM as ordinary

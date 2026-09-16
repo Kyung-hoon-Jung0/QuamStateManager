@@ -12571,6 +12571,19 @@ def pulses_page():
         template = "_pulses.html"
     else:
         template = "pulses.html"
+
+    # docs/190 F39: the open pulse rides the address. Resolved HERE against this
+    # chip's own index, so a link from another chip says so in one muted line
+    # instead of painting a 404 over the inspector -- and so a `pulse=` naming
+    # something that is not a pulse path at all can never reach /pulse/detail.
+    open_pulse = request.args.get("pulse", "").strip()
+    open_pulse_missing = ""
+    if open_pulse and not rows_only:
+        known = any(r["path"] == open_pulse for r in pulse_index.rows())
+        if not known:
+            open_pulse, open_pulse_missing = "", open_pulse
+    else:
+        open_pulse = ""
     return render_template(
         template,
         **_ctx(
@@ -12579,6 +12592,8 @@ def pulses_page():
             # full create form opens straight away (the Pulses page's own
             # "+ New pulse" button is the other entry point).
             open_create=(request.args.get("create") == "1"),
+            open_pulse=open_pulse,
+            open_pulse_missing=open_pulse_missing,
             rows=page_rows,
             active_channel=channel,
             active_query=query,
@@ -13436,7 +13451,8 @@ def pulse_create_form():
     # classes get an importability verdict, and the strip on top names the
     # env + class count (or says "static catalog" honestly).
     from quam_state_manager.core.pulse_catalog import (env_creatable_specs,
-                                                      env_overlay_active)
+                                                      env_overlay_active,
+                                                      env_roster_breakdown)
     roster = env_overlay_active()
     env_specs = env_creatable_specs(roster)
 
@@ -13637,6 +13653,7 @@ def pulse_create_form():
                      else ""),
         env_card=_env_card_state(store),
         env_class_count=len(roster or {}),
+        env_roster=env_roster_breakdown(roster),
         pairs_info_json=json.dumps(pairs_info),
         gate_defs_json=gate_defs_json,
         pairs_all=list(pairs_info),
@@ -13652,11 +13669,14 @@ def pulse_env_strip():
     store = _store()
     if not store:
         return ""
-    from quam_state_manager.core.pulse_catalog import env_overlay_active
+    from quam_state_manager.core.pulse_catalog import (env_overlay_active,
+                                                       env_roster_breakdown)
+    roster = env_overlay_active()
     return render_template(
         "_pulse_env_strip.html",
         env_card=_env_card_state(store),
-        env_class_count=len(env_overlay_active() or {}),
+        env_class_count=len(roster or {}),
+        env_roster=env_roster_breakdown(roster),
     )
 
 
@@ -15309,8 +15329,15 @@ def redo():
     # the RAM stack is empty while the persisted cursor sits below the tip
     # (a restart). A `jrn_live` frame met MID-burst ends the burst instead.
     _frames = _redo_stack(ctx)
+    # docs/190 F44: a fork clears the redo timeline -- the rule every editor
+    # applies -- but in every editor the new edit was YOUR OWN, visible on
+    # screen. Here it was another window or a running node, so the press did
+    # nothing and said nothing (measured: 0 changes, no toast). Remember that
+    # it happened and say it once, at the end.
+    _forked = False
     if _frames and ctx.get("redo_seq") != store.mutation_seq:
         _frames.clear()   # foreign mutation since — dead timeline
+        _forked = True
     _dropped_stale = False
     while _frames and _frames[-1].get("kind") == "jrn_live":
         _frame = _frames[-1]
@@ -15375,7 +15402,14 @@ def redo():
             stopped = "exhausted"
             break
         if ctx.get("redo_seq") != store.mutation_seq:
-            frames.clear()   # foreign mutation since — dead timeline, silent no-op
+            # docs/190 F44: unreachable today -- the check above this loop
+            # already cleared the stack, and nothing between the two moves
+            # either sequence (measured: a write probe here never fired across
+            # the 104 undo/redo tests, bursts included). Left standing as the
+            # defence it has always been, and kept in step with the flag so it
+            # cannot become the silent branch if it ever does fire.
+            frames.clear()   # foreign mutation since — dead timeline
+            _forked = True
             stopped = "exhausted"
             break
         if frames[-1].get("kind") == "jrn_live":
@@ -15425,6 +15459,13 @@ def redo():
         _invalidate_engine_cache()
         all_fents.append(fents)
     if not all_fents:
+        if _forked:
+            return _redo_response(
+                "Nothing to redo — the chip changed after your undo "
+                "(another window or a run edited it), so that redo history "
+                "no longer applies.", [],
+                extra={"requested": n_req, "consumed": 0, "stopped": "forked",
+                       "level": "warning", "live": False})
         return _tray_html()
 
     fents = all_fents[0]

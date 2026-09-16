@@ -520,6 +520,17 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
             return None
     app.jinja_env.filters["phys_amp"] = _phys_amp_filter
 
+    # docs/190 F47 — the env strip's one sentence about the classes that are
+    # NOT on the create list, built beside the classifier the list itself is
+    # built with so the two cannot drift apart.
+    def _env_roster_note_filter(breakdown):
+        from quam_state_manager.core.pulse_catalog import env_roster_note
+        try:
+            return env_roster_note(breakdown or {})
+        except Exception:
+            return ""
+    app.jinja_env.filters["env_roster_note"] = _env_roster_note_filter
+
     def _flatten_leaves_filter(value, cap: int = 40):
         """(dot_path, leaf_value) pairs for a nested mapping — the Review
         tray's created/deleted subtree expansion (r16 ②, docs/73). Lists are

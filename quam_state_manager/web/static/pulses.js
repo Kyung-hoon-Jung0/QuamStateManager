@@ -431,14 +431,24 @@ window.PulsesPage = (function () {
         // committed Q (dotted, section colour) must never read as it (docs/141 4l-review)
         pushTraces(verify, cssVar('--pico-muted-color', '#8a8a8a'), ' (config)', 'longdash', 1.5, 0.9);
 
+        // docs/190 F52: a horizontal legend at y=-0.25 sits ON the "time (ns)"
+        // title once it wraps -- measured with three pulses in view: a 1,019px
+        // legend band across the 61px title. Give the legend its own room
+        // under the axis and let the plot area shrink to make it.
+        var rows = Math.ceil(data.length / 4);
+        var legendRoom = data.length > 1 ? 16 * rows + 6 : 0;
         var layout = {
-            margin: { l: 50, r: 10, t: 10, b: 40 },
+            margin: { l: 50, r: 10, t: 10 + legendRoom, b: 40 },
             xaxis: { title: 'time (ns)', zeroline: false },
             yaxis: { title: 'amplitude (V)', zeroline: true },
             showlegend: data.length > 1,
-            legend: { orientation: 'h', y: -0.25 },
+            // ABOVE the plot: under it the legend sat on the "time (ns)" title
+            // (measured with three pulses in view -- a 1,019px band across the
+            // 61px title), and moving both down kept them together.
+            legend: { orientation: 'h', y: 1.0, yanchor: 'bottom',
+                      x: 0, xanchor: 'left' },
             font: { size: 11, color: cssVar('--pico-color', '#888') },
-            height: plotHeight()
+            height: plotHeight() + legendRoom
         };
         return window._plotlyRender(divId, data, layout,
             { displayModeBar: false, responsive: true });
@@ -1178,6 +1188,7 @@ window.PulsesPage = (function () {
         if (nameInput) {
             nameInput.hidden = !isNew;
             nameInput.required = isNew;
+            createValidateGateName();      // docs/190 F48
         }
         slotSel.innerHTML = '';
         function addSlot(name, disabled, title) {
@@ -1314,6 +1325,33 @@ window.PulsesPage = (function () {
             taken.indexOf(nameInput.value) !== -1
                 ? 'An operation with this name already exists on ' + where
                 : '');
+    }
+
+    /* docs/190 F48: the new-gate name was free text with a pattern and
+       nothing else, so a name the pair already carries was only refused AFTER
+       the press (`Gate 'cz_SNZ' already exists on q1-2.`) -- while the gate
+       select right above it lists those very names. Every OTHER name field on
+       this form has told the user as they type since r15; this one now does
+       too, from the pairs-info island already in the browser, and the server's
+       refusal stays the backstop. */
+    function createValidateGateName() {
+        var root = createRoot();
+        var nameInput = document.getElementById('pulse-create-newgate-name');
+        if (!root || !nameInput) return;
+        if (nameInput.hidden) { nameInput.setCustomValidity(''); return; }
+        var pairSel = document.getElementById('pulse-create-pair');
+        var pair = pairSel ? pairSel.value : '';
+        var info = (root._pairsInfo || {})[pair];
+        var taken = (info && info.gates) ? Object.keys(info.gates) : [];
+        var v = (nameInput.value || '').trim();
+        nameInput.setCustomValidity(
+            v && taken.indexOf(v) !== -1
+                ? 'A gate called "' + v + '" already exists on ' + pair
+                  + ' — choose it in the list above to add a slot to it, or'
+                  + ' give this one a different name'
+                : '');
+        nameInput.setAttribute('aria-invalid',
+                               nameInput.validationMessage ? 'true' : 'false');
     }
 
     function initCreate() {
@@ -1492,6 +1530,7 @@ window.PulsesPage = (function () {
         createSlotSelected: createSlotSelected,
         createPairChannels: createPairChannels,
         createValidateName: createValidateName,
+        createValidateGateName: createValidateGateName,
         createSyncQdacChannel: createSyncQdacChannel,
         envStripProbe: envStripProbe
     };

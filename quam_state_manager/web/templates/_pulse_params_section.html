@@ -60,7 +60,17 @@
                            value="{{ p.value if p.value is not none else '' }}"
                            aria-label="{{ p.key }}">
                 </form>
-                {% if p.unit %}<span class="unit-preview muted">{{ p.unit }}</span>{% endif %}
+                {# docs/190 F34: what actually leaves the instrument. Every
+                   entity surface has carried this since docs/109 -- MW: dBm via
+                   P = FSP + 20*log10|amp|, LF/flux: engineering volts -- and the
+                   Pulses inspector, the one page devoted to pulses, showed a
+                   flat "V" on an MW amplitude that is not a voltage at all. When
+                   the port chain resolves, the physical line REPLACES that label;
+                   when it does not (text value, dangling chain, amp 0, no channel
+                   ancestor) the row is byte-identical to before. #}
+                {% set _phys = p.dot_path | phys_amp(p.value) %}
+                {% if _phys %}<span class="phys-note muted"{% if _phys.kind == 'mw' %} data-dbm="{{ _phys.dbm }}"{% endif %} title="{% if _phys.kind == 'mw' %}Actual output power: P = FSP ({{ _phys.fsp }} dBm) + 20·log10|amp| — the stored amplitude is a scale factor, not a voltage{% else %}LF amplitude is the output voltage{% endif %}">&#8776; {{ _phys.text }}</span>
+                {% elif p.unit %}<span class="unit-preview muted">{{ p.unit }}</span>{% endif %}
                 {% if p.kind in ('float', 'int') and not p.is_pointer %}
                 <button type="button" class="pulse-tune-btn" title="Tune with a slider"
                         onclick="PulsesPage.toggleParamSlider(this)">&asymp;</button>

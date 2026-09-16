@@ -51,7 +51,8 @@
                     onchange="PulsesPage.createSlotSelected(this)"></select>
             <input type="text" name="new_gate_name" id="pulse-create-newgate-name"
                    aria-label="New gate name" placeholder="new gate name, e.g. cz_snz"
-                   pattern="[a-zA-Z][a-zA-Z0-9_]{0,63}" autocomplete="off" hidden>
+                   pattern="[a-zA-Z][a-zA-Z0-9_]{0,63}" autocomplete="off" hidden
+                   oninput="PulsesPage.createValidateGateName()">
         </span>
         <span data-target-kind="pair_channel" class="pulse-target-fields" hidden>
             <select name="pc_pair" aria-label="Pair"
