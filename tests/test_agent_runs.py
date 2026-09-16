@@ -448,6 +448,53 @@ class TestRun:
         assert "approved 1 write(s) from `05_power_rabi` -- applied" in _journal(c, inst)
         assert c.get("/api/agent/chip").get_json()["waiting"] == 0
 
+    def test_an_approval_decides_only_the_writes_it_proposed(
+            self, c, inst, fake_run, synth_folder):
+        """docs/191 A06 -- the client edits VALUES; the paths come from the
+        approval. The door took the list verbatim, so a request naming another
+        path wrote THAT path and recorded it as this node's own proposal.
+
+        The presser could edit that field directly, so this is provenance
+        rather than permission: the Calibration log is the thing built to be
+        trustworthy about who proposed what.
+        """
+        _arm(c)
+        aid = _run(c).get_json()["result"]["approval"]["id"]
+        before = json.loads((synth_folder / "state.json").read_text(encoding="utf-8"))
+
+        d = c.post(f"/api/agent/approvals/{aid}/approve",
+                   json={"writes": [{"path": "qubits.qA2.f_01",
+                                     "old": 1.0, "new": 5.0e9}]},
+                   headers=HUMAN)
+        assert d.status_code == 400, d.get_json()
+        assert "qubits.qA2.f_01" in d.get_json()["error"]
+        assert "proposed" in d.get_json()["error"]
+
+        after = json.loads((synth_folder / "state.json").read_text(encoding="utf-8"))
+        assert after == before, "the chip must not move on a refused approval"
+        pend = c.get("/api/agent/approvals").get_json()["pending"]
+        assert [p["id"] for p in pend] == [aid], "it stays pending, to be decided properly"
+        assert "qubits.qA2.f_01" not in _journal(c, inst)
+
+    def test_the_proposals_own_anchor_survives_an_edited_value(
+            self, c, inst, fake_run, synth_folder):
+        """The VALUE is the person's to change; the `old` it is compared
+        against is the proposal's, not whatever the client sends."""
+        from quam_state_manager.core import approvals as _ap
+        _arm(c)
+        aid = _run(c).get_json()["result"]["approval"]["id"]
+        chip_key = c.get("/api/agent/approvals").get_json()["pending"][0].get("chip")
+        d = c.post(f"/api/agent/approvals/{aid}/approve",
+                   json={"writes": [{"path": "qubits.qA1.f_01",
+                                     "old": "nonsense", "new": 6.3e9}]},
+                   headers=HUMAN).get_json()
+        assert d["ok"] and d["stage"]["applied"] is True
+        live = json.loads((synth_folder / "state.json").read_text(encoding="utf-8"))
+        assert live["qubits"]["qA1"]["f_01"] == 6.3e9
+        rec = _ap.get(inst, chip_key, aid) if chip_key else None
+        if rec:
+            assert rec["writes"][0]["old"] != "nonsense", rec["writes"]
+
     def test_reject_leaves_the_chip_alone(self, c, inst, fake_run, synth_folder):
         _arm(c)
         aid = _run(c).get_json()["result"]["approval"]["id"]

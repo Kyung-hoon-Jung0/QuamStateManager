@@ -64,7 +64,35 @@ async arrival of an earlier card, read as a consequence of the press that
 happened to precede it. A `</textarea><script>` payload is stored and rendered
 escaped; nothing executed.
 
-## 2. Two red pins the round found
+## 2. The observer belt, and what an approval approves
+
+**The observer belt holds.** Pressed with a live plan on the board: Start and
+Cancel are REMOVED from the panel, the mode select is disabled, the approval
+actions become the word "observing", every one of the ten guarded functions
+called directly posts nothing, and a submit says why ("Observer mode is on for
+this window -- it shows, it does not send"). The preset chips stay live, which
+is correct: a preset fills a draft and nothing starts before a plan card's
+Start. Recorded as verified rather than as a finding.
+
+**A06 -- an approval could be redirected to a path the run never proposed.**
+The client builds `writes` from the approval's own paths and reads only the
+VALUE from the editable cell, but the door took `data["writes"]` verbatim: it
+staged them and recorded them as the approval's own. Measured on a real chip --
+approving a `qubits.q1.T1` approval with a `qubits.q2.f_01` write moved q2 from
+6.3 GHz to 5.0 GHz, and the record (and so the journal line) said
+`05_power_rabi` had proposed it.
+
+The presser is a person who could edit that field directly, so this is
+provenance rather than permission -- and provenance is exactly what the
+Calibration log exists for (docs/173: a journal line names its AUTHOR). An
+approval decides the writes it proposed now: a stranger path is refused by
+name, the chip does not move, and the approval stays PENDING so it can still
+be decided properly. Each proposal keeps its own `old` anchor, because the
+value is the person's to change and the thing it is compared against is not.
+Measured after: the substitution is a 400 naming the path, and the legitimate
+case -- the same path with a hand-edited value -- still applies.
+
+## 3. Two red pins the round found
 
 Neither is a product defect; both had been failing quietly, which is worse than
 either.
@@ -89,10 +117,10 @@ brackets and quotes are gone.
 | | |
 |---|---|
 | browser checks (real Chrome) | 6/6 for A01, the rest measured directly |
-| new pins | 8 Python + 7 jsdom |
-| mutations caught | 10 of 10, plus 4 on the two repaired pins |
+| new pins | 10 Python + 7 jsdom |
+| mutations caught | 14 of 14, plus 4 on the two repaired pins |
 | jsdom selfchecks | 132 / 132 |
-| pytest (agent / journal / story / chat / setup / natural) | 789 passed |
+| pytest (agent / journal / story / chat / setup / natural) | 791 passed |
 
 One of my own pins was vacuous and the sweep found it: the A04 section stayed
 open in the harness for the wrong reason, because that harness's status record

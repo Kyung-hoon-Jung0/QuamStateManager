@@ -1552,6 +1552,29 @@ def approvals_decide(aid: str, verb: str):
         cur = approvals.get(inst, chip, aid)
         if cur is None or cur.get("status") != "pending":
             return _err("no pending approval with that id", 404)
+        if verb == "approve" and writes is not None:
+            # docs/191 A06: the client edits VALUES -- the paths come from the
+            # approval itself. The door took the list verbatim, so a request
+            # naming a different path wrote THAT path to the chip and recorded
+            # it as the approval's own (measured: approving a "qubits.q1.T1"
+            # approval with "qubits.q2.f_01" moved q2 and left the record, and
+            # so the journal line, saying `05_power_rabi` proposed it). The
+            # presser could edit that field directly, so this is provenance
+            # rather than permission -- and the Calibration log is the thing
+            # built to be trustworthy about who proposed what.
+            proposed = {str(w.get("path")): w for w in (cur.get("writes") or [])}
+            strangers = [str(w.get("path")) for w in writes
+                         if str(w.get("path")) not in proposed]
+            if strangers:
+                return _err(
+                    "an approval decides the writes it proposed: "
+                    + ", ".join(strangers[:6])
+                    + (" and %d more" % (len(strangers) - 6) if len(strangers) > 6 else "")
+                    + " was not among them", 400)
+            # keep each proposal's own `old`: the value is the person's to
+            # change, the anchor it is compared against is not
+            writes = [dict(w, old=proposed[str(w.get("path"))].get("old"))
+                      for w in writes]
         out = {"ok": True}
         if verb == "approve" and cur.get("kind") == "writes":
             # the writes go through the door FIRST; a refusal keeps the approval pending
