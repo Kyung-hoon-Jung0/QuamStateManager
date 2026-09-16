@@ -401,3 +401,37 @@ class TestCtrlZDeclaresWhatItSaw:
         r = app_client.post("/undo", data={"expect_sig": stale})
         assert r.status_code == 409
         assert self._store(app_client).merged["qubits"]["q2"]["T1"] == 1.9e-5
+
+    def test_the_drift_poll_carries_the_change_set(self, app_client):
+        """docs/190 F05: a window that is only LOOKING learned nothing. Tab B
+        showed 0 unsaved changes and the old amplitude while tab A had staged a
+        new one -- and still did 12 s after A wrote it to the chip. The
+        every-page drift poll carries the change SET now (not the store's
+        mutation counter, which also moves when another window merely opens the
+        chip and would make a passive pane re-fetch for nothing)."""
+        d0 = app_client.get("/state/drift").get_json()
+        assert "edit_seq" in d0 and d0["edit_seq"]
+        _edit(app_client, "qubits.q1.f_01", "6.2e9")
+        d1 = app_client.get("/state/drift").get_json()
+        assert d1["edit_seq"] != d0["edit_seq"], "a staged edit did not move it"
+        # an apply empties the log: that is a change a passive window must see
+        app_client.post("/state/sync", data={"mode": "apply", "seen_changes": "1"})
+        d2 = app_client.get("/state/drift").get_json()
+        assert d2["edit_seq"] != d1["edit_seq"]
+
+    def test_the_poll_is_wired_to_the_decision(self):
+        """The jsdom pin drives `_onDriftEditSeq` directly, so it cannot see
+        the poll forgetting to call it -- measured: deleting the call left the
+        selfcheck green. This is the seam that mutation exposed."""
+        import pathlib
+        js = pathlib.Path("quam_state_manager/web/static/app.js").read_text(encoding="utf-8")
+        i = js.index('fetch("/state/drift"')
+        body = js[i:i + 1800]
+        assert "onEditSeq(d);" in body, "the drift poll does not call the decision"
+        assert "window._onDriftEditSeq = onEditSeq;" in js
+
+    def test_it_does_not_move_for_a_mere_reload(self, app_client):
+        d0 = app_client.get("/state/drift").get_json()["edit_seq"]
+        app_client.get("/pulses")
+        app_client.get("/bulk")
+        assert app_client.get("/state/drift").get_json()["edit_seq"] == d0

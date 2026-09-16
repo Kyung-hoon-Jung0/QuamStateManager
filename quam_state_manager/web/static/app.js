@@ -394,7 +394,11 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
     // while edits exist and the stage gate 409s with a confirm fragment —
     // render it there instead of a dead click (docs/65). Narrowed to the
     // state-history stage/restore endpoints.
-    if (t.id === 'status-bar' && status === 409) {
+    // docs/190 F22: 409 was not the only answer that lands here. A forced
+    // revert whose snapshot has since been pruned answers 404 with the reason,
+    // and htmx dropped it -- the user pressed Revert and got an EMPTY status
+    // bar, which is what the stress round measured and read as a dead button.
+    if (t.id === 'status-bar' && status >= 400 && status < 500) {
         var _p409 = (evt.detail.requestConfig && evt.detail.requestConfig.path) || '';
         if (_p409.indexOf('/state-history/') === 0) {
             evt.detail.shouldSwap = true;
@@ -3359,6 +3363,61 @@ window.applyEditsToLive = function () {
     var _lastCount = null;        // last polled count (change detection → event dispatch)
 
     var _driftPolling = false;
+    var _foreignRefreshing = false;
+    /* docs/190 F05: another window changed the working copy. Re-render the tray
+       (the count and the change signature the docs/179 gate reads) and re-fetch
+       the rows/inspector VALUES the reader has on screen. Never a navigation:
+       the pane, the search, the scroll and the open pulse all stay. */
+    function refreshAfterForeignEdit() {
+        if (_foreignRefreshing || !window.htmx) return;
+        _foreignRefreshing = true;
+        var done = function () { _foreignRefreshing = false; };
+        try {
+            var p = window.htmx.ajax("GET", "/state/tray",
+                                     { target: "#pending-tray", swap: "outerHTML" });
+            if (p && p.then) p.then(done, done); else done();
+        } catch (e) { done(); }
+        // the values on screen: the pulses table patches its own rows, the
+        // grids and the inspector re-read through their existing refreshers
+        try { window.htmx.trigger(document.body, "pulses-changed"); } catch (e) {}
+        try {
+            var insp = document.getElementById("inspector-pane");
+            var root = insp && insp.querySelector("#pulse-detail-root");
+            var path = root && root.getAttribute("data-pulse-path");
+            // Only for a window that is genuinely LOOKING: never take the pane
+            // away from someone who is using it. Anything typed or clicked in
+            // the last two seconds means this window has a user in it, and the
+            // tray refresh above already told them the chip moved.
+            var busy = (Date.now() - (window.__lastUserAct || 0)) < 2000;
+            var a = document.activeElement;
+            var inside = insp && a && insp.contains(a);
+            var open = insp && insp.querySelector(
+                ".pulse-rename-form:not([hidden]), .pulse-duplicate-form:not([hidden]),"
+                + " .pulse-delete-confirm:not([hidden])");
+            if (path && !busy && !inside && !open) {
+                window.htmx.ajax("GET", "/pulse/detail?path=" + encodeURIComponent(path),
+                                 { target: "#inspector-pane", swap: "innerHTML" });
+            }
+        } catch (e) {}
+    }
+    /* The poll's own decision, as a function a test can drive: the FIRST
+       payload only records where the chip is (a window that just opened has
+       nothing stale on screen); every later change is a foreign edit. */
+    function onEditSeq(d) {
+        if (!d || !d.edit_seq || d.edit_seq === window._editSeqSeen) return false;
+        var first = window._editSeqSeen === undefined;
+        window._editSeqSeen = d.edit_seq;
+        if (first) return false;
+        refreshAfterForeignEdit();
+        return true;
+    }
+    window._onDriftEditSeq = onEditSeq;
+    window._refreshAfterForeignEdit = refreshAfterForeignEdit;
+    ["pointerdown", "keydown", "wheel"].forEach(function (n) {
+        document.addEventListener(n, function () { window.__lastUserAct = Date.now(); },
+                                  { capture: true, passive: true });
+    });
+
     function poll() {
         // In-flight guard + visibility gating (audit B24): never overlap a slow
         // request, and don't poll while the window is hidden/backgrounded.
@@ -3374,6 +3433,12 @@ window.applyEditsToLive = function () {
                 // stateHistoryChanged; 0 means "unknown" and is never a
                 // signal. Dispatched on document.body because the chip's
                 // hx-trigger is `stateHistoryChanged from:body`.
+                // docs/190 F05: a window that is only LOOKING must not keep
+                // showing values the chip no longer has. When the working copy
+                // moved (another window edited, applied, undid, pulled), refresh
+                // THIS window's tray and the values on screen -- in place, never
+                // swapping what the reader is looking at (docs/87/144).
+                onEditSeq(d);
                 if (d && d.hist_seq && d.hist_seq !== window._histSeqSeen) {
                     var first = window._histSeqSeen === undefined;
                     window._histSeqSeen = d.hist_seq;
@@ -5657,6 +5722,12 @@ window.InlineCommit = (function () {
         userMoved = false;
         pending = { mode: mode, key: key, idx: idx, caret: caret,
                     scroller: sc, scrollTop: sc ? sc.scrollTop : null,
+                    // docs/190 F15: the keystrokes a fast typist makes between
+                    // the commit request and its swap land on THIS node, which
+                    // the swap then discards. Keep it (it is detached, not
+                    // gone) plus the value that was actually sent, so the
+                    // restore can tell "they kept typing" from "they stopped".
+                    node: input, sent: input.value,
                     ts: Date.now() };
     }
 
@@ -5675,12 +5746,33 @@ window.InlineCommit = (function () {
             var el = p.mode === "key" ? findByKey(p.key) : (paneFocusables()[p.idx] || null);
             if (el) {
                 try { el.focus({ preventScroll: true }); } catch (e) { }
-                if (p.mode === "key" && el.setSelectionRange) {
-                    try {
-                        var pos = p.caret == null ? el.value.length
-                                                  : Math.min(p.caret, el.value.length);
-                        el.setSelectionRange(pos, pos);
-                    } catch (e) { /* non-text inputs have no selection range */ }
+                if (p.mode === "key") {
+                    // docs/190 F15: keystrokes made while the commit was in
+                    // flight were applied HALF -- the swap ate the Ctrl+A and
+                    // the Backspace landed on the fresh node holding the
+                    // committed text, so 530 then "select all, 540" became
+                    // "53540" on the chip. They are buffered now and replayed
+                    // here, onto the node that survives.
+                    var carried = applyBuffer(el);
+                    if (el.setSelectionRange) {
+                        try {
+                            var pos = carried ? el.value.length
+                                : (p.caret == null ? el.value.length
+                                                   : Math.min(p.caret, el.value.length));
+                            el.setSelectionRange(pos, pos);
+                        } catch (e) { /* non-text inputs have no selection range */ }
+                    }
+                    if (carried && el.value !== el.getAttribute("data-committed")) {
+                        // they finished with Enter: commit what they typed
+                        if (bufferWantsCommit()) {
+                            var f = el.closest("form");
+                            if (f && f.requestSubmit) {
+                                remember(el, el);
+                                f.requestSubmit();
+                            }
+                        }
+                    }
+                    clearBuffer();
                 }
             }
         }
@@ -5694,6 +5786,58 @@ window.InlineCommit = (function () {
             setTimeout(function () { restore(last); }, ms);
         });
     }
+
+    /* docs/190 F15 -- the in-flight keystroke buffer.
+       A commit re-renders the whole inspector (the docs/75 house model), so
+       for ~200-400 ms the input the user is typing into is doomed. Dropping
+       those keystrokes silently is one lie; applying half of them to the fresh
+       node is a worse one (it wrote 53540 where the user typed 540). They are
+       recorded here and replayed onto the surviving node. */
+    var buf = [];            // {key, ctrl} in order
+    var bufCommit = false;   // the user ended the burst with Enter
+    function clearBuffer() { buf = []; bufCommit = false; }
+    function bufferWantsCommit() { return bufCommit; }
+    function bufferLen() { return buf.length; }
+    function applyBuffer(el) {
+        if (!buf.length || !el) return false;
+        var v = el.value, selAll = false;
+        for (var i = 0; i < buf.length; i++) {
+            var k = buf[i];
+            if (k.ctrl && (k.key === "a" || k.key === "A")) { selAll = true; continue; }
+            if (k.ctrl) continue;                       // other chords are not text
+            if (k.key === "Backspace") {
+                if (selAll) { v = ""; selAll = false; }
+                else v = v.slice(0, -1);
+                continue;
+            }
+            if (k.key === "Delete") { if (selAll) { v = ""; selAll = false; } continue; }
+            if (k.key.length !== 1) continue;           // arrows, Tab, Escape...
+            if (selAll) { v = ""; selAll = false; }
+            v += k.key;
+        }
+        if (v === el.value) return false;
+        el.value = v;
+        return true;
+    }
+    document.addEventListener("keydown", function (e) {
+        var el = e.target;
+        var inInput = el && el.matches && el.matches(INLINE_SEL);
+        var form = inInput ? el.closest("form") : null;
+        // Two windows swallow a keystroke, and BOTH were measured on the real
+        // chip (docs/190 F15): the request is in flight and the node is doomed,
+        // or the swap has landed and focus is on <body> for the ~120 ms until
+        // the restore pass runs. In the second one a Ctrl+A went to the
+        // document and the Backspace after it ate a digit of the committed
+        // value instead: 530 + "select all, 540" wrote 53540 to the chip.
+        var hole = (!inInput && pending && pending.mode === "key"
+                    && (!el || el === document.body || el.tagName === "HTML"));
+        if (!hole && !(inInput && inFlight(form))) return;
+        if (e.key === "Enter") { bufCommit = true; e.preventDefault(); return; }
+        if (e.key === "Escape" || e.key === "Tab") return;
+        if (e.metaKey || e.altKey) return;
+        buf.push({ key: e.key, ctrl: !!e.ctrlKey });
+        e.preventDefault();
+    }, true);
 
     function noteUserScroll() { userMoved = true; }
     /* A click/tap means the user has taken over — drop the pending restore
@@ -5713,6 +5857,8 @@ window.InlineCommit = (function () {
 
     return { inFlight: inFlight, remember: remember, restore: restore,
              afterSwap: afterSwap, _key: fieldKey, _find: findByKey,
+             _bufferLen: bufferLen, _applyBuffer: applyBuffer,
+             _clearBuffer: clearBuffer,
              _focusables: paneFocusables,
              _pending: function () { return pending; } };
 })();
@@ -5726,6 +5872,16 @@ document.addEventListener("htmx:beforeRequest", function (evt) {
 document.addEventListener("htmx:afterRequest", function (evt) {
     var elt = evt.detail && evt.detail.elt;
     if (elt && elt.dataset && elt.dataset.committing) delete elt.dataset.committing;
+});
+/* docs/190 F15: the focus restore hung on afterSETTLE, which htmx fires a tick
+   after the content lands, so for ~20-120 ms after every commit the focus was
+   on <body>. A Ctrl+A typed in that window went to the DOCUMENT and the
+   Backspace after it ate a digit of the committed value: 530 then "select all,
+   540" wrote 53540 to the chip. Focus comes back with the content now; the
+   settle passes still run for the scroll position, which needs the final
+   layout. */
+document.addEventListener("htmx:afterSwap", function (evt) {
+    if (evt.target && evt.target.id === "inspector-pane") window.InlineCommit.restore(false);
 });
 document.addEventListener("htmx:afterSettle", function (evt) {
     if (evt.target && evt.target.id === "inspector-pane") window.InlineCommit.afterSwap();

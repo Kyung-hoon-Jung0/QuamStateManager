@@ -16557,23 +16557,24 @@ def state_drift():
         logger.debug("live-write ingest edge failed", exc_info=True)
     if not _drift_tracked(ctx):
         return jsonify(ok=True, tracked=False, count=0, auto_pull=auto_pull,
-                       hist_seq=hist_seq)
+                       hist_seq=hist_seq, edit_seq=_edit_seq())
     try:
         info = _compute_drift(ctx)
     except Exception:   # noqa: BLE001 — a poll must never 500
         logger.debug("drift compute failed", exc_info=True)
         return jsonify(ok=True, tracked=True, count=0, auto_pull=auto_pull,
-                       hist_seq=hist_seq)
+                       hist_seq=hist_seq, edit_seq=_edit_seq())
     if info is None:
         return jsonify(ok=True, tracked=False, count=0, auto_pull=auto_pull,
-                       hist_seq=hist_seq)
+                       hist_seq=hist_seq, edit_seq=_edit_seq())
     # (docs/87) ``auto_pulled`` used to ride along here as a one-shot so the
     # silent clean auto-pull became a visible toast. The user-facing path no
     # longer pulls without asking, so there is nothing to announce after the
     # fact — the banner asks BEFORE, and names the same count.
     return jsonify({"ok": True, "tracked": True, "count": info["count"],
                     "baseline_utc": info["baseline_utc"],
-                    "auto_pull": auto_pull, "hist_seq": hist_seq})
+                    "auto_pull": auto_pull, "hist_seq": hist_seq,
+                    "edit_seq": _edit_seq()})
 
 
 @bp.route("/state/drift/view")
@@ -16648,6 +16649,29 @@ def _change_log_sig(store) -> str:
     paths = "\n".join(str(getattr(c, "dot_path", None) or "?")
                        for c in (store.change_log or []))
     return hashlib.sha1(paths.encode("utf-8")).hexdigest()[:12]
+
+
+def _edit_seq() -> str:
+    """What this chip's working copy is at, for a window that is not acting.
+
+    docs/190 F05: two SM windows share one working copy, and a window that is
+    only LOOKING learned nothing — tab B showed 0 unsaved changes and the old
+    amplitude while tab A had staged a new one and even after A applied it to
+    the chip (measured: 12 s later, still 0.3046 on B's row while the file said
+    0.311). The tray already stamps ``mutation_seq`` for PaneState; the
+    every-page drift poll carries it now, so a passive window can tell that the
+    chip moved under it. Cheap by construction: two attributes off objects the
+    request already holds, no extra read.
+    """
+    store = _store()
+    if store is None:
+        return ""
+    # The CHANGE SET, not the store's mutation counter: a counter also moves
+    # when another window merely opens the chip (activation, an index rebuild),
+    # and a passive window must not re-fetch its pane for that. A signature
+    # moves exactly when an edit is staged, undone, discarded or applied.
+    with store._lock:
+        return f"{_change_log_sig(store)}:{len(store.change_log)}"
 
 
 def _unseen_edit_refusal(ctx) -> dict | None:

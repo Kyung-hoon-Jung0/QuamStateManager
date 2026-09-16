@@ -545,3 +545,66 @@ class TestTheOperatingPointFollowsThePulse:
         _, c = chip
         html = c.get("/pair/q1-2").get_data(as_text=True)
         assert "gi-switch-btn" in html
+
+
+class TestCrossingLabelsDoNotCollide:
+    """docs/190 F17 (stress round, measured in real Chrome on the customer's
+    SNZ pulse): the three crossings of one branch are the same physics a few
+    MHz apart, so three 55px labels landed on one baseline within ~90px and
+    read as one smear -- in both themes, so a layout fault, not contrast."""
+
+    def test_close_points_take_turns(self):
+        from quam_state_manager.core.gate_inspector import _stagger_labels
+        pos = _stagger_labels([0.0, 0.001, 0.002], axis_span=1.0)
+        assert len(set(pos)) == 3, pos
+        assert pos[0] == "top center"
+
+    def test_a_lone_point_is_unchanged(self):
+        from quam_state_manager.core.gate_inspector import _stagger_labels
+        assert _stagger_labels([0.3]) == ["top center"]
+        assert _stagger_labels([]) == []
+
+    def test_far_apart_points_all_stay_on_top(self):
+        from quam_state_manager.core.gate_inspector import _stagger_labels
+        assert _stagger_labels([-1.0, 0.0, 1.0], axis_span=2.0) == ["top center"] * 3
+
+    def test_the_assignment_follows_screen_order_not_list_order(self):
+        from quam_state_manager.core.gate_inspector import _stagger_labels
+        a = _stagger_labels([0.002, 0.0, 0.001], axis_span=1.0)
+        assert a[1] == "top center"          # leftmost keeps the plain slot
+        assert len(set(a)) == 3
+
+    def test_the_figure_itself_carries_the_stagger(self):
+        """Not a grep: build the real figure and read the trace. The first
+        version of this pin looked for the assignment in the SOURCE and passed
+        with the call replaced by a constant (mutation-caught).
+
+        The synthetic pair's crossings are far apart, so this feeds the
+        builder the shape the CUSTOMER's chip has -- three crossings a few mV
+        apart on a ~1.5 V axis, which is what rendered as one smear."""
+        sw = compute_detuning_sweep(_q("q1"), QT, "control")
+        sw = dict(sw)
+        sw["zeros"] = [
+            {"label": "Δ(11−20)=0", "voltage": 0.050, "frequency": 5.0e9},
+            {"label": "Δ(11−02)=0", "voltage": 0.055, "frequency": 4.9e9},
+            {"label": "Δ(10−01)=0", "voltage": 0.060, "frequency": 4.8e9},
+        ]
+        fig = build_plotly_figure(sw, moving_role="control")
+        trace = next(t for t in fig["data"] if t.get("name") == "Interaction points")
+        pos = trace["textposition"]
+        assert isinstance(pos, list) and len(pos) == 3, pos
+        assert len(set(pos)) == 3, pos
+
+    def test_crossings_that_are_far_apart_keep_the_plain_slot(self):
+        sw = compute_detuning_sweep(_q("q1"), QT, "control")
+        fig = build_plotly_figure(sw, moving_role="control")
+        trace = next(t for t in fig["data"] if t.get("name") == "Interaction points")
+        assert set(trace["textposition"]) == {"top center"}, trace["textposition"]
+
+    def test_it_measures_against_the_axis_not_the_cluster(self):
+        from quam_state_manager.core.gate_inspector import _stagger_labels
+        # three crossings 1 mV apart on a 1 V axis DO overlap on screen;
+        # judged against their own span they would read as far apart
+        assert len(set(_stagger_labels([0.0, 0.001, 0.002], axis_span=1.0))) == 3
+        # the same three on a 10 mV axis are genuinely spread out
+        assert _stagger_labels([0.0, 0.004, 0.008], axis_span=0.01) == ["top center"] * 3

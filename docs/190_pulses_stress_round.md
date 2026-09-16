@@ -237,3 +237,52 @@ composer when one is on screen.
 Escape ladder, the URL sync, the row-click race and the sort memory, because
 four of the first pins for these were source greps that a comment edit would
 have broken and a behaviour change would not.
+
+## 10. The second batch, by hand (2026-09-17)
+
+The weekly limit took the subagents away, so these were reproduced, fixed,
+pinned and mutation-checked one at a time in the same browser.
+
+**F15 — the commit ate a keystroke.** Typing 530, Enter, then select-all and
+540 wrote **53540** to the chip. The buffering theory was wrong twice before
+the trace settled it: the focus restore hung on htmx's `afterSettle`, a tick
+after the content lands, so for 20–120 ms after every commit focus was on
+`<body>`. The Ctrl+A went to the DOCUMENT and the Backspace after it ate a
+digit of the committed value. Focus now comes back with the content
+(`afterSwap`), the settle passes still run for the scroll position (which needs
+the final layout), and anything still typed in the hole is buffered and
+replayed onto the node that survives. Measured 8/8 clean at zero delay, where
+the first trial had been corrupt.
+
+**F05 — a window that is only looking.** Tab B showed 0 unsaved changes and
+0.3046 while tab A had staged 0.311, and still did twelve seconds after A wrote
+it to the chip. The every-page drift poll carries the change SET now, and a
+signal refreshes that window's tray and the values on screen. Two decisions
+worth recording: the key is the change *signature*, not the store's mutation
+counter (a counter also moves when another window merely OPENS the chip, and a
+passive pane must not re-fetch for that — measured, it made the pane blink);
+and the pane is only re-read for a window with nobody in it (no keystroke, no
+click, no focus inside it for two seconds), so a reader mid-typing keeps their
+text. Verified in two real tabs: B's tray and row follow within two seconds
+while its search, its open pulse and its half-typed value are untouched.
+
+**F22 — a refused revert that said nothing.** Two halves. The control is
+hidden while anything is pending (by design), and with F05 in place a stale
+window learns that within seconds. The half that was real: htmx drops 4xx
+bodies, and only 409 was allowed through to `#status-bar`, so a forced revert
+whose snapshot had been pruned answered 404 *with the reason* and the user got
+an empty bar. Any 4xx from that door renders now.
+
+**F17 — three labels, one baseline.** The crossings of one CZ branch are the
+same physics a few MHz apart, so three 55 px labels landed within ~90 px and
+read as one smear in both themes. They take turns now (top/bottom, then
+right), and proximity is judged against the **axis**, not against the points'
+own span — measuring a cluster against itself calls it spread out exactly when
+it overlaps. Measured 4 overlapping pairs → 0 on the customer's SNZ pulse.
+
+Every fix mutation-checked (3/3, 5/5 + 1 seam pinned in Python after jsdom
+could not reach it, 2/2, 2/2). **Two of my own pins were vacuous and the sweep
+found both**: the F17 pin greped the source for an assignment and passed with
+the call replaced by a constant, and its first figure-level replacement asserted
+a stagger on a fixture whose crossings are genuinely far apart. The pin now
+feeds the builder the shape the customer's chip has.

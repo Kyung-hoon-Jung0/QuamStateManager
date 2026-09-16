@@ -247,4 +247,140 @@ ok(window.location.search.indexOf('page=4') >= 0,
     ok(order2 === '100,200,300', 'the sort is re-applied after the swap (got ' + order2 + ')');
 }
 
-process.exit(fails ? 1 : 0);
+// ------------------------- F15: the commit must not eat a keystroke
+// The focus restore used to hang on htmx's afterSETTLE, a tick after the
+// content lands, so for ~20-120ms after every commit focus was on <body>: a
+// Ctrl+A typed there went to the document and the Backspace after it ate a
+// digit of the committed value (530 + "select all, 540" wrote 53540).
+{
+    doc.body.innerHTML =
+        '<div id="inspector-pane">' +
+        '<form class="inline-edit"><input type="hidden" name="dot_path" value="q.x.length">' +
+        '<input name="value" class="edit-input" data-param="length" data-committed="600" value="600"></form>' +
+        '</div>';
+    const input = doc.querySelector('input[name=value]');
+    input.focus();
+    window.InlineCommit.remember(input, input);
+    ok(!!window.InlineCommit._pending(), 'the commit remembered the field');
+
+    // the swap: the pane is replaced and focus is lost to <body>
+    doc.getElementById('inspector-pane').innerHTML =
+        '<form class="inline-edit"><input type="hidden" name="dot_path" value="q.x.length">' +
+        '<input name="value" class="edit-input" data-param="length" data-committed="530" value="530"></form>';
+    doc.body.focus();
+    const swap = new window.CustomEvent('htmx:afterSwap', { bubbles: true, detail: {} });
+    Object.defineProperty(swap, 'target', { value: doc.getElementById('inspector-pane') });
+    doc.dispatchEvent(swap);
+    const active = doc.activeElement;
+    ok(active && active.getAttribute && active.getAttribute('data-param') === 'length',
+       'focus is back in the field AT THE SWAP, not a settle later (got '
+       + (active ? active.tagName + ':' + active.getAttribute('data-param') : 'none') + ')');
+}
+
+// ...and a keystroke that still lands in the hole is buffered, not half-applied
+{
+    window.InlineCommit._clearBuffer();
+    doc.body.innerHTML =
+        '<div id="inspector-pane">' +
+        '<form class="inline-edit"><input type="hidden" name="dot_path" value="q.x.length">' +
+        '<input name="value" class="edit-input" data-param="length" data-committed="600" value="600"></form>' +
+        '</div>';
+    const inp = doc.querySelector('input[name=value]');
+    inp.focus();
+    window.InlineCommit.remember(inp, inp);
+    doc.getElementById('inspector-pane').innerHTML = '';          // the node is doomed
+    // the user keeps typing while focus sits on <body>
+    ['a', 'Backspace', '5', '4', '0'].forEach(function (k) {
+        const ev = new window.KeyboardEvent('keydown',
+            { key: k, ctrlKey: k === 'a', bubbles: true, cancelable: true });
+        doc.body.dispatchEvent(ev);
+    });
+    ok(window.InlineCommit._bufferLen() === 5, 'the keystrokes were buffered (got '
+       + window.InlineCommit._bufferLen() + ')');
+    const fresh = doc.createElement('input');
+    fresh.value = '530';
+    const carried = window.InlineCommit._applyBuffer(fresh);
+    ok(carried && fresh.value === '540',
+       'the buffer replays as SELECT-ALL then 540, never 53540 (got ' + fresh.value + ')');
+    window.InlineCommit._clearBuffer();
+}
+
+// ------------------- F22: a refused revert always SAYS something
+// The tray's Revert targets #status-bar. htmx drops 4xx bodies, and only 409
+// was allowed through, so a forced revert whose snapshot had been pruned (404,
+// with the reason in the body) landed the user an EMPTY status bar.
+{
+    doc.body.innerHTML = '<div id="status-bar"></div>';
+    function beforeSwap(status, path) {
+        // the handler reads evt.detail.TARGET (htmx's swap target), not the
+        // event target -- a fixture that only sets the latter tests nothing
+        const ev = new window.CustomEvent('htmx:beforeSwap', {
+            bubbles: true, cancelable: true,
+            detail: { shouldSwap: false, isError: true,
+                      target: doc.getElementById('status-bar'),
+                      xhr: { status: status, responseText: 'the reason' },
+                      requestConfig: { path: path } },
+        });
+        Object.defineProperty(ev, 'target', { value: doc.getElementById('status-bar') });
+        doc.dispatchEvent(ev);
+        return ev.detail;
+    }
+    ok(beforeSwap(409, '/state-history/2026-01-01/stage?from=tray').shouldSwap === true,
+       'the 409 confirm still renders in the status bar');
+    ok(beforeSwap(404, '/state-history/2026-01-01/stage?force=1&from=tray').shouldSwap === true,
+       'a 404 from the same door renders its reason too');
+    ok(beforeSwap(404, '/something/else').shouldSwap === false,
+       'and nothing else is let through');
+}
+
+// ---------------------- F05: a passive window follows a foreign edit
+// ...but never takes the pane away from someone using it.
+{
+    doc.body.innerHTML =
+        '<div id="pending-tray" data-change-count="0" data-change-sig="aaa"></div>' +
+        '<div id="inspector-pane"><div id="pulse-detail-root" data-pulse-path="q.x.sat">' +
+        '<form class="inline-edit"><input name="value" data-param="length" value="600"></form>' +
+        '</div></div>';
+    const calls = [];
+    window.htmx.ajax = (verb, path) => { calls.push(path); return Promise.resolve(); };
+    window.__lastUserAct = 0;                       // nobody has touched this window
+    // drive the POLL's own decision, not a copy of it
+    window._editSeqSeen = undefined;
+    ok(window._onDriftEditSeq({ edit_seq: "sig-a:0" }) === false,
+       'the first payload only records where the chip is');
+    ok(calls.length === 0, 'and refreshes nothing');
+    ok(window._onDriftEditSeq({ edit_seq: "sig-a:0" }) === false,
+       'an unchanged payload is not a signal');
+    ok(window._onDriftEditSeq({ edit_seq: "sig-b:1" }) === true,
+       'a changed change-set IS a signal');
+    ok(calls.some(p => p.indexOf('/state/tray') === 0), 'the tray is refreshed (got ' + JSON.stringify(calls) + ')');
+    ok(calls.some(p => p.indexOf('/pulse/detail') === 0), 'an idle window re-reads the open pulse');
+
+    // an in-flight refresh coalesces the next signal (one request, not two)
+    calls.length = 0;
+    window._refreshAfterForeignEdit();
+    ok(calls.length === 0, 'a second signal during the refresh coalesces');
+
+    setTimeout(function () {
+        // the same window one keystroke later: the tray still refreshes, the
+        // pane does not
+        calls.length = 0;
+        window.__lastUserAct = Date.now();
+        window._refreshAfterForeignEdit();
+        ok(calls.some(p => p.indexOf('/state/tray') === 0),
+           'a busy window still gets the truthful tray (got ' + JSON.stringify(calls) + ')');
+        ok(!calls.some(p => p.indexOf('/pulse/detail') === 0),
+           'a window with a user in it keeps its pane');
+
+        setTimeout(function () {
+            // and never while the focus is inside the inspector
+            calls.length = 0;
+            window.__lastUserAct = 0;
+            doc.querySelector('input[data-param]').focus();
+            window._refreshAfterForeignEdit();
+            ok(!calls.some(p => p.indexOf('/pulse/detail') === 0),
+               'focus inside the inspector keeps the pane');
+            process.exit(fails ? 1 : 0);
+        }, 30);
+    }, 30);
+}

@@ -261,6 +261,13 @@ def build_plotly_figure(
         zero_labels.append(z["label"])
 
     if zero_x:
+        # docs/190 F17: the three crossings of one branch land within a few
+        # pixels of each other (they are the same physics a few MHz apart), so
+        # three 55px labels on one baseline rendered as one unreadable smear --
+        # measured on the customer's SNZ pulse, identically in both themes.
+        # Stagger them instead: nearby labels take turns above and below, in a
+        # fixed order, so each one is legible and the assignment is stable.
+        positions = _stagger_labels(zero_x, axis_span=(max(xs) - min(xs)) if xs else 0.0)
         traces.append({
             "x": zero_x,
             "y": [0.0] * len(zero_x),
@@ -269,7 +276,7 @@ def build_plotly_figure(
             "name": "Interaction points",
             "marker": {"color": "#e74c3c", "size": 10, "symbol": "x"},
             "text": zero_labels,
-            "textposition": "top center",
+            "textposition": positions,
             "textfont": {"size": 10},
             "hovertemplate": (
                 "<b>%{text}</b><br>"
@@ -584,6 +591,35 @@ def _zero_frequencies(
         ("Δ(11−02)=0", f_c + alpha_t),
         ("Δ(10−01)=0", f_c),
     ]
+
+
+_STAGGER_CYCLE = ("top center", "bottom center", "top right", "bottom right")
+
+
+def _stagger_labels(xs: list[float], axis_span: float = 0.0) -> list[str]:
+    """One textposition per point, so labels that share an x do not collide.
+
+    Proximity is judged against the plotted AXIS, not against the points' own
+    span: the three crossings of one branch are a cluster, so measuring them
+    against each other calls them far apart exactly when they overlap. A label
+    is about 55 px of a ~1,000 px plot, so a twentieth of the axis is the
+    width to clear. A lone point keeps the plain "top center" it always had
+    (docs/190 F17).
+    """
+    if len(xs) < 2:
+        return ["top center"] * len(xs)
+    span = axis_span if axis_span > 0 else (max(xs) - min(xs))
+    near = (span / 20.0) if span > 0 else float("inf")
+    order = sorted(range(len(xs)), key=lambda i: xs[i])
+    out = ["top center"] * len(xs)
+    slot = 0
+    for n, i in enumerate(order):
+        if n and abs(xs[i] - xs[order[n - 1]]) <= near:
+            slot = (slot + 1) % len(_STAGGER_CYCLE)
+        else:
+            slot = 0
+        out[i] = _STAGGER_CYCLE[slot]
+    return out
 
 
 def _zeros_on_voltage(
