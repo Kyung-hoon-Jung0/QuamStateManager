@@ -8,7 +8,23 @@
    itself); the tables are read-only renderings of the same QueryEngine rows
    those pages show, all entities, unpaginated. The toolbar's Download
    serializes the CURRENT DOM (SVG already drawn) with the stylesheet inlined,
-   so the saved file is fully self-contained. #}
+   so the saved file is fully self-contained.
+
+   docs/188 (customer 2026-09-16: "the report should hold every value that can
+   be extracted — T2, echo, RB and the rest"). The one 9-column Qubits table
+   became six grouped sections, and the pairs grew an RB table and a gate-
+   parameter table. Two rules the grouping is built on:
+
+     * a column is NEVER dropped because this chip happens not to fill it.
+       docs/94/docs/148: a silently-absent field reads as "this chip has no
+       such thing", which is the opposite of what an empty cell means. Every
+       column renders, an absent value is "-", and a block that is empty for
+       EVERY entity says which leaf it would have filled from.
+     * every number goes through the `qty` filter — the app's one unit
+       renderer — so the report and the live pages cannot disagree about what
+       a value means. `pct` below is the one thing this file adds: a fidelity
+       as a percentage, which `qty` has no opinion about.
+#}
 <html lang="en" data-theme="dark">
 <head>
     <meta charset="utf-8">
@@ -49,6 +65,25 @@
         .chip-report .cmap { border: 1px solid var(--pico-muted-border-color); border-radius: 8px;
                           padding: 0.4rem 0.7rem; background: var(--pico-card-background-color); }
         .chip-report .rep-note { color: var(--pico-muted-color); font-size: 0.78rem; }
+        /* docs/188 — a wide grouped table (readout, RB) at a smaller size, and
+           the table's own unit line under the section heading, so a column
+           header stays one short word. */
+        .chip-report table.rep-wide { font-size: 0.75rem; }
+        .chip-report table.rep-wide th, .chip-report table.rep-wide td { padding: 0.22rem 0.36rem; }
+        .chip-report .rep-cap { color: var(--pico-muted-color); font-size: 0.78rem;
+                          margin: -0.25rem 0 0.4rem; }
+        .chip-report .rep-lvl { font-size: 0.72rem; white-space: nowrap; }
+        /* an entity id is never a place to break a line. Measured in real
+           Chrome: the 9-column gate-parameter table squeezed the first
+           column until `q1-2` rendered as `q1-` over `2`, because a
+           `#./inferred_total_length` pointer two columns over takes the
+           width. The id keeps its width; the pointer gives way. */
+        .chip-report .rep-wide td.rep-id,
+        .chip-report .rep-wide th:first-child { white-space: nowrap; }
+        .chip-report .rep-wide td { overflow-wrap: anywhere; }
+        /* an unphysical number is SHOWN (it is in the file) and marked — never
+           silently dropped, and never rendered as if it were a measurement */
+        .chip-report .rep-bad { color: var(--pico-del-color, #d33); }
         @media print {
             .no-print { display: none !important; }
             /* keep the dark ink — the browser's default background-stripping
@@ -62,6 +97,20 @@
     </style>
 </head>
 <body class="chip-report">
+{# ---------------------------------------------------------------------- #}
+{# Formatting this file owns. Everything dimensional goes through `qty`    #}
+{# (the app's one unit renderer); these two cover what `qty` deliberately  #}
+{# does not: a fidelity as a percentage, and a bare fit parameter.         #}
+{# ---------------------------------------------------------------------- #}
+{% macro pct(v) -%}
+{%- if v is none %}-{% elif v is number %}{{ "%.3f" | format(v * 100) }}%{% else %}&quot;{{ v }}&quot;{% endif -%}
+{%- endmacro %}
+{% macro raw(v) -%}
+{%- if v is none %}-{% else %}{{ v | qty('') }}{% endif -%}
+{%- endmacro %}
+{% macro yn(v) -%}
+{%- if v %}&#10003;{% else %}<span class="rep-off">off</span>{% endif -%}
+{%- endmacro %}
 {% if not has_chip %}
     <h1>Chip report</h1>
     <p class="rep-meta">No chip is open in State Manager — open a state folder,
@@ -77,7 +126,10 @@
     <p class="rep-meta">Generated {{ generated }} by QUAM State Manager
        &middot; source <code>{{ folder }}</code><br>
        {{ qubits | length }} qubits &middot; {{ pairs | length }} pairs
-       &middot; {{ couplers | length }} couplers</p>
+       &middot; {{ resonators | length }} resonators
+       &middot; {{ flux | length }} flux lines
+       &middot; {{ couplers | length }} couplers
+       {%- if qdac_qubits %} &middot; {{ qdac_qubits | length }} QDAC-biased{% endif %}</p>
 
     <h2>Topology</h2>
     {# the exact mount shape _component_map.html uses — ComponentMap draws the
@@ -88,64 +140,140 @@
         <div class="cmap-body"><p class="muted" style="margin:0">Loading chip layout&hellip;</p></div>
     </details>
 
-    <h2>Qubits ({{ qubits | length }})</h2>
-    <table>
-        <thead><tr><th>ID</th><th>Active</th><th>f_01 (GHz)</th><th>T1 (&micro;s)</th>
-            <th>T2ramsey (&micro;s)</th><th>Readout amp</th><th>P(RO) (dBm)</th>
-            <th>Gate fidelity</th><th>Grid</th></tr></thead>
+    {# ================================================================== #}
+    {# Qubits — one section per family of numbers. The ID column repeats so #}
+    {# every table is readable on its own page in print.                   #}
+    {# ================================================================== #}
+    <h2>Qubits &mdash; frequencies ({{ qubits | length }})</h2>
+    <p class="rep-cap">f&#8321;&#8320; and f&#8321;&#8322; are the qubit transitions;
+       &alpha; is the anharmonicity f&#8321;&#8322;&minus;f&#8320;&#8321;, &chi; the
+       dispersive shift. &quot;Last cal.&quot; is the freshest timestamp anywhere
+       in that qubit.</p>
+    <table class="rep-wide">
+        <thead><tr><th>ID</th><th>Active</th><th>Grid</th>
+            <th>f_01 (GHz)</th><th>f_12 (GHz)</th><th>Anharm. (MHz)</th>
+            <th>&chi; (MHz)</th><th>xy RF (GHz)</th><th>xy IF (MHz)</th>
+            <th>Last cal.</th></tr></thead>
         <tbody>
         {% for q in qubits %}
         <tr>
-            <td><strong>{{ q.id }}</strong></td>
-            <td>{% if q.is_active %}&#10003;{% else %}<span class="rep-off">off</span>{% endif %}</td>
+            <td class="rep-id"><strong>{{ q.id }}</strong></td>
+            <td>{{ yn(q.is_active) }}</td>
+            <td>{{ q.grid_location or '-' }}</td>
             <td>{{ q.f_01 | qty('f_01') }}</td>
+            <td>{{ q.f_12 | qty('f_12') }}</td>
+            <td>{{ q.anharmonicity | qty('anharmonicity') }}</td>
+            <td>{{ q.chi | qty('chi') }}</td>
+            <td>{{ q.xy_RF_frequency | qty('xy_RF_frequency') }}</td>
+            <td>{{ q.xy_intermediate_frequency | qty('xy_intermediate_frequency') }}</td>
+            <td>{{ cal.get(q.id) or '-' }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+
+    <h2>Qubits &mdash; coherence ({{ qubits | length }})</h2>
+    <table>
+        <thead><tr><th>ID</th><th>T1 (&micro;s)</th><th>T2 Ramsey (&micro;s)</th>
+            <th>T2 echo (&micro;s)</th><th>T2 Ramsey / 2&middot;T1</th></tr></thead>
+        <tbody>
+        {% for q in qubits %}
+        <tr>
+            <td class="rep-id"><strong>{{ q.id }}</strong></td>
             <td>{{ q.T1 | qty('T1') }}</td>
             <td>{{ q.T2ramsey | qty('T2ramsey') }}</td>
-            <td>{% if q.readout_amplitude is none %}-{% elif q.readout_amplitude is number %}{{ "%.4f" | format(q.readout_amplitude) }}{% else %}&quot;{{ q.readout_amplitude }}&quot;{% endif %}</td>
-            {% set _ph = ('qubits.' ~ q.id ~ '.resonator.operations.readout.amplitude') | phys_amp(q.readout_amplitude) %}
-            <td>{% if _ph and _ph.kind == 'mw' %}{{ _ph.text }}{% else %}-{% endif %}</td>
-            <td>{% if q.gate_fidelity_avg is none %}-{% elif q.gate_fidelity_avg is number %}{{ "%.4f" | format(q.gate_fidelity_avg) }}{% else %}&quot;{{ q.gate_fidelity_avg }}&quot;{% endif %}</td>
-            <td>{{ q.grid_location or '-' }}</td>
+            <td>{{ q.T2echo | qty('T2echo') }}</td>
+            {# the T2 <= 2*T1 ceiling as a ratio — a number the chip implies but
+               stores nowhere, and the one cross-check a coherence table is for.
+               Rendered only when BOTH are real numbers, never inferred. #}
+            <td>{% if q.T1 is number and q.T2ramsey is number and q.T1 > 0 -%}
+                {{ "%.2f" | format(q.T2ramsey / (2 * q.T1)) }}
+                {%- else %}-{% endif %}</td>
         </tr>
         {% endfor %}
         </tbody>
     </table>
 
-    <h2>Qubit pairs ({{ pairs | length }})</h2>
-    <table>
-        <thead><tr><th>Pair</th><th>Control</th><th>Target</th><th>Active</th>
-            <th>2Q fidelity</th></tr></thead>
+    <h2>Qubits &mdash; single-qubit gates ({{ qubits | length }})</h2>
+    <p class="rep-cap">Amplitudes are the stored waveform amplitudes;
+       &alpha;<sub>DRAG</sub> is the x180 DRAG coefficient. Fidelities are
+       whatever the chip records under <code>gate_fidelity</code>.</p>
+    <table class="rep-wide">
+        <thead><tr><th>ID</th><th>x180 amp</th><th>x180 length (ns)</th>
+            <th>x180 &alpha;<sub>DRAG</sub></th><th>x90 amp</th><th>Saturation amp</th>
+            <th>F avg</th><th>F x180</th><th>F x90</th></tr></thead>
         <tbody>
-        {% for p in pairs %}
-        {% if p.get('_error') %}
-        <tr><td><strong>{{ p.id }}</strong></td>
-            <td colspan="4">&#9888; unreadable pair &mdash; {{ p._error }}</td></tr>
-        {% else %}
+        {% for q in qubits %}
         <tr>
-            <td><strong>{{ p.id }}</strong></td>
-            <td>{{ p.qubit_control or '-' }}</td>
-            <td>{{ p.qubit_target or '-' }}</td>
-            <td>{% if p.is_active %}&#10003;{% else %}<span class="rep-off">off</span>{% endif %}</td>
-            <td>{% if p.get('pair_fidelity') is none %}-{% elif p.pair_fidelity is number %}{{ "%.4f" | format(p.pair_fidelity) }}{% else %}&quot;{{ p.pair_fidelity }}&quot;{% endif %}</td>
+            <td class="rep-id"><strong>{{ q.id }}</strong></td>
+            <td>{{ q.x180_amplitude | qty('x180_amplitude') }}</td>
+            <td>{{ q.x180_length | qty('x180_length') }}</td>
+            <td>{{ raw(q.x180_alpha) }}</td>
+            <td>{{ q.x90_amplitude | qty('x90_amplitude') }}</td>
+            <td>{{ q.saturation_amplitude | qty('saturation_amplitude') }}</td>
+            <td>{{ pct(q.gate_fidelity_avg) }}</td>
+            <td>{{ pct(q.gate_fidelity_x180) }}</td>
+            <td>{{ pct(q.gate_fidelity_x90) }}</td>
         </tr>
-        {% endif %}
         {% endfor %}
         </tbody>
     </table>
 
-    <h2>Resonators ({{ resonators | length }})</h2>
-    <table>
-        <thead><tr><th>ID</th><th>Active</th><th>Readout freq (GHz)</th><th>Amplitude</th>
-            <th>Length (ns)</th><th>Time of flight (ns)</th></tr></thead>
+    <h2>Readout ({{ resonators | length }})</h2>
+    <p class="rep-cap">P(RO) is the true power leaving the instrument
+       (P = FSP + 20&middot;log&#8321;&#8320;|amp|, docs/109) and is blank on a
+       non-MW channel.</p>
+    <table class="rep-wide">
+        <thead><tr><th>ID</th><th>Active</th><th>Readout f (GHz)</th><th>RF (GHz)</th>
+            <th>Amp</th><th>P(RO) (dBm)</th><th>Length (ns)</th>
+            <th>Threshold</th><th>IW angle (rad)</th><th>ToF (ns)</th></tr></thead>
         <tbody>
         {% for q in resonators %}
         <tr>
-            <td><strong>{{ q.id }}</strong></td>
-            <td>{% if q.is_active %}&#10003;{% else %}<span class="rep-off">off</span>{% endif %}</td>
+            <td class="rep-id"><strong>{{ q.id }}</strong></td>
+            <td>{{ yn(q.is_active) }}</td>
             <td>{{ q.readout_frequency | qty('readout_frequency') }}</td>
-            <td>{% if q.readout_amplitude is none %}-{% elif q.readout_amplitude is number %}{{ "%.4f" | format(q.readout_amplitude) }}{% else %}&quot;{{ q.readout_amplitude }}&quot;{% endif %}</td>
-            <td>{{ q.readout_length if q.readout_length is not none else '-' }}</td>
+            <td>{{ q.readout_RF_frequency | qty('readout_RF_frequency') }}</td>
+            <td>{{ q.readout_amplitude | qty('readout_amplitude') }}</td>
+            {% set _ph = ('qubits.' ~ q.id ~ '.resonator.operations.readout.amplitude') | phys_amp(q.readout_amplitude) %}
+            <td>{% if _ph and _ph.kind == 'mw' %}{{ _ph.text }}{% else %}-{% endif %}</td>
+            <td>{{ q.readout_length | qty('readout_length') }}</td>
+            <td>{{ raw(q.readout_threshold) }}</td>
+            <td>{{ raw(q.readout_iw_angle) }}</td>
             <td>{{ q.time_of_flight | qty('time_of_flight') }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+
+    {# Readout fidelity is DERIVED from the confusion matrices, and only the
+       topology derives it (query._assignment_fidelity / _cm_diag). An absent
+       block names the leaf it fills from rather than not existing — docs/148,
+       the customer's own "왜 GEF는 없는거니". #}
+    {% set _ge_any = topo_nodes.values() | map(attribute='assignment_fidelity') | select('number') | list %}
+    {% set _gef_any = topo_nodes.values() | map(attribute='assignment_fidelity_gef') | select('number') | list %}
+    <h2>Readout fidelity ({{ resonators | length }})</h2>
+    <p class="rep-cap">Derived from each resonator's confusion matrix &mdash; the
+       mean diagonal (assignment) and each state's own diagonal.
+       {% if not _ge_any %}<br>GE columns fill from <code>resonator.confusion_matrix</code>;
+       no qubit on this chip carries a usable one.{% endif %}
+       {% if not _gef_any %}<br>GEF columns fill from <code>resonator.gef_confusion_matrix</code>;
+       no qubit on this chip carries one.{% endif %}</p>
+    <table class="rep-wide">
+        <thead><tr><th>ID</th><th>Assignment (GE)</th><th>F |g&rang;</th><th>F |e&rang;</th>
+            <th>Assignment (GEF)</th><th>F |g&rang;</th><th>F |e&rang;</th><th>F |f&rang;</th></tr></thead>
+        <tbody>
+        {% for q in resonators %}
+        {% set n = topo_nodes.get(q.id) or {} %}
+        <tr>
+            <td class="rep-id"><strong>{{ q.id }}</strong></td>
+            <td>{{ pct(n.get('assignment_fidelity')) }}</td>
+            <td>{{ pct(n.get('ro_fidelity_g')) }}</td>
+            <td>{{ pct(n.get('ro_fidelity_e')) }}</td>
+            <td>{{ pct(n.get('assignment_fidelity_gef')) }}</td>
+            <td>{{ pct(n.get('ro_fidelity_gef_g')) }}</td>
+            <td>{{ pct(n.get('ro_fidelity_gef_e')) }}</td>
+            <td>{{ pct(n.get('ro_fidelity_gef_f')) }}</td>
         </tr>
         {% endfor %}
         </tbody>
@@ -153,17 +281,24 @@
 
     <h2>Flux lines ({{ flux | length }})</h2>
     {% if flux %}
-    <table>
-        <thead><tr><th>ID</th><th>Active</th><th>Joint offset (V)</th>
-            <th>Independent offset (V)</th><th>Flux point</th></tr></thead>
+    <table class="rep-wide">
+        <thead><tr><th>ID</th><th>Active</th><th>Bias source</th>
+            <th>Joint offset (V)</th><th>Independent offset (V)</th><th>Flux point</th>
+            <th>Delay (ns)</th><th>&Phi;&#8320; voltage (V)</th><th>&Phi;&#8320; current (A)</th>
+            <th>df&#8320;&#8321;/d&Phi;&sup2; (Hz/&Phi;&#8320;&sup2;)</th></tr></thead>
         <tbody>
         {% for q in flux %}
         <tr>
-            <td><strong>{{ q.id }}</strong></td>
-            <td>{% if q.is_active %}&#10003;{% else %}<span class="rep-off">off</span>{% endif %}</td>
+            <td class="rep-id"><strong>{{ q.id }}</strong></td>
+            <td>{{ yn(q.is_active) }}</td>
+            <td>{{ q.bias_mode or '-' }}</td>
             <td>{{ q.z_joint_offset | qty('z_joint_offset') }}</td>
             <td>{{ q.z_independent_offset | qty('z_independent_offset') }}</td>
             <td>{{ q.z_flux_point or '-' }}</td>
+            <td>{{ q.z_delay_ns | qty('z_delay_ns') }}</td>
+            <td>{{ q.phi0_voltage | qty('phi0_voltage') }}</td>
+            <td>{{ raw(q.phi0_current) }}</td>
+            <td>{{ q.freq_vs_flux_01_quad_term | qty('freq_vs_flux_01_quad_term') }}</td>
         </tr>
         {% endfor %}
         </tbody>
@@ -172,20 +307,221 @@
     <p class="rep-note">No qubit on this chip has an OPX flux line.</p>
     {% endif %}
 
+    {# docs/136 — a QDAC-biased qubit's DC point lives on its own component, not
+       on `z`. The section renders only on a chip that has one: unlike a COLUMN,
+       a whole absent instrument is not a value this chip failed to record. #}
+    {% if qdac_qubits %}
+    <h2>QDAC-II bias ({{ qdac_qubits | length }})</h2>
+    <p class="rep-cap">Several qubits legitimately share one trigger cable
+       &mdash; one OPX digital output per QDAC ext input.</p>
+    <table class="rep-wide">
+        <thead><tr><th>ID</th><th>Channel</th><th>DC offset (V)</th><th>Trigger</th>
+            <th>Dwell (s)</th><th>Slew rate</th><th>Output range</th>
+            <th>Output filter</th><th>Settle time (ns)</th></tr></thead>
+        <tbody>
+        {% for q in qdac_qubits %}
+        <tr>
+            <td class="rep-id"><strong>{{ q.id }}</strong></td>
+            <td>{{ q.qdac_channel if q.qdac_channel is not none else '-' }}</td>
+            <td>{{ q.qdac_dc_offset | qty('qdac_dc_offset') }}</td>
+            <td>{{ q.qdac_trigger_port_label or q.qdac_trigger_port or '-' }}</td>
+            <td>{{ raw(q.qdac_dwell) }}</td>
+            <td>{{ raw(q.qdac_slew_rate) }}</td>
+            <td>{{ q.qdac_output_range or '-' }}</td>
+            <td>{{ q.qdac_output_filter or '-' }}</td>
+            <td>{{ q.qdac_settle_time | qty('qdac_settle_time') }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    {# Which physical port drives which qubit. It lives only on the topology
+       node (`_extract_port_label` follows the state -> wiring -> ports chain
+       and builds the label from the port's own identity fields), and a printed
+       chip record that cannot answer "which port is q3's flux line" is not a
+       record of the chip. The Instrument Wiring DIAGRAM is deliberately not
+       reproduced here -- it is an SVG of the rack, and the map above is
+       already the drawing this page carries. #}
+    <h2>Wiring &mdash; ports ({{ qubits | length }})</h2>
+    <p class="rep-cap">The OPX port each channel is cabled to, followed through
+       the chip's own pointer chain. A blank means that qubit declares no such
+       channel &mdash; a QDAC-biased qubit has a channel number instead of a
+       flux port.</p>
+    <table class="rep-wide">
+        <thead><tr><th>ID</th><th>Drive (xy)</th><th>Readout</th><th>Flux (z)</th>
+            <th>Bias source</th><th>QDAC channel</th></tr></thead>
+        <tbody>
+        {% for q in qubits %}
+        {% set n = topo_nodes.get(q.id) or {} %}
+        <tr>
+            <td class="rep-id"><strong>{{ q.id }}</strong></td>
+            <td>{{ n.get('xy_port') or '-' }}</td>
+            <td>{{ n.get('rr_port') or '-' }}</td>
+            <td>{{ n.get('z_port') or '-' }}</td>
+            <td>{{ q.bias_mode or '-' }}</td>
+            <td>{{ q.qdac_channel if q.qdac_channel is not none else '-' }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+
+    {# ================================================================== #}
+    {# Pairs                                                               #}
+    {# ================================================================== #}
+    <h2>Qubit pairs ({{ pairs | length }})</h2>
+    <p class="rep-cap">&quot;Best 2Q fidelity&quot; is the number Chip Status colours
+       the edge with, and the source names what measured it &mdash; the per-gate
+       and per-Clifford numbers are in the next table, where they are labelled
+       (docs/138).</p>
+    <table class="rep-wide">
+        <thead><tr><th>Pair</th><th>Control</th><th>Target</th><th>Active</th>
+            <th>Moving</th><th>Best 2Q fidelity</th><th>Source</th><th>Best gate</th>
+            <th>Detuning (MHz)</th><th>Mutual flux bias</th><th>Last cal.</th></tr></thead>
+        <tbody>
+        {% for p in pairs %}
+        {% if p.get('_error') %}
+        <tr><td class="rep-id"><strong>{{ p.id }}</strong></td>
+            <td colspan="10">&#9888; unreadable pair &mdash; {{ p._error }}</td></tr>
+        {% else %}
+        {% set e = (topo_edges | selectattr('pair_id', 'equalto', p.id) | list | first) or {} %}
+        <tr>
+            <td class="rep-id"><strong>{{ p.id }}</strong></td>
+            <td>{{ p.qubit_control or '-' }}</td>
+            <td>{{ p.qubit_target or '-' }}</td>
+            <td>{{ yn(p.is_active) }}</td>
+            <td>{{ e.get('moving_qubit') or '-' }}</td>
+            <td>{{ pct(e.get('cz_fidelity')) }}</td>
+            <td>{{ e.get('fidelity_source') or '-' }}</td>
+            <td>{{ e.get('best_gate') or '-' }}</td>
+            <td>{{ e.get('detuning') | qty('detuning') }}</td>
+            <td>{% set _mb = e.get('mutual_flux_bias') %}{% if _mb is none %}-{% elif _mb is string or _mb is number %}{{ raw(_mb) }}{% else %}{{ _mb | join(', ') }}{% endif %}</td>
+            <td>{{ cal.get(p.id) or '-' }}</td>
+        </tr>
+        {% endif %}
+        {% endfor %}
+        </tbody>
+    </table>
+
+    {# Every RB / Bell number the chip stores, with the LEVEL spelled out.
+       docs/138: StandardRB is per CLIFFORD and InterleavedRB is per GATE, and a
+       Clifford is several gates — a table that printed both as "fidelity" is
+       exactly the report the customer already had to correct once. #}
+    {% set _lvl = {'gate': '2Q gate (IRB)', 'clifford': '2Q Clifford (SRB)',
+                   'state': '2Q Bell state', 'decay': 'RB fit (decay α)'} %}
+    {% set rb_rows = [] %}
+    {% for e in topo_edges %}{% for gf in (e.get('gate_fidelities') or []) %}
+        {% set _ = rb_rows.append((e.get('pair_id'), gf)) %}
+    {% endfor %}{% endfor %}
+    <h2>2Q randomized benchmarking ({{ rb_rows | length }})</h2>
+    {% if rb_rows %}
+    <p class="rep-cap">One row per number the chip actually stores.
+       A decay &alpha; is the RB exponential's base &mdash; a fit parameter, not a
+       fidelity &mdash; so it is shown as a bare number.
+       &quot;Per gate &divide;N&quot; is the per-gate fidelity the Standard-RB run
+       itself computed, read from that run (never recomputed here) &mdash; blank
+       where that run is not in this workspace's dataset folders.</p>
+    <table class="rep-wide">
+        <thead><tr><th>Pair</th><th>Gate</th><th>Measurement</th><th>What it measures</th>
+            <th>Value</th><th>Per gate &divide;N</th><th>Run</th></tr></thead>
+        <tbody>
+        {% for pair_id, gf in rb_rows %}
+        <tr>
+            <td class="rep-id"><strong>{{ pair_id }}</strong></td>
+            <td class="rep-id">{{ gf.get('gate') or '-' }}</td>
+            <td>{{ gf.get('metric') or '-' }}</td>
+            <td class="rep-lvl">{{ _lvl.get(gf.get('level')) or '—' }}</td>
+            <td>{% if gf.get('raw_value') is not none -%}
+                    <span class="rep-bad">{{ raw(gf.get('raw_value')) }} &#9888; unphysical</span>
+                {%- elif gf.get('level') == 'decay' -%}
+                    {{ raw(gf.get('value')) }}
+                {%- else -%}
+                    {{ pct(gf.get('value')) }}
+                {%- endif %}</td>
+            <td>{% if gf.get('derived_gate_fidelity') is not none -%}
+                    {{ pct(gf.get('derived_gate_fidelity')) }}
+                    {%- if gf.get('average_gates_per_clifford') is number %}
+                    <span class="rep-note">&divide;{{ "%.2f" | format(gf.get('average_gates_per_clifford')) }}</span>
+                    {%- endif %}
+                {%- else %}-{% endif %}</td>
+            <td>{{ gf.get('load_id') if gf.get('load_id') is not none else '-' }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="rep-note">No pair on this chip stores an RB or Bell-state fidelity.
+       These fill from a gate macro's <code>fidelity</code> block.</p>
+    {% endif %}
+
+    <h2>2Q gate parameters ({{ gate_params | length }})</h2>
+    {% if gate_params %}
+    <p class="rep-cap">One row per gate variant the pair carries, calibrated or
+       not. A length stored as a JSON pointer (an inferred total) is printed as
+       the pointer, which is what the file holds.</p>
+    <table class="rep-wide">
+        <thead><tr><th>Pair</th><th>Gate</th><th>Amplitude</th><th>Coupler amp</th>
+            <th>Length (ns)</th><th>Flat length (ns)</th><th>Smoothing (ns)</th>
+            <th>Phase shift ctrl (rad)</th><th>Phase shift tgt (rad)</th></tr></thead>
+        <tbody>
+        {% for g in gate_params %}
+        <tr>
+            <td class="rep-id"><strong>{{ g.pair }}</strong></td>
+            <td class="rep-id">{{ g.gate }}</td>
+            <td>{{ g.amplitude | qty('amplitude') }}</td>
+            <td>{{ g.coupler_amplitude | qty('coupler_amplitude') }}</td>
+            <td>{{ g.length | qty('length') }}</td>
+            <td>{{ g.flat_length | qty('flat_length') }}</td>
+            <td>{{ g.smoothing_length | qty('smoothing_length') }}</td>
+            <td>{{ raw(g.phase_shift_control) }}</td>
+            <td>{{ raw(g.phase_shift_target) }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="rep-note">No pair on this chip carries a CZ-shaped gate macro.</p>
+    {% endif %}
+
+    {# The pair's own multi-qubit readout confusion matrix — the 2Q counterpart
+       of the per-qubit assignment fidelity above, and stored on the PAIR. #}
+    {% set conf_edges = topo_edges | selectattr('confusion_diag') | list %}
+    {% if conf_edges %}
+    <h2>Pair readout confusion ({{ conf_edges | length }})</h2>
+    <p class="rep-cap">The diagonal of each pair's stored confusion matrix &mdash;
+       the probability each joint state is read back as itself.</p>
+    <table>
+        <thead><tr><th>Pair</th><th>States</th><th>Diagonal</th><th>Mean diagonal</th></tr></thead>
+        <tbody>
+        {% for e in conf_edges %}
+        <tr>
+            <td class="rep-id"><strong>{{ e.pair_id }}</strong></td>
+            <td>{{ e.confusion_size }}</td>
+            <td>{% for v in e.confusion_diag %}{{ raw(v) }}{% if not loop.last %}, {% endif %}{% endfor %}</td>
+            <td>{% set _d = e.confusion_diag | select('number') | list %}
+                {%- if _d %}{{ pct((_d | sum) / (_d | length)) }}{% else %}-{% endif %}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
     <h2>Couplers ({{ couplers | length }})</h2>
     {% if couplers %}
     <table>
         <thead><tr><th>Pair</th><th>Control</th><th>Target</th><th>Active</th>
-            <th>Decouple offset (V)</th><th>Interaction offset (V)</th></tr></thead>
+            <th>Decouple offset (V)</th><th>Interaction offset (V)</th>
+            <th>Delay (ns)</th></tr></thead>
         <tbody>
         {% for p in couplers %}
         <tr>
-            <td><strong>{{ p.id }}</strong></td>
+            <td class="rep-id"><strong>{{ p.id }}</strong></td>
             <td>{{ p.qubit_control or '-' }}</td>
             <td>{{ p.qubit_target or '-' }}</td>
-            <td>{% if p.is_active %}&#10003;{% else %}<span class="rep-off">off</span>{% endif %}</td>
+            <td>{{ yn(p.is_active) }}</td>
             <td>{{ p.coupler_decouple_offset | qty('coupler_decouple_offset') }}</td>
             <td>{{ p.coupler_interaction_offset | qty('coupler_interaction_offset') }}</td>
+            <td>{{ p.coupler_delay_ns | qty('coupler_delay_ns') }}</td>
         </tr>
         {% endfor %}
         </tbody>

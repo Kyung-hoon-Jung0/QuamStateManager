@@ -78,13 +78,20 @@ class TestReportContent:
         assert "sidebar" not in b and "topbar" not in b
         assert 'id="pending-tray"' not in b
 
-    def test_all_five_component_sections_render_unpaginated(self, client):
+    def test_every_component_section_renders_unpaginated(self, client):
+        """docs/188 split the one Qubits table into grouped sections; every
+        component view still renders, for every entity, on one page."""
         b = client.get("/chip-status/report").get_data(as_text=True)
-        assert "Qubits (2)" in b
-        assert "Qubit pairs (1)" in b
-        assert "Resonators (1)" in b          # only q1 has one
-        assert "Flux lines (1)" in b          # only q1 has z
-        assert "Couplers (0)" in b
+        for heading in ("Qubits &mdash; frequencies (2)",
+                        "Qubits &mdash; coherence (2)",
+                        "Qubits &mdash; single-qubit gates (2)",
+                        "Readout (1)",                 # only q1 has a resonator
+                        "Readout fidelity (1)",
+                        "Flux lines (1)",              # only q1 has z
+                        "Wiring &mdash; ports (2)",
+                        "Qubit pairs (1)",
+                        "Couplers (0)"):
+            assert heading in b, heading
         assert "q1-q2" in b
         # honest empty state, not a bare heading
         assert "No pair on this chip has a tunable coupler." in b
@@ -107,3 +114,228 @@ class TestReportContent:
         # it must strip scripts and inline the stylesheet in the saved file
         assert "querySelectorAll('script')" in b
         assert "link[rel=\"stylesheet\"]" in b
+
+
+# ---------------------------------------------------------------------------
+# docs/188 - "the report should hold every value that can be extracted"
+# ---------------------------------------------------------------------------
+def _rich_chip(folder: Path) -> Path:
+    """A chip carrying one of everything the report is meant to print.
+
+    Deliberately awkward in four ways, each of which the plain fixture above
+    cannot reach: a GEF confusion matrix (the derived three-state readout
+    fidelities), a QDAC-biased qubit (a bias line that is NOT a flux line), a
+    CZ macro whose ``flux_pulse_qubit`` is a POINTER (the only path on which
+    the report's gate parameters differ from the topology's), and an
+    InterleavedRB of 1.5345 - a real donor-chip value (docs/138) that must
+    never print as a 153% gate fidelity.
+    """
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "state.json").write_text(json.dumps({
+        "qubits": {
+            "q1": {
+                "id": "q1", "f_01": 6.1e9, "f_12": 5.9e9,
+                "anharmonicity": 2.0e8, "chi": -3.5e5,
+                "T1": 3.0e-5, "T2ramsey": 2.0e-5, "T2echo": 4.1e-5,
+                "gate_fidelity": {"averaged": 0.9991, "x180": 0.9989,
+                                  "x90": 0.9994},
+                "xy": {"RF_frequency": 6.1e9,
+                       "opx_output": "#/wiring/qubits/q1/xy/opx_output",
+                       "operations": {
+                    "x180_DragCosine": {"amplitude": 0.31, "length": 40,
+                                        "alpha": -0.05},
+                    "x90_DragCosine": {"amplitude": 0.155},
+                    "saturation": {"amplitude": 0.005}}},
+                "resonator": {
+                    "RF_frequency": 7.2e9,
+                    "opx_output": "#/wiring/qubits/q1/rr/opx_output",
+                    "confusion_matrix": [[0.96, 0.04], [0.11, 0.89]],
+                    "gef_confusion_matrix": [[0.94, 0.04, 0.02],
+                                             [0.09, 0.88, 0.03],
+                                             [0.05, 0.07, 0.88]],
+                    "operations": {"readout": {"amplitude": 0.1,
+                                               "length": 1000,
+                                               "threshold": 4.4588e-4}}},
+                "z": {"joint_offset": 0.05, "independent_offset": 0.02,
+                      "flux_point": "joint",
+                      "opx_output": "#/wiring/qubits/q1/z/opx_output",
+                      "operations": {"cz_flat": {"amplitude": 0.42,
+                                                 "length": 100,
+                                                 "flat_length": 52,
+                                                 "smoothing_length": 20}}},
+            },
+            "q2": {
+                "id": "q2", "f_01": 6.3e9,
+                # a QDAC-II bias line: a channel + dc_offset and NO opx_output.
+                # Structural detection (docs/136) - no env or class needed.
+                "z": {"channel": 13, "dc_offset": 0.12, "trigger_port": "ext1",
+                      "dwell": 1e-3, "slew_rate": 1e7, "output_range": "low",
+                      "output_filter": "dc", "settle_time": 100},
+            },
+        },
+        "qubit_pairs": {
+            "q1-q2": {
+                "id": "q1-q2",
+                "qubit_control": "#/qubits/q1", "qubit_target": "#/qubits/q2",
+                "detuning": 1.5e8,
+                "confusion": [[0.85, 0.05, 0.06, 0.04],
+                              [0.07, 0.79, 0.08, 0.06],
+                              [0.06, 0.09, 0.77, 0.08],
+                              [0.05, 0.08, 0.10, 0.77]],
+                "coupler": {"decouple_offset": -0.1, "interaction_offset": 0.3},
+                "macros": {"cz_flat": {
+                    # the pulse lives on the moving qubit's z line and the
+                    # macro POINTS at it; `get_pair` dereferences that, the
+                    # topology's `gate_details` does not.
+                    "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_flat",
+                    "phase_shift_control": 0.134,
+                    "phase_shift_target": 0.901,
+                    "fidelity": {"StandardRB": 0.658,
+                                 "StandardRB_alpha": 0.5445,
+                                 "InterleavedRB": 1.5345,
+                                 "StandardRB_load_id": 1477}}},
+            },
+        },
+        "active_qubit_names": ["q1", "q2"],
+        # the port objects the wiring points at -- the second hop
+        "ports": {
+            "mw_outputs": {"con1": {"3": {
+                "1": {"controller_id": "con1", "fem_id": 3, "port_id": 1,
+                      "full_scale_power_dbm": 0},
+                "2": {"controller_id": "con1", "fem_id": 3, "port_id": 2,
+                      "full_scale_power_dbm": 0}}}},
+            "analog_outputs": {"con1": {"5": {
+                "1": {"controller_id": "con1", "fem_id": 5,
+                      "port_id": 1}}}},
+        },
+    }), encoding="utf-8")
+    (folder / "wiring.json").write_text(json.dumps({
+        "network": {"host": "1.2.3.4"},
+        "wiring": {"qubits": {"q1": {
+            "xy": {"opx_output": "#/ports/mw_outputs/con1/3/2"},
+            "rr": {"opx_output": "#/ports/mw_outputs/con1/3/1"},
+            "z": {"opx_output": "#/ports/analog_outputs/con1/5/1"}}}},
+    }), encoding="utf-8")
+    return folder
+
+
+@pytest.fixture
+def rich_client(tmp_path):
+    _rich_chip(tmp_path / "quam_state")
+    app = create_app(testing=True, instance_path=str(tmp_path / "_ir"))
+    c = app.test_client()
+    c.post("/load", data={"folder": str(tmp_path / "quam_state")})
+    return c
+
+
+class TestEverythingExtractable:
+    """The customer's ask: every value SM can extract is in the printout."""
+
+    def test_coherence_prints_t2_echo_and_the_ceiling_ratio(self, rich_client):
+        b = rich_client.get("/chip-status/report").get_data(as_text=True)
+        assert "T2 echo (&micro;s)" in b
+        assert "41.00" in b                      # 4.1e-5 s -> 41.00 us
+        # T2ramsey / 2*T1 - the T2 <= 2*T1 ceiling, a cross-check the chip
+        # implies and stores nowhere
+        assert "T2 Ramsey / 2&middot;T1" in b
+        assert ">0.33<" in b or "0.33" in b      # 2.0e-5 / (2 * 3.0e-5)
+
+    def test_a_column_is_never_dropped_because_this_chip_is_empty(self, client):
+        """docs/94 / docs/148. The PLAIN chip records no T2 echo and no 1Q gate
+        fidelity; the columns must still be there, because an absent column
+        reads as "this chip has no such thing"."""
+        b = client.get("/chip-status/report").get_data(as_text=True)
+        for header in ("T2 echo (&micro;s)", "F x180", "F x90",
+                       "x180 &alpha;<sub>DRAG</sub>", "IW angle (rad)",
+                       "Threshold"):
+            assert header in b, header
+
+    def test_readout_fidelities_are_derived_and_gef_is_there(self, rich_client):
+        b = rich_client.get("/chip-status/report").get_data(as_text=True)
+        assert "Assignment (GEF)" in b
+        assert "92.500%" in b                    # GE mean diag (0.96, 0.89)
+        assert "90.000%" in b                    # GEF mean diag (.94, .88, .88)
+        # nothing to apologise for on a chip that HAS the matrices
+        assert "gef_confusion_matrix</code>;" not in b
+
+    def test_an_absent_derivation_names_the_leaf_it_fills_from(self, client):
+        """The plain chip stores no confusion matrix at all. The block must say
+        which leaf it would have come from - the docs/148 rule."""
+        b = client.get("/chip-status/report").get_data(as_text=True)
+        assert "resonator.confusion_matrix</code>" in b
+        assert "resonator.gef_confusion_matrix</code>" in b
+
+    def test_rb_rows_say_what_they_measure(self, rich_client):
+        """docs/138: StandardRB is per CLIFFORD, InterleavedRB is per GATE, and
+        a decay alpha is a fit parameter, not a fidelity."""
+        b = rich_client.get("/chip-status/report").get_data(as_text=True)
+        assert "2Q randomized benchmarking" in b
+        assert "2Q Clifford (SRB)" in b
+        assert "2Q gate (IRB)" in b
+        assert "RB fit (decay " in b           # ... and the alpha is a ROW
+        assert "65.800%" in b                    # the SRB fidelity, as a percent
+        assert "0.5445" in b                     # ... and alpha as a BARE number
+        assert "54.450%" not in b
+        assert "1477" in b                       # the run that produced them
+
+    def test_an_unphysical_fidelity_is_shown_and_marked_never_as_a_percent(
+            self, rich_client):
+        b = rich_client.get("/chip-status/report").get_data(as_text=True)
+        assert "1.5345" in b and "unphysical" in b
+        assert "153.450%" not in b
+
+    def test_gate_parameters_follow_a_pointer_to_the_pulse(self, rich_client):
+        """The report reads the pulse through `get_pair`, which DEREFERENCES a
+        macro's `flux_pulse_qubit` reference. The topology's `gate_details`
+        reads the raw macro and would print the phase shifts and nothing
+        else."""
+        b = rich_client.get("/chip-status/report").get_data(as_text=True)
+        assert "2Q gate parameters (1)" in b
+        assert "0.4200" in b                     # amplitude, through the pointer
+        assert ">52<" in b                       # flat_length
+        assert "0.9010" in b                     # phase shift target
+
+    def test_the_qdac_bias_component_prints(self, rich_client):
+        b = rich_client.get("/chip-status/report").get_data(as_text=True)
+        assert "QDAC-II bias (1)" in b
+        assert "ext1" in b
+        assert "Output filter" in b
+
+    def test_a_chip_without_a_qdac_has_no_qdac_section(self, client):
+        """A whole absent INSTRUMENT is not a value this chip failed to record
+        - unlike a column, it is right to leave it out."""
+        b = client.get("/chip-status/report").get_data(as_text=True)
+        assert "QDAC-II bias" not in b
+
+    def test_the_pair_row_names_what_measured_its_fidelity(self, rich_client):
+        b = rich_client.get("/chip-status/report").get_data(as_text=True)
+        assert "Best 2Q fidelity" in b and "Detuning (MHz)" in b
+        assert "150.00" in b                     # 1.5e8 Hz -> 150.00 MHz
+        assert "Pair readout confusion (1)" in b
+
+    def test_the_ports_each_channel_is_cabled_to_are_printed(self, rich_client):
+        """A printed chip record that cannot answer "which port is q1's flux
+        line" is not a record of the chip. The label is built by following the
+        chip's own two-hop chain (state -> wiring -> ports), so it exists only
+        on the topology node."""
+        b = rich_client.get("/chip-status/report").get_data(as_text=True)
+        assert "Wiring &mdash; ports (2)" in b
+        assert "con1/fem3/p2" in b               # q1 drive
+        assert "con1/fem3/p1" in b               # q1 readout
+        assert "con1/fem5/p1" in b               # q1 flux
+        # q2 is QDAC-biased: a channel NUMBER, not a flux port
+        assert ">13<" in b
+
+    def test_the_readout_power_that_leaves_the_instrument(self, rich_client):
+        """docs/109 -- P = FSP + 20*log10|amp|, and it needs the resolved MW
+        port, so it is real only once the cabling resolves."""
+        b = rich_client.get("/chip-status/report").get_data(as_text=True)
+        assert "P(RO) (dBm)" in b
+        assert "-20.0 dBm" in b                  # 0 dBm FSP, amplitude 0.1
+
+    def test_a_small_number_keeps_its_precision(self, rich_client):
+        """The report must not invent a second number renderer: a %.4f pass
+        rounded a 4.4588e-04 readout threshold to "0.0004"."""
+        b = rich_client.get("/chip-status/report").get_data(as_text=True)
+        assert "4.4588e-04" in b
+        assert ">0.0004<" not in b

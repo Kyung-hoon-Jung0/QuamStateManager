@@ -9785,6 +9785,34 @@ def chip_status_report():
             logger.warning("report get_pair(%r) failed: %s", pair_name, exc)
             pairs.append({"id": pair_name, "is_active": True,
                           "_error": f"{type(exc).__name__}: {exc}"})
+    # docs/188 (customer 2026-09-16: "the report should hold every value that
+    # can be extracted"). The report reads the SAME topology Chip Status does,
+    # rather than deriving a second, poorer version of its own: the readout
+    # fidelities derived from the confusion matrices live only there, so do the
+    # RB rows with their docs/138 LEVEL (per-gate IRB vs per-Clifford SRB), and
+    # so does the Standard-RB-per-gate derivation. An enrichment never breaks
+    # the page -- a topology that raises leaves the report's own tables intact.
+    try:
+        topo = _topology_with_derived_rb(engine)
+    except Exception:  # noqa: BLE001
+        logger.exception("report: topology failed")
+        topo = {"nodes": [], "edges": []}
+    topo_nodes = {n.get("id"): n for n in (topo.get("nodes") or [])}
+    topo_edges = list(topo.get("edges") or [])
+
+    # Per-entity calibration recency. `last_calibrated` is the freshest
+    # *updated_at anywhere in that qubit/pair (chip_health.newest_epoch_ms) --
+    # the same number Chip Status ages its tiles by.
+    cal: dict[str, str] = {}
+    for rec in list(topo.get("nodes") or []) + topo_edges:
+        key = rec.get("id") or rec.get("pair_id")
+        ms = rec.get("last_calibrated")
+        if key and isinstance(ms, (int, float)) and not isinstance(ms, bool):
+            try:
+                cal[key] = datetime.fromtimestamp(ms / 1000.0).strftime("%Y-%m-%d")
+            except (OverflowError, OSError, ValueError):
+                pass
+
     return render_template(
         "chip_report.html",
         has_chip=True,
@@ -9796,7 +9824,51 @@ def chip_status_report():
         resonators=[q for q in qubits if q.get("has_resonator")],
         flux=[q for q in qubits if q.get("has_z")],
         couplers=[p for p in pairs if p.get("has_coupler")],
+        topo_nodes=topo_nodes,
+        topo_edges=topo_edges,
+        gate_params=_report_gate_param_rows(pairs),
+        cal=cal,
+        qdac_qubits=[q for q in qubits if q.get("has_qdac")],
     )
+
+
+# The per-gate pulse parameters `get_pair` flattens onto a pair dict. Ordered
+# for the report's own column order, and the ONE place that list is written.
+_REPORT_GATE_FIELDS = ("amplitude", "coupler_amplitude", "length", "flat_length",
+                       "smoothing_length", "phase_shift_control",
+                       "phase_shift_target")
+
+
+def _report_gate_param_rows(pairs: list[dict]) -> list[dict]:
+    """One row per (pair, CZ-shaped gate) carrying that gate's pulse parameters.
+
+    The gate NAMES are discovered from the flat pair dict itself -- `get_pair`
+    writes `<gate>_phase_shift_control` for every macro it judged CZ-shaped --
+    so nothing here re-implements which macros count as gates.
+
+    The VALUES come from that same flat dict deliberately, not from the
+    topology's `gate_details`: `get_pair` DEREFERENCES a macro's
+    `flux_pulse_qubit` JSON reference (`_deref_pulse_ref`) while
+    `_extract_gate_details` reads the raw macro, so on a chip that stores the
+    pulse by reference -- which the customer's 5Q chip does -- the topology
+    reports the phase shifts and nothing else.
+    """
+    rows: list[dict] = []
+    suffix = "_phase_shift_control"
+    for pair in pairs:
+        if not isinstance(pair, dict) or pair.get("_error"):
+            continue
+        for key in list(pair.keys()):
+            if not isinstance(key, str) or not key.endswith(suffix):
+                continue
+            gate = key[: -len(suffix)]
+            if not gate:
+                continue
+            row: dict = {"pair": pair.get("id"), "gate": gate}
+            for field in _REPORT_GATE_FIELDS:
+                row[field] = pair.get(f"{gate}_{field}")
+            rows.append(row)
+    return rows
 
 
 @bp.route("/wiring")
