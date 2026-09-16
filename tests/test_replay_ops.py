@@ -41,6 +41,9 @@ def _make_state(f_01: float = 6.25e9) -> dict:
                     "RF_frequency": f_01,
                     "operations": {
                         "x180_DragCosine": {"amplitude": 0.115, "length": 40},
+                        "x90_DragCosine": {"amplitude": 0.05, "length": 40},
+                        "y90_DragCosine": {"amplitude": "#../x90_DragCosine/amplitude",
+                                           "length": 40},
                         "x180": "#./x180_DragCosine",
                     },
                 },
@@ -143,6 +146,48 @@ class TestCapture:
 
 
 class TestReplay:
+    def test_relink_replays_at_the_leaf_not_through_the_old_pointer(self, store, fresh_store):
+        """docs/190 F01 (stress 2026-09-16, critical): y90.amplitude held
+        '#../x90/amplitude'; the user re-linked it to '#../x180/amplitude'.
+        Replaying that as a plain ``set`` resolved the OLD pointer still on
+        the pulled state and wrote the new pointer string into x90.amplitude
+        -- a field the user never opened -- while y90 kept the old link."""
+        mod = Modifier(store)
+        mod.set_value(f"{OPS}.y90_DragCosine.amplitude",
+                      "#../x180_DragCosine/amplitude", coerce=False)
+        pending = _capture_change_log_as_updates(store)
+        assert pending[f"{OPS}.y90_DragCosine.amplitude"][0] == "literal"
+
+        replay = _replay_updates(Modifier(fresh_store), pending)
+        assert replay["failed"] == []
+        ops = fresh_store.merged["qubits"]["qA1"]["xy"]["operations"]
+        assert ops["y90_DragCosine"]["amplitude"] == "#../x180_DragCosine/amplitude"
+        assert ops["x90_DragCosine"]["amplitude"] == 0.05   # never touched
+
+    def test_breaklink_replays_at_the_leaf(self, store, fresh_store):
+        """The literal (break-link) twin: the field HELD a pointer and now
+        holds a number -- it must land at the leaf, not at the old target."""
+        mod = Modifier(store)
+        mod.set_value(f"{OPS}.y90_DragCosine.amplitude", 0.07, coerce=False)
+        pending = _capture_change_log_as_updates(store)
+        assert pending[f"{OPS}.y90_DragCosine.amplitude"][0] == "literal"
+        replay = _replay_updates(Modifier(fresh_store), pending)
+        assert replay["failed"] == []
+        ops = fresh_store.merged["qubits"]["qA1"]["xy"]["operations"]
+        assert ops["y90_DragCosine"]["amplitude"] == 0.07
+        assert ops["x90_DragCosine"]["amplitude"] == 0.05
+
+    def test_value_edit_through_a_pointer_still_lands_on_the_target(self, store, fresh_store):
+        """The value-mode path logs the resolved TARGET; unchanged semantics."""
+        mod = Modifier(store)
+        mod.set_value(f"{OPS}.x90_DragCosine.amplitude", 0.06)
+        pending = _capture_change_log_as_updates(store)
+        assert pending[f"{OPS}.x90_DragCosine.amplitude"][0] == "set"
+        replay = _replay_updates(Modifier(fresh_store), pending)
+        ops = fresh_store.merged["qubits"]["qA1"]["xy"]["operations"]
+        assert ops["x90_DragCosine"]["amplitude"] == 0.06
+        assert ops["y90_DragCosine"]["amplitude"] == "#../x90_DragCosine/amplitude"
+
     def test_create_survives_replay(self, store, fresh_store):
         """The L3 regression: a created pulse must survive pull-with-reapply."""
         mod = Modifier(store)

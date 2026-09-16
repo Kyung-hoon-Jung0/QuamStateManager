@@ -1755,8 +1755,9 @@ def _rebuild_after_working_copy_replaced(ctx: dict) -> None:
     """Rebuild every derived object after the working folder's files were
     replaced wholesale (a sync pull, or a State History restore).
 
-    ``store.reload()`` re-reads the working files (and nulls the cached
-    generated config — a replaced state needs a fresh regenerate), then the
+    ``store.reload()`` re-reads the working files (the cached generated
+    config is kept -- it is basis-hash-keyed and reads as stale by itself,
+    docs/190 F23 -- and re-warmed below when it IS stale), then the
     search index, wiring-json, engine + pulse_index caches are rebuilt and
     the working-dirty / live-diverged flags cleared. Single shared
     entrypoint so a restore can never hand-roll a partial cache clear and
@@ -1794,6 +1795,12 @@ def _rebuild_after_working_copy_replaced(ctx: dict) -> None:
         _warm_state_schema_async(store, inst, live_folder=ctx.get("path"))
     except Exception:  # noqa: BLE001 — healing must never break the rebuild
         logger.warning("post-rebuild schema re-attach failed", exc_info=True)
+    # docs/190 F23: a pull that changed content leaves the lab-class
+    # waveforms stale; re-warm in the background (a no-op when still fresh).
+    try:
+        _maybe_warm_generated_config(ctx, current_app.instance_path)
+    except Exception:  # noqa: BLE001 -- never let a warm break a rebuild
+        logger.debug("generated-config re-warm skipped", exc_info=True)
 
 
 def _reseed_drift_baseline_if_chip_changed(ctx: dict) -> None:
@@ -2057,8 +2064,19 @@ def _capture_change_log_as_updates(store) -> dict:
             updates[path] = _tagged("delete", None, gid)
         else:
             prev = updates.get(path)
-            if prev is not None and prev[0] in ("create", "replace"):
+            if prev is not None and prev[0] in ("create", "replace", "literal"):
                 updates[path] = _tagged(prev[0], nv, gid)
+            elif is_pointer(nv) or is_pointer(entry.old_value):
+                # A re-link (new value IS a pointer) or a break-link (the field
+                # HELD a pointer) was written AT this leaf, never through an
+                # alias -- the value-mode path logs the resolved TARGET as its
+                # dot_path, so an entry whose leaf carries a pointer on either
+                # side can only be one of those two. Replaying it as a plain
+                # ``set`` re-resolved the OLD pointer still present on the
+                # freshly pulled state and wrote the new pointer string into
+                # the old target: a field the user never opened (stress round
+                # 2026-09-16, docs/190 F01).
+                updates[path] = _tagged("literal", nv, gid)
             else:
                 updates[path] = _tagged("set", nv, gid)
     return updates
@@ -2098,8 +2116,11 @@ def _merge_reapply(base: dict, incoming: dict) -> dict:
             for stale in [p for p in out if p != path and p.startswith(prefix)]:
                 out.pop(stale)
             out[path] = _tagged("replace", value, gid)
+        elif op == "literal":
+            out[path] = _tagged(prev[0] if (prev and prev[0] in ("create", "replace")) else "literal",
+                                value, gid)
         else:  # set
-            out[path] = _tagged(prev[0] if (prev and prev[0] in ("create", "replace")) else "set",
+            out[path] = _tagged(prev[0] if (prev and prev[0] in ("create", "replace", "literal")) else "set",
                                 value, gid)
     return out
 
@@ -2757,6 +2778,11 @@ def _replay_updates(modifier, updates: dict) -> dict:
                                          "out-of-band) — kept the live version",
                             })
                             continue  # skip applied += 1
+                elif op == "literal":
+                    # AT the leaf -- see _capture_change_log_as_updates; the
+                    # pointer that used to sit here must not be followed.
+                    modifier.set_value(dot_path, value, _defer_hooks=True,
+                                       coerce=False, enforce=False, group_id=gid)
                 elif op == "replace":
                     try:
                         modifier.set_value(dot_path, value,
@@ -3882,6 +3908,13 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         # `mutation_seq` and docs/117 with the auto-apply session; the rule
         # is that BOTH renderers stamp every field the template reads.
         "changes": (_modifier().get_change_log() if _modifier() else []),
+        # THE SAME TRAP, FOURTH FIELD (docs/190 F06): the change-set signature
+        # (docs/179) that Apply -- and now Ctrl+Z -- declares. A full page
+        # render stamped "" here, so a window opened BEFORE any edit existed
+        # sent an empty declaration, the gate waved it through, and its
+        # Ctrl+Z popped a lab-mate's edit exactly as before the fix.
+        "change_sig": (_change_log_sig_of(_modifier().get_change_log())
+                       if _modifier() else ""),
         "working_dirty": _working_dirty(),
         # ...and the badge's live verdict, for the same reason as `changes`.
         "live_diverged": bool((_active_ctx() or {}).get("live_diverged")),
@@ -7032,6 +7065,35 @@ def _resolve_edit_path(store, dot_path: str) -> str:
 _BRACKET_SEG_RE = re.compile(r"\[(\d+)\]")
 
 
+def _pulse_edit_is_noop(store, dot_path: str, parsed) -> bool:
+    """True when a value-mode commit would write what is already there.
+
+    Compares against the value the user is LOOKING at: a pointer leaf resolves
+    first, so pressing Enter on a resolved 40 is a no-op even though the leaf
+    itself holds ``#../x180/length``. Bools and strings compare by identity of
+    type too (1 is not True, "40" is not 40) so a real type change still lands.
+    """
+    try:
+        from quam_state_manager.core.pointer_path import resolve_field_target
+        cur = store.get_value(dot_path)
+        if is_pointer(cur):
+            t = resolve_field_target(store.merged, dot_path)
+            if not t.get("resolvable"):
+                return False          # dangling: let the write land
+            cur = t.get("resolved_value")
+    except (KeyError, TypeError, ValueError, IndexError):
+        return False
+    if isinstance(cur, bool) != isinstance(parsed, bool):
+        return False
+    if isinstance(cur, str) != isinstance(parsed, str):
+        return False
+    if isinstance(cur, (int, float)) and isinstance(parsed, (int, float)):
+        # an int field typed back as the same int (or 40.0 on a 40) is a no-op;
+        # int -> float of the same magnitude is NOT (the type changes on disk)
+        return cur == parsed and isinstance(cur, int) == isinstance(parsed, int)
+    return cur == parsed
+
+
 def _normalize_dot_path(dot_path: str) -> str:
     """Rewrite legacy bracket segments (``parent[3]``) to canonical dot form
     (``parent.3``). One-release compatibility shim for stale copied/bookmarked
@@ -9425,6 +9487,10 @@ _PARAMETRIC_CZ_QCLASS = (
     "quam_builder.architecture.superconducting.custom_gates"
     ".flux_tunable_transmon_pair.two_qubit_gates.ParametricCZGate"
 )
+_CZ_GATE_QCLASS = (
+    "quam_builder.architecture.superconducting.custom_gates"
+    ".flux_tunable_transmon_pair.two_qubit_gates.CZGate"
+)
 
 
 def _parametric_cz_evidence(store) -> str | None:
@@ -9462,6 +9528,7 @@ def _build_gate_template(gate_type: str, fields: dict[str, Any], *,
                          parametric_qclass: str | None = None,
                          cr_qclass: str | None = None,
                          stark_qclass: str | None = None,
+                         cz_qclass: str | None = None,
                          slot_qclasses: dict[str, str] | None = None) -> dict:
     """Construct the macro dict for ``gate_type`` from validated *fields*.
 
@@ -9475,6 +9542,13 @@ def _build_gate_template(gate_type: str, fields: dict[str, Any], *,
     def _classed(d: dict, slot_key: str) -> dict:
         qc = _sq.get(slot_key)
         return {"__class__": qc, **d} if qc else d
+
+    # docs/190 F13: the CR / Stark / parametric branches always wrote the
+    # macro's own ``__class__`` + ``id``; the five flux branches wrote a bare
+    # dict, which quam loads as a plain dict, not a CZGate. The class comes
+    # from the chip's own CZGate macros (majority, verbatim) or the modern
+    # quam_builder canonical -- the same one gaussian_cz.py writes.
+    _cz_head = {"__class__": cz_qclass or _CZ_GATE_QCLASS, "id": "#./inferred_id"}
 
     if gate_type == "cr_gate":
         # the modern CRGate shape (verified on every flavor artifact, docs/54)
@@ -9497,6 +9571,7 @@ def _build_gate_template(gate_type: str, fields: dict[str, Any], *,
         }
     if gate_type == "cz_unipolar":
         return {
+            **_cz_head,
             "fidelity": {},
             "flux_pulse_qubit": _classed({
                 "amplitude": fields["amplitude"],
@@ -9511,6 +9586,7 @@ def _build_gate_template(gate_type: str, fields: dict[str, Any], *,
         }
     if gate_type == "cz_flattop":
         return {
+            **_cz_head,
             "fidelity": {},
             "flux_pulse_qubit": _classed({
                 "amplitude": fields["amplitude"],
@@ -9518,8 +9594,16 @@ def _build_gate_template(gate_type: str, fields: dict[str, Any], *,
                 "smoothing_length": fields["smoothing_length"],
                 "length": "#./inferred_total_length",
             }, "qubit"),
-            "coupler_flux_pulse": _classed(
-                {"amplitude": fields["coupler_amplitude"]}, "coupler"),
+            # docs/190 F14: amplitude alone left a classed _FlatTopGaussianPulse
+            # without its required flat_length (no default in quam 0.6.0), so
+            # the created gate failed the env's own load. Share the qubit
+            # pulse's timing through pointers, as the bipolar branch does.
+            "coupler_flux_pulse": _classed({
+                "amplitude": fields["coupler_amplitude"],
+                "flat_length": "#../flux_pulse_qubit/flat_length",
+                "smoothing_length": "#../flux_pulse_qubit/smoothing_length",
+                "length": "#./inferred_total_length",
+            }, "coupler"),
             "phase_shift_control": fields["phase_shift_control"],
             "phase_shift_target": fields["phase_shift_target"],
         }
@@ -9528,6 +9612,7 @@ def _build_gate_template(gate_type: str, fields: dict[str, Any], *,
         # fields by self-reference (run_build's link_attrs semantics — one
         # source of truth, edits can't drift the two slots apart).
         return {
+            **_cz_head,
             "fidelity": {},
             "flux_pulse_qubit": _classed({
                 "amplitude": fields["amplitude"],
@@ -9551,6 +9636,7 @@ def _build_gate_template(gate_type: str, fields: dict[str, Any], *,
         # the whole gate rides the qubit z line (safe on fixed OR tunable
         # couplers) — no coupler pulse, matching run_build's SNZ shape.
         return {
+            **_cz_head,
             "fidelity": {},
             "flux_pulse_qubit": _classed({
                 "amplitude": fields["amplitude"],
@@ -9565,6 +9651,7 @@ def _build_gate_template(gate_type: str, fields: dict[str, Any], *,
         }
     if gate_type == "cz_flattop_erf":
         return {
+            **_cz_head,
             "fidelity": {},
             "flux_pulse_qubit": _classed({
                 "amplitude": fields["amplitude"],
@@ -9728,6 +9815,7 @@ def pair_add_gate(name: str):
         cr_qclass=cr_semantics.gate_class_evidence(store.merged, "CRGate"),
         stark_qclass=cr_semantics.gate_class_evidence(
             store.merged, "StarkInducedCZGate"),
+        cz_qclass=cr_semantics.gate_class_evidence(store.merged, "CZGate"),
         slot_qclasses=_slot_qclasses_for(store, gate_type))
     dot_path = f"qubit_pairs.{name}.macros.{gate_name}"
     try:
@@ -12172,7 +12260,7 @@ def instrument_compare():
 _PULSE_PATH_RES = (
     re.compile(r"^qubits\.[^.]+\.(xy|z|resonator|xy_detuned)\.operations\.[^.]+$"),
     re.compile(
-        r"^qubit_pairs\.[^.]+\.macros\.[^.]+\.(flux_pulse_qubit|coupler_flux_pulse)$"),
+        r"^qubit_pairs\.[^.]+\.macros\.[^.]+\.(flux_pulse_qubit|coupler_flux_pulse|flux_pulse_target)$"),
     # Pair drive-channel ops (CR/ZZ chips): the real CR drive pulses.
     # `zz_drive` vs `zz` is the quam-builder generation rename (docs/54).
     re.compile(
@@ -12512,6 +12600,27 @@ def pulses_page():
             has_pair_drive=has_pair_drive,
         ),
     )
+
+
+@bp.route("/api/pulse/paths")
+def api_pulse_paths():
+    """Every pulse on the chip, as ``[path, label]`` pairs.
+
+    docs/190 F29/F40: the detail pane's "+ add pulse..." picker built its
+    candidate list from the rows CURRENTLY rendered, so searching for a pulse
+    by name (one row) left the picker empty, and a re-search never refreshed
+    it. The overlay is about the chip, not about the table's current filter.
+    """
+    store = _store()
+    if not store:
+        return jsonify({"ok": False, "options": []})
+    idx = _pulse_index()
+    if idx is None:
+        return jsonify({"ok": False, "options": []})
+    opts = [[r["path"], f"{r['owner']} \u00b7 {r['channel']}.{r['op_name']}"]
+            for r in idx.rows()]
+    return jsonify({"ok": True, "seq": getattr(store, "mutation_seq", 0),
+                    "options": opts})
 
 
 @bp.route("/pulse/detail")
@@ -12879,6 +12988,7 @@ def pulse_edit():
     dot_path = request.form.get("dot_path", "").strip()
     mode = request.form.get("mode", "value")
     raw_value = request.form.get("value", "")
+    _noop_edit = False
 
     # dot_path is "<op_path>.<field>": validate the OP part (which for an
     # alias detail is the resolved target — possibly in another container,
@@ -12917,6 +13027,29 @@ def pulse_edit():
                     "_status.html",
                     message="A pointer must start with #/, #./ or #../",
                     level="error"), 400
+            # docs/190 F27: a pointer that resolves to a CONTAINER (a bare
+            # "#../", "#/qubits/q1/xy") is accepted by the syntax check but
+            # turns the field into a dump of its parent dict, the row into
+            # "-", and the preview into "cannot parse {...}"; one Ctrl+Z did
+            # not restore an editable field. Refuse it up front. A dangling
+            # pointer stays allowed (real chips carry them; the badge says so).
+            from quam_state_manager.core.pointer_resolver import resolve_pointer
+            if value.endswith("/") or value.rstrip("/") in ("#", "#.", "#.."):
+                return render_template(
+                    "_status.html",
+                    message=("A pointer needs a target segment "
+                             "(e.g. #../x180/amplitude), not just #../"),
+                    level="error"), 400
+            try:
+                probe = resolve_pointer(store.merged, value, tuple(dot_path.split(".")))
+            except Exception:  # noqa: BLE001 -- dangling / malformed: allowed
+                probe = None
+            if isinstance(probe, (dict, list)):
+                return render_template(
+                    "_status.html",
+                    message=("That pointer resolves to a container, not a value "
+                             "-- point at a leaf (e.g. .../amplitude)"),
+                    level="error"), 400
             modifier.set_value(dot_path, value)
         elif mode == "literal":
             # Break-link: type the literal after the RESOLVED value, write
@@ -12944,6 +13077,7 @@ def pulse_edit():
             modifier.set_value(dot_path, parsed, coerce=False, enforce=False)
         else:  # value — follow pointer aliases to the real write target
             parsed = _parse_value(raw_value)
+            _noop_edit = False
             if isinstance(parsed, str) and parsed.startswith("#"):
                 # Pointer-shaped input in value mode would re-link the
                 # RESOLVED TARGET node (a shared node!) — reject and point
@@ -12960,7 +13094,14 @@ def pulse_edit():
                 raw_current = store.get_value(dot_path)
             except (KeyError, TypeError, ValueError, IndexError):
                 pass
-            if is_pointer(raw_current):
+            if _pulse_edit_is_noop(store, dot_path, parsed):
+                # Enter on a value the user did not change is not an edit.
+                # It used to stage a phantom entry into the Review tray (and
+                # so into the undo stack and the next Apply): a physicist
+                # tabbing through a pulse to READ it left a trail of edits
+                # (stress round 2026-09-16, docs/190).
+                _noop_edit = True
+            elif is_pointer(raw_current):
                 target = resolve_field_target(store.merged, dot_path)
                 if target.get("resolvable"):
                     # the leaf IS a pointer — write at its resolved target
@@ -12991,6 +13132,10 @@ def pulse_edit():
     if not _is_pulse_path(view_main):
         view_main = path
     resp = _render_pulse_detail(view_main, paths=view_paths or None)
+    if _noop_edit:
+        # nothing was written: re-render the detail, but never claim a change
+        # (no tray OOB, no pulses-changed trigger) -- docs/190 §8
+        return _pulse_mutation_response(resp, trigger=False, paths=None)
     if isinstance(resp, tuple) and view_main != path:
         # docs/141 4l-review: the write already succeeded; a main pulse that
         # vanished meanwhile (another window renamed it) must not turn into
@@ -13015,16 +13160,23 @@ def api_pulse_synth():
     from quam_state_manager.core.waveform_synth import (
         synth_for_operation, synthesize)
 
-    if path:
-        if not store:
-            return jsonify({"ok": False, "error": "No state loaded"})
-        if not _is_pulse_path(path):
-            return jsonify({"ok": False, "error": f"not a pulse path: {path}"})
-        payload = synth_for_operation(store, path, overrides=params)
-    elif qclass:
-        payload = synthesize(qclass, params)
-    else:
+    if not path and not qclass:
         return jsonify({"ok": False, "error": "need path or qclass"})
+    if path and not store:
+        return jsonify({"ok": False, "error": "No state loaded"})
+    if path and not _is_pulse_path(path):
+        return jsonify({"ok": False, "error": f"not a pulse path: {path}"})
+    # The contract in the docstring is load-bearing: the client keeps its last
+    # good plot on ok=False, but a 500 has no body to keep -- and the stress
+    # round of 2026-09-16 reached one with a plain "inf" typed into a field.
+    try:
+        if path:
+            payload = synth_for_operation(store, path, overrides=params)
+        else:
+            payload = synthesize(qclass, params)
+    except Exception as exc:  # noqa: BLE001 -- never a 500 on this route
+        logger.warning("pulse synth failed for %s: %s", path or qclass, exc)
+        payload = {"ok": False, "error": f"synthesis failed: {exc}"}
 
     return jsonify({
         "ok": payload.get("ok", False),
@@ -13372,8 +13524,10 @@ def pulse_create_form():
                         "cr_gate", "stark_cz_gate"):
                     continue
                 slots: dict[str, dict[str, Any]] = {}
-                for slot in ("flux_pulse_qubit", "coupler_flux_pulse"):
+                for slot in ("flux_pulse_qubit", "coupler_flux_pulse", "flux_pulse_target"):
                     v = m.get(slot)
+                    if slot == "flux_pulse_target" and slot not in m:
+                        continue  # only a two-flux gate class declares it
                     if isinstance(v, dict):
                         leaf = (v.get("__class__") or "").rsplit(".", 1)[-1]
                         slots[slot] = {
@@ -13551,8 +13705,11 @@ def api_pulse_gaussian_cz():
         if not raw:
             return default
         try:
-            return int(float(raw)) if integer else float(raw)
-        except ValueError:
+            f = float(raw)
+            if not math.isfinite(f):
+                return None
+            return int(f) if integer else f
+        except (ValueError, OverflowError):
             return None
 
     padding = _num("padding_length", 20, integer=True)
@@ -13601,9 +13758,13 @@ def api_pulse_gaussian_cz():
                 except Exception:  # noqa: BLE001
                     break
             logger.exception("gaussian-cz create failed; rolled back")
+            # docs/190 F50: a caught, rolled-back validation failure (a type
+            # mismatch in the caller's numbers) is a refusal, not a 500.
+            from quam_state_manager.core.type_policy import TypeMismatchError
+            code = 400 if isinstance(exc, (TypeMismatchError, ValueError, TypeError)) else 500
             return render_template(
                 "_status.html", level="error",
-                message=f"Creation failed and was rolled back: {exc}"), 500
+                message=f"Creation failed and was rolled back: {exc}"), code
 
     src = result["sources"]
     msg = render_template(
@@ -13683,6 +13844,13 @@ def api_pulse_create():
                                level="error"), 400
 
     target_kind = request.form.get("target_kind", "qubit")
+    if target_kind not in ("qubit", "pair", "pair_channel"):
+        # docs/190 F54: an unrecognised kind used to fall through to the qubit
+        # branch, so a typo (or a stale form) silently created a qubit pulse.
+        return render_template(
+            "_status.html", level="error",
+            message=(f"Unknown target kind {target_kind!r} "
+                     "(expected qubit, pair or pair_channel)")), 400
     # Check-and-create under one lock hold (same pattern as delete/rename) —
     # a concurrent mutator must not occupy the slot/name between the
     # existence check and the write. Modifier methods re-enter the RLock;
@@ -13788,6 +13956,7 @@ def _pulse_create_locked(store, modifier, spec, fields, target_kind,
             defaults = {f[0]: f[2] for f in gdef["fields"]}
             new_gate_template = _build_gate_template(
                 gate_type, defaults,
+                cz_qclass=cr_semantics.gate_class_evidence(store.merged, "CZGate"),
                 slot_qclasses=_slot_qclasses_for(store, gate_type))
             dot_path = f"qubit_pairs.{pair}.macros.{new_gate_name}"
         else:
@@ -14050,6 +14219,10 @@ def api_pulse_rename():
 
     parent, old_name = path.rsplit(".", 1)
     new_path = f"{parent}.{new_name}"
+    if new_name == old_name:
+        return render_template("_status.html",
+                               message=f"Already named '{old_name}'",
+                               level="warning"), 409
 
     retargeted = 0
     with store._lock:
@@ -14065,7 +14238,9 @@ def api_pulse_rename():
         gid = modifier.new_group_id()
         try:
             modifier.rename_subtree(path, new_path, new_value=rewritten, group_id=gid)
-        except KeyError as exc:
+        except (KeyError, ValueError) as exc:
+            # ValueError = old and new are the same path (a user pressing
+            # Enter on the unchanged name) -- a refusal, never a traceback.
             return render_template("_status.html", message=str(exc),
                                    level="error"), 409
         if retarget:
@@ -14433,6 +14608,28 @@ def undo():
     if guard is not None:
         return guard
     _journal_sync(ctx)      # docs/160 C: another window may have written the journal
+
+    # docs/190 F06/F07 (stress 2026-09-16): two windows share ONE change log,
+    # and Ctrl+Z pops its top entry whoever pressed -- a lab-mate's edit was
+    # reverted while the presser's own stayed, and the lab-mate's window kept
+    # showing a value that no longer existed. Same doctrine as Apply's
+    # docs/120 gate: a press means what the presser could SEE. The client
+    # declares the change-set signature its tray is showing (docs/179); a
+    # log that moved since is refused ONCE, the tray is refreshed so the
+    # window stops lying, and the next press undoes what it now shows.
+    expect_sig = (request.values.get("expect_sig") or "").strip()
+    if expect_sig and store is not None and store.change_log:
+        with store._lock:
+            cur_sig = _change_log_sig(store)
+            top_path = getattr(store.change_log[-1], "dot_path", "?")
+        if cur_sig != expect_sig:
+            resp = make_response(render_template(
+                "_status.html", level="warning",
+                message=(f"Nothing undone \u2014 the newest pending change was made "
+                         f"in another window ({top_path}). The tray now shows it; "
+                         "press Ctrl+Z again to undo that change.")), 409)
+            resp.headers["HX-Trigger"] = "undo-foreign"
+            return resp
 
     all_entries: list = []
     groups = 0

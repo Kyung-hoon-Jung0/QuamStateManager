@@ -65,6 +65,13 @@
                 <button type="button" class="pulse-tune-btn" title="Tune with a slider"
                         onclick="PulsesPage.toggleParamSlider(this)">&asymp;</button>
                 {% endif %}
+                {# docs/190 section 8: every OTHER editable value in the app carries
+                   the value-history clock; the Pulses detail was the one surface
+                   where the promise was not kept (measured: 545 on the grid, 0 here). #}
+                <button type="button" class="field-hist-btn" tabindex="-1"
+                        data-dot-path="{{ p.dot_path }}"
+                        title="Value history — past values of this field from Param History snapshots"
+                        onclick="PulsesPage.openFieldHistory(this)">&#128344;</button>
                 {% if p.prev_link and not p.is_pointer %}
                 {# This field was a pointer earlier this session; unlinking
                    replaced it with a literal. Show what it was linked to and
@@ -96,11 +103,11 @@
                 {% endif %}
             </td>
         </tr>
-        {% if p.is_pointer and p.shared_by %}
+        {% if p.is_pointer and p.target_path and not p.is_runtime and p.target_path != p.dot_path %}
         <tr class="ptr-impact-row"><td colspan="2">
             <span class="ptr-impact">edits follow the pointer &mdash; write at
-                <code>{{ p.target_path }}</code>; also used by
-                <strong>{{ p.shared_by | join(', ') }}</strong></span>
+                <code>{{ p.target_path }}</code>{% if p.shared_by %}; also used by
+                <strong>{{ p.shared_by | join(', ') }}</strong>{% endif %}</span>
         </td></tr>
         {% endif %}
         {% endfor %}

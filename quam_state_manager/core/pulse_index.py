@@ -59,7 +59,10 @@ PULSE_CHANNELS = ("xy", "z", "resonator", "xy_detuned")
 # quam-builder generations (the branch tip renamed the field); pair-level
 # ``xy_detuned`` is serialized by some generations too. See docs/54.
 PAIR_PULSE_CHANNELS = ("cross_resonance", "zz_drive", "zz", "xy_detuned")
-GATE_SLOTS = ("flux_pulse_qubit", "coupler_flux_pulse")
+# ``flux_pulse_target``: a lab's asymmetric two-flux CZ (both qubits
+# pulsed, each with its own amplitude) carries a THIRD slot -- 37 of them on
+# the pilot chip, none of which had a row (stress round 2026-09-16, docs/190).
+GATE_SLOTS = ("flux_pulse_qubit", "coupler_flux_pulse", "flux_pulse_target")
 
 
 # ---------------------------------------------------------------------------

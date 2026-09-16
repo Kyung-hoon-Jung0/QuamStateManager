@@ -16,7 +16,7 @@
         {% endif %}
 
         <li>
-            <span class="page-info">
+            <span class="page-info" data-current-page="{{ current_page }}">
                 {% if per_page > 0 %}
                 Page {{ current_page }} of {{ total_pages }}
                 {% endif %}

@@ -8,13 +8,20 @@
         <button class="inspector-close" onclick="document.getElementById('inspector-pane').innerHTML=''"
                 title="Close" aria-label="Close">&times;</button>
     </div>
-    <p class="muted" style="font-size:.82em;margin:.3rem 0 .6rem">
-        Builds <code>cz_gaussian_unipolar</code> + <code>cz_gaussian_bipolar</code>
-        for a pair from its calibrated <code>cz_flattop</code> (amplitude +
-        flat_length; the coupler pulse too when the pair has one), and the
-        pointer-linked operations on the moving qubit's z line and the coupler
-        — the macro's pulse stays the single source of truth.
-    </p>
+    {# docs/190 F20: the four fields are 2-digit numbers and this paragraph is
+       six lines; together they pushed the only submit button below the fold at
+       every viewport. The explanation is one line with the rest on demand. #}
+    <details class="gcz-about">
+        <summary class="muted">Builds <code>cz_gaussian_unipolar</code> +
+            <code>cz_gaussian_bipolar</code> from the pair's calibrated
+            <code>cz_flattop</code></summary>
+        <p class="muted" style="font-size:.82em;margin:.3rem 0 .6rem">
+            Takes the amplitude + flat_length (and the coupler pulse when the
+            pair has one), and the pointer-linked operations on the moving
+            qubit's z line and the coupler — the macro's pulse stays the single
+            source of truth.
+        </p>
+    </details>
     {% if not pairs %}
     <p class="muted">No pair on this chip carries a <code>cz_flattop</code>
         macro to source from.</p>
@@ -28,7 +35,7 @@
                 {% endfor %}
             </select>
         </label>
-        <div class="gcz-params">
+        <div class="gcz-params gcz-params-row">
             <label>Padding (ns)
                 <input type="number" name="padding_length" value="20" step="1" min="0">
             </label>

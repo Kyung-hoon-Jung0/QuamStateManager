@@ -311,8 +311,11 @@ class QuamStore:
         """Re-read files from disk and rebuild everything. Acquires _lock."""
         with self._lock:
             self._load()
-            self.generated_config = None
-            self.generated_config_meta = None
+            # The generated config is KEPT: it is basis-hash-keyed
+            # (``generated_config_meta["basis_hash"]`` vs the content hash),
+            # so every reader already knows whether it is stale. Nulling it
+            # here made an unrelated sync/pull in ANOTHER window silently take
+            # the lab-class waveforms away from this one (docs/190 F23).
             self.change_log.clear()
             # A reload IS an in-memory content change: advance the mutation
             # counter so seq-validated caches (PulseIndex) and staleness

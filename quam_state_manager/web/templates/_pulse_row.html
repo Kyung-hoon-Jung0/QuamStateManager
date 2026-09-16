@@ -14,7 +14,7 @@
             </td>
             <td><strong>{{ r.owner }}</strong></td>
             <td><span class="pulse-chan-chip pulse-chan-{{ r.channel }}">{{
-                {'xy':'xy','z':'z','resonator':'res','flux_pulse_qubit':'flux','coupler_flux_pulse':'coupler'}.get(r.channel, r.channel)
+                {'xy':'xy','z':'z','resonator':'res','flux_pulse_qubit':'flux','coupler_flux_pulse':'coupler','flux_pulse_target':'flux·target'}.get(r.channel, r.channel)
             }}</span></td>
             <td>{{ r.op_name }}
                 {%- if r.is_alias %} <span class="pointer-badge" title="Alias — resolves to {{ r.alias_target }}">alias</span>{% endif %}

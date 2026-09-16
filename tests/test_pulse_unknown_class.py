@@ -371,3 +371,30 @@ class TestTheConfigIsWarmedInAdvance:
         assert R._config_state_hash(store) is first        # same object: memoized
         store.mutation_seq += 1
         assert R._config_state_hash(store) is not first    # recomputed
+
+
+class TestAnotherWindowsPullKeepsThisWindowsWaveform:
+    """docs/190 F23 (stress 2026-09-16): `store.reload()` nulled the cached
+    generated config, and every `/state/sync` pull -- including one from a
+    DIFFERENT window -- goes through it. The lab-class detail regressed to
+    'Generate now' with no notice. The cache is basis-hash-keyed, so it can
+    stay: a reader sees `stale` by itself, and the rebuild re-warms it."""
+
+    def test_reload_keeps_a_fresh_generated_config(self, tmp_path):
+        _, _, store = _client(tmp_path, with_config=True)
+        assert store.generated_config is not None
+        cfg, meta = store.generated_config, store.generated_config_meta
+        store.reload()
+        assert store.generated_config is cfg and store.generated_config_meta is meta
+
+    def test_the_rebuild_after_a_pull_re_warms(self, tmp_path, monkeypatch):
+        from quam_state_manager.web import routes as R
+        calls = []
+        monkeypatch.setattr(R, "_maybe_warm_generated_config",
+                            lambda ctx, inst: calls.append(ctx.get("path")))
+        app, c, store = _client(tmp_path, with_config=True)
+        ctx = next(iter(app.config["contexts"].values()))
+        del calls[:]            # the /load activation's own warm is not the claim
+        with app.app_context():
+            R._rebuild_after_working_copy_replaced(ctx)
+        assert calls == [ctx.get("path")], "the rebuild did not offer the config a re-warm"

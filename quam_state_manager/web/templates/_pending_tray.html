@@ -194,7 +194,7 @@
     </div>
   </div>
   {% if change_count > 0 %}
-  <div id="tray-drawer" class="tray-drawer">
+  <div id="tray-drawer" class="tray-drawer" inert>
     <div class="tray-change-list">
       {% for c in changes %}
       <div class="tray-change-item" data-group-id="{{ c.group_id or '' }}">

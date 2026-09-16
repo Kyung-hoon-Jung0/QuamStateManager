@@ -127,3 +127,34 @@ def test_pulse_overlay_selfcheck():
                          capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
     assert res.returncode == 0, res.stdout + "\n" + res.stderr
     assert "ok -" in res.stdout and "FAIL" not in res.stdout + res.stderr
+
+
+class TestTheOverlayPickerIsChipWide:
+    """docs/190 F29/F40 (stress round): the "+ add pulse..." picker built its
+    candidates from the rows the CURRENT filter renders, so searching for a
+    pulse by name (one row) left the picker empty and a re-search never
+    refreshed it. The overlay is about the chip, not about the table."""
+
+    def test_the_route_lists_every_pulse(self, client):
+        d = client.get("/api/pulse/paths").get_json()
+        assert d["ok"] and len(d["options"]) > 3
+        rows = client.get("/pulses?rows=1&per_page=0").get_data(as_text=True)
+        for path, label in d["options"][:3]:
+            assert path in rows
+            assert "·" in label
+
+    def test_it_answers_without_a_chip(self, tmp_path):
+        from quam_state_manager.web.app import create_app
+        c = create_app(testing=True, instance_path=str(tmp_path / "_none")).test_client()
+        d = c.get("/api/pulse/paths").get_json()
+        assert d["options"] == [] and d["ok"] is False
+
+    def test_the_client_prefers_the_chip_wide_list(self):
+        import pathlib
+        js = pathlib.Path("quam_state_manager/web/static/pulses.js").read_text(encoding="utf-8")
+        i = js.index("function buildViewBar")
+        body = js[i:i + 2000]
+        assert "window.PulsesPage._allPaths" in body
+        assert "/api/pulse/paths" in js
+        # the rendered-rows read is still there as the fallback, below it
+        assert body.index("_allPaths") < body.index(".pulse-sel-chk[data-path]")

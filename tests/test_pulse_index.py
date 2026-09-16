@@ -112,6 +112,14 @@ def merged() -> dict:
                             "__class__": QC + "SNZPulse",
                         },
                         "coupler_flux_pulse": {"amplitude": 0.1, "length": 100},
+                        # docs/190 F12: a lab's asymmetric two-flux CZ pulses
+                        # the target qubit too -- its own amplitude, own row
+                        "flux_pulse_target": {
+                            "length": "#./inferred_length",
+                            "amplitude": 0.17, "flat_length": 20,
+                            "t_phi_eff": 2.0, "padding": 0,
+                            "__class__": QC + "SNZPulse",
+                        },
                     },
                     # flat-top-shaped IMPLICIT body (no __class__) — exactly
                     # what the app's own cz_flattop gate template writes; the
@@ -198,6 +206,8 @@ class TestListPulses:
         assert "qubit_pairs.qA1-qA2.macros.cz_unipolar.flux_pulse_qubit" in paths
         assert "qubit_pairs.qA1-qA2.macros.cz_snz.flux_pulse_qubit" in paths
         assert "qubit_pairs.qA1-qA2.macros.cz_snz.coupler_flux_pulse" in paths
+        assert "qubit_pairs.qA1-qA2.macros.cz_snz.flux_pulse_target" in paths
+        assert "qubit_pairs.qA1-qA2.macros.cz_unipolar.flux_pulse_target" not in paths
         assert "qubit_pairs.qA1-qA2.macros.cz_unipolar.coupler_flux_pulse" not in paths
         assert "qubit_pairs.qA1-qA2.macros.cz" not in paths
 

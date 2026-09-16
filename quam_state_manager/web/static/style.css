@@ -2273,7 +2273,10 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
     padding: 0;
     pointer-events: none;
 }
-#status-bar > * { pointer-events: auto; }
+/* docs/190 F24: the whole toast box used to take pointer events for its 6 s
+   lifetime and swallowed the click that was correcting the input under it. */
+#status-bar > * { pointer-events: none; }
+#status-bar .toast-x, #status-bar button, #status-bar a { pointer-events: auto; }
 
 /* ---------------------------------------------------------------- */
 /* Toast (status messages)                                           */
@@ -10180,6 +10183,7 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
 .pulse-chan-z         { border-color: #3498db; }
 .pulse-chan-resonator { border-color: #e67e22; }
 .pulse-chan-flux_pulse_qubit,
+.pulse-chan-flux_pulse_target,
 .pulse-chan-coupler_flux_pulse { border-color: #2bb673; }
 
 .pulse-class-chip {
@@ -10215,7 +10219,9 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
 /* overflow:hidden is a hard guard: even if Plotly mis-measures and lays the
    chart out taller than 260px, it can never spill onto — and steal clicks
    from — the parameter inputs below it (feedback #5 "inputs unclickable"). */
-.pulse-detail-plot { height: 260px; min-height: 260px; max-height: 260px; overflow: hidden; }
+/* docs/190 F18: the box follows the plot pulses.js renders (pane-relative),
+   so the property table below it stays reachable in a short pane. */
+.pulse-detail-plot { height: auto; min-height: 120px; max-height: 260px; overflow: hidden; }
 .pulse-plot-empty { display: none; }
 /* docs/141 4k: one parameter section per pulse in view, carrying the colour
    its traces have in the plot -- a quiet left rule + swatch, not a fill */
@@ -10422,7 +10428,10 @@ table.prop-table .pulse-slider-row .pulse-slider-commit {
 .pulse-create-field { margin: 0; font-size: 0.85em; }
 .pulse-create-field-label { display: block; color: var(--pico-muted-color); margin-bottom: 0.1rem; }
 .pulse-create-field input { margin: 0; padding: 0.2rem 0.4rem; height: auto; font-family: var(--font-mono); }
-.pulse-create-plot { height: 220px; min-height: 220px; }
+/* docs/190 F04: pulses.js renders the preview at 260px; an unclamped 220px
+   box let the extra 40px of SVG sit OVER the Create button, so a real mouse
+   click at the button's centre hit the chart (keyboard submit still worked). */
+.pulse-create-plot { height: 260px; min-height: 260px; max-height: 260px; overflow: hidden; }
 .pulse-create-actions { display: flex; gap: 0.4rem; margin-top: 0.5rem; }
 .pulse-create-actions button { margin: 0; }
 .pulse-new-btn { margin: 0 0 0 0.5rem; white-space: nowrap; }
@@ -13251,3 +13260,32 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .diag-row-acknowledged td:first-child { box-shadow: inset 3px 0 0 var(--pico-muted-border-color); }
 tr.diag-row-collapsed { display: none; }
 .diag-acked-toggle td { padding: 0.3rem 0.5rem; }
+
+/* docs/190 F33: a pulse field whose commit the server refused (400) keeps the
+   typed text so the typo can be fixed in place, and says so on the field. */
+.pulse-edit-form input[data-param][aria-invalid="true"] {
+    border-color: var(--color-error-border);
+    box-shadow: 0 0 0 1px var(--color-error-border) inset;
+}
+
+/* docs/190 F20: a form of four 2-digit numbers is a ROW, not a column — full
+   width inputs made it ~600px tall and put its only submit below the fold. */
+.gcz-params-row { display: flex; flex-wrap: wrap; gap: .6rem 1rem; }
+.gcz-params-row > label { flex: 0 1 auto; font-size: .85em; margin: 0; }
+.gcz-params-row > label input { width: 7.5rem; margin-top: .15rem; }
+#gcz-root .gcz-about > summary { cursor: pointer; font-size: .82em; margin: .2rem 0 .5rem; }
+#gcz-root label > select { margin-top: .15rem; }
+
+/* docs/190 F18: in a short pane the pulse VALUES come first and the preview
+   follows them — a 140px curve that costs every property row is a bad trade. */
+.pulse-detail-compact { display: flex; flex-direction: column; }
+.pulse-detail-compact > .pulse-plot-bar,
+.pulse-detail-compact > .pulse-view-bar,
+.pulse-detail-compact > #pulse-detail-plot { order: 9; }
+
+/* docs/190 F53: the Gaussian CZ header laid its close x under the title, unlike
+   every other inspector header; and Pico stretches a submit to 100%. */
+#gcz-root .inspector-header-line { display: flex; align-items: center; gap: .5rem; }
+#gcz-root .inspector-header-line h3 { flex: 1 1 auto; }
+#gcz-root .inspector-header-line .inspector-close { margin-left: auto; }
+#gcz-root button[type=submit].btn-sm { width: auto; }

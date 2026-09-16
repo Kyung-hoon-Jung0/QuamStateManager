@@ -280,6 +280,25 @@ window.PulsesPage = (function () {
         if (!window.htmx) return;
         window.htmx.ajax('GET', viewUrl(main, paths), { target: '#inspector-pane', swap: 'innerHTML' });
     }
+    var _pathsSeq = null, _pathsBusy = false;
+    function ensureAllPaths(after) {
+        var tray = document.getElementById('pending-tray');
+        var seq = tray ? (tray.getAttribute('data-seq') || '') : '';
+        if (_pathsBusy) return;
+        if (window.PulsesPage && window.PulsesPage._allPaths && _pathsSeq === seq) return;
+        _pathsBusy = true;
+        fetch('/api/pulse/paths', { headers: { 'X-Requested-With': 'fetch' } })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                _pathsBusy = false;
+                if (!d || !d.ok) return;
+                _pathsSeq = seq;
+                if (window.PulsesPage) window.PulsesPage._allPaths = d.options || [];
+                if (after) after();
+            })
+            .catch(function () { _pathsBusy = false; });
+    }
+
     function buildViewBar(root) {
         var bar = root.querySelector('.pulse-view-bar');
         if (!bar) return;
@@ -299,16 +318,26 @@ window.PulsesPage = (function () {
         if (!pick) return;
         var have = {};
         view.forEach(function (p) { have[p] = 1; });
+        // docs/190 F29/F40: the candidates are every pulse on the CHIP, not the
+        // rows the current filter happens to render -- searching for a pulse by
+        // name left the picker empty, which read as "there is nothing to add".
+        var all = (window.PulsesPage && window.PulsesPage._allPaths) || null;
         var opts = [];
-        document.querySelectorAll('.pulse-sel-chk[data-path]').forEach(function (cb) {
-            var p = cb.getAttribute('data-path');
-            if (!p || have[p]) return;
-            opts.push(p);
-        });
+        if (all && all.length) {
+            all.forEach(function (pair) { if (!have[pair[0]]) opts.push(pair[0]); });
+        } else {
+            document.querySelectorAll('.pulse-sel-chk[data-path]').forEach(function (cb) {
+                var p = cb.getAttribute('data-path');
+                if (!p || have[p]) return;
+                opts.push(p);
+            });
+        }
+        var labels = {};
+        if (all) all.forEach(function (pair) { labels[pair[0]] = pair[1]; });
         pick.innerHTML = '<option value="">+ add pulse…</option>';
         opts.forEach(function (p) {
             var op = document.createElement('option');
-            op.value = p; op.textContent = overlayLabel(p);
+            op.value = p; op.textContent = labels[p] || overlayLabel(p);
             pick.appendChild(op);
         });
         pick.hidden = opts.length === 0 || view.length >= 4;
@@ -330,6 +359,38 @@ window.PulsesPage = (function () {
        the config ground truth (verify) dotted grey-ish last. Outside the
        detail view (the create form's plot) the classic single-pulse I/Q
        colours apply. */
+    /* docs/190 F18: how tall the preview may be. A pulse detail is a plot ABOVE
+       a table of values, and the values are what the reader edits: at 1280x800
+       the pane is 420px and a fixed 260px plot pushed every property row off
+       screen (measured: 0 of 42 rows visible). The plot takes at most a third
+       of the pane, never less than 120px (below that the curve says nothing),
+       never more than the 260px it always had. */
+    var PLOT_H_MAX = 260, PLOT_H_MIN = 120;
+    function plotHeight() {
+        var pane = document.getElementById('inspector-pane');
+        var h = pane ? pane.getBoundingClientRect().height : 0;
+        if (!h) return PLOT_H_MAX;
+        return Math.max(PLOT_H_MIN, Math.min(PLOT_H_MAX, Math.round(h * 0.34)));
+    }
+    /* Below this the plot cannot shrink further and still say anything, so the
+       ORDER changes instead: the values come first and the curve is one scroll
+       away (docs/190 F18 -- at 1000x700 a 140px plot still left zero property
+       rows on screen). */
+    var COMPACT_PANE_H = 470;
+    function applyCompactOrder() {
+        var root = detailRoot();
+        var pane = document.getElementById('inspector-pane');
+        if (!root || !pane) return;
+        var h = pane.getBoundingClientRect().height;
+        root.classList.toggle('pulse-detail-compact', h > 0 && h < COMPACT_PANE_H);
+    }
+    window.addEventListener('resize', function () {
+        var root = detailRoot();
+        if (!root) return;
+        applyCompactOrder();
+        renderPulsePlot('pulse-detail-plot');
+    });
+
     function renderPulsePlot(divId, committed, preview, verify) {
         var root = divId === 'pulse-detail-plot' ? detailRoot() : null;
         var secs = root ? sectionsOf(root) : [];
@@ -377,7 +438,7 @@ window.PulsesPage = (function () {
             showlegend: data.length > 1,
             legend: { orientation: 'h', y: -0.25 },
             font: { size: 11, color: cssVar('--pico-color', '#888') },
-            height: 260
+            height: plotHeight()
         };
         return window._plotlyRender(divId, data, layout,
             { displayModeBar: false, responsive: true });
@@ -491,6 +552,12 @@ window.PulsesPage = (function () {
     }
 
     function initDetail() {
+        applyCompactOrder();
+        // the picker's candidates are chip-wide (docs/190 F29/F40)
+        ensureAllPaths(function () {
+            var r = detailRoot();
+            if (r) buildViewBar(r);
+        });
         var root = detailRoot();
         if (!root || root._pulsesInit) return;
 
@@ -653,10 +720,24 @@ window.PulsesPage = (function () {
         var block = root.querySelector(selector);
         if (!block) return;
         block.hidden = !block.hidden;
+        var input = block.querySelector('input[type="text"]');
         if (!block.hidden) {
-            var input = block.querySelector('input[type="text"]');
             if (input) { input.focus(); input.select(); }
+        } else if (input) {
+            // docs/190 F42: an abandoned draft must not greet the next open
+            input.value = input.defaultValue;
         }
+    }
+
+    /* docs/190 section 8: the 🕘 sits OUTSIDE the inline-edit form (beside the
+       slider toggle), so FieldHistory.openInspector -- which reads the form's
+       hidden dot_path -- found nothing. The row knows its own path. */
+    function openFieldHistory(btn) {
+        if (!window.FieldHistory) return;
+        var path = btn.getAttribute('data-dot-path') || '';
+        var cell = btn.closest('td') || btn.parentElement;
+        var input = cell ? cell.querySelector('input[data-param]') : null;
+        window.FieldHistory.open(btn, path, input);
     }
 
     function startRename(btn) { toggleBlock(btn, '.pulse-rename-form'); }
@@ -762,23 +843,29 @@ window.PulsesPage = (function () {
                 });
             })
             .then(function (res) {
+                btn.disabled = false;   // docs/190 F08: a failure must leave a retry
                 if (!document.body.contains(root)) return;
                 if (!res.ok) {
-                    // surface the error text (env not selected, 502, …) and
-                    // always offer the escape hatch to pick a Python env, so a
-                    // "no env selected" failure isn't a dead end.
+                    // docs/190 F10: the server renders its own honest failure
+                    // (lead line + exception + collapsible traceback) -- show
+                    // THAT, not a 300-char flattening of it, and offer the env
+                    // picker only when the server says no env is selected.
                     var tmp = document.createElement('div');
                     tmp.innerHTML = res.text;
-                    var errText = (tmp.textContent || 'regenerate failed').trim().slice(0, 300);
-                    verifyNote(root, esc(errText) +
-                        ' <a class="btn-sm" href="/generate">Choose environment →</a>',
-                        'warn');
+                    var plain = (tmp.textContent || '').trim();
+                    var html = res.text && res.text.indexOf('<') >= 0
+                        ? res.text : esc(plain || 'regenerate failed');
+                    if (/no (python )?env|select(ed)? (an? )?env|choose environment/i.test(plain)) {
+                        html += ' <a class="btn-sm" href="/generate">Choose environment →</a>';
+                    }
+                    verifyNote(root, html, 'warn');
                     return;
                 }
                 root._verifyPlot = null;  // force a fresh fetch
                 verifyPulse(btn);
             })
             .catch(function () {
+                btn.disabled = false;
                 if (document.body.contains(root)) {
                     verifyNote(root, 'regenerate failed', 'warn');
                 }
@@ -1110,7 +1197,8 @@ window.PulsesPage = (function () {
                 root._pairsInfo[pairSel ? pairSel.value : ''];
             var slots = (info && info.gates && info.gates[gateSel.value] &&
                          info.gates[gateSel.value].slots) || {};
-            ['flux_pulse_qubit', 'coupler_flux_pulse'].forEach(function (s) {
+            ['flux_pulse_qubit', 'coupler_flux_pulse', 'flux_pulse_target'].forEach(function (s) {
+                if (s === 'flux_pulse_target' && !slots[s]) return; // only two-flux gates declare it
                 var st = slots[s] || { state: 'empty' };
                 addSlot(s, st.state === 'held', st['class'] || '');
             });
@@ -1326,6 +1414,22 @@ window.PulsesPage = (function () {
         }
     }
 
+    // docs/190 F33: a refused commit (400) leaves the typed text in place so
+    // the typo can be fixed where it was made -- but the field must SAY it was
+    // refused, not only the toast. Cleared on the next keystroke.
+    document.addEventListener('htmx:responseError', function (evt) {
+        var el = evt.target;
+        var form = el && el.closest ? el.closest('form.pulse-edit-form') : null;
+        if (!form) return;
+        var input = form.querySelector('input[data-param]');
+        if (!input) return;
+        input.setAttribute('aria-invalid', 'true');
+        input.addEventListener('input', function clear() {
+            input.removeAttribute('aria-invalid');
+            input.removeEventListener('input', clear);
+        });
+    });
+
     document.addEventListener('htmx:afterSwap', function (evt) {
         if (!evt.detail || !evt.detail.target) return;
         var tid = evt.detail.target.id;
@@ -1364,10 +1468,13 @@ window.PulsesPage = (function () {
     });
 
     return {
+        // docs/190 F29/F40: the chip-wide candidate list for the overlay picker
+        _allPaths: null,
         initDetail: initDetail,
         initCreate: initCreate,
         renderPulsePlot: renderPulsePlot,
         toggleParamSlider: toggleParamSlider,
+        openFieldHistory: openFieldHistory,
         startRename: startRename,
         cancelRename: cancelRename,
         startDuplicate: startDuplicate,

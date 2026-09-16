@@ -54,3 +54,26 @@ class TestPulsesFilterRespectedAndPersisted:
         m = re.search(r'channel=xy[^<]*?class="([^"]*)"\s*>XY</a>', html, re.S)
         assert m and "active" in m.group(1)               # XY badge restored as active
         assert 'class="active">All' not in html           # All is NOT active
+
+
+class TestThePageNumberIsPartOfTheView:
+    """docs/190 section 8: the URL dropped the page number, so page 4 of a
+    156-pulse chip reloaded (or shared, or Back'd) as page 1 with no way to
+    tell. The server always honoured ?page=; the client never wrote it."""
+
+    def test_the_rows_partial_marks_the_current_page(self):
+        # the marker the client reads lives in the shipped pagination partial
+        import pathlib
+        html = pathlib.Path("quam_state_manager/web/templates/_pagination.html").read_text(encoding="utf-8")
+        assert 'data-current-page="{{ current_page }}"' in html
+
+    def test_the_client_writes_page_and_per_page_into_the_url(self):
+        import pathlib
+        js = pathlib.Path("quam_state_manager/web/static/app.js").read_text(encoding="utf-8")
+        i = js.index("function _pulsesSyncUrl")
+        body = js[i:i + 1800]
+        assert 'parts.push("page=" + cur)' in body
+        assert 'parts.push("per_page=" + pp.value)' in body
+        assert "data-current-page" in body
+        # and the sync runs after the swap that CHANGES the page
+        assert 'if (t && (t.id === "pulses-rows-wrap" || t.id === "table-pane")) _pulsesSyncUrl();' in js

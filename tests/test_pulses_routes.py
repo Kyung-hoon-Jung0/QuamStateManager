@@ -297,6 +297,62 @@ class TestPulseSynthApi:
         data = loaded_client.post("/api/pulse/synth", json={}).get_json()
         assert not data["ok"]
 
+    # Stress round 2026-09-16 (docs/190): a plain "inf" / "nan" typed into a
+    # field reached int(float(...)) and 500'd; a float field set to Infinity
+    # answered 200 with a bare `Infinity` token that is not JSON.
+    @pytest.mark.parametrize("field,raw", [
+        ("length", "inf"), ("length", "-inf"), ("length", "nan"),
+        ("amplitude", "inf"), ("amplitude", "nan"),
+    ])
+    def test_synth_non_finite_is_a_param_error_not_a_500(self, loaded_client, field, raw):
+        resp = loaded_client.post("/api/pulse/synth", json={
+            "path": f"{XY}.saturation", "params": {field: raw}})
+        assert resp.status_code == 200
+        assert b"Infinity" not in resp.data and b"NaN" not in resp.data
+        data = resp.get_json()
+        assert not data["ok"]
+        assert field in data["param_errors"]
+
+    def test_synth_overflow_from_finite_params_is_an_error_not_infinity(self, loaded_client):
+        # JSON cannot carry inf, but finite params can overflow inside the
+        # synth (a DRAG pulse with amplitude 1e308 / anharmonicity 1e-300
+        # measurably does); the reply must stay parseable JSON with ok=False.
+        resp = loaded_client.post("/api/pulse/synth", json={
+            "qclass": "DragCosinePulse",
+            "params": {"length": 40, "amplitude": 1e308, "alpha": 1e308,
+                       "anharmonicity": 1e-300, "detuning": 0.0, "axis_angle": 0.0},
+        })
+        assert resp.status_code == 200
+        assert b"Infinity" not in resp.data and b"NaN" not in resp.data
+        data = resp.get_json()
+        assert not data["ok"] and "non-finite" in data["error"]
+
+    def test_synth_raw_json_nan_length_on_an_inferred_length_class(self, loaded_client):
+        # Python's json parser accepts bare NaN/Infinity tokens, so a script
+        # can hand an inferred-length class a float NaN as its stored length
+        # (server log 2026-09-16: "cannot convert float NaN to integer").
+        for tok in ("NaN", "Infinity", "-Infinity"):
+            body = ('{"qclass": "SNZPulse", "params": {"length": %s, '
+                    '"amplitude": 0.1, "flat_length": 20, "b_over_a": 0.5, "t_phi": 0}}' % tok)
+            resp = loaded_client.post("/api/pulse/synth", data=body,
+                                      content_type="application/json")
+            assert resp.status_code == 200, tok
+            assert b"Infinity" not in resp.data and b"NaN" not in resp.data
+            resp.get_json()
+
+    def test_synth_route_never_500s_on_an_unexpected_exception(self, loaded_client, monkeypatch):
+        # The docstring's contract, pinned directly: whatever the synth
+        # raises, the client gets ok=False and keeps its last good plot.
+        from quam_state_manager.core import waveform_synth as ws
+        def boom(*a, **k):
+            raise RuntimeError("synthetic failure")
+        monkeypatch.setattr(ws, "synth_for_operation", boom)
+        resp = loaded_client.post("/api/pulse/synth", json={
+            "path": f"{XY}.saturation", "params": {"amplitude": "0.1"}})
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert not data["ok"] and "synthetic failure" in data["error"]
+
 
 class TestPulseEdit:
     def test_edit_plain_value(self, loaded_client):
@@ -357,6 +413,29 @@ class TestPulseEdit:
         assert resp.status_code == 200
         html = loaded_client.get(f"/pulse/detail?path={XY}.saturation").data.decode()
         assert "#../x180_DragCosine/length" in html
+
+    @pytest.mark.parametrize("ptr", ["#../", "#/qubits/qA1/xy", "#./", "#../x180_DragCosine"])
+    def test_edit_pointer_mode_rejects_a_container_target(self, loaded_client, ptr):
+        # docs/190 F27: syntactically fine, but it resolves to a dict -- the
+        # field became a dump of its parent and the row rendered "-".
+        resp = loaded_client.post("/pulse/edit", data={
+            "path": f"{XY}.saturation",
+            "dot_path": f"{XY}.saturation.length",
+            "mode": "pointer", "value": ptr,
+        })
+        assert resp.status_code == 400, ptr
+        assert b"container" in resp.data or b"target segment" in resp.data
+        html = loaded_client.get(f"/pulse/detail?path={XY}.saturation").data.decode()
+        assert ptr not in html
+
+    def test_edit_pointer_mode_dangling_is_still_allowed(self, loaded_client):
+        # real chips carry dangling pointers; the badge says so, the write lands
+        resp = loaded_client.post("/pulse/edit", data={
+            "path": f"{XY}.saturation",
+            "dot_path": f"{XY}.saturation.length",
+            "mode": "pointer", "value": "#../nope/length",
+        })
+        assert resp.status_code == 200
 
     def test_edit_pointer_mode_rejects_malformed(self, loaded_client):
         resp = loaded_client.post("/pulse/edit", data={
@@ -558,6 +637,17 @@ class TestPulseRename:
             "retarget": "0"})
         assert resp.status_code == 200
         assert b"dangle" in resp.data
+
+    def test_rename_to_own_name_is_a_409_not_a_500(self, loaded_client):
+        # Stress round 2026-09-16: Enter on the unchanged name raised the
+        # modifier's ValueError straight through the route.
+        resp = loaded_client.post("/api/pulse/rename", data={
+            "path": f"{XY}.saturation", "new_name": "saturation"})
+        assert resp.status_code == 409
+        assert b"Already named" in resp.data
+        # and nothing was renamed or logged as a change
+        html = loaded_client.get(f"/pulse/detail?path={XY}.saturation").data.decode()
+        assert "saturation" in html
 
     def test_rename_collision_409(self, loaded_client):
         resp = loaded_client.post("/api/pulse/rename", data={
@@ -1412,6 +1502,51 @@ class TestCzGateFirst:
         assert fp["amplitude"] == 0.07 and fp["flat_length"] == 120
         assert macro["coupler_flux_pulse"] is None
         assert macro["phase_shift_control"] == 0.0
+        # docs/190 F13: the macro itself is a CZGate, not a bare dict
+        assert macro["__class__"].rsplit(".", 1)[-1] == "CZGate"
+        assert macro["id"] == "#./inferred_id"
+
+    def test_new_gate_macro_class_follows_the_chip_evidence(self, pairs_client,
+                                                            modern_roster):
+        # docs/190 F13: a chip whose CZ macros carry a lab fork's CZGate
+        # gets THAT class on the new macro, verbatim, not the canonical.
+        from quam_state_manager.core import pulse_catalog as pc
+        pc.apply_env_overlay(modern_roster)
+        ctx = next(iter(pairs_client._app.config["contexts"].values()))
+        st = ctx["store"].state
+        fork = "quam_config.two_flux_gate.CZGate"
+        for pair in st["qubit_pairs"].values():
+            for m in (pair.get("macros") or {}).values():
+                if isinstance(m, dict):
+                    m["__class__"] = fork
+        r = pairs_client.post("/api/pulse/create", data={
+            "pulse_type": "SNZPulse", "target_kind": "pair",
+            "pair": "q2-q1", "gate": "__new__:cz_snz",
+            "new_gate_name": "cz_snz_b", "slot": "flux_pulse_qubit",
+            "amplitude": "0.07", "flat_length": "120", "t_phi_eff": "0",
+            "padding": "16"})
+        assert r.status_code == 200, r.data[:400]
+        assert st["qubit_pairs"]["q2-q1"]["macros"]["cz_snz_b"]["__class__"] == fork
+
+    def test_new_flattop_gate_coupler_slot_carries_its_required_fields(
+            self, pairs_client, modern_roster):
+        # docs/190 F14: amplitude alone left a classed _FlatTopGaussianPulse
+        # that quam 0.6.0 refuses to load (flat_length has no default).
+        from quam_state_manager.core import pulse_catalog as pc
+        pc.apply_env_overlay(modern_roster)
+        r = pairs_client.post("/api/pulse/create", data={
+            "pulse_type": "FlatTopGaussianPulse", "target_kind": "pair",
+            "pair": "q2-q1", "gate": "__new__:cz_flattop",
+            "new_gate_name": "cz_ft", "slot": "flux_pulse_qubit",
+            "amplitude": "0.07", "flat_length": "120", "smoothing_length": "16"})
+        assert r.status_code == 200, r.data[:400]
+        ctx = next(iter(pairs_client._app.config["contexts"].values()))
+        macro = ctx["store"].state["qubit_pairs"]["q2-q1"]["macros"]["cz_ft"]
+        cp = macro["coupler_flux_pulse"]
+        assert cp["flat_length"] == "#../flux_pulse_qubit/flat_length"
+        assert cp["smoothing_length"] == "#../flux_pulse_qubit/smoothing_length"
+        assert cp["length"] == "#./inferred_total_length"
+        assert macro["__class__"].rsplit(".", 1)[-1] == "CZGate"
 
     def test_new_gate_coupler_slot_refused_for_qubit_only_variant(
             self, pairs_client, modern_roster):
@@ -1612,3 +1747,124 @@ class TestPulseView:
             "view_main": f"{XY}.gone_meanwhile", "view_paths": [f"{XY}.gone_meanwhile", f"{XY}.saturation"],
         })
         assert resp.status_code == 200 and 'data-committed="64"' in resp.data.decode()
+
+
+class TestAnUnchangedCommitIsNotAnEdit:
+    """docs/190 §8 (stress round 2026-09-17): Enter on a value the user did not
+    change staged a phantom entry into the Review tray -- so tabbing through a
+    pulse to READ it left a trail of edits, each one an undo step and each one
+    part of the next Apply."""
+
+    def _log(self, app):
+        ctx = next(iter(app.config["contexts"].values()))
+        return list(ctx["store"].change_log)
+
+    def test_enter_on_the_same_value_logs_nothing(self, loaded_client, app):
+        cur = loaded_client.get(f"/field/peek?dot_path={XY}.saturation.length").get_json()
+        cur = cur["values"][f"{XY}.saturation.length"]
+        before = len(self._log(app))
+        r = loaded_client.post("/pulse/edit", data={
+            "path": f"{XY}.saturation", "dot_path": f"{XY}.saturation.length",
+            "mode": "value", "value": str(cur)})       # the committed value
+        assert r.status_code == 200
+        assert len(self._log(app)) == before, "a no-op commit logged a change"
+        assert b"pulses-changed" not in (r.headers.get("HX-Trigger") or "").encode()
+
+    def test_a_real_change_still_logs(self, loaded_client, app):
+        before = len(self._log(app))
+        loaded_client.post("/pulse/edit", data={
+            "path": f"{XY}.saturation", "dot_path": f"{XY}.saturation.length",
+            "mode": "value", "value": "640"})
+        assert len(self._log(app)) == before + 1
+
+    def test_the_same_value_through_a_POINTER_is_also_a_no_op(self, loaded_client, app):
+        # x90's length is a pointer at x180's; typing the RESOLVED value back
+        # must not write to the target either.
+        peek = loaded_client.get(f"/field/peek?dot_path={XY}.x90_DragCosine.length").get_json()
+        res = peek["resolved"][f"{XY}.x90_DragCosine.length"]["resolved_value"]
+        before = len(self._log(app))
+        r = loaded_client.post("/pulse/edit", data={
+            "path": f"{XY}.x90_DragCosine", "dot_path": f"{XY}.x90_DragCosine.length",
+            "mode": "value", "value": str(res)})
+        assert r.status_code == 200
+        assert len(self._log(app)) == before
+
+    def test_an_int_typed_as_a_float_of_the_same_value_is_not_swallowed(self, loaded_client, app):
+        """600 -> 600.0 is a TYPE change on disk, so the no-op guard must not
+        eat it: the field either takes it (a logged change) or refuses it with
+        a message. What it may never do is answer 200 and record nothing."""
+        cur = loaded_client.get(f"/field/peek?dot_path={XY}.saturation.length").get_json()
+        cur = cur["values"][f"{XY}.saturation.length"]
+        before = len(self._log(app))
+        r = loaded_client.post("/pulse/edit", data={
+            "path": f"{XY}.saturation", "dot_path": f"{XY}.saturation.length",
+            "mode": "value", "value": f"{float(cur)}"})
+        assert (len(self._log(app)) == before + 1) or r.status_code >= 400,             "a type change answered 200 and logged nothing"
+
+
+class TestCreateRefusesAnUnknownTarget:
+    """docs/190 F54: an unrecognised target_kind fell through to the qubit
+    branch, so a typo (or a stale form) silently created a qubit pulse."""
+
+    @pytest.mark.parametrize("kind", ["garbage", "QUBIT", "", "pair_channels", "qubit "])
+    def test_unknown_kind_is_a_400_and_writes_nothing(self, loaded_client, app, kind):
+        ctx = next(iter(app.config["contexts"].values()))
+        ops = ctx["store"].state["qubits"]["qA1"]["xy"]["operations"]
+        before = set(ops)
+        r = loaded_client.post("/api/pulse/create", data={
+            "pulse_type": "SquarePulse", "target_kind": kind,
+            "qubit": "qA1", "channel": "xy", "op_name": "unknown_kind_probe",
+            "length": "100", "amplitude": "0.1"})
+        assert r.status_code == 400, (kind, r.status_code)
+        assert b"target kind" in r.data
+        assert set(ops) == before, f"{kind!r} created something"
+
+    def test_the_three_real_kinds_are_not_refused(self, loaded_client, app):
+        r = loaded_client.post("/api/pulse/create", data={
+            "pulse_type": "SquarePulse", "target_kind": "qubit",
+            "qubit": "qA1", "channel": "xy", "op_name": "known_kind_probe",
+            "length": "100", "amplitude": "0.1"})
+        assert r.status_code == 200, r.data[:200]
+
+
+class TestTheDetailPutsValuesWhereTheyCanBeRead:
+    """docs/190 F18/F20/F53/N10 (stress round 2026-09-17), all measured in real
+    Chrome first: a fixed 260px plot left ZERO property rows on screen at
+    1280x800 and 1000x700; the Gaussian CZ form was ~600px of full-width inputs
+    for four 2-digit numbers with its only submit below the fold; and the one
+    surface in the app whose editable values had no value-history clock."""
+
+    def test_the_plot_height_follows_the_pane(self):
+        import pathlib
+        js = pathlib.Path("quam_state_manager/web/static/pulses.js").read_text(encoding="utf-8")
+        assert "height: plotHeight()" in js
+        i = js.index("function plotHeight")
+        body = js[i:i + 400]
+        assert "inspector-pane" in body and "PLOT_H_MAX" in body and "PLOT_H_MIN" in body
+        # and a pane too short for both gets the VALUES first
+        assert "pulse-detail-compact" in js and "COMPACT_PANE_H" in js
+        css = pathlib.Path("quam_state_manager/web/static/style.css").read_text(encoding="utf-8")
+        assert ".pulse-detail-compact > #pulse-detail-plot { order: 9; }" in css
+        assert ".pulse-detail-plot { height: auto;" in css
+
+    def test_every_editable_pulse_value_carries_the_history_clock(self, loaded_client):
+        html = loaded_client.get(f"/pulse/detail?path={XY}.saturation").data.decode()
+        n_inputs = html.count('class="edit-input"')
+        n_clocks = html.count('class="field-hist-btn"')
+        assert n_inputs > 0 and n_clocks == n_inputs, (n_inputs, n_clocks)
+        # the button must carry its own path: it sits OUTSIDE the inline-edit
+        # form, so FieldHistory.openInspector (which reads the form) finds none
+        assert 'data-dot-path="' in html
+        assert "PulsesPage.openFieldHistory(this)" in html
+
+    def test_the_gaussian_cz_form_is_a_row_with_a_reachable_submit(self):
+        # the fixture chip has no cz_flattop pair, so the FORM renders only on a
+        # real chip; pin the shipped template and its rules instead
+        import pathlib
+        html = pathlib.Path("quam_state_manager/web/templates/_pulse_gaussian_cz.html").read_text(encoding="utf-8")
+        assert "gcz-params-row" in html          # four short numbers on one row
+        assert "gcz-about" in html               # the six-line paragraph folds away
+        css = pathlib.Path("quam_state_manager/web/static/style.css").read_text(encoding="utf-8")
+        assert ".gcz-params-row { display: flex;" in css
+        assert "#gcz-root button[type=submit].btn-sm { width: auto; }" in css
+        assert "#gcz-root .inspector-header-line { display: flex;" in css

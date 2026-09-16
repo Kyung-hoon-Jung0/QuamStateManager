@@ -390,10 +390,12 @@ def _flattop_gaussian_deprecated(p):
     rise = _flattop_rise("gaussian", float(p["amplitude"]), rise_fall_length)
     waveform = np.array(
         rise + [float(p["amplitude"])] * int(p["flat_length"]) + rise[::-1])
+    # quam 0.6.0 (every lab env this mirror is pinned to) appends ALL of the
+    # zero padding AFTER the envelope: `np.concatenate((waveform, zeros))`.
+    # The 0.5.0a3 golden this was first pinned against centred it, and the
+    # centred curve read a flux edge ~pad/2 ns late (docs/190 F25).
     zero_pad_len = int(p["length"]) - len(waveform)
-    left_pad = zero_pad_len // 2
-    right_pad = zero_pad_len - left_pad
-    waveform = np.concatenate((np.zeros(left_pad), waveform, np.zeros(right_pad)))
+    waveform = np.concatenate((waveform, np.zeros(zero_pad_len)))
     return _axis_rotate_envelope(waveform, p.get("axis_angle"))
 
 
@@ -503,13 +505,13 @@ def _cosine_bipolar_deprecated(p):
     seg_flat_neg = -amplitude * np.ones(flat // 2)
     seg_fall = -amplitude * halfcos(fall_len)[::-1]
 
+    # quam 0.6.0: `[seg_rise, seg_flat_pos, seg_switch, seg_flat_neg,
+    # seg_fall, zero_padding]` -- the padding is all AFTER (docs/190 F25).
     zero_pad_len = length - (smoothing + flat)
-    left_pad = zero_pad_len // 2
-    right_pad = zero_pad_len - left_pad
 
     waveform = np.concatenate([
-        np.zeros(left_pad), seg_rise, seg_flat_pos, seg_switch,
-        seg_flat_neg, seg_fall, np.zeros(right_pad),
+        seg_rise, seg_flat_pos, seg_switch, seg_flat_neg, seg_fall,
+        np.zeros(zero_pad_len),
     ])
     waveform = _axis_rotate_envelope(waveform, p.get("axis_angle"))
     return waveform.tolist()
@@ -560,9 +562,16 @@ def _coerce_param(spec_param, value):
         return None
     kind = spec_param.kind if spec_param is not None else None
     if kind == "int":
+        # int(inf) raises OverflowError, int(nan) ValueError -- the caller's
+        # except clause names both (a preview with "inf" typed into a length
+        # box used to 500; stress round 2026-09-16).
         return int(float(value))
     if kind == "float":
-        return float(value)
+        f = float(value)
+        if not math.isfinite(f):
+            # float("inf") parses; nothing downstream can use it.
+            raise ValueError("non-finite")
+        return f
     if kind == "bool":
         if isinstance(value, str):
             return value.strip().lower() in ("1", "true", "yes", "on")
@@ -686,7 +695,7 @@ def synthesize(qclass_or_key: str, params: dict[str, Any], *,
             continue
         try:
             resolved[p.name] = _coerce_param(p, value)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             param_errors[p.name] = f"cannot parse {value!r} as {p.kind}"
 
     # Length resolution (explicit / inferred / derived).
@@ -702,7 +711,8 @@ def synthesize(qclass_or_key: str, params: dict[str, Any], *,
         # property; a literal in the state file wins there too (keeps the
         # preview consistent with resolve_length and the ground truth).
         raw_len = params.get("length")
-        if isinstance(raw_len, (int, float)) and not isinstance(raw_len, bool):
+        if (isinstance(raw_len, (int, float)) and not isinstance(raw_len, bool)
+                and math.isfinite(raw_len)):
             length = int(raw_len)
         else:
             length = inferred_length(spec.key, resolved)
@@ -741,6 +751,10 @@ def synthesize(qclass_or_key: str, params: dict[str, Any], *,
                               unmodeled=unmodeled, warnings=warnings)
 
     payload = _shape_payload(spec, raw, length, warnings)
+    if not payload.get("ok"):
+        payload["class_match"] = how
+        payload["unmodeled_fields"] = unmodeled
+        return payload
     payload["class_match"] = how
     payload["unmodeled_fields"] = unmodeled
     return payload
@@ -778,6 +792,13 @@ def _shape_payload(spec: PulseSpec, raw: Any, length: int | None,
         is_iq = False
 
     n = len(i)
+    if not np.all(np.isfinite(i)) or (q is not None and not np.all(np.isfinite(q))):
+        # Finite parameters can still overflow (a DRAG pulse with amplitude
+        # 1e308 and anharmonicity 1e-300 does). A sample that is inf/nan is
+        # not a waveform: it cannot be plotted, and jsonify would emit a bare
+        # `Infinity` token that no JSON parser accepts (stress 2026-09-16).
+        return _payload_error("waveform has non-finite samples (overflow)",
+                              spec_key=spec.key, warnings=warnings)
     payload = {
         "ok": True,
         "kind": "constant" if constant_value is not None else "arbitrary",

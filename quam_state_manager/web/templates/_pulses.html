@@ -13,7 +13,7 @@
      hx-trigger="load" style="display:none"></div>
 {% endif %}
 <div class="table-header-row">
-    <h2>Pulses <small class="muted">({{ total }})</small></h2>
+    <h2>Pulses <small class="muted" id="pulses-total">({{ total }})</small></h2>
     <div class="table-filter">
         <input type="search" name="q" value="{{ active_query or '' }}"
                placeholder="{{ search_hint() }}" title="{{ search_title() }}" autocomplete="off"

@@ -134,6 +134,59 @@ window.__chipToken = 'chipB';
 swapTo('/explorer', '<div id="fresh2">fresh</div>');
 ok(!!doc.getElementById('fresh2'), 'a chip switch keeps the fresh render');
 
+// docs/190 F26: the Pulses filter is search text + channel tab + owner pick.
+// A sidebar re-click renders fresh defaults; SOFT used to put the text back
+// (and only the text), so the XY tab silently reverted to All.
+{
+    const PULSES = (q, ch, owner) =>
+        '<div class="table-filter"><input type="search" name="q" id="pulses-q" value="' + q + '"></div>' +
+        '<nav id="pulse-channel-tabs"><ul>' +
+        '<li><a hx-get="/pulses?rows=1&per_page=50" class="' + (ch === '' ? 'active' : '') + '">All</a></li>' +
+        '<li><a hx-get="/pulses?rows=1&channel=xy&per_page=50" class="' + (ch === 'xy' ? 'active' : '') + '">XY</a></li>' +
+        '</ul></nav>' +
+        '<input type="hidden" id="pulses-owner-pick" value="' + owner + '">' +
+        '<div id="pulses-rows-wrap" hx-get="/pulses?rows=1&per_page=50"></div>';
+    doc.getElementById('pending-tray').setAttribute('data-seq', '11');
+    swapTo('/pulses', PULSES('x180', 'xy', 'q2'));
+    doc.getElementById('pending-tray').setAttribute('data-seq', '12');   // an edit: SOFT tier
+    swapTo('/bulk', '<div>bulk</div>');
+    const rowsCalls = [];
+    window.htmx.ajax = (verb, path, opts) => { rowsCalls.push(path); return Promise.resolve(); };
+    let inputs = 0;
+    swapTo('/pulses', PULSES('', '', ''));
+    const q = doc.getElementById('pulses-q');
+    ok(q.value === 'x180', 'SOFT: the search text came back on the fresh DOM');
+    const active = doc.querySelector('#pulse-channel-tabs a.active');
+    ok(!!active && /channel=xy/.test(active.getAttribute('hx-get')),
+       'SOFT: the XY channel tab came back too (was silently reset to All)');
+    ok(doc.getElementById('pulses-owner-pick').value === 'q2', 'SOFT: the owner pick came back');
+    ok(rowsCalls.length === 1, 'the rows are refetched once (the search box fetches on keyup, not on a dispatched input)');
+
+    // no text to restore -> the tab alone must still refetch the rows once
+    swapTo('/bulk', '<div>bulk</div>');
+    doc.getElementById('pending-tray').setAttribute('data-seq', '13');
+    swapTo('/pulses', PULSES('', '', ''));
+    // establish a text-less filter: tab Z active, then leave and come back
+    pane().querySelector('#pulse-channel-tabs ul').insertAdjacentHTML('beforeend',
+        '<li><a hx-get="/pulses?rows=1&channel=z&per_page=50" class="">Z</a></li>');
+    pane().querySelectorAll('#pulse-channel-tabs a').forEach(a => a.classList.remove('active'));
+    pane().querySelector('a[hx-get*="channel=z"]').classList.add('active');
+    pane().querySelector('#pulses-q').value = '';            // the user cleared the box
+    pane().querySelector('#pulses-owner-pick').value = '';   // and the owner pick
+    doc.getElementById('pending-tray').setAttribute('data-seq', '14');
+    swapTo('/bulk', '<div>bulk</div>');
+    doc.getElementById('pending-tray').setAttribute('data-seq', '15');   // an edit: SOFT, not KEEP
+    rowsCalls.length = 0;
+    swapTo('/pulses', PULSES('', '', '') .replace('</ul>', '<li><a hx-get="/pulses?rows=1&channel=z&per_page=50" class="">Z</a></li></ul>'));
+    ok(rowsCalls.length === 1 && /[/]pulses[?]rows=1/.test(rowsCalls[0]),
+       'a restored tab with no search text refetches the rows exactly once (got ' + JSON.stringify(rowsCalls) + ')');
+    const z = doc.querySelector('#pulse-channel-tabs a.active');
+    ok(!!z && /channel=z/.test(z.getAttribute('hx-get')), 'the Z tab is active on the fresh DOM');
+    // leave the harness where the next section expects it: on /explorer
+    window.htmx.ajax = () => Promise.resolve();
+    swapTo('/explorer', '<div id="fresh-exp-after-pulses">fresh</div>');
+}
+
 // ── 5. same-route refresh only refreshes the SOFT capture, never parks ─────
 pane().innerHTML = '<input type="search" id="explorer-search" class="tree-search" value="qA5">';
 {

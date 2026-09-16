@@ -339,3 +339,65 @@ class TestAnArmedSessionIsNotAskedTheQuestion:
         r = app_client.post("/state/apply-to-live")
         assert r.status_code == 200, r.get_data(as_text=True)
         assert _live(app_client)["qubits"]["q1"]["f_01"] == 6.2e9
+
+
+class TestCtrlZDeclaresWhatItSaw:
+    """docs/190 F06/F07 (stress 2026-09-16): Ctrl+Z is the third door the
+    docs/120 doctrine applies to. Two windows share one change log; a press
+    declares the change-set signature its tray shows (docs/179) and a log that
+    moved since is refused once -- naming the foreign path -- never popped."""
+
+    def _sig(self, client):
+        html = client.get("/state/tray").get_data(as_text=True)
+        import re
+        m = re.search(r'data-change-sig="([0-9a-f]*)"', html)
+        return m.group(1) if m else ""
+
+    def _store(self, client):
+        return next(iter(client._app.config["contexts"].values()))["store"]
+
+    def test_a_press_with_a_matching_view_undoes(self, app_client):
+        _edit(app_client, "qubits.q1.f_01", "6.2e9")
+        sig = self._sig(app_client)
+        r = app_client.post("/undo", data={"expect_sig": sig})
+        assert r.status_code == 200
+        assert self._store(app_client).merged["qubits"]["q1"]["f_01"] == 6.1e9
+
+    def test_a_client_that_sends_nothing_behaves_exactly_as_before(self, app_client):
+        _edit(app_client, "qubits.q1.f_01", "6.2e9")
+        assert app_client.post("/undo").status_code == 200
+
+    def test_the_other_windows_edit_is_refused_once_and_named(self, app_client):
+        _edit(app_client, "qubits.q1.f_01", "6.2e9")        # mine
+        sig = self._sig(app_client)                          # what my tray shows
+        _edit(app_client, "qubits.q2.T1", "1.9e-5")          # the OTHER window
+        r = app_client.post("/undo", data={"expect_sig": sig})
+        assert r.status_code == 409
+        body = r.get_data(as_text=True)
+        assert "another window" in body and "qubits.q2.T1" in body
+        assert r.headers.get("HX-Trigger") == "undo-foreign"
+        st = self._store(app_client).merged
+        assert st["qubits"]["q2"]["T1"] == 1.9e-5, "nothing popped"
+        assert st["qubits"]["q1"]["f_01"] == 6.2e9
+        # the refreshed tray's signature is what the next press declares
+        r2 = app_client.post("/undo", data={"expect_sig": self._sig(app_client)})
+        assert r2.status_code == 200
+        assert self._store(app_client).merged["qubits"]["q2"]["T1"] == 1.4e-5
+
+    def test_an_empty_log_is_not_a_refusal(self, app_client):
+        r = app_client.post("/undo", data={"expect_sig": "deadbeef0000"})
+        assert r.status_code != 409
+
+    def test_a_full_page_render_declares_the_empty_set_too(self, app_client):
+        """The fourth field of the base.html trap (docs/190 F06): a window
+        opened BEFORE any edit existed must still declare a signature, or the
+        gate has nothing to compare and waves the stale press through."""
+        import re
+        html = app_client.get("/pulses").get_data(as_text=True)
+        m = re.search(r'data-change-sig="([0-9a-f]*)"', html)
+        assert m and m.group(1), "full-page tray carries no change signature"
+        stale = m.group(1)
+        _edit(app_client, "qubits.q2.T1", "1.9e-5")          # the OTHER window
+        r = app_client.post("/undo", data={"expect_sig": stale})
+        assert r.status_code == 409
+        assert self._store(app_client).merged["qubits"]["q2"]["T1"] == 1.9e-5

@@ -218,6 +218,18 @@ class TestRoute:
         html = env["client"].get("/pulse/gaussian-cz").get_data(as_text=True)
         assert 'value="q1-2"' in html and "coupler" in html
 
+    def test_nan_and_inf_are_not_numbers(self, env):
+        # Stress round 2026-09-16 (docs/190): 'nan' parsed as a float and
+        # reached the type policy as a non-finite write -> 500.
+        c = env["client"]
+        for bad in ("nan", "inf", "-inf"):
+            r = c.post("/api/pulse/gaussian-cz",
+                       data={"pair_id": "q1-2", "qubit_filter_mhz": bad})
+            assert r.status_code == 400, (bad, r.status_code)
+            assert "must be numbers" in r.get_data(as_text=True)
+        st = self._store(env)
+        assert "cz_gaussian_unipolar" not in st.state["qubit_pairs"]["q1-2"]["macros"]
+
     def test_create_undo_and_overwrite(self, env):
         c = env["client"]
         r = c.post("/api/pulse/gaussian-cz", data={"pair_id": "q1-2"})

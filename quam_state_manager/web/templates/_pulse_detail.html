@@ -73,7 +73,7 @@
 
 {% if can_rename %}
 <div class="pulse-rename-form" hidden>
-    <form hx-post="/api/pulse/rename" hx-target="#inspector-pane" hx-swap="innerHTML">
+    <form hx-post="/api/pulse/rename" hx-target="#inspector-pane" hx-swap="innerHTML" hx-sync="this:drop" hx-disabled-elt="find button[type=submit]">
         <input type="hidden" name="path" value="{{ path }}">
         <input type="text" name="new_name" required
                pattern="[a-zA-Z][a-zA-Z0-9_]{0,63}" value="{{ op_name }}"
@@ -91,7 +91,7 @@
 
 {% if can_rename or alias_chain %}
 <div class="pulse-duplicate-form" hidden>
-    <form hx-post="/api/pulse/duplicate" hx-target="#inspector-pane" hx-swap="innerHTML">
+    <form hx-post="/api/pulse/duplicate" hx-target="#inspector-pane" hx-swap="innerHTML" hx-sync="this:drop" hx-disabled-elt="find button[type=submit]">
         <input type="hidden" name="path" value="{{ path }}">
         <input type="text" name="new_name" required
                pattern="[a-zA-Z][a-zA-Z0-9_]{0,63}" value="{{ op_name }}_copy"
@@ -116,7 +116,7 @@
     {% else %}
     <p>No other operation references this {{ 'alias' if alias_chain else 'pulse' }}.</p>
     {% endif %}
-    <form hx-post="/api/pulse/delete" hx-target="#inspector-pane" hx-swap="innerHTML">
+    <form hx-post="/api/pulse/delete" hx-target="#inspector-pane" hx-swap="innerHTML" hx-sync="this:drop" hx-disabled-elt="find button[type=submit]">
         <input type="hidden" name="path" value="{{ path }}">
         <input type="hidden" name="force" value="1">
         <button class="btn-sm pulse-confirm-delete" type="submit">Delete {{ op_name }}</button>

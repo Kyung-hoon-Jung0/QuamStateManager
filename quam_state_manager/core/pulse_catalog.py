@@ -718,7 +718,7 @@ def infer_spec_ex(pulse_dict: dict, *, context_slot: str | None = None
     qclass = pulse_dict.get("__class__")
     if isinstance(qclass, str):
         return resolve_qclass(qclass)
-    if context_slot in ("flux_pulse_qubit", "coupler_flux_pulse"):
+    if context_slot in ("flux_pulse_qubit", "coupler_flux_pulse", "flux_pulse_target"):
         return PULSE_CATALOG["SquarePulse"], "implicit"
     return None, None
 

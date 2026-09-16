@@ -422,10 +422,23 @@ document.addEventListener('htmx:responseError', function(evt) {
     if (t && t.classList && t.classList.contains('config-status-host')) return;
     if (t && t.id === 'state-history-detail') return;
     var xhr = evt.detail && evt.detail.xhr;
+    // docs/190 F06: a refused Ctrl+Z (the log moved under another window)
+    // refreshes this window's tray so the next press declares what it sees.
+    if (xhr && xhr.status === 409 && xhr.getResponseHeader
+            && xhr.getResponseHeader("HX-Trigger") === "undo-foreign" && window.htmx) {
+        try { window.htmx.ajax("GET", "/state/tray", {target: "#pending-tray", swap: "outerHTML"}); } catch (e) {}
+    }
     var msg = "That action didn't go through — please try again.";
     if (xhr && xhr.responseText) {
         var m = xhr.responseText.match(/<p[^>]*>([\s\S]*?)<\/p>/);
-        if (m) { var clean = m[1].replace(/<[^>]+>/g, '').trim(); if (clean) msg = clean; }
+        if (m) {
+            // docs/190 F30: the body is Jinja-autoescaped; textContent of a
+            // parsed element decodes &#39; / &#34; / &amp; back to characters
+            var ta = document.createElement('textarea');
+            ta.innerHTML = m[1].replace(/<[^>]+>/g, '');
+            var clean = ta.value.trim();
+            if (clean) msg = clean;
+        }
     }
     if (window.showToast) window.showToast(msg, "error");
 });
@@ -1121,6 +1134,59 @@ window.showWaveformPlot = function(btn) {
                                  : bText.localeCompare(aText, undefined, nat);
         });
         rows.forEach(function(row) { tbody.appendChild(row); });
+        // docs/190 F36: remember the sort so a rows refetch (a search, a
+        // channel tab, a table refresh after an edit) does not silently drop
+        // it -- a physicist who sorted by length and then filtered got the
+        // default order back with no indication that anything changed.
+        table.setAttribute('data-sorted-col', String(col));
+        table.setAttribute('data-sorted-dir', dir);
+    });
+
+    function _reapplySort(table) {
+        if (!table) return;
+        var col = table.getAttribute('data-sorted-col');
+        var dir = table.getAttribute('data-sorted-dir');
+        if (col === null || col === '' || !dir) return;
+        var th = table.querySelector('th.sortable[data-col="' + col + '"]');
+        if (!th) return;
+        // click() replays the ONE sort implementation above; it toggles, so
+        // arm the opposite direction first and let it land on `dir`.
+        th.classList.remove('sort-asc', 'sort-desc');
+        if (dir === 'asc') th.classList.remove('sort-asc');
+        else th.classList.add('sort-asc');
+        th.click();
+    }
+
+    document.addEventListener('htmx:afterSwap', function (evt) {
+        var t = evt.target;
+        if (!t || !t.querySelector) return;
+        var tables = (t.matches && t.matches('table')) ? [t]
+                     : Array.prototype.slice.call(t.querySelectorAll('table[data-sorted-col]'));
+        // the swap replaces the table itself, so the remembered attributes
+        // live on the OLD node: carry them across by table id
+        if (!tables.length && window._sortMemo) {
+            Object.keys(window._sortMemo).forEach(function (id) {
+                var tb = document.getElementById(id);
+                if (!tb) return;
+                tb.setAttribute('data-sorted-col', window._sortMemo[id][0]);
+                tb.setAttribute('data-sorted-dir', window._sortMemo[id][1]);
+                tables.push(tb);
+            });
+        }
+        tables.forEach(_reapplySort);
+    });
+
+    // keep the memo keyed by table id, so it survives the node being replaced
+    document.addEventListener('click', function (evt) {
+        var th = evt.target.closest && evt.target.closest('th.sortable');
+        if (!th) return;
+        setTimeout(function () {
+            var table = th.closest('table');
+            if (!table || !table.id) return;
+            window._sortMemo = window._sortMemo || {};
+            window._sortMemo[table.id] = [table.getAttribute('data-sorted-col'),
+                                          table.getAttribute('data-sorted-dir')];
+        }, 0);
     });
 })();
 
@@ -1186,10 +1252,54 @@ window.showWaveformPlot = function(btn) {
 document.addEventListener('keydown', function(evt) {
     if (evt.key !== 'Escape') return;
     var t = evt.target;
-    if (!t || !t.classList || !t.classList.contains('edit-input')) return;
-    if (t.value !== t.defaultValue) t.value = t.defaultValue;
-    t.blur();
-    evt.preventDefault();
+    if (t && t.classList && t.classList.contains('edit-input')) {
+        if (t.value !== t.defaultValue) t.value = t.defaultValue;
+        t.blur();
+        evt.preventDefault();
+        return;
+    }
+    // docs/190 F41 + §8: ONE Escape ladder, innermost first. Pressing Escape
+    // with a Rename box open used to close the whole inspector, which is not
+    // what the presser was pointing at.
+    if (evt.defaultPrevented) return;
+    if (window.smModalOpen && window.smModalOpen()) return;
+    var tag = t && t.tagName ? t.tagName.toLowerCase() : '';
+    if ((tag === 'input' || tag === 'textarea') && t.hasAttribute('data-param')) return;
+
+    // 1. a floating topbar tool (Settings / Calculator / Config manual)
+    var tool = document.querySelector('#settings-dropdown:not(.settings-hidden),'
+                                      + ' #calc-popover:not(.calc-hidden),'
+                                      + ' #manual-popover:not(.manual-hidden)');
+    if (tool) {
+        evt.preventDefault();
+        if (tool.id === 'settings-dropdown' && window.toggleSettings) window.toggleSettings();
+        else if (tool.id === 'calc-popover' && window.toggleCalc) window.toggleCalc();
+        else if (window.toggleManual) window.toggleManual();
+        else tool.classList.add(tool.id === 'calc-popover' ? 'calc-hidden' : 'settings-hidden');
+        return;
+    }
+    // 2. an inline form inside the inspector (rename / duplicate / delete)
+    var pane = document.getElementById('inspector-pane');
+    if (!pane || !pane.firstElementChild) return;
+    var form = pane.querySelector('.pulse-rename-form:not([hidden]), .pulse-duplicate-form:not([hidden]),'
+                                  + ' .pulse-delete-confirm:not([hidden])');
+    if (form) {
+        evt.preventDefault();
+        form.hidden = true;
+        var inp = form.querySelector('input[type="text"]');
+        if (inp) inp.value = inp.defaultValue;      // docs/190 F42
+        return;
+    }
+    // 3. an open parameter slider
+    var slider = pane.querySelector('.pulse-slider-row:not([hidden]), input[type="range"]');
+    if (slider) {
+        var btn = pane.querySelector('.pulse-tune-btn.open, .pulse-tune-btn[aria-expanded="true"]');
+        if (btn) { evt.preventDefault(); btn.click(); return; }
+    }
+    // 4. the inspector itself
+    if (!(pane.querySelector('#pulse-detail-root') || pane.querySelector('#pulse-create-root')
+          || pane.querySelector('#gcz-root'))) return;
+    if (window.closeInspector) { window.closeInspector(); evt.preventDefault(); }
 });
 
 /* The f_01↔RF_frequency 🔗 sync preference, shared with the bulk table's toggle
@@ -2586,6 +2696,10 @@ window.togglePendingTray = function() {
     var label  = document.getElementById("tray-toggle-label");
     if (!drawer) return;
     var open = drawer.classList.toggle("tray-expanded");
+    // docs/190 F19: a drawer folded to max-height:0 still sits in the Tab
+    // order, so Tab landed on an invisible "Discard" and Enter discarded a
+    // pending edit with nothing painted. `inert` takes the whole subtree out.
+    if (open) drawer.removeAttribute("inert"); else drawer.setAttribute("inert", "");
     if (label) label.textContent = open ? "\u25B2 Close" : "\u25BC Review";
     try { sessionStorage.setItem("quam_tray_open", open ? "1" : "0"); } catch(e) {}
 };
@@ -2597,6 +2711,7 @@ window._restoreTrayState = function() {
         var open = false;
         try { open = sessionStorage.getItem("quam_tray_open") === "1"; } catch(e) {}
         drawer.classList.toggle("tray-expanded", open);
+        if (open) drawer.removeAttribute("inert"); else drawer.setAttribute("inert", "");
         if (label) label.textContent = open ? "\u25B2 Close" : "\u25BC Review";
     }
     // Clear stale sidebar pending markers whenever the tray reports ZERO pending
@@ -4812,7 +4927,37 @@ window.PaneState = (function () {
         });
         var d = { inputs: inputs };
         if (route === '/explorer') d.explorer = _captureExplorer();
+        if (route === '/pulses') d.pulses = _capturePulsesFilter(root);
         return d;
+    }
+    // docs/190 F26: the Pulses filter is THREE things -- search text, channel
+    // tab, owner pick -- and only the text was captured, so a sidebar re-click
+    // came back with the text restored and the channel silently reset to All.
+    function _capturePulsesFilter(root) {
+        var tab = root.querySelector('#pulse-channel-tabs a.active');
+        var m = tab ? (tab.getAttribute('hx-get') || '').match(/channel=([^&]+)/) : null;
+        var pick = root.querySelector('#pulses-owner-pick');
+        return { channel: m ? decodeURIComponent(m[1]) : '',
+                 owner: pick ? (pick.value || '') : '' };
+    }
+    function _reapplyPulsesFilter(p, f) {
+        var changed = false;
+        var nav = p.querySelector('#pulse-channel-tabs');
+        if (nav && f.channel) {
+            var want = null;
+            nav.querySelectorAll('a').forEach(function (a) {
+                var m = (a.getAttribute('hx-get') || '').match(/channel=([^&]+)/);
+                if (m && decodeURIComponent(m[1]) === f.channel) want = a;
+            });
+            if (want && !want.classList.contains('active')) {
+                nav.querySelectorAll('a').forEach(function (a) { a.classList.remove('active'); });
+                want.classList.add('active');
+                changed = true;
+            }
+        }
+        var pick = p.querySelector('#pulses-owner-pick');
+        if (pick && f.owner && pick.value !== f.owner) { pick.value = f.owner; changed = true; }
+        return changed;
     }
     function _reapplySoft(route) {
         var d = soft[route];
@@ -4820,7 +4965,8 @@ window.PaneState = (function () {
         var p = pane();
         if (!p) return;
         if (d.explorer) _restoreExplorer(d.explorer);
-        if (!d.inputs.length) return;
+        var filterChanged = (route === '/pulses' && d.pulses) ? _reapplyPulsesFilter(p, d.pulses) : false;
+        var fetched = false;
         var els = p.querySelectorAll('input[type="search"], .tree-search');
         d.inputs.forEach(function (it) {
             var el = null;
@@ -4832,8 +4978,21 @@ window.PaneState = (function () {
             if (el && it.value && el.value !== it.value) {
                 el.value = it.value;
                 el.dispatchEvent(new Event('input', { bubbles: true }));
+                fetched = true;
             }
         });
+        // The Pulses search box fetches on `keyup changed` / `search`, not on
+        // the `input` we dispatch above (that one only re-syncs the URL), so
+        // a restored filter of ANY kind refetches the rows once, here. Measured
+        // in real Chrome: text + tab restored, 50 unfiltered rows underneath.
+        if (route === '/pulses' && (filterChanged || fetched) && window.htmx) {
+            var wrap = p.querySelector('#pulses-rows-wrap');
+            if (wrap) {
+                var pp = (String(wrap.getAttribute('hx-get') || '').match(/per_page=(\d+)/) || [])[1];
+                window.htmx.ajax('GET', '/pulses?rows=1' + (pp ? '&per_page=' + pp : ''),
+                                 { source: wrap, target: wrap, swap: 'innerHTML' });
+            }
+        }
     }
     function _park(route) {
         var p = pane();
@@ -5614,6 +5773,57 @@ document.addEventListener("keydown", function (evt) {
 // with the typed (≠ data-committed) value still in place. Re-submitting from
 // there double-commits AND — because htmx drops the duplicate without
 // preventing the default action — hands the browser a native form submission.
+/* docs/190 F21 (stress round 2026-09-17): clicking another pulse row while an
+ * inline field holds uncommitted text left the reader on the OLD pulse. The
+ * blur commits (the house model), and its response -- a full re-render of the
+ * pulse just edited -- lands AFTER the row's own /pulse/detail and overwrites
+ * it. Nothing said so. The row click is what the user pointed at, so it wins:
+ * remember it, and re-issue it once the commit's swap has landed. */
+document.addEventListener("click", function (evt) {
+    var row = evt.target && evt.target.closest && evt.target.closest("tr.clickable-row[data-pulse-path]");
+    if (!row) return;
+    var dirty = Array.prototype.some.call(
+        document.querySelectorAll('form.inline-edit input[name="value"]'),
+        function (i) {
+            var base = i.hasAttribute("data-committed") ? i.getAttribute("data-committed") : i.defaultValue;
+            return i.value !== base;
+        });
+    if (!dirty) return;
+    window._pulseNavWanted = row.getAttribute("data-pulse-path");
+}, true);
+
+document.addEventListener("htmx:afterSwap", function (evt) {
+    var t = evt.target;
+    if (!t || t.id !== "inspector-pane" || !window._pulseNavWanted) return;
+    var want = window._pulseNavWanted;
+    var root = t.querySelector("#pulse-detail-root");
+    var got = root ? root.getAttribute("data-pulse-path") : null;
+    var from = (evt.detail && evt.detail.pathInfo && evt.detail.pathInfo.requestPath) || "";
+    // The blur-commit's own response is a full re-render of the OLD pulse and
+    // lands AFTER the row's (the commit is issued first, the row's request is
+    // lighter). Its swap removes the form, so "is a commit in flight" cannot
+    // be read off the DOM -- it is read off the response that just landed.
+    if (from.indexOf("/pulse/edit") === 0) {
+        window._pulseNavWanted = null;
+        if (got !== want && window.htmx) {
+            window.htmx.ajax("GET", "/pulse/detail?path=" + encodeURIComponent(want),
+                             { target: "#inspector-pane", swap: "innerHTML" });
+        }
+        return;
+    }
+    if (got === want) {
+        // the row's own response: keep the intent briefly in case the commit's
+        // response is still coming, then let it go
+        clearTimeout(window._pulseNavTimer);
+        window._pulseNavTimer = setTimeout(function () { window._pulseNavWanted = null; }, 4000);
+        return;
+    }
+    window._pulseNavWanted = null;
+    if (!window.htmx) return;
+    window.htmx.ajax("GET", "/pulse/detail?path=" + encodeURIComponent(want),
+                     { target: "#inspector-pane", swap: "innerHTML" });
+});
+
 document.addEventListener("focusout", function(evt) {
     var input = evt.target;
     if (!input || !input.matches
@@ -5726,7 +5936,12 @@ window.UndoQueue = (function () {
                 // live files; send this window's render-time chip token so a
                 // stale window (another tab switched chips) is refused server
                 // side instead of rewriting the wrong chip's live state.
-                values: { expect_chip: String(window.__chipToken || "") },
+                values: { expect_chip: String(window.__chipToken || ""),
+                          // docs/190 F06: the change set THIS window shows
+                          expect_sig: (function () {
+                              var t = document.getElementById("pending-tray");
+                              return (t && t.getAttribute("data-change-sig")) || "";
+                          })() },
             });
         } catch (e) { done(); return; }
         /* A /undo that never settles used to hold `busy` FOREVER — every
@@ -17468,11 +17683,30 @@ function _pulsesSyncUrl() {
     if (ch) parts.push("channel=" + ch);
     if (q) parts.push("q=" + encodeURIComponent(q));
     if (owner) parts.push("owner=" + encodeURIComponent(owner));
+    // docs/190 §8: the page number and the rows-per-page are part of what the
+    // reader is looking at. They were dropped here, so page 4 of a 156-pulse
+    // chip reloaded (or shared, or Back'd) as page 1 with no way to tell.
+    var info = document.querySelector("#pulses-rows-wrap [data-current-page]");
+    var cur = info ? (info.getAttribute("data-current-page") || "") : "";
+    if (cur && cur !== "1") parts.push("page=" + cur);
+    var pp = document.querySelector("select[name='per_page']");
+    if (pp && pp.value && pp.value !== "50") parts.push("per_page=" + pp.value);
     try {
         history.replaceState(history.state, "", "/pulses" + (parts.length ? "?" + parts.join("&") : ""));
     } catch (e) {}
 }
 window._pulsesSyncUrl = _pulsesSyncUrl;
+
+// docs/190 section 8: the rows swap is what changes the page number, and the
+// pagination links are not in the configRequest rewriter's element set, so the
+// URL has to be re-synced AFTER the swap -- otherwise page 4 of a 156-pulse
+// chip reloads as page 1.
+document.addEventListener("htmx:afterSwap", function (evt) {
+    var t = evt.target;
+    // the rows partial lands in #pulses-rows-wrap (search / tab) or in
+    // #table-pane (the pagination links target the whole pane)
+    if (t && (t.id === "pulses-rows-wrap" || t.id === "table-pane")) _pulsesSyncUrl();
+});
 
 // Persist the search keyword to the URL as the user types (cheap, no network).
 document.addEventListener("input", function (e) {
@@ -18511,7 +18745,7 @@ window.UndoNav = (function () {
         // (the macro itself is not a pulse and /pulse/detail refuses it), and
         // only the four qubit channels + the pair drive channels carry pulses
         var m = /^(qubits\.[^.]+\.(?:xy|z|resonator|xy_detuned)\.operations\.[^.]+)(\.|$)/.exec(dp)
-             || /^(qubit_pairs\.[^.]+\.macros\.[^.]+\.(?:flux_pulse_qubit|coupler_flux_pulse))(\.|$)/.exec(dp)
+             || /^(qubit_pairs\.[^.]+\.macros\.[^.]+\.(?:flux_pulse_qubit|coupler_flux_pulse|flux_pulse_target))(\.|$)/.exec(dp)
              || /^(qubit_pairs\.[^.]+\.(?:cross_resonance|zz_drive|zz|xy_detuned)\.operations\.[^.]+)(\.|$)/.exec(dp);
         return m ? m[1] : null;
     }
