@@ -1212,6 +1212,16 @@ window.AgentPanel = (function () {
     unmountMissing();
     var home = document.getElementById("agent-home");
     if (home) mount(home, { id: "home" });
+    // docs/191 J01: `toggleFloat` already refuses to OPEN the float while the
+    // home feed exists. The same rule has to hold when home ARRIVES: navigating
+    // to the Agent page with the float open left the SAME conversation rendered
+    // twice, one over the other, with two composers and two Arm / Stop now
+    // strips on one screen. The float exists to carry the feed onto a page that
+    // is not this one, so this page is where it stands down.
+    if (home) {
+      var pop = document.getElementById("agent-popover");
+      if (pop && !pop.classList.contains("agent-hidden")) pop.classList.add("agent-hidden");
+    }
   }
   document.addEventListener("htmx:afterSwap", function () { init(); wirePaint(); });
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init); else init();

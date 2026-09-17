@@ -744,3 +744,44 @@ Of the first cut's twelve mutations, four came back GREEN:
   because `attach` is idempotent per input and the real module had already
   claimed that id — the REAL suggester answered and the pin asserted on
   *"loading parameters…"*. It has its own probe input now.
+
+## 14. The float — the second mount, and the one page it must not be on
+
+The floating panel (`toggleFloat` → `mount(body, {compact: true, id: "float"})`)
+is the Agent feed carried onto a page that is not the Agent page. Pressed on
+`/pulses`, everything per-mount holds: the composer takes real keys and keeps its
+caret across two polls (F01 at a second mount), a planted card lands **exactly
+once**, the docs/191 R01 `ResizeObserver` is bound per mount (`[['float', true]]`)
+and narrowing the float re-clamps inside it alone, and `S.mounts` is stable at 2
+across four navigations — `unmountMissing` does not leak.
+
+### J01 — the same conversation, twice, with two Arm / Stop strips
+
+`toggleFloat` refuses to OPEN the float while the home feed exists. Nothing
+applied that rule when home **arrives**. Open the float on `/pulses`, navigate to
+`/agent`, and both mounts render the same feed at once — measured geometry, float
+`x=817 w=646` sitting over home `x=326 w=1154`, two composers, two Send buttons,
+and two `Arm` / `Stop after this run` / `Stop now` strips on one screen.
+
+Not dangerous — both drive the same doors and the same state — but the float
+exists precisely so you need not be on this page, so this page is where it stands
+down. `init()` (which htmx already calls on every swap) hides an open float when
+a home feed is present. Verified in Chrome: exactly one visible feed at every
+point of `/pulses → /agent → /pulses`, and the float re-opens once you leave.
+
+### Two more vacuous pins, and one mutation that was not one
+
+The sweep returned two GREENs on the first cut:
+
+- "the float is hidden even when there is no home" passed because the pin did
+  `init(); toggleFloat();` — and toggling **reopens** whatever `init` had just
+  shut, so the sequence ended open either way. It asserts after a bare `init()`
+  now, with no toggle to hide the damage.
+- "the home feed is mounted on every swap" is **not a gap**: `mount` returns
+  early on `data-ag-mounted`, so calling it twice changes nothing observable and
+  a pin cannot fail on a mutation that does not mutate (docs/141 §4ad's
+  precedent). The rule is the GUARD, so that is what is pinned — and mutating
+  either half of it, the check or the marker, is red.
+
+Running total for this round: **nine of my own pins were vacuous until a sweep
+found them.**

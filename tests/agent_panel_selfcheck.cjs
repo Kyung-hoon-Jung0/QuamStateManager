@@ -415,6 +415,55 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   P.toggleFloat();
   ok(pop.classList.contains('agent-hidden'), 'toggling again hides it');
 
+  // docs/191 J01: `toggleFloat` refuses to OPEN the float while the home feed
+  // exists — and the same rule has to hold when home ARRIVES. Measured in real
+  // Chrome: open the float on /pulses, navigate to /agent, and the SAME
+  // conversation rendered twice, one over the other, with two composers and two
+  // Arm / Stop now strips (float at x=817 w=646 over home at x=326 w=1154).
+  P.toggleFloat();
+  ok(!pop.classList.contains('agent-hidden'), 'J01: the float is open on a page with no home');
+  const homeBack = document.createElement('div');
+  homeBack.id = 'agent-home';
+  document.body.appendChild(homeBack);
+  P.init();                                   // what an htmx swap onto /agent does
+  ok(pop.classList.contains('agent-hidden'),
+     'J01: arriving at the Agent home stands the float down — one feed, not two');
+  ok(P._state.mounts.filter(function (m) { return m.id === 'home'; }).length === 1,
+     'J01: …and the home feed is mounted exactly once');
+  // …and leaving again must leave it re-openable, not stuck shut
+  document.body.removeChild(homeBack);
+  P.init();
+  P.toggleFloat();
+  ok(!pop.classList.contains('agent-hidden'),
+     'J01: off the Agent page the float opens again');
+  // The stand-down is conditional on the HOME being there. Without this the
+  // float survives being opened and then closes itself on the next htmx swap of
+  // any page — and a toggle-then-assert cannot see it, because toggling reopens
+  // what init() just shut.
+  P.init();
+  ok(!pop.classList.contains('agent-hidden'),
+     'J01: a swap on a page with no home leaves the float exactly as it was');
+  P.toggleFloat();
+
+  // mount() is idempotent per root — the guard is the rule, since a second
+  // mount() call is a no-op and a pin cannot fail on a mutation that does not
+  // mutate (docs/141 §4ad's precedent).
+  {
+    const probe = document.createElement('div');
+    probe.id = 'mount-idempotence-probe';
+    document.body.appendChild(probe);
+    const before = P._state.mounts.length;
+    P.mount(probe, { id: 'probe' });
+    P.mount(probe, { id: 'probe' });
+    ok(P._state.mounts.length === before + 1,
+       'J01: one root is one mount, however many times mount() is called — '
+       + (P._state.mounts.length - before));
+    ok(probe.getAttribute('data-ag-mounted') === '1',
+       'J01: …and the root carries the marker the guard reads');
+    document.body.removeChild(probe);
+    P.init();                                  // unmountMissing drops it again
+  }
+
   // ------------------------------------------------ customer feedback 2026-09-08: the compact redesign
   // One column, a status strip, a timeline feed, the composer pinned at the bottom. Whether a
   // button is STRETCHED (Pico's width:100%) or where the composer lands on screen are layout
