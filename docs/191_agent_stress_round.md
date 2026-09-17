@@ -124,7 +124,57 @@ A neighbouring pin needed repair on the way: it proved the 60-step cap using
 steps with no targets, which after this change would raise for the targets
 reason instead. It uses a well-formed step now, so it still proves the cap.
 
-## 4. Two red pins the round found
+## 4. Pressed, one control at a time, with a real mouse
+
+The user asked mid-round whether every menu and feature was really being
+clicked and typed into one by one. Half of it was: the Pulses round and A01,
+A02 and A04 were driven in real Chrome, but A06, B01, C01 and C02 were reached
+through the JSON doors and pytest instead. So the whole Agent surface was
+walked again with `Input.dispatchMouseEvent` at each control's real screen
+position and `Input.dispatchKeyEvent` per character -- never `element.click()`
+or `el.value = x` from script, so an overlay that eats a click, a control off
+screen, or a handler bound to the wrong event would show up as a press that
+changed nothing.
+
+| surface | controls | pressed |
+|---|---|---|
+| Agent home | 10 | all but the Send button, which is disabled on an empty draft by design |
+| Agent → Setup | 17 across 8 sections | all: both Previews, the Runner link, the journal box + Use this folder, Dry run both ways, both Test buttons |
+| Calibration log | 6 | the day arrows, the day box, the search box, the author select, Raw .md |
+
+Plus, from the earlier passes: the composer (Enter, Shift+Enter, an empty
+send, 4,000 characters, a NUL and an ANSI escape, a `</textarea><script>`
+payload, Korean with an emoji), all three preset chips, both backends, the
+observer box both ways, six actor names, ten Tab presses and five arrow keys.
+**Zero console or network errors across every pass.**
+
+Three things the clicking turned up, and all three were refuted by measuring
+them:
+
+**D01 — the sidebar float opened at zero width with no controls.** True as
+observed and not a defect: the sidebar's Agent entry is a LINK to `/agent`, and
+customer feedback of 2026-09-08 deliberately made the Agent a destination
+rather than a floating panel (the template says so in its own comment). The
+panel still mounts correctly when something calls `toggleAgentPanel()` --
+714x504 with 11 controls -- and its close button is such a caller. What is
+stale is the docs/173 §S6 sentence "the sidebar Agent button floats the same
+feed on any page", which that feedback superseded.
+
+**D02 — two links vanished between being listed and being pressed.** The panel
+does not re-render on its own: a MutationObserver over its subtree recorded
+ZERO node replacements in 20 s untouched, both links survived 6 s, and 6 of 6
+real clicks reached the Setup page. What wiped them was my own walker's index
+attribute, cleared by a render that an earlier press in the same walk caused.
+The walker re-finds each control by name now.
+
+**E01 — "Use this folder" and "Test claude" appeared to navigate to
+`/scheduler`.** Pressed once each from a freshly loaded page they do exactly
+the right thing: the journal section becomes `✓ 4. Journal folder`, the test
+section says "asking claude one read-only question…", and only the Runner link
+goes to `/scheduler`. The earlier readings were the walker measuring before its
+own `history.back()` had settled.
+
+## 5. Two red pins the round found
 
 Neither is a product defect; both had been failing quietly, which is worse than
 either.
