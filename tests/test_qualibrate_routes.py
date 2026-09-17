@@ -257,3 +257,63 @@ class TestWorkbenchProjectAware:
     def test_match_payload_carries_active_project(self, env):
         d = env["client"].get("/workbench/match").get_json()
         assert d["qb_project"] == "alpha"
+
+class TestTheVersionBadgeSaysWhichKindOfDrift:
+    """docs/199 — measured on the customer's own machine: qualibrate **v6**
+    against a reader pinned to v5, with every path SM needs extracted correctly
+    and resolved on disk. The page showed a red "⚠ unsupported" whose tooltip
+    blamed the version for read-only — which docs/55 makes unconditional. So it
+    alarmed a lab about a config it reads perfectly, for a reason that was not
+    a reason.
+
+    These render the page per version shape, because a source grep cannot tell
+    a live branch from a dead one (the sweep proved exactly that)."""
+
+    def _render(self, tmp_path, monkeypatch, q_ver, m_ver):
+        cfg = tmp_path / ".qualibrate"
+        good = _chip(tmp_path / "chips" / "c")
+        storage = tmp_path / "ds"
+        storage.mkdir()
+        _write(cfg / "config.toml", f'''
+[qualibrate]
+project = "alpha"
+version = {q_ver}
+
+[qualibrate.storage]
+location = "{storage.as_posix()}"
+
+[quam]
+state_path = "{good.as_posix()}"
+version = {m_ver}
+''')
+        (cfg / "projects" / "alpha").mkdir(parents=True, exist_ok=True)
+        monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(cfg))
+        monkeypatch.delenv("QUALIBRATE_CONFIG_DIR", raising=False)
+        app = create_app(testing=True, instance_path=str(tmp_path / "_i2"))
+        return app.test_client().get("/qualibrate").get_data(as_text=True)
+
+    def test_the_supported_pair_shows_a_tick_and_no_warning(self, tmp_path, monkeypatch):
+        html = self._render(tmp_path, monkeypatch, 5, 3)
+        assert "unsupported" not in html
+        assert "newer than v" not in html
+
+    def test_a_newer_config_is_not_called_unsupported(self, tmp_path, monkeypatch):
+        # The customer's actual shape.
+        html = self._render(tmp_path, monkeypatch, 6, 3)
+        assert "newer than v5" in html, "it says what kind of drift this is"
+        assert "unsupported" not in html, \
+            "a config SM reads perfectly must not be called unsupported"
+
+    def test_a_newer_config_does_not_blame_the_version_for_read_only(
+            self, tmp_path, monkeypatch):
+        html = self._render(tmp_path, monkeypatch, 6, 3)
+        assert "for any version" in html, \
+            "read-only is unconditional (docs/55), not a consequence of the version"
+        assert "SM stays read-only\"" not in html
+
+    def test_an_older_config_keeps_the_warning(self, tmp_path, monkeypatch):
+        # The worrying direction: a field this reader expects may be absent.
+        html = self._render(tmp_path, monkeypatch, 4, 3)
+        assert "unsupported" in html
+        assert "newer than v" not in html
+

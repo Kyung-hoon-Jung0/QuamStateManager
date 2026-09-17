@@ -19,7 +19,17 @@
         {% if listing.versions.supported %}
         <span class="cell-good">&#10003;</span>
         {% else %}
-        <span class="cell-bad" title="differs from the supported v{{ supported_versions.qualibrate }}/v{{ supported_versions.quam }} — SM stays read-only">&#9888; unsupported</span>
+        {# docs/199: a NEWER config is not an unreadable one. Measured on a
+           real qualibrate v6 tree: every path SM needs was extracted
+           correctly and resolved on disk. And "SM stays read-only" was
+           never a consequence of the version -- docs/55 makes this tree
+           read-only for every version -- so saying it here implied that a
+           matching version would unlock writes. #}
+        {% if listing.versions.newer %}
+        <span class="muted" title="Newer than the v{{ supported_versions.qualibrate }}/v{{ supported_versions.quam }} generation this reader was pinned to. SM read this config and resolved the paths it needs; it never writes these files, for any version.">newer than v{{ supported_versions.qualibrate }} — read fine</span>
+        {% else %}
+        <span class="cell-bad" title="Differs from the v{{ supported_versions.qualibrate }}/v{{ supported_versions.quam }} generation this reader was pinned to, and is not simply newer — a field SM expects may be missing. It never writes these files, for any version.">&#9888; unsupported</span>
+        {% endif %}
         {% endif %}
     </p>
     <p class="muted">Everything on this page is read-only — QUAlibrate owns these files.

@@ -484,7 +484,7 @@ def list_projects(cfg_dir: Path | None = None,
         {"ok": bool, "config_dir": str, "config_exists": bool,
          "active": str|None, "source": "env:..."|"default",
          "versions": {"qualibrate": int|None, "quam": int|None,
-                      "supported": bool},
+                      "supported": bool, "newer": bool},
          "projects": [{"name", "active", "overlay_empty",
                        "state_path": {"raw", "native", "exists", "source"},
                        "storage":    {...same...},
@@ -589,6 +589,17 @@ def list_projects(cfg_dir: Path | None = None,
             "qualibrate": q_ver, "quam": m_ver,
             "supported": (q_ver == SUPPORTED_QUALIBRATE_VERSION
                           and m_ver == SUPPORTED_QUAM_VERSION),
+            # A config from a LATER generation is not the same thing as one
+            # this reader cannot read: qualibrate has only ever added sections,
+            # and the fields SM reads have kept their places. Measured on a
+            # real v6 config -- every path extracted correctly and resolved.
+            # An OLDER config is the genuinely worrying direction, because a
+            # field this reader expects may not exist there yet.
+            "newer": (isinstance(q_ver, int) and isinstance(m_ver, int)
+                      and (q_ver, m_ver) != (SUPPORTED_QUALIBRATE_VERSION,
+                                             SUPPORTED_QUAM_VERSION)
+                      and q_ver >= SUPPORTED_QUALIBRATE_VERSION
+                      and m_ver >= SUPPORTED_QUAM_VERSION),
         },
         "projects": out_projects,
     }

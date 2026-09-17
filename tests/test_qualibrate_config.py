@@ -295,7 +295,7 @@ class TestListProjects:
         assert listing["ok"] and listing["config_exists"]
         assert listing["active"] == "alpha"
         assert listing["versions"] == {"qualibrate": 5, "quam": 3,
-                                       "supported": True}
+                                       "supported": True, "newer": False}
         by = {p["name"]: p for p in listing["projects"]}
         assert set(by) == {"alpha", "beta", "gamma", "delta", "epsilon"}
 
@@ -486,3 +486,66 @@ class TestStatePathSharedLint:
         assert "beta" in shared[0]["message"] and "gamma" in shared[0]["message"]
         # display keeps a real spelling, not the normalized key
         assert str(real) in shared[0]["message"]
+
+class TestANewerConfigIsNotAnUnreadableOne:
+    """docs/199 -- measured on the customer's own machine.
+
+    Their qualibrate is **v6** against a reader pinned to v5, and SM extracts
+    every path it needs exactly: state_path, storage and calibration_library
+    all matched the raw TOML and all resolved on disk. The only thing v6 added
+    is ``[qualibrate.composite.*]`` spawn flags, which SM never reads.
+
+    The page nevertheless showed a red "⚠ unsupported" whose tooltip said "SM
+    stays read-only" -- implying a matching version would let SM write. It
+    would not: docs/55 makes this tree read-only for every version. So the
+    badge alarmed a lab about a config it reads perfectly, and explained it
+    with a consequence that was never a consequence.
+
+    An OLDER config is the genuinely worrying direction, because a field this
+    reader expects may not exist there yet -- so that case keeps the warning.
+    """
+
+    def _listing(self, tmp_path, q_ver, m_ver):
+        cfg = tmp_path / ".qualibrate"
+        (cfg / "projects" / "alpha").mkdir(parents=True)
+        (cfg / "config.toml").write_text(
+            f'[qualibrate]\nversion = {q_ver}\nproject = "alpha"\n'
+            f'[qualibrate.storage]\nlocation = "{(tmp_path / "d").as_posix()}"\n'
+            f'[quam]\nversion = {m_ver}\n'
+            f'state_path = "{(tmp_path / "s").as_posix()}"\n',
+            encoding="utf-8")
+        return qc.list_projects(cfg)
+
+    def test_the_supported_pair_is_neither_newer_nor_flagged(self, tmp_path):
+        v = self._listing(tmp_path, qc.SUPPORTED_QUALIBRATE_VERSION,
+                          qc.SUPPORTED_QUAM_VERSION)["versions"]
+        assert v["supported"] is True
+        assert v["newer"] is False
+
+    def test_a_newer_qualibrate_is_newer_not_unsupported_in_kind(self, tmp_path):
+        # The customer's actual shape: qualibrate ahead, quam level.
+        v = self._listing(tmp_path, qc.SUPPORTED_QUALIBRATE_VERSION + 1,
+                          qc.SUPPORTED_QUAM_VERSION)["versions"]
+        assert v["supported"] is False, "it is still not the pinned pair"
+        assert v["newer"] is True, "but it is a FORWARD drift, which reads fine"
+
+    def test_an_older_config_is_not_newer(self, tmp_path):
+        # The worrying direction: a field this reader expects may be absent.
+        v = self._listing(tmp_path, qc.SUPPORTED_QUALIBRATE_VERSION - 1,
+                          qc.SUPPORTED_QUAM_VERSION)["versions"]
+        assert v["supported"] is False
+        assert v["newer"] is False
+
+    def test_mixed_directions_are_not_newer(self, tmp_path):
+        # qualibrate ahead but quam BEHIND is not a clean forward drift.
+        v = self._listing(tmp_path, qc.SUPPORTED_QUALIBRATE_VERSION + 1,
+                          qc.SUPPORTED_QUAM_VERSION - 1)["versions"]
+        assert v["newer"] is False
+
+    def test_a_missing_version_is_never_newer(self, tmp_path):
+        cfg = tmp_path / ".qualibrate"
+        (cfg / "projects" / "alpha").mkdir(parents=True)
+        (cfg / "config.toml").write_text(
+            '[qualibrate]\nproject = "alpha"\n[quam]\n', encoding="utf-8")
+        v = qc.list_projects(cfg)["versions"]
+        assert v["newer"] is False, "absent versions are not a forward drift"
