@@ -113,3 +113,55 @@ Same root cause as every previous one — probing before reading:
   stages by design, then recording it as broken. That misreading is what found
   the real defect, but it was luck rather than method — the method is to read
   what the surface itself claims before deciding it lied.
+
+---
+
+## 7. Auto-apply (the push half of docs/117), pressed on the real chip
+
+**The gate refuses honestly.** The first arm came back **409**, and
+`/auto-apply/gate` said why in the user's own words:
+
+> `armable: false — "The live chip changed outside SM — resolve that first."`
+
+Correct, and caused by my own file-level restore earlier in the round: writing
+`state.json` from a script *is* an outside write, so SM flagged drift like it
+would for any experiment. docs/117 refuses to arm on a diverged chip, and it
+did. Dropping the pending edit and taking live cleared it (`armable: true`).
+
+**Armed, an edit reaches the chip with no further press.** Pill reads
+`⚡ Auto-Sync push ⏻`, tray carries `data-auto-apply="1"`, and
+`qubits.q1.anharmonicity` went from 200,607,661.78676715 to the typed value on
+disk **within ~4 s** of pressing Enter — nothing else touched. The applied log
+recorded it with a Δ:
+
+```
+qubits.q1.anharmonicity  200,607,661.78676715 → 203,000,000.0  +2,392,338.21323285
+```
+
+**The per-entry ✕ flushes too.** Its tooltip states the CAS contract ("Compare-
+and-swap: if the value moved since, this refuses instead of overwriting"), and
+the clean run shows `POST /auto-apply/revert` followed immediately by
+`POST /state/apply-to-live`, with the chip moving back **by itself in under 3 s**.
+
+### An unreproduced observation, recorded rather than rounded away
+
+One earlier run of that same ✕ staged (tray → 1, toast *"Reverted"*) and the
+chip did **not** move while the pill still read armed. Three later attempts did
+not reproduce it, and the one clean measurement flushed correctly, so it is NOT
+reported as a defect. It is written down because the shape matters: if a revert
+can stage while the session claims to be armed, the user reads an armed pill, a
+success toast, and a chip that still holds the old value. If it resurfaces, the
+place to look is `auto-apply.js`'s `_stopped` latch (docs/187 R-series), which
+is released only by a tray rendering *without* the armed attribute — and a
+disarm posted by `fetch` rather than htmx swaps no tray at all, which is exactly
+what the failing run had done a step earlier.
+
+Two of my own probe errors along the way, both worth naming because they produce
+confident-looking nonsense:
+
+- the applied log is **collapsible**, so filtering buttons on visible width
+  reports "no ✕" for a control that is simply folded away;
+- the forward edit's own flush re-renders the log, so a click measured before
+  the swap lands on empty space — no toast, no request, and a reading of "the
+  button does nothing". The fix is to confirm the press produced a request
+  before believing anything it appears to show.
