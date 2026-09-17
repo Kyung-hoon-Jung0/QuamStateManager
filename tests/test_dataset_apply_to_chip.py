@@ -269,3 +269,51 @@ def test_gate_panels_ask_once_not_twice():
            / "web" / "templates" / "_sh_confirm.html").read_text(encoding="utf-8")
     assert 'hx-confirm=' not in tpl        # the ATTRIBUTE, not the word
     assert "hx-post" in tpl and "action_label" in tpl      # still completable
+
+def _result_message(html: str) -> str:
+    """Just the result line -- the response also carries an OOB tray whose own
+    tooltip mentions Revert last apply, which made whole-body assertions read
+    the tray instead of the thing under test."""
+    return html.split('id="pending-tray"')[0]
+
+
+class TestTheResultLineSaysWhatTheButtonDoes:
+    """docs/198 -- found by pressing this path on the real customer chip.
+
+    "Apply to chip" answers with a result line naming what it overwrote, and it
+    ends by pointing at the way back. That pointer used to read "↺ Revert last
+    apply (top bar) restores the pre-apply state", which promises the chip moves
+    when you press it. It does not: the button STAGES the pre-apply state into
+    the working copy, and the chip moves on the following Apply -- the docs/107
+    covenant, one explicit act per live write.
+
+    The tray's own tooltip already said this correctly. This line did not, and
+    the consequence is not hypothetical: driving it for real, the chip did not
+    move on the press and the button read as dead. docs/120 -- a press means
+    what the presser could see.
+    """
+
+    def _apply(self, env, rid, off):
+        c = env["client"]
+        root = env["tmp"] / "data"
+        _seed_run(root, rid, _state(off_a=off))
+        uid = _uid(env, root, rid)
+        return _result_message(c.post(f"/dataset/{uid}/load-state?apply=1").data.decode())
+
+    def test_the_result_line_does_not_promise_a_restore(self, env):
+        msg = self._apply(env, 61, 0.061)
+        assert "Revert last apply" in msg, "it still points at the way back"
+        assert "restores the pre-apply state" not in msg, \
+            "the button stages; only the following Apply restores"
+
+    def test_it_names_the_staging(self, env):
+        assert "stages the pre-apply state" in self._apply(env, 62, 0.062)
+
+    def test_it_names_the_apply_that_follows(self, env):
+        assert "back on the chip" in self._apply(env, 63, 0.063)
+
+    def test_the_button_tooltip_agrees_with_it(self, env):
+        tpl = (Path(__file__).resolve().parents[1] / "quam_state_manager" / "web"
+               / "templates" / "_dataset_detail.html").read_text(encoding="utf-8")
+        assert "stages the pre-apply state" in tpl
+        assert "Revert last apply restores the pre-apply state" not in tpl

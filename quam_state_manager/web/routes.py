@@ -25433,8 +25433,13 @@ def dataset_load_state(uid):
                 "_status.html",
                 message=(f"Run #{run_id}'s state is now LIVE on {chip_label}."
                          + drift_note + replaced_note
+                         # docs/198: it STAGES -- the chip moves on the
+                         # following Apply, not on this press. Saying
+                         # "restores" made a correct staging read as a
+                         # dead button when this was driven for real.
                          + " Reversible — ↺ Revert last apply (top bar) "
-                           "restores the pre-apply state."),
+                           "stages the pre-apply state; Apply puts it "
+                           "back on the chip."),
                 level="success")
             resp = make_response(msg + "\n" + _tray_oob())
             resp.headers["HX-Trigger"] = _state_restored_trigger(ctx, _pre_leaves)
