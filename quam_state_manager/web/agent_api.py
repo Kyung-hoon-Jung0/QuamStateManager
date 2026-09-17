@@ -1028,7 +1028,20 @@ def limits_route():
             return _err(str(exc))
         _bump()
         _wake()
-        return jsonify(ok=True, chip=chip, limits=cur)
+        # docs/191 C02: `limits.validate` ignores a key it does not know (an
+        # older SM must survive a newer patch, and that is pinned). The door
+        # answered a plain 200 for it, so `{"max_runs": 5}` -- or a typo like
+        # `max_writes` for `max_writes_per_plan` -- read as saved and changed
+        # nothing. These are the numbers the run gates read; the answer names
+        # what it did not take.
+        ignored = sorted(k for k in (data or {}) if k not in limits.DEFAULTS)
+        out = {"ok": True, "chip": chip, "limits": cur}
+        if ignored:
+            out["ignored"] = ignored
+            out["note"] = ("not saved -- there is no limit called "
+                           + ", ".join(ignored) + "; the ones there are: "
+                           + ", ".join(sorted(limits.DEFAULTS)))
+        return jsonify(**out)
     return jsonify(ok=True, chip=chip, limits=limits.load(current_app.instance_path, key),
                    modes=list(limits.MODES))
 

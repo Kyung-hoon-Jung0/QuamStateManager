@@ -37,6 +37,50 @@ class TestStore:
         limits.path_for(tmp_path, "c").write_text("{not json", encoding="utf-8")
         assert limits.load(tmp_path, "c")["mode"] == "ask-writes"
 
+    @pytest.mark.parametrize("bad", [float("inf"), float("-inf"), float("nan")])
+    def test_a_max_delta_bound_must_be_finite(self, tmp_path, bad):
+        """docs/191 C01 -- `Infinity` parsed, was stored, and turned the gate
+        off without saying so; and a bare `Infinity` in the saved JSON is a
+        token no standard parser reads back (the docs/190 F02 rule)."""
+        with pytest.raises(limits.LimitError, match="finite"):
+            limits.save(tmp_path, "c", {"max_delta": {"ramsey": bad}})
+
+    def test_an_ordinary_bound_is_untouched(self, tmp_path):
+        out = limits.save(tmp_path, "c", {"max_delta": {"ramsey": 2e6, "rabi": -0.05}})
+        assert out["max_delta"] == {"ramsey": 2e6, "rabi": 0.05}, out["max_delta"]
+
+
+class TestTheDoorSaysWhatItDidNotTake:
+    """docs/191 C02 -- `validate` IGNORES a key it does not know (an older SM
+    must survive a newer patch, pinned above), and the door answered a plain
+    200 for it. So `{"max_runs": 5}` -- or a typo like `max_writes` for
+    `max_writes_per_plan` -- read as saved and changed nothing, on the very
+    numbers the run gates read."""
+
+    @pytest.fixture
+    def c(self, tmp_path):
+        return create_app(testing=True,
+                          instance_path=str(tmp_path / "inst")).test_client()
+
+    def test_an_unknown_limit_is_named_in_the_answer(self, c):
+        r = c.post("/api/agent/limits", json={"max_runs": 5}, headers=_H)
+        assert r.status_code == 200
+        b = r.get_json()
+        assert b["ignored"] == ["max_runs"], b
+        assert "no limit called max_runs" in b["note"]
+        assert "max_writes_per_plan" in b["note"], "it names the real ones"
+
+    def test_a_known_limit_answers_with_no_note(self, c):
+        b = c.post("/api/agent/limits", json={"mode": "auto"}, headers=_H).get_json()
+        assert b["limits"]["mode"] == "auto"
+        assert "ignored" not in b and "note" not in b
+
+    def test_a_mixed_patch_saves_the_real_one_and_names_the_rest(self, c):
+        b = c.post("/api/agent/limits",
+                   json={"mode": "ask-all", "max_writes": 3}, headers=_H).get_json()
+        assert b["limits"]["mode"] == "ask-all"
+        assert b["ignored"] == ["max_writes"], b
+
 
 class TestJudgements:
     def test_past_stop_by(self):

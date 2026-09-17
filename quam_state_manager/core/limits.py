@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import math
 import re
 import time
 from datetime import datetime
@@ -66,6 +67,10 @@ def validate(patch: dict) -> dict:
     out: dict = {}
     for k, v in (patch or {}).items():
         if k not in DEFAULTS:
+            # Deliberately IGNORED here, and pinned that way: an older SM must
+            # survive a newer patch. The DOOR is what tells the caller which
+            # keys it did not take (docs/191 C02) -- the store stays lenient,
+            # the answer stops implying it saved something it did not.
             continue
         if k == "mode":
             if v not in MODES:
@@ -90,9 +95,18 @@ def validate(patch: dict) -> dict:
             md = {}
             for fam, lim in v.items():
                 try:
-                    md[str(fam)] = abs(float(lim))
+                    f = abs(float(lim))
                 except (TypeError, ValueError):
                     raise LimitError(f"max_delta[{fam}] must be a number") from None
+                if not math.isfinite(f):
+                    # docs/191 C01: `Infinity` parsed, was stored, and turned
+                    # the gate off without saying so -- and a bare `Infinity`
+                    # token in the saved JSON is one no standard parser reads
+                    # back (the docs/190 F02 rule).
+                    raise LimitError(
+                        f"max_delta[{fam}] must be a finite number "
+                        "(leave it out to set no bound)")
+                md[str(fam)] = f
             out[k] = md
         elif k == "webhook_url":
             s = str(v or "").strip()
