@@ -518,3 +518,48 @@ person picks — their Obsidian vault, typically. It is not a finding. It is wor
 naming because the probe left a real `C:\etc\passwd` directory on the machine,
 which was removed; a sweep that writes needs to clean up after itself, and this
 one did not until it was told to.
+
+## 11. The composer in Korean, and two "findings" that were the rig
+
+The user works in Korean, and on a Korean IME the Enter that **commits** the last
+syllable is the same key that **sends**. Driven with Chrome's own
+`Input.imeSetComposition` (a real composition state, not a synthesised keydown),
+composing 안녕 one jamo at a time and then pressing Enter:
+
+```
+what the page saw: {composing: true, keyCode: 13, shift: false}   sent: []
+```
+
+Correct — it committed the syllable and sent nothing. After the composition ends,
+a plain Enter sends `안녕하세요` whole; Shift+Enter gives `첫째 줄\n둘째 줄` and
+sends nothing; and a panel repaint mid-composition keeps both the focus and the
+half-typed 한 (F01's fix covers a composing textarea too).
+
+**No defect. But the guard was not pinned** — `ev.isComposing || ev.keyCode === 229`
+could have been refactored away and nothing would have caught it sending 안녕
+instead of 안녕하세요. Three pins now, both signals separately (browsers do not
+agree on one), all four mutations RED.
+
+### Two results that were my rig, not the product
+
+The first run of this probe reported two failures. Both were the harness:
+
+- **"Shift+Enter inserts no newline"** — the probe hand-rolled the key event
+  without the `text` field Chrome sends, so nothing *could* be inserted. Through
+  the rig's own `press`, it works.
+- **"an Enter mid-composition leaves a stray `\n` in the box"** — the page's own
+  behaviour is provably right (it sent nothing, `prevented: false` because the key
+  is the IME's, not the app's). Whether the textarea then receives a newline is
+  the IME's business, and **this rig cannot answer it**: CDP sets the composition
+  state but installs no IME to swallow the key, so the dispatched Enter arrives
+  carrying `text: "\r"` as an ordinary key would. Recorded as undecidable here,
+  not as a finding. It wants a real Korean IME on a real keyboard.
+
+### And one thing the probe did that it should not have
+
+The first probe blocked `/chat/send` but the composer with no live session calls
+`/chat/start`, so the Enter **started a real CLI turn on the user's own account**
+— a 안녕하세요 and a one-line reply, which then stood down cleanly. Reported to the
+user at the time. The corrected probe blocks every send door, through both `fetch`
+and `XMLHttpRequest`. A probe that drives the send button has to know every door
+the button can open.

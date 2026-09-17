@@ -273,6 +273,34 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   const r1 = P.key({ key: 'Enter', shiftKey: true, target: ta, preventDefault() {} });
   await tick(30);
   ok(r1 === true && !calls.some(c => /chat\/send/.test(c.url)), 'Shift+Enter is a newline, not a send');
+  // docs/191 §11: on a Korean IME the Enter that COMMITS the last syllable is the
+  // same key that sends. The guard reads two signals because browsers do not
+  // agree on one: `isComposing` (the standard) and keyCode 229 (what several
+  // still report). Driven with a real CDP composition in Chrome, the page saw
+  // {composing: true, keyCode: 13} and correctly sent nothing; neither signal
+  // was pinned, so a refactor could have dropped either and sent 안녕 instead of
+  // 안녕하세요 with nothing to catch it.
+  calls.length = 0;
+  ta.value = '안녕';
+  const rC = P.key({ key: 'Enter', shiftKey: false, isComposing: true, keyCode: 13,
+                     target: ta, preventDefault() {} });
+  await tick(30);
+  ok(rC === true && !calls.some(c => /chat\/send/.test(c.url)),
+     'an Enter mid-composition (isComposing) commits the syllable and sends nothing');
+  calls.length = 0;
+  ta.value = '안녕';
+  const rK = P.key({ key: 'Enter', shiftKey: false, keyCode: 229,
+                     target: ta, preventDefault() {} });
+  await tick(30);
+  ok(rK === true && !calls.some(c => /chat\/send/.test(c.url)),
+     'and so does one reported the other way round, as keyCode 229');
+  calls.length = 0;
+  ta.value = '안녕하세요';
+  P.key({ key: 'Enter', shiftKey: false, isComposing: false, keyCode: 13,
+          target: ta, preventDefault() {} });
+  await tick(30);
+  ok(calls.some(c => c.url === '/api/agent/chat/send' && c.body.text === '안녕하세요'),
+     'and the Enter AFTER the composition ends sends the whole line');
   // R2-16: a refused /run keeps its text; an accepted one clears the box
   global.fetch = window.fetch = function (url, opts) {
     if (/\/api\/agent\/plans$/.test(url)) return Promise.resolve({ status: 400, json: () => Promise.resolve({ ok: false, error: 'unknown node 99_nothing' }) });
