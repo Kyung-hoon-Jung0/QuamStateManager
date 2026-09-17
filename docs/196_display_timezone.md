@@ -129,10 +129,10 @@ stamp as local instead of UTC, and re-adding a `Z` to the axis value.
 
 ## Open
 
-- **The open/adopt snapshot stamped "now"** (§1). The scheduler-hook reorder
-  docs/132 shipped is the model; applying it here means ingesting the newest run
-  before adopting, which is a change to the history-stamping path and deserves
-  its own round rather than riding along with a display change.
+- **The open/adopt snapshot stamped "now"** (§1) — **reproduced in docs/200**,
+  which has the measurement, the mechanism (the docs/132 enrich path adds the
+  run id but deliberately not the timestamp), three fix options with their
+  costs, and an `xfail` test that turns green when one of them lands.
 - **The Column History chip** (`routes.py:8119`) still formats server-side and
   so cannot honour a per-viewer zone. It needs the `ts_local` treatment (emit
   the instant, convert on the client) — same fix shape, different surface.
