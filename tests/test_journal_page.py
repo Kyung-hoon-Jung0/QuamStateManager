@@ -100,7 +100,11 @@ class TestThePage:
     def test_the_author_is_unknown_until_someone_claims(self, world):
         c = world["client"]
         html = c.get(f"/journal/day?day={DAY}").get_data(as_text=True)
-        assert html.count(">unknown<") == 2
+        # docs/191 N01: the day swap now carries the author list out-of-band too,
+        # so split the CARDS from the <select> before counting either.
+        body, _, oob = html.partition('<select name="author"')
+        assert body.count(">unknown<") == 2, "both runs' authors"
+        assert ">unknown<" in oob, "and the filter offers it as a choice"
         r = c.post("/journal/claim", json={"run_id": 101, "who": "박OO", "note": "mine"}, headers=_H)
         assert r.status_code == 200 and r.get_json()["claim"]["author"] == "human:박OO"
         html = c.get(f"/journal/day?day={DAY}").get_data(as_text=True)
@@ -292,3 +296,60 @@ class TestTheAgentsJournalDoorAnswersTheDayItWasAsked:
         today = datetime.now().strftime("%Y-%m-%d")
         b = world["client"].get("/api/agent/journal").get_json()
         assert b["date"] == today
+
+
+class TestTheDayNavigationActuallyNavigates:
+    """docs/191 N01, found by pressing ‹ four times in Chrome and watching it
+    move ONE day. `/journal/day` swapped `#jr-body` only, and the nav lives
+    outside it -- so `prev_day`, `next_day`, the `›` disabled state and the
+    `today` button were whatever the full page render baked in and never moved
+    again. One press and the log was stuck: ‹ went to the same day forever, ›
+    stayed disabled, and `today` never appeared at all."""
+
+    def _nav(self, html):
+        i = html.find('id="jr-daynav"')
+        return html[i:html.find("</span>", i)] if i >= 0 else ""
+
+    def test_the_day_swap_carries_the_nav_with_it(self, world):
+        html = world["client"].get(f"/journal/day?day={DAY}").get_data(as_text=True)
+        nav = self._nav(html)
+        assert nav, "the nav must come back with the body, or it cannot move"
+        assert 'hx-swap-oob="true"' in nav, "and out-of-band, since the target is #jr-body"
+
+    def test_each_step_hands_back_the_NEXT_pair_of_neighbours(self, world):
+        c = world["client"]
+        seen = []
+        day = DAY
+        for _ in range(4):
+            nav = self._nav(c.get(f"/journal/day?day={day}").get_data(as_text=True))
+            m = re.search(r"JournalPage\.day\('(\d{4}-\d{2}-\d{2})'\)[^>]*title=\"previous day\"", nav)
+            if not m:
+                m = re.search(r"JournalPage\.day\('(\d{4}-\d{2}-\d{2})'\)", nav)
+            assert m, nav
+            day = m.group(1)
+            seen.append(day)
+        assert len(set(seen)) == 4, f"four presses must reach four days, got {seen}"
+        assert seen == sorted(seen, reverse=True), seen
+
+    def test_today_appears_when_you_leave_today_and_goes_when_you_return(self, world):
+        c = world["client"]
+        today = datetime.now().strftime("%Y-%m-%d")
+        on_today = self._nav(c.get(f"/journal/day?day={today}").get_data(as_text=True))
+        assert ">today<" not in on_today, "there is no 'go to today' when you are on it"
+        assert "disabled" in on_today, "and no tomorrow to go to"
+        away = self._nav(c.get(f"/journal/day?day={DAY}").get_data(as_text=True))
+        assert ">today<" in away, "the way back must appear once you have left"
+        assert "disabled" not in away, "and the next day must become reachable"
+
+    def test_the_picker_follows_the_day_it_landed_on(self, world):
+        nav = self._nav(world["client"].get(f"/journal/day?day={DAY}").get_data(as_text=True))
+        assert f'id="jr-day-pick" value="{DAY}"' in nav
+
+    def test_the_full_page_and_the_swap_render_the_same_nav(self, world):
+        """One partial, two callers -- the strip cannot drift between them."""
+        c = world["client"]
+        full = self._nav(c.get(f"/journal?day={DAY}").get_data(as_text=True))
+        swap = self._nav(c.get(f"/journal/day?day={DAY}").get_data(as_text=True))
+        assert full and swap
+        assert swap.replace(' hx-swap-oob="true"', "") == full, \
+            "the only difference may be the out-of-band marker"

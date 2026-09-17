@@ -1,0 +1,14 @@
+{# docs/191 N01: the day nav lives OUTSIDE #jr-body, which is all a day change
+   swaps -- so `prev_day`, `next_day`, the disabled state and the `today` button
+   were baked in at page load and never moved again. One press and the log was
+   stuck: ‹ went to the same day forever, › stayed disabled, and `today` never
+   appeared. It is its own partial now, swapped out-of-band beside the body, so
+   the SERVER stays the one place that knows what the neighbouring days are
+   (including the calendar-end clamp from A02). #}
+<span class="jr-daynav" id="jr-daynav"{% if oob %} hx-swap-oob="true"{% endif %}>
+    <button type="button" class="btn-sm outline" onclick="JournalPage.day('{{ story.prev_day }}')" title="previous day">‹</button>
+    <input type="date" name="day_pick" id="jr-day-pick" value="{{ story.day }}" onchange="JournalPage.day(this.value)">
+    <button type="button" class="btn-sm outline" onclick="JournalPage.day('{{ story.next_day }}')"
+            {% if story.is_today %}disabled{% endif %} title="next day">›</button>
+    {% if not story.is_today %}<button type="button" class="btn-sm outline" onclick="JournalPage.day('')">today</button>{% endif %}
+</span>

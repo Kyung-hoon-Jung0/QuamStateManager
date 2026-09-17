@@ -1,0 +1,9 @@
+{# The day/filter swap: the body into #jr-body, and the day nav out-of-band so
+   the strip's neighbours, its disabled state and its `today` button move with
+   it (docs/191 N01). The author list is the day's own, so it rides along too. #}
+{% include '_journal_body.html' %}
+{% with oob = true %}{% include '_journal_daynav.html' %}{% endwith %}
+<select name="author" id="jr-author" title="who" hx-swap-oob="true">
+    <option value="">everyone</option>
+    {% for a in story.authors %}<option value="{{ a }}" {% if story.filters.author == a %}selected{% endif %}>{{ a }}</option>{% endfor %}
+</select>

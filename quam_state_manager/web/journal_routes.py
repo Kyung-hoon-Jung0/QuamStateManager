@@ -114,9 +114,16 @@ def journal_page():
 
 @journal_bp.route("/journal/day")
 def journal_day():
-    """The body only -- day / filter changes swap this."""
+    """The body, plus the day nav and the author list out-of-band.
+
+    docs/191 N01: it used to be the body ONLY, and the nav lives outside
+    `#jr-body` -- so `prev_day` / `next_day` / the disabled state / the `today`
+    button were whatever the full page render had baked in, and never moved
+    again. Measured in Chrome: three presses of the previous-day button moved
+    one day, the next-day button stayed disabled forever, and `today` never
+    appeared at all."""
     data = _build(_day_arg())
-    return render_template("_journal_body.html", story=data)
+    return render_template("_journal_day_swap.html", story=data)
 
 
 @journal_bp.route("/journal/raw")
