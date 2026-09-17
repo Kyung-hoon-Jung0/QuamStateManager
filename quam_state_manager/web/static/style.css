@@ -1645,9 +1645,29 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
 .sm-th-row.active {
     background: color-mix(in srgb, var(--pico-primary) 16%, transparent);
     box-shadow: inset 2px 0 0 var(--pico-primary); }
+/* docs/191 N03 (customer): what KIND of thing a row offers, as a compact badge
+   in front of the term -- `param  multiplexed`, `tag  flagged`, `note  fridge`.
+   SM blue, tabular so the three badges are the same width and the terms line up
+   down the column. */
+.sm-th-kind { flex: 0 0 auto; font-family: var(--font-mono); font-size: .62rem;
+    letter-spacing: .02em; line-height: 1.5; padding: 0 .3rem; border-radius: 4px;
+    color: var(--pico-primary);
+    background: color-mix(in srgb, var(--pico-primary) 13%, transparent);
+    border: 1px solid color-mix(in srgb, var(--pico-primary) 26%, transparent);
+    min-width: 2.6rem; text-align: center; }
+.sm-th-row.active .sm-th-kind {
+    background: color-mix(in srgb, var(--pico-primary) 22%, transparent); }
 /* The key is the IDENTITY: it is never the thing that gets cut. */
 .sm-th-label { font-family: var(--font-mono); font-size: .8rem;
     color: var(--pico-color); white-space: nowrap; flex: 0 0 auto; }
+/* …but a TAG or a NOTE word is a person's own free text, not an identity, and
+   nothing bounds its length. Measured before this rule: a 62-character note word
+   rendered 694 px inside a 520 px panel with `text-overflow: clip`, so it was cut
+   mid-word with nothing on screen saying so. These two give way, with an
+   ellipsis, and keep their full text in the row's title. */
+.sm-th-row[data-kind="tag"] .sm-th-label,
+.sm-th-row[data-kind="note"] .sm-th-label {
+    flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .sm-th-row.active .sm-th-label { color: var(--pico-primary); font-weight: 600; }
 /* …so when a row is still too wide, the meta is what gives way. */
 .sm-th-meta { margin-left: auto; font-size: .68rem;

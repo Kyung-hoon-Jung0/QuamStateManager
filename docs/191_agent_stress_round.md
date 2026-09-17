@@ -563,3 +563,184 @@ The first probe blocked `/chat/send` but the composer with no live session calls
 user at the time. The corrected probe blocks every send door, through both `fetch`
 and `XMLHttpRequest`. A probe that drives the send button has to know every door
 the button can open.
+
+## 12. Two the Calibration log's own strip was hiding, and one the customer asked about
+
+### N01 — the day navigation moved once and then stopped
+
+Pressing `‹` four times in Chrome moved **one** day. `/journal/day` swapped
+`#jr-body` and the nav lives outside it, so `prev_day`, `next_day`, the `›`
+disabled state and the `today` button were whatever the FULL page render had
+baked in, and never moved again:
+
+- `‹` went to the same day for ever,
+- `›` stayed `disabled` (its state was "we are on today", which stopped being
+  true after the first press),
+- and `today` renders `{% if not story.is_today %}`, so on a fresh load of today
+  it is absent and never appeared — **there was no way back.**
+
+One press and the log's day navigation was stuck until a reload. The nav is its
+own partial now, swapped **out-of-band** beside the body (the author filter rides
+along, since its options are the day's own), so the server stays the single place
+that knows what the neighbouring days are — including the calendar-end clamp from
+A02. Verified in Chrome: four presses, four days; `today` appears on leaving and
+goes on returning; `›` un-disables in the past and walks back up.
+
+### The three "failures" in the same walk that were my probe
+
+Recorded because the ratio matters: of the leftover controls pressed in that
+round, **three apparent defects were all the harness** —
+
+- the tool-group `<details>` opened to "0 tool rows" because a group's rows are
+  its **siblings** (`.ag-in-group`, hidden/shown by the summary), not its
+  children;
+- `#jr-prev` / `#jr-next` / `#jr-today` do not exist — the real controls are
+  `.jr-daynav button` and `#jr-day-pick` (`#jr-day` is the form's *hidden* field);
+- the presets toggle measured `display: none`, which is correct: `.ag-presets-toggle`
+  is shown only in `.ag-compact`, and in a wide panel all three preset chips are
+  already on screen.
+
+Pressed with the right selectors, all three work — including the fold surviving
+two feed repaints.
+
+### N02 — the search box offered a token its own filter could not match
+
+The customer asked whether the left-hand Datasets search covers tags and notes.
+It does not, and the answer is worse than a plain no. Measured in real Chrome:
+
+```
+type `zzflag` in the sidebar box   ->  the box offers  "#41: zzflagged  tag"
+press Enter                        ->  the box holds   tag:zzflagged
+the tree                           ->  39 rows  ->  0
+```
+
+The suggestion is **proof the run exists**, and accepting it hid the run. Same
+for `note:`. The sidebar typeahead has advertised `tag:`/`note:` since docs/182
+while `_SIDEBAR_KNOWN_SCOPES` never contained either, so the token fell through
+to free text and matched nothing.
+
+An `ExperimentEntry` has no tags and no note — the tree is built from folder
+names plus `node.json`, and giving it either would put a file read on the
+scanner's path. So the filter resolves those terms to **run ids**, through
+`tag_vocab` — *the same vocabulary the suggestion came from*, which is what makes
+the two unable to disagree — and matches on the id the tree already has.
+`tag_vocab.build` reads `quashboard_tags.json` directly and never through a
+`DatasetStore`, which is the rule the typeahead route already follows: a
+keystroke must never be able to trigger the cold run scan docs/170 bounded.
+
+`runs_for` also reports when a matched tag holds **more runs than the vocabulary
+remembers** (`MAX_RUNS_PER_TAG` = 200), so a short answer can be named rather
+than quietly shown.
+
+Verified in Chrome: `zzflag` → offered → Enter → **`tag:zzflagged`, one row,
+#41**; `zzwidg` → `note:zzwidget`, one row, #41.
+
+**Deliberately not changed:** bare `zzflagged` still matches nothing. The
+sidebar's free-text branch is narrow on purpose (run ids were excluded from it
+because any digit matched everything), and folding a run-id set into free text
+would build the vocabulary on every keystroke. The scope is the documented way
+in, and it is what the typeahead inserts.
+
+### A process note, the second time in this repo
+
+`a69bb4f` is titled *"README covers the Agent cockpit, and the root loses two
+stale handoffs"* and its message describes exactly that. It also contains the
+first half of N01 — `journal_routes.py`, `_journal.html`, the two new partials
+and 63 lines of `test_journal_page.py` — because it was made with `git add -A`
+while that work was in the tree unfinished.
+
+docs/187's review recorded the same trap (`git add -A` capturing a reviewer's
+`autoSyncPulledV2` mutation). The commit is pushed, so the record is corrected
+here and in the next commit's message rather than rewritten: **N01's route,
+template and partials landed in `a69bb4f`, not in the commit whose message
+describes them.** A commit that says what it contains is worth more than a tidy
+history, and `git add -A` beside an unfinished change cannot produce one.
+
+## 13. The customer's three follow-ups on the search box
+
+### N03 — the kind leads the row
+
+> "파라미터는 param, 태그는 tag, 노트는 note 라고 검색어 바로 앞에 표시하면서
+> 뜨게 하자 … param은 배치형식으로 compact하게 살짝 SM의 푸른색 스타일로."
+
+Every suggestion now carries its `kind`, and `_row` draws it as a compact badge
+**before** the term:
+
+```
+[param]  multiplexed          2 values · 39 runs
+[tag  ]  zzflagged                           #41
+[note ]  fridge                              #41
+```
+
+The badges share a `min-width`, so the three read as one column and the terms
+line up. Two consequences taken on purpose: the label is now the **term itself**
+(docs/182 asked for the run number to be visible, and it moved to the meta —
+where this box already puts *where / how many*), and a heading row is not a
+choice, so it wears no badge.
+
+### N04 — a long note word gave way to nothing
+
+The row already shows only the **word that matched**, never the note's text, so
+a long *note* was never the problem. A long *word* was. Measured before the fix,
+in Chrome:
+
+| row | rendered | panel | what happened |
+|---|---|---|---|
+| a 62-character note word | 694 px | 520 px | cut mid-word, `text-overflow: clip` |
+| a long tag name | 638 px | 520 px | same |
+
+`.sm-th-label` is `white-space: nowrap; flex: 0 0 auto` on purpose — the comment
+beside it says *"the key is the IDENTITY: it is never the thing that gets cut"*,
+which is right for a parameter key and wrong for a person's free text. Tag and
+note labels now ellipsize (keyed on the `data-kind` the badge already stamps) and
+keep their full text in the row's `title`. A parameter key is unchanged.
+
+### N05 — create, rename and delete now reach the box
+
+> "note랑 tag는 사용자가 업데이트/신규생성/삭제 할때 잘 작동하게 해야할거야."
+
+`TagVocab.load` was called **once**, lazily, and never again. So a tag created
+while the page was open was not offered until a reload, and a deleted one was
+offered for ever — inserting a token that now finds nothing, which is the same
+defect N02 just fixed, arriving by a different road.
+
+Two paths, because they cover different sources:
+
+- the four tag/note mutations in `app.js` refresh the vocabulary the moment they
+  land, so the box is right immediately in the window that did the editing;
+- and the box **re-checks on focus**, which is the only thing that can catch an
+  edit made in another window. The route is conditional on `?v=` (the tag files'
+  size + mtime), so an unchanged archive answers 204.
+
+Measured in Chrome with the page open throughout: create → offered; delete →
+gone; and a tag made with no local callback at all → offered after one focus,
+with a single conditional request.
+
+### The trap I wrote myself, twice in one file
+
+The focus wiring read `if (window.TagVocab) TagVocab.revalidate();` — a
+`window.X` guard beside a **bare `X` call**, which is the standing harness rule
+in CLAUDE.md and the docs/125 `CSS` global bug. It throws in a Node realm instead
+of degrading, and my own `try/catch` swallowed it. The pin failed for that and
+nothing else, and both sides are window-qualified now.
+
+The same rule bit the harness a second time: `tag_typeahead_selfcheck.cjs`
+evaluates the file through `window.eval` **without `runScripts`**, so it compiles
+in the Node realm and a bare `fetch` never sees `window.fetch`. Both globals are
+bridged now, with the reason written beside them.
+
+### And four vacuous pins the sweep caught
+
+Of the first cut's twelve mutations, four came back GREEN:
+
+- the heading-row pin passed with its guard deleted, because the fixture's
+  heading carried no `kind` for the guard to suppress;
+- the param-kind pin asserted on a fixture that hard-coded `kind: 'param'`, so
+  it never touched the real suggester (it drives `SidebarTypeahead.suggest`
+  through the real loader now, which made the tail async);
+- the focus-wiring pin did not exist at all — `revalidate: null` in the attach
+  config passed everything;
+- and `T.attach('sidebar-filter-input', …)` in the render pin was a silent no-op,
+  because `attach` is idempotent per input and the real module had already
+  claimed that id — the REAL suggester answered and the pin asserted on
+  *"loading parameters…"*. It has its own probe input now.

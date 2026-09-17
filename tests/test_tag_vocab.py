@@ -192,3 +192,62 @@ def test_tag_typeahead_selfcheck_passes():
         pytest.skip("jsdom not installed (run `npm install jsdom`)")
     assert r.returncode == 0, (r.stdout + r.stderr)
     assert "tag_typeahead_selfcheck ok" in r.stdout, (r.stdout + r.stderr)
+
+
+class TestRunsForResolvesATermToRuns:
+    """docs/191 N02: the sidebar filter turns `tag:`/`note:` into run ids through
+    THIS vocabulary — the one its own typeahead suggested the token from — so a
+    suggestion and the filter cannot disagree."""
+
+    BUILT = {"tags": [{"t": "zzflagged", "n": 1, "r": [41]},
+                      {"t": "recheck", "n": 2, "r": [9, 3]},
+                      {"t": "big", "n": 300, "r": list(range(300, 100, -1))}],
+             "notes": [{"r": 41, "w": ["recheck", "zzwidget"]},
+                       {"r": 12, "w": ["fridge", "warm"]}]}
+
+    def test_a_tag_names_its_runs(self):
+        assert tag_vocab.runs_for(self.BUILT, tags=["zzflagged"])[0] == {41}
+        assert tag_vocab.runs_for(self.BUILT, tags=["recheck"])[0] == {9, 3}
+
+    def test_a_partial_term_matches_like_the_datasets_table(self):
+        assert tag_vocab.runs_for(self.BUILT, tags=["zzflag"])[0] == {41}
+        assert tag_vocab.runs_for(self.BUILT, tags=["FLAG"])[0] == {41}, "case-insensitive"
+
+    def test_a_note_word_names_its_run(self):
+        assert tag_vocab.runs_for(self.BUILT, notes=["zzwidget"])[0] == {41}
+        assert tag_vocab.runs_for(self.BUILT, notes=["fridge"])[0] == {12}
+
+    def test_the_two_vocabularies_do_not_bleed_into_each_other(self):
+        """`recheck` is a TAG on 9 and 3, and a NOTE word on 41."""
+        assert tag_vocab.runs_for(self.BUILT, tags=["recheck"])[0] == {9, 3}
+        assert tag_vocab.runs_for(self.BUILT, notes=["recheck"])[0] == {41}
+
+    def test_a_term_nobody_used_names_nobody(self):
+        assert tag_vocab.runs_for(self.BUILT, tags=["nope"]) == (set(), False)
+        assert tag_vocab.runs_for(self.BUILT, notes=["nope"]) == (set(), False)
+        assert tag_vocab.runs_for(self.BUILT) == (set(), False)
+
+    def test_a_blank_term_is_not_a_wildcard(self):
+        assert tag_vocab.runs_for(self.BUILT, tags=["", "   "]) == (set(), False)
+
+    def test_a_tag_bigger_than_the_vocabulary_remembers_says_so(self):
+        """`r` is capped at MAX_RUNS_PER_TAG; a caller showing a short answer as
+        if it were the whole one would be lying about the archive."""
+        ids, capped = tag_vocab.runs_for(self.BUILT, tags=["big"])
+        assert capped is True and len(ids) == tag_vocab.MAX_RUNS_PER_TAG
+        assert tag_vocab.runs_for(self.BUILT, tags=["zzflagged"])[1] is False
+
+    def test_a_malformed_row_is_skipped_not_raised(self):
+        built = {"tags": [{"t": "x", "n": 1, "r": ["nope"]}], "notes": [{"r": None, "w": ["w"]}]}
+        try:
+            tag_vocab.runs_for(built, notes=["w"])
+        except Exception as exc:                          # noqa: BLE001
+            raise AssertionError(f"a bad note row raised: {exc}") from None
+
+    def test_it_round_trips_what_build_actually_produces(self, tmp_path):
+        (tmp_path / "quashboard_tags.json").write_text(
+            '{"tags": {"41": ["zzflagged"]}, "notes": {"41": "recheck the zzwidget"}}',
+            encoding="utf-8")
+        built = tag_vocab.build([tmp_path])
+        assert tag_vocab.runs_for(built, tags=["zzflag"])[0] == {41}
+        assert tag_vocab.runs_for(built, notes=["zzwidget"])[0] == {41}

@@ -152,6 +152,44 @@ def build(folders: Iterable[Path]) -> dict:
     return {"tags": tags, "notes": note_rows, "dropped": dropped}
 
 
+def runs_for(built: dict, *, tags: Iterable[str] = (), notes: Iterable[str] = ()) -> tuple[set[int], bool]:
+    """Which runs a ``tag:`` / ``note:`` term names, from a built vocabulary.
+
+    docs/191 N02: the sidebar's typeahead OFFERED `tag:`/`note:` tokens that the
+    sidebar filter could not match, so accepting your own suggestion emptied the
+    tree -- the worst possible answer, because the suggestion is proof the run
+    exists. The filter resolves those terms through THIS vocabulary, the one the
+    suggestion came from, so the two cannot disagree by construction.
+
+    Matching is substring on a lowered term, like the Datasets table's `tag:` /
+    `note:` scopes. The second return value is True when a matched tag holds
+    more runs than the vocabulary remembers (``MAX_RUNS_PER_TAG``) -- the caller
+    must say so rather than quietly show a short answer.
+    """
+    want_t = [str(t).strip().lower() for t in tags if str(t).strip()]
+    want_n = [str(n).strip().lower() for n in notes if str(n).strip()]
+    out: set[int] = set()
+    capped = False
+    if want_t:
+        for row in built.get("tags") or []:
+            name = str(row.get("t") or "").lower()
+            if not any(t in name for t in want_t):
+                continue
+            runs = row.get("r") or []
+            out.update(int(r) for r in runs)
+            if int(row.get("n") or 0) > len(runs):
+                capped = True
+    if want_n:
+        for row in built.get("notes") or []:
+            words = [str(w).lower() for w in (row.get("w") or [])]
+            if any(any(n in w for w in words) for n in want_n):
+                try:
+                    out.add(int(row.get("r")))
+                except (TypeError, ValueError):
+                    continue
+    return out, capped
+
+
 def version(folders: Iterable[Path]) -> str:
     """A cheap identity for the vocabulary: the tag files' size+mtime.
 

@@ -303,10 +303,20 @@ window.Typeahead = (function () {
         return { items: items, hidden: honest.length - picked.length };
     }
 
-    function _row(text, meta, cls) {
+    function _row(text, meta, cls, kind) {
         var li = document.createElement('li');
         li.className = 'sm-th-row' + (cls ? ' ' + cls : '');
         li.setAttribute('role', 'option');
+        // docs/191 N03 (customer): the KIND leads the row, so `multiplexed` and
+        // a tag both named `multiplexed` are told apart at a glance and the
+        // token the row will insert is legible before you accept it.
+        if (kind) {
+            var k = document.createElement('span');
+            k.className = 'sm-th-kind sm-th-kind-' + kind;
+            k.textContent = kind;
+            li.appendChild(k);
+            li.setAttribute('data-kind', kind);
+        }
         var a = document.createElement('span');
         a.className = 'sm-th-label';
         a.textContent = text;
@@ -327,9 +337,13 @@ window.Typeahead = (function () {
         for (var i = 0; i < items.length; i++) {
             var it = items[i];
             var li = _row(it.label, it.meta,
-                          (it.note ? 'sm-th-note' : '') + (it.cls ? ' ' + it.cls : ''));
+                          (it.note ? 'sm-th-note' : '') + (it.cls ? ' ' + it.cls : ''),
+                          it.note ? null : it.kind);        // a note row is not a choice
             li.id = PANEL_ID + '-' + i;
+            // A tag or note label may be ellipsized (docs/191 N03), so the full
+            // text has to survive somewhere the person can reach.
             if (it.title) li.title = it.title;
+            else if (it.kind === 'tag' || it.kind === 'note') li.title = it.label;
             if (!it.note) {
                 li.setAttribute('data-i', String(i));
                 li.addEventListener('mousedown', function (ev) {
@@ -468,7 +482,17 @@ window.Typeahead = (function () {
             el.setAttribute('aria-expanded', 'false');
         }
         document.addEventListener('focusin', function (e) {
-            if (e.target && e.target.id === inputId) _role(e.target);
+            if (!e.target || e.target.id !== inputId) return;
+            _role(e.target);
+            // docs/191 N04 (customer): a tag or note a person just CREATED,
+            // renamed or DELETED has to reach the box. `load` was called once,
+            // lazily, and never again — so a new tag was not offered until a
+            // reload and a deleted one was offered for ever, inserting a token
+            // that now finds nothing. The route is conditional on `?v=` (the tag
+            // files' size+mtime) and answers 204 when nothing moved, so this is
+            // one tiny request per focus, and it catches a change made in
+            // ANOTHER window too, which no local callback could.
+            if (cfg && cfg.revalidate) { try { cfg.revalidate(); } catch (err) { /* never a gate */ } }
         });
 
         // Delegated on document: this file evaluates in <head>, before the
@@ -642,7 +666,7 @@ window.SidebarTypeahead = (function () {
             var c = window.Typeahead.compose(r, function (k) {
                 var d = byKey[k];
                 var nv = d.v.length + (d.more || 0);
-                var it = { label: k, insert: k + '=', fire: false };
+                var it = { label: k, insert: k + '=', fire: false, kind: 'param' };
                 if (nv === 1 && d.v.length === 1) {
                     // Nothing to choose. Enter (or a click) finishes the token;
                     // Tab still leaves `key=` for a value of your own.
@@ -716,6 +740,7 @@ window.SidebarTypeahead = (function () {
             var tok = PV ? PV(d.k, stem, op === '..' ? '=' : op)
                          : (d.k + op + stem);
             var head = {
+                kind: 'param',
                 label: d.k + ' ' + op + ' ' + stem,
                 meta: covered.length + ' of ' + d.v.length + ' values · ' + runs + ' runs',
                 insert: tok, fire: true
@@ -727,6 +752,7 @@ window.SidebarTypeahead = (function () {
             var rows = [head];
             for (var j = 0; j < covered.length && rows.length < 8; j++) {
                 rows.push({
+                    kind: 'param',
                     label: covered[j][0], meta: covered[j][1] + ' runs',
                     insert: PV ? PV(d.k, covered[j][0]) : (d.k + '=' + covered[j][0]),
                     fire: true
@@ -738,6 +764,7 @@ window.SidebarTypeahead = (function () {
         var rr = window.Typeahead.rank(d._vals, stem, 'sb-vals:' + vocab.v + ':' + d.k);
         var cc = window.Typeahead.compose(rr, function (val) {
             return {
+                kind: 'param',
                 label: val, meta: d._counts[val] + ' runs',
                 insert: PV ? PV(d.k, val) : (d.k + '=' + val), fire: true
             };
@@ -759,7 +786,15 @@ window.SidebarTypeahead = (function () {
 
     function init() {
         if (!window.Typeahead) return;
-        window.Typeahead.attach(INPUT, { suggest: suggest });
+        window.Typeahead.attach(INPUT, {
+        suggest: suggest,
+        // docs/191 N04: the person's own words can change without the archive
+        // changing, so the box re-checks them every time it takes focus.
+        // window-qualified on BOTH sides: a `window.X` guard beside a bare `X`
+        // call throws instead of degrading (CLAUDE.md's standing harness rule,
+        // the docs/125 `CSS` global bug). My own try/catch made it silent.
+        revalidate: function () { if (window.TagVocab) window.TagVocab.revalidate(); }
+    });
     }
     init();
     return { load: load, refresh: refresh, suggest: suggest,
@@ -818,11 +853,16 @@ window.TagVocab = (function () {
             var runs = d.r || [];
             for (var i = 0; i < runs.length; i++) {
                 if (out.length >= MAX_ROWS) { truncated++; continue; }
+                // docs/191 N03 (customer): the KIND leads the row as a badge,
+                // so the label is the TERM itself -- `tag  zzflagged`, the shape
+                // they asked for -- and the run id moves to the meta, where the
+                // rest of the box already puts "where/how many".
                 out.push({
-                    label: '#' + runs[i] + ': ' + d.t,
+                    kind: 'tag',
+                    label: d.t,
                     insert: tok,
                     fire: true,
-                    meta: d.n === 1 ? 'tag' : 'tag · ' + d.n + ' runs'
+                    meta: d.n === 1 ? '#' + runs[i] : d.n + ' runs'
                 });
             }
         });
@@ -840,10 +880,11 @@ window.TagVocab = (function () {
                 // The note's CONTENT is deliberately not here — only the word
                 // that matched. A whole note would not fit and was explicitly
                 // not wanted.
-                label: '#' + d.r + ': note (' + hit + ')',
+                label: hit,
                 insert: ntok,
                 fire: true,
-                meta: 'note'
+                kind: 'note',
+                meta: '#' + d.r
             });
         });
 
@@ -872,7 +913,11 @@ window.TagVocab = (function () {
         return tok;
     }
 
-    return { load: load, items: items, _scoped: _scoped,
+    /* Ask the server whether the vocabulary moved. Conditional on `?v=`, so an
+       unchanged archive answers 204 and costs nothing (docs/191 N04). */
+    function revalidate() { load(false); }
+
+    return { load: load, items: items, _scoped: _scoped, revalidate: revalidate,
              _data: function () { return data; },
              _set: function (d) { data = d; } };
 })();

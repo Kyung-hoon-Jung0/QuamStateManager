@@ -13740,6 +13740,7 @@ function _showTagPicker(runId, btnEl, td, allTags, currentTags) {
             })
             .then(function(r) { return r.json(); })
             .then(function(data) {
+                if (window.TagVocab) TagVocab.load(true);    // docs/191 N04: the person's own words just changed
                 if (window.DatasetVirtual && typeof window.DatasetVirtual.patchTags === 'function') {
                     window.DatasetVirtual.patchTags(runId, data.tags);
                 }
@@ -13773,6 +13774,7 @@ function _showTagPicker(runId, btnEl, td, allTags, currentTags) {
                 })
                 .then(function(r) { return r.json(); })
                 .then(function(data) {
+                    if (window.TagVocab) TagVocab.load(true);    // docs/191 N04: the person's own words just changed
                     if (window.DatasetVirtual && typeof window.DatasetVirtual.patchTags === 'function') {
                         window.DatasetVirtual.patchTags(runId, data.tags);
                     }
@@ -13828,6 +13830,7 @@ window.removeDatasetTag = function(runId, tag, spanEl) {
     })
     .then(function(r) { return r.json(); })
     .then(function(data) {
+        if (window.TagVocab) TagVocab.load(true);    // docs/191 N04: the person's own words just changed
         if (window.DatasetVirtual && typeof window.DatasetVirtual.patchTags === 'function') {
             window.DatasetVirtual.patchTags(runId, data.tags);
         }
@@ -13853,6 +13856,7 @@ window.saveDatasetNote = function(runId, note, el) {
         body: JSON.stringify({note: note})
     })
     .then(function() {
+        if (window.TagVocab) TagVocab.load(true);    // docs/191 N04: the person's own words just changed
         // Brief ✓ feedback on the edited textarea (el is passed from onblur so it
         // targets the right one in split/pinned view; falls back to the first).
         var ta = el || document.querySelector('.ds-note-textarea');

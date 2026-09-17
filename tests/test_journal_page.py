@@ -345,6 +345,19 @@ class TestTheDayNavigationActuallyNavigates:
         nav = self._nav(world["client"].get(f"/journal/day?day={DAY}").get_data(as_text=True))
         assert f'id="jr-day-pick" value="{DAY}"' in nav
 
+    def test_the_author_filter_rides_along_with_the_day(self, world):
+        """Its options are the DAY's own authors, so it is as stale as the nav
+        was if it stays behind: claim a run on one day, step to it, and the
+        filter must offer that person."""
+        c = world["client"]
+        c.post("/journal/claim", json={"run_id": 101, "who": "Kyunghoon"}, headers=_H)
+        html = c.get(f"/journal/day?day={DAY}").get_data(as_text=True)
+        i = html.find('id="jr-author"')
+        assert i >= 0, "the author filter must come back with the day"
+        sel = html[i:html.find("</select>", i)]
+        assert 'hx-swap-oob="true"' in sel, "and out-of-band, since the target is #jr-body"
+        assert "human:Kyunghoon" in sel, "offering the day's own authors"
+
     def test_the_full_page_and_the_swap_render_the_same_nav(self, world):
         """One partial, two callers -- the strip cannot drift between them."""
         c = world["client"]

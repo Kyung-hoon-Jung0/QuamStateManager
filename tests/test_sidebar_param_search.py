@@ -266,3 +266,134 @@ def test_it_filters_the_real_tree():
     assert n("param:multiplexed=true") == n("p:multiplexed=true") == yes
     assert n("-multiplexed=true") == len(entries) - yes
     assert n("multiplexed") == 0, "a bare word stays free text"
+
+
+# ── docs/191 N02: the box's own suggestion must FIND something ──────────────
+class TestTagAndNoteReachTheSidebarTree:
+    """Measured in real Chrome before the fix: type `zzflag` in the sidebar box,
+    the box itself offers `#41: zzflagged tag`, press Enter, and the tree goes
+    from 39 rows to **0**. The suggestion is proof the run exists, and accepting
+    it hid the run — the worst answer a search can give. `tag:`/`note:` are
+    resolved to run ids through the SAME vocabulary the suggestion came from, so
+    the two cannot disagree."""
+
+    def _entry_with_id(self, rid):
+        e = _entry()
+        object.__setattr__(e, "run_id", rid) if hasattr(e, "__dataclass_fields__") else None
+        return e
+
+    def test_the_scopes_are_known_at_all(self):
+        from quam_state_manager.web import routes
+        assert {"tag", "note"} <= routes._SIDEBAR_KNOWN_SCOPES
+        conds = routes._parse_tree_query("tag:flagged note:todo")
+        assert [(c["field"], c["value"]) for c in conds] == [("tag", "flagged"), ("note", "todo")]
+
+    def test_the_short_aliases_work_like_every_other_scope(self):
+        from quam_state_manager.web import routes
+        conds = routes._parse_tree_query("t:flagged n:todo")
+        assert [(c["field"], c["value"]) for c in conds] == [("tag", "flagged"), ("note", "todo")]
+
+    def test_a_run_the_vocabulary_names_is_kept(self):
+        from quam_state_manager.web import routes
+        e = _entry()
+        conds = routes._parse_tree_query("tag:flagged")
+        runsets = {("tag", "flagged"): {e.run_id}}
+        assert routes._entry_matches(e, conds, runsets) is True
+
+    def test_a_run_it_does_not_name_is_dropped(self):
+        from quam_state_manager.web import routes
+        e = _entry()
+        conds = routes._parse_tree_query("tag:flagged")
+        assert routes._entry_matches(e, conds, {("tag", "flagged"): {999}}) is False
+
+    def test_an_unresolvable_vocabulary_matches_nothing_rather_than_everything(self):
+        from quam_state_manager.web import routes
+        e = _entry()
+        conds = routes._parse_tree_query("tag:flagged")
+        assert routes._entry_matches(e, conds, {}) is False
+        assert routes._entry_matches(e, conds, None) is False
+
+    def test_the_two_scopes_do_not_share_one_answer(self):
+        """`tag:x` and `note:x` are different questions and must not collide."""
+        from quam_state_manager.web import routes
+        e = _entry()
+        conds = routes._parse_tree_query("note:x")
+        assert routes._entry_matches(e, conds, {("tag", "x"): {e.run_id}}) is False
+        assert routes._entry_matches(e, conds, {("note", "x"): {e.run_id}}) is True
+
+    def test_it_composes_with_the_rest_of_the_grammar(self):
+        from quam_state_manager.web import routes
+        e = _entry()
+        rs = {("tag", "flagged"): {e.run_id}}
+        assert routes._entry_matches(e, routes._parse_tree_query("tag:flagged node"), rs) is True
+        assert routes._entry_matches(e, routes._parse_tree_query("tag:flagged nope"), rs) is False
+        assert routes._entry_matches(e, routes._parse_tree_query("-tag:flagged"), rs) is False
+
+    def test_the_FILTER_uses_the_resolution_end_to_end(self, monkeypatch):
+        """The two halves are only useful joined: `_filter_tree` is what the
+        sidebar calls, and a mutation that stopped it resolving at all was caught
+        by nothing until this pin existed."""
+        from quam_state_manager.web import routes
+        from quam_state_manager.core import tag_vocab
+        from quam_state_manager.core.scanner import DateGroup
+
+        keep, drop = _entry(), _entry()
+        object.__setattr__(drop, "run_id", 2)
+        tree = {"/root": [DateGroup(date_str="2026-09-10", entries=[keep, drop])]}
+        monkeypatch.setattr(routes, "_dataset_candidate_folders", lambda **kw: [])
+        monkeypatch.setattr(tag_vocab, "build",
+                            lambda folders: {"tags": [{"t": "flagged", "n": 1,
+                                                       "r": [keep.run_id]}], "notes": []})
+        out = routes._filter_tree(tree, "tag:flagged")
+        assert [e.run_id for g in out.get("/root", []) for e in g.entries] == [keep.run_id]
+        assert routes._filter_tree(tree, "tag:nothing") == {}
+
+    def test_the_resolver_reads_the_vocabulary_and_not_a_dataset_store(self, monkeypatch):
+        """A keystroke must never be able to trigger the cold run scan docs/170
+        bounded — the same rule the typeahead route follows."""
+        from quam_state_manager.web import routes
+        from quam_state_manager.core import tag_vocab
+        seen = {}
+
+        def _folders(**kw):
+            seen["fast"] = kw.get("fast")
+            return []
+
+        monkeypatch.setattr(routes, "_dataset_candidate_folders", _folders)
+        monkeypatch.setattr(tag_vocab, "build",
+                            lambda folders: {"tags": [{"t": "flagged", "n": 1, "r": [7]}],
+                                             "notes": [{"r": 9, "w": ["todo"]}]})
+        got = routes._resolve_runset_conds(routes._parse_tree_query("tag:flag note:todo"))
+        assert got == {("tag", "flag"): {7}, ("note", "todo"): {9}}
+        assert seen["fast"] is True
+
+    def test_a_query_with_no_such_scope_builds_no_vocabulary(self, monkeypatch):
+        """Every keystroke in the sidebar box comes through here. Both of these
+        must be monkeypatched or the pin is vacuous: without the folder stub the
+        real `_dataset_candidate_folders` raises outside an app context, the
+        resolver catches it, and `build` is never reached for a reason that has
+        nothing to do with the early exit under test."""
+        from quam_state_manager.web import routes
+        from quam_state_manager.core import tag_vocab
+        calls = []
+        monkeypatch.setattr(routes, "_dataset_candidate_folders",
+                            lambda **kw: calls.append("folders") or [])
+        monkeypatch.setattr(tag_vocab, "build",
+                            lambda folders: calls.append("build") or {"tags": [], "notes": []})
+        assert routes._resolve_runset_conds(routes._parse_tree_query("rabi q1")) == {}
+        assert calls == [], f"a query with no tag/note term did work anyway: {calls}"
+
+    def test_an_unreadable_vocabulary_is_an_empty_tree_not_a_crash(self, monkeypatch):
+        from quam_state_manager.web import routes
+        from quam_state_manager.core import tag_vocab
+
+        def _boom(folders):
+            raise OSError("the tag file is gone")
+
+        monkeypatch.setattr(routes, "_dataset_candidate_folders", lambda **kw: [])
+        monkeypatch.setattr(tag_vocab, "build", _boom)
+        conds = routes._parse_tree_query("tag:flagged")
+        runsets = routes._resolve_runset_conds(conds)          # must not raise
+        # What matters is the ANSWER, not the shape it takes: nothing is named,
+        # so the tree is empty rather than showing runs the query never matched.
+        assert routes._entry_matches(_entry(), conds, runsets) is False

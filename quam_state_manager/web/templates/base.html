@@ -701,7 +701,7 @@
                            version-bump refetch can never land after a newer keystroke
                            and freeze the tree on a stale query. #}
                         <textarea rows="1" placeholder="{{ search_hint() }}"
-                                  title="{{ search_title('name:', 'date:', 'status:', 'run:', 'param:', '-' ~ 'negate') }}"
+                                  title="{{ search_title('name:', 'date:', 'status:', 'run:', 'param:', 'tag:', 'note:', '-' ~ 'negate') }}"
                                   id="sidebar-filter-input" aria-label="Filter experiments"
                                   class="search-help-input" data-search-help="sidebar-search-help"
                                   hx-get="/workspace/tree" hx-trigger="input changed delay:250ms"

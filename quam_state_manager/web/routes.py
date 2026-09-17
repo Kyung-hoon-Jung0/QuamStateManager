@@ -18474,8 +18474,15 @@ def diff_data():
 # Datasets-page search (web/static/dataset-virtual.js: tokenize/parseQuery).
 # Scopes map to the fields a tree entry actually has.
 _SIDEBAR_SCOPE_ALIASES = {"e": "name", "exp": "name", "d": "date", "st": "status",
-                          "run": "id", "q": "qubit", "qp": "pair", "p": "param"}
-_SIDEBAR_KNOWN_SCOPES = {"name", "date", "status", "id", "qubit", "pair", "param"}
+                          "run": "id", "q": "qubit", "qp": "pair", "p": "param",
+                          "t": "tag", "n": "note"}          # docs/191 N02
+#: docs/191 N02: `tag` and `note` are resolved to RUN IDS before matching (an
+#: ExperimentEntry has neither field), through the same vocabulary the sidebar's
+#: own typeahead suggested them from -- so a suggestion and the filter cannot
+#: disagree. Before this, accepting your own suggestion emptied the tree.
+_SIDEBAR_KNOWN_SCOPES = {"name", "date", "status", "id", "qubit", "pair", "param",
+                         "tag", "note"}
+_SIDEBAR_RUNSET_SCOPES = ("tag", "note")
 # Bare ``key=value`` is a param filter, not free text (``multiplexed=true``) --
 # the same shape dataset-virtual.js:198 routes to the param facet, so one token
 # means one thing on both search boxes.
@@ -18706,9 +18713,13 @@ def _param_hit(params: dict, cond) -> bool:
     return False
 
 
-def _entry_matches(entry, conds: list[dict]) -> bool:
+def _entry_matches(entry, conds: list[dict], runsets: dict | None = None) -> bool:
     """True iff *entry* satisfies the parsed query — AND across groups, OR
-    within one (``q1 | q2``), negation as before (always a singleton group)."""
+    within one (``q1 | q2``), negation as before (always a singleton group).
+
+    ``runsets`` maps a ``tag:``/``note:`` condition's own value to the set of run
+    ids it names (docs/191 N02); absent, those conditions match nothing, which is
+    the pre-N02 behaviour and is what an unresolvable vocabulary should do."""
     name = (entry.experiment_name or "").lower()
     date = (entry.date_str or "").lower()
     status = (entry.status or "").lower()
@@ -18745,6 +18756,10 @@ def _entry_matches(entry, conds: list[dict]) -> bool:
             return any(value in p for p in pairs)        # substring
         if field == "param":
             return _param_hit(params, c)
+        if field in _SIDEBAR_RUNSET_SCOPES:
+            if entry.run_id is None:
+                return False
+            return int(entry.run_id) in ((runsets or {}).get((field, value)) or ())
         return False
 
     for group in _group_tree_conds(conds):
@@ -18755,6 +18770,36 @@ def _entry_matches(entry, conds: list[dict]) -> bool:
         if not any(_hit(c) for c in group):   # no member matched → reject
             return False
     return True
+
+
+def _resolve_runset_conds(conds: list[dict]) -> dict:
+    """``{(scope, value): {run ids}}`` for every ``tag:``/``note:`` condition.
+
+    docs/191 N02. Read through ``tag_vocab``, never through a ``DatasetStore``:
+    that is the same rule the typeahead route follows, and for the same reason —
+    a keystroke must never be able to trigger the cold run scan docs/170 bounded.
+    Built once per query, not once per entry. An unreadable vocabulary resolves
+    to nothing, which shows an empty tree rather than the wrong runs.
+    """
+    wanted = [(c["field"], c["value"]) for c in conds if c.get("field") in _SIDEBAR_RUNSET_SCOPES]
+    if not wanted:
+        return {}
+    try:
+        from quam_state_manager.core import tag_vocab
+        built = tag_vocab.build(_dataset_candidate_folders(fast=True))
+    except Exception:  # noqa: BLE001
+        logger.exception("sidebar tag/note filter: the vocabulary could not be read")
+        return {}
+    out: dict = {}
+    for scope, value in wanted:
+        kw = {"tags": [value]} if scope == "tag" else {"notes": [value]}
+        try:
+            ids, _capped = tag_vocab.runs_for(built, **kw)
+        except Exception:  # noqa: BLE001
+            logger.exception("sidebar tag/note filter: %s:%s could not be resolved", scope, value)
+            ids = set()
+        out[(scope, value)] = ids
+    return out
 
 
 def _filter_tree(tree: dict, text: str) -> dict:
@@ -18771,11 +18816,12 @@ def _filter_tree(tree: dict, text: str) -> dict:
     conds = _parse_tree_query(text)
     if not conds:
         return tree
+    runsets = _resolve_runset_conds(conds)
     result: dict = {}
     for root_path, date_groups in tree.items():
         filtered_groups = []
         for dg in date_groups:
-            matched = [e for e in dg.entries if _entry_matches(e, conds)]
+            matched = [e for e in dg.entries if _entry_matches(e, conds, runsets)]
             if matched:
                 filtered_groups.append(DateGroup(date_str=dg.date_str, entries=matched))
         if filtered_groups:
