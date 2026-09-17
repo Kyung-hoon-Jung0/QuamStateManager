@@ -141,13 +141,24 @@ def journal_claim():
     author = f"human:{who}" if who else "human"
     if str(data.get("author") or "").strip() in ("unknown", ""):
         pass
-    rec = story.claim_run(current_app.instance_path, _chip_name(), run_id, author=author, note=data.get("note"))
+    # A payload that never mentions the note keeps the note (story.claim_run's
+    # _KEEP); only a note the caller actually sent -- including an empty one --
+    # decides it.
+    kw = {"note": data["note"]} if "note" in data else {}
+    rec = story.claim_run(current_app.instance_path, _chip_name(), run_id, author=author, **kw)
     # docs/173 S8: journal the claim on the RUN's own day, so the line sits next to
     # the run it is about (and is not stranded on today's page when the claim is made
     # later). Fall back to now() when the run's date cannot be resolved.
     when = _run_when(run_id)
-    journal_mod.append(current_app.instance_path, _chip_name(),
-                       f"run #{run_id} was run by {author}" + (f": {rec['note']}" if rec.get("note") else ""),
+    # A later claim does not erase the earlier line (the journal is append-only),
+    # so the line says what it overrode -- otherwise the day reads as two people
+    # each claiming the same run, at the same stamped time, with no way to tell
+    # which was said last.
+    prev = rec.get("prev") or {}
+    line = f"run #{run_id} was run by {author}" + (f": {rec['note']}" if rec.get("note") else "")
+    if prev.get("author") and prev["author"] != author:
+        line += f" (corrects an earlier claim of {prev['author']})"
+    journal_mod.append(current_app.instance_path, _chip_name(), line,
                        kind="human", run_id=run_id, when=when)
     return jsonify(ok=True, claim=rec)
 
@@ -172,5 +183,9 @@ def journal_adopt():
     under this chip. A person's decision, never automatic."""
     data = request.get_json(silent=True) or request.form.to_dict()
     day = (data.get("day") or "").strip() or datetime.now().strftime("%Y-%m-%d")
+    # docs/191 H05: this day reached `day_file` for BOTH the read and the
+    # unlink, so `../../victim` moved a file's lines onto itself and deleted it.
+    if not journal_mod.is_day(day):
+        return jsonify(ok=False, error="day must be YYYY-MM-DD"), 400
     n = journal_mod.adopt_unassigned(current_app.instance_path, _chip_name(), day)
     return jsonify(ok=True, moved=n)

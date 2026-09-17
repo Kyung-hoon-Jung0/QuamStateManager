@@ -24183,6 +24183,9 @@ _WAIT_SLOTS_N = 4
 #: What a REFUSED wait costs before it answers. Long enough that even a client
 #: that ignores `saturated` cannot spin, short enough to be invisible.
 _WAIT_SATURATED_FLOOR_S = 2.0
+# docs/191 P01: how long an agent event may sit unseen by a waiting page. One
+# integer read per slice, only for callers that send `aseq`.
+_AGENT_SLICE_S = 1.0
 
 
 def _wait_slots():
@@ -24237,13 +24240,24 @@ def datasets_wait():
         w.set_roots([f["path"] for f in active if f.get("path")])
     except Exception:
         logger.exception("datasets/wait: could not resolve the active data folders")
+    # docs/191 P01: the Agent pill sits in the topbar of EVERY page and this
+    # long poll is its only live channel -- but an agent event moves
+    # `agent_seq`, not the run watcher's tick, so `changed` stayed false and an
+    # approval the agent was BLOCKED on reached the topbar only when the pill's
+    # own 60 s safety timer came round (measured: 57.9 s, and the page saw no
+    # wake at all in between). A caller that sends its last-known `aseq` is
+    # answered when EITHER signal moves.
+    try:
+        aseq = int(request.args.get("aseq", "-1"))
+    except (TypeError, ValueError):
+        aseq = -1
     if since < 0:
         # the handshake: "what is your tick now?" -- answered at once, never
         # a change (the page has just loaded and polled). Every later wait
         # carries a real cursor, so the FIRST change on a fresh server (tick
         # 0 -> 1) is reported as the change it is.
         tick = w.wait(w.tick, 0.0)
-        resp = jsonify({"agent_seq": int(current_app.config.get("agent_seq") or 0), "tick": tick, "changed": False, "roots": len(w.roots)})
+        resp = jsonify({"agent_seq": int(current_app.config.get("agent_seq") or 0), "tick": tick, "changed": False, "agent_changed": False, "roots": len(w.roots)})
         resp.headers["Cache-Control"] = "no-store"
         return resp
     # docs/141 4ac (CRITICAL): bound how many of these can block at once. A
@@ -24263,14 +24277,34 @@ def datasets_wait():
     if not slots.acquire(blocking=False):
         time.sleep(min(_WAIT_SATURATED_FLOOR_S, max(0.0, timeout)))
         resp = jsonify({"agent_seq": int(current_app.config.get("agent_seq") or 0), "tick": w.tick, "changed": False,
-                        "roots": len(w.roots), "saturated": True})
+                        "agent_changed": False, "roots": len(w.roots), "saturated": True})
         resp.headers["Cache-Control"] = "no-store"
         return resp
+    def _aseq():
+        return int(current_app.config.get("agent_seq") or 0)
+
     try:
-        tick = w.wait(since, timeout)
+        if aseq < 0:
+            # a caller that never said where it was on the agent clock is left
+            # exactly as it was: one blocking wait, no slices, no new answers.
+            tick = w.wait(since, timeout)
+        else:
+            # Slice the wait so an agent bump is not swallowed by a 25 s block.
+            # The slice costs one integer read, and only a caller that asked
+            # for it pays: the dataset tick still decides `changed`.
+            deadline = time.monotonic() + max(0.0, timeout)
+            tick = since
+            while True:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    break
+                tick = w.wait(since, min(_AGENT_SLICE_S, left))
+                if tick != since or _aseq() != aseq:
+                    break
     finally:
         slots.release()
-    resp = jsonify({"agent_seq": int(current_app.config.get("agent_seq") or 0), "tick": tick, "changed": tick != since, "roots": len(w.roots)})
+    resp = jsonify({"agent_seq": _aseq(), "tick": tick, "changed": tick != since,
+                    "agent_changed": aseq >= 0 and _aseq() != aseq, "roots": len(w.roots)})
     resp.headers["Cache-Control"] = "no-store"
     return resp
 

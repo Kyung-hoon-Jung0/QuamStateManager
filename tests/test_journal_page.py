@@ -213,3 +213,82 @@ class TestTheDayPickerCannotCrashThePage:
                                    headers={"HX-Request": "true"}
                                    ).get_data(as_text=True)
         assert "JournalPage.day('0001-01-01')" in html
+
+
+class TestACorrectionIsNotAnErasure:
+    """Round 2 (2026-09-17), found by pressing the form in a real browser: the
+    summary invites "Correct the author / add a note", and the form REPLACED the
+    whole claim -- so a person fixing a misspelt name lost the sentence they had
+    written, with nothing on screen to warn them. Three separate holes: the
+    boxes showed nothing, the door deleted an unmentioned note, and the journal
+    ended up asserting two different authors for one run at one stamped time."""
+
+    def test_the_boxes_show_what_is_already_recorded(self, world):
+        c = world["client"]
+        r = c.post("/journal/claim", json={"run_id": 104, "who": "Kyunghoon",
+                                          "note": "fridge still warming"}, headers=_H)
+        assert r.status_code == 200
+        html = c.get(f"/journal?day={DAY}").get_data(as_text=True)
+        assert 'class="jr-who" placeholder="your name" value="Kyunghoon"' in html, \
+            "the name box must arrive carrying the author it is about to replace"
+        assert 'class="jr-note-in" placeholder="optional" value="fridge still warming"' in html, \
+            "the note box must arrive carrying the note it is about to replace"
+
+    def test_a_claim_that_says_nothing_about_the_note_keeps_it(self, world):
+        c = world["client"]
+        c.post("/journal/claim", json={"run_id": 104, "who": "Kyunghoon",
+                                       "note": "fridge still warming"}, headers=_H)
+        rec = c.post("/journal/claim", json={"run_id": 104, "who": "Jihoon"},
+                     headers=_H).get_json()["claim"]
+        assert rec["author"] == "human:Jihoon"
+        assert rec["note"] == "fridge still warming", \
+            "correcting the NAME deleted the note the last claim left"
+
+    def test_an_explicitly_empty_note_still_clears_it(self, world):
+        """The other half: a person who empties a box they can SEE means it."""
+        c = world["client"]
+        c.post("/journal/claim", json={"run_id": 104, "who": "K", "note": "n"}, headers=_H)
+        rec = c.post("/journal/claim", json={"run_id": 104, "who": "K", "note": ""},
+                     headers=_H).get_json()["claim"]
+        assert rec["note"] is None
+
+    def test_the_later_claim_names_the_one_it_corrects(self, world):
+        """The journal is append-only and both lines carry the RUN's time, so
+        without this the day reads as two people claiming one run with no way to
+        tell which was said last."""
+        c = world["client"]
+        c.post("/journal/claim", json={"run_id": 104, "who": "Kyunghoon"}, headers=_H)
+        c.post("/journal/claim", json={"run_id": 104, "who": "Jihoon"}, headers=_H)
+        text = journal.read(world["inst"], "chip", DAY)
+        lines = [ln for ln in text.splitlines() if "run #104 was run by" in ln]
+        assert len(lines) == 2, lines
+        assert "corrects an earlier claim of human:Kyunghoon" in lines[-1], lines
+        assert "corrects an earlier claim" not in lines[0], "the FIRST claim corrected nothing"
+
+    def test_a_reclaim_by_the_same_person_is_not_a_correction(self, world):
+        c = world["client"]
+        c.post("/journal/claim", json={"run_id": 104, "who": "Kyunghoon"}, headers=_H)
+        c.post("/journal/claim", json={"run_id": 104, "who": "Kyunghoon", "note": "added later"},
+               headers=_H)
+        text = journal.read(world["inst"], "chip", DAY)
+        assert "corrects an earlier claim" not in text, \
+            "the same name twice is someone adding a note, not correcting anyone"
+
+
+class TestTheAgentsJournalDoorAnswersTheDayItWasAsked:
+    """The PAGE spells it `day=`; this door spelt it `date=` only, so an agent
+    copying the page's own URL was handed TODAY -- and would read an empty
+    answer as 'nothing happened that day'."""
+
+    def test_both_spellings_reach_the_same_day(self, world):
+        c = world["client"]
+        by_date = c.get(f"/api/agent/journal?date={DAY}").get_json()
+        by_day = c.get(f"/api/agent/journal?day={DAY}").get_json()
+        assert by_date["date"] == DAY and by_day["date"] == DAY
+        assert by_day["text"] == by_date["text"] != ""
+        assert "rabi left-biased" in by_day["text"]
+
+    def test_neither_spelling_still_means_today(self, world):
+        today = datetime.now().strftime("%Y-%m-%d")
+        b = world["client"].get("/api/agent/journal").get_json()
+        assert b["date"] == today

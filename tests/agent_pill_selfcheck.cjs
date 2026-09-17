@@ -83,6 +83,18 @@ const now = Date.now() / 1000;
   await tick();
   ok(fetches.length === 2, 'a wake without a seq (a run folder) re-fetches');
 
+  // ---- docs/191 P01: the agent's own channel reaches the pill ----
+  payload = { ok: true, seq: 9, state: 'waiting', waiting: 1 };
+  const nBefore = fetches.length;
+  document.dispatchEvent(new window.CustomEvent('sm:agent-changed', { detail: { agent_seq: 9 } }));
+  await tick();
+  ok(fetches.length === nBefore + 1, 'sm:agent-changed re-fetches -- the channel an agent-only event arrives on');
+  ok(document.getElementById('agent-pill').getAttribute('data-state') === 'waiting',
+     'and the pill actually lands on the new state');
+  document.dispatchEvent(new window.CustomEvent('sm:agent-changed', { detail: { agent_seq: 9 } }));
+  await tick();
+  ok(fetches.length === nBefore + 1, 'the SAME agent seq twice re-fetches once');
+
   console.log(fails ? ('FAILED ' + fails) : ('all checks passed (' + passes + ' assertions)'));
   process.exit(fails ? 1 : 0);
 })().catch(e => { console.error('FAIL: ' + (e && e.stack || e)); process.exit(1); });

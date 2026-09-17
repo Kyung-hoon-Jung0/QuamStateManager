@@ -248,3 +248,81 @@ def test_agent_pill_selfcheck():
     if proc.returncode == 2 and "jsdom not installed" in (proc.stderr or ""):
         pytest.skip("jsdom not installed")
     assert proc.returncode == 0, f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+
+
+class TestTheAgentClockIsItsOwnCursor:
+    """docs/191 P01, measured in real Chrome on the Pulses page: 13 of the 14
+    agent doors poke the run watcher as well as bumping `agent_seq`, so an open
+    page heard them in 0.4 s. `POST /api/agent/journal` -- the agent's own words,
+    the one thing docs/173 makes REQUIRED of it -- only bumped, so no page heard
+    it at all until the pill's own 60 s safety timer came round (measured 57.9 s,
+    with the page seeing no wake in between). The wait now carries a second
+    cursor on the agent clock, so a bump alone is enough, and an agent event no
+    longer has to claim a run folder changed to be heard."""
+
+    def test_the_journal_door_moves_the_agent_clock(self, client, app):
+        before = int(app.config.get("agent_seq") or 0)
+        r = client.post("/api/agent/journal", json={"text": "saw a dip", "kind": "agent",
+                                                    "reason": "rabi was left-biased"}, headers=_H)
+        assert r.status_code == 200
+        assert int(app.config["agent_seq"]) == before + 1
+
+    def test_a_moved_agent_clock_answers_the_wait_at_once(self, client, app):
+        from quam_state_manager.core import run_watch
+        w = run_watch.RunWatcher()
+        app.config["run_watcher"] = w
+        app.config["agent_seq"] = 4
+        t0 = time.time()
+        d = client.get(f"/datasets/wait?since={w.tick}&aseq=3&timeout=20").get_json()
+        assert time.time() - t0 < 5.0, "an already-moved agent clock must not be waited out"
+        assert d["agent_changed"] is True and d["agent_seq"] == 4
+        assert d["changed"] is False, "no run folder changed, and the answer must not say one did"
+
+    def test_an_agent_bump_DURING_the_wait_ends_it(self, client, app):
+        from quam_state_manager.core import run_watch
+        w = run_watch.RunWatcher()
+        app.config["run_watcher"] = w
+        app.config["agent_seq"] = 9
+        out = {}
+
+        def waiter():
+            out["t0"] = time.time()
+            out["d"] = client.get(f"/datasets/wait?since={w.tick}&aseq=9&timeout=20").get_json()
+            out["dt"] = time.time() - out["t0"]
+
+        th = threading.Thread(target=waiter, daemon=True)
+        th.start()
+        time.sleep(1.5)
+        app.config["agent_seq"] = 10          # what _bump() does
+        th.join(12.0)
+        assert not th.is_alive(), "the wait never noticed the agent clock move"
+        assert out["d"]["agent_changed"] is True and out["d"]["agent_seq"] == 10
+        assert out["dt"] < 8.0, f"heard it, but {out['dt']:.1f}s late"
+
+    def test_a_caller_that_sends_no_cursor_is_left_exactly_as_it_was(self, client, app):
+        """An older tab mid-refresh must not start being told about agent events
+        it has no handler for -- and must not lose its blocking wait either."""
+        from quam_state_manager.core import run_watch
+        w = run_watch.RunWatcher()
+        app.config["run_watcher"] = w
+        app.config["agent_seq"] = 77
+        t0 = time.time()
+        d = client.get(f"/datasets/wait?since={w.tick}&timeout=2").get_json()
+        assert d["agent_changed"] is False, "no cursor was sent, so nothing can have changed on it"
+        assert d["changed"] is False and time.time() - t0 >= 1.5, "it must still BLOCK like before"
+
+    def test_an_unmoved_agent_clock_does_not_end_the_wait_early(self, client, app):
+        from quam_state_manager.core import run_watch
+        w = run_watch.RunWatcher()
+        app.config["run_watcher"] = w
+        app.config["agent_seq"] = 5
+        t0 = time.time()
+        d = client.get(f"/datasets/wait?since={w.tick}&aseq=5&timeout=3").get_json()
+        assert time.time() - t0 >= 2.5, "the slices must not turn a long poll into a spin"
+        assert d["agent_changed"] is False and d["changed"] is False
+
+    def test_the_handshake_never_claims_either_kind_of_change(self, client, app):
+        app.config["agent_seq"] = 3
+        d = client.get("/datasets/wait?since=-1&aseq=0").get_json()
+        assert d["changed"] is False and d["agent_changed"] is False
+        assert d["agent_seq"] == 3, "but it does hand over the cursor to start from"

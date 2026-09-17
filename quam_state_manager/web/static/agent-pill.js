@@ -112,11 +112,15 @@ window.AgentPill = (function () {
     timer = setInterval(function () { if (!document.hidden) refresh(true); }, SAFETY_MS);
   }
 
-  document.addEventListener("sm:runs-changed", function (e) {
+  function onWake(e) {
     var seq = e && e.detail && e.detail.agent_seq;
     if (typeof seq === "number" && seq === lastSeq) return;
     refresh(true);
-  });
+  }
+  // docs/191 P01: `sm:agent-changed` is the one that actually carries an agent
+  // event; `sm:runs-changed` is kept because a run landing is agent news too.
+  document.addEventListener("sm:agent-changed", onWake);
+  document.addEventListener("sm:runs-changed", onWake);
   document.addEventListener("visibilitychange", function () { if (!document.hidden) refresh(true); });
   if (document.readyState !== "loading") { refresh(true); arm(); }
   else document.addEventListener("DOMContentLoaded", function () { refresh(true); arm(); });

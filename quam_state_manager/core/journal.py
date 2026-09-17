@@ -102,15 +102,32 @@ def _safe_key(name: str) -> str:
     return key or "chip"
 
 
+#: What a journal day is -- the same shape `list_days` uses to decide which
+#: files ARE days. docs/191 H05: the chip half of the path went through
+#: `_safe_key` and the day half went through nothing, so `?date=../../secret`
+#: read any .md file on the machine and `POST /journal/adopt {"day":
+#: "../../victim"}` read it, appended it to itself and then UNLINKED it --
+#: measured: `{"moved": 1, "ok": true}` and the file gone.
+_DAY_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
 def day_file(instance_path, chip: str, day: str | None = None) -> Path:
     day = day or datetime.now().strftime("%Y-%m-%d")
+    if not _DAY_RE.fullmatch(str(day)):
+        raise ValueError(f"not a journal day: {day!r} (a day is YYYY-MM-DD)")
     return root(instance_path) / _safe_key(chip) / f"{day}.md"
+
+
+def is_day(day) -> bool:
+    """Whether a caller's day is one -- for a door that wants to answer 400
+    rather than raise."""
+    return bool(_DAY_RE.fullmatch(str(day or "")))
 
 
 def list_days(instance_path, chip: str) -> list[str]:
     d = root(instance_path) / _safe_key(chip)
     try:
-        return sorted((f.stem for f in d.glob("*.md") if re.fullmatch(r"\d{4}-\d{2}-\d{2}", f.stem)),
+        return sorted((f.stem for f in d.glob("*.md") if _DAY_RE.fullmatch(f.stem)),
                       reverse=True)
     except OSError:
         return []
@@ -125,9 +142,13 @@ def list_chips(instance_path) -> list[str]:
 
 
 def read(instance_path, chip: str, day: str | None = None) -> str:
+    """The day's text, or "" -- a READ of a day that is not one has always built
+    an empty page rather than raising (`story.build_day` relies on it), and the
+    H05 gate must not change that. The honest refusal belongs at the DOOR, which
+    answers 400; here a nonsense day is simply a day with nothing in it."""
     try:
         return day_file(instance_path, chip, day).read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, ValueError):
         return ""
 
 

@@ -147,6 +147,25 @@ window.AgentPanel = (function () {
 
   // ------------------------------------------------------------- cards
   function cardsHost(m) { return m.root.querySelector(".ag-cards"); }
+  // docs/191 R01: the clamp verdict is a HEIGHT, and a height changes with the
+  // column's width -- but `setHtml` skips an unchanged card, so the verdict was
+  // computed once, at whatever width the card first rendered at, and never
+  // again. Same pattern as `window.PlotHost` (docs/122): watch the container,
+  // act only when the WIDTH moved (a card collapsing changes the height, and
+  // acting on that is a loop).
+  function watchWidth(m) {
+    var host = cardsHost(m);
+    if (!host || m.__agWidthWatch || typeof ResizeObserver !== "function") return;
+    var last = Math.round(host.clientWidth);
+    m.__agWidthWatch = new ResizeObserver(function () {
+      var w = Math.round(host.clientWidth);
+      if (w === last) return;
+      last = w;
+      var all = host.querySelectorAll(".ag-card");
+      for (var i = 0; i < all.length; i++) confirmClamp(all[i]);
+    });
+    try { m.__agWidthWatch.observe(host); } catch (e) { /* no observer, no re-check */ }
+  }
   function cardFor(m, kind, id, ts) {
     // review R2-14: a card takes its place by TIME, not by arrival -- the
     // live objects (plans, runs, approvals) come with every poll, the chat
@@ -249,14 +268,46 @@ window.AgentPanel = (function () {
   // nothing hidden -- still wore the fade and a "show more" that revealed nothing.
   // isLong() is only the candidate now; the rendered box decides. No layout (jsdom,
   // a detached node) leaves the candidate verdict exactly as it was.
+  // docs/191 R01: round 2 made the height decide in ONE direction -- it could
+  // take a clamp off a card that hid nothing, but never put one on a card the
+  // character count had called short. Measured in Chrome by narrowing the
+  // panel: a 778-character answer renders 299 px at 1500 px wide and 707 px at
+  // 700 px, more than twice the 20.5em clamp, with no "show more" at all, while
+  // a 3,233-character one beside it is clamped to 308 px. Same box, same rule,
+  // both ways now.
+  var MORE_HTML = '<button type="button" class="ag-more" onclick="return AgentPanel.toggleMore(this)">show more</button>';
+  function addMore(el, md) {
+    if (!el.querySelector(".ag-more")) md.insertAdjacentHTML("afterend", MORE_HTML);
+  }
   function confirmClamp(el) {
-    var md = el.querySelector ? el.querySelector(".ag-md.ag-clamp") : null;
-    if (!md || el.getAttribute("data-expanded") === "1") return;
-    if (!md.clientHeight) return;                       // nothing is laid out: keep the heuristic
-    if (md.scrollHeight > md.clientHeight + 4) return;  // genuinely cut off: the clamp stands
-    md.classList.remove("ag-clamp");
-    var b = el.querySelector(".ag-more");
-    if (b) b.remove();
+    var md = el.querySelector ? el.querySelector(".ag-md") : null;
+    if (!md) return;
+    // A verdict THIS function reached is re-applied first: setHtml rebuilds the
+    // card from a template that only knows the character count, so a clamp added
+    // here is wiped by every later re-render -- and an OPEN card would then be
+    // left with no way back down.
+    if (el.getAttribute("data-clamped") === "1" && !md.classList.contains("ag-clamp")) {
+      md.classList.add("ag-clamp");
+      addMore(el, md);
+      syncExpanded(el);
+    }
+    if (el.getAttribute("data-expanded") === "1") return;   // never re-judged under the reader
+    if (md.classList.contains("ag-clamp")) {
+      if (!md.clientHeight) return;                       // nothing is laid out: keep the heuristic
+      if (md.scrollHeight > md.clientHeight + 4) return;  // genuinely cut off: the clamp stands
+      md.classList.remove("ag-clamp");
+      el.removeAttribute("data-clamped");
+      var b = el.querySelector(".ag-more");
+      if (b) b.remove();
+      return;
+    }
+    // not a candidate by character count -- try the clamp on and keep it only
+    // if it actually hides something.
+    if (!md.scrollHeight) return;                         // no layout: leave it exactly as it was
+    md.classList.add("ag-clamp");
+    if (md.scrollHeight <= md.clientHeight + 4) { md.classList.remove("ag-clamp"); return; }
+    el.setAttribute("data-clamped", "1");
+    addMore(el, md);
   }
   function toggleMore(btn) {
     var card = btn && btn.closest ? btn.closest(".ag-card") : null;
@@ -592,6 +643,7 @@ window.AgentPanel = (function () {
     if (typeof d.last === "number" && d.last > S.after) S.after = d.last;
     renderAll();
     S.mounts.forEach(function (m) { groupTools(cardsHost(m)); });   // after every insert: runs of tool rows fold
+    S.mounts.forEach(watchWidth);                                   // docs/191 R01: re-decide the clamp when the column resizes
     S.mounts.forEach(function (m, i) {
       var host = cardsHost(m);
       if (!host) return;
@@ -623,11 +675,13 @@ window.AgentPanel = (function () {
       if (Date.now() - S.lastPoll >= gap) poll();
     }, 1000);
   }
-  document.addEventListener("sm:runs-changed", function (e) {
+  function onWake(e) {
     var seq = e && e.detail && e.detail.agent_seq;
     if (typeof seq === "number" && seq === S.seq) return;
     poll();
-  });
+  }
+  document.addEventListener("sm:agent-changed", onWake);   // docs/191 P01
+  document.addEventListener("sm:runs-changed", onWake);
   document.addEventListener("focusout", function (e) {
     // a card that waited while the person typed in it catches up now
     var card = e && e.target && e.target.closest && e.target.closest(".ag-card");

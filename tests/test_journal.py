@@ -9,10 +9,13 @@ path) become the links that make the journal worth opening in SM at all.
 from __future__ import annotations
 
 import json
+from datetime import datetime
+from urllib.parse import quote
 
 import pytest
 
 from quam_state_manager.core import journal
+from quam_state_manager.web.app import create_app
 
 
 class TestStorage:
@@ -128,3 +131,67 @@ class TestRendererWhitelist:
         out = journal.render(journal.read(tmp_path, "c"))
         assert 'by-run/12' in out and 'data-path="qubits.q1.xy.operations.x180.amplitude"' in out
         assert "<b>" not in out and "&lt;b&gt;left-biased&lt;/b&gt;" in out
+
+
+class TestADayIsADayAndNotAPath:
+    """docs/191 H05, found by asking the agent's READ doors hostile questions.
+    The chip half of a journal path went through `_safe_key`; the day half went
+    through nothing. Measured on the running rig, before the fix:
+
+      GET  /api/agent/journal?date=../../secret   -> 200, the file's contents
+      POST /journal/adopt {"day": "../../victim"} -> {"moved": 1, "ok": true}
+                                                     and victim.md was GONE
+
+    -- an arbitrary .md read and an arbitrary .md DELETE, because `adopt` reads
+    the source, appends it, and then unlinks it. Both halves are now the same
+    kind of name."""
+
+    def test_day_file_refuses_anything_that_is_not_a_day(self, tmp_path):
+        for bad in ("../../secret", "..\\..\\secret", "2026-09-07/../../x",
+                    "\x00x", "  ", "x", "20260907", "2026-9-7", "2026-09-07.md"):
+            with pytest.raises(ValueError):
+                journal.day_file(tmp_path, "chip", bad)
+
+    def test_a_real_day_still_lands_where_it_always_did(self, tmp_path):
+        p = journal.day_file(tmp_path, "chip", "2026-09-07")
+        assert p.name == "2026-09-07.md" and p.parent.name == "chip"
+        assert journal.day_file(tmp_path, "chip").parent.name == "chip", "and no day means today"
+        today = datetime.now().strftime("%Y-%m-%d")
+        for nothing in (None, ""):        # "no day given" still means today, not a refusal
+            assert journal.day_file(tmp_path, "chip", nothing).name == f"{today}.md"
+
+    def test_the_agent_door_refuses_instead_of_reading_the_file(self, tmp_path):
+        inst = tmp_path / "inst"
+        app = create_app(testing=True, instance_path=str(inst))
+        c = app.test_client()
+        journal.append(inst, "chip", "a real line", kind="sm")
+        inst.mkdir(parents=True, exist_ok=True)
+        (inst / "secret.md").write_text("TOP SECRET", encoding="utf-8")
+        for bad in ("../../secret", "..%2f..%2fsecret", "\x00x"):
+            r = c.get("/api/agent/journal?date=" + quote(bad, safe="%"))
+            assert r.status_code == 400, f"{bad!r} was answered {r.status_code}"
+            assert "TOP SECRET" not in r.get_data(as_text=True)
+        assert (inst / "secret.md").read_text(encoding="utf-8") == "TOP SECRET"
+
+    def test_adopt_refuses_instead_of_deleting_the_file(self, tmp_path):
+        inst = tmp_path / "inst"
+        app = create_app(testing=True, instance_path=str(inst))
+        c = app.test_client()
+        journal.append(inst, "unassigned", "an orphan line", kind="sm")
+        victim = inst / "victim.md"
+        victim.parent.mkdir(parents=True, exist_ok=True)
+        victim.write_text("# not a day\n\n- **10:00** `human` do not delete me\n", encoding="utf-8")
+        r = c.post("/journal/adopt", json={"day": "../../victim"},
+                   headers={"Origin": "http://localhost"})
+        assert r.status_code == 400, r.get_data(as_text=True)
+        assert victim.exists(), "a malformed day deleted a file outside the journal"
+        today = datetime.now().strftime("%Y-%m-%d")
+        ok = c.post("/journal/adopt", json={"day": today}, headers={"Origin": "http://localhost"})
+        assert ok.status_code == 200 and ok.get_json()["moved"] >= 1, "and a real day still works"
+
+    def test_list_days_still_lists_the_days(self, tmp_path):
+        for d in ("2026-09-07", "2026-09-08"):
+            journal.day_file(tmp_path, "chip", d).parent.mkdir(parents=True, exist_ok=True)
+            journal.day_file(tmp_path, "chip", d).write_text("# x\n", encoding="utf-8")
+        (journal.root(tmp_path) / "chip" / "notes.md").write_text("x", encoding="utf-8")
+        assert journal.list_days(tmp_path, "chip") == ["2026-09-08", "2026-09-07"]

@@ -479,7 +479,13 @@ def note_set():
 @agent_bp.route("/journal", methods=["GET"])
 def journal_get():
     chip = request.args.get("chip") or _chip_name()
-    day = request.args.get("date") or None
+    # The journal PAGE spells it `day=`; this door spelt it `date=` only, so a
+    # caller copying the page's own URL was answered with TODAY under a `date`
+    # field naming today -- honest, but a question nobody asked. Both spellings.
+    day = request.args.get("date") or request.args.get("day") or None
+    # docs/191 H05: this went into a file path unchecked. A day is a day.
+    if day is not None and not journal_mod.is_day(day):
+        return _err("date must be YYYY-MM-DD")
     text = journal_mod.read(current_app.instance_path, chip, day)
     return jsonify(ok=True, chip=chip, date=day or datetime.now().strftime("%Y-%m-%d"),
                    days=journal_mod.list_days(current_app.instance_path, chip),

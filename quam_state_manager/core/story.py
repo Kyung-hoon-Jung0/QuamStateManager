@@ -201,16 +201,32 @@ def load_claims(instance_path, chip: str) -> dict[str, dict]:
         return {}
 
 
-def claim_run(instance_path, chip: str, run_id: int, *, author: str, note: str | None = None) -> dict:
-    """A person says "이건 내가 돌렸어요" (or corrects the author)."""
+_KEEP = object()
+
+
+def claim_run(instance_path, chip: str, run_id: int, *, author: str, note=_KEEP) -> dict:
+    """A person says "이건 내가 돌렸어요" (or corrects the author).
+
+    A correction REPLACES the record, so an omitted ``note`` used to delete the
+    note the last claim left -- a person fixing a misspelt name lost the sentence
+    they had written, and nothing on screen said so. A caller that says nothing
+    about the note now keeps it; only an explicitly empty note clears one, which
+    is a person emptying a box they could see (docs/120). The previous record is
+    returned as ``prev`` so the journal line can name what it overrode.
+    """
     p = claims_path(instance_path, chip)
     p.parent.mkdir(parents=True, exist_ok=True)
     claims = load_claims(instance_path, chip)
-    rec = {"author": author, "note": (note or "").strip() or None,
+    prev = claims.get(str(int(run_id))) or None
+    if note is _KEEP:
+        kept = (prev or {}).get("note")
+    else:
+        kept = (note or "").strip() or None
+    rec = {"author": author, "note": kept,
            "ts": datetime.now().isoformat(timespec="seconds")}
     claims[str(int(run_id))] = rec
     p.write_text(json.dumps(claims, indent=1, ensure_ascii=False), encoding="utf-8")
-    return rec
+    return dict(rec, prev=prev)
 
 
 def _author_of(run: dict, start: float | None, end: float | None, *, agent_runs: dict, events: list[dict],

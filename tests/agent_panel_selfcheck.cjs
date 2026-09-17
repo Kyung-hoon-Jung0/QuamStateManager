@@ -615,6 +615,103 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   ok(cut.querySelector('.ag-md.ag-clamp') && cut.querySelector('.ag-more'),
      'an answer whose box DOES overflow keeps the clamp and the link');
 
+  // --- docs/191 R01: the height decides BOTH ways ---------------------------
+  // Round 2 could only take a clamp OFF. Measured in Chrome by narrowing the
+  // panel: a 778-character answer is 299px at 1500px wide and 707px at 700px --
+  // more than twice the 20.5em clamp -- and wore no "show more" at all, while a
+  // 3,233-character one beside it was clamped to 308px.
+  // touch a card BY IDENTITY: `feed.cards[length - 1]` silently moved when a
+  // later block pushed another card, and two pins quietly stopped re-rendering
+  // the card they were about (caught by the mutation sweep, not by the suite)
+  function touch(n) { feed.cards.find(function (c) { return c.n === n; }).html += ' '; }
+  const shortText = 'y'.repeat(300);                       // well under CLAMP_CHARS
+  feed.cards.push({ n: 910, ts: t0 + 22, kind: 'answer', text: shortText, html: '<p>' + shortText + '</p>', backend: 'claude' });
+  feed.last = 910; P._state.after = 0;
+  await P.poll(true); await tick();
+  const narrow = feedEl.querySelector('[data-card="answer:910"]');
+  ok(narrow && !narrow.querySelector('.ag-md.ag-clamp') && !narrow.querySelector('.ag-more'),
+     'a short answer in a WIDE column is not a candidate and stays unclamped');
+
+  layout(narrow.querySelector('.ag-md'), 308, 707);        // the same card, in a narrow column
+  touch(910);
+  P._state.after = 0;
+  await P.poll(true); await tick();
+  ok(narrow.querySelector('.ag-md.ag-clamp'),
+     'the same card, rendering taller than the clamp, GETS one -- the character count is only a candidate');
+  ok(narrow.querySelector('.ag-more') && narrow.querySelector('.ag-more').textContent === 'show more',
+     'and it gets the show-more the person needs to read the rest');
+  ok(narrow.querySelectorAll('.ag-more').length === 1, 'exactly one link, however many times the check runs');
+
+  // the speculative add must leave NO trace on a card that fits: this is the
+  // branch that tries the clamp on and takes it straight back off
+  const shortFits = 'z'.repeat(300);
+  feed.cards.push({ n: 911, ts: t0 + 23, kind: 'answer', text: shortFits, html: '<p>' + shortFits + '</p>', backend: 'claude' });
+  feed.last = 911; P._state.after = 0;
+  await P.poll(true); await tick();
+  const fitsShort = feedEl.querySelector('[data-card="answer:911"]');
+  layout(fitsShort.querySelector('.ag-md'), 299, 299);     // laid out, and nothing is hidden
+  touch(911);
+  P._state.after = 0;
+  await P.poll(true); await tick();
+  ok(!fitsShort.querySelector('.ag-md').classList.contains('ag-clamp'),
+     'a short answer whose box FITS keeps no clamp -- the try-on is taken back off');
+  ok(!fitsShort.querySelector('.ag-more') && !fitsShort.hasAttribute('data-clamped'),
+     'and it gets no show-more and no verdict to re-apply later');
+
+  P.toggleMore(narrow.querySelector('.ag-more'));
+  ok(narrow.getAttribute('data-expanded') === '1', 'the added link opens the card like any other');
+  layout(narrow.querySelector('.ag-md'), 707, 707);        // opened: nothing is hidden any more
+  touch(910);
+  P._state.after = 0;
+  await P.poll(true); await tick();
+  ok(narrow.getAttribute('data-expanded') === '1' && narrow.querySelector('.ag-more'),
+     'an OPEN card is never re-judged -- it would collapse under the reader');
+
+  // and the column resizing re-decides it, since an unchanged card is not re-rendered
+  {
+    let cb = null;
+    function RO(fn) { cb = fn; this.observe = function () {}; this.disconnect = function () {}; }
+    window.ResizeObserver = global.ResizeObserver = RO;   // agent.js reads it BARE (CLAUDE.md harness rule)
+    const host = feedEl;   // h2's own .ag-cards -- what cardsHost(m) returns
+    let w = 1500;
+    Object.defineProperty(host, 'clientWidth', { configurable: true, get: () => w });
+    touch(910);
+    P._state.after = 0;
+    await P.poll(true); await tick();                      // installs the watcher
+    ok(typeof cb === 'function', 'the panel watches its own column width');
+    const wide = feedEl.querySelector('[data-card="answer:900"]');
+    layout(wide.querySelector('.ag-md'), 308, 900);        // it would overflow now
+    wide.querySelector('.ag-md').classList.remove('ag-clamp');
+    const b0 = wide.querySelector('.ag-more'); if (b0) b0.remove();
+    cb();
+    ok(!wide.querySelector('.ag-md.ag-clamp'), 'the SAME width re-judges nothing');
+    w = 700; cb();
+    ok(wide.querySelector('.ag-md.ag-clamp') && wide.querySelector('.ag-more'),
+       'a narrower column re-decides the clamp on a card nothing re-rendered');
+    w = 701; cb(); w = 702; cb();                          // two more checks, no re-render between
+    ok(wide.querySelectorAll('.ag-more').length === 1,
+       'and running the check again does not stack a second show-more on the card');
+    // the restore branch is the one that can stack: the verdict is still on the
+    // card, the class is gone (what a re-render leaves), the LINK is still there
+    wide.querySelector('.ag-md').classList.remove('ag-clamp');
+    w = 703; cb();
+    ok(wide.querySelectorAll('.ag-more').length === 1,
+       're-applying a verdict to a card that still has its link adds no second one');
+    ok(wide.querySelector('.ag-md.ag-clamp'), 'and the clamp itself is back');
+
+    // (3) widening back must CLEAR the verdict, not leave it to be re-applied
+    layout(wide.querySelector('.ag-md'), 900, 900);         // the column is wide: nothing is hidden
+    w = 1500; cb();
+    ok(!wide.querySelector('.ag-md.ag-clamp') && !wide.querySelector('.ag-more'),
+       'widening the column takes the clamp and the link back off');
+    ok(!wide.hasAttribute('data-clamped'),
+       'and clears the verdict, so a later re-render does not put it back');
+    touch(900);
+    P._state.after = 0;
+    await P.poll(true); await tick();
+    ok(!wide.querySelector('.ag-md.ag-clamp'), 'proved: the next re-render leaves it unclamped');
+  }
+
   console.log(`\n${passes} passed, ${fails} failed`);
   /* ── W. the wiring strip ────────────────────────────────────────────
    *

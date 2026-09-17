@@ -40,6 +40,10 @@ function world() {
     var d = e.detail || {};
     win._log.events.push(d.agent_seq != null ? d.tick + ':' + d.agent_seq : d.tick);   // docs/173: the agent seq rides the wake
   });
+  win._log.agentEvents = [];                 // docs/191 P01: the agent's own channel
+  win.document.addEventListener('sm:agent-changed', function (e) {
+    win._log.agentEvents.push((e.detail || {}).agent_seq);
+  });
   win.fetch = function (url, opts) {
     win._log.urls.push(url);
     return new Promise(function (resolve, reject) {
@@ -64,8 +68,8 @@ function answer(win, a) {
 async function main() {
   let win = world();
   await tick(10);
-  ok(win._log.urls.length === 1 && /\/datasets\/wait\?since=-1&timeout=25$/.test(win._log.urls[0]),
-     'the page opens ONE handshake wait with since=-1 (' + win._log.urls[0] + ')');
+  ok(win._log.urls.length === 1 && /\/datasets\/wait\?since=-1&aseq=-1&timeout=25$/.test(win._log.urls[0]),
+     'the page opens ONE handshake wait with since=-1 and aseq=-1 (' + win._log.urls[0] + ')');
   ok(win.LiveWake.state().inFlight === true, 'and it is in flight');
   // a visibility "visible" while a wait is open must not open a second one
   win.document.dispatchEvent(new win.Event('visibilitychange'));
@@ -153,6 +157,41 @@ async function main() {
     ok(issued <= 2,
        'a saturated answer is not re-issued at once (' + issued + ' requests in 300 ms)');
     ok(w2.LiveWake.state().wakes === 0, 'and a saturated answer is never read as a change');
+  }
+
+  // ---- docs/191 P01: the agent clock is a SECOND cursor on the same wait ----
+  {
+    const w3 = world();
+    await tick(10);
+    answer(w3, { tick: 3, changed: false, agent_seq: 5, agent_changed: false });   // handshake
+    await tick(20);
+    ok(w3.LiveWake.state().aseq === 5, 'the handshake adopts the server agent_seq (5)');
+    ok(/since=3&aseq=5&/.test(w3._log.urls[1]), 'and the next wait carries BOTH cursors (' + w3._log.urls[1] + ')');
+    ok(w3._log.agentEvents.length === 0, 'the handshake never wakes the agent channel either');
+
+    // an agent-only answer: the agent clock moved, no run folder did
+    answer(w3, { tick: 3, changed: false, agent_seq: 6, agent_changed: true });
+    await tick(20);
+    ok(w3._log.agentEvents.length === 1 && w3._log.agentEvents[0] === 6,
+       'an agent-only answer dispatches sm:agent-changed carrying the new seq');
+    ok(w3._log.events.length === 0,
+       'and it does NOT claim a run folder changed (sm:runs-changed stayed silent)');
+    ok(w3._log.pollNow === 0, 'nor does it send the Datasets table looking for a run');
+    ok(w3.LiveWake.state().aseq === 6 && w3.LiveWake.state().agentWakes === 1,
+       'the cursor advances so the same event is never reported twice');
+    ok(/aseq=6&/.test(w3._log.urls[2]), 'the next wait asks from the new agent cursor');
+
+    // both at once: the run folder AND the agent clock moved
+    answer(w3, { tick: 4, changed: true, agent_seq: 7, agent_changed: true });
+    await tick(20);
+    ok(w3._log.events.length === 1 && w3._log.agentEvents.length === 2,
+       'an answer carrying both signals fires both events, once each');
+    ok(w3._log.pollNow === 1, 'and only THAT one polls the Datasets table');
+
+    // a run-only answer must not invent an agent event
+    answer(w3, { tick: 5, changed: true, agent_seq: 7, agent_changed: false });
+    await tick(20);
+    ok(w3._log.agentEvents.length === 2, 'a run-only answer leaves the agent channel silent');
   }
 
   console.log(fails ? ('FAILED ' + fails) : 'live_wake_selfcheck: all ok');

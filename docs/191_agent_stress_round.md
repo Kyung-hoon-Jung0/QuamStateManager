@@ -289,3 +289,178 @@ brackets and quotes are gone.
 One of my own pins was vacuous and the sweep found it: the A04 section stayed
 open in the harness for the wrong reason, because that harness's status record
 never reported a successful test, so the section was never eligible to close.
+
+## 9. The surfaces nobody had pressed yet — journal authorship, the pill, the read doors
+
+Three areas were still untouched when the Agent walks ran out: the journal's
+authorship form, the topbar pill (the only Agent surface on *every* page), and
+the agent's own READ doors — the MCP tools it calls with whatever it has decided,
+with nobody watching.
+
+### H01 — "Correct the author" silently deleted the note
+
+The form's summary reads **"Correct the author / add a note"**. Its two boxes
+arrived empty, and `claim_run` replaced the whole record. So a person fixing a
+misspelt name typed the name, pressed Save, and lost the sentence they had
+written — with nothing on screen to warn them. Measured on the rig:
+
+```
+1) claim WITH a note      -> {"author": "human:Kyunghoon", "note": "fridge was still warming"}
+2) correct the NAME only  -> {"author": "human:Jihoon",    "note": null}
+3) `note` omitted entirely-> {"author": "human:Minji",     "note": null}
+```
+
+Case 3 is the plainer defect: the caller said nothing about the note and it was
+deleted. Three fixes, one per hole:
+
+- `story.claim_run`'s `note` now defaults to a `_KEEP` sentinel — a caller that
+  does not mention the note keeps it. An explicitly empty note still clears one:
+  that is a person emptying a box they can see (docs/120).
+- `journal_claim` forwards `note` only when the key is actually present.
+- the form's boxes arrive **carrying what they are about to replace** — the
+  stored note, and the current author's name. Leaving a box alone now means
+  keeping it, which is what the screen already implied.
+
+End to end in real Chrome, on an untouched run: type a name and a note, come
+back, retype only the name — `THE NOTE SURVIVED: True`.
+
+### H02 — the journal asserted two authors for one run, at one time
+
+The journal is append-only and a claim line is stamped with the **run's** own
+time (docs/173 S8, so it sits beside the run it is about). Two claims therefore
+produced two lines with identical timestamps and different authors, and file
+order was the only clue which was said last. A later claim now names what it
+overrode:
+
+```
+- **01:58:26** `human` run #12 was run by human:Kyunghoon: the fridge was still warming …
+- **01:58:26** `human` run #12 was run by human:Jihoon: … (corrects an earlier claim of human:Kyunghoon)
+```
+
+A re-claim by the *same* name is someone adding a note, not correcting anyone,
+and says nothing.
+
+### H03 — the page says `day=`, the door said `date=`
+
+`GET /api/agent/journal?day=2026-09-07` answered with **today**, under a `date`
+field naming today. Honest, but a question nobody asked — and an agent copying
+the journal page's own URL would read the empty answer as "nothing happened that
+day". The door takes both spellings now.
+
+### H05 — a day was a path (the round's most serious finding)
+
+The chip half of a journal file path goes through `_safe_key`. The day half went
+through nothing. Measured on the running rig:
+
+```
+GET  /api/agent/journal?date=../../secret   -> 200  "TOP SECRET: the customer's calibration notes"
+POST /journal/adopt {"day": "../../victim"} -> {"moved": 1, "ok": true}      … and victim.md was GONE
+```
+
+An arbitrary `.md` **read**, and an arbitrary `.md` **delete** — `adopt` reads the
+source file, appends its bullets, and then unlinks it, and with a traversing day
+source and destination are the same file. A NUL byte in the same argument was
+the one 500 in the whole read-door sweep (`ValueError: embedded null byte`,
+which `read`'s `except OSError` does not catch).
+
+Fixed at the single choke point: `journal.day_file` refuses anything that is not
+`YYYY-MM-DD`, which is the shape `list_days` already used to decide what *is* a
+day. `journal.is_day` lets a door answer 400 instead of raising, and both doors
+that took the value from a request now do. One contract was deliberately kept:
+`journal.read` still returns `""` for a nonsense day rather than raising, because
+`story.build_day` has always built an empty page from one — the honest refusal
+belongs at the door, not in the reader.
+
+### P01 — the agent's own words took a minute to reach the topbar
+
+The pill is the only Agent surface on every page. docs/173 says it "refreshes
+when live-wake wakes (the server bumps its tick on every agent event)". Pressed
+and timed on the Pulses page:
+
+| door | bumps `agent_seq` | pokes the run watcher | page heard it after |
+|---|---|---|---|
+| `POST /api/agent/limits` (and 12 others) | yes | yes | **0.4 s** |
+| `POST /api/agent/journal` | yes | **no** | **nothing in 15 s** (57.9 s in the long run — the pill's own safety timer) |
+
+13 of the 14 doors already worked. The exception was the agent writing its own
+words — the one thing docs/173 makes *required* of it (`reason` is mandatory for
+`kind=agent`) — arriving up to a minute late on every open page.
+
+The narrow fix would have been one `_wake()` call. The wider one was taken
+because `_wake()` moves the **run watcher's** tick, which tells every tab "a run
+folder changed" — a false statement that costs every open tab a dataset delta
+poll and a new-run poll on every agent journal line. Instead `/datasets/wait`
+now carries a **second cursor**: a caller that sends `aseq=<its last agent_seq>`
+is answered when *either* signal moves, and gets `agent_changed` alongside
+`changed`. `live-wake.js` dispatches `sm:agent-changed` for the agent half and
+keeps `sm:runs-changed` meaning what its name says, so an agent-only wake never
+sends the Datasets table looking for a run. A caller that sends no `aseq` — an
+older tab mid-refresh — keeps the byte-identical blocking wait it had.
+
+Measured after: **0.5 s**, for both doors, with the agent-only event firing only
+the agent channel.
+
+Structurally this closes the class, not the instance: any future `_bump()`
+without a matching `_wake()` is now live by construction.
+
+### What was measured and found sound
+
+- Every read door with 23 hostile inputs each (empty, huge, `1e400`, `nan`, NUL,
+  3 000 chars, script tags, SQL, Arabic-Indic and full-width digits, traversals):
+  404s and 400s throughout, one 500 (H05's NUL), no silent wrong answers.
+- The pill on `/`, `/diagnostics`, `/journal`, `/state-history`: present and
+  correct on all of them; its click lands on the Calibration log.
+- The pill at 1500 / 1100 / 980 / 820 px: 303 px → 99 px → 94 px, no topbar
+  overflow — the `shortText` work from the 2026-09-09 complaint holds.
+- The claim line still lands on the **run's** own day, not today's page.
+
+### A measurement that was wrong first
+
+The first pill timing said 58 s for an *approval*, and the conclusion drawn from
+it — "the documented live channel does not exist" — was wrong. The rig had
+created the approval with a subprocess writing straight to disk, so the server's
+`agent_seq` never moved at all; the run's own `adapter.wake()` does bump it. The
+finding only became real when the event went through a door. Recorded because
+the first number was published in this file's own draft before it was checked.
+
+### R01 — the clamp could only ever be taken off
+
+Round 2 fixed the clamp being decided by CHARACTER count when the clamp itself is
+a HEIGHT — but only in one direction: `confirmClamp` could remove a clamp from a
+card that hid nothing, and never add one to a card the character count had called
+short. Measured in Chrome by narrowing the panel:
+
+| card | 1500 px | 900 px | 700 px | clamped? |
+|---|---|---|---|---|
+| 778 chars | 299 px | 507 px | **707 px** | **never** |
+| 3 233 chars | 435 px | 1 001 px | 1 741 px | yes, to 308 px |
+
+So at a narrow width a 707 px answer — more than twice the 20.5em clamp — filled
+the feed with no way to collapse it, while a shorter-looking one beside it wore a
+"show more". The character count is now only the *candidate*; the rendered box
+decides both ways.
+
+Two things the first cut of that fix got wrong, both caught by its own pins:
+
+- `setHtml` rebuilds a card from a template that only knows the character count,
+  so a clamp *added* by `confirmClamp` was wiped by the next re-render — and an
+  **open** card was then left with no link to close it. The verdict now lives on
+  the card as `data-clamped`, beside `data-expanded`, and is re-applied first.
+- The verdict is a height, and a height changes with the column's width — but
+  `setHtml` skips an unchanged card, so the verdict was computed once, at
+  whatever width the card first rendered at. A `ResizeObserver` on the feed
+  re-decides on a **width** change only (acting on the height change a collapsing
+  card causes is a loop). Same pattern as `window.PlotHost` (docs/122).
+
+### Two lessons from this round's own pins
+
+The mutation sweep caught three vacuous pins and, separately, a test bug worth
+recording: the R01 block re-rendered cards with `feed.cards[feed.cards.length-1]`,
+and when a later block pushed one more card that index silently moved — two pins
+stopped re-rendering the card they were about and went green against the mutation
+they claimed to catch. Cards are addressed by identity now (`touch(n)`).
+
+The other is the standing harness rule from CLAUDE.md, hit again: a Node realm
+does not expose `window` properties as bare globals. `agent.js` reads
+`ResizeObserver` bare, so a `window.ResizeObserver` stub alone left the watcher
+uninstalled and the pin red for the wrong reason.

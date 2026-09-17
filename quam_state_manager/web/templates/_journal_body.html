@@ -109,8 +109,8 @@
             <div class="jr-sec jr-claim" data-run="{{ c.run_id }}">
                 {% if c.note %}<p class="jr-note-text"><b>Note:</b> {{ c.note }}</p>{% endif %}
                 <details class="jr-claim-form"><summary class="muted">{% if c.author == 'unknown' %}I ran this{% else %}Correct the author / add a note{% endif %}</summary>
-                    <label>Who <input type="text" class="jr-who" placeholder="your name"></label>
-                    <label>Note <input type="text" class="jr-note-in" placeholder="optional"></label>
+                    <label>Who <input type="text" class="jr-who" placeholder="your name" value="{{ c.author[6:] if c.author and c.author.startswith('human:') else '' }}"></label>
+                    <label>Note <input type="text" class="jr-note-in" placeholder="optional" value="{{ c.note or '' }}"></label>
                     <button type="button" class="btn-sm" onclick="JournalPage.claim(this)">Save</button>
                 </details>
             </div>

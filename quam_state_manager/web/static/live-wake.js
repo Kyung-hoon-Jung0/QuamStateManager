@@ -22,11 +22,27 @@
     // change, including the very first change on a freshly started server.
     var tick = -1, failures = 0, ctl = null, abortTimer = null, retryTimer = null;
     var inFlight = false, stopped = false, wakes = 0, requests = 0;
+    // docs/191 P01: a second cursor, on the AGENT clock. The server bumps
+    // `agent_seq` on every agent event, but that never moved the run watcher's
+    // tick -- so a page that was not the Agent page learnt an approval was
+    // waiting only when the pill's own 60 s safety timer came round. -1 until
+    // the handshake answers, so we never wake on the first reading.
+    var aseq = -1, agentWakes = 0;
 
-    function wake(detail) {
+    function wake(detail, runsChanged) {
         wakes++;
-        try { document.dispatchEvent(new CustomEvent('sm:runs-changed', { detail: detail || {} })); } catch (e) {}
-        try { if (window.DatasetVirtual && typeof DatasetVirtual.pollNow === 'function') DatasetVirtual.pollNow(); } catch (e) {}
+        var d = detail || {};
+        // Two signals, two events: `sm:runs-changed` still means a run folder
+        // changed (the new-run popup and the Datasets table read it that way),
+        // and an agent-only wake must not send them looking for a run.
+        if (runsChanged) {
+            try { document.dispatchEvent(new CustomEvent('sm:runs-changed', { detail: d })); } catch (e) {}
+            try { if (window.DatasetVirtual && typeof DatasetVirtual.pollNow === 'function') DatasetVirtual.pollNow(); } catch (e) {}
+        }
+        if (d.agent_changed) {
+            agentWakes++;
+            try { document.dispatchEvent(new CustomEvent('sm:agent-changed', { detail: d })); } catch (e) {}
+        }
     }
     function schedule(ms) {
         if (retryTimer) clearTimeout(retryTimer);
@@ -38,7 +54,7 @@
         inFlight = true;
         requests++;
         ctl = (typeof AbortController === 'function') ? new AbortController() : null;
-        var url = '/datasets/wait?since=' + tick + '&timeout=' + WAIT_TIMEOUT_S;
+        var url = '/datasets/wait?since=' + tick + '&aseq=' + aseq + '&timeout=' + WAIT_TIMEOUT_S;
         abortTimer = setTimeout(function () { try { if (ctl) ctl.abort(); } catch (e) {} }, ABORT_MS);
         var opts = { credentials: 'same-origin', cache: 'no-store' };
         if (ctl) opts.signal = ctl.signal;
@@ -49,8 +65,12 @@
                 if (!d || typeof d.tick !== 'number') throw new Error('bad payload');
                 var handshake = (tick < 0);
                 var changed = !!d.changed && !handshake;
+                var agentChanged = !!d.agent_changed && !handshake;
                 tick = d.tick;
-                if (changed) wake({ tick: tick, agent_seq: d.agent_seq });
+                if (typeof d.agent_seq === 'number') aseq = d.agent_seq;
+                if (changed || agentChanged) {
+                    wake({ tick: tick, agent_seq: d.agent_seq, agent_changed: agentChanged }, changed);
+                }
                 schedule(d.saturated ? SATURATED_MS : 0);   // straight back to waiting
             })
             .catch(function () {
@@ -73,7 +93,7 @@
     window.LiveWake = {
         start: loop,
         stop: function () { stopped = true; if (retryTimer) clearTimeout(retryTimer); try { if (ctl && inFlight) ctl.abort(); } catch (e) {} },
-        state: function () { return { tick: tick, failures: failures, inFlight: inFlight, wakes: wakes, requests: requests, stopped: stopped }; },
+        state: function () { return { tick: tick, aseq: aseq, failures: failures, inFlight: inFlight, wakes: wakes, agentWakes: agentWakes, requests: requests, stopped: stopped }; },
         _wake: wake,
     };
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', loop);
