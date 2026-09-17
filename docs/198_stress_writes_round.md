@@ -271,3 +271,48 @@ read from the wrong element, a reporting hook installed after the action, a chip
 file consulted about a button that stages. The discipline that settles it is
 cheap: prove the request fired and read what the surface itself claims, before
 concluding it lied.
+
+---
+
+## 13. The menus that had never been pressed
+
+Answering "what have we actually covered" against the REAL sidebar rather than
+memory turned up four menus and a whole sub-nav that no round had touched.
+All were driven on the customer chip; **no defects**.
+
+| menu | what it showed |
+|---|---|
+| **Chip Components → Qubits** | 5 rows × 9 cols, **0 blank cells** |
+| **→ Pairs** | 4 rows × 8 cols, 0 blank — columns *adapted to this chip*: `MOVING` (its `moving_qubit`), `CZ FLATTOP AMP`, `DETUNING`, and no coupler columns |
+| **→ Resonators** | 5 rows × 9 cols, 0 blank |
+| **→ Flux** | 5 rows × 7 cols, 0 blank |
+| **Instrument Wiring** | the real rack SVG — con1 OPX1000, FEM 3 (mw-fem) + FEM 5 (lf-fem), q1–q5 + twpa1 |
+| **Calibration log** | real journal entries, e.g. *largest Δ `qubits.q4.freq_vs_flux_01_quad_term` 26094182288.42811 → 0.0* |
+| **Projects** | 34 QUAlibrate projects, 68 rows, read-only notice |
+| **Help** | the guide |
+| **Chip Status × 9 sections** | all render and genuinely differ (7/32/26 sections, 1/88/40 SVGs) |
+
+**Couplers is correctly absent from the nav.** Every pair on this chip has
+`coupler: null`, and the page gates itself chip-wide on `has_coupler` — so the
+nav omitting it is the designed behaviour, not a missing menu.
+
+**A ✓ that looked wrong and is not.** The Pairs page marks all four pairs
+ACTIVE while `active_qubit_pair_names` is `[]`. That is QUAM's own semantics,
+stated at `query.py:396` and applied identically to qubits at `:131`:
+*absent/empty = all active*. Checked rather than assumed, precisely because it
+looked like a lie about chip state.
+
+**A warning worth passing on, not a defect.** Projects shows
+*"Versions: qualibrate v6 / quam v3 ⚠ unsupported"*. It is explained on hover
+("differs from the supported v5/v3 — SM stays read-only") and
+`SUPPORTED_QUALIBRATE_VERSION = 5` while this machine runs **v6**. Reading works
+fine on v6 (34 projects listed, active project resolved), and docs/55 keeps the
+tree read-only for every version anyway — but the version gap is a real fact the
+lab should know.
+
+**Two probes reported "no sub-tabs" before this, and both were wrong the same
+way**: `/chip-status` is a **404** — a url I invented. The real one is
+`/topology?view=<section>`, which the sidebar's own hrefs say plainly. The
+page Flask returned for a made-up url was Not Found, and measuring *that* is
+how a rich nine-section page reads as empty. Read the href; do not guess the
+route.
