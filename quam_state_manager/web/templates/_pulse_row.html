@@ -29,6 +29,13 @@
             <td class="pulse-spark-cell">
                 {%- if r.is_alias -%}
                 <span class="muted pulse-alias-target">&rarr; {{ r.alias_target.rsplit('.', 1)[-1] if r.alias_target else '?' }}</span>
+                {%- elif r.spark_svg and r.spark_from_config -%}
+                {#- docs/195: the lab's own class, so the lab's own code drew this.
+                    Dashed + titled, because an unlabelled lab-drawn curve sitting
+                    among SM-drawn ones is exactly what docs/189 refused to ship. -#}
+                <span class="pulse-spark-lab"
+                      title="Waveform from the generated config &mdash; this pulse class is the lab's own, so its own code drew it{% if r.spark_at %} ({{ r.spark_at }}){% endif %}">{{
+                    r.spark_svg | safe }}</span>
                 {%- elif r.spark_svg -%}
                 {{ r.spark_svg | safe }}
                 {%- else -%}

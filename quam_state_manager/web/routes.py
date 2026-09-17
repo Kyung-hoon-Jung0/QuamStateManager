@@ -12553,8 +12553,12 @@ def pulse_row():
         return "", 204
     row = dict(row)
     from quam_state_manager.core.waveform_synth import sparkline_svg, synth_for_operation
-    if row.get("is_alias") or not row.get("known"):
+    if row.get("is_alias"):
         row["spark_svg"] = None
+    elif not row.get("known"):
+        # The lab's own class: its own code drew this (docs/189).
+        row["spark_svg"], row["spark_at"] = _pulse_truth_spark(store, path)
+        row["spark_from_config"] = bool(row["spark_svg"])
     else:
         row["spark_svg"] = pulse_index.sparkline(
             path, lambda p=path: sparkline_svg(synth_for_operation(store, p)))
@@ -12609,10 +12613,17 @@ def pulses_page():
     # re-synthesize. Aliases / unknown classes render "→ target" instead.
     from quam_state_manager.core.waveform_synth import sparkline_svg, synth_for_operation
     for row in page_rows:
-        if row["is_alias"] or not row["known"]:
+        if row["is_alias"]:
             row["spark_svg"] = None
             continue
         path = row["path"]
+        if not row["known"]:
+            # A class SM has no synthesizer for -- SNZ, GaussianNZ, a lab's own
+            # readout weights. Drawn from the lab's generated config, and marked
+            # as such in the markup so it never reads as one SM drew.
+            row["spark_svg"], row["spark_at"] = _pulse_truth_spark(store, path)
+            row["spark_from_config"] = bool(row["spark_svg"])
+            continue
         row["spark_svg"] = pulse_index.sparkline(
             path, lambda p=path: sparkline_svg(synth_for_operation(store, p)))
 
@@ -14445,6 +14456,33 @@ def _config_op_for_pulse_path(config: dict, path: str,
         if len(exact) == 1:
             return exact[0]
     return None, None
+
+
+def _pulse_truth_spark(store, path):
+    """A sparkline for a class SM cannot synthesize, from the lab's own config.
+
+    Returns ``(svg, generated_at)`` or ``(None, None)``. Never raises: a missing
+    or unreadable config simply means no thumbnail, exactly as before.
+
+    The config is generated ONCE in the background when the chip is opened
+    (docs/189 part 2) and cached as one dict, so this is a dictionary lookup --
+    it is not a reason for the table to become slow, which is what the customer
+    asked about.
+    """
+    from quam_state_manager.core.waveform_synth import sparkline_svg
+    try:
+        truth = _pulse_truth_lookup(store, path)
+    except Exception:       # noqa: BLE001 -- a thumbnail is never worth an error page
+        logger.debug("lab sparkline lookup failed for %s", path, exc_info=True)
+        return None, None
+    if truth.get("status") != "ok":
+        return None, None
+    traces = truth.get("traces") or []
+    ys_i = next((t.get("y") for t in traces if t.get("name") == "I"), None)
+    ys_q = next((t.get("y") for t in traces if t.get("name") == "Q"), None)
+    if not ys_i:
+        return None, None
+    return sparkline_svg({"ok": True, "i": ys_i, "q": ys_q}), truth.get("at")
 
 
 def _pulse_truth_lookup(store, path):

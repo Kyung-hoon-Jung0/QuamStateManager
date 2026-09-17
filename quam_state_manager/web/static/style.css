@@ -10171,6 +10171,14 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
 .pulse-spark { color: var(--pico-muted-color); display: block; }
 .pulse-spark .spark-q { opacity: 0.45; }
 .pulse-spark-cell { min-width: 96px; }
+/* A waveform the LAB's own code drew (docs/195): SM has no synthesizer
+   for this class, so the curve is read out of the generated config. It
+   is dashed so it never reads as one SM drew itself -- the provenance
+   that docs/189 could not find room for in a thumbnail. The title says
+   it in words; this says it at a glance. */
+.pulse-spark-lab { display: inline-flex; align-items: center; }
+.pulse-spark-lab .spark-i,
+.pulse-spark-lab .spark-q { stroke-dasharray: 3 2; }
 .pulse-alias-target { font-family: var(--font-mono); font-size: 0.8em; }
 /* Multi-select checkboxes + compare bar */
 .pulse-sel-col { width: 28px; padding: 2px 4px !important; text-align: center; }

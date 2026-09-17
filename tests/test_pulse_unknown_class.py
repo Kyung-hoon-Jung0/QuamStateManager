@@ -398,3 +398,79 @@ class TestAnotherWindowsPullKeepsThisWindowsWaveform:
         with app.app_context():
             R._rebuild_after_working_copy_replaced(ctx)
         assert calls == [ctx.get("path")], "the rebuild did not offer the config a re-warm"
+
+class TestTheTableRowGetsASparklineToo:
+    """docs/195 — the customer reported the blank sparkline column twice.
+
+    docs/189 drew these waveforms in the DETAIL view and deliberately left the
+    table column blank: a thumbnail has no room for a provenance label, and an
+    unlabelled lab-drawn curve among SM-drawn ones is the one thing that fix
+    refused to ship. The objection was right and is answerable -- a sparkline
+    carries a title, and it can be drawn differently -- so it is drawn now,
+    dashed, and says whose code drew it.
+    """
+
+    def test_the_row_carries_a_waveform(self, configured):
+        _, c, _ = configured
+        body = c.get("/pulses").get_data(as_text=True)
+        assert "pulse-spark-lab" in body, \
+            "a class SM cannot synthesize still gets a thumbnail"
+        assert "<polyline" in body
+
+    def test_it_says_whose_code_drew_it(self, configured):
+        _, c, _ = configured
+        body = c.get("/pulses").get_data(as_text=True)
+        assert "from the generated config" in body
+        assert "the lab's own" in body
+
+    def test_with_no_config_the_column_is_blank_as_before(self, plain):
+        # No config to read, so no thumbnail -- and nothing invented.
+        _, c, _ = plain
+        body = c.get("/pulses").get_data(as_text=True)
+        assert "pulse-spark-lab" not in body
+
+    def test_a_class_SM_knows_is_drawn_by_SM_and_not_marked(self, configured):
+        # The control: the known pulse's own sparkline must be untouched by
+        # this, and must NOT wear the lab marker.
+        _, c, _ = configured
+        body = c.get("/pulses").get_data(as_text=True)
+        row = body.split("x180_DragCosine")[1][:900] if "x180_DragCosine" in body else ""
+        assert row, "the known pulse renders"
+        assert "pulse-spark-lab" not in row
+
+    def test_only_an_ok_verdict_is_drawn(self, configured):
+        """The status is the contract; the traces are what it carries on "ok".
+
+        Every non-ok status _pulse_truth_lookup can currently produce also has
+        empty traces, so the emptiness guard shadows the status check and a
+        sweep of it comes back green -- the fixture cannot reach the state
+        (docs/141 4af). The guard is still the right primary one: reading
+        traces off a non-ok payload would be relying on a shape the function
+        does not promise. So the contract is pinned directly.
+        """
+        app, c, _ = configured
+        import quam_state_manager.web.routes as rt
+        real = rt._pulse_truth_lookup
+        # a payload that breaks the contract: not ok, yet carrying traces
+        rt._pulse_truth_lookup = lambda store, path: {
+            "status": "no-trace",
+            "traces": [{"name": "I", "y": [0.1, 0.9, 0.1]}],
+        }
+        try:
+            body = c.get("/pulses").get_data(as_text=True)
+        finally:
+            rt._pulse_truth_lookup = real
+        assert "pulse-spark-lab" not in body, \
+            "a non-ok verdict must not be drawn, whatever it happens to carry"
+
+    def test_the_single_row_endpoint_agrees_with_the_page(self, configured):
+        # /pulse/row is the partial the table patches rows through; a row that
+        # renders one way on the page and another way on a patch is the defect
+        # class docs/141 4l-review exists for.
+        _, c, _ = configured
+        row = c.get("/pulse/row", query_string={"path": SNZ_PATH})
+        assert row.status_code == 200
+        body = row.get_data(as_text=True)
+        assert "pulse-spark-lab" in body
+        assert "the lab's own" in body
+

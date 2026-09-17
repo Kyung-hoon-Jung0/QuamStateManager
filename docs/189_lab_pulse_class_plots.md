@@ -305,3 +305,50 @@ zero clicks**.
   picked, the detail page still shows the honest line and the `Generate now`
   button — which is correct: SM has no other source for these waveforms.
 
+---
+
+## Part 3 — the table's sparkline column (2026-09-17, docs/195 round)
+
+**The customer reported the blank column a second time**, with the right
+question attached: *"generate config가 가장 좋긴한데, 이걸 매번실행하면 느려질텐데
+가능한가요?"*
+
+Both halves have answers, and one of them was mine to fix.
+
+**The speed half was already solved by part 2** and is worth restating, because
+the customer's worry is exactly the right one: `generate_config()` does NOT run
+per render. It runs once, in a background daemon thread, when a chip that
+actually carries a class SM cannot draw is opened (13–18 s), and the result is
+one ~0.3 MB dict in RAM. Reading one pulse out of it is a dictionary lookup.
+
+**The blank column was mine.** Part 1 left it deliberately:
+
+> the row sparklines are still blank for these classes, because a sparkline has
+> no room for a provenance label and an unlabelled lab-drawn curve in a column
+> of SM-drawn ones is the one thing this fix refuses to do.
+
+The principle is right and I still hold it. The conclusion was wrong: a
+sparkline *does* carry a `title`, and it can be *drawn differently*. Two
+reports is enough evidence that a blank cell reads as a broken feature, which
+is a worse lie than a labelled curve.
+
+So the row draws it, from the same `_pulse_truth_lookup` the detail view uses,
+through `_pulse_truth_spark` → the existing `sparkline_svg`. It is wrapped in
+`.pulse-spark-lab`, whose polylines are **dashed** (`stroke-dasharray: 3 2`),
+and whose title reads *"Waveform from the generated config — this pulse class is
+the lab's own, so its own code drew it (‹when›)"*. An SM-drawn sparkline is
+untouched and solid.
+
+Measured in real Chrome on a copy of the customer's `260907_KRS_5Q`:
+`cz_SNZ_flux_pulse_q1_q2` renders its 88-sample SNZ shape dashed, `readout`
+(1,200) and `readout_GEF` (1,488) likewise, while `ErfSquarePulse` and
+`GaussianFilteredSquarePulse` two rows above stay solid and unmarked.
+
+Pinned by `TestTheTableRowGetsASparklineToo` (6) in
+`tests/test_pulse_unknown_class.py`; **mutation sweep 7/7 red**, after one
+GREEN that was the useful kind: every non-`ok` status `_pulse_truth_lookup` can
+currently return *also* has empty traces, so the status check is shadowed by
+the emptiness guard and no fixture can reach the state (docs/141 §4af). The
+status is the documented contract, so it stays as the primary guard and is
+pinned directly, by handing the renderer a payload that breaks that contract
+(not-ok, yet carrying traces).
