@@ -245,8 +245,29 @@ class TestPlans:
         assert agent_plans.running(tmp_path, "PJ") is None
         with pytest.raises(ValueError):
             agent_plans.normalize_steps([{"targets": ["q1"]}])
-        with pytest.raises(ValueError):
-            agent_plans.normalize_steps([{"node": "n"}] * (agent_plans.MAX_STEPS + 1))
+        # a WELL-FORMED step repeated past the cap, so this still proves the
+        # cap rather than tripping on the targets check added below (docs/191)
+        with pytest.raises(ValueError, match="at most"):
+            agent_plans.normalize_steps(
+                [{"node": "n", "targets": ["q1"]}] * (agent_plans.MAX_STEPS + 1))
+
+    def test_a_step_must_name_something_to_run_on(self):
+        """docs/191 B01 -- this function's own docstring says "node + targets
+        required" and only the node was checked, so `{"node": "n", "targets":
+        []}` was accepted (a 200 from POST /api/agent/plans) while every other
+        malformed shape was refused by name. A node runs ON something."""
+        for bad in ([{"node": "n", "targets": []}],
+                    [{"node": "n"}],
+                    [{"node": "n", "targets": ["", "  "]}],
+                    [{"node": "n", "targets": ""}]):
+            with pytest.raises(ValueError, match="at least one target"):
+                agent_plans.normalize_steps(bad)
+
+    def test_a_step_that_names_targets_is_untouched(self):
+        out = agent_plans.normalize_steps(
+            [{"node": "n", "targets": "q1, q2", "why": "w"}])
+        assert out[0]["targets"] == ["q1", "q2"]
+        assert out[0]["node"] == "n" and out[0]["status"] == "pending"
 
 
 # ------------------------------------------------------------------ home

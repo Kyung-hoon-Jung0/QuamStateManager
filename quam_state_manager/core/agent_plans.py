@@ -90,6 +90,15 @@ def normalize_steps(steps) -> list[dict]:
         if isinstance(targets, str):
             targets = targets.replace(",", " ").split()
         targets = [str(t).strip() for t in targets if str(t).strip()]
+        if not targets:
+            # docs/191 B01: the line above this function says "node + targets
+            # required" and only the node was checked, so a step naming a node
+            # and nothing to run it on was accepted (200) while every other
+            # malformed shape was refused by name. Both doors reach here -- the
+            # structured one and a `/run <node>` line with nothing after it --
+            # so one check answers for both.
+            raise ValueError(f"step {i}: at least one target required "
+                             "(a node runs ON something)")
         params = s.get("params") or {}
         if not isinstance(params, dict):
             raise ValueError(f"step {i}: params must be an object")

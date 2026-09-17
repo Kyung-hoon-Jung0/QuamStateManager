@@ -92,7 +92,39 @@ value is the person's to change and the thing it is compared against is not.
 Measured after: the substitution is a 400 naming the path, and the legitimate
 case -- the same path with a hand-edited value -- still applies.
 
-## 3. Two red pins the round found
+## 3. The /run line's server half, and the plan lifecycle
+
+The client grammar was already hard (`/help`, `/RUN`, `/runn` each refused by
+name). What a person can still hand the door is a well-formed line whose
+CONTENT is wrong, and a plan pressed out of order. Seventeen malformed run
+lines and eleven malformed step lists were posted, then a plan was taken
+through its whole lifecycle backwards.
+
+**No 500s anywhere, and every refusal names what is wrong** — the node that is
+not in the calibrations folder, the targets that are not on the chip (in
+natural order), the mode that is not one of three, `at most 60 steps`, `plan is
+running`, `plan is cancelled`, `the mode is chosen before Start`, 404 for an
+unknown plan, and rule 0 holding against the agent's own header (`only a
+person's click starts a plan`). Path-traversal node names are refused as
+missing nodes; a `q1; rm -rf /` target list is refused as four unknown targets.
+Cancelling an already-cancelled plan answers 200, which is what idempotent
+means and is recorded as correct rather than as a finding.
+
+**B01 — a step could name a node and nothing to run it on.** One shape got
+through: `{"node": "n", "targets": []}` was accepted with a 200 while every
+other malformed step was refused by name. `normalize_steps`'s own docstring
+says "node + targets required" and only the node was checked. Both doors reach
+that function — the structured one and a `/run <node>` line with nothing after
+it — so one check answers for both: `step 0: at least one target required (a
+node runs ON something)`. A blank or whitespace target was already dropped by
+the normaliser, so it now falls into the same refusal rather than producing an
+empty list.
+
+A neighbouring pin needed repair on the way: it proved the 60-step cap using
+steps with no targets, which after this change would raise for the targets
+reason instead. It uses a well-formed step now, so it still proves the cap.
+
+## 4. Two red pins the round found
 
 Neither is a product defect; both had been failing quietly, which is worse than
 either.
@@ -117,10 +149,10 @@ brackets and quotes are gone.
 | | |
 |---|---|
 | browser checks (real Chrome) | 6/6 for A01, the rest measured directly |
-| new pins | 10 Python + 7 jsdom |
-| mutations caught | 14 of 14, plus 4 on the two repaired pins |
+| new pins | 12 Python + 7 jsdom |
+| mutations caught | 17 of 17, plus 4 on the two repaired pins |
 | jsdom selfchecks | 132 / 132 |
-| pytest (agent / journal / story / chat / setup / natural) | 791 passed |
+| pytest (agent / journal / story / chat / setup / natural / plan) | 881 passed |
 
 One of my own pins was vacuous and the sweep found it: the A04 section stayed
 open in the harness for the wrong reason, because that harness's status record
