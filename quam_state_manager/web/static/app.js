@@ -7309,6 +7309,27 @@ window.clearDetailPanelSearch = function(btnEl) {
         return typeof v === "string" && _POINTER_RE.test(v);
     }
 
+    // The durable read-only policy, applied to a dot-path. The vocabulary is
+    // the SERVER's (leaf_classify.readonly_policy, injected as
+    // window._treeReadOnly by the explorer page) — never re-spelled here, or
+    // the tree and the write doors would drift apart. Absent (a dataset tree,
+    // a test harness) => no opinion, exactly as before.
+    //
+    // Why the tree needs its own verdict at all: it renders every row in the
+    // browser, so without this a membership element opened an edit box, took
+    // a typed value, and only then did /field/edit answer "not here". docs/120
+    // — a press means what the presser could see.
+    function _policyReadOnly(path) {
+        var pol = window._treeReadOnly;
+        if (!pol || !path) return null;
+        var segs = String(path).split(".");
+        var tops = pol.membership_tops || [];
+        if (tops.indexOf(segs[0]) >= 0) return pol.membership_reason || "read-only";
+        var skips = pol.skip_leaves || [];
+        if (skips.indexOf(segs[segs.length - 1]) >= 0) return pol.skip_reason || "read-only";
+        return null;
+    }
+
     function _typeOf(v) {
         if (v === null) return "null";
         if (Array.isArray(v)) return "array";
@@ -7652,6 +7673,21 @@ window.clearDetailPanelSearch = function(btnEl) {
                 // so a click must never open an editor against the LOADED chip.
                 // Copying the value is the useful action here.
                 valEl.title = "Click to copy value";
+                valEl.style.cursor = "copy";
+                (function(el) {
+                    el.onclick = function(e) {
+                        e.stopPropagation();
+                        var raw = el.dataset.editVal != null ? el.dataset.editVal : el.textContent;
+                        window.copyWithFeedback(raw, el);
+                    };
+                })(valEl);
+            } else if (_policyReadOnly(path)) {
+                // The write door would refuse this leaf, so the row says so
+                // BEFORE the click instead of after the typing. Copying stays
+                // useful (these are exactly the values people quote).
+                var _roWhy = _policyReadOnly(path);
+                valEl.classList.add("tree-val-readonly");
+                valEl.title = _roWhy + " \u2014 click to copy";
                 valEl.style.cursor = "copy";
                 (function(el) {
                     el.onclick = function(e) {
@@ -8861,7 +8897,14 @@ window.clearDetailPanelSearch = function(btnEl) {
         var isArr = Array.isArray(v);
         var inList = Array.isArray(parent.value);
         var topLevel = m.depth === 0;
-        var identity = m.key === "__class__" || m.key === "id";
+        // __class__/id are SKIP_LEAVES; active_* are MEMBERSHIP_TOPS. The server
+        // owns both vocabularies and _policyReadOnly applies its payload, so the
+        // group offers nothing the write doors would refuse. The literal pair
+        // stays as the floor for a tree rendered WITHOUT the payload (the
+        // selfcheck harnesses pass crud:true and no window._treeReadOnly), so
+        // this can only ever refuse more than before, never less.
+        var identity = m.key === "__class__" || m.key === "id"
+                    || !!_policyReadOnly(m.path);
 
         // docs/126 ④: EVERY row copies (key + value as JSON) — the customer
         // pointed at the empty gap between the hover actions and asked for it.

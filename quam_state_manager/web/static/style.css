@@ -5288,6 +5288,14 @@ table code { font-size: 0.88em; }
     background: var(--tree-val-pointer-bg);
     padding: 0 0.25em; border-radius: 2px;
 }
+/* A leaf the write doors refuse (chip-membership arrays, identity keys).
+   It reads as a value, not as an input: dotted underline for "there is a
+   reason here", carried in the title. Colour stays the type colour so the
+   row still scans as data. */
+.tree-val-readonly {
+    text-decoration: underline dotted var(--pico-muted-color);
+    text-underline-offset: 3px;
+}
 .tree-children { /* controlled by JS display toggle */ }
 .tree-diff > .tree-row {
     background: var(--tree-match-bg);

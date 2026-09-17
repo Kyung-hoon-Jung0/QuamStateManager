@@ -72,6 +72,10 @@
     // as a chip beside the port nodes by renderJsonTree.
     window._treePortOwners = {{ port_owners | default('null') | script_json }};
 
+    // The durable read-only policy (leaf_classify.readonly_policy), so a row
+    // the write doors will refuse never opens an edit box in the first place.
+    window._treeReadOnly = {{ read_only_policy | default('null') | script_json }};
+
     renderJsonTree("explorer-tree-state", stateData, { defaultDepth: 1, crud: true });
     renderJsonTree("explorer-tree-wiring", wiringData, { defaultDepth: 1, crud: true });
     if (window.explorerApplyScale) window.explorerApplyScale();   // persisted size

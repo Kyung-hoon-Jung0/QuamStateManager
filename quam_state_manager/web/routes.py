@@ -5489,6 +5489,7 @@ def explorer():
     store = _store()
     if not store:
         return render_template("_empty_state.html", page="the state explorer")
+    from quam_state_manager.core.leaf_classify import readonly_policy
     state_json = json.dumps(store.state)
     wiring_json = _wiring_json()
     template = "_explorer.html" if _is_htmx() else "explorer.html"
@@ -5498,6 +5499,9 @@ def explorer():
         state_json=state_json,
         wiring_json=wiring_json,
         port_owners=json.dumps(_port_owner_map(store.wiring)),
+        # The tree builds its rows client-side, so it gets the durable
+        # read-only vocabulary rather than a second spelling of it.
+        read_only_policy=json.dumps(readonly_policy()),
     )
 
 
@@ -8532,14 +8536,15 @@ def _crud_policy_reason(store, dot_path: str, *, deleting: bool = False) -> str 
     tops, identity keys, and list parents (create/delete-on-list needs element
     insert semantics — edit the whole array instead)."""
     from quam_state_manager.core.edit_policy import _container_at
-    from quam_state_manager.core.leaf_classify import MEMBERSHIP_TOPS, SKIP_LEAVES
+    from quam_state_manager.core.leaf_classify import (
+        MEMBERSHIP_REASON, MEMBERSHIP_TOPS, SKIP_LEAVES, SKIP_REASON)
     segs = dot_path.split(".")
     if not segs or not all(segs):
         return "invalid path"
     if segs[0] in MEMBERSHIP_TOPS:
-        return "chip-membership array — edit via the chip add/remove controls, not here"
+        return MEMBERSHIP_REASON
     if segs[-1] in SKIP_LEAVES:
-        return "identity / type key — read-only"
+        return SKIP_REASON
     if len(segs) >= 2 and isinstance(_container_at(store.merged, segs[:-1]), list):
         return ("list element — edit the whole array instead "
                 "(element insert/remove is not supported)")

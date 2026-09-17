@@ -68,3 +68,41 @@ class TestClassifyLeaf:
         assert is_editable(KIND_SCALAR) is True
         for k in (KIND_XREF, KIND_SELFREF, KIND_LIST, KIND_SKIP, KIND_MEMBERSHIP):
             assert is_editable(k) is False, f"{k} must NOT be editable"
+
+class TestTheClientGetsTheSameVocabulary:
+    """``readonly_policy`` is what the Json Tree applies in the browser.
+
+    The tree builds every row client-side, so it cannot ask
+    ``editability_reason`` per leaf — it gets the vocabulary and reaches the
+    same verdict. These pins exist so the payload can never drift from the
+    sets and reasons the write doors actually enforce: a drift would put the
+    tree back where it was, offering an edit box on a leaf the door refuses.
+    """
+
+    def test_the_payload_carries_the_real_sets(self):
+        from quam_state_manager.core.leaf_classify import (
+            MEMBERSHIP_TOPS, SKIP_LEAVES, readonly_policy)
+        pol = readonly_policy()
+        assert set(pol["membership_tops"]) == set(MEMBERSHIP_TOPS)
+        assert set(pol["skip_leaves"]) == set(SKIP_LEAVES)
+
+    def test_the_reasons_are_the_doors_own_words(self):
+        # editability_reason is what /field/edit answers; _crud_policy_reason is
+        # what /field/create and /field/delete answer. One spelling, three users.
+        from quam_state_manager.core.edit_policy import editability_reason
+        from quam_state_manager.core.leaf_classify import readonly_policy
+        pol = readonly_policy()
+
+        class _Store:
+            merged = {}
+
+        assert editability_reason(_Store(), "active_qubit_names.0") == pol["membership_reason"]
+        assert editability_reason(_Store(), "qubits.q1.__class__") == pol["skip_reason"]
+
+    def test_a_path_the_doors_allow_is_not_in_the_payload(self):
+        # The payload must not over-refuse either — the tree would then hide an
+        # editor the server would have accepted.
+        from quam_state_manager.core.leaf_classify import readonly_policy
+        pol = readonly_policy()
+        assert "qubits" not in pol["membership_tops"]
+        assert "f_01" not in pol["skip_leaves"]

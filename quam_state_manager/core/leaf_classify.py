@@ -41,6 +41,35 @@ MEMBERSHIP_TOPS = frozenset(
     {"active_qubit_names", "active_qubit_pair_names", "active_twpa_names"}
 )
 
+# The refusal each policy speaks with. They live here, beside the vocabulary
+# they explain, because three surfaces say them: the write doors
+# (edit_policy.editability_reason, routes._crud_policy_reason), the All-values
+# tab's badges, and — since the Json Tree builds its rows in the browser —
+# the client, via readonly_policy() below. A second spelling of a vocabulary
+# this module already owns is how these drift apart.
+MEMBERSHIP_REASON = (
+    "chip-membership array — edit via the chip add/remove controls, not here"
+)
+SKIP_REASON = "identity / type key — read-only"
+
+
+def readonly_policy() -> dict:
+    """The durable read-only policy as a payload a client can apply itself.
+
+    The Explorer's Json Tree renders every row in the browser from raw JSON, so
+    it cannot call ``editability_reason`` per leaf. It gets the vocabulary
+    instead, and reaches the same verdict the doors do — which is the point:
+    before this, the tree opened an edit box on a membership element and the
+    user only learned it was never editable after typing a value and pressing
+    Enter (docs/120: a press means what the presser could see).
+    """
+    return {
+        "membership_tops": sorted(MEMBERSHIP_TOPS),
+        "membership_reason": MEMBERSHIP_REASON,
+        "skip_leaves": sorted(SKIP_LEAVES),
+        "skip_reason": SKIP_REASON,
+    }
+
 # The mutually-exclusive policy kinds.
 KIND_SCALAR = "scalar"          # editable
 KIND_XREF = "xref"              # cross-ref pointer (#/ or #../) — read-only + deep-link

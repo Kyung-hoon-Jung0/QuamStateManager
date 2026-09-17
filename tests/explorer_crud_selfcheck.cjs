@@ -41,7 +41,7 @@ const DATA = {
   }
 };
 
-function makeWorld(fetchImpl) {
+function makeWorld(fetchImpl, policy, data) {
   const dom = new JSDOM('<!DOCTYPE html><html><body><div id="tree"></div></body></html>',
     { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/' });
   const win = dom.window;
@@ -52,9 +52,30 @@ function makeWorld(fetchImpl) {
   };
   win.confirm = function () { win._confirmed = (win._confirmed || 0) + 1; return true; };
   new win.Function(APP_JS).call(win);
-  win.renderJsonTree('tree', JSON.parse(JSON.stringify(DATA)), { defaultDepth: 1, crud: true });
+  // AFTER app.js — it defines the real copyWithFeedback, which would otherwise
+  // replace this stub and the copy would go to a clipboard jsdom has not got.
+  win._copied = [];
+  win.copyWithFeedback = function (txt) { win._copied.push(txt); };
+  // The explorer page injects this (leaf_classify.readonly_policy). Left absent
+  // by default so every other check here runs against what it always did.
+  if (policy) win._treeReadOnly = policy;
+  win.renderJsonTree('tree', JSON.parse(JSON.stringify(data || DATA)),
+                     { defaultDepth: 1, crud: true });
   return win;
 }
+
+// The server's own payload, spelled as leaf_classify.readonly_policy() emits it.
+const RO_POLICY = {
+  membership_tops: ['active_qubit_names', 'active_qubit_pair_names', 'active_twpa_names'],
+  membership_reason: 'chip-membership array \u2014 edit via the chip add/remove controls, not here',
+  skip_leaves: ['__class__', 'id'],
+  skip_reason: 'identity / type key \u2014 read-only'
+};
+
+const RO_DATA = {
+  active_qubit_names: ['q1', 'q2'],
+  qubits: { qA1: { __class__: 'q.Transmon', id: 'qA1', f_01: 6.25e9 } }
+};
 
 function jsonResp(obj, status) {
   return Promise.resolve({ ok: (status || 200) < 400, status: status || 200,
@@ -246,6 +267,82 @@ function nodeAt(container, p) {
     await tick(20);
     const chip = leaf.querySelector('.tree-type-chip');
     ok(!!chip && /number · env/.test(chip.textContent), 'C6: type chip in the editor');
+  }
+
+  // C7: a membership element never opens an editor. It used to: the row took
+  //     a typed value and only /field/edit said "not here", after the fact.
+  {
+    const win = makeWorld(function () { return jsonResp({ ok: true }); },
+                          RO_POLICY, RO_DATA);
+    const c = win.document.getElementById('tree');
+    expandAll(c);
+    const el = nodeAt(c, 'active_qubit_names.0');
+    ok(!!el, 'C7: the membership element renders');
+    const val = el.querySelector('.tree-val');
+    ok(val.classList.contains('tree-val-readonly'), 'C7: marked read-only');
+    ok(/chip-membership array/.test(val.title), 'C7: the title carries the reason');
+    val.click();
+    await tick(20);
+    ok(!el.querySelector('.tree-edit-input'), 'C7: no edit box opens');
+    ok(win._copied.length === 1, 'C7: the click copies instead');
+    ok(win._fetchCalls.filter(function (f) {
+      return String(f.url).indexOf('/field/edit') === 0; }).length === 0,
+      'C7: nothing was POSTed to /field/edit');
+  }
+
+  // C8: an identity key is the same policy, and the reason differs.
+  {
+    const win = makeWorld(function () { return jsonResp({ ok: true }); },
+                          RO_POLICY, RO_DATA);
+    const c = win.document.getElementById('tree');
+    expandAll(c);
+    const el = nodeAt(c, 'qubits.qA1.__class__');
+    const val = el.querySelector('.tree-val');
+    ok(val.classList.contains('tree-val-readonly'), 'C8: identity key marked read-only');
+    ok(/identity \/ type key/.test(val.title), 'C8: identity reason, not the membership one');
+    val.click();
+    await tick(20);
+    ok(!el.querySelector('.tree-edit-input'), 'C8: no edit box on an identity key');
+  }
+
+  // C9: an ordinary leaf is untouched — the gate refuses only what the doors do.
+  {
+    const win = makeWorld(function () { return jsonResp({ ok: true, values: {}, expected: {} }); },
+                          RO_POLICY, RO_DATA);
+    const c = win.document.getElementById('tree');
+    expandAll(c);
+    const el = nodeAt(c, 'qubits.qA1.f_01');
+    const val = el.querySelector('.tree-val');
+    ok(!val.classList.contains('tree-val-readonly'), 'C9: a normal leaf is not marked');
+    val.click();
+    await tick(20);
+    ok(!!el.querySelector('.tree-edit-input'), 'C9: a normal leaf still edits');
+  }
+
+  // C10: no structural action anywhere under a membership top — /field/create
+  //      and /field/delete both refuse one.
+  //
+  //      The shape here is a DICT, not the list a healthy chip carries, and
+  //      that is deliberate: for a LIST the existing inList/isDict/topLevel
+  //      rules already suppress every action, so a list fixture pins nothing
+  //      (it passed with the gate reverted — a vacuous pin). A malformed chip
+  //      is exactly where the gate earns its place: without it this node is
+  //      offered ⚙ and ✕ that the door then refuses.
+  {
+    const MALFORMED = { active_qubit_names: { q1: true }, qubits: {} };
+    const win = makeWorld(function () { return jsonResp({ ok: true }); },
+                          RO_POLICY, MALFORMED);
+    const c = win.document.getElementById('tree');
+    expandAll(c);
+    const top = nodeAt(c, 'active_qubit_names');
+    hover(win, top);
+    ok(!top.querySelector('.tree-act-add'), 'C10: no ＋ on a membership top');
+    ok(!!top.querySelector('.tree-act-copy'), 'C10: copy still offered');
+
+    const leaf = nodeAt(c, 'active_qubit_names.q1');
+    hover(win, leaf);
+    ok(!leaf.querySelector('.tree-act-del'), 'C10: no ✕ under a membership top');
+    ok(!leaf.querySelector('.tree-act-type'), 'C10: no ⚙ under a membership top');
   }
 
   if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }

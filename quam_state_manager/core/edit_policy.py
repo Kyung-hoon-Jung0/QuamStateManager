@@ -334,14 +334,15 @@ def editability_reason(store: Any, target_path: str) -> str | None:
     keys). ``digital_marker`` is a real per-pulse value (null / "ON" / pointer on
     real chips), not an identity key — it is editable.
     """
-    from quam_state_manager.core.leaf_classify import MEMBERSHIP_TOPS, SKIP_LEAVES
+    from quam_state_manager.core.leaf_classify import (
+        MEMBERSHIP_REASON, MEMBERSHIP_TOPS, SKIP_LEAVES, SKIP_REASON)
     segs = target_path.split(".")
     if not segs:
         return None
     if segs[0] in MEMBERSHIP_TOPS:
-        return "chip-membership array — edit via the chip add/remove controls, not here"
+        return MEMBERSHIP_REASON
     if segs[-1] in SKIP_LEAVES:
-        return "identity / type key — read-only"
+        return SKIP_REASON
     return None
 
 
