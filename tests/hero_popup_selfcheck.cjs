@@ -58,9 +58,18 @@ const topo = {
   summary: {},
 };
 
-function makeWorld() {
+function makeWorld(opts) {
+  // The real page wraps the hero in `.topo-dashboard`, and chip-status.js's
+  // `decorate()` queries `dash.querySelectorAll(...)` — without that ancestor no
+  // node is given `data-kbd-cell` and the keyboard grid cannot be reached at
+  // all. A fixture that cannot enter the state proves nothing about it
+  // (docs/141 §4af), so the keyboard world builds the wrapper.
+  const inner = '<div id="topo-hero"></div>';
+  const body = (opts && opts.dashboard)
+    ? '<div class="topo-dashboard">' + inner + '</div>'
+    : inner;
   const dom = new JSDOM(
-    '<!DOCTYPE html><html><body><div id="topo-hero"></div></body></html>',
+    '<!DOCTYPE html><html><body>' + body + '</body></html>',
     { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/' });
   const win = dom.window;
   win.htmx = { ajax: function () {} };
@@ -146,6 +155,62 @@ setTimeout(function () {
   if (pop) {
     ok(/qA1/.test(pop.textContent),
       'C2: and it is the hovered qubit\'s popup');
+  }
+
+  /* ── D. docs/192 CS01: Esc closes what Enter opened ──────────────────
+   *
+   * The map's own tip line reads "Tab into the grid, ←↑↓→ to move, Enter to
+   * inspect, Esc to close". Enter opens the INSPECTOR; Escape closed only the
+   * hover popup and the JSON panel, and app.js's own Escape ladder closes the
+   * inspector for the PULSES page's roots alone. Measured in real Chrome before
+   * the fix: two Escape presses, the inspector unchanged at 9,781 characters,
+   * while the pane's own × closed it. */
+  {
+    const kwin = makeWorld({ dashboard: true });
+    const kdoc = kwin.document;
+    const khero = kdoc.getElementById('topo-hero');
+    const esc = function (target) {
+      const ev = new kwin.KeyboardEvent('keydown',
+        { key: 'Escape', bubbles: true, cancelable: true });
+      (target || kdoc.body).dispatchEvent(ev);
+      return ev.defaultPrevented;
+    };
+    const pane = kdoc.createElement('div');
+    pane.id = 'inspector-pane';
+    kdoc.body.appendChild(pane);
+    let closed = 0;
+    kwin.closeInspector = function () { closed++; pane.innerHTML = ''; };
+
+    const cell = khero.querySelector('[data-kbd-cell]');
+    ok(!!cell, 'D1: the map has keyboard cells at all');
+
+    // Esc from a cell with NOTHING open must not claim to have closed anything.
+    pane.innerHTML = '';
+    esc(cell);
+    ok(closed === 0, 'D2: Esc with an empty inspector closes nothing');
+
+    // Esc from a cell, with the inspector holding what Enter opened.
+    pane.innerHTML = '<h2>QUBIT qA1</h2>';
+    const prevented = esc(cell);
+    ok(closed === 1, 'D3: Esc from the grid closes the inspector Enter opened');
+    ok(prevented, 'D4: …and takes the key, so nothing else also acts on it');
+
+    // Esc from OUTSIDE the grid must leave the inspector alone — the sentence
+    // is written in the grid's own tip line, and this is a page-wide handler.
+    pane.innerHTML = '<h2>QUBIT qA1</h2>';
+    closed = 0;
+    esc(kdoc.body);
+    ok(closed === 0, 'D5: Esc outside the grid does not reach the inspector');
+
+    // A hover popup still wins: it is the more transient thing on screen.
+    pane.innerHTML = '<h2>QUBIT qA1</h2>';
+    closed = 0;
+    const p2 = kdoc.createElement('div');
+    p2.className = 'topo-card-popup';
+    kdoc.body.appendChild(p2);
+    esc(cell);
+    ok(closed === 0 && !kdoc.querySelector('.topo-card-popup'),
+      'D6: a hover popup is closed FIRST and the inspector is left alone');
   }
   process.exit(fails ? 1 : 0);
 }, 700);

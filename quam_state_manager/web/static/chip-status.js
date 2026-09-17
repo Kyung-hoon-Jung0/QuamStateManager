@@ -3756,6 +3756,21 @@ window.ChipStatus.mount = function (opts) {
                 if (pop) { pop.remove(); e.preventDefault(); return; }
                 var jp = document.getElementById('json-panel');
                 if (jp && !jp.classList.contains('hidden')) { window.closeJsonPanel(); e.preventDefault(); return; }
+                // docs/192 CS01: the map's own tip line reads "Enter to inspect,
+                // Esc to close", and Enter opens the INSPECTOR — which neither
+                // branch above touches. app.js's Escape ladder closes it only for
+                // the Pulses page's own roots, so from the grid Escape did
+                // nothing at all (measured: two presses, inspector unchanged at
+                // 9,781 chars, while the pane's own × closed it). Scoped to the
+                // grid, because that is where the sentence is written.
+                var kc = t && t.closest && t.closest('[data-kbd-cell]');
+                var ip = document.getElementById('inspector-pane');
+                if (kc && ip && ip.innerHTML.trim() && window.closeInspector) {
+                    window.closeInspector();
+                    try { kc.focus(); } catch (err) { /* the cell may have gone */ }
+                    e.preventDefault();
+                    return;
+                }
             }
             if (!t || !t.closest || !t.closest('.topo-dashboard')) return;
             if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable) return;
