@@ -212,3 +212,62 @@ Output · Review). Two claims were tested rather than assumed:
 A wizard walk that pressed Next seven times without advancing looked like a
 silent stall and was not: the step was refusing, in `#gen-message`, and the walk
 simply never read that element.
+
+## 10. Re-generate: the reconstruction is correct on this chip
+
+The highest-value remaining check, because it is chip-SPECIFIC: docs/118 found
+that a modern quam_builder chip's pair reference is a **two-hop** pointer, and
+reading it as one hop silently dropped every pair — losing 59% of pair
+calibration on a real 10Q chip while the build still reported SUCCESS.
+
+The KRISS chip is a good adversary for that bug, because its pair section looks
+empty from three directions at once:
+
+```
+state.qubit_pairs            q1-2, q2-3, q3-4, q4-5     (4 pairs)
+active_qubit_pair_names      []                          (none active)
+wiring.wiring                qubits, twpas only          (NO qubit_pairs)
+```
+
+`reconstruct_spec(state, wiring)` nevertheless returns **all four**, resolved to
+their `(control, target)` membership:
+
+```
+qubits       5
+qubit_pairs  [["q1","q2"], ["q2","q3"], ["q3","q4"], ["q4","q5"]]
+lines        16
+notes / info_notes / warnings   (none)
+```
+
+and the silence is correct, which is the part worth checking rather than
+assuming. The pairs carry `coupler: null`, `cross_resonance: null`,
+`zz_drive: null` — this chip genuinely has **no pair hardware**; its CZ moves
+the control qubit's own flux (`moving_qubit: "control"`, the macros driving
+`flux_pulse_qubit`). And `wiring.qubits.{q1..q5} × {rr, xy, z}` = 15, plus one
+TWPA line = **exactly the 16 lines** reconstruct produced. There is no missing
+coupler to report, so reporting none is right — and docs/134's rule ("derive
+optional lines only where the SOURCE chip had them") is what makes a rebuild
+from this spec reproduce the chip rather than invent couplers for it.
+
+## 11. Compare hub
+
+Renders its honest empty state — *"0 sources · No sources yet — add two or more
+below. The same chip can be added several times at different points in time."* —
+with the three source pickers (workspace / history / recent) and `+ Current chip
+live`. No complaints.
+
+## 12. What three clean rounds mean
+
+Sections 7–11 found **no product defects**. That is worth stating plainly rather
+than padding: every surface in them has had a dedicated round already
+(docs/117 + 187 + 195 for auto-sync, docs/134–136 + 176 for the generate
+wizard, docs/118 for the pair pointers), and they are holding under a deliberate
+attempt to break them on a real chip.
+
+The errors in these rounds were mine, and they cluster into one shape worth
+carrying forward: **four of them produced a confident "this control does
+nothing"** when the control was working — a press that never landed, a message
+read from the wrong element, a reporting hook installed after the action, a chip
+file consulted about a button that stages. The discipline that settles it is
+cheap: prove the request fired and read what the surface itself claims, before
+concluding it lied.
