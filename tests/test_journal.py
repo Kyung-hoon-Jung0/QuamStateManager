@@ -9,6 +9,7 @@ path) become the links that make the journal worth opening in SM at all.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from urllib.parse import quote
 
@@ -195,3 +196,49 @@ class TestADayIsADayAndNotAPath:
             journal.day_file(tmp_path, "chip", d).write_text("# x\n", encoding="utf-8")
         (journal.root(tmp_path) / "chip" / "notes.md").write_text("x", encoding="utf-8")
         assert journal.list_days(tmp_path, "chip") == ["2026-09-08", "2026-09-07"]
+
+
+class TestAKeyIsADirectoryName:
+    """docs/191 H06, from the same hostile-input sweep as H05, on the WRITE
+    doors this time. A key goes through `_safe_key`'s character set but had no
+    LENGTH, and a path the OS cannot even name raised the wrong kind:
+
+      POST /api/agent/journal      {"chip": "a"*5000}     -> 500
+      POST /api/agent/journal/root {"root": "\x00canary"} -> 500
+
+    Neither wrote outside its own store (a planted canary was untouched through
+    the whole sweep), so these are honest-crash bugs, not H05's class -- but a
+    500 from a tool the agent calls is a tool the agent cannot recover from."""
+
+    def test_a_long_name_becomes_a_key_the_filesystem_accepts(self, tmp_path):
+        key = journal._safe_key("a" * 5000)
+        assert len(key) <= journal._KEY_MAX, len(key)
+        p = journal.day_file(tmp_path, "a" * 5000, "2026-09-07")
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("# x\n", encoding="utf-8")      # the real test: the OS takes it
+        assert p.exists()
+
+    def test_two_different_long_names_never_fold_onto_one_folder(self, tmp_path):
+        a, b = journal._safe_key("x" * 300 + "-alpha"), journal._safe_key("x" * 300 + "-beta")
+        assert a != b, "truncation alone would put two chips' journals in one file"
+        assert len(a) <= journal._KEY_MAX and len(b) <= journal._KEY_MAX
+
+    def test_a_short_name_is_byte_identical_to_before(self, tmp_path):
+        for name in ("chip", "live_kriss", "PJ_10082026", "q-1.2_3", "a" * 80):
+            assert journal._safe_key(name) == re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("._"), name
+
+    def test_the_journal_door_survives_a_5000_character_chip(self, tmp_path):
+        app = create_app(testing=True, instance_path=str(tmp_path / "inst"))
+        r = app.test_client().post("/api/agent/journal",
+                                   json={"text": "probe", "kind": "human", "chip": "a" * 5000},
+                                   headers={"Origin": "http://localhost"})
+        assert r.status_code == 200, r.get_data(as_text=True)[:200]
+
+    def test_a_root_the_os_cannot_name_is_a_refusal_not_a_crash(self, tmp_path):
+        app = create_app(testing=True, instance_path=str(tmp_path / "inst"))
+        c = app.test_client()
+        for bad in ("\x00canary", "C:/nope\x00/x"):
+            r = c.post("/api/agent/journal/root", json={"root": bad},
+                       headers={"Origin": "http://localhost"})
+            assert r.status_code == 400, f"{bad!r} answered {r.status_code}"
+            assert "cannot use that folder" in r.get_json()["error"]

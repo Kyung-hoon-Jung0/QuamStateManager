@@ -535,7 +535,10 @@ def journal_root():
         data = request.get_json(silent=True) or request.form.to_dict()
         try:
             root = journal_mod.set_root(current_app.instance_path, data.get("root"))
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
+            # docs/191 H06: a NUL in the path raises ValueError from the OS
+            # call, not OSError, and answered 500 -- the same uncaught-kind
+            # mistake `journal.read` made in H05.
             return _err(f"cannot use that folder: {exc}")
         if "agent_says" in data or "claude_says" in data:
             v = data.get("agent_says", data.get("claude_says"))

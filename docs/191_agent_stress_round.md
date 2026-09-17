@@ -464,3 +464,57 @@ The other is the standing harness rule from CLAUDE.md, hit again: a Node realm
 does not expose `window` properties as bare globals. `agent.js` reads
 `ResizeObserver` bare, so a `window.ResizeObserver` stub alone left the watcher
 uninstalled and the pin red for the wrong reason.
+
+## 10. The WRITE doors, asked the same hostile questions
+
+H05 came from a string that reached a file path, so the doors that *change*
+something got the same sweep: twelve fields across the agent's and the journal's
+write doors, each given traversals, NULs, 5 000-character strings, `1e400`,
+`nan`, `[]`, `true` and empty. A canary file was planted outside every store and
+its bytes re-read after every single request.
+
+**Nothing wrote or deleted outside its own store.** Two 500s, one refuted alarm.
+
+### H06 — a key is a directory name, so it has a length
+
+```
+POST /api/agent/journal      {"chip": "a"*5000}    -> 500   (the OS refused the path)
+POST /api/agent/journal/root {"root": "\x00canary"} -> 500  (ValueError, not OSError)
+```
+
+`_safe_key` bounded the character set and not the length, and the root door
+caught `OSError` but the NUL raises `ValueError` from the OS call — the same
+wrong-kind mistake `journal.read` made in H05. A key is now capped at 80
+characters, and a truncated one carries a 10-character digest of the whole name
+so two long chip names never fold into one folder (verified: `…-fb16efd732` vs
+`…-9d0641debb`). Names that always fitted are byte-identical, and pinned so.
+
+### The alarm that was wrong
+
+`POST /api/agent/limits {"max_runs_per_hour": "abc"}` answered 200 and the value
+read back as `None`, which looked exactly like a safety limit being silently
+switched off. It is not: **there is no limit called `max_runs_per_hour`** — the
+key does not exist, `validate` ignores it by design, and the answer says so:
+`{"ignored": ["max_runs_per_hour"], "note": "not saved -- there is no limit
+called max_runs_per_hour; the ones there are: …"}`. That is docs/191 C02 doing
+its job. Every limit that *does* exist refuses every one of those ten values
+with a 400 and stores nothing:
+
+```
+max_writes_per_plan  "abc"=400 "nan"=400 "-1"=400 "1e400"=400 "1.5"=400 "[]"=400 "true"=400 null=400 ""=400 "inf"=400
+stoploss_target      … identical …      stoploss_plan … identical …      human_recent_min … identical …
+```
+
+Recorded because the first reading of it was published in this file's draft as a
+finding before it was checked — the second time in this round that a measurement
+had to correct a conclusion.
+
+### One thing the sweep did that is worth saying out loud
+
+`POST /api/agent/journal/root {"root": "/etc/passwd"}` returned 200 and **created
+that folder**. That is the documented behaviour of a user setting ("the folder
+must exist or be creatable") and the journal root is meant to be a folder the
+person picks — their Obsidian vault, typically. It is not a finding. It is worth
+naming because the probe left a real `C:\etc\passwd` directory on the machine,
+which was removed; a sweep that writes needs to clean up after itself, and this
+one did not until it was told to.

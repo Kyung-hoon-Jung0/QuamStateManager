@@ -17,6 +17,7 @@ figure, a state path opens that value's history. So:
 
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 import os
@@ -97,8 +98,20 @@ def set_agent_says(instance_path, on: bool) -> bool:
     return bool(on)
 
 
+#: A key becomes a directory NAME, so it has a length as well as a character
+#: set. docs/191 H06: a 5,000-character chip name sanitised to a 5,000-character
+#: folder and `POST /api/agent/journal` answered 500 (the OS refused the path).
+#: Truncation alone would fold two long names onto one folder, so a truncated
+#: key carries a short digest of the whole name and stays distinct.
+_KEY_MAX = 80
+
+
 def _safe_key(name: str) -> str:
-    key = re.sub(r"[^A-Za-z0-9_.-]+", "_", (name or "").strip()).strip("._")
+    raw = (name or "").strip()
+    key = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw).strip("._")
+    if len(key) > _KEY_MAX:
+        tag = hashlib.sha1(raw.encode("utf-8", "surrogatepass")).hexdigest()[:10]
+        key = key[:_KEY_MAX - 11].rstrip("._") + "-" + tag
     return key or "chip"
 
 
