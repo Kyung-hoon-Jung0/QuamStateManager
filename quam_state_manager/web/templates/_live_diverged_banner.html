@@ -9,10 +9,24 @@
        read both sides to reach its verdict, so it hands the diff back. It is
        "as of that check"; Review is the authority. None ⇒ say nothing rather
        than invent a number. #}
+    {# When Auto-Sync established WHICH fields collide, lead with them. A
+       non-colliding live change never reaches this banner any more -- it is
+       merged in silently -- so an appearance here means a genuine two-sided
+       edit, and naming it is the difference between a decision and a dialog
+       the user learns to dismiss. #}
     <span class="topo-change-banner-text">
+        {%- if live_conflicts %}
+        &#9888;&#65039; <b>{{ live_conflicts|length }}</b> field{{ 's' if live_conflicts|length != 1 }}
+        {{ 'were' if live_conflicts|length != 1 else 'was' }} changed both here and on
+        <b>{{ active_name or "this chip" }}</b>:
+        {% for p in live_conflicts[:3] %}<code>{{ p }}</code>{{ ', ' if not loop.last }}{% endfor %}
+        {%- if live_conflicts|length > 3 %} and {{ live_conflicts|length - 3 }} more{% endif %}
+        &mdash; choose which to keep.
+        {%- else %}
         &#9888;&#65039; The live state files for <b>{{ active_name or "this chip" }}</b> changed on disk
         {%- if live_drift_count %} &mdash; <b>{{ live_drift_count }}</b> value{{ 's' if live_drift_count != 1 }} differ{{ '' if live_drift_count != 1 else 's' }}
         {%- endif %} &mdash; you are viewing the working state, which may show an <b>older chip</b>.
+        {%- endif %}
     </span>
     {# This banner only renders when the working copy MAY hold unapplied
        edits (clean copies are auto-synced silently) — so the discard path

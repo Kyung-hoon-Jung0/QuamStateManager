@@ -3524,9 +3524,23 @@ window.applyEditsToLive = function () {
                         // the row of the policy table that is supposed to ask.
                         // Nothing failed and no test saw it, because the pin
                         // posted `dom_dirty=1` by hand.
-                        var _domDirty = !!document.querySelector('.bulk-cell.dirty');
+                        // Report WHICH cells are dirty, not merely that some
+                        // are: the server decides per field now, and a bare
+                        // flag forces it to treat every typed cell as a
+                        // possible collision with everything the chip moved.
+                        // A cell with no dot-path still counts as unnamed dirt
+                        // through the flag, so the honest answer never gets
+                        // weaker than it was.
+                        var _dirtyCells = document.querySelectorAll('.bulk-cell.dirty');
+                        var _domDirty = _dirtyCells.length > 0;
+                        var _q = [];
+                        if (_domDirty) _q.push('dom_dirty=1');
+                        Array.prototype.forEach.call(_dirtyCells, function (c) {
+                            var dp = c.getAttribute('data-dot-path');
+                            if (dp) _q.push('dom_path=' + encodeURIComponent(dp));
+                        });
                         var pp = window.htmx.ajax('POST',
-                            '/auto-sync/pull' + (_domDirty ? '?dom_dirty=1' : ''), {
+                            '/auto-sync/pull' + (_q.length ? '?' + _q.join('&') : ''), {
                             target: '#pending-tray', swap: 'outerHTML',
                         });
                         if (pp && typeof pp.then === 'function') pp.then(_rel, _rel);

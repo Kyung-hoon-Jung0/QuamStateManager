@@ -17,6 +17,7 @@ to take live changes, so the merge is the composition of two permissions the
 user gave — not a new one. Push-only sessions keep docs/117's disarm exactly.
 """
 import json
+import time
 import shutil
 import subprocess
 from pathlib import Path
@@ -914,3 +915,277 @@ class TestTheServerReportsEveryKindOfLoss:
             "an edit that landed during the pull was dropped with "
             "replaced=false — silently: %r" % payload)
         assert payload.get("count", 0) >= 1, payload
+
+class TestAPullAsksOnlyAboutTheFieldTheUserTouched:
+    """The customer's rule: Auto-Sync adopts an external change by itself, and
+    only stops to ask when the SAME field was edited on both sides.
+
+    Before this, one whole-file question -- is the working copy dirty at all --
+    meant an experiment writing T1 while the user edited f_01 raised exactly
+    the prompt an experiment overwriting f_01 raised. Same box, different
+    meaning, so the box stopped meaning anything.
+    """
+
+    def _armed_and_edited(self, env, *, path="qubits.qA1.f_01"):
+        _arm(env, pull=True, push=False, replace=False)
+        assert _edit(env, path=path).status_code == 200
+
+    def test_a_different_field_merges_without_asking(self, env):
+        # The user edited f_01; a node writes T1. Nothing collides.
+        self._armed_and_edited(env)
+        _write_chip(env["live"], _state(f01=5.0e9, t1=9.9e-5))
+        _ctx(env)["live_diverged"] = True
+
+        r = env["client"].post("/auto-sync/pull")
+        # The server does not pull here itself -- it tells the client to press
+        # the door that pulls AND puts the user's edits back on top.
+        assert "autoSyncMergePull" in (r.headers.get("HX-Trigger") or ""), \
+            "a non-colliding live change must resolve itself"
+        assert not _ctx(env).get("live_conflicts")
+
+    def test_the_same_field_still_asks(self, env):
+        # The user edited f_01; a node writes f_01 too. A real collision.
+        self._armed_and_edited(env)
+        _write_chip(env["live"], _state(f01=7.7e9))
+        _ctx(env)["live_diverged"] = True
+
+        r = env["client"].post("/auto-sync/pull")
+        assert r.status_code == 204, "a collision must not resolve itself"
+        assert "autoSyncMergePull" not in (r.headers.get("HX-Trigger") or "")
+        assert _ctx(env)["live_conflicts"] == ["qubits.qA1.f_01"], \
+            "and the refusal must NAME what collided"
+
+    def test_the_signal_names_the_chip(self, env):
+        # Same reason docs/187 R2 put a chip on the push-side signal: the
+        # client presses a door ~2s later, and a chip switch in between must
+        # be a refusal, not a write onto the wrong chip.
+        self._armed_and_edited(env)
+        _write_chip(env["live"], _state(f01=5.0e9, t1=9.9e-5))
+        _ctx(env)["live_diverged"] = True
+
+        trig = json.loads(env["client"].post("/auto-sync/pull").headers["HX-Trigger"])
+        assert trig["autoSyncMergePull"]["chip"], "the signal must name a chip"
+
+    def test_a_typed_but_uncommitted_cell_is_judged_by_its_path(self, env):
+        # The server cannot see a typed grid cell, so the client reports the
+        # PATHS. A cell on a field the chip did not move is not a collision.
+        _arm(env, pull=True, push=False, replace=False)
+        _write_chip(env["live"], _state(f01=5.0e9, t1=9.9e-5))
+        _ctx(env)["live_diverged"] = True
+
+        r = env["client"].post("/auto-sync/pull", data={
+            "dom_dirty": "1", "dom_path": "qubits.qA1.f_01"})
+        assert "autoSyncMergePull" in (r.headers.get("HX-Trigger") or "")
+
+    def test_a_typed_cell_on_the_moved_field_does_ask(self, env):
+        _arm(env, pull=True, push=False, replace=False)
+        _write_chip(env["live"], _state(f01=7.7e9))
+        _ctx(env)["live_diverged"] = True
+
+        r = env["client"].post("/auto-sync/pull", data={
+            "dom_dirty": "1", "dom_path": "qubits.qA1.f_01"})
+        assert r.status_code == 204
+        assert _ctx(env)["live_conflicts"] == ["qubits.qA1.f_01"]
+
+    def test_unnamed_dom_dirt_is_still_dirt(self, env):
+        # A dirty cell carrying no dot-path must never read as "nothing typed":
+        # the flag alone has to keep the old, conservative answer.
+        _arm(env, pull=True, push=False, replace=False)
+        _write_chip(env["live"], _state(f01=7.7e9))
+        _ctx(env)["live_diverged"] = True
+
+        r = env["client"].post("/auto-sync/pull", data={"dom_dirty": "1"})
+        assert r.status_code == 204
+
+    def test_a_clean_copy_is_untouched_by_any_of_this(self, env):
+        # No edits at all -> the plain pull, exactly as before.
+        _arm(env, pull=True, push=False, replace=False)
+        _write_chip(env["live"], _state(f01=7.7e9))
+        _ctx(env)["live_diverged"] = True
+
+        r = env["client"].post("/auto-sync/pull", data={"dom_dirty": "0"})
+        assert r.status_code == 200
+        assert "autoSyncMergePull" not in (r.headers.get("HX-Trigger") or "")
+
+    def test_a_verdict_that_could_not_be_computed_ASKS(self, env):
+        """The one direction that must never fail open.
+
+        If the live chip cannot be read, SM does not know whether anything
+        collides -- and "no conflict" would mean pulling over the user's edits
+        with no prompt and no Ctrl+Z. Unknown has to mean ask.
+        """
+        self._armed_and_edited(env)
+        _write_chip(env["live"], _state(f01=5.0e9, t1=9.9e-5))  # a SAFE change
+        _ctx(env)["live_diverged"] = True
+
+        import quam_state_manager.web.routes as rt
+        real = rt._auto_pull_verdict
+        rt._auto_pull_verdict = lambda ctx, dom: None      # the read failed
+        try:
+            r = env["client"].post("/auto-sync/pull")
+        finally:
+            rt._auto_pull_verdict = real
+        assert r.status_code == 204, "an uncomputable verdict must not pull"
+        assert "autoSyncMergePull" not in (r.headers.get("HX-Trigger") or "")
+
+    def test_replace_still_means_replace(self, env):
+        # The checkbox's own semantics are not touched by the new verdict: a
+        # user who ticked replace asked for the live chip to win outright.
+        self._armed_and_edited(env)
+        _ctx(env)["auto_apply"]["pull_replace"] = True
+        _write_chip(env["live"], _state(f01=7.7e9))
+        _ctx(env)["live_diverged"] = True
+
+        r = env["client"].post("/auto-sync/pull")
+        assert r.status_code == 200, "replace pulls through the collision"
+        assert "autoSyncMergePull" not in (r.headers.get("HX-Trigger") or "")
+
+class TestTheSignalDoesNotWithholdAMergeableePull:
+    """`_auto_pull_due` is what tells the client a pull is worth pressing.
+
+    It carried the same whole-file "is anything dirty" test as the pull, for a
+    good reason at the time: do not advertise a pull the policy will refuse, or
+    the client POSTs a 204 every 5 s forever and each one takes the shared
+    apply latch. But the policy stopped refusing the non-colliding case, so
+    that guard became the thing preventing the resolution.
+    """
+
+    def _armed_edited_and_moved(self, env, *, same_field):
+        _arm(env, pull=True, push=False, replace=False)
+        assert _edit(env, path="qubits.qA1.f_01").status_code == 200
+        if same_field:
+            _write_chip(env["live"], _state(f01=7.7e9))
+        else:
+            _write_chip(env["live"], _state(f01=5.0e9, t1=9.9e-5))
+        _ctx(env)["live_diverged"] = True
+
+    def test_a_non_colliding_change_is_advertised(self, env):
+        self._armed_edited_and_moved(env, same_field=False)
+        with env["app"].app_context():
+            assert routes_mod._auto_pull_due(_ctx(env)) is True
+
+    def test_a_collision_is_advertised_once_then_falls_silent(self, env):
+        # Once. The pull has to run to learn there IS a collision -- what must
+        # not happen is it being re-advertised on every poll afterwards.
+        self._armed_edited_and_moved(env, same_field=True)
+        ctx = _ctx(env)
+        with env["app"].app_context():
+            assert routes_mod._auto_pull_due(ctx) is True, "the first look is allowed"
+        assert env["client"].post("/auto-sync/pull").status_code == 204
+        assert ctx["live_conflicts"] == ["qubits.qA1.f_01"]
+        with env["app"].app_context():
+            assert routes_mod._auto_pull_due(ctx) is False,                 "a known, unchanged collision must stop being advertised"
+
+    def test_a_new_live_write_re_arms_the_signal(self, env):
+        # The remembered refusal is only valid while nothing moved. Another
+        # write is a new question, and must be asked again.
+        self._armed_edited_and_moved(env, same_field=True)
+        assert env["client"].post("/auto-sync/pull").status_code == 204
+        ctx = _ctx(env)
+        with env["app"].app_context():
+            assert routes_mod._auto_pull_due(ctx) is False
+        time.sleep(0.02)
+        _write_chip(env["live"], _state(f01=8.8e9))     # they write again
+        with env["app"].app_context():
+            assert routes_mod._auto_pull_due(ctx) is True
+
+    def test_a_new_edit_re_arms_it_too(self, env):
+        self._armed_edited_and_moved(env, same_field=True)
+        assert env["client"].post("/auto-sync/pull").status_code == 204
+        ctx = _ctx(env)
+        with env["app"].app_context():
+            assert routes_mod._auto_pull_due(ctx) is False
+        assert _edit(env, path="qubits.qA1.T1", value="3e-05").status_code == 200
+        with env["app"].app_context():
+            assert routes_mod._auto_pull_due(ctx) is True
+
+    def test_undoing_the_colliding_edit_re_arms_the_signal(self, env):
+        """Ctrl+Z on the colliding edit leaves nothing to decide.
+
+        (I first kept `len(change_log)` in the fingerprint believing undo did
+        not move `mutation_seq`. It does -- the sweep's own guard assertion
+        caught that, and the redundant term was removed. The BEHAVIOUR is still
+        worth pinning: this is what a user actually does when told two writes
+        collided.)
+        """
+        self._armed_edited_and_moved(env, same_field=True)
+        assert env["client"].post("/auto-sync/pull").status_code == 204
+        ctx = _ctx(env)
+        with env["app"].app_context():
+            assert routes_mod._auto_pull_due(ctx) is False
+        assert env["client"].post("/undo").status_code in (200, 204)
+        assert not ctx["store"].change_log, "the edit is gone"
+        with env["app"].app_context():
+            assert routes_mod._auto_pull_due(ctx) is True
+
+    def test_a_resolved_verdict_is_forgotten(self, env):
+        # The merge path clears the record. Leaving it behind would let a
+        # later, unrelated state be judged by a verdict about an older one.
+        self._armed_edited_and_moved(env, same_field=True)
+        assert env["client"].post("/auto-sync/pull").status_code == 204
+        ctx = _ctx(env)
+        assert ctx.get("live_conflict_at"), "the refusal was remembered"
+
+        time.sleep(0.02)
+        _write_chip(env["live"], _state(f01=5.1e9, t1=9.9e-5))  # now agrees with the edit
+        r = env["client"].post("/auto-sync/pull")
+        assert "autoSyncMergePull" in (r.headers.get("HX-Trigger") or "")
+        assert not ctx.get("live_conflict_at"),             "a resolved state must not keep the refusal"
+
+    def test_a_save_re_arms_the_signal(self, env):
+        # The verdict before and after a save are different answers about the
+        # same edits: saved-but-unapplied content has no originals in memory,
+        # so the honest verdict becomes "cannot tell -- ask". The fingerprint
+        # has to see that, and `mutation_seq` does not move for a save.
+        self._armed_edited_and_moved(env, same_field=False)
+        ctx = _ctx(env)
+        with env["app"].app_context():
+            sig_before = routes_mod._auto_pull_sig(ctx)
+        ctx["working_dirty"] = True              # what /save records
+        with env["app"].app_context():
+            sig_after = routes_mod._auto_pull_sig(ctx)
+        assert sig_before != sig_after, \
+            "a save changes the answer, so it must change the fingerprint"
+
+    def test_a_clean_copy_is_advertised_exactly_as_before(self, env):
+        _arm(env, pull=True, push=False, replace=False)
+        _write_chip(env["live"], _state(f01=7.7e9))
+        _ctx(env)["live_diverged"] = True
+        with env["app"].app_context():
+            assert routes_mod._auto_pull_due(_ctx(env)) is True
+
+    def test_an_unarmed_session_is_never_advertised(self, env):
+        _write_chip(env["live"], _state(f01=7.7e9))
+        _ctx(env)["live_diverged"] = True
+        with env["app"].app_context():
+            assert routes_mod._auto_pull_due(_ctx(env)) is False
+
+class TestTheBannerNamesTheCollision:
+    """A banner that appears for everything says nothing.
+
+    Since a non-colliding live change now merges silently, an appearance of
+    this banner means a genuine two-sided edit -- so it names the fields
+    instead of counting values over a whole chip.
+    """
+
+    def test_it_names_the_colliding_fields(self, env):
+        _arm(env, pull=True, push=False, replace=False)
+        assert _edit(env, path="qubits.qA1.f_01").status_code == 200
+        _write_chip(env["live"], _state(f01=7.7e9))
+        _ctx(env)["live_diverged"] = True
+        assert env["client"].post("/auto-sync/pull").status_code == 204
+
+        html = env["client"].get("/bulk").get_data(as_text=True)
+        assert "qubits.qA1.f_01" in html, "the banner must name what collided"
+        assert "changed both here and on" in html
+
+    def test_with_no_verdict_it_reads_exactly_as_before(self, env):
+        # Nothing established a per-field verdict (no armed session), so the
+        # historical wording stands -- this change adds a case, never replaces
+        # the old one.
+        _write_chip(env["live"], _state(f01=7.7e9))
+        _ctx(env)["live_diverged"] = True
+        html = env["client"].get("/bulk").get_data(as_text=True)
+        assert "changed on disk" in html
+        assert "changed both here and on" not in html
+

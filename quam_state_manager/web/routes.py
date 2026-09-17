@@ -1052,6 +1052,35 @@ def _drift_count(seen: dict) -> int | None:
         return None
 
 
+def _drift_conflicts(ctx: dict, seen: dict) -> list[str]:
+    """Which drifting paths the user had ALSO edited — free, same contents.
+
+    Mirrors ``_drift_count``: the reconcile had to read both sides to reach its
+    verdict, so this adds no live read to a surface that renders on every page.
+    Returns [] when it cannot tell, which reads as "nothing named" — the banner
+    then says what it always said rather than inventing a field.
+    """
+    live, work = seen.get("live"), seen.get("working")
+    store = ctx.get("store")
+    if not live or not work or store is None:
+        return []
+    try:
+        from quam_state_manager.core import sync_conflict
+        entries = Differ().diff(work, live, ignore_keys=set())
+        with store._lock:
+            log = list(getattr(store, "change_log", None) or [])
+        verdict = sync_conflict.classify(
+            live_by_path={e.dot_path: e.new_value for e in entries},
+            change_log=log,
+            reapply_paths=tuple((ctx.get("pending_reapply") or {}).keys()),
+            working_dirty=bool(ctx.get("working_dirty")),
+        )
+        return list(verdict.conflicts)
+    except Exception:       # noqa: BLE001 — naming a field is never worth an error page
+        logger.debug("drift conflicts failed", exc_info=True)
+        return []
+
+
 def _reconcile_cached_quam_ctx(key: str, ctx: dict, *,
                                auto_adopt: bool = True) -> None:
     """Refresh an in-memory cached QUAM context whose live mtimes moved.
@@ -1190,8 +1219,14 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict, *,
             ctx["live_diverged"] = result == working_copy.RECONCILE_STALE
             if result == working_copy.RECONCILE_STALE:
                 ctx["live_drift_count"] = _drift_count(seen)
+                # Name the two-sided edits here, not only once a pull has run:
+                # the banner goes up on THIS verdict, and a banner that cannot
+                # say what collided is the one the user learns to dismiss.
+                ctx["live_conflicts"] = _drift_conflicts(ctx, seen)
             else:
                 ctx.pop("live_drift_count", None)
+                ctx.pop("live_conflicts", None)
+                ctx.pop("live_conflict_at", None)
 
 
 def _probe_readonly(folder) -> bool:
@@ -3956,6 +3991,11 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         # exactly where pull is wanted).
         "auto_pull_armable": _auto_pull_armable(),
         "applied_log": _applied_log_rows(),
+        # The fields the live chip moved that the user had ALSO edited.
+        # Auto-Sync adopts everything else without asking, so when the
+        # banner does appear it can say which fields it is about rather
+        # than "N values differ" over a whole chip.
+        "live_conflicts": (_active_ctx() or {}).get("live_conflicts") or [],
         # docs/20 v2: first-open "name this chip?" banner payload (None when
         # named / declined / archive / no chip) + declared-but-unreachable
         # extras.data_folder values (muted note, never an error).
@@ -15898,6 +15938,44 @@ def auto_sync_set():
     return resp
 
 
+def _auto_pull_verdict(ctx: dict, dom_paths) -> "object | None":
+    """Which of the user's edits the live chip actually collides with.
+
+    Auto-Sync used to ask one whole-file question -- is the working copy dirty
+    at all? -- so an experiment writing q2 while the user edited q1 raised the
+    same prompt as one overwriting the field being typed into. The user
+    reported the consequence: with Auto-Sync on, edits on both sides make the
+    prompts confusing, and the sync control changes under you.
+
+    Returns a ``sync_conflict.Verdict``, or None when it could not be computed
+    (a live read failure) -- which the caller must treat as "ask", never as
+    "no conflict". The live read is the one this route was about to do anyway.
+    """
+    from quam_state_manager.core import sync_conflict
+    wc, store = ctx.get("working_copy"), ctx.get("store")
+    if wc is None or store is None:
+        return None
+    try:
+        live_state, live_wiring = working_copy.read_live(wc)
+        entries = Differ().diff(store, (live_state, live_wiring), ignore_keys=set())
+    except (FileNotFoundError, OSError, ValueError, safe_io.LiveFileError):
+        logger.info("auto-pull verdict: live unreadable -- asking instead")
+        return None
+    except Exception:            # noqa: BLE001 -- a verdict is never worth a 500
+        logger.warning("auto-pull verdict failed", exc_info=True)
+        return None
+    live_by_path = {e.dot_path: e.new_value for e in entries}
+    with store._lock:
+        log = list(getattr(store, "change_log", None) or [])
+    return sync_conflict.classify(
+        live_by_path=live_by_path,
+        change_log=log,
+        dom_paths=dom_paths,
+        reapply_paths=tuple((ctx.get("pending_reapply") or {}).keys()),
+        working_dirty=bool(ctx.get("working_dirty")),
+    )
+
+
 @bp.route("/auto-sync/pull", methods=["POST"])
 def auto_sync_pull():
     """Perform (or decline) one automatic pull. The POLICY lives here.
@@ -15928,10 +16006,45 @@ def auto_sync_pull():
     # filled column with no prompt. Treating the client's report as dirt is the
     # only way this decision can be made honestly.
     dom_dirty = request.values.get("dom_dirty") in ("1", "true")
-    if (_quam_ctx_dirty(ctx) or dom_dirty) and not sess.get("pull_replace"):
-        # THE line docs/87 draws, kept: SM does not choose between the user's
-        # work and the live chip. The banner is already showing.
-        return "", 204
+    dom_paths = tuple(p for p in request.values.getlist("dom_path") if p)
+
+    # Per-field, not whole-file. Arming Auto-Sync means "adopt what the chip
+    # says"; it cannot have meant "and ask me every time anything anywhere
+    # moves". So a live change that touches NONE of the user's edits is merged
+    # in without a word, and only a real collision -- the same field on both
+    # sides -- is put to the user. The verdict is computed from the change
+    # log's own `old_value`, which is the value the path held before this user
+    # touched it, so "they moved it too" is decided exactly rather than guessed.
+    _dirty = _quam_ctx_dirty(ctx) or dom_dirty
+    if _dirty:
+        verdict = _auto_pull_verdict(ctx, dom_paths)
+        if verdict is None or verdict.must_ask:
+            # THE line docs/87 draws, kept: SM does not choose between the
+            # user's work and the live chip. The banner is already showing,
+            # and now it can name the fields that actually collide.
+            _paths = list(getattr(verdict, "conflicts", ()) or ())
+            ctx["live_conflicts"] = _paths          # the banner names these
+            ctx["live_conflict_at"] = {"sig": _auto_pull_sig(ctx), "paths": _paths}
+            if not sess.get("pull_replace"):
+                return "", 204
+        elif not sess.get("pull_replace"):
+            # Nothing collides. Take the live changes and put the user's edits
+            # back on top, through the door that already does exactly that
+            # (`/state/sync?mode=reapply`) rather than a second merge written
+            # here -- the same division docs/187 chose for the push side: the
+            # server decides, the client presses one tested door.
+            ctx.pop("live_conflicts", None)
+            ctx.pop("live_conflict_at", None)
+            resp = make_response("", 204)
+            resp.headers["HX-Trigger"] = json.dumps({"autoSyncMergePull": {
+                "chip": _active_chip_token(),
+                "external": list(verdict.external)[:50],
+                "kept": len(verdict.mine),
+            }})
+            return resp
+        else:
+            ctx.pop("live_conflicts", None)
+            ctx.pop("live_conflict_at", None)
 
     wc = ctx.get("working_copy")
     if wc is None:
@@ -16582,6 +16695,30 @@ def _reset_baseline_after_apply(ctx) -> None:
         logger.warning("baseline reset after apply-to-live failed", exc_info=True)
 
 
+def _auto_pull_sig(ctx: dict | None) -> tuple:
+    """A cheap fingerprint of everything the per-field verdict depends on.
+
+    Two `os.stat`s and two in-memory reads -- no live CONTENT is opened, which
+    is the property `_auto_pull_due` is built on. It exists so the expensive
+    verdict (which does read live) is computed at most once per (my edits x
+    their writes) state, instead of on every 5 s drift poll.
+    """
+    store = (ctx or {}).get("store")
+    wc = (ctx or {}).get("working_copy")
+    # mutation_seq covers every edit AND every undo (undo_group bumps it too --
+    # measured, after a first cut carried len(change_log) beside it on the
+    # belief that it did not). working_dirty is NOT covered by it: a save moves
+    # content to disk without a mutation, so it is carried separately.
+    seq = getattr(store, "mutation_seq", 0) if store is not None else 0
+    mt: tuple = ()
+    if wc is not None:
+        try:
+            mt = safe_io.state_wiring_mtimes(wc.live_folder)
+        except OSError:
+            mt = ()
+    return (seq, mt, bool((ctx or {}).get("working_dirty")))
+
+
 def _auto_pull_due(ctx: dict | None) -> bool:
     """Should the client press /auto-sync/pull right now?
 
@@ -16610,7 +16747,20 @@ def _auto_pull_due(ctx: dict | None) -> bool:
     # is still re-checked at the pull itself — this can only over-offer, never
     # over-pull.)
     if _quam_ctx_dirty(ctx) and not sess.get("pull_replace"):
-        return False
+        # A dirty working copy no longer means "the policy will refuse this".
+        # Since the pull decides per FIELD, a live change that touches nothing
+        # the user edited resolves itself -- and withholding the signal here
+        # would be the one thing stopping it, which is precisely the customer's
+        # complaint (the prompt appears; nothing resolves).
+        #
+        # The verdict needs a live READ, which this function must not do. So it
+        # is computed once by the pull and remembered against a fingerprint of
+        # what it depended on; while nothing has moved, the remembered "there
+        # is a real collision" keeps the old silence, and the 204-every-5s spin
+        # the original comment guarded against cannot come back.
+        rec = ctx.get("live_conflict_at")
+        if rec and rec.get("sig") == _auto_pull_sig(ctx):
+            return False
     return True
 
 

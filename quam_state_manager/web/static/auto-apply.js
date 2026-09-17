@@ -232,6 +232,29 @@
                   + '\u21c4 Pull & apply to finish it.', 'warning');
         });
     });
+    document.addEventListener('autoSyncMergePull', function (e) {
+        /* The live chip moved somewhere the user has NOT edited, so there is
+           nothing to decide: take the live values and put the user's edits
+           back on top. The server already established that per field -- this
+           side only presses the door that does it (`reapply` keeps the edits
+           pending; only an Apply writes the chip, so the covenant is intact).
+
+           Silent by design. Announcing a merge that resolved itself is the
+           noise this replaced: the user armed Auto-Sync precisely so that
+           adopting the chip's own changes would not need them. */
+        var d = (e && e.detail) || {};
+        var chip = d.chip || '';
+        _whenLatchFree(function () {
+            if (window.doStateSync) window.doStateSync('reapply', false, false, chip);
+        }, 40,
+        function () {
+            /* Same bound, same reason, same honesty as the push side: the
+               drift banner is still up, so say what would finish it. */
+            toast('Auto-Sync could not take the live changes just now — '
+                  + 'another write was still in flight. Your edits are safe; '
+                  + 'press \u21c4 Pull & apply to finish it.', 'warning');
+        });
+    });
     // htmx fires a plain (detail-less) event for string triggers too
     document.addEventListener('autoApplyApplied', function () { applyLogState(); });
 
