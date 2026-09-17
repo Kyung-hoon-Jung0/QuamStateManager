@@ -164,13 +164,37 @@ def _get(env, url):
 
 class TestTheDiffPage:
     def test_two_snapshots_show_only_what_differs(self, env):
+        # ?view=tree explicitly: this pins the TREE's pruning, and since
+        # docs/197 the default view is the table, so asking for the tree is now
+        # something a caller states rather than something it inherits.
         a, b = env["refs"][0], env["refs"][2]
-        html = _get(env, f"/diff?a={a}&b={b}").get_data(as_text=True)
+        html = _get(env, f"/diff?a={a}&b={b}&view=tree").get_data(as_text=True)
         assert "diff-tree-payload" in html
         payload = json.loads(html.split('id="diff-tree-payload" type="application/json">')[1]
                              .split("</script>")[0])
         assert payload["a"] == {"qubits": {"qA1": {"T1": 1.0e-5}}}
         assert payload["b"] == {"qubits": {"qA1": {"T1": 3.0e-5}}}
+
+    def test_the_default_view_is_the_table(self, env):
+        """docs/197 (customer): "기본을 table로 합시다."
+
+        The tree is the better surface for "where does this key live"; the
+        question a comparison opens with is "what is different", which is a
+        list of rows. 3+ sources already land on panes -- also a table -- so
+        this makes the 2-source case agree rather than being the odd one out.
+        """
+        a, b = env["refs"][0], env["refs"][2]
+        html = _get(env, f"/diff?a={a}&b={b}").get_data(as_text=True)
+        assert "diff-wb-list" in html, "no view= must render the table"
+        # the bare id also occurs inside an always-emitted getElementById, so
+        # pin the ELEMENT rather than the substring
+        assert 'id="diff-tree-payload"' not in html, "and not the tree"
+
+    def test_an_explicit_view_still_wins(self, env):
+        a, b = env["refs"][0], env["refs"][2]
+        html = _get(env, f"/diff?a={a}&b={b}&view=tree").get_data(as_text=True)
+        assert 'id="diff-tree-payload"' in html
+        assert "diff-wb-list" not in html
 
     def test_the_counts_lead_with_what_changed(self, env):
         html = _get(env, f"/diff?a={env['refs'][0]}&b={env['refs'][2]}").get_data(as_text=True)

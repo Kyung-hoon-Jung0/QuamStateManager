@@ -18429,7 +18429,12 @@ def diff_view():
     if len(srcs) >= 3:
         view = "panes"
     elif not view:
-        view = "tree"
+        # docs/197 (customer): the TABLE is the default. The tree is the better
+        # surface for "where does this key live"; the question a comparison
+        # opens with is "what is different", which is a list of rows. 3+ sources
+        # already land on panes -- also a table -- so this makes the 2-source
+        # case agree with the 3-source one instead of being the odd one out.
+        view = "list"
     base = min(base, max(0, len(srcs) - 1))
 
     payload = None

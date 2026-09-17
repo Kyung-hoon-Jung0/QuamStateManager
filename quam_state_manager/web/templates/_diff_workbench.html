@@ -32,9 +32,26 @@
     {% for i in range(_nslots) %}
     {% set _ref = slot_refs[i] %}
     {% set _src = slot_srcs[i] %}
-    {% if i == 1 %}<span class="diff-vs">vs</span>{% endif %}
+    {# The separator is a DIRECTION, not a versus. Sources are sorted oldest
+       first (routes._oldest_first), so left-to-right already IS old -> new --
+       it just never said so, and a bare "vs" between A and B with nothing
+       after C read as "A against B, plus a stray C". An arrow between every
+       adjacent pair says the one thing the row is for. #}
+    {% if i >= 1 and _ref %}<span class="diff-vs" aria-hidden="true"
+         title="older on the left, newer on the right">&rarr;</span>{% endif %}
     <label class="diff-side{% if i >= 2 %} diff-side-c{% endif %}">
       <span class="diff-side-tag">{{ slots[i] | upper }}</span>
+      {# Drop THIS source. It clears the select and lets the form's own change
+         trigger do the rest: the server compacts the remaining slots, so no
+         URL is hand-built here and no gap is left behind. Offered only while
+         there is a source to drop and at least two would survive -- below two
+         the workbench has nothing to compare. #}
+      {% if _ref and (srcs | length) > 2 %}
+      <button type="button" class="diff-side-drop" tabindex="-1"
+              title="Remove this column"
+              aria-label="Remove column {{ slots[i] | upper }}"
+              data-slot="{{ slots[i] }}">&#128465;</button>
+      {% endif %}
       <select name="{{ slots[i] }}">
         <option value="">{{ '— pick a source —' if i < 2 else ('— optional third —' if i == 2 else '— optional —') }}</option>
         {% for o in options %}
@@ -48,6 +65,44 @@
     {% endfor %}
     {# docs/141 4y: the Compare hub is retired as a destination -- no link. #}
   </form>
+  <script>
+  (function () {
+      /* One delegated handler for the per-column remove buttons. Clearing the
+         select and firing `change` is the whole action: the form already
+         carries tab/view/base and every other slot, and the server compacts
+         the surviving sources, so a dropped middle column does not leave a
+         gap. Building a URL here instead would have to re-spell five slot
+         parameters -- which is how docs/141 4ac's Show-more lost every slot
+         past `a`. */
+      var form = document.currentScript && document.currentScript.previousElementSibling;
+      if (!form || form.tagName !== 'FORM') {
+          form = document.querySelector('#diff-root .diff-wb-pickers');
+      }
+      if (!form || form._dropBound) return;
+      form._dropBound = true;
+      form.addEventListener('click', function (e) {
+          var btn = e.target.closest && e.target.closest('.diff-side-drop');
+          if (!btn) return;
+          e.preventDefault();
+          var sel = form.querySelector('select[name="' + btn.getAttribute('data-slot') + '"]');
+          if (!sel) return;
+          /* The baseline indexes the COMPACTED list, so dropping a column to
+             its left would silently re-base the comparison onto a different
+             source. Step it back by one instead. */
+          var base = form.querySelector('input[name="base"]');
+          if (base) {
+              var slots = Array.prototype.map.call(
+                  form.querySelectorAll('select'), function (x) { return x.name; });
+              var gone = slots.indexOf(sel.name);
+              var cur = parseInt(base.value, 10) || 0;
+              if (gone >= 0 && gone < cur) base.value = String(cur - 1);
+              else if (gone === cur) base.value = '0';
+          }
+          sel.value = '';
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+  })();
+  </script>
 
   <div class="ph-tabs diff-wb-tabs">
     {% for t in tabs %}

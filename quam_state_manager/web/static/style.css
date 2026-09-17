@@ -12155,7 +12155,26 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
     font-weight: 700; font-size: 0.8em; padding: 0.1rem 0.4rem; border-radius: 4px;
     background: var(--color-neutral-bg); color: var(--color-neutral-text);
 }
-.diff-vs { color: var(--pico-muted-color); font-size: 0.85em; }
+/* docs/197: the separator is a DIRECTION. Sources are already sorted
+   oldest-first, so left-to-right IS old -> new -- this is what says it.
+   Identity blue, like the 2-way badge below, because they mean the same
+   thing on the same page. */
+.diff-vs {
+    color: var(--pico-primary); font-size: 1.05em; font-weight: 600;
+    opacity: 0.75; user-select: none;
+}
+/* Remove this column. Quiet until the row is hovered -- it sits beside a
+   select people use constantly, and a always-lit delete next to a control
+   you aim at all day is an accident waiting to happen. */
+.diff-side-drop {
+    background: none; border: 0; padding: 0 0.15rem; margin: 0;
+    width: auto; line-height: 1; cursor: pointer;
+    font-size: 0.9em; color: var(--pico-muted-color);
+    opacity: 0; transition: opacity 0.12s ease, color 0.12s ease;
+}
+.diff-wb-pickers:hover .diff-side-drop,
+.diff-side-drop:focus-visible { opacity: 1; }
+.diff-side-drop:hover { color: var(--color-danger-text, #e05260); }
 .diff-wb-tabs { align-items: center; }
 .diff-view-toggle { margin-left: auto; display: flex; gap: 0.25rem; padding-bottom: 0.2rem; }
 .diff-wb-counts {

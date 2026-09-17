@@ -483,3 +483,82 @@ class TestSearchBox:
         html = _get(env, _url(env, view="panes") + "&q=" + "z" * 500)
         assert 'value="' + "z" * 200 + '"' in html, "the echoed query is capped at 200 chars"
 
+class TestTheRowReadsAsADirection:
+    """docs/197 (customer): "old가 왼쪽부터, new가 오른쪽에 정렬되어서 -> 이런식으로
+    화살표가 old에서 new로 업데이트된 것처럼 표현이 되어야 하는데 지금은 그렇게 안나와서."
+
+    The ORDER was already right -- `routes._oldest_first` puts the oldest in
+    slot A (pinned since 2026-09-11), and a real-Chrome run on the customer's
+    own archive confirmed A=#39 16:39:39, B=#40 16:42:54, C=#41 16:43:06.
+    What was missing is that nothing SAID so: the row read
+    "A [#39] vs B [#40] | C [#41]" -- a versus between the first two and
+    nothing at all after the third.
+    """
+
+    def test_every_adjacent_pair_carries_an_arrow(self, env):
+        html = _get(env, _url(env))
+        assert html.count('class="diff-vs"') == 2, \
+            "an arrow belongs between every adjacent pair, not only the first"
+        assert "&rarr;" in html
+
+    def test_the_arrow_says_which_way_it_points(self, env):
+        html = _get(env, _url(env))
+        assert "older on the left, newer on the right" in html
+
+    def test_two_sources_get_exactly_one_arrow(self, env):
+        html = _get(env, _url(env, three=False))
+        assert html.count('class="diff-vs"') == 1
+
+    def test_the_word_versus_is_gone(self, env):
+        # It said the wrong thing: a comparison of a chip over time is not a
+        # contest between two runs, it is one run becoming the next.
+        html = _get(env, _url(env))
+        assert ">vs<" not in html
+
+
+class TestAColumnCanBeDropped:
+    """docs/197 (customer): "Diff에서 기존에 선택된거 column에 휴지통 모양 두어서
+    그거 클릭하면 그 column은 삭제되게 합시다." """
+
+    def test_each_filled_slot_offers_a_remove_control(self, env):
+        html = _get(env, _url(env))
+        assert html.count('class="diff-side-drop"') == 3, \
+            "each of the three sources can be dropped"
+        for slot in ("a", "b", "c"):
+            assert f'data-slot="{slot}"' in html
+
+    def test_it_names_the_column_for_a_screen_reader(self, env):
+        html = _get(env, _url(env))
+        assert 'aria-label="Remove column A"' in html
+
+    def test_two_sources_offer_none(self, env):
+        # Below two there is nothing left to compare, so removing the second is
+        # not an action the workbench should offer at all.
+        html = _get(env, _url(env, three=False))
+        assert 'class="diff-side-drop"' not in html,             "the bare name also appears in the handler's selector"
+
+    def test_an_empty_slot_offers_none(self, env):
+        # D's picker renders once C carries a source, but an empty slot has
+        # nothing to drop.
+        html = _get(env, _url(env))
+        assert 'name="d"' in html, "the optional D picker is there"
+        assert 'data-slot="d"' not in html, "and carries no remove control"
+
+    def test_dropping_is_the_form_s_own_change(self, env):
+        # The handler clears the select and fires `change`; the form already
+        # carries tab/view/base and every other slot, and the server compacts
+        # what survives. Hand-building a URL here would have to re-spell five
+        # slot parameters, which is how docs/141 4ac's Show-more lost every
+        # slot past `a`.
+        html = _get(env, _url(env))
+        assert "new Event('change'" in html
+        assert "diff-wb-pickers" in html
+
+    def test_the_baseline_follows_a_drop_to_its_left(self, env):
+        # `base` indexes the COMPACTED list, so dropping a column left of the
+        # baseline would silently re-base the comparison onto a different
+        # source. The handler steps it back instead.
+        html = _get(env, _url(env))
+        assert 'input[name="base"]' in html
+        assert "gone < cur" in html
+
