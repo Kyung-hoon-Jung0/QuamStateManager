@@ -3,6 +3,8 @@
 view by a C column and the figures tab by a third column; figures are the
 runs' own images served by ref + name, one row per figure name."""
 from __future__ import annotations
+import shutil
+import subprocess
 
 import json
 import re
@@ -561,4 +563,20 @@ class TestAColumnCanBeDropped:
         html = _get(env, _url(env))
         assert 'input[name="base"]' in html
         assert "gone < cur" in html
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_diff_drop_selfcheck():
+    """The column-drop handler, EXECUTED out of the real template.
+
+    docs/197 shipped with render pins only — they prove the button is there and
+    correctly gated, and nothing about what pressing it does. docs/187's lesson
+    was this exact gap.
+    """
+    root = Path(__file__).resolve().parents[1]
+    proc = subprocess.run(["node", str(root / "tests" / "diff_drop_selfcheck.cjs")],
+                          capture_output=True, text=True, cwd=str(root), timeout=180)
+    if proc.returncode == 2 and "jsdom not installed" in (proc.stderr or ""):
+        pytest.skip("jsdom not installed")
+    assert proc.returncode == 0, (
+        f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}")
 

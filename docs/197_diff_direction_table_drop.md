@@ -111,3 +111,49 @@ class/id name I asserted on also occurs inside a script that *looks it up*
 (`diff-tree-payload` inside `getElementById`, `diff-side-drop` inside the
 handler's own selector). Both now pin the element — `id="…"`, `class="…"` —
 rather than the bare substring.
+
+---
+
+## 5. Self-review: the drop handler had no executable pin
+
+§4's pins are all **server-side render checks**. They prove the button is there,
+carries its slot, names its column for a screen reader, and is correctly
+withheld on an empty slot and at two sources. They prove **nothing about what
+pressing it does** — which is the whole feature, and it is client code.
+
+That is the gap docs/187 named in its own review: *"the four client pins were
+greps over fixed character windows … replaced by `autosync_merge_selfcheck.cjs`,
+which dispatches the real events at the real file."*
+
+`tests/diff_drop_selfcheck.cjs` now does that here. It **extracts the handler
+from the template by its own marker** rather than restating it — a copy in the
+test would keep passing while the shipped one rotted — and dispatches real
+clicks:
+
+| | |
+|---|---|
+| D1 | the press clears that slot and fires exactly one `change` |
+| D2 | every other slot, the tab and the view are untouched (why no URL is hand-built) |
+| D3 | dropping left of the baseline steps it back — the comparison keeps its baseline |
+| D4 | dropping right of it leaves it alone |
+| D5 | dropping the baseline itself falls back to the first survivor |
+| D6 | a click on a select — which the handler is delegated over — drops nothing |
+| D7 | **re-binding is idempotent**: the template's script re-runs on every htmx swap of `#diff-root`, and a second binding would issue two requests for one press |
+| D8 | an empty optional slot has no control, so nothing can drop it |
+
+19 assertions, **sweep 7/7 red**, with a pytest driver so it cannot skip
+silently.
+
+**The handler was correct** — including D7, which was the real worry. This round
+added the evidence, not a fix. Worth saying plainly: a review that finds nothing
+has still moved something, because "it works" was an assumption before and is a
+measurement now.
+
+One reasoning check that did NOT turn into a bug, recorded because it nearly
+did: the handler indexes `base` by the position of the `<select>` among its
+siblings, while `base` actually indexes the **compacted source list**. Those
+differ the moment a filled slot follows an empty one. They never do — the server
+compacts (`routes.py:18408-18419`, docs/141 §4ac), so the only empty picker is
+the trailing optional one, which shifts nothing before it. The math is safe
+*because of* a property of the server, not of the handler, which is exactly the
+kind of coupling worth writing down.
