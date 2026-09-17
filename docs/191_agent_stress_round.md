@@ -209,7 +209,30 @@ checkbox does not. The focus is put back on **the same control** after the
 swap, and never on a different one -- a Start button replaced by *Stop now*
 must not inherit the press that replaced it.
 
-## 6. Two red pins the round found
+## 6. The approval card and two windows, both pressed by hand
+
+**The approval card is correct end to end.** A pending approval was put in the
+rig's own store (the card is what is under test, not how the approval was
+born), then everything after that was a person: a real click into the editable
+value cell, `654` typed character by character, and a real press on *Write to
+chip*. The chip moved 600 -> **654** -- the edited number, not the proposed one
+-- the card left the feed, and a toast said "written to the chip" (my first
+probe sampled 3 s late and read silence; the toast lives 3.5 s and had gone).
+A second approval pressed *Reject* wrote nothing: the chip stayed at 654.
+
+**Two windows agree without a reload.**
+
+| what one window did | what the other saw |
+|---|---|
+| A typed `/run …` and sent it | B showed the DRAFT card in ~4 s |
+| A pressed Start | A showed RUNNING at once (the F01 fix), B in ~5 s |
+| B ticked observer | B lost Start/Cancel; A kept them -- the flag is per window |
+| A pressed Reject on an approval | B dropped the decided card in ~5 s |
+
+Zero console or network errors in either window (the one dialog entry is the
+Reject note prompt, which is the product asking).
+
+## 7. Two red pins the round found
 
 Neither is a product defect; both had been failing quietly, which is worse than
 either.
