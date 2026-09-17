@@ -59,7 +59,7 @@
     {% for g in groups %}
     <div class="ph-change-group">
       <div class="ph-change-head">
-        <span class="ph-change-when">{{ g.when }}</span>
+        <span class="ph-change-when">{{ (g.timestamp or "") | ts_local(short=True) }}</span>
         {% if g.trigger %}<span class="history-trigger-badge history-trigger-{{ g.trigger }}">{{ g.trigger }}</span>{% endif %}
         {% if g.experiment %}
           <span class="ph-change-exp" title="{{ g.experiment }}">{% if g.run_id is not none %}#{{ g.run_id }} {% endif %}{{ g.experiment }}</span>

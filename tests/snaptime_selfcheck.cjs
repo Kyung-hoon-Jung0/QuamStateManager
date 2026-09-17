@@ -214,6 +214,44 @@ const TS = '20260917_031400_000';     // 2026-09-17 03:14:00 UTC
      'S14: and the note agrees with it');
 }
 
+// S15 — a data-fmt="short" row renders compactly, in the SAME zone as a full
+//        one beside it. The chips grew their own digit-slicing because there
+//        was no compact form; there is one now, and it must not become a
+//        second clock (docs/201).
+{
+  const win = world('Asia/Seoul');
+  const doc = win.document;
+  doc.body.innerHTML =
+    '<span id="full" class="ts-local" data-utc="2026-09-10T14:15:16Z">f</span>' +
+    '<span id="chip" class="ts-local" data-fmt="short" data-utc="2026-09-10T14:15:16Z">c</span>';
+  win.applyLocalTimes(doc);
+  const full = doc.getElementById('full').textContent;
+  const chip = doc.getElementById('chip').textContent;
+  ok(full !== 'f' && chip !== 'c', 'S15: both localized');
+  ok(chip.length < full.length, 'S15: the chip form is shorter, got ' + chip);
+  // 23:15 or 11:15 PM depending on the locale's own convention -- the point
+  // is that both render the SAME wall clock, not which notation it uses
+  ok(/23:15|11:15/.test(full), 'S15: Seoul is UTC+9, got ' + full);
+  ok(/23:15|11:15/.test(chip), 'S15: and the chip agrees with it, got ' + chip);
+  ok(!/2026/.test(chip), 'S15: the chip drops the year, got ' + chip);
+}
+
+// S16 — a zone change moves the chips too, not just the full rows.
+{
+  const win = world('UTC');
+  const doc = win.document;
+  doc.body.innerHTML =
+    '<select id="tz-select"><option value=""></option><option value="UTC">UTC</option>'
+    + '<option value="Asia/Seoul">Asia/Seoul</option></select>'
+    + '<span class="ts-local" data-fmt="short" data-utc="2026-09-10T14:15:16Z">c</span>';
+  win.applyLocalTimes(doc);
+  const before = doc.querySelector('.ts-local').textContent;
+  win.setDisplayZone('Asia/Seoul');
+  const after = doc.querySelector('.ts-local').textContent;
+  ok(before !== after, 'S16: the chip followed the zone change');
+  ok(/23:15|11:15/.test(after), 'S16: and lands in Seoul time, got ' + after);
+}
+
 if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
-console.log('snaptime_selfcheck: all checks passed (37 assertions)');
+console.log('snaptime_selfcheck: all checks passed (44 assertions)');
 process.exit(0);

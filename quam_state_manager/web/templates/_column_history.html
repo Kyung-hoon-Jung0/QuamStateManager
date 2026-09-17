@@ -62,7 +62,7 @@
                   title="{% if p.run_id is not none %}run #{{ p.run_id }} — {{ p.experiment or '' }}{% elif p.experiment %}{{ p.experiment }}{% else %}Not from an experiment — a {{ p.trigger }} snapshot of the live folder{% endif %}{% if p.has %} &middot; click to fill {{ row.id }}'s cell (Enter there stages it){% endif %}">
             <span class="ch-chip-dot ch-dot-{{ p.trigger }}" aria-hidden="true"></span>
             <code>{% if p.has %}{{ p.display }}{% else %}—{% endif %}</code>
-            <span class="ch-chip-when">{{ p.when }}</span>
+            <span class="ch-chip-when">{{ (p.ts or p.timestamp or "") | ts_local(short=True) }}</span>
             {% if p.is_current %}<span class="ch-chip-now">current</span>{% endif %}
             {% if _prev and p.has and _prev.has %}{{ delta_chip(_prev.raw, p.raw, 'ch-chip-delta') }}{% endif %}
           </button>
@@ -101,7 +101,7 @@
            hx-target="#inspector-pane" hx-swap="innerHTML"
            title="{{ r.experiment or '' }} — open run #{{ r.run_id }}'s data in the inspector pane">#{{ r.run_id }}</a>
         {% else %}<span title="{{ r.experiment or '' }}">#{{ r.run_id }}</span>{% endif %}
-        <span class="ch-run-when">{{ r.when }}</span>
+        <span class="ch-run-when">{{ (r.ts or r.timestamp or "") | ts_local(short=True) }}</span>
         <button type="button" class="ch-useall" data-run-index="{{ loop.index0 }}"
                 onclick="ColumnHistory.useAll(this)"
                 title="Fill EVERY row's grid cell with this run's values (one Ctrl+Z undoes the whole fill; commit stays yours)">Use all</button>

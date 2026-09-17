@@ -45,7 +45,7 @@
          what reverting to it would do NOW — the one the customer asked for,
          rendered beside the button it belongs to. #}
       <td class="fh-val" title="{{ pt.fill }}"><code>{{ pt.display }}</code>{% if pt.is_current %} <span class="fh-now">current</span>{% endif %}{% if _prev %}{{ delta_chip(_prev.value, pt.value, 'fh-delta') }}{% endif %}</td>
-      <td class="fh-ts">{{ pt.when }}</td>
+      <td class="fh-ts">{{ (pt.timestamp or pt.ts or "") | ts_local(short=True) }}</td>
       <td class="fh-src">
         {% if pt.experiment %}
         <span class="fh-exp" title="{% if pt.run_id is not none %}run #{{ pt.run_id }} — {% endif %}{{ pt.experiment }}">{% if pt.run_id is not none %}#{{ pt.run_id }} {% endif %}{{ pt.experiment }}</span>

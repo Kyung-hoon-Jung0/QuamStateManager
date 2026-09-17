@@ -88,3 +88,57 @@ class TestNothingStoredMoves:
         assert "display only" in base.lower(), \
             "the label must say it changes nothing stored"
         assert "UTC" in base
+
+class TestTheCompactChipsCarryTheInstantToo:
+    """docs/201 — the `when` chips were the same defect as the chart axes.
+
+    Seven server-side sites sliced a UTC stamp into a label
+    (``f"{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}"``); five reached a template
+    and were read as times, so a Seoul viewer read them nine hours off from the
+    ``ts_local`` rows beside them. They grew their own slicing because
+    ``ts_local`` had no COMPACT form and a chip has no room for a full stamp.
+    """
+
+    def _filter(self):
+        from quam_state_manager.web.app import create_app
+        app = create_app(testing=True)
+        return app.jinja_env.filters["ts_local"]
+
+    def test_the_short_form_carries_the_same_instant(self):
+        f = self._filter()
+        long_html = str(f("20260910_141516"))
+        short_html = str(f("20260910_141516", short=True))
+        assert 'data-utc="2026-09-10T14:15:16Z"' in long_html
+        assert 'data-utc="2026-09-10T14:15:16Z"' in short_html, \
+            "the compact form must carry the SAME instant, not a truncated one"
+
+    def test_the_short_form_is_marked_so_the_client_can_render_it_small(self):
+        f = self._filter()
+        assert 'data-fmt="short"' in str(f("20260910_141516", short=True))
+        assert 'data-fmt' not in str(f("20260910_141516"))
+
+    def test_the_no_js_fallback_is_compact_but_still_a_real_time(self):
+        f = self._filter()
+        html = str(f("20260910_141516", short=True))
+        assert "09-10 14:15" in html, "a chip-sized fallback"
+        assert "2026-09-10 14:15:16 UTC" not in html, "not the full stamp"
+
+    def test_an_unparseable_stamp_is_not_invented(self):
+        f = self._filter()
+        html = str(f("not-a-stamp", short=True))
+        assert "not-a-stamp" in html
+        assert "data-utc" not in html
+
+    def test_the_five_display_sites_no_longer_slice_digits(self):
+        from pathlib import Path
+        tpl_dir = Path(__file__).resolve().parents[1] / "quam_state_manager" / "web" / "templates"
+        for name, needle in [
+            ("_column_history.html", "ch-chip-when"),
+            ("_column_history.html", "ch-run-when"),
+            ("_field_history.html", "fh-ts"),
+            ("_param_history_changes.html", "ph-change-when"),
+        ]:
+            html = (tpl_dir / name).read_text(encoding="utf-8")
+            line = [l for l in html.splitlines() if needle in l][0]
+            assert "ts_local" in line, f"{name}:{needle} still renders a pre-sliced string"
+

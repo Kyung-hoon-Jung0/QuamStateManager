@@ -8156,6 +8156,9 @@ def bulk_column_history():
                 # stored type honestly — docs/76.
                 "raw": p["value"],
                 "has": p["value"] is not None,
+                # the raw stamp too, so the template can localize it
+                # (docs/201); `when` stays as the no-JS fallback
+                "ts": ts,
                 "when": (f"{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}"
                          if len(ts) >= 13 else ts),
                 "trigger": p["trigger"],

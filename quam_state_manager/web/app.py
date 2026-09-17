@@ -575,7 +575,7 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
         return f"{y}-{mo}-{d} {h}:{mi}:{s} UTC"
     app.jinja_env.filters["format_ts"] = _format_ts_filter
 
-    def _ts_local_filter(ts):
+    def _ts_local_filter(ts, short: bool = False):
         """Render a snapshot/ISO timestamp as a CLIENT-LOCALIZABLE span (feedback C2:
         users are worldwide; UTC isn't friendly). The body is the UTC fallback (graceful
         with JS off); ``data-utc`` carries a strict ISO-8601 Z instant that app.js's
@@ -590,7 +590,11 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
         if m:
             y, mo, d, h, mi, s = m.groups()
             iso = f"{y}-{mo}-{d}T{h}:{mi}:{s}Z"
-            fallback = f"{y}-{mo}-{d} {h}:{mi}:{s} UTC"
+            # docs/201: a CHIP has no room for a full stamp, which is why five
+            # surfaces grew their own digit-slicing instead of using this
+            # filter. The short form is the same instant, rendered small.
+            fallback = (f"{mo}-{d} {h}:{mi}" if short
+                        else f"{y}-{mo}-{d} {h}:{mi}:{s} UTC")
         else:
             iso_m = re.match(r"^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})", ts)
             if iso_m:
@@ -598,8 +602,12 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
                 fallback = f"{iso_m.group(1)} {iso_m.group(2)} UTC"
             else:
                 return Markup(f'<span class="ts-local">{escape(ts)}</span>')
+            if short:
+                fallback = f"{iso_m.group(1)[5:]} {iso_m.group(2)[:5]}"
+        fmt = ' data-fmt="short"' if short else ""
         return Markup(
-            f'<span class="ts-local" data-utc="{escape(iso)}">{escape(fallback)}</span>')
+            f'<span class="ts-local" data-utc="{escape(iso)}"{fmt}>'
+            f'{escape(fallback)}</span>')
     app.jinja_env.filters["ts_local"] = _ts_local_filter
 
     # Long-cache static assets (they're fingerprinted by asset_url below, so a

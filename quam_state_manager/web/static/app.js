@@ -851,9 +851,18 @@ function applyLocalTimes(root) {
                never read two different clocks. With no choice made this is
                toLocaleString's own zone, i.e. exactly the old behaviour. */
             var z = window.SnapTime ? window.SnapTime.zone() : '';
+            /* docs/201: a chip asks for the compact form. Same instant, same
+               zone -- only the rendering differs, so a chip and the row above
+               it can never disagree. */
+            var short = el.getAttribute('data-fmt') === 'short';
+            var opt = short
+                ? { month: '2-digit', day: '2-digit',
+                    hour: '2-digit', minute: '2-digit' }
+                : undefined;
             try {
-                el.textContent = z ? d.toLocaleString(undefined, { timeZone: z })
-                                   : d.toLocaleString();
+                if (z) opt = Object.assign({}, opt || {}, { timeZone: z });
+                el.textContent = opt ? d.toLocaleString(undefined, opt)
+                                     : d.toLocaleString();
             } catch (e) { el.textContent = d.toLocaleString(); }
             el.title = iso + ' (UTC)';
         }
