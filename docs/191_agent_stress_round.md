@@ -232,7 +232,31 @@ A second approval pressed *Reject* wrote nothing: the chip stayed at 654.
 Zero console or network errors in either window (the one dialog entry is the
 Reject note prompt, which is the product asking).
 
-## 7. Two red pins the round found
+## 7. Arm and the two Stops, pressed — and what "Arm beside Stop" means
+
+Pressed with a real mouse: **Stop after this run** turned the card and the
+server to `STOPPED` together; **Stop now** asked first, with the confirm naming
+exactly what it kills ("the agent process is killed and the running node is
+cancelled. The OPX finishes its current sequence; SM's chip writes are
+atomic…"), and the plan stayed stopped.
+
+**G01 — the strip offered `Arm` beside `Stop after this run` / `Stop now` /
+`End session`, and kept offering both for 24 s.** That reads as two mutually
+exclusive states, so it was measured rather than assumed, and it is correct:
+`armed` and `alive` are different facts. After the stop the session file says
+`armed: false, stopped: true` while the CLI process says `alive: true, pid
+36480` — a live agent that may talk but may not touch hardware. `Arm` grants
+the hardware permission again (rule 0); `End session` closes the process. The
+strip is stating both truths at once, and refusing to show either would be the
+lie.
+
+Worth recording from the same run: pressing Start really does spawn a session
+on the person's own logged-in CLI, and that session stood down correctly — its
+own words were "**Stopped — nothing ran.** … No hardware touched, no runs, tray
+empty, `live_diverged: false`", with the plan `stopped` and step 0 `cancelled`.
+That is the observer guard's whole reason for existing, seen working.
+
+## 8. Two red pins the round found
 
 Neither is a product defect; both had been failing quietly, which is worse than
 either.
@@ -256,7 +280,7 @@ brackets and quotes are gone.
 
 | | |
 |---|---|
-| browser checks (real Chrome) | 6/6 for A01, the rest measured directly |
+| browser checks (real Chrome) | every Agent surface pressed control by control |
 | new pins | 12 Python + 16 jsdom |
 | mutations caught | 23 of 23, plus 4 on the two repaired pins |
 | jsdom selfchecks | 132 / 132 |
