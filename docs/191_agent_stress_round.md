@@ -785,3 +785,59 @@ The sweep returned two GREENs on the first cut:
 
 Running total for this round: **nine of my own pins were vacuous until a sweep
 found them.**
+
+## 15. The Setup page's WRITE path — the only files SM touches outside its own dir
+
+`/agent/setup` edits `~/.claude.json`, `~/.claude/settings.json` and
+`~/.codex/config.toml` — a newcomer's first five minutes, and the one place SM
+writes outside `instance/`. Pressed for real against a scratch home
+(`app.config["agent_setup_home"]`), so every button below made a genuine write to
+a genuine file, just not the user's own.
+
+**No defect. The doctrine holds, measured:**
+
+| what was pressed | what happened |
+|---|---|
+| the page with an empty home | 5 steps to do, nothing written |
+| `Preview what SM would write` | the diff rendered; the home was **byte-identically untouched** |
+| `Write these (with backups)` | the button does not exist until a preview has run |
+| the write, on an empty home | `.claude.json` + `.claude/settings.json`, one server entry |
+| the write, **on a config the lab already owns** | see below |
+| pressing the same section again | not offered — the step reads as done |
+
+The case that matters is a lab whose CLI is already configured. Seeded with their
+own MCP server, their `theme`/`numStartups`/`projects`, a `PreToolUse` hook
+running `their-audit.sh`, and a `Bash(git *)` permission:
+
+```
+their server survived  : True        SM added itself beside it : True
+their other keys kept  : dark 412 ['/lab/work']
+their hook survived    : True        SM's hook added beside it : True
+their permissions kept : ['Bash(git *)']
+backups written        : .claude.json.sm-backup-20260917-124538
+                         .claude/settings.json.sm-backup-20260917-124538
+```
+
+Nothing resembling a credential is written or read, and the lab-context section
+states what SM can see before asking (*"SM sees: 5 qubits, 4 pairs; bias sources
+{opx:5}, 1 node files. It cannot see what follows — please confirm."*) rather
+than inventing it.
+
+Deliberately not pressed again: `Test claude` / `Test codex` spawn a REAL CLI
+turn on the user's own account. One was spent earlier in this round, by accident,
+and reported at the time.
+
+### What this round did to a folder it should not have
+
+The rig's `workspace_roots.json` pointed at the customer's real archive
+(`D:\work\Customer_Codes\dataset\KRISS_CZ_260906`). Tags, notes and bookmarks
+live in `quashboard_tags.json` **beside the data**, and `journal.set_root` does
+`mkdir(parents=True)` wherever it is pointed — both outside the instance dir
+entirely. So §12–13's tag/note probes wrote five test tags and a test note onto
+run 41 of the customer's archive, and created a `journal/live_kriss/` folder in
+it.
+
+Restored by hand; the file held only this round's own entries, so nothing of the
+customer's was lost, and the rig now runs on a copy. Recorded because a scratch
+**instance** dir reads as sufficient isolation and is not: the next round copies
+the run folders first and checks the real folder afterwards.
