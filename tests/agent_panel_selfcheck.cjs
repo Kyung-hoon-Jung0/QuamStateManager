@@ -175,6 +175,77 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   inp.blur();
   await tick(10);
   ok(/edited server side/.test(apEl.textContent), 'and catches up once the focus leaves');
+
+  /* ---- docs/191 F01: a PRESSED BUTTON is not someone typing.
+     A real mouse click leaves focus on the button it pressed, so after Start
+     the plan card held the active element and the guard above froze it: the
+     server said `running` within a second while the card still read DRAFT and
+     still offered Start, for 13 s and through an explicit poll (measured in
+     real Chrome). The protection is for a text entry; a focused button, link
+     or checkbox has nothing to lose from a re-render. */
+  const planCard = cards.querySelector('[data-card="plan:pl-1"]');
+  const planTitle0 = feed.live.plans[0].title;
+  const firstBtn = planCard.querySelector('button');
+  ok(!!firstBtn, 'F01: the plan card offers a button to press');
+  // a focused SELECT is protected too: re-rendering under an open dropdown
+  // takes the choice away mid-gesture. (A textarea is in the same list and is
+  // defensive today -- no card renders one; the composer sits outside cards.)
+  const modeSel = planCard.querySelector('select');
+  if (modeSel) {
+    modeSel.focus();
+    feed.live.plans[0].title = 'changed while the select had focus';
+    await P.poll(true); await tick();
+    ok(!/changed while the select had focus/.test(planCard.textContent),
+       'F01: a focused select is left alone, like a text box');
+    modeSel.blur();
+    await tick(10);
+    ok(/changed while the select had focus/.test(planCard.textContent),
+       'F01: and catches up when the focus leaves it');
+  }
+
+  // the select block above re-rendered the card, so take the button again --
+  // this is the press the rest of the block is about
+  const pressed = planCard.querySelector('button');
+  pressed.focus();
+  ok(document.activeElement === pressed, 'F01: and the press leaves focus on it');
+  feed.live.plans[0].title = 'the plan moved on';
+  await P.poll(true); await tick();
+  ok(/the plan moved on/.test(planCard.textContent),
+     'F01: the card follows the plan while a button holds the focus');
+
+  // the SAME control keeps the focus...
+  const sameBtn = planCard.querySelector('button');
+  ok(sameBtn && document.activeElement === sameBtn,
+     'F01: and the same control keeps the focus across the re-render');
+
+  // ...and a control that REPLACED it never inherits the press
+  sameBtn.focus();
+  feed.live.plans[0].status = 'running';
+  feed.live.plans[0].title = 'now running';
+  await P.poll(true); await tick();
+  const after = planCard.querySelector('button');
+  ok(/now running/.test(planCard.textContent), 'F01: a status change reaches the card');
+  ok(!after || document.activeElement !== after
+     || (after.textContent || '').trim() === (sameBtn.textContent || '').trim(),
+     'F01: a DIFFERENT button never inherits the focus of the press that replaced it');
+
+  // put the shared fixture back as the later assertions expect to find it:
+  // a DRAFT plan with its mode select (this file's world is sequential)
+  feed.live.plans[0].status = 'draft';
+  feed.live.plans[0].title = planTitle0;
+  document.activeElement && document.activeElement.blur && document.activeElement.blur();
+  await P.poll(true); await tick();
+
+  // and the typing protection is untouched: put focus back in a text box
+  const inp2 = cards.querySelector('input.ag-ap-new');
+  if (inp2) {
+    inp2.focus();
+    inp2.value = '4440000000';
+    feed.live.approvals[0].reason = 'changed again server side';
+    await P.poll(true); await tick();
+    ok(inp2.value === '4440000000',
+       'F01: a person typing is still protected');
+  }
   // R2-11: a RUN request is allowed, not written
   feed.live.approvals.push({ id: 'ap-run', kind: 'run', node: '07_ramsey', targets: ['q2'], why_held: 'mode ask-all', created: now - 5, writes: [] });
   await P.poll(true); await tick();

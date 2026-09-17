@@ -170,19 +170,61 @@ window.AgentPanel = (function () {
     }
     return el;
   }
+  /* docs/191 F01: "the person is typing in it" is not the same as "the person
+     focused something in it". A real mouse click LEAVES FOCUS on the button it
+     pressed, so after pressing Start the plan card contained the active element
+     for as long as the person did nothing else -- and the guard below froze it.
+     Measured in real Chrome: the server said `running` within a second while
+     the card still read DRAFT and still offered Start and the mode select, for
+     13 s and through an explicit poll; only a full page load told the truth,
+     and the second press answered "plan is running".
+
+     So the protection is for a TEXT entry, which is what R2-1 was about (an
+     approval's editable value, the composer): a focused button, link or
+     checkbox has nothing to lose from a re-render. */
+  function editingIn(el) {
+    var a = document.activeElement;
+    if (!a || a === document.body || !el.contains(a)) return false;
+    if (a.isContentEditable) return true;
+    var tag = (a.tagName || "").toLowerCase();
+    if (tag === "textarea" || tag === "select") return true;
+    if (tag !== "input") return false;
+    var ty = (a.getAttribute("type") || "text").toLowerCase();
+    return ["button", "submit", "reset", "checkbox", "radio", "image", "file"].indexOf(ty) < 0;
+  }
+  function focusKeyIn(el) {
+    var a = document.activeElement;
+    if (!a || a === document.body || !el.contains(a)) return null;
+    return (a.tagName || "") + "|" + String(a.className || "") + "|"
+      + (a.textContent || "").trim().slice(0, 40);
+  }
+  function refocus(el, key) {
+    if (!key) return;
+    var all = el.querySelectorAll("button, a[href], input, select, textarea");
+    for (var i = 0; i < all.length; i++) {
+      var e = all[i];
+      var k = (e.tagName || "") + "|" + String(e.className || "") + "|"
+        + (e.textContent || "").trim().slice(0, 40);
+      // only the SAME control: a Start button replaced by "Stop now" must never
+      // inherit the focus of the press that replaced it
+      if (k === key) { try { e.focus(); } catch (err) { /* gone */ } return; }
+    }
+  }
   function setHtml(el, html, force) {
     // review R2-1: an unchanged card is left alone (no flicker, no lost
-    // <details> state); a card the person is typing in is never replaced
+    // <details> state); a card the person is TYPING in is never replaced
     if (!force && el.__agHtml === html) return false;
-    if (!force && el.contains(document.activeElement) && document.activeElement !== document.body) {
+    if (!force && editingIn(el)) {
       el.__agStale = html;                              // re-rendered on the next poll after the focus leaves
       return false;
     }
+    var _key = focusKeyIn(el);
     el.innerHTML = html;
     el.__agHtml = html;
     el.__agStale = null;
     syncExpanded(el);
     confirmClamp(el);        // the rendered height, not the character count, decides the clamp
+    refocus(el, _key);       // docs/191 F01: the SAME control keeps the focus, or nothing does
     return true;
   }
   // customer feedback 2026-09-08: the feed is a TIMELINE -- every row is a monospace

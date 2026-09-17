@@ -174,7 +174,42 @@ section says "asking claude one read-only question…", and only the Runner link
 goes to `/scheduler`. The earlier readings were the walker measuring before its
 own `history.back()` had settled.
 
-## 5. Two red pins the round found
+## 5. What clicking found that nothing else could (F01)
+
+A plan was made the way a person makes one -- `/run 05_power_rabi q1` TYPED
+into the composer character by character and sent with a real Enter -- and then
+its card was pressed with a real mouse.
+
+**The card the person just acted in is the one card that never updates.**
+Measured: within a second of pressing Start the server reports the plan
+`running`, while the card still reads **DRAFT** and still offers **Start** and
+an enabled mode select. It stayed that way for 13 s and through an explicit
+`poll(true)`; only a full page load showed `RUNNING` with *Stop after this run*
+/ *Stop now*. Pressing the still-live Start again answers `plan is running`,
+and the still-live mode select answers `the mode is chosen before Start`.
+
+The cause is one line in `setHtml`:
+
+```js
+if (!force && el.contains(document.activeElement) && ...) { el.__agStale = html; return false; }
+```
+
+It exists for a real reason (review R2-1: an approval's editable value must not
+be wiped under the person's fingers, and the recovery is a `focusout`
+listener). But **a real mouse click leaves focus on the button it pressed**, so
+pressing Start makes the plan card hold the active element with nothing being
+typed -- and focus only leaves when the person clicks elsewhere, which is
+exactly what they have no reason to do while waiting to see what their press
+did. Every API probe missed it because a scripted `POST` never focuses
+anything.
+
+"Typing in it" is now what it says: a focused textarea, select, contenteditable
+or text-like input defers the render as before; a focused button, link or
+checkbox does not. The focus is put back on **the same control** after the
+swap, and never on a different one -- a Start button replaced by *Stop now*
+must not inherit the press that replaced it.
+
+## 6. Two red pins the round found
 
 Neither is a product defect; both had been failing quietly, which is worse than
 either.
@@ -199,8 +234,8 @@ brackets and quotes are gone.
 | | |
 |---|---|
 | browser checks (real Chrome) | 6/6 for A01, the rest measured directly |
-| new pins | 12 Python + 7 jsdom |
-| mutations caught | 17 of 17, plus 4 on the two repaired pins |
+| new pins | 12 Python + 16 jsdom |
+| mutations caught | 23 of 23, plus 4 on the two repaired pins |
 | jsdom selfchecks | 132 / 132 |
 | pytest (agent / journal / story / chat / setup / natural / plan) | 881 passed |
 
