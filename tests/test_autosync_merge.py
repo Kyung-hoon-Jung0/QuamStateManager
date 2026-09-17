@@ -1124,13 +1124,15 @@ class TestTheSignalDoesNotWithholdAMergeableePull:
         self._armed_edited_and_moved(env, same_field=True)
         assert env["client"].post("/auto-sync/pull").status_code == 204
         ctx = _ctx(env)
-        assert ctx.get("live_conflict_at"), "the refusal was remembered"
+        assert (ctx.get("live_auto_at") or {}).get("conflicts"),             "the refusal was remembered"
 
         time.sleep(0.02)
         _write_chip(env["live"], _state(f01=5.1e9, t1=9.9e-5))  # now agrees with the edit
         r = env["client"].post("/auto-sync/pull")
         assert "autoSyncMergePull" in (r.headers.get("HX-Trigger") or "")
-        assert not ctx.get("live_conflict_at"),             "a resolved state must not keep the refusal"
+        # The record SURVIVES now — it carries the merge budget — but it must
+        # no longer claim a collision, or the banner would keep naming one.
+        assert not (ctx.get("live_auto_at") or {}).get("conflicts"),             "a resolved state must not keep the refusal"
 
     def test_a_save_re_arms_the_signal(self, env):
         # The verdict before and after a save are different answers about the
@@ -1188,4 +1190,126 @@ class TestTheBannerNamesTheCollision:
         html = env["client"].get("/bulk").get_data(as_text=True)
         assert "changed on disk" in html
         assert "changed both here and on" not in html
+
+class TestTheMergeSignalHasABudget:
+    """Self-review of docs/195: the pull-side merge signal could loop.
+
+    The push side has carried a budget since docs/187 (`merge_tries`, 3) for
+    exactly this shape. The pull side shipped without one:
+
+      poll -> _auto_pull_due sees dirt and no remembered verdict -> advertise
+      pull -> no collision -> POPS the record, signals autoSyncMergePull, 204
+      client -> presses /state/sync?mode=reapply
+
+    When that press resolves, live_diverged clears and it ends. When it does
+    NOT -- the client's ~2 s latch give-up, a docs/65 staged carve-out, a write
+    error -- nothing was recorded, so the next poll advertises again. Every
+    5 s, for ever, each one taking the shared apply latch. That is the loop the
+    original _auto_pull_due comment was written to prevent.
+    """
+
+    def _armed_non_colliding(self, env):
+        _arm(env, pull=True, push=False, replace=False)
+        assert _edit(env, path="qubits.qA1.f_01").status_code == 200
+        _write_chip(env["live"], _state(f01=5.0e9, t1=9.9e-5))   # a DIFFERENT field
+        _ctx(env)["live_diverged"] = True
+
+    def test_an_unresolved_merge_stops_signalling(self, env):
+        self._armed_non_colliding(env)
+        ctx = _ctx(env)
+        signals = 0
+        for _ in range(8):
+            with env["app"].app_context():
+                if not routes_mod._auto_pull_due(ctx):
+                    break
+            r = env["client"].post("/auto-sync/pull")
+            if "autoSyncMergePull" in (r.headers.get("HX-Trigger") or ""):
+                signals += 1
+            # the client never resolves it: live stays diverged, edits stay
+            ctx["live_diverged"] = True
+        assert signals <= 3, (
+            f"the same unresolved state signalled a merge {signals} times; "
+            "the push side stops at 3 (docs/187) and this must too")
+
+    def test_the_poll_stops_ADVERTISING_once_exhausted(self, env):
+        """The gate and the door guard different harms, so both are pinned.
+
+        The door stops the SIGNAL. The poll gate stops the client POSTing at
+        all — and that is the one the original `_auto_pull_due` comment was
+        written for: every pull takes `window._applyInFlight`, which also gates
+        the manual Apply buttons, so a pull firing every 5 s for ever makes
+        those buttons read as dead clicks.
+        """
+        self._armed_non_colliding(env)
+        ctx = _ctx(env)
+        for _ in range(routes_mod._AUTO_MERGE_TRIES + 1):
+            env["client"].post("/auto-sync/pull")
+            ctx["live_diverged"] = True               # never resolves
+        with env["app"].app_context():
+            assert routes_mod._auto_pull_due(ctx) is False, (
+                "once the budget is spent the poll must stop asking the client "
+                "to press at all, not merely stop signalling")
+
+    def test_the_door_holds_the_budget_on_its_own(self, env):
+        """The poll and the pull are SEPARATE requests.
+
+        Every other test here consults `_auto_pull_due` first, which shadows
+        the route's own budget — the sweep showed both of its branches passing
+        under mutation for exactly that reason. A page that keeps posting the
+        pull without re-asking (a stale tab, a retry) reaches the door alone,
+        so the door has to hold the line by itself.
+        """
+        self._armed_non_colliding(env)
+        ctx = _ctx(env)
+        signals = 0
+        for _ in range(8):
+            r = env["client"].post("/auto-sync/pull")      # no due-check
+            if "autoSyncMergePull" in (r.headers.get("HX-Trigger") or ""):
+                signals += 1
+            ctx["live_diverged"] = True                    # never resolves
+        assert signals <= 3, (
+            f"the door signalled {signals} times for one unresolved state "
+            "without the poll gate in front of it")
+
+    def test_the_door_gives_a_new_situation_its_own_allowance(self, env):
+        # Same path, but the situation genuinely changes half way: the budget
+        # is per-situation, so the second one must get its own attempts.
+        self._armed_non_colliding(env)
+        ctx = _ctx(env)
+        for _ in range(5):
+            env["client"].post("/auto-sync/pull")
+            ctx["live_diverged"] = True
+        time.sleep(0.02)
+        _write_chip(env["live"], _state(f01=5.0e9, t1=7.7e-5))   # a NEW write
+        ctx["live_diverged"] = True
+        r = env["client"].post("/auto-sync/pull")
+        assert "autoSyncMergePull" in (r.headers.get("HX-Trigger") or ""),             "a new divergence starts its own count, even at the door"
+
+    def test_a_resolved_merge_leaves_the_budget_alone(self, env):
+        # The ordinary case must not be rationed: once it resolves, the next
+        # genuine divergence gets its own full allowance.
+        self._armed_non_colliding(env)
+        ctx = _ctx(env)
+        r = env["client"].post("/auto-sync/pull")
+        assert "autoSyncMergePull" in (r.headers.get("HX-Trigger") or "")
+        ctx["live_diverged"] = False          # the client resolved it
+        with env["app"].app_context():
+            assert routes_mod._auto_pull_due(ctx) is False
+
+    def test_a_new_live_write_earns_a_fresh_allowance(self, env):
+        # A budget must be per-situation, not per-session: a NEW divergence is
+        # a new question and deserves its own attempts.
+        self._armed_non_colliding(env)
+        ctx = _ctx(env)
+        for _ in range(6):
+            with env["app"].app_context():
+                if not routes_mod._auto_pull_due(ctx):
+                    break
+            env["client"].post("/auto-sync/pull")
+            ctx["live_diverged"] = True
+        time.sleep(0.02)
+        _write_chip(env["live"], _state(f01=5.0e9, t1=8.8e-5))   # they write again
+        ctx["live_diverged"] = True
+        with env["app"].app_context():
+            assert routes_mod._auto_pull_due(ctx) is True,                 "a new divergence must be allowed to try again"
 

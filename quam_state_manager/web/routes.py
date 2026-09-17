@@ -1226,7 +1226,7 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict, *,
             else:
                 ctx.pop("live_drift_count", None)
                 ctx.pop("live_conflicts", None)
-                ctx.pop("live_conflict_at", None)
+                ctx.pop("live_auto_at", None)
 
 
 def _probe_readonly(folder) -> bool:
@@ -16065,7 +16065,8 @@ def auto_sync_pull():
             # and now it can name the fields that actually collide.
             _paths = list(getattr(verdict, "conflicts", ()) or ())
             ctx["live_conflicts"] = _paths          # the banner names these
-            ctx["live_conflict_at"] = {"sig": _auto_pull_sig(ctx), "paths": _paths}
+            ctx["live_auto_at"] = {"sig": _auto_pull_sig(ctx),
+                                   "conflicts": _paths, "merge_tries": 0}
             if not sess.get("pull_replace"):
                 return "", 204
         elif not sess.get("pull_replace"):
@@ -16075,7 +16076,21 @@ def auto_sync_pull():
             # here -- the same division docs/187 chose for the push side: the
             # server decides, the client presses one tested door.
             ctx.pop("live_conflicts", None)
-            ctx.pop("live_conflict_at", None)
+            # Spend from a per-SITUATION budget rather than forgetting the
+            # attempt: the client may never land the press it is being asked
+            # for (its own latch gives up after ~2 s, the door can refuse a
+            # staged payload), and a forgotten attempt is re-advertised on the
+            # next poll for ever. A new fingerprint -- another edit, another
+            # live write -- is a new situation and starts again at one.
+            _sig = _auto_pull_sig(ctx)
+            _rec = ctx.get("live_auto_at") or {}
+            _tries = (_rec.get("merge_tries", 0) + 1) if _rec.get("sig") == _sig else 1
+            ctx["live_auto_at"] = {"sig": _sig, "conflicts": [],
+                                   "merge_tries": _tries}
+            if _tries > _AUTO_MERGE_TRIES:
+                # Out of attempts. Say nothing more and leave the banner, which
+                # is already up, to offer the explicit choices.
+                return "", 204
             resp = make_response("", 204)
             resp.headers["HX-Trigger"] = json.dumps({"autoSyncMergePull": {
                 "chip": _active_chip_token(),
@@ -16085,7 +16100,7 @@ def auto_sync_pull():
             return resp
         else:
             ctx.pop("live_conflicts", None)
-            ctx.pop("live_conflict_at", None)
+            ctx.pop("live_auto_at", None)
 
     wc = ctx.get("working_copy")
     if wc is None:
@@ -16799,9 +16814,17 @@ def _auto_pull_due(ctx: dict | None) -> bool:
         # what it depended on; while nothing has moved, the remembered "there
         # is a real collision" keeps the old silence, and the 204-every-5s spin
         # the original comment guarded against cannot come back.
-        rec = ctx.get("live_conflict_at")
+        rec = ctx.get("live_auto_at")
         if rec and rec.get("sig") == _auto_pull_sig(ctx):
-            return False
+            # Either a real collision was established for THIS state (the
+            # banner is up and naming it), or the merge signal has been sent
+            # its allowance of times without the situation resolving. Both
+            # mean: stop asking the client to press. docs/187 gave the push
+            # side the same bound, and for the same reason -- a signal that
+            # never resolves otherwise fires on every 5 s poll for ever, each
+            # one taking the shared apply latch.
+            if rec.get("conflicts") or rec.get("merge_tries", 0) >= _AUTO_MERGE_TRIES:
+                return False
     return True
 
 

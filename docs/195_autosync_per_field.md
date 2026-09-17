@@ -173,3 +173,52 @@ this round added a listener for a different event and did not touch that path.
   undo journal holds those units, so it *could* be enumerated — deliberately
   not done here, because it widens the silent path and this round's whole
   argument is that the silent path must only cover what was counted.
+
+---
+
+## 7. Self-review: the merge signal could loop (fixed)
+
+Reviewing this change against the codebase's own history — docs/123–125,
+docs/141 §4ac/§4ae and docs/160 §5b–5e are all rounds where the *fix* carried
+the next defect — turned one up here, and it is the shape docs/187 already
+fixed once on the other side.
+
+**The loop.** The merge branch POPPED its record. So:
+
+```
+poll  -> _auto_pull_due: dirty, nothing remembered   -> advertise
+pull  -> no collision -> pop the record, signal, 204
+client-> presses /state/sync?mode=reapply
+```
+
+When that press lands, `live_diverged` clears and it ends. When it does **not**
+— the client's own latch gives up after ~2 s (docs/187 R9), the door can refuse
+a staged payload (docs/65), a write can fail — nothing was recorded, so the next
+poll advertises again. **Measured: 8 signals for one unresolved state, and
+unbounded.** Each pull also takes `window._applyInFlight`, which gates the
+manual Apply buttons — which is precisely the harm the original
+`_auto_pull_due` comment was written to prevent.
+
+**The fix** is the budget the push side has carried since docs/187
+(`_AUTO_MERGE_TRIES`, 3), spent per SITUATION rather than per session: the
+record now persists and counts, and a new fingerprint — another edit, another
+live write — starts again at one. Exhausted, the signal stops and the banner,
+already up, offers the explicit choices.
+
+One record carries both verdicts (`live_auto_at`: `sig`, `conflicts`,
+`merge_tries`), because two keys holding one fact is what the earlier sweep in
+§5 already caught here.
+
+**The gate and the door are pinned separately**, and the sweep is why. They
+guard different harms — the door stops the SIGNAL, the poll gate stops the
+client POSTing at all — and each shadowed the other:
+
+- first sweep: two GREENs, because every test consulted `_auto_pull_due` first,
+  so the door's own budget was never reached. Added a test that posts to the
+  door directly (a stale tab, a retry — the poll and the pull are separate
+  requests).
+- second sweep: a different GREEN, the mirror image — with the door holding the
+  line, the gate's half became unobservable. Added an assertion on the
+  advertise decision itself.
+
+**Sweep 6/6 red.** Total for docs/195: 8/8, 9/9, 7/7, 6/6.
