@@ -165,3 +165,50 @@ confident-looking nonsense:
   the swap lands on empty space — no toast, no request, and a reading of "the
   button does nothing". The fix is to confirm the press produced a request
   before believing anything it appears to show.
+
+## 8. The compare-and-swap refusal, reached and read
+
+The applied log's ✕ promises: *"Compare-and-swap: if the value moved since, this
+refuses instead of overwriting."* Reached deliberately — apply A, apply B to the
+same field, then press A's ✕, whose anchor is now stale — the answer is a model
+refusal:
+
+```
+POST /auto-apply/revert -> 409
+toast: "Not reverted — qubits.q1.anharmonicity has changed since
+        (now 2.070000e+08, this change wrote 2.060000e+08). Nothing was written."
+chip: unchanged
+```
+
+It names the path, the value now, the value this entry wrote, and states
+explicitly that nothing was written. Three console lines accompany it, which is
+what an HTTP 409 costs and is not a defect.
+
+**This took four attempts to establish, and the three failures were all mine.**
+Twice the press never landed (no request at all) and once the toast hook was
+installed after the press rather than before — each producing a confident-looking
+"the button says nothing". The method that settled it: assert the request fired
+and read its status BEFORE judging the interface, and hook the reporting channel
+before the action rather than after. A silent-failure claim needs the press
+proved first.
+
+## 9. The Generate Config wizard — surveyed, nothing to fix
+
+Eight steps (Environment · Network · Chassis · Qubits · Wiring · Populate ·
+Output · Review). Two claims were tested rather than assumed:
+
+- **the env probe is honest.** Ten interpreters are listed with a real verdict
+  each — `miniconda3 … ✗ missing: qualang_tools, quam_builder, quam` beside
+  `KRISS_CZ … ✓ qualang_tools 0.22.0 · quam_builder 0.4.0 · quam 0.6.0`. (An
+  early reading that the customer's own env showed "✗ missing" was mine: the
+  selector had matched the *first row's* status span, not the chosen env's.)
+- **a refusal is visible from the button that caused it.** Pressing Next with an
+  empty Network step answers `"Enter the QOP host IP."` in `#gen-message`. That
+  is the element docs/134 ② once called out as out-of-view for a sibling button,
+  so it was measured at a 900 px viewport: the message renders at y 825–858 and
+  the Next button sits at 900 — directly beneath it, in view. No repeat of that
+  defect here.
+
+A wizard walk that pressed Next seven times without advancing looked like a
+silent stall and was not: the step was refusing, in `#gen-message`, and the walk
+simply never read that element.
