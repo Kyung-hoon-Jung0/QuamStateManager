@@ -93,3 +93,66 @@ wrapper (docs/141 §4af: a GREEN means the fixture cannot reach that state).
 Pinned by D1–D6; 5/5 mutations red, including "closes from anywhere" and "closes
 an already-empty inspector", which are the two ways the fix could have been too
 broad.
+
+## 4. The rest of the page, pressed
+
+| control | verdict |
+|---|---|
+| Overview: per-tile ⋮ → statistic | **sound** — see below |
+| Overview: Remove / Reset all / prefs | **sound** |
+| hero: metric strip (4 metrics) | **sound** — values follow, active marked by weight + colour |
+| hero: zoom − + Fit Aa | **sound** — 2103 → 2412 → 2721 → 2412 → 1237 px; `Aa` is a font toggle, not zoom |
+| per-panel S · M · L density | **sound** — `{"2q:StandardRB:cz_SNZ":0.7 → 1 → 0.85}` |
+| Health: ⚙ Thresholds | **CS02**, below |
+
+The Overview tile system holds under every press: switching a metric tile's
+statistic gives the number it names (`median` → 99.86% MED, `min` → 99.84% MIN,
+`max` → 99.90% MAX) with the complements on the sub-line; a non-default choice
+persists across a reload as `{"stats":{"gate1q":"max"}}`; Remove persists **and
+clears that tile's stale stat**; the page says "customized"; and Reset all puts
+15 tiles back and elides the preference to `None` rather than storing an empty
+object. A composite tile (`chip_size`) offers only "Remove panel", with a note —
+which is docs/150's own rule, not a missing feature.
+
+## 5. CS02 — a threshold typed but not applied looked applied
+
+Commit in the thresholds editor is **explicit**: the "Update colour bands"
+button, or Enter in a field. That is a fair choice. What was not fair:
+
+```
+type 70, press Tab  ->  the box reads 70
+                        the hint reads "your lab's bands for 1 of 7 metrics …
+                                        shared with everyone using this SM"
+                        the server still holds 60
+                        only a reload revealed it
+```
+
+Nothing distinguished a typed number from a saved one, while the hint underneath
+described the **saved** state — so the screen asserted something untrue about a
+setting that decides the in-spec verdict *for everyone using this SM*. Every
+other explicit-commit surface in SM marks its pending state (the Review tray,
+`bulk-cell-modified`, `data-committed` on inline inputs); this one did not.
+
+Fixed the way the doctrine says rather than by committing on blur: each field
+carries `data-saved`, "dirty" is a **comparison** against it (so typing back to
+the saved value clears the mark by itself, with no flag to drift), the field is
+marked, and the hint becomes *"1 threshold is typed but NOT applied — press
+'Update colour bands'"*. Applying clears both and sends it.
+
+Verified in Chrome: `70 → type 80 + Tab → dirty, server still 0.7 → Update →
+saved 80.00, server 0.8`. The thresholds this round moved were reset afterwards
+(`edited: []`).
+
+### And one line of mine that never ran
+
+The first cut also called the sweep after building the editor. The mutation sweep
+stayed **green** when that call was deleted, which is the sweep doing its job:
+`buildThresholdEditor` replaces the whole `innerHTML`, so every field returns with
+`value === data-saved` and nothing can be dirty at that moment. The call was dead
+on arrival and is gone, with the reason recorded beside where it was.
+
+Pinned by `tests/thresh_dirty_selfcheck.cjs` (17 assertions — a new harness,
+since nothing reached this editor before); 7/7 mutations red. The fixture needed
+the real `nodes`/`edges` topo shape **and** real `defaultThresholds`: a thin one
+makes `mount` bail before the threshold functions are even defined, and an empty
+one builds an editor with no rows, so every pin would have been vacuous.

@@ -3544,9 +3544,14 @@ window.ChipStatus.mount = function (opts) {
                   '" title="Reset this metric to the spec default" aria-label="Reset to spec default">↺</button></span>'
                 : '<span class="thresh-prov default">default</span>';
             html += '<label class="thresh-label">' + labelHtml(k, false) + '</label>' +
-                    '<input class="thresh-in" type="number" step="any" data-metric="' + k + '" data-bound="warn" value="' +
+                    // docs/192 CS02: the SAVED value rides on the field, so
+                    // "typed but not applied" is a comparison rather than a flag
+                    // that can drift out of step with the server.
+                    '<input class="thresh-in" type="number" step="any" data-metric="' + k + '" data-bound="warn" data-saved="' +
+                    (th.warn * disp.scale).toFixed(disp.dec) + '" value="' +
                     (th.warn * disp.scale).toFixed(disp.dec) + '">' +
-                    '<input class="thresh-in" type="number" step="any" data-metric="' + k + '" data-bound="fail" value="' +
+                    '<input class="thresh-in" type="number" step="any" data-metric="' + k + '" data-bound="fail" data-saved="' +
+                    (th.fail * disp.scale).toFixed(disp.dec) + '" value="' +
                     (th.fail * disp.scale).toFixed(disp.dec) + '">' +
                     '<span class="thresh-unit">' + disp.unit + '</span>' + prov;
         });
@@ -3565,12 +3570,55 @@ window.ChipStatus.mount = function (opts) {
                 if (e.key === 'Enter') { e.preventDefault(); applyThresholds(); }
                 else if (e.key === 'Escape') { toggleThresholdEditor(); }
             });
+            // docs/192 CS02: commit here is EXPLICIT (the "Update colour bands"
+            // button, or Enter), which is a fair choice — but a typed-and-not-
+            // applied number was indistinguishable from a saved one. Measured:
+            // type 70, press Tab, the box reads 70, the hint still reads "your
+            // lab's bands … shared with everyone using this SM", and the server
+            // still holds 60; only a reload revealed it. These thresholds decide
+            // the in-spec verdict for everyone, so an uncommitted one has to say
+            // so (docs/120: a press means what the presser could see).
+            inp.addEventListener('input', function() { _threshMarkDirty(); });
         });
+        // No sweep after a build on purpose: `buildThresholdEditor` replaces the
+        // whole innerHTML, so every field comes back with value === data-saved
+        // and nothing can be dirty. A call here never fired — the mutation sweep
+        // said so by staying green when it was deleted.
         // Per-row reset buttons.
         host.querySelectorAll('.thresh-reset-row').forEach(function(btn) {
             btn.addEventListener('click', function() { resetMetricThreshold(btn.getAttribute('data-metric')); });
         });
     }
+    /* Which threshold fields hold a number the server has not been told about.
+       The saved value is stamped on each field at build time, so "dirty" is a
+       comparison against what was SAVED, never a flag that can drift. */
+    function _threshMarkDirty() {
+        var host = document.getElementById('topo-thresh-editor');
+        if (!host) return 0;
+        var n = 0;
+        host.querySelectorAll('.thresh-in').forEach(function(inp) {
+            var saved = inp.getAttribute('data-saved');
+            var dirty = saved !== null && String(inp.value) !== String(saved);
+            inp.classList.toggle('thresh-dirty', dirty);
+            if (dirty) n++;
+        });
+        var st = document.getElementById('thresh-status');
+        if (st) {
+            if (n) {
+                st.classList.add('thresh-status-dirty');
+                st.textContent = n + (n === 1 ? ' threshold is' : ' thresholds are')
+                    + ' typed but NOT applied — press "Update colour bands"';
+            } else if (st.classList.contains('thresh-status-dirty')) {
+                st.classList.remove('thresh-status-dirty');
+                st.textContent = (_labSpec && _labSpec.summary) ? _labSpec.summary
+                    : 'all at spec default';
+                st.textContent += ' · shared with everyone using this SM';
+            }
+        }
+        return n;
+    }
+    window._threshMarkDirty = _threshMarkDirty;
+
     window.applyThresholds = function() {
         var host = document.getElementById('topo-thresh-editor'); if (!host) return;
         host.querySelectorAll('.thresh-in').forEach(function(inp) {

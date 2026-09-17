@@ -13334,3 +13334,14 @@ tr.diag-row-collapsed { display: none; }
     margin: 0 0 0.35rem 0;
     color: var(--color-error-text);
 }
+
+/* docs/192 CS02: a threshold typed but not yet applied. Commit here is explicit
+   (the "Update colour bands" button, or Enter), which is a fair choice — but an
+   uncommitted number used to look exactly like a saved one, under a hint that
+   described the SAVED state. These bands decide the in-spec verdict for everyone
+   using this SM, so the difference has to be visible. */
+.thresh-in.thresh-dirty {
+    border-color: var(--pico-del-color, #d35400);
+    background: color-mix(in srgb, var(--pico-del-color, #d35400) 9%, transparent); }
+.thresh-hint.thresh-status-dirty {
+    color: var(--pico-del-color, #d35400); font-weight: 600; }
