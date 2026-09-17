@@ -737,6 +737,106 @@ document.addEventListener('htmx:afterSwap', function (e) {
     if (t && t.id === 'pending-tray' && window._restoreTrayState) window._restoreTrayState();
 });
 
+/* ---------------------------------------------------------------------------
+ * SnapTime -- the one place a snapshot stamp becomes a time on screen.
+ *
+ * A stamp is `YYYYMMDD_HHMMSS[_mmm]` and is UTC (core/history._ts_stamp uses
+ * datetime.now(timezone.utc); a run ingest converts the run's own wall-clock
+ * LOCAL->UTC). Everything below is DISPLAY only -- nothing stored, compared or
+ * sorted goes through here, so a zone change can never move data.
+ *
+ * The zone is the viewer's own choice (Settings), kept in localStorage beside
+ * the other per-viewer preferences: '' = this browser's zone, 'UTC', or any
+ * IANA name. It is deliberately not a server setting -- two people looking at
+ * one chip from two countries should each read their own clock.
+ * ------------------------------------------------------------------------ */
+(function () {
+    var KEY = 'quam_tz';
+    var RE = /^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/;
+
+    function zone() {
+        try { return window.localStorage.getItem(KEY) || ''; }
+        catch (e) { return ''; }          /* private window / blocked storage */
+    }
+    function setZone(z) {
+        try {
+            if (z) window.localStorage.setItem(KEY, z);
+            else window.localStorage.removeItem(KEY);
+        } catch (e) { /* the preference simply does not persist */ }
+    }
+
+    /* The stamp as a real instant. Refuses to guess: an id that does not parse
+     * returns null, and every caller keeps its raw label rather than placing a
+     * point at a fabricated time (the rule chip-status.js._iso already held). */
+    function parse(ts) {
+        var m = RE.exec(String(ts == null ? '' : ts));
+        if (!m) return null;
+        var d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]));
+        return isNaN(d.getTime()) ? null : d;
+    }
+
+    /* The wall-clock PARTS in the chosen zone. Intl handles DST and every IANA
+     * name; a zone the browser rejects falls back to the browser's own rather
+     * than throwing on every point of a 400-point series. */
+    function parts(d) {
+        var opt = { year: 'numeric', month: '2-digit', day: '2-digit',
+                    hour: '2-digit', minute: '2-digit', second: '2-digit',
+                    hour12: false };
+        var z = zone();
+        if (z) opt.timeZone = z;
+        var out = {};
+        try {
+            new Intl.DateTimeFormat('en-CA', opt).formatToParts(d)
+                .forEach(function (p) { out[p.type] = p.value; });
+        } catch (e) {
+            delete opt.timeZone;
+            new Intl.DateTimeFormat('en-CA', opt).formatToParts(d)
+                .forEach(function (p) { out[p.type] = p.value; });
+        }
+        if (out.hour === '24') out.hour = '00';      /* en-CA hour12:false quirk */
+        return out;
+    }
+
+    /* A NAIVE ISO string already shifted into the chosen zone.
+     *
+     * This is what a Plotly date axis needs: given an instant with `Z` it
+     * renders UTC, so the shift has to happen before it. Naive-and-shifted is
+     * the only spelling that puts the chosen zone's wall clock on the axis. */
+    function axisValue(ts) {
+        var d = parse(ts);
+        if (!d) return null;
+        var p = parts(d);
+        return p.year + '-' + p.month + '-' + p.day
+             + 'T' + p.hour + ':' + p.minute + ':' + p.second;
+    }
+
+    /* 'YYYY-MM-DD HH:MM:SS' in the chosen zone -- the long label. */
+    function format(ts) {
+        var v = axisValue(ts);
+        return v ? v.replace('T', ' ') : String(ts == null ? '' : ts);
+    }
+
+    /* 'MM-DD HH:MM' -- the compact chip label. */
+    function short(ts) {
+        var v = axisValue(ts);
+        return v ? v.slice(5, 16).replace('T', ' ')
+                 : String(ts == null ? '' : ts);
+    }
+
+    /* What the axis must SAY, so no one has to guess the basis again. */
+    function label() {
+        var z = zone();
+        if (z) return z;
+        try {
+            return Intl.DateTimeFormat().resolvedOptions().timeZone || 'local time';
+        } catch (e) { return 'local time'; }
+    }
+
+    window.SnapTime = { zone: zone, setZone: setZone, parse: parse,
+                        axisValue: axisValue, format: format, short: short,
+                        label: label, KEY: KEY };
+})();
+
 /* C2: render all state-change timestamps in the user's LOCAL time (users are
  * worldwide). The server emits <span class="ts-local" data-utc="…Z">…UTC fallback…</span>
  * at display sites; convert data-utc → toLocaleString() once (idempotent via
@@ -746,11 +846,66 @@ function applyLocalTimes(root) {
     var nodes = (root || document).querySelectorAll('.ts-local[data-utc]:not([data-localized])');
     for (var i = 0; i < nodes.length; i++) {
         var el = nodes[i], iso = el.getAttribute('data-utc'), d = new Date(iso);
-        if (!isNaN(d.getTime())) { el.textContent = d.toLocaleString(); el.title = iso + ' (UTC)'; }
+        if (!isNaN(d.getTime())) {
+            /* The viewer's chosen zone, so a row and the chart beside it can
+               never read two different clocks. With no choice made this is
+               toLocaleString's own zone, i.e. exactly the old behaviour. */
+            var z = window.SnapTime ? window.SnapTime.zone() : '';
+            try {
+                el.textContent = z ? d.toLocaleString(undefined, { timeZone: z })
+                                   : d.toLocaleString();
+            } catch (e) { el.textContent = d.toLocaleString(); }
+            el.title = iso + ' (UTC)';
+        }
         el.setAttribute('data-localized', '1');   // never re-convert (safe across nested swaps)
     }
 }
 window.applyLocalTimes = applyLocalTimes;
+
+/* The Settings time-zone control. Display only: a change re-renders what is on
+   screen and touches nothing on disk. Every chart re-reads SnapTime as it
+   draws, so the re-render is the whole of the propagation. */
+function setDisplayZone(z) {
+    if (!window.SnapTime) return;
+    window.SnapTime.setZone(z || '');
+    syncZoneNote();
+    /* Re-localize the spans: they are marked done-once, so clear the marker
+       first or a zone change would move the charts and leave the rows behind
+       -- the very disagreement this exists to remove. */
+    var done = document.querySelectorAll('.ts-local[data-localized]');
+    for (var i = 0; i < done.length; i++) done[i].removeAttribute('data-localized');
+    applyLocalTimes(document);
+    /* Charts redraw from their own sources; tell whoever is listening. */
+    (document.body || document).dispatchEvent(
+        new CustomEvent('sm:timezone-changed', { bubbles: true, detail: { zone: z || '' } }));
+}
+window.setDisplayZone = setDisplayZone;
+
+function syncZoneNote() {
+    var sel = document.getElementById('tz-select');
+    var note = document.getElementById('tz-note');
+    if (!window.SnapTime) return;
+    if (sel) {
+        var z = window.SnapTime.zone();
+        /* A select only accepts a value that exists as an option, and the
+           shortlist cannot hold 400 IANA names -- so a viewer whose zone is
+           not on it would see a BLANK control while their times were in fact
+           converted. Add the option rather than show nothing. */
+        if (z && !Array.prototype.some.call(sel.options,
+                function (o) { return o.value === z; })) {
+            var opt = document.createElement('option');
+            opt.value = z; opt.textContent = z;
+            sel.appendChild(opt);
+        }
+        sel.value = z;
+    }
+    if (note) note.textContent = 'Showing times in ' + window.SnapTime.label()
+                               + '. Stored as UTC.';
+}
+window.syncZoneNote = syncZoneNote;
+if (document.readyState === 'loading')
+    document.addEventListener('DOMContentLoaded', syncZoneNote);
+else syncZoneNote();
 document.addEventListener('htmx:afterSwap', function (e) {
     if (e.detail && e.detail.target) applyLocalTimes(e.detail.target);
 });
@@ -15537,9 +15692,11 @@ function paramHistoryRenderDrawerChart(data, currentValue) {
             .getPropertyValue('--trigger-' + (t || 'auto'));
         return (s || '#888').trim();
     };
+    /* A snapshot stamp is UTC; this used to slice its digits into a label and
+       draw them unconverted, so the chart disagreed with the ts_local rows on
+       the same page by the viewer's whole UTC offset. */
     var fmtTs = function(ts) {
-        return ts.slice(0,4) + '-' + ts.slice(4,6) + '-' + ts.slice(6,8)
-             + ' ' + ts.slice(9,11) + ':' + ts.slice(11,13) + ':' + ts.slice(13,15);
+        return (window.SnapTime ? window.SnapTime.format(ts) : String(ts));
     };
     // Which run this snapshot came from — ONE answer for both lines below.
     // `p.run`/`p.node` are stamped server-side from the snapshot provenance

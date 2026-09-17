@@ -4276,9 +4276,23 @@ window.ChipTrends = (function () {
        than being placed at a fabricated instant. */
     var _TS_RE = /^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/;
     function _iso(ts) {
+        /* The stamp is UTC, and this used to hand Plotly its digits with no
+           zone marker at all -- which a date axis reads as the browser's own
+           wall clock, placing every point off by the viewer's UTC offset and
+           disagreeing with the ts_local rows on the same page. SnapTime
+           returns a naive ISO already SHIFTED into the chosen zone, which is
+           the only spelling that puts that zone's clock on a Plotly axis (an
+           instant with `Z` renders as UTC). Same refusal to guess: an id that
+           does not parse returns null and the chart falls back wholesale. */
+        if (window.SnapTime) return window.SnapTime.axisValue(ts);
         var m = _TS_RE.exec(String(ts == null ? '' : ts));
         if (!m) return null;
         return m[1] + '-' + m[2] + '-' + m[3] + 'T' + m[4] + ':' + m[5] + ':' + m[6];
+    }
+
+    /* What the axis must SAY, so the basis is never a guess again. */
+    function _tzNote() {
+        return window.SnapTime ? (' (' + window.SnapTime.label() + ')') : '';
     }
 
     /* The axis is TIME, not the snapshot sequence. A category axis spaces 433
@@ -4539,6 +4553,13 @@ window.ChipTrends = (function () {
                 legend: { orientation: 'h', y: -0.28, font: { size: 10 } },
                 colorway: (window.UI_CONFIG && UI_CONFIG.plotly && UI_CONFIG.plotly.colorway) || undefined,
                 xaxis: { type: axisType, tickangle: axisType === 'date' ? 0 : -40,
+                         /* Say the zone on a TIME axis. A snapshot-id axis is
+                            a sequence of labels, not clock times, so it gets
+                            no zone note -- claiming one there would be the
+                            same unstated-basis problem in reverse. */
+                         title: axisType === 'date'
+                             ? { text: 'time' + _tzNote(), font: { size: 10 } }
+                             : undefined,
                          tickfont: { size: 9 }, automargin: true },
                 yaxis: { title: { text: c.metric + (c.unit ? ' (' + c.unit + ')' : ''),
                                   font: { size: 11 } },

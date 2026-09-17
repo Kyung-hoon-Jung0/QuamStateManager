@@ -959,6 +959,30 @@
         <button onclick="toggleColorblindMode()" class="settings-opt" id="colorblind-toggle">Colorblind mode</button>
         </div>
         </div>
+        {# The charts used to draw UTC digits unconverted while the rows beside
+           them localized, so one page showed two bases -- which is what the
+           report "Trends가 어떤 기준인지 모호하다" was about. Stored times are
+           UTC and stay UTC; this only decides what a time READS as. #}
+        <div class="settings-group">
+        <small class="settings-label">Time zone <span class="muted">(display only)</span></small>
+        <div class="settings-options">
+        <select id="tz-select" class="settings-opt" onchange="setDisplayZone(this.value)"
+                title="Snapshot times are stored in UTC. This changes only how they are shown.">
+            <option value="">This browser</option>
+            <option value="UTC">UTC</option>
+            <option value="Asia/Seoul">Asia/Seoul</option>
+            <option value="Asia/Tokyo">Asia/Tokyo</option>
+            <option value="Asia/Shanghai">Asia/Shanghai</option>
+            <option value="Asia/Jerusalem">Asia/Jerusalem</option>
+            <option value="Europe/London">Europe/London</option>
+            <option value="Europe/Paris">Europe/Paris</option>
+            <option value="America/New_York">America/New_York</option>
+            <option value="America/Chicago">America/Chicago</option>
+            <option value="America/Los_Angeles">America/Los_Angeles</option>
+        </select>
+        <small class="muted" id="tz-note"></small>
+        </div>
+        </div>
         <div class="settings-group">
         <small class="settings-label">Layout</small>
         <div class="settings-options">
