@@ -1,0 +1,188 @@
+# 202 — A rebuild reported what it lost, never what replaced it
+
+Date: 2026-09-18. Found by executing the one action the stress round had never
+pressed on the customer chip: a **real Re-generate build** of
+`260907_KRS_5Q`, in the environment that lab actually runs (`KRISS_CZ`), writing
+to a scratch folder. The chip's own hash was `0c9a78e48405` before and after
+every build in this round.
+
+---
+
+## 1. What the build did
+
+```
+reconstruct : qubits=5 pairs=4 lines=16 quam_class=quam_config.my_quam.Quam
+build       : 17.4 s   ok: True
+merge       : carried 737 · grafted 1207 · kept_new_pointer 260
+              dangling_grafts 0 · schema_dropped 50 · residual_lost 10
+```
+
+docs/176's root-class fix is working — the reconstruction carries the lab's own
+`quam_config.my_quam.Quam` rather than a stock root. docs/118's case is clean:
+**all 1,954 pair leaves kept identically**, all 11 headline calibrated values
+kept, 0 leaves added.
+
+`schema_dropped: 50` is the number worth pulling on. The report NAMES those
+paths, and they are readout weights:
+
+```
+qubits.q1.resonator.operations.readout.ringdown_length
+qubits.q1.resonator.operations.readout.weights_imag
+qubits.q1.resonator.operations.readout.weights_real
+```
+
+## 2. The cause was reported nowhere
+
+The source chip's readout pulse is `quam_config.complex_weights_pulse.`
+`ComplexWeightsReadoutPulse` — a class the **lab** wrote, declaring
+`weights_real` / `weights_imag` / `ringdown_length`. The rebuild produces
+`quam.components.pulses.SquareReadoutPulse`, stock quam. The lab's fields are
+not fields of the stock class, so the merge's cross-generation schema gate
+(docs/51) drops them — correctly, because grafting them would poison
+`Quam.load()`.
+
+So the **consequence** was reported (50 dropped paths, each named) and the
+**cause** was not. A reader saw a list of `weights_*` keys and had to infer
+"my readout class was replaced" from it. That inference is the only part they
+can act on.
+
+The gap is structural, not an oversight in one function: **the build spec has
+no slot for a per-pulse class**. It carries the chip's root class and nothing
+below it, so `reconstruct_spec` *cannot* carry `ComplexWeightsReadoutPulse` and
+the builder writes whatever its own templates write.
+
+### The fix
+
+`regen_merge` records the substitution where it happens — the one place that
+already decides `__class__` comes from the NEW build:
+
+```python
+if (k == "__class__" and isinstance(nv, str)
+        and isinstance(old.get(k), str) and old[k] != nv):
+    stats.class_changed.append((path or "(root)", old[k], nv))
+```
+
+`__class__` and `__package_versions__` share that branch and the comment there
+called both "serialization artifacts". That is true of the version stamp and
+false of `__class__`, which says what the object IS; the comment now says so.
+
+`regenerate.py` ships `class_changed` / `class_changed_paths` /
+`class_changed_total` beside the existing `schema_dropped` block, and
+`generate.js` renders an amber `10 class substitutions` chip plus one line per
+**substitution** — grouped, because one class swap normally appears at every
+qubit and a per-path list buries the single fact that matters.
+
+## 3. What the panel says now, on the real chip
+
+```
+[chip] 737 carried · 1207 grafted · 10 not carried · 50 cross-gen dropped
+       10 class substitutions
+rebuilt as quam.components.pulses.SquareReadoutPulse
+   (was quam_config.complex_weights_pulse.ComplexWeightsReadoutPulse)
+   — 5 places: qubits.q1.resonator.operations.readout, …q2…, …q3…, …
+rebuilt as quam.components.pulses.SquareReadoutPulse
+   (was quam_config.gef_weights_pulse.GefWeightsReadoutPulse)
+   — 5 places: qubits.q1.resonator.operations.readout_GEF, …
+```
+
+**Two** lab classes, not one — my first reading of the chip found only
+`ComplexWeightsReadoutPulse`, and the report found `GefWeightsReadoutPulse`
+beside it. Re-running the merge with the env's real class schemas reproduces
+the build's own `schema_dropped = 50` exactly, and **50 of 50** dropped paths
+sit on one of the 10 re-typed objects: the class lines explain the whole drop.
+
+### The practical consequence for this lab
+
+A re-generate today loses the optimized integration weights for all five
+qubits — 300 / 500 / 400 / 1200 / 1250 elements — and readout optimization
+would have to be re-run. The source chip keeps them; only the rebuilt folder
+is affected, and the panel now says why.
+
+## 4. The pre-build warning that the chip refuted
+
+The same fact is knowable before a 17 s build, and docs/176 ③ is the precedent
+(a root refusal belongs in the review, not in the build's 400 half a minute
+later). So a reconstruct-time note was written: enumerate the chip's pulses via
+`pulse_index.list_pulses` (reusing the enumeration SM already owns rather than
+writing a second one), and warn for every class outside `quam` / `quam_builder`.
+
+Measured on the real chip, it fires on **four** classes — and it is **wrong for
+three of them**:
+
+| class | places | what the real rebuild did |
+|---|---|---|
+| `ComplexWeightsReadoutPulse` | 5 | re-typed to stock, fields dropped |
+| `GefWeightsReadoutPulse` | 5 | re-typed to stock, fields dropped |
+| `SNZTwoFluxPulse` | 16 | **byte-identical** — class and all 11 keys kept |
+| `GaussianNZTwoFluxPulse` | 4 | **byte-identical** — class and all 13 keys kept |
+
+The builder writes `resonator.operations.readout`, so it overwrites that object.
+It writes no `cz_SNZ_flux_pulse_*` operation at all, so tier-2 grafts those
+whole and the lab's class survives. A source-side warning cannot tell the two
+apart without building, so it told this lab it would lose 20 pulses it will
+not lose.
+
+**Reverted.** The post-build report is a MEASUREMENT of the finished rebuild and
+is therefore always right; the pre-build note was a prediction and was mostly
+wrong. Recorded rather than dropped, because "tell the user earlier" is a good
+instinct that was refuted here by the only thing that could refute it — the
+real chip — and the distinction is now a pin
+(`test_a_pulse_the_rebuild_never_wrote_is_not_a_substitution`).
+
+## 5. Still open
+
+The report names the substitution; it does not prevent it. The real fix is the
+docs/176 pattern one level down — the spec carrying a per-pulse class the way
+it already carries the root class — and it is a change to the build spec's
+vocabulary and to `run_build`'s construction path, needing a real build per
+class and env-importability handling (`cqt` cannot import
+`quam_config.two_flux_gate`; `KRISS_CZ` can). Not attempted here.
+
+Note what the fix would NOT be: keeping the OLD class on the merged object.
+docs/136 established that poison — grafting an old `QdacBiasLine` onto a
+rebuilt qubit produces a state whose field is typed for something the build
+never wrote, and `Quam.load()` dies on the first one with the build reporting
+success.
+
+---
+
+## Pins
+
+- `tests/test_regen_merge.py` — 6 tests: the substitution recorded; every
+  dropped field sitting on a named object; an unchanged class silent; the
+  version stamp not a class (both spellings — see below); the root named
+  `(root)`; a grafted subtree never called a substitution
+- `tests/test_regenerate.py` — the report block's shape, and an ordinary
+  rebuild reporting none
+- `tests/generate_classchange_selfcheck.cjs` — 13 assertions EXECUTING the
+  shipped renderer: the chip, the grouping, both class names, the place count,
+  the capped-list total, and silence on a result predating the field
+
+**Mutation sweeps: 8/8 server-side, 6/6 client-side** — after a first sweep of
+7 caught only 6.
+
+## 6. The vacuous pin the sweep caught
+
+`test_a_version_stamp_move_is_not_a_class_substitution` used the real shape,
+`__package_versions__` as a dict, and passed **with the `k == "__class__"`
+guard deleted**: `isinstance(nv, str)` already excludes a dict, so the fixture
+could not reach the state the guard protects (docs/141 §4af). A scan of all 46
+chips on this machine confirms that key is a dict at the root every time.
+
+Both spellings are pinned now — the dict for what real data does, a
+deliberately hostile string for what the guard is for.
+
+## Measurement errors this round (running tally: 11)
+
+- **the heredoc backslash trap, a fourth time** — `\\n` inside a quoted heredoc
+  produced a literal newline and a `SyntaxError`. The memory note
+  `bash-heredoc-backslash-trap` says to use the Write tool for backslash
+  content; the Edit tool fixed it in one pass.
+- **a mutation aimed at the wrong branch** — the first "a graft is also called a
+  substitution" mutation edited the NEW-only loop, while a graft comes from the
+  `old.items()` loop, so it went GREEN against a fixture that was fine. The pin
+  was sound and the mutation was not; re-aimed, it reds.
+- **a malformed fixture read as a finding** — `{"qubits": {q: …} for q in qs}`
+  written with the comprehension around the OUTER dict left only `q3`, and the
+  test failed `3 == 9` looking like a merge bug. `carried=1` in the failure
+  output was what named it.

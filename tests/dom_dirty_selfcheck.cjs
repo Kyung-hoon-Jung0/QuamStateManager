@@ -129,7 +129,13 @@ ok(!doc.querySelector('.bulk-cell.dirty'),
   const i = src.indexOf('/auto-sync/pull');
   ok(i !== -1, 'B0: the auto-pull call site is in app.js');
   const block = src.slice(Math.max(0, i - 1400), i + 200);
-  ok(/querySelector\(\s*'\.bulk-cell\.dirty'\s*\)/.test(block),
+  // Either spelling is the rule being pinned. docs/195 changed this call from
+  // `querySelector` (does ANY cell have unsaved typing?) to `querySelectorAll`
+  // (which cells, so each can be reported as its own `dom_path`) -- and this
+  // assertion, written against the literal, went red on main with nothing
+  // saying so until a later round ran the suite. A pin on a character window
+  // around a call site is the shape docs/187 already had to replace once.
+  ok(/querySelectorAll?\(\s*'\.bulk-cell\.dirty'\s*\)/.test(block),
     'B1: it looks for `.bulk-cell.dirty`');
   ok(!/bulk-cell\.bulk-dirty/.test(block),
     'B2: and no longer for the counter-id class that can never match');
@@ -140,8 +146,15 @@ ok(!doc.querySelector('.bulk-cell.dirty'),
   }).join(' ');
   ok(!/hasUnsaved/.test(code),
     'B3: the non-existent hasUnsaved fallback is gone, not left as dead armor');
+  // docs/195: the pull sends BOTH -- the flag, so the honest answer is never
+  // weaker than it was, AND one dom_path per dirty cell, so the server's
+  // per-field verdict can ask whether the user and the external writer touched
+  // the SAME field. Pinning either alone lets the other be deleted silently.
   ok(/dom_dirty=1/.test(block),
     'B4: a dirty grid still turns into ?dom_dirty=1 on the pull');
+  ok(/dom_path=/.test(block),
+    'B5: and names WHICH cells are dirty, one dom_path each -- the per-field '
+    + 'verdict cannot ask "did we both touch this field" from a bare flag');
 }
 
 process.exit(fails ? 1 : 0);

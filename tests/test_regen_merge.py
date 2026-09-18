@@ -448,3 +448,122 @@ class TestNaturalOrderedStats:
         r = merge_states(old, new)
         assert r.stats.pruned_ops == [
             f"qubits.q{n}.z.operations.cz_broken" for n in qs]
+
+
+# --- docs/202: a class substitution is the CAUSE the report never named ------
+
+LAB_RO = "quam_config.complex_weights_pulse.ComplexWeightsReadoutPulse"
+STOCK_RO = "quam.components.pulses.SquareReadoutPulse"
+
+
+def test_a_class_substitution_is_recorded():
+    """The customer case (KRS_5Q, 2026-09-18): the chip's readout pulse is the
+    lab's OWN class declaring weights_real/weights_imag/ringdown_length, and a
+    rebuild produces the stock SquareReadoutPulse -- because the build spec has
+    no slot for a per-pulse class, so reconstruct_spec cannot carry it. The
+    weights then drop through the schema gate, which IS reported; the class
+    substitution that caused it was reported nowhere."""
+    old = {"qubits": {"q1": {"resonator": {"operations": {"readout": {
+        "__class__": LAB_RO, "amplitude": 0.1,
+        "weights_real": [1.0, 2.0], "ringdown_length": 40}}}}}}
+    new = {"qubits": {"q1": {"resonator": {"operations": {"readout": {
+        "__class__": STOCK_RO, "amplitude": 0.0}}}}}}
+    r = merge_states(old, new, class_schemas={STOCK_RO: ["amplitude"]})
+    assert r.stats.class_changed == [
+        ("qubits.q1.resonator.operations.readout", LAB_RO, STOCK_RO)]
+    # the consequence is still reported, unchanged
+    assert set(r.stats.schema_dropped) == {
+        "qubits.q1.resonator.operations.readout.weights_real",
+        "qubits.q1.resonator.operations.readout.ringdown_length"}
+
+
+def test_every_dropped_field_sits_on_an_object_the_report_names():
+    """The property that makes the new line worth showing: on the real chip all
+    50 dropped paths sat on one of the 10 re-typed objects, so the class lines
+    explain the whole drop. Pin the relationship, not the numbers."""
+    qs = ("q1", "q2", "q3")
+    old = {"qubits": {q: {"resonator": {"operations": {"readout": {
+        "__class__": LAB_RO, "amplitude": 0.1, "weights_real": [1.0],
+        "weights_imag": [2.0], "ringdown_length": 40}}}} for q in qs}}
+    new = {"qubits": {q: {"resonator": {"operations": {"readout": {
+        "__class__": STOCK_RO, "amplitude": 0.0}}}} for q in qs}}
+    r = merge_states(old, new, class_schemas={STOCK_RO: ["amplitude"]})
+    assert len(r.stats.schema_dropped) == 9          # 3 qubits x 3 lab fields
+    retyped = {p for p, _, _ in r.stats.class_changed}
+    assert len(retyped) == 3
+    orphans = [p for p in r.stats.schema_dropped
+               if p.rsplit(".", 1)[0] not in retyped]
+    assert orphans == [], f"dropped with no class line to explain them: {orphans}"
+
+
+def test_an_unchanged_class_is_never_reported_as_a_substitution():
+    # Every merged object carries __class__; only a DIFFERENT one is news.
+    old = {"qubits": {"q1": {"xy": {"__class__": "quam.X", "f": 1.0}}}}
+    new = {"qubits": {"q1": {"xy": {"__class__": "quam.X", "f": 0.0}}}}
+    r = merge_states(old, new)
+    assert r.stats.class_changed == []
+
+
+def test_a_version_stamp_move_is_not_a_class_substitution():
+    """__package_versions__ shares the branch and moves on almost every rebuild,
+    so reporting it would bury the real substitutions under noise.
+
+    The string spelling is DELIBERATELY hostile: across the 46 real chips on
+    this machine that key is always a dict at the root, so `isinstance(nv, str)`
+    already excludes it and a fixture using the real shape cannot reach the
+    state the `k == "__class__"` guard protects -- it passes with the guard
+    deleted, which is a vacuous pin (docs/141 4af). Both spellings are pinned:
+    the dict for what real data does, the string for what the guard is for."""
+    real = ({"__package_versions__": {"quam": "0.5.0"},
+             "qubits": {"q1": {"__class__": "quam.X"}}},
+            {"__package_versions__": {"quam": "0.6.0"},
+             "qubits": {"q1": {"__class__": "quam.X"}}})
+    hostile = ({"__package_versions__": "0.5.0",
+                "qubits": {"q1": {"__class__": "quam.X"}}},
+               {"__package_versions__": "0.6.0",
+                "qubits": {"q1": {"__class__": "quam.X"}}})
+    for old, new in (real, hostile):
+        assert merge_states(old, new).stats.class_changed == []
+
+
+def test_a_root_class_substitution_is_named_too():
+    # The root decides what the chip can contain (docs/176). It has no dot-path,
+    # so it is reported under an explicit marker rather than an empty string.
+    old = {"__class__": "quam_config.my_quam.Quam", "qubits": {}}
+    new = {"__class__": "quam_builder.Quam", "qubits": {}}
+    r = merge_states(old, new)
+    assert r.stats.class_changed == [
+        ("(root)", "quam_config.my_quam.Quam", "quam_builder.Quam")]
+
+
+def test_a_pulse_the_rebuild_never_wrote_is_not_a_substitution():
+    """Measured on the customer chip (2026-09-18): of its 24 lab-typed pulses,
+    only the 10 READOUTS are re-typed. The 16 SNZ + 4 GaussianNZ CZ flux pulses
+    come through the rebuild byte-identical -- class and all 11/13 keys -- because
+    the builder does not write those operations at all, so tier-2 grafts them
+    whole.
+
+    This is why the report is a MEASUREMENT of the finished rebuild and not a
+    prediction made from the source chip: a reconstruct-time warning written in
+    the same session claimed all 24 would lose fields, and 20 of them do not."""
+    lab_cz = "quam_config.two_flux_gate.SNZTwoFluxPulse"
+    old = {"qubits": {"q1": {
+        "resonator": {"operations": {"readout": {
+            "__class__": LAB_RO, "amplitude": 0.1, "weights_real": [1.0]}}},
+        # the builder writes no cz_SNZ_* operation, so this whole subtree grafts
+        "z": {"operations": {"cz_SNZ_flux_pulse_q1_q2": {
+            "__class__": lab_cz, "amplitude": 0.2, "t_snz": 12}}}}}}
+    new = {"qubits": {"q1": {
+        "resonator": {"operations": {"readout": {
+            "__class__": STOCK_RO, "amplitude": 0.0}}},
+        "z": {"operations": {}}}}}
+    r = merge_states(old, new, class_schemas={STOCK_RO: ["amplitude"]})
+
+    # the grafted CZ pulse kept its own class and every field
+    cz = r.merged["qubits"]["q1"]["z"]["operations"]["cz_SNZ_flux_pulse_q1_q2"]
+    assert cz["__class__"] == lab_cz and cz["t_snz"] == 12
+    # ...and is reported as a graft, never as a substitution
+    assert [p for p, _, _ in r.stats.class_changed] == [
+        "qubits.q1.resonator.operations.readout"]
+    assert any(p.startswith("qubits.q1.z.operations.cz_SNZ")
+               for p, _ in r.stats.graft_subtrees)

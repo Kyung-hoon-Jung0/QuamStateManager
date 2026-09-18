@@ -217,6 +217,59 @@ def test_class_schemas_flow_into_merge(tmp_path, monkeypatch):
     assert cz["phase"] == 0.2                        # tier1 carry intact
 
 
+def test_the_report_names_the_class_substitution_behind_the_drop(tmp_path, monkeypatch):
+    """docs/202 — the customer chip's readout pulse is the LAB's own class and a
+    rebuild produces the stock one, so every field only their class declares is
+    dropped. That drop was reported; the substitution causing it was not, and it
+    is the only part a reader can act on."""
+    lab, stock = "quam_config.cw.ComplexWeightsReadoutPulse", "quam.pulses.SquareReadoutPulse"
+    (tmp_path / "old").mkdir()
+    old_state = {"qubits": {"q1": {"resonator": {"operations": {"readout": {
+        "__class__": lab, "amplitude": 0.1, "weights_real": [1.0]}}}}}}
+    (tmp_path / "old" / "state.json").write_text(json.dumps(old_state))
+    (tmp_path / "old" / "wiring.json").write_text(json.dumps({"wiring": {}, "network": {}}))
+    fresh = {"qubits": {"q1": {"resonator": {"operations": {"readout": {
+        "__class__": stock, "amplitude": 0.0}}}}}}
+
+    def fake_build(python_path, mode, spec, out_dir, timeout=300):
+        out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "state.json").write_text(json.dumps(fresh))
+        (out_dir / "wiring.json").write_text(json.dumps({"wiring": {}, "network": {}}))
+        return {"ok": True, "status": "ok", "error": None,
+                "result": {"class_schemas": {stock: ["amplitude"]}}}
+
+    monkeypatch.setattr(regenerate.config_generator, "run_generator", fake_build)
+    out = regenerate.run_regenerate("py", tmp_path / "old", {"x": 1}, tmp_path / "new")
+
+    m = out["merge"]
+    assert m["schema_dropped"] == 1                   # the consequence, as before
+    assert m["class_changed"] == 1                    # and now the cause
+    assert m["class_changed_total"] == 1
+    assert m["class_changed_paths"] == [{
+        "path": "qubits.q1.resonator.operations.readout",
+        "old": lab, "new": stock}]
+
+
+def test_a_rebuild_that_changes_no_class_reports_none(tmp_path, monkeypatch):
+    # The ordinary case must stay quiet, or the panel cries wolf on every build.
+    (tmp_path / "old").mkdir()
+    (tmp_path / "old" / "state.json").write_text(json.dumps(
+        {"qubits": {"q1": {"__class__": "qb.Transmon", "f_01": 5e9}}}))
+    (tmp_path / "old" / "wiring.json").write_text(json.dumps({"wiring": {}, "network": {}}))
+
+    def fake_build(python_path, mode, spec, out_dir, timeout=300):
+        out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "state.json").write_text(json.dumps(
+            {"qubits": {"q1": {"__class__": "qb.Transmon", "f_01": 0.0}}}))
+        (out_dir / "wiring.json").write_text(json.dumps({"wiring": {}, "network": {}}))
+        return {"ok": True, "status": "ok", "error": None, "result": {}}
+
+    monkeypatch.setattr(regenerate.config_generator, "run_generator", fake_build)
+    out = regenerate.run_regenerate("py", tmp_path / "old", {"x": 1}, tmp_path / "new")
+    assert out["merge"]["class_changed"] == 0
+    assert out["merge"]["class_changed_paths"] == []
+
+
 class TestCollectClassSchemas:
     """run_build._collect_class_schemas — the in-env harvest feeding the gate.
 

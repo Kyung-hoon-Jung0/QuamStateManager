@@ -7338,6 +7338,26 @@
         var twpaN = m.twpa_wiring_carried || 0;     // TWPAs carried (wiring + ports)
         var prunedN = m.pruned_ops || 0;            // redundant old ops cleaned
         var schemaDropN = m.schema_dropped || 0;    // old-stack fields the new env's classes don't know
+        // The CAUSE behind most of those drops: the rebuild typed an object
+        // differently from the source chip (usually the lab's own subclass
+        // replaced by the stock class the builder knows). Grouped by the
+        // substitution, because one class swap normally shows up at every
+        // qubit and a per-path list buries the one fact that matters.
+        var classCh = m.class_changed_paths || [];
+        var classChN = (m.class_changed_total != null)
+            ? m.class_changed_total : classCh.length;
+        var classGroups = [];
+        (function () {
+          var seen = {};
+          classCh.forEach(function (c) {
+            var key = c.old + " -> " + c.new;
+            if (!seen[key]) {
+              seen[key] = { old: c.old, nw: c.new, paths: [] };
+              classGroups.push(seen[key]);
+            }
+            seen[key].paths.push(c.path);
+          });
+        })();
         var popProtN = m.populate_protected || 0;   // wizard populate edits kept over tier-1
         var popConf = m.populate_conflicts || [];
         var mp = document.createElement("div");
@@ -7364,6 +7384,13 @@
             '(e.g. CZGate.duration_control → duration_qubit) — grafting them would make ' +
             'Quam.load() fail, so they were dropped">' + schemaDropN +
             ' cross-gen dropped</span>' : '') +
+          (classChN ? '<span class="gen-merge-stat gen-merge-warn" title="The rebuild ' +
+            'typed these objects as a different class than the source chip — usually ' +
+            "your own subclass replaced by the stock class this env's builder knows. " +
+            'Every field only your class declares is gone from the rebuild (they are ' +
+            'in the dropped list below). Name the class in the build recipe, or keep ' +
+            'the source chip for those values.">' + classChN +
+            ' class substitution' + (classChN === 1 ? '' : 's') + '</span>' : '') +
           (dangN ? '<span class="gen-merge-stat gen-merge-warn" title="Grafted legacy content ' +
             'whose reference no longer resolves">' + dangN + ' broken ref</span>' : '') +
           (popConf.length ? '<span class="gen-merge-stat gen-merge-warn" ' +
@@ -7385,6 +7412,19 @@
             " the rebuild re-expressed (unreferenced, broken pointers)";
           el.appendChild(pn);
         }
+        // A class substitution is named where the user is already looking —
+        // above the fold, not inside a collapsed list — because it explains
+        // the dropped fields underneath it and is the only line here that
+        // says what to change.
+        classGroups.slice(0, 6).forEach(function (g) {
+          var cg = document.createElement("div");
+          cg.className = "gen-merge-muted gen-merge-detail";
+          cg.textContent = "rebuilt as " + g.nw + " (was " + g.old + ") — " +
+            g.paths.length + " place" + (g.paths.length === 1 ? "" : "s") +
+            ": " + g.paths.slice(0, 3).join(", ") +
+            (g.paths.length > 3 ? ", …" : "");
+          el.appendChild(cg);
+        });
         if (lostN || dangN || schemaDropN) {
           var det = document.createElement("details");
           det.className = "gen-merge-detail";

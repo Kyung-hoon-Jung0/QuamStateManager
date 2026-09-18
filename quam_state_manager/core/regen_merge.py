@@ -131,6 +131,7 @@ class MergeStats:
     dangling_grafts: list[str] = field(default_factory=list)  # grafts w/ broken abs pointer (after prune)
     pruned_ops: list[str] = field(default_factory=list)      # redundant old ops removed by prune
     schema_dropped: list[str] = field(default_factory=list)  # OLD-only fields the NEW env's class schema doesn't know (cross-generation rename/removal)
+    class_changed: list[tuple[str, str, str]] = field(default_factory=list)  # (path, OLD class, NEW class) -- the rebuild typed this object differently
     populate_protected: list[str] = field(default_factory=list)  # user populate edits kept as NEW over tier-1 (docs/72)
     populate_conflicts: list[str] = field(default_factory=list)  # hand-tuned OLD values kept where a populate edit implied a derived change (z delay)
 
@@ -148,9 +149,25 @@ def _merge(old: Any, new: Any, path: str, stats: MergeStats,
         out: dict = {}
         for k, nv in new.items():
             if k in ("__class__", "__package_versions__"):
-                # Serialization artifacts, not calibration: always the NEW
-                # build's. Tier-1-carrying an OLD __package_versions__ stamp
-                # would lie about which stack wrote the rebuilt state.
+                # Always the NEW build's. Tier-1-carrying an OLD
+                # __package_versions__ stamp would lie about which stack wrote
+                # the rebuilt state, and an OLD __class__ would type the object
+                # for a class this build never wrote.
+                #
+                # But __class__ is NOT an artifact the way the version stamp
+                # is: it says what this object IS. When the rebuild types an
+                # object differently from the source chip -- a lab's own
+                # subclass replaced by the stock one the builder knows -- the
+                # object loses every field only the lab's class declares, and
+                # those drop out through the schema gate below as
+                # `schema_dropped` paths. That reports the CONSEQUENCE
+                # (`...readout.weights_real` was dropped) and never the CAUSE
+                # (your ComplexWeightsReadoutPulse was rebuilt as a
+                # SquareReadoutPulse), which is the thing a reader needs in
+                # order to know what to do about it.
+                if (k == "__class__" and isinstance(nv, str)
+                        and isinstance(old.get(k), str) and old[k] != nv):
+                    stats.class_changed.append((path or "(root)", old[k], nv))
                 out[k] = copy.deepcopy(nv)
                 continue
             if k in STRUCTURAL_LEAF_KEYS:               # membership -> always NEW
@@ -544,6 +561,7 @@ def merge_states(old_state: dict, new_state: dict,
     # (customer rule 2026-09-09).
     stats.schema_dropped.sort(key=natural_key)
     stats.populate_protected.sort(key=natural_key)
+    stats.class_changed.sort(key=lambda c: natural_key(c[0]))
 
     merged_paths = {p for p, _ in _iter_leaves(merged)}
     old_scalars = [(p, v) for p, v in _iter_leaves(old_state)

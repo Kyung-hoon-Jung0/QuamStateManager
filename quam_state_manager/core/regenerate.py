@@ -218,6 +218,15 @@ def run_regenerate(
         "schema_dropped": len(s.schema_dropped),
         "schema_dropped_paths": s.schema_dropped[:200],
         "schema_dropped_paths_total": len(s.schema_dropped),
+        # The CAUSE behind most cross-generation drops: the rebuild typed an
+        # object differently from the source chip. Reported separately because
+        # the remedy differs -- a dropped field is gone, a substituted class is
+        # a class this env's builder could not produce, which is usually the
+        # lab's own subclass and usually fixable by naming it.
+        "class_changed": len(s.class_changed),
+        "class_changed_paths": [
+            {"path": p, "old": o, "new": n} for p, o, n in s.class_changed[:80]],
+        "class_changed_total": len(s.class_changed),
         "populate_protected": len(s.populate_protected),
         "populate_protected_paths": s.populate_protected[:80],
         "populate_conflicts": s.populate_conflicts[:20],
