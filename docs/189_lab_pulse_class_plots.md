@@ -352,3 +352,23 @@ the emptiness guard and no fixture can reach the state (docs/141 §4af). The
 status is the documented contract, so it stays as the primary guard and is
 pinned directly, by handing the renderer a payload that breaks that contract
 (not-ok, yet carrying traces).
+
+### Part 3 self-review: what it cost the page
+
+Part 2's argument was that the customer's *"SM이 느려질텐데"* worry was answered —
+so adding a per-row lookup to the table render without measuring it would be
+careless. `_pulse_truth_spark` runs per unknown-class row, each doing a config
+lookup plus `decimate_minmax` over up to 1,488 samples.
+
+Measured on the real chip, warm, six requests:
+
+```
+/pulses                     median 23 ms   (194 KB, 3 lab sparklines, 51 polylines)
+/pulses?channel=xy          median 28 ms   (no lab classes at all)
+/pulse/row (a lab class)            17 ms
+```
+
+The tab with **no** lab rows is the slower of the two, so the lab path is not
+distinguishable from run-to-run noise. The config is a cached dict (part 2) and
+`_config_stale` is memoized on `(mutation_seq, len(change_log))`, which is what
+keeps the per-row lookup to a dictionary read. The worry stays answered.

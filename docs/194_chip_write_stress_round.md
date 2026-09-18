@@ -153,3 +153,36 @@ All the same root cause — **probing before reading the markup**:
   as "no toast fired" rather than "the hook is gone".
 
 Each was corrected in place rather than reported as a defect.
+
+---
+
+## 6. Self-review: does the policy reach the right trees, and only those?
+
+`window._treeReadOnly` is a plain global published by `/explorer`. Two things
+worth checking rather than assuming, because the reasoning path looked alarming
+and turned out to be wrong.
+
+**Five more pages render an editable tree.** `_qubits`, `_pairs`,
+`_resonators`, `_flux` and `_couplers` all call
+`renderJsonTree(..., {defaultDepth: 2})` with no `valueClick`, so their entity
+panel defaults to EDIT semantics. If the policy reached them inconsistently,
+the same leaf would be read-only or not depending on where the viewer had been.
+
+**It does leak, and it is harmless.** Measured in real Chrome: a fresh load of
+`/qubits` reports `window._treeReadOnly` **false**; navigating `/explorer →
+Qubits` by htmx reports **true** — the global survives the swap, as globals do.
+But those panels render `qubitsWiring[name]`, a **wiring** subtree, and
+`wiring.json` on the real chip has **19 distinct keys, none** of them
+`__class__`, `id`, or any `active_*`:
+
+```
+a qubit's wiring subtree: {"rr": {...}, "xy": {...}, "z": {...}}   (port pointers)
+```
+
+Membership arrays live at the STATE root and cannot appear in a per-qubit
+wiring subtree at all. So the policy marks nothing there because there is
+nothing to mark, and docs/194's explorer-only scope was correct.
+
+Recorded because "five more pages render editable trees of the live chip" is a
+true sentence that sounds like a defect and is not one — and the only way to
+tell was to read what those trees actually contain.
