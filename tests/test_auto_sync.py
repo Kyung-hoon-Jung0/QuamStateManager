@@ -203,8 +203,17 @@ class TestTheSignalRidesTheExistingPoll:
         src = (Path(__file__).resolve().parent.parent / "quam_state_manager"
                / "web" / "static" / "app.js").read_text(encoding="utf-8")
         i = src.index("/auto-sync/pull")
-        chunk = src[i - 2600:i + 600]
-        assert "_applyInFlight" in chunk
+        # Anchored on the GUARD that opens the block, not a byte distance: a
+        # 2,600-char window expired when docs/195 put the per-cell dom_path
+        # collection between the guard and the call, and read as "the latch
+        # is gone" while the latch was untouched.
+        g = src.rfind("d.auto_pull", 0, i)
+        assert g != -1, "the pull is no longer issued from the drift handler"
+        chunk = src[g:i + 600]
+        guard = chunk[:chunk.index("\n")]
+        assert "!window._applyInFlight" in guard, (
+            "the pull must refuse to start while the latch is held: " + guard)
+        assert "window._applyInFlight = true" in chunk
         # ...and it must always be released, including when the request never
         # settles — the same latch gates the manual Apply buttons, so a wedged
         # pull would make them read as dead clicks (the docs/80 lesson).
@@ -320,6 +329,55 @@ class TestTheRedTeamFindings:
     pinned by the scenario that produced them, not by the patch that fixed
     them."""
 
+    def test_an_edit_in_the_lock_window_is_refused_before_any_live_io(
+            self, tmp_path, monkeypatch):
+        """The behaviour the first in-lock re-check exists for, reached for real.
+
+        The structural pin below cannot tell ONE re-check from TWO: a second
+        one runs after `sync_from_live` and still rescues the edit (it
+        re-persists memory and answers 204), so deleting the first left that
+        pin green (docs/202 appendix, measured). What only the first one does
+        is refuse BEFORE the I/O -- no live read, no working-folder rewrite, no
+        spurious "backup" snapshot for an edit that was never going to be
+        discarded. So land an edit exactly in the lock-acquisition window and
+        watch whether that I/O happens."""
+        from quam_state_manager.core import working_copy as WC
+        from quam_state_manager.web import routes as R
+
+        app, c, live = _mk(tmp_path)
+        c.post("/auto-sync/set", data={"pull": "1"})       # replace OFF
+        _diverge(app, live, 6.8e9)                          # clean, drifted
+
+        real_lock = R._active_wc_lock
+        edits = []
+
+        class _EditOnEnter:
+            """The build lock, with a user's edit arriving while it is taken."""
+            def __init__(self, inner):
+                self.inner = inner
+
+            def __enter__(self):
+                if not edits:
+                    ctx = _ctx(app)
+                    edits.append(ctx["modifier"].set_value("qubits.q1.f_01", 5.5e9))
+                return self.inner.__enter__()
+
+            def __exit__(self, *exc):
+                return self.inner.__exit__(*exc)
+
+        monkeypatch.setattr(R, "_active_wc_lock",
+                            lambda ctx=None: _EditOnEnter(real_lock(ctx)))
+        synced = []
+        real_sync = WC.sync_from_live
+        monkeypatch.setattr(WC, "sync_from_live",
+                            lambda wc, *a, **k: (synced.append(1), real_sync(wc, *a, **k))[1])
+
+        r = c.post("/auto-sync/pull")
+        assert edits, "the fixture never reached the lock window"
+        assert r.status_code == 204, "an edit in the window must stop the pull"
+        assert synced == [], "refused only AFTER reading live and rewriting the working copy"
+        assert _f01(app) == 5.5e9, "the edit survived"
+
     def test_the_dirty_check_is_repeated_inside_the_build_lock(self, tmp_path):
         """/field/edit takes only store._lock, and the window between the
         outer check and store.reload() spans lock acquisition plus two live
@@ -329,10 +387,20 @@ class TestTheRedTeamFindings:
         from quam_state_manager.web import routes as R
         src = Path(R.__file__).read_text(encoding="utf-8")
         i = src.index("def auto_sync_pull")
-        body = src[i:i + 4600]
+        # The whole function, bounded by the next route -- a 4,600-char slice
+        # expired when docs/195's per-field verdict pushed the lock past it.
+        body = src[i:src.index("\n@bp.route", i)]
         lock_at = body.index("with build_lock:")
-        after = body[lock_at:]
-        assert "_quam_ctx_dirty(ctx)" in after, "no re-check inside the lock"
+        # Strip comments: the comment above the re-check NAMES store.reload(),
+        # so an offset search that included it reported the reload as coming
+        # FIRST (measured, docs/202 appendix).
+        code = "\n".join(l for l in body[lock_at:].splitlines()
+                         if not l.strip().startswith("#"))
+        recheck = code.find("_quam_ctx_dirty(ctx)")
+        assert recheck != -1, "no re-check inside the lock"
+        reload_at = code.find("_rebuild_after_working_copy_replaced(ctx")
+        assert reload_at == -1 or recheck < reload_at, (
+            "the re-check must run BEFORE the working copy is replaced")
 
     def test_a_replace_pull_snapshots_before_discarding(self, tmp_path):
         """The change log is not journalled (the journal captures on save) and
@@ -354,10 +422,15 @@ class TestTheRedTeamFindings:
         from quam_state_manager.web import routes as R
         src = Path(R.__file__).read_text(encoding="utf-8")
         i = src.index("def auto_sync_pull")
-        # Sliced generously: the function grew when the post-I/O re-check
-        # landed, and a slice too short reads as "the call is gone".
-        body = src[i:i + 9000]
-        assert "_clear_reapply(ctx)" in body
+        # The whole function, bounded by the next route. "Sliced generously"
+        # (9,000 chars) expired anyway when docs/195 grew it to ~13,000 -- a
+        # generous window is still a window.
+        body = src[i:src.index("\n@bp.route", i)]
+        rebuild = body.index("_rebuild_after_working_copy_replaced(ctx")
+        clear = body.find("_clear_reapply(ctx)", rebuild)
+        assert clear != -1, "a replace-pull must clear the reapply stash"
+        # ...as its pair: nothing may run between them that could read it.
+        assert clear - rebuild < 600, "the clear drifted away from the rebuild"
 
     def test_typed_but_uncommitted_cells_block_a_non_replace_pull(self, tmp_path):
         """A fill-down or pasted column lives only in the DOM until Apply, so
@@ -376,12 +449,26 @@ class TestTheRedTeamFindings:
     def test_a_declined_pull_stops_being_advertised(self, tmp_path):
         """live_diverged never clears on its own, so the client used to POST a
         204-ing pull every 5 s forever — and each took window._applyInFlight,
-        which also gates the manual Apply buttons, making them dead clicks."""
+        which also gates the manual Apply buttons, making them dead clicks.
+
+        docs/195 changed the contract from ZERO presses to AT MOST ONE: whether
+        the user and the outside writer touched the SAME field needs the live
+        content, and the drift poll deliberately reads none (it is the cheap
+        one). So the first poll advertises, the pull computes the per-field
+        verdict and declines on a conflict, and the gate goes quiet until
+        something changes. What must never come back is the forever."""
         app, c, live = _mk(tmp_path)
         c.post("/auto-sync/set", data={"pull": "1"})       # replace OFF
         c.post("/field/edit", data={"dot_path": "qubits.q1.f_01", "value": "5.5e9"})
-        _diverge(app, live, 6.8e9)
-        assert c.get("/state/drift").get_json().get("auto_pull") is False
+        _diverge(app, live, 6.8e9)                          # the SAME field
+        presses = 0
+        for _ in range(6):
+            if c.get("/state/drift").get_json().get("auto_pull"):
+                presses += 1
+                assert c.post("/auto-sync/pull").status_code == 204, (
+                    "a conflict must decline, never pull over the edit")
+        assert presses == 1, f"advertised {presses} times over six polls"
+        assert _f01(app) == 5.5e9, "the user's value survived"
 
     def test_changing_a_switch_keeps_the_revert_anchor(self, tmp_path):
         """docs/117 anchors "Revert last apply" to the session. Rebuilding it

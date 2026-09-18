@@ -285,7 +285,13 @@ class TestTrendsSelectors:
         _seed_run(root, 3, "1_res_spec", qubits=("q1",))
         app.config["dataset_store"] = DatasetStore(root)
         html = app.test_client().get("/trends").get_data(as_text=True)
-        exps = re.findall(r'<option value="([^"]*_[^"]*)">', html)
+        # Only the PAGE's options: base.html's Settings panel is on every page,
+        # and docs/196's time-zone picker put `America/New_York` -- a value
+        # with an underscore -- ahead of the experiment list, so a page-wide
+        # scrape read it as an experiment.
+        page = html[html.index('id="table-pane"'):] if 'id="table-pane"' in html else html
+        page = page.split('id="tz-select"')[0]
+        exps = re.findall(r'<option value="([^"]*_[^"]*)">', page)
         assert exps[:3] == ["1_res_spec", "2_ramsey", "10_readout"], exps
         qs = re.findall(r'<option value="(q\d+)">', html)
         assert qs == ["q1", "q2", "q10", "q11"], qs

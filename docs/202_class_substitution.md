@@ -186,3 +186,54 @@ deliberately hostile string for what the guard is for.
   written with the comprehension around the OUTER dict left only `q3`, and the
   test failed `3 == 9` looking like a merge bug. `carried=1` in the failure
   output was what named it.
+
+---
+
+## Appendix — six pins this session's own pushes turned red
+
+The full suite for this commit failed 27 tests. Re-run in isolation, 25 failed
+deterministically (2 were flakes). Run at `8e483f6` — the commit before this
+session's first push — **19 of those 25 fail identically**: the docs/87 OS
+class, the QDAC live builds, the replay benchmarks, `test_knowledge_pack`'s
+name scan, `test_runner_p7`. **Six pass there and fail at HEAD**, so they came
+from docs/195 and docs/196, pushed earlier in this session without a full
+suite run. That is the process failure this appendix records.
+
+Each was measured, not inferred (docs/155 §10a):
+
+| pin | what happened | the rule |
+|---|---|---|
+| auto-sync latch | a 2,600-char window; docs/195 put the per-cell `dom_path` collection between the guard and the call | holds — the pull is gated on `!_applyInFlight`, takes it, releases and drains |
+| in-lock dirty re-check | a 4,600-char slice; the lock moved to offset 4,758 | holds — the re-check is the first statement inside the lock |
+| reapply stash cleared | "sliced generously" at 9,000 chars; the function is 13,227 now | holds — `_clear_reapply` pairs the rebuild |
+| declined pull | **the contract changed**: docs/195 cannot know "same field" without the live content the cheap drift poll never reads | measured: advertises **once**, the pull declines and records the conflict, then quiet over every later poll |
+| `_iso` parity | the grammar now runs in `SnapTime.parse` (app.js); `return null` sat past a 300-char window | holds — the same anchored 8+6 regex, the same refusal |
+| Trends option order | a page-wide `<option value="…_…">` scrape matched the Settings zone picker's `America/New_York` | holds — the picker has no `name` and sits in no form |
+
+No product regression among them. One suspicion was checked and cleared on
+the way: the zone picker's inline `onchange=` runs under the app's CSP, whose
+`script-src` carries `'unsafe-inline'` (docs/120's dead handlers needed
+`unsafe-eval`, a different thing).
+
+Every pin is re-anchored on structure rather than a byte count — the guard
+that opens a block, a function bounded by the next `@bp.route`, a JS function
+bounded by its own closing brace — and the declined-pull pin now asserts the
+contract docs/195 actually ships (at most one press in six polls, 204 on the
+conflict, the user's value intact).
+
+### The sweep found one more
+
+8 mutations, first pass **7 of 8**: deleting the FIRST in-lock re-check left
+`test_the_dirty_check_is_repeated_inside_the_build_lock` green, because a
+second guard after `sync_from_live` still rescues the edit (re-persists memory,
+answers 204). The structural pin could not tell one re-check from two.
+
+What only the first guard does is refuse BEFORE the I/O — no live read, no
+working-folder rewrite, no "backup" snapshot for an edit nobody was going to
+discard. `test_an_edit_in_the_lock_window_is_refused_before_any_live_io`
+reaches that window for real: the build lock is wrapped so a user's edit lands
+while it is being taken, and `sync_from_live` is spied. With the first guard
+deleted it goes red. **8 of 8.**
+
+After the re-pins, the 27 ids re-run at HEAD fail **19 — exactly the base's
+19, test for test**.

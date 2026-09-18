@@ -324,10 +324,20 @@ class TestTimeAxis:
         from pathlib import Path as _P
         src = _P("quam_state_manager/web/static/chip-status.js").read_text(encoding="utf-8")
         assert "function _iso(ts)" in src
-        # same anchored 8+6 grammar, same refusal to guess
-        assert r"/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/" in src
-        assert "return null" in src[src.index("function _iso(ts)"):
-                                    src.index("function _iso(ts)") + 300]
+        grammar = r"/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/"
+        # same anchored 8+6 grammar, same refusal to guess -- in the fallback
+        assert grammar in src
+        i = src.index("function _iso(ts)")
+        body = src[i:src.index("\n    }", i)]
+        assert "return null" in body
+        # docs/196: _iso DELEGATES to window.SnapTime when it is present, so the
+        # grammar that actually places points lives in app.js now. Parity has to
+        # follow the delegation, or this pin guards a branch that never runs.
+        assert "window.SnapTime.axisValue(ts)" in body
+        app_js = _P("quam_state_manager/web/static/app.js").read_text(encoding="utf-8")
+        assert "var RE = " + grammar + ";" in app_js
+        p = app_js.index("function parse(ts)")
+        assert "return null" in app_js[p:app_js.index("\n    }", p)]
 
     def test_non_numeric_and_bools_never_become_points(self):
         from quam_state_manager.web.routes import _trend_points
