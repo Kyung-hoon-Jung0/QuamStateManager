@@ -237,3 +237,69 @@ deleted it goes red. **8 of 8.**
 
 After the re-pins, the 27 ids re-run at HEAD fail **19 — exactly the base's
 19, test for test**.
+
+---
+
+## 7. The Compare hub — the last unpressed menu
+
+Pressed on the customer chip in real Chrome (`h1`–`h7` in the scratchpad), every
+control by hand:
+
+| control | result |
+|---|---|
+| **+ Current chip** ×2, **live** | 3 sources; "Add at least one more source." at 1; the context prompt at 2+ |
+| bucket ① / ③ over working ×2 + live | `✓ Identical — 30,222 leaves equal` (the chip is clean — correct) |
+| bucket ② with 3 sources | refused by name: "② Same design compares exactly two sources — remove extras or switch to ① / ③." |
+| Exact / Wide / Lab default | the URL carries each; the result re-renders |
+| ★ on row 2 | `ref=1`, the star moves |
+| × on row 1 | 3 → 2 rows, and **the ★ followed its source** (`ref` 1 → 0) — `removeAt`'s promise, verified |
+| History… → KRISS_CZ | the "which state?" popover lists 14 snapshots; two clicks add two `hist:` sources |
+| bucket ① over two snapshots | `8 changed · 0 within tolerance · 31,064 equal`, e.g. `q1.anharmonicity` 207 → 206 MHz |
+| hostile `bucket=7/-1/abc` | falls back to the context prompt |
+| `preset=zzz`, `ref=99`, `ref=-5` | defaulted / clamped |
+| `src=ws:<script>…` | escaped, rendered as a ✕ unreadable row, no dialog |
+| a nonexistent source | a ✕ row carrying its own error text, excluded from the comparison |
+
+Zero console complaints across all of it.
+
+### Two things it threw away without a word
+
+**① A URL with more than eight sources.** The route slices `src=` to the pool
+cap (`_HUB_MAX_SOURCES = 8`) — correct — but the notice that says so fired only
+on `trunc=`, a parameter the retired sidebar redirect used to send. A pasted,
+bookmarked or hand-edited twenty-source URL compared eight as though they were
+everything. The route already holds the full list, so it counts it now
+(`trunc_total = max(trunc, len(all_refs))`), and the sentence counts the rows
+ON SCREEN (`basket|length`), not `sources_count` — which counts only the
+readable ones and would say "the first 7" beside eight rows when one is ✕.
+The client already refused a ninth ADD with a toast; this is the URL door.
+
+**② An unreadable `map=`.** `map=zz:yy` (parses, names the wrong qubits) said
+"matches neither device — showing the suggestion instead". `map=::,,` (does not
+parse) said nothing, for the same outcome. `_hub_validated_map` now names it
+("could not be read"), and the saved-mapping fallback's sentence — which said
+"matches neither device" for BOTH — says "could not be used".
+
+Neither produced a wrong number: the comparison over the kept eight is right,
+and a dropped map falls back to the suggestion panel rather than a confident
+empty result. What was wrong is that the page did not say what it had dropped,
+beside neighbours that did — the docs/94 silent-cap class.
+
+Pinned by `TestTheHubSaysWhatItDropped` (6) in `tests/test_compare_hub_routes.py`;
+**mutation sweep 6/6**, including both over-warning directions (an absent map
+called unreadable; the notice at eight or fewer). Real Chrome: `Showing the
+first 8 of 20 selections — the basket holds at most 8 sources.` above the
+results; `could not be read` on `::,,`; `matches neither device` on `zz:yy`.
+
+### Measurement errors this round (running tally: 14)
+
+- **the setup section collapses when a context is chosen** (by design — the
+  results take the page), so my ★ and × presses landed on zero-size buttons
+  and read as "the star does nothing". Re-driven with the section open, both
+  work.
+- **`options()` returns `[value, text, disabled]`** and I passed the whole list
+  as the value, so the History select landed on nothing and the popover read
+  as "empty".
+- **a long query opened at Tab construction** rendered one row and no notice;
+  the same URL through `navigate()` renders eight rows and the notice, stable
+  over eight seconds. The server's own answer was checked first and was right.

@@ -1103,3 +1103,64 @@ class TestFinalAuditHardening:
         html = r.data.decode()
         assert "LabA (rootA)" in html
         assert "LabA (rootB)" in html
+
+
+class TestTheHubSaysWhatItDropped:
+    """docs/202 §7 -- found pressing the Compare hub on the customer chip in
+    real Chrome: two ways the page threw away what the URL asked for and said
+    nothing, beside neighbours that DID say it."""
+
+    def test_a_url_with_more_sources_than_the_basket_holds_says_so(self, env):
+        """The route sliced `src=` to eight and kept the rest silently: only
+        the retired sidebar redirect's `trunc=` could raise the notice. A
+        pasted twenty-source URL compared eight as if they were everything."""
+        c, a, b = env
+        srcs = [a, b] * 10                                    # 20 tokens
+        r = _hub(c, *srcs, bucket=1)
+        assert r.status_code == 200
+        # The template breaks this sentence across a line; read it as a person
+        # does, with the whitespace collapsed.
+        body = " ".join(r.get_data(as_text=True).split())
+        assert "Showing the first 8 of 20 selections" in body
+
+    def test_eight_or_fewer_says_nothing(self, env):
+        c, a, b = env
+        body = _hub(c, *([a, b] * 4), bucket=1).get_data(as_text=True)
+        assert "Showing the first" not in body
+
+    def test_the_count_is_the_rows_on_screen_not_the_readable_ones(self, env, tmp_path):
+        """An unreadable source still takes a basket slot (and shows as a ✕
+        row). Counting only the valid sources said "the first 7" while eight
+        rows sat on the screen."""
+        c, a, b = env
+        missing = tmp_path / "nope" / "quam_state"
+        srcs = [str(missing)] + [a, b] * 5                    # 11 tokens
+        body = " ".join(_hub(c, *srcs, bucket=1).get_data(as_text=True).split())
+        assert "Showing the first 8 of 11 selections" in body
+
+    def test_an_unreadable_map_is_named_not_dropped_in_silence(self, env):
+        """`map=zz:yy` (parses, wrong names) got a sentence; `map=::,,` (does
+        not parse) got nothing, for the same outcome."""
+        c, a, b = env
+        r = c.get(f"/compare-hub?src=ws:{a}&src=ws:{b}&bucket=2&map=%3A%3A%2C%2C")
+        assert r.status_code == 200
+        assert b"could not be read" in r.data
+        assert b"cmp-confirm-panel" in r.data or b"cmp-mapping-bar" in r.data
+
+    def test_no_map_at_all_is_not_a_warning(self, env):
+        c, a, b = env
+        r = c.get(f"/compare-hub?src=ws:{a}&src=ws:{b}&bucket=2")
+        assert b"could not be read" not in r.data
+        assert b"could not be used" not in r.data
+
+    def test_the_saved_map_fallback_is_worded_for_both_failures(self, env):
+        """With a saved mapping on file, a bad URL map is overridden -- and
+        that sentence used to say "matches neither device" even for a map
+        that could not be read at all."""
+        c, a, b = env
+        c.post("/compare-hub/map/save", json={
+            "srcs": [f"ws:{a}", f"ws:{b}"], "ref": 0, "map": "qA1:qA1"})
+        for bad in ("zz%3Ayy", "%3A%3A%2C%2C"):
+            r = c.get(f"/compare-hub?src=ws:{a}&src=ws:{b}&bucket=2&map={bad}")
+            assert b"could not be used" in r.data, bad
+            assert b"saved mapping" in r.data, bad

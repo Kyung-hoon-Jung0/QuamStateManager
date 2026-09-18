@@ -20867,6 +20867,12 @@ def _hub_validated_map(sources, ref_idx: int, map_raw: str):
     - partial garbage keeps the valid subset, with a count note.
     """
     qmap = _hub_parse_map(map_raw)
+    if not qmap and (map_raw or "").strip():
+        # A map that does not even parse was dropped in silence, while one
+        # that parses but names the wrong qubits got a sentence (below). Same
+        # outcome for the user -- the suggestion is shown -- so the same honesty.
+        return None, ("The mapping in the URL could not be read — "
+                      "showing the suggestion instead.")
     if not qmap or len(sources) != 2:
         return qmap, None
     try:
@@ -21348,7 +21354,8 @@ def compare_hub():
     the comparison context is ALWAYS user-declared, docs/49 axiom 2),
     ``preset`` exact|lab|wide, ``ref`` index into the *valid* sources,
     ``map`` a confirmed bucket-② qubit mapping (``a:b,c:d``)."""
-    refs = [r for r in request.args.getlist("src") if r][:_HUB_MAX_SOURCES]
+    all_refs = [r for r in request.args.getlist("src") if r]
+    refs = all_refs[:_HUB_MAX_SOURCES]
     bucket = _int_arg("bucket", 0)
     if bucket not in (1, 2, 3):
         bucket = 0
@@ -21391,9 +21398,11 @@ def compare_hub():
                         if map_warning:
                             # don't claim "showing the suggestion" while a
                             # saved mapping quietly applies instead
-                            map_warning = ("The mapping in the URL matches "
-                                           "neither device — using your "
-                                           "saved mapping instead.")
+                            # Worded for BOTH ways a URL map fails (it
+                            # names the wrong qubits, or it cannot be read).
+                            map_warning = ("The mapping in the URL could not "
+                                           "be used — using your saved "
+                                           "mapping instead.")
                     elif saved and saved.get("stale"):
                         map_warning = ((map_warning + " ") if map_warning
                                        else "") + \
@@ -21421,7 +21430,13 @@ def compare_hub():
     except Exception:
         history_chips = []
 
-    trunc_total = _int_arg("trunc", 0)
+    # The basket cap is stated wherever it bites. `trunc=` is what the retired
+    # sidebar redirect used to send; a URL that simply CARRIES more than eight
+    # `src=` (pasted, bookmarked, hand-edited) was sliced above with nothing
+    # said -- twelve of twenty sources gone from a page that then compared the
+    # rest as if they were everything (docs/202 §7, the docs/94 silent-cap
+    # class). The route holds the full list; it says so.
+    trunc_total = max(_int_arg("trunc", 0), len(all_refs))
     legacy_from = request.args.get("from", "")
     if legacy_from not in ("diff", "compare", "chip-compare"):
         legacy_from = ""

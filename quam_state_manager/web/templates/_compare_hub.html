@@ -147,7 +147,9 @@
       cross-device mapping in one place.</p>
     {% endif %}
     {% if trunc_total %}
-    <div class="toast toast-warning"><p>Showing the first {{ sources_count }} of
+    {# The rows ON SCREEN, readable or not -- `sources_count` counts only the
+       valid ones and would understate what was kept. #}
+    <div class="toast toast-warning"><p>Showing the first {{ basket|length }} of
       {{ trunc_total }} selections — the basket holds at most 8 sources.</p></div>
     {% endif %}
     {% if map_warning %}
