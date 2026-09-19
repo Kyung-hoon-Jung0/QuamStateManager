@@ -328,3 +328,76 @@ lab names.
 The pin now scans `web/templates/*.html` and `web/static/*.css` beside `.py`
 and `.js`. Both new scopes mutation-checked: a lab name put back into the
 template comment reds it, and so does one appended to `style.css`.
+
+---
+
+## 9. Two safety properties that had never been checked on Windows — and one real race behind them
+
+Of the 19 base failures, six guard state safety: `test_state_coherence` ×4
+(a dirty chip is never evicted; the LRU is true LRU; a run archive opens
+read-only and is never downgraded) and `test_web`'s
+`TestPhase4QuamCacheConcurrency` + `TestDatasetSelectionFix`. None was a
+product failure. Each was a PIN that could not run here, and that is worse
+than it sounds:
+
+- **The five cache lookups used `str(path)`.** `_activate_quam` keys the cache
+  by `path_match.fs_key`, which case-normalizes on Windows, so a mixed-case
+  `str(path)` is never a key. Four pins died at the lookup, BEFORE their
+  assertion — the properties they name had never been checked on this OS. And
+  `assert str(chips[1]) not in cache`, the LRU pin's "evicted instead" half,
+  **could not fail at all**: a key that is never present is always absent.
+  They look up `fs_key` now. Every property holds, and a sweep proves each
+  pin can fail: eviction taking a dirty chip, a re-access not refreshing LRU
+  order, a run archive opening as live — 3 of 3.
+- **The downgrade guard was unreachable by its own pin.** The fourth mutation
+  (delete "NEVER downgrade a read-only archive") stayed green: the fixture IS
+  a recognisable run archive, so `_is_run_archive` re-labels the `/load` before
+  the guard runs. Every production caller passes `<run>/quam_state`, so today
+  the classifier always wins and the guard is defense in depth — but it states
+  its own contract, so `TestTheDowngradeGuardOnItsOwn` opens a folder
+  explicitly as an archive that the classifier does not recognise. Red on the
+  mutation now.
+- **`TestDatasetSelectionFix` was stale on every OS**, not an OS-class failure.
+  It asserted the folder PATH in `data-folder`; the route sends `folder_sig`, a
+  signature of the active folder set. Checked before calling it stale: the
+  consumer (`dataset-virtual.js`) compares the attribute against what IT
+  stored last time, never against a path, so the feature works. Re-pinned on
+  that contract — the same folder gives the same value, a different folder a
+  different one.
+- **`TestPhase4QuamCacheConcurrency` asserted a tautology.** `sum(k == key) ==
+  1` over a dict's keys cannot be 2. What a race can break is WHICH context a
+  caller gets back.
+
+### The race
+
+Reading that last pin's target turned up a real one. `_activate_quam`'s slow
+path is single-flight per folder (a build lock plus a cache re-check under
+it). But the FAST path re-inserts an LRU-evicted entry *without* the build
+lock — its own comment names the hazard ("two contexts on one working
+folder"). If that re-insert lands between a slow-path build and its install,
+the install saw the key present, refreshed LRU order, and published **its own**
+context. **Reproduced by injecting that re-insert**: afterwards the registry's
+active context and the cache's entry were two objects with two stores for one
+working folder — an edit made through the active context vanishes on the next
+open (a cache hit serves the other store), and the uncached context escapes
+the dirty-pin that protects unsaved edits from eviction.
+
+Narrow — it needs an eviction (ten chips cached) and a concurrent re-open of
+the same chip — but it is exactly the state the fast path's comment exists to
+prevent. The install now applies that comment's own rule: the cache's current
+entry wins (`ctx = _quam_cache[key]`).
+
+`TestOneContextPerFolder` reproduces the window deterministically. The
+concurrency pin now asserts IDENTITY — all eight callers hold the cache's
+object, which is also the registry's — and a start barrier plus a slowed build
+makes the threads actually contend: unslowed, threads 2–8 took the fast path
+and the pin stayed green with single-flight AND adoption both deleted. Sweep:
+reverting the fix reds the deterministic pin; removing single-flight AND the
+adoption reds both (8 builds, 8 distinct contexts). Removing only
+single-flight leaves one context (8 builds, 1 distinct): the two mechanisms
+now back each other up.
+
+Measurement error, recorded: the first "remove single-flight" mutation indexed
+an earlier occurrence of `build_lock = _get_quam_build_lock(key)` and disabled
+the FAST path's lookup instead ("builds: 1" gave it away). Re-aimed on the slow
+path's own comment.

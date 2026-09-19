@@ -19,8 +19,19 @@ from pathlib import Path
 
 import pytest
 
+from quam_state_manager.core import path_match
 from quam_state_manager.web import routes
 from quam_state_manager.web.app import create_app
+
+
+def _key(p) -> str:
+    """The cache's OWN key for a folder (`_activate_quam` keys by
+    `path_match.fs_key`). These pins looked up `str(path)`, which on Windows
+    is never a key -- fs_key case-normalizes -- so the two lookups below died
+    before their assertions and the safety properties they name were never
+    checked on this OS (docs/202 §9). Worse, `not in` with the wrong spelling
+    can never fail: the LRU pin's "evicted instead" half was vacuously green."""
+    return path_match.fs_key(p)
 
 
 def _make_chip(folder: Path, f01: float = 6.0e9, host: str = "10.0.0.1") -> Path:
@@ -83,7 +94,7 @@ class TestEvictionNeverLosesEdits:
         for i in range(routes._QUAM_CACHE_MAX + 2):
             c.post("/load", data={"folder": str(_make_chip(tmp_path / f"d{i}"))})
         # A is still resident in the cache (pinned because dirty)
-        assert str(a) in routes._quam_cache
+        assert _key(a) in routes._quam_cache
 
     def test_true_lru_reaccess_protects_clean_chip(self, app, tmp_path):
         # fill exactly to capacity with clean chips, re-access the first, then
@@ -95,8 +106,8 @@ class TestEvictionNeverLosesEdits:
             c.post("/load", data={"folder": str(ch)})
         c.post("/load", data={"folder": str(chips[0])})        # re-access oldest
         c.post("/load", data={"folder": str(_make_chip(tmp_path / "extra"))})
-        assert str(chips[0]) in routes._quam_cache              # protected by LRU
-        assert str(chips[1]) not in routes._quam_cache          # evicted instead
+        assert _key(chips[0]) in routes._quam_cache              # protected by LRU
+        assert _key(chips[1]) not in routes._quam_cache          # evicted instead
 
 
 class TestContextRegistryBounded:
@@ -173,7 +184,7 @@ class TestArchiveReadOnly:
         arch = _make_run_archive(tmp_path / "run_0001")
         c.post("/workspace/select", data={"path": str(arch)})
         # classified as archive regardless of the default-live route
-        assert routes._quam_cache[str(arch)]["origin"] == "dataset_archive"
+        assert routes._quam_cache[_key(arch)]["origin"] == "dataset_archive"
         # and apply-to-live is refused
         r = c.post("/state/apply-to-live", data={"force": "1"})
         assert r.status_code == 409
@@ -184,9 +195,64 @@ class TestArchiveReadOnly:
         c.post("/workspace/select", data={"path": str(arch)})
         # re-open the SAME path via /load (default origin="live")
         c.post("/load", data={"folder": str(arch)})
-        assert routes._quam_cache[str(arch)]["origin"] == "dataset_archive"
+        assert routes._quam_cache[_key(arch)]["origin"] == "dataset_archive"
         r = c.post("/state/apply-to-live", data={"force": "1"})
         assert r.status_code == 409
+
+
+class TestTheDowngradeGuardOnItsOwn:
+    """docs/202 §9. The pin above cannot reach `_activate_quam`'s "NEVER
+    downgrade a read-only archive" guard: its fixture IS a recognizable run
+    archive, so `_is_run_archive` re-labels the `/load` as an archive before
+    the guard runs, and deleting the guard left it green (measured). Every
+    production caller passes `<run>/quam_state`, whose parent carries
+    node.json, so today the classifier always wins -- the guard is defense in
+    depth. It still states a contract of its own, so pin it where it is the
+    ONLY thing standing: a folder opened explicitly as an archive that the
+    classifier does not recognize (a run whose node.json has since moved)."""
+
+    def test_an_explicit_archive_is_not_downgraded_by_a_plain_load(self, app, tmp_path):
+        c = app.test_client()
+        folder = _make_chip(tmp_path / "frozen")             # no node.json sibling
+        assert not routes._is_run_archive(folder), "fixture must bypass the classifier"
+        with app.test_request_context():
+            routes._activate_quam(folder, origin="dataset_archive")
+        c.post("/load", data={"folder": str(folder)})         # default origin: live
+        assert routes._quam_cache[_key(folder)]["origin"] == "dataset_archive"
+        assert c.post("/state/apply-to-live", data={"force": "1"}).status_code == 409
+
+
+class TestOneContextPerFolder:
+    """docs/202 §9 -- reproduced before it was fixed. The fast path re-inserts
+    an LRU-evicted entry WITHOUT the build lock; when that lands between a
+    slow-path build and its install, the install used to refresh LRU order and
+    then publish its OWN context, leaving one store in the registry and another
+    in the cache for the same working folder."""
+
+    def test_a_reinsert_in_the_build_window_is_adopted_not_shadowed(
+            self, app, tmp_path, monkeypatch):
+        folder = _make_chip(tmp_path / "chip")
+        key = _key(folder)
+        with app.test_request_context():
+            old = routes._activate_quam(folder)
+        with routes._quam_cache_lock:
+            routes._quam_cache.pop(key, None)           # an LRU eviction
+
+        real_build = routes._build_quam_context
+
+        def build_then_reinsert(*a, **k):
+            out = real_build(*a, **k)
+            with routes._quam_cache_lock:              # the fast path, in the window
+                routes._quam_cache[key] = old
+            return out
+
+        monkeypatch.setattr(routes, "_build_quam_context", build_then_reinsert)
+        with app.test_request_context():
+            got = routes._activate_quam(folder)
+            active = app.config["contexts"][app.config["active_context"]]
+        cached = routes._quam_cache[key]
+        assert got is cached and active is cached, "two contexts on one working folder"
+        assert active.get("store") is cached.get("store")
 
 
 class TestArchiveGuardCapturedCtx:

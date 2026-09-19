@@ -5267,8 +5267,9 @@ class TestPhase4QuamCacheConcurrency:
     cache. Spawn N threads activating the same folder; assert exactly
     one cache entry afterwards."""
 
-    def test_concurrent_activate_quam_keeps_one_entry(self, app, tmp_path):
+    def test_concurrent_activate_quam_keeps_one_entry(self, app, tmp_path, monkeypatch):
         import threading
+        import time as _time
         from quam_state_manager.web import routes
 
         folder = tmp_path / "chip" / "quam_state"
@@ -5283,25 +5284,56 @@ class TestPhase4QuamCacheConcurrency:
 
         errors: list[Exception] = []
 
+        got: list = []
+
         def hit():
             try:
                 with app.app_context():
-                    routes._activate_quam(folder)
+                    got.append(routes._activate_quam(folder))
             except Exception as e:
                 errors.append(e)
 
-        threads = [threading.Thread(target=hit) for _ in range(8)]
+        # Make the threads actually CONTEND. Unslowed, the build finishes before
+        # the next thread starts, threads 2-8 take the cache-hit fast path, and
+        # this pin stayed green with single-flight AND adoption both deleted
+        # (docs/202 §9, measured). A slow build behind a start barrier piles all
+        # eight into the build lock, which is the window the rule exists for.
+        real_build = routes._build_quam_context
+        start = threading.Barrier(8)
+
+        def slow_build(*a, **k):
+            _time.sleep(0.05)
+            return real_build(*a, **k)
+
+        monkeypatch.setattr(routes, "_build_quam_context", slow_build)
+
+        def hit_together():
+            start.wait()
+            hit()
+
+        threads = [threading.Thread(target=hit_together) for _ in range(8)]
         for t in threads:
             t.start()
         for t in threads:
             t.join()
 
         assert not errors, f"thread errors: {errors}"
-        key = str(folder)
+        # The cache's own key (fs_key case-normalizes on Windows). `str(folder)`
+        # is never a key there, so this pin died at "cache miss" and the
+        # property it names -- ONE entry after a race -- was never checked on
+        # this OS (docs/202 §9).
+        from quam_state_manager.core import path_match
+        key = path_match.fs_key(folder)
         with routes._quam_cache_lock:
             assert key in routes._quam_cache, "cache miss after race"
-            same_key_count = sum(1 for k in routes._quam_cache if k == key)
-            assert same_key_count == 1
+            cached = routes._quam_cache[key]
+        # `sum(k == key) == 1` was a tautology -- a dict cannot hold one key
+        # twice. What a race can actually break is WHICH context the callers
+        # get: eight activations must hand back ONE object, the cache's, so an
+        # edit made through any of them is the edit the next open shows.
+        assert len(got) == 8
+        assert all(c is cached for c in got), "a caller got a context the cache does not hold"
+        assert app.config["contexts"][app.config["active_context"]] is cached
 
 
 class TestPhase4CSRFOriginCheck:
@@ -5614,9 +5646,25 @@ class TestDatasetSelectionFix:
         assert resp.status_code == 200
         body = resp.data.decode("utf-8")
         assert 'id="ds-rows-data"' in body
-        assert 'data-folder="' in body
-        # The folder path renders inside the data-folder attribute.
-        assert str(folder) in body or str(folder).replace("\\", "/") in body
+        # docs/202 §9: this asserted the folder PATH was in the attribute. The
+        # route sends a signature of the active folder SET now (`folder_sig`),
+        # so the pin failed on every OS while the feature worked -- the
+        # consumer compares the value against what IT stored last time, never
+        # against a path. Pin that contract instead: the same folder gives the
+        # same value, a different folder a different one.
+        import re as _re
+        from quam_state_manager.core.dataset import DatasetStore
+
+        def _sig(b):
+            m = _re.search(r'id="ds-rows-data"[^>]*data-folder="([^"]*)"', b, _re.S)
+            return m.group(1) if m else None
+
+        first = _sig(body)
+        assert first, "data-folder must carry a value"
+        assert _sig(client.get("/datasets").data.decode("utf-8")) == first
+        other = self._seed_dataset_folder(tmp_path / "ds_other")
+        app.config["dataset_store"] = DatasetStore(other)
+        assert _sig(client.get("/datasets").data.decode("utf-8")) != first
 
     def test_datasets_page_has_column_picker_and_jsbuilt_table(self, app, tmp_path):
         """The renewal: the table's colgroup + header are now JS-built empty

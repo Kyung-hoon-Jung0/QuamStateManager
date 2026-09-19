@@ -1478,6 +1478,14 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
                     _evict_oldest_quam()
                 _quam_cache[key] = ctx
             else:
+                # Someone installed a context for this folder while ours was
+                # being built -- the fast path's re-insert of an LRU-evicted
+                # entry takes no build lock. The cache's current entry wins
+                # (the rule the fast path states); publishing OUR ctx here put
+                # one store in the registry and another in the cache for the
+                # same working folder, so an edit made now vanished on the next
+                # open (docs/202 §9, reproduced by injecting that re-insert).
+                ctx = _quam_cache[key]
                 _quam_cache.move_to_end(key)   # true LRU — mark most-recently used
             current_app.config["contexts"][ctx_name] = ctx
             current_app.config["active_context"] = ctx_name
