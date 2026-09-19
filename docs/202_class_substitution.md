@@ -535,3 +535,29 @@ Windows — and removing the dedup in `Workspace.add_root` reds it there.
 
 Baseline: **4 deterministic failures**, the WSL-kernel probe and the three QDAC
 live builds, each environmental by construction.
+
+---
+
+## 14. The last four
+
+**The WSL-kernel pin** (`TestRunningUnderWsl::test_true_on_microsoft_kernel`)
+faked `/proc/version` by matching `str(self) == "/proc/version"` — which on
+Windows is `\proc\version`, so the fake never fired and the true case could not
+pass. `running_under_wsl()` has no platform short-circuit; the parsing rule is
+platform-neutral. The fake matches `as_posix()` now: 3 pass, and dropping the
+case-folding (`.lower()`) reds the true case.
+
+**The three QDAC live builds** fail for a reason that is neither code nor OS:
+the build's own warning says `quam_config.qdac_components is not importable in
+this env`. The env they select, `CQT_20Q`, reaches the customer's `quam_config`
+through an editable-install `.pth` pointing at
+`D:\work\Customer_Codes\PJ_10082026\qualibration_graphs\superconducting` — and
+**that tree no longer exists anywhere on this machine** (searched `D:\` and the
+user profile to depth 5; only SM's own working-state copies still carry the
+name). PJ_10082026 was the user-designated verification baseline (2026-08-24).
+Nothing was changed about it here: re-pointing the env at another customer's
+tree would silently swap the baseline the user chose. The three failures are
+that fact, and they will pass again the day the tree is back.
+
+**cqt baseline after this entry: 3 deterministic failures, all one missing
+folder.** Session start: 19.

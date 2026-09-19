@@ -693,7 +693,11 @@ class TestRunningUnderWsl:
         real_read = Path.read_text
 
         def fake_read(self, *args, **kwargs):
-            if str(self) == "/proc/version":
+            # as_posix(): on Windows str(Path("/proc/version")) is
+            # "\proc\version", so a str() match never fired and the true
+            # case could not pass here -- the parsing rule under test is
+            # platform-neutral (docs/202 §14).
+            if self.as_posix() == "/proc/version":
                 return behaviour()
             return real_read(self, *args, **kwargs)
 
