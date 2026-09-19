@@ -793,3 +793,26 @@ were read from their own failure output:
   test's store statting its own date dirs with the same names read as a 21st.
   It counts by path now. The real render still counts exactly 20, and a floor
   of `n > 0` keeps a differently spelled path from making the check vacuous.
+
+The confirmation run at `cfe5a5d` (8,813 passed) failed one more:
+**`test_safe_io::test_reader_survives_concurrent_writes`**, with a
+`LiveFileError` saying the pair "kept changing across 4 read attempts".
+
+- **No corrupt data was returned.** The read REFUSED, which is docs/28's own
+  contract: it would rather say "try again" than hand back state and wiring
+  from two different saves. The test's writer saves in a tight loop with no
+  pause, which no real experiment does, and the test counted the refusal as
+  corrupt.
+- **Measured, interleaved:** 4/30 at HEAD, and 30/30 with the same
+  `LiveFileError` at the commit before §10's settle. So it predates this round,
+  and §10 had already taken it from always to sometimes.
+- **The test now encodes the contract:** zero corrupt payloads, zero exceptions
+  other than `LiveFileError`, a refusal counted rather than failed, and a read
+  after the writer stops must succeed. That last part is the refusal's
+  promise, and it is newly checked. Result: 0/105 after, in three batches.
+  One earlier batch counted 2/30 that could not be captured again, so the
+  assertion now prints `(writes, reads, refused)` if it recurs.
+- **Refuse-never-return-junk stays pinned deterministically** by
+  `test_read_state_wiring_never_settles_raises_not_torn`. A mutant that
+  returns an empty pair instead of raising reds it 5/5, while the stress test
+  cannot see that mutant (0/5), because refusals are rare there.

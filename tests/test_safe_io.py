@@ -192,6 +192,7 @@ def test_reader_survives_concurrent_writes(tmp_path):
     t.start()
 
     reads = 0
+    refused = 0
     corrupt: list = []
     deadline = time.monotonic() + 1.5
     while time.monotonic() < deadline:
@@ -200,6 +201,15 @@ def test_reader_survives_concurrent_writes(tmp_path):
             reads += 1
             if not isinstance(s, dict) or "qubits" not in s:
                 corrupt.append(s)
+        except LiveFileError:
+            # docs/28's own contract, not a failure: when the pair keeps
+            # changing across every attempt the read REFUSES ("try again")
+            # rather than hand back a state/wiring pair from two saves. This
+            # writer never pauses -- no real experiment saves like that -- so
+            # a refusal can happen; it was 4/30 runs, and 30/30 before the
+            # docs/202 §10 settle (measured 2026-09-19). Counting it as
+            # corrupt made the test a load flake.
+            refused += 1
         except Exception as exc:  # noqa: BLE001
             corrupt.append(repr(exc))
 
@@ -208,7 +218,10 @@ def test_reader_survives_concurrent_writes(tmp_path):
 
     assert not write_failures, f"writer failed: {write_failures[:3]}"
     assert not corrupt, f"reader saw corrupt/failed data: {corrupt[:3]}"
-    assert writes[0] > 5 and reads > 5
+    assert writes[0] > 5 and reads > 5, (writes[0], reads, refused)
+    # and the refusal's promise holds: once the writer rests, a read succeeds
+    s, _w = read_state_wiring(tmp_path)
+    assert isinstance(s, dict) and "qubits" in s
 
 
 @win_only
