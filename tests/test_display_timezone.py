@@ -129,6 +129,54 @@ class TestTheCompactChipsCarryTheInstantToo:
         assert "not-a-stamp" in html
         assert "data-utc" not in html
 
+    def test_every_fetched_fragment_that_carries_one_is_localized(self):
+        """The CLIENT half of the same fix. ``.ts-local`` ships
+        ``visibility:hidden`` until ``applyLocalTimes`` stamps it, and only an
+        htmx swap runs that automatically. docs/201 moved the Column History and
+        field-history chips onto ``ts_local``, but both cards load through a raw
+        ``fetch`` + ``innerHTML``. Every chip's time went INVISIBLE (measured in
+        real Chrome, 2026-09-19), the trap docs/128 had already found once on
+        the version-diff overlay.
+
+        So: every ``fetch`` of a route that renders a ``ts_local`` template
+        must call ``applyLocalTimes`` in its handler.
+        """
+        tpl_dir = _ROOT / "quam_state_manager" / "web" / "templates"
+        carrying = {p.name for p in tpl_dir.glob("_*.html")
+                    if "ts_local" in p.read_text(encoding="utf-8")}
+        routes_src = (_ROOT / "quam_state_manager" / "web" / "routes.py"
+                      ).read_text(encoding="utf-8")
+        route_tpl: dict[str, set] = {}
+        heads = list(re.finditer(r'@bp\.route\("([^"]+)"', routes_src))
+        for i, m in enumerate(heads):
+            end = heads[i + 1].start() if i + 1 < len(heads) else len(routes_src)
+            body = routes_src[m.end():end]
+            for t in carrying:
+                if f'"{t}"' in body:
+                    route_tpl.setdefault(m.group(1).split("<")[0], set()).add(t)
+
+        checked, missing = [], []
+        for js in sorted(_STATIC.glob("*.js")):
+            src = js.read_text(encoding="utf-8")
+            for m in re.finditer(r"""fetch\(\s*(["'])(/[^"'?]*)""", src):
+                path = m.group(2)
+                if path not in route_tpl:
+                    continue
+                end = src.find(".catch(", m.end())
+                handler = src[m.end(): end if end > 0 else m.end() + 1500]
+                where = f"{js.name}:{src.count(chr(10), 0, m.start()) + 1} {path}"
+                checked.append(where)
+                # a CALL, not the word: the docs/128 handler's own comment
+                # names the function, which made a removed call read as present
+                if "applyLocalTimes(" not in handler:
+                    missing.append(where)
+        assert {"/bulk/column-history", "/field/history",
+                "/state/versions/"} <= {w.split(" ")[1] for w in checked}, \
+            f"the scan must reach the known fetch sites; saw {checked}"
+        assert not missing, (
+            "these fetch+innerHTML loaders render a ts_local template without "
+            f"applyLocalTimes, so the time stays invisible: {missing}")
+
     def test_the_five_display_sites_no_longer_slice_digits(self):
         from pathlib import Path
         tpl_dir = Path(__file__).resolve().parents[1] / "quam_state_manager" / "web" / "templates"

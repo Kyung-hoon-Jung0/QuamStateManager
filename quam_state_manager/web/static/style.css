@@ -11912,7 +11912,11 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 .ch-chip[data-fill] { cursor: pointer; }
 .ch-chip[data-fill]:hover { background: var(--history-cell-hover, rgba(128,128,128,.12));
     border-color: var(--pico-primary); }
-.ch-chip-when { font-size: .62rem; color: var(--color-text-muted); }
+/* nowrap + no shrink: the localized short form ("09/17, 09:39 PM") has
+   spaces, and a squeezed chip (the "current" badge beside it) wrapped the time
+   onto three lines. */
+.ch-chip-when { font-size: .62rem; color: var(--color-text-muted);
+    white-space: nowrap; flex: 0 0 auto; }
 .ch-chip-now { font-size: .58rem; background: var(--pico-primary); color: #fff;
     border-radius: .5rem; padding: 0 .3rem; }
 .ch-chip-miss { color: var(--color-text-muted); }

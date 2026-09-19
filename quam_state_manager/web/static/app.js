@@ -18498,6 +18498,8 @@ window.FieldHistory = (function () {
             .then(function (r) { return r.text(); })
             .then(function (html) {
                 p.innerHTML = html;
+                // same reason as the Column History card: no swap event here
+                if (window.applyLocalTimes) window.applyLocalTimes(p);
                 if (window.htmx) window.htmx.process(p);
                 renderChart(p);
                 position(anchor);
@@ -19524,6 +19526,11 @@ window.ColumnHistory = (function () {
             .then(function (r) { return r.text(); })
             .then(function (html) {
                 card.innerHTML = html;
+                // docs/201 made the `when` chips `.ts-local` (hidden until
+                // localized). A raw fetch+innerHTML fires no htmx swap event,
+                // so without this call every chip's time was INVISIBLE -- the
+                // same trap docs/128 found on the version-diff overlay.
+                if (window.applyLocalTimes) window.applyLocalTimes(card);
                 if (window.htmx) window.htmx.process(card);
                 _applyView(card);
             })
