@@ -646,3 +646,120 @@ def test_a_subclass_of_a_subclass_is_kept_too():
     r = merge_states(old, new, class_schemas={STOCK_RO: ["amplitude"]}, keep_classes=keep)
     ro = r.merged["qubits"]["q1"]["resonator"]["operations"]["readout"]
     assert ro["__class__"] == LAB_GEF and ro["u_centers"] == [0.1, 0.2]
+
+
+# ---------------------------------------------------------------------------
+# docs/202 §17 -- a declared port nothing references is carried
+# ---------------------------------------------------------------------------
+
+MW_OUT = "quam.components.ports.analog_outputs.MWFEMAnalogOutputPort"
+MW_IN = "quam.components.ports.analog_inputs.MWFEMAnalogInputPort"
+
+
+def _port(cls, fem, port, **kw):
+    return {"controller_id": "con1", "fem_id": fem, "port_id": port,
+            "__class__": cls, **kw}
+
+
+def _chip_with_ports(outs, ins=None, refs=(), qubits=("q1",)):
+    """A chip whose wiring points at the ``refs`` output ports; ``outs`` /
+    ``ins`` are ``{fem: [port, ...]}``. Returns (state, wiring)."""
+    ports = {"__class__": "quam.components.ports.ports_containers.FEMPortsContainer",
+             "mw_outputs": {"con1": {str(f): {str(p): _port(MW_OUT, f, p, band=3,
+                                                              full_scale_power_dbm=-11)
+                                              for p in ps} for f, ps in outs.items()}}}
+    if ins:
+        ports["mw_inputs"] = {"con1": {str(f): {str(p): _port(MW_IN, f, p)
+                                                for p in ps} for f, ps in ins.items()}}
+    state = {"ports": ports, "qubits": {q: {"id": q} for q in qubits}}
+    wiring = {"wiring": {"qubits": {
+        q: {"xy": {"opx_output": f"#/ports/mw_outputs/con1/{f}/{p}"}}
+        for q, (f, p) in zip(qubits, refs)}}}
+    return state, wiring
+
+
+def _merge_ports(old, new):
+    return merge_states(old[0], new[0], old_wiring=old[1], new_wiring=new[1])
+
+
+class TestADeclaredPortNothingUsesIsCarried:
+    def test_the_customer_case_port_8_on_a_fem_the_rebuild_keeps(self):
+        """KRS_5Q: ports 3/1..3/7 wired, 3/8 declared (band 3, -11 dBm, LO 7.6
+        GHz) and pointed at by nothing. The rebuild has 3/1..3/7."""
+        old = _chip_with_ports({3: [1, 8]}, refs=[(3, 1)])
+        old[0]["ports"]["mw_outputs"]["con1"]["3"]["8"]["upconverter_frequency"] = 7.6e9
+        new = _chip_with_ports({3: [1]}, refs=[(3, 1)])
+        r = _merge_ports(old, new)
+        p8 = r.merged["ports"]["mw_outputs"]["con1"]["3"]["8"]
+        assert p8["upconverter_frequency"] == 7.6e9 and p8["__class__"] == MW_OUT
+        assert r.stats.ports_carried == ["ports.mw_outputs.con1.3.8"]
+        assert r.stats.residual_lost == []
+
+    def test_a_removed_qubits_port_still_stays_removed(self):
+        """The rule the graft block exists for: q2 was dropped in the wizard,
+        its port was POINTED AT in the source, so it never comes back."""
+        old = _chip_with_ports({3: [1, 2]}, refs=[(3, 1), (3, 2)], qubits=("q1", "q2"))
+        new = _chip_with_ports({3: [1]}, refs=[(3, 1)])
+        r = _merge_ports(old, new)
+        assert set(r.merged["ports"]["mw_outputs"]["con1"]["3"]) == {"1"}
+        assert r.stats.ports_carried == []
+        assert "ports.mw_outputs.con1.3.2.band" in r.stats.residual_lost
+
+    @pytest.mark.parametrize("how", ["relative pointer", "port list",
+                                     "pointer at the whole slot", "state pointer"])
+    def test_any_kind_of_reference_counts_as_used(self, how):
+        old = _chip_with_ports({3: [1, 8]}, refs=[(3, 1)])
+        if how == "relative pointer":            # extras.spare -> ../ports/...
+            old[0]["extras"] = {"spare": "#../ports/mw_outputs/con1/3/8"}
+        elif how == "port list":                 # the older [con, fem, port] form
+            old[0]["qubits"]["q1"]["legacy_out"] = ["con1", 3, 8]
+        elif how == "pointer at the whole slot":
+            old[0]["extras"] = {"fem": "#/ports/mw_outputs/con1/3"}
+        else:
+            old[0]["qubits"]["q1"]["spare_out"] = "#/ports/mw_outputs/con1/3/8"
+        new = _chip_with_ports({3: [1]}, refs=[(3, 1)])
+        r = _merge_ports(old, new)
+        assert "8" not in r.merged["ports"]["mw_outputs"]["con1"]["3"]
+        assert r.stats.ports_carried == []
+
+    def test_a_port_on_a_fem_the_rebuild_no_longer_uses_is_not_carried(self):
+        """Carrying it would ask the config to program a slot that may not be
+        in the rack any more."""
+        old = _chip_with_ports({3: [1], 5: [8]}, refs=[(3, 1)])
+        new = _chip_with_ports({3: [1]}, refs=[(3, 1)])
+        r = _merge_ports(old, new)
+        assert "5" not in r.merged["ports"]["mw_outputs"]["con1"]
+        assert r.stats.ports_carried == []
+
+    def test_a_fem_counts_as_used_through_any_port_type(self):
+        """The rebuild's FEM 3 holds only OUTPUT ports; an unused INPUT port on
+        that same FEM is on hardware the chip still has, so it comes along
+        -- inside a container the rebuild never wrote at all."""
+        old = _chip_with_ports({3: [1]}, ins={3: [8]}, refs=[(3, 1)])
+        new = _chip_with_ports({3: [1]}, refs=[(3, 1)])
+        r = _merge_ports(old, new)
+        assert r.merged["ports"]["mw_inputs"]["con1"]["3"]["8"]["__class__"] == MW_IN
+        assert r.stats.ports_carried == ["ports.mw_inputs.con1.3.8"]
+
+    def test_a_carried_port_never_points_at_something_left_behind(self):
+        """An unused input whose downconverter points at a port that is NOT
+        coming (a removed qubit's) would carry a broken pointer into a config
+        -- so it stays behind. Pointing at a port that IS coming is fine."""
+        old = _chip_with_ports({3: [1, 2, 8]}, ins={3: [7, 8]},
+                               refs=[(3, 1), (3, 2)], qubits=("q1", "q2"))
+        ins = old[0]["ports"]["mw_inputs"]["con1"]["3"]
+        ins["7"]["downconverter_frequency"] = "#/ports/mw_outputs/con1/3/2/upconverter_frequency"
+        ins["8"]["downconverter_frequency"] = "#/ports/mw_outputs/con1/3/8/upconverter_frequency"
+        old[0]["ports"]["mw_outputs"]["con1"]["3"]["8"]["upconverter_frequency"] = 7.6e9
+        new = _chip_with_ports({3: [1]}, refs=[(3, 1)])
+        r = _merge_ports(old, new)
+        assert r.stats.ports_carried == ["ports.mw_inputs.con1.3.8",
+                                         "ports.mw_outputs.con1.3.8"]
+        assert "7" not in r.merged["ports"]["mw_inputs"]["con1"]["3"]
+        assert r.stats.dangling_grafts == []
+
+    def test_a_port_the_rebuild_already_has_is_merged_not_carried(self):
+        old = _chip_with_ports({3: [1, 8]}, refs=[(3, 1)])
+        new = _chip_with_ports({3: [1, 8]}, refs=[(3, 1)])
+        r = _merge_ports(old, new)
+        assert r.stats.ports_carried == []

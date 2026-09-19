@@ -7350,6 +7350,10 @@
         // them and they subclass what the builder wrote), with their fields.
         var keptN = (m.class_kept_total != null)
             ? m.class_kept_total : (m.class_kept_paths || []).length;
+        // docs/202 §17 -- declared ports nothing in the source referenced,
+        // carried onto a FEM the rebuild still uses.
+        var portsN = (m.ports_carried_total != null)
+            ? m.ports_carried_total : (m.ports_carried || []).length;
         var keptByCls = {};
         (m.class_kept_paths || []).forEach(function (c) {
           keptByCls[c.cls] = (keptByCls[c.cls] || 0) + 1;
@@ -7381,6 +7385,12 @@
           (supN ? '<span class="gen-merge-stat gen-merge-ok" title="Value preserved — the ' +
             'rebuild references it (e.g. a CZ pulse the old builder stored inline, now on the ' +
             'qubit z line)">' + supN + ' via reference</span>' : '') +
+          (portsN ? '<span class="gen-merge-stat gen-merge-ok gen-merge-ports" ' +
+            'title="Ports the source chip declared but nothing used (no qubit, ' +
+            'pair or wiring line pointed at them), carried onto a FEM this ' +
+            'rebuild still uses. A port something DID use is never brought back ' +
+            '— that is how a removed qubit stays removed.">' + portsN +
+            ' unused port' + (portsN === 1 ? '' : 's') + ' carried</span>' : '') +
           (twpaN ? '<span class="gen-merge-stat gen-merge-ok" title="TWPAs the builder ' +
             "can't rebuild, carried whole (state + wiring + ports) so the config still " +
             'compiles">' + twpaN + ' TWPA carried</span>' : '') +
@@ -7429,6 +7439,12 @@
         // above the fold, not inside a collapsed list — because it explains
         // the dropped fields underneath it and is the only line here that
         // says what to change.
+        (m.ports_carried || []).slice(0, 6).forEach(function (p) {
+          var pl = document.createElement("div");
+          pl.className = "gen-merge-muted gen-merge-detail gen-merge-port-line";
+          pl.textContent = "carried " + p + " — declared, used by nothing in the source";
+          el.appendChild(pl);
+        });
         Object.keys(keptByCls).slice(0, 6).forEach(function (cls) {
           var kl = document.createElement("div");
           kl.className = "gen-merge-muted gen-merge-detail gen-merge-kept";

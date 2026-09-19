@@ -649,3 +649,132 @@ a notification.
 by the user's decision.
 
 **cqt baseline: 0 deterministic failures** (3 honest skips). Session start: 19.
+
+---
+
+## 17. The unused port comes along (user: "4번 포트 그렇게 구현해", 2026-09-19)
+
+The user asked for the change that had been described to them. The merge never
+grafts under `ports`, so a removed qubit's port cannot come back. That rule also
+dropped a port the source DECLARED and nothing used, and on KRS_5Q the ten
+values §15 left "not carried" were exactly one such port,
+`ports.mw_outputs.con1.3.8`. Nothing in the source pointed at it, so it cannot
+be a removed qubit's port.
+
+`regen_merge._carryable_ports` decides up front. A port entity (a dict with
+`__class__` under `ports`) is carried when ALL of these hold:
+
+- **Nothing outside `ports` references it.** That means no absolute pointer, no
+  relative pointer (resolved the way QUAM reads `#./` and `#../`), no older
+  `[con, fem, port]` list, and no pointer at a container above it (a whole
+  slot).
+- **The rebuild has no port at that path.**
+- **Its FEM, meaning controller plus slot, still holds a port in the rebuild,
+  through any port type.** A port on a FEM the new chip no longer uses would
+  ask the config to program a slot that may not be in the rack.
+- **Every pointer inside it lands in the rebuild or in another carried port.**
+  This is a fixed-point closure. An unused input whose downconverter points at
+  a removed qubit's output stays behind rather than carrying a broken pointer
+  into a config.
+
+Carried ports are reported as `stats.ports_carried`. The panel shows a green
+`N unused port(s) carried` chip and one line per port.
+
+**Real Chrome, customer chip.** Re-generate → step 7 (the output folder was
+typed in) → Review → Generate, all through the wizard's own buttons:
+
+```
+737 carried · 1267 grafted · 1 unused port carried · 0 not carried · 10 kept as your class
+carried ports.mw_outputs.con1.3.8 — declared, used by nothing in the source
+port 3/8 in the rebuild: byte-identical to the source
+Quam.load() in KRISS_CZ: MWFEMAnalogOutputPort 7600000000 -11
+generate_config(): OK, 17 elements; FEM3 analog outputs [1..8]
+customer chip hash: 0c9a78e48405 before and after
+```
+
+The first line reads `0 not carried`; after §15 it was 10.
+
+Pins: `TestADeclaredPortNothingUsesIsCarried` (10: the customer case; a removed
+qubit's port still stays removed; four kinds of reference each block; a FEM the
+rebuild dropped; a FEM that is used only through another port type; the
+pointer closure; a port the rebuild already has). The selfcheck adds P1–P3 and
+now has 22 assertions. Sweeps: **10/10 server + 3/3 client**. The existing
+"removed port not resurrected" fixtures carry no `__class__` on their ports, so
+the rule leaves them alone, and they still pass.
+
+---
+
+## 18. The poll flake had a cause after all (user: "이번에 한번 잡아보자")
+
+§3 recorded `TestPollEndpointUnderWriter` as failing ~30% with no cause, and
+the user accepted that. They then asked for it to be run down, using several
+Sonnet workflows. Four hypothesis lenses ran (the pytest-vs-script gap, the
+cursor/mtime gate, background threads, direct failure capture), each followed
+by an adversarial verifier. Three lenses died on a worktree-isolation error,
+not on the problem. The fourth captured failing dumps, and its verifier
+reproduced them independently:
+
+`DatasetStore.changes_since` filtered with `run.last_parsed <= ts: continue`.
+`ts` is the previous response's `now`, and `last_parsed` is a separate
+`time.time()` read at the top of the next scan's parse pass. Windows ticks
+coarsely (`time.get_clock_info('time').resolution` = 15.6 ms). Inside one tick
+the two reads are the SAME float, and the run the scan had just parsed was
+dropped from every later poll. With the clock frozen, the failure rate went
+15/15 and 45/45 (investigator, verifier); with the boundary changed, it went
+15/15 and 20/20 clean.
+
+**The workflow's fix was one character (`<=` → `<`). It shipped differently,
+because reading the code showed a second hole behind the same symptom.** The
+cursor was read AFTER the snapshot and outside the scan lock. A scan by
+another request (another tab, the scheduler's post-node rescan) landing in
+between stamped a run below the cursor this poll handed back, and it was lost
+the same way. `<` does not close that hole, and it re-ships every same-tick
+row once. So:
+
+- `_stamp()`: every stamp a scan writes (`last_parsed`, vanished) is strictly
+  after every cursor already issued (`math.nextafter` past it when the clock
+  has not moved, including a clock that went back);
+- `_issue_cursor()`: the cursor is taken under `_scan_lock`, in the same
+  critical section as the snapshot, and it is at or above every stamp written
+  so far.
+
+With both, `last_parsed > ts` delivers each change **exactly once**, with no
+drop and no repeat. Pinned by `TestEveryChangeIsDeliveredExactlyOnce`:
+
+- the same-tick case, run with a frozen clock;
+- the race, injected deterministically: the first row a poll serializes hands a
+  rescan to another thread;
+- the contract itself.
+
+Sweep 3/3, and the whole old `dataset.py` fails both behavioral pins.
+
+**Measured afterwards: 0/40.** The two formerly flaky tests ran 40 times, each
+in a fresh process (11/40 before). The machine was loaded with the full suite
+and `npm run selfcheck` at the time, which is the harsher condition.
+
+**Still unexplained:** why the standalone replay of the same steps missed 0/60
+before the fix. Both agents offered leads (instrumentation or a warm process
+pushing the two reads into different ticks; the conftest's qualibrate
+isolation not running outside pytest), and neither was forcing-tested. With the
+boundary exact, it no longer decides anything.
+
+---
+
+## 19. Fourteen selfchecks the suite never ran, and a flake that was another test's timer
+
+Found while checking the §17 selfcheck. **14 of 136 `*_selfcheck.cjs` had no
+pytest driver.** Among them were docs/125's red-team pins (settle_config,
+plothost, scroll_abort, livediff_buttons, fh_chart) and my own
+`generate_classchange` from this round. So the full suite, which is the gate
+before every push, never executed them; only a manual `npm run selfcheck` did.
+All 136 were green when checked, which is luck, not coverage.
+`tests/test_orphan_selfchecks.py` now runs every selfcheck that no other test
+file names. The set is computed, not listed, so a future undriven selfcheck is
+covered too, and one that later gains its own driver drops out.
+
+The known load flake `test_dataset_store_cache::test_the_debounce_writes_once_for_a_burst`
+named its own cause in one failure: the second "write" was
+`test_detail_carries_result_slo…/workspace_cache/ds_….json`. An EARLIER test's
+store still had a debounce timer armed, and the spy patched a module-global.
+The spy now counts only this store's cache folder. The pin keeps its teeth: a
+0 s debounce still reds it.

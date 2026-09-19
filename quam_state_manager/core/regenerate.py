@@ -264,6 +264,9 @@ def run_regenerate(
         # lab's own subclass and usually fixable by naming it.
         # docs/202 §15: the lab classes the merge could keep (env imports it,
         # and it subclasses what the builder wrote), and so did.
+        # docs/202 §17: declared ports nothing referenced, carried.
+        "ports_carried": s.ports_carried[:80],
+        "ports_carried_total": len(s.ports_carried),
         "class_kept": len(s.class_kept),
         "class_kept_paths": [{"path": p, "cls": c} for p, c in s.class_kept[:80]],
         "class_kept_total": len(s.class_kept),

@@ -289,7 +289,13 @@ class TestTheWiring:
         real = D.safe_io.atomic_write_json
 
         def spy(path, data, **k):
-            writes.append(Path(path))
+            # THIS store's writes only. The spy patches a module-global, and
+            # an earlier test's store can still have a debounce timer armed:
+            # its write landed in this window and read as a second flush (the
+            # load flake, caught naming test_detail_carries_result_slo's
+            # cache file, 2026-09-19).
+            if Path(path).parent == cache:
+                writes.append(Path(path))
             return real(path, data, **k)
         monkeypatch.setattr(D.safe_io, "atomic_write_json", spy)
         s = DatasetStore(root, cache_dir=cache)          # the first complete scan arms it

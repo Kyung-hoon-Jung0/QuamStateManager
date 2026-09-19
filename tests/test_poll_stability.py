@@ -496,6 +496,122 @@ class TestPollEndpointUnderWriter:
 
 
 # ======================================================================
+# The cursor contract: every change delivered exactly once
+# ======================================================================
+
+class _FrozenClock:
+    """``dataset._time`` with a stopped wall clock: every ``time()`` is the
+    same float, the way two reads inside one coarse Windows tick are."""
+
+    def __init__(self, t: float):
+        self.t = t
+
+    def time(self) -> float:
+        return self.t
+
+    def __getattr__(self, name):
+        return getattr(time, name)
+
+
+class _StorePoller:
+    """changes_since driven directly, the way the route drives it."""
+
+    def __init__(self, store: DatasetStore):
+        self.store, self.ts, self.seen = store, 0.0, {}
+        self.duplicates = 0
+
+    def poll(self) -> dict:
+        body = self.store.changes_since(self.ts)
+        for row in body["updated"]:
+            if row["id"] in self.seen:
+                self.duplicates += 1
+            self.seen[row["id"]] = row
+        self.ts = body["now"]
+        return body
+
+
+class TestEveryChangeIsDeliveredExactlyOnce:
+    """The TestPollEndpointUnderWriter flake (~30% on this machine, docs/80
+    addendum): ``last_parsed > ts`` compared two independent wall-clock reads.
+    Inside one coarse Windows tick they are the SAME float, and the run the
+    scan had just parsed was dropped from every later poll."""
+
+    def test_a_run_parsed_in_the_cursors_own_tick_still_arrives(
+            self, tmp_path, monkeypatch):
+        from quam_state_manager.core import dataset as dataset_mod
+        root = tmp_path / "data"
+        w = RunWriter(root)
+        w.write(1)
+        store = DatasetStore(root)
+        monkeypatch.setattr(dataset_mod, "_time", _FrozenClock(1.8e9))
+        p = _StorePoller(store)
+        p.poll()
+        assert set(p.seen) == {1}
+
+        w.write(2, hhmmss="020000")
+        _touch_tree(root, when=1.8e9 + 5)
+        p.poll()
+        assert set(p.seen) == {1, 2}, "the run parsed in the cursor's tick was dropped"
+        p.poll()
+        assert p.duplicates == 0, "and it arrives once, not on every poll"
+
+    def test_a_scan_by_another_request_right_after_the_snapshot_is_not_lost(
+            self, tmp_path, monkeypatch):
+        """The second hole behind the same symptom. The cursor used to be read
+        AFTER the snapshot, outside the scan lock, so a scan by another request
+        landing in between stamped a run BELOW the cursor this poll handed back.
+        The next poll's ``last_parsed > ts`` then skipped it for good.
+
+        Injected deterministically: the first row this poll serializes hands a
+        rescan to another thread and waits up to 1 s for it. Where the lock
+        still holds the snapshot, the other thread cannot scan until the poll
+        lets go, and its stamp lands after the cursor."""
+        from quam_state_manager.core import dataset as dataset_mod
+        root = tmp_path / "data"
+        w = RunWriter(root)
+        w.write(1)
+        store = DatasetStore(root)
+        p = _StorePoller(store)
+        p.poll()
+
+        real_compact = dataset_mod._compact_row
+        fired = []
+
+        def compact_then_race(run):
+            if not fired:
+                fired.append(True)
+                w.write(3, hhmmss="030000")
+                _touch_tree(root, when=time.time() + 50)
+                th = threading.Thread(target=store.rescan_if_stale)
+                th.start()
+                th.join(timeout=1.0)
+            return real_compact(run)
+
+        w.write(2, hhmmss="020000")
+        _touch_tree(root, when=time.time() + 20)
+        monkeypatch.setattr(dataset_mod, "_compact_row", compact_then_race)
+        p.poll()                                   # ships 2; run 3 lands mid-poll
+        monkeypatch.setattr(dataset_mod, "_compact_row", real_compact)
+        assert fired, "the injection must actually run"
+        deadline = time.time() + 5
+        while 3 not in p.seen and time.time() < deadline:
+            p.poll()
+            time.sleep(0.05)
+        assert set(p.seen) == {1, 2, 3}, "a run another request scanned was lost"
+        assert p.duplicates == 0
+
+    def test_a_stamp_is_never_at_or_below_an_issued_cursor(self, tmp_path, monkeypatch):
+        """The contract in two lines, including a wall clock that went BACK."""
+        from quam_state_manager.core import dataset as dataset_mod
+        store = DatasetStore(tmp_path)
+        c = store._issue_cursor()
+        monkeypatch.setattr(dataset_mod, "_time", _FrozenClock(c - 100.0))
+        s = store._stamp()
+        assert s > c
+        assert store._issue_cursor() >= s
+
+
+# ======================================================================
 # One bad folder must not take the poll down
 # ======================================================================
 

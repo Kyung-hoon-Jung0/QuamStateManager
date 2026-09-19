@@ -387,6 +387,15 @@ class DatasetStore:
         # reader that snapshots under it can also trigger a rescan. See
         # docs/40_scheduler.md §dataset-integration.
         self._scan_lock = threading.RLock()
+        # The delta-poll cursor contract (docs/80 §addendum). Every stamp a
+        # scan writes (last_parsed, vanished) goes through _stamp(), which
+        # never returns a value at or below a cursor already handed out;
+        # changes_since issues its cursor under _scan_lock at snapshot time,
+        # at or above every stamp written so far. So `last_parsed > ts`
+        # delivers each change exactly once: never dropped, never repeated.
+        self._stamp_lock = threading.Lock()
+        self._issued_cursor = 0.0
+        self._max_stamp = 0.0
         self._last_mtime: tuple[float, int] = (0.0, -1)
         # Per-folder fingerprint cache for incremental rescans.
         # path → (folder_fp, node_fp, data_fp, run_id) where each component is
@@ -602,7 +611,7 @@ class DatasetStore:
                 known.has_ds_fit = (run_entry / "ds_fit.h5").exists()
                 known.has_quam_state = (run_entry / "quam_state").is_dir()
                 if flags != (known.has_ds_raw, known.has_ds_fit, known.has_quam_state):
-                    known.last_parsed = _time.time()   # the row changed: ship it
+                    known.last_parsed = self._stamp()   # the row changed: ship it
             return known
 
         # Parse node.json
@@ -864,7 +873,7 @@ class DatasetStore:
         # main thread below). Without parallelism a 10⁴-run cold scan
         # freezes the UI for ~30s; with it, seconds.
         if to_parse:
-            now = _time.time()
+            now = self._stamp()
             workers = min(_SCAN_PARSE_WORKERS, len(to_parse))
 
             def _parse_one(task):
@@ -944,7 +953,7 @@ class DatasetStore:
         # Drop runs whose folders vanished. SKIPPED on a truncated walk — an
         # un-walked dir's runs are missing from seen_paths for the wrong
         # reason, and dropping them would broadcast false 'vanished' rows.
-        now_ts = _time.time()
+        now_ts = self._stamp()
         vanished = [] if truncated else \
             [p for p in self._folder_fp.keys() if p not in seen_paths]
         for p in vanished:
@@ -1302,6 +1311,34 @@ class DatasetStore:
             self._load_tags()
             return truncated
 
+    def _stamp(self) -> float:
+        """A last_parsed / vanished stamp -- strictly after every cursor issued.
+
+        Windows' ``time.time()`` ticks coarsely, so a scan run straight after a
+        poll could read the SAME float the poll had just handed the client as
+        its cursor, and ``last_parsed > ts`` then dropped the new run for good
+        (the TestPollEndpointUnderWriter flake: 11/40, and a real one for a
+        user whose run lands in the same tick). Thread-safe: the parse pass
+        calls this from its worker threads.
+        """
+        with self._stamp_lock:
+            t = _time.time()
+            if t <= self._issued_cursor:
+                t = math.nextafter(self._issued_cursor, math.inf)
+            if t > self._max_stamp:
+                self._max_stamp = t
+            return t
+
+    def _issue_cursor(self) -> float:
+        """The cursor a delta response hands back. Call under ``_scan_lock``,
+        together with the snapshot it describes: every stamp already written
+        is <= it (so those rows are in the snapshot), and every later one is
+        > it (so the next poll ships them)."""
+        with self._stamp_lock:
+            c = max(_time.time(), self._max_stamp, self._issued_cursor)
+            self._issued_cursor = c
+            return c
+
     def runs_snapshot(self) -> list:
         """A point-in-time list of the RunInfo values, taken under the scan lock.
 
@@ -1342,16 +1379,22 @@ class DatasetStore:
         scan_ms = (_time.perf_counter() - _t0) * 1000.0
         updated = []
         # Snapshot under the scan lock so a concurrent worker rescan can't
-        # mutate self.runs mid-iteration ("dictionary changed size").
+        # mutate self.runs mid-iteration ("dictionary changed size") -- and
+        # take the cursor IN the same critical section. Taken after it (as it
+        # was), a scan by another request landing in between stamped a run
+        # below the cursor that was then returned, and the next poll's
+        # `last_parsed > ts` skipped that run for good.
         with self._scan_lock:
             runs = list(self.runs.values())
+            vanished_log = list(self._vanished)
+            cursor = self._issue_cursor()
         for run in runs:
             if run.last_parsed <= ts:
                 continue
             if date and run.date != date:
                 continue
             updated.append(_compact_row(run))
-        vanished = [run_id for run_id, vts in self._vanished if vts > ts]
+        vanished = [run_id for run_id, vts in vanished_log if vts > ts]
         if scan_ms > 1000.0:
             logger.info("changes_since: slow rescan %.0f ms on %s "
                         "(truncated=%s)", scan_ms, self.folder_path,
@@ -1366,7 +1409,7 @@ class DatasetStore:
             # client merges by id — harmless). A TRUNCATED scan is different:
             # it may advance — un-walked dirs' future parses stamp a LATER
             # last_parsed, so nothing is skipped (docs/105 #4).
-            "now": _time.time() if scan_ok else ts,
+            "now": cursor if scan_ok else ts,
             "partial": bool(getattr(self, "_last_scan_truncated", False)
                             or not scan_ok),
             "scan_ms": round(scan_ms, 1),

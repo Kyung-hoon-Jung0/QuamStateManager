@@ -171,6 +171,25 @@ ok(chipText() === null && classLines().length === 0,
   ok2(doc.querySelectorAll('.gen-merge-kept').length === 0 &&
       !/kept as your class/.test(doc.getElementById('gen-build-result').textContent),
     'K3: nothing kept, nothing said');
+
+  // ── docs/202 §17: a declared port nothing used, carried ───────────────────
+  const P8 = 'ports.mw_outputs.con1.3.8';
+  T.showBuildResult({ ok: true, result: { qubits: ['q1'], qubit_pairs: [] },
+    merge: Object.assign({}, BASE, { ports_carried: [P8], ports_carried_total: 1 }) },
+    'D:\out');
+  const pel = doc.getElementById('gen-build-result');
+  const pchip = pel.querySelector('.gen-merge-ports');
+  ok2(pchip && /^1 unused port carried$/.test(pchip.textContent.trim()),
+    'P1: the chip says what was carried, singular — got ' + (pchip && pchip.textContent));
+  ok2(pchip && pchip.classList.contains('gen-merge-ok'), 'P1: and reads as good news');
+  const plines = Array.prototype.map.call(pel.querySelectorAll('.gen-merge-port-line'),
+    function (d) { return d.textContent; });
+  ok2(plines.length === 1 && plines[0].indexOf(P8) >= 0,
+    'P2: the port is named by its path — got ' + JSON.stringify(plines));
+  T.showBuildResult({ ok: true, result: { qubits: ['q1'], qubit_pairs: [] },
+    merge: Object.assign({}, BASE) }, 'D:\out');
+  ok2(!doc.querySelector('.gen-merge-ports') && !doc.querySelector('.gen-merge-port-line'),
+    'P3: a result with no carried port (or predating the field) says nothing');
   console.log(fails ? ('FAILED ' + fails + ' of ' + asserts)
                     : ('ok (' + asserts + ' assertions)'));
   process.exitCode = fails ? 1 : 0;

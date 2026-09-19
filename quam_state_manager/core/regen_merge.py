@@ -133,6 +133,7 @@ class MergeStats:
     schema_dropped: list[str] = field(default_factory=list)  # OLD-only fields the NEW env's class schema doesn't know (cross-generation rename/removal)
     class_changed: list[tuple[str, str, str]] = field(default_factory=list)  # (path, OLD class, NEW class) -- the rebuild typed this object differently
     class_kept: list[tuple[str, str]] = field(default_factory=list)  # (path, OLD class) -- a lab subclass the build env can hold, kept (docs/202 §15)
+    ports_carried: list[str] = field(default_factory=list)  # declared ports nothing referenced, carried onto a FEM the rebuild still uses (docs/202 §17)
     populate_protected: list[str] = field(default_factory=list)  # user populate edits kept as NEW over tier-1 (docs/72)
     populate_conflicts: list[str] = field(default_factory=list)  # hand-tuned OLD values kept where a populate edit implied a derived change (z delay)
 
@@ -174,7 +175,8 @@ def _kept_class(old: dict, new: dict, keep: dict | None) -> str | None:
 def _merge(old: Any, new: Any, path: str, stats: MergeStats,
            schemas: dict[str, list[str]] | None = None,
            protect: set[str] | None = None,
-           keep: dict | None = None) -> Any:
+           keep: dict | None = None,
+           carry_ports: set[str] | None = None) -> Any:
     if isinstance(old, dict) and isinstance(new, dict):
         out: dict = {}
         kept_cls = _kept_class(old, new, keep)
@@ -211,7 +213,7 @@ def _merge(old: Any, new: Any, path: str, stats: MergeStats,
                 continue
             if k in old:
                 out[k] = _merge(old[k], nv, f"{path}.{k}" if path else k,
-                                stats, schemas, protect, keep)
+                                stats, schemas, protect, keep, carry_ports)
             else:
                 out[k] = copy.deepcopy(nv)
                 stats.kept_new_only += _count_leaves(nv)
@@ -253,6 +255,22 @@ def _merge(old: Any, new: Any, path: str, stats: MergeStats,
                 # data — never carry a stale one onto a rebuilt state.
                 continue
             if not graftable_here:
+                # docs/202 §17: the one exception under `ports` -- a port the
+                # source chip DECLARED but nothing referenced cannot be a
+                # removed qubit's port, so it is carried (decided up front by
+                # _carryable_ports, which also requires its FEM to still be
+                # in the rebuild).
+                sub = f"{path}.{k}" if path else k
+                if carry_ports and top == "ports":
+                    kept = _only_carried(ov, sub, carry_ports)
+                    if kept is not None:
+                        out[k] = kept
+                        n = _count_leaves(kept)
+                        stats.grafted += n
+                        stats.graft_subtrees.append((sub, n))
+                        stats.ports_carried.extend(
+                            p for p in carry_ports
+                            if p == sub or p.startswith(sub + "."))
                 continue                                # removed entity -> residual_lost
             if legal is not None and k not in legal:
                 stats.schema_dropped.append(f"{path}.{k}" if path else k)
@@ -559,6 +577,162 @@ def graft_twpa_wiring(merged_state: dict, old_state: dict,
     return carried
 
 
+# ---------------------------------------------------------------------------
+# docs/202 §17 -- a declared port nothing references
+#
+# The merge never grafts under `ports`: a removed qubit's port must not come
+# back. But a chip can DECLARE a port nothing uses (a spare line, a second pump
+# kept for later), and that rule dropped it too -- on one customer chip the ten
+# values still reported "not carried" after §15 were exactly one such port.
+# Such a port cannot be a removed qubit's: in the SOURCE, nothing pointed at it.
+# So it is carried, when all of these hold:
+#   - nothing outside `ports` in the source (state or wiring) references it --
+#     by absolute pointer, relative pointer, or a [con, fem, port] list;
+#   - the rebuild has no port at that path;
+#   - its FEM (controller + slot) still holds a port in the rebuild -- a port
+#     on a FEM the new chip no longer uses would ask the config to program a
+#     slot that may not be in the rack;
+#   - every pointer inside it lands in the rebuild or in another carried port.
+# ---------------------------------------------------------------------------
+
+def _port_entities(ports: Any, prefix: str = "ports") -> dict[str, dict]:
+    """Every port ENTITY -- a dict carrying ``__class__`` below the container
+    itself -- keyed by dot-path. Descent stops at an entity."""
+    out: dict[str, dict] = {}
+    if not isinstance(ports, dict):
+        return out
+    for k, v in ports.items():
+        if not isinstance(v, dict):
+            continue
+        p = f"{prefix}.{k}"
+        if isinstance(v.get("__class__"), str):
+            out[p] = v
+        else:
+            out.update(_port_entities(v, p))
+    return out
+
+
+def _port_hw(path: str, ent: dict) -> tuple:
+    """(controller, fem) of a port entity -- its own ids first, the path second."""
+    parts = path.split(".")
+    con = ent.get("controller_id", parts[2] if len(parts) > 2 else None)
+    fem = ent.get("fem_id", parts[3] if len(parts) > 4 else None)
+    return (str(con), None if fem is None else str(fem))
+
+
+def _pointer_target(src_path: str, pointer: str) -> str | None:
+    """The dot-path a pointer lands on, for the pointer stored at ``src_path``.
+
+    ``#/a/b`` is absolute. ``#./x`` is relative to the object holding the
+    attribute, and each ``../`` climbs one more level (QUAM's own reading).
+    """
+    if pointer.startswith("#/"):
+        return ".".join(s for s in pointer[2:].split("/") if s)
+    base = src_path.split(".")[:-1]              # the object holding the leaf
+    rest = pointer[1:]                           # "./x" or "../x" or "../../x"
+    if rest.startswith("./"):
+        rest = rest[2:]
+    else:
+        while rest.startswith("../"):
+            if not base:
+                return None
+            base = base[:-1]
+            rest = rest[3:]
+    return ".".join(base + [s for s in rest.split("/") if s])
+
+
+def _walk_refs(obj: Any, path: str = ""):
+    """Yield ``(src_path, kind, value)`` for every pointer string and every
+    short ``[con, (fem,) port]`` list, lists descended."""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            yield from _walk_refs(v, f"{path}.{k}" if path else str(k))
+    elif isinstance(obj, list):
+        if (2 <= len(obj) <= 3 and isinstance(obj[0], str)
+                and all(isinstance(x, int) and not isinstance(x, bool)
+                        for x in obj[1:])):
+            yield path, "tuple", obj
+        for i, v in enumerate(obj):
+            yield from _walk_refs(v, f"{path}.{i}")
+    elif is_pointer(obj):
+        yield path, "pointer", obj
+
+
+def _hits(target: str, entity: str) -> bool:
+    """A target touches an entity when it is the entity, inside it, or a
+    container above it (a pointer at a whole slot references every port in it)."""
+    return (target == entity or target.startswith(entity + ".")
+            or entity.startswith(target + "."))
+
+
+def _carryable_ports(old_state: dict, new_state: dict,
+                     old_wiring: dict | None = None,
+                     new_wiring: dict | None = None) -> set[str]:
+    old_ents = _port_entities(old_state.get("ports"))
+    if not old_ents:
+        return set()
+    new_ents = _port_entities(new_state.get("ports"))
+    new_hw = {_port_hw(p, e) for p, e in new_ents.items()}
+    new_doc = _merged_doc(new_state, new_wiring)
+    # (a port the rebuild has is merged normally -- it never reaches the graft)
+    cand = {p for p, e in old_ents.items()
+            if p not in new_ents and _port_hw(p, e) in new_hw}
+    if not cand:
+        return set()
+
+    internal: dict[str, list[str]] = {p: [] for p in cand}
+    for src, kind, val in _walk_refs(_merged_doc(old_state, old_wiring)):
+        inside = src == "ports" or src.startswith("ports.")
+        if kind == "tuple":
+            if inside:
+                continue
+            con, *rest = val
+            key = (str(con), str(rest[0]) if len(rest) == 2 else None)
+            port = rest[-1]
+            cand = {p for p in cand
+                    if not (_port_hw(p, old_ents[p]) == key
+                            and str(old_ents[p].get("port_id", p.rsplit(".", 1)[-1]))
+                            == str(port))}
+            continue
+        target = _pointer_target(src, val)
+        if target is None:
+            continue
+        if not inside:
+            cand = {p for p in cand if not _hits(target, p)}
+            continue
+        owner = next((p for p in internal if src.startswith(p + ".")), None)
+        if owner is not None:
+            internal[owner].append(target)
+
+    # every pointer a carried port holds must still land somewhere
+    changed = True
+    while changed:
+        changed = False
+        for p in sorted(cand):
+            for t in internal.get(p, ()):
+                if (_resolves(new_doc, "#/" + t.replace(".", "/"))
+                        or any(t == c or t.startswith(c + ".") for c in cand)):
+                    continue
+                cand.discard(p)
+                changed = True
+                break
+    return cand
+
+
+def _only_carried(obj: Any, path: str, carry: set[str]) -> Any:
+    """``obj`` pruned to the carried ports at or under ``path``; None if none."""
+    if path in carry:
+        return copy.deepcopy(obj)
+    if not isinstance(obj, dict) or not any(c.startswith(path + ".") for c in carry):
+        return None
+    out = {}
+    for k, v in obj.items():
+        sub = _only_carried(v, f"{path}.{k}", carry)
+        if sub is not None:
+            out[k] = sub
+    return out or None
+
+
 def merge_states(old_state: dict, new_state: dict,
                  class_schemas: dict[str, list[str]] | None = None,
                  protect_paths: set[str] | None = None,
@@ -601,8 +775,10 @@ def merge_states(old_state: dict, new_state: dict,
     # calibration in the merge.
     new_state = _reconcile_pair_ids(old_state, new_state,
                                     old_wiring, new_wiring)   # align pair ids first
+    carry_ports = _carryable_ports(old_state, new_state, old_wiring, new_wiring)
     merged = _merge(old_state, new_state, "", stats, class_schemas, protect_paths,
-                    keep_classes)
+                    keep_classes, carry_ports)
+    stats.ports_carried.sort(key=natural_key)
     # Every one of these lists is a set of dot-paths shown to the user in
     # the build-result transparency panel, TRUNCATED to the first 80/200
     # (regenerate.py) — so the sort decides both the order and WHICH paths
