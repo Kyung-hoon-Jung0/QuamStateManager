@@ -771,7 +771,12 @@ class TestRootNormalizationAndDedup:
         a = tmp_path / "ChipData"
         _make_exp(a / "2026-02-19", 1)
         b = tmp_path / "chipdata"
-        b.mkdir()
+        # docs/202 §13: on Windows (case-insensitive NTFS) `chipdata` IS
+        # `ChipData`, so a plain mkdir raised WinError 183 before anything was
+        # tested -- the one OS where two spellings of one directory are the
+        # everyday case never ran this pin. exist_ok keeps the POSIX
+        # simulation below and lets Windows use its real filesystem.
+        b.mkdir(exist_ok=True)
 
         real_stat = os.stat
         a_res, b_res = str(a.resolve()), str(b.resolve())

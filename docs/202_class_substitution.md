@@ -518,3 +518,20 @@ That leaves the `cqt` baseline at **5 deterministic failures**, every one
 environmental and named: the WSL-kernel probe, the scanner's hard-link dedup
 (`WinError 183`), and the three QDAC live builds (the env's own root class,
 docs/176).
+
+---
+
+## 13. The dedup pin that could not run on the one OS it describes
+
+`test_scanner::test_add_root_dedups_same_inode_spellings` guards "one physical
+directory registered under two spellings must not duplicate every run". It
+simulates the case for POSIX by forcing `os.stat` to report one inode for
+`ChipData` and `chipdata` — and its fixture's `b.mkdir()` raised `WinError 183`
+on Windows, because on case-insensitive NTFS the two spellings are **really**
+one directory. So the OS where this is the everyday case never ran the pin;
+it was filed as "OS class". `mkdir(exist_ok=True)`: POSIX keeps its
+simulation, Windows uses its real filesystem. It passes — the dedup holds on
+Windows — and removing the dedup in `Workspace.add_root` reds it there.
+
+Baseline: **4 deterministic failures**, the WSL-kernel probe and the three QDAC
+live builds, each environmental by construction.
