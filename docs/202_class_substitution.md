@@ -453,3 +453,33 @@ directory's timestamp across modifications that close together — and **0 of
 after the last scan, so the product sees it; the test created two directories
 milliseconds apart. It now waits 0.3 s first: 10 of 10, and a key that ignores
 the env directories still reds it.
+
+---
+
+## 11. Two notification events a user can enable that nothing ever sends
+
+`test_runner_p7::test_only_four_events_exist` — a design pin (docs/78 D-9) whose
+point is that "a notifier that fires on everything is one the user mutes, and
+a muted notifier reads as coverage while delivering nothing" — had been red
+since 2026-09-06, when docs/172 §1b deliberately added three agent events and
+did not update it. Re-pinned on the seven, as an exact set, so every future
+event is still a decision made there.
+
+Checking that the three new ones actually fire found that two do not.
+`agent_failure` is emitted from `agent_runs.py` and `agent_api.py`;
+**`agent_apply_refused` and `agent_stalled` appear only in the vocabulary and
+in `limits.DEFAULTS["notify_events"]`, where they are enabled by default** —
+no composed name, no wrapper, no literal anywhere sends them. "Stalled" is a
+real, specified state (docs/173 §3.1: not running AND 15 min with no event, or
+the PID dead), but it is decided client-side by `agent-pill.js`, where no
+notifier lives; the apply refusal never calls one.
+
+Nobody receives them today — the webhook defaults to empty and the Limits UI
+that would expose `notify_events` was deferred (docs/173 §S7) — so this is a
+truthful-vocabulary gap, not an outage, and building a server-side stall
+detector unasked would be scope nobody chose. What ships is the record, in the
+form that cannot rot: `test_every_declared_event_has_an_emitter` is
+`xfail(strict=True)`. It fails today for exactly the two names (verified with
+`--runxfail`), its emitter scan finds the other five (so it is not vacuous),
+and adding emitters for both turns it red — verified — so the xfail cannot
+outlive the gap.

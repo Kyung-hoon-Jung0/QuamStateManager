@@ -1,17 +1,46 @@
-"""Runner+agent P7 (docs/78 D-9): four events, best-effort delivery."""
+"""Runner+agent P7 (docs/78 D-9): a closed event set, best-effort delivery."""
 from __future__ import annotations
 
 import json
+
+import pytest
 
 from quam_state_manager.core.autofit import notify
 
 
 class TestEvents:
-    def test_only_four_events_exist(self):
+    def test_only_the_declared_events_exist(self):
         """A notifier that fires on everything is one the user mutes, and a
-        muted notifier reads as coverage while delivering nothing."""
+        muted notifier reads as coverage while delivering nothing.
+
+        docs/172 §1b deliberately added three agent events; this pin still
+        asserted the original four and had been red since (2026-09-06 ->
+        found 2026-09-19, docs/202 §11). An exact set on purpose: every new
+        event must be a decision someone makes here, not a drift."""
         assert set(notify.EVENTS) == {"plan_done", "target_halted",
-                                      "plan_stopped", "needs_human"}
+                                      "plan_stopped", "needs_human",
+                                      "agent_failure", "agent_apply_refused",
+                                      "agent_stalled"}
+
+    @pytest.mark.xfail(strict=True, reason=(
+        "docs/202 §11: agent_apply_refused and agent_stalled are declared and "
+        "enabled by default in limits.DEFAULTS['notify_events'], but no code "
+        "emits them -- 'stalled' is decided client-side by agent-pill.js, and "
+        "the apply refusal never calls the notifier. Strict: this flips red the "
+        "day their emitters exist, so the xfail cannot outlive the gap."))
+    def test_every_declared_event_has_an_emitter(self):
+        """An event a user can enable that nothing ever sends is the muted
+        notifier of the docstring above, in another form: it reads as
+        coverage while delivering nothing."""
+        import re
+        from pathlib import Path
+        root = Path(notify.__file__).resolve().parents[2]
+        emitted = set()
+        for f in root.rglob("*.py"):
+            text = f.read_text(encoding="utf-8", errors="replace")
+            emitted.update(re.findall(
+                r'notify\(\s*(?:[A-Za-z_][\w.]*\s*,\s*){0,2}"([a-z_]+)"', text))
+        assert set(notify.EVENTS) <= emitted, sorted(set(notify.EVENTS) - emitted)
 
     def test_an_unknown_event_is_refused_not_guessed(self, tmp_path):
         out = notify.notify(tmp_path, "everything_is_fine")
