@@ -102,3 +102,67 @@ call than recording it precisely.
 It is written as an xfail rather than a test of current behaviour on purpose: it
 turns green the day (a), (b) or (c) lands, instead of quietly encoding the wrong
 answer as correct and having to be rewritten then.
+
+---
+
+## 5. The fix (2026-09-19): (a), done as a move under three guards
+
+The user asked for it ("1,2번 고치자"). Option (a), the re-stamp. §3's cost
+estimate held, and it shaped the design rather than ruling it out.
+
+**Which snapshots move.** The notice row has to have `trigger == "auto"` and no
+run yet, and it has to be the only row holding that content. In SM, `auto`
+means a pull of content an outside writer produced: the user's **Take live**
+(`/state/sync`, `kind="manual"`) or a machine adopt (`kind="exp"`). A `save`,
+`manual` or `restore` row is SM writing live at that moment, and docs/132's rule
+still applies: the human's time is the truth. Those rows are only enriched,
+exactly as before.
+
+§1 was also imprecise about the user path. Opening a chip does not adopt
+(docs/87 turned that off); the late **Take live** is what mints the "now" row,
+and that is the button the customer named.
+
+**When a move is allowed.** The run must be EARLIER than the notice. Nothing may
+lie between the two stamps: no snapshot dir, no `param_history` row, no
+`leaf_snaps` row. Pruned snapshots keep their index rows, and an index insert
+can fail and leave only the dir, so each of the three records blocks the move on
+its own. Under that guard, the move is a relabel. Every neighbour, every change
+point and the `diff_summary` against the prior stay valid, so the index rows are
+UPDATEd in place in one transaction. That includes `param_history_cp` and
+`_cp_last`, whose rowid watermark would never see an UPDATE.
+
+**The outcome equals ingest-first.** The meta becomes `trigger="experiment"`,
+`kind="exp"`, plus the run fields, and `restamped_from` is kept as an audit
+trail. `test_notice_first_ends_exactly_as_ingest_first` compares both orders
+field for field, index rows included.
+
+**Crash safety.** The move is copy-then-delete under an intent file
+(`.restamp.json`). Every state a killed process can leave is the old row, the
+new row, or both. That can show as a visible duplicate, but never as a row whose
+dir and meta disagree. `_finish_restamp` completes or abandons the move. The
+self-heal calls it before it compares disk with the index, so it never indexes
+the copy as a second snapshot. A re-ingest of the same run converges on its own.
+
+**Both ingest paths.** The single-run path (a Datasets page polling while the
+run lands) and the bulk backfill (Param History's import: the path for a run
+that was already on disk when SM opened, i.e. the customer's closed-SM batch)
+both go through `_ingest_entries_into`'s duplicate branch. The batch
+transaction is committed first so the move can take the write lock.
+
+**Verified on the customer chip in real Chrome.** A run landed in the project's
+dataset folder at 14:10:20 while SM held an older state. The live file changed,
+the banner offered Take live, and it was pressed at 20:25, which minted
+`20260919_112518_7923 auto/manual`. Param History → Import from workspace then
+moved it to `20260919_051020_200 experiment/exp run 4200`, with the old dir and
+every index row at the old stamp gone. State History's top row reads
+**9/19/2026, 2:10:20 PM · EXP · after restamp_probe run #4200**.
+`/topology/trends` (the Chip Status chart) carries the run's stamp 16 times and
+the press's stamp 0 times. The chip was restored byte-for-byte afterwards.
+
+Pins: `tests/test_adopt_stamp.py`. The xfail is now a plain test, alongside
+`TestTheOrderOfArrivalDoesNotMatter` (13) and `TestAKilledReStampConverges`
+(4). Mutation sweep: 16/16 RED. One pin was vacuous on the first pass and is
+now fixed: the bulk-path pin never had an open batch transaction, because its
+only entry was the duplicate. The two-holders guard cannot be reached through
+today's callers (content dedup keeps one holder per hash, and every forced
+capture is manual or backup), so it is pinned with a forced `auto` notice.

@@ -3966,6 +3966,14 @@ class HistoryManager:
         so a new snapshot forces a re-verification on next read.
         """
         self._join_deferred_index()
+        # docs/200: a half-done re-stamp is finished BEFORE the self-heal
+        # compares disk with the index, or it would index the copy as a
+        # second snapshot beside the old one.
+        try:
+            self._finish_restamp(self._history_dir(quam_state_path))
+        except Exception:  # noqa: BLE001
+            logger.warning("Pending re-stamp could not be finished",
+                           exc_info=True)
         snapshots = self.list_snapshots(quam_state_path)
         if not snapshots:
             return
@@ -4885,6 +4893,222 @@ class HistoryManager:
                 return True
         return False
 
+    # docs/200 fix -- the intent record of an in-flight re-stamp. Its name
+    # starts with a dot and it is a FILE, so no snapshot listing ever renders it.
+    _RESTAMP_INTENT = ".restamp.json"
+
+    def _restamp_notice(self, target_dir: Path, content_hash: str,
+                        entry: Any, new_ts: str,
+                        conn: sqlite3.Connection) -> str | None:
+        """Move a NOTICE snapshot to the time of the run that produced it.
+
+        docs/200: SM pulled content an outside writer had produced (the user's
+        late ``Take live``, or a machine adopt), so the snapshot is stamped
+        when SM NOTICED it. When that run's ingest arrives afterwards, the
+        content is already stored, and before this fix the enrich path only
+        attached the run -- so the Trends point sat on the day someone pressed
+        sync. The customer's rule: the point belongs at the time the
+        experiment ran, however late the sync.
+
+        The outcome must be the one ingest-first already produces (the scheduler
+        hook's docs/132 order): an EXP row at the run's own stamp, carrying the
+        run. So the snapshot is MOVED, not copied or re-derived:
+
+        - only a notice (``trigger == "auto"``) with no run yet, and the only
+          snapshot holding this content. A ``save``/``manual``/``restore``
+          row is something SM itself wrote to live at that moment; its time
+          is the truth there (docs/132) and it is left to the enrich path;
+        - only EARLIER, and only when nothing -- no snapshot on disk, no index
+          row of a pruned one -- lies between the two stamps. The move is
+          then a relabel: every neighbour, every change point, every
+          ``diff_summary`` computed against the prior stays exactly as it
+          was, so the index rows are relabelled in place instead of rebuilt.
+
+        Crash-safe by copy-then-delete under an intent file: every state a
+        killed process can leave is either the old row, the new row, or both
+        (a visible duplicate, never a broken row). :meth:`_finish_restamp`
+        completes it on the next index read (the self-heal calls it first);
+        a re-ingest of the same run converges on its own, because the ingest
+        writes its copy into the very dir name the half-done move used and
+        its duplicate branch removes it before this runs again.
+
+        Returns the OLD stamp when the snapshot moved, else None (the caller
+        then falls back to the enrich path). Never raises.
+        """
+        run_id = getattr(entry, "run_id", None)
+        if run_id is None:
+            return None
+        try:
+            with self._lock:
+                snaps = self._list_snapshots_in_dir(target_dir)
+                holders = [s for s in snaps if s.state_hash == content_hash]
+                if len(holders) != 1:
+                    return None
+                snap = holders[0]
+                old_ts = snap.timestamp
+                if (snap.trigger != "auto" or snap.run_id is not None
+                        or not new_ts < old_ts):
+                    return None
+                if (target_dir / new_ts).exists():
+                    return None
+                if any(new_ts < s.timestamp < old_ts for s in snaps):
+                    return None
+                if conn.execute(
+                        "SELECT 1 FROM param_history WHERE timestamp >= ? "
+                        "AND timestamp < ? LIMIT 1", (new_ts, old_ts)).fetchone():
+                    return None
+                if conn.execute(
+                        "SELECT 1 FROM leaf_snaps WHERE ts >= ? AND ts < ? "
+                        "LIMIT 1", (new_ts, old_ts)).fetchone():
+                    return None
+
+                src = target_dir / old_ts
+                data = json.loads((src / "meta.json").read_text(encoding="utf-8"))
+                exp_name = getattr(entry, "experiment_name", None)
+                run_folder = getattr(entry, "folder_path", None)
+                data.update({
+                    "timestamp": new_ts,
+                    "trigger": "experiment",
+                    "kind": "exp",
+                    "run_id": run_id,
+                    "experiment_name": exp_name,
+                    "experiment_folder_path": str(run_folder) if run_folder else None,
+                    "new_experiments": [exp_name] if exp_name else [],
+                    # audit trail; SnapshotMeta ignores unknown keys
+                    "restamped_from": old_ts,
+                })
+                safe_io.atomic_write_json(target_dir / self._RESTAMP_INTENT, {
+                    "from": old_ts, "to": new_ts, "meta": data})
+                dst = target_dir / new_ts
+                # meta.json LAST: until it lands, a listing skips the new dir
+                # as half-written and the old row still renders whole
+                shutil.copytree(src, dst,
+                                ignore=shutil.ignore_patterns("meta.json"))
+                tmp = dst / "meta.json.tmp"
+                tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                tmp.replace(dst / "meta.json")
+                self._finish_restamp(target_dir, conn)
+                return old_ts
+        except Exception:  # noqa: BLE001 -- the enrich path still runs
+            logger.warning("Re-stamp of the %s notice snapshot failed",
+                           getattr(entry, "run_id", None), exc_info=True)
+            return None
+
+    def _finish_restamp(self, target_dir: Path,
+                        conn: sqlite3.Connection | None = None) -> None:
+        """Complete (or abandon) a re-stamp an earlier call or a killed process
+        left half done. Idempotent: every step checks before it acts.
+
+        - new dir without meta.json -> the copy never finished: abandon it,
+          the old row is still whole, and the run's next ingest retries;
+        - otherwise relabel the index rows old -> new, delete the old dir,
+          and drop the intent.
+        """
+        intent_p = target_dir / self._RESTAMP_INTENT
+        if not intent_p.exists():
+            return
+        with self._lock:
+            try:
+                intent = json.loads(intent_p.read_text(encoding="utf-8"))
+                old_ts, new_ts = intent["from"], intent["to"]
+                data = intent["meta"]
+            except (OSError, ValueError, KeyError, TypeError):
+                logger.warning("Unreadable re-stamp intent in %s -- dropped",
+                               target_dir, exc_info=True)
+                intent_p.unlink(missing_ok=True)
+                return
+            dst = target_dir / new_ts
+            if not (dst / "meta.json").exists():
+                shutil.rmtree(dst, ignore_errors=True)
+                intent_p.unlink(missing_ok=True)
+                return
+            own = conn is None
+            if own:
+                idx_path = target_dir / "index.sqlite"
+                _ensure_param_history_schema(idx_path)
+                conn = sqlite3.connect(str(idx_path), isolation_level=None,
+                                       timeout=10.0)
+            try:
+                self._relabel_index_rows(conn, old_ts, new_ts, data)
+            finally:
+                if own:
+                    conn.close()
+            shutil.rmtree(target_dir / old_ts, ignore_errors=True)
+            if (target_dir / old_ts).exists():
+                # a reader still holds a file on Windows -- keep the intent,
+                # the next ingest or index read finishes the job
+                logger.warning("Re-stamp %s -> %s: old dir still busy",
+                               old_ts, new_ts)
+            else:
+                intent_p.unlink(missing_ok=True)
+            self._manifest_update_entry(target_dir, new_ts, data)
+            self._invalidate_chip_dir_caches(target_dir)
+
+    @staticmethod
+    def _relabel_index_rows(conn: sqlite3.Connection, old_ts: str,
+                            new_ts: str, data: dict) -> None:
+        """Relabel one snapshot's index rows in ONE transaction.
+
+        Order is preserved (the caller proved nothing lies between the two
+        stamps), so every change point stays valid under its new label -- the
+        ``param_history_cp`` companion included, whose rowid watermark would
+        never notice an UPDATE. A row already under the new stamp (a self-heal
+        indexed the copy before this ran) wins, and the old rows go.
+        """
+        run_id = data.get("run_id")
+        exp = data.get("experiment_name")
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            if conn.execute("SELECT 1 FROM param_history WHERE timestamp = ? "
+                            "LIMIT 1", (new_ts,)).fetchone():
+                conn.execute("DELETE FROM param_history WHERE timestamp = ?",
+                             (old_ts,))
+                _cp_invalidate(conn)
+            else:
+                for table in ("param_history", "param_history_cp",
+                              "param_history_cp_last"):
+                    conn.execute(
+                        f"UPDATE {table} SET timestamp = ?, "
+                        "trigger = 'experiment', run_id = ?, experiment = ? "
+                        "WHERE timestamp = ?", (new_ts, run_id, exp, old_ts))
+            if conn.execute("SELECT 1 FROM leaf_snaps WHERE ts = ?",
+                            (new_ts,)).fetchone():
+                conn.execute("DELETE FROM leaf_cp WHERE snap_id IN "
+                             "(SELECT id FROM leaf_snaps WHERE ts = ?)",
+                             (old_ts,))
+                conn.execute("DELETE FROM leaf_snaps WHERE ts = ?", (old_ts,))
+                leaf_index.mark_dirty(conn, f"re-stamp {old_ts} -> {new_ts}")
+            else:
+                conn.execute(
+                    "UPDATE leaf_snaps SET ts = ?, trigger = 'experiment', "
+                    "run_id = ?, experiment = ?, folder = ? WHERE ts = ?",
+                    (new_ts, run_id, exp, data.get("experiment_folder_path"),
+                     old_ts))
+            conn.execute("COMMIT")
+        except BaseException:
+            try:
+                conn.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
+            raise
+
+    def _invalidate_chip_dir_caches(self, target_dir: Path) -> None:
+        """Drop every cache keyed on this chip dir's snapshot NAMES."""
+        self._bump_chip_version(target_dir)
+        try:
+            target_resolved = target_dir.resolve()
+        except OSError:
+            target_resolved = target_dir
+        for k in list(self._snapshot_list_cache):
+            d = self._safe_history_dir(k)
+            if d is None:
+                continue
+            try:
+                if d.resolve() == target_resolved:
+                    self._snapshot_list_cache.pop(k, None)
+            except OSError:
+                continue
+
     def _safe_history_dir(self, source_key: str) -> Path | None:
         """_history_dir for a cache key, never raising (cache upkeep only)."""
         try:
@@ -5031,6 +5255,7 @@ class HistoryManager:
         ingested = 0
         skipped_duplicate = 0
         enriched = 0
+        restamped = 0
         in_txn = False
 
         # Phase 3 §4.2 — throttle progress to every ``_BACKFILL_PROGRESS_EVERY``
@@ -5118,7 +5343,21 @@ class HistoryManager:
                     if content_hash in known:
                         shutil.rmtree(snap_dir, ignore_errors=True)
                         skipped_duplicate += 1
-                        if enrich_duplicates and self._enrich_run_fields(
+                        # docs/200: the stored copy may be a NOTICE of this
+                        # very run -- move it to the run's own time. The
+                        # re-stamp writes the index itself, so a batch
+                        # transaction must not be holding the write lock.
+                        if in_txn:
+                            conn.execute("COMMIT")
+                            in_txn = False
+                        moved_from = self._restamp_notice(
+                            target_dir, content_hash, entry, ts, conn)
+                        if moved_from is not None:
+                            existing_ts.discard(moved_from)
+                            existing_ts.add(ts)
+                            restamped += 1
+                            enriched += 1
+                        elif enrich_duplicates and self._enrich_run_fields(
                                 target_dir, content_hash, entry):
                             enriched += 1
                         _tick(i)
@@ -5224,7 +5463,7 @@ class HistoryManager:
                 for k in stale_keys:
                     self._snapshot_list_cache.pop(k, None)
         return {"ingested": ingested, "skipped_duplicate": skipped_duplicate,
-                "enriched": enriched}
+                "enriched": enriched, "restamped": restamped}
 
     def backfill_from_workspace(
         self,

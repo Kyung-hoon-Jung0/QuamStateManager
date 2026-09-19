@@ -129,10 +129,11 @@ stamp as local instead of UTC, and re-adding a `Z` to the axis value.
 
 ## Open
 
-- **The open/adopt snapshot stamped "now"** (§1) — **reproduced in docs/200**,
-  which has the measurement, the mechanism (the docs/132 enrich path adds the
-  run id but deliberately not the timestamp), three fix options with their
-  costs, and an `xfail` test that turns green when one of them lands.
-- **The Column History chip** (`routes.py:8119`) still formats server-side and
-  so cannot honour a per-viewer zone. It needs the `ts_local` treatment (emit
-  the instant, convert on the client) — same fix shape, different surface.
+Both items are **closed** (kept here so the trail reads straight):
+
+- **The open/adopt snapshot stamped "now"** (§1) — reproduced in docs/200,
+  **fixed in docs/200 §5** (2026-09-19): the run's ingest moves the notice
+  snapshot to the run's own stamp.
+- **The Column History chip** — **fixed in docs/201** (2026-09-18), which found
+  it was one of five surfaces slicing a UTC stamp server-side; all five now go
+  through `ts_local(short=True)`.
