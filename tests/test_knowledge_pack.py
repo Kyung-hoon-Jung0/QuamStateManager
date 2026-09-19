@@ -261,9 +261,15 @@ class TestNoCustomerNamesShipped:
                          + "|".join(self.NAMES)
                          + r")(?![A-Za-z0-9])", re.IGNORECASE)
         offenders = []
-        files = list(root.rglob("*.py")) + [
-            f for f in (root / "web" / "static").rglob("*.js")
-            if not any(v in f.name.lower() for v in vendor)]
+        # docs/202 §8: templates and stylesheets ship too. A Jinja comment
+        # naming a customer chip sat in `_pulse_detail.html` while this pin
+        # scanned only .py/.js -- invisible to the browser, not to anyone who
+        # opens the installed package.
+        files = list(root.rglob("*.py")) + list(
+            (root / "web" / "templates").rglob("*.html")) + [
+            f for f in (root / "web" / "static").rglob("*")
+            if f.suffix in (".js", ".css")
+            and not any(v in f.name.lower() for v in vendor)]
         for f in sorted(files):
             text = f.read_text(encoding="utf-8", errors="replace")
             for m in pat.finditer(text):

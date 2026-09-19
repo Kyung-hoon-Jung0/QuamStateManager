@@ -116,7 +116,7 @@ window.PulsesPage = (function () {
 
     /* The waveform SM cannot compute, computed by the code that owns it.
 
-       A lab may write its own pulse classes -- KRISS_CZ's chip carries
+       A lab may write its own pulse classes -- one customer chip carries
        `SNZTwoFluxPulse`, `GaussianNZTwoFluxPulse` and two readout-weight
        classes, 30 pulse objects in all -- and `waveform_synth` only mirrors
        quam's. Transcribing a lab-private algorithm into SM would mean shipping

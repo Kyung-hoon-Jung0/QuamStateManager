@@ -303,3 +303,28 @@ results; `could not be read` on `::,,`; `matches neither device` on `zz:yy`.
 - **a long query opened at Tab construction** rendered one row and no notice;
   the same URL through `navigate()` renders eight rows and the notice, stable
   over eight seconds. The server's own answer was checked first and was right.
+
+---
+
+## 8. A customer's name in shipped code — a red pin nobody had read
+
+`test_knowledge_pack::test_shipped_code_carries_no_lab_name` was among the 19
+failures the pre-session base shares, and "pre-existing" is where triage
+usually stops. This one is a **confidentiality** pin (docs/138: shipped code
+carries no lab name, because SM ships to other labs), so it was read: six
+comments naming one customer's chip, `KRISS_CZ`, in `pulse_catalog.py` ×2,
+`waveform_synth.py`, `routes.py` ×2 and `pulses.js` — written during the
+docs/189–190 Pulses round on that chip.
+
+A seventh sat where the pin never looked: a Jinja comment in
+`_pulse_detail.html`. `{# … #}` never reaches the browser, but the template
+ships in the installed package like any other source file.
+
+All seven reworded to "one customer chip" / "a lab's own CZ pulse class" —
+comments only, no behaviour. The class names (`SNZTwoFluxPulse`, …) stay: they
+are technical terms for a published CZ technique, and the pin's `NAMES` list is
+lab names.
+
+The pin now scans `web/templates/*.html` and `web/static/*.css` beside `.py`
+and `.js`. Both new scopes mutation-checked: a lab name put back into the
+template comment reds it, and so does one appended to `style.css`.

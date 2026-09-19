@@ -564,7 +564,7 @@ def env_leaf_verdict(leaf: str, rec: object) -> str:
     ONE classifier, so the create form's list and the strip's arithmetic above
     it cannot disagree (docs/190 F47: the strip read "25 pulse classes
     discovered" directly above a list of 16, and nothing anywhere said where
-    the other 9 went -- on the KRISS_CZ env they are 3 base classes, 2
+    the other 9 went -- on one customer env they are 3 base classes, 2
     deprecated spellings and 4 other NAMES for a type already in the list, so
     nothing was missing and the page had no way to say so).
 
@@ -646,7 +646,7 @@ def env_roster_note(b: dict) -> str:
 # ---------------------------------------------------------------------------
 # The env roster is a subclass walk over the homes QM ships (see
 # ``probe_state_schema._dump_pulse_roster``), so a class the LAB wrote is not
-# in it -- on the KRISS_CZ chip that is four classes covering 30 pulse objects
+# in it -- on one customer chip that is four classes covering 30 pulse objects
 # (docs/189). SM already holds their full field schemas, in the same instance
 # folder, because the CHIP declares them and the class inventory probes exactly
 # what the chip declares; the create form simply never read that half. So a

@@ -127,7 +127,7 @@
 
 <div class="pulse-plot-bar">
     {# docs/189 -- the label names the SOURCE of the curve. SM synthesizes the
-       classes it mirrors; for a lab's own class (KRISS_CZ's SNZTwoFluxPulse)
+       classes it mirrors; for a lab's own class (e.g. an SNZ two-flux CZ pulse)
        the curve is the lab's own generate_config() output, and passing that
        off as "synthesized" would be a lie about which code drew it. #}
     {% if plot_source == 'config' %}

@@ -996,8 +996,8 @@ def synth_for_operation(store, op_path: str, *,
                         # parameter is wrong" are different situations with
                         # different remedies, and the only thing that told them
                         # apart was the wording of an English sentence. A lab
-                        # that writes its own pulse class (KRISS_CZ's
-                        # SNZTwoFluxPulse) is the FIRST case, and it has a real
+                        # that writes its own pulse class (one customer
+                        # chip's SNZTwoFluxPulse) is the FIRST case, and it has a real
                         # answer: the env's own generate_config().
                         "reason": "unknown_class"})
         return payload

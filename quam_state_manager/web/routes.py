@@ -12967,7 +12967,7 @@ def _pulse_section_ctx(store, pulse_index, path: str):
     delete_used_by = (pulse_index.used_by(path) if alias_chain
                       else used_by_target)
     # docs/189 (customer, on-site: "pulses 메뉴에서 snz 는 plotting이 안돼").
-    # A lab may write its OWN pulse classes -- the KRISS_CZ chip's CZ flux pulse
+    # A lab may write its OWN pulse classes -- one customer chip's CZ flux pulse
     # is `quam_config.two_flux_gate.SNZTwoFluxPulse`, and four such classes cover
     # 30 pulse objects on it. `waveform_synth` mirrors quam's classes only, so
     # it answered "unrecognized pulse class ..." and the page drew NOTHING.
@@ -26708,7 +26708,7 @@ def _config_state_hash(store: QuamStore) -> str:
     and that was fine while the only caller was a button press. It is not fine
     now: `_pulse_section_ctx` asks for staleness on every render of a pulse
     whose class SM cannot synthesize, which is every CZ flux pulse on a chip
-    like KRISS_CZ. The key is the pair `_bulk_grid_key` already trusts to
+    whose lab wrote its own CZ pulse class. The key is the pair `_bulk_grid_key` already trusts to
     decide which CELLS are current -- a mutation bumps `mutation_seq`, a staged
     edit lengthens the change log -- so a hash can never outlive a change to
     the thing it hashes.
