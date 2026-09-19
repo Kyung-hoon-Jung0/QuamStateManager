@@ -22,6 +22,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(Path(__file__).parent))   # the house idiom (cr_fixtures)
+from archive_roots import lab_archive  # noqa: E402
+
 from quam_state_manager.core.autofit import pathreplay as PR
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -438,7 +442,7 @@ class TestTheBenchmarkDoesNotRegress:
         import collections
         from quam_state_manager.core.autofit import knowledge
         G = (_ROOT / "tests/golden/calib_paths/resonator_spectroscopy_vs_power")
-        archives = {"AS": Path(r"D:\work\dataset\AS_10TQ9TC"),
+        archives = {"AS": lab_archive("AS_10TQ9TC"),
                     "CQT": Path(r"D:\work\Customer_Codes\CQT\data")}
         pack = knowledge.load_family("resonator_spectroscopy_vs_power")
         rows = []

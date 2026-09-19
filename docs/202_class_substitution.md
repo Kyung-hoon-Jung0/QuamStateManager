@@ -483,3 +483,38 @@ form that cannot rot: `test_every_declared_event_has_an_emitter` is
 `--runxfail`), its emitter scan finds the other five (so it is not vacuous),
 and adding emitters for both turns it red — verified — so the xfail cannot
 outlive the gap.
+
+---
+
+## 12. Five benchmark failures that were one moved folder
+
+The last five of the base failures I had described without measuring were the
+knowledge replay benchmarks (`test_pathreplay` ×2, `test_replaybench` ×3):
+"only 42 keys resolved to archives" against a floor of 45, "only 39 targets
+resolved" against 55. I had written them down as "fewer archives resolve on
+this disk". Measured, per golden file:
+
+```
+AS   2026-08-09  day folder MISSING  (6 keys)
+AS   2026-08-10  day folder MISSING  (2 keys)
+CQT  2026-08-13 … 2026-08-17   every run loads (64/64), 42 keys
+```
+
+Nothing was lost and nothing in the code regressed. All four lab archives the
+benchmarks name (AS_10TQ9TC, SNU_1Q, IQCC_QOP37, KRISS_CR) had moved from
+`D:\work\dataset\` to `D:\work\Customer_Codes\dataset\`, and the old folder no
+longer exists. The same stale path had been quietly **skipping**
+`TestOnTheRealArchives::test_a_textbook_flux_arch_is_read_as_one` ("AS archive
+absent") — a real-archive pin reporting nothing while its archive sat on disk.
+
+`tests/archive_roots.lab_archive(name)` searches the current root, then the old
+one, and answers with the current root's path when neither holds the archive,
+so every existing `skipif(not X.exists())` still skips honestly. Both files
+use it (via the house `sys.path` idiom `cr_fixtures` already uses). Result:
+**83 passed, 0 skipped**; the textbook-arch pin runs and passes. The pre-fix
+state is the mutation — it is what the base suite measured.
+
+That leaves the `cqt` baseline at **5 deterministic failures**, every one
+environmental and named: the WSL-kernel probe, the scanner's hard-link dedup
+(`WinError 183`), and the three QDAC live builds (the env's own root class,
+docs/176).

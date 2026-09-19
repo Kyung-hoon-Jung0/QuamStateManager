@@ -21,6 +21,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(Path(__file__).parent))   # the house idiom (cr_fixtures)
+from archive_roots import lab_archive  # noqa: E402
+
 from quam_state_manager.core.autofit import knowledge
 from quam_state_manager.core.autofit import mapcases as MC
 from quam_state_manager.core.autofit import replaybench as RB
@@ -212,7 +216,7 @@ class TestScoring:
 class TestOnTheRealArchives:
     """Anchored on maps whose shape was confirmed by a human reader."""
 
-    AS = Path(r"D:\work\dataset\AS_10TQ9TC\2026-08-10")
+    AS = lab_archive("AS_10TQ9TC") / "2026-08-10"
     CQT = Path(r"D:\work\Customer_Codes\CQT\data\2026-08-13")
 
     @pytest.mark.skipif(not AS.exists(), reason="AS archive absent")
@@ -235,10 +239,10 @@ class TestOnTheRealArchives:
 
 _KEYS = _ROOT / "tests" / "golden" / "calib_paths"
 _ARCHIVES = {"CQT": Path(r"D:\work\Customer_Codes\CQT\data"),
-             "AS_10TQ9TC": Path(r"D:\work\dataset\AS_10TQ9TC"),
-             "SNU_1Q": Path(r"D:\work\dataset\SNU_1Q"),
-             "IQCC_QOP37": Path(r"D:\work\dataset\IQCC_QOP37"),
-             "KRISS_CR": Path(r"D:\work\dataset\KRISS_CR")}
+             "AS_10TQ9TC": lab_archive("AS_10TQ9TC"),
+             "SNU_1Q": lab_archive("SNU_1Q"),
+             "IQCC_QOP37": lab_archive("IQCC_QOP37"),
+             "KRISS_CR": lab_archive("KRISS_CR")}
 _NODES = {"qubit_spectroscopy": "08_qubit_spectroscopy",
           "qubit_spectroscopy_vs_flux": "09_qubit_spectroscopy_vs_flux",
           "resonator_spectroscopy_vs_flux": "06_resonator_spectroscopy_vs_flux",
