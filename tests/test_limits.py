@@ -103,7 +103,9 @@ class TestJudgements:
         assert limits.notify(tmp_path, "c", "agent_failure", {})["skipped"]
         limits.save(tmp_path, "c", {"webhook_url": "https://hooks.example/x", "notify_events": ["agent_failure"]})
         assert limits.notify(tmp_path, "c", "agent_failure", {"a": 1})["sent"] == ["https://hooks.example/x"]
-        assert limits.notify(tmp_path, "c", "agent_stalled", {})["skipped"], "an event the lab turned off is not sent"
+        # a REAL event this chip's list leaves out (docs/202 §16 retired the
+        # agent_stalled name this used to borrow -- nothing ever sent it)
+        assert limits.notify(tmp_path, "c", "needs_human", {})["skipped"], "an event the lab turned off is not sent"
         assert sent == [("https://hooks.example/x", "agent_failure")]
 
 

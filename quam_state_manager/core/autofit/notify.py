@@ -29,8 +29,13 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# docs/172 added three agent events; two of them (agent_apply_refused,
+# agent_stalled) were declared and enabled by default but never sent by any
+# code. Removed by the user's decision (2026-09-19, docs/202 §16) rather than
+# left to read as coverage. Add one back only together with its sender --
+# test_runner_p7 refuses an event nothing emits.
 EVENTS = ("plan_done", "target_halted", "plan_stopped", "needs_human",
-          "agent_failure", "agent_apply_refused", "agent_stalled")   # docs/172
+          "agent_failure")
 _SETTINGS_FILE = "autofit_notify.json"
 _QUEUE_FILE = "autofit_notifications.json"
 _QUEUE_CAP = 200

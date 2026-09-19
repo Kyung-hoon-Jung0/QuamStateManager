@@ -13,21 +13,14 @@ class TestEvents:
         """A notifier that fires on everything is one the user mutes, and a
         muted notifier reads as coverage while delivering nothing.
 
-        docs/172 §1b deliberately added three agent events; this pin still
-        asserted the original four and had been red since (2026-09-06 ->
-        found 2026-09-19, docs/202 §11). An exact set on purpose: every new
-        event must be a decision someone makes here, not a drift."""
+        docs/172 §1b added three agent events; two were never sent by any
+        code and were removed on the user's decision (docs/202 §11, §16). An
+        exact set on purpose: every new event must be a decision someone makes
+        here, not a drift -- and the pin below refuses one nothing emits."""
         assert set(notify.EVENTS) == {"plan_done", "target_halted",
                                       "plan_stopped", "needs_human",
-                                      "agent_failure", "agent_apply_refused",
-                                      "agent_stalled"}
+                                      "agent_failure"}
 
-    @pytest.mark.xfail(strict=True, reason=(
-        "docs/202 §11: agent_apply_refused and agent_stalled are declared and "
-        "enabled by default in limits.DEFAULTS['notify_events'], but no code "
-        "emits them -- 'stalled' is decided client-side by agent-pill.js, and "
-        "the apply refusal never calls the notifier. Strict: this flips red the "
-        "day their emitters exist, so the xfail cannot outlive the gap."))
     def test_every_declared_event_has_an_emitter(self):
         """An event a user can enable that nothing ever sends is the muted
         notifier of the docstring above, in another form: it reads as

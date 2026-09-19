@@ -33,7 +33,7 @@ DEFAULTS = {
     "stop_by": "",                       # "HH:MM" local; empty = none
     "human_recent_min": 30,              # a human/unknown run within this many minutes refuses run_node
     "webhook_url": "",
-    "notify_events": ["agent_failure", "agent_apply_refused", "agent_stalled", "plan_done", "needs_human"],
+    "notify_events": ["agent_failure", "plan_done", "needs_human"],   # docs/202 §16
 }
 
 

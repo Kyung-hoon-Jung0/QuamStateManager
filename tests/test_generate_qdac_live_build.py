@@ -22,8 +22,9 @@ import pytest
 
 from quam_state_manager.core import config_generator as cg
 
-# The env name says CQT; `import quam_config` in it resolves to the
-# **PJ_10082026** tree, which is the baseline (docs/136 §19). The `cqt` env —
+# The env name says CQT; `import quam_config` in it resolved to the
+# PJ_10082026 tree, the verification baseline until the user deleted it
+# (2026-09-19, docs/202 §16) -- see _env_with_customer_qdac. The `cqt` env —
 # the one pytest itself runs in — resolves to the older CQT/CS_installations
 # tree instead. Do not "correct" this name on the strength of what it reads
 # like; check `import quam_config` first.
@@ -38,6 +39,36 @@ def _find_env_python() -> str | None:
             if probe.get("usable"):
                 return python
     return None
+
+
+_CUSTOMER_QDAC: dict = {}
+
+
+def _env_with_customer_qdac() -> str | None:
+    """The env's python, only when it can import the customer's
+    ``quam_config.qdac_components`` -- the thing every test here exercises.
+
+    docs/202 §16: the user deleted the PJ_10082026 tree this env's editable
+    install points at (2026-09-19, no longer needed). The env itself stays
+    QM-usable, so the old ``_find_env_python() is None`` gate let all three
+    tests run and fail on a missing package; they skip now, and say why."""
+    if "py" not in _CUSTOMER_QDAC:
+        py = _find_env_python()
+        ok = False
+        if py:
+            try:
+                ok = subprocess.run(
+                    [py, "-c", "import quam_config.qdac_components"],
+                    capture_output=True, timeout=120).returncode == 0
+            except (OSError, subprocess.SubprocessError):
+                ok = False
+        _CUSTOMER_QDAC["py"] = py if ok else None
+    return _CUSTOMER_QDAC["py"]
+
+
+_SKIP_REASON = (f"conda env {_ENV_NAME!r} missing, not QM-usable, or cannot import "
+                "quam_config.qdac_components (the customer tree it pointed at was "
+                "removed -- docs/202 §16)")
 
 
 def _qdac_test_spec() -> dict:
@@ -86,8 +117,7 @@ def _qdac_test_spec() -> dict:
     }
 
 
-@pytest.mark.skipif(_find_env_python() is None,
-                     reason=f"conda env {_ENV_NAME!r} not found or not QM-usable on this machine")
+@pytest.mark.skipif(_env_with_customer_qdac() is None, reason=_SKIP_REASON)
 def test_qdac_build_produces_every_qdac_key(tmp_path):
     python_path = _find_env_python()
     spec = _qdac_test_spec()
@@ -183,8 +213,7 @@ def _bias_tee_spec() -> dict:
     return spec
 
 
-@pytest.mark.skipif(_find_env_python() is None,
-                    reason=f"conda env {_ENV_NAME!r} not found or not QM-usable on this machine")
+@pytest.mark.skipif(_env_with_customer_qdac() is None, reason=_SKIP_REASON)
 def test_a_bias_tee_spec_is_accepted_and_degrades_out_loud(tmp_path):
     """The shape SM cannot build here, built anyway — and saying so.
 
@@ -241,8 +270,7 @@ def test_a_bias_tee_spec_is_accepted_and_degrades_out_loud(tmp_path):
         assert isinstance(q1.get(field), dict), (field, sorted(q1))
 
 
-@pytest.mark.skipif(_find_env_python() is None,
-                    reason=f"conda env {_ENV_NAME!r} not found or not QM-usable on this machine")
+@pytest.mark.skipif(_env_with_customer_qdac() is None, reason=_SKIP_REASON)
 def test_a_degraded_bias_tee_chip_still_loads(tmp_path):
     """The point of degrading rather than failing: the chip must still open.
 

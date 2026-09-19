@@ -621,3 +621,31 @@ after a first pass of 7/8: the `importable` guard is defense in depth (the real
 probe returns `fields: None` for any class it cannot import, so a realistic
 fixture is filtered before the guard is reached) and is now pinned with a
 deliberately complete-but-unimportable entry that says so.
+
+---
+
+## 16. The user's decisions on §11 and §14 (2026-09-19)
+
+**§14 — the PJ_10082026 tree was deleted on purpose** ("내가 지웠어, 필요없어").
+It is no longer a verification baseline. The three QDAC live builds were gated
+on `_find_env_python()`, which only asks whether `CQT_20Q` exists and is
+QM-usable — still true — so they ran and failed on a package that is gone.
+They are gated now on what they actually exercise,
+`_env_with_customer_qdac()`: the env must import
+`quam_config.qdac_components`, and the skip says why. Checked both ways: closed
+for `CQT_20Q`, open for the `cqt` env, whose `quam_config` carries the module.
+
+**§11 — the two notification events nothing sends are removed from the list**
+(`agent_apply_refused`, `agent_stalled`), from `notify.EVENTS` and from
+`limits.DEFAULTS["notify_events"]`. A saved per-chip limits file that still
+names them loads unchanged (the validator accepts any list of strings) and
+simply never matches an event. The strict xfail became a live pin:
+`test_every_declared_event_has_an_emitter` passes, and putting either name
+back reds both it and the exact-set vocabulary pin (checked). The Agent
+pill's client-side "stalled" STATE (docs/173 §3.1) is untouched — it was never
+a notification.
+
+§3/§4 (the unused port 3/8 and the unexplained poll flake) stand as recorded,
+by the user's decision.
+
+**cqt baseline: 0 deterministic failures** (3 honest skips). Session start: 19.
