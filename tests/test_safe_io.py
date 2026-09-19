@@ -418,3 +418,45 @@ class TestTwoWritersOfOneFile:
             safe_io._replace_into_place(tmp, p)
         assert "disappeared" in str(ei.value) and tmp.name in str(ei.value)
         assert sleeps == [], "no retry waits for a file that is gone"
+
+
+class TestAReplaceInFlightIsNotAMissingFile:
+    """docs/202 §10 -- the pair read's stat bracket was the one step outside
+    every retry loop. Measured on this project's Windows machine: with a
+    writer looping atomic_write_json, read_state_wiring raised
+    FileNotFoundError 36-50 times in 1.5 s on the D: volume the customer's
+    chips live on (ReplaceFileW leaves the NAME briefly absent), for a chip
+    that was never missing. `test_reader_survives_concurrent_writes` above
+    states the promise; it had been red on Windows ever since."""
+
+    @staticmethod
+    def _chip(tmp_path):
+        (tmp_path / "state.json").write_text(json.dumps({"qubits": {}}), encoding="utf-8")
+        (tmp_path / "wiring.json").write_text(json.dumps({"wiring": {}}), encoding="utf-8")
+        return tmp_path
+
+    def test_a_briefly_absent_name_is_ridden_out(self, tmp_path, monkeypatch):
+        from quam_state_manager.core import safe_io
+        folder = self._chip(tmp_path)
+        real = safe_io._pair_fingerprint
+        misses = {"left": 2}
+
+        def flaky(f):
+            if misses["left"]:
+                misses["left"] -= 1
+                raise FileNotFoundError(2, "replace in flight", str(f / "state.json"))
+            return real(f)
+
+        monkeypatch.setattr(safe_io, "_pair_fingerprint", flaky)
+        state, wiring = read_state_wiring(folder)
+        assert state == {"qubits": {}} and wiring == {"wiring": {}}
+        assert misses["left"] == 0, "the fixture must actually have missed"
+
+    def test_a_genuinely_missing_file_still_says_so_promptly(self, tmp_path):
+        """The settle is short on purpose: a wrong folder picked in the browser
+        should not wait the read ladder's 0.9 s to learn it has no state.json."""
+        (tmp_path / "wiring.json").write_text("{}", encoding="utf-8")
+        t0 = time.monotonic()
+        with pytest.raises(FileNotFoundError):
+            read_state_wiring(tmp_path)
+        assert time.monotonic() - t0 < 0.6

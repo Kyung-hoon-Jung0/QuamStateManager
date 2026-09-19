@@ -401,3 +401,55 @@ Measurement error, recorded: the first "remove single-flight" mutation indexed
 an earlier occurrence of `build_lock = _get_quam_build_lock(key)` and disabled
 the FAST path's lookup instead ("builds: 1" gave it away). Re-aimed on the slow
 path's own comment.
+
+---
+
+## 10. The live pair read failed on a chip that was never missing
+
+`test_safe_io::test_reader_survives_concurrent_writes` was in the base 19 and
+failed deterministically in isolation. It states a promise docs/28 makes: a
+writer looping `atomic_write_json` must never make `read_state_wiring` fail.
+Measured on this machine, on two volumes:
+
+| volume | reads in 1.5 s | read failures | kind |
+|---|---|---|---|
+| TEMP (`…\ESTsoft\CreatorTemp`, an AV vendor's dir) | 5–42 | 20–91 | `FileNotFoundError` |
+| `D:\work` (where the customer's chips live) | ~1,700 | **36–50** | `FileNotFoundError` |
+
+So not an antivirus artifact. And the numbers contradicted the retry ladder:
+forty failures inside 1.5 s cannot each have slept the ladder's 0.9 s, so
+they were raised WITHOUT retrying. The cause: `_pair_fingerprint` — the stat
+bracket that detects a torn pair — does a bare `Path.stat()` on both files,
+called outside both retry loops. `read_json_raw` beside it has always retried
+a transient `FileNotFoundError` ("a read that lands in the brief window of an
+external atomic replace"); the stat did not, and `ReplaceFileW` leaves the NAME
+briefly absent. The docstring even said "raises OSError if a file is missing
+(same as the caller's read)" — the same error, but not the same retry.
+
+This is the pair read behind Sync, Apply-to-live and reconcile, on a bench
+where qualibrate rewrites `state.json` every 30–60 s (docs/187). The window is
+small and the writer in the test is a tight loop, so at the customer it is
+rare — but it is a "state.json not found" on a chip that exists, and the pin
+promising otherwise had been red on Windows the whole time.
+
+`_pair_fingerprint_settled` rides it out with short sleeps (10/20/40/80 ms),
+not the read ladder's 0.15 s steps: a replace window closes well inside the
+first, and a folder that genuinely has no `state.json` (a wrong pick in the
+browser) should not wait 0.9 s to say so — it adds at most 0.15 s there.
+Re-measured: **0 failures in six runs on both volumes**, read throughput on
+`D:` unchanged. Pinned: the existing concurrency test (green on Windows for
+the first time), plus a deterministic stat miss that is ridden out and a
+genuinely missing file that still raises within 0.6 s. Sweep 3/3: the bare
+stat back; the settle on the long ladder; the settle never giving up.
+
+### And the other filesystem flake, which was the fixture
+
+`TestEnvDiscoveryCache::test_a_changed_inventory_invalidates_it` failed 2 runs
+in 3 even in isolation. The env cache (docs/135) keys on each env's parent
+directory `st_mtime_ns`. Measured: a child `mkdir` left the parent's mtime
+unchanged **16 of 30** times at millisecond spacing on `D:` — NTFS coalesces a
+directory's timestamp across modifications that close together — and **0 of
+12** at ≥ 0.25 s spacing, on both volumes. A real conda env is created seconds
+after the last scan, so the product sees it; the test created two directories
+milliseconds apart. It now waits 0.3 s first: 10 of 10, and a key that ignores
+the env directories still reds it.

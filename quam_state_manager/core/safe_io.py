@@ -692,10 +692,10 @@ def read_state_wiring_raw(folder: Path | str, *, attempts: int | None = None
     state_path = folder / "state.json"
     wiring_path = folder / "wiring.json"
     for attempt in range(n):
-        before = _pair_fingerprint(folder)
+        before = _pair_fingerprint_settled(folder)
         state, state_bytes = read_json_raw(state_path)
         wiring, wiring_bytes = read_json_raw(wiring_path)
-        after = _pair_fingerprint(folder)
+        after = _pair_fingerprint_settled(folder)
         if before == after:
             return state, wiring, state_bytes, wiring_bytes
         logger.debug(
@@ -779,7 +779,38 @@ def _pair_fingerprint(folder: Path) -> tuple:
     env is a 9p/WSL mount), so a writer replacing wiring.json between the two reads
     could slip a MIXED pair past a float-mtime bracket. ``st_mtime_ns`` is lossless
     and ``st_size`` changes on virtually every real state save, so this catches it.
-    Raises ``OSError`` if a file is missing (same as the caller's read)."""
+    Raises ``OSError`` if a file is missing -- see
+    :func:`_pair_fingerprint_settled` for the caller that rides out a replace."""
     st = (folder / "state.json").stat()
     wi = (folder / "wiring.json").stat()
     return ((st.st_mtime_ns, st.st_size), (wi.st_mtime_ns, wi.st_size))
+
+
+# docs/202 §10 -- how long to wait out a name that is briefly absent.
+_STAT_SETTLE_S = (0.01, 0.02, 0.04, 0.08)
+
+
+def _pair_fingerprint_settled(folder: Path) -> tuple:
+    """:func:`_pair_fingerprint`, riding out an atomic replace in flight.
+
+    Measured on this project's Windows machine (docs/202 §10): with a writer
+    looping ``atomic_write_json``, a bare ``stat()`` of ``state.json`` raised
+    ``FileNotFoundError`` 36-50 times in 1.5 s on the D: volume the customer's
+    chips live on -- ``ReplaceFileW`` leaves the NAME briefly absent. The
+    per-file reads beside this call have always retried that
+    (:func:`read_json_raw`); this stat did not, and it runs outside both retry
+    loops, so the whole pair read failed with "file not found" on a chip that
+    was never missing. ``read_state_wiring`` promises ``FileNotFoundError`` only
+    for a file that is GENUINELY absent.
+
+    Short sleeps, not the read ladder's 0.15 s steps: a replace window closes
+    in well under the first one, and a folder that really has no state.json
+    (a wrong folder picked in the browser) should not wait 0.9 s to say so --
+    this adds at most 0.15 s to that answer.
+    """
+    for delay in _STAT_SETTLE_S:
+        try:
+            return _pair_fingerprint(folder)
+        except FileNotFoundError:
+            time.sleep(delay)
+    return _pair_fingerprint(folder)       # still absent: genuinely missing

@@ -604,6 +604,14 @@ class TestEnvDiscoveryCache:
         discover_envs()
         discover_envs()
         assert len(calls) == 1
+        # A real env is created seconds after the last scan, never within the
+        # same few milliseconds. NTFS coalesces a directory's timestamp across
+        # modifications that close together (docs/202 §10, measured: a child
+        # mkdir left the parent's st_mtime_ns unchanged 16 of 30 times at ms
+        # spacing on D:, 0 of 12 at >= 0.25 s), so without this gap the pin
+        # failed 2 runs in 3 while the cache behaved exactly as designed.
+        import time as _time
+        _time.sleep(0.3)
         (envs_dir / "LabB").mkdir()          # a new env appears
         discover_envs()
         assert len(calls) == 2, "a changed envs directory must re-scan"
