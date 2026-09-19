@@ -778,3 +778,18 @@ named its own cause in one failure: the second "write" was
 store still had a debounce timer armed, and the spy patched a module-global.
 The spy now counts only this store's cache folder. The pin keeps its teeth: a
 0 s debounce still reds it.
+
+The full run at `85321ef` then failed two more tests. Both pass alone, and both
+were read from their own failure output:
+
+- **`test_working_copy::test_gc_orphan_grace_skips_fresh_dirs`**:
+  `orphan_grace_s=0.0` still skipped a fresh orphan. A file's mtime and
+  `time.time()` are two conversions of Windows' clock, and they land
+  microseconds apart in either direction. A fresh file read "ahead" of the
+  clock 236 times in 2,000, so `age < 0.0` was true. A zero grace now means no
+  grace, and that is pinned with an mtime set ahead (the old guard reds it).
+- **`test_share_io_cost::…stats_each_date_dir_once`**: 21 > 20. It counted
+  stats by BASENAME while `os.stat` was patched process-wide, so an earlier
+  test's store statting its own date dirs with the same names read as a 21st.
+  It counts by path now. The real render still counts exactly 20, and a floor
+  of `n > 0` keeps a differently spelled path from making the check vacuous.

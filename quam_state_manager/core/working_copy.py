@@ -906,7 +906,13 @@ def gc_working_copies(
         target = root / key
         if rec["live_folder"] is None and rec["status"] == "broken":
             try:
-                if now - target.stat().st_mtime < orphan_grace_s:
+                # `> 0` first: a zero grace means NO grace. A file's mtime and
+                # time.time() are two conversions of Windows' clock that land a
+                # few microseconds apart either way (a fresh file read "ahead"
+                # 236 times in 2,000 here), so `age < 0.0` was true for a dir
+                # made a moment ago and a zero-grace GC skipped it.
+                if (orphan_grace_s > 0
+                        and now - target.stat().st_mtime < orphan_grace_s):
                     continue                # possible create() in flight
             except OSError:
                 pass

@@ -750,6 +750,21 @@ def test_gc_orphan_grace_skips_fresh_dirs(tmp_path):
     assert not orphan.exists()
 
 
+def test_gc_zero_grace_means_no_grace_even_a_hair_in_the_future(tmp_path):
+    """The flake behind the test above (full suite, 2026-09-19): on Windows a
+    fresh file's mtime reads microseconds AHEAD of time.time() about one time
+    in eight, and `age < 0.0` then skipped the dir. Pinned deterministically
+    with an mtime set a little ahead."""
+    inst = tmp_path / "instance"
+    orphan = inst / "working_state" / "inflight-87654321"
+    orphan.mkdir(parents=True)
+    (orphan / "state.json").write_text("{}", encoding="utf-8")
+    ahead = time.time() + 2.0
+    os.utime(orphan, (ahead, ahead))
+    assert gc_working_copies(inst, orphan_grace_s=0.0)["deleted"] == 1
+    assert not orphan.exists()
+
+
 def test_gc_keep_fn_checked_at_delete_time(tmp_path):
     inst = tmp_path / "instance"
     live = tmp_path / "c1" / "quam_state"

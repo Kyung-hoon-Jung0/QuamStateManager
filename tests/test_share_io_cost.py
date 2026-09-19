@@ -667,13 +667,21 @@ class TestOneSweepSharedByBothWalkers:
         assert r.status_code in (200, 204, 302), r.status_code
         return app, c
 
-    def _date_dir_stats(self, client, url, dates):
+    def _date_dir_stats(self, client, url, dates, folder):
+        """Stats of THIS archive's date dirs during one request.
+
+        By path, not by basename: os.stat is patched process-wide, and a
+        store left over from an earlier test (a debounce timer, a warmup)
+        can stat ITS OWN date dirs -- same seeded names, other tmp folder --
+        inside this window. Counted by basename that read as a 21st stat
+        (full suite, 2026-09-19)."""
         hits = []
         real = os.stat
+        mine = {os.path.normcase(os.path.join(str(folder), d)) for d in dates}
 
         def counting(path, *a, **k):
             try:
-                if os.path.basename(os.fspath(path)) in dates:
+                if os.path.normcase(os.fspath(path)) in mine:
                     hits.append(os.fspath(path))
             except (TypeError, ValueError):
                 pass
@@ -685,7 +693,7 @@ class TestOneSweepSharedByBothWalkers:
         finally:
             os.stat = real
         assert r.status_code == 200, r.status_code
-        return len(hits)
+        return hits
 
     def test_a_datasets_render_stats_each_date_dir_once(self, tmp_path):
         folder = _seed_archive(tmp_path / "data", dates=20)
@@ -693,12 +701,15 @@ class TestOneSweepSharedByBothWalkers:
         dates = {q.name for q in folder.iterdir() if q.is_dir()}
         c.get("/datasets")                      # warm every other cache first
 
-        n = self._date_dir_stats(c, "/datasets", dates)
+        hits = self._date_dir_stats(c, "/datasets", dates, folder)
+        n = len(hits)
+        # not vacuous: a path spelled another way would count 0 and pass
+        assert n > 0, "the counter must see this archive's own date dirs"
 
         assert n <= 20, (
             "%d stats over 20 date dirs in one render - the workspace token "
-            "and the store's staleness check are each sweeping the archive"
-            % n
+            "and the store's staleness check are each sweeping the archive: %r"
+            % (n, sorted(hits)[:25])
         )
 
     def test_the_two_walkers_still_answer_independently(self, tmp_path):
