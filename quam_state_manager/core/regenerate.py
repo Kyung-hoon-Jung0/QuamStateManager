@@ -56,6 +56,35 @@ def reconstruct_from_folder(
     return regen_spec.reconstruct_spec(state, wiring)
 
 
+def _source_classes_the_env_holds(python_path, old_state, instance_path=None,
+                                  probe=None) -> dict | None:
+    """``{class: {"bases", "fields"}}`` for every SOURCE class the env imports.
+
+    Read through the cached per-env schema probe (the same one typed editing
+    uses), in the SAME interpreter the build ran in -- a class another env can
+    import proves nothing about this one. Never raises; ``None`` means "keep
+    nothing", which is exactly the behaviour before docs/202 §15.
+    """
+    try:
+        from . import state_env_schema
+        classes = state_env_schema.harvest_classes(old_state)
+        if not classes:
+            return None
+        res = (probe or state_env_schema.probe_state_schema)(
+            python_path, classes, instance_path)
+    except Exception:  # noqa: BLE001 -- an optional improvement never fails a rebuild
+        return None
+    if not isinstance(res, dict) or not res.get("ok"):
+        return None
+    keep: dict = {}
+    for cls, rec in (res.get("classes") or {}).items():
+        if (isinstance(rec, dict) and rec.get("importable")
+                and rec.get("is_dataclass") and isinstance(rec.get("fields"), dict)):
+            keep[cls] = {"bases": list(rec.get("bases") or ()),
+                         "fields": list(rec["fields"])}
+    return keep or None
+
+
 def run_regenerate(
     python_path: str,
     old_folder: Path | str,
@@ -65,6 +94,8 @@ def run_regenerate(
     populate_baseline: dict | None = None,
     populate_touched: list | None = None,
     scripts_dir: Path | str | None = None,
+    instance_path: Path | str | None = None,
+    source_probe=None,
 ) -> dict:
     """Build ``spec`` fresh into ``out_dir`` then merge the OLD chip's values on.
 
@@ -143,11 +174,19 @@ def run_regenerate(
         protect, pop_conflicts = regen_populate.protect_paths(
             changed, pop_view, old_state, old_wiring, new_state, new_wiring)
 
+    # docs/202 §15: which of the SOURCE chip's classes this build env can
+    # hold -- the merge keeps a lab subclass the builder replaced with its
+    # stock base, so the lab's own fields (its optimized readout weights on
+    # the KRISS 5Q chip) survive a rebuild instead of dropping out.
+    keep_classes = _source_classes_the_env_holds(
+        python_path, old_state, instance_path, source_probe)
+
     result = regen_merge.merge_states(old_state, new_state,
                                       class_schemas=class_schemas,
                                       protect_paths=protect,
                                       old_wiring=old_wiring,
-                                      new_wiring=new_wiring)
+                                      new_wiring=new_wiring,
+                                      keep_classes=keep_classes)
     result.stats.populate_conflicts.extend(pop_conflicts)
 
     # TWPAs are grafted back at the state level but the builder made no TWPA
@@ -223,6 +262,11 @@ def run_regenerate(
         # the remedy differs -- a dropped field is gone, a substituted class is
         # a class this env's builder could not produce, which is usually the
         # lab's own subclass and usually fixable by naming it.
+        # docs/202 §15: the lab classes the merge could keep (env imports it,
+        # and it subclasses what the builder wrote), and so did.
+        "class_kept": len(s.class_kept),
+        "class_kept_paths": [{"path": p, "cls": c} for p, c in s.class_kept[:80]],
+        "class_kept_total": len(s.class_kept),
         "class_changed": len(s.class_changed),
         "class_changed_paths": [
             {"path": p, "old": o, "new": n} for p, o, n in s.class_changed[:80]],

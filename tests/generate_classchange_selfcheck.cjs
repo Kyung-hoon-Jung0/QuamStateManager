@@ -145,6 +145,33 @@ render(merge({}));
 ok(chipText() === null && classLines().length === 0,
   'C6: a result predating this field renders unchanged');
 
-console.log(fails ? ('FAILED ' + fails + ' of ' + asserts)
-                  : ('ok (' + asserts + ' assertions)'));
-process.exit(fails ? 1 : 0);
+// ── docs/202 §15: classes the merge KEPT are named, grouped, in green ────────
+{
+  const kept = ['q1', 'q2', 'q3'].map(function (q) {
+    return { path: 'qubits.' + q + '.resonator.operations.readout', cls: LAB };
+  }).concat([{ path: 'qubits.q1.resonator.operations.readout_GEF', cls: LAB2 }]);
+  T.showBuildResult({ ok: true, result: { qubits: ['q1'], qubit_pairs: [] },
+    merge: Object.assign({}, BASE, { class_kept: 4, class_kept_paths: kept,
+                                     class_kept_total: 4 }) }, 'D:\out');
+  const el = doc.getElementById('gen-build-result');
+  const chip = Array.prototype.filter.call(el.querySelectorAll('.gen-merge-stat'),
+    function (s) { return /kept as your class/.test(s.textContent); })[0];
+  let n = 0; function ok2(c, m) { asserts++; n++; if (!c) { console.error('FAIL: ' + m); fails++; } }
+  ok2(chip && /\b4 kept as your class/.test(chip.textContent),
+    'K1: the kept chip counts every place — got ' + (chip && chip.textContent));
+  ok2(chip && chip.classList.contains('gen-merge-ok'), 'K1: and reads as good news, not a warning');
+  const lines = Array.prototype.map.call(el.querySelectorAll('.gen-merge-kept'),
+    function (d) { return d.textContent; });
+  ok2(lines.length === 2, 'K2: one line per kept CLASS, not per place — got ' + lines.length);
+  ok2(lines.some(function (l) { return l.indexOf(LAB) >= 0 && /3 places/.test(l); }),
+    'K2: the class and its count — got ' + JSON.stringify(lines));
+  // an ordinary build (nothing kept) says nothing
+  T.showBuildResult({ ok: true, result: { qubits: ['q1'], qubit_pairs: [] },
+    merge: Object.assign({}, BASE) }, 'D:\out');
+  ok2(doc.querySelectorAll('.gen-merge-kept').length === 0 &&
+      !/kept as your class/.test(doc.getElementById('gen-build-result').textContent),
+    'K3: nothing kept, nothing said');
+  console.log(fails ? ('FAILED ' + fails + ' of ' + asserts)
+                    : ('ok (' + asserts + ' assertions)'));
+  process.exitCode = fails ? 1 : 0;
+}

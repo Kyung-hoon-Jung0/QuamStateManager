@@ -561,3 +561,63 @@ that fact, and they will pass again the day the tree is back.
 
 **cqt baseline after this entry: 3 deterministic failures, all one missing
 folder.** Session start: 19.
+
+---
+
+## 15. The rebuild keeps the lab's class now — §5's open item, closed
+
+§5 left the substitution named but not prevented, and assumed the fix was the
+docs/176 pattern one level down (a per-pulse class slot in the build spec). It
+did not need to be. Keeping a class is safe exactly when two facts hold, and SM
+could already measure both **in the build's own env**:
+
+1. **the env imports it** — the per-env schema probe (`probe_state_schema`,
+   cached, the one typed editing uses) reports `importable`, `fields` and the
+   MRO (`bases`) for every class in a chip's inventory;
+2. **the class the rebuild wrote is in its MRO** — a subclass goes anywhere its
+   base goes, so no parent field's declared type can be violated.
+
+Checked for this customer before writing a line: in `KRISS_CZ`,
+`ComplexWeightsReadoutPulse` → `quam.components.pulses.SquareReadoutPulse` →
+…, and `GefWeightsReadoutPulse` → `ComplexWeightsReadoutPulse` →
+`SquareReadoutPulse` → … — both subclass the exact class the builder writes.
+
+`run_regenerate` probes the SOURCE chip's classes in the same interpreter it
+built with (`_source_classes_the_env_holds`, never raises, `None` = keep
+nothing); `merge_states(keep_classes=…)` keeps the old class where both rules
+hold (`_kept_class`) and gates that object's fields by the KEPT class's own
+schema — and only that object's: `keep` never widens the global `schemas`, so
+the docs/136 value gate still refuses a lab-class value wherever the rebuild
+never put its base. A class failing either rule is still reported as a
+substitution, exactly as §3.
+
+### On the real chip, end to end
+
+```
+build 10.5 s ok · carried 737 · grafted 1257 · schema_dropped 0 (was 50)
+class_kept 10 · class_changed 0
+q1..q5 readout      ComplexWeightsReadoutPulse  weights 300/500/400/1200/1250 → identical
+q1..q5 readout_GEF  GefWeightsReadoutPulse      weights 372/480/324/1808/1912 → identical
+Quam.load() in KRISS_CZ:  LOAD OK ComplexWeightsReadoutPulse 300
+generate_config():        OK, 17 elements
+customer chip hash:       0c9a78e48405 before and after
+```
+
+The `Quam.load()` + `generate_config()` pass is the check that matters — a
+kept class that poisoned the chip would have failed exactly there. The panel
+says it in green: `10 kept as your class`, one line per class.
+
+The ten residual losses left are one whole port, `ports.mw_outputs.con1.3.8`
+(band 3, −11 dBm, LO 7.6 GHz) that **nothing in the source references** — a
+declared, unused port. The merge refuses to graft port subtrees at any depth
+by design (docs/51: otherwise a removed qubit's port is resurrected) and
+reports it by path; recorded, not changed.
+
+Pinned: `test_regen_merge.py` (5 — kept with its fields; an unrelated class
+never kept; an unimportable one never kept; keep never widens the value gate;
+a subclass of a subclass kept), `test_regenerate.py::TestTheSourceClassesTheEnvHolds`
+(3), `generate_classchange_selfcheck.cjs` K1–K3 (18 assertions). **Sweep 8/8**,
+after a first pass of 7/8: the `importable` guard is defense in depth (the real
+probe returns `fields: None` for any class it cannot import, so a realistic
+fixture is filtered before the guard is reached) and is now pinned with a
+deliberately complete-but-unimportable entry that says so.

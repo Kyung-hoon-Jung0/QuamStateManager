@@ -26403,6 +26403,7 @@ def regenerate_build():
         populate_baseline=populate_baseline,
         populate_touched=populate_touched,
         scripts_dir=scripts_dir,
+        instance_path=current_app.instance_path,
     )
     return jsonify(outcome)
 

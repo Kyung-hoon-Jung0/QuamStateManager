@@ -270,6 +270,75 @@ def test_a_rebuild_that_changes_no_class_reports_none(tmp_path, monkeypatch):
     assert out["merge"]["class_changed_paths"] == []
 
 
+class TestTheSourceClassesTheEnvHolds:
+    """docs/202 §15 -- the merge keeps a lab subclass only when the BUILD env
+    imports it; that answer comes from the per-env schema probe."""
+
+    LAB = "quam_config.cw.ComplexWeightsReadoutPulse"
+    STOCK = "quam.pulses.SquareReadoutPulse"
+
+    def _probe(self, classes):
+        def probe(python_path, class_paths, instance_path=None):
+            return {"ok": True, "classes": classes}
+        return probe
+
+    def test_only_importable_dataclasses_are_offered(self):
+        probe = self._probe({
+            self.LAB: {"importable": True, "is_dataclass": True,
+                       "bases": [self.STOCK], "fields": {"weights_real": {}}},
+            # Deliberately hostile: the real probe returns fields=None for any
+            # class it cannot import, so a realistic entry is filtered by the
+            # fields check alone and the `importable` guard went untested
+            # (the sweep's GREEN). This one is complete in every other way.
+            "lab.NotImportable": {"importable": False, "is_dataclass": True,
+                                  "bases": [self.STOCK], "fields": {"weights_real": {}}},
+            "lab.NoFields": {"importable": True, "is_dataclass": True,
+                             "bases": [self.STOCK], "fields": None},
+        })
+        keep = regenerate._source_classes_the_env_holds(
+            "py", {"x": {"__class__": self.LAB}}, probe=probe)
+        assert keep == {self.LAB: {"bases": [self.STOCK], "fields": ["weights_real"]}}
+
+    def test_a_failed_probe_keeps_nothing(self):
+        def boom(*a, **k):
+            raise RuntimeError("env vanished")
+        assert regenerate._source_classes_the_env_holds(
+            "py", {"x": {"__class__": self.LAB}}, probe=boom) is None
+        assert regenerate._source_classes_the_env_holds(
+            "py", {"x": {"__class__": self.LAB}},
+            probe=lambda *a, **k: {"ok": False, "classes": {}}) is None
+
+    def test_the_report_says_what_was_kept(self, tmp_path, monkeypatch):
+        (tmp_path / "old").mkdir()
+        (tmp_path / "old" / "state.json").write_text(json.dumps(
+            {"qubits": {"q1": {"resonator": {"operations": {"readout": {
+                "__class__": self.LAB, "amplitude": 0.1, "weights_real": [1.0, 2.0]}}}}}}))
+        (tmp_path / "old" / "wiring.json").write_text(json.dumps({"wiring": {}, "network": {}}))
+
+        def fake_build(python_path, mode, spec, out_dir, timeout=300):
+            out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "state.json").write_text(json.dumps(
+                {"qubits": {"q1": {"resonator": {"operations": {"readout": {
+                    "__class__": self.STOCK, "amplitude": 0.0}}}}}}))
+            (out_dir / "wiring.json").write_text(json.dumps({"wiring": {}, "network": {}}))
+            return {"ok": True, "status": "ok", "error": None,
+                    "result": {"class_schemas": {self.STOCK: ["amplitude"]}}}
+
+        monkeypatch.setattr(regenerate.config_generator, "run_generator", fake_build)
+        probe = self._probe({self.LAB: {"importable": True, "is_dataclass": True,
+                                        "bases": [self.STOCK],
+                                        "fields": {"amplitude": {}, "weights_real": {}}}})
+        out = regenerate.run_regenerate("py", tmp_path / "old", {"x": 1},
+                                        tmp_path / "new", source_probe=probe)
+        m = out["merge"]
+        assert m["class_kept"] == 1 and m["class_changed"] == 0
+        assert m["class_kept_paths"] == [{"path": "qubits.q1.resonator.operations.readout",
+                                          "cls": self.LAB}]
+        merged = json.loads((tmp_path / "new" / "state.json").read_text())
+        ro = merged["qubits"]["q1"]["resonator"]["operations"]["readout"]
+        assert ro["__class__"] == self.LAB and ro["weights_real"] == [1.0, 2.0]
+
+
 class TestCollectClassSchemas:
     """run_build._collect_class_schemas — the in-env harvest feeding the gate.
 

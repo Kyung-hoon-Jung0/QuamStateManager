@@ -567,3 +567,82 @@ def test_a_pulse_the_rebuild_never_wrote_is_not_a_substitution():
         "qubits.q1.resonator.operations.readout"]
     assert any(p.startswith("qubits.q1.z.operations.cz_SNZ")
                for p, _ in r.stats.graft_subtrees)
+
+
+# --- docs/202 §15: keep a lab subclass the build env can hold ----------------
+
+LAB_GEF = "quam_config.gef_weights_pulse.GefWeightsReadoutPulse"
+
+
+def _ro_chip(cls, **fields):
+    return {"qubits": {"q1": {"resonator": {"operations": {"readout": dict(
+        {"__class__": cls, "amplitude": 0.1}, **fields)}}}}}
+
+
+KEEP = {LAB_RO: {"bases": [STOCK_RO, "quam.components.pulses.ReadoutPulse"],
+                 "fields": ["amplitude", "weights_real", "weights_imag", "ringdown_length"]}}
+
+
+def test_a_lab_subclass_the_env_holds_is_kept_with_its_fields():
+    """The customer case, measured on the real chip: ComplexWeightsReadoutPulse
+    subclasses the SquareReadoutPulse the builder writes, the build env imports
+    it -- so the merge keeps it, and the optimized weights ride along."""
+    old = _ro_chip(LAB_RO, weights_real=[1.0, 2.0], ringdown_length=40)
+    new = _ro_chip(STOCK_RO, amplitude=0.0)
+    r = merge_states(old, new, class_schemas={STOCK_RO: ["amplitude"]}, keep_classes=KEEP)
+    ro = r.merged["qubits"]["q1"]["resonator"]["operations"]["readout"]
+    assert ro["__class__"] == LAB_RO
+    assert ro["weights_real"] == [1.0, 2.0] and ro["ringdown_length"] == 40
+    assert ro["amplitude"] == 0.1                        # tier-1 carry unchanged
+    assert r.stats.class_kept == [("qubits.q1.resonator.operations.readout", LAB_RO)]
+    assert r.stats.class_changed == [] and r.stats.schema_dropped == []
+
+
+def test_a_class_that_does_not_subclass_the_new_one_is_never_kept():
+    """docs/136's poison: an old object of an unrelated class grafted into a
+    slot typed for something else kills Quam.load(). Importable is not enough;
+    the class the rebuild wrote must be in the old class's MRO."""
+    unrelated = {LAB_RO: {"bases": ["quam.components.pulses.Pulse"],
+                          "fields": ["amplitude", "weights_real"]}}
+    old = _ro_chip(LAB_RO, weights_real=[1.0])
+    new = _ro_chip(STOCK_RO)
+    r = merge_states(old, new, class_schemas={STOCK_RO: ["amplitude"]}, keep_classes=unrelated)
+    ro = r.merged["qubits"]["q1"]["resonator"]["operations"]["readout"]
+    assert ro["__class__"] == STOCK_RO
+    assert "weights_real" not in ro
+    assert r.stats.class_kept == []
+    assert [p for p, _, _ in r.stats.class_changed] == ["qubits.q1.resonator.operations.readout"]
+
+
+def test_a_class_the_env_cannot_import_is_never_kept():
+    old = _ro_chip(LAB_RO, weights_real=[1.0])
+    new = _ro_chip(STOCK_RO)
+    r = merge_states(old, new, class_schemas={STOCK_RO: ["amplitude"]},
+                     keep_classes={"other.Class": {"bases": [STOCK_RO], "fields": []}})
+    assert r.merged["qubits"]["q1"]["resonator"]["operations"]["readout"]["__class__"] == STOCK_RO
+    assert r.stats.class_kept == []
+
+
+def test_keeping_a_class_at_one_path_never_widens_the_value_gate():
+    """`keep` only decides what is legal for the object being kept. The value
+    gate (a graft whose VALUE has a class this build never wrote, under a
+    tagged parent) still reads the build's own schemas -- so a lab class the
+    env CAN import is still refused where the rebuild never put its base."""
+    tagged = "quam.components.channels.IQChannel"
+    old = {"qubits": {"q1": {"xy": {"__class__": tagged, "extra_pulse": {
+        "__class__": LAB_RO, "weights_real": [1.0]}}}}}
+    new = {"qubits": {"q1": {"xy": {"__class__": tagged}}}}
+    r = merge_states(old, new, class_schemas={tagged: ["extra_pulse"]}, keep_classes=KEEP)
+    assert "extra_pulse" not in r.merged["qubits"]["q1"]["xy"]
+    assert "qubits.q1.xy.extra_pulse" in r.stats.schema_dropped
+
+
+def test_a_subclass_of_a_subclass_is_kept_too():
+    """GefWeightsReadoutPulse -> ComplexWeightsReadoutPulse -> SquareReadoutPulse
+    on the real chip: the rule reads the whole MRO, not the first base."""
+    keep = {LAB_GEF: {"bases": [LAB_RO, STOCK_RO], "fields": ["amplitude", "u_centers"]}}
+    old = _ro_chip(LAB_GEF, u_centers=[0.1, 0.2])
+    new = _ro_chip(STOCK_RO)
+    r = merge_states(old, new, class_schemas={STOCK_RO: ["amplitude"]}, keep_classes=keep)
+    ro = r.merged["qubits"]["q1"]["resonator"]["operations"]["readout"]
+    assert ro["__class__"] == LAB_GEF and ro["u_centers"] == [0.1, 0.2]

@@ -7346,6 +7346,14 @@
         var classCh = m.class_changed_paths || [];
         var classChN = (m.class_changed_total != null)
             ? m.class_changed_total : classCh.length;
+        // docs/202 §15 -- lab classes the merge KEPT (the build env imports
+        // them and they subclass what the builder wrote), with their fields.
+        var keptN = (m.class_kept_total != null)
+            ? m.class_kept_total : (m.class_kept_paths || []).length;
+        var keptByCls = {};
+        (m.class_kept_paths || []).forEach(function (c) {
+          keptByCls[c.cls] = (keptByCls[c.cls] || 0) + 1;
+        });
         var classGroups = [];
         (function () {
           var seen = {};
@@ -7384,6 +7392,11 @@
             '(e.g. CZGate.duration_control → duration_qubit) — grafting them would make ' +
             'Quam.load() fail, so they were dropped">' + schemaDropN +
             ' cross-gen dropped</span>' : '') +
+          (keptN ? '<span class="gen-merge-stat gen-merge-ok" title="Your own ' +
+            'classes, kept: this environment imports them and each subclasses the ' +
+            'stock class the builder wrote, so every field only your class declares ' +
+            '(e.g. optimized readout weights) was carried over">' + keptN +
+            ' kept as your class' + '</span>' : '') +
           (classChN ? '<span class="gen-merge-stat gen-merge-warn" title="The rebuild ' +
             'typed these objects as a different class than the source chip — usually ' +
             "your own subclass replaced by the stock class this env's builder knows. " +
@@ -7416,6 +7429,13 @@
         // above the fold, not inside a collapsed list — because it explains
         // the dropped fields underneath it and is the only line here that
         // says what to change.
+        Object.keys(keptByCls).slice(0, 6).forEach(function (cls) {
+          var kl = document.createElement("div");
+          kl.className = "gen-merge-muted gen-merge-detail gen-merge-kept";
+          kl.textContent = "kept " + cls + " — " + keptByCls[cls] + " place" +
+            (keptByCls[cls] === 1 ? "" : "s") + ", with every field it declares";
+          el.appendChild(kl);
+        });
         classGroups.slice(0, 6).forEach(function (g) {
           var cg = document.createElement("div");
           cg.className = "gen-merge-muted gen-merge-detail";

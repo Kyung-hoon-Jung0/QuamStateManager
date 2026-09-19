@@ -132,6 +132,7 @@ class MergeStats:
     pruned_ops: list[str] = field(default_factory=list)      # redundant old ops removed by prune
     schema_dropped: list[str] = field(default_factory=list)  # OLD-only fields the NEW env's class schema doesn't know (cross-generation rename/removal)
     class_changed: list[tuple[str, str, str]] = field(default_factory=list)  # (path, OLD class, NEW class) -- the rebuild typed this object differently
+    class_kept: list[tuple[str, str]] = field(default_factory=list)  # (path, OLD class) -- a lab subclass the build env can hold, kept (docs/202 §15)
     populate_protected: list[str] = field(default_factory=list)  # user populate edits kept as NEW over tier-1 (docs/72)
     populate_conflicts: list[str] = field(default_factory=list)  # hand-tuned OLD values kept where a populate edit implied a derived change (z delay)
 
@@ -142,11 +143,41 @@ class MergeResult:
     stats: MergeStats
 
 
+def _kept_class(old: dict, new: dict, keep: dict | None) -> str | None:
+    """The OLD object's class, when the merge may keep it (docs/202 §15).
+
+    A re-generate writes the builder's stock class where the source chip had
+    the lab's own -- the KRISS 5Q chip's `ComplexWeightsReadoutPulse` came back
+    a `SquareReadoutPulse`, and every field only the lab's class declares (its
+    optimized integration weights) dropped out. Keeping the old class is safe
+    exactly when BOTH hold, each measured in the build's own env:
+
+    - the env imports it (it is in `keep` at all -- `Quam.load()` will find it);
+    - the class the rebuild wrote is in its MRO -- a SUBCLASS goes wherever
+      its base went, so no parent field's declared type can be violated.
+
+    The second rule is what keeps this from being docs/136's poison (an old
+    `QdacBiasLine` grafted onto a `z` typed `FluxLine`): an unrelated class is
+    never kept, it is reported as a substitution instead.
+    """
+    if not keep:
+        return None
+    o_cls, n_cls = old.get("__class__"), new.get("__class__")
+    if not (isinstance(o_cls, str) and isinstance(n_cls, str)) or o_cls == n_cls:
+        return None
+    rec = keep.get(o_cls)
+    if not rec or n_cls not in (rec.get("bases") or ()):
+        return None
+    return o_cls
+
+
 def _merge(old: Any, new: Any, path: str, stats: MergeStats,
            schemas: dict[str, list[str]] | None = None,
-           protect: set[str] | None = None) -> Any:
+           protect: set[str] | None = None,
+           keep: dict | None = None) -> Any:
     if isinstance(old, dict) and isinstance(new, dict):
         out: dict = {}
+        kept_cls = _kept_class(old, new, keep)
         for k, nv in new.items():
             if k in ("__class__", "__package_versions__"):
                 # Always the NEW build's. Tier-1-carrying an OLD
@@ -165,6 +196,10 @@ def _merge(old: Any, new: Any, path: str, stats: MergeStats,
                 # (your ComplexWeightsReadoutPulse was rebuilt as a
                 # SquareReadoutPulse), which is the thing a reader needs in
                 # order to know what to do about it.
+                if k == "__class__" and kept_cls:
+                    out[k] = kept_cls
+                    stats.class_kept.append((path or "(root)", kept_cls))
+                    continue
                 if (k == "__class__" and isinstance(nv, str)
                         and isinstance(old.get(k), str) and old[k] != nv):
                     stats.class_changed.append((path or "(root)", old[k], nv))
@@ -176,7 +211,7 @@ def _merge(old: Any, new: Any, path: str, stats: MergeStats,
                 continue
             if k in old:
                 out[k] = _merge(old[k], nv, f"{path}.{k}" if path else k,
-                                stats, schemas, protect)
+                                stats, schemas, protect, keep)
             else:
                 out[k] = copy.deepcopy(nv)
                 stats.kept_new_only += _count_leaves(nv)
@@ -201,7 +236,13 @@ def _merge(old: Any, new: Any, path: str, stats: MergeStats,
         # stats.schema_dropped. Untagged container dicts (operations / macros /
         # extras) have no schema and keep grafting user-added subtrees.
         legal: list[str] | None = None
-        if schemas:
+        if kept_cls:
+            # This object IS the kept class now, so its own declared fields are
+            # what is legal -- and only here: `keep` never widens the global
+            # `schemas`, which the value gate below also reads, so a lab class
+            # kept at one path cannot become graftable anywhere else.
+            legal = list(keep[kept_cls].get("fields") or ())
+        elif schemas:
             cls = new.get("__class__")
             if isinstance(cls, str):
                 legal = schemas.get(cls)
@@ -522,8 +563,15 @@ def merge_states(old_state: dict, new_state: dict,
                  class_schemas: dict[str, list[str]] | None = None,
                  protect_paths: set[str] | None = None,
                  old_wiring: dict | None = None,
-                 new_wiring: dict | None = None) -> MergeResult:
+                 new_wiring: dict | None = None,
+                 keep_classes: dict | None = None) -> MergeResult:
     """Merge the OLD calibrated state onto the NEW rebuilt structure.
+
+    ``keep_classes`` -- optional ``{class_path: {"bases": [...], "fields":
+    [...]}}`` for the SOURCE chip's classes that the build env imports
+    (docs/202 §15). Where the rebuild wrote a class that is in the source
+    class's MRO, the source class is kept and its own fields carried; see
+    :func:`_kept_class`. ``None`` ⇒ the NEW class always wins, as before.
 
     Returns the merged state plus :class:`MergeStats`. ``stats.residual_lost``
     lists any OLD scalar path with no home in the merged tree (should be empty
@@ -553,7 +601,8 @@ def merge_states(old_state: dict, new_state: dict,
     # calibration in the merge.
     new_state = _reconcile_pair_ids(old_state, new_state,
                                     old_wiring, new_wiring)   # align pair ids first
-    merged = _merge(old_state, new_state, "", stats, class_schemas, protect_paths)
+    merged = _merge(old_state, new_state, "", stats, class_schemas, protect_paths,
+                    keep_classes)
     # Every one of these lists is a set of dot-paths shown to the user in
     # the build-result transparency panel, TRUNCATED to the first 80/200
     # (regenerate.py) — so the sort decides both the order and WHICH paths
@@ -562,6 +611,7 @@ def merge_states(old_state: dict, new_state: dict,
     stats.schema_dropped.sort(key=natural_key)
     stats.populate_protected.sort(key=natural_key)
     stats.class_changed.sort(key=lambda c: natural_key(c[0]))
+    stats.class_kept.sort(key=lambda c: natural_key(c[0]))
 
     merged_paths = {p for p, _ in _iter_leaves(merged)}
     old_scalars = [(p, v) for p, v in _iter_leaves(old_state)
