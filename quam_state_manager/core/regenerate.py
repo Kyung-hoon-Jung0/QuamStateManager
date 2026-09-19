@@ -177,7 +177,7 @@ def run_regenerate(
     # docs/202 §15: which of the SOURCE chip's classes this build env can
     # hold -- the merge keeps a lab subclass the builder replaced with its
     # stock base, so the lab's own fields (its optimized readout weights on
-    # the KRISS 5Q chip) survive a rebuild instead of dropping out.
+    # one customer chip) survive a rebuild instead of dropping out.
     keep_classes = _source_classes_the_env_holds(
         python_path, old_state, instance_path, source_probe)
 

@@ -147,7 +147,7 @@ def _kept_class(old: dict, new: dict, keep: dict | None) -> str | None:
     """The OLD object's class, when the merge may keep it (docs/202 §15).
 
     A re-generate writes the builder's stock class where the source chip had
-    the lab's own -- the KRISS 5Q chip's `ComplexWeightsReadoutPulse` came back
+    the lab's own -- one customer chip's `ComplexWeightsReadoutPulse` came back
     a `SquareReadoutPulse`, and every field only the lab's class declares (its
     optimized integration weights) dropped out. Keeping the old class is safe
     exactly when BOTH hold, each measured in the build's own env:
