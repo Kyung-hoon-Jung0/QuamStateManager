@@ -284,6 +284,39 @@ function inputFor(win, p) {
       'V6: ty extras present after the rebase');
   }
 
+  // V7 (QA liveedit-r2-01): Escape CANCELS a Flat View edit -- Table View
+  // parity (docs/120 item 9). Before, the typed value stayed dirty and the next
+  // click-away (focusout commits) POSTed the value the user had abandoned.
+  {
+    const st = win.AllValues._state;
+    const F01 = 'qubits.qA1.f_01';
+    if (!inputFor(win, F01)) expandGroup(win);   // V6 left it expanded
+    const fin = inputFor(win, F01);
+    const stored = st.rows[st.rowsByPath.get(F01)][1];
+    fin.dispatchEvent(new win.FocusEvent('focusin', { bubbles: true }));
+    fin.value = '7.7e-05';
+    fin.dispatchEvent(new win.Event('input', { bubbles: true }));
+    const tr = fin.closest('tr');
+    ok(st.dirty.has(F01) && tr.classList.contains('av-row-dirty')
+       && win.document.getElementById('av-dirty-count').textContent !== '',
+      'V7: fixture -- the typed edit is dirty and counted');
+    const esc = new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+    fin.dispatchEvent(esc);
+    ok(fin.value === stored, 'V7: Escape restores the stored value, got ' + fin.value);
+    ok(!st.dirty.has(F01) && !tr.classList.contains('av-row-dirty'),
+      'V7: Escape un-dirties the row');
+    ok(esc.defaultPrevented, 'V7: the Escape is consumed (no popover/inspector close too)');
+    const posts = win._log.editBatch.length;
+    fin.dispatchEvent(new win.FocusEvent('focusout', { bubbles: true }));
+    await tick(20);
+    ok(win._log.editBatch.length === posts,
+      'V7: the click-away after Escape commits nothing (' + (win._log.editBatch.length - posts) + ' POST)');
+    // with nothing typed, Escape is left to the app (not swallowed)
+    const esc2 = new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+    fin.dispatchEvent(esc2);
+    ok(!esc2.defaultPrevented, 'V7: a clean Escape passes through to the app');
+  }
+
   if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
   console.log('all_values_v2_selfcheck: all checks passed');
   process.exit(0);

@@ -363,8 +363,21 @@
             // holds its value in `vals`. byPath only names the COLUMN, which
             // is enough to decide what to hydrate but not to repair one cell's
             // search text.
+            // byPathAll / pathTd are MULTI-valued (QA F4): one leaf is often
+            // claimed by several columns (the curated x90 amp alias AND the
+            // dyn DragCosine leaf), and byPath's last writer hid the others,
+            // so an undo repaint skipped the alias twin and left it stale.
             v = { html: new Map(), vals: new Map(), cold: cold, wrap: wrap, byPath: {},
-                  pathTd: {}, remote: new Set(), inflight: new Map(), failed: 0 };
+                  byPathAll: {}, pathTd: {}, remote: new Set(), inflight: new Map(), failed: 0 };
+            var claim = function (p, k) {
+                v.byPath[p] = k;
+                var all = v.byPathAll[p] || (v.byPathAll[p] = []);
+                if (all.indexOf(k) < 0) all.push(k);
+            };
+            var claimTd = function (p, k, td) {
+                claim(p, k);
+                (v.pathTd[p] || (v.pathTd[p] = [])).push(td);
+            };
             onState(v);
             styleEl().textContent = widths.join('\n');
             phase('virt: plan');
@@ -379,8 +392,8 @@
                     var ent = (srv.map.cols && srv.map.cols[colKey] && ri != null) ? srv.map.cols[colKey][ri] : null;
                     if (ent) {
                         if (ent[0]) v.vals.set(td, String(ent[0]).toLowerCase());
-                        if (ent[1]) { v.byPath[ent[1]] = colKey; v.pathTd[ent[1]] = td; }
-                        if (ent[2]) { v.byPath[ent[2]] = colKey; v.pathTd[ent[2]] = td; }
+                        if (ent[1]) claimTd(ent[1], colKey, td);
+                        if (ent[2] && ent[2] !== ent[1]) claimTd(ent[2], colKey, td);
                     }
                     return;
                 }
@@ -388,16 +401,16 @@
                 var val = inp ? String(inp.value) : (td.textContent || '');
                 if (inp) {
                     var a1 = inp.getAttribute('data-dot-path'), a2 = inp.getAttribute('data-resolved');
-                    if (a1) v.byPath[a1] = colKey;
-                    if (a2) v.byPath[a2] = colKey;
+                    if (a1) claim(a1, colKey);
+                    if (a2) claim(a2, colKey);
                 } else {
                     var ls = td.querySelector('.bulk-cell-list[data-path]');
                     if (ls) {
-                        v.byPath[ls.getAttribute('data-path')] = colKey;
+                        claim(ls.getAttribute('data-path'), colKey);
                         // docs/159: /undo names the RESOLVED leaf -- a detached
                         // list column must be findable by it too
                         var lr = ls.getAttribute('data-resolved');
-                        if (lr) v.byPath[lr] = colKey;
+                        if (lr) claim(lr, colKey);
                     }
                 }
                 v.vals.set(td, val.toLowerCase());
@@ -429,11 +442,14 @@
            answers from a snapshot taken before the edit. */
         function patchColdValue(dotPath, disp) {
             if (!v || !v.pathTd) return false;
-            var td = v.pathTd[dotPath];
-            if (!td || !v.remote.has(td.getAttribute('data-col-key'))) return false;
-            v.vals.set(td, String(disp == null ? '' : disp).toLowerCase());
-            patchColdValue.flushHay = true;
-            return true;
+            var hit = false;
+            (v.pathTd[dotPath] || []).forEach(function (td) {
+                if (!v.remote.has(td.getAttribute('data-col-key'))) return;
+                v.vals.set(td, String(disp == null ? '' : disp).toLowerCase());
+                hit = true;
+            });
+            if (hit) patchColdValue.flushHay = true;
+            return hit;
         }
 
         // Returns a Promise that resolves when every named column is here: the
@@ -685,6 +701,8 @@
             isDead: function (k) { return !!v && !!v.dead && v.dead.has(k); },
             isRemote: function (k) { return !!v && v.remote.has(k); },
             colOfPath: function (p) { return v && v.byPath ? v.byPath[p] : undefined; },
+            // every column that claims the path (QA F4) -- colOfPath names one
+            colsOfPath: function (p) { return v && v.byPathAll ? (v.byPathAll[p] || []).slice() : []; },
         };
     }
 

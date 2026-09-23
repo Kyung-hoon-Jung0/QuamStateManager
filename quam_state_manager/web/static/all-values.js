@@ -459,6 +459,7 @@
             else if (row[4] && row[4].dims) row.length = 4;   // extra held only dims
         }
         state.etag = null;   // structure may have changed → next activation re-pulls rows
+        state.tableStale = true;   // ...and the Table's cell SHAPE may have too (QA liveedit-r2-02)
         if (jb.tray_html && window._swapPendingTray) {
             window._bulkSelfEdit = true; try { window._swapPendingTray(jb.tray_html); } finally { window._bulkSelfEdit = false; }
         }
@@ -653,6 +654,7 @@
             if (jb.tray_html && window._swapPendingTray) {
                 window._bulkSelfEdit = true; try { window._swapPendingTray(jb.tray_html); } finally { window._bulkSelfEdit = false; }
             }
+            patchTableView(jb);
             applyChunks(updates, start + CHUNK);
         }).catch(function (err) {
             state._syncAfter = false;   // network error mid-chunk → never auto-push (parity with applyError)
@@ -669,6 +671,38 @@
             state.rows[r]._s = null;            // refresh lazy haystack
             state.dirty.delete(res.dot_path);
         }
+    }
+    // QA liveedit-r2-02: Flat View lives in #table-pane beside the Table View,
+    // so its tray swap suppresses the Table's full re-GET (_bulkSelfEdit) --
+    // and that re-GET was the Table's only way to learn of the edit, which then
+    // stayed stale (value, data-orig, marker, header min/max) until a reload.
+    // Land the COMMITTED values in the grids by path, through the repaint undo
+    // and sync-pull already use (`old_value_*` there means "the value to land").
+    // Too many, or a cell it cannot repaint honestly -> the Table resyncs on
+    // its next show instead.
+    var TABLE_PATCH_MAX = 200;
+    function patchTableView(jb) {
+        var changes = [];
+        (jb && jb.results || []).forEach(function (r) {
+            if (!r || r.applied === false || r.display == null) return;
+            changes.push({ dot_path: r.resolved_path || r.dot_path,
+                           old_value_disp: r.display, old_value_str: r.display });
+        });
+        if (!changes.length) return;
+        if (changes.length > TABLE_PATCH_MAX) { state.tableStale = true; return; }
+        var grids = [window.BulkEdit, window.BulkPairEdit];
+        var eg = window.EntityGrids || {};
+        Object.keys(eg).forEach(function (k) { if (grids.indexOf(eg[k]) < 0) grids.push(eg[k]); });
+        var uncovered = 0;
+        grids.forEach(function (g) {
+            if (!g || typeof g.revertPaths !== 'function') return;
+            try {
+                uncovered += ((g.revertPaths(changes) || {}).uncovered || []).length;
+                if (g.applyModifiedDelta && jb.modified) g.applyModifiedDelta(jb.modified);
+                if (g.recomputeStats) g.recomputeStats();
+            } catch (e) { uncovered++; }
+        });
+        if (uncovered) state.tableStale = true;
     }
     function afterApply() {
         // The chunked Apply committed edits to the working copy → re-run the safety
@@ -749,6 +783,7 @@
             if (jb.tray_html && window._swapPendingTray) {
                 window._bulkSelfEdit = true; try { window._swapPendingTray(jb.tray_html); } finally { window._bulkSelfEdit = false; }
             }
+            patchTableView(jb);
             if (window._diagChanged) window._diagChanged();
             updateDirtyUI();
             var row = inputEl && inputEl.closest ? inputEl.closest('tr') : null;
@@ -758,9 +793,22 @@
           .finally(function () { state.applying = false; });
     }
     function onTbodyKeydown(e) {
-        if (e.key !== 'Enter') return;
         var t = e.target;
         if (!t.classList || !t.classList.contains('av-input')) return;
+        if (e.key === 'Escape') {
+            // QA liveedit-r2-01 (Table View parity, docs/120 item 9): Escape
+            // CANCELS the edit in progress -- otherwise the next click-away
+            // commits the value the user just abandoned (focusout commits).
+            var p = t.getAttribute('data-dot-path');
+            if (!state.dirty.has(p)) return;   // nothing typed: the app's own Escape
+            e.preventDefault(); e.stopPropagation();
+            var r = state.rowsByPath.get(p);
+            t.value = (r != null) ? state.rows[r][1] : state.dirty.get(p).orig;
+            onTbodyInput({ target: t });        // v === orig: un-dirties the row + count
+            t.select();
+            return;
+        }
+        if (e.key !== 'Enter') return;
         e.preventDefault();
         applyOne(t.getAttribute('data-dot-path'), t);
     }
@@ -1049,6 +1097,12 @@
         }
         if (!restoring) lsSet(TAB_KEY, pane);
         if (pane === 'allvalues') activate();
+        // QA liveedit-r2-02: a Flat edit the in-place patch could not express
+        // -> the honest full resync (it still refuses to wipe unapplied edits)
+        if (pane === 'grid' && state.tableStale && window._scheduleGridResync) {
+            state.tableStale = false;
+            window._scheduleGridResync(0);
+        }
     }
 
     window.AllValues = {

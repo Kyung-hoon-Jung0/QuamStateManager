@@ -1728,12 +1728,18 @@
     }
     // Every cell of one LO pair: this port's band and frequency, and the peer
     // port's. At most four, and they are what the verdict is ABOUT.
+    // QA liveedit-r2-14: PAGE-wide, not this table only -- a TWPA pump / pair
+    // port lives in a pair-shaped grid (table.bulk-pair-table), and the group
+    // key (con/fem/kind:port) is the same in every grid, so a peer in another
+    // grid is judged by its live value too. #bulk-table stays explicit (a bare
+    // qubit table carries no class).
+    var _LO_GRIDS = ['#bulk-table', 'table.bulk-pair-table'];
     function _loCellsIn(group) {
-        var t = table();
-        if (!group || !t) return [];
+        if (!group) return [];
         var esc = (window.CSS && CSS.escape) ? CSS.escape(group) : group;
-        return Array.prototype.slice.call(
-            t.querySelectorAll('.bulk-cell[data-lo-group="' + esc + '"]'));
+        return Array.prototype.slice.call(document.querySelectorAll(_LO_GRIDS.map(function (g) {
+            return g + ' .bulk-cell[data-lo-group="' + esc + '"]';
+        }).join(', ')));
     }
     // The LIVE value of one LO field, read from the cell that owns it.
     // `data-band` / `data-freq` / `data-peer-band` are what the SERVER rendered
@@ -1802,8 +1808,10 @@
         return warned;
     }
     function _updateBandWarnCount() {
-        var t = table(); if (!t) return;
-        var n = t.querySelectorAll('.bulk-cell.bulk-band-warn').length;
+        // every Live-Edit grid (QA liveedit-r2-14): the toolbar count is shared
+        var n = document.querySelectorAll(_LO_GRIDS.map(function (g) {
+            return g + ' .bulk-cell.bulk-band-warn';
+        }).join(', ')).length;
         var el = document.getElementById('bulk-band-warn');
         if (el) { el.textContent = n ? ('⚠ ' + n + ' band issue' + (n === 1 ? '' : 's')) : ''; el.hidden = !n; }
     }
@@ -3377,6 +3385,8 @@
                             && Date.now() - window._dynReloadAt < CARRY_TTL_MS) return;
                         if (!window.confirm('You have unapplied edits in Live State Edit. Leave and discard them?')) {
                             ev.preventDefault();
+                            // every teardown listener gates on shouldSwap (app.js)
+                            if (ev.detail) ev.detail.shouldSwap = false;
                         }
                     }
                 });
@@ -3846,30 +3856,32 @@
                 + ', .bulk-cell-list[data-resolved="' + q + '"]');
         };
         // A cold column (docs/105) has no .bulk-cell to land in — the same trap
-        // _consumeEditCarry hit. Hydrate once if any named path is absent.
-        var absent = entries.some(function (e) {
-            return e && e.dot_path && !sel(e.dot_path).length;
-        });
+        // _consumeEditCarry hit. Hydrate the cold columns that claim a path.
         _virtPatchColdValue.flushHay = false;
         // docs/141 4l-review: hydrate only the cold columns the named paths
         // live in (the byPath map _virtInit built) -- an undo of a pair-grid
         // or hidden-column path used to un-virtualize the whole grid; a path
         // in no column is `missing` by definition and costs no hydration
-        if (absent && _virt) {
+        // QA F4: EVERY column claiming the path, not byPath's last writer --
+        // the curated x90 amp alias and its dyn DragCosine twin both claim
+        // the resolved leaf, and the twin used to win, so the alias stayed a
+        // stale page-load fragment (and a hot twin hid a cold one entirely).
+        if (_virt && _virt.byPathAll) {
             var dueKeys = [];
             entries.forEach(function (e) {
-                if (!e || !e.dot_path || sel(e.dot_path).length) return;
-                var ck = _virt.byPath && _virt.byPath[e.dot_path];
-                // a server-cold column needs no repaint: it is rendered from
-                // the (already reverted) working copy when it is fetched --
-                // but its SEARCH TEXT is the cold map, which nothing else
-                // updates, so patch that one cell (docs/141 4ac).
-                if (ck && _virt.remote.has(ck)) {
-                    _virtPatchColdValue(e.dot_path,
-                        e.old_value_disp != null ? e.old_value_disp : e.old_value_str);
-                    return;
-                }
-                if (ck && dueKeys.indexOf(ck) < 0) dueKeys.push(ck);
+                if (!e || !e.dot_path) return;
+                var remoteHit = false;
+                (_virt.byPathAll[e.dot_path] || []).forEach(function (ck) {
+                    if (!_virt.cold.has(ck)) return;
+                    // a server-cold column needs no repaint: it is rendered from
+                    // the (already reverted) working copy when it is fetched --
+                    // but its SEARCH TEXT is the cold map, which nothing else
+                    // updates, so patch that cell (docs/141 4ac).
+                    if (_virt.remote.has(ck)) { remoteHit = true; return; }
+                    if (dueKeys.indexOf(ck) < 0) dueKeys.push(ck);
+                });
+                if (remoteHit) _virtPatchColdValue(e.dot_path,
+                    e.old_value_disp != null ? e.old_value_disp : e.old_value_str);
             });
             if (dueKeys.length) _virtHydrateCols(dueKeys);
         }
@@ -3970,6 +3982,7 @@
         return { patched: patched, missing: missing, covered: covered, uncovered: uncovered };
     }
     BulkEdit.revertPaths = _revertPaths;
+    BulkEdit.recomputeStats = function () { _recomputeStats(); };   // QA liveedit-r2-02
     BulkEdit._virtState = function () {
         return _virt ? { cold: Array.from(_virt.cold), remote: Array.from(_virt.remote),
                          inflight: Array.from(_virt.inflight.keys()), failed: _virt.failed || 0 } : null;
@@ -3986,6 +3999,14 @@
     BulkEdit._virtHydrateCols = _virtHydrateCols;
     BulkEdit._setCarry = function (c) { _editCarry = c; };
     BulkEdit._syncApplied = _syncAppliedAcrossTable;
+    // QA liveedit-r2-14: the LO band advisory, for the pair-shaped grids
+    // (pair-edit.js makeGrid: qubit pairs, TWPAs, every discovered collection)
+    BulkEdit._bandEdit = function (cell) { _validateBandGroup(cell); _updateBandWarnCount(); };
+    BulkEdit._bandScan = function (root) {
+        Array.prototype.slice.call(root.querySelectorAll('.bulk-cell[data-lo-field]')).forEach(_validateBand);
+        _updateBandWarnCount();
+    };
+    BulkEdit._bandWarnLine = _bandWarnLine;
 
     // docs/111 test hooks (jsdom selfcheck drives the internals directly)
     BulkEdit._ge = {

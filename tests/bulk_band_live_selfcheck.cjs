@@ -38,6 +38,7 @@ try {
 const STATIC = path.join(__dirname, '..', 'quam_state_manager', 'web', 'static');
 const GRID_VIRT_JS = fs.readFileSync(path.join(STATIC, 'grid-virt.js'), 'utf8');
 const BULK_JS = fs.readFileSync(path.join(STATIC, 'bulk-edit.js'), 'utf8');
+const PAIR_JS = fs.readFileSync(path.join(STATIC, 'pair-edit.js'), 'utf8');
 
 let fails = 0, asserts = 0;
 function ok(c, m) { asserts++; if (!c) { console.error('FAIL: ' + m); fails++; } }
@@ -71,7 +72,48 @@ function freqAttrs(port, peerPort, band, freq) {
 /* `withFreqCols` off = only the band column exists, which is the report's own
    view (they were searching "band"). On = the frequency cells are there too,
    which is what proves the group re-judge reaches them. */
-function build(withFreqCols) {
+/* QA liveedit-r2-14: a discovered-collection grid (TWPAs), the same markup
+   `_bulk_entity_grid.html` renders -- a pair-shaped table the band advisory
+   never looked at. twpa1's pump LO starts IN band 3; twpa2's starts outside
+   it, which the mount must flag. */
+function twpaGrid() {
+  const cell = function (tw, freq, band) {
+    const port = 'con1/2/mw_outputs:' + (tw === 'twpa1' ? 1 : 2);
+    const peer = 'con1/2/mw_outputs:' + (tw === 'twpa1' ? 2 : 1);
+    const dp = 'twpas.' + tw + '.pump.opx_output.upconverter_frequency';
+    return '<td class="bulk-td ck-0" data-col-key="pump_lo"><input type="text" class="bulk-cell" value="'
+      + freq + '" data-orig="' + freq + '" data-dot-path="' + dp + '" data-resolved="ports.' + port
+      + '.upconverter_frequency" size="14"' + freqAttrs(port, peer, band, freq) + '></td>';
+  };
+  const bandTd = function (tw, freq) {
+    const port = 'con1/2/mw_outputs:' + (tw === 'twpa1' ? 1 : 2);
+    const peer = 'con1/2/mw_outputs:' + (tw === 'twpa1' ? 2 : 1);
+    const dp = 'twpas.' + tw + '.pump.opx_output.band';
+    return '<td class="bulk-td ck-1" data-col-key="pump_band"><input type="text" class="bulk-cell" value="3"'
+      + ' data-orig="3" data-dot-path="' + dp + '" data-resolved="ports.' + port + '.band" size="4"'
+      + loAttrs(port, peer, 3, freq, tw === 'twpa1' ? 'twpa2' : 'twpa1', 3) + '></td>';
+  };
+  const row = function (tw, freq) {
+    return '<tr data-qubit="' + tw + '" data-entity="' + tw + '"><th class="bulk-rowhead" data-col-key="__id__">'
+      + tw + '</th>' + cell(tw, freq, 3) + bandTd(tw, freq)
+      + '<td class="bulk-apply-col"><button class="btn-xs bulk-row-apply" disabled>Apply</button>'
+      + '<span class="bulk-row-error" hidden></span></td></tr>';
+  };
+  const g = 'bulk-e_twpas';
+  return '<div class="bulk-pair-divider" id="' + g + '-divider">'
+    + '<div class="bulk-colvis-menu" id="' + g + '-colvis-menu"></div>'
+    + '<span id="' + g + '-search-count"></span><span id="' + g + '-dirty-count"></span>'
+    + '<button id="' + g + '-apply-all" disabled></button><button id="' + g + '-apply-sync" disabled></button>'
+    + '<button id="' + g + '-reset" disabled></button></div>'
+    + '<div class="bulk-table-wrap bulk-pair-table-wrap"><table class="bulk-table bulk-pair-table" id="' + g + '-table">'
+    + '<thead><tr class="bulk-head-row"><th class="bulk-corner" data-col-key="__id__"></th>'
+    + '<th class="bulk-col-head ck-0" data-col-key="pump_lo" data-section="Pump"><span class="bulk-col-label">pump LO</span></th>'
+    + '<th class="bulk-col-head ck-1" data-col-key="pump_band" data-section="Pump"><span class="bulk-col-label">pump band</span></th>'
+    + '<th class="bulk-apply-col"></th></tr></thead><tbody>'
+    + row('twpa1', 9000000000) + row('twpa2', 11500000000) + '</tbody></table></div>';
+}
+
+function build(withFreqCols, withTwpa) {
   let rows = '';
   PAIRS.forEach(function (p) {
     [[p.a, 'con1/1/' + p.pa, 'con1/1/' + p.pb, p.fa, p.b, 2],
@@ -107,11 +149,12 @@ function build(withFreqCols) {
     + '<button id="bulk-apply-all" disabled></button><button id="bulk-reset" disabled></button>'
     + '</div><div class="bulk-table-wrap"><table id="bulk-table"><thead>'
     + '<tr class="bulk-head-row"><th class="bulk-corner" data-col-key="__id__"></th>'
-    + heads + '</tr></thead><tbody>' + rows + '</tbody></table></div></div></div>';
+    + heads + '</tr></thead><tbody>' + rows + '</tbody></table></div>'
+    + (withTwpa ? twpaGrid() : '') + '</div></div>';
 }
 
-function world(withFreqCols) {
-  const dom = new JSDOM('<!DOCTYPE html><html><body>' + build(withFreqCols) + '</body></html>',
+function world(withFreqCols, withTwpa) {
+  const dom = new JSDOM('<!DOCTYPE html><html><body>' + build(withFreqCols, withTwpa) + '</body></html>',
     { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/' });
   const win = dom.window;
   global.window = win; global.document = win.document;
@@ -128,6 +171,17 @@ function world(withFreqCols) {
   if (withFreqCols) cols.push({ key: 'xyfreq', label: 'XY LO', section: 'XY Port', unit: '', default_on: true });
   win.BulkEdit.mount(cols, { bands: BANDS }, [],
     { chip: 'chipA', qubits: ['q1', 'q2', 'q3', 'q4'].map(function (q) { return { id: q, grid: null }; }) });
+  if (withTwpa) {
+    // _bulkedit.html's order: the qubit grid mounts first (it sets BANDS),
+    // then every discovered collection
+    win.__bulkSearchDebounce = 1;
+    new win.Function(PAIR_JS).call(win);
+    win.twpa = win.makeEntityGrid('e_twpas', 'TWPAs');
+    win.twpa.mount([{ key: 'pump_lo', label: 'pump LO', section: 'Pump', unit: 'Hz',
+                      default_on: true, editable: true, kind: 'scalar', maxlen: 14 },
+                    { key: 'pump_band', label: 'pump band', section: 'Pump', unit: '',
+                      default_on: true, editable: true, kind: 'scalar', maxlen: 4 }]);
+  }
   return win;
 }
 
@@ -249,6 +303,48 @@ function type(win, cell, v) {
   ok(!warns(win, 'q1'),
      'E1: an unpaired port (an LF FEM, an odd port id) has no peer to conflict with');
   ok(!warns(win, 'q2'), 'E2: and the re-judge does not reach outside a group that is not there');
+}
+
+// ── F. QA liveedit-r2-14: a TWPA / pair-shaped grid is judged too ────────
+// The advisory was wired on #bulk-table alone: typing a pump LO of 11 GHz into
+// a band-3 port (6.5-10.5 GHz) in the TWPA grid warned nothing and Enter
+// committed it with no dialog -- on the customer chip those were the ONLY LO
+// cells on the page.
+{
+  const win = world(false, true);
+  const tw = (id) => win.document.querySelector('#bulk-e_twpas-table tr[data-entity="' + id + '"] .bulk-cell[data-lo-field="freq"]');
+  const twb = (id) => win.document.querySelector('#bulk-e_twpas-table tr[data-entity="' + id + '"] .bulk-cell[data-lo-field="band"]');
+  ok(!!win.twpa && !!tw('twpa1'), 'F0: fixture -- the TWPA grid mounted');
+  ok(tw('twpa2').classList.contains('bulk-band-warn'),
+     'F1: a pump LO already outside its band is flagged at mount');
+  ok(!tw('twpa1').classList.contains('bulk-band-warn'), 'F2: one inside its band is not');
+  // twpa2's LO and its band cell ("freq ... outside Band 3") both warn
+  ok(counter(win) === '⚠ 2 band issues', 'F3: the shared toolbar count includes it: ' + counter(win));
+  type(win, tw('twpa1'), '11000000000');
+  ok(tw('twpa1').classList.contains('bulk-band-warn'), 'F4: typing 11 GHz into band 3 warns');
+  const msg = tw('twpa1').closest('td').querySelector('.bulk-band-msg');
+  ok(!!msg && !msg.hidden && /Outside Band 3/.test(msg.textContent),
+     'F5: with the reason inline: ' + (msg && msg.textContent));
+  ok(twb('twpa1').classList.contains('bulk-band-warn') && counter(win) === '⚠ 4 band issues',
+     'F6: the group is re-judged (its band cell reads the live LO) and the count follows: ' + counter(win));
+  win._confirms = [];
+  win.confirm = function (m) { win._confirms.push(m); return false; };
+  tw('twpa1').dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  ok(win._confirms.length === 1 && /LO band conflict/.test(win._confirms[0]),
+     'F7: Enter asks "apply anyway?" before committing (A10): ' + JSON.stringify(win._confirms));
+  ok(win.fetches === 0, 'F8: and a Cancel commits nothing');
+  win._confirms = [];
+  win.twpa.applyAll();
+  ok(win._confirms.length === 1 && /LO band conflict/.test(win._confirms[0]),
+     'F9: Apply all names the conflict too');
+  type(win, tw('twpa1'), '9000000000');
+  ok(!tw('twpa1').classList.contains('bulk-band-warn') && counter(win) === '⚠ 2 band issues',
+     'F10: back inside the band, the warning is withdrawn: ' + counter(win));
+  // the LO pair lives in THIS grid, so its group lookup must reach it: moving
+  // twpa1 to band 1 (0.05-5.5 GHz) puts its 9 GHz LO outside, on the OTHER cell
+  type(win, twb('twpa1'), '1');
+  ok(tw('twpa1').classList.contains('bulk-band-warn'),
+     'F11: a band edit re-judges the LO cell of its own pair in a pair-shaped grid');
 }
 
 if (fails === 0) console.log('all checks passed (' + asserts + ' assertions)');

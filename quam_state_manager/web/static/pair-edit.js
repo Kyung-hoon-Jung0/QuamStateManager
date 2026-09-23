@@ -75,6 +75,7 @@
             onLanded: function (t, set) {
                 try { _recomputeStats(); } catch (e) {}
                 try { _markLinkedCells(); } catch (e) {}
+                try { _bandScan(t); } catch (e) {}   // a fetched LO cell is judged too
             },
             onState: function (st) { _pvirt = st; },
         });
@@ -615,8 +616,22 @@
             if (s.value !== v) s.value = v;
             s.classList.remove('bulk-cell-bad');
             _markCellDirty(s);
+            _bandEdit(s);
             _refreshRow(_rowOf(s));
         });
+    }
+    // QA liveedit-r2-14: the LO band advisory (bulk-edit.js owns it) was wired
+    // on the qubit table only, so an out-of-band LO typed here -- a TWPA pump,
+    // a pair port -- committed with no warning. Advisory, never a dependency.
+    function _bandEdit(cell) {
+        if (cell && cell.hasAttribute('data-lo-field') && window.BulkEdit && window.BulkEdit._bandEdit)
+            window.BulkEdit._bandEdit(cell);
+    }
+    function _bandScan(t) {
+        if (t && window.BulkEdit && window.BulkEdit._bandScan) window.BulkEdit._bandScan(t);
+    }
+    function _bandWarnLine(cells) {
+        return (window.BulkEdit && window.BulkEdit._bandWarnLine) ? window.BulkEdit._bandWarnLine(cells) : '';
     }
     function _markLinkedCells() {
         var t = table(); if (!t) return;
@@ -745,6 +760,7 @@
             _applyColumnVisibility();
             _recomputeStats();
             _markLinkedCells();
+            _bandScan(t);        // flag already-out-of-band LO ports (QA liveedit-r2-14)
             // docs/141 4ad: adopt the server-cold columns (and detach any the
             // client's own estimate calls cold) AFTER the column visibility and
             // the persisted widths are settled -- the plan reads both. Then one
@@ -793,6 +809,7 @@
                 cell.classList.remove('bulk-cell-bad');
                 _markCellDirty(cell);
                 if (cell.classList.contains('bulk-cell-linked')) _mirrorLinked(cell);
+                _bandEdit(cell);
                 _refreshRow(_rowOf(cell));
                 _refreshGlobal();
             });
@@ -885,6 +902,8 @@
                             && Date.now() - window._undoNavAt < 4000) return;
                         if (!window.confirm('You have unapplied ' + cfg.noun + ' edits in Live State Edit. Leave and discard them?')) {
                             ev.preventDefault();
+                            // every teardown listener gates on shouldSwap (app.js)
+                            if (ev.detail) ev.detail.shouldSwap = false;
                         }
                     }
                 });
@@ -896,6 +915,9 @@
             var tr = btn.closest('tr'); if (!tr) return;
             var dirty = _cells(tr).filter(_isDirty);
             if (!dirty.length) return;
+            // surface (never block) an LO band conflict at commit -- A10, as the qubit grid
+            var bw = _bandWarnLine(dirty);
+            if (bw && !window.confirm('Apply this edit?' + bw)) return;
             btn.disabled = true; btn.textContent = '…';
             _applyCells(dirty, tr, false).then(function (res) {
                 btn.textContent = res.ok ? '✓' : 'Apply';
@@ -913,7 +935,8 @@
             var n = _dirtyCount(t);
             if (!window.confirm('Apply ' + n + ' ' + cfg.noun + ' edit' + (n === 1 ? '' : 's')
                 + ' across ' + rows.length + ' ' + cfg.noun + (rows.length === 1 ? '' : 's') +
-                (syncAfter ? ' and push to the live chip?' : ' to the working state?'))) return;
+                (syncAfter ? ' and push to the live chip?' : ' to the working state?')
+                + _bandWarnLine(_cells(t).filter(_isDirty)))) return;
             var all = document.getElementById(P + '-apply-all');
             if (all) { all.disabled = true; all.textContent = 'Applying…'; }
             var apsBtn = document.getElementById(P + '-apply-sync'); if (apsBtn) apsBtn.disabled = true;
@@ -1115,17 +1138,19 @@
             // the time the repaint loop below runs. REMOTE columns are left
             // alone on purpose: fetching them would put a round trip back into
             // every Ctrl+Z, which docs/122 ③ bought away.
+            // QA F4: every claimant column, not colOfPath's last writer --
+            // two columns claiming one leaf hid each other here too.
             var _due = [];
             entries.forEach(function (e) {
                 if (!e || !e.dot_path) return;
-                var k = _pgv.colOfPath(e.dot_path);
-                if (k && _pgv.isCold(k) && !_pgv.isRemote(k) && _due.indexOf(k) < 0) _due.push(k);
+                _pgv.colsOfPath(e.dot_path).forEach(function (k) {
+                    if (_pgv.isCold(k) && !_pgv.isRemote(k) && _due.indexOf(k) < 0) _due.push(k);
+                });
             });
             if (_due.length) _pgv.hydrateCols(_due);
             entries.forEach(function (e) {
                 if (!e || !e.dot_path) return;
-                var ck = _pgv.colOfPath(e.dot_path);
-                if (ck && _pgv.isRemote(ck)) {
+                if (_pgv.colsOfPath(e.dot_path).some(function (k) { return _pgv.isRemote(k); })) {
                     // docs/159 + round 2, F10: the pair grid renders a LIST as
                     // the `▦ N×M` badge, so the badge is this column's search
                     // text -- writing the qubit grid's 24-char JSON preview
@@ -1214,6 +1239,7 @@
         return { patched: patched, missing: missing, covered: covered, uncovered: uncovered };
     }
     BulkPairEdit.revertPaths = _revertPaths;
+    BulkPairEdit.recomputeStats = function () { _recomputeStats(); };   // QA liveedit-r2-02
     // docs/141 4af: the apply echo's own entry point, so a harness can drive
     // it without a live /field/edit-batch round trip -- the qubit grid has
     // had `BulkEdit._syncApplied` since §4n for the same reason.

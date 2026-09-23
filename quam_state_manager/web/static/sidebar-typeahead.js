@@ -1008,6 +1008,11 @@ window.BulkTypeahead = (function () {
     function vocab() { return _prepared().counts; }
 
     function suggest(stage, key, stem) {
+        // QA liveedit-r2-13: a chip press WRITES the box and dispatches 'input'
+        // for the pair grid -- nobody typed, and the panel it opened covered
+        // the chip row and swallowed the next chip's click. null also closes a
+        // panel left open by earlier typing.
+        if (window._chipDrivenSearch) return null;
         if (!stem) return null;
         var vc = _prepared();
         var v = vc.counts;

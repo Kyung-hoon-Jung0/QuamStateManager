@@ -226,4 +226,37 @@ ok(shown() === 1, 'I6: AND of an operation and a property still matches it');
 click(x180); click(chip('amp'));
 ok(q() === '', 'I7: releasing both empties the box');
 
+/* ── J. a chip press never opens the search typeahead ────────────────
+   QA liveedit-r2-13. _write dispatches 'input' on the box so the pair grid
+   refilters; the shared typeahead (sidebar-typeahead.js) listens to every
+   input on #bulk-search and opened its column-word panel under the box --
+   over the chip row, where the next chip's click landed on a completion and
+   rewrote the query instead. The typeahead reads its vocabulary from
+   `#table-pane th.bulk-col-head`, so the panel goes inside a #table-pane. */
+{
+  const tp = doc.createElement('div'); tp.id = 'table-pane';
+  const panel = doc.getElementById('bulk-panel');
+  panel.parentNode.insertBefore(tp, panel); tp.appendChild(panel);
+  window.eval(fs.readFileSync(path.join(STATIC, 'sidebar-typeahead.js'), 'utf8'));
+  const ta = () => doc.getElementById('sm-typeahead');
+  const taOpen = () => !!ta() && ta().hidden === false && box.getAttribute('aria-expanded') === 'true';
+  typeBox('');
+  if (modeBtn().textContent === 'OR') click(modeBtn());
+  typeBox('x18');
+  ok(taOpen(), 'J0: fixture -- TYPING a column word opens the typeahead ('
+     + (ta() && ta().textContent) + ')');
+  typeBox('');
+  ok(!taOpen(), 'J0b: fixture -- and an emptied box closes it');
+  click(chip('x180'));
+  ok(q() === 'x180', 'J1: the chip wrote its term');
+  ok(!taOpen(), 'J2: ...and did NOT open the typeahead over the chip row');
+  click(chip('x180'));
+  typeBox('x18');
+  ok(taOpen(), 'J3: fixture -- typed text opens it again');
+  click(chip('amp'));
+  ok(/amp/.test(q()) && !taOpen(), 'J4: a chip press closes a panel left open by typing ('
+     + q() + ')');
+  typeBox('');
+}
+
 process.exit(fails ? 1 : 0);

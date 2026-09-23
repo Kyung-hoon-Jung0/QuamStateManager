@@ -103,7 +103,12 @@ function cellHtml(r, i, v, src) {
     + ' title="' + dp + '">';
 }
 
-function build() {
+// QA F4 twins: opts.alias0 makes the client-detached p0 an alias of p4's leaf
+// (p4 is server-cold and comes LATER, so it was byPath's last writer);
+// opts.twinRemote makes the server-cold p5 claim p4's leaf too (two remote tds,
+// one path -- pathTd used to keep only the last).
+function build(opts) {
+  opts = opts || {};
   let head = '';
   for (let i = 0; i < COLS.length; i++) {
     const hid = (i === I_HIDDEN) ? ' bulk-col-hidden' : '';
@@ -124,11 +129,16 @@ function build() {
         // rendered HOT. The hidden one is detached by the client at mount --
         // that is the local path (docs/141 4af).
         tds += '<td class="bulk-td ck-' + i + flags + '" data-col-key="p' + i + '">'
-          + cellHtml(r, i, String((r + 1) * 100 + i)) + '</td>';
+          + ((opts.alias0 && i === 0)
+             ? cellHtml(r, i, coldVal(r, 4)).replace(
+                 'data-resolved="qubit_pairs.' + PAIRS[r] + '.f0"', 'data-resolved="qubit_pairs.' + PAIRS[r] + '.f4"')
+             : cellHtml(r, i, String((r + 1) * 100 + i))) + '</td>';
       } else {
         // server-cold: empty, but keeping every flag the hot one carries
         tds += '<td class="bulk-td ck-' + i + flags + ' bulk-td-cold" data-col-key="p' + i + '"></td>';
-        (map.cols['p' + i] = map.cols['p' + i] || []).push([coldVal(r, i), 'qubit_pairs.' + PAIRS[r] + '.f' + i, 0]);
+        (map.cols['p' + i] = map.cols['p' + i] || []).push((opts.twinRemote && i === 5)
+          ? [coldVal(r, 4), 'qubit_pairs.' + PAIRS[r] + '.f5', 'qubit_pairs.' + PAIRS[r] + '.f4']
+          : [coldVal(r, i), 'qubit_pairs.' + PAIRS[r] + '.f' + i, 0]);
       }
     }
     body += '<tr data-qubit="' + PAIRS[r] + '" data-pair="' + PAIRS[r] + '"><th class="bulk-rowhead" data-col-key="__id__">'
@@ -149,7 +159,7 @@ function build() {
 
 function world(opts) {
   opts = opts || {};
-  const dom = new JSDOM('<!DOCTYPE html><html><body>' + build() + '</body></html>',
+  const dom = new JSDOM('<!DOCTYPE html><html><body>' + build(opts) + '</body></html>',
     { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/' });
   const win = dom.window;
   global.window = win; global.document = win.document;
@@ -225,7 +235,7 @@ function world(opts) {
   {
     const store = {};
     if (opts.search) store.quam_bulk_search = opts.search;
-    if (!opts.showHidden) store.quam_bulk_hidden_cols_pair_v2 = JSON.stringify(['p' + I_HIDDEN]);
+    if (!opts.showHidden) store.quam_bulk_hidden_cols_pair_v2 = JSON.stringify(['p' + I_HIDDEN].concat(opts.alias0 ? ['p0'] : []));
     Object.defineProperty(win, 'localStorage', {
       configurable: true,
       value: {
@@ -573,6 +583,46 @@ async function main() {
        'the cell shows the value the undo restored (' + (cell && cell.value) + ')');
     ok(!!cell && cell.getAttribute('data-orig') === 'UNDONE9',
        'and its baseline moved with it, so the row does not read dirty');
+    global.window = win; global.document = doc;
+  }
+
+  /* ── QA F4: an undo reaches EVERY claimant of a leaf ───────────────── */
+  {
+    const W = world({ alias0: true }); await tick(60);
+    const w = W.win, d = W.doc;
+    const st = w.BulkPairEdit._pairVirtState();
+    ok(st && st.cold.indexOf('p0') >= 0 && st.remote.indexOf('p0') < 0 && st.remote.indexOf('p4') >= 0,
+       'fixture: the alias p0 is client-detached, its twin p4 server-cold ('
+       + JSON.stringify(st && { cold: st.cold, remote: st.remote }) + ')');
+    w._log.fetches.length = 0;
+    const dp = 'qubit_pairs.' + PAIRS[0] + '.f4';
+    const rp = w.BulkPairEdit.revertPaths([{ dot_path: dp, old_value_disp: 'UNDONE4' }]);
+    const cell = d.querySelector(
+      '#bulk-pair-table tr[data-pair="' + PAIRS[0] + '"] td[data-col-key="p0"] .bulk-cell');
+    ok(!!cell && cell.value === 'UNDONE4' && cell.getAttribute('data-orig') === 'UNDONE4',
+       'the detached alias twin is hydrated and lands the undone value ('
+       + (cell && cell.value) + ')');
+    ok(rp && rp.patched === 1 && rp.missing === 0 && w._log.fetches.length === 0,
+       'covered, with no round trip (' + JSON.stringify(rp) + ')');
+    global.window = win; global.document = doc;
+  }
+  {
+    const W = world({ twinRemote: true }); await tick(60);
+    const w = W.win, d = W.doc;
+    const sb = d.getElementById('bulk-search');
+    const shown = () => Array.prototype.filter.call(
+      d.querySelectorAll('#bulk-pair-table tbody tr'), (r) => !r.classList.contains('bulk-row-hidden')
+    ).map((r) => r.getAttribute('data-pair'));
+    sb.value = coldVal(0, 4); sb.dispatchEvent(new w.Event('input', { bubbles: true }));
+    await tick(260);
+    ok(shown().indexOf(PAIRS[0]) >= 0, 'fixture: two server-cold twins show the old value');
+    w._workingCopy = { ['p4|' + PAIRS[0]]: 'ZZZ4', ['p5|' + PAIRS[0]]: 'ZZZ4' };
+    w.BulkPairEdit.revertPaths([{ dot_path: 'qubit_pairs.' + PAIRS[0] + '.f4', old_value_disp: 'ZZZ4' }]);
+    await tick(40);
+    sb.value = coldVal(0, 4); sb.dispatchEvent(new w.Event('input', { bubbles: true }));
+    await tick(260);
+    ok(shown().indexOf(PAIRS[0]) < 0,
+       'after the undo NEITHER remote twin still answers the replaced value');
     global.window = win; global.document = doc;
   }
 

@@ -5427,6 +5427,11 @@ window.PaneState = (function () {
     });
     document.addEventListener('htmx:beforeSwap', function (evt) {
         if (!evt.target || evt.target.id !== 'table-pane') return;
+        // A swap an upstream listener VETOED (the Live-Edit leave guard's
+        // Cancel calls preventDefault on body, first) never replaces the DOM:
+        // htmx aborts right after this event, afterSwap never runs, so a park
+        // here would strand the pane blank with the grid detached.
+        if (evt.defaultPrevented) return;
         if (evt.detail && evt.detail.shouldSwap === false) return;
         var inRoute = _routeOf(evt.detail);
         // park the OUTGOING route (htmx's history snapshot is already taken);
