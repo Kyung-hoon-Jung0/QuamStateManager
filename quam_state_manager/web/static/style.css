@@ -2148,6 +2148,30 @@ body.exp-list-compact .entry-name wbr { display: none; }
     max-height: calc(100vh - var(--topbar-height));
 }
 
+/* docs/203 — the app shell is a flex column, so nothing above the layout can
+   make the DOCUMENT overflow. The layout used to be sized
+   calc(100vh - var(--topbar-height)), a number app.js publishes from a
+   ResizeObserver AFTER the bar has already changed height. A Live State Edit
+   commit adds the tray's action cluster, the bar wraps one or two rows taller,
+   and for that frame the document overflowed by the growth: a window scrollbar
+   appeared, the bar re-wrapped 15px narrower, the publish landed, the scrollbar
+   went, the bar re-wrapped again. Measured in Chrome at 1707px: three painted
+   layout shifts in 200ms per commit plus a "ResizeObserver loop" error — the
+   customer's "the whole screen shakes". Here the layout takes whatever height
+   is left, in the same layout pass as the bar, so no scrollbar can ever be
+   created. Scoped to screen (a printed page must still flow) and to a body
+   that actually holds the shell. */
+@media screen {
+    body:has(> .app-layout) {
+        height: 100vh; overflow: hidden;
+        display: flex; flex-direction: column;
+    }
+    body:has(> .app-layout) > :not(.app-layout) { flex: 0 0 auto; }
+    body:has(> .app-layout) > .app-layout { flex: 1 1 auto; min-height: 0; }
+    body:has(> .app-layout) #sidebar,
+    body:has(> .app-layout) #main { max-height: none; min-height: 0; }
+}
+
 #content-area {
     flex: 1;
     display: flex; flex-direction: column;
@@ -11377,6 +11401,11 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
    third row; the box shrinks first (its placeholder is a reminder, not a label) */
 @media (max-width: 1150px) { .topbar .search-box { flex: 0 1 11rem; } }
 @media (max-width: 1000px) { .topbar .search-box { flex: 0 1 8rem; } }
+/* docs/203 — window.TopbarHold keeps the group at the tallest height it has
+   reached at this width, so an edit→apply cycle cannot bounce the page. Rows
+   pack to the top: the held space is blank space at the bottom, and nothing
+   inside the bar moves when the tray's action cluster comes and goes. */
+.topbar > nav > ul:first-child { min-height: var(--topbar-hold, 0px); align-content: flex-start; }
 .agent-idle .agent-pill-link { opacity: .6; }
 .agent-between .agent-pill-dot, .agent-running .agent-pill-dot { background: var(--pico-primary); }
 .agent-running .agent-pill-dot { animation: schedPulse 1.4s ease-in-out infinite; }

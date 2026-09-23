@@ -128,6 +128,13 @@
     <noscript><style>.ts-local{visibility:visible}</style></noscript>
 </head>
 <body data-plotly-src="{{ url_for('static', filename='plotly.min.js') }}">
+    {# docs/203 — the bar and the banner slots share ONE block container. The
+       body is a flex column on screen (style.css), and a flex container never
+       collapses its items' margins, so with the slots as direct children every
+       gap between two stacked banners doubled (measured: 10px taller, the
+       layout 10px shorter). Inside one block box the banners' margins collapse
+       exactly as they always did. #}
+    <div class="shell-head">
     <header class="topbar">
         <nav>
             <ul>
@@ -320,6 +327,7 @@
          hx-get="/diagnostics/banner"
          hx-trigger="load, diagnostics-changed from:body delay:500ms"
          hx-swap="innerHTML"></div>
+    </div>{# /.shell-head #}
     <div class="app-layout">
         <aside id="sidebar">
             {# docs/89 — the two app-wide TOOLS, first thing in the sidebar.

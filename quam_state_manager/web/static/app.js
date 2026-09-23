@@ -20163,6 +20163,87 @@ window.TopbarHeight = (function () {
     return { publish: publish, measure: measure };
 })();
 
+/* ── the top bar does not bounce on an edit (docs/203) ────────────────────
+ *
+ * The bar's left group is a wrapping flex row, and the pending tray lives in
+ * it. A Live State Edit commit adds "● N unsaved · Review · Apply to live",
+ * the badge turns into "Working state · N unsaved", Auto-Sync gains
+ * "(N pending)" — and the group wraps one or two rows taller. Measured on the
+ * customer's 5Q chip: 135px at 1280/1366, 92 at 1536, 85 at 1707, 13 at 1920.
+ * An Apply, an Undo or an auto-apply flush takes it all away again, so every
+ * edit→apply cycle moved the whole page down and back up. With auto-apply ON
+ * that is a bounce per keystroke-commit.
+ *
+ * The docs/203 flex shell already stopped the scrollbar feedback; this stops
+ * the step itself. The group is allowed to GROW (its content has to fit), but
+ * never to shrink back while the window keeps its width: the tallest height
+ * seen is held as a min-height (a CSS variable, so html.topbar-hidden's own
+ * `min-height: 0` still wins). The rows pack to the top (align-content:
+ * flex-start in style.css), so the held space is blank space at the bottom of
+ * the bar and nothing in it moves. The hold is released where movement is
+ * expected anyway: a window resize and a page navigation.
+ *
+ * No loop: a ResizeObserver that sets min-height to the height it just
+ * observed does not change the size, so it never re-fires itself. The release
+ * runs from resize / navigation events, outside the observer.
+ */
+window.TopbarHold = (function () {
+    'use strict';
+    var _hold = 0;
+    function group() { return document.querySelector('.topbar > nav > ul:first-child'); }
+    function hidden() { return document.documentElement.classList.contains('topbar-hidden'); }
+    function set(ul, h) {
+        _hold = h;
+        if (h > 0) ul.style.setProperty('--topbar-hold', h + 'px');
+        else ul.style.removeProperty('--topbar-hold');
+    }
+    function observed(ul, h) {
+        if (hidden()) return;
+        // the EXACT observed height, never rounded: a min-height 0.9px taller
+        // than what was observed is itself a resize, and the observer would
+        // re-fire into Chrome's "ResizeObserver loop" error (measured)
+        if (h > _hold) set(ul, h);
+    }
+    function release() {
+        // drop the hold, then hold what the bar needs RIGHT NOW: a release with
+        // the tray still pending must not leave _hold at 0, or the next Apply
+        // would shrink the bar unheld
+        var ul = group();
+        if (!ul) return;
+        set(ul, 0);
+        if (!hidden()) set(ul, ul.getBoundingClientRect().height);
+    }
+    function start() {
+        var ul = group();
+        if (!ul) return;
+        if (window.ResizeObserver) {
+            try {
+                new window.ResizeObserver(function (entries) {
+                    var e = entries[entries.length - 1];
+                    var h = (e.borderBoxSize && e.borderBoxSize[0])
+                        ? e.borderBoxSize[0].blockSize
+                        : ul.getBoundingClientRect().height;
+                    observed(ul, h);
+                }).observe(ul);
+            } catch (e) { /* older engine: no hold, the shell still keeps the layout honest */ }
+        }
+        var lastW = window.innerWidth;
+        window.addEventListener('resize', function () {
+            if (window.innerWidth === lastW) return;   // a height-only resize keeps the hold
+            lastW = window.innerWidth;
+            release();
+        });
+        document.addEventListener('htmx:pushedIntoHistory', release);
+        window.addEventListener('popstate', release);
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', start);
+    } else {
+        start();
+    }
+    return { release: release, held: function () { return _hold; } };
+})();
+
 /* ── hx-on without eval (docs/120 item 27) ────────────────────────────────
  *
  * The app sets its own Content-Security-Policy, and it deliberately does NOT
