@@ -768,6 +768,52 @@ def _node_is_dict(root: dict, dot_path: str) -> bool:
     return isinstance(node, dict)
 
 
+# Collections whose entities another object may LIST by reference (a TWPA's
+# ``qubits`` is the one such list on real chips: 360 of 400 real states).
+_LISTED_ENTITY_COLLECTIONS = ("qubits", "qubit_pairs")
+
+
+def _prune_removed_entity_refs(merged: dict, old_state: dict) -> list[str]:
+    """Drop, from every LIST leaf of ``merged``, each absolute reference to a
+    qubit / qubit pair the rebuild removed; return one report line per drop.
+
+    Lists are merge leaves (tier-1 carries them whole, tier-2 grafts them
+    whole), and ``is_pointer`` only knows a STRING -- so a list of pointers
+    slipped past both the "pointer keeps NEW" rule and the dangling scan: a
+    TWPA kept ``'#/qubits/q5'`` after q5 was removed, QUAM warned "Could not
+    resolve reference" and handed back the raw string. Only a reference that
+    resolved in the SOURCE and no longer resolves is dropped (the rebuild
+    removed its entity); every other element, and a pre-existing broken one,
+    is left exactly as it was. Mutates ``merged`` in place.
+    """
+    dropped: list[str] = []
+
+    def removed(x: Any) -> bool:
+        if not (isinstance(x, str) and x.startswith("#/")):
+            return False
+        if x[2:].split("/", 1)[0] not in _LISTED_ENTITY_COLLECTIONS:
+            return False
+        return _resolves(old_state, x) and not _resolves(merged, x)
+
+    def walk(node: Any, prefix: str) -> None:
+        if not isinstance(node, dict):
+            return
+        for k, v in node.items():
+            p = f"{prefix}.{k}" if prefix else k
+            if isinstance(v, list):
+                gone = [x for x in v if removed(x)]
+                if gone:
+                    node[k] = [x for x in v if not removed(x)]
+                    dropped.extend(
+                        f"{p} -> {x} (removed {x[2:].split('/', 1)[0].rstrip('s')};"
+                        " reference dropped)" for x in gone)
+            else:
+                walk(v, p)
+
+    walk(merged, "")
+    return dropped
+
+
 def merge_states(old_state: dict, new_state: dict,
                  class_schemas: dict[str, list[str]] | None = None,
                  protect_paths: set[str] | None = None,
@@ -813,6 +859,10 @@ def merge_states(old_state: dict, new_state: dict,
     carry_ports = _carryable_ports(old_state, new_state, old_wiring, new_wiring)
     merged = _merge(old_state, new_state, "", stats, class_schemas, protect_paths,
                     keep_classes, carry_ports)
+    # A removed qubit/pair is still NAMED inside a list another object carried
+    # (a TWPA's `qubits`); the list survives as a leaf, so drop the reference
+    # visibly here (reported with the residual loss) rather than ship it broken.
+    ref_drops = _prune_removed_entity_refs(merged, old_state)
     stats.ports_carried.sort(key=natural_key)
     # Every one of these lists is a set of dot-paths shown to the user in
     # the build-result transparency panel, TRUNCATED to the first 80/200
@@ -850,6 +900,10 @@ def merge_states(old_state: dict, new_state: dict,
          else stats.residual_lost).append(p)
     stats.superseded.sort(key=natural_key)
     stats.residual_lost.sort(key=natural_key)
+    # First, not sorted in: the panel shows only the first 80 of a list a
+    # removed qubit fills with hundreds of its own leaves, and a changed
+    # association is the line a reader could not have predicted.
+    stats.residual_lost[:0] = sorted(ref_drops, key=natural_key)
 
     grafted_prefixes = [p for p, _ in stats.graft_subtrees]
     dangling: list[str] = []

@@ -134,6 +134,41 @@ def test_twpas_preserved_when_rebuild_drops_them():
     assert merge_states(old2, new2).merged["qubits"].keys() == {"q1"}
 
 
+def test_removed_qubit_reference_dropped_from_a_carried_list():
+    # QA F14: removing q2 left '#/qubits/q2' inside the TWPA's `qubits` LIST --
+    # a list is a merge leaf, so tier-1 carried the old list whole over the
+    # builder's null and the dangling scan (strings only) never looked inside.
+    old = {"qubits": {"q1": {"f": 1}, "q2": {"f": 2}},
+           "twpas": {"t": {"qubits": ["#/qubits/q1", "#/qubits/q2"]}}}
+    new = {"qubits": {"q1": {"f": 0}},
+           "twpas": {"t": {"qubits": None}}}           # TWPA(...).to_dict()
+    r = merge_states(old, new)
+    assert r.merged["twpas"]["t"]["qubits"] == ["#/qubits/q1"]
+    refs = [x for x in r.stats.residual_lost if x.startswith("twpas.")]
+    assert len(refs) == 1                            # reported, never silent
+    # listed FIRST: the panel shows 80 lines and the removed qubit's own
+    # leaves (hundreds on a real chip) would otherwise bury it
+    assert r.stats.residual_lost[0] == refs[0]
+    assert "twpas.t.qubits" in refs[0] and "#/qubits/q2" in refs[0]
+    # the same when the whole TWPA is grafted (builder emitted no twpas)
+    r2 = merge_states(old, {"qubits": {"q1": {"f": 0}}, "twpas": {}})
+    assert r2.merged["twpas"]["t"]["qubits"] == ["#/qubits/q1"]
+    assert any("#/qubits/q2" in x for x in r2.stats.residual_lost)
+
+
+def test_surviving_list_references_carried_verbatim():
+    # control: nothing removed -> the list is carried untouched, nothing reported;
+    # a reference that was ALREADY broken in the source is not ours to edit.
+    old = {"qubits": {"q1": {"f": 1}, "q2": {"f": 2}},
+           "twpas": {"t": {"qubits": ["#/qubits/q1", "#/qubits/q2", "#/qubits/q9",
+                                      "#/wiring/x", "plain"]}}}
+    new = {"qubits": {"q1": {"f": 0}, "q2": {"f": 0}},
+           "twpas": {"t": {"qubits": None}}}
+    r = merge_states(old, new)
+    assert r.merged["twpas"]["t"]["qubits"] == old["twpas"]["t"]["qubits"]
+    assert r.stats.residual_lost == []
+
+
 def test_dangling_graft_flagged():
     # A grafted macro points at a qubit the rebuild no longer has.
     old = {"qubit_pairs": {"p": {"macros": {"cz": {"ref": "#/qubits/q9/z"}}}}}

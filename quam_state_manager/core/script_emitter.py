@@ -39,7 +39,7 @@ from quam_state_manager.core.loader import natural_key
 import importlib.util
 import inspect
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from pprint import pformat
 
@@ -821,7 +821,9 @@ def emit_bundle(spec: dict, allocation: dict | None, versions: dict | None,
     ``versions`` feeds the README's env pins. Pure — writes nothing.
     """
     chip = chip_name or "chip"
-    stamp = stamp or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    # A person reads this date: the build machine's LOCAL day (a UTC stamp
+    # dated a 01:52 KST build "yesterday"). Storage stamps stay UTC (docs/196).
+    stamp = stamp or datetime.now().strftime("%Y-%m-%d")
     bundle = {
         "01_make_wiring.py": _emit_wiring(spec, allocation or {}, chip, stamp),
         "02_build_machine.py": _emit_build(spec, chip, stamp, allocation or {}),

@@ -60,3 +60,35 @@ def test_a_real_divergence_is_still_raised_and_kept(env):
     assert ctx.get("live_diverged") is True
     ctx = _poll(env)
     assert ctx.get("live_diverged") is True, "still diverged -> still flagged"
+
+
+def test_an_outside_write_is_seen_on_the_next_poll_not_30_s_later(env, monkeypatch):
+    """QA regenerate-r2-36: the hash re-check is throttled to once / 30 s, and
+    the cheap mtime check its comment relies on ran only on the Chip Status
+    poll -- so on every other page an outside write read "Synced" for up to
+    30 s and Re-generate built the stale working copy. A MOVED live pair is
+    judged on the very next poll (throttle NOT lifted here), and only once."""
+    import os
+    import time
+
+    from quam_state_manager.core import working_copy
+
+    ctx = _poll(env)                                  # a hash check just ran
+    assert ctx.get("live_diverged") is not True
+    calls = []
+    real = working_copy.live_diverged_now
+    monkeypatch.setattr(working_copy, "live_diverged_now",
+                        lambda wc: calls.append(1) or real(wc))
+    c = env["client"]
+    assert c.get("/state/drift").status_code == 200   # nothing moved: throttled
+    assert calls == []
+    p = env["live"] / "state.json"
+    p.write_text(json.dumps(_state(off_a=0.123)), encoding="utf-8")
+    t = time.time() + 5
+    os.utime(p, (t, t))
+    assert c.get("/state/drift").status_code == 200
+    assert ctx.get("live_diverged") is True, "an outside write must not wait 30 s"
+    assert calls == [1]
+    for _ in range(3):                                # same mtimes: no re-hash
+        c.get("/state/drift")
+    assert calls == [1]

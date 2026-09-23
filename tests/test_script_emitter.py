@@ -88,6 +88,27 @@ def _bundle(spec=None, alloc=_ALLOC):
         "demo", stamp=STAMP)
 
 
+def test_default_stamp_is_the_local_day_not_utc(monkeypatch):
+    # QA F26: a 01:52 KST build was dated the previous (UTC) day. The stamp a
+    # person reads is the build machine's LOCAL date; a clock-free fake keeps
+    # this deterministic on any machine timezone.
+    import datetime as _dt
+
+    class _FakeDT(_dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:                             # local wall clock, KST
+                return cls(2026, 9, 24, 1, 52)
+            return cls(2026, 9, 23, 16, 52, tzinfo=tz)  # the same instant, UTC
+
+    monkeypatch.setattr(script_emitter, "datetime", _FakeDT)
+    b = script_emitter.emit_bundle(_base(), _ALLOC, {"python": "3.11"}, "demo")
+    for name in ("README.md", "01_make_wiring.py", "02_build_machine.py",
+                 "03_generate_config.py"):
+        assert "2026-09-24" in b[name], name
+        assert "2026-09-23" not in b[name], name
+
+
 # --- compile + shape ---------------------------------------------------------
 
 @pytest.mark.parametrize("spec_fn", [

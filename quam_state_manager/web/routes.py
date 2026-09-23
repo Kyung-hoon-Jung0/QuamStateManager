@@ -803,7 +803,20 @@ def _refresh_live_diverged(ctx) -> None:
         return
     now = time.monotonic()
     last = ctx.get("_live_hash_checked_at")
-    if last is not None and (now - last) < _LIVE_HASH_RECHECK_S:
+    # QA regenerate-r2-36: the "cheap os.stat check on every poll" the throttle
+    # above relies on ran only on the Chip Status poll, so on every other page
+    # an outside write read "Synced" for up to 30 s (and Re-generate built the
+    # stale working copy). Two os.stat here: when the live pair's mtimes MOVED
+    # since the last hash check and differ from the sync point, judge now --
+    # once per move, so a still-different live is not re-hashed every poll.
+    try:
+        live_mt = safe_io.state_wiring_mtimes(wc.live_folder)
+    except OSError:
+        live_mt = None
+    moved = (live_mt is not None
+             and live_mt != ctx.get("_live_hash_checked_mt")
+             and live_mt != (wc.synced_state_mtime, wc.synced_wiring_mtime))
+    if not moved and last is not None and (now - last) < _LIVE_HASH_RECHECK_S:
         return
     ctx["_live_hash_checked_at"] = now
     # NON-BLOCKING build lock: if a sync/reconcile is in flight (it holds the lock,
@@ -818,6 +831,7 @@ def _refresh_live_diverged(ctx) -> None:
     if not lock.acquire(blocking=False):
         return
     try:
+        ctx["_live_hash_checked_mt"] = live_mt
         verdict = working_copy.live_diverged_now(wc)
         if verdict:
             ctx["live_diverged"] = True
@@ -25937,8 +25951,20 @@ def generate_probe():
         return jsonify({"error": "No interpreter path given."}), 400
     # r15 (docs/71): accept a venv/conda FOLDER (or a project folder holding
     # a .venv) and resolve it to the interpreter file server-side.
-    resolved = (config_generator.resolve_python_interpreter(python_path)
-                or python_path)
+    resolved = config_generator.resolve_python_interpreter(python_path)
+    if resolved is None and os.path.isdir(python_path):
+        # A folder with no interpreter in it: never spawn the folder itself
+        # (Windows answers "PermissionError: [WinError 5] Access is denied").
+        # Same accepted forms as /generate/select-env's refusal.
+        return jsonify({
+            "python": None, "versions": {}, "usable": False, "missing": [],
+            "resolved": None,
+            "error": (f"No Python interpreter in this folder: {python_path}. "
+                      "Point at the interpreter file OR a venv folder "
+                      r"containing Scripts\python.exe / bin/python (a project "
+                      "folder holding a .venv works too)."),
+        })
+    resolved = resolved or python_path
     res = config_generator.probe_selected_env(
         resolved, instance_path=current_app.instance_path,
     )
@@ -26111,6 +26137,34 @@ def _ingest_abs_path(raw: str) -> tuple[str, str | None]:
     return str(p), None
 
 
+def _output_folder_problem(path: str) -> str | None:
+    """Why a folder cannot be created at absolute *path*, in plain words, or
+    None when it can (a missing tail under an existing folder is fine -- the
+    build's ``mkdir(parents=True)`` makes it). Checked before a build starts:
+    without it a file path or a missing drive reached ``mkdir`` inside the
+    build and surfaced as the raw ``[WinError 183]`` / ``[WinError 3]`` text.
+    Write permission is deliberately NOT judged here (docs/114: os.access is
+    optimistic under NTFS ACLs). Never raises."""
+    try:
+        p = Path(path)
+        if p.exists():
+            if not p.is_dir():
+                return (f"'{p}' is a file, not a folder. Pick a folder, "
+                        f"for example '{p.parent}'.")
+            return None
+        anc = p.parent
+        while not anc.exists():
+            if anc.parent == anc:
+                return (f"'{anc}' does not exist or cannot be reached "
+                        "(missing drive or network share).")
+            anc = anc.parent
+        if not anc.is_dir():
+            return f"'{anc}' is a file, so no folder can be created under it."
+        return None
+    except (OSError, ValueError):
+        return None
+
+
 def _build_output_guard(output_path: str) -> dict | None:
     """A needs_confirm payload if building into *output_path* would clobber an
     existing chip or ingest stray JSON, else None. Two hazards: (1) an EXISTING chip
@@ -26161,6 +26215,9 @@ def generate_build():
     if not output_path:
         return jsonify({"ok": False, "error": "No output folder given."}), 400
     output_path, path_err = _ingest_abs_path(output_path)
+    if path_err:
+        return jsonify({"ok": False, "error": f"Output folder: {path_err}"}), 400
+    path_err = _output_folder_problem(output_path)
     if path_err:
         return jsonify({"ok": False, "error": f"Output folder: {path_err}"}), 400
     if scripts_dir:
@@ -26332,6 +26389,28 @@ def _regen_protected_folders(src_p: Path) -> list[Path]:
     return folders
 
 
+def _regen_source_live_note(src_p: Path) -> str | None:
+    """A plain warning when *src_p* is the active chip's working copy and the
+    live chip's files changed on disk after SM last synced them (QA
+    regenerate-r2-36): the rebuild carries the working state, so those
+    changes are not in it. Read-only, unthrottled (a build is rare and slow
+    anyway), None when unknown or in sync. Never raises."""
+    try:
+        ctx = _active_ctx() or {}
+        wc = ctx.get("working_copy")
+        if (wc is None or not getattr(wc, "working_folder", None)
+                or not path_match.same_folder(src_p, wc.working_folder)):
+            return None
+        if working_copy.live_diverged_now(wc) is not True:
+            return None
+    except Exception:   # noqa: BLE001 — a note never blocks a build
+        return None
+    return ("Built from State Manager's working copy of this chip: the live "
+            "chip's files changed on disk after SM last synced them, so "
+            "those changes are NOT in this rebuild. To include them, take "
+            "live (↓ Take live) and re-generate.")
+
+
 def _output_within_chip(out: Path, chip: Path) -> bool:
     """*out* is *chip* itself, or lies under it with no dot-prefixed folder in
     between. QUAM's folder load rglob()s every *.json and skips only files
@@ -26374,6 +26453,9 @@ def regenerate_build():
     if not source_folder:
         return jsonify({"ok": False, "error": "No source chip to merge from."}), 400
     output_path, path_err = _ingest_abs_path(output_path)
+    if path_err:
+        return jsonify({"ok": False, "error": f"Output folder: {path_err}"}), 400
+    path_err = _output_folder_problem(output_path)
     if path_err:
         return jsonify({"ok": False, "error": f"Output folder: {path_err}"}), 400
     source_folder, path_err = _ingest_abs_path(source_folder)
@@ -26456,6 +26538,7 @@ def regenerate_build():
         if guard is not None:
             return jsonify(guard)
 
+    live_note = _regen_source_live_note(src_p)   # judged as the source is read
     outcome = regenerate.run_regenerate(
         python_path, source_folder, spec, Path(output_path), timeout=600,
         populate_baseline=populate_baseline,
@@ -26463,6 +26546,12 @@ def regenerate_build():
         scripts_dir=scripts_dir,
         instance_path=current_app.instance_path,
     )
+    if live_note and isinstance(outcome, dict):
+        outcome["source_live_changed"] = True
+        res = outcome.get("result")
+        if isinstance(res, dict):
+            # the result panel prints result.warnings as "⚠ ..." lines
+            res["warnings"] = list(res.get("warnings") or []) + [live_note]
     return jsonify(outcome)
 
 
@@ -26628,7 +26717,6 @@ def generate_export_config():
     (expired/never previewed) is a clean 409 rather than a silent subprocess.
     """
     from quam_state_manager.core import config_export as cfgexp
-    from quam_state_manager.core.history import chip_name_for
 
     folder = (request.args.get("path") or "").strip()
     fmt = (request.args.get("format") or "json").lower()
@@ -26641,10 +26729,12 @@ def generate_export_config():
             "error": "No previewed config to export — click \"Preview config\" first.",
         }), 409
 
-    # Same chip-name derivation as the Config Viewer export (chip_name_for, not
-    # a naive basename) so the SAME config downloads under the SAME filename
-    # whichever surface the user exports from.
-    chip = chip_name_for(Path(folder))
+    # Same chip-name derivation as the Config Viewer export and the chip
+    # header (_chip_display_name) so the SAME config downloads under the SAME
+    # filename whichever surface the user exports from. Not chip_name_for
+    # alone: for a flat build folder that is the PARENT's name, so every
+    # rebuild in gen_out downloaded as config_gen_out.json.
+    chip = _chip_display_name(folder)
     stem = cfgexp.safe_stem(chip)
     try:
         if fmt == "py":
@@ -26867,7 +26957,6 @@ def config_export_file():
     but never blocks: exporting the last-good config is legitimate.
     """
     from quam_state_manager.core import config_export as cfgexp
-    from quam_state_manager.core.history import chip_name_for
 
     store = _store()
     if not store or not store.generated_config:
@@ -26880,7 +26969,7 @@ def config_export_file():
 
     fmt = (request.args.get("format") or "json").lower()
     path = _active_path()
-    chip = chip_name_for(Path(path)) if path else None
+    chip = _chip_display_name(path) if path else None
     stem = cfgexp.safe_stem(chip)
     try:
         if fmt == "py":

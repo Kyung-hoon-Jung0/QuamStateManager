@@ -187,6 +187,24 @@ class TestFolderAcceptingRoutes:
         assert r.status_code == 400
         assert "venv folder" in r.get_json()["error"]
 
+    def test_probe_of_a_folder_without_python_says_so_and_spawns_nothing(
+            self, client, tmp_path, monkeypatch):
+        # QA regenerate-r2-32: the unresolved folder fell through to being
+        # EXECUTED -> "probe failed: PermissionError: [WinError 5] Access is
+        # denied". It now answers in the probe's own shape, with no spawn.
+        def no_spawn(*_a, **_k):
+            raise AssertionError("a folder must never be spawned")
+        monkeypatch.setattr(cg, "_run_command", no_spawn)
+        empty = tmp_path / "empty"
+        empty.mkdir()
+        r = client.get("/generate/probe", query_string={"python": str(empty)})
+        body = r.get_json()
+        assert r.status_code == 200, body
+        assert body["usable"] is False and body["resolved"] is None
+        assert "No Python interpreter in this folder" in body["error"]
+        assert "venv folder" in body["error"]
+        assert "PermissionError" not in body["error"]
+
     def test_probe_resolves_folders_and_echoes(self, client, tmp_path):
         venv = tmp_path / "v"
         interp = _mk_interp(venv, "win")

@@ -3785,6 +3785,101 @@ class TestGenerate:
         assert [Path(c) for c in calls] == [
             outside, synth_folder / ".sidecar_like"]
 
+    def test_regenerate_build_says_when_live_moved_past_the_working_copy(
+            self, loaded_client, synth_folder, monkeypatch, tmp_path_factory):
+        # QA regenerate-r2-36: an outside write to the live chip, then a
+        # re-generate within the 30 s hash throttle: the rebuild (from the
+        # working copy, by design) silently lacked the live change. The
+        # result now says so; an unchanged live adds nothing.
+        import os
+        import time
+        from quam_state_manager.core import regenerate as regen_mod
+        calls, wc = self._regen_rig(loaded_client, monkeypatch)
+        monkeypatch.setattr(
+            regen_mod, "run_regenerate",
+            lambda py, src, spec, out, timeout=300, **kw: calls.append(out)
+            or {"ok": True, "status": "ok", "error": None, "merge": None,
+                "result": {"warnings": ["w0"]}})
+        out = tmp_path_factory.mktemp("regen_live") / "out"
+
+        def build():
+            resp = loaded_client.post("/regenerate/build", json={
+                "spec": _gen_valid_spec(), "source_folder": wc,
+                "output_path": str(out)})
+            assert resp.status_code == 200, resp.get_json()
+            return resp.get_json()
+
+        body = build()
+        assert body["result"]["warnings"] == ["w0"]
+        assert "source_live_changed" not in body
+        st = json.loads((synth_folder / "state.json").read_text(encoding="utf-8"))
+        st.setdefault("extras", {})["qa_r2_36"] = 1
+        (synth_folder / "state.json").write_text(json.dumps(st), encoding="utf-8")
+        t = time.time() + 5
+        os.utime(synth_folder / "state.json", (t, t))
+        body = build()
+        assert body["source_live_changed"] is True
+        warns = body["result"]["warnings"]
+        assert warns[0] == "w0" and len(warns) == 2
+        assert "changed on disk" in warns[1] and "NOT in this rebuild" in warns[1]
+
+    # --- QA F28: an output that cannot be a folder is refused on step 7, in
+    # plain words, before anything builds. It used to reach mkdir inside the
+    # build and show the raw "[WinError 183] Cannot create a file when that
+    # file already exists" / "[WinError 3] ... 'Q:\\'" text.
+    @staticmethod
+    def _unused_drive():
+        import string
+        for c in reversed(string.ascii_uppercase):
+            if not Path(f"{c}:\\").exists():
+                return f"{c}:\\nope\\x"
+        return None
+
+    @pytest.mark.parametrize("route", ["/generate/build", "/regenerate/build"])
+    def test_build_refuses_an_output_that_cannot_be_a_folder(
+            self, client, tmp_path, monkeypatch, route):
+        from quam_state_manager.core import config_generator
+        from quam_state_manager.core import regenerate as regen_mod
+        calls = []
+        monkeypatch.setattr(
+            config_generator, "run_generator",
+            lambda py, mode, spec, out, **k: calls.append(out)
+            or {"ok": True, "status": "ok"})
+        monkeypatch.setattr(
+            regen_mod, "run_regenerate",
+            lambda py, src, spec, out, timeout=300, **kw: calls.append(out)
+            or {"ok": True, "status": "ok", "error": None, "merge": None})
+        monkeypatch.setattr(config_generator, "get_selected_env",
+                            lambda *_a, **_k: sys.executable)
+        monkeypatch.setattr(config_generator, "probe_capabilities",
+                            lambda *_a, **_k: {})
+        src = tmp_path / "src"
+        src.mkdir()
+        a_file = tmp_path / "gen_out" / "state.json"
+        a_file.parent.mkdir()
+        a_file.write_text("{}", encoding="utf-8")
+
+        def post(out):
+            return client.post(route, json={
+                "spec": _gen_valid_spec(), "output_path": str(out),
+                "source_folder": str(src), "force": True})
+
+        refusals = [(a_file, "is a file, not a folder"),
+                    (a_file / "sub", "is a file, so no folder can be created")]
+        if sys.platform == "win32" and self._unused_drive():
+            refusals.append((self._unused_drive(), "does not exist"))
+        for out, words in refusals:
+            resp = post(out)
+            assert resp.status_code == 400, (out, resp.get_json())
+            err = resp.get_json()["error"]
+            assert err.startswith("Output folder: ") and words in err, err
+            assert "WinError" not in err and "Errno" not in err
+        assert calls == []
+        # a missing tail under an existing folder is still created by the build
+        resp = post(tmp_path / "new" / "deeper")
+        assert resp.status_code == 200, resp.get_json()
+        assert [Path(c) for c in calls] == [tmp_path / "new" / "deeper"]
+
     def test_build_warns_on_nonempty_output_folder(self, client, tmp_path, monkeypatch):
         """A stray .json in the output folder blocks the build with a confirm."""
         from quam_state_manager.core import config_generator
@@ -4721,6 +4816,31 @@ class TestGenerateExportConfig:
         src = client.get(
             "/generate/export-config?path=" + str(folder) + "&format=py").data.decode()
         assert "WARNING" not in src
+
+    def test_export_is_named_after_the_build_folder_on_both_surfaces(
+            self, client, tmp_path, monkeypatch):
+        # QA regenerate-r2-33: chip_name_for() of a flat build folder is its
+        # PARENT, so every rebuild in gen_out downloaded as config_gen_out.json
+        # (and the .py said "QM hardware config for gen_out"). Named after the
+        # folder itself now, and the Config Viewer export of the same chip,
+        # after Load into app, agrees.
+        TestGeneratePreviewConfig._mock_env_and_previewer(monkeypatch)
+        folder = TestGeneratePreviewConfig._built_folder(tmp_path)
+        client.post("/generate/preview-config", json={"path": str(folder)})
+        for fmt in ("json", "py"):
+            resp = client.get(
+                "/generate/export-config?path=" + str(folder) + "&format=" + fmt)
+            assert resp.status_code == 200
+            cd = resp.headers.get("Content-Disposition", "")
+            assert f"config_built_chip.{fmt}" in cd, cd
+        src = client.get(
+            "/generate/export-config?path=" + str(folder) + "&format=py").data.decode()
+        assert "QM hardware config for built_chip" in src
+        client.post("/generate/load", json={"path": str(folder)})
+        assert _store_of(client).generated_config is not None
+        cd = client.get("/config/export?format=json").headers.get(
+            "Content-Disposition", "")
+        assert "config_built_chip.json" in cd, cd
 
     def test_export_is_never_cached(self, client, tmp_path, monkeypatch):
         # QA regenerate-r2-19: the link names only folder + format, and the
