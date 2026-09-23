@@ -834,7 +834,11 @@
                 if (BulkPairEdit._toolbarPressTs && (Date.now() - BulkPairEdit._toolbarPressTs) < 1000) return;
                 if (to && to.closest && to.closest('#' + P + '-apply-all, #' + P + '-apply-sync, #' + P + '-reset')) return;
                 var b = row && row.querySelector('.bulk-row-apply');
-                if (b && !b.disabled) BulkPairEdit.applyRow(b);
+                // QA liveedit-r2-06: an Apply press elsewhere (the tray) waits for it
+                if (b && !b.disabled) {
+                    var _rp = BulkPairEdit.applyRow(b);
+                    if (window._trackGridCommit) window._trackGridCommit(_rp);
+                }
             });
             t.addEventListener('mouseover', function (e) { _hoverBA(e, true); });
             t.addEventListener('mouseout', function (e) { _hoverBA(e, false); });
@@ -897,10 +901,12 @@
             var dirty = _cells(tr).filter(_isDirty);
             if (!dirty.length) return;
             btn.disabled = true; btn.textContent = '…';
-            _applyCells(dirty, tr, false).then(function (res) {
+            // returned (QA liveedit-r2-06) so a click-away commit can be awaited
+            return _applyCells(dirty, tr, false).then(function (res) {
                 btn.textContent = res.ok ? '✓' : 'Apply';
                 if (res.ok) setTimeout(function () { btn.textContent = 'Apply'; }, 900);
                 _refreshRow(tr); _refreshGlobal(); _recomputeStats();
+                return res;
             });
         },
 

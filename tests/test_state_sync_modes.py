@@ -361,7 +361,10 @@ class TestAcceptThenSyncPreservesEdit:
         assert '<span class="review-sync-edits" hidden>' in html
         assert '<span class="review-sync-clean">' in html
         # The trio markup (apply + reapply) is present even though hidden.
-        assert "doStateSync('apply')" in html
+        # QA liveedit-r2-05: this screen SHOWS the live values, so its apply is
+        # "informed" -- the one-click same-field collision question is not
+        # asked again here (the literal grew that argument).
+        assert "doStateSync('apply', false, false, null, {informed: true})" in html
         assert "doStateSync('reapply')" in html
 
     def test_saved_unapplied_review_offers_safe_push_not_discard_only(

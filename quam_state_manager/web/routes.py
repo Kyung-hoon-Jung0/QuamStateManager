@@ -1822,6 +1822,7 @@ def _rebuild_after_working_copy_replaced(ctx: dict) -> None:
     ctx["working_dirty"] = False
     ctx["live_diverged"] = False
     ctx.pop("live_drift_count", None)   # docs/116: the count dies with the verdict
+    ctx.pop("live_conflicts", None)     # QA liveedit-r2-05: ...and so do its names
     # audit-r10: a wholesale replace resolves any prior staged base (a pull
     # consumed it; a fresh stage re-sets the flag right after this call).
     ctx["staged_base"] = False
@@ -6703,17 +6704,39 @@ def _diverged_oob() -> str:
     of staying stuck on the previous one. Mirrors the OOB copy ``_explorer.html``
     emits on the chip-load redirect path.
     """
-    ident = _active_chip_identity()
     return (
         '<div id="live-diverged-slot" hx-swap-oob="outerHTML">'
-        + render_template(
-            "_live_diverged_banner.html",
-            live_diverged=bool(ident and ident["live_diverged"]),
-            live_drift_count=(ident or {}).get("live_drift_count"),
-            active_name=ident["name"] if ident else None,
-        )
+        + _diverged_banner_html()
         + "</div>"
     )
+
+
+def _diverged_banner_html() -> str:
+    """The ``#live-diverged-slot`` banner's inner HTML, from ctx fields only.
+
+    QA liveedit-r2-07: the banner used to be rendered by a full page render
+    alone, so an open page never showed the "choose which to keep" question
+    Auto-Sync's declined pull (and the one-click apply's collision gate) had
+    just recorded. No live read here (docs/28) -- the flags already hold the
+    verdict. Carries ``live_conflicts`` + ``chip_origin`` like the full render
+    (the in-place-switch OOB copy used to lose both).
+    """
+    ident = _active_chip_identity()
+    return render_template(
+        "_live_diverged_banner.html",
+        live_diverged=bool(ident and ident["live_diverged"]),
+        live_drift_count=(ident or {}).get("live_drift_count"),
+        live_conflicts=(_active_ctx() or {}).get("live_conflicts") or [],
+        active_name=ident["name"] if ident else None,
+        chip_origin=ident["origin"] if ident else "live",
+    )
+
+
+@bp.route("/state/diverged-banner", methods=["GET"])
+def state_diverged_banner():
+    """Re-render the live-diverged banner in place (QA liveedit-r2-07).
+    Always 200; empty when the active chip has not diverged."""
+    return _diverged_banner_html()
 
 
 def _fmt_val(v) -> str:
@@ -8065,18 +8088,40 @@ def bulk_column_history():
         return render_template("_status.html", message="no usable paths",
                                level="error"), 400
 
+    from quam_state_manager.core.pointer_path import resolve_field_target
+
+    # QA F5: the cells hand over their ALIAS path (x180 amp is
+    # ``xy.operations.x180.amplitude`` where ``x180 == "#./x180_DragCosine"``),
+    # and both history tiers walk a path literally -- they stopped at the
+    # pointer string, so the most-edited columns showed no history at all.
+    # Read history at the leaf the alias names NOW (mid-path pointers
+    # followed; the leaf itself untouched, so the tiers' own per-snapshot
+    # leaf-pointer rule and "self-refs stay raw" still hold) -- the per-cell
+    # popover's data-resolved does the same. Unresolvable paths keep ``dp``.
+    with store._lock:
+        merged_now = store.merged
+    ft_by_row: dict[str, Any] = {}
+    hist_map: dict[str, str] = {}
+    for row_id, dp in path_map.items():
+        try:
+            ft = resolve_field_target(merged_now, dp)
+        except Exception:  # noqa: BLE001 — keeps editable=False semantics
+            ft = None
+        ft_by_row[row_id] = ft
+        leaf = ((ft.get("candidates") or [{}])[0].get("path")
+                if ft and ft.get("resolvable") else None)
+        hist_map[row_id] = leaf or dp
+
     hm = _history()
-    snap_series = hm.column_history(ctx["path"], path_map)
+    snap_series = hm.column_history(ctx["path"], hist_map)
     try:
         runs_all, examined = _runs_column_series(
-            ctx, path_map, max_runs=CH_SERIES_RUNS,
+            ctx, hist_map, max_runs=CH_SERIES_RUNS,
             max_examine=CH_SERIES_EXAMINE)
     except Exception:  # noqa: BLE001 — the panel must survive a bad root
         logger.debug("column-history runs tier failed", exc_info=True)
         runs_all, examined = [], 0
     runs = runs_all[:CH_BYRUN_COLS]     # By-run tab shows the newest few
-
-    from quam_state_manager.core.pointer_path import resolve_field_target
 
     def _num_or_none(v):
         if isinstance(v, bool) or not isinstance(v, (int, float)):
@@ -8086,18 +8131,15 @@ def bulk_column_history():
 
     rows_out: list[dict[str, Any]] = []
     uid_roots = _uid_roots()
-    with store._lock:
-        merged_now = store.merged
     for row_id in sorted(path_map, key=natural_key):
         dp = path_map[row_id]
         current = None
         editable = True
-        try:
-            ft = resolve_field_target(merged_now, dp)
-            if ft.get("resolvable"):
-                current = ft.get("resolved_value")
-        except Exception:  # noqa: BLE001
+        ft = ft_by_row.get(row_id)
+        if ft is None:
             editable = False
+        elif ft.get("resolvable"):
+            current = ft.get("resolved_value")
         # Merged series: snapshot tiers + run values, time-merged, then
         # change-point collapsed (field_history's NaN-safe key rule). The
         # snapshot-rows-first build + STABLE sort on ts alone reproduces
@@ -15738,11 +15780,18 @@ def discard():
         ctx["undo_cursor"] = min(int(ctx.get("undo_cursor") or 0) + 1,
                                  len(ctx.get("undo_units") or []))
 
+    _payload = _revert_entry_payload(
+        entry.dot_path, entry.old_value, created=entry.created,
+        deleted=entry.deleted, source_file=entry.source_file)
+    # QA F3: does another log entry still name this path? Only then may the
+    # grid keep the cell's red "pending" box after the repaint.
+    if store is not None:
+        with store._lock:
+            _payload["still_pending"] = any(
+                e.dot_path == entry.dot_path for e in store.change_log)
     resp = make_response(_tray_html())
     resp.headers["HX-Trigger"] = json.dumps({
-        "cellDiscarded": _revert_entry_payload(
-            entry.dot_path, entry.old_value, created=entry.created,
-            deleted=entry.deleted, source_file=entry.source_file),
+        "cellDiscarded": _payload,
         # open Pulses surfaces re-fetch their rows (no-op elsewhere)
         "pulses-changed": True,
         # refresh the diagnostics tray badge + error banner
@@ -16025,6 +16074,15 @@ def _auto_pull_verdict(ctx: dict, dom_paths) -> "object | None":
     )
 
 
+def _live_conflict_204(paths):
+    """204 + a ``liveConflict`` signal: the page re-renders its drift banner
+    (GET /state/diverged-banner). The name must not contain 'autoSyncMerge'."""
+    resp = make_response("", 204)
+    resp.headers["HX-Trigger"] = json.dumps({"liveConflict": {
+        "chip": _active_chip_token(), "paths": list(paths or [])[:50]}})
+    return resp
+
+
 @bp.route("/auto-sync/pull", methods=["POST"])
 def auto_sync_pull():
     """Perform (or decline) one automatic pull. The POLICY lives here.
@@ -16076,7 +16134,10 @@ def auto_sync_pull():
             ctx["live_auto_at"] = {"sig": _auto_pull_sig(ctx),
                                    "conflicts": _paths, "merge_tries": 0}
             if not sess.get("pull_replace"):
-                return "", 204
+                # QA liveedit-r2-07: "the banner is already showing" was true
+                # only after a full render -- an open page got a bare 204 and
+                # never asked. Still 204; the signal makes the page fetch it.
+                return _live_conflict_204(_paths)
         elif not sess.get("pull_replace"):
             # Nothing collides. Take the live changes and put the user's edits
             # back on top, through the door that already does exactly that
@@ -16096,9 +16157,10 @@ def auto_sync_pull():
             ctx["live_auto_at"] = {"sig": _sig, "conflicts": [],
                                    "merge_tries": _tries}
             if _tries > _AUTO_MERGE_TRIES:
-                # Out of attempts. Say nothing more and leave the banner, which
-                # is already up, to offer the explicit choices.
-                return "", 204
+                # Out of attempts. Say nothing more and put the banner up (QA
+                # liveedit-r2-07: it was not "already up" on an open page) to
+                # offer the explicit choices.
+                return _live_conflict_204([])
             resp = make_response("", 204)
             resp.headers["HX-Trigger"] = json.dumps({"autoSyncMergePull": {
                 "chip": _active_chip_token(),
@@ -17180,6 +17242,35 @@ def state_sync():
                             "chip will DISCARD it."),
             })
 
+    # QA liveedit-r2-05: the one-click apply pulls first and replays the edits
+    # over whatever the chip holds, so a node that wrote the SAME field the
+    # user edited was silently overwritten -- no banner, no question (docs/87,
+    # docs/195: a same-field collision is the one case the user decides).
+    # Opt-in (`check_collisions=1`, sent by the one-click presses), skipped
+    # when the user was already told (a conflict-tray retry replays the
+    # stash), and answered by its OWN token -- never implied by force=1 or
+    # ack_unseen=1 (docs/41). A different-field live change still merges
+    # without a word (docs/104's no-confirm press is unchanged there).
+    if (mode == "apply" and request.values.get("check_collisions") == "1"
+            and request.values.get("ack_collision") != "1"
+            and not ctx.get("pending_reapply")):
+        _cv = _auto_pull_verdict(ctx, ())
+        _coll = list(getattr(_cv, "conflicts", ()) or ())
+        if _coll:
+            ctx["live_diverged"] = True          # the banner names these
+            ctx["live_conflicts"] = _coll
+            ctx.pop("live_drift_count", None)
+            _n = len(_coll)
+            return jsonify({
+                "status": "collision", "mode": "apply",
+                "paths": _coll[:8], "count": _n,
+                "message": (
+                    f"The live chip changed {_n} field{'s' if _n != 1 else ''} "
+                    f"you also edited since SM last read it (an experiment "
+                    f"wrote it?). Applying now replaces the chip's value with "
+                    f"yours."),
+            })
+
     wc = ctx["working_copy"]
     store = ctx["store"]
 
@@ -17379,6 +17470,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
     _clear_reapply(ctx)  # edits are on the live chip now — nothing left to re-apply
     ctx["live_diverged"] = False  # live now holds the merged working content
     ctx.pop("live_drift_count", None)   # docs/116
+    ctx.pop("live_conflicts", None)     # QA liveedit-r2-05: resolved with it
     _reset_baseline_after_apply(ctx)  # the user's own change isn't "live drift"
     if pre_apply_ts:
         ctx["last_apply"] = {
@@ -17636,6 +17728,7 @@ def state_apply_to_live():
     _clear_reapply(ctx)  # the edits are now on the live chip — nothing left to re-apply
     ctx["live_diverged"] = False  # live now holds the working content (incl. force)
     ctx.pop("live_drift_count", None)   # docs/116
+    ctx.pop("live_conflicts", None)     # QA liveedit-r2-05: resolved with it
     _reset_baseline_after_apply(ctx)  # the user's own change isn't "live drift"
     if pre_apply_ts:
         ctx["last_apply"] = {

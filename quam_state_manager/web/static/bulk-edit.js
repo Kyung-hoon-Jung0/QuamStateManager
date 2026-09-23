@@ -3293,7 +3293,11 @@
                         '#bulk-apply-all, #bulk-apply-sync, #bulk-reset, '
                         + '[hx-target="#table-pane"]')) return;
                 var b = row && row.querySelector('.bulk-row-apply');
-                if (b && !b.disabled) BulkEdit.applyRow(b);
+                // QA liveedit-r2-06: an Apply press elsewhere (the tray) waits for it
+                if (b && !b.disabled) {
+                    var _rp = BulkEdit.applyRow(b);
+                    if (window._trackGridCommit) window._trackGridCommit(_rp);
+                }
             });
             // Enter applies the row; arrow keys move between cells (spreadsheet nav).
             t.addEventListener('keydown', function (e) {
@@ -3413,10 +3417,12 @@
             var bw = _bandWarnLine(dirty);
             if (bw && !window.confirm('Apply this edit?' + bw)) return;
             btn.disabled = true; btn.textContent = '…';
-            _applyCells(dirty, tr, false).then(function (res) {
+            // returned (QA liveedit-r2-06) so a click-away commit can be awaited
+            return _applyCells(dirty, tr, false).then(function (res) {
                 btn.textContent = res.ok ? '✓' : 'Apply';
                 if (res.ok) setTimeout(function () { btn.textContent = 'Apply'; }, 900);
                 _refreshRow(tr); _refreshGlobal(); _recomputeStats();
+                return res;
             });
         },
 
