@@ -2482,8 +2482,17 @@ window.ChipStatus.mount = function (opts) {
             });
         });
 
-        // Exit early if no RB data
-        if (!rbData.StandardRB && !rbData.InterleavedRB) return;
+        // docs/205: no RB data used to return here with the container EMPTY,
+        // so the 2Q Gate Fidelity section read as a bare heading -- a silently
+        // skipped panel reads as a broken one. Say so, and name the leaf it
+        // fills from, the way the 1Q / readout sections do (docs/148).
+        if (!rbData.StandardRB && !rbData.InterleavedRB) {
+            container.innerHTML = '<p class="muted topo-2qrb-empty" style="margin:0.2rem 0 0.8rem">'
+                + 'no 2Q randomized-benchmarking values on this chip yet — fills from '
+                + '<code>qubit_pairs.&lt;pair&gt;.macros.&lt;gate&gt;.fidelity.StandardRB</code> / '
+                + '<code>InterleavedRB</code> once a 2Q RB run writes them</p>';
+            return;
+        }
 
         // ── Compute pair grid positions (doubled-coordinate scheme) ──
         // Pair midpoint between source & target qubits.
