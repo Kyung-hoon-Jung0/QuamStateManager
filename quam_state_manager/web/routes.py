@@ -6196,6 +6196,8 @@ def bulk_all_values():
     policy = getattr(store, "type_policy", None)
     ctx = _active_ctx() or {}
     chip_tag = hashlib.sha1(str(ctx.get("path", "")).encode("utf-8")).hexdigest()[:12]
+    # QA F17: v3 -- summary.editable now counts list elements + resolvable xrefs,
+    # so a browser-cached v2 body must not revalidate (304) into the old count.
     # v2 salt: payload-shape version + the policy inputs the ty chips derive from
     # (assignment count + manifest versions), so a type-assign or env manifest
     # warm can't 304 a client into stale chips.
@@ -6203,9 +6205,9 @@ def bulk_all_values():
         man_tag = (hashlib.sha1(repr(policy.manifest.get("versions") or {})
                                 .encode("utf-8")).hexdigest()[:8]
                    if policy.manifest is not None else "0")
-        etag = f'"{chip_tag}-{mseq}-{mver}-v2-{len(policy.assignments)}-{man_tag}"'
+        etag = f'"{chip_tag}-{mseq}-{mver}-v3-{len(policy.assignments)}-{man_tag}"'
     else:
-        etag = f'"{chip_tag}-{mseq}-{mver}-v2"'
+        etag = f'"{chip_tag}-{mseq}-{mver}-v3"'
     if request.headers.get("If-None-Match") == etag:
         r = make_response("", 304)
         r.headers["ETag"] = etag

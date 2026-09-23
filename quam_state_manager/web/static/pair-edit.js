@@ -405,7 +405,7 @@
         if (th) th.textContent = sortDir > 0 ? ' ▲' : ' ▼';
     }
 
-    function _recomputeStats() {
+    function _recomputeStats(onlyKeys) {
         var t = table(); if (!t) return;
         var hide = _hiddenSet();
         // docs/141 4ae: a COLD or RETIRED column has no cells to count. Without
@@ -417,6 +417,7 @@
             return !!(_pvirt && _pgv && (_pgv.isCold(k) || (_pgv.isDead && _pgv.isDead(k))));
         };
         COLS.forEach(function (c) {
+            if (onlyKeys && !onlyKeys[c.key]) return;   // QA F9: a keyed pass (repaint / Escape)
             var stat = t.querySelector('[data-col-stats="' + (window.CSS && CSS.escape ? CSS.escape(c.key) : c.key) + '"]');
             if (!stat) return;
             if (hide.has(c.key)) { stat.textContent = ''; return; }
@@ -971,8 +972,13 @@
 
         resetDirty: function () {
             var t = table(); if (!t) return;
+            var statKeys = {};   // QA F9: a restored column's header follows it
             _cells(t).forEach(function (c) {
-                if (_isDirty(c)) c.value = c.getAttribute('data-orig');
+                if (_isDirty(c)) {
+                    c.value = c.getAttribute('data-orig');
+                    var td = c.closest('[data-col-key]');
+                    if (td) statKeys[td.getAttribute('data-col-key')] = 1;
+                }
                 c.classList.remove('dirty', 'bulk-cell-bad');
             });
             _rows().forEach(function (tr) {
@@ -981,6 +987,7 @@
             });
             _rows().forEach(_refreshRow);
             _refreshGlobal();
+            if (Object.keys(statKeys).length) _recomputeStats(statKeys);
         },
 
         sort: sort,
@@ -1170,6 +1177,11 @@
                                               : String(k).replace(/"/g, '\\"');
         };
         var patched = 0, missing = 0, rows = [], covered = [], uncovered = [];
+        var statKeys = {};   // QA F9: the columns whose header min/max must follow
+        var noteStat = function (c) {
+            var td = c.closest('[data-col-key]');
+            if (td) statKeys[td.getAttribute('data-col-key')] = 1;
+        };
         entries.forEach(function (e) {
             if (!e || !e.dot_path) return;
             // BOTH attributes (docs/124 C-2/M-8, same as BulkEdit): the server
@@ -1202,6 +1214,7 @@
                     if (trl && rows.indexOf(trl) < 0) rows.push(trl);
                     patched++;
                     wrote++;
+                    noteStat(c);
                     return;
                 }
                 // A readonly cell (a runtime column) is FOUND but cannot be
@@ -1230,16 +1243,18 @@
                 if (tr && rows.indexOf(tr) < 0) rows.push(tr);
                 patched++;
                 wrote++;
+                noteStat(c);
             });
             if (wrote && honest) covered.push(e.dot_path);
             else uncovered.push(e.dot_path);   // found (cs.length > 0) but not honestly repainted
         });
         rows.forEach(_refreshRow);
-        if (patched) _refreshGlobal();
+        // QA F9: the repainted columns' header min/max + extremes follow
+        if (patched) { _refreshGlobal(); try { _recomputeStats(statKeys); } catch (e) {} }
         return { patched: patched, missing: missing, covered: covered, uncovered: uncovered };
     }
     BulkPairEdit.revertPaths = _revertPaths;
-    BulkPairEdit.recomputeStats = function () { _recomputeStats(); };   // QA liveedit-r2-02
+    BulkPairEdit.recomputeStats = function (onlyKeys) { _recomputeStats(onlyKeys); };   // QA liveedit-r2-02 (+ F9: keyed)
     // docs/141 4af: the apply echo's own entry point, so a harness can drive
     // it without a live /field/edit-batch round trip -- the qubit grid has
     // had `BulkEdit._syncApplied` since §4n for the same reason.

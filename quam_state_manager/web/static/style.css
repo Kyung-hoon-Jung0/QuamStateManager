@@ -9878,6 +9878,25 @@ a.sidebar-tool-btn { text-decoration: none; color: inherit; }
    like every other selected cell (audit). */
 .bulk-td.bulk-sel-anchor { outline-width: 3px; background: color-mix(in srgb, var(--pico-primary) 22%, transparent); }
 .bulk-sel-hint { font-size: .78em; opacity: .8; margin-right: .5rem; white-space: nowrap; }
+/* QA F7: the selection hint + arithmetic bar float in one pill (the
+   #ds-basket-bar pattern) instead of wrapping the toolbar row -- in flow they
+   pushed the grid down 24-70 px on the first shift-click. Injected by
+   bulk-edit.js as the toolbar's sibling (never inside a transformed bar). */
+.bulk-sel-dock {
+    position: fixed; bottom: .8rem; left: 50%; transform: translateX(-50%);
+    z-index: 400; display: flex; align-items: center; gap: .4rem;
+    padding: .3rem .7rem; border-radius: 999px;
+    background: var(--pico-card-background-color);
+    border: 1px solid var(--pico-primary); box-shadow: 0 4px 14px rgba(0,0,0,.3);
+    max-width: min(92vw, 760px);
+}
+.bulk-sel-dock[hidden] { display: none; }
+.bulk-sel-dock .bulk-sel-hint { opacity: .9; }
+.bulk-sel-dock .bulk-arith-bar { margin-right: 0; }
+.bulk-sel-dock .bulk-arith-go { width: auto; }
+/* (0,2,0) beats Pico's input:not([type=...]) height + margin-bottom, which
+   made the pill 70 px tall at the 20 px root size */
+.bulk-sel-dock .bulk-arith-expr { height: auto; margin: 0; padding: .1rem .35rem; }
 /* docs/167 — selection arithmetic. Sits beside the selection hint, appears
    with the selection, and is sized like the toolbar's other small affordances
    so it never competes with the grid. Injected by bulk-edit.js, so /bulk's

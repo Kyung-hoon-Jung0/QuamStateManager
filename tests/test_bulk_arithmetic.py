@@ -119,3 +119,19 @@ class TestTheOutputShapeIsTheContract:
         # … but the grouped form the grid displays is not exponential, and a
         # comma'd exponential is not a number to anybody:
         assert isinstance(parse_value("1,1e9"), str)
+
+
+def test_the_selection_dock_takes_no_flow_space():
+    """QA F7: the selection hint + arithmetic bar sat IN the toolbar's wrapping
+    flex row, so the first shift-click wrapped it and pushed the grid down
+    (+70 px at 1366) -- the next click hit a header and re-sorted the rows.
+    They float in `.bulk-sel-dock` now. The layout itself needs real Chrome
+    (jsdom has no layout); what is pinned here is the declaration that makes
+    it true, plus the `[hidden]` rule the class's `display` would override."""
+    import re
+    css = (_ROOT / "quam_state_manager" / "web" / "static" / "style.css").read_text(encoding="utf-8")
+    m = re.search(r"\.bulk-sel-dock\s*\{([^}]*)\}", css)
+    assert m, ".bulk-sel-dock rule missing"
+    body = m.group(1)
+    assert re.search(r"position:\s*fixed", body), body
+    assert re.search(r"\.bulk-sel-dock\[hidden\]\s*\{\s*display:\s*none", css)

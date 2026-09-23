@@ -36,18 +36,21 @@ function world(nRows, opts) {
       + '" data-orig="0.' + r + '" data-dot-path="qubits.q' + r + '.amp"></td>'
       + '<td class="bulk-td" data-col-key="len"><input type="text" class="bulk-cell'
       + (ro ? ' bulk-cell-ro" readonly' : '"') + ' value="' + (100 + r)
-      + '" data-orig="' + (100 + r) + '" data-dot-path="qubits.q' + r + '.len"></td></tr>';
+      + '" data-orig="' + (100 + r) + '" data-dot-path="qubits.q' + r + '.len"></td>'
+      + (opts.applyCol ? '<td class="bulk-apply-col"></td>' : '') + '</tr>';
   }
   // the REAL header shape: a sortable corner (class bulk-corner, no
   // .sortable/.bulk-col-head) + resize-handle spans that also carry
   // data-col-key
   const html = '<!doctype html><html><body>'
-    + '<div id="table-pane"><table class="bulk-table" id="bulk-table">'
+    + '<div id="table-pane"' + (opts.panePad ? ' style="padding: 0 ' + opts.panePad + 'px"' : '')
+    + '><table class="bulk-table" id="bulk-table">'
     + '<thead><tr><th class="bulk-corner" data-col-key="__id__">qubit</th>'
     + '<th class="bulk-col-head sortable" data-col-key="amp" data-section="s">amp'
     + '<span class="bulk-resize-handle" data-col-key="amp"></span></th>'
     + '<th class="bulk-col-head sortable" data-col-key="len" data-section="s">len'
     + '<span class="bulk-resize-handle" data-col-key="len"></span></th>'
+    + (opts.applyCol ? '<th class="bulk-apply-col"></th>' : '')
     + '</tr></thead><tbody>' + body + '</tbody></table></div>';
   const dom = new JSDOM(html, { url: 'http://localhost/bulk', pretendToBeVisual: true,
                               runScripts: 'outside-only' });
@@ -222,6 +225,77 @@ function world(nRows, opts) {
   // F14: LiveEditUndo exposes resync (paste double-record killer)
   ok(typeof win3.LiveEditUndo.resync === 'function' || true,
      'F14: paste re-syncs the undo snapshot when available');
+
+  // ── QA F16: an unpinned row goes home; a pinned column sticks to BOTH edges ──
+  {
+    const order = (w) => Array.prototype.map.call(
+      w.document.querySelectorAll('#bulk-table tbody tr'), (tr) => tr.getAttribute('data-qubit')).join(',');
+    const w = world(5);
+    w.BulkEdit._ge.pinRow('q3');
+    ok(order(w) === 'q3,q0,q1,q2,q4', 'F16: precondition — the pinned row floats');
+    w.BulkEdit._ge.pinRow('q3');   // unpin
+    ok(order(w) === 'q0,q1,q2,q3,q4',
+       'F16: unpinning puts the row back where it was (got ' + order(w) + ')');
+    // with a sort active, "back" means its SORTED place, and the sort itself
+    // (direction included) is untouched
+    w.BulkEdit.sort('len'); w.BulkEdit.sort('len');           // descending
+    ok(order(w) === 'q4,q3,q2,q1,q0', 'F16: precondition — sorted descending');
+    w.BulkEdit._ge.pinRow('q1');
+    w.BulkEdit._ge.pinRow('q1');
+    ok(order(w) === 'q4,q3,q2,q1,q0',
+       'F16: an unpinned row returns to its SORTED place (got ' + order(w) + ')');
+    w.BulkEdit.sort('len');
+    ok(order(w) === 'q0,q1,q2,q3,q4',
+       'F16: and the next header click still toggles the direction (got ' + order(w) + ')');
+    // one of two pins removed: the other stays on top, the freed one goes home
+    w.BulkEdit._ge.pinRow('q4'); w.BulkEdit._ge.pinRow('q2');
+    w.BulkEdit._ge.pinRow('q4');
+    ok(order(w) === 'q2,q0,q1,q3,q4',
+       'F16: unpinning one of two keeps the other floated (got ' + order(w) + ')');
+
+    // columns: jsdom lays nothing out, so widths are stubbed -- without that
+    // every inset is 0px and a broken stack would pass (a vacuous pin)
+    const wc = world(3, { applyCol: true });
+    Object.defineProperty(wc.HTMLElement.prototype, 'offsetWidth', { configurable: true, get() {
+      if (this.classList.contains('bulk-apply-col')) return 30;
+      if (this.classList.contains('bulk-rowhead')) return 40;
+      if (this.getAttribute('data-col-key') === 'amp') return 70;
+      return 50;
+    } });
+    wc.BulkEdit._ge.pinCol('len');
+    wc.BulkEdit._ge.pinCol('amp');
+    const hs = (k, p) => wc.document.querySelector('th.bulk-col-head[data-col-key="' + k + '"]').style[p];
+    ok(hs('amp', 'left') === '40px' && hs('len', 'left') === '110px',
+       'F16: the left stack is unchanged (amp 40px, len 110px; got ' + hs('amp', 'left') + ', ' + hs('len', 'left') + ')');
+    ok(hs('len', 'right') === '30px' && hs('amp', 'right') === '80px',
+       'F16: a right stack mirrors it from the Apply column, in DOM order (len 30px, amp 80px; got '
+       + hs('len', 'right') + ', ' + hs('amp', 'right') + ')');
+    const cellR = wc.document.querySelector('td[data-col-key="amp"]').style.right;
+    ok(cellR === '80px', 'F16: the cells carry the same right inset as their header (got ' + cellR + ')');
+    wc.BulkEdit._ge.pinCol('amp');   // unpin
+    ok(wc.document.querySelector('td[data-col-key="amp"]').style.right === ''
+       && hs('len', 'right') === '30px',
+       'F16: unpinning clears the right inset and restacks the rest');
+
+    // the row head / Apply column stick at MINUS the pane padding (flush with
+    // its edge) and insets count from the padding edge: a pin abutting them
+    // sits one padding nearer, or scrolled columns show through the gap
+    // (real Chrome, 1366: a 20 px gap on both sides)
+    const wp = world(3, { applyCol: true, panePad: 16 });
+    Object.defineProperty(wp.HTMLElement.prototype, 'offsetWidth', { configurable: true, get() {
+      if (this.classList.contains('bulk-apply-col')) return 30;
+      if (this.classList.contains('bulk-rowhead')) return 40;
+      if (this.getAttribute('data-col-key') === 'amp') return 70;
+      return 50;
+    } });
+    wp.BulkEdit._ge.pinCol('amp');
+    wp.BulkEdit._ge.pinCol('len');
+    const hp = (k, p) => wp.document.querySelector('th.bulk-col-head[data-col-key="' + k + '"]').style[p];
+    ok(hp('amp', 'left') === '24px' && hp('len', 'left') === '94px'
+       && hp('len', 'right') === '14px' && hp('amp', 'right') === '64px',
+       'F16: both stacks start flush with the sticky row head / Apply column (got left '
+       + hp('amp', 'left') + ',' + hp('len', 'left') + ' right ' + hp('len', 'right') + ',' + hp('amp', 'right') + ')');
+  }
 
   process.exit(fails ? 1 : 0);
 })();

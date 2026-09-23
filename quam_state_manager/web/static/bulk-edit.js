@@ -2238,7 +2238,25 @@
             el = document.createElement('span');
             el.id = 'bulk-sel-hint';
             el.className = 'bulk-sel-hint';
-            host.parentNode.insertBefore(el, host);
+            // QA F7: the hint + the arithmetic bar used to sit IN the toolbar's
+            // wrapping flex row, so the first shift-click wrapped it and pushed
+            // the whole grid down (70 px at 1366) -- the next click landed on a
+            // header and re-sorted. They live in a floating dock now (the
+            // #ds-basket-bar pattern): position:fixed takes no flow space. It
+            // is the toolbar's SIBLING, not its child: the toolbar carries the
+            // translateX(scrollLeft) of _pinBars, and a transformed ancestor
+            // would make `fixed` mean "fixed to the toolbar".
+            var bar = host.closest ? host.closest('.bulk-toolbar') : null;
+            if (bar && bar.parentNode) {
+                var dock = document.createElement('div');
+                dock.id = 'bulk-sel-dock';
+                dock.className = 'bulk-sel-dock';
+                dock.hidden = true;
+                dock.appendChild(el);
+                bar.parentNode.insertBefore(dock, bar.nextSibling);
+            } else {
+                host.parentNode.insertBefore(el, host);
+            }
         }
         return el;
     }
@@ -2248,6 +2266,7 @@
         el.textContent = n
             ? (n + ' cell' + (n === 1 ? '' : 's') + ' selected — Ctrl+D fills from the anchor · Esc clears · or scale them:')
             : '';
+        if (el.parentNode && el.parentNode.id === 'bulk-sel-dock') el.parentNode.hidden = !n;   // QA F7
         var t = table();
         if (t) {
             t.querySelectorAll('td.bulk-sel-anchor').forEach(function (td) {
@@ -2531,17 +2550,27 @@
 
         var rows = [], skipped = [], unchanged = [], anyFloat = false;
         _selCells().forEach(function (td) {
-            var label = (td.getAttribute('data-dot-path') || td.getAttribute('data-col-key') || '?');
-            function skip(reason) { skipped.push({ label: label, reason: reason }); }
-            // Always through _editableIn: it hydrates a virtualized cold cell.
+            // Always through _editableIn: it hydrates a virtualized cold cell --
+            // so it runs FIRST, before anything is read from inside the td.
             var c = _editableIn(td);
+            // QA liveedit-r2-10: the dot-path and the per-cell flags live on the
+            // cell element, never on the <td> (which carries only data-col-key),
+            // so every row used to read the column key ('x180_amplitude' five
+            // times) and the not-set / reference reasons never fired. Name the
+            // qubit; the full dot-path rides the row's tooltip.
+            var inner = c || td.querySelector('[data-dot-path], [data-path]');
+            var path = inner ? (inner.getAttribute('data-dot-path') || inner.getAttribute('data-path') || '') : '';
+            var trq = td.closest('tr');
+            var rid = trq && trq.getAttribute('data-qubit');
+            var label = (rid ? rid + ' · ' : '') + (td.getAttribute('data-col-key') || path || '?');
+            function skip(reason) { skipped.push({ label: label, path: path, reason: reason }); }
             if (!c || c.readOnly) return skip('read-only');
-            if (td.getAttribute('data-missing') === '1') {
+            if (c.getAttribute('data-missing') === '1') {
                 return skip('not set — there is no value to scale');
             }
             var cur = window.ValueDelta && window.ValueDelta.parse(c.value);
             if (!cur) {
-                return skip(td.getAttribute('data-is-pointer') === '1'
+                return skip(c.getAttribute('data-is-pointer') === '1'
                     ? 'holds a reference, not a number — edit its target'
                     : 'not a number');
             }
@@ -2558,7 +2587,7 @@
                      === same.mant * _pow10(Math.max(0, cur.scale - same.scale))) {
                 return unchanged.push({ label: label, now: c.value });
             }
-            rows.push({ cell: c, td: td, label: label, now: c.value,
+            rows.push({ cell: c, td: td, label: label, path: path, now: c.value,
                         text: out.text, exact: out.exact });
         });
         return { rows: rows, skipped: skipped, unchanged: unchanged,
@@ -2674,7 +2703,7 @@
             body += '<table class="ch-table"><thead><tr><th>Cell</th><th>Now</th>'
                  + '<th></th><th>New</th></tr></thead><tbody>'
                  + plan.rows.map(function (r) {
-                     return '<tr><td>' + esc(r.label) + '</td><td>' + esc(r.now)
+                     return '<tr><td title="' + esc(r.path || '') + '">' + esc(r.label) + '</td><td>' + esc(r.now)
                           + '</td><td>→</td><td>' + esc(r.text)
                           + (r.exact ? '' : ' <span class="muted">≈</span>')
                           + '</td></tr>';
@@ -2690,7 +2719,7 @@
             body += '<p class="muted bulk-arith-note">Skipped ' + plan.skipped.length
                  + ':</p><table class="ch-table"><tbody>'
                  + plan.skipped.map(function (k) {
-                     return '<tr><td>' + esc(k.label) + '</td><td class="muted">'
+                     return '<tr><td title="' + esc(k.path || '') + '">' + esc(k.label) + '</td><td class="muted">'
                           + esc(k.reason) + '</td></tr>';
                  }).join('') + '</tbody></table>';
         }
@@ -2821,7 +2850,7 @@
         // reset
         t.querySelectorAll('.bulk-col-pinned').forEach(function (el) {
             el.classList.remove('bulk-col-pinned');
-            el.style.left = ''; el.style.position = '';
+            el.style.left = ''; el.style.right = ''; el.style.position = '';
         });
         var pins = _pinnedCols().filter(function (k) {
             return t.querySelector('th.bulk-col-head[data-col-key="' + _cssEsc(k) + '"]');
@@ -2836,10 +2865,30 @@
         // the row-header (qubit id) column is the base offset
         var rowHead = t.querySelector('tbody th.bulk-rowhead, tbody tr > th');
         var left = rowHead ? rowHead.offsetWidth : 0;
-        pins.forEach(function (k) {
+        // QA F16: a left inset alone only engages once the column's own place
+        // has scrolled past it, so a pin far to the right sat off-screen at
+        // scrollLeft 0 ("stays visible while scrolling" was false). A RIGHT
+        // inset too -- stacked from the Apply column, the mirror of the left
+        // stack -- makes it stick to whichever edge it would leave by.
+        // Widths first (each pinned cold column hydrated before measuring).
+        var ws = pins.map(function (k) {
             _virtEnsureTd(t.querySelector('td[data-col-key="' + _cssEsc(k) + '"]'));
-            var th = t.querySelector('th.bulk-col-head[data-col-key="' + _cssEsc(k) + '"]');
-            var w = th ? th.offsetWidth : 0;
+            var h = t.querySelector('th.bulk-col-head[data-col-key="' + _cssEsc(k) + '"]');
+            return h ? h.offsetWidth : 0;
+        });
+        var applyHead = t.querySelector('thead th.bulk-apply-col');
+        // The row head and the Apply column stick at MINUS the pane's padding
+        // (flush with its edge, style.css) while an inset counts from the
+        // padding edge -- so a pin abutting them sits one padding nearer than
+        // their width, or scrolled columns show through a padding-wide gap.
+        var sc = _scrollerOf(t);
+        var scs = (sc && window.getComputedStyle) ? window.getComputedStyle(sc) : null;
+        if (rowHead) left = Math.max(0, left - (scs ? (parseFloat(scs.paddingLeft) || 0) : 0));
+        var right = (applyHead ? Math.max(0, applyHead.offsetWidth - (scs ? (parseFloat(scs.paddingRight) || 0) : 0)) : 0)
+            + ws.reduce(function (a, b) { return a + b; }, 0);
+        pins.forEach(function (k, i) {
+            var w = ws[i];
+            right -= w;
             // audit F4: the CELLS and the header only — the resize-handle span
             // inside the th also carries data-col-key, and an inline
             // position:sticky killed its absolute anchoring (drag-resize and
@@ -2851,6 +2900,7 @@
                 el.classList.add('bulk-col-pinned');
                 el.style.position = 'sticky';
                 el.style.left = left + 'px';
+                el.style.right = right + 'px';
             });
             left += w;
         });
@@ -2859,15 +2909,35 @@
         var t = table(); if (!t) return;
         var tb = t.querySelector('tbody'); if (!tb) return;
         var pins = _pinnedRows();
+        var unpinned = 0;
         t.querySelectorAll('tr.bulk-row-pinned').forEach(function (tr) {
             tr.classList.remove('bulk-row-pinned');
+            if (pins.indexOf(tr.getAttribute('data-qubit')) < 0) unpinned++;
         });
+        if (unpinned) _restoreRowOrder(tb);   // QA F16
         if (!pins.length) return;
         // float pinned rows to the top, preserving pin order
         for (var i = pins.length - 1; i >= 0; i--) {
             var tr = tb.querySelector('tr[data-qubit="' + _cssEsc(pins[i]) + '"]');
             if (tr) { tr.classList.add('bulk-row-pinned'); tb.insertBefore(tr, tb.firstChild); }
         }
+    }
+    // QA F16: floating a pinned row moved it in the DOM and nothing ever moved
+    // it back -- an unpinned row stayed first until a reload. Put every row
+    // back in server order (stamped once per fresh tbody by _injectPinGlyphs),
+    // then re-apply the active sort. sort() TOGGLES the direction of the key
+    // it is already sorted by, so flip first and let it flip back.
+    function _restoreRowOrder(tb) {
+        var rows = _rows();
+        var nat = function (r, i) {
+            var v = r.getAttribute('data-nat-idx');
+            return v === null ? 1e9 + i : +v;
+        };
+        var idx = rows.map(nat);
+        rows.map(function (r, i) { return { r: r, n: idx[i] }; })
+            .sort(function (a, b) { return a.n - b.n; })
+            .forEach(function (o) { tb.appendChild(o.r); });
+        if (sortKey) { sortDir = -sortDir; sort(sortKey); }
     }
     // audit F11: the sticky insets are a px snapshot — anything that changes
     // real widths (font scale, drag-resize, curated column show/hide) must
@@ -2918,9 +2988,10 @@
             });
             th.appendChild(b);
         });
-        t.querySelectorAll('tbody tr[data-qubit]').forEach(function (tr) {
+        t.querySelectorAll('tbody tr[data-qubit]').forEach(function (tr, i) {
             var head = tr.querySelector('th');
             if (!head || head.querySelector('.bulk-pin-row')) return;
+            tr.setAttribute('data-nat-idx', String(i));   // QA F16: the server order
             var b = document.createElement('button');
             b.type = 'button';
             b.className = 'bulk-pin bulk-pin-row';
@@ -3005,6 +3076,30 @@
         }
     }
 
+    // QA F9 + F10: Escape put the committed value back, so what was DERIVED
+    // from the value it threw away goes too -- the row's error message (it
+    // described that value; nothing else would ever clear it, the row is clean
+    // now) and the column's header min/max + extreme colouring (a failed commit
+    // recomputed them without the cell). Keyed to the one column: the input
+    // path never recomputes stats (a full pass costs 34-70 ms on a wide chip).
+    // The Escape branch serves every .bulk-cell grid, so a pair / entity grid's
+    // cell is recomputed by the grid that owns it.
+    function _escapeSettle(cell) {
+        var tr = _rowOf(cell);
+        var slot = tr && tr.querySelector('.bulk-row-error');
+        if (slot && !_cells(tr).some(_isDirty)) { slot.hidden = true; slot.textContent = ''; }
+        var k = _colKeyOf(cell); if (!k) return;
+        var keys = {}; keys[k] = 1;
+        if (FREQ_TWIN[k]) keys[FREQ_TWIN[k]] = 1;
+        var t = table();
+        if (t && t.contains(cell)) { _recomputeStats(keys); return; }
+        var grids = [window.BulkPairEdit], eg = window.EntityGrids || {};
+        Object.keys(eg).forEach(function (n) { if (grids.indexOf(eg[n]) < 0) grids.push(eg[n]); });
+        grids.forEach(function (g) {
+            if (g && typeof g.recomputeStats === 'function') { try { g.recomputeStats(keys); } catch (e) {} }
+        });
+    }
+
     function _bindGridEditing() {
         var t = table(); if (!t || t._geBound) return;
         t._geBound = true;
@@ -3058,6 +3153,7 @@
                         ev.stopPropagation();       // don't also close a popover
                         _ae.value = _ae.getAttribute('data-orig');
                         _ae.dispatchEvent(new Event('input', { bubbles: true }));
+                        _escapeSettle(_ae);          // QA F9 + F10
                         _ae.select();
                         return;
                     }
@@ -3497,8 +3593,9 @@
 
         resetDirty: function () {
             var t = table(); if (!t) return;
+            var statKeys = {};   // QA F9: a restored column's header follows it
             _cells(t).forEach(function (c) {
-                if (_isDirty(c)) c.value = c.getAttribute('data-orig');
+                if (_isDirty(c)) { c.value = c.getAttribute('data-orig'); statKeys[_colKeyOf(c)] = 1; }
                 c.classList.remove('dirty', 'bulk-cell-bad');
             });
             // Clear any leftover per-row error from a previous failed Apply
@@ -3509,6 +3606,7 @@
             });
             _rows().forEach(_refreshRow);
             _refreshGlobal();
+            if (Object.keys(statKeys).length) _recomputeStats(statKeys);
         },
 
         // docs/120 item 8 — the way out of a value search that hid exactly the
@@ -3886,6 +3984,12 @@
             if (dueKeys.length) _virtHydrateCols(dueKeys);
         }
         var patched = 0, missing = 0, rows = [], covered = [], uncovered = [];
+        var statKeys = {};   // QA F9: the columns whose header min/max must follow
+        var noteStat = function (c) {
+            var ck = _colKeyOf(c); if (!ck) return;
+            statKeys[ck] = 1;
+            if (FREQ_TWIN[ck]) statKeys[FREQ_TWIN[ck]] = 1;
+        };
         entries.forEach(function (e) {
             if (!e || !e.dot_path) return;
             var cs = sel(e.dot_path);
@@ -3934,6 +4038,7 @@
                     if (trl && rows.indexOf(trl) < 0) rows.push(trl);
                     patched++;
                     wrote++;
+                    noteStat(c);
                     return;
                 }
                 // A readonly cell (a runtime column) is FOUND but cannot be
@@ -3968,13 +4073,17 @@
                 if (tr && rows.indexOf(tr) < 0) rows.push(tr);
                 patched++;
                 wrote++;
+                noteStat(c);
             });
             if (wrote && honest) covered.push(e.dot_path);
             else uncovered.push(e.dot_path);   // found (cs.length > 0) but not honestly repainted
         });
         rows.forEach(_refreshRow);
         if (_virtPatchColdValue.flushHay) { _hayCache = null; _virtPatchColdValue.flushHay = false; }
-        if (patched) _refreshGlobal();
+        // QA F9: an undo / Revert-last-apply / sync-pull repaint landed new
+        // values, so the header min/max + extremes follow -- only for the
+        // columns it touched (the repaint is a 55 ms path, docs/122).
+        if (patched) { _refreshGlobal(); try { _recomputeStats(statKeys); } catch (e) {} }
         // `covered` (not a missing COUNT) is what the caller needs: with both
         // grids on screen a qubit leaf is legitimately absent from the pair
         // grid, so summing each surface's misses would demand a full rebuild
@@ -3982,7 +4091,7 @@
         return { patched: patched, missing: missing, covered: covered, uncovered: uncovered };
     }
     BulkEdit.revertPaths = _revertPaths;
-    BulkEdit.recomputeStats = function () { _recomputeStats(); };   // QA liveedit-r2-02
+    BulkEdit.recomputeStats = function (onlyKeys) { _recomputeStats(onlyKeys); };   // QA liveedit-r2-02 (+ F9: keyed)
     BulkEdit._virtState = function () {
         return _virt ? { cold: Array.from(_virt.cold), remote: Array.from(_virt.remote),
                          inflight: Array.from(_virt.inflight.keys()), failed: _virt.failed || 0 } : null;

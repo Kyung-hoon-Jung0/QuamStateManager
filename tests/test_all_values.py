@@ -91,6 +91,31 @@ class TestCompletenessInvariant:
         assert KIND_ARRAY not in summary["by_kind"]
         assert KIND_EMPTY not in summary["by_kind"]
 
+    def test_editable_is_the_rule_the_client_edits_by(self):
+        """QA F17: the coverage line and the group badges beside it are one
+        page, so they must count one thing. all-values.js ``isEditableRow``:
+        scalar, list element, or a RESOLVABLE xref (``row[4].d == 0``). The
+        summary counted scalars only — 1,604 vs ~29.7k on the customer chip."""
+        store = _synthetic_store()
+        rows, summary = build_all_values_rows(store)
+
+        def is_editable_row(row):   # all-values.js isEditableRow, verbatim rule
+            k = row[2]
+            return k in ("scalar", "list") or (
+                k == "xref" and not (len(row) > 4 and row[4].get("d")))
+
+        by_rule = sum(1 for r in rows if is_editable_row(r))
+        assert summary["editable"] == by_rule
+        bk = summary["by_kind"]
+        live_xrefs = sum(1 for r in rows if r[2] == "xref" and not r[4]["d"])
+        assert summary["editable"] == bk["scalar"] + bk["list"] + live_xrefs
+        # the fixture reaches every term: 11 scalars, 4 list elements, 2 live
+        # xrefs (the qubit's z.opx_output chain) and 1 dangling one (the TWPA
+        # pump) -- 17, where the scalar-only count said 11
+        assert (bk["scalar"], bk["list"], live_xrefs, bk["xref"]) == (11, 4, 2, 3)
+        assert summary["editable"] == 17
+        assert summary["readonly"] == summary["total"] - summary["editable"]
+
 
 class TestClassificationOnRealShape:
     def test_each_category_lands_in_the_right_kind(self):

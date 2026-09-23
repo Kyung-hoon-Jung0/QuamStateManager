@@ -62,7 +62,9 @@ function freshRows() {
     ['qubits.qA1.extras', '{} empty', 'empty', 0]
   ];
 }
-const SUMMARY = { total: 4, editable: 1, readonly: 3, by_kind: {}, arrays: 2, empties: 1 };
+// QA F17: the server counts what the client edits -- the scalar, the live xref
+// and the list element are editable (3); only the dangling xref is read-only.
+const SUMMARY = { total: 4, editable: 3, readonly: 1, by_kind: {}, arrays: 2, empties: 1 };
 
 let fails = 0;
 function ok(c, m) { if (!c) { console.error('FAIL: ' + m); fails++; } }

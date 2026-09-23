@@ -53,11 +53,16 @@ function ok(c, m) { asserts++; if (!c) { console.error('FAIL: ' + m); fails++; }
 
 const QUBITS = ['q1', 'q2', 'q3', 'q4'];
 
+// QA liveedit-r2-10: the fixture matches production (_bulkedit.html + the
+// _bulk_cell_macros.html renderer) -- the <td> carries only its class and
+// data-col-key; data-dot-path, data-missing and data-is-pointer are on the
+// <input>. The old fixture put them on the td too, which is why a preview
+// that labelled every row with the column key, and never said 'not set' or
+// 'reference', stayed green.
 function cell(dp, v, extra) {
-  return '<td class="bulk-td ck-0" data-col-key="amp" data-dot-path="' + dp + '"'
-    + (extra || '') + '><input type="text" class="bulk-cell" value="' + v
+  return '<td class="bulk-td ck-0" data-col-key="amp"><input type="text" class="bulk-cell" value="' + v
     + '" data-orig="' + v + '" data-dot-path="' + dp + '" data-resolved="' + dp
-    + '" size="10"></td>';
+    + '"' + (extra || '') + ' size="10"></td>';
 }
 
 function build(values, extras) {
@@ -478,8 +483,8 @@ const vals = (win) => Array.prototype.slice.call(
 // 3. Every selected cell lands in exactly one bucket, with a reason
 // ───────────────────────────────────────────────────────────────────────────
 {
-  const win = world(['0.2', '#/qubits/q1/amp', 'hello', '0.4'],
-                    ['', ' data-is-pointer="1"', '', ' data-missing="1"']);
+  const win = world(['0.2', '#/qubits/q1/amp', 'hello', ''],
+                    ['', ' data-is-pointer="1"', '', ' placeholder="not set" data-missing="1"']);
   selectAll(win);
   const p = win.BulkEdit._ge.arithPlan('*2');
   const total = p.rows.length + p.skipped.length + p.unchanged.length;
@@ -491,6 +496,41 @@ const vals = (win) => Array.prototype.slice.call(
   ok(/not set/.test(reasons), 'a missing cell says there is no value to scale');
   ok(/not a number/.test(reasons), 'a text cell says it is not a number');
   ok(p.skipped.every(function (k) { return !!k.label; }), 'every skipped row names its cell');
+  // QA liveedit-r2-10: ...and names it by its QUBIT, not the column key
+  ok(p.skipped.map(function (k) { return k.label.split(' ')[0]; }).join(',') === 'q2,q3,q4',
+     'each skipped row starts with its qubit (got '
+     + p.skipped.map(function (k) { return k.label; }).join(' | ') + ')');
+  ok(p.skipped.every(function (k) { return /^qubits\.q\d\.amp$/.test(k.path); }),
+     'and carries its dot-path for the tooltip');
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// 3b. QA liveedit-r2-10 — the preview says WHICH qubit gets which value
+// ───────────────────────────────────────────────────────────────────────────
+{
+  const win = world(['0.3', '0.31', '0.32', '0.33']);
+  selectAll(win);
+  const p = win.BulkEdit._ge.arithPlan('*1.1');
+  const labels = p.rows.map(function (r) { return r.label; });
+  ok(labels.join(',') === 'q1 · amp,q2 · amp,q3 · amp,q4 · amp',
+     'every planned row names its qubit and column (got ' + labels.join(' | ') + ')');
+  ok(new Set(labels).size === labels.length, 'no two rows read the same');
+  ok(p.rows.map(function (r) { return r.path; }).join(',')
+     === 'qubits.q1.amp,qubits.q2.amp,qubits.q3.amp,qubits.q4.amp',
+     'and each row keeps its full dot-path');
+  // a SORTED grid is the case that made this matter: the row order is no
+  // longer the qubit order, so the label is the only way to tell them apart
+  const tb = win.document.querySelector('#bulk-table tbody');
+  tb.insertBefore(tb.querySelector('tr[data-qubit="q3"]'), tb.firstChild);
+  const p2 = win.BulkEdit._ge.arithPlan('*1.1');
+  ok(p2.rows[0].label === 'q3 · amp' && p2.rows[0].text === '0.352',
+     'in a re-ordered grid the first row is q3 and says so (got ' + p2.rows[0].label + ')');
+  win.BulkEdit._ge.arithOpen('*1.1');
+  const ov = win.document.querySelector('.ch-overlay');
+  const firstCell = ov && ov.querySelector('tbody tr td');
+  ok(!!firstCell && firstCell.textContent === 'q3 · amp'
+     && firstCell.getAttribute('title') === 'qubits.q3.amp',
+     'the preview table shows the qubit, with the dot-path on hover');
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -567,6 +607,28 @@ const vals = (win) => Array.prototype.slice.call(
   const hint = win.document.getElementById('bulk-sel-hint');
   ok(/scale them/.test(hint.textContent),
      'the selection hint names it, or nobody discovers it');
+  // QA F7: in the toolbar's wrapping flex row the hint + bar pushed the whole
+  // grid down on the first shift-click. They float in one dock now -- the
+  // toolbar's SIBLING (the toolbar carries _pinBars' translateX, which would
+  // turn position:fixed into "fixed to the toolbar").
+  const dock = win.document.getElementById('bulk-sel-dock');
+  ok(!!dock && hint.parentNode === dock && bar.parentNode === dock,
+     'F7: the hint and the bar share one floating dock');
+  ok(!dock.closest('.bulk-toolbar'), 'F7: and the dock is not inside the (transformed) toolbar');
+  ok(!win.document.querySelector('.bulk-toolbar #bulk-sel-hint, .bulk-toolbar #bulk-arith-bar'),
+     'F7: nothing selection-related is left in the toolbar row');
+  ok(dock.hidden === false, 'F7: the dock shows with the selection');
+  win.document.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  ok(win.document.querySelectorAll('td.bulk-sel').length === 0, 'F7: Escape clears the selection');
+  ok(dock.hidden === true, 'F7: and the dock goes with it');
+}
+{
+  // F7: a plain click (anchor only) must not show an empty dock
+  const win = world(['1', '2', '3', '4']);
+  const c = win.document.querySelector('#bulk-table tbody input.bulk-cell');
+  c.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  const dock = win.document.getElementById('bulk-sel-dock');
+  ok(!!dock && dock.hidden === true, 'F7: a plain click leaves the dock hidden');
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -593,19 +655,19 @@ function specialWorld() {
   const SHARED = 'ports.mw_outputs.con1.1.1.amp';
   const rows =
       '<tr data-qubit="q1"><th class="bulk-rowhead" data-col-key="__id__">q1</th>'
-    + '<td class="bulk-td ck-0" data-col-key="amp" data-dot-path="qubits.q1.amp">'
+    + '<td class="bulk-td ck-0" data-col-key="amp">'
     + '<input type="text" class="bulk-cell bulk-cell-linked" value="0.2" data-orig="0.2"'
     + ' data-dot-path="qubits.q1.amp" data-resolved="' + SHARED + '" data-linkable="1" size="10">'
     + '</td><td class="bulk-apply-col"><button class="btn-xs bulk-row-apply" disabled></button>'
     + '<span class="bulk-row-error" hidden></span></td></tr>'
     + '<tr data-qubit="q2"><th class="bulk-rowhead" data-col-key="__id__">q2</th>'
-    + '<td class="bulk-td ck-0" data-col-key="amp" data-dot-path="qubits.q2.amp">'
+    + '<td class="bulk-td ck-0" data-col-key="amp">'
     + '<input type="text" class="bulk-cell bulk-cell-linked" value="0.2" data-orig="0.2"'
     + ' data-dot-path="qubits.q2.amp" data-resolved="' + SHARED + '" data-linkable="1" size="10">'
     + '</td><td class="bulk-apply-col"><button class="btn-xs bulk-row-apply" disabled></button>'
     + '<span class="bulk-row-error" hidden></span></td></tr>'
     + '<tr data-qubit="q3"><th class="bulk-rowhead" data-col-key="__id__">q3</th>'
-    + '<td class="bulk-td bulk-cell-ro ck-0" data-col-key="amp" data-dot-path="qubits.q3.amp">'
+    + '<td class="bulk-td bulk-cell-ro ck-0" data-col-key="amp">'
     + '<input type="text" class="bulk-cell" value="0.9" data-orig="0.9" readonly'
     + ' data-dot-path="qubits.q3.amp" data-resolved="qubits.q3.amp" size="10">'
     + '</td><td class="bulk-apply-col"><button class="btn-xs bulk-row-apply" disabled></button>'
