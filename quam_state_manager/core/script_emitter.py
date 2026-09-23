@@ -335,7 +335,10 @@ def _emit_wiring(spec: dict, allocation: dict, chip: str, stamp: str) -> str:
     if twpa_elems:
         w("# readout TWPA pumps (add_twpa_lines seeds pump + pump_ on the port)")
         for tid in twpa_elems:
-            args = "twpas=[%r]" % tid
+            # The id run_build hands add_twpa_lines (redundant "twpa" prefix
+            # stripped -- qualang_tools prepends it), else the recipe names the
+            # element "twpatwpa1" and 02's populate never finds it.
+            args = "twpas=[%r]" % _run_build()._twpa_wire_id(tid)
             if twpa_pumps.get(tid) is not None:
                 args += ", pump_constraints=%s" % _constraint(twpa_pumps[tid])
             if twpa_iso.get(tid) is not None:

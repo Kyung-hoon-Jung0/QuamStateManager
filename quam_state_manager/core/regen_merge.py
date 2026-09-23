@@ -179,7 +179,14 @@ def _merge(old: Any, new: Any, path: str, stats: MergeStats,
            carry_ports: set[str] | None = None) -> Any:
     if isinstance(old, dict) and isinstance(new, dict):
         out: dict = {}
-        kept_cls = _kept_class(old, new, keep)
+        # Keys whose OLD typed object met a NEW null: decided by the tier-2
+        # graft loop below (schema gate + dangling check), never tier-1.
+        deferred: set = set()
+        # Never at the root: the root has its own slot in the build spec
+        # (docs/176 `spec.quam_class`, the Review step's "Chip root class"),
+        # and the build wrote exactly the class the user named there. The
+        # docs/202 §15 keep is for objects below it the spec cannot name.
+        kept_cls = _kept_class(old, new, keep) if path else None
         for k, nv in new.items():
             if k in ("__class__", "__package_versions__"):
                 # Always the NEW build's. Tier-1-carrying an OLD
@@ -212,7 +219,25 @@ def _merge(old: Any, new: Any, path: str, stats: MergeStats,
                 stats.kept_new_pointer += 1
                 continue
             if k in old:
-                out[k] = _merge(old[k], nv, f"{path}.{k}" if path else k,
+                ov = old[k]
+                # An object and a null never meet as tier-1 scalars. The leaf
+                # branch below would carry the whole OLD object onto a field
+                # the rebuild left EMPTY (a CR rebuild of a flux chip wrote
+                # `z: null`; the old FluxLine came back pointing at wiring the
+                # rebuild never made -- generate_config() crashed with the
+                # build reporting success), skipping the schema gate and the
+                # dangling check; or carry an OLD null over a channel the
+                # rebuild CREATED (every CR/ZZ channel of that chip erased).
+                if (nv is None and isinstance(ov, dict)
+                        and isinstance(ov.get("__class__"), str)):
+                    out[k] = None
+                    deferred.add(k)
+                    continue
+                if ov is None and isinstance(nv, dict):
+                    out[k] = copy.deepcopy(nv)          # NEW keeps structure
+                    stats.kept_new_only += _count_leaves(nv)
+                    continue
+                out[k] = _merge(ov, nv, f"{path}.{k}" if path else k,
                                 stats, schemas, protect, keep, carry_ports)
             else:
                 out[k] = copy.deepcopy(nv)
@@ -249,7 +274,8 @@ def _merge(old: Any, new: Any, path: str, stats: MergeStats,
             if isinstance(cls, str):
                 legal = schemas.get(cls)
         for k, ov in old.items():
-            if (k in new or k in ("__class__", "__package_versions__")
+            if ((k in new and k not in deferred)
+                    or k in ("__class__", "__package_versions__")
                     or k in STRUCTURAL_LEAF_KEYS):
                 # __package_versions__ is quam's serialization stamp, not user
                 # data — never carry a stale one onto a rebuilt state.
@@ -733,6 +759,15 @@ def _only_carried(obj: Any, path: str, carry: set[str]) -> Any:
     return out or None
 
 
+def _node_is_dict(root: dict, dot_path: str) -> bool:
+    node: Any = root
+    for seg in dot_path.split("."):
+        if not isinstance(node, dict) or seg not in node:
+            return False
+        node = node[seg]
+    return isinstance(node, dict)
+
+
 def merge_states(old_state: dict, new_state: dict,
                  class_schemas: dict[str, list[str]] | None = None,
                  protect_paths: set[str] | None = None,
@@ -793,8 +828,12 @@ def merge_states(old_state: dict, new_state: dict,
     old_scalars = [(p, v) for p, v in _iter_leaves(old_state)
                    if not is_pointer(v)
                    and not p.startswith("__package_versions__")]  # artifact, never "lost"
-    for p, _ in old_scalars:
+    for p, ov in old_scalars:
         if p in merged_paths:
+            continue
+        # An OLD null the rebuild replaced with real structure is not a lost
+        # calibration (see _merge: NEW keeps structure over an OLD null).
+        if ov is None and _node_is_dict(merged, p):
             continue
         # Schema-gate drops are already reported in stats.schema_dropped —
         # don't double-count them as residual loss (they are deliberate, not

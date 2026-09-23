@@ -135,6 +135,60 @@ def test_alpha_names_survive():
     assert "qubit_pairs=[('A1', 'B2')]" in src
 
 
+_TWPA_IDS = ["twpaA", "TWPA1", "A", "1", "twpa"]
+
+
+def _twpa_spec():
+    return _base(twpas=[{"id": t} for t in _TWPA_IDS], lines=[
+        {"element": t, "line": "twpa_pump",
+         "channel": {"kind": "mw_fem", "out_port": 7} if t == "twpaA" else None}
+        for t in _TWPA_IDS])
+
+
+def test_twpa_id_is_stripped_like_the_wizard_build():
+    """QA F13: the recipe called add_twpa_lines(twpas=['twpa1']) with the raw
+    spec id; qualang_tools prepends "twpa", so the recipe chip named the TWPA
+    'twpatwpa1', 02's populate missed it (pump values never seeded) and 03
+    dangled on '#/twpas/twpatwpa1/pump'. run_build strips the prefix."""
+    src = _bundle(_twpa_spec(), alloc={})["01_make_wiring.py"]
+    assert ("connectivity.add_twpa_lines(twpas=['A'], "
+            "pump_constraints=mw_fem_spec(out_port=7))") in src
+    assert "twpas=['twpaA']" not in src
+    for wire in ("'1'", "'A'", "'twpa'"):      # TWPA1 -> '1'; bare ids kept
+        assert f"add_twpa_lines(twpas=[{wire}]" in src
+
+
+def test_twpa_ids_match_build_connectivity_exactly(monkeypatch):
+    """Parity with the wizard build itself: the ids build_connectivity hands
+    add_twpa_lines are the ids the emitted 01 hands it."""
+    import re
+    import sys
+    import types
+
+    got: list = []
+
+    class _FakeConnectivity:
+        def add_twpa_lines(self, twpas, **_kw):
+            got.extend(twpas)
+
+        def __getattr__(self, _name):
+            return lambda *a, **k: None
+
+    fake = types.ModuleType("qualang_tools.wirer")
+    fake.Connectivity = _FakeConnectivity
+    monkeypatch.setitem(sys.modules, "qualang_tools.wirer", fake)
+    spec = _twpa_spec()
+    for ln in spec["lines"]:
+        ln["channel"] = None                  # no channel_specs import needed
+    script_emitter._run_build().build_connectivity(spec, include_pair_lines=False)
+    src = _bundle(spec, alloc={})["01_make_wiring.py"]
+    emitted = [ast.literal_eval(m) for m in
+               re.findall(r"add_twpa_lines\(twpas=(\[[^\]]*\])", src)]
+    # sorted spec ids: 1, A, TWPA1, twpa, twpaA
+    assert got == ["1", "A", "1", "twpa", "A"]
+    assert [t for ids in emitted for t in ids] == got
+
+
 def test_fixed_frequency_class_choice():
     src = _bundle(_cr_spec(), alloc={})["01_make_wiring.py"]
     assert "FixedFrequencyQuam" in src

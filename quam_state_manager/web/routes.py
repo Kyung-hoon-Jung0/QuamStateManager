@@ -26302,6 +26302,49 @@ def regenerate_reconstruct():
     })
 
 
+def _regen_protected_folders(src_p: Path) -> list[Path]:
+    """The chip folders a re-generate must never write into, nor under.
+
+    The merge source AND, when that source is a working copy (the default:
+    reconstruct/build prefer ``_ctx_path()``), the LIVE chip folder it
+    mirrors -- comparing against the working copy alone never matches the
+    folder the user actually loaded, so "output = the loaded chip" slipped
+    past the must-differ refusal. A working copy of a chip that is no longer
+    the active one (a stale tab) names its live folder in its meta sidecar.
+    """
+    folders = [src_p]
+    ctx = _active_ctx() or {}
+    wc = ctx.get("working_copy")
+    live = None
+    if (wc is not None and getattr(wc, "working_folder", None)
+            and path_match.same_folder(src_p, wc.working_folder)):
+        live = ctx.get("live_path") or ctx.get("path") or wc.live_folder
+    else:
+        root = working_copy.working_state_root(current_app.instance_path)
+        meta = src_p.parent / f"{src_p.name}.meta.json"
+        if path_match.same_folder(src_p.parent, root) and meta.is_file():
+            try:
+                live = safe_io.read_json(meta, attempts=1).get("live_folder")
+            except (OSError, ValueError):
+                live = None
+    if isinstance(live, (str, Path)) and str(live):
+        folders.append(Path(live))
+    return folders
+
+
+def _output_within_chip(out: Path, chip: Path) -> bool:
+    """*out* is *chip* itself, or lies under it with no dot-prefixed folder in
+    between. QUAM's folder load rglob()s every *.json and skips only files
+    under dot-dirs (quam/serialisation/json.py), so a rebuild written into a
+    plain sub-folder is loaded AS the chip -- its keys overwrite the chip's
+    own. fs_key: resolve() + NFC + the per-OS case fold."""
+    o = Path(path_match.fs_key(out)).parts
+    c = Path(path_match.fs_key(chip)).parts
+    if len(o) < len(c) or o[:len(c)] != c:
+        return False
+    return not any(part.startswith(".") for part in o[len(c):])
+
+
 @bp.route("/regenerate/build", methods=["POST"])
 def regenerate_build():
     """Rebuild an existing chip from an (edited) spec into a NEW folder, then
@@ -26352,6 +26395,21 @@ def regenerate_build():
             "ok": False,
             "error": "Output folder must differ from the source chip folder.",
         }), 400
+    # Never INTO the loaded chip's live folder, nor UNDER it or the source:
+    # both refusals come before `force`, so no confirm can bypass them.
+    for chip in _regen_protected_folders(src_p):
+        if not _output_within_chip(out_p, chip):
+            continue
+        if path_match.fs_key(out_p) == path_match.fs_key(chip):
+            msg = "Output folder must differ from the source chip folder."
+            if chip is not src_p:
+                msg = msg[:-1] + f" — it is the loaded chip's own folder ({chip})."
+        else:
+            msg = (f"Output folder is inside the source chip folder ({chip}). "
+                   "QUAM loads every .json under a chip folder, sub-folders "
+                   "included, so that chip would load the rebuilt design "
+                   "instead of its own. Choose a folder outside it.")
+        return jsonify({"ok": False, "error": msg}), 400
 
     python_path = config_generator.get_selected_env(current_app.instance_path)
     if not python_path:
@@ -26548,6 +26606,17 @@ def generate_preview_pulse_waveform():
     return jsonify(payload)
 
 
+def _send_download(mem, *, mimetype, download_name):
+    """A dynamic attachment, never cached. SEND_FILE_MAX_AGE_DEFAULT (365 d,
+    meant for the fingerprinted /static assets) is inherited by EVERY
+    send_file, and these URLs name only a folder + format -- a rebuild into
+    the same folder downloaded the OLD config from the browser cache."""
+    resp = send_file(mem, mimetype=mimetype, as_attachment=True,
+                     download_name=download_name, max_age=0)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @bp.route("/generate/export-config", methods=["GET"])
 def generate_export_config():
     """Download a just-previewed build's config as a drop-in file for bare QUA.
@@ -26590,8 +26659,8 @@ def generate_export_config():
         logger.exception("Wizard config export serialization failed")
         return jsonify({"ok": False, "error": f"serialize failed: {exc}"}), 500
     mem.seek(0)
-    return send_file(mem, mimetype=mime, as_attachment=True,
-                     download_name=f"config_{stem}.{ext}")
+    return _send_download(mem, mimetype=mime,
+                          download_name=f"config_{stem}.{ext}")
 
 
 @bp.route("/generate/load", methods=["POST"])
@@ -26829,8 +26898,8 @@ def config_export_file():
             "_status.html", message=f"Could not serialize config: {exc}", level="error",
         ), 500
     mem.seek(0)
-    return send_file(mem, mimetype=mime, as_attachment=True,
-                     download_name=f"config_{stem}.{ext}")
+    return _send_download(mem, mimetype=mime,
+                          download_name=f"config_{stem}.{ext}")
 
 
 @bp.route("/config/preview", methods=["POST"])

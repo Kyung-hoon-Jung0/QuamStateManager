@@ -612,7 +612,8 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
 
     # Long-cache static assets (they're fingerprinted by asset_url below, so a
     # stale copy can't linger past an edit). HTMX partials stay no-store via
-    # _add_security_headers; this only affects /static/*.
+    # _add_security_headers. NOTE every send_file inherits this too -- a
+    # dynamic download must opt out (routes._send_download).
     app.config["SEND_FILE_MAX_AGE_DEFAULT"] = timedelta(days=365)
 
     # `asset_url(filename)` — like url_for('static', ...) but appends ?v=<mtime>

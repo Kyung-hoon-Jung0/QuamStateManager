@@ -3706,6 +3706,85 @@ class TestGenerate:
         assert got["populate_touched"] is None
         assert got["scripts_dir"] is None
 
+    # --- QA F2/F3: the output is never the loaded chip's live folder, nor
+    # under it. The merge source is the WORKING COPY (instance/working_state),
+    # so a check against the source alone never saw the folder the user
+    # loaded: "output = the chip" got only the generic OVERWRITTEN confirm
+    # (force wrote the live chip), and "output = chip/nested" built silently
+    # -- QUAM's folder load rglob()s it and the chip loads the NEW design.
+    @staticmethod
+    def _regen_rig(client, monkeypatch):
+        from quam_state_manager.core import config_generator
+        from quam_state_manager.core import regenerate as regen_mod
+        calls = []
+        monkeypatch.setattr(
+            regen_mod, "run_regenerate",
+            lambda py, src, spec, out, timeout=300, **kw: calls.append(out)
+            or {"ok": True, "status": "ok", "error": None, "merge": None})
+        monkeypatch.setattr(config_generator, "get_selected_env",
+                            lambda *_a, **_k: sys.executable)
+        monkeypatch.setattr(config_generator, "probe_capabilities",
+                            lambda *_a, **_k: {})
+        app = client.application
+        ctx = app.config["contexts"][app.config["active_context"]]
+        return calls, str(ctx["working_copy"].working_folder)
+
+    def test_regenerate_build_refuses_output_inside_the_loaded_chip(
+            self, loaded_client, synth_folder, monkeypatch):
+        calls, wc = self._regen_rig(loaded_client, monkeypatch)
+        resp = loaded_client.post("/regenerate/build", json={
+            "spec": _gen_valid_spec(), "source_folder": wc,
+            "output_path": str(synth_folder / "nested"), "force": True})
+        assert resp.status_code == 400, resp.get_json()
+        assert "inside the source chip folder" in resp.get_json()["error"]
+        assert calls == []
+
+    def test_regenerate_build_refuses_the_loaded_chips_own_folder(
+            self, loaded_client, synth_folder, monkeypatch):
+        calls, wc = self._regen_rig(loaded_client, monkeypatch)
+        resp = loaded_client.post("/regenerate/build", json={
+            "spec": _gen_valid_spec(), "source_folder": wc,
+            "output_path": str(synth_folder), "force": True})
+        assert resp.status_code == 400, resp.get_json()
+        body = resp.get_json()
+        assert "must differ from the source chip folder" in body["error"]
+        assert "loaded chip's own folder" in body["error"]
+        assert not body.get("needs_confirm")
+        assert calls == []
+
+    def test_regenerate_build_protects_a_stale_tabs_live_chip(
+            self, loaded_client, synth_folder, monkeypatch, tmp_path_factory):
+        # A tab that reconstructed chip A keeps posting A's working copy after
+        # another window loaded chip B -- A's live folder comes from the
+        # working copy's meta sidecar, not the (now B) active context.
+        import shutil
+        calls, wc_a = self._regen_rig(loaded_client, monkeypatch)
+        chip_b = tmp_path_factory.mktemp("chip_b")
+        for name in ("state.json", "wiring.json"):
+            shutil.copy(synth_folder / name, chip_b / name)
+        loaded_client.post("/load", data={"folder": str(chip_b)})
+        app = loaded_client.application
+        active = app.config["contexts"][app.config["active_context"]]
+        assert str(active["working_copy"].working_folder) != wc_a
+        resp = loaded_client.post("/regenerate/build", json={
+            "spec": _gen_valid_spec(), "source_folder": wc_a,
+            "output_path": str(synth_folder / "sub"), "force": True})
+        assert resp.status_code == 400, resp.get_json()
+        assert "inside the source chip folder" in resp.get_json()["error"]
+        assert calls == []
+
+    def test_regenerate_build_still_builds_outside_or_in_a_dot_folder(
+            self, loaded_client, synth_folder, monkeypatch, tmp_path_factory):
+        calls, wc = self._regen_rig(loaded_client, monkeypatch)
+        outside = tmp_path_factory.mktemp("regen_sibling") / "out"
+        for out in (outside, synth_folder / ".sidecar_like"):
+            resp = loaded_client.post("/regenerate/build", json={
+                "spec": _gen_valid_spec(), "source_folder": wc,
+                "output_path": str(out)})
+            assert resp.status_code == 200, resp.get_json()
+        assert [Path(c) for c in calls] == [
+            outside, synth_folder / ".sidecar_like"]
+
     def test_build_warns_on_nonempty_output_folder(self, client, tmp_path, monkeypatch):
         """A stray .json in the output folder blocks the build with a confirm."""
         from quam_state_manager.core import config_generator
@@ -4423,6 +4502,15 @@ class TestConfigExportDownload:
             assert resp.content_type == "application/json"
             assert json.loads(resp.data.decode()) == SYNTH_GENERATED_CONFIG
 
+    def test_export_is_never_cached(self, loaded_client):
+        # QA regenerate-r2-19: the URL names no chip; the app-wide one-year
+        # send_file max-age served chip A's config for chip B from cache.
+        _seed_config_cache(loaded_client)
+        for fmt in ("json", "py"):
+            cc = loaded_client.get(f"/config/export?format={fmt}").headers.get(
+                "Cache-Control", "")
+            assert cc == "no-store", cc
+
     def test_filename_stem_from_chip(self, loaded_client):
         _seed_config_cache(loaded_client)
         cd = loaded_client.get("/config/export?format=py").headers["Content-Disposition"]
@@ -4633,6 +4721,24 @@ class TestGenerateExportConfig:
         src = client.get(
             "/generate/export-config?path=" + str(folder) + "&format=py").data.decode()
         assert "WARNING" not in src
+
+    def test_export_is_never_cached(self, client, tmp_path, monkeypatch):
+        # QA regenerate-r2-19: the link names only folder + format, and the
+        # response inherited SEND_FILE_MAX_AGE_DEFAULT (public, 1 year) -- a
+        # rebuild into the same folder downloaded the OLD config from cache.
+        TestGeneratePreviewConfig._mock_env_and_previewer(monkeypatch)
+        folder = TestGeneratePreviewConfig._built_folder(tmp_path)
+        client.post("/generate/preview-config", json={"path": str(folder)})
+        for fmt in ("json", "py"):
+            resp = client.get(
+                "/generate/export-config?path=" + str(folder) + "&format=" + fmt)
+            assert resp.status_code == 200
+            cc = resp.headers.get("Cache-Control", "")
+            assert cc == "no-store", cc
+            assert "max-age=31536000" not in cc
+        # static assets keep their year (the fingerprinted cache is intended)
+        assert "max-age=31536000" in client.get(
+            "/static/app.js").headers.get("Cache-Control", "")
 
     def test_unknown_format_falls_back_to_json(self, client, tmp_path, monkeypatch):
         TestGeneratePreviewConfig._mock_env_and_previewer(monkeypatch)

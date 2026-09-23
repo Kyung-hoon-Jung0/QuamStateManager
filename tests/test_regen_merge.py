@@ -648,6 +648,30 @@ def test_a_subclass_of_a_subclass_is_kept_too():
     assert ro["__class__"] == LAB_GEF and ro["u_centers"] == [0.1, 0.2]
 
 
+LAB_ROOT = "quam_config.my_quam.Quam"
+STOCK_ROOT = "quam_builder.architecture.superconducting.qpu.flux_tunable_quam.FluxTunableQuam"
+
+
+def test_the_root_class_the_user_picked_is_never_overridden():
+    """QA regenerate-r2-16: the Review step's "Chip root class" is the spec's
+    own slot (docs/176) -- the user picked the stock root to share the chip
+    without the lab package, the build wrote it, and the §15 keep restored the
+    lab root anyway ("kept quam_config.my_quam.Quam -- 1 place"). Below the
+    root the keep still applies."""
+    keep = dict(KEEP)
+    keep[LAB_ROOT] = {"bases": [STOCK_ROOT], "fields": ["qubits", "lab_extra"]}
+    old = _ro_chip(LAB_RO, weights_real=[1.0, 2.0])
+    old.update({"__class__": LAB_ROOT, "lab_extra": 7})
+    new = _ro_chip(STOCK_RO)
+    new["__class__"] = STOCK_ROOT
+    r = merge_states(old, new, keep_classes=keep,
+                     class_schemas={STOCK_ROOT: ["qubits"], STOCK_RO: ["amplitude"]})
+    assert r.merged["__class__"] == STOCK_ROOT
+    assert r.stats.class_changed == [("(root)", LAB_ROOT, STOCK_ROOT)]
+    assert "lab_extra" in r.stats.schema_dropped
+    assert r.stats.class_kept == [("qubits.q1.resonator.operations.readout", LAB_RO)]
+
+
 # ---------------------------------------------------------------------------
 # docs/202 §17 -- a declared port nothing references is carried
 # ---------------------------------------------------------------------------
@@ -763,3 +787,56 @@ class TestADeclaredPortNothingUsesIsCarried:
         new = _chip_with_ports({3: [1, 8]}, refs=[(3, 1)])
         r = _merge_ports(old, new)
         assert r.stats.ports_carried == []
+
+
+# ---------------------------------------------------------------------------
+# QA regenerate-r2-14 -- an object and a null never meet as tier-1 scalars
+# ---------------------------------------------------------------------------
+
+FLUX_Q = "quam_builder.architecture.superconducting.qubit.FluxTunableTransmon"
+FLUX_LINE = "quam.components.channels.FluxLine"
+
+
+def _cr_rebuild_of_a_flux_chip():
+    """The customer case: a flux chip re-generated as cross-resonance. The
+    rebuild still types q1 FluxTunableTransmon but has no flux wiring, so it
+    serializes `z: null`; the pair's CR channel is NEW where OLD had null."""
+    old = {"qubits": {"q1": {
+        "__class__": FLUX_Q, "id": "q1",
+        "z": {"__class__": FLUX_LINE, "joint_offset": 0.12,
+              "opx_output": "#/wiring/qubits/q1/z/opx_output"}}},
+        "qubit_pairs": {"q1-2": {"cross_resonance": None}}}
+    new = {"qubits": {"q1": {"__class__": FLUX_Q, "id": "q1", "z": None}},
+           "qubit_pairs": {"q1-2": {"cross_resonance": {
+               "__class__": "quam_builder.CRChannel", "intermediate_frequency": 0,
+               "opx_output": "#/wiring/qubit_pairs/q1-2/cr/opx_output"}}}}
+    return old, new
+
+
+class TestAnObjectNeverMeetsANullAsAScalar:
+    def test_a_typed_object_over_a_new_null_goes_through_the_schema_gate(self):
+        old, new = _cr_rebuild_of_a_flux_chip()
+        r = merge_states(old, new, class_schemas={FLUX_Q: ["id", "z"]})
+        assert r.merged["qubits"]["q1"]["z"] is None
+        assert "qubits.q1.z" in r.stats.schema_dropped
+        assert r.stats.residual_lost == []
+
+    def test_without_schemas_it_grafts_and_its_pointer_is_checked(self):
+        old, new = _cr_rebuild_of_a_flux_chip()
+        r = merge_states(old, new)
+        assert r.merged["qubits"]["q1"]["z"]["joint_offset"] == 0.12
+        assert ("qubits.q1.z", 2) in r.stats.graft_subtrees
+        assert "qubits.q1.z.opx_output" in r.stats.dangling_grafts
+
+    def test_an_old_null_never_erases_a_channel_the_rebuild_made(self):
+        old, new = _cr_rebuild_of_a_flux_chip()
+        r = merge_states(old, new, class_schemas={FLUX_Q: ["id", "z"]})
+        cr = r.merged["qubit_pairs"]["q1-2"]["cross_resonance"]
+        assert cr == new["qubit_pairs"]["q1-2"]["cross_resonance"]
+        assert r.stats.residual_lost == []
+
+    def test_a_scalar_over_a_null_still_carries(self):
+        # tier-1 unchanged where neither side is an object
+        r = merge_states({"q": {"T1": 4.2e-5, "arr": [1, 2]}},
+                         {"q": {"T1": None, "arr": None}})
+        assert r.merged["q"] == {"T1": 4.2e-5, "arr": [1, 2]}

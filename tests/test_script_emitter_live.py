@@ -105,3 +105,48 @@ def test_emitted_bundle_rebuilds_identical_state(tmp_path):
     )
     assert r.returncode == 0, r.stdout + r.stderr
     assert "generate_config() OK" in r.stdout
+
+
+def test_emitted_bundle_rebuilds_a_twpa_chip(tmp_path):
+    """QA F13: a TWPA whose spec id already says "twpa" (the wizard's own
+    default, and every reconstructed chip) came out of the recipe as
+    'twpatwpa1' with the pump values never seeded (02's populate missed it)
+    while the wizard build had 'twpa1' @ 8.205 GHz. Same fidelity contract."""
+    python = _first_usable_qm_env()
+    if not python:
+        pytest.skip("no usable QM env found")
+
+    spec = _spec()
+    spec["twpas"] = [{"id": "twpa1"}]
+    spec["lines"] = spec["lines"] + [
+        {"element": "twpa1", "line": "twpa_pump", "channel": None}]
+    spec["populate"]["twpa"] = {"twpa1": {"pump_frequency": 8.205e9,
+                                          "pump_amplitude": 0.48,
+                                          "settling_time": 40}}
+    out_a = tmp_path / "a"
+    outcome = run_generator(python, "build", spec, out_a, timeout=600)
+    assert outcome.get("ok"), outcome
+    result = outcome.get("result") or {}
+    bundle = script_emitter.emit_bundle(
+        spec, result.get("allocation") or {}, result.get("versions") or {},
+        "twpa", stamp="2026-01-01")
+    sdir = tmp_path / "scripts"
+    script_emitter.write_bundle(sdir, bundle)
+    out_b = tmp_path / "b"
+    out_b.mkdir()
+    for script in ("01_make_wiring.py", "02_build_machine.py"):
+        r = subprocess.run(
+            [python, str(sdir / script), str(out_b)],
+            capture_output=True, text=True, encoding="utf-8", cwd=str(sdir), timeout=600,
+        )
+        assert r.returncode == 0, f"{script}: {r.stdout}\n{r.stderr}"
+    a = json.loads((out_a / "state.json").read_text(encoding="utf-8"))
+    b = json.loads((out_b / "state.json").read_text(encoding="utf-8"))
+    if not a.get("twpas"):
+        pytest.skip("this env's quam_builder builds no TWPAs")
+    assert list(b.get("twpas") or {}) == list(a["twpas"]) == ["twpa1"]
+    assert b["twpas"]["twpa1"].get("pump_frequency") == 8.205e9
+    for name in ("state.json", "wiring.json"):
+        a = json.loads((out_a / name).read_text(encoding="utf-8"))
+        b = json.loads((out_b / name).read_text(encoding="utf-8"))
+        assert a == b, f"{name} differs between wizard build and emitted scripts"
