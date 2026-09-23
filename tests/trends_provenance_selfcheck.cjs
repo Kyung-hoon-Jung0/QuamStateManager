@@ -14,7 +14,8 @@
  *    metric toggle, so a value applied once would otherwise be lost) and falls
  *    back to 1 on junk / unreadable storage;
  *  - a click on a point whose snapshot carries a uid calls htmx.ajax with
- *    "/dataset/<folder_key>:<run_id>" into #table-pane;
+ *    "/dataset/<folder_key>:<run_id>" into #inspector-pane (docs/204: into
+ *    #table-pane it replaced the Trends it came from and its x could not close it);
  *  - a click on a point with NO uid does nothing at all;
  *  - the hover line names "#<run> · <short>" for a run and the why-sentence
  *    otherwise, with the click hint only where a uid exists;
@@ -295,10 +296,13 @@ world.push((function () {
     // single timeout-0 queue, so one stalled load wedges every later click.
     ok(!('pushUrl' in win._htmxCalls[0][2]) && !('pushURL' in win._htmxCalls[0][2]),
        '4c1 the click passes no dead pushUrl option');
-    ok(win._htmxCalls[0][2].source === '#table-pane',
+    ok(win._htmxCalls[0][2].source === '#inspector-pane',
        '4c2 the click names a source element so hx-sync queues on the pane');
-    ok(win._htmxCalls[0][2].target === '#table-pane',
-       '4d ...into the main pane');
+    // docs/204: the run opens BESIDE the chart. Into #table-pane it replaced
+    // the Trends it was clicked from, and the run header's x (closeInspector)
+    // clears #inspector-pane -- so the x did nothing (customer report).
+    ok(win._htmxCalls[0][2].target === '#inspector-pane',
+       '4d ...into the inspector pane, never over the chart it came from');
 
     win._htmxCalls.length = 0;
     fire(win, 'plotly_click', { points: [{ customdata: pts[0] }] });

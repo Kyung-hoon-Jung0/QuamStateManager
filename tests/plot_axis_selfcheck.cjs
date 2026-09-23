@@ -121,7 +121,8 @@ done.push(new Promise(function (resolve) {
         newPlot: function (id, data, layout) {
             const el = win.document.getElementById(id);
             el.data = data; el.layout = layout;
-            el.on = function () {};
+            el._h = {};
+            el.on = function (ev, fn) { el._h[ev] = fn; };
             return win.Promise.resolve(el);
         },
     };
@@ -166,6 +167,15 @@ done.push(new Promise(function (resolve) {
                 const y3 = (chart.layout || {}).yaxis || {};
                 ok(y3.range[0] < flat && y3.range[1] > flat,
                    '3e a current value equal to the history still leaves a band');
+                // docs/204: a click opens the run in the INSPECTOR pane. Into
+                // #table-pane it replaced what it was clicked from, and the run's
+                // x (closeInspector) had nothing to close (customer report).
+                win._htmxCalls.length = 0;
+                chart._h.plotly_click({ points: [{ customdata: [0, 0, 0, 0, 'ab12cd34:34'] }] });
+                const call = win._htmxCalls[0] || [];
+                ok(call[1] === '/dataset/ab12cd34:34', '3f a drawer click opens that run');
+                ok(call[2] && call[2].target === '#inspector-pane' && call[2].source === '#inspector-pane',
+                   '3g ...in the inspector pane, never over the chart it came from');
                 resolve();
             }, 30);
         }, 30);

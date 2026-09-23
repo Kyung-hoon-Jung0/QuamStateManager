@@ -4388,8 +4388,14 @@ window.ChipTrends = (function () {
                 // There is deliberately no pushUrl here -- htmx 2 has no such
                 // ajax option (the bundled htmx.min.js contains the string
                 // zero times), so passing it only looked like history support.
-                window.htmx.ajax('GET', url, { source: '#table-pane',
-                                               target: '#table-pane',
+                // docs/204: the run opens in the INSPECTOR pane, like every
+                // other surface that opens a run (Datasets, Column History, the
+                // parent-run link). Swapped into #table-pane it REPLACED the
+                // Trends it was clicked from, and its header's x
+                // (closeInspector) clears #inspector-pane -- so the x did
+                // nothing and the only way back was the sidebar.
+                window.htmx.ajax('GET', url, { source: '#inspector-pane',
+                                               target: '#inspector-pane',
                                                swap: 'innerHTML' });
             } else {
                 window.location.href = url;

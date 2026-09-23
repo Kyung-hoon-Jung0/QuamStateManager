@@ -15887,8 +15887,11 @@ function paramHistoryRenderDrawerChart(data, currentValue) {
                 if (window.htmx) {
                     // See chip-status.js's twin: `source` for hx-sync queueing,
                     // and no pushUrl -- htmx 2 has no such ajax option.
+                    // docs/204: into the INSPECTOR pane (see chip-status.js's
+                    // twin) -- into #table-pane it replaced the chart and its
+                    // x had nothing to close.
                     window.htmx.ajax('GET', url, {
-                        source: '#table-pane', target: '#table-pane',
+                        source: '#inspector-pane', target: '#inspector-pane',
                         swap: 'innerHTML',
                     });
                 } else {
