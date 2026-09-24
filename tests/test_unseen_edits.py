@@ -427,7 +427,12 @@ class TestCtrlZDeclaresWhatItSaw:
         js = pathlib.Path("quam_state_manager/web/static/app.js").read_text(encoding="utf-8")
         i = js.index('fetch("/state/drift"')
         body = js[i:i + 1800]
-        assert "onEditSeq(d);" in body, "the drift poll does not call the decision"
+        # QA liveedit-r2-09 (review): the call now also hands over the tray the
+        # poll was sent under (captured before the fetch), so a poll that
+        # predates this window's own tray render is not judged foreign
+        assert "onEditSeq(d, _trayAtIssue);" in body, "the drift poll does not call the decision"
+        pre = js[js.rindex("function poll()", 0, i):i]
+        assert 'var _trayAtIssue = document.getElementById("pending-tray");' in pre
         assert "window._onDriftEditSeq = onEditSeq;" in js
 
     def test_it_does_not_move_for_a_mere_reload(self, app_client):

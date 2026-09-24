@@ -287,7 +287,21 @@ def is_fsp_comp_bundle(dot_paths) -> bool:
     ``.operations.<op>.amplitude`` leaf, the plan's own path shape), never by
     a gid prefix: /redo and staged journal steps re-mint gids.
     """
+    return bool(fsp_comp_bundle_members(dot_paths))
+
+
+def fsp_comp_bundle_members(dot_paths) -> list:
+    """The members of a change group that ARE the FSP compensation unit: its
+    FSP leaves plus its ``.operations.<op>.amplitude`` leaves (the plan's own
+    path shape), in log order -- or ``[]`` when the group is no such bundle.
+
+    Anything else committed in the same group (a T1 typed into the same row
+    commit, another leaf of a staged journal step) is NOT part of the unit:
+    its ✕ takes it alone, and a member's ✕ leaves it in the tray (QA
+    liveedit-r2-16 review)."""
     paths = [p for p in (dot_paths or []) if isinstance(p, str)]
-    return (len(paths) >= 2
-            and any(p.endswith(_FSP_LEAF) for p in paths)
-            and any(_AMP_LEAF_RE.search(p) for p in paths))
+    fsp = [p for p in paths if p.endswith(_FSP_LEAF)]
+    amps = [p for p in paths if _AMP_LEAF_RE.search(p)]
+    if not fsp or not amps:
+        return []
+    return [p for p in paths if p.endswith(_FSP_LEAF) or _AMP_LEAF_RE.search(p)]

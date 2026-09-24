@@ -213,6 +213,24 @@ class TestOneClickApplyAsksAboutASameFieldCollision:
         assert _live(env)["qubits"]["qA1"]["T2ramsey"] == 1.23e-6
         assert not _ctx(env).get("live_conflicts"), (
             "a stale name would reappear on the next generic drift banner")
+        # (review) ...and the banner on the OPEN page comes down with it: the
+        # landed apply answers with the slot, empty, as an OOB swap
+        html = r.data.decode()
+        slot = html[html.index('id="live-diverged-slot"'):]
+        assert 'hx-swap-oob="outerHTML"' in slot[:80], html[-400:]
+        assert "live-diverged-banner" not in html and "choose which to keep" not in html
+
+    def test_an_auto_apply_flush_that_lands_takes_the_banner_down_too(self, env):
+        c = env["client"]
+        assert c.post("/auto-apply/arm").status_code == 200   # armed before the drift
+        self._collide(env)
+        assert _apply(env).get_json()["status"] == "collision"
+        assert "choose which to keep" in c.get("/state/diverged-banner").data.decode()
+        r = c.post("/state/apply-to-live", data={"force": "1"})
+        assert "autoApplyApplied" in r.headers.get("HX-Trigger", ""), "the armed branch"
+        html = r.data.decode()
+        assert 'id="live-diverged-slot" hx-swap-oob="outerHTML"' in html
+        assert "choose which to keep" not in html
 
     def test_take_live_from_the_banner_clears_the_named_collision(self, env):
         # the banner's "Take live -- discard my edits" (a discard pull)
@@ -239,16 +257,94 @@ class TestOneClickApplyAsksAboutASameFieldCollision:
         assert d["status"] == "ok"
         assert _live(env)["qubits"]["qA1"]["T2ramsey"] == 1.23e-6
 
-    def test_the_conflict_tray_retry_is_not_asked_again(self, env):
-        # apply-to-live hit the staleness conflict: the user WAS told the chip
-        # moved, and their edits live in the reapply stash
+    def test_the_conflict_tray_retry_asks_about_a_same_field_move(self, env):
+        # (review) apply-to-live hit the staleness conflict and the edits went
+        # into the reapply stash. The conflict tray says only "an experiment
+        # program updated the live state" -- it never names the field -- so its
+        # "Pull & apply (merge)" used to replace the node's value unasked.
         _edit(env, _T2R, "1.23e-6")
         _write_chip(env["live"], _state(t2r=9.99e-7), future=True)
         html = env["client"].post("/state/apply-to-live").data.decode()
         assert "changed since you loaded it" in html
         assert _ctx(env).get("pending_reapply")
         d = _apply(env).get_json()
+        assert d["status"] == "collision" and d["paths"] == [_T2R], d
+        assert _live(env)["qubits"]["qA1"]["T2ramsey"] == 9.99e-7, "nothing written"
+        assert "tray_html" not in d, "a person's press keeps the tray it is looking at"
+        d = _apply(env, ack_collision="1").get_json()
         assert d["status"] == "ok", d
+        assert _live(env)["qubits"]["qA1"]["T2ramsey"] == 1.23e-6, "asked, then written"
+
+    def test_the_conflict_tray_retry_merges_a_different_field_without_a_word(self, env):
+        _edit(env, _T2R, "1.23e-6")
+        _node_writes(env, T1=9.9e-5)
+        env["client"].post("/state/apply-to-live")
+        assert _ctx(env).get("pending_reapply")
+        d = _apply(env).get_json()
+        assert d["status"] == "ok", d
+        live = _live(env)["qubits"]["qA1"]
+        assert live["T2ramsey"] == 1.23e-6 and live["T1"] == 9.9e-5
+
+    def test_after_a_save_the_gate_still_runs(self, env):
+        # /save stashes too; the gate used to be skipped from then on
+        _edit(env, _T2R, "1.23e-6")
+        assert env["client"].post("/save").status_code == 200
+        assert _ctx(env).get("pending_reapply") and not _ctx(env)["store"].change_log
+        _node_writes(env, T2ramsey=9.99e-7)
+        d = _apply(env).get_json()
+        assert d["status"] == "collision" and d["paths"] == [_T2R], d
+        assert _live(env)["qubits"]["qA1"]["T2ramsey"] == 9.99e-7
+
+    def test_saved_then_edited_again_is_judged_from_the_sync_point(self, env):
+        # the stash keeps the EARLIEST original: after a save the log's own
+        # original is the user's saved value, and judging live against THAT
+        # called the chip's untouched value "the chip moved it too"
+        _edit(env, _T2R, "1.23e-6")
+        assert env["client"].post("/save").status_code == 200
+        _edit(env, _T2R, "1.3e-6")
+        _node_writes(env, T1=9.9e-5)                       # a different field
+        env["client"].post("/state/apply-to-live")         # refused, stashed again
+        assert _ctx(env)["pending_reapply_orig"][_T2R] == 1.5e-6
+        d = _apply(env).get_json()
+        assert d["status"] == "ok", d
+        live = _live(env)["qubits"]["qA1"]
+        assert live["T2ramsey"] == 1.3e-6 and live["T1"] == 9.9e-5
+
+    def test_the_automatic_merge_after_a_same_field_refusal_writes_nothing(self, env):
+        c = env["client"]
+        assert c.post("/auto-sync/set", data={"pull": "1", "pull_replace": "0",
+                                               "push": "1"}).status_code == 200
+        _edit(env, "qubits.qA1.T1", "1.25e-5")
+        assert c.post("/state/apply-to-live").status_code == 200
+        _node_writes(env, T1=1.66e-5)                      # the node wrote T1
+        _edit(env, "qubits.qA1.T1", "1.23e-5")             # ...and so did I
+        r = c.post("/state/apply-to-live")                 # refused -> merge signal
+        chip = json.loads(r.headers["HX-Trigger"])["autoSyncMerge"]["chip"]
+        assert "resolving this itself" in r.data.decode()
+        d = _apply(env, expect_chip=chip).get_json()       # what autoSyncMerge sends
+        assert d["status"] == "collision" and d["paths"] == ["qubits.qA1.T1"], d
+        assert _live(env)["qubits"]["qA1"]["T1"] == 1.66e-5, "the node's value survives"
+        banner = c.get("/state/diverged-banner").data.decode()
+        assert "changed both here and on" in banner and "qubits.qA1.T1" in banner
+        tray = d.get("tray_html") or ""
+        assert 'id="pending-tray"' in tray and "resolving this itself" not in tray, (
+            "the tray must stop saying Auto-Sync is resolving what the user now decides")
+
+    def test_a_merge_that_landed_leaves_no_stale_original_behind(self, env):
+        # the originals go with the stash: after a landed merge the sync point
+        # moved, and a stale original would call MY earlier value "the chip's"
+        c = env["client"]
+        _edit(env, "qubits.qA1.T1", "1.25e-5")
+        _node_writes(env, f_01=7.7e9)
+        c.post("/state/apply-to-live")                     # refused, stashed
+        assert _apply(env).get_json()["status"] == "ok"    # merged and landed
+        assert not _ctx(env).get("pending_reapply_orig")
+        _edit(env, "qubits.qA1.T1", "1.3e-5")
+        _node_writes(env, f_01=7.8e9)                      # a different field again
+        c.post("/state/apply-to-live")                     # refused, stashed
+        d = _apply(env).get_json()
+        assert d["status"] == "ok", d
+        assert _live(env)["qubits"]["qA1"]["T1"] == 1.3e-5
 
 
 # ── liveedit-r2-07 ──────────────────────────────────────────────────────────
@@ -327,6 +423,17 @@ class TestAPassiveWindowLearnsARoundTrip:
             html = env["client"].get(url).data.decode()
             m = re.search(r'data-edit-seq="([^"]*)"', html)
             assert m and m.group(1) == want, (url, m and m.group(1), want)
+
+    def test_the_conflict_tray_names_it_too(self, env):
+        # (review) a refused push's conflict tray IS #pending-tray; without the
+        # stamp this window's own refused apply always read as foreign
+        import re
+        _edit(env, "qubits.qA1.T1", "2.5e-5")
+        _node_writes(env, T1=9.9e-5)
+        html = env["client"].post("/state/apply-to-live").data.decode()
+        assert "pending-tray-conflict" in html
+        m = re.search(r'data-edit-seq="([^"]*)"', html)
+        assert m and m.group(1) and m.group(1) == _seq(env), (m and m.group(1), _seq(env))
 
 
 # ── liveedit-r2-17 ──────────────────────────────────────────────────────────

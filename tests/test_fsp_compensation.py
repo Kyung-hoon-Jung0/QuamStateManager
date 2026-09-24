@@ -440,6 +440,60 @@ class TestTrayDiscardKeepsTheBundleWhole:
                      env["client"].get("/bulk").data.decode()):
             assert html.count("with its full-scale-power bundle (4 changes") == 4, html[:200]
 
+    # review follow-up: the unit is the FSP + its amplitudes, never the whole
+    # gid -- a T1 typed into the same row commit rode along before.
+    _LEN = "qubits.qA1.xy.operations.x180.length"
+
+    def _commit_comp_with_len(self, env) -> list[str]:
+        c = env["client"]
+        plan = c.post("/field/edit", data={"dot_path": _FSP, "value": "-6"}
+                      ).get_json()["fsp_compensation"]
+        updates = ([{"dot_path": self._LEN, "value": "48"},
+                    {"dot_path": _FSP, "value": "-6"}]
+                   + [{"dot_path": a["path"], "value": str(a["new"])}
+                      for a in plan["amps"]])
+        r = c.post("/field/edit-batch", json={"updates": updates, "fsp_ack": "comp",
+                                              "expect_chip": ""})
+        assert r.status_code == 200 and r.get_json()["ok"], r.get_json()
+        log = env["ctx"]["store"].change_log
+        assert len(log) == 5 and len({e.group_id for e in log}) == 1
+        return [u["dot_path"] for u in updates]
+
+    def test_members_are_the_fsp_and_amplitudes_only(self):
+        amp = "qubits.q1.xy.operations.x180_DragCosine.amplitude"
+        got = mw_fem.fsp_comp_bundle_members(
+            ["qubits.q1.T1", _FSP, amp, "qubits.q2.T2ramsey"])
+        assert got == [_FSP, amp]
+        assert mw_fem.fsp_comp_bundle_members([_FSP, "qubits.q1.T1"]) == []
+
+    def test_an_unrelated_leaf_in_the_same_commit_is_its_own_x(self, env):
+        self._commit_comp_with_len(env)
+        r = _x(env, self._LEN)
+        assert r.status_code == 200
+        trig = json.loads(r.headers["HX-Trigger"])
+        assert "cellDiscarded" in trig and "cellsReverted" not in trig
+        left = [e.dot_path for e in env["ctx"]["store"].change_log]
+        assert len(left) == 4 and self._LEN not in left and _FSP in left, (
+            "the ✕ on a T1-like row swept the FSP bundle away with it")
+        assert _ro(env)[0] == -6
+
+    def test_a_member_x_leaves_the_unrelated_leaf(self, env):
+        self._commit_comp_with_len(env)
+        r = _x(env, _AMP)
+        assert [e.dot_path for e in env["ctx"]["store"].change_log] == [self._LEN]
+        assert _ro(env) == (0, 0.6)
+        trig = json.loads(r.headers["HX-Trigger"])
+        ents = trig["cellsReverted"]["entries"]
+        assert len(ents) == 4 and self._LEN not in {e["dot_path"] for e in ents}
+        assert "its 3 compensated amplitudes" in trig["cellsReverted"]["message"]
+
+    def test_the_x_counts_only_the_unit(self, env):
+        self._commit_comp_with_len(env)
+        html = env["client"].get("/state/tray").data.decode()
+        assert html.count("with its full-scale-power bundle (4 changes") == 4, html[:200]
+        assert "bundle (5 changes" not in html
+        assert html.count("Discard this change (Ctrl+Shift+Z restores it)") == 1
+
 
 class TestPointerAmpsThatFollowACompensatedTarget:
     """QA F18: the popup said "Not compensated: -x90_DragCosine ... (amplitude

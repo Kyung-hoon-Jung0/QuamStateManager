@@ -444,12 +444,15 @@ class Modifier:
             return entry
 
     def discard_unit(self, index: int, expect_path: str | None = None,
-                     is_unit=None) -> list[ChangeEntry] | None:
-        """:meth:`discard`, except that an entry whose GROUP is one physical
-        unit takes the whole group with it (QA liveedit-r2-16: an FSP change
-        and its compensated amplitudes -- one member alone changes a pulse's
-        output power). ``is_unit(dot_paths) -> bool`` decides; without it, or
-        for an ungrouped / non-unit entry, this is exactly :meth:`discard`.
+                     unit_of=None) -> list[ChangeEntry] | None:
+        """:meth:`discard`, except that an entry that is a member of a
+        physical unit inside its GROUP takes the unit's other members with it
+        (QA liveedit-r2-16: an FSP change and its compensated amplitudes --
+        one member alone changes a pulse's output power).
+        ``unit_of(group_dot_paths) -> members`` names the unit's dot-paths;
+        a group entry outside them (a T1 committed in the same row) is
+        discarded alone and never swept along. Without ``unit_of``, or for an
+        ungrouped / non-member entry, this is exactly :meth:`discard`.
 
         Returns the reverted entries newest first (``undo_group``'s order and
         its revert-then-pop-per-entry raise semantics), or None like
@@ -464,12 +467,13 @@ class Modifier:
                 return None
             gid = entry.group_id
             members = [e.dot_path for e in log if gid is not None and e.group_id == gid]
-            if len(members) < 2 or is_unit is None or not is_unit(members):
+            unit = set(unit_of(members) or ()) if (len(members) >= 2 and unit_of) else set()
+            if len(unit) < 2 or entry.dot_path not in unit:
                 one = self.discard(index, expect_path=expect_path)
                 return [one] if one is not None else None
             reverted: list[ChangeEntry] = []
             for i in range(len(log) - 1, -1, -1):
-                if log[i].group_id != gid:
+                if log[i].group_id != gid or log[i].dot_path not in unit:
                     continue
                 e = log[i]
                 self._revert_entry(e)

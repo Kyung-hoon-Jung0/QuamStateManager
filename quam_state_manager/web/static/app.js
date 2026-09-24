@@ -3216,6 +3216,71 @@ window._trackGridCommit = function (p) {
     return p;
 };
 
+/* QA liveedit-r2-06 (review): a human press lasts 40-200 ms, and on a fast
+   server the click-away commit's response re-renders #pending-tray (outerHTML)
+   inside that window. The pressed button is then detached, the browser fires
+   no click at all, and the Apply (or Save, or ✕) was swallowed without a
+   word. Remember what was pressed; when the tray was swapped under it and the
+   release lands inside the new tray, press the SAME button there (identical
+   markup, so the same action) -- once, and only if no click reached it. A
+   release outside the tray is the user letting go of the press: nothing. */
+(function () {
+    var pressed = null;
+    document.addEventListener("pointerdown", function (e) {
+        var b = e.button === 0 && e.target && e.target.closest
+                && e.target.closest("#pending-tray button");
+        pressed = b ? { el: b, html: b.outerHTML } : null;
+    }, true);
+    document.addEventListener("pointerup", function (e) {
+        var p = pressed;
+        pressed = null;
+        if (!p || p.el.isConnected) return;          // no swap: the browser clicks
+        var tray = document.getElementById("pending-tray");
+        if (!tray || !e.target || !tray.contains(e.target)) return;
+        var bs = tray.querySelectorAll("button"), t = null;
+        for (var i = 0; i < bs.length; i++) if (bs[i].outerHTML === p.html) { t = bs[i]; break; }
+        if (!t) {
+            // not the same action any more: never pressed on the user's
+            // behalf, and never swallowed without a word either
+            if (window.showToast) window.showToast("The tray changed while you "
+                + "were pressing it, so nothing was pressed. Check it and press "
+                + "again.", "warning");
+            return;
+        }
+        var clicked = false;
+        var saw = function (ev) { if (ev.target && t.contains(ev.target)) clicked = true; };
+        document.addEventListener("click", saw, true);
+        setTimeout(function () {
+            document.removeEventListener("click", saw, true);
+            if (!clicked && t.isConnected && !t.disabled) t.click();
+        }, 0);
+    }, true);
+})();
+
+/* ...and a press that arrives while a commit is awaited (the FSP popup can
+   hold one open) waits its turn instead of being dropped: the queued presses
+   run in order after the commits settle, each once the apply latch is free.
+   A press identical to one already waiting is the double press, and waits
+   once. Bounded: a press that still cannot run after ~10 s says so. */
+function _runSyncPressesInTurn(calls) {
+    var i = 0, tries = 0;
+    (function next() {
+        if (i >= calls.length) return;
+        if (window._applyInFlight) {
+            if (++tries > 200) {
+                if (window.showToast) window.showToast("A sync you pressed did not run -- "
+                    + "another write was still in flight. Press it again.", "warning");
+                return;
+            }
+            setTimeout(next, 50);
+            return;
+        }
+        tries = 0;
+        window.doStateSync.apply(null, calls[i++]);
+        setTimeout(next, 0);
+    })();
+}
+
 window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
     // docs/187 R2: `expectChip` is optional and only the automatic
     // merge passes it -- the chip the server said conflicted, carried on
@@ -3227,20 +3292,31 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
     mode = mode || "discard";
     var _pendCommits = (window._pendingGridCommits || []).slice();
     if (_pendCommits.length) {
-        if (window._awaitingGridCommit) return;      // a double press waits once
-        window._awaitingGridCommit = true;
+        var _args = [mode, forced, ackUnseen, expectChip, opts];
+        var _key = JSON.stringify([mode, !!forced, !!ackUnseen, expectChip || "", opts || {}]);
+        var _wait = window._awaitingGridCommit;
+        if (_wait) {                                 // a double press waits once;
+            if (_wait.keys.indexOf(_key) < 0) {      // any other press waits too
+                _wait.keys.push(_key);
+                _wait.calls.push(_args);
+            }
+            return;
+        }
+        _wait = window._awaitingGridCommit = { keys: [_key], calls: [_args] };
         Promise.all(_pendCommits.map(function (p) {
             return p.then(null, function () { return { ok: false }; });
         })).then(function (rs) {
             window._awaitingGridCommit = false;
+            var calls = _wait.calls;
             // applyAll's rule: push to the chip only if every edit committed
             if (rs.some(function (r) { return r && r.ok === false; })) {
-                if (window.showToast) window.showToast("Your typed edit was not "
+                if (calls.some(function (a) { return a[0] === "apply"; })
+                        && window.showToast) window.showToast("Your typed edit was not "
                     + "committed, so nothing was applied. Fix the marked cell "
                     + "and press Apply again.", "warning");
-                return;
+                calls = calls.filter(function (a) { return a[0] !== "apply"; });
             }
-            window.doStateSync(mode, forced, ackUnseen, expectChip, opts);
+            _runSyncPressesInTurn(calls);
         });
         return;
     }
@@ -3340,6 +3416,13 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
                         window.htmx.ajax("GET", "/state/diverged-banner",
                         {target: "#live-diverged-slot", swap: "innerHTML"});
                 };
+                // (review) the automatic merge's conflict tray stops saying
+                // Auto-Sync is resolving this: the server hands it back
+                if (data.tray_html) {
+                    window._bulkSelfEdit = true;
+                    try { _swapPendingTray(data.tray_html); }
+                    finally { window._bulkSelfEdit = false; }
+                }
                 if (expectChip) { _banner(); return; }
                 var clines = (data.paths || []).slice(0, 6).join("\n  ");
                 if (window.confirm((data.message || "") + "\n\n  " + clines
@@ -3746,6 +3829,10 @@ window.livePushExtrasLine = function (typedPaths) {
         var t0 = document.getElementById("pending-tray");
         var foreign = !(d && d.edit_seq && t0
                         && t0.getAttribute("data-edit-seq") === d.edit_seq);
+        // (review) ...and then there is nothing to refresh: the tray is the
+        // one rendered at this edit_seq. Re-GETting it anyway swapped a
+        // refused push's conflict tray for the plain one within seconds.
+        if (!foreign) { _foreignRefreshing = false; return; }
         var done = function () { _foreignRefreshing = false; };
         var after = function () { done(); if (foreign) followOnGrid(); };
         try {
@@ -3779,8 +3866,23 @@ window.livePushExtrasLine = function (typedPaths) {
     /* The poll's own decision, as a function a test can drive: the FIRST
        payload only records where the chip is (a window that just opened has
        nothing stale on screen); every later change is a foreign edit. */
-    function onEditSeq(d) {
+    /* QA liveedit-r2-09 (review): THIS window is mid-write (an apply, a row
+       commit, a Ctrl+Z, a tray button's request), or its tray was re-rendered
+       after the poll was sent. The poll's edit_seq may then be a step of this
+       window's own write that the tray will show once it lands -- judging it
+       now called the window's own apply "foreign" and re-GET the grid. Leave
+       the move unconsumed; the next poll judges it against the landed tray. */
+    function ownWritePending(trayAtIssue) {
+        if (window._applyInFlight || window._awaitingGridCommit
+                || (window._pendingGridCommits || []).length) return true;
+        if (window.UndoQueue && window.UndoQueue.busy && window.UndoQueue.busy()) return true;
+        if (document.querySelector("#pending-tray.htmx-request, #pending-tray .htmx-request,"
+                                   + " #undo-sync-src.htmx-request")) return true;
+        return !!(trayAtIssue && trayAtIssue !== document.getElementById("pending-tray"));
+    }
+    function onEditSeq(d, trayAtIssue) {
         if (!d || !d.edit_seq || d.edit_seq === window._editSeqSeen) return false;
+        if (ownWritePending(trayAtIssue)) return false;
         var first = window._editSeqSeen === undefined;
         window._editSeqSeen = d.edit_seq;
         if (first) return false;
@@ -3799,6 +3901,7 @@ window.livePushExtrasLine = function (typedPaths) {
         // request, and don't poll while the window is hidden/backgrounded.
         if (_driftPolling || document.hidden) return;
         _driftPolling = true;
+        var _trayAtIssue = document.getElementById("pending-tray");
         fetch("/state/drift", { cache: "no-store" })
             .then(function (r) { return r.ok ? r.json() : null; })
             .then(function (d) {
@@ -3814,7 +3917,7 @@ window.livePushExtrasLine = function (typedPaths) {
                 // moved (another window edited, applied, undid, pulled), refresh
                 // THIS window's tray and the values on screen -- in place, never
                 // swapping what the reader is looking at (docs/87/144).
-                onEditSeq(d);
+                onEditSeq(d, _trayAtIssue);
                 if (d && d.hist_seq && d.hist_seq !== window._histSeqSeen) {
                     var first = window._histSeqSeen === undefined;
                     window._histSeqSeen = d.hist_seq;

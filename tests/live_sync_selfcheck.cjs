@@ -311,6 +311,107 @@ function discard(w, detail) {
     ok(S.sync.length === 1, 'C9 with nothing in flight the next press posts at once');
 }
 
+/* ── C'. r2-06 review: a human-length press on the tray is never swallowed ── */
+{
+    let release = null;
+    const TRAY_BTN = '<button type="button" class="btn-apply-live">Apply to live now</button>';
+    const { w, S } = world(bulkHtml('data-change-count="1" data-change-sig="S1"'),
+        'http://localhost/bulk', ['app.js', 'grid-virt.js', 'bulk-edit.js'], function (w, S) {
+        S.editHandler = function () {
+            return new Promise(function (res) {
+                release = function (body) { res({ status: 200, json: function () { return Promise.resolve(body); } }); };
+            });
+        };
+    });
+    mountBulk(w);
+    // the tray's onclick="doStateSync('apply')" (inline handlers do not run
+    // under runScripts 'outside-only', so the harness wires the same call)
+    let clicks = 0;
+    w.document.addEventListener('click', function (e) {
+        const b = e.target.closest && e.target.closest('#pending-tray .btn-apply-live');
+        if (b) { clicks++; w.doStateSync('apply'); }
+    });
+    const pdown = function (el) { el.dispatchEvent(new w.MouseEvent('pointerdown', { bubbles: true, button: 0 })); };
+    const pup = function (el) { el.dispatchEvent(new w.MouseEvent('pointerup', { bubbles: true, button: 0 })); };
+    const typeAndPress = function (qid, v) {
+        const c = cellOf(w, qid, 'T1');
+        c.focus(); c.value = v;
+        c.dispatchEvent(new w.Event('input', { bubbles: true }));
+        const old = w.document.querySelector('#pending-tray .btn-apply-live');
+        pdown(old);                                           // mousedown on the tray button...
+        c.dispatchEvent(new w.FocusEvent('focusout', { bubbles: true, relatedTarget: old }));
+        return old;                                           // ...blurs the cell: the row commit starts
+    };
+
+    // 1. the commit lands BETWEEN mousedown and mouseup (a 40-200 ms press)
+    const old1 = typeAndPress('q2', '1.25e-05');
+    ok(S.edits.length === 1, "C'1 the blur starts the row commit");
+    release({ ok: true, results: [{ dot_path: 'qubits.q2.T1', applied: true, display: '1.25e-05' }],
+              tray_html: '<div id="pending-tray" data-change-count="2" data-change-sig="S2">' + TRAY_BTN + '</div>' });
+    await sleep(30);
+    ok(!old1.isConnected, "C'2 the commit re-rendered the tray under the pressed button");
+    pup(w.document.querySelector('#pending-tray .btn-apply-live'));   // release; the browser fires NO click
+    await sleep(60);
+    ok(S.sync.length === 1, "C'3 the press is not swallowed: the apply is posted (got " + S.sync.length + ')');
+    ok(/seen_sig=S2(&|$)/.test(S.sync[0] ? S.sync[0].body : ''),
+       "C'4 ...declaring the tray after the commit: " + (S.sync[0] && S.sync[0].body));
+
+    // 2. a native click DID reach the new button: exactly one apply
+    S.sync.length = 0; clicks = 0;
+    typeAndPress('q3', '1.15e-05');
+    release({ ok: true, results: [{ dot_path: 'qubits.q3.T1', applied: true, display: '1.15e-05' }],
+              tray_html: '<div id="pending-tray" data-change-count="3" data-change-sig="S3">' + TRAY_BTN + '</div>' });
+    await sleep(30);
+    const nb = w.document.querySelector('#pending-tray .btn-apply-live');
+    pup(nb); nb.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+    await sleep(60);
+    ok(clicks === 1 && S.sync.length === 1, "C'5 a click that arrived is never doubled (clicks " + clicks + ', posts ' + S.sync.length + ')');
+
+    // 3. released OUTSIDE the tray: the user let go of the press
+    S.sync.length = 0;
+    typeAndPress('q1', '1.35e-05');
+    release({ ok: true, results: [{ dot_path: 'qubits.q1.T1', applied: true, display: '1.35e-05' }],
+              tray_html: '<div id="pending-tray" data-change-count="4" data-change-sig="S4">' + TRAY_BTN + '</div>' });
+    await sleep(30);
+    S.toasts.length = 0;
+    pup(w.document.getElementById('table-pane'));
+    await sleep(60);
+    ok(S.sync.length === 0 && !S.toasts.some(function (t) { return /nothing was pressed/.test(t.m); }),
+       "C'6 a release outside the tray presses nothing (the user let go -- no toast)");
+
+    // 4. the new tray holds a DIFFERENT action there: never pressed for the user
+    typeAndPress('q2', '1.26e-05');
+    release({ ok: true, results: [{ dot_path: 'qubits.q2.T1', applied: true, display: '1.26e-05' }],
+              tray_html: '<div id="pending-tray" data-change-count="5" data-change-sig="S5" data-working-dirty="1">'
+                  + '<button type="button" class="btn-apply-live" hx-post="/state/apply-to-live">Apply to live chip</button></div>' });
+    await sleep(30);
+    S.toasts.length = 0;
+    pup(w.document.querySelector('#pending-tray .btn-apply-live'));
+    await sleep(60);
+    ok(S.sync.length === 0, "C'7 a button that changed its action is not pressed on the user's behalf");
+    ok(S.toasts.some(function (t) { return /nothing was pressed/.test(t.m); }),
+       "C'7b ...and the swallowed press is said out loud: " + JSON.stringify(S.toasts));
+
+    // 5. a DIFFERENT press while a commit is awaited waits its turn (it was dropped)
+    S.sync.length = 0;
+    const c2 = cellOf(w, 'q3', 'T1');
+    c2.focus(); c2.value = '1.16e-05';
+    c2.dispatchEvent(new w.Event('input', { bubbles: true }));
+    c2.dispatchEvent(new w.FocusEvent('focusout', { bubbles: true,
+        relatedTarget: w.document.querySelector('#pending-tray') }));
+    w.doStateSync('apply');
+    w.doStateSync('apply');                                        // the double press
+    w.doStateSync('apply', false, false, 'CHIP-A');                // the automatic merge
+    await sleep(20);
+    ok(S.sync.length === 0, "C'8 nothing posts while the commit is awaited");
+    release({ ok: true, results: [{ dot_path: 'qubits.q3.T1', applied: true, display: '1.16e-05' }],
+              tray_html: '<div id="pending-tray" data-change-count="6" data-change-sig="S6"></div>' });
+    await sleep(300);
+    ok(S.sync.length === 2, "C'9 both distinct presses ran, the double press once (got " + S.sync.length + ')');
+    ok(S.sync.length === 2 && !/expect_chip/.test(S.sync[0].body) && /expect_chip=CHIP-A/.test(S.sync[1].body),
+       "C'10 ...in the order they were pressed");
+}
+
 /* ── D. r2-05: the collision question ────────────────────────────────── */
 {
     const { w, S } = world('<div id="live-diverged-slot"></div><div id="pending-tray" data-change-count="1" data-change-sig="S1"></div>',
@@ -363,6 +464,17 @@ function discard(w, detail) {
     await sleep(40);
     ok(S.confirms.length === 0 && S.sync.length === 1, 'D11 the automatic merge shows no dialog and does not retry');
     ok(bannerGets().length === 1, 'D12 ...it puts the naming banner up instead');
+
+    // (review) the server now returns this on the real automatic path, with
+    // the conflict tray re-rendered without "Auto-Sync is resolving this"
+    S.sync.length = 0; S.ajax.length = 0;
+    S.syncQueue = [Object.assign({}, COLL, { tray_html:
+        '<div id="pending-tray" class="pending-tray-conflict" data-change-count="0" data-edit-seq="Z1">decide</div>' })];
+    w.doStateSync('apply', false, false, 'CHIP-A');
+    await sleep(40);
+    const t = w.document.getElementById('pending-tray');
+    ok(t && t.getAttribute('data-edit-seq') === 'Z1' && bannerGets().length === 1,
+       'D13 the automatic collision swaps in the tray the server rendered, and bannered');
 }
 
 /* ── E. r2-07: liveConflict re-renders the banner in place ───────────── */
@@ -401,7 +513,8 @@ function discard(w, detail) {
     S.ajax.length = 0; S.stateChanged = 0;
     ok(w._onDriftEditSeq({ edit_seq: 'E2' }) === true, 'F1 ...and the next one');
     await sleep(60);
-    ok(S.ajax.some(function (a) { return a.url === '/state/tray'; }), 'F2 the tray is still refreshed');
+    ok(!S.ajax.some(function (a) { return a.url === '/state/tray'; }),
+       'F2 (review) the tray is NOT re-fetched: it is the one rendered at this edit_seq');
     ok(S.stateChanged === 0 && bulkGets() === 0,
        'F3 a move this window\'s own tray already shows re-GETs no grid (docs/203)');
 
@@ -445,6 +558,57 @@ function discard(w, detail) {
     await sleep(120);
     ok(w.document.activeElement === cellOf(w, 'q3', 'T1'),
        'F10 the focused cell is focused again after the re-render');
+}
+
+/* ── F'. r2-09 review: this window's OWN write is never judged mid-flight ── */
+{
+    const conflictTray = '<div id="pending-tray" class="pending-tray pending-tray-conflict" data-change-count="0"'
+        + ' data-change-sig="S0" data-edit-seq="C1"><button class="btn-sm primary">Pull &amp; apply</button></div>';
+    const { w, S } = world(bulkHtml('data-change-count="1" data-change-sig="S1" data-edit-seq="E1"'),
+        'http://localhost/bulk', ['app.js', 'grid-virt.js', 'bulk-edit.js']);
+    mountBulk(w);
+    const bulkGets = function () { return S.ajax.filter(function (a) { return a.url === '/bulk'; }).length; };
+    const trayGets = function () { return S.ajax.filter(function (a) { return a.url === '/state/tray'; }).length; };
+    w.__lastUserAct = 0;
+    w._editSeqSeen = 'E1';
+
+    // an apply is in flight: the save already moved the working copy
+    w._applyInFlight = true;
+    S.ajax.length = 0; S.stateChanged = 0;
+    ok(w._onDriftEditSeq({ edit_seq: 'E1-saved' }) === false,
+       "F'1 a move seen while this window's own apply is in flight is not judged");
+    ok(w._editSeqSeen === 'E1' && trayGets() === 0 && bulkGets() === 0,
+       "F'2 ...and not consumed: no tray, no grid re-GET");
+    // the apply lands: its response swapped in the conflict tray (refused push)
+    w.document.getElementById('pending-tray').outerHTML = conflictTray;
+    w._applyInFlight = false;
+    ok(w._onDriftEditSeq({ edit_seq: 'C1' }) === true, "F'3 the next poll judges it against the landed tray");
+    await sleep(60);
+    ok(trayGets() === 0 && bulkGets() === 0 && !!w.document.querySelector('#pending-tray.pending-tray-conflict'),
+       "F'4 the conflict tray stays up (it carries data-edit-seq) and no grid is re-read");
+
+    // a row commit (tracked) in flight counts as this window writing
+    let rel = null;
+    const pc = new Promise(function (r) { rel = r; });
+    w._trackGridCommit(pc);
+    ok(w._onDriftEditSeq({ edit_seq: 'C2' }) === false, "F'5 a tracked row commit in flight defers it too");
+    rel({ ok: true }); await sleep(10);
+
+    // the tray was re-rendered after the poll was SENT: the poll may predate it
+    const issued = w.document.getElementById('pending-tray');
+    w.document.getElementById('pending-tray').outerHTML =
+        '<div id="pending-tray" data-change-count="1" data-change-sig="S3" data-edit-seq="C3"></div>';
+    ok(w._onDriftEditSeq({ edit_seq: 'C2b' }, issued) === false,
+       "F'6 a poll sent before this window's own tray render is not judged");
+    ok(w._onDriftEditSeq({ edit_seq: 'C3' }, w.document.getElementById('pending-tray')) === true,
+       "F'7 ...the next one is, against the tray it rendered");
+    await sleep(60);
+    ok(trayGets() === 0 && bulkGets() === 0, "F'8 own apply, own tray: nothing re-GET");
+
+    // a genuine lab-mate move still follows
+    ok(w._onDriftEditSeq({ edit_seq: 'X9' }, w.document.getElementById('pending-tray')) === true, "F'9 a foreign move");
+    await sleep(60);
+    ok(trayGets() === 1 && bulkGets() === 1, "F'10 ...re-reads the tray and the grid (got " + trayGets() + '/' + bulkGets() + ')');
 }
 
 /* ── G. F8: the red box follows the server's per-path pending flag ──── */

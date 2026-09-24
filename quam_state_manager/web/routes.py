@@ -1074,6 +1074,7 @@ def _drift_conflicts(ctx: dict, seen: dict) -> list[str]:
             change_log=log,
             reapply_paths=tuple((ctx.get("pending_reapply") or {}).keys()),
             working_dirty=bool(ctx.get("working_dirty")),
+            reapply_originals=ctx.get("pending_reapply_orig"),
         )
         return list(verdict.conflicts)
     except Exception:       # noqa: BLE001 — naming a field is never worth an error page
@@ -2198,6 +2199,30 @@ def _stash_reapply(updates: dict, ctx: dict | None = None) -> None:
     # Composition-aware merge (not dict.update) so a delete→Save→recreate across
     # captures composes to 'replace' instead of a bare 'create' that drops on replay.
     ctx["pending_reapply"] = _merge_reapply(ctx.get("pending_reapply") or {}, updates)
+    # QA liveedit-r2-05 (review): ...and the value each stashed leaf held
+    # BEFORE the user touched it, read off the log the capture was made from
+    # (every caller stashes `_capture_change_log_as_updates(store)` under
+    # store._lock). Without it the same-field gate cannot tell "the chip moved
+    # this field" from "only I moved it" once a save cleared the log, so it
+    # was skipped whenever a stash existed -- i.e. on exactly the two doors
+    # that replay one (the conflict tray's merge, the Auto-Sync merge). The
+    # EARLIEST original wins, like the log's own rule; a pull clears the
+    # stash (and these) with it, so they always name the current sync point.
+    # Only plain leaf writes get one: a created/deleted subtree has no single
+    # value to compare and keeps the conservative any-difference rule.
+    store = ctx.get("store")
+    if store is not None:
+        try:
+            from quam_state_manager.core import sync_conflict
+            with store._lock:
+                orig = sync_conflict.originals_from_change_log(store.change_log)
+            orig.update(ctx.get("pending_reapply_orig") or {})   # earlier wins
+            stash = ctx["pending_reapply"]
+            ctx["pending_reapply_orig"] = {
+                p: v for p, v in orig.items()
+                if p in stash and _untag(stash[p])[0] in ("set", "literal")}
+        except Exception:  # noqa: BLE001 -- no original means "ask", never a 500
+            logger.debug("reapply originals capture failed", exc_info=True)
 
 
 def _clear_reapply(ctx: dict | None = None) -> None:
@@ -2210,6 +2235,7 @@ def _clear_reapply(ctx: dict | None = None) -> None:
         ctx = _active_ctx()
     if ctx is not None:
         ctx["pending_reapply"] = None
+        ctx.pop("pending_reapply_orig", None)   # QA liveedit-r2-05: they go together
 
 
 # ======================================================================
@@ -6659,15 +6685,22 @@ def _change_log_sig_of(changes) -> str:
 
 
 def _fsp_bundle_gids(changes) -> dict:
-    """{gid: member count} for every FSP compensation bundle in the log -- the
-    tray ✕ discards those as one unit (QA liveedit-r2-16), and says so."""
+    """{gid: {"n": unit size, "paths": unit dot-paths}} for every FSP
+    compensation bundle in the log -- the tray ✕ on a unit member discards
+    the unit (FSP + compensated amps) as one (QA liveedit-r2-16), and says
+    so; any other row of the same gid is its own ✕."""
     from quam_state_manager.core import mw_fem
     groups: dict = {}
     for c in changes or []:
         gid = getattr(c, "group_id", None)
         if gid is not None:
             groups.setdefault(gid, []).append(c.dot_path)
-    return {g: len(ps) for g, ps in groups.items() if mw_fem.is_fsp_comp_bundle(ps)}
+    out: dict = {}
+    for g, ps in groups.items():
+        unit = mw_fem.fsp_comp_bundle_members(ps)
+        if len(unit) >= 2:
+            out[g] = {"n": len(unit), "paths": set(unit)}
+    return out
 
 
 def _render_tray(*, oob: bool) -> str:
@@ -15835,7 +15868,7 @@ def discard():
         # takes the whole bundle (one gid = one Review bundle = one Ctrl+Z =
         # one ✕); every other entry is discarded alone, exactly as before.
         entries = modifier.discard_unit(index, expect_path=expect_path,
-                                        is_unit=mw_fem.is_fsp_comp_bundle)
+                                        unit_of=mw_fem.fsp_comp_bundle_members)
     except KeyError as exc:
         # e.g. discarding a delete whose key was re-created since, or an edit
         # inside a subtree that a later entry deleted — surface, don't 500.
@@ -15870,7 +15903,7 @@ def discard():
         # the bundle went as one: the grids repaint every member (the same
         # event a Ctrl+Z of it sends), and the user is told why N went
         _n_amp = sum(1 for e in entries
-                     if not e.dot_path.endswith(mw_fem._FSP_LEAF))
+                     if mw_fem._AMP_LEAF_RE.search(e.dot_path))
         resp = make_response(_tray_html())
         resp.headers["HX-Trigger"] = json.dumps({
             "cellsReverted": {
@@ -16016,6 +16049,9 @@ def _conflict_tray(ctx, store, *, staged_conflict: bool,
         # `doStateSync` declares when the merge presses itself.
         working_dirty=bool(ctx.get("working_dirty")) if ctx else False,
         mutation_seq=(getattr(store, "mutation_seq", "") if store else ""),
+        # QA liveedit-r2-09 (review): the drift poll's own-move test reads it;
+        # without it this window's own refused push always counted as foreign
+        edit_seq=_edit_seq(),
         auto_sync=_auto_sync_state(ctx),
         auto_apply_armable=_auto_apply_armable(ctx),
         auto_pull_armable=_auto_pull_armable(ctx),
@@ -16181,6 +16217,7 @@ def _auto_pull_verdict(ctx: dict, dom_paths) -> "object | None":
         dom_paths=dom_paths,
         reapply_paths=tuple((ctx.get("pending_reapply") or {}).keys()),
         working_dirty=bool(ctx.get("working_dirty")),
+        reapply_originals=ctx.get("pending_reapply_orig"),
     )
 
 
@@ -17375,14 +17412,15 @@ def state_sync():
     # over whatever the chip holds, so a node that wrote the SAME field the
     # user edited was silently overwritten -- no banner, no question (docs/87,
     # docs/195: a same-field collision is the one case the user decides).
-    # Opt-in (`check_collisions=1`, sent by the one-click presses), skipped
-    # when the user was already told (a conflict-tray retry replays the
-    # stash), and answered by its OWN token -- never implied by force=1 or
-    # ack_unseen=1 (docs/41). A different-field live change still merges
-    # without a word (docs/104's no-confirm press is unchanged there).
+    # Opt-in (`check_collisions=1`, sent by the one-click presses) and
+    # answered by its OWN token -- never implied by force=1 or ack_unseen=1
+    # (docs/41). A different-field live change still merges without a word
+    # (docs/104's no-confirm press is unchanged there). A reapply stash no
+    # longer skips it (review): the conflict tray's merge and the Auto-Sync
+    # merge are the doors that replay one, and the tray never named the
+    # field -- the stash's recorded originals make the verdict exact there.
     if (mode == "apply" and request.values.get("check_collisions") == "1"
-            and request.values.get("ack_collision") != "1"
-            and not ctx.get("pending_reapply")):
+            and request.values.get("ack_collision") != "1"):
         _cv = _auto_pull_verdict(ctx, ())
         _coll = list(getattr(_cv, "conflicts", ()) or ())
         if _coll:
@@ -17390,7 +17428,7 @@ def state_sync():
             ctx["live_conflicts"] = _coll
             ctx.pop("live_drift_count", None)
             _n = len(_coll)
-            return jsonify({
+            _body = {
                 "status": "collision", "mode": "apply",
                 "paths": _coll[:8], "count": _n,
                 "message": (
@@ -17398,7 +17436,14 @@ def state_sync():
                     f"you also edited since SM last read it (an experiment "
                     f"wrote it?). Applying now replaces the chip's value with "
                     f"yours."),
-            })
+            }
+            if request.values.get("expect_chip"):
+                # the automatic merge: the conflict tray on screen says
+                # "Auto-Sync is resolving this itself" -- it is not any more,
+                # the user decides. Hand back the same tray without that line.
+                _body["tray_html"] = _conflict_tray(ctx, ctx["store"],
+                                                    staged_conflict=False)
+            return jsonify(_body)
 
     wc = ctx["working_copy"]
     store = ctx["store"]
@@ -17900,14 +17945,18 @@ def state_apply_to_live():
         # The applied log IS the feedback; one success toast per edit would be
         # noise the user cannot dismiss fast enough.
         _auto["flushes"] = int(_auto.get("flushes") or 0) + 1
-        resp = make_response(_tray_html())
+        # QA liveedit-r2-07 (review): live now holds the working content, so
+        # the "choose which to keep" banner is answered -- take it down in
+        # place (the OOB slot renders empty once live_diverged is cleared)
+        resp = make_response(_tray_html() + "\n" + _diverged_oob())
         resp.headers["HX-Trigger"] = ("liveDriftChanged, stateHistoryChanged, "
                                       "autoApplyApplied")
         return resp
     toast = render_template(
         "_status.html", message="Applied to the live chip.", level="success")
     resp = make_response(_tray_html() + "\n"
-                         + f'<div id="status-bar" hx-swap-oob="innerHTML">{toast}</div>')
+                         + f'<div id="status-bar" hx-swap-oob="innerHTML">{toast}</div>'
+                         + _diverged_oob())      # QA liveedit-r2-07 (review), as above
     # The live chip + baseline just moved — refresh the open State-History timeline (a
     # new snapshot was captured) + the embedded drift panel + global banner, instead of
     # pre-apply state until a manual reload (audit P0-5/6). Use stateHistoryChanged (a
