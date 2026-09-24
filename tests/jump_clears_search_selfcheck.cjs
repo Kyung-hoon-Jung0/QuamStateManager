@@ -18,6 +18,11 @@
  *   J4  no query at all: nothing is cleared, nothing is announced
  *   J5  the box is driven the way a person drives it, so the chip bar cannot be
  *       left claiming a filter that is no longer applied
+ *   J6  (QA r2-03) a jump from the WIRING tab with both trees filtered shows
+ *       the state tab, clears the state tree's filter, and the toast is true
+ *   J7  (QA r2-03) a tree left filtered under a box cleared on the other tab
+ *       is re-synced when shown -- never a blank tree under an empty box
+ *       (the real switchExplorerTab, extracted from _explorer.html)
  *
  * Run: node tests/jump_clears_search_selfcheck.cjs   (needs jsdom)
  */
@@ -42,6 +47,7 @@ const HTML = '<!doctype html><html><body>'
   + '<div class="explorer-pane">'
   + '<input type="text" id="explorer-search" oninput="explorerSearch(this.value)">'
   + '<div id="explorer-chipbar"></div>'
+  + '<div id="explorer-tabs"><span class="tree-file-tab active">state.json</span><span class="tree-file-tab">wiring.json</span></div>'
   + '<div id="explorer-tree-state" class="json-tree"></div>'
   + '<div id="explorer-tree-wiring" class="json-tree" style="display:none"></div>'
   + '</div><div id="status-bar"></div></body></html>';
@@ -201,6 +207,73 @@ async function main() {
   await sleep(400);
   ok(inputs >= 1,
     'J5: clearing fires the box’s own input event, so the chip bar follows');
+
+  // ── J6/J7 (QA r2-03): the wiring tab ─────────────────────────────────────
+  // The page's own tab switcher and active-tree probe, taken from the template
+  // text (never a hand copy: the pin must test what ships). They call
+  // jsonTreeSearch / _activeTreeId bare, so bridge them.
+  const TPL = fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'templates', '_explorer.html'), 'utf8');
+  function extract(sig) {
+    const i = TPL.indexOf(sig);
+    if (i < 0) throw new Error('template lost: ' + sig);
+    let depth = 0, j = TPL.indexOf('{', i);
+    for (; j < TPL.length; j++) {
+      if (TPL[j] === '{') depth++;
+      else if (TPL[j] === '}' && --depth === 0) break;
+    }
+    return TPL.slice(i, j + 1) + ';';
+  }
+  window.eval(extract('window._activeTreeId = function'));
+  window.eval(extract('window.switchExplorerTab = function'));
+  global._activeTreeId = window._activeTreeId;
+  global.jsonTreeSearch = window.jsonTreeSearch;
+  const w = d.getElementById('explorer-tree-wiring');
+  const WDATA = { network: { host: '10.0.0.1', cluster_name: 'c1' }, ports: { p1: { offset: 0.1 } } };
+  function hiddenIn(el) { return el.querySelectorAll('.tree-search-hidden').length; }
+
+  // J6: type on state, switch to wiring (both trees filtered), jump to a state path
+  window.switchExplorerTab('state');
+  render();
+  window.renderJsonTree('explorer-tree-wiring', WDATA, { defaultDepth: 1, crud: true });
+  type('host');
+  await sleep(300);
+  window.switchExplorerTab('wiring');
+  await sleep(300);
+  ok(c.style.display === 'none' && hiddenIn(c) > 0 && hiddenIn(w) > 0,
+    'J6 fixture: wiring shown, both trees filtered by "host"');
+  said.length = 0;
+  const realFetch = global.fetch;
+  global.fetch = window.fetch = () => Promise.resolve({ json: () => Promise.resolve({ loaded: true }) });
+  window._navigateToExplorerPath(TARGET);
+  await sleep(700);
+  global.fetch = window.fetch = realFetch;
+  ok(c.style.display !== 'none' && w.style.display === 'none',
+    'J6: a jump to a state path shows the state tab');
+  ok(box.value === '' && shown(TARGET) && hiddenIn(c) === 0,
+    'J6: the state tree is unfiltered and the target is on screen (hidden rows=' + hiddenIn(c) + ')');
+  const t6 = node(TARGET);
+  ok(t6 && t6.classList.contains('tree-highlight') && !t6.classList.contains('tree-search-hidden'),
+    'J6: the target is highlighted AND visible');
+  ok(said.length === 1 && /host/.test(said[0]), 'J6: the toast names the dropped query (' + said.join(' | ') + ')');
+
+  // J7a: the wiring tree the jump left filtered is re-synced when shown
+  window.switchExplorerTab('wiring');
+  await sleep(300);
+  ok(hiddenIn(w) === 0, 'J7: a tree left filtered under an empty box is un-filtered when shown (' + hiddenIn(w) + ' hidden)');
+
+  // J7b: the Diagnostics-free gesture: filter state, switch, clear, switch back
+  window.switchExplorerTab('state');
+  render();
+  type('amplitude');
+  await sleep(300);
+  ok(hiddenIn(c) > 0, 'J7b fixture: the state tree is filtered');
+  window.switchExplorerTab('wiring');
+  await sleep(300);
+  type('');
+  await sleep(300);
+  window.switchExplorerTab('state');
+  await sleep(300);
+  ok(hiddenIn(c) === 0, 'J7b: switching back after clearing the box on the other tab shows the state tree (' + hiddenIn(c) + ' hidden)');
 
   console.log(fails ? 'FAILED (' + fails + ')'
     : 'jump_clears_search_selfcheck ok (' + asserts + ' assertions)');

@@ -5364,6 +5364,8 @@ table code { font-size: 0.88em; }
    keep buttons, and a "N changed" roll-up pill on collapsed ancestors. Accept
    turns the row into a normal pending working-copy edit (.tree-row-pending). */
 .tree-row-incoming { border-left: 3px solid var(--color-success-border); background: var(--color-success-bg); }
+/* QA JT-03: a difference that is the user's OWN unapplied edit is not incoming */
+.tree-row-incoming.tree-row-mine { border-left-color: var(--color-warning-border); background: var(--tree-pending-bg); }
 .tree-incoming-arrow { color: var(--pico-muted-color); margin: 0 0.15em; font-weight: 600; }
 .tree-incoming-val {
     font-weight: 600; padding: 0 0.2em; border-radius: 2px;

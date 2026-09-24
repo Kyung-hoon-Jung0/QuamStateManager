@@ -7989,7 +7989,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                         (_isPointer(refValue) ? " tree-val-pointer" : "");
                     inEl.textContent = _formatValue(refValue);
                     inEl.title = cmpDiff ? "the other side's value"
-                                         : "Qualibrate's live value";
+                                         : "the live chip's value";
                     row.appendChild(inEl);
                 }
                 // ONE delta implementation (docs/76). This tree printed its own
@@ -8012,7 +8012,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                     acc.type = "button";
                     acc.className = "tree-accept-btn";
                     acc.textContent = "✓";
-                    acc.title = "Accept Qualibrate's value into the working state";
+                    acc.title = "Take the live value into the working state";
                     (function(p, rv, el, rw) {
                         // window.-qualified: the handlers live in the live-diff
                         // IIFE, not this one — a bare call is a ReferenceError
@@ -8025,7 +8025,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                     rej.type = "button";
                     rej.className = "tree-reject-btn";
                     rej.textContent = "✗";
-                    rej.title = "Keep your value (dismiss this incoming change)";
+                    rej.title = "Keep the working-state value (dismiss this difference)";
                     (function(rw, p) {
                         rej.onclick = function(e) { e.stopPropagation(); window._rejectLiveValue(rw, p); };
                     })(row, path);
@@ -13561,6 +13561,10 @@ function _navigateToExplorerPath(dotPath) {
                     setTimeout(tryExpand, 100);
                     return;
                 }
+                // The jump draws in the STATE tree, so that tree must be the one
+                // on screen: from the wiring tab the highlight landed in a hidden
+                // tree and the search clear hit the wiring tree (QA r2-03).
+                if (container.style.display === 'none' && window.switchExplorerTab) window.switchExplorerTab('state');
                 _jumpToTreePath('explorer-tree-state', dotPath);
             }
             tryExpand();
@@ -17502,6 +17506,7 @@ document.addEventListener('click', function(evt) {
         if (on) {
             var cnt = document.getElementById("livediff-bar-count");
             if (cnt) cnt.textContent = remaining;
+            _ldBarText();
         }
     }
     var _liveDiffState = [];   // [{dot_path, value(live)}] for state.json tree
@@ -17559,7 +17564,13 @@ document.addEventListener('click', function(evt) {
                 for (k in val) if (Object.prototype.hasOwnProperty.call(val, k)) seen[k] = 1;
                 for (k in ref) if (Object.prototype.hasOwnProperty.call(ref, k)) seen[k] = 1;
                 for (k in seen) {
-                    _collectDiffPairs(val[k], ref[k], base ? base + "." + k : k, out);
+                    var kp = base ? base + "." + k : k;
+                    // QA r2-02: decided by key PRESENCE, never by undefined --
+                    // a key the live chip removed used to leave as a value-less
+                    // update (stored null), one it added as a plain set (refused).
+                    if (!Object.prototype.hasOwnProperty.call(ref, k)) out.push({ dot_path: kp, op: "delete" });
+                    else if (!Object.prototype.hasOwnProperty.call(val, k)) out.push({ dot_path: kp, value: ref[k], op: "create" });
+                    else _collectDiffPairs(val[k], ref[k], kp, out);
                 }
             }
         } else {
@@ -17632,9 +17643,211 @@ document.addEventListener('click', function(evt) {
     }
 
     function _bumpLiveDiffCount(delta) {
+        var was = _liveDiffRemaining;
         _liveDiffRemaining = Math.max(0, _liveDiffRemaining + delta);
         var cnt = document.getElementById("livediff-bar-count");
         if (cnt) cnt.textContent = _liveDiffRemaining;
+        _ldBarText();
+        // the last row reviewed ends the diff -- the bar used to stay up
+        // reading "changed 0 field(s) ... then accept" (QA JT-03)
+        if (was > 0 && _liveDiffRemaining === 0 && _explorerLiveDiffOn()) window.explorerLiveDiff(false);
+    }
+
+    /* QA JT-03 -- WHO moved each differing field. diff(working, live) cannot
+       say, so the bar announced the user's own unapplied edits as "Qualibrate
+       changed N field(s)" and its ✓ reverted them. /state/live-diff now
+       carries sync_conflict.classify's verdict (mine / conflicts) and
+       live_moved (the sync-point content check: false = nothing outside SM
+       wrote live since the last sync, so every difference is SM-side).
+       Unknown -> neutral wording, never a guessed attribution. */
+    var _ldAttr = { mine: [], conflicts: [], liveMoved: undefined, unaccounted: null };
+    function _ldCovers(list, p) {       // sync_conflict.covers, both directions
+        for (var i = 0; i < list.length; i++) {
+            var m = String(list[i]);
+            if (m === p || p.indexOf(m + ".") === 0 || m.indexOf(p + ".") === 0) return true;
+        }
+        return false;
+    }
+    function _ldOwner(p) {              // "theirs" | "mine" | "both" | null (cannot tell)
+        if (_ldAttr.liveMoved === false) return "mine";
+        if (_ldAttr.liveMoved !== true || _ldAttr.unaccounted) return null;
+        if (_ldCovers(_ldAttr.conflicts, p)) return "both";
+        if (_ldCovers(_ldAttr.mine, p)) return "mine";
+        return "theirs";
+    }
+    function _ldBarText() {
+        var lead = document.getElementById("livediff-bar-lead");
+        var what = document.getElementById("livediff-bar-what");
+        var tail = document.getElementById("livediff-bar-tail");
+        if (!lead || !what || !tail) return;
+        var n = { theirs: 0, mine: 0, both: 0, unknown: 0 };
+        _liveDiffState.concat(_liveDiffWiring).forEach(function (p) {
+            if (_liveDiffDone[p.dot_path]) return;
+            n[_ldOwner(p.dot_path) || "unknown"]++;
+        });
+        var differ = " field(s) differ from the live chip";
+        if (n.unknown) {
+            lead.textContent = ""; what.textContent = differ;
+            tail.textContent = " \u2014 review before\u2192after; \u2713 takes the live value, \u2717 keeps the working state\u2019s.";
+        } else if (_ldAttr.liveMoved === false) {
+            lead.textContent = ""; what.textContent = differ;
+            tail.textContent = " \u2014 the live chip has not changed since your last sync, so these are your own unapplied values: \u2713 puts the live value back, \u2717 keeps yours.";
+        } else if (!n.mine && !n.both) {
+            lead.textContent = "Qualibrate changed "; what.textContent = " field(s)";
+            tail.textContent = " \u2014 review before\u2192after, then accept.";
+        } else {
+            var parts = [];
+            if (n.theirs) parts.push(n.theirs + " changed on the live chip");
+            if (n.mine) parts.push(n.mine + (n.mine === 1 ? " is your own unapplied edit" : " are your own unapplied edits"));
+            if (n.both) parts.push(n.both + " changed on both sides");
+            lead.textContent = ""; what.textContent = differ + " (" + parts.join(", ") + ")";
+            tail.textContent = " \u2014 \u2713 takes the live value, \u2717 keeps yours.";
+        }
+    }
+    // Row titles follow the attribution: on the user's own edit ✓ is a discard.
+    function _ldAttributeRow(row, p) {
+        var o = _ldOwner(p.dot_path);
+        if (o !== "mine" && o !== "both") return;
+        row.classList.add("tree-row-mine");
+        var acc = row.querySelector(":scope > .tree-accept-btn");
+        var rej = row.querySelector(":scope > .tree-reject-btn");
+        if (acc) acc.title = o === "both"
+            ? "Take the live value \u2014 both sides changed this field, so your edit is discarded"
+            : "Discard your edit \u2014 put the live value back";
+        if (rej) rej.title = "Keep your edit";
+    }
+
+    /* QA r2-01 -- a STRUCTURAL pair (a key only one side has, a list whose
+       length changed, a type change) was counted by the bar but had no row:
+       the overlay iterated the working document only, so a live-only key was
+       never rendered, and _buildNode marks a changed VALUE only. The overlay
+       now renders both sides' keys (union) and this gives every pair root the
+       renderer did not already mark its markers + ✓/✗, so the rows the user
+       can review are exactly the pairs the bar counts. Pair roots only: an
+       element inside a shortened list keeps its "removed" tag, no second ✓. */
+    function _ldType(v) { return v === null ? "null" : (Array.isArray(v) ? "array" : typeof v); }
+    function _ldSummary(v) {
+        var t = _ldType(v);
+        if (t === "array") return "[" + v.length + " item" + (v.length !== 1 ? "s" : "") + "]";
+        if (t === "object") { var k = Object.keys(v).length; return "{" + k + " key" + (k !== 1 ? "s" : "") + "}"; }
+        return window._formatValue ? window._formatValue(v) : String(v);
+    }
+    function _ldNode(p) {
+        var ids = ["explorer-tree-state", "explorer-tree-wiring"];
+        for (var i = 0; i < ids.length; i++) {
+            var c = document.getElementById(ids[i]);
+            var n = c && c.querySelector('.tree-node[data-path="' + p + '"]');
+            if (n) return n;
+        }
+        return null;
+    }
+    function _ldDecorate(containerId, pairs) {
+        var container = document.getElementById(containerId);
+        if (!container) return;
+        pairs.forEach(function (p) {
+            var node = container.querySelector('.tree-node[data-path="' + p.dot_path + '"]');
+            var row = node && node.querySelector(":scope > .tree-row");
+            if (!row) return;
+            if (!row.querySelector(":scope > .tree-accept-btn")) _ldStructuralMarks(node, row, p);
+            _ldAttributeRow(row, p);
+        });
+    }
+    function _ldStructuralMarks(node, row, p) {
+        row.classList.add("tree-row-incoming");
+        node.classList.add("tree-diff");
+        if (p.op === "create" || p.op === "delete") {
+            if (!row.querySelector(":scope > .tree-sidetag")) {   // the renderer tags leaves, not containers
+                var tag = document.createElement("span");
+                tag.className = "tree-sidetag " + (p.op === "create" ? "tree-tag-added" : "tree-tag-removed");
+                tag.textContent = p.op === "create" ? "added" : "removed";
+                row.appendChild(tag);
+            }
+        } else {
+            var arrow = document.createElement("span");
+            arrow.className = "tree-incoming-arrow";
+            arrow.textContent = " \u2192 ";
+            row.appendChild(arrow);
+            var inEl = document.createElement("span");
+            inEl.className = "tree-incoming-val";
+            inEl.textContent = _ldSummary(p.value);
+            inEl.title = "the live chip's value";
+            row.appendChild(inEl);
+        }
+        var acc = document.createElement("button");
+        acc.type = "button";
+        acc.className = "tree-accept-btn";
+        acc.textContent = "\u2713";
+        acc.title = p.op === "create" ? "Add this key to the working state (only the live chip has it)"
+                  : p.op === "delete" ? "Remove this key from the working state (the live chip does not have it)"
+                  : "Take the live value into the working state";
+        acc.onclick = function (e) { e.stopPropagation(); _ldAcceptPair(p, node, row); };
+        row.appendChild(acc);
+        var rej = document.createElement("button");
+        rej.type = "button";
+        rej.className = "tree-reject-btn";
+        rej.textContent = "\u2717";
+        rej.title = "Keep the working-state value (dismiss this difference)";
+        rej.onclick = function (e) { e.stopPropagation(); _rejectLiveValue(row, p.dot_path); };
+        row.appendChild(rej);
+    }
+    // ✓ on a structural row: create / delete / whole-value replace.
+    function _ldAcceptPair(p, node, row) {
+        var u = p.op === "delete" ? { dot_path: p.dot_path, delete: true } : { dot_path: p.dot_path, value: p.value };
+        if (p.op === "create") u.create = true;
+        _liveFetchJson("/field/edit-batch", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ updates: [u] })
+        }).then(function (res) {
+            var d = res.data;
+            if (!res.ok || !d) {
+                var msg = (d && d.results && d.results[0] && d.results[0].error) ||
+                          (d && d.error) || (res.transient ? "live chip busy" : "edit rejected");
+                window.showToast("Could not accept " + p.dot_path + ": " + msg
+                    + (res.transient ? " \u2014 try again" : ""), "warning");
+                return;
+            }
+            _ldMarkAccepted(p, node, row);
+            if (d.tray_html) {
+                _swapPendingTray(d.tray_html);
+                window._restoreTrayState && window._restoreTrayState();
+            }
+            _bumpLiveDiffCount(-1);
+        });
+    }
+    // An accepted row shows what the working state now holds (staged, pending).
+    function _ldMarkAccepted(p, node, row) {
+        _clearIncoming(row);
+        row.classList.add("tree-row-pending");
+        _liveDiffDone[p.dot_path] = 1;
+        var tag = row.querySelector(":scope > .tree-sidetag");
+        if (p.op === "delete" || p.op === "create") {
+            if (tag) tag.textContent = (p.op === "delete" ? "removed" : "added") + " \u00b7 staged";
+            if (p.op === "delete") node.classList.add("tree-removed");
+            return;
+        }
+        var val = row.querySelector(":scope > .tree-val");
+        if (val && window._formatValue) {
+            val.textContent = window._formatValue(p.value);
+            val.dataset.editVal = (typeof p.value === "string") ? p.value : window._formatValue(p.value);
+        }
+        var sum = row.querySelector(":scope > .tree-summary");
+        if (sum) {
+            // a container now holds the live value: its old children are stale
+            sum.textContent = _ldSummary(p.value);
+            var kids = node.querySelector(":scope > .tree-children");
+            if (kids) { kids.innerHTML = ""; kids.style.display = "none"; }
+            var tg = row.querySelector(":scope > .tree-toggle");
+            if (tg) { tg.textContent = "\u25B6"; tg.classList.add("collapsed"); tg.classList.remove("expanded"); }
+            var t = _ldType(p.value);
+            if (t === "object" || t === "array") {
+                node._lazyData = { value: p.value, type: t, path: p.dot_path,
+                                   depth: parseInt(node.getAttribute("data-depth"), 10) || 0,
+                                   refValue: undefined, hasDiff: false, valueClick: "livediff", union: false };
+            } else {
+                delete node._lazyData;
+            }
+        }
     }
 
     // ✓ — accept Qualibrate's live value into the working copy as a pending edit.
@@ -17739,7 +17952,9 @@ document.addEventListener('click', function(evt) {
     // toggle OFF (known state, not stuck half-on) and tell the user the Live-diff
     // button itself retries (re-invokes this on click) — the discoverable recourse.
     function _liveDiffRecover(msg) {
-        _explorerLiveDiffOn = false;
+        // (no `_explorerLiveDiffOn = false` here: that assignment replaced the
+        // function itself, so every later toggle threw "not a function"; the
+        // DOM below is the truth, docs/124 M-4)
         var t = document.getElementById("explorer-livediff-toggle");
         if (t) t.classList.remove("active");
         var bar = document.getElementById("explorer-livediff-bar");
@@ -17831,6 +18046,8 @@ document.addEventListener('click', function(evt) {
                 _liveDiffWiring = []; _collectDiffPairs(wData, liveWiring, "", _liveDiffWiring);
                 _liveDiffDone = {};
                 _liveDiffRemaining = _liveDiffState.length + _liveDiffWiring.length;
+                _ldAttr = { mine: d.mine || [], conflicts: d.conflicts || [],
+                            liveMoved: d.live_moved, unaccounted: d.unaccounted || null };
 
                 if (_liveDiffRemaining === 0) {
                     // BOTH halves off (docs/124 M-5): clearing only the flag
@@ -17841,12 +18058,15 @@ document.addEventListener('click', function(evt) {
                     return;
                 }
 
+                // union (QA r2-01): a key only one side has is a row too
                 renderJsonTree("explorer-tree-state", sData,
-                    { defaultDepth: 1, refData: liveState, valueClick: "livediff" });
+                    { defaultDepth: 1, refData: liveState, valueClick: "livediff", union: true });
                 renderJsonTree("explorer-tree-wiring", wData,
-                    { defaultDepth: 1, refData: liveWiring, valueClick: "livediff" });
+                    { defaultDepth: 1, refData: liveWiring, valueClick: "livediff", union: true });
                 _autoExpandAndTag("explorer-tree-state", _liveDiffState);
                 _autoExpandAndTag("explorer-tree-wiring", _liveDiffWiring);
+                _ldDecorate("explorer-tree-state", _liveDiffState);
+                _ldDecorate("explorer-tree-wiring", _liveDiffWiring);
                 // renderJsonTree wiped innerHTML — re-apply hardware-spec marks.
                 if (window._applyExplorerSpecMarks) window._applyExplorerSpecMarks();
                 // ...and the search, for the same reason (docs/122 item 2).
@@ -17875,7 +18095,36 @@ document.addEventListener('click', function(evt) {
             return !_liveDiffDone[p.dot_path];
         });
         if (!pairs.length) { window.showToast("Nothing left to accept.", "info"); return; }
-        var updates = pairs.map(function(p) { return { dot_path: p.dot_path, value: p.value }; });
+        // QA JT-03: over the user's OWN unapplied edits "accept the live value"
+        // is a revert -- never done silently.
+        var own = pairs.filter(function (p) { var o = _ldOwner(p.dot_path); return o === "mine" || o === "both"; });
+        var held = 0;
+        var allOwn = own.length === pairs.length;
+        if (own.length && !window.confirm(
+                (allOwn ? (own.length === 1 ? "The differing field is your own unapplied edit.\n\n"
+                                            : "All " + own.length + " differing fields are your own unapplied edits.\n\n")
+                        : own.length + " of the " + pairs.length + " differing field(s) are your own unapplied edits.\n\n")
+                + "OK \u2014 put the live value back over "
+                + (own.length === 1 ? "it" : "them") + (allOwn ? "" : " too")
+                + (own.length === 1 ? " (your edit is discarded).\n" : " (your edits are discarded).\n")
+                + (allOwn ? "Cancel \u2014 keep " + (own.length === 1 ? "it" : "them") + "; nothing is accepted."
+                          : "Cancel \u2014 accept only the other " + (pairs.length - own.length)
+                            + "; yours stay marked for per-row review."))) {
+            pairs = pairs.filter(function (p) { return own.indexOf(p) < 0; });
+            held = own.length;
+            if (!pairs.length) {
+                window.showToast("Nothing accepted \u2014 every remaining row is your own edit. "
+                    + "Use \u2713 on a row to put the live value back.", "info");
+                return;
+            }
+        }
+        // QA r2-02: a key the live chip removed is DELETED, one it added is CREATED
+        var updates = pairs.map(function(p) {
+            if (p.op === "delete") return { dot_path: p.dot_path, delete: true };
+            var u = { dot_path: p.dot_path, value: p.value };
+            if (p.op === "create") u.create = true;
+            return u;
+        });
         // Defensive-parse + bounded retry: a burst no longer dead-ends in an
         // ambiguous "network error".
         _liveFetchJson("/field/edit-batch", {
@@ -17899,7 +18148,7 @@ document.addEventListener('click', function(evt) {
                 window._restoreTrayState && window._restoreTrayState();
             }
             var failed = (d.results || []).filter(function(r) { return !r.applied; });
-            if (!failed.length) {
+            if (!failed.length && !held) {
                 window.showToast(
                     "Accepted " + updates.length + " value" + (updates.length === 1 ? "" : "s") +
                     " into the working state — review the tray, then Apply to live.", "success");
@@ -17907,15 +18156,27 @@ document.addEventListener('click', function(evt) {
                 return;
             }
             var okCount = updates.length - failed.length;
-            window.showToast(
-                "Accepted " + okCount + " of " + updates.length + " — " + failed.length +
-                " rejected (first: " + (failed[0].error || "edit rejected") +
-                "). The remaining rows stay marked below.", "warning");
-            // Re-render the overlay: applied rows vanish (working copy now matches
-            // live there); rejected rows keep their incoming markers for per-row
-            // handling.
-            window.explorerLiveDiff(false);
-            window.explorerLiveDiff(true);
+            window.showToast(failed.length
+                ? "Accepted " + okCount + " of " + updates.length + " — " + failed.length +
+                  " rejected (first: " + (failed[0].error || "edit rejected") +
+                  "). The remaining rows stay marked below."
+                : "Accepted " + okCount + " value" + (okCount === 1 ? "" : "s") + " — "
+                  + (held === 1 ? "your own edit was" : held + " of your own edits were")
+                  + " left marked for per-row review.",
+                failed.length ? "warning" : "success");
+            // Mark the applied rows in place (QA r2-02). The old off/on re-diff
+            // read the trees' STALE _treeData and raced the soft refresh, so the
+            // bar re-counted every row and showed the old values.
+            (d.results || []).forEach(function (r) {
+                if (!r.applied) return;
+                var p = null;
+                for (var i = 0; i < pairs.length; i++) if (pairs[i].dot_path === r.dot_path) { p = pairs[i]; break; }
+                var node = _ldNode(r.dot_path);
+                var row = node && node.querySelector(":scope > .tree-row");
+                if (p && row) _ldMarkAccepted(p, node, row);
+                else _liveDiffDone[r.dot_path] = 1;
+            });
+            _bumpLiveDiffCount(-okCount);
         });
     };
 

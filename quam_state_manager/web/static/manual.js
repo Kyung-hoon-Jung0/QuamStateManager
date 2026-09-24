@@ -232,7 +232,7 @@ window.ConfigManual = (function () {
             h += '</details>';
         });
         if (skipped) h += '<p class="manual-note">… ' + skipped + ' more keys not shown — narrow the search or open fewer classes</p>';
-        if (!rows.length) h += '<p class="manual-note">nothing matches <code>' + esc(q) + '</code></p>';
+        if (!rows.length && _data) h += '<p class="manual-note">nothing matches <code>' + esc(q) + '</code></p>';
         body.innerHTML = h;
     }
     var _lazy = {};
@@ -293,6 +293,17 @@ window.ConfigManual = (function () {
         }
         var q = pop().querySelector('.manual-search').value;
         load().then(function () { renderSearch(q); schedulePoll(); });
+    }
+    /* The in-window ways back to the search (typing, "← all keys") go
+       through here: an open straight into the node view (a row's ?, F1)
+       cleared the catalogue and fetched only the node, so rendering the
+       search from _data alone listed the 'loading…' placeholder forever
+       (QA JT-01). Cached catalogue: render synchronously, as before. */
+    function showSearch() {
+        var s = pop().querySelector('.manual-search');
+        renderSearch(s.value);
+        if (_data && _loadedChip === currentChip()) return;
+        load().then(function () { if (isOpen() && _mode === 'search') renderSearch(s.value); });
     }
 
     /* ── window plumbing (mirrors calc.js) ───────────────────────── */
@@ -392,13 +403,13 @@ window.ConfigManual = (function () {
         s.addEventListener('input', function () {
             _mode = 'search'; _nodePath = null;
             clearTimeout(timer);
-            timer = setTimeout(function () { renderSearch(s.value); }, 80);
+            timer = setTimeout(showSearch, 80);
         });
         s.addEventListener('keydown', function (e) { if (e.key === 'Escape') { setOpen(false, null); e.preventDefault(); } });
         p.addEventListener('keydown', function (e) { if (e.key === 'Escape') { setOpen(false, null); } });
         p.addEventListener('click', function (e) {
             var back = e.target.closest && e.target.closest('.manual-back');
-            if (back) { e.preventDefault(); _mode = 'search'; _nodePath = null; renderSearch(s.value); s.focus(); return; }
+            if (back) { e.preventDefault(); _mode = 'search'; _nodePath = null; showSearch(); s.focus(); return; }
             var go = e.target.closest && e.target.closest('.manual-goto');
             if (go) {
                 e.preventDefault();

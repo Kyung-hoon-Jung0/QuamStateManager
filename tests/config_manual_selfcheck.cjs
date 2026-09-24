@@ -177,7 +177,7 @@ setTimeout(function () {
                     window.localStorage.setItem('quam_manual_size', JSON.stringify({ w: 700, h: 520 }));   // jsdom's real Storage
                     window.toggleConfigManual(); window.toggleConfigManual(d.getElementById('manual-btn'));
                     ok(pop.style.width === '700px' && pop.style.height === '520px', 'a remembered size is restored on open (' + pop.style.width + ' x ' + pop.style.height + '; stored=' + window.localStorage.getItem('quam_manual_size') + ' vw=' + window.innerWidth + ' open=' + !pop.classList.contains('manual-hidden') + ')');
-                    reviewPins(function () { process.exit(fails ? 1 : 0); });
+                    reviewPins(function () { closedIntoNodePins(function () { process.exit(fails ? 1 : 0); }); });
                 }, 400);
             });
             return;
@@ -252,4 +252,42 @@ function reviewPinsRun(done) {
             }, 400);
         });
     });
+}
+
+/* QA JT-01: an open from CLOSED straight into the node view (a row's ?, F1)
+   clears the catalogue and fetches only the node -- the in-window ways back
+   to the search ("← all keys", typing) must fetch it, never list the
+   'loading…' placeholder forever. */
+function closedIntoNodePins(done) {
+    window.__catalogState = 'ready'; window.__catalogNote = null;
+    const esc = () => pop.querySelector('.manual-search').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    const f1 = () => { const cell = d.getElementById('cell'); cell.focus(); cell.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'F1', bubbles: true })); };
+    esc();
+    ok(pop.classList.contains('manual-hidden'), 'JT-01 setup: the window is closed');
+    calls.length = 0;
+    f1();
+    setTimeout(function () {
+        ok(!pop.classList.contains('manual-hidden') && !!body().querySelector('.manual-back'), 'JT-01: F1 from closed opens the node view');
+        ok(!calls.some((c) => c === '/api/manual'), 'JT-01 setup: the node open fetched only the node (the catalogue is not in hand)');
+        body().querySelector('.manual-back').click();
+        setTimeout(function () {
+            const n = body().querySelectorAll('.manual-entry').length;
+            ok(calls.some((c) => c === '/api/manual'), 'JT-01: "← all keys" fetches the catalogue');
+            ok(n > 0 && new RegExp(ENTRIES.length + ' keys').test(body().querySelector('.manual-status').textContent),
+               'JT-01: "← all keys" lists the catalogue, not the loading placeholder (' + n + ' rows; ' + body().querySelector('.manual-status').textContent + ')');
+            esc();
+            calls.length = 0;
+            f1();
+            setTimeout(function () {
+                const s = pop.querySelector('.manual-search');
+                s.value = 'joint';
+                s.dispatchEvent(new window.Event('input', { bubbles: true }));
+                setTimeout(function () {
+                    const keys = Array.from(body().querySelectorAll('.manual-entry')).map((e) => e.getAttribute('data-key'));
+                    ok(keys.length === 1 && keys[0] === 'joint_offset', 'JT-01: typing after a node open searches the real catalogue (' + keys.join(',') + ')');
+                    done();
+                }, 250);
+            }, 30);
+        }, 50);
+    }, 30);
 }
