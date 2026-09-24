@@ -190,3 +190,19 @@ class TestTheCompactChipsCarryTheInstantToo:
             line = [l for l in html.splitlines() if needle in l][0]
             assert "ts_local" in line, f"{name}:{needle} still renders a pre-sliced string"
 
+    def test_the_config_viewer_last_good_is_a_local_time(self):
+        """QA generate-r2-27: the Config Viewer printed 'Last good
+        2026-09-23T17:38:51+00:00' -- the raw UTC ISO string -- beside a
+        Settings note reading 'Showing times in Asia/Seoul'. Every producer of
+        ``generated_config_meta['at']`` stamps ``datetime.now(timezone.utc)``,
+        which is what the ISO branch of ``ts_local`` assumes. The downloaded
+        config.py header keeps its UTC stamp WITH its offset (a file, not a
+        display: docs/196 'Stored as UTC')."""
+        from quam_state_manager.web.app import create_app
+        app = create_app(testing=True)
+        with app.test_request_context("/"):
+            tpl = app.jinja_env.get_template("_config_status.html")
+            html = tpl.render(meta={"at": "2026-09-23T17:38:51+00:00"})
+        strong = [l for l in html.splitlines() if "config-meta-strong" in l][0]
+        assert 'class="ts-local" data-utc="2026-09-23T17:38:51Z"' in strong, strong
+        assert "+00:00" not in strong, "the raw UTC ISO string is not a display"

@@ -7841,7 +7841,12 @@ button.recents-item:focus {
     align-items: center; justify-content: center; gap: 0.15rem;
     min-height: 66px; cursor: pointer;
     border: 1px dashed var(--pico-muted-border-color); border-radius: 0.35rem;
-    background: var(--pico-background-color); color: var(--pico-muted-color);
+    /* A LITERAL, never var(--pico-*): the slot is role=button (generate.js
+       renderSlot), and Pico's [role=button] rule redefines
+       --pico-background-color to the primary fill ON this element -- every
+       EMPTY slot painted solid blue, louder than the filled MW/LF tints
+       (QA F13; the same trap as .tree-entry-click). Empty reads empty. */
+    background: transparent; color: var(--pico-muted-color);
 }
 .gen-slot:hover { border-color: var(--pico-primary); }
 .gen-slot:focus { outline: none; }
@@ -11457,6 +11462,14 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
    third row; the box shrinks first (its placeholder is a reminder, not a label) */
 @media (max-width: 1150px) { .topbar .search-box { flex: 0 1 11rem; } }
 @media (max-width: 1000px) { .topbar .search-box { flex: 0 1 8rem; } }
+/* QA generate-r2-23: Pico pads every nav <li> 1rem top AND bottom -- sized for
+   a one-line bar, paid again on EVERY wrapped row. At 150% zoom (1066x633 CSS
+   px) the bar wrapped to three ~75px rows and took 231px, 35% of the window,
+   before the page began. A short or narrow window spends less on that padding
+   (rows ~45px); nothing is hidden and nothing moves out of the bar. */
+@media screen and (max-height: 800px), screen and (max-width: 1150px) {
+    .topbar > nav > ul > li { padding-top: 0.2rem; padding-bottom: 0.2rem; }
+}
 /* docs/203 — window.TopbarHold keeps the group at the tallest height it has
    reached at this width, so an edit→apply cycle cannot bounce the page. Rows
    pack to the top: the held space is blank space at the bottom, and nothing
