@@ -451,5 +451,39 @@ function partial(ts, extra) {
     } });
     await tick(); await tick();
 
+    // ---- QA JT-19: the reported journey -- Escape closes the Diff overlay,
+    // then the NEXT Escape closes the Versions panel (it used to stay open
+    // over the tree's search box after any number of presses) ------------
+    SV.closeDiff();
+    SV.close();
+    global.fetch = window.fetch = function (url) {     // back to the parking fetch (11. swapped it)
+        return new Promise(function (resolve) { pending.push({ url: url, resolve: resolve }); });
+    };
+    SV.toggle();
+    await tick();
+    ok(panel().hidden === false, 'JT-19 setup: the versions panel is open');
+    resetCalls();
+    SV.diff('EEE', 'CHIP_A');
+    await tick();
+    settle(0, partial('E'));
+    await tick(); await tick();
+    ok(overlay().style.display === 'flex', 'JT-19 setup: the Diff overlay is up');
+    const escNow = function () {
+        const ev = new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+        (document.activeElement || document.body).dispatchEvent(ev);
+    };
+    escNow();
+    await tick();
+    ok(overlay().style.display === 'none', 'JT-19: the first Escape closes the Diff overlay');
+    ok(panel().hidden === false, 'JT-19: ... and ONLY the overlay (innermost first)');
+    escNow();
+    await tick();
+    ok(panel().hidden === true, 'JT-19: the next Escape closes the Versions panel');
+    ok(document.querySelector('.state-version-chip').getAttribute('aria-expanded') === 'false',
+       'JT-19: and the chip says it is closed');
+    escNow();
+    await tick();
+    ok(panel().hidden === true, 'JT-19: a further Escape leaves it closed (no toggle back open)');
+
     process.exit(fails ? 1 : 0);
 })();

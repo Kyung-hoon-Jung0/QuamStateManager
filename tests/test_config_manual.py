@@ -76,6 +76,9 @@ def test_config_manual_selfcheck():
                          capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
     assert res.returncode == 0, res.stdout + "\n" + res.stderr
     assert "ok - an undescribed key says so" in res.stdout
+    # QA JT-18: the hover-F1 pins ran (the chain ends in them; a silent early
+    # exit must not read as green)
+    assert "ok - JT-18: a sidebar-button open still returns focus to the button" in res.stdout
 
 
 # ---------------------------------------------------------------------------

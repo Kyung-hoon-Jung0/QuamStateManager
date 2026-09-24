@@ -177,7 +177,7 @@ setTimeout(function () {
                     window.localStorage.setItem('quam_manual_size', JSON.stringify({ w: 700, h: 520 }));   // jsdom's real Storage
                     window.toggleConfigManual(); window.toggleConfigManual(d.getElementById('manual-btn'));
                     ok(pop.style.width === '700px' && pop.style.height === '520px', 'a remembered size is restored on open (' + pop.style.width + ' x ' + pop.style.height + '; stored=' + window.localStorage.getItem('quam_manual_size') + ' vw=' + window.innerWidth + ' open=' + !pop.classList.contains('manual-hidden') + ')');
-                    reviewPins(function () { closedIntoNodePins(function () { process.exit(fails ? 1 : 0); }); });
+                    reviewPins(function () { closedIntoNodePins(function () { hoverF1Pins(function () { process.exit(fails ? 1 : 0); }); }); });
                 }, 400);
             });
             return;
@@ -289,5 +289,84 @@ function closedIntoNodePins(done) {
                 }, 250);
             }, 30);
         }, 50);
+    }, 30);
+}
+
+/* QA JT-18: the Json tree's ? advertises "(F1)" but shows only on HOVER, and
+   a hovered row is not focused -- F1 found no path, opened nothing and let
+   the browser's own help through. The hovered editable row is the fallback
+   (focus still wins), gated like the ? itself; and closing the manual hands
+   focus back to where F1 was pressed, not to the sidebar button. */
+function hoverF1Pins(done) {
+    const esc = () => pop.querySelector('.manual-search').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    const f1 = (target) => {
+        const ev = new window.KeyboardEvent('keydown', { key: 'F1', bubbles: true, cancelable: true });
+        (target || d.body).dispatchEvent(ev);
+        return ev;
+    };
+    const over = (el) => el.dispatchEvent(new window.MouseEvent('mouseover', { bubbles: true }));
+    d.body.insertAdjacentHTML('beforeend',
+        '<div class="json-tree">' +
+        '<div class="tree-node" data-path="qubits.q1.T1"><div class="tree-row" id="row-help" tabindex="-1">' +
+        '<span class="tree-key">T1</span><span class="tree-val">1e-05</span>' +
+        '<button type="button" class="key-help-btn tree-help" tabindex="-1">?</button></div></div>' +
+        '<div class="tree-node" data-path="qubits.q1.T2"><div class="tree-row" id="row-nohelp">' +
+        '<span class="tree-key">T2</span><span class="tree-val">2e-05</span></div></div>' +
+        '</div>');
+    esc();
+    if (d.activeElement && d.activeElement !== d.body && d.activeElement.blur) d.activeElement.blur();
+    calls.length = 0;
+    over(d.querySelector('#row-help .tree-val'));
+    const ea = f1();
+    setTimeout(function () {
+        ok(ea.defaultPrevented, 'JT-18: F1 over a hovered editable tree row is consumed (no browser help)');
+        ok(!pop.classList.contains('manual-hidden')
+           && calls.some((c) => c.indexOf('/api/manual/node?path=qubits.q1.T1') === 0),
+           "JT-18: and opens the manual on that row's key (" + calls.join(',') + ')');
+        pop.querySelector('.manual-search').focus();   // wherever the user goes meanwhile
+        esc();
+        ok(d.activeElement === d.getElementById('row-help'),
+           'JT-18: with nothing focused, closing hands focus to the row F1 was pressed on (was: the sidebar button)');
+        calls.length = 0;
+        over(d.body);
+        const eb = f1();
+        ok(!eb.defaultPrevented && pop.classList.contains('manual-hidden') && !calls.length,
+           'JT-18: with the pointer off the tree, F1 does nothing and is not consumed');
+        over(d.querySelector('#row-nohelp .tree-key'));
+        const ec = f1();
+        ok(!ec.defaultPrevented && pop.classList.contains('manual-hidden'),
+           'JT-18: a row without the ? (read-only / diff trees) is not hijacked');
+        over(d.querySelector('#row-help .tree-key'));
+        calls.length = 0;
+        const cell = d.getElementById('cell'); cell.focus();
+        f1(cell);
+        setTimeout(function () {
+            ok(calls.some((c) => c.indexOf('/api/manual/node?path=qubits.q1.z.joint_offset') === 0)
+               && !calls.some((c) => c.indexOf('path=qubits.q1.T1') > 0),
+               'JT-18: a focused cell still wins over the hovered row');
+            pop.querySelector('.manual-search').focus();   // the user went into the window
+            esc();
+            ok(d.activeElement === cell, 'JT-18: closing the manual returns focus to the cell F1 was pressed in (was: the sidebar button)');
+            const row = d.getElementById('row-help');
+            row.focus();
+            f1(row);
+            setTimeout(function () {
+                window.toggleConfigManual();          // the Escape ladder's close (focus outside the window)
+                ok(pop.classList.contains('manual-hidden') && d.activeElement === row,
+                   'JT-18: ... and to a focused tree row, when the Escape ladder closes it');
+                window.toggleConfigManual(d.getElementById('manual-btn'));
+                esc();
+                ok(d.activeElement === d.getElementById('manual-btn'),
+                   'JT-18: a sidebar-button open still returns focus to the button');
+                const plain = d.createElement('input'); d.body.appendChild(plain);
+                plain.focus();
+                over(d.querySelector('#row-help .tree-key'));
+                const ep = f1(plain);
+                ok(ep.defaultPrevented && !pop.classList.contains('manual-hidden') && d.activeElement === plain,
+                   'JT-18: F1 over a row while focus is in a plain field opens the row but leaves the focus alone');
+                esc();
+                done();
+            }, 30);
+        }, 30);
     }, 30);
 }

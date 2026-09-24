@@ -203,5 +203,51 @@ ok(/_armScrollAbort/.test(src) && /_restoreGen/.test(src)
    'a user who scrolls meanwhile owns the scroll — the retries abandon (docs/75 precedent)');
 ok(/'PageUp'|"PageUp"/.test(src), 'keyboard scrolling counts as the user taking over too');
 
+// ── 6. QA JT-17: a Depth press re-shapes the expansion, so the search memo
+//      must stop claiming the tree shows the query's result. Before the fix
+//      retyping the same query (or adding a space) did nothing at all. ────
+const F_DATA = { qubits: { q1: { xy: { f_01: 1 }, other: 2 },
+                           q2: { xy: { f_01: 2 }, other: 3 } },
+                 misc: { a: 1 } };
+window.renderJsonTree('explorer-tree-state', F_DATA, { defaultDepth: 1 });
+const fLeaf = () => host.querySelector('.tree-node[data-path="qubits.q1.xy.f_01"]');
+const onScreen = (n) => {
+    for (let e = n; e && e !== host; e = e.parentElement) {
+        if (e.classList.contains('tree-search-hidden')) return false;
+        if (e.classList.contains('tree-children') && e.style.display === 'none') return false;
+    }
+    return !!n;
+};
+window.jsonTreeSearch('explorer-tree-state', 'f_01');
+await settle();
+ok(onScreen(fLeaf()) && fLeaf().classList.contains('tree-highlight'),
+   'JT-17 setup: the search shows and highlights the match');
+const hiddenBefore = host.querySelectorAll('.tree-search-hidden').length;
+ok(hiddenBefore > 0, 'JT-17 setup: the search hides the non-matching rows (' + hiddenBefore + ')');
+window.jsonTreeExpandToDepth('explorer-tree-state', 1);
+ok(!onScreen(fLeaf()), 'JT-17: Depth 1 collapses the matched leaf away (the report)');
+ok(host.querySelectorAll('.tree-search-hidden').length === hiddenBefore,
+   'JT-17: the depth press keeps the filter itself (depth works inside the filtered set)');
+window.jsonTreeSearch('explorer-tree-state', 'f_01 ');   // same trimmed query
+await settle();
+ok(onScreen(fLeaf()) && fLeaf().classList.contains('tree-highlight'),
+   'JT-17: re-entering the SAME query after a depth press brings the results back');
+window.jsonTreeCollapseAll('explorer-tree-state');
+ok(!onScreen(fLeaf()), 'JT-17: Depth 0 collapses it too');
+window.jsonTreeSearch('explorer-tree-state', 'f_01');
+await settle();
+ok(onScreen(fLeaf()), 'JT-17: and the same query restores it after Depth 0');
+window.jsonTreeExpandAll('explorer-tree-state');
+ok(host._lastSearchQuery === undefined, 'JT-17: All forgets the memo as well');
+// an EMPTY memo is kept: an empty re-fire (tab switch) must not reset a depth
+window.jsonTreeSearch('explorer-tree-state', '');
+await settle();
+window.jsonTreeExpandToDepth('explorer-tree-state', 3);
+const openAt3 = window.jsonTreeExpandedPaths('explorer-tree-state').length;
+window.jsonTreeSearch('explorer-tree-state', '');
+await settle();
+ok(window.jsonTreeExpandedPaths('explorer-tree-state').length === openAt3,
+   'JT-17: an empty re-fire after a depth press keeps the chosen depth (' + openAt3 + ')');
+
 process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error('FAIL: selfcheck threw: ' + (e && e.stack || e)); process.exit(1); });

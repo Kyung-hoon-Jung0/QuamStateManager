@@ -130,6 +130,40 @@ esc(cell);
 ok(cell.value === '40', 'Escape in an edit cell reverted the cell');
 ok(closedInspector === 0, 'and did not close the inspector');
 
+// 7. QA JT-19: the topbar Versions panel is a floating tool too -- it had no
+//    keyboard way out, so it sat over the page after any number of Escapes
+inspectorWithForm('rename');
+closedInspector = 0;
+doc.body.insertAdjacentHTML('afterbegin',
+    '<button class="state-version-chip" aria-expanded="true">Versions</button>' +
+    '<div id="state-version-panel"><button class="sv-row-btn">Diff</button></div>');
+doc.querySelector('.sv-row-btn').focus();
+const svEv = esc(doc.activeElement);
+ok(doc.getElementById('state-version-panel').hidden === true,
+   'JT-19: Escape closes an open Versions panel');
+ok(svEv.defaultPrevented, 'JT-19: and consumes the press');
+ok(doc.querySelector('.state-version-chip').getAttribute('aria-expanded') === 'false',
+   'JT-19: the chip reports it closed');
+ok(doc.activeElement === doc.querySelector('.state-version-chip'),
+   'JT-19: focus that was inside the panel goes back to its chip');
+ok(doc.querySelector('.pulse-rename-form').hidden === false && closedInspector === 0,
+   'JT-19: the form and inspector beneath were left alone (innermost first)');
+esc();
+ok(doc.querySelector('.pulse-rename-form').hidden === true,
+   'JT-19: the next Escape reaches the form, as before');
+
+// 8. QA JT-18: the Config Manual opened by F1 on a hovered tree row leaves
+//    focus outside it, so this ladder is what Escape reaches -- and it called
+//    window.toggleManual, a name that never existed (the press was consumed
+//    and the manual stayed open)
+inspectorWithForm(null);
+doc.body.insertAdjacentHTML('afterbegin', '<div id="manual-popover" class="manual-popover"></div>');
+let toggledManual = 0;
+window.toggleConfigManual = function () { toggledManual++; doc.getElementById('manual-popover').classList.add('manual-hidden'); };
+esc();
+ok(toggledManual === 1 && doc.getElementById('manual-popover').classList.contains('manual-hidden'),
+   'JT-18: Escape with focus outside the Config Manual closes it');
+
 // ------------------------------------------------------- the Pulses URL sync
 function pulsesDom(page, perPage, q, channel) {
     doc.body.innerHTML =

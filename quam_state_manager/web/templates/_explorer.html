@@ -21,7 +21,8 @@
         <button class="btn-sm outline" onclick="jsonTreeExpandToDepth(_activeTreeId(), 1)">1</button>
         <button class="btn-sm outline" onclick="jsonTreeExpandToDepth(_activeTreeId(), 2)">2</button>
         <button class="btn-sm outline" onclick="jsonTreeExpandToDepth(_activeTreeId(), 3)">3</button>
-        <button class="btn-sm outline" onclick="jsonTreeExpandAll(_activeTreeId())">All</button>
+        <button class="btn-sm outline" onclick="jsonTreeExpandAllUi(_activeTreeId(), this)"
+                title="Expand every node &mdash; slow on a large chip (tens of thousands of rows)">All</button>
     </div>
     <button class="btn-sm outline" id="explorer-livediff-toggle" type="button"
             onclick="explorerLiveDiff()"

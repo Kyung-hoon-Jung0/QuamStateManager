@@ -1445,15 +1445,25 @@ document.addEventListener('keydown', function(evt) {
     var tag = t && t.tagName ? t.tagName.toLowerCase() : '';
     if ((tag === 'input' || tag === 'textarea') && t.hasAttribute('data-param')) return;
 
-    // 1. a floating topbar tool (Settings / Calculator / Config manual)
+    // 1. a floating topbar tool (Settings / Calculator / Config manual /
+    //    Versions -- QA JT-19: the Versions panel had no keyboard way out)
     var tool = document.querySelector('#settings-dropdown:not(.settings-hidden),'
                                       + ' #calc-popover:not(.calc-hidden),'
-                                      + ' #manual-popover:not(.manual-hidden)');
+                                      + ' #manual-popover:not(.manual-hidden),'
+                                      + ' #state-version-panel:not([hidden])');
     if (tool) {
         evt.preventDefault();
+        if (tool.id === 'state-version-panel') {       // what the panel's own close() does
+            var _svFocus = tool.contains(document.activeElement);
+            tool.hidden = true;
+            var _svChip = document.querySelector('.state-version-chip');
+            if (_svChip) _svChip.setAttribute('aria-expanded', 'false');
+            if (_svFocus && _svChip) _svChip.focus();
+            return;
+        }
         if (tool.id === 'settings-dropdown' && window.toggleSettings) window.toggleSettings();
         else if (tool.id === 'calc-popover' && window.toggleCalc) window.toggleCalc();
-        else if (window.toggleManual) window.toggleManual();
+        else if (window.toggleConfigManual) window.toggleConfigManual();   // QA JT-18: the real name (toggleManual never existed)
         else tool.classList.add(tool.id === 'calc-popover' ? 'calc-hidden' : 'settings-hidden');
         return;
     }
@@ -7803,6 +7813,7 @@ window.clearDetailPanelSearch = function(btnEl) {
 
         var row = document.createElement("div");
         row.className = "tree-row";
+        row.tabIndex = -1;   // QA JT-20: reachable by the tree's arrow keys, one Tab stop per tree
 
         if (isContainer) {
             var toggle = document.createElement("span");
@@ -8714,8 +8725,10 @@ window.clearDetailPanelSearch = function(btnEl) {
             }
             if (newVal === editVal && !meansTypeChange) { cancel(); return; }
             committed = true;
+            var refocus = document.activeElement === input;   // QA JT-20
             valEl.textContent = currentDisplay;
             valEl.classList.remove("tree-val-editing");
+            if (refocus) _kbRefocusRow(valEl);
 
             var body = new URLSearchParams();
             body.append("dot_path", dotPath);
@@ -8838,8 +8851,10 @@ window.clearDetailPanelSearch = function(btnEl) {
         function cancel() {
             if (committed) return;
             committed = true;
+            var refocus = document.activeElement === input;   // QA JT-20
             valEl.textContent = currentDisplay;
             valEl.classList.remove("tree-val-editing");
+            if (refocus) _kbRefocusRow(valEl);
         }
 
         input.addEventListener("keydown", function(e) {
@@ -9133,6 +9148,154 @@ window.clearDetailPanelSearch = function(btnEl) {
             var node = row.closest(".tree-node");
             if (!node || !node._meta || !node._meta.path) return;
             _buildRowActions(container, node, row);
+        });
+    }
+
+    /* QA JT-20: the tree was mouse-only -- the arrows and the values were
+       click-only spans, so a keyboard user could not open a node, edit a value
+       or reach a row for F1. The WAI-ARIA tree keys, one Tab stop per tree:
+       Tab lands on the container, which hands focus to the last row used (or
+       the first); ArrowUp/Down walk the VISIBLE rows (collapsed children and
+       search-hidden rows are skipped); Right opens / steps in; Left closes /
+       steps out; Home/End; Enter toggles a node or does a value's own click
+       (edit here, copy on the read-only trees -- no mode logic duplicated);
+       F2 edits (a value, or a node's JSON). The walk is structural, never a
+       querySelectorAll over a ~10k-row tree. Keys typed into the editors
+       (inputs, buttons) are theirs, never the tree's. */
+    function _kbShown(n) {
+        return !!(n && n.classList && n.classList.contains("tree-node")
+                  && !n.classList.contains("tree-search-hidden"));
+    }
+    function _kbParent(node) {
+        var p = node.parentElement;
+        return (p && p.classList.contains("tree-children")) ? p.parentElement : null;
+    }
+    function _kbKids(node) {
+        var ch = node.querySelector(":scope > .tree-children");
+        if (!ch || ch.style.display === "none") return [];
+        return Array.prototype.filter.call(ch.children, _kbShown);
+    }
+    function _kbSib(n, dir) {
+        var s = dir > 0 ? n.nextElementSibling : n.previousElementSibling;
+        while (s && !_kbShown(s)) s = dir > 0 ? s.nextElementSibling : s.previousElementSibling;
+        return s;
+    }
+    function _kbDeepLast(n) {
+        for (var k = _kbKids(n); k.length; k = _kbKids(n)) n = k[k.length - 1];
+        return n;
+    }
+    function _kbNext(node) {
+        var k = _kbKids(node);
+        if (k.length) return k[0];
+        for (var n = node; n; n = _kbParent(n)) {
+            var s = _kbSib(n, 1);
+            if (s) return s;
+        }
+        return null;
+    }
+    function _kbPrev(node) {
+        var s = _kbSib(node, -1);
+        return s ? _kbDeepLast(s) : _kbParent(node);
+    }
+    function _kbEnds(container, last) {
+        var roots = Array.prototype.filter.call(container.children, _kbShown);
+        if (!roots.length) return null;
+        return last ? _kbDeepLast(roots[roots.length - 1]) : roots[0];
+    }
+    function _kbReachable(node) {
+        for (var n = node; n; n = _kbParent(n)) {
+            if (!_kbShown(n)) return false;
+            var p = _kbParent(n);
+            if (p && _kbKids(p).indexOf(n) < 0) return false;
+        }
+        return true;
+    }
+    function _kbFocus(node) {
+        var r = node && node.querySelector(":scope > .tree-row");
+        if (r) r.focus();
+    }
+    function _kbCollapse(node) {
+        var ch = node.querySelector(":scope > .tree-children");
+        var tg = node.querySelector(":scope > .tree-row > .tree-toggle");
+        if (!ch || !tg) return;
+        ch.style.display = "none";
+        tg.textContent = "\u25B6";
+        tg.classList.add("collapsed");
+        tg.classList.remove("expanded");
+    }
+    /* An editor that closes under the keyboard hands focus back to its row,
+       not to <body> (the user would lose their place in the tree). */
+    function _kbRefocusRow(valEl) {
+        var r = valEl && valEl.closest ? valEl.closest(".tree-row") : null;
+        if (r && r.hasAttribute("tabindex") && r.isConnected) r.focus({ preventScroll: true });
+    }
+    function _attachTreeKeys(container) {
+        container.tabIndex = 0;          // a re-render starts with focus outside
+        if (container._treeKeys) return;
+        container._treeKeys = true;
+        // a click on the tree's blank area focuses the container too; only a
+        // keyboard arrival is handed on to a row (no scroll jump on a click)
+        container.addEventListener("mousedown", function () {
+            container._kbMouse = true;
+            setTimeout(function () { container._kbMouse = false; }, 0);
+        }, true);
+        container.addEventListener("focusin", function (e) {
+            // while focus is INSIDE, the container leaves the Tab order:
+            // Shift+Tab from a row must go past the tree, not land on the
+            // container and be handed straight back (a keyboard trap)
+            if (e.target !== container) container.tabIndex = -1;
+            if (e.target && e.target.classList && e.target.classList.contains("tree-row")) {
+                container._kbRow = e.target;
+            }
+        });
+        container.addEventListener("focusout", function (e) {
+            var to = e.relatedTarget;
+            if (!to || !container.contains(to)) container.tabIndex = 0;
+        });
+        container.addEventListener("focus", function (e) {
+            if (e.target !== container || container._kbMouse) return;
+            if (e.relatedTarget && container.contains(e.relatedTarget)) return;   // leaving backwards
+            var r = container._kbRow;
+            var node = (r && r.isConnected && container.contains(r)) ? r.parentElement : null;
+            _kbFocus(node && _kbReachable(node) ? node : _kbEnds(container, false));
+        });
+        container.addEventListener("keydown", function (e) {
+            if (e.ctrlKey || e.altKey || e.metaKey) return;
+            var t = e.target;
+            var onRow = !!(t && t.classList && t.classList.contains("tree-row")
+                           && t.parentElement && t.parentElement.classList.contains("tree-node"));
+            if (!onRow && t !== container) return;       // an editor, a button, ...
+            var node = onRow ? t.parentElement : null;
+            var k = e.key, to = null;
+            if (k === "Home" || (!node && k === "ArrowDown")) to = _kbEnds(container, false);
+            else if (k === "End" || (!node && k === "ArrowUp")) to = _kbEnds(container, true);
+            else if (!node) return;
+            else if (k === "ArrowDown") to = _kbNext(node);
+            else if (k === "ArrowUp") to = _kbPrev(node);
+            else if (k === "ArrowRight" || k === "ArrowLeft" || k === "Enter" || k === "F2") {
+                var ch = node.querySelector(":scope > .tree-children");
+                var open = !!ch && ch.style.display !== "none";
+                if (k === "ArrowRight") {
+                    if (!ch) return;                        // a leaf: the pane may scroll sideways
+                    var kids = _kbKids(node);
+                    // closed, or open with every child search-hidden: the
+                    // arrow's own click (it reveals them, like the mouse)
+                    if (!open || (!kids.length && _searchHiddenKids(node).length)) _toggleNode(node);
+                    else to = kids[0] || null;
+                } else if (k === "ArrowLeft") {
+                    if (open) _kbCollapse(node); else to = _kbParent(node);
+                } else if (ch && k === "Enter") {
+                    _toggleNode(node);
+                } else {
+                    var act = ch ? t.querySelector(":scope > .tree-json-edit-btn")
+                                 : t.querySelector(":scope > .tree-val");
+                    if (!act) return;
+                    act.click();
+                }
+            } else return;
+            e.preventDefault();
+            e.stopPropagation();          // a page-level arrow/Enter handler must not act too
+            if (to) _kbFocus(to);
         });
     }
 
@@ -9524,6 +9687,7 @@ window.clearDetailPanelSearch = function(btnEl) {
         // re-stamped on EVERY render so a non-crud re-render disables it.
         container._crudEnabled = false;
         if (options.crud) _attachCrudHover(container);
+        _attachTreeKeys(container);
 
         if (defaultDepth >= 99) {
             _expandAll(container);
@@ -9532,19 +9696,89 @@ window.clearDetailPanelSearch = function(btnEl) {
         }
     };
 
+    /* QA JT-17: the search memo (_lastSearchQuery) means "the tree shows q's
+       result". A depth press re-shapes the expansion (the filter classes stay),
+       so after it the same query is NOT redundant any more -- without this,
+       retyping it (or adding a space) did nothing and the user had to change
+       the text to get the results back. Only a real query is forgotten: an
+       empty memo stays, so an empty re-fire never resets the chosen depth. */
+    function _depthPressForgetsSearch(c) {
+        if (c._lastSearchQuery) c._lastSearchQuery = undefined;
+    }
+
     window.jsonTreeExpandToDepth = function(containerId, depth) {
         var c = document.getElementById(containerId);
-        if (c) _expandToDepth(c, depth);
+        if (c) { _expandToDepth(c, depth); _depthPressForgetsSearch(c); }
     };
 
     window.jsonTreeCollapseAll = function(containerId) {
         var c = document.getElementById(containerId);
-        if (c) _collapseAll(c);
+        if (c) { _collapseAll(c); _depthPressForgetsSearch(c); }
     };
 
     window.jsonTreeExpandAll = function(containerId) {
         var c = document.getElementById(containerId);
-        if (c) _expandAll(c);
+        if (c) { _expandAll(c); _depthPressForgetsSearch(c); }
+    };
+
+    /* QA JT-16: Depth "All" on a real chip materialises and lays out every
+       node -- 31,227 rows on a 5-qubit chip, measured ~1.3 s of JS and then a
+       ~5 s style/layout frame no JS chunking can split (content-visibility
+       would, but it corrupts scrollHeight). The page used to freeze with no
+       word. Above _EXPAND_ALL_NOTE_AT rows the press now SAYS so first: the
+       note, a disabled button and a busy cursor are painted, THEN the expand
+       runs, and all three clear after the heavy frame. At or below it the
+       press is exactly the old synchronous one. window.jsonTreeExpandAll stays
+       synchronous on purpose: its other callers read the expansion right
+       after it. */
+    var _EXPAND_ALL_NOTE_AT = 5000;
+    function _treeRowCount(data) {
+        var n = 0, stack = [data];
+        while (stack.length) {
+            var v = stack.pop();
+            if (v === null || typeof v !== "object") continue;
+            var ks = Object.keys(v);
+            n += ks.length;
+            for (var i = 0; i < ks.length; i++) stack.push(v[ks[i]]);
+        }
+        return n;
+    }
+    window.jsonTreeExpandAllUi = function(containerId, btn) {
+        var c = document.getElementById(containerId);
+        if (!c) return;
+        var rows = (c._treeData !== undefined && c._treeData !== null)
+            ? _treeRowCount(c._treeData) : 0;
+        if (rows <= _EXPAND_ALL_NOTE_AT) { window.jsonTreeExpandAll(containerId); return; }
+        if (c._expandAllBusy) return;          // the first press is still pending
+        c._expandAllBusy = true;
+        var note = document.createElement("span");
+        note.className = "tree-busy-note";
+        note.setAttribute("role", "status");
+        note.textContent = "Expanding all " + rows.toLocaleString() +
+            " rows \u2014 the page pauses for a few seconds\u2026";
+        var group = btn && btn.closest ? btn.closest(".tree-depth-group") : null;
+        if (group && group.parentNode) group.parentNode.insertBefore(note, group.nextSibling);
+        if (btn) btn.disabled = true;
+        c.setAttribute("aria-busy", "true");
+        c.classList.add("tree-busy");
+        var raf = window.requestAnimationFrame
+            ? window.requestAnimationFrame.bind(window)
+            : function (f) { return setTimeout(f, 16); };
+        function clear() {
+            c._expandAllBusy = false;
+            if (note.parentNode) note.parentNode.removeChild(note);
+            if (btn) btn.disabled = false;
+            c.removeAttribute("aria-busy");
+            c.classList.remove("tree-busy");
+        }
+        // paint the note, THEN freeze; clear only after the heavy frame
+        raf(function () { setTimeout(function () {
+            try {
+                if (c.isConnected) { _expandAll(c); _depthPressForgetsSearch(c); }
+            } finally {
+                raf(function () { setTimeout(clear, 0); });
+            }
+        }, 0); });
     };
 
     /* docs/122 item 2 — expansion is state the user built by hand, and every

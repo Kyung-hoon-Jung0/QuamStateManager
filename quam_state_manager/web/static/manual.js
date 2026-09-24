@@ -344,6 +344,7 @@ window.ConfigManual = (function () {
     }
 
     function setOpen(open, trigger) {
+        var wasOpen = isOpen();
         var p = pop();
         var btn = (window._toolTrigger ? window._toolTrigger('.manual-btn', trigger)
                                        : document.getElementById('manual-btn'));
@@ -363,11 +364,23 @@ window.ConfigManual = (function () {
             if (s && _mode === 'search') setTimeout(function () { s.focus(); }, 0);
         } else {
             clearTimeout(_pollTimer); _pollTimer = null;
-            if (btn) btn.focus();
+            // QA JT-18: an open from a place (F1 on a tree row / cell) hands
+            // focus back THERE, not to the sidebar button
+            // (the search box AND the window both close on one Escape: only
+            // the press that actually closed it moves focus)
+            if (!wasOpen) return;
+            var back = _returnFocus; _returnFocus = null;
+            if (back && back.isConnected && back.focus) back.focus();
+            if (btn && (!back || document.activeElement !== back)) btn.focus();   // gone / hidden: the old target
         }
     }
 
-    window.toggleConfigManual = function (trigger) { setOpen(!isOpen(), trigger); };
+    var _returnFocus = null;
+    window.toggleConfigManual = function (trigger) {
+        var o = isOpen();
+        if (!o) _returnFocus = null;            // a close keeps where F1 came from
+        setOpen(!o, trigger);
+    };
 
     /* Deep link: {q} pre-fills the search, {path} opens the "this place" view. */
     window.openConfigManual = function (opts) {
@@ -379,7 +392,10 @@ window.ConfigManual = (function () {
             _mode = 'search'; _nodePath = null;
             if (typeof opts.q === 'string') p.querySelector('.manual-search').value = opts.q;
         }
-        if (isOpen()) refresh(); else setOpen(true, null);
+        if (isOpen()) { refresh(); return; }
+        var a = document.activeElement;
+        _returnFocus = (a && a !== document.body && !p.contains(a)) ? a : null;
+        setOpen(true, null);
     };
 
     function enableDrag(p) {
@@ -433,7 +449,23 @@ window.ConfigManual = (function () {
         else window.openConfigManual({ q: b.getAttribute('data-help-q') });
     });
 
-    /* F1 on a focused state cell / tree row / inspector input opens "this place". */
+    /* QA JT-18: the Json tree's ? says "(F1)" but only shows on HOVER, and a
+       row the pointer rests on is not focused -- F1 found no path, opened
+       nothing and let the browser's own help through. The row under the
+       pointer is remembered, gated exactly like the ? itself (only rows that
+       carry one: the editable live-state trees), and used when focus names no
+       place. A mouseover tracker, not :hover, so it is testable and cheap. */
+    var _hoverTreePath = null, _hoverTreeRow = null;
+    document.addEventListener('mouseover', function (e) {
+        var row = e.target && e.target.closest ? e.target.closest('.tree-row') : null;
+        var help = row && row.querySelector(':scope > .key-help-btn.tree-help');
+        var node = help ? row.closest('.tree-node[data-path]') : null;
+        _hoverTreePath = node ? node.getAttribute('data-path') : null;
+        _hoverTreeRow = node ? row : null;
+    }, true);
+
+    /* F1 on a focused state cell / tree row / inspector input -- or on the
+       hovered editable tree row -- opens "this place". */
     document.addEventListener('keydown', function (e) {
         if (e.key !== 'F1' || e.ctrlKey || e.altKey || e.metaKey) return;
         var t = e.target;
@@ -449,6 +481,14 @@ window.ConfigManual = (function () {
             var form = t.closest('form');
             var hid = form && form.querySelector('input[type="hidden"][name="dot_path"]');
             if (hid) path = hid.value;
+        }
+        if (!path && _hoverTreePath) {
+            path = _hoverTreePath;
+            // nothing had focus: the row F1 was pressed on becomes the place
+            // Escape hands focus back to (not the sidebar button)
+            var ae = document.activeElement;
+            if ((!ae || ae === document.body) && _hoverTreeRow && _hoverTreeRow.isConnected
+                    && _hoverTreeRow.hasAttribute('tabindex')) _hoverTreeRow.focus({ preventScroll: true });
         }
         if (!path) return;
         e.preventDefault();

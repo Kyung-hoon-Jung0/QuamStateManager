@@ -5288,6 +5288,10 @@ table code { font-size: 0.88em; }
     cursor: default; white-space: nowrap;
 }
 .tree-row:hover { background: rgba(128, 128, 128, 0.07); }
+/* QA JT-20: a row the arrow keys moved to is visibly the one they act on;
+   a mouse click focuses a row too, but draws nothing (focus-visible only) */
+.tree-row:focus { outline: none; }
+.tree-row:focus-visible { outline: 2px solid var(--pico-primary); outline-offset: -2px; }
 .tree-toggle {
     display: inline-block; width: 16px; text-align: center;
     cursor: pointer; user-select: none; flex-shrink: 0;
@@ -5304,6 +5308,15 @@ table code { font-size: 0.88em; }
 .tree-colon { color: var(--pico-muted-color); margin-right: 0.3em; }
 .tree-summary { color: var(--pico-muted-color); font-style: italic; font-size: 0.92em; }
 .tree-val { margin: 0; }
+/* QA JT-15: a long single-line value (a 5k-char JSON-in-a-string extras leaf)
+   ends in an ellipsis at the row's edge instead of pushing the hover actions
+   (copy/type/delete/?) tens of thousands of px to the right. The full value is
+   still one click away (edit / copy read dataset.editVal, not the layout).
+   Not while editing: .tree-val-editing is inline-flex and hosts the input +
+   the async type chip. */
+.tree-val:not(.tree-val-editing), .tree-incoming-val {
+    min-width: 0; overflow: hidden; text-overflow: ellipsis;
+}
 .tree-val-string { color: var(--tree-val-string-color); }
 .tree-val-number { color: var(--tree-val-number-color); }
 .tree-val-boolean { color: var(--tree-val-boolean-color); }
@@ -5332,6 +5345,9 @@ table code { font-size: 0.88em; }
     background: var(--tree-match-strong-bg);
 }
 .tree-search-hidden { display: none; }
+/* QA JT-16: Depth "All" above the row budget says so before the pause */
+.tree-busy-note { font-size: 0.85em; color: var(--pico-muted-color); white-space: nowrap; }
+.json-tree.tree-busy { cursor: progress; }
 /* docs/168: a finding the user has said is expected. Still listed, still its
    own severity -- muted so the eye passes over it, never hidden. */
 .diag-row-acknowledged { opacity: 0.62; }
