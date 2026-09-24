@@ -132,7 +132,32 @@ window.ChipStatus.density = (function () {
    of the pane. A core with no DOM assumptions of its own: the caller hands it
    the selector for a view. */
 window.ChipStatus.jumpGuard = (function () {
-    var last = null, WINDOW_MS = 8000, armedPane = null;
+    /* QA F-06 / F-20 (review): the window used to run from the CLICK. On a
+       fresh page the charts that give the sections their height land in 1-2 s
+       long tasks for 7-15 s on the 5-qubit rig, so the re-anchor that would
+       have put the jump right came after the window: a Trends jump stayed
+       clamped two-thirds down the pane, and an F5 inside Trends ended 1876 px
+       low on the 2Q panels. The window now runs from the last LANDING: every
+       re-anchor the page's growth triggers keeps the jump live WINDOW_MS
+       longer, never past CAP_MS from the click (a page that keeps resizing
+       cannot hold the pane for ever; any wheel / touch / key / press still
+       ends it at once). */
+    var last = null, WINDOW_MS = 8000, CAP_MS = 60000, armedPane = null;
+    function live() {
+        var now = Date.now();
+        return !!last && now - last.act <= WINDOW_MS && now - last.at <= CAP_MS;
+    }
+    /* QA F-20 (review): an offset INSIDE a section that has not got its content
+       yet (Trends is a 51 px placeholder until its fetch lands) points past the
+       section, into the 2Q panels below it -- and when Trends then grew, the
+       browser's scroll anchoring carried the pane down with those panels.
+       Until the section can hold the offset, land on its top; the growth that
+       fills it re-anchors to top + offset. */
+    function land(el, pane, off) {
+        var r = el.getBoundingClientRect();
+        var o = (off > 0 && off >= r.height) ? 0 : off;
+        pane.scrollTop += r.top - pane.getBoundingClientRect().top + o;
+    }
     var BELOW = ['fidelity2q', 'fidelity1q', 'readout',
                  'coherence', 'frequencies', 'calibration'];   // rendered below Trends
     /* QA F-06: a jump TO Trends is re-anchored too. It is not displaced but
@@ -166,7 +191,8 @@ window.ChipStatus.jumpGuard = (function () {
            its top edge -- so a Back restore survives the lazy content above it
            the same way a jump does. Without it: the section's own top, as ever. */
         note: function (view, pane, off) {
-            last = { view: view, at: Date.now(), off: (typeof off === 'number') ? off : null };
+            var now = Date.now();
+            last = { view: view, at: now, act: now, off: (typeof off === 'number') ? off : null };
             arm(pane);
         },
         below: BELOW,
@@ -175,17 +201,26 @@ window.ChipStatus.jumpGuard = (function () {
         // by a wheel / touch / key), so the scroll-spy can keep the CLICKED
         // item lit while its target is on screen but cannot reach the top.
         current: function () {
-            return (last && Date.now() - last.at <= WINDOW_MS) ? last.view : null;
+            return live() ? last.view : null;
         },
+        // QA F-20 (review): the {view, off} a restore is still putting back, or
+        // null -- so the scroll record keeps what is being restored instead of
+        // a mid-landing position (a second F5 during it lost the place).
+        intent: function () {
+            return (live() && last.off !== null) ? { view: last.view, off: last.off } : null;
+        },
+        land: land,
         reanchor: function (selOf) {
-            if (!last || Date.now() - last.at > WINDOW_MS) return false;
-            if (REANCHOR.indexOf(last.view) < 0) return false;
+            if (!live()) return false;
+            // a restore (an offset) is re-anchored in ANY section: above Trends
+            // it is not displaced, but it can be clamped by the unbuilt page
+            if (REANCHOR.indexOf(last.view) < 0 && last.off === null) return false;
             var sel = selOf ? selOf(last.view) : null;
             var el = sel && document.querySelector(sel);
             if (!el || !el.scrollIntoView) return false;
+            last.act = Date.now();
             if (last.off !== null && armedPane) {
-                armedPane.scrollTop += el.getBoundingClientRect().top
-                    - armedPane.getBoundingClientRect().top + last.off;
+                land(el, armedPane, last.off);
                 return true;
             }
             el.scrollIntoView({ behavior: 'auto', block: 'start' });
@@ -2754,7 +2789,17 @@ window.ChipStatus.mount = function (opts) {
                 drawn.push(_plotlyRender(el, s.data, layout, s.config));
             }
             if (i < specs.length) {
-                (window.requestAnimationFrame || function(f) { setTimeout(f, 16); })(pump);
+                /* QA F-02 (review): chained on rAF alone, the batches ran
+                   back to back -- Chrome runs the next frame's callbacks ahead
+                   of queued tasks after a long one -- so the main thread was
+                   unavailable for 6-8 s at a stretch after a Trends deep link
+                   (measured: a 50 ms CDP sampler starved that long; clicks and
+                   the Trends fetch's own swap waited behind it). A frame for
+                   the paint, then a TASK for the next batch: anything queued
+                   meanwhile runs first. */
+                (window.requestAnimationFrame || function(f) { setTimeout(f, 16); })(function () {
+                    setTimeout(pump, 0);
+                });
             } else {
                 // QA F-02: a chart takes its height only when Plotly has DRAWN
                 // it (async: _plotlyRender is a promise chain, the first one may
@@ -3464,6 +3509,37 @@ window.ChipStatus.mount = function (opts) {
         }
     };
 
+    /* QA F-06 / F-20 (review): re-anchor when the page GROWS, not only when the
+       Trends fetch or a chart batch reports in. Those callbacks ran once each,
+       and on the 5-qubit rig the one that mattered came 7-15 s after the jump,
+       behind 1-2 s chart long tasks; meanwhile the pane sat clamped at the
+       pre-build maximum, or was carried off by the browser's scroll anchoring
+       as Trends grew above the 2Q panels it had landed on. The dashboard's own
+       height is the event: every change re-lands a live jump (the guard decides
+       whether one is live and whether the user has taken over). The height a
+       smooth jump measured its target against is the baseline, so the sections
+       a jump builds before it starts do not turn it into an instant one. */
+    var _jumpBaseH = -1;
+    function _dashH() {
+        var d = document.querySelector('.topo-dashboard');
+        return d ? d.offsetHeight : -1;
+    }
+    function _setupJumpFollow() {
+        var dash = document.querySelector('.topo-dashboard');
+        if (!dash || !window.ResizeObserver) return;
+        _jumpBaseH = dash.offsetHeight;
+        var ro = new ResizeObserver(function () {
+            var h = dash.offsetHeight;
+            if (h === _jumpBaseH) return;
+            _jumpBaseH = h;
+            _jump.reanchor();
+        });
+        ro.observe(dash);
+        window.ChipStatus._onLeave(dash, function _jumpFollowTeardown() {
+            try { ro.disconnect(); } catch (e) {}
+        });
+    }
+
     function _ensureSectionBuilt(key) {
         if (Array.isArray(key)) { key.forEach(_ensureSectionBuilt); return; }
         if (!key || _chipSectionBuilt[key]) return;
@@ -3551,6 +3627,7 @@ window.ChipStatus.mount = function (opts) {
         if (spec.build === 'metrics') _ensureSectionBuilt('2qrb');
         requestAnimationFrame(function() {        // let a just-built section lay out
             var el = document.querySelector(spec.sel);
+            _jumpBaseH = _dashH();                // what the smooth jump measured against
             if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
             else { var p = _scrollPane(); if (p) p.scrollTo({ top: 0, behavior: 'smooth' }); }
         });
@@ -3643,6 +3720,16 @@ window.ChipStatus.mount = function (opts) {
             try {
                 if (!pane || !_dashEl || !_dashEl.isConnected
                     || location.pathname !== '/topology') return;
+                // QA F-20 (review): mid-restore the pane is where the page lets
+                // it be, not where the record says; keep the record until the
+                // restore ends (landed and settled, or the user took over)
+                var it = window.ChipStatus.jumpGuard.intent();
+                if (it && _restoring && it.view === _restoring.view
+                    && _restoring.url === location.pathname + location.search) {
+                    _recWrite(_restoring);
+                    _lastRec = _restoring;
+                    return;
+                }
                 var paneTop = pane.getBoundingClientRect().top;
                 var best = null, bestTop = -Infinity;
                 Object.keys(TAB_SPEC).forEach(function(v) {
@@ -3721,6 +3808,7 @@ window.ChipStatus.mount = function (opts) {
        RB host above it, as a jump does); the jump guard carries the offset so
        the lazy content landing above re-anchors it, and a wheel / key / touch
        still hands the pane back to the user. */
+    var _restoring = null;   // the record a live restore is putting back
     function _restoreChipScroll(hs) {
         var pane = _scrollPane();
         if (!pane) return;
@@ -3734,11 +3822,11 @@ window.ChipStatus.mount = function (opts) {
         window.setChipStatusView(hs.view, null, false);
         if (spec.build === 'metrics') _ensureSectionBuilt('2qrb');
         window.ChipStatus.jumpGuard.note(hs.view, pane, hs.d || 0);
+        _restoring = hs;
         requestAnimationFrame(function() {     // let the just-built section lay out
             var el = document.querySelector(spec.sel);
             if (el) {
-                pane.scrollTop += el.getBoundingClientRect().top
-                    - pane.getBoundingClientRect().top + (hs.d || 0);
+                window.ChipStatus.jumpGuard.land(el, pane, hs.d || 0);
             } else {
                 pane.scrollTop = hs.top;
             }
@@ -4248,6 +4336,7 @@ window.ChipStatus.mount = function (opts) {
     // — or, as this block existed to guarantee, to tear down on nav-away.
     _setupLazyBuild();
     _setupScrollSpy();
+    _setupJumpFollow();
 
     // A deep-link ?view= (left-nav sub-item or a shared link) scrolls to that
     // section; a bare /topology load stays at the top, by design — we do NOT
@@ -4690,16 +4779,27 @@ window.ChipTrends = (function () {
        _reload, which now remembers the exact query it sent; the section's
        first build replays it. Always `metrics=`-led (even empty), so turning
        every chip off stays a remembered choice and the bare-request defaults
-       stay a first-visit thing. Per browser, like Columns. */
+       stay a first-visit thing. Per chip (below). */
     var SEL_KEY = 'quam_trends_sel_v1';
     var SEL_MAX = 4096;
+    /* QA chipstatus-r2-18 (review): ...per CHIP, not per browser. Columns are
+       chip-agnostic; a selection is not -- a pair badge or a typed family
+       chosen on one chip was replayed on the next chip's first Trends build,
+       which rendered it as "no recorded parameter matches". Keyed by the
+       page's chip token (the fingerprint window.__chipToken carries, as
+       PaneState and the bulk grid's pinned rows key theirs); no token, the
+       bare key. */
+    function _selKey() {
+        var t = String(window.__chipToken || '');
+        return t ? SEL_KEY + '::' + t : SEL_KEY;
+    }
     /* '?<query>' to replay, or '' (nothing stored, a private window, a value
        that is not ours). Seeds the badge press order from the stored list,
        which _params wrote newest first, so the families cap trims the same
        badge after the reload as before it. */
     function storedQuery() {
         var v;
-        try { v = window.localStorage.getItem(SEL_KEY); } catch (e) { return ''; }
+        try { v = window.localStorage.getItem(_selKey()); } catch (e) { return ''; }
         if (typeof v !== 'string' || v.indexOf('metrics=') !== 0 || v.length > SEL_MAX) return '';
         if (!_pathOrder.length) {
             var m = /(?:^|&)paths=([^&]*)/.exec(v);
@@ -4718,7 +4818,7 @@ window.ChipTrends = (function () {
         if (!window.htmx || !document.getElementById('topo-trends')) return;
         var mine = ++_reloadSeq;
         var q = _params();
-        try { window.localStorage.setItem(SEL_KEY, q); } catch (e) { /* private window */ }
+        try { window.localStorage.setItem(_selKey(), q); } catch (e) { /* private window */ }
         var p = htmx.ajax('GET', '/topology/trends?' + q,
                           { source: '#topo-trends', target: '#topo-trends',
                             swap: 'outerHTML' });
@@ -4921,6 +5021,9 @@ window.ChipTrends = (function () {
                                       + _esc(q.trim()) + '</code>');
                         return;
                     }
+                    // QA chipstatus-r2-17 (review): _topo_trends.html's
+                    // unmatched slot renders these rows a second time --
+                    // pinned row for row by test_the_two_row_renderers_agree
                     box.innerHTML = rows.map(function (r) {
                         var isStr = (typeof r === 'string');
                         var p = isStr ? r : (r.path || r.dot_path || '');

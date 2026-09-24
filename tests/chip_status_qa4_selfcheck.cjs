@@ -83,7 +83,7 @@ const RAW = { wiring: { qubits: { q1: { xy: { opx_output: '#/ports/a' } }, q2: {
 const META = { T1: { label: 'T1', abbr: 'T1', direction: 'higher' },
                gate_fidelity_avg: { label: '1Q gate fidelity', abbr: 'Gate F', direction: 'higher' } };
 
-/* opts: url, chipView, storage (object preset), histState */
+/* opts: url, chipView, storage (object preset), histState, chipToken */
 function world(opts) {
   opts = opts || {};
   const dom = new JSDOM(PAGE, { runScripts: 'outside-only', pretendToBeVisual: true,
@@ -91,6 +91,8 @@ function world(opts) {
   const win = dom.window;
   if (opts.histState) win.history.replaceState(opts.histState, '');
   const T = { win: win, doc: win.document, ajax: [] };
+  // base.html sets it inline, before any script, from the render-time chip
+  if (opts.chipToken != null) win.__chipToken = opts.chipToken;
   if (opts.storage) {
     Object.keys(opts.storage).forEach((k) => win.localStorage.setItem(k, opts.storage[k]));
   }
@@ -194,6 +196,28 @@ const esc = (T) => T.doc.activeElement.dispatchEvent(
       const f = W.ajax.filter((x) => x.indexOf('/topology/trends') === 0)[0];
       ok(f === '/topology/trends', 'r2-18 ' + label + ' -> the bare first-visit request (' + f + ')');
     }
+
+    // review: the selection belongs to the CHIP it was made on
+    const A = world({ chipToken: 'chipA' });
+    A.doc.getElementById('topo-trends').outerHTML = SECTION;
+    A.win.ChipTrends.togglePath('qubit_pairs.*.A');
+    const kA = A.win.localStorage.getItem(KEY + '::chipA');
+    ok(kA && /paths=qubit_pairs\.\*\.A/.test(kA) && A.win.localStorage.getItem(KEY) === null,
+       'r2-18 review: a selection made on chip A is stored under chip A (' + kA + ')');
+    // the browser's storage as chip A left it, whatever key A chose
+    const left = {};
+    for (let i = 0; i < A.win.localStorage.length; i++) {
+      const k = A.win.localStorage.key(i); left[k] = A.win.localStorage.getItem(k);
+    }
+    const B = world({ chipToken: 'chipB', storage: left });
+    B.win.setChipStatusView('trends', null, false);
+    const fb = B.ajax.filter((x) => x.indexOf('/topology/trends') === 0)[0];
+    ok(fb === '/topology/trends',
+       'r2-18 review: chip B\'s first Trends build does not replay chip A\'s badges / typed family (' + fb + ')');
+    const A2 = world({ chipToken: 'chipA', storage: left });
+    A2.win.setChipStatusView('trends', null, false);
+    const fa = A2.ajax.filter((x) => x.indexOf('/topology/trends') === 0)[0];
+    ok(fa === '/topology/trends?' + kA, 'r2-18 review: ...while chip A gets its own back (' + fa + ')');
   }
 
   // ── r2-20: focus goes into the popovers and comes back ──────────────────

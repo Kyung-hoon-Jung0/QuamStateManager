@@ -1578,6 +1578,45 @@ class TestTypedTextThatNamesNoParameter:
         body = client.get("/topology/trends?metrics=&path=qubits.*.xy").get_data(as_text=True)
         assert self.NOTHING not in body, self._slot(body)
 
+    def test_the_two_row_renderers_agree(self, client, tmp_path, monkeypatch):
+        """Review of r2-17: the slot's rows are the typeahead's rows rendered a
+        SECOND time (Jinja here, suggest() in chip-status.js). Drift between
+        them -- a label, a count, an escape, the press -- is a user seeing two
+        spellings of one parameter. Both halves render the same rows (the
+        server's own /topology/trends/paths answer) and must agree on
+        everything a user can read or press, including an HTML-hostile label,
+        a one-entity family, a pair family and a row with no label."""
+        node = shutil.which("node")
+        if node is None:
+            pytest.skip("node not available")
+        _versions(client, tmp_path / "quam_state", n=2)
+        rows = [
+            {"path": "qubits.*.T<1>&\"q'", "label": "T<1>&\"q'", "scope": "qubits", "n": 5},
+            {"path": "qubit_pairs.*.cz.phase", "label": "cz.phase", "scope": "qubit_pairs", "n": 3},
+            {"path": "qubits.*.solo", "label": "solo", "scope": "qubits", "n": 1},
+            {"path": "extras.lone_leaf", "label": "", "scope": "", "n": 1},
+            {"path": "qubit_pairs.*.two", "label": "two", "scope": "qubit_pairs", "n": 2},
+        ]
+        hm = client.application.config["history_manager"]
+        monkeypatch.setattr(hm, "leaf_families", lambda *a, **k: [dict(r) for r in rows])
+        slot = self._slot(client.get("/topology/trends?metrics=&path=zzq").get_data(as_text=True))
+        assert "is not one parameter" in slot, slot
+        served = client.get("/topology/trends/paths?q=zzq").get_json()
+        assert served == rows, served
+        inp = tmp_path / "parity.json"
+        inp.write_text(json.dumps({"rows": served, "server_html": slot}), encoding="utf-8")
+        root = Path(__file__).resolve().parent.parent
+        r = subprocess.run([node, str(root / "tests" / "trends_sug_parity.cjs"), str(inp)],
+                           capture_output=True, text=True, encoding="utf-8",
+                           timeout=120, cwd=str(root))
+        if r.returncode == 2:
+            pytest.skip("jsdom not installed")
+        assert r.returncode == 0, r.stdout + r.stderr
+        got = json.loads(r.stdout)
+        assert len(got["server"]) == len(rows) == len(got["js"]), got
+        for js, srv in zip(got["js"], got["server"]):
+            assert js == srv, (js, srv)
+
     def test_a_badge_keeps_its_honest_empty_slot(self, client, tmp_path):
         """Only the BOX is judged: a `?paths=` badge (the 2Q gate-fidelity
         template) keeps the by-design "Nothing recorded" slot."""

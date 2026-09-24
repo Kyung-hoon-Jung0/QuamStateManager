@@ -10788,18 +10788,37 @@ def _snapshot_run_uid(folder: Any, run_id: Any,
     Every path operation is guarded. ``folder`` is a string recorded by a past
     snapshot; it can be malformed, or name a drive that has since gone away,
     and computing a hover hint must never 500 the section.
+
+    QA F-09 (review): a dataset root that was COPIED or MOVED since the
+    snapshot (another machine, a renamed share, a lab's archive copy) left
+    every point of it dead although the very same run folder sits under a
+    registered root. When the recorded grandparent is not registered, the
+    run's own ``<date dir>/<run folder>`` is looked for under each registered
+    root; exactly one hit is that run and gets its uid. None or several (two
+    copies registered at once) stays None -- the click never guesses which.
     """
     if not folder or run_id is None:
         return None
     try:
-        gp = Path(folder).parent.parent.resolve()
+        rp = Path(folder)
+        gp = rp.parent.parent.resolve()
         rid = int(run_id)
     except (OSError, ValueError, TypeError):
         return None
     for root, key in roots:
         if gp == root:
             return _dataset_uid(key, rid)
-    return None
+    date_dir, run_dir = rp.parent.name, rp.name
+    if not date_dir or not run_dir:
+        return None
+    hits = []
+    for root, key in roots:
+        try:
+            if key not in hits and (root / date_dir / run_dir).is_dir():
+                hits.append(key)
+        except (OSError, ValueError):
+            continue
+    return _dataset_uid(hits[0], rid) if len(hits) == 1 else None
 
 
 def _snapshot_provenance_map(hm, path: Path,

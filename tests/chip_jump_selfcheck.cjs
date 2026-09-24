@@ -16,6 +16,11 @@
 //   F-17  Escape closes the Panels / tile popovers and the History drawer
 //   F-19  an in-page tab press keeps the URL in step (F5 lands there)
 //   F-20  Back returns to where the user had scrolled, not the section anchor
+//   review (wave 2c): the page's GROWTH re-lands a live jump (a ResizeObserver
+//         on the dashboard), the window runs from the last landing (capped),
+//         an offset waits until its section can hold it, the scroll record
+//         keeps a restore that is still landing, and the chart pump yields a
+//         task between batches
 //
 // Run: node tests/chip_jump_selfcheck.cjs   (needs jsdom)
 'use strict';
@@ -113,6 +118,25 @@ function world(topo, opts) {
   }
   // QA F-20: the entry's state as a Back / reload finds it, BEFORE the mount
   if (opts.state) win.history.replaceState(opts.state, '');
+  // review F-06/F-20: a ResizeObserver the test can fire; the dashboard's
+  // height is the test's to set (jsdom lays nothing out)
+  if (opts.ro) {
+    T.ros = [];
+    win.ResizeObserver = function (cb) {
+      const o = { cb: cb, els: [] }; T.ros.push(o);
+      this.observe = function (el) { o.els.push(el); };
+      this.unobserve = function () {};
+      this.disconnect = function () { o.els = []; };
+    };
+    T.dashH = 3000;
+    Object.defineProperty(win.document.querySelector('.topo-dashboard'), 'offsetHeight',
+                          { configurable: true, get: () => T.dashH });
+    T.grow = function (h) {
+      T.dashH = h;
+      const dash = win.document.querySelector('.topo-dashboard');
+      T.ros.forEach(function (o) { if (o.els.indexOf(dash) >= 0) o.cb([{ target: dash }]); });
+    };
+  }
   if (opts.beforeMount) opts.beforeMount(T);
   win.ChipStatus.mount({ topo: topo, rawWiring: {}, defaultThresholds: {}, diagFindings: [],
                          metricMeta: {}, chipView: opts.chipView || '' });
@@ -377,12 +401,16 @@ function world(topo, opts) {
     pane.getBoundingClientRect = () => ({ top: 0, bottom: 700, left: 0, right: 1000, width: 1000, height: 700 });
     return box;
   }
-  function geomAll(T, tops) {
+  /* A recorded offset lies INSIDE its section (the recorder names the next
+     section otherwise), so the sections here are taller than any offset the
+     pins use; `hts` overrides one (a 51 px lazy placeholder). */
+  function geomAll(T, tops, hts) {
     VIEWS.forEach(function (v) {
       const el = T.doc.querySelector(SEL[v]);
       if (!el) return;
       const t = tops[v] == null ? 99999 : tops[v];
-      el.getBoundingClientRect = () => ({ top: t, bottom: t + 300, left: 0, right: 1000, width: 1000, height: 300 });
+      const h = (hts && hts[v] != null) ? hts[v] : 1500;
+      el.getBoundingClientRect = () => ({ top: t, bottom: t + h, left: 0, right: 1000, width: 1000, height: h });
     });
   }
   {
@@ -504,6 +532,133 @@ function world(topo, opts) {
     ok(J.reanchor((v) => SEL[v]) === true && box.st === 1000
        && T.scrolled.map((s) => s.id + ':' + s.behavior).join(',') === 'coherence:auto',
        'F-20 control: a jump noted without an offset still re-anchors to the section top');
+  }
+
+  // ── review F-20: an F5 inside Trends, whose content lands AFTER the restore ──
+  {
+    // measured on the 5Q rig: record {trends, d 533}; at mount Trends is the
+    // 51 px lazy placeholder 455 px down the pane, the 2Q panels right under it
+    const rec = { url: '/topology?view=trends', view: 'trends', d: 533, top: 2592 };
+    let box;
+    const T = world(CHAIN, { url: '/topology?view=trends', chipView: 'trends', ro: true,
+                             state: { htmx: true, smChipScroll: rec },
+                             beforeMount: function (T0) {
+                               box = stubPane(T0, 0);
+                               geomAll(T0, { trends: 455, fidelity2q: 506 }, { trends: 51 });
+                             } });
+    const win = T.win, pane = T.doc.getElementById('table-pane');
+    const real = win.Date.now;
+    let skew = 0;
+    win.Date.now = function () { return real() + skew; };
+    await sleep(60);
+    ok(box.st === 455,
+       'review F-20 an offset the lazy section cannot hold yet lands on the section TOP, not 533 px into the 2Q panels below it (' + box.st + ')');
+    // a scroll mid-landing (the pane is where the page lets it be) must not
+    // overwrite the record: a second F5 now still has the place to go back to
+    geomAll(T, { trends: 0, fidelity2q: 51 }, { trends: 51 });
+    pane.dispatchEvent(new win.Event('scroll'));
+    await sleep(320);
+    const r1 = win.history.state && win.history.state.smChipScroll;
+    ok(r1 && r1.view === 'trends' && r1.d === 533,
+       'review F-20 a scroll while the restore is still landing keeps the record being restored (' + JSON.stringify(r1) + ')');
+    // Trends' content lands (the fetch, then its charts): the dashboard grows
+    geomAll(T, { trends: 0, fidelity2q: 1927 }, { trends: 1927 });
+    T.grow(4876);
+    ok(box.st === 455 + 533,
+       'review F-20 when the section grows the page re-lands the restore at top + offset (' + box.st + ')');
+    // the window runs from the LAST landing: charts still drawing 13 s after
+    // the F5 (6 s after the previous landing) are still followed
+    skew = 7000;
+    geomAll(T, { trends: -533, fidelity2q: 1394 }, { trends: 1927 });
+    T.grow(5000);
+    skew = 13000;
+    geomAll(T, { trends: -300, fidelity2q: 1627 }, { trends: 1927 });
+    T.grow(5200);
+    ok(box.st === 988 + 233,
+       'review F-20 a landing 13 s after the F5 (6 s after the last one) is still followed -- the window runs from the last landing (' + box.st + ')');
+    // ...but never past the cap, however long the page keeps growing
+    let st = box.st, h = 5200;
+    for (skew = 18000; skew <= 58000; skew += 5000) {
+      geomAll(T, { trends: -500 }, { trends: 1927 }); T.grow(h += 10);
+    }
+    const atCap = box.st;
+    skew = 63000;
+    geomAll(T, { trends: -500 }, { trends: 1927 }); T.grow(h += 10);
+    ok(atCap > st && box.st === atCap && win.ChipStatus.jumpGuard.current() === null,
+       'review F-20 ...and a page that keeps growing stops holding the pane 60 s after the jump (' + atCap + ' -> ' + box.st + ')');
+    win.Date.now = real;
+  }
+
+  {
+    // a restore ABOVE Trends is not displaced, but it can be clamped by the
+    // unbuilt page below it: it is re-landed on growth too (a plain jump there
+    // is still left alone -- the F-06 control above)
+    const rec = { url: '/topology?view=topology', view: 'topology', d: 400, top: 900 };
+    let box;
+    const T = world(CHAIN, { url: '/topology?view=topology', chipView: 'topology', ro: true,
+                             state: { smChipScroll: rec },
+                             beforeMount: function (T0) { box = stubPane(T0, 0); geomAll(T0, { topology: 500 }); } });
+    await sleep(60);
+    ok(box.st === 900, 'review F-20 setup: a record inside Topology lands at its top + offset (' + box.st + ')');
+    box.st = 700;                                        // what the unbuilt page allowed
+    geomAll(T, { topology: -200 });
+    T.grow(5000);
+    ok(box.st === 900, 'review F-20 a restore above Trends clamped by the unbuilt page is re-landed when it grows (' + box.st + ')');
+  }
+
+  // ── review F-06: a jump re-lands on GROWTH, and stays smooth when it can ──
+  {
+    const T = world(CHAIN, { ro: true });
+    const win = T.win, pane = T.doc.getElementById('table-pane');
+    stubPane(T, 1792);
+    // the jump builds the 2Q host + metric shells synchronously: that growth
+    // happens BEFORE the smooth scroll measures its target
+    win.setChipStatusView('fidelity1q', null, true);
+    T.dashH = 3500;
+    await sleep(60);
+    T.grow(3500);                                     // the observer reports it
+    ok(T.scrolled.map((s) => s.id + ':' + s.behavior).join(',') === 'sec-fidelity-1q:smooth',
+       'review F-06 growth the jump itself built before starting leaves it a smooth jump ('
+       + T.scrolled.map((s) => s.id + ':' + s.behavior) + ')');
+    // later growth (charts drawn above the target, or below a clamped one)
+    T.scrolled.length = 0;
+    T.grow(5400);
+    ok(T.scrolled.map((s) => s.id + ':' + s.behavior).join(',') === 'sec-fidelity-1q:auto',
+       'review F-06 when the page grows, the live jump is put back on its target at once ('
+       + T.scrolled.map((s) => s.id + ':' + s.behavior) + ')');
+    // the user takes over: growth no longer moves the pane
+    pane.dispatchEvent(new win.Event('wheel'));
+    T.scrolled.length = 0;
+    T.grow(6400);
+    ok(T.scrolled.length === 0, 'review F-06 after a wheel the growth leaves the pane to the user');
+    // a jump TO Trends, clamped at the pre-build maximum, lands when the page grows
+    win.setChipStatusView('trends', null, true);
+    await sleep(60);
+    T.scrolled.length = 0;
+    T.grow(8000);
+    ok(T.scrolled.map((s) => s.id + ':' + s.behavior).join(',') === 'trends:auto',
+       'review F-06 a clamped Trends jump lands the moment the sections below it grow ('
+       + T.scrolled.map((s) => s.id + ':' + s.behavior) + ')');
+  }
+
+  // ── review F-02: the chart pump hands the thread back between batches ────
+  {
+    const T = world(CHAIN);
+    const win = T.win;
+    let inRaf = false;
+    const raf = win.requestAnimationFrame.bind(win);
+    win.requestAnimationFrame = function (f) {
+      return raf(function (t) { inRaf = true; try { f(t); } finally { inRaf = false; } });
+    };
+    const seen = [];
+    const render = win._plotlyRender;
+    win._plotlyRender = function (el) { seen.push(inRaf); return render.apply(this, arguments); };
+    win.setChipStatusView('fidelity1q', null, false);
+    await sleep(400);
+    ok(seen.length > 3, 'review F-02 setup: more than one batch of charts (' + seen.length + ')');
+    ok(seen.slice(3).every((x) => x === false),
+       'review F-02 every batch after the first runs as its own TASK, not inside a frame callback ('
+       + seen.map((x) => (x ? 'raf' : 'task')).join(',') + ')');
   }
 
   console.log(fails ? ('FAILED ' + fails) : 'chip_jump_selfcheck: all ok');
