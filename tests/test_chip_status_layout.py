@@ -374,6 +374,17 @@ class TestQaLayoutCss:
         assert "scroll-margin-top: calc(3.2rem + var(--floating-chrome-h))" in self.CSS[
             self.CSS.index("html.topbar-hidden .topo-dashboard .topo-section,"):]
 
+    def test_f12_a_tall_hover_popup_scrolls_inside_the_viewport(self):
+        """QA F-12: the q1-2 pair popup is 891 px tall; at 1366x768
+        positionPopup pinned it at top 6 px and its Parameters section ran off
+        the bottom with nothing to scroll (the wheel moved the page under it).
+        Capped at the viewport minus positionPopup's 2 x 6 px pad, the
+        existing clamp keeps the whole box on screen and it scrolls."""
+        rule = self._rule(".topo-card-popup, .topo-pair-popup")
+        assert "max-height: calc(100vh - 12px)" in rule
+        assert "overflow-y: auto" in rule
+        assert "overscroll-behavior: contain" in rule
+
 
 class Test4acGefHonesty:
     """docs/141 4ac -- what the GEF metric refuses to claim (R2-9, R7-6/R2-11)."""

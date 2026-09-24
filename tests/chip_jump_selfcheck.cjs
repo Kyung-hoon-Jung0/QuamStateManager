@@ -13,6 +13,9 @@
 //   F-07  while a jump is live the CLICKED item stays lit; at the bottom of
 //         the pane the last section on screen wins
 //   F-03  the 2Q pair grid drops tracks no pair uses (a chain used half)
+//   F-17  Escape closes the Panels / tile popovers and the History drawer
+//   F-19  an in-page tab press keeps the URL in step (F5 lands there)
+//   F-20  Back returns to where the user had scrolled, not the section anchor
 //
 // Run: node tests/chip_jump_selfcheck.cjs   (needs jsdom)
 'use strict';
@@ -80,7 +83,8 @@ const CHAIN = { nodes: ['0,0', '1,0', '2,0', '3,0', '4,0'].map((l, i) => node('q
    deferred); renders are recorded and resolved by the test */
 function world(topo, opts) {
   opts = opts || {};
-  const dom = new JSDOM(PAGE, { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/' });
+  const dom = new JSDOM(PAGE, { runScripts: 'outside-only', pretendToBeVisual: true,
+                               url: 'http://localhost' + (opts.url || '/') });
   const win = dom.window;
   win.htmx = { ajax: function () {}, process: function () {} };
   win.fetch = function () { return new win.Promise(function () {}); };
@@ -107,7 +111,11 @@ function world(topo, opts) {
   } else {
     win.Plotly = {};
   }
-  win.ChipStatus.mount({ topo: topo, rawWiring: {}, defaultThresholds: {}, diagFindings: [], metricMeta: {} });
+  // QA F-20: the entry's state as a Back / reload finds it, BEFORE the mount
+  if (opts.state) win.history.replaceState(opts.state, '');
+  if (opts.beforeMount) opts.beforeMount(T);
+  win.ChipStatus.mount({ topo: topo, rawWiring: {}, defaultThresholds: {}, diagFindings: [],
+                         metricMeta: {}, chipView: opts.chipView || '' });
   T.lit = function () {
     const b = T.doc.querySelector('.topo-subnav-btn.active'), a = T.doc.querySelector('#chip-status-subnav a.active');
     return (b && b.getAttribute('data-view')) + '/' + (a && a.getAttribute('data-view'));
@@ -278,6 +286,222 @@ function world(topo, opts) {
     ok(tpl(gs, 'grid-template-columns') === 'repeat(3,var(--topo-panel-cell-size))'
        && tpl(gs, 'grid-template-rows') === 'repeat(3,auto)',
        'F-03 a 2x2 lattice keeps its 3x3 doubled grid (' + tpl(gs, 'grid-template-columns') + ' x ' + tpl(gs, 'grid-template-rows') + ')');
+  }
+
+  // ── QA F-17: Escape closes the Overview popovers and the History drawer ──
+  {
+    const T = world(CHAIN);
+    const win = T.win, doc = T.doc;
+    const esc = (target, pre) => {
+      const e = new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+      if (pre) e.preventDefault();
+      (target || doc.body).dispatchEvent(e);
+      return e;
+    };
+    // ⚙ Panels
+    const sb = doc.createElement('button'); sb.id = 'ov-settings-btn';
+    doc.body.appendChild(sb);
+    win._ovOpenSettings(sb);
+    ok(!!doc.getElementById('ov-settings-pop'), 'F-17 setup: the Panels popover is open');
+    let e = esc();
+    ok(!doc.getElementById('ov-settings-pop') && e.defaultPrevented,
+       'F-17 Escape closes the Panels popover (it closed only on an outside click)');
+    ok(doc.activeElement === sb, 'F-17 ...and focus goes back to the Panels button');
+    // a tile's ⋮
+    const kebab = doc.querySelector('.ov-tile-menu');
+    ok(!!kebab, 'F-17 setup: an Overview tile carries its ⋮');
+    kebab.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    const tp = doc.getElementById('ov-tile-popover');
+    ok(!!tp, 'F-17 setup: the tile popover is open');
+    const sel = tp.querySelector('select, button');
+    sel.focus();
+    ok(doc.activeElement === sel, 'F-17 setup: focus is on a control inside the popover');
+    e = esc(sel);
+    ok(!doc.getElementById('ov-tile-popover') && e.defaultPrevented,
+       'F-17 Escape closes the tile ⋮ popover, from a control inside it too');
+    ok(doc.activeElement === kebab, 'F-17 ...and focus goes back to that ⋮, not <body>');
+    // the State History drawer
+    const hp = doc.createElement('div');
+    hp.id = 'history-panel'; hp.className = 'history-panel history-panel-open';
+    hp.innerHTML = '<button id="hp-x">x</button><div id="history-content" data-loaded="1"></div>';
+    doc.body.appendChild(hp);
+    const dlg = doc.createElement('dialog'); dlg.setAttribute('open', '');
+    doc.body.appendChild(dlg);
+    esc();
+    ok(hp.classList.contains('history-panel-open'), 'F-17 a modal open over the page owns the Escape, not the drawer');
+    dlg.remove();
+    esc(null, true);
+    ok(hp.classList.contains('history-panel-open'),
+       'F-17 an Escape another layer already consumed does not also close the drawer');
+    // the grid's inspector rule (docs/192 CS01) still comes first
+    const cell = doc.querySelector('[data-kbd-cell]');
+    const ip = doc.createElement('div'); ip.id = 'inspector-pane'; ip.innerHTML = '<p>q1</p>';
+    doc.body.appendChild(ip);
+    if (cell) {
+      cell.focus();
+      esc(cell);
+      ok(!ip.innerHTML.trim() && hp.classList.contains('history-panel-open'),
+         'F-17 from a grid cell Escape closes the INSPECTOR first; the drawer stays');
+    }
+    doc.getElementById('hp-x').focus();
+    e = esc(doc.getElementById('hp-x'));
+    ok(!hp.classList.contains('history-panel-open') && e.defaultPrevented,
+       'F-17 Escape closes the State History drawer (only its ✕ did)');
+    ok(win.localStorage.getItem('quam_history_panel_open') === '0',
+       'F-17 ...through its one toggle, so the remembered state says closed as the ✕ would');
+  }
+
+  // ── QA F-19: the in-page jump bar keeps the URL in step ─────────────────
+  {
+    const T = world(CHAIN, { url: '/topology?view=overview', state: { htmx: true } });
+    const win = T.win, doc = T.doc;
+    const btn = doc.querySelector('.topo-subnav-btn[data-view="coherence"]');
+    win.setChipStatusView('coherence', btn, true);
+    ok(win.location.pathname + win.location.search === '/topology?view=coherence',
+       'F-19 an in-page tab rewrites the URL, so F5 / a copied link lands there ('
+       + win.location.search + ')');
+    ok(win.history.state && win.history.state.htmx === true,
+       'F-19 ...keeping htmx\'s marker on the entry (replaceState, no new entry)');
+    win.setChipStatusView('frequencies', null, true);
+    ok(win.location.search === '?view=coherence',
+       'F-19 a call with no button (the mount\'s deep link, the sidebar) leaves the URL alone');
+  }
+
+  // ── QA F-20: Back returns to where the user had scrolled, not the anchor ──
+  function stubPane(T, st0) {
+    const pane = T.doc.getElementById('table-pane');
+    const box = { st: st0 };
+    Object.defineProperty(pane, 'clientHeight', { configurable: true, get: () => 700 });
+    Object.defineProperty(pane, 'scrollHeight', { configurable: true, get: () => 20000 });
+    Object.defineProperty(pane, 'scrollTop', { configurable: true, get: () => box.st, set: (v) => { box.st = v; } });
+    pane.getBoundingClientRect = () => ({ top: 0, bottom: 700, left: 0, right: 1000, width: 1000, height: 700 });
+    return box;
+  }
+  function geomAll(T, tops) {
+    VIEWS.forEach(function (v) {
+      const el = T.doc.querySelector(SEL[v]);
+      if (!el) return;
+      const t = tops[v] == null ? 99999 : tops[v];
+      el.getBoundingClientRect = () => ({ top: t, bottom: t + 300, left: 0, right: 1000, width: 1000, height: 300 });
+    });
+  }
+  {
+    // the record: section-relative, merged into the entry's state
+    const T = world(CHAIN, { url: '/topology?view=coherence', state: { htmx: true } });
+    const win = T.win, pane = T.doc.getElementById('table-pane');
+    win.setChipStatusView('coherence', null, false);     // build the metric groups
+    await sleep(900);                                    // past the spy suppression
+    const box = stubPane(T, 5751);
+    geomAll(T, { overview: -5000, health: -4600, topology: -4000, trends: -3000,
+                 fidelity2q: -2000, fidelity1q: -1200, readout: -900, coherence: -300, frequencies: 400 });
+    pane.dispatchEvent(new win.Event('scroll'));
+    await sleep(320);
+    const rec = win.history.state && win.history.state.smChipScroll;
+    ok(rec && rec.url === '/topology?view=coherence' && rec.view === 'coherence' && rec.d === 300 && rec.top === 5751,
+       'F-20 a scroll is recorded ON the history entry: section + offset inside it (' + JSON.stringify(rec) + ')');
+    ok(win.history.state.htmx === true, 'F-20 ...merged, so htmx\'s {htmx:true} marker survives');
+    // a jump lands its target just UNDER the sticky bar (+67 px in real Chrome):
+    // that section is the one at the top, not the one above it
+    geomAll(T, { readout: -1014, coherence: 67, frequencies: 700 });
+    pane.dispatchEvent(new win.Event('scroll'));
+    await sleep(320);
+    const recJ = win.history.state.smChipScroll;
+    ok(recJ && recJ.view === 'coherence' && recJ.d === -67,
+       'F-20 a section just under the sticky bar is the one recorded, as the spy lights it ('
+       + JSON.stringify(recJ) + ')');
+    // a scroll right before navigating away is not lost to the debounce
+    box.st = 5900;
+    geomAll(T, { coherence: -449, frequencies: 251 });
+    pane.dispatchEvent(new win.Event('scroll'));
+    const ev = new win.CustomEvent('htmx:beforeSwap', { detail: { target: pane } });
+    T.doc.body.dispatchEvent(ev);
+    const rec2 = win.history.state.smChipScroll;
+    ok(rec2 && rec2.d === 449 && rec2.top === 5900,
+       'F-20 a record still pending when the page is swapped out is written first (' + JSON.stringify(rec2) + ')');
+    // what htmx 2 does next on a pushed navigation (measured in real Chrome):
+    // its history save REPLACES this entry's state with a bare {htmx:true},
+    // then fires htmx:beforeHistoryUpdate, then pushes the next URL
+    win.history.replaceState({ htmx: true }, '');
+    T.doc.body.dispatchEvent(new win.CustomEvent('htmx:beforeHistoryUpdate', { detail: {} }));
+    const rec3 = win.history.state && win.history.state.smChipScroll;
+    ok(win.history.state.htmx === true && rec3 && rec3.d === 449 && rec3.url === '/topology?view=coherence',
+       'F-20 the record survives htmx\'s own history save of the outgoing page ('
+       + JSON.stringify(win.history.state) + ')');
+    await sleep(10);
+    win.history.replaceState({ htmx: true }, '');
+    T.doc.body.dispatchEvent(new win.CustomEvent('htmx:beforeHistoryUpdate', { detail: {} }));
+    ok(!win.history.state.smChipScroll,
+       'F-20 ...and that listener does not outlive the navigation it was kept for');
+  }
+  {
+    // the restore: Back into that entry re-renders the page, whose deep link
+    // used to win and land on the section anchor
+    const rec = { url: '/topology?view=coherence', view: 'coherence', d: 300, top: 5751 };
+    let box;
+    const T = world(CHAIN, { url: '/topology?view=coherence', chipView: 'coherence',
+                             state: { smChipScroll: rec },
+                             beforeMount: function (T0) { box = stubPane(T0, 0); } });
+    geomAll(T, { coherence: 3827 });
+    await sleep(60);
+    ok(!T.scrolled.some((s) => s.behavior === 'smooth'),
+       'F-20 the deep link\'s smooth jump to the anchor is NOT taken for a recorded entry');
+    ok(box.st === 3827 + 300, 'F-20 the pane lands on the section PLUS the offset the user had scrolled (' + box.st + ')');
+    ok(T.lit() === 'coherence/coherence', 'F-20 ...with that section lit (' + T.lit() + ')');
+    // lazy content lands above it: the guard carries the offset, not the anchor
+    geomAll(T, { coherence: 1200 });
+    const before = box.st;
+    ok(T.win.ChipStatus.jumpGuard.reanchor((v) => SEL[v]) === true && box.st === before + 1200 + 300,
+       'F-20 when Trends / the charts land above it, the re-anchor keeps the offset (' + (box.st - before) + ')');
+    ok(!T.scrolled.some((s) => s.behavior === 'auto'), 'F-20 ...by geometry, not by snapping to the section top');
+  }
+  {
+    // htmx's own Back: its restore re-saves the page it leaves and REPLACES the
+    // returned-to entry's state with a bare {htmx:true} before the page mounts
+    // (measured in real Chrome). The popstate event still carried the record.
+    const rec = { url: '/topology?view=coherence', view: 'coherence', d: 300, top: 5751 };
+    let box;
+    const T = world(CHAIN, { url: '/topology?view=coherence', chipView: 'coherence',
+                             state: { htmx: true },
+                             beforeMount: function (T0) {
+                               box = stubPane(T0, 0);
+                               T0.win.dispatchEvent(new T0.win.PopStateEvent('popstate',
+                                 { state: { htmx: true, smChipScroll: rec } }));
+                             } });
+    geomAll(T, { coherence: 3827 });
+    await sleep(60);
+    ok(box.st === 3827 + 300 && !T.scrolled.some((s) => s.behavior === 'smooth'),
+       'F-20 a Back through htmx\'s cache restore (entry state already wiped) still restores (' + box.st + ')');
+    // handed out once: a later FORWARD visit to the same URL is a fresh entry
+    T.win.ChipStatus.mount({ topo: CHAIN, rawWiring: {}, defaultThresholds: {}, diagFindings: [],
+                             metricMeta: {}, chipView: 'coherence' });
+    await sleep(60);
+    ok(T.scrolled.some((s) => s.behavior === 'smooth' && s.id === 'coherence'),
+       'F-20 ...once: the next visit to that URL is a fresh entry and deep-links as before');
+  }
+  {
+    // a record for another URL is not this entry's: the deep link stands
+    const rec = { url: '/topology?view=overview', view: 'overview', d: 10, top: 10 };
+    const T = world(CHAIN, { url: '/topology?view=coherence', chipView: 'coherence', state: { smChipScroll: rec } });
+    await sleep(60);
+    ok(T.scrolled.some((s) => s.behavior === 'smooth' && s.id === 'coherence'),
+       'F-20 a record taken at another URL is ignored; the ?view= deep link still jumps');
+    const T2 = world(CHAIN, { url: '/topology?view=coherence', chipView: 'coherence' });
+    await sleep(60);
+    ok(T2.scrolled.some((s) => s.behavior === 'smooth' && s.id === 'coherence'),
+       'F-20 control: a fresh entry (no record) jumps to the section as before');
+  }
+  {
+    // the jump guard's offset is optional: a plain jump is unchanged
+    const T = world(CHAIN);
+    T.win.setChipStatusView('coherence', null, false);
+    const box = stubPane(T, 1000);
+    geomAll(T, { coherence: 500 });
+    const J = T.win.ChipStatus.jumpGuard, pane = T.doc.getElementById('table-pane');
+    J.note('coherence', pane);
+    T.scrolled.length = 0;
+    ok(J.reanchor((v) => SEL[v]) === true && box.st === 1000
+       && T.scrolled.map((s) => s.id + ':' + s.behavior).join(',') === 'coherence:auto',
+       'F-20 control: a jump noted without an offset still re-anchors to the section top');
   }
 
   console.log(fails ? ('FAILED ' + fails) : 'chip_jump_selfcheck: all ok');

@@ -3905,14 +3905,25 @@ class HistoryManager:
 
     def leaf_families(self, quam_state_path: str | Path, query: str = "", *,
                       roots: tuple[str, ...] = ("qubits", "qubit_pairs"),
-                      limit: int | None = None) -> list[dict]:
+                      limit: int | None = None,
+                      fresh: bool = False) -> list[dict]:
         """Indexed paths folded into ``(scope, tail)`` FAMILIES, counted in SQL.
 
         The entity count a caller renders ("· 30 pairs") is exact whatever the
         display limit is — folding it from a LIMITed row list under-counted
         every family on a chip with more indexed paths than the pull.
+
+        *fresh* (QA F-10) runs the same freshness gate every other leaf-tier
+        read runs first. The Trends typeahead passes it: answered from a
+        dirty/behind index (a real customer instance held 4 of its snapshots,
+        dirty) the placeholder's own example, "interleaved", found nothing.
+        It defaults OFF because the curated Trends render calls this too (the
+        2Q pair badges) and a page render must stay off the index write lock
+        (``TestTheReadStaysOffTheIndexWriteLock``).
         """
         try:
+            if fresh:
+                self._ensure_leaf_index_fresh(Path(quam_state_path))
             conn = self._open_index(Path(quam_state_path))
         except sqlite3.Error:
             return []

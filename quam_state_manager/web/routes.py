@@ -11855,7 +11855,11 @@ def topology_trends_paths():
         return jsonify([])
     # Grouped in SQL, so each row's entity count is exact and the 25 is a limit
     # on FAMILIES rather than on the rows a count was folded from.
-    return jsonify(_history().leaf_families(Path(ctx["path"]), q, limit=25))
+    # fresh=True (QA F-10): an explicit leaf-tier query, like the chart query,
+    # so it pays the freshness gate -- a stale index answered [] for the
+    # placeholder's own example.
+    return jsonify(_history().leaf_families(Path(ctx["path"]), q, limit=25,
+                                            fresh=True))
 
 
 # ── docs/120 item 10 — the working-state version, from the top bar ────────

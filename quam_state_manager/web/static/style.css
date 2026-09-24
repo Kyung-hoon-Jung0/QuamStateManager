@@ -4554,6 +4554,13 @@ html.topbar-hidden .topo-subnav {
     box-shadow: 0 2px 6px rgba(0,0,0,0.10), 0 12px 32px rgba(0,0,0,0.18);
     border-radius: 14px;
     animation: topo-popup-in 0.15s ease-out;
+    /* QA F-12: positionPopup pins a popup taller than the viewport at top 6px
+       and it ran off the bottom (the pair popup's Parameters section, 891px
+       tall at 1366x768), with nothing to scroll -- the wheel moved the page
+       under it. Cap it to the viewport (12px = positionPopup's 2 x pad) and
+       let it scroll, as F-SETTINGS-TALL did for the settings popover; contain
+       the wheel so its end does not scroll the pane underneath. */
+    max-height: calc(100vh - 12px); overflow-y: auto; overscroll-behavior: contain;
 }
 .topo-card-popup { padding: 6px 2px; min-width: 200px; }
 .topo-card-popup .topo-prop-row { padding: 0 8px; }
@@ -12801,6 +12808,10 @@ td.vc-cell-takeable:focus-within .vc-take,
     color: inherit; font-family: var(--font-mono); font-size: .72rem;
     cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .topo-trend-sug:hover { background: var(--pico-primary); color: var(--pico-primary-inverse); }
+/* QA F-10: an empty / failed answer is a statement, not a row to click. */
+.topo-trend-sug-empty { padding: .3rem .5rem; font-size: .72rem; line-height: 1.35;
+    color: var(--pico-muted-color); cursor: default; }
+.topo-trend-sug-empty code { font-size: inherit; padding: 0 .2rem; }
 
 /* The column control, beside the "Trends" heading (customer feedback
    2026-09-09). Reuses .topo-trend-chip so the badges read identically to the

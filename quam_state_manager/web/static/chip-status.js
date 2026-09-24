@@ -135,7 +135,13 @@ window.ChipStatus.jumpGuard = (function () {
         });
     }
     return {
-        note: function (view, pane) { last = { view: view, at: Date.now() }; arm(pane); },
+        /* QA F-20: `off` (optional) is a position INSIDE the section -- px past
+           its top edge -- so a Back restore survives the lazy content above it
+           the same way a jump does. Without it: the section's own top, as ever. */
+        note: function (view, pane, off) {
+            last = { view: view, at: Date.now(), off: (typeof off === 'number') ? off : null };
+            arm(pane);
+        },
         below: BELOW,
         cancel: cancel,
         // QA F-07: the view of a jump that is still live (fresh, not cancelled
@@ -150,9 +156,35 @@ window.ChipStatus.jumpGuard = (function () {
             var sel = selOf ? selOf(last.view) : null;
             var el = sel && document.querySelector(sel);
             if (!el || !el.scrollIntoView) return false;
+            if (last.off !== null && armedPane) {
+                armedPane.scrollTop += el.getBoundingClientRect().top
+                    - armedPane.getBoundingClientRect().top + last.off;
+                return true;
+            }
             el.scrollIntoView({ behavior: 'auto', block: 'start' });
             return true;
         }
+    };
+})();
+
+/* QA F-20 — the scroll record a Back arrived with. htmx's own Back handling
+   saves the page it is leaving and, doing so, REPLACES the state of the entry
+   being returned to with a bare {htmx:true} (measured in real Chrome) -- before
+   the Chip Status it restores has mounted. The popstate EVENT still carries
+   that entry's state as it was. Handed out once, for its own URL, shortly
+   after the Back, so a later forward visit to the same URL cannot pick it up. */
+window.ChipStatus.popRec = (function () {
+    var got = null;
+    try {
+        window.addEventListener('popstate', function (e) {
+            var r = e && e.state && e.state.smChipScroll;
+            got = r ? { rec: r, at: Date.now() } : null;
+        });
+    } catch (e) { /* no window events: nothing to keep */ }
+    return function take(url) {
+        var g = got;
+        got = null;
+        return (g && g.rec.url === url && Date.now() - g.at < 10000) ? g.rec : null;
     };
 })();
 
@@ -1362,6 +1394,7 @@ window.ChipStatus.mount = function (opts) {
              + '</div>';
         var pop = document.createElement('div');
         pop.id = 'ov-tile-popover';
+        pop._opener = anchor;              // QA F-17: Escape hands focus back here
         pop.innerHTML = body;
         document.body.appendChild(pop);
         var r = anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : { bottom: 0, left: 0 };
@@ -3228,6 +3261,16 @@ window.ChipStatus.mount = function (opts) {
         if (view === 'gate' || view === 'fidelity') view = 'fidelity2q';   // docs/141 4o + docs/148 aliases
         var spec = TAB_SPEC[view] || TAB_SPEC.overview;
         try { localStorage.setItem('quam_chipstatus_view', view); } catch (e) {}
+        // QA F-19: the in-page jump bar (the only caller that passes its button)
+        // left the URL at the section the page was opened on, so F5 or a copied
+        // link went back there. Only the sidebar's chipNavView wrote it. The
+        // mount's deep link passes no button: it runs mid-swap, before htmx has
+        // pushed the new entry, and must not rewrite the previous page's URL.
+        // history.state is kept (htmx's {htmx:true} marker rides the entry).
+        if (btn && TAB_SPEC[view]) {
+            try { history.replaceState(history.state, '', '/topology?view=' + view); } catch (e) {}
+            if (window.syncSidebarNavActive) window.syncSidebarNavActive();
+        }
         if (scroll !== false) _jump.note(view);
         _setActiveTab(view);
         _suppressSpyUntil = Date.now() + 800;     // don't let the spy fight the jump
@@ -3314,9 +3357,62 @@ window.ChipStatus.mount = function (opts) {
             if (jumped) best = jumped;
             if (best) _setActiveTab(best);
         }
+        /* QA F-20: Back to Chip Status landed on the section ANCHOR, 300 px above
+           where the user had scrolled to. The scroller is #table-pane, and
+           htmx's history snapshot records only window.scrollY, so nothing kept
+           the pane's offset. Record it ON the history entry (merged into
+           history.state, so htmx's {htmx:true} marker stays), relative to the
+           nearest section above -- the lazy Trends / metrics content above it
+           has not been built yet when a Back re-renders the page. The section
+           is the one the spy calls "at the top" (a jump lands its target just
+           under the sticky bar, not at 0). Unthrottled by the jump suppression,
+           so the end of a smooth jump is recorded too; written only while this
+           dashboard is the one on screen. */
+        var _dashEl = document.querySelector('.topo-dashboard');
+        var _recT = null, _lastRec = null;
+        function _recWrite(rec) {
+            history.replaceState(Object.assign({}, history.state || {}, { smChipScroll: rec }), '');
+        }
+        function _recordScroll() {
+            _recT = null;
+            try {
+                if (!pane || !_dashEl || !_dashEl.isConnected
+                    || location.pathname !== '/topology') return;
+                var paneTop = pane.getBoundingClientRect().top;
+                var best = null, bestTop = -Infinity;
+                Object.keys(TAB_SPEC).forEach(function(v) {
+                    var el = document.querySelector(TAB_SPEC[v].sel);
+                    if (!el) return;
+                    var top = el.getBoundingClientRect().top - paneTop;
+                    if (top <= 130 && top > bestTop) { bestTop = top; best = v; }
+                });
+                var rec = { url: location.pathname + location.search,
+                            view: best, d: best ? Math.round(-bestTop) : 0,
+                            top: Math.round(pane.scrollTop) };
+                _recWrite(rec);
+                _lastRec = rec;
+            } catch (e) { /* a record is a nicety; scrolling must never break */ }
+        }
+        function _recHandler() { clearTimeout(_recT); _recT = setTimeout(_recordScroll, 250); }
+        /* A pushed htmx navigation saves the outgoing page first, and that save
+           REPLACES this entry's state with a bare {htmx:true} -- after
+           beforeSwap, just before it pushes the next URL. Put the record back
+           then, on the entry it was taken on (same URL, dashboard still up). */
+        function _recKeep() {
+            if (!_dashEl || !_dashEl.isConnected) {
+                document.body.removeEventListener('htmx:beforeHistoryUpdate', _recKeep);
+                return;
+            }
+            try {
+                if (_lastRec && _lastRec.url === location.pathname + location.search
+                    && !(history.state && history.state.smChipScroll)) _recWrite(_lastRec);
+            } catch (e) { /* nicety */ }
+        }
+        document.body.addEventListener('htmx:beforeHistoryUpdate', _recKeep);
         if (pane) {
             var _spyHandler = _throttle(onScroll, 120);
             pane.addEventListener('scroll', _spyHandler, { passive: true });
+            pane.addEventListener('scroll', _recHandler, { passive: true });
             // Teardown: #table-pane is the PERSISTENT HTMX swap target (survives
             // navigation), so without removing this the scroll listener accumulates
             // one per Chip Status visit — every OTHER per-mount listener here has this
@@ -3324,12 +3420,67 @@ window.ChipStatus.mount = function (opts) {
             function _spyTeardown(evt) {
                 if (evt.detail && evt.detail.target && evt.detail.target.id === 'table-pane') {
                     clearTimeout(_spyLate);
+                    // htmx pushes the next URL AFTER beforeSwap: a record still
+                    // pending lands on THIS entry, not the next page's
+                    if (_recT) { clearTimeout(_recT); _recordScroll(); }
+                    // _recKeep still has to see this navigation's history update,
+                    // which htmx fires after this event, in the same task
+                    setTimeout(function() {
+                        document.body.removeEventListener('htmx:beforeHistoryUpdate', _recKeep);
+                    }, 0);
+                    pane.removeEventListener('scroll', _recHandler);
                     pane.removeEventListener('scroll', _spyHandler);
                     document.body.removeEventListener('htmx:beforeSwap', _spyTeardown);
                 }
             }
             document.body.addEventListener('htmx:beforeSwap', _spyTeardown);
         }
+    }
+
+    /* QA F-20: the record _setupScrollSpy left on THIS history entry, or null.
+       Only for the very URL it was taken at: a forward navigation is a new entry
+       (htmx pushes before it swaps) and an in-page jump rewrites the URL, so
+       neither can pick up a stale record. When htmx's Back has already wiped
+       the entry's state, the record the popstate carried stands in (popRec). */
+    function _chipScrollRecord() {
+        var hs = null;
+        try {
+            var here = location.pathname + location.search;
+            var popped = window.ChipStatus.popRec ? window.ChipStatus.popRec(here) : null;
+            hs = (history.state && history.state.smChipScroll) || popped;
+        } catch (e) { return null; }
+        if (!hs || typeof hs !== 'object' || typeof hs.top !== 'number') return null;
+        if (hs.url !== location.pathname + location.search) return null;
+        if (hs.view && !TAB_SPEC[hs.view]) return null;
+        return hs;
+    }
+    /* Put the pane back where the record says: the section it was in, plus the
+       offset inside it. The section is built (and, for a metrics view, the 2Q
+       RB host above it, as a jump does); the jump guard carries the offset so
+       the lazy content landing above re-anchors it, and a wheel / key / touch
+       still hands the pane back to the user. */
+    function _restoreChipScroll(hs) {
+        var pane = _scrollPane();
+        if (!pane) return;
+        if (!hs.view) {                        // above the first section
+            window.ChipStatus.jumpGuard.cancel();
+            _setActiveTab('topology');
+            pane.scrollTop = hs.top;
+            return;
+        }
+        var spec = TAB_SPEC[hs.view];
+        window.setChipStatusView(hs.view, null, false);
+        if (spec.build === 'metrics') _ensureSectionBuilt('2qrb');
+        window.ChipStatus.jumpGuard.note(hs.view, pane, hs.d || 0);
+        requestAnimationFrame(function() {     // let the just-built section lay out
+            var el = document.querySelector(spec.sel);
+            if (el) {
+                pane.scrollTop += el.getBoundingClientRect().top
+                    - pane.getBoundingClientRect().top + (hs.d || 0);
+            } else {
+                pane.scrollTop = hs.top;
+            }
+        });
     }
 
     // Re-fit the topology diagram to the current pane width (no rebuild) — runs
@@ -3798,16 +3949,21 @@ window.ChipStatus.mount = function (opts) {
 
     // A deep-link ?view= (left-nav sub-item or a shared link) scrolls to that
     // section; a bare /topology load stays at the top (topology), by design — we
-    // do NOT resume the last-used localStorage view.
+    // do NOT resume the last-used localStorage view. QA F-20: returning to the
+    // SAME history entry (Back, forward, reload) is not a fresh load: it goes
+    // back to where the user had scrolled to on it (_chipScrollRecord).
     // docs/141 4ac: normalise the alias HERE. 4o kept accepting ?view=gate for
     // old links and maps it onto Fidelity inside setChipStatusView -- but this
     // guard tests the RAW value against TAB_SPEC, from which the same commit
     // deliberately removed `gate`, so the branch was skipped and the mapping
     // never ran: an old bookmark landed on Topology with no sign anything was
     // ignored.
+    var _hs = _chipScrollRecord();
     var _deepView = (_serverChipView === 'gate' || _serverChipView === 'fidelity')
         ? 'fidelity2q' : _serverChipView;
-    if (_deepView && TAB_SPEC[_deepView]) {
+    if (_hs) {
+        _restoreChipScroll(_hs);           // QA F-20: Back / reload of THIS entry
+    } else if (_deepView && TAB_SPEC[_deepView]) {
         window.setChipStatusView(_deepView, null, true);
     } else {
         // a fresh page with no deep view has no live jump: a jump made on the
@@ -3896,6 +4052,23 @@ window.ChipStatus.mount = function (opts) {
                 // (the IIFE's stale activePopup is handled by its isConnected guards).
                 var pop = document.querySelector('.topo-card-popup, .topo-pair-popup');
                 if (pop) { pop.remove(); e.preventDefault(); return; }
+                // QA F-17: the Overview's click-opened popovers (a tile's ⋮ and
+                // ⚙ Panels, both body-level) closed only on an outside click.
+                // Same closers the outside click uses, so their mousedown
+                // listeners go too; focus goes back to the opener, not <body>.
+                var ovp = document.getElementById('ov-tile-popover');
+                if (ovp) {
+                    var ovIn = ovp.contains(document.activeElement);
+                    _ovClosePopover();
+                    if (ovIn && ovp._opener) try { ovp._opener.focus(); } catch (err) {}
+                    e.preventDefault(); return;
+                }
+                if (document.getElementById('ov-settings-pop')) {
+                    _ovCloseSettings();
+                    var osb = document.getElementById('ov-settings-btn');
+                    if (osb) try { osb.focus(); } catch (err) {}
+                    e.preventDefault(); return;
+                }
                 var jp = document.getElementById('json-panel');
                 if (jp && !jp.classList.contains('hidden')) { window.closeJsonPanel(); e.preventDefault(); return; }
                 // docs/192 CS01: the map's own tip line reads "Enter to inspect,
@@ -3910,6 +4083,22 @@ window.ChipStatus.mount = function (opts) {
                 if (kc && ip && ip.innerHTML.trim() && window.closeInspector) {
                     window.closeInspector();
                     try { kc.focus(); } catch (err) { /* the cell may have gone */ }
+                    e.preventDefault();
+                    return;
+                }
+                // QA F-17: the State History drawer, outermost -- after the
+                // grid's inspector rule above. Through its one toggle, so the
+                // remembered open/closed flag moves exactly as the ✕ moves it.
+                // A modal open over the page, or an Escape another layer has
+                // already consumed (app.js's ladder runs first), is not the
+                // drawer's: one press closes one layer.
+                var hp = document.getElementById('history-panel');
+                if (hp && hp.classList.contains('history-panel-open') && window.toggleHistoryPanel
+                        && !e.defaultPrevented && !(window.smModalOpen && window.smModalOpen())) {
+                    var hpIn = hp.contains(document.activeElement);
+                    window.toggleHistoryPanel();
+                    var htb = hpIn && document.querySelector('.history-toggle-btn');
+                    if (htb) try { htb.focus(); } catch (err) {}
                     e.preventDefault();
                     return;
                 }
@@ -4201,6 +4390,7 @@ window.ChipTrends = (function () {
         if (el) el.value = p || '';
         var s = document.getElementById('topo-trend-suggest');
         if (s) s.hidden = true;
+        _sugSeq++; clearTimeout(_sugTimer);   // QA F-10: a late answer must not reopen it
         _reload();
     }
     /* ── Columns (customer feedback 2026-09-09) ────────────────────────────
@@ -4330,8 +4520,19 @@ window.ChipTrends = (function () {
        the "click it again for every single qubit" the customer reported. Each
        row now says how many entities it covers, and clicking it charts them
        all. */
+    /* QA F-10: an empty answer used to HIDE the box, so "interleaved" (the
+       placeholder's own example) showed nothing at all -- no rows, no "no
+       matches". It now says so, and a failed request says that. The first
+       query after a capture can now pay the index rebuild (seconds), so an
+       answer to an older keystroke must not overwrite a newer one. */
+    var _sugSeq = 0;
+    function _sugNote(box, html) {
+        box.innerHTML = '<div class="topo-trend-sug-empty">' + html + '</div>';
+        box.hidden = false;
+    }
     function suggest(q) {
         clearTimeout(_sugTimer);
+        var seq = ++_sugSeq;
         var box = document.getElementById('topo-trend-suggest');
         if (!box) return;
         if (!q || q.trim().length < 2) { box.hidden = true; return; }
@@ -4339,7 +4540,12 @@ window.ChipTrends = (function () {
             fetch('/topology/trends/paths?q=' + encodeURIComponent(q.trim()))
                 .then(function (r) { return r.json(); })
                 .then(function (rows) {
-                    if (!rows || !rows.length) { box.hidden = true; return; }
+                    if (seq !== _sugSeq) return;      // a newer keystroke owns the box
+                    if (!rows || !rows.length) {
+                        _sugNote(box, 'No recorded parameter matches <code>'
+                                      + _esc(q.trim()) + '</code>');
+                        return;
+                    }
                     box.innerHTML = rows.map(function (r) {
                         var isStr = (typeof r === 'string');
                         var p = isStr ? r : (r.path || r.dot_path || '');
@@ -4357,7 +4563,10 @@ window.ChipTrends = (function () {
                     }).join('');
                     box.hidden = false;
                 })
-                .catch(function () { box.hidden = true; });
+                .catch(function () {
+                    if (seq !== _sugSeq) return;
+                    _sugNote(box, 'Parameter search failed — type again to retry');
+                });
         }, 220);
     }
     /* Charts arrive as [{metric, series:[{entity, points:[[snapId, value]]}]}].
@@ -4456,9 +4665,19 @@ window.ChipTrends = (function () {
         }
         return info.why ? _esc(info.why) : '';
     }
+    /* QA F-09: a run whose folder is not under a loaded Datasets folder (moved,
+       copied, never added) keeps its number and loses the click -- and the
+       hover now SAYS so; it used to show "#142 · 11 Rabi" with no hint and a
+       click that silently did nothing. A constant, so nothing to escape, and
+       it never says "click": it is not an offer. A no-run point gets no hint
+       (its provenance line already carries the why). */
     function _hintLine(info) {
-        return (info && info.uid)
-            ? '<i style="opacity:.7">click to open the dataset</i>' : '';
+        if (info && info.uid) return '<i style="opacity:.7">click to open the dataset</i>';
+        if (info && info.run) {
+            return '<i style="opacity:.7">not openable here: its run folder is not'
+                 + ' under a loaded Datasets folder</i>';
+        }
+        return '';
     }
 
     function _openSnapDataset(evt) {
@@ -4470,8 +4689,9 @@ window.ChipTrends = (function () {
             var map = _snaps();
             var info = map && map[String(sid)];
             // No uid => the point is not clickable and the hover has already
-            // said why. Doing NOTHING is the contract: no navigation to a 404,
-            // no error.
+            // said why (_hintLine names the unloaded run folder; a no-run point's
+            // provenance line is the why). Doing NOTHING is the contract: no
+            // navigation to a 404, no error.
             if (!info || !info.uid) return;
             var url = '/dataset/' + info.uid;
             if (window.htmx && window.htmx.ajax) {

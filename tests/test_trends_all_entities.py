@@ -246,6 +246,68 @@ class TestTheTypeaheadOffersFamilies:
         assert client.get("/topology/trends/paths?q=").get_json() == []
 
 
+class TestTheTypeaheadReadsAFreshIndex:
+    """QA F-10: the typeahead answered from the leaf index AS IT WAS. A real
+    customer instance held 4 of its snapshots, ``dirty=1``, so the
+    placeholder's own example ("interleaved") returned ``[]`` -- until some
+    other query (a charted typed path) happened to rebuild the index. The
+    typeahead now runs the same freshness gate the chart query runs; the
+    curated page render still does not (it calls ``leaf_families`` too, for
+    the 2Q badges, and must stay off the index write lock)."""
+
+    def _stale(self, client, folder: Path, needle: str):
+        """Make the index forget every path matching *needle*, and say it is
+        dirty -- the shape the customer's instance was in."""
+        import sqlite3
+
+        from quam_state_manager.core import leaf_index
+        hm = client.application.config["history_manager"]
+        conn = sqlite3.connect(hm._index_path(folder))
+        try:
+            ids = [r[0] for r in conn.execute(
+                "SELECT id FROM leaf_paths WHERE path LIKE ?", (f"%{needle}%",))]
+            assert ids, "setup: the capture indexed the family"
+            conn.executemany("DELETE FROM leaf_cp WHERE path_id = ?", [(i,) for i in ids])
+            conn.executemany("DELETE FROM leaf_paths WHERE id = ?", [(i,) for i in ids])
+            leaf_index.mark_dirty(conn, "test: a stale index")
+            conn.commit()
+        finally:
+            conn.close()
+        return hm
+
+    def test_a_stale_index_still_finds_the_family(self, client, tmp_path):
+        folder = tmp_path / "quam_state"
+        _versions(client, folder)
+        hm = self._stale(client, folder, "interaction_offset")
+        assert hm.leaf_families(folder, "interaction_offset") == [], \
+            "setup: read as it is, the stale index knows nothing of it"
+        rows = client.get("/topology/trends/paths?q=interaction_offset").get_json()
+        assert [r["path"] for r in rows] == ["qubit_pairs.*.coupler.interaction_offset"], rows
+        assert rows[0]["n"] == 3
+
+    def test_only_the_typeahead_pays_the_freshen(self, client, tmp_path, monkeypatch):
+        """The page render with PAIRS (so ``_trend_pair_chips`` ->
+        ``leaf_families`` is really reached) must not freshen; the typeahead
+        must. The provenance suite's version of this pin has no pairs."""
+        folder = tmp_path / "quam_state"
+        _versions(client, folder)
+        hm = client.application.config["history_manager"]
+        calls = []
+        real = hm._ensure_leaf_index_fresh
+        monkeypatch.setattr(hm, "_ensure_leaf_index_fresh",
+                            lambda p: (calls.append(str(p)), real(p))[1])
+        fam = []
+        real_fam = hm.leaf_families
+        monkeypatch.setattr(hm, "leaf_families",
+                            lambda *a, **k: (fam.append(k.get("fresh", False)),
+                                             real_fam(*a, **k))[1])
+        assert client.get("/topology/trends?metrics=f_01").status_code == 200
+        assert fam and not any(fam), f"setup: the render reached leaf_families: {fam}"
+        assert calls == [], f"the page render rebuilt the leaf index: {calls}"
+        client.get("/topology/trends/paths?q=interaction_offset")
+        assert len(calls) == 1, f"the typeahead ran the freshness gate: {calls}"
+
+
 class TestSeveralFamiliesAtOnce:
     """Mechanism 3: ?paths= is comma-separated, ?path= keeps working, and the
     cap SAYS when it trims."""

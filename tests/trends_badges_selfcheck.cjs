@@ -336,6 +336,66 @@ setTimeout(function () {
     ok((w7.urls[w7.urls.length - 1] || '').indexOf('path=qubits.q1.f_01') > 0,
        'and still travels');
 
-    process.exit(fails ? 1 : 0);
+    f10Checks(function () { process.exit(fails ? 1 : 0); });
   }, 30);
 }, 300);
+
+// ── QA F-10: an empty, failed or out-of-order answer ───────────────────────
+// "interleaved" -- the placeholder's own example -- came back [] from a stale
+// index and the box simply stayed hidden: no rows, no "no matches".
+function f10Checks(done) {
+  const w = world([]);
+  const b = w.document.getElementById('topo-trend-suggest');
+  w.ChipTrends.suggest('zz<b>q');
+  const wf = world([]);
+  wf.eval('window.fetch = function () { return Promise.reject(new Error("offline")); };');
+  const bf = wf.document.getElementById('topo-trend-suggest');
+  wf.ChipTrends.suggest('interleaved');
+  const ws = world([]);
+  ws.eval('window.__pending = []; window.fetch = function (u) {'
+        + ' return new Promise(function (res) { window.__pending.push({ u: u, res: res }); }); };');
+  const bs = ws.document.getElementById('topo-trend-suggest');
+  ws.ChipTrends.suggest('inte');
+  setTimeout(function () {
+    ok(!b.hidden && b.querySelectorAll('.topo-trend-sug').length === 0
+       && /No recorded parameter matches/.test(b.textContent),
+       'F-10 an empty answer SAYS nothing matches instead of hiding the box ('
+       + JSON.stringify(b.textContent) + ')');
+    ok(b.querySelector('.topo-trend-sug-empty code')
+       && b.querySelector('.topo-trend-sug-empty code').textContent === 'zz<b>q'
+       && !b.querySelector('b'),
+       'F-10 ...naming the query as TEXT (escaped, not markup)');
+    ok(!bf.hidden && /search failed/i.test(bf.textContent),
+       'F-10 a failed request says so too (' + JSON.stringify(bf.textContent) + ')');
+    // an answer to an OLDER keystroke must not overwrite the newer one: the
+    // first query after a capture can now pay the index rebuild (seconds)
+    ws.ChipTrends.suggest('interleaved');
+    setTimeout(function () {
+      // app.js's own load-time fetches share the mock: keep the typeahead's
+      const mine = function () {
+        return ws.eval('window.__pending').filter(function (x) { return /trends\/paths/.test(x.u); });
+      };
+      const pend = mine();
+      ok(pend.length === 2, 'F-10 setup: both keystrokes are in flight ('
+         + pend.map(function (x) { return x.u; }).join(' ') + ')');
+      const reply = function (rows) { return { json: function () { return Promise.resolve(rows); } }; };
+      pend[1].res(reply(ROWS));
+      setTimeout(function () {
+        pend[0].res(reply([]));
+        setTimeout(function () {
+          ok(bs.querySelectorAll('.topo-trend-sug').length === 3
+             && !bs.querySelector('.topo-trend-sug-empty'),
+             'F-10 the late answer to "inte" does not overwrite the rows for "interleaved"');
+          ws.ChipTrends.suggest('interleavedX');
+          ws.ChipTrends.setPath('qubits.*.f_01');
+          setTimeout(function () {
+            const p2 = mine();
+            ok(p2.length === 2 && bs.hidden,
+               'F-10 picking a path cancels the pending keystroke; the box stays closed');
+            done();
+          }, 300);
+        }, 20);
+      }, 20);
+    }, 300);
+  }, 300);
+}
