@@ -169,6 +169,27 @@ class TestDiagnosticsIntegration:
         # no selected env in tests → 204 or the no-env copy
         assert r.status_code in (200, 204)
 
+    def test_env_card_names_the_env_it_checks_against(self, client, tmp_path):
+        """generate-r2-08: a Generate-wizard row click switches the env the
+        card validates against machine-wide, so the warm card must NAME that
+        env (its folder), not only quam/quam_builder versions."""
+        from quam_state_manager.core import config_generator
+        py = tmp_path / "envs" / "labenv_r208" / "python.exe"
+        py.parent.mkdir(parents=True)
+        py.write_text("", encoding="utf-8")
+        inst = client.application.instance_path
+        config_generator.set_selected_env(inst, str(py))
+        html = client.get("/diagnostics/env-card").get_data(as_text=True)
+        assert "checked against" in html            # the warm branch rendered
+        assert "labenv_r208" in html
+        # a POSIX-layout env (<env>/bin/python) is named by the env folder
+        py2 = tmp_path / "envs" / "posixenv_r208" / "bin" / "python"
+        py2.parent.mkdir(parents=True)
+        py2.write_text("", encoding="utf-8")
+        config_generator.set_selected_env(inst, str(py2))
+        html = client.get("/diagnostics/env-card").get_data(as_text=True)
+        assert "posixenv_r208" in html and ">bin<" not in html
+
     def test_env_probe_requires_selected_env(self, client):
         r = client.post("/diagnostics/env-probe")
         assert r.status_code == 400

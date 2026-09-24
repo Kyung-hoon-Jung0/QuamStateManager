@@ -2,6 +2,9 @@
    place (the old 6-second toast vanished before it was read), with one-click
    candidates for any immediate subfolder that actually holds a state.json. #}
 <div class="load-failed-panel">
+  <button type="button" class="outline btn-sm load-failed-close"
+          onclick="this.closest('.load-failed-panel').remove()"
+          title="Dismiss" aria-label="Dismiss">&times;</button>
   <h3>&#9888; This folder is not a QUAM state</h3>
   <p class="muted"><code>{{ folder }}</code></p>
   <p>{{ error }}</p>

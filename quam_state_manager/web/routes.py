@@ -26212,6 +26212,60 @@ def _output_folder_problem(path: str, chip: bool = True) -> str | None:
         return None
 
 
+# One build at a time per OUTPUT folder (generate-r2-09). The overwrite guard
+# and the build are check-then-write: two tabs/windows pressing Generate into
+# one folder a moment apart both passed the guard, both reported success, and
+# the later build's files replaced the earlier chip. A NON-blocking per-folder
+# lock held across the whole build request (guard included) makes the guard +
+# build atomic: the second press gets a 409 busy instead of a wait of up to
+# the build timeout; after the first build finishes, a retry meets the
+# overwrite guard. Keyed like every other folder registry (path_match.fs_key)
+# so case-variant spellings share one lock; separate from _quam_build_locks on
+# purpose — those guard apply-to-live / chip loads and must never be held for
+# a whole build. Generate and Re-generate share it (they must exclude each
+# other too). One process only: two SM processes are docs/80 territory.
+_gen_out_locks: dict[str, threading.Lock] = {}
+_gen_out_locks_guard = threading.Lock()
+_GEN_OUT_BUSY = ("Another build into this folder is already running (another "
+                 "tab or window). Wait for it to finish, then build again — "
+                 "the folder's overwrite check will ask before replacing that "
+                 "chip.")
+
+
+def _gen_out_lock(output_path) -> threading.Lock:
+    key = path_match.fs_key(output_path)
+    with _gen_out_locks_guard:
+        lock = _gen_out_locks.get(key)
+        if lock is None:
+            lock = _gen_out_locks[key] = threading.Lock()
+        return lock
+
+
+def _one_build_per_output_folder(view):
+    """Hold the output folder's build lock for the whole build request. The
+    key is the view's own normalization (_ingest_abs_path) of the same JSON
+    field; a missing/invalid path passes straight through so the view reports
+    it exactly as before."""
+    @functools.wraps(view)
+    def wrapped(*args, **kwargs):
+        data = request.get_json(silent=True)
+        raw = (data.get("output_path") or "") if isinstance(data, dict) else ""
+        raw = raw.strip() if isinstance(raw, str) else ""
+        if not raw:
+            return view(*args, **kwargs)
+        path, err = _ingest_abs_path(raw)
+        if err:
+            return view(*args, **kwargs)
+        lock = _gen_out_lock(path)
+        if not lock.acquire(blocking=False):
+            return jsonify({"ok": False, "busy": True, "error": _GEN_OUT_BUSY}), 409
+        try:
+            return view(*args, **kwargs)
+        finally:
+            lock.release()
+    return wrapped
+
+
 def _build_output_guard(output_path: str) -> dict | None:
     """A needs_confirm payload if building into *output_path* would clobber an
     existing chip or ingest stray JSON, else None. Two hazards: (1) an EXISTING chip
@@ -26243,6 +26297,7 @@ def _build_output_guard(output_path: str) -> dict | None:
 
 
 @bp.route("/generate/build", methods=["POST"])
+@_one_build_per_output_folder
 def generate_build():
     """Build state.json + wiring.json from a spec into the chosen folder.
 
@@ -26524,6 +26579,7 @@ def _open_chip_under(out: Path) -> Path | None:
 
 
 @bp.route("/regenerate/build", methods=["POST"])
+@_one_build_per_output_folder
 def regenerate_build():
     """Rebuild an existing chip from an (edited) spec into a NEW folder, then
     merge the source chip's calibrated values back on. Returns the build outcome
@@ -27326,8 +27382,18 @@ def _env_card_state(store: QuamStore) -> dict:
         probing = any(k.startswith((python_path or "\0") + "|")
                       for k in _schema_warm_inflight)
     missing = list((manifest or {}).get("missing_classes") or [])
+    # the env's folder name, so the card SAYS which env it checks against (a
+    # Generate-wizard row click switches it machine-wide): <env>/python.exe,
+    # or <env>/bin|Scripts/python
+    env_name = None
+    if python_path:
+        _pp = Path(python_path).parent
+        if _pp.name.lower() in ("bin", "scripts") and _pp.parent.name:
+            _pp = _pp.parent
+        env_name = _pp.name or None
     return {
         "selected": python_path,
+        "env_name": env_name,
         "selected_exists": bool(python_path and Path(python_path).is_file()),
         "warm": manifest is not None,
         "probing": probing,

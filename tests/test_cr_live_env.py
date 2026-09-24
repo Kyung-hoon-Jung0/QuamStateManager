@@ -179,3 +179,85 @@ class TestCustomerStateLoads:
         err = (outcome.get("error") or "") + (outcome.get("traceback") or "")
         assert "target_qubit_RF_frequency" not in err
         assert "FixedFrequencyZZDriveTransmon" not in err
+
+
+def _shared_cr_spec_no_zz():
+    """The shared-port chain WITHOUT the ZZ line: q2 is both a CR control
+    (q2-q1, q2-q3) and a CR target (q1-q2) — the chained layout where a
+    target's xy port also carries the dual-upconverter dict."""
+    spec = _shared_cr_zz_spec()
+    spec["lines"] = [ln for ln in spec["lines"] if ln["line"] != "zz_drive"]
+    # resonators populated too, so the WHOLE config can be schema-checked
+    spec["populate"]["resonator"] = {
+        f"q{i}": {"RF_freq": 7.1e9 + 0.1e9 * i, "LO_frequency": 7.35e9}
+        for i in (1, 2, 3)}
+    return spec
+
+
+_QM_SCHEMA_CHECK = r"""
+import json, sys
+from qm import QuantumMachinesManager
+from qm.program._qua_config_schema import load_config
+QuantumMachinesManager.set_capabilities_offline()
+cfg = json.load(open(sys.argv[1], encoding="utf-8"))
+try:
+    load_config(cfg)
+except Exception as exc:
+    print("SCHEMA_FAIL", type(exc).__name__, exc)
+    sys.exit(3)
+print("SCHEMA_OK")
+"""
+
+
+class TestSharedXyConfigValid:
+    """generate-r2-01: a shared_xy CR build must produce a config the OPX
+    accepts. quam_builder>=0.4 XYDriveMW.upconverter_frequency reads only
+    the port's scalar LO, which the dual-upconverter surgery clears — so
+    unless the build pins each control's xy LO to its upconverter, every
+    CR-control xy IF ships as the literal '#./inferred_intermediate_frequency'
+    and every chained CR target reads 'CR target frequency unknown'.
+    Gated on the shared-port capabilities only (NOT cr.flavor_rf_pointer), so
+    it runs in the released-quam_builder envs where the defect lives."""
+
+    def test_shared_xy_build_generates_a_valid_config(self, tmp_path):
+        import subprocess
+
+        from quam_state_manager.core.config_generator import run_config_preview
+
+        env = _env_with(("pair.cr_channel", "wire.alloc_block_reuse"))
+        if env is None:
+            pytest.skip("no shared-port-CR-capable env available")
+        out_dir = tmp_path / "chip"
+        outcome = run_generator(env, "build", _shared_cr_spec_no_zz(), out_dir,
+                                timeout=300)
+        assert outcome.get("ok"), outcome.get("error")
+        warns = (outcome.get("result") or {}).get("warnings") or []
+        assert not [w for w in warns if "CR target frequency unknown" in w], warns
+
+        # the dual-upconverter layout really was installed (else the pin is moot)
+        state = json.loads((out_dir / "state.json").read_text())
+        assert state["qubits"]["q2"]["xy"]["LO_frequency"].endswith(
+            "/opx_output/upconverters/1/frequency")
+
+        prev = run_config_preview(env, out_dir, timeout=300)
+        assert prev.get("ok"), prev.get("error")
+        cfg = (prev.get("result") or {}).get("config") or {}
+        elements = cfg.get("elements") or {}
+        checked = [n for n in elements if n.endswith(".xy") or n.startswith("cr_")]
+        assert checked, sorted(elements)
+        for name in checked:
+            if_ = elements[name].get("intermediate_frequency")
+            assert isinstance(if_, (int, float)) and not isinstance(if_, bool), (
+                name, if_)
+
+        # and the OPX's own config schema accepts it
+        cfg_path = tmp_path / "cfg.json"
+        cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
+        chk = tmp_path / "chk.py"
+        chk.write_text(_QM_SCHEMA_CHECK, encoding="utf-8")
+        proc = subprocess.run([env, str(chk), str(cfg_path)],
+                              capture_output=True, text=True, timeout=300)
+        if "No module named 'qm" in (proc.stderr or ""):
+            pytest.skip("env has no qm package to validate the config with")
+        assert proc.returncode == 0 and "SCHEMA_OK" in proc.stdout, (
+            proc.stdout[-2000:], proc.stderr[-2000:])

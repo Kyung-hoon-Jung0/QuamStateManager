@@ -121,6 +121,25 @@ class TestProbeCache:
         assert r["missing_classes"] == ["otherlab_tools.X"]
         assert r["by_leaf"].get("B") == ["a.B"]
 
+    def test_missing_classes_are_the_requesting_chips_own(self, fake_env):
+        """generate-r2-08: the per-env cache is a UNION over every chip ever
+        probed in the env; ``missing_classes`` (what the /diagnostics env card
+        lists) must cover only the classes the REQUESTING chip carries —
+        chip A's non-importable class must not be reported against chip B."""
+        ses.probe_state_schema(
+            fake_env["py"], ["a.B", "otherlab_tools.X"], fake_env["inst"])
+        hit = ses.probe_state_schema(fake_env["py"], ["a.B"], fake_env["inst"])
+        assert hit["cached"] and "otherlab_tools.X" in hit["classes"]   # union kept
+        assert hit["missing_classes"] == []
+        # the miss path probes the union too — same per-chip rule
+        miss = ses.probe_state_schema(fake_env["py"], ["e.F"], fake_env["inst"])
+        assert not miss["cached"] and "otherlab_tools.X" in miss["classes"]
+        assert miss["missing_classes"] == []
+        # and a chip that DOES carry it still sees it
+        own = ses.probe_state_schema(
+            fake_env["py"], ["otherlab_tools.X"], fake_env["inst"])
+        assert own["missing_classes"] == ["otherlab_tools.X"]
+
     def test_lru_prune(self, fake_env, tmp_path, monkeypatch):
         for i in range(ses._MAX_CACHED_ENVS + 2):
             py = tmp_path / f"py{i}"
@@ -150,6 +169,17 @@ class TestManifestForStore:
         assert m is not None and set(m["classes"]) == {"a.B", "c.D"}
         assert m["by_leaf"]["D"] == ["c.D"]
         assert fake_env["calls"]["probe"] == 1     # cached_only spawned nothing
+
+    def test_cached_only_missing_classes_are_this_chips(self, fake_env):
+        """generate-r2-08: the chip-open attach path (cached_only) must not
+        leak another chip's non-importable class into this chip's list."""
+        store = self._store()
+        ses.probe_state_schema(fake_env["py"],
+                               ["a.B", "c.D", "otherlab_tools.X"], fake_env["inst"])
+        m = ses.manifest_for_store(store, fake_env["py"], fake_env["inst"],
+                                   cached_only=True)
+        assert m is not None and "otherlab_tools.X" in m["classes"]
+        assert m["missing_classes"] == []
 
     def test_cached_only_goes_cold_on_signature_flip(self, fake_env):
         store = self._store()
