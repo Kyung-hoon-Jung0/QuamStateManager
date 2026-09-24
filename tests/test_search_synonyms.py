@@ -251,6 +251,30 @@ class TestTheGridsHaystack:
         assert len(_hits(cols, "{name}")) == 0
 
 
+    def test_a_subscript_label_is_found_by_its_plain_spelling(self, cols):
+        """QA liveedit-r2-24. The headers read `Qubit f₀₁` / `Qubit f₁₂`; the
+        key is `f_01` and the template words split it to `f 01`, so the
+        natural spelling `f01` found only two extras columns and `f12` found
+        nothing (every row hidden, as a VALUE search). The NFKC-folded label
+        joins the haystack: an exact Unicode equivalence, not a fuzzy match."""
+        by = {c["key"]: c for c in cols}
+        assert "f_01" in by and "f_12" in by, sorted(by)
+        # the case is only evidence while the real label carries subscripts
+        assert not by["f_01"]["label"].isascii(), by["f_01"]["label"]
+        assert not by["f_12"]["label"].isascii(), by["f_12"]["label"]
+        assert "f_01" in _hits(cols, "f01")
+        assert "f_12" in _hits(cols, "f12")
+
+    def test_an_ascii_label_is_never_appended(self):
+        """The fold joins the haystack only where it CHANGES the label, so
+        every ASCII column's haystack stays byte-identical."""
+        plain = {"key": "T1", "label": "Relaxation T1", "section": "Coherence",
+                 "tmpl": "", "search": ""}
+        assert "relaxation" not in routes_mod._search_text(plain).lower()
+        sub = dict(plain, key="f_01", label="Qubit f₀₁")
+        assert "qubit f01" in routes_mod._search_text(sub).lower()
+
+
 class TestThePairGridToo:
     """Same rule, second grid — it has its own builder and its own call site."""
 

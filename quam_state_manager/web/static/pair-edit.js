@@ -530,6 +530,13 @@
                 (r.body && r.body.results || []).forEach(function (res) { byPath[res.dot_path] = res; });
                 if (r.body && r.body.ok) {
                     if (seenGlobal) batchKeys.forEach(function (k) { seenGlobal[k] = true; });
+                    // QA liveedit-r2-22: the echo below rewrites the value
+                    // programmatically (no `input` event), so the docked 🕘
+                    // stayed at the TYPED text's tail -- '1700' became
+                    // '1,700' and the icon sat on the last digit. Remember
+                    // the focused cell's text; re-dock only if it changed
+                    // (one layout read per Enter, never per row of an apply-all).
+                    var _fAe = document.activeElement, _fAeVal = _fAe ? _fAe.value : undefined;
                     cells.forEach(function (c) {
                         var res = byPath[c.getAttribute('data-dot-path')] || {};
                         if (!c.hasAttribute('data-baseline')) c.setAttribute('data-baseline', c.getAttribute('data-orig'));
@@ -543,6 +550,7 @@
                         setTimeout(function () { c.classList.remove('bulk-applied-flash'); }, 700);
                     });
                     _syncAppliedAcrossTable(r.body.results);
+                    if (_fAe && _fAe.value !== _fAeVal && window.__cellBtnInvalidate) window.__cellBtnInvalidate();
                     if (!silent && r.body.tray_html && window._swapPendingTray) {
                         window._bulkSelfEdit = true;
                         try { window._swapPendingTray(r.body.tray_html); }

@@ -723,5 +723,33 @@ function specialWorld() {
      'the read-only cell is byte-unchanged');
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// 10. QA liveedit-r2-11: Escape INSIDE the expression box only blurs the box.
+//     The grid's document keydown listener runs in the CAPTURE phase, so the
+//     box's own stopPropagation came too late and _clearSel ran first.
+// ───────────────────────────────────────────────────────────────────────────
+{
+  const win = world(['0.2', '0.4', '0.6', '0.8']);
+  selectAll(win);
+  win.BulkEdit._ge.syncSel();
+  const inp = win.document.getElementById('bulk-arith-expr');
+  ok(!!inp, 'precondition: the expression box exists');
+  inp.focus();
+  ok(win.document.activeElement === inp, 'precondition: the box has focus');
+  ok(win.document.querySelectorAll('td.bulk-sel').length === 4, 'precondition: 4 selected');
+  inp.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  ok(win.document.querySelectorAll('td.bulk-sel').length === 4,
+     'r2-11: Escape in the expression box keeps the selection it describes (got '
+     + win.document.querySelectorAll('td.bulk-sel').length + ')');
+  ok(win.document.getElementById('bulk-arith-bar').hidden === false,
+     'r2-11: and the arithmetic bar stays');
+  ok(win.document.activeElement !== inp, 'r2-11: the box itself lets go of focus');
+  // The grid convention is untouched: a second Escape (focus now elsewhere)
+  // still clears.
+  win.document.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  ok(win.document.querySelectorAll('td.bulk-sel').length === 0,
+     'r2-11: a second Escape outside the box still clears the selection');
+}
+
 if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
 console.log('all checks passed (' + asserts + ' assertions)');

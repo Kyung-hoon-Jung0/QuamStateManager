@@ -9522,6 +9522,23 @@ button.diag-badge { cursor: pointer; }
 .bulk-panel { padding: 0.5rem 0.25rem; }
 .bulk-toolbar { display: flex; align-items: center; gap: 0.7rem; margin-bottom: 0.6rem; flex-wrap: wrap; }
 .bulk-toolbar-title { margin-bottom: 0.3rem; }   /* tight gap to the controls row below */
+/* QA liveedit-r2-19: on a 1366x768 laptop at 125% (1093x614) the grid's first
+   row opened below the fold -- the header stack above it carried three Pico
+   leaks: `[role=group]` made Table/Flat a full-width bar on its own line (+16px
+   margin), `details` kept its 1rem bottom margin in the pickers row, and the
+   chip scroller's auto basis (its whole content width) pushed the AND button
+   onto a line of its own. Scoped to this page (Datasets reuses .bulk-colvis). */
+.bulk-toolbar-title > .bulk-segmented { flex: 0 0 auto; width: auto; margin-bottom: 0; align-self: center; }
+.bulk-toolbar-title > .bulk-docbadges { margin-bottom: 0; }
+.bulk-panel .bulk-toolbar > details.bulk-colvis { margin-bottom: 0; }
+.bulk-chipbar > .bulk-chip-scroll { flex: 1 1 0; }
+/* a short window spends less on spacing and type -- nothing is hidden */
+@media screen and (max-height: 760px) {
+    .bulk-toolbar-title h2 { font-size: 1.3rem; }
+    .bulk-panel { padding-top: 0.2rem; }
+    .bulk-panel .notes-block { margin-bottom: 0.15rem; }
+    .bulk-panel .bulk-toolbar-title, .bulk-panel .bulk-toolbar-controls { margin-bottom: 0.3rem; row-gap: 0.3rem; }
+}
 /* user font-size control (tiles + slider + bold) */
 /* docs/120 item 4 — quick-filter chips, in the row the readability cluster
    used to occupy. Its own line under the controls row: on a real chip this is

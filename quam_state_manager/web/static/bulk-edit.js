@@ -236,6 +236,13 @@
     function _reloadPane() {
         if (window.htmx) htmx.ajax('GET', '/bulk', { target: '#table-pane', swap: 'innerHTML' });
     }
+    // QA liveedit-r2-15: a rendered derived column that the persisted hidden
+    // set names -- the page was rendered without ?dynhide.
+    function _dynLeaked() {
+        var dh = {};
+        _dynHidden().forEach(function (k) { dh[k] = 1; });
+        return COLS.some(function (c) { return c && c.dyn && dh[c.key]; });
+    }
 
     /* ── docs/120 item 4: the quick-filter chip bar ────────────────────────
      *
@@ -1627,6 +1634,13 @@
                     // Commit succeeded → only now claim these physical nodes in the
                     // cross-row dedup, so a failed row never strands a shared sibling (A11).
                     if (seenGlobal) batchKeys.forEach(function (k) { seenGlobal[k] = true; });
+                    // QA liveedit-r2-22: the echo below rewrites the value
+                    // programmatically (no `input` event), so the docked 🕘
+                    // stayed at the TYPED text's tail -- '1700' became
+                    // '1,700' and the icon sat on the last digit. Remember
+                    // the focused cell's text; re-dock only if it changed
+                    // (one layout read per Enter, never per row of an apply-all).
+                    var _fAe = document.activeElement, _fAeVal = _fAe ? _fAe.value : undefined;
                     cells.forEach(function (c) {
                         var res = byPath[c.getAttribute('data-dot-path')] || {};
                         // before/after baseline: remember the pre-edit value the FIRST
@@ -1646,6 +1660,7 @@
                     // other rows) from the same server echo — so editing+applying one
                     // shared-port cell updates them all.
                     _syncAppliedAcrossTable(r.body.results);
+                    if (_fAe && _fAe.value !== _fAeVal && window.__cellBtnInvalidate) window.__cellBtnInvalidate();
                     if (!silent && r.body.tray_html && window._swapPendingTray) {
                         window._bulkSelfEdit = true;            // suppress our own cross-surface refresh
                         try { window._swapPendingTray(r.body.tray_html); }
@@ -2096,7 +2111,11 @@
             colWidths: function () { return _colWidths; },
             urlParams: function () {
                 var q = '';
-                var dh = _dynHidden();
+                // QA liveedit-r2-15: name the hidden set the page was RENDERED
+                // with, not what localStorage holds now (another window, or a
+                // full-page load) -- a different set is a different grid, and a
+                // column it dropped came back as a 400 "could not be loaded".
+                var dh = (QMETA && Array.isArray(QMETA.dynhide)) ? QMETA.dynhide : _dynHidden();
                 if (dh.length) q += '&dynhide=' + encodeURIComponent(dh.join(','));
                 // the path-folded token when the page shipped one, else the
                 // display name (an older page); the route accepts both (4ac)
@@ -3146,6 +3165,12 @@
                 // untouched, so Escape with nothing being typed still clears.
                 if (ev.key === 'Escape') {
                     var _ae = document.activeElement;
+                    // QA liveedit-r2-11: this listener runs in the CAPTURE
+                    // phase, before the arith box's own handler, so its
+                    // stopPropagation came too late and one Escape in the box
+                    // cleared the selection it describes. The box owns its
+                    // Escape (it blurs itself); the selection stays.
+                    if (_ae && _ae.id === 'bulk-arith-expr') return;
                     if (_ae && _ae.classList
                             && _ae.classList.contains('bulk-cell')
                             && !_ae.readOnly && _isDirty(_ae)) {
@@ -3218,10 +3243,24 @@
             if (qubitMeta && typeof qubitMeta === 'object') {
                 QMETA = { chip: String(qubitMeta.chip || ''),
                           chipKey: String(qubitMeta.chipKey || ''),
-                          qubits: Array.isArray(qubitMeta.qubits) ? qubitMeta.qubits : [] };
+                          qubits: Array.isArray(qubitMeta.qubits) ? qubitMeta.qubits : [],
+                          // QA liveedit-r2-15: the hidden dyn set this page was
+                          // RENDERED with (null on an older page)
+                          dynhide: Array.isArray(qubitMeta.dynhide) ? qubitMeta.dynhide.map(String) : null };
             }
             var t = table();
             if (!t) return;
+            // QA liveedit-r2-15: only htmx GETs pass configRequest, so a FULL
+            // page load of /bulk (F5, a typed URL, a new window) rendered every
+            // derived column -- including the ones the user hid. Re-GET the
+            // pane once through the path that carries ?dynhide, before any
+            // cold-column fetch is made against a grid about to be replaced.
+            if (_dynLeaked() && window.htmx && !window._bulkDynReconciled) {
+                window._bulkDynReconciled = true;   // loop guard
+                _reloadPane();
+                return;
+            }
+            window._bulkDynReconciled = false;
             // Restore the persisted search/filter before applySearch runs below.
             var sb0 = document.getElementById('bulk-search');
             if (sb0) { try { sb0.value = localStorage.getItem(SEARCH_KEY) || ''; } catch (e) {} }

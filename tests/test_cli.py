@@ -154,6 +154,16 @@ class TestParseValue:
             with pytest.raises(ValueError):
                 _parse_value(bad)
 
+    def test_underflow_rejected(self):
+        """QA liveedit-r2-25: a nonzero literal that underflows to 0.0 is
+        refused like its overflowing mirror, never stored as 0."""
+        import pytest
+        for bad in ("1e-400", "-1e-400"):
+            with pytest.raises(ValueError, match="too small"):
+                _parse_value(bad)
+        assert _parse_value("0e-400") == 0.0
+        assert _parse_value("5e-324") == 5e-324
+
     def test_roundtrip_with_group_digits(self):
         from quam_state_manager.core.units import group_digits
         for v in (5050000000, 5075187484.52453, 7460000000.0, 0.215,

@@ -6041,6 +6041,9 @@ def bulk_edit():
                                             pair_rows=pair_rows, filter_chips=filter_chips,
                                             dyn_truncated=dyn_truncated,
                                             active_chip_key=_bulk_chip_gate_token() or "",
+                                            # QA liveedit-r2-15: the hidden set this
+                                            # render used, for /bulk/cells to repeat
+                                            bulk_dynhide=sorted(_dyn_hidden),
                                             cold_keys=cold_keys, cold_map=cold_map,
                                             pair_cold_keys=pair_cold_keys,
                                             pair_cold_map=pair_cold_map,
@@ -6386,7 +6389,15 @@ def _search_text(col: dict) -> str:
     tmpl_words = tmpl.replace("{name}", " ").replace(".", " ").replace("_", " ")
     extra = search_synonyms.augment(
         col.get("label"), col.get("key"), col.get("section"), base, tmpl)
-    return " ".join(p for p in (base, tmpl_words, extra) if p)
+    # QA liveedit-r2-24: the header says `Qubit f₀₁`, and nobody types
+    # subscripts -- 'f01' found only two extras columns and 'f12' nothing.
+    # NFKC is an exact Unicode equivalence (f₀₁ IS f01), not a fuzzy match;
+    # added only where it changes the label, so ASCII haystacks are unchanged.
+    import unicodedata
+    label = str(col.get("label") or "")
+    label_fold = unicodedata.normalize("NFKC", label)
+    label_fold = label_fold if label_fold != label else ""
+    return " ".join(p for p in (base, tmpl_words, extra, label_fold) if p)
 
 
 def _pair_bulk_grid(store: QuamStore, modified: dict
