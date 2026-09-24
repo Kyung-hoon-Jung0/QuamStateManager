@@ -953,6 +953,10 @@ html.topbar-hidden #pending-tray > .auto-sync-wrap {
     display: inline-flex; margin: 0; box-shadow: 0 2px 8px rgba(0,0,0,.25);
 }
 html.topbar-hidden { --topbar-height: 0px; }
+/* QA chipstatus-r2-10: the band the floating ☰ + tray card above covers at
+   the top of the pane (card top 6px + ~42px tall: bottom measured 48px at a
+   20px root). A bar that PINS there reserves it -- see .topo-subnav. */
+html.topbar-hidden { --floating-chrome-h: 2.5rem; }
 /* Always-reachable handle to bring the bar back (the Hide toggle is in the bar).
    It's a <button>, so set explicit colors — Pico would otherwise white-on-blue it. */
 .topbar-reveal {
@@ -4121,6 +4125,15 @@ td.col-delta .val-delta { margin-left: 0; }
     border-bottom: 1px solid var(--pico-muted-border-color);
     background: var(--pico-background-color);
 }
+/* QA chipstatus-r2-10: with the chrome collapsed the pane starts at y=0, the
+   very band the floating ☰ + sync/Auto-Sync card (fixed, z 120) sits on. The
+   pinned tabs under it could not be pressed; a press on Overview hit the
+   badge and opened the review modal. Same flush pin (negative top, so the
+   docs/126 see-through strip stays covered); the opaque padding now fills
+   the floating band and the buttons start below it. */
+html.topbar-hidden .topo-subnav {
+    padding-top: calc(0.45rem + var(--table-pane-pad-v) + var(--floating-chrome-h));
+}
 .topo-subnav-btn {
     margin: 0; padding: 0.25rem 0.7rem;
     font-size: 0.85em; line-height: 1.3;
@@ -4683,6 +4696,13 @@ td.col-delta .val-delta { margin-left: 0; }
 .topo-density-ctl-panel input.topo-density-pslider { width: 4rem; min-width: 0; margin: 0 0 0 0.15rem; padding: 0; height: 0.9rem; vertical-align: middle; }
 /* a jump from the sticky sub-nav lands the section title BELOW the bar */
 .topo-dashboard .topo-section { scroll-margin-top: 3.2rem; }
+/* QA F-07: Coherence / Frequencies / Calibration land on the group's injected
+   <h3 data-group> header, which is not a .topo-section -- it went under the bar */
+.topo-dashboard .topo-section-title[data-group] { scroll-margin-top: 3.2rem; }
+/* QA chipstatus-r2-10: the bar is taller by the floating band when the chrome
+   is collapsed, so every jump target clears that too */
+html.topbar-hidden .topo-dashboard .topo-section,
+html.topbar-hidden .topo-dashboard .topo-section-title[data-group] { scroll-margin-top: calc(3.2rem + var(--floating-chrome-h)); }
 .topo-density-ctl { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.82em; }
 .topo-density-ctl .density-label { color: var(--pico-muted-color); }
 .topo-density-ctl .density-preset {
@@ -6726,6 +6746,10 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
     display: inline-grid;
     gap: var(--topo-panel-cell-gap);
 }
+/* QA F-03: contained like the 1Q grid (.topo-metric-topo-grid): a pair grid
+   wider than the pane scrolls inside its own box instead of pushing the whole
+   pane sideways. The padding keeps the focus ring and corner mark unclipped. */
+.topo-metric-panel-row .topo-2q-pair-grid { flex: 0 0 auto; max-width: 100%; overflow-x: auto; padding: 3px; }
 .topo-2q-pair-grid .heatmap-cell {
     width: var(--topo-panel-cell-size);
     min-height: var(--topo-panel-cell-size);

@@ -112,6 +112,11 @@ window.ChipStatus.jumpGuard = (function () {
     var last = null, WINDOW_MS = 8000, armedPane = null;
     var BELOW = ['fidelity2q', 'fidelity1q', 'readout',
                  'coherence', 'frequencies', 'calibration'];   // rendered below Trends
+    /* QA F-06: a jump TO Trends is re-anchored too. It is not displaced but
+       CLAMPED: its smooth scroll starts before its own charts are fetched, so
+       it stops at the pre-Trends maximum scroll with the heading 450-630 px
+       down the pane, and nothing moved it once the charts arrived. */
+    var REANCHOR = BELOW.concat(['trends']);
     /* docs/141 4ac: the guard must not fight the USER. It used to re-anchor on
        nothing but the age of the jump, so a deliberate scroll made inside the
        8 s window was yanked back the moment the lazy Trends charts landed
@@ -133,9 +138,15 @@ window.ChipStatus.jumpGuard = (function () {
         note: function (view, pane) { last = { view: view, at: Date.now() }; arm(pane); },
         below: BELOW,
         cancel: cancel,
+        // QA F-07: the view of a jump that is still live (fresh, not cancelled
+        // by a wheel / touch / key), so the scroll-spy can keep the CLICKED
+        // item lit while its target is on screen but cannot reach the top.
+        current: function () {
+            return (last && Date.now() - last.at <= WINDOW_MS) ? last.view : null;
+        },
         reanchor: function (selOf) {
             if (!last || Date.now() - last.at > WINDOW_MS) return false;
-            if (BELOW.indexOf(last.view) < 0) return false;
+            if (REANCHOR.indexOf(last.view) < 0) return false;
             var sel = selOf ? selOf(last.view) : null;
             var el = sel && document.querySelector(sel);
             if (!el || !el.scrollIntoView) return false;
@@ -2425,7 +2436,7 @@ window.ChipStatus.mount = function (opts) {
     // offsetHeight mid-build (the old per-panel innerHTML += pattern) is what
     // re-serialized the growing DOM and froze the page.
     function _renderChartSpecsProgressively(specs) {
-        var i = 0, BATCH = 3;
+        var i = 0, BATCH = 3, drawn = [];
         function pump() {
             var end = Math.min(i + BATCH, specs.length);
             for (; i < end; i++) {
@@ -2441,13 +2452,33 @@ window.ChipStatus.mount = function (opts) {
                 if (window.PlotTheme && window.PlotTheme.houseLayout) {
                     layout = window.PlotTheme.houseLayout(layout);
                 }
-                _plotlyRender(el, s.data, layout, s.config);
+                drawn.push(_plotlyRender(el, s.data, layout, s.config));
             }
             if (i < specs.length) {
                 (window.requestAnimationFrame || function(f) { setTimeout(f, 16); })(pump);
+            } else {
+                // QA F-02: a chart takes its height only when Plotly has DRAWN
+                // it (async: _plotlyRender is a promise chain, the first one may
+                // still be loading Plotly), up to 640 px each. A jump measured
+                // before that lands thousands of px off once the section above
+                // its target has grown. When the last chart is drawn, a jump
+                // made a moment ago goes back to where it pointed -- the same
+                // guard the Trends landing runs, which yields to the user.
+                Promise.all(drawn).then(function () {
+                    (window.requestAnimationFrame || function(f) { setTimeout(f, 16); })(function () {
+                        if (_jump) _jump.reanchor();
+                    });
+                });
             }
         }
-        if (specs.length) pump();
+        if (!specs.length) return;
+        // QA F-02/F-06: _plotlyRender waits for Plotly, so on a page where it
+        // is not loaded yet the pump only QUEUED promise chains, and they all
+        // ran in one microtask flush once it arrived -- measured: 19 charts in
+        // one 7.5 s long task, which outlived the jump guard's 8 s window and
+        // stranded every jump. Load first, then pump 3 per frame as intended.
+        if (!window.Plotly && window.requirePlotly) window.requirePlotly().then(pump, pump);
+        else pump();
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -2509,6 +2540,25 @@ window.ChipStatus.mount = function (opts) {
             if (mc + 1 > pairGridCols) pairGridCols = mc + 1;
             if (mr + 1 > pairGridRows) pairGridRows = mr + 1;
         });
+        // QA F-03: drop the tracks no pair uses. A chain puts every pair on an
+        // ODD doubled column, so half the tracks were empty full-width cells
+        // (4 pairs of a 5-qubit chain took 8 x 132 px and pushed the whole
+        // pane sideways at 1366 px). Order and row alignment are kept; a
+        // square lattice uses every doubled track and is unchanged. The set
+        // comes from topo.edges, so every gate panel shares one layout.
+        (function () {
+            var cs = {}, rs = {};
+            Object.keys(pairGridPositions).forEach(function (k) {
+                cs[pairGridPositions[k].col] = 1; rs[pairGridPositions[k].row] = 1;
+            });
+            var num = function (a, b) { return a - b; };
+            var cl = Object.keys(cs).map(Number).sort(num), rl = Object.keys(rs).map(Number).sort(num);
+            Object.keys(pairGridPositions).forEach(function (k) {
+                var p = pairGridPositions[k];
+                pairGridPositions[k] = {col: cl.indexOf(p.col), row: rl.indexOf(p.row)};
+            });
+            if (cl.length) { pairGridCols = cl.length; pairGridRows = rl.length; }
+        })();
         var hasPairGrid = Object.keys(pairGridPositions).length > 0;
 
         var stops = dCfg.colorScale;
@@ -3183,6 +3233,11 @@ window.ChipStatus.mount = function (opts) {
         _suppressSpyUntil = Date.now() + 800;     // don't let the spy fight the jump
         _ensureSectionBuilt(spec.build);
         if (scroll === false) return;
+        // QA F-02: every 'metrics' view sits BELOW the lazy 2Q RB host, which
+        // the smooth scroll passes (within the observer's margin) and builds
+        // mid-flight: ~2.5k px landed above the measured target and a 1Q jump
+        // ended on the 2Q panels. Build it now, before the target is measured.
+        if (spec.build === 'metrics') _ensureSectionBuilt('2qrb');
         requestAnimationFrame(function() {        // let a just-built section lay out
             var el = document.querySelector(spec.sel);
             if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -3221,16 +3276,42 @@ window.ChipStatus.mount = function (opts) {
     // Scroll-spy: highlight the tab whose section sits at the top of the pane.
     function _setupScrollSpy() {
         var pane = _scrollPane();
+        var _spyLate = null;
         function onScroll() {
-            if (Date.now() < _suppressSpyUntil) return;
+            // QA F-02: a scroll made while the spy is suppressed (the tail of a
+            // smooth jump, a re-anchor's instant jump) was dropped for good, so
+            // the tab the pane PASSED on the way stayed lit. Look again once the
+            // suppression is over.
+            if (Date.now() < _suppressSpyUntil) {
+                clearTimeout(_spyLate);
+                _spyLate = setTimeout(onScroll, _suppressSpyUntil - Date.now() + 30);
+                return;
+            }
             var paneTop = pane ? pane.getBoundingClientRect().top : 0;
-            var best = null, bestTop = -Infinity;
+            var paneH = pane ? pane.clientHeight : 0;
+            var best = null, bestTop = -Infinity, lastVis = null, lastVisTop = -Infinity, jumped = null;
+            var live = window.ChipStatus.jumpGuard.current();
             Object.keys(TAB_SPEC).forEach(function(v) {
                 var el = document.querySelector(TAB_SPEC[v].sel);
                 if (!el) return;
-                var top = el.getBoundingClientRect().top - paneTop;
+                var r = el.getBoundingClientRect();
+                var top = r.top - paneTop;
                 if (top <= 130 && top > bestTop) { bestTop = top; best = v; }
+                if (top < paneH && top > lastVisTop) { lastVisTop = top; lastVis = v; }
+                if (v === live && top < paneH && r.bottom - paneTop > 0) jumped = v;
             });
+            // QA F-07: at the bottom of the pane the last sections can never
+            // reach the top, so the last one on screen wins (the usual
+            // scroll-spy convention; picked by position, not TAB_SPEC order),
+            // unless that section is a lazy placeholder not built yet: a fresh
+            // page scrolled straight to its end lit "Read. Fid." over the
+            // Topology palette, and kept it after the page grew --
+            if (pane && lastVis && pane.scrollTop + paneH >= pane.scrollHeight - 2
+                && (!TAB_SPEC[lastVis].build || _chipSectionBuilt[TAB_SPEC[lastVis].build])) best = lastVis;
+            // -- and while a jump is live, the item the user CLICKED stays lit
+            // as long as its target is on screen (Calibration, the last group,
+            // stops ~150 px short of the top and used to light Frequencies).
+            if (jumped) best = jumped;
             if (best) _setActiveTab(best);
         }
         if (pane) {
@@ -3242,6 +3323,7 @@ window.ChipStatus.mount = function (opts) {
             // beforeSwap teardown; the scroll-spy was the one that was missed.
             function _spyTeardown(evt) {
                 if (evt.detail && evt.detail.target && evt.detail.target.id === 'table-pane') {
+                    clearTimeout(_spyLate);
                     pane.removeEventListener('scroll', _spyHandler);
                     document.body.removeEventListener('htmx:beforeSwap', _spyTeardown);
                 }
@@ -3728,6 +3810,9 @@ window.ChipStatus.mount = function (opts) {
     if (_deepView && TAB_SPEC[_deepView]) {
         window.setChipStatusView(_deepView, null, true);
     } else {
+        // a fresh page with no deep view has no live jump: a jump made on the
+        // previous visit must not re-anchor (or light the spy) on this one
+        window.ChipStatus.jumpGuard.cancel();
         _setActiveTab('topology');
     }
 

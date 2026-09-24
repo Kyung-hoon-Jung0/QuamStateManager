@@ -137,6 +137,23 @@ class TestSectionOrder:
             assert r.status_code == 200
             assert f"chipView: {json.dumps(v)}" in r.get_data(as_text=True), v
 
+    @pytest.mark.parametrize("hx", [True, False])
+    def test_every_client_view_is_a_server_view(self, client, hx):
+        """QA F-01: docs/148 added fidelity2q / fidelity1q / readout to the
+        client's TAB_SPEC but not to the route's whitelist, so a deep link,
+        F5, or a sidebar sub-link pressed from another page rendered
+        chipView "" and landed on Topology. Parity: every TAB_SPEC key the
+        client can scroll to must survive the server's filter, as a full page
+        and as the sidebar's htmx GET."""
+        spec = JS[JS.index("var TAB_SPEC = {"):JS.index("var _chipSectionBuilt")]
+        keys = re.findall(r"^\s+(\w+):\s+\{ build:", spec, re.M)
+        assert {"fidelity2q", "fidelity1q", "readout"} <= set(keys), keys
+        headers = {"HX-Request": "true"} if hx else {}
+        for v in keys:
+            r = client.get(f"/topology?view={v}", headers=headers)
+            assert r.status_code == 200, v
+            assert f"chipView: {json.dumps(v)}" in r.get_data(as_text=True), v
+
 
 class TestClientTables:
     def test_tab_spec(self):
@@ -304,6 +321,58 @@ def test_chip_density_selfcheck():
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout + r.stderr
     assert r.stdout.count("ok - ") >= 10, r.stdout
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_chip_jump_selfcheck():
+    """QA F-02/F-03/F-06/F-07: a jump lands where it points and the pressed
+    item stays lit -- against the REAL, mounted chip-status.js under jsdom."""
+    node = shutil.which("node")
+    try:
+        subprocess.run([node, "-e", "require('jsdom')"], check=True, capture_output=True, timeout=30)
+    except Exception:
+        pytest.skip("jsdom not installed")
+    r = subprocess.run([node, str(ROOT / "tests" / "chip_jump_selfcheck.cjs")],
+                       capture_output=True, text=True, encoding="utf-8", timeout=180, cwd=str(ROOT))
+    if r.returncode == 2:
+        pytest.skip("jsdom not installed")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.count("ok - ") >= 20, r.stdout
+
+
+class TestQaLayoutCss:
+    """The CSS halves of the QA round-2 Chip Status fixes (the geometry itself
+    was measured in real Chrome; jsdom has no layout)."""
+
+    CSS = (ROOT / "quam_state_manager" / "web" / "static" / "style.css").read_text(encoding="utf-8")
+
+    def _rule(self, selector):
+        i = self.CSS.index(selector + " {")
+        return self.CSS[i:self.CSS.index("}", i)]
+
+    def test_f03_the_pair_grid_is_contained_like_the_1q_grid(self):
+        """A pair grid wider than the pane scrolls inside its own box; it used
+        to push the whole Chip Status pane sideways (1111 > 1045 px at 1366)."""
+        rule = self._rule(".topo-metric-panel-row .topo-2q-pair-grid")
+        assert "max-width: 100%" in rule and "overflow-x: auto" in rule and "flex: 0 0 auto" in rule
+
+    def test_f07_the_group_headers_clear_the_sticky_bar(self):
+        """Coherence / Frequencies / Calibration land on the injected
+        <h3 data-group>, which is not a .topo-section."""
+        assert "scroll-margin-top: 3.2rem" in self._rule(".topo-dashboard .topo-section-title[data-group]")
+        assert ".topo-dashboard .topo-section { scroll-margin-top:" in self.CSS   # the old line is untouched
+
+    def test_r2_10_the_pinned_tabs_clear_the_floating_chrome(self):
+        """With the chrome collapsed the floating tray card (fixed, top 6px,
+        z 120) sat on the pinned tabs; Overview opened the review modal."""
+        assert "html.topbar-hidden { --floating-chrome-h: 2.5rem; }" in self.CSS
+        pad = self._rule("html.topbar-hidden .topo-subnav")
+        assert "padding-top: calc(0.45rem + var(--table-pane-pad-v) + var(--floating-chrome-h))" in pad
+        # the flush pin itself is unchanged (docs/126 see-through strip)
+        assert "top: calc(-1 * var(--table-pane-pad-v))" in self._rule(".topo-subnav")
+        # and every jump clears the taller bar
+        assert "scroll-margin-top: calc(3.2rem + var(--floating-chrome-h))" in self.CSS[
+            self.CSS.index("html.topbar-hidden .topo-dashboard .topo-section,"):]
 
 
 class Test4acGefHonesty:

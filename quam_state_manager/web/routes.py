@@ -10211,7 +10211,11 @@ def wiring_view():
     # Phase C scroll-spy sections (+ "full" kept for old bookmarks → topology).
     # docs/141 4o: "health" joined; "gate" stays accepted (old links) and the
     # client maps it onto the Fidelity section that absorbed it.
+    # docs/148 split Fidelity into three CLIENT views (TAB_SPEC); the server
+    # must accept them too, or a deep link / F5 / a sidebar sub-link pressed
+    # from another page silently lands on Topology (QA F-01).
     _CHIP_VIEWS = {"topology", "overview", "health", "gate", "fidelity",
+                   "fidelity2q", "fidelity1q", "readout",
                    "coherence", "frequencies", "calibration", "trends", "full"}
     chip_view = request.args.get("view", "").strip().lower()
     if chip_view not in _CHIP_VIEWS:
