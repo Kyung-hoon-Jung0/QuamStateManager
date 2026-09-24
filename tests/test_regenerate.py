@@ -622,3 +622,79 @@ class TestTheQaRegenerateFixesEndToEnd:
                                         tmp_path / "new",
                                         source_probe=lambda *a, **k: {"ok": False})
         assert out["merge"]["pairs_reversed"] == [{"old": "q2-3", "new": "q3-2", "lost": 2}]
+
+
+def test_the_network_block_keeps_its_custom_qmm_settings(tmp_path, monkeypatch):
+    """QA regenerate-r2-17: the source wiring.network carries an IQCC cloud QMM
+    (qmm_class / qmm_settings / use_custom_qmm) the wizard never shows; the
+    build writes host/cluster/port only. The rebuild must carry the rest, keep
+    the wizard's host, name what it carried, and keep the sidecar valid."""
+    from quam_state_manager.core import regen_spec
+    state = {"qubits": {"q1": {"f_01": 5.1e9}}, "active_qubit_names": ["q1"]}
+    old_net = {"host": "10.1.1.6", "cluster_name": "c",
+               "qmm_class": "iqcc_cloud_client.CloudQuantumMachinesManager",
+               "qmm_settings": {"backend": "arbel"}, "use_custom_qmm": True,
+               "quantum_computer_backend": "arbel"}
+    (tmp_path / "old").mkdir()
+    (tmp_path / "old" / "state.json").write_text(json.dumps(state))
+    (tmp_path / "old" / "wiring.json").write_text(json.dumps(
+        {"wiring": {}, "network": old_net}))
+
+    def fake_build(python_path, mode, spec, out_dir, timeout=300):
+        out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "state.json").write_text(json.dumps(
+            {"qubits": {"q1": {"f_01": 0.0}}, "active_qubit_names": ["q1"]}))
+        (out_dir / "wiring.json").write_text(json.dumps(
+            {"wiring": {}, "network": {"host": "h2", "cluster_name": "c", "port": None}}))
+        return {"ok": True, "status": "ok", "error": None, "result": {}}
+
+    monkeypatch.setattr(regenerate.config_generator, "run_generator", fake_build)
+    spec = {"qubits": ["q1"], "_marker": "net-1"}
+    out = regenerate.run_regenerate("py", tmp_path / "old", spec, tmp_path / "new",
+                                    source_probe=lambda *a, **k: {"ok": False})
+    assert out["ok"] is True
+    assert out["merge"]["network_carried"] == [
+        "qmm_class", "qmm_settings", "quantum_computer_backend", "use_custom_qmm"]
+    net = json.loads((tmp_path / "new" / "wiring.json").read_text())["network"]
+    assert net["use_custom_qmm"] is True and net["qmm_settings"] == {"backend": "arbel"}
+    assert net["qmm_class"] == old_net["qmm_class"]
+    assert net["host"] == "h2" and net["port"] is None          # the wizard's values
+    # the sidecar hash covers the carried wiring: a later reconstruct still
+    # finds the exact spec
+    rec = regenerate.reconstruct_from_folder(tmp_path / "new")
+    assert rec.exact is True and rec.spec["_marker"] == "net-1"
+
+
+def test_an_in_memory_source_is_merged_instead_of_the_files(tmp_path, monkeypatch):
+    """QA regenerate-r2-21: the open chip's unsaved edits (in memory only) are
+    the source when the route hands them over -- the old folder's files, which
+    lack them, are never read for the merge; nor by reconstruct."""
+    on_disk = {"qubits": {"q1": {"chi": -350000.0}}, "active_qubit_names": ["q1"]}
+    in_mem = {"qubits": {"q1": {"chi": -360000.0}}, "active_qubit_names": ["q1"]}
+    (tmp_path / "old").mkdir()
+    (tmp_path / "old" / "state.json").write_text(json.dumps(on_disk))
+    (tmp_path / "old" / "wiring.json").write_text(json.dumps({"wiring": {}, "network": {}}))
+
+    def fake_build(python_path, mode, spec, out_dir, timeout=300):
+        out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "state.json").write_text(json.dumps(
+            {"qubits": {"q1": {"chi": 0.0}}, "active_qubit_names": ["q1"]}))
+        (out_dir / "wiring.json").write_text(json.dumps({"wiring": {}, "network": {}}))
+        return {"ok": True, "status": "ok", "error": None, "result": {}}
+
+    monkeypatch.setattr(regenerate.config_generator, "run_generator", fake_build)
+    out = regenerate.run_regenerate("py", tmp_path / "old", {"x": 1}, tmp_path / "new",
+                                    source_probe=lambda *a, **k: {"ok": False},
+                                    old_source=(in_mem, {"wiring": {}, "network": {}}))
+    assert out["ok"] is True
+    merged = json.loads((tmp_path / "new" / "state.json").read_text())
+    assert merged["qubits"]["q1"]["chi"] == -360000.0
+
+    # reconstruct: the given content, not the folder's files
+    real = regenerate.safe_io.read_state_wiring
+    monkeypatch.setattr(regenerate.safe_io, "read_state_wiring",
+                        lambda f, *a, **k: (_ for _ in ()).throw(AssertionError("read files"))
+                        if Path(f) == tmp_path / "old" else real(f, *a, **k))
+    rec = regenerate.reconstruct_from_folder(
+        tmp_path / "old", source=(in_mem, {"wiring": {}, "network": {}}))
+    assert rec.spec is not None

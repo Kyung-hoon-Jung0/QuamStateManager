@@ -72,6 +72,16 @@ def _is_int(v) -> bool:
     return isinstance(v, int) and not isinstance(v, bool)
 
 
+# QA F10: a QOP host is an IPv4/IPv6 address or a DNS name (qm-saas hands a
+# hostname), so this only refuses characters none of them can hold -- spaces,
+# "!", "/" ... -- never a legal name. A port is a TCP port: 1-65535.
+_NET_HOST_RE = re.compile(r"[A-Za-z0-9._:%\[\]-]+")
+
+
+def _is_valid_port(v) -> bool:
+    return _is_int(v) and 1 <= v <= 65535
+
+
 def _validate_channel(channel, ctx: str) -> list[str]:
     """Validate a single ``channel`` (port-pin) object. Returns error strings."""
     if not isinstance(channel, dict):
@@ -108,13 +118,16 @@ def validate_spec(spec) -> list[str]:
     if not isinstance(network, dict):
         errors.append("network: missing or not an object")
     else:
-        if not network.get("host"):
+        host = network.get("host")
+        if not host:
             errors.append("network.host: required")
+        elif not (isinstance(host, str) and _NET_HOST_RE.fullmatch(host.strip())):
+            errors.append(f"network.host: {host!r} is not an IP address or hostname")
         if not network.get("cluster_name"):
             errors.append("network.cluster_name: required")
         port = network.get("port")
-        if port is not None and not _is_int(port):
-            errors.append("network.port: must be an integer or null")
+        if port is not None and not _is_valid_port(port):
+            errors.append("network.port: must be an integer 1-65535, or empty")
 
     # -- instruments -------------------------------------------------------
     instruments = spec.get("instruments")

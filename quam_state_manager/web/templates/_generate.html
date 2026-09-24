@@ -76,7 +76,7 @@
       </div>
       <div class="gen-field">
         <label for="gen-net-port">Port <span class="muted">(optional)</span></label>
-        <input type="number" id="gen-net-port"
+        <input type="number" id="gen-net-port" min="1" max="65535" step="1"
                placeholder="leave blank for the default" autocomplete="off">
       </div>
     </section>
@@ -276,7 +276,7 @@
       <div class="gen-band">
         <div class="gen-band-head"><span class="gen-band-title">TWPAs</span> <span class="muted">&mdash; optional</span></div>
         <p class="muted gen-oneline"
-           title="Built natively on quam_builder 0.4.0+ (Connectivity.add_twpa_lines); an older builder skips them with a warning. The pump tone and calibration seeds are entered on the Populate step.">
+           title="Built natively when qualang-tools exposes Connectivity.add_twpa_lines (and quam_builder 0.4.0+ materialises the TWPA); an older env skips them with a warning. The pump tone and calibration seeds are entered on the Populate step.">
           Built with the chip on quam_builder 0.4.0+ &mdash; pump tone and calibration seeds are on the Populate step.</p>
         <div id="gen-twpa-list" class="gen-twpa-list"></div>
         <button type="button" class="outline btn-sm" id="gen-add-twpa">

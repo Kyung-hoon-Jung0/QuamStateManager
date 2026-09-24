@@ -765,6 +765,31 @@ def graft_twpa_wiring(merged_state: dict, old_state: dict,
     return carried
 
 
+def graft_network_settings(old_wiring: dict | None, new_wiring: dict) -> list[str]:
+    """Carry the source chip's ``wiring.network`` keys the build did not write.
+
+    QA regenerate-r2-17: the wizard edits only ``host`` / ``cluster_name`` /
+    ``port`` and the build writes a fresh ``network`` block from them, so every
+    other key -- a custom/cloud QMM's ``qmm_class`` / ``qmm_settings`` /
+    ``use_custom_qmm`` -- silently vanished and the rebuilt chip could not reach
+    its backend. Fills ABSENT keys only: what the build wrote (the user's
+    step-2 values, a ``port: None`` included) is never overwritten. Mutates
+    ``new_wiring`` in place; returns the carried keys, naturally sorted.
+    """
+    old_net = (old_wiring or {}).get("network") if isinstance(old_wiring, dict) else None
+    if not isinstance(old_net, dict) or not old_net:
+        return []
+    new_net = new_wiring.get("network")
+    if not isinstance(new_net, dict):
+        new_net = new_wiring["network"] = {}
+    carried = []
+    for k, v in old_net.items():
+        if k not in new_net:
+            new_net[k] = copy.deepcopy(v)
+            carried.append(k)
+    return sorted(carried, key=natural_key)
+
+
 # ---------------------------------------------------------------------------
 # docs/202 §17 -- a declared port nothing references
 #

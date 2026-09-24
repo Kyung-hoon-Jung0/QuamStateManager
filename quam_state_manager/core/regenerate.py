@@ -26,6 +26,7 @@ from . import config_generator, path_match, regen_merge, regen_script, regen_spe
 def reconstruct_from_folder(
     folder: Path | str,
     sidecar_dirs: tuple[Path | str, ...] = (),
+    source: tuple[dict, dict] | None = None,
 ) -> regen_spec.ReconstructedSpec:
     """Read a chip folder's state+wiring and reconstruct its build spec.
 
@@ -41,9 +42,13 @@ def reconstruct_from_folder(
     hash gate inside :func:`regen_spec.load_spec_sidecar` keys on the CONTENT
     read here, so a live-folder sidecar is only used while the working copy is
     byte-equivalent to the state the sidecar was written for.
+
+    ``source``: ``(state, wiring)`` to use INSTEAD of the folder's files -- the
+    open chip's in-memory content when it holds unsaved edits (QA
+    regenerate-r2-21). ``None`` reads the files, as before.
     """
     folder = Path(folder)
-    state, wiring = safe_io.read_state_wiring(folder)
+    state, wiring = source if source is not None else safe_io.read_state_wiring(folder)
     for cand in (folder, *(Path(d) for d in sidecar_dirs)):
         sidecar = regen_spec.load_spec_sidecar(cand, state, wiring)
         if sidecar is not None:
@@ -141,6 +146,7 @@ def run_regenerate(
     scripts_dir: Path | str | None = None,
     instance_path: Path | str | None = None,
     source_probe=None,
+    old_source: tuple[dict, dict] | None = None,
 ) -> dict:
     """Build ``spec`` fresh into ``out_dir`` then merge the OLD chip's values on.
 
@@ -164,6 +170,10 @@ def run_regenerate(
     ``scripts_dir`` — where to write the editable build-script bundle
     (r16 ⓪-4: the wizard's script-path box). ``None`` keeps the legacy
     ``<out_dir>/build_scripts`` location.
+
+    ``old_source`` -- ``(state, wiring)`` to merge from INSTEAD of
+    ``old_folder``'s files: the open chip's in-memory content when it holds
+    unsaved edits (QA regenerate-r2-21). ``None`` reads the files, as before.
     """
     old_folder = Path(old_folder)
     out_dir = Path(out_dir)
@@ -185,7 +195,8 @@ def run_regenerate(
         return outcome
 
     try:
-        old_state, old_wiring = safe_io.read_state_wiring(old_folder)
+        old_state, old_wiring = (old_source if old_source is not None
+                                 else safe_io.read_state_wiring(old_folder))
         new_state, new_wiring = safe_io.read_state_wiring(out_dir)
     except (OSError, ValueError) as exc:
         outcome["merge"] = None
@@ -267,6 +278,13 @@ def run_regenerate(
         result.stats.dangling_grafts = [
             p for p in result.stats.dangling_grafts if not p.startswith("twpas.")]
 
+    # QA regenerate-r2-17: wiring.network keys the wizard does not edit (a
+    # custom/cloud QMM) -- the build writes host/cluster/port only. Before the
+    # sidecar write: its hash covers this wiring.
+    net_carried = regen_merge.graft_network_settings(old_wiring, new_wiring)
+    if net_carried:
+        safe_io.atomic_write_json(out_dir / "wiring.json", new_wiring)
+
     safe_io.atomic_write_json(out_dir / "state.json", result.merged)
 
     # Emit the editable build-script bundle alongside the rebuilt state, so the
@@ -319,6 +337,7 @@ def run_regenerate(
         "dangling_grafts_total": len(s.dangling_grafts),
         "pruned_ops": len(s.pruned_ops),
         "twpa_wiring_carried": twpa_carried,
+        "network_carried": net_carried,
         "schema_dropped": len(s.schema_dropped),
         "schema_dropped_paths": s.schema_dropped[:200],
         "schema_dropped_paths_total": len(s.schema_dropped),

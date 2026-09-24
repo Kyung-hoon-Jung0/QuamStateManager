@@ -190,6 +190,22 @@ ok(chipText() === null && classLines().length === 0,
     merge: Object.assign({}, BASE) }, 'D:\out');
   ok2(!doc.querySelector('.gen-merge-ports') && !doc.querySelector('.gen-merge-port-line'),
     'P3: a result with no carried port (or predating the field) says nothing');
+
+  // ── QA regenerate-r2-17: network keys the wizard never shows, carried ─────
+  const NK = ['qmm_class', 'qmm_settings', 'quantum_computer_backend', 'use_custom_qmm'];
+  T.showBuildResult({ ok: true, result: { qubits: ['q1'], qubit_pairs: [] },
+    merge: Object.assign({}, BASE, { network_carried: NK }) }, 'D:\out');
+  const nel = doc.getElementById('gen-build-result');
+  const nchip = nel.querySelector('.gen-merge-net');
+  ok2(nchip && /^4 network settings carried$/.test(nchip.textContent.trim()),
+    'N1: the chip counts the carried network keys — got ' + (nchip && nchip.textContent));
+  const nline = nel.querySelector('.gen-merge-net-line');
+  ok2(nline && NK.every(function (k) { return nline.textContent.indexOf(k) >= 0; }),
+    'N2: the carried keys are named — got ' + (nline && nline.textContent));
+  T.showBuildResult({ ok: true, result: { qubits: ['q1'], qubit_pairs: [] },
+    merge: Object.assign({}, BASE) }, 'D:\out');
+  ok2(!doc.querySelector('.gen-merge-net') && !doc.querySelector('.gen-merge-net-line'),
+    'N3: nothing carried (or a result predating the field) says nothing');
   console.log(fails ? ('FAILED ' + fails + ' of ' + asserts)
                     : ('ok (' + asserts + ' assertions)'));
   process.exitCode = fails ? 1 : 0;

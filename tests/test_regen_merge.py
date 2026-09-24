@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from quam_state_manager.core.regen_merge import (
+    graft_network_settings,
     graft_twpa_wiring,
     merge_states,
     reconcile_twpa_ids,
@@ -221,6 +222,49 @@ def test_graft_twpa_wiring_carries_wiring_and_ports():
 
 def test_graft_twpa_wiring_noop_without_twpas():
     assert graft_twpa_wiring({"qubits": {}}, {}, {"wiring": {}}, {"wiring": {}}) == 0
+
+
+class TestGraftNetworkSettings:
+    """QA regenerate-r2-17: a custom/cloud QMM's network keys survive a rebuild,
+    and what the wizard wrote (host / cluster / port) is never overwritten."""
+
+    OLD = {"network": {"host": "10.1.1.6", "cluster_name": "c_old", "port": 80,
+                       "qmm_class": "iqcc_cloud_client.CloudQuantumMachinesManager",
+                       "qmm_settings": {"backend": "arbel"},
+                       "use_custom_qmm": True,
+                       "quantum_computer_backend": "arbel"}}
+
+    def test_absent_keys_are_carried_and_named(self):
+        new = {"wiring": {}, "network": {"host": "10.9.9.9", "cluster_name": "c_new",
+                                         "port": None}}
+        got = graft_network_settings(self.OLD, new)
+        assert got == ["qmm_class", "qmm_settings", "quantum_computer_backend",
+                       "use_custom_qmm"]
+        net = new["network"]
+        assert net["qmm_class"] == "iqcc_cloud_client.CloudQuantumMachinesManager"
+        assert net["qmm_settings"] == {"backend": "arbel"}
+        assert net["use_custom_qmm"] is True
+        # the wizard's step-2 values win, a build-written port None included
+        assert net["host"] == "10.9.9.9" and net["cluster_name"] == "c_new"
+        assert net["port"] is None
+
+    def test_nested_settings_are_copied_not_aliased(self):
+        new = {"network": {"host": "h"}}
+        graft_network_settings(self.OLD, new)
+        new["network"]["qmm_settings"]["backend"] = "x"
+        assert self.OLD["network"]["qmm_settings"]["backend"] == "arbel"
+
+    def test_no_old_network_is_a_noop(self):
+        for old in (None, {}, {"network": {}}, {"network": None}):
+            new = {"network": {"host": "h"}}
+            assert graft_network_settings(old, new) == []
+            assert new == {"network": {"host": "h"}}
+
+    def test_a_missing_new_network_block_is_created(self):
+        new = {"wiring": {}}
+        assert graft_network_settings({"network": {"use_custom_qmm": True}}, new) == [
+            "use_custom_qmm"]
+        assert new["network"] == {"use_custom_qmm": True}
 
 
 # --- real-data parity with the P2 probe (auto-skip when absent) -------------

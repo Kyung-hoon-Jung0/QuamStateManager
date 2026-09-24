@@ -212,3 +212,15 @@ class TestFolderAcceptingRoutes:
         body = r.get_json()
         assert r.status_code == 200
         assert body.get("resolved") == str(interp)
+
+    # QA generate-r2-21: Explorer's "Copy as path" wraps the path in quotes;
+    # the quoted form was probed/selected literally ("executable not found").
+    def test_a_quoted_copy_as_path_is_unquoted(self, client, tmp_path):
+        venv = tmp_path / "qv"
+        interp = _mk_interp(venv, "win")
+        r = client.get("/generate/probe", query_string={"python": f'"{interp}"'})
+        assert r.status_code == 200 and r.get_json().get("resolved") == str(interp)
+        r = client.post("/generate/select-env", json={"python": f'"{venv}"'})
+        body = r.get_json()
+        assert r.status_code == 200 and body["ok"], body
+        assert body.get("selected") == str(interp)

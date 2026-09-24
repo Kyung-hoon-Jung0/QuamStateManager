@@ -139,7 +139,19 @@
     2: function () {
       var net = state.spec.network;
       if (!net.host) return "Enter the QOP host IP.";
+      // QA F10: an IP or a DNS name (qm-saas hands a hostname) -- refuse only
+      // what no address can hold. validate_spec mirrors it (step-rail jumps
+      // skip this guard).
+      if (!/^[A-Za-z0-9._:%\[\]-]+$/.test(net.host)) {
+        return "Host must be an IP address or hostname — no spaces or symbols " +
+               "(got \"" + net.host + "\").";
+      }
       if (!net.cluster_name) return "Enter the cluster name.";
+      if (net.port != null &&
+          !(Number.isInteger(net.port) && net.port >= 1 && net.port <= 65535)) {
+        return "Port must be a whole number from 1 to 65535, or left blank " +
+               "(got " + net.port + ").";
+      }
       return null;
     },
     3: function () {
@@ -180,6 +192,29 @@
         return "Fixed-frequency qubits can't use a tunable-coupler CZ (the CZ gate " +
                "needs a qubit flux line). Pick a flux-tunable architecture, or use " +
                "the fixed-frequency (cross-resonance) chip type.";
+      }
+      // QA F9: flux-source shapes this architecture cannot build -- caught
+      // here, not as an off-screen ';'-joined list at step 5 (validate_spec).
+      // A bias tee plays pulses on the qubit's z line; there is none here.
+      if (!state.qubitFlux) {
+        var teeN = state.spec.qubits.filter(isBiasTee).length;
+        if (teeN) {
+          return teeN + " qubit" + (teeN === 1 ? " is" : "s are") + " set to " +
+                 "'Both — bias tee', but this architecture has no qubit flux (z) " +
+                 "line for the LF-FEM pulse half — set Flux source to QDAC-II or None.";
+        }
+      }
+      // A tunable-coupler CZ with EVERY qubit QDAC-only has no qubit flux line
+      // at all (validate_spec: "coupler lines need qubit flux lines"). A
+      // partial-QDAC chip is a warn-and-skip at build time, never blocked.
+      if (state.pairGate === "cz_tunable" && state.qubitFlux &&
+          state.spec.qubit_pairs.length && state.spec.qubits.length &&
+          state.spec.qubits.every(function (q) {
+            return isQdacBiased(q) && !isBiasTee(q);
+          })) {
+        return "A tunable-coupler CZ plays on the qubit flux (z) line, but every " +
+               "qubit is QDAC-only — put at least the pair qubits on LF-FEM or " +
+               "bias tee, or pick another architecture.";
       }
       // Pairs declared but the selected 2-qubit gate can't be built on this
       // hardware → the build would silently drop them (no error, no pairs in
@@ -274,6 +309,19 @@
     return p.charAt(0) === "/" || /^[A-Za-z]:[\\/]/.test(p) || /^\\\\/.test(p);
   }
 
+  // QA generate-r2-21: Explorer's "Copy as path" wraps the path in quotes
+  // ("D:\x\y"). Strip ONE matched surrounding pair -- never an interior
+  // quote. Every value starting with a quote fails looksAbsolutePath today,
+  // so this only changes inputs that are refused now. Mirrored server-side
+  // by routes._unquote_path.
+  function unquotePath(s) {
+    s = String(s == null ? "" : s).trim();
+    if (s.length >= 2 && (s[0] === '"' || s[0] === "'") && s[s.length - 1] === s[0]) {
+      s = s.slice(1, -1).trim();
+    }
+    return s;
+  }
+
   function root() {
     return document.getElementById("generate-root");
   }
@@ -333,6 +381,7 @@
     if (state.step >= 5) deriveLines();
     if (state.step === 4) {
       syncLineTypeToggles();
+      renderFluxSource();   // QA F9: a revisit repaints the row from state
       syncTopoControls();   // show the Renumber button if we arrived with id holes
       // Re-render the pair list from state: a CZ auto-orientation flip on
       // step 6/8 (czAutoOrient) reorders spec.qubit_pairs while this list
@@ -609,7 +658,7 @@
   function useCustomEnv() {
     var input = document.getElementById("gen-env-custom-path");
     var status = document.getElementById("gen-env-custom-status");
-    var python = input && input.value.trim();
+    var python = input && unquotePath(input.value);
     if (!python) { if (status) status.textContent = "Enter an interpreter or venv-folder path."; return; }
     if (status) status.textContent = "checking…";
     fetch("/generate/probe?python=" + encodeURIComponent(python))
@@ -651,8 +700,10 @@
     if (port) {
       port.addEventListener("input", function () {
         var v = port.value.trim();
-        var num = parseInt(v, 10);
-        state.spec.network.port = (v === "" || isNaN(num)) ? null : num;
+        // QA F10: Number, not parseInt -- parseInt read "1e5" as 1 and "80.5"
+        // as 80, silently; the step-2 guard judges the value as typed.
+        var num = Number(v);
+        state.spec.network.port = (v === "" || !isFinite(num)) ? null : num;
       });
     }
   }
@@ -1982,6 +2033,10 @@
     reconcilePopulatePairs();   // drop now-irrelevant CR/CZ pair populate
     syncLineTypeToggles();
     deriveLines();
+    // QA F9: the Flux source row reads state.qubitFlux (set just above via
+    // syncLineTypeToggles) -- without this it kept offering LF-FEM / bias
+    // tee on a chip that no longer has a z line.
+    renderFluxSource();
     // Re-style the board edges to the new gate's line bundle (CR arrow / CZ dashed
     // / coupler dot) — edgeStyle() reads state.pairGate at render.
     if (window.WiringGrid) window.WiringGrid.refresh();
@@ -6817,18 +6872,18 @@
   // Read live from the input — the folder browser fills .value directly.
   function getOutputPath() {
     var input = document.getElementById("gen-output-path");
-    return input ? input.value.trim() : "";
+    return input ? unquotePath(input.value) : "";
   }
 
   function getScriptsPath() {
     var input = document.getElementById("gen-scripts-path");
-    return input ? input.value.trim() : (state.scriptsPath || "");
+    return input ? unquotePath(input.value) : (state.scriptsPath || "");
   }
 
   // r16 ⓪-4: the scripts path FOLLOWS the state output folder
   // (`<output>\state_gen_scripts`) until the user edits the box themselves.
   function autoScriptsPath(outPath) {
-    var p = (outPath || "").trim();
+    var p = unquotePath(outPath);
     if (!p) return "";
     var win = /\\/.test(p) || /^[A-Za-z]:/.test(p);
     var sep = win ? "\\" : "/";
@@ -6852,7 +6907,10 @@
       // hand-typed paths.
       ["input", "change"].forEach(function (ev) {
         out.addEventListener(ev, function () {
-          state.outputPath = out.value.trim();
+          state.outputPath = unquotePath(out.value);
+          // QA generate-r2-21: on commit (not while typing -- the caret
+          // would jump) the box shows the path that will be used.
+          if (ev === "change" && out.value !== state.outputPath) out.value = state.outputPath;
           // Durable mirror — a cleared sessionStorage draft (crash, quota,
           // tab close) used to silently lose the output folder.
           try { localStorage.setItem("quam_gen_output_path", state.outputPath); }
@@ -6875,7 +6933,8 @@
       ["input", "change"].forEach(function (ev) {
         sp.addEventListener(ev, function () {
           state._scriptsPathTouched = true;   // user owns the box from here on
-          state.scriptsPath = sp.value.trim();
+          state.scriptsPath = unquotePath(sp.value);
+          if (ev === "change" && sp.value !== state.scriptsPath) sp.value = state.scriptsPath;
           try { localStorage.setItem("quam_gen_scripts_path", state.scriptsPath); }
           catch (e) { /* private mode */ }
         });
@@ -6926,7 +6985,9 @@
     var rows = [
       ["Environment", state.env || "(none selected — step 1)"],
       ["Network", (sp.network.host || "?") +
-        " · cluster " + (sp.network.cluster_name || "?")],
+        " · cluster " + (sp.network.cluster_name || "?") +
+        // QA F10: the port that will be written, shown before Generate
+        (sp.network.port != null ? " · port " + sp.network.port : "")],
       ["Instruments", inst.controllers.length + " OPX1000 (" + femCount +
         " FEMs), " + inst.opx_plus.length + " OPX+, " +
         inst.octaves.length + " Octave"],
@@ -7417,6 +7478,9 @@
         var dangN = (m.dangling_grafts_total != null)
             ? m.dangling_grafts_total : (m.dangling_grafts || []).length;
         var twpaN = m.twpa_wiring_carried || 0;     // TWPAs carried (wiring + ports)
+        // QA regenerate-r2-17: wiring.network keys step 2 does not show (a
+        // custom/cloud QMM), carried unchanged -- named, never invisible.
+        var netCarried = m.network_carried || [];
         var prunedN = m.pruned_ops || 0;            // redundant old ops cleaned
         var schemaDropN = m.schema_dropped || 0;    // old-stack fields the new env's classes don't know
         // The CAUSE behind most of those drops: the rebuild typed an object
@@ -7484,6 +7548,11 @@
           (twpaN ? '<span class="gen-merge-stat gen-merge-ok" title="TWPAs the builder ' +
             "can't rebuild, carried whole (state + wiring + ports) so the config still " +
             'compiles">' + twpaN + ' TWPA carried</span>' : '') +
+          (netCarried.length ? '<span class="gen-merge-stat gen-merge-ok gen-merge-net" ' +
+            'title="Network settings the wizard does not edit (e.g. a custom or ' +
+            'cloud QMM), carried unchanged from the source chip (wiring.json)">' +
+            netCarried.length + ' network setting' + (netCarried.length === 1 ? '' : 's') +
+            ' carried</span>' : '') +
           '<span class="gen-merge-stat ' + (lostN ? 'gen-merge-warn' : 'gen-merge-muted') +
             '" title="OLD values with no home in the rebuild">' +
             lostN + ' not carried</span>' +
@@ -7529,6 +7598,12 @@
         // above the fold, not inside a collapsed list — because it explains
         // the dropped fields underneath it and is the only line here that
         // says what to change.
+        if (netCarried.length) {
+          var nl = document.createElement("div");
+          nl.className = "gen-merge-muted gen-merge-detail gen-merge-net-line";
+          nl.textContent = "carried network: " + netCarried.join(", ");
+          el.appendChild(nl);
+        }
         (m.ports_carried || []).slice(0, 6).forEach(function (p) {
           var pl = document.createElement("div");
           pl.className = "gen-merge-muted gen-merge-detail gen-merge-port-line";
@@ -7937,9 +8012,9 @@
       if (!isNaN(m)) state.muxSize = clampMux(m);
     }
     var out = document.getElementById("gen-output-path");
-    if (out) state.outputPath = out.value.trim();
+    if (out) state.outputPath = unquotePath(out.value);
     var sp = document.getElementById("gen-scripts-path");
-    if (sp) state.scriptsPath = sp.value.trim();
+    if (sp) state.scriptsPath = unquotePath(sp.value);
   }
 
   function saveDraft() {
@@ -8557,6 +8632,7 @@
       autoApplyStandardDefaults: autoApplyStandardDefaults,
       markPopulateTouched: markPopulateTouched,
       autoScriptsPath: autoScriptsPath,
+      unquotePath: unquotePath,
       maybeFollowScriptsPath: maybeFollowScriptsPath,
       POP_QUBIT_COLS: POP_QUBIT_COLS,
       POP_QDAC_COLS: POP_QDAC_COLS,

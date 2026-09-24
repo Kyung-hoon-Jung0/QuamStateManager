@@ -87,7 +87,9 @@ REGISTRY: dict[str, dict] = {
         "label": "TWPA pump lines", "category": "wiring",
         "package": "qualang-tools", "symbol": "Connectivity.add_twpa_lines",
         "produces": "pump + pump_ channels on one MW-FEM port per TWPA",
-        "fix": "upgrade qualang-tools to a build that exposes add_twpa_lines",
+        "fix": "upgrade qualang-tools to a build that exposes add_twpa_lines "
+               "(together with a quam_builder that knows the TWPA wiring type, "
+               "e.g. 0.4.0)",
         "severity": DEGRADE},
     "wire.qdac_trigger_line": {
         "label": "QDAC-II digital trigger lines", "category": "wiring",

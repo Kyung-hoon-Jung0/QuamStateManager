@@ -25975,7 +25975,7 @@ def generate_probe():
     interpreter's mtime. Repeated wizard visits skip the subprocess
     spawn when nothing changed.
     """
-    python_path = (request.args.get("python") or "").strip()
+    python_path = _unquote_path(request.args.get("python"))   # QA generate-r2-21
     if not python_path:
         return jsonify({"error": "No interpreter path given."}), 400
     # r15 (docs/71): accept a venv/conda FOLDER (or a project folder holding
@@ -26009,7 +26009,7 @@ def generate_select_env():
     persisting (a bad path would otherwise fail every later subprocess with a
     confusing error)."""
     data = request.get_json(silent=True) or {}
-    python_path = (data.get("python") or "").strip()
+    python_path = _unquote_path(data.get("python"))   # QA generate-r2-21
     if not python_path:
         return jsonify({"ok": False, "error": "No interpreter path given."}), 400
     # r15 (docs/71): a venv folder / project folder with a .venv resolves to
@@ -26150,12 +26150,25 @@ def generate_allocate():
     return jsonify(outcome)
 
 
+def _unquote_path(raw) -> str:
+    """*raw* trimmed, with ONE matched pair of surrounding quotes removed --
+    Explorer's "Copy as path" form ``"D:\\x\\y"`` (QA generate-r2-21). An
+    interior or unmatched quote is left alone. Every value that starts with a
+    quote fails ``is_absolute()``, so this only changes inputs that were
+    refused. Mirrors generate.js ``unquotePath``."""
+    s = str(raw or "").strip()
+    if len(s) >= 2 and s[0] in "\"'" and s[-1] == s[0]:
+        s = s[1:-1].strip()
+    return s
+
+
 def _ingest_abs_path(raw: str) -> tuple[str, str | None]:
     """Normalize a user-supplied folder path from a build request: expand ``~``
     and require an ABSOLUTE result. Returns ``(path, error)``. Audit-proven
     failure modes this closes: ``~/chips`` built into a literal ``./~`` dir,
     and a Windows path replayed from localStorage onto a POSIX server
     silently built into ``$CWD/D:\\builds``."""
+    raw = _unquote_path(raw)            # QA generate-r2-21
     try:
         p = Path(raw).expanduser()
     except RuntimeError:                # "~" with no resolvable home
@@ -26378,8 +26391,11 @@ def regenerate_reconstruct():
     _ctx = _active_ctx()
     _live = (_ctx or {}).get("path")
     sidecar_dirs = (str(_live),) if _live and str(_live) != str(folder) else ()
+    unsaved = _regen_inmemory_source(folder)   # QA regenerate-r2-21
     try:
-        rec = regenerate.reconstruct_from_folder(folder, sidecar_dirs=sidecar_dirs)
+        rec = regenerate.reconstruct_from_folder(
+            folder, sidecar_dirs=sidecar_dirs,
+            source=unsaved[:2] if unsaved else None)
     except (OSError, ValueError) as exc:
         return jsonify({"ok": False, "error": f"Could not read {folder}: {exc}"}), 400
     except Exception as exc:  # noqa: BLE001 — users hand-edit state/wiring
@@ -26411,7 +26427,11 @@ def regenerate_reconstruct():
         "notes": notes,
         # Statements of fact about the reconstruction (docs/135) — rendered
         # without the warning glyph the `notes` list wears.
-        "info_notes": list(rec.info_notes),
+        "info_notes": list(rec.info_notes) + ([
+            f"Includes {unsaved[2]} unsaved edit{'' if unsaved[2] == 1 else 's'} "
+            "from this session (not yet saved to the working state) — the "
+            "rebuild carries the values you see."] if unsaved else []),
+        "unsaved_included": unsaved[2] if unsaved else 0,
         "flavor": flavor,
         "source_folder": str(folder),
         "source_name": ident["name"] if ident else Path(folder).name,
@@ -26484,6 +26504,35 @@ def _regen_source_live_note(src_p: Path) -> str | None:
     return ("Built from State Manager's working copy of this chip: the live "
             "chip's files changed on disk after SM last synced them, so "
             "those changes are NOT in this rebuild. To include them, " + how)
+
+
+def _regen_inmemory_source(folder) -> tuple[dict, dict, int] | None:
+    """``(state, wiring, n)`` -- the in-memory content of the open chip whose
+    WORKING COPY is *folder*, when it holds ``n`` > 0 unsaved edits; else None
+    (QA regenerate-r2-21). Those edits live only in ``store.state/wiring``
+    until Save, so reading the working-copy FILES silently left them out of
+    the rebuild while the page promised "Calibrated values are carried over".
+    Matched by working folder, never by "the active chip", so a switch
+    mid-wizard cannot hand over another chip's edits. Deep copies under the
+    store lock: the build runs for minutes while requests keep editing."""
+    if not folder:
+        return None
+    with _quam_cache_lock:              # never hold it while taking store._lock
+        ctxs = list(_quam_cache.values())
+    ctxs += list((current_app.config.get("contexts") or {}).values())
+    for ctx in ctxs:
+        if not isinstance(ctx, dict) or ctx.get("type") != "quam":
+            continue
+        wc, store = ctx.get("working_copy"), ctx.get("store")
+        wf = getattr(wc, "working_folder", None)
+        if store is None or not wf or not path_match.same_folder(Path(folder), Path(wf)):
+            continue
+        with store._lock:
+            n = len(store.change_log or ())
+            if not n:
+                return None
+            return copy.deepcopy(store.state), copy.deepcopy(store.wiring), n
+    return None
 
 
 def _output_within_chip(out: Path, chip: Path) -> bool:
@@ -26653,13 +26702,18 @@ def regenerate_build():
             return jsonify(guard)
 
     live_note = _regen_source_live_note(src_p)   # judged as the source is read
+    # QA regenerate-r2-21: an open chip's unsaved edits are part of the source.
+    unsaved = _regen_inmemory_source(src_p)
     outcome = regenerate.run_regenerate(
         python_path, source_folder, spec, Path(output_path), timeout=600,
         populate_baseline=populate_baseline,
         populate_touched=populate_touched,
         scripts_dir=scripts_dir,
         instance_path=current_app.instance_path,
+        **({"old_source": unsaved[:2]} if unsaved else {}),
     )
+    if unsaved and isinstance(outcome, dict):
+        outcome["unsaved_included"] = unsaved[2]
     if live_note and isinstance(outcome, dict):
         outcome["source_live_changed"] = True
         res = outcome.get("result")
