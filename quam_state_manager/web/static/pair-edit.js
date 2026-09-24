@@ -739,6 +739,17 @@
     }
     function _autoFitColWidth(key) { delete _colWidths[key]; _saveColWidths(); _applyColWidthStyle(); }
 
+    /* QA liveedit-r2-21 (twin of bulk-edit.js _focusBack): Apply all disables
+       the pressed button, which drops focus to <body>; when the apply lands,
+       hand it to the cell the user last left, only if nothing else took it. */
+    var _lastEditCell = null;
+    function _focusBack(el) {
+        var a = document.activeElement;
+        if (!el || !el.focus || !document.body.contains(el)) return;
+        if (a && a !== document.body && a !== document.documentElement) return;
+        try { el.focus({ preventScroll: true }); } catch (e) { try { el.focus(); } catch (e2) {} }
+    }
+
     var BulkPairEdit = {
         // docs/141 4af: the same read-only window onto the instance that
         // `BulkEdit._virtState` has always given the qubit grid. Without it a
@@ -852,6 +863,7 @@
             t.addEventListener('focusout', function (e) {
                 var cell = e.target.closest && e.target.closest('.bulk-cell');
                 if (!cell || cell.classList.contains('bulk-cell-ro')) return;
+                _lastEditCell = cell;   // QA liveedit-r2-21: Apply all hands focus back here
                 var row = _rowOf(cell);
                 var to = e.relatedTarget;
                 if (to && row && row.contains(to)) return;
@@ -949,6 +961,8 @@
             var all = document.getElementById(P + '-apply-all');
             if (all) { all.disabled = true; all.textContent = 'Applying…'; }
             var apsBtn = document.getElementById(P + '-apply-sync'); if (apsBtn) apsBtn.disabled = true;
+            var backCell = (_lastEditCell && rows.indexOf(_rowOf(_lastEditCell)) >= 0)
+                ? _lastEditCell : _cells(rows[0]).filter(_isDirty)[0];   // QA liveedit-r2-21
             var i = 0, failures = 0, succeeded = 0, lastTray = null, firstFailRow = null;
             var seenGlobal = {};
             function next() {
@@ -960,6 +974,7 @@
                     }
                     if (all) all.textContent = failures ? ('Apply all (' + failures + ' failed)') : ('Apply all (' + cfg.nounPlural + ')');
                     _refreshGlobal(); _recomputeStats();
+                    _focusBack(backCell);
                     if (failures) {
                         var msg = succeeded + ' applied, ' + failures + ' failed — see the red row' + (failures === 1 ? '' : 's');
                         if (window.showToast) window.showToast(msg, 'warning');

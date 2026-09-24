@@ -383,6 +383,21 @@
             + '</div></div>';
         document.body.appendChild(ov);
         var ta = ov.querySelector('.av-modal-ta');
+        // QA liveedit-r2-21: closing took the focused textarea with it, so focus
+        // fell to <body>; hand it back to this path's ✎ (looked up by path: a
+        // save repaints the row, so the pressed element may be a new one).
+        function closeBack() {
+            closeJsonModal();
+            var a = document.activeElement;
+            if (a && a !== document.body && a !== document.documentElement) return;
+            var btns = document.querySelectorAll('[data-av-edit]');
+            for (var bi = 0; bi < btns.length; bi++) {
+                if (btns[bi].getAttribute('data-av-edit') === path) {
+                    try { btns[bi].focus({ preventScroll: true }); } catch (e3) { btns[bi].focus(); }
+                    return;
+                }
+            }
+        }
         function showErr(msg) {
             var e2 = ov.querySelector('.av-modal-err');
             e2.textContent = msg; e2.hidden = false;
@@ -413,16 +428,16 @@
                     return;
                 }
                 containerSaved(path, parsed, jb);
-                closeJsonModal();
+                closeBack();
             }).catch(function (ex) { showErr('Apply failed: ' + ex); });
         }
         ov.addEventListener('keydown', function (e) {
-            if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeJsonModal(); }
+            if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeBack(); }
             else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); }
         });
-        ov.addEventListener('mousedown', function (e) { if (e.target === ov) closeJsonModal(); });
+        ov.addEventListener('mousedown', function (e) { if (e.target === ov) closeBack(); });
         ov.querySelector('[data-av-save]').addEventListener('click', save);
-        ov.querySelector('[data-av-cancel]').addEventListener('click', closeJsonModal);
+        ov.querySelector('[data-av-cancel]').addEventListener('click', closeBack);
     }
     // Local display mirror of core/all_values container formatting: enough to
     // repaint THIS row honestly until the next re-pull (state.etag is dropped —
@@ -534,7 +549,11 @@
         if (tk.k === 'is') {
             if (tk.v === 'modified') return row[3] === 1 || state.dirty.has(row[0]);
             if (tk.v === 'editable') return isEditableRow(row);
-            return true;
+            // QA liveedit-r2-29: an unknown qualifier (a typo like is:modifed)
+            // matched EVERY leaf, which read as "all N are modified". It
+            // matches nothing now -- as kind:<typo> here and is:<typo> on the
+            // Datasets search do -- and applyFilter names it beside the count.
+            return false;
         }
         return haystack(r).indexOf(tk.v) >= 0;
     }
@@ -586,7 +605,9 @@
             if (state.groups[gj].matchCount > 0) state.groups[gj].expanded = true;   // auto-open matches
         rebuildDisplay();
         state.lastFirst = -1; renderWindow(true);
-        setShowing(shown);
+        setShowing(shown, tokens.filter(function (t) {
+            return t.k === 'is' && t.v !== 'modified' && t.v !== 'editable';
+        }).map(function (t) { return t.raw; }));
     }
     function clearFilter() {
         syncChips('');                      // re-activate the "All" chip
@@ -597,10 +618,13 @@
         state.lastFirst = -1; renderWindow(true);
         setShowing(null);
     }
-    function setShowing(n) {
+    function setShowing(n, unknownIs) {
         var el = document.getElementById('av-showing');
         if (!el) return;
-        el.textContent = (n === null) ? '' : ('Showing ' + n.toLocaleString() + ' of ' + state.rows.length.toLocaleString());
+        el.textContent = (n === null) ? '' : ('Showing ' + n.toLocaleString() + ' of ' + state.rows.length.toLocaleString()
+            + (unknownIs && unknownIs.length
+                ? ' — unknown qualifier ' + unknownIs.join(', ') + ' (is:modified or is:editable)' : ''));
+        el.title = el.textContent;   // the strip ellipsizes; hover reads it whole
     }
 
     function expandAll(v) {

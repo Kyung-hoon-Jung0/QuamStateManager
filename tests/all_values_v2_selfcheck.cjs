@@ -241,6 +241,11 @@ function inputFor(win, p) {
       'V5: POST carries the PARSED value');
     ok(post && post.expect_chip === 'tok', 'V5: chip token stamped');
     ok(!win.document.getElementById('av-json-modal'), 'V5: modal closes on success');
+    // QA liveedit-r2-21: focus goes back to this path's ✎, never to <body>
+    // (the row repaints on save, so the ✎ is found again by its path)
+    const aeS = win.document.activeElement;
+    ok(!!aeS && aeS.getAttribute && aeS.getAttribute('data-av-edit') === MATRIX,
+      'V5: Save returns focus to the row ✎ (got ' + (aeS && aeS.tagName) + ')');
     ok(win.AllValues._state.etag === null, 'V5: etag dropped → next activation re-pulls');
     const mrow = win.AllValues._state.rows[win.AllValues._state.rowsByPath.get(MATRIX)];
     ok(mrow[1] === '[2×2]' && mrow[3] === 1 && mrow[4].dims === '2×2',
@@ -253,6 +258,9 @@ function inputFor(win, p) {
     win.document.getElementById('av-json-modal')
       .dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     ok(!win.document.getElementById('av-json-modal'), 'V5: Esc cancels');
+    const aeE = win.document.activeElement;
+    ok(!!aeE && aeE.getAttribute && aeE.getAttribute('data-av-edit') === 'qubits.qA1.extras',
+      'V5: Esc returns focus to the ✎ that opened it (got ' + (aeE && aeE.tagName) + ')');
     ok(win._log.editBatch.length === 2, 'V5: Esc never POSTs');
   }
 
@@ -317,6 +325,37 @@ function inputFor(win, p) {
     const esc2 = new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
     fin.dispatchEvent(esc2);
     ok(!esc2.defaultPrevented, 'V7: a clean Escape passes through to the app');
+  }
+
+  // V8 (QA liveedit-r2-29): an unknown `is:` qualifier matched EVERY leaf, so
+  // a typo (is:modifed) read "Showing 7 of 7" -- as if every leaf were
+  // modified. It matches nothing now and the count line names it.
+  {
+    const box = win.document.getElementById('av-search');
+    const showing = () => win.document.getElementById('av-showing').textContent;
+    async function search(q) {
+      box.value = q;
+      box.dispatchEvent(new win.Event('input', { bubbles: true }));
+      await tick(150);   // past the 80 ms debounce
+    }
+    const total = win.AllValues._state.rows.length;
+    await search('is:modifed');
+    ok(/^Showing 0 of /.test(showing()), 'V8: a typo qualifier matches nothing, got ' + showing());
+    ok(/unknown qualifier is:modifed/.test(showing()) && /is:modified/.test(showing()),
+      'V8: and the count line names the unknown qualifier + the known ones, got ' + showing());
+    await search('is:modified');
+    const nMod = parseInt(showing().replace(/^Showing ([\d,]+).*/, '$1').replace(/,/g, ''), 10);
+    ok(nMod > 0 && nMod < total && !/unknown/.test(showing()),
+      'V8: a known qualifier still filters, no hint, got ' + showing());
+    // the app's one grammar: with SearchQuery loaded, `|` ORs -- an unknown
+    // qualifier used to swallow the whole group (every row)
+    new win.Function(fs.readFileSync(path.join(ROOT, 'quam_state_manager', 'web', 'static',
+      'search-query.js'), 'utf8')).call(win);
+    await search('is:bogus | f_01');
+    ok(/^Showing 1 of /.test(showing()) && /unknown qualifier is:bogus/.test(showing()),
+      'V8: is:bogus | f_01 shows the f_01 leaf only (+ the hint), got ' + showing());
+    await search('');
+    ok(showing() === '', 'V8: clearing the box clears the line');
   }
 
   if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }

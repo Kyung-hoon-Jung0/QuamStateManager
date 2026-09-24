@@ -436,8 +436,17 @@
             inp.setAttribute('aria-label', 'New filter patch');
             scroll.insertBefore(inp, scroll.querySelector('.bulk-chip-add'));
             inp.focus();
-            function commit() {
+            function commit(keepOnBad) {
                 var t = inp.value.trim().toLowerCase();
+                // A rejected word used to vanish with no word of why (QA
+                // liveedit-r2-26). Say it; on Enter keep the box so the user
+                // can fix it; empty stays silent (that is just dismissing).
+                var why = _patchProblem(t);
+                if (why) {
+                    if ((keepOnBad || inp._warned !== t) && window.showToast) window.showToast(why, 'warning');
+                    inp._warned = t;
+                    if (keepOnBad && inp.parentNode) { inp.select(); return; }
+                }
                 if (inp.parentNode) inp.parentNode.removeChild(inp);
                 if (!/^[^\s|]{1,40}$/.test(t)) return;   // one token, no pipes
                 var cur = _customTerms();
@@ -449,7 +458,7 @@
                 _write();
             }
             inp.addEventListener('keydown', function (e) {
-                if (e.key === 'Enter') { e.preventDefault(); commit(); }
+                if (e.key === 'Enter') { e.preventDefault(); commit(true); }
                 else if (e.key === 'Escape') {
                     if (inp.parentNode) inp.parentNode.removeChild(inp);
                 }
@@ -457,6 +466,15 @@
             inp.addEventListener('blur', function () {
                 setTimeout(function () { if (inp.parentNode) commit(); }, 120);
             });
+        }
+        /* Why a typed patch cannot be saved, or '' when it can (or is empty). */
+        function _patchProblem(t) {
+            if (!t || /^[^\s|]{1,40}$/.test(t)) return '';
+            var why = t.indexOf('|') >= 0
+                ? "one word without '|' ('|' means OR in the search box)"
+                : (/\s/.test(t) ? 'one word, no spaces' : 'at most 40 characters');
+            return 'A patch is ' + why + ' — "' + (t.length > 40 ? t.slice(0, 40) + '…' : t)
+                + '" was not saved.';
         }
         function _removeCustom(term) {
             _saveCustom(_customTerms().filter(function (x) { return x !== term; }));
@@ -484,10 +502,33 @@
             // pair grid, that reshuffle fed straight back into the next write.
             var seen = {};
             active = [];
-            toks.forEach(function (t) {
-                if (terms.indexOf(t) >= 0 && !seen[t]) { seen[t] = 1; active.push(t); }
+            var at = [];   // token index of each lit chip
+            toks.forEach(function (t, i) {
+                if (terms.indexOf(t) >= 0 && !seen[t]) { seen[t] = 1; active.push(t); at.push(i); }
             });
+            // QA liveedit-r2-32: the mode is part of the box's truth too. A
+            // hand-typed 'readout | flux' lit both chips under an AND button,
+            // and the next chip press re-joined them with ' ' -- the user's OR
+            // silently became an AND (union -> nothing).
+            // Where the box says nothing (under two lit chips, a mixed query)
+            // the mode is the user's own last choice again.
+            mode = _queryMode(toks, at) || _readMode();
             _paint();
+        }
+        /* 'or' when every lit chip sits in ONE `|` group of the query (docs/96
+           tight-binding grammar), 'and' when each sits in a group of its own;
+           null when fewer than two chips are lit, the query mixes both, or the
+           grammar module is absent. */
+        function _queryMode(toks, at) {
+            if (at.length < 2 || !window.SearchQuery || !window.SearchQuery.groupBy) return null;
+            var idx = toks.map(function (t, i) { return i; });
+            var gOf = {};
+            window.SearchQuery.groupBy(idx, function (i) { return toks[i]; })
+                .forEach(function (g, gi) { g.forEach(function (i) { gOf[i] = gi; }); });
+            var groups = {};
+            at.forEach(function (i) { groups[gOf[i]] = 1; });
+            var n = Object.keys(groups).length;
+            return n === 1 ? 'or' : (n === at.length ? 'and' : null);
         }
         function mount() {
             var b = bar(); if (!b) return;
@@ -3231,6 +3272,18 @@
         if (label !== 'start') (window.__bulkMountTimings = window.__bulkMountTimings || []).push([label, Math.round(now - _mountT0)]);
         _mountT0 = now;
     }
+    /* QA liveedit-r2-21: Apply all / Apply to live disables the pressed button,
+       and a focused control that turns disabled drops focus to <body> (it also
+       stays disabled after a clean apply, so it cannot take focus back). When
+       the apply lands, hand focus to the cell the user last left -- only if it
+       is still sitting on <body>, never away from somewhere the user went. */
+    var _lastEditCell = null;
+    function _focusBack(el) {
+        var a = document.activeElement;
+        if (!el || !el.focus || !document.body.contains(el)) return;
+        if (a && a !== document.body && a !== document.documentElement) return;
+        try { el.focus({ preventScroll: true }); } catch (e) { try { el.focus(); } catch (e2) {} }
+    }
     var BulkEdit = {
         mount: function (columns, bandMeta, dynModel, qubitMeta) {
             if (Array.isArray(columns)) COLS = columns;
@@ -3407,6 +3460,7 @@
             t.addEventListener('focusout', function (e) {
                 var cell = e.target.closest && e.target.closest('.bulk-cell');
                 if (!cell) return;
+                _lastEditCell = cell;   // QA liveedit-r2-21: Apply all hands focus back here
                 if (FREQ_TWIN[_colKeyOf(cell)]) _freqBlur(cell);
                 // Tab / click-away COMMITS the row (like Enter). Only when focus
                 // leaves the row entirely — moving between cells in the SAME row
@@ -3582,6 +3636,8 @@
             var all = document.getElementById('bulk-apply-all');
             if (all) { all.disabled = true; all.textContent = 'Applying…'; }
             var apsBtn = document.getElementById('bulk-apply-sync'); if (apsBtn) apsBtn.disabled = true;
+            var backCell = (_lastEditCell && rows.indexOf(_rowOf(_lastEditCell)) >= 0)
+                ? _lastEditCell : _cells(rows[0]).filter(_isDirty)[0];   // QA liveedit-r2-21
             var i = 0, failures = 0, succeeded = 0, lastTray = null, firstFailRow = null;
             var seenGlobal = {};   // dedup a shared-port node across rows → written once
             function next() {
@@ -3601,6 +3657,7 @@
                     }
                     if (all) all.textContent = failures ? ('Apply all (' + failures + ' failed)') : 'Apply all';
                     _refreshGlobal(); _recomputeStats();
+                    _focusBack(backCell);
                     // On a tall table the tiny "(N failed)" label + off-screen red rows
                     // are easy to miss. Surface a status-bar toast and scroll the first
                     // failing row into view so the failure can't be silently overlooked (A16).
@@ -3711,7 +3768,17 @@
                 + '</div></div>';
             document.body.appendChild(ov);
             var ta = ov.querySelector('.bulk-json-ta');
-            function close() { if (ov.parentNode) ov.parentNode.removeChild(ov); }
+            // QA liveedit-r2-21: removing the overlay took the focused textarea
+            // with it, so focus fell to <body>; give it back to the opener (the
+            // ✎ stays in place across a save -- the cell is patched in place).
+            function close() {
+                if (ov.parentNode) ov.parentNode.removeChild(ov);
+                var a = document.activeElement;
+                if (btn && btn.focus && document.body.contains(btn)
+                        && (!a || a === document.body || a === document.documentElement)) {
+                    try { btn.focus({ preventScroll: true }); } catch (e) { try { btn.focus(); } catch (e2) {} }
+                }
+            }
             function showErr(msg) {
                 var el = ov.querySelector('.bulk-json-err');
                 el.textContent = msg; el.hidden = false;
