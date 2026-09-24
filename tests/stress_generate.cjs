@@ -780,8 +780,7 @@ async function main() {
     await typeInto('#gen-qdac-ip', v, { settle: 120, fast: true });
   }
   ok('a hostile QDAC IP is stored as text and never breaks the spec',
-     typeof (await spec(`(QuamGen.state.spec.qdac||{}).ip`)) !== 'undefined' ||
-     (await spec(`JSON.stringify(QuamGen.state.spec.qdac||{})`)) !== null,
+     typeof (await spec(`(QuamGen.state.spec.qdac||{}).ip_address`)) === 'string',
      await spec(`JSON.stringify(QuamGen.state.spec.qdac||{}).slice(0,300)`));
   await ev(`(function(){var s=document.getElementById('gen-flux-source'); s.value='opx'; s.dispatchEvent(new Event('change',{bubbles:true})); return 1;})()`);
   await sleep(350);
@@ -1390,13 +1389,17 @@ async function main() {
   await click('#gen-reset'); await sleep(1200);
   const afterReset = await ev(`JSON.stringify({step:QuamGen.state.step, q:QuamGen.state.spec.qubits.length,
      host:QuamGen.state.spec.network.host, arch:QuamGen.state.chipArch, mode:QuamGen.state.mode,
-     out:QuamGen.state.outputPath, env:!!QuamGen.state.env, alloc:!!QuamGen.state.allocation,
+     out:QuamGen.state.outputPath, env:QuamGen.state.env||null, alloc:!!QuamGen.state.allocation,
+     envHl:((document.querySelector('#gen-env-list .gen-env-row.selected')||{dataset:{}}).dataset.python)||null,
      pairs:QuamGen.state.spec.qubit_pairs.length, twpas:QuamGen.state.spec.twpas.length,
      chassis:QuamGen.state.spec.instruments.controllers.length})`);
   const R = JSON.parse(afterReset);
   ok('Reset wizard asks first', (await ev(`(window.__confirms||[]).length`)) >= 1, await ev(`JSON.stringify(window.__confirms||[])`));
   ok('Reset returns to step 1 with an empty chip', R.step === 1 && R.q === 0 && R.pairs === 0 && R.twpas === 0, R);
-  ok('…and clears the network, output path, env and allocation', !R.host && !R.out && !R.env && !R.alloc, R);
+  ok('…and clears the network, output path and allocation', !R.host && !R.out && !R.alloc, R);
+  // QA F4: the env is a machine-wide choice, not wizard content — Reset keeps
+  // it, so the highlighted row IS the selection and Next moves on.
+  ok('…and keeps the highlighted env as the real selection', R.env === R.envHl, R);
   // Reset seeds 5 EMPTY chassis, and with no LF-FEM the architecture is
   // honestly derived as fixed-frequency — the stored default only survives
   // once hardware that can build it exists.

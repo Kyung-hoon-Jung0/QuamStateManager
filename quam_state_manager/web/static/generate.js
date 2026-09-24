@@ -280,7 +280,7 @@
 
   // -- shell -----------------------------------------------------------
 
-  function showMessage(msg, kind) {
+  function showMessage(msg, kind, opts) {
     var el = document.getElementById("gen-message");
     if (!el) return;
     if (!msg) {
@@ -291,6 +291,14 @@
     el.textContent = msg;
     el.className = "gen-message gen-message-" + (kind || "warn");
     el.hidden = false;
+    // QA F3: #gen-message sits below every panel — far below the fold after
+    // the header Next, a long step 4 or step 5 — so a refused press looked
+    // dead. A message a user PRESS produced brings itself into view
+    // ('nearest' = no scroll when already visible). Opt-in: automatic
+    // messages (step-entry probes, auto-allocate) never move the page.
+    if (opts && opts.reveal && typeof el.scrollIntoView === "function") {
+      try { el.scrollIntoView({ block: "nearest" }); } catch (e) { /* old engine */ }
+    }
   }
 
   function render() {
@@ -372,7 +380,7 @@
     var guard = stepGuards[state.step];
     var err = guard ? guard() : null;
     if (err) {
-      showMessage(err, "warn");
+      showMessage(err, "warn", { reveal: true });
       return;
     }
     if (state.step < STEP_COUNT) {
@@ -392,7 +400,7 @@
   function jumpToStep(target) {
     if (target > state.step) {
       var topoErr = topologyBlocker();
-      if (topoErr) { goToStep(4); showMessage(topoErr, "warn"); return; }
+      if (topoErr) { goToStep(4); showMessage(topoErr, "warn", { reveal: true }); return; }
     }
     goToStep(target);
   }
@@ -593,12 +601,13 @@
           applySelection(python);
           showMessage(null);
         } else {
-          showMessage((res && res.error) || "Could not select environment.", "error");
+          showMessage((res && res.error) || "Could not select environment.", "error",
+                      { reveal: true });
         }
       })
       .catch(function () {
         if (mySeq !== _envSelectSeq) return;
-        showMessage("Could not select environment.", "error");
+        showMessage("Could not select environment.", "error", { reveal: true });
       });
   }
 
@@ -1210,11 +1219,11 @@
   function applyNamingScheme() {
     var old = state.spec.qubits.slice();
     var r = schemeNames(old.length);
-    if (r.error) { showMessage(r.error, "warn"); return; }
+    if (r.error) { namingRefusal(r.error); return; }
     var names = r.names, seen = {};
     for (var i = 0; i < names.length; i++) {
       var err = validateQubitName(names[i], seen);
-      if (err) { showMessage("Naming scheme: " + err, "warn"); return; }
+      if (err) { namingRefusal("Naming scheme: " + err); return; }
       seen[names[i]] = true;
     }
     var map = {}, changed = false;
@@ -1259,6 +1268,19 @@
     return null;
   }
 
+  // QA F3: a refused rename / Apply names answers AT the naming block (the
+  // docs/134 answer-at-the-button pattern) — #gen-message is a screen below
+  // it, and a scroll there is undone the moment Tab moves focus to the next
+  // rename box. renderNamingUi puts the normal note back on the next render.
+  function namingRefusal(msg) {
+    showMessage(msg, "warn");
+    var note = document.getElementById("gen-naming-note");
+    if (note) {
+      note.textContent = "✗ " + msg;
+      note.classList.add("gen-topo-caption-warn");   // the existing warning-text colour
+    }
+  }
+
   // Per-qubit rename inputs (inside the step-4 naming block).
   function renderQubitNameList() {
     var host = document.getElementById("gen-qubit-name-list");
@@ -1276,7 +1298,7 @@
         if (v === q) return;
         var err = renameQubit(q, v);
         if (err) {
-          showMessage(err, "warn");
+          namingRefusal(err);
           input.value = q;               // restore the valid name
         } else {
           showMessage(null);
@@ -1307,6 +1329,7 @@
     if (sin) sin.value = (nm.start == null ? 1 : nm.start);
     var note = document.getElementById("gen-naming-note");
     if (note) {
+      note.classList.remove("gen-topo-caption-warn");   // QA F3: clear a refusal
       if (nm.preset === "grid") {
         var r = schemeNames(state.spec.qubits.length);
         note.textContent = r.error ? r.error
@@ -2338,27 +2361,31 @@
     var qdIp = document.getElementById("gen-qdac-ip");
     var qdPort = document.getElementById("gen-qdac-port");
     var qdUsb = document.getElementById("gen-qdac-usb");
-    var qd = (state.spec.qdac = state.spec.qdac || qdacInstrumentDefaults());
+    // QA F5: read the CURRENT spec's qdac on every edit — a captured object
+    // went stale the moment Reset / hydrateFromSpec replaced state.spec, and
+    // typed IP/port/link edits then landed on a discarded object.
+    function curQd() { return (state.spec.qdac = state.spec.qdac || qdacInstrumentDefaults()); }
+    curQd();
     if (qdComm) {
       qdComm.addEventListener("change", function () {
-        qd.communication_type = qdComm.value;
+        curQd().communication_type = qdComm.value;
         renderQdacInstrument();
       });
     }
-    if (qdIp) qdIp.addEventListener("input", function () { qd.ip_address = qdIp.value.trim(); });
+    if (qdIp) qdIp.addEventListener("input", function () { curQd().ip_address = qdIp.value.trim(); });
     if (qdPort) {
       qdPort.addEventListener("input", function () {
         // An empty field falls back to the 5025 default rather than an
         // explicit null — Python's qdac.get("port", 5025) only substitutes
         // the default when the key is ABSENT, not when it's None.
         var v = parseInt(qdPort.value, 10);
-        qd.port = isNaN(v) ? 5025 : v;
+        curQd().port = isNaN(v) ? 5025 : v;
       });
     }
     if (qdUsb) {
       qdUsb.addEventListener("input", function () {
         var v = parseInt(qdUsb.value, 10);
-        qd.usb_device = isNaN(v) ? null : v;
+        curQd().usb_device = isNaN(v) ? null : v;
       });
     }
 
@@ -3787,12 +3814,13 @@
           if (warns.length) showMessage(warns.join(" "), "warn");
         } else {
           if (auto) { _allocAutoBlocked = true; _allocFailSig = sigAtRequest; }
-          if (status) status.textContent = "✗ allocation failed";
+          var failWhy = res.error || (res.errors || []).join("; ") || "Allocation failed.";
+          // QA F3: the reason answers AT the button (the docs/134 pattern)
+          // — #gen-message is far below the fold here and a step change
+          // clears it. No scroll: the answer is already beside the press.
+          if (status) status.textContent = "✗ allocation failed: " + failWhy;
           renderWiringDiagram();   // back to the manual placeholder
-          showMessage(
-            res.error || (res.errors || []).join("; ") || "Allocation failed.",
-            "error"
-          );
+          showMessage(failWhy, "error");
         }
       })
       .catch(function () {
@@ -3800,7 +3828,7 @@
         _allocInFlight = false;
         if (auto) { _allocAutoBlocked = true; _allocFailSig = sigAtRequest; }
         if (btn) btn.disabled = false;
-        if (status) status.textContent = "✗ allocation failed";
+        if (status) status.textContent = "✗ allocation failed: the request did not complete";
         renderWiringDiagram();
         showMessage("Allocation request failed.", "error");
       });
@@ -7622,8 +7650,21 @@
   }
 
   function runBuild(force, ackDegrades) {
+    // QA F3b: a pre-flight refusal answers in the result slot under Generate
+    // and REPLACES whatever it held — the previous build's green "Generated"
+    // box used to stay on screen, so a refused press read as a new success
+    // (the wiring-error gate below already overwrites the slot the same way).
+    function refuseBuild(msg, kind) {
+      var rEl = document.getElementById("gen-build-result");
+      if (rEl) {
+        rEl.hidden = false;
+        rEl.className = "gen-build-result gen-build-error";
+        rEl.textContent = "✗ " + msg;
+      }
+      showMessage(msg, kind, { reveal: true });   // after the slot's reflow
+    }
     if (!state.env) {
-      showMessage("Select an environment in step 1.", "warn");
+      refuseBuild("Select an environment in step 1.", "warn");
       return;
     }
     // An auto-picked env lives client-side only (review [7]) — the BUILD is
@@ -7641,13 +7682,13 @@
             _envPersisted = true;
             runBuild(force, ackDegrades);
           } else {
-            showMessage((res && res.error) ||
+            refuseBuild((res && res.error) ||
               "Could not select the build environment — pick one in step 1.",
               "error");
           }
         })
         .catch(function () {
-          showMessage(
+          refuseBuild(
             "Could not select the build environment — pick one in step 1.",
             "error");
         });
@@ -7664,13 +7705,13 @@
     deriveLines();
     var outPath = getOutputPath();
     if (!outPath) {
-      showMessage("Choose an output folder in step 7.", "warn");
+      refuseBuild("Choose an output folder in step 7.", "warn");
       return;
     }
     if (!looksAbsolutePath(outPath)) {
       // Defense-in-depth (a draft-restored relative path can bypass the
       // step-7 validator via the step chips) — the server 400s it anyway.
-      showMessage("Output folder must be an absolute path — fix it in step 7.",
+      refuseBuild("Output folder must be an absolute path — fix it in step 7.",
                   "warn");
       return;
     }
@@ -7680,8 +7721,12 @@
     // guard. Send the user back to the Qubits step with the reason.
     var topoErr = topologyBlocker();
     if (topoErr) {
+      // QA F3b: this refusal leaves step 8 — clear the slot so a return
+      // there never shows the previous build's success as current.
+      var tEl = document.getElementById("gen-build-result");
+      if (tEl) { tEl.hidden = true; tEl.textContent = ""; }
       goToStep(4);
-      showMessage(topoErr, "warn");
+      showMessage(topoErr, "warn", { reveal: true });
       return;
     }
 
@@ -7826,6 +7871,9 @@
         populateUnits: state.populateUnits,
         muxSize: state.muxSize, outputPath: state.outputPath,
         scriptsEnabled: state.scriptsEnabled, scriptsPath: state.scriptsPath,
+        // QA F2: whether the scripts box is the USER's (typed) or still
+        // following the output folder — a draft path alone can't tell.
+        scriptsPathTouched: !!state._scriptsPathTouched,
         qubitFlux: state.qubitFlux, couplerFlux: state.couplerFlux,
         pairGate: state.pairGate, chipArch: state.chipArch,
         crPortMode: state.crPortMode, zzEnabled: state.zzEnabled,
@@ -7903,14 +7951,26 @@
     // historical behavior).
     state.crPortMode = (d.crPortMode === "shared_xy") ? "shared_xy" : "dedicated";
     state.zzEnabled = !!d.zzEnabled;
+    var scriptsFromDraft = !!d.scriptsPath;
     state.scriptsPath = d.scriptsPath || "";
     if (!state.scriptsPath) {
       try { state.scriptsPath = localStorage.getItem("quam_gen_scripts_path") || ""; }
       catch (e) { /* private mode */ }
     }
-    // A restored non-empty path is the user's earlier explicit choice; an
-    // empty one auto-follows the state folder until they touch the box.
-    state._scriptsPathTouched = !!state.scriptsPath;
+    // QA F2: a DRAFT path is saved whether or not the user typed it (the
+    // auto-followed value rides the draft too), so treating it as "touched"
+    // latched the box after any reload / re-mount and the next chip's build
+    // silently rewrote the previous chip's scripts. The draft carries its own
+    // flag; a legacy draft without it follows when its path IS the derived
+    // one. The localStorage mirror is written only by the box's own listener
+    // — a restored value from there is the user's earlier explicit choice.
+    if (scriptsFromDraft) {
+      state._scriptsPathTouched = (typeof d.scriptsPathTouched === "boolean")
+        ? d.scriptsPathTouched
+        : state.scriptsPath !== autoScriptsPath(state.outputPath);
+    } else {
+      state._scriptsPathTouched = !!state.scriptsPath;
+    }
     maybeFollowScriptsPath();
     // Line-type toggles — default true for backward compat with old drafts.
     state.qubitFlux = d.qubitFlux !== false;
@@ -7972,7 +8032,11 @@
     try { sessionStorage.removeItem(DRAFT_KEY); } catch (e) {}
     state.step = 1;
     state.spec = freshSpec();
-    state.env = null;
+    // QA F4: env: KEEP the current selection (the docs/134 hydrateFromSpec
+    // rule). It is a machine-wide choice the server keeps saved, not wizard
+    // content — nulling it left the row highlighted while Next refused
+    // "Select an environment", and the one-shot auto-pick latches stopped
+    // anything from re-selecting it.
     state.allocation = null;
     state.pairsTouched = false;
     state.wiringTouched = false;
@@ -8107,6 +8171,16 @@
   document.addEventListener("htmx:beforeSwap", function (evt) {
     if (!evt.detail || !evt.detail.target) return;
     if (evt.detail.target.id !== "table-pane") return;
+    if (!root()) return;   // the wizard isn't currently mounted
+    captureDomFields();
+    saveDraft();
+  });
+  // QA F1: a full-page unload (F5 / Ctrl+R / tab close / full navigation)
+  // never raises the htmx hook above, and the draft is otherwise written only
+  // on a step change — so a reload restored the draft as it was when the
+  // current step was ENTERED and silently dropped every edit made on it.
+  // pagehide fires on reload, close and bfcache entry alike.
+  window.addEventListener("pagehide", function () {
     if (!root()) return;   // the wizard isn't currently mounted
     captureDomFields();
     saveDraft();
