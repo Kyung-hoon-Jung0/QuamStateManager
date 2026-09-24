@@ -24,6 +24,10 @@
  *     flag after Ctrl+Z / Ctrl+Shift+Z (input, alias and list cells).
  *  H. F11 -- Escape and an outside click close the Live-Edit pickers and the
  *     Auto-Sync popover (capture phase; Datasets pickers untouched).
+ *  I. F14 -- the grids' ⚡ confirm names what else the push carries (the
+ *     tray's pending drawer, the saved working state), in all three grids.
+ *  J. liveedit-r2-27 -- a note added/deleted re-marks the grids' row heads in
+ *     place from the mutation's `marks` (pair map scoped to the pair table).
  *
  * Run: node tests/live_sync_selfcheck.cjs   (driven by tests/test_live_sync_client.py)
  */
@@ -35,7 +39,7 @@ try { ({ JSDOM } = require('jsdom')); } catch (e) { console.error('jsdom not ins
 
 const STATIC = path.join(__dirname, '..', 'quam_state_manager', 'web', 'static');
 const SRC = {};
-['app.js', 'bulk-edit.js', 'grid-virt.js', 'pair-edit.js', 'auto-apply.js'].forEach(function (f) {
+['app.js', 'bulk-edit.js', 'grid-virt.js', 'pair-edit.js', 'auto-apply.js', 'all-values.js', 'notes.js'].forEach(function (f) {
     SRC[f] = fs.readFileSync(path.join(STATIC, f), 'utf8');
 });
 
@@ -554,6 +558,252 @@ function discard(w, detail) {
     ok(closed === 1 && props.open, 'H9 Escape closes the Auto-Sync popover first (one popup per press)');
     esc();
     ok(!props.open, 'H10 ...and the next Escape the picker');
+}
+
+/* ── I. F14: the grid ⚡ confirm names everything the push carries ───── */
+{
+    // The push (applyEditsToLive) sends the WHOLE tray; the confirm used to
+    // count only the cells typed on this screen.
+    function trayF14(paths, dirty) {
+        return '<div id="pending-tray" data-change-count="' + paths.length + '" data-change-sig="S1"'
+            + ' data-working-dirty="' + (dirty ? '1' : '0') + '">'
+            // the applied log reuses .tray-change-path inside the same tray
+            + '<div class="applied-log"><code class="tray-change-path" title="qubits.q9.T1">qubits.q9.T1</code></div>'
+            + (paths.length ? '<div id="tray-drawer" class="tray-drawer"><div class="tray-change-list">'
+                + paths.map(function (p) {
+                    return '<div class="tray-change-item"><code class="tray-change-path" title="' + p + '">' + p + '</code></div>';
+                }).join('') + '</div></div>' : '')
+            + '</div>';
+    }
+    function setTray(w, paths, dirty) {
+        w.document.getElementById('pending-tray').outerHTML = trayF14(paths, dirty);
+    }
+    function count(s, sub) { return s.split(sub).length - 1; }
+    const { w, S } = world(bulkHtml(), 'http://localhost/bulk', ['app.js', 'grid-virt.js', 'bulk-edit.js']);
+    mountBulk(w);
+    setTray(w, ['qubits.q1.T2ramsey', 'qubits.q2.T1'], false);
+    const c = cellOf(w, 'q2', 'T1');
+    c.value = '1.25e-05'; c.dispatchEvent(new w.Event('input', { bubbles: true }));
+    S.confirmAnswer = false;
+    w.BulkEdit.applyAll(true);
+    let m = S.confirms[S.confirms.length - 1] || '';
+    ok(m.indexOf('Apply 1 edit across 1 qubit and push to the live chip?') === 0,
+       'I1 the typed count still leads the confirm (got ' + JSON.stringify(m) + ')');
+    ok(count(m, 'qubits.q1.T2ramsey') === 1 && /also carries 1 edit already in the tray/.test(m),
+       'I2 the earlier committed edit the push also carries is named, once');
+    ok(m.indexOf('qubits.q2.T1') < 0, 'I3 a typed path already in the tray is not listed as an extra');
+    ok(m.indexOf('qubits.q9.T1') < 0, 'I4 the applied log (already on the chip) is never listed');
+    ok(S.edits.length === 0, 'I5 declining the confirm commits nothing');
+
+    const nBefore = S.confirms.length;
+    w.BulkEdit.applyAll(false);
+    m = S.confirms[S.confirms.length - 1] || '';
+    ok(S.confirms.length === nBefore + 1 && m.indexOf('also carries') < 0 && m.indexOf('working state?') > 0,
+       'I6 the plain working-state Apply all is unchanged (no push, no extras)');
+
+    setTray(w, [], false);
+    w.BulkEdit.applyAll(true);
+    m = S.confirms[S.confirms.length - 1] || '';
+    ok(m === 'Apply 1 edit across 1 qubit and push to the live chip?',
+       'I7 an empty tray leaves the old text byte-identical (got ' + JSON.stringify(m) + ')');
+
+    setTray(w, [], true);
+    w.BulkEdit.applyAll(true);
+    m = S.confirms[S.confirms.length - 1] || '';
+    ok(/saved, not-yet-applied working state/.test(m) && !/\d+ edits? already/.test(m),
+       'I8 a saved-but-unapplied working state is named, with no number');
+
+    // the alias cell: the tray keys the RESOLVED leaf
+    c.value = c.getAttribute('data-orig'); c.dispatchEvent(new w.Event('input', { bubbles: true }));
+    const a = cellOf(w, 'q1', 'x180_amp');
+    a.value = '0.31'; a.dispatchEvent(new w.Event('input', { bubbles: true }));
+    setTray(w, ['qubits.q1.xy.operations.x180_DragCosine.amplitude', 'q.a', 'q.b', 'q.c', 'q.d', 'q.e', 'q.f', 'q.g'], false);
+    w.BulkEdit.applyAll(true);
+    m = S.confirms[S.confirms.length - 1] || '';
+    ok(m.indexOf('x180_DragCosine') < 0, 'I9 an alias cell covers its resolved leaf in the tray');
+    ok(/also carries 7 edits already in the tray: q\.a, q\.b, q\.c, q\.d, q\.e, \+2 more\./.test(m),
+       'I10 a long tray lists five paths and counts the rest (got ' + JSON.stringify(m) + ')');
+}
+{
+    // the pair / entity grids (pair-edit.js factory): the same confirm
+    const P = 'bulk-pair';
+    const html = '<div id="pending-tray" data-change-count="1" data-working-dirty="0"><div id="tray-drawer"><div class="tray-change-item">'
+        + '<code class="tray-change-path" title="qubits.q1.T2ramsey">qubits.q1.T2ramsey</code></div></div></div>'
+        + '<div id="table-pane"><div class="bulk-panel"><input type="search" id="bulk-search">'
+        + '<div class="bulk-pair-divider" id="' + P + '-divider"><div class="bulk-colvis-menu" id="' + P + '-colvis-menu"></div>'
+        + '<span id="' + P + '-search-count"></span><span id="' + P + '-dirty-count"></span>'
+        + '<button id="' + P + '-apply-all" disabled></button><button id="' + P + '-apply-sync" disabled></button>'
+        + '<button id="' + P + '-reset" disabled></button></div>'
+        + '<div class="bulk-table-wrap"><table class="bulk-table bulk-pair-table" id="' + P + '-table"><thead><tr class="bulk-head-row">'
+        + '<th class="bulk-corner" data-col-key="__id__"></th><th class="bulk-col-head ck-0" data-col-key="general__detuning" data-section="General" data-maxlen="12">'
+        + '<span class="bulk-col-label">detuning</span></th><th class="bulk-apply-col"></th></tr></thead><tbody>'
+        + '<tr data-qubit="q1-2" data-pair="q1-2"><th class="bulk-rowhead" data-col-key="__id__">q1-2</th>'
+        + '<td class="bulk-td ck-0" data-col-key="general__detuning"><input type="text" class="bulk-cell" value="1" data-orig="1"'
+        + ' data-dot-path="qubit_pairs.q1-2.detuning" data-resolved="qubit_pairs.q1-2.detuning" size="12"></td>'
+        + '<td class="bulk-apply-col"><button class="btn-xs bulk-row-apply" disabled>Apply</button><span class="bulk-row-error" hidden></span></td></tr>'
+        + '</tbody></table></div></div></div>';
+    const { w, S } = world(html, 'http://localhost/bulk', ['app.js', 'grid-virt.js', 'pair-edit.js']);
+    w.BulkPairEdit.mount([{ key: 'general__detuning', label: 'detuning', section: 'General', unit: '',
+                            default_on: true, editable: true, kind: 'scalar', maxlen: 12 }]);
+    const c = w.document.querySelector('.bulk-cell[data-dot-path="qubit_pairs.q1-2.detuning"]');
+    c.value = '2'; c.dispatchEvent(new w.Event('input', { bubbles: true }));
+    w.BulkPairEdit.applyAll(true);
+    const m = S.confirms[S.confirms.length - 1] || '';
+    ok(/push to the live chip\?/.test(m) && m.split('qubits.q1.T2ramsey').length === 2,
+       'I11 the pair grid ⚡ confirm names the tray edit it also pushes (got ' + JSON.stringify(m) + ')');
+}
+{
+    // the All values tab
+    const html = '<div id="pending-tray" data-change-count="1" data-working-dirty="0"><div id="tray-drawer"><div class="tray-change-item">'
+        + '<code class="tray-change-path" title="qubits.q1.T2ramsey">qubits.q1.T2ramsey</code></div></div></div>'
+        + '<button type="button" class="bulk-seg" data-pane="grid">Grid</button>'
+        + '<button type="button" class="bulk-seg" data-pane="allvalues">All values</button>'
+        + '<div data-bulk-pane="grid"></div><div data-bulk-pane="allvalues" hidden>'
+        + '<input type="search" id="av-search"><span id="av-coverage"></span><span id="av-showing"></span>'
+        + '<span id="av-dirty-count"></span><button id="av-apply" disabled></button>'
+        + '<button id="av-apply-sync" disabled></button><button id="av-reset" disabled></button><div id="av-chips"></div>'
+        + '<div class="av-scroll" id="av-scroll"><table class="av-table-virtual" id="av-table"><tbody id="av-tbody"></tbody></table></div></div>';
+    const { w, S } = world(html, 'http://localhost/bulk', ['app.js', 'all-values.js'], function (w) {
+        const base = w.fetch;
+        w.fetch = function (u, o) {
+            if (String(u).indexOf('/bulk/all-values') === 0) {
+                return Promise.resolve({ status: 200, headers: { get: function () { return null; } },
+                    json: function () { return Promise.resolve({ rows: [
+                        ['qubits.q2.T2ramsey', '8.7e-06', 'scalar', 0]],
+                        summary: { total: 1, editable: 1, readonly: 0, by_kind: {}, arrays: 0, empties: 0 } }); } });
+            }
+            return base(u, o);
+        };
+    });
+    Object.defineProperty(w.document.getElementById('av-scroll'), 'clientHeight', { value: 600 });
+    w.AllValues.switchPane('allvalues');
+    await sleep(20);
+    const g = w.document.querySelector('#av-tbody .av-group-row');
+    if (g) g.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+    const inp = w.document.querySelector('#av-tbody .av-input[data-dot-path="qubits.q2.T2ramsey"]');
+    ok(!!inp, 'I12 the All values row renders its input');
+    if (inp) {
+        inp.value = '9e-06'; inp.dispatchEvent(new w.Event('input', { bubbles: true }));
+        w.document.getElementById('av-apply-sync').dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+        const m = S.confirms[S.confirms.length - 1] || '';
+        ok(/^Apply 1 edits and push to the live chip\?/.test(m) && m.split('qubits.q1.T2ramsey').length === 2
+           && m.indexOf('qubits.q2.T2ramsey') < 0,
+           'I13 the All values ⚡ confirm names the tray edit it also pushes (got ' + JSON.stringify(m) + ')');
+    }
+}
+
+/* ── J. r2-27: a note mutation re-marks the grid row heads in place ──── */
+{
+    const html = '<details id="notes-block"><summary class="notes-summary">Notes</summary>'
+        + '<div id="notes-panel" data-count="0"><form class="notes-add"><input class="notes-add-subject">'
+        + '<input class="notes-add-text"><button type="button" class="notes-add-go">Add note</button></form></div></details>'
+        + '<table id="bulk-table"><tbody>'
+        + '<tr data-qubit="q2"><th class="bulk-rowhead" data-col-key="__id__">q2<button class="bulk-pin bulk-pin-row"></button></th></tr>'
+        + '<tr data-qubit="q12"><th class="bulk-rowhead" data-col-key="__id__">q12</th></tr>'
+        + '</tbody></table>'
+        + '<table id="bulk-pair-table"><tbody>'
+        + '<tr data-qubit="q12" data-pair="q12"><th class="bulk-rowhead" data-col-key="__id__">q12</th></tr>'
+        + '</tbody></table>';
+    let answer = null, repins = 0;
+    const { w } = world(html, 'http://localhost/bulk', ['notes.js'], function (w) {
+        w.fetch = function () {
+            return Promise.resolve({ status: answer.status || 200,
+                json: function () { return Promise.resolve(answer.body); } });
+        };
+        w.__bulkRepin = function () { repins++; };
+    });
+    const d = w.document;
+    const head = (tid, id) => d.querySelector('#' + tid + ' tr[data-qubit="' + id + '"] > th');
+    function press(body, status) {
+        answer = { body: body, status: status };
+        d.querySelector('.notes-add-subject').value = 'qubits.q2';
+        d.querySelector('.notes-add-text').value = 'x';
+        d.querySelector('.notes-add-go').dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+        return sleep(20);
+    }
+    const panel = '<div id="notes-panel" data-count="1"><form class="notes-add"><input class="notes-add-subject">'
+        + '<input class="notes-add-text"><button type="button" class="notes-add-go">Add note</button></form></div>';
+
+    await press({ ok: true, panel: panel, marks: { qubits: { q2: 'QA note: <b>q2</b> drifts' }, pairs: {} } });
+    let q2 = head('bulk-table', 'q2');
+    ok(q2.classList.contains('bulk-rowhead-note') && q2.getAttribute('title') === 'QA note: <b>q2</b> drifts',
+       'J1 an added note marks its row head at once (class + title)');
+    const mk = q2.querySelector('.bulk-note-mark');
+    ok(!!mk && mk.textContent === '📝' && mk.nextElementSibling === q2.querySelector('.bulk-pin-row'),
+       'J2 ...with the mark where the server puts it (after the id, before the pin)');
+    ok(!q2.querySelector('b'), 'J3 note text is never parsed as HTML');
+    ok(!head('bulk-table', 'q12').classList.contains('bulk-rowhead-note'), 'J4 other rows stay unmarked');
+    ok(repins === 1, 'J5 pinned columns are re-laid after the row-head width moved');
+
+    await press({ ok: true, panel: panel, marks: { qubits: {}, pairs: { q12: 'CZ drifts' } } });
+    ok(!q2.classList.contains('bulk-rowhead-note') && !q2.hasAttribute('title') && !q2.querySelector('.bulk-note-mark'),
+       'J6 a deleted note unmarks its row head at once');
+    ok(head('bulk-pair-table', 'q12').classList.contains('bulk-rowhead-note')
+       && !head('bulk-table', 'q12').classList.contains('bulk-rowhead-note'),
+       'J7 a pair mark lights the pair row only, never the same-named qubit row');
+
+    await press({ ok: true, panel: panel });
+    ok(head('bulk-pair-table', 'q12').classList.contains('bulk-rowhead-note'),
+       'J8 an answer without marks changes nothing (absent never means "clear all")');
+
+    await press({ ok: false, note_conflict: true, stored: { text: 'theirs' },
+                  marks: { qubits: { q2: 'theirs' }, pairs: {} } }, 409);
+    ok(head('bulk-table', 'q2').getAttribute('title') === 'theirs'
+       && !head('bulk-pair-table', 'q12').classList.contains('bulk-rowhead-note'),
+       'J9 a 409 conflict answer re-marks too');
+}
+
+/* ── K. F15: a text coordinate is not a number in the grids' stats ───── */
+{
+    // grid_location "0,0" / "1,0" / "4,0": the header read "min 0 · max 40" and
+    // the extremes were coloured, because the comma was stripped as grouping.
+    function statsWorld(vals) {
+        const r = world(bulkHtml(), 'http://localhost/bulk', ['app.js', 'grid-virt.js', 'bulk-edit.js']);
+        ['q1', 'q2', 'q3'].forEach(function (q, i) {
+            const c = cellOf(r.w, q, 'T1'); c.value = vals[i]; c.setAttribute('data-orig', vals[i]);
+        });
+        mountBulk(r.w);
+        const d = r.w.document;
+        return { stat: d.querySelector('[data-col-stats="T1"]').textContent,
+                 marked: ['q1', 'q2', 'q3'].filter(function (q) {
+                     const c = cellOf(r.w, q, 'T1');
+                     return c.classList.contains('cell-best') || c.classList.contains('cell-worst');
+                 }) };
+    }
+    let s = statsWorld(['0,0', '1,0', '4,0']);
+    ok(s.stat === '' && s.marked.length === 0,
+       'K1 a coordinate column gets no min/max and no extreme colouring (got ' + JSON.stringify(s) + ')');
+    s = statsWorld(['1,000', '2,500', '12,345']);
+    ok(s.stat === 'min 1,000 · max 12,345' && s.marked.join() === 'q1,q3',
+       'K2 well-formed thousands groups still read as numbers (got ' + JSON.stringify(s) + ')');
+
+    // the pair / entity grids (pair-edit.js factory) share the rule
+    function pairStats(vals) {
+        const P = 'bulk-pair';
+        const row = function (id, v) {
+            return '<tr data-qubit="' + id + '" data-pair="' + id + '"><th class="bulk-rowhead" data-col-key="__id__">' + id + '</th>'
+                + '<td class="bulk-td ck-0" data-col-key="general__loc"><input type="text" class="bulk-cell" value="' + v + '" data-orig="' + v + '"'
+                + ' data-dot-path="qubit_pairs.' + id + '.loc" data-resolved="qubit_pairs.' + id + '.loc" size="12"></td>'
+                + '<td class="bulk-apply-col"><button class="btn-xs bulk-row-apply" disabled>Apply</button><span class="bulk-row-error" hidden></span></td></tr>';
+        };
+        const html = '<div id="table-pane"><div class="bulk-panel"><input type="search" id="bulk-search">'
+            + '<div class="bulk-pair-divider" id="' + P + '-divider"><div class="bulk-colvis-menu" id="' + P + '-colvis-menu"></div>'
+            + '<span id="' + P + '-search-count"></span><span id="' + P + '-dirty-count"></span>'
+            + '<button id="' + P + '-apply-all" disabled></button><button id="' + P + '-apply-sync" disabled></button>'
+            + '<button id="' + P + '-reset" disabled></button></div>'
+            + '<div class="bulk-table-wrap"><table class="bulk-table bulk-pair-table" id="' + P + '-table"><thead><tr class="bulk-head-row">'
+            + '<th class="bulk-corner" data-col-key="__id__"></th><th class="bulk-col-head ck-0" data-col-key="general__loc" data-section="General" data-maxlen="12">'
+            + '<span class="bulk-col-label">loc</span><span class="bulk-col-stats" data-col-stats="general__loc"></span></th><th class="bulk-apply-col"></th></tr></thead><tbody>'
+            + row('q1-2', vals[0]) + row('q2-3', vals[1]) + '</tbody></table></div></div></div>';
+        const { w } = world(html, 'http://localhost/bulk', ['app.js', 'grid-virt.js', 'pair-edit.js']);
+        w.BulkPairEdit.mount([{ key: 'general__loc', label: 'loc', section: 'General', unit: '',
+                                default_on: true, editable: true, kind: 'scalar', maxlen: 12 }]);
+        return w.document.querySelector('[data-col-stats="general__loc"]').textContent;
+    }
+    let ps = pairStats(['0,1', '4,0']);
+    ok(ps === '', 'K3 the pair grid gives a coordinate column no min/max (got ' + JSON.stringify(ps) + ')');
+    ps = pairStats(['1,000', '2,000']);
+    ok(ps === 'min 1,000 · max 2,000', 'K4 ...while grouped numbers keep theirs (got ' + JSON.stringify(ps) + ')');
 }
 
 console.log(fails ? (fails + ' failed') : ('all checks passed (' + asserts + ' assertions)'));

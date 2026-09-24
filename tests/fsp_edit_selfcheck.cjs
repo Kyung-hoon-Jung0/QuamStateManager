@@ -333,4 +333,35 @@ ok(longCell.textContent.length <= 9,
 ok(longCell.title === '0.011220184543019634',
   'N3: ...with the exact value on hover: ' + longCell.title);
 
+/* ── O. QA F18: a pointer that follows a compensated row is not "Not compensated"
+ * -x90_DragCosine's amplitude is a pointer to x90_DragCosine.amplitude, which
+ * sits in the table above: the server marks it `follows`. The popup must not
+ * list it under "Not compensated", while a pointer the plan does not cover
+ * (another port) still is. */
+{
+  const p = mkRealPlan();
+  const AMP = 'qubits.q1.resonator.operations.readout.amplitude';
+  p.skipped = [
+    { path: 'qubits.q1.resonator.operations.-ro.amplitude', follows: AMP,
+      reason: 'pointer to a compensated amplitude — follows it, no separate write' },
+    { path: 'qubits.q1.resonator.operations.xport.amplitude',
+      reason: 'amplitude is a pointer — edit its target' },
+  ];
+  openPopup(p);
+  const lines = Array.from(card().querySelectorAll('.fsp-skipped')).map(e => e.textContent);
+  const notComp = lines.find(t => t.indexOf('Not compensated:') === 0) || '';
+  const follow = lines.find(t => t.indexOf('Follow their target') === 0) || '';
+  ok(notComp.indexOf('.-ro.amplitude') < 0,
+    'O1: a pointer following a compensated row is never listed as "Not compensated": ' + JSON.stringify(lines));
+  ok(notComp.indexOf('xport.amplitude') > 0,
+    'O2: a pointer the plan does not cover still is');
+  ok(/-ro → readout/.test(follow),
+    'O3: the follower is named with the row it follows: ' + JSON.stringify(follow));
+  const only = mkRealPlan();
+  only.skipped = [p.skipped[0]];
+  openPopup(only);
+  ok(!Array.from(card().querySelectorAll('.fsp-skipped')).some(e => /Not compensated/.test(e.textContent)),
+    'O4: with only followers, no "Not compensated" line at all');
+}
+
 process.exit(fails ? 1 : 0);

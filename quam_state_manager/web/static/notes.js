@@ -45,6 +45,46 @@
         }
     }
 
+    // QA liveedit-r2-27: the grids' row-head markers (class, title, the mark)
+    // are server-rendered, so a note added or deleted here left them as they
+    // were until a reload. Every mutation now answers with the same `marks`
+    // the grid render uses; re-mark the row heads in place. The pair grid is
+    // keyed on data-pair and scoped by table id -- pair rows carry data-qubit
+    // too, and a qubit and a pair can share an id string. Text goes through
+    // setAttribute/textContent only: a note is never parsed as HTML.
+    function markGrid(tableId, attr, map) {
+        var t = document.getElementById(tableId);
+        if (!t) return;
+        Array.prototype.forEach.call(
+            t.querySelectorAll('tbody tr[' + attr + '] > th.bulk-rowhead'), function (th) {
+                var id = th.parentNode.getAttribute(attr);
+                var has = Object.prototype.hasOwnProperty.call(map, id);
+                var mk = th.querySelector('.bulk-note-mark');
+                th.classList.toggle('bulk-rowhead-note', has);
+                if (has) {
+                    th.setAttribute('title', map[id]);
+                    if (!mk) {
+                        mk = document.createElement('span');
+                        mk.className = 'bulk-note-mark';
+                        mk.setAttribute('aria-label', 'has a note');
+                        mk.textContent = '\uD83D\uDCDD';
+                        // where the server puts it: after the id, before the pin
+                        th.insertBefore(mk, th.querySelector('.bulk-pin-row'));
+                    }
+                } else {
+                    th.removeAttribute('title');
+                    if (mk) mk.remove();
+                }
+            });
+    }
+    function applyMarks(m) {
+        if (!m) return;                     // absent never means "clear all"
+        markGrid('bulk-table', 'data-qubit', m.qubits || {});
+        markGrid('bulk-pair-table', 'data-pair', m.pairs || {});
+        // the row-head width may have moved: pinned columns sit off it
+        if (window.__bulkRepin) window.__bulkRepin();
+    }
+
     function post(url, body) {
         var form = new FormData();
         Object.keys(body).forEach(function (k) {
@@ -62,6 +102,7 @@
 
     function handle(res) {
         if (res.body && res.body.panel) swap(res.body.panel);
+        if (res.body && res.body.marks) applyMarks(res.body.marks);
         if (res.status === 409 && res.body && res.body.note_conflict) {
             var theirs = (res.body.stored && res.body.stored.text) || '';
             say('Not saved — somebody else changed this note. Theirs now reads: '
@@ -129,5 +170,5 @@
         }
     });
 
-    window.EntityNotes = { swap: swap, _post: post };
+    window.EntityNotes = { swap: swap, _post: post, applyMarks: applyMarks };
 })();

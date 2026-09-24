@@ -6056,10 +6056,8 @@ def bulk_edit():
     # and grid-virt.js never selects them (every selector there is
     # `td[data-col-key]` or `th.bulk-col-head`), so a marker costs no client
     # pass and no per-cell work.
-    from quam_state_manager.core import entity_notes as _en
-    _nctx = _notes_ctx()
-    note_rows, pair_note_rows = (
-        _en.row_marks(_en.load(*_nctx)) if _nctx else ({}, {}))
+    _nm = _note_marks()
+    note_rows, pair_note_rows = _nm["qubits"], _nm["pairs"]
     html = render_template(template, **_ctx(page="bulk", columns=columns, rows=rows,
                                             column_groups=column_groups, band_meta=band_meta,
                                             dyn_cols=dyn_cols, qubit_meta=qubit_meta,
@@ -6789,6 +6787,14 @@ def _fmt_val(v) -> str:
         if abs_v >= 1e6 or (0 < abs_v < 1e-3):
             return "%.6e" % v
     return str(v)
+
+
+def _fmt_msg_val(v) -> str:
+    """_fmt_val for human-readable toast/status TEXT: a null reads "not set"
+    (the Live-Edit grid's own word for a null leaf) instead of vanishing after
+    the arrow ("Undone: q1.z.settle_time →", QA liveedit-r2-31). Never use this
+    for old_value_str -- a cell input must repaint EMPTY for null."""
+    return "not set" if v is None else _fmt_val(v)
 
 
 def _revert_entry_payload(dot_path, value, *, created=False, deleted=False,
@@ -10557,11 +10563,17 @@ def state_history_stage(timestamp: str):
         return render_template("_status.html",
                                message=f"Staging failed: {exc}", level="error"), 500
     logger.info("State History: staged snapshot %s into working copy", timestamp)
+    # QA F19: there is no "diff below" on either door (the tray's Revert last
+    # apply lands in #status-bar; State History's Load replaces the detail
+    # pane). The review that exists is the top-bar badge -> openReview ->
+    # /state/review (working vs live). The id is a UTC stamp: say so.
+    _push = _auto_push_note(ctx)
     msg = render_template(
         "_status.html",
-        message=(f"Snapshot {timestamp} loaded as the working state. Review the "
-                 "diff below, then Apply to live from the top bar."
-                 + _auto_push_note(ctx)),
+        message=(f"Snapshot {current_app.jinja_env.filters['format_ts'](timestamp)} "
+                 "loaded as the working state."
+                 + (_push or " Review it against the live chip with the ● Working "
+                    "state badge in the top bar, then press ↑ Apply to live chip.")),
         level="success")
     # detail-area message + OOB tray refresh (now shows working_dirty).
     # stateRestored so an inspector/pulse pane open on another menu re-reads
@@ -14997,7 +15009,7 @@ def undo():
         # landed — "→ 5,100,000,000" alone doesn't tell you what was lost.
         from quam_state_manager.core import value_delta as _vd
         _d = _vd.compute(anchor.new_value, anchor.old_value)
-        message = f"Undone: {anchor.dot_path} → {_fmt_val(anchor.old_value)}"
+        message = f"Undone: {anchor.dot_path} → {_fmt_msg_val(anchor.old_value)}"
         if _d and _d["dir"] != "same":
             message += f" ({_d['text']}"
             message += f", {_d['pct_text']})" if _d["pct_text"] else ")"
@@ -15174,7 +15186,7 @@ def _undo_journal_step(ctx, n_req: int = 1):
     else:
         from quam_state_manager.core import value_delta as _vd
         _d = _vd.compute(anchor.get("new"), anchor.get("old"))
-        message = f"{head}: {anchor['path']} → {_fmt_val(anchor.get('old'))}"
+        message = f"{head}: {anchor['path']} → {_fmt_msg_val(anchor.get('old'))}"
         if _d and _d["dir"] != "same":
             message += f" ({_d['text']}"
             message += f", {_d['pct_text']})" if _d["pct_text"] else ")"
@@ -15452,7 +15464,7 @@ def _redo_journal_forward(ctx, store, modifier, index: int, unit_id: str | None 
                 else edit_policy.cas_equal(cur, e.get("old"))
             if not same:
                 return [], (f"{e['path']} has changed since "
-                            f"(now {_fmt_val(cur)}); nothing was written")
+                            f"(now {_fmt_msg_val(cur)}); nothing was written")
         _redo_begin(ctx, store)
         try:
             for (op, path, value, _src) in fops:
@@ -15511,7 +15523,7 @@ def _live_redo_response(fw: list, why: str | None, n_req: int, *, consumed: int 
     elif anchor.created:
         message = f"Redone → live: {anchor.dot_path} restored"
     else:
-        message = f"Redone → live: {anchor.dot_path} → {_fmt_val(anchor.new_value)}"
+        message = f"Redone → live: {anchor.dot_path} → {_fmt_msg_val(anchor.new_value)}"
     # round 2, F15: one press = one unit, so a coalesced burst must be told it
     # stopped at the journal boundary or the remaining k-1 presses vanish
     _burst = _walk_burst_extra(n_req)
@@ -15747,7 +15759,7 @@ def redo():
     elif anchor["created"]:
         message = f"Redone: {anchor['path']} restored"
     else:
-        message = f"Redone: {anchor['path']} → {_fmt_val(anchor['new'])}"
+        message = f"Redone: {anchor['path']} → {_fmt_msg_val(anchor['new'])}"
     # Client flags describe what happened to the CELL now: a re-applied
     # create restored it (deleted=True in undo-speak), a re-applied delete
     # removed it (created=True) — the exact inversion of the frame's flags.
@@ -16553,8 +16565,8 @@ def auto_apply_revert():
                 return render_template(
                     "_status.html", level="warning",
                     message=(f"Not reverted — {e['path']} has changed since "
-                             f"(now {_fmt_val(cur)} in SM, this change wrote "
-                             f"{_fmt_val(e.get('new'))}). Nothing was written.")
+                             f"(now {_fmt_msg_val(cur)} in SM, this change wrote "
+                             f"{_fmt_msg_val(e.get('new'))}). Nothing was written.")
                 ), 409
 
         _redo_begin(ctx, store)
@@ -24855,6 +24867,18 @@ def _notes_state() -> dict:
             "count": len(ordered), "chip": merged is not None}
 
 
+def _note_marks() -> dict:
+    """The grids' row-head note markers, ``{"qubits": {...}, "pairs": {...}}``
+    -- ONE mapping for the grid render and every note mutation's answer, so
+    notes.js can re-mark the row heads in place (QA liveedit-r2-27: a note
+    added or deleted used to leave the markers as they were until a reload).
+    Kept out of `_notes_state()`: that dict is spread into the grid template."""
+    from quam_state_manager.core import entity_notes
+    ctx = _notes_ctx()
+    q, p = entity_notes.row_marks(entity_notes.load(*ctx)) if ctx else ({}, {})
+    return {"qubits": q, "pairs": p}
+
+
 def _entity_note(entity: str) -> dict | None:
     """The note about ONE entity, for the inspector strip.
 
@@ -24939,11 +24963,12 @@ def note_save():
         # Somebody else's text, handed back rather than overwritten -- the
         # docs/120 two-token discipline: `force=1` is a separate decision.
         return jsonify(ok=False, note_conflict=True, stored=exc.stored,
+                       marks=_note_marks(),
                        error="Somebody else changed this note since you opened "
                              "it. Their text is shown below."), 409
     except (ValueError, KeyError) as exc:
         return jsonify(ok=False, error=str(exc)), 400
-    return jsonify(ok=True, note=rec, panel=render_template(
+    return jsonify(ok=True, note=rec, marks=_note_marks(), panel=render_template(
         "_notes_panel.html", **_notes_state()))
 
 
@@ -24955,7 +24980,7 @@ def note_delete():
         return jsonify(ok=False, error="No chip is loaded."), 400
     gone = entity_notes.delete(ctx[0], ctx[1],
                                (request.form.get("subject") or "").strip())
-    return jsonify(ok=bool(gone), panel=render_template(
+    return jsonify(ok=bool(gone), marks=_note_marks(), panel=render_template(
         "_notes_panel.html", **_notes_state()))
 
 
@@ -24981,7 +25006,7 @@ def note_readdress():
         rec = entity_notes.readdress(ctx[0], ctx[1], subject, new_subject)
     except (ValueError, KeyError) as exc:
         return jsonify(ok=False, error=str(exc) or "no such note"), 400
-    return jsonify(ok=True, note=rec, panel=render_template(
+    return jsonify(ok=True, note=rec, marks=_note_marks(), panel=render_template(
         "_notes_panel.html", **_notes_state()))
 
 

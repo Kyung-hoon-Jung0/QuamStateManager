@@ -211,6 +211,44 @@ def fsp_compensation_plan(merged: dict, resolved_fsp_path: str,
                 "clips": abs(new_amp) > 1.0,
             })
 
+    # QA F18: a pointer amplitude whose target is compensated in THIS plan is
+    # not "not compensated" -- it follows its target, with no write of its
+    # own (e.g. -x90_DragCosine -> x90_DragCosine.amplitude). Checked after
+    # the loop: natural order meets "-x90..." before "x90...". The row stays
+    # in `skipped` (payload shape unchanged) and gains `follows`. Pointers to
+    # anything else (another port, a literal elsewhere, a dead end) keep the
+    # old reason. Never raises: a raise here makes _fsp_plan_for return None,
+    # and the FSP would commit with no offer at all.
+    if skipped and amps:
+        from quam_state_manager.core.pointer_path import resolve_field_target
+
+        def _leaf_of(path):
+            # A hop's TARGET is walked without following an alias op met on
+            # the way (`#../x180/amplitude` with x180 = "#./x180_DragCosine"
+            # dead-ends at the first hop), but the same path given as INPUT is
+            # followed segment by segment -- so re-resolve from the last hop.
+            for _ in range(4):
+                tgt = resolve_field_target(merged, path)
+                if tgt.get("resolvable"):
+                    return tgt.get("resolved_path")
+                chain = tgt.get("chain") or []
+                if not chain or chain[-1].get("to_path") in (None, path):
+                    return None
+                path = chain[-1]["to_path"]
+            return None
+
+        comp = {a["path"] for a in amps}
+        for row in skipped:
+            if row.get("reason") != "amplitude is a pointer — edit its target":
+                continue
+            try:
+                leaf = _leaf_of(row["path"])
+                if leaf in comp:
+                    row["follows"] = leaf
+                    row["reason"] = "pointer to a compensated amplitude — follows it, no separate write"
+            except Exception:  # noqa: BLE001 -- the row keeps its old reason
+                pass
+
     range_warn = None
     try:
         from quam_state_manager.core.spec_constraints import (

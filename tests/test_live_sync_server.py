@@ -449,3 +449,138 @@ class TestUndoRedoSayWhetherAPathIsStillPending:
         e = _reverted(r)["qubits.qA1.T1"]
         assert _trigger(r)["cellsReverted"].get("live") is False
         assert e["pending"] is True, "a staged inverse waits in the tray: it IS pending"
+
+
+# ── liveedit-r2-27 ──────────────────────────────────────────────────────────
+def _pair_env(tmp_path):
+    st = _state()
+    st["qubits"]["qA2"] = {"id": "qA2", "T1": 1.0e-5}
+    st["qubit_pairs"] = {"qA1-2": {"id": "qA1-2", "qubit_control": "#/qubits/qA1",
+                                   "qubit_target": "#/qubits/qA2"}}
+    live = tmp_path / "chips" / "live"
+    _write_chip(live, st)
+    app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+    c = app.test_client()
+    assert c.post("/load", data={"folder": str(live)}).status_code in (200, 302)
+    return c
+
+
+class TestANoteMutationAnswersWithTheRowMarks:
+    """The grids' row-head markers were server-rendered only, so a note added
+    or deleted left them stale until a reload. Every note mutation now answers
+    with the same `marks` the grid render uses (one mapping, `_note_marks`)."""
+
+    def test_add_then_delete_moves_the_qubit_mark(self, env):
+        c = env["client"]
+        j = c.post("/note", data={"subject": "qubits.qA1", "text": "drifts after cooldown"}).get_json()
+        assert j["ok"] and j["marks"] == {"qubits": {"qA1": "drifts after cooldown"}, "pairs": {}}, j.get("marks")
+        j = c.post("/note/delete", data={"subject": "qubits.qA1"}).get_json()
+        assert j["ok"] and j["marks"] == {"qubits": {}, "pairs": {}}, j.get("marks")
+
+    def test_a_leaf_note_lights_its_entity(self, env):
+        j = env["client"].post("/note", data={"subject": "qubits.qA1.T1", "text": "T1 noisy"}).get_json()
+        assert j["marks"]["qubits"] == {"qA1": "T1 noisy"}
+
+    def test_a_pair_note_lands_in_the_pair_map_only(self, tmp_path):
+        c = _pair_env(tmp_path)
+        j = c.post("/note", data={"subject": "qubit_pairs.qA1-2", "text": "CZ phase drifts"}).get_json()
+        assert j["marks"] == {"qubits": {}, "pairs": {"qA1-2": "CZ phase drifts"}}, j["marks"]
+
+    def test_readdress_moves_the_mark(self, tmp_path):
+        c = _pair_env(tmp_path)
+        c.post("/note", data={"subject": "qubits.qA1", "text": "moved"})
+        j = c.post("/note/readdress", data={"subject": "qubits.qA1", "new_subject": "qubits.qA2"}).get_json()
+        assert j["ok"] and j["marks"]["qubits"] == {"qA2": "moved"}, j
+
+    def test_a_conflict_answers_with_the_marks_too(self, env):
+        c = env["client"]
+        c.post("/note", data={"subject": "qubits.qA1", "text": "theirs"})
+        r = c.post("/note", data={"subject": "qubits.qA1", "text": "mine", "expect_rev": "999"})
+        assert r.status_code == 409 and r.get_json()["marks"]["qubits"] == {"qA1": "theirs"}
+
+    def test_the_grid_render_reads_the_same_mapping(self, env):
+        c = env["client"]
+        c.post("/note", data={"subject": "qubits.qA1", "text": "drifts after cooldown"})
+        body = c.get("/bulk").data.decode()
+        assert 'bulk-rowhead-note' in body and 'title="drifts after cooldown"' in body
+
+
+# ── F19 ─────────────────────────────────────────────────────────────────────
+class TestTheStageMessagePointsAtAReviewThatExists:
+    """"Review the diff below" pointed at nothing: the tray's Revert last apply
+    lands in #status-bar and no diff renders under it. The review that exists
+    is the top-bar badge (openReview -> /state/review). The id is a UTC stamp."""
+
+    def _ts(self, env):
+        c = env["client"]
+        assert c.post("/state-history/snapshot").status_code == 200
+        with env["app"].app_context():
+            snaps = routes_mod._history().list_snapshots(env["live"])
+        s0 = snaps[0]
+        return getattr(s0, "timestamp", None) or s0["timestamp"]
+
+    def test_the_revert_door_names_the_badge_and_a_utc_time(self, env):
+        ts = self._ts(env)
+        body = env["client"].post(f"/state-history/{ts}/stage?force=1&from=tray").data.decode()
+        assert "diff below" not in body, body[:400]
+        assert "loaded as the working state" in body
+        assert "Working state badge" in body and "Apply to live chip" in body, body[:400]
+        pretty = f"{ts[0:4]}-{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}:{ts[13:15]} UTC"
+        assert pretty in body, (pretty, body[:400])
+
+    def test_armed_the_note_replaces_the_review_instruction(self, env):
+        ts = self._ts(env)
+        c = env["client"]
+        c.post("/auto-apply/arm")
+        body = c.post(f"/state-history/{ts}/stage?force=1").data.decode()
+        assert "ARMED" in body and "Working state badge" not in body, body[:400]
+
+    def test_the_revert_button_title_says_its_time_is_local(self, env):
+        c = env["client"]
+        _edit(env, "qubits.qA1.T1", "1.3e-5")
+        assert c.post("/state/sync", data={"mode": "apply", "seen_changes": "1"}).status_code == 200
+        tray = c.get("/state/tray").data.decode()
+        assert "tray-revert-apply" in tray, tray[:600]
+        import re
+        m = re.search(r"Revert last apply \(done ([^)]*)\)", tray)
+        assert m and m.group(1).endswith(" local time") and "T" not in m.group(1), m and m.group(1)
+
+
+# ── liveedit-r2-31 ──────────────────────────────────────────────────────────
+@pytest.fixture
+def null_env(tmp_path):
+    st = _state()
+    st["qubits"]["qA1"]["z"] = {"settle_time": None}
+    live = tmp_path / "chips" / "live"
+    _write_chip(live, st)
+    app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+    c = app.test_client()
+    assert c.post("/load", data={"folder": str(live)}).status_code in (200, 302)
+    return {"app": app, "client": c, "live": live, "tmp": tmp_path}
+
+
+class TestAnUndoBackToNullSaysNotSet:
+    """"Undone: qubits.q1.z.settle_time →" ended on a bare arrow: _fmt_val
+    renders null as "" (right for a cell input, wrong for a sentence)."""
+
+    P = "qubits.qA1.z.settle_time"
+
+    def test_the_staged_undo(self, null_env):
+        c = null_env["client"]
+        _edit(null_env, self.P, "200")
+        cr = _trigger(c.post("/undo"))["cellsReverted"]
+        assert cr["message"] == f"Undone: {self.P} → not set", cr["message"]
+        e = {x["dot_path"]: x for x in cr["entries"]}[self.P]
+        assert e["old_value_str"] == "", "the cell itself still repaints EMPTY"
+
+    def test_the_live_undo(self, null_env):
+        c = null_env["client"]
+        _edit(null_env, self.P, "200")
+        assert c.post("/state/sync", data={"mode": "apply", "seen_changes": "1"}).status_code == 200
+        cr = _trigger(c.post("/undo"))["cellsReverted"]
+        assert cr["message"].endswith(f"{self.P} → not set"), cr["message"]
+
+    def test_the_message_helper_and_the_cell_helper_stay_apart(self):
+        assert routes_mod._fmt_msg_val(None) == "not set"
+        assert routes_mod._fmt_val(None) == ""
+        assert routes_mod._fmt_msg_val(0.5) == routes_mod._fmt_val(0.5)

@@ -3638,6 +3638,41 @@ window.applyEditsToLive = function () {
     }
 };
 
+/* QA F14: the grids' ⚡ confirm counted only the cells typed on this screen, but
+ * applyEditsToLive (above) pushes the WHOLE tray -- an edit committed earlier
+ * went to the chip under "Apply 1 edit across 1 qubit". This names what else the
+ * push carries: the tray's pending paths the typed set does not already cover
+ * (scoped to the pending drawer -- `.tray-change-path` is reused by the
+ * applied log inside the same tray), plus the saved-but-unapplied working state,
+ * which is stated WITHOUT a number (docs/187 R7: a number only when it is the
+ * whole thing). '' when the push carries nothing beyond what was typed. */
+window.livePushExtrasLine = function (typedPaths) {
+    var tray = document.getElementById("pending-tray");
+    if (!tray) return "";
+    var skip = {};
+    (typedPaths || []).forEach(function (p) { if (p) skip[p] = true; });
+    var seen = {}, extra = [];
+    Array.prototype.forEach.call(
+        tray.querySelectorAll("#tray-drawer .tray-change-item .tray-change-path"),
+        function (el) {
+            var p = el.getAttribute("title") || el.textContent || "";
+            if (!p || skip[p] || seen[p]) return;
+            seen[p] = true; extra.push(p);
+        });
+    var dirty = tray.getAttribute("data-working-dirty") === "1";
+    if (!extra.length && !dirty) return "";
+    var s = "\n\n";
+    if (extra.length) {
+        var shown = extra.slice(0, 5).join(", ");
+        if (extra.length > 5) shown += ", +" + (extra.length - 5) + " more";
+        s += "The push also carries " + extra.length + " edit" + (extra.length === 1 ? "" : "s") +
+             " already in the tray: " + shown + ".";
+        if (dirty) s += "\n";
+    }
+    if (dirty) s += "It also pushes the saved, not-yet-applied working state.";
+    return s;
+};
+
 /* ------------------------------------------------------------------ */
 /* Live-drift tracking — accumulating "Live changes since baseline"    */
 /* ------------------------------------------------------------------ */
@@ -5754,7 +5789,9 @@ window.smOpenStateFolder = function () {
    are parsed from their shortest round-tripping decimal spelling, so the
    answer reads 0.1 — the number a physicist would have written down. */
 window.ValueDelta = (function () {
-    var GROUPED = /^[+-]?\d[\d,]*(\.\d+)?$/;
+    // well-formed thousands groups only -- "0,1" is a coordinate, not 1 (QA F15;
+    // mirrors value_delta._GROUPED character for character)
+    var GROUPED = /^[+-]?[1-9]\d{0,2}(,\d{3})+(\.\d+)?$/;
     var DECIMAL = /^([+-]?)(\d+)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/;
     var SCI_HIGH_EXP = 16;    // |v| >= 1e15  (mirrors _SCI_HIGH)
     var SCI_LOW_EXP = -6;     // |v| <  1e-6  (mirrors _SCI_LOW)
@@ -13378,9 +13415,23 @@ window._openFspPopup = (function () {
         table.appendChild(tbody);
         wrap.appendChild(table);
         card.appendChild(wrap);
-        if ((plan.skipped || []).length) {
+        // QA F18: a pointer amplitude whose target is in the table above is
+        // not "not compensated" -- it follows that row (the server marks it
+        // `follows`). Said neutrally: an overridden target row moves it too.
+        var _skFollow = (plan.skipped || []).filter(function (s) { return s.follows; });
+        var _skRest = (plan.skipped || []).filter(function (s) { return !s.follows; });
+        if (_skFollow.length) {
+            var _AMP = /^(.*)\.operations\.([^.]+)\.amplitude$/;
+            card.appendChild(_el("p", "fsp-skipped",
+                "Follow their target (pointers, no separate write): " + _skFollow.map(function (s) {
+                    var m = _AMP.exec(s.path), t = _AMP.exec(s.follows);
+                    return (m && t && m[1] === t[1]) ? (m[2] + " \u2192 " + t[2])
+                                                    : (s.path + " \u2192 " + s.follows);
+                }).join("; ")));
+        }
+        if (_skRest.length) {
             var sk = _el("p", "fsp-skipped",
-                "Not compensated: " + plan.skipped.map(function (s) {
+                "Not compensated: " + _skRest.map(function (s) {
                     return s.path + " (" + s.reason + ")";
                 }).join("; "));
             card.appendChild(sk);

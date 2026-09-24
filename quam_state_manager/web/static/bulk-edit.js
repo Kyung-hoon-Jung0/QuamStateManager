@@ -86,8 +86,17 @@
     function _isDirty(c) { return c.value !== c.getAttribute('data-orig'); }
     function _rowOf(c) { return c.closest('tr'); }
     function _grp(v) { return (window._groupDigits ? window._groupDigits(v) : String(v)); }
-    // comma-insensitive numeric value of a cell's text (for sort + min/max + search)
-    function _num(s) { var n = parseFloat(String(s).replace(/,/g, '')); return isFinite(n) ? n : null; }
+    // comma-insensitive numeric value of a cell's text (for sort + min/max + search).
+    // Only well-formed thousands groups are grouping (value_delta._GROUPED's shape):
+    // a text coordinate "4,0" is not 40 (QA F15 -- grid_location read "min 0 · max 40").
+    function _num(s) {
+        s = String(s).trim();
+        if (s.indexOf(',') >= 0) {
+            if (!/^[+-]?[1-9]\d{0,2}(,\d{3})+(\.\d+)?$/.test(s)) return null;
+            s = s.replace(/,/g, '');
+        }
+        var n = parseFloat(s); return isFinite(n) ? n : null;
+    }
 
     // ── persisted column visibility ──────────────────────────────────────────
     function _hidden() {
@@ -1495,6 +1504,17 @@
         return c.getAttribute('data-linkable') === '1'
             ? c.getAttribute('data-resolved')
             : c.getAttribute('data-dot-path');
+    }
+    // QA F14: the typed cells' own paths (as written AND as resolved), so the
+    // ⚡ confirm's extras line names only what the push carries beyond them.
+    function _livePushExtras(dirtyCells) {
+        if (typeof window.livePushExtrasLine !== 'function') return '';
+        var typed = [];
+        dirtyCells.forEach(function (c) {
+            typed.push(c.getAttribute('data-dot-path'));
+            if (c.getAttribute('data-resolved')) typed.push(c.getAttribute('data-resolved'));
+        });
+        return window.livePushExtrasLine(typed);
     }
     // Physical-change count: linked siblings share one resolved node, so count
     // UNIQUE physical targets among dirty cells, not the raw cell count.
@@ -3437,9 +3457,11 @@
             // Surface any LO band conflict among ALL dirty cells in the apply set —
             // appended to the confirm, never a hard block (A10).
             var bw = _bandWarnLine(_cells(t).filter(_isDirty));
+            // QA F14: the ⚡ push carries the whole tray -- name what else rides along
+            var ex = syncAfter ? _livePushExtras(_cells(t).filter(_isDirty)) : '';
             if (!window.confirm('Apply ' + n + ' edit' + (n === 1 ? '' : 's') + ' across ' + rows.length +
                 ' qubit' + (rows.length === 1 ? '' : 's') +
-                (syncAfter ? ' and push to the live chip?' : ' to the working state?') + bw)) return;
+                (syncAfter ? ' and push to the live chip?' : ' to the working state?') + bw + ex)) return;
             var all = document.getElementById('bulk-apply-all');
             if (all) { all.disabled = true; all.textContent = 'Applying…'; }
             var apsBtn = document.getElementById('bulk-apply-sync'); if (apsBtn) apsBtn.disabled = true;

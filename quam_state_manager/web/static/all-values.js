@@ -638,9 +638,12 @@
         state.dirty.forEach(function (d, path) { updates.push({ dot_path: path, value: d.value }); });
         // Always confirm the ⚡ live-push (matches the qubit/pair grids, which always
         // confirm); for the plain working-state apply, only confirm past the big-batch gate.
+        // QA F14: the ⚡ push carries the whole tray -- name what else rides along
+        var ex = (syncAfter && typeof window.livePushExtrasLine === 'function')
+            ? window.livePushExtrasLine(updates.map(function (u) { return u.dot_path; })) : '';
         if ((syncAfter || updates.length > CONFIRM_OVER)
             && !window.confirm('Apply ' + updates.length +
-                (syncAfter ? ' edits and push to the live chip?' : ' edits to the working state?'))) return;
+                (syncAfter ? ' edits and push to the live chip?' : ' edits to the working state?') + ex)) return;
         state._syncAfter = !!syncAfter;
         setApplying(true);
         applyChunks(updates, 0);

@@ -439,3 +439,47 @@ class TestTrayDiscardKeepsTheBundleWhole:
         for html in (env["client"].get("/state/tray").data.decode(),
                      env["client"].get("/bulk").data.decode()):
             assert html.count("with its full-scale-power bundle (4 changes") == 4, html[:200]
+
+
+class TestPointerAmpsThatFollowACompensatedTarget:
+    """QA F18: the popup said "Not compensated: -x90_DragCosine ... (amplitude
+    is a pointer — edit its target)" while that target sat in the compensated
+    table. A pointer whose target is compensated in THIS plan follows it; the
+    row stays in `skipped` (shape unchanged) and names what it follows."""
+
+    RO = "qubits.qA1.resonator.operations.readout.amplitude"
+
+    def _plan(self, extra_ops):
+        m = _merged()
+        m["qubits"]["qA1"]["resonator"]["operations"].update(extra_ops)
+        plan = mw_fem.fsp_compensation_plan(
+            m, "ports.mw_outputs.con1.1.1.full_scale_power_dbm", -6)
+        return {s["path"].split(".operations.")[1].split(".")[0]: s for s in plan["skipped"]}, plan
+
+    def test_a_pointer_to_a_compensated_amp_follows_it(self):
+        sk, plan = self._plan({})
+        w = sk["weird"]
+        assert w["follows"] == self.RO and self.RO in {a["path"] for a in plan["amps"]}
+        assert "edit its target" not in w["reason"]
+
+    def test_the_pointer_met_before_its_target_still_follows(self):
+        # natural order puts "-ro" ahead of "readout": the check runs after the loop
+        sk, _ = self._plan({"-ro": {"amplitude": "#../readout/amplitude"}})
+        assert sk["-ro"]["follows"] == self.RO
+
+    def test_through_an_alias_op_it_follows_the_leaf(self):
+        sk, _ = self._plan({"via_alias": {"amplitude": "#../ro_alias/amplitude"}})
+        assert sk["via_alias"]["follows"] == self.RO
+
+    def test_a_pointer_to_another_port_is_still_not_compensated(self):
+        sk, _ = self._plan({"xport": {"amplitude": "#/qubits/qA1/xy/operations/x180/amplitude"}})
+        assert "follows" not in sk["xport"]
+        assert sk["xport"]["reason"] == "amplitude is a pointer — edit its target"
+
+    def test_a_dangling_pointer_is_still_not_compensated(self):
+        sk, _ = self._plan({"dead": {"amplitude": "#/qubits/qZ9/resonator/operations/readout/amplitude"}})
+        assert "follows" not in sk["dead"]
+
+    def test_nothing_written_changes(self):
+        _, plan = self._plan({"-ro": {"amplitude": "#../readout/amplitude"}})
+        assert not any(a["path"].endswith(".-ro.amplitude") for a in plan["amps"])
