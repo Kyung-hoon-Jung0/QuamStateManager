@@ -242,3 +242,14 @@ def test_aggregate_records_counts_unresolved_as_missing():
     agg = ch.aggregate_records(rows, ["f_01"])["f_01"]
     assert agg["measured"] == 1 and agg["unresolved"] == 1 and agg["missing"] == 1
     assert agg["bad"] == 0
+
+
+def test_cz_fidelity_is_named_for_what_it_measures():
+    """QA F-11 (docs/138): cz_fidelity's source is Bell_State, interleaved RB
+    or the CR channel depending on the chip. The label every surface reads --
+    threshold editor, Add-panel, custom tile, report card -- said "CZ Bell
+    fidelity" over an interleaved-RB number."""
+    m = ch.metric_meta("cz_fidelity")
+    assert "Bell" not in m["label"] and "Bell" not in m["abbr"], m
+    assert m["label"] == "2Q gate fidelity", m
+    assert ch.DEFAULT_THRESHOLDS["cz_fidelity"]["label"] == m["label"]

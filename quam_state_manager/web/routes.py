@@ -10226,7 +10226,10 @@ def wiring_view():
     # badge + per-node markers, so "is it healthy" and "is it broken" stop being
     # two disconnected pages. Thresholds seed the client's live verdict/colour
     # (the client persists UI edits to localStorage).
-    diag_findings = diagnostics.lint_state(store) if store else []
+    # QA F-16: the SAME finding set /diagnostics and the top-bar badge count
+    # (state + cached generated config + env match). lint_state alone said
+    # "2 warnings" over a Diagnostics page that listed 3.
+    diag_findings = _active_chip_findings(store) if store else []
     diag_summary = diagnostics.summarize(diag_findings)
 
     # Optional ?view= picks the Chip Status sub-view (Topology / Full View /
@@ -17862,6 +17865,9 @@ def export_csv():
     return send_file(mem, mimetype="text/csv", as_attachment=True, download_name="quam_summary.csv")
 
 
+_SPARK_POINTS = 40   # the popup sparkline's LTTB budget
+
+
 @bp.route("/api/topology/sparklines/<qubit>")
 def topology_sparklines(qubit: str):
     """Lazy per-qubit Param-History sparklines for the Chip Status '…more' popup.
@@ -17886,7 +17892,7 @@ def topology_sparklines(qubit: str):
     # CHANGE", not "since the previous identical sample" -- which is what a
     # trend arrow was always meant to say.
     for r in hm.extract_property_history(path, list(DEFAULT_TRACKED_PROPERTIES),
-                                         qubit_filter=[qubit], downsample=40,
+                                         qubit_filter=[qubit], downsample=_SPARK_POINTS,
                                          compress="changes"):
         prop = r["property"]
         cur = qd.get(prop)
@@ -17903,8 +17909,31 @@ def topology_sparklines(qubit: str):
             continue  # <2 finite points → no real trend (honest gap)
         nums = [p["value"] for p in phys_vals
                 if isinstance(p.get("value"), (int, float)) and not isinstance(p.get("value"), bool)]
-        delta = nums[-1] - nums[-2] if len(nums) >= 2 else None
-        delta_pct = (delta / abs(nums[-2]) * 100) if (delta is not None and nums[-2]) else None
+        # QA chipstatus-r2-12: the compressed series keeps BOTH edges of every
+        # step, so its last two points are equal unless the last change landed
+        # on the newest snapshot -- nums[-1] - nums[-2] read '–' after a real
+        # change. The arrow is the newest value against the previous DISTINCT
+        # one. When LTTB thinned the series (it can drop a step's flat edge),
+        # read that one property undownsampled so the step is the real last one.
+        full = phys_vals
+        if len(r["values"]) >= _SPARK_POINTS:
+            try:
+                ex = [b for b in hm.extract_property_history(
+                          path, [prop], qubit_filter=[qubit], downsample=None,
+                          compress="changes")
+                      if b.get("qubit") == r.get("qubit") and b.get("property") == prop]
+                if ex:
+                    full = [p for p in ex[0]["values"]
+                            if chip_health.physicality(prop, p.get("value"))] or phys_vals
+            except Exception:
+                logger.debug("sparkline full-series read failed", exc_info=True)
+        fin = [float(p["value"]) for p in full
+               if isinstance(p.get("value"), (int, float)) and not isinstance(p.get("value"), bool)
+               and math.isfinite(p["value"])]
+        last = fin[-1] if fin else None
+        prev = next((v for v in reversed(fin[:-1]) if v != last), None)
+        delta = (last - prev) if prev is not None else None
+        delta_pct = (delta / abs(prev) * 100) if (delta is not None and prev) else None
         meta = chip_health.metric_meta(prop)
         good = None
         if delta not in (None, 0) and meta["direction"] in ("higher", "lower"):
@@ -17937,23 +17966,19 @@ def export_report():
     # The chip header's rule, like the config exports (QA regenerate-r2-33):
     # chip_name_for named a flat chip folder after its PARENT ("chip").
     chip = _chip_display_name(path) if path else "chip"
-    diag_findings = [f.as_dict() for f in diagnostics.lint_state(store)] if store else []
-    # Honour the user's UI-edited thresholds (sent as a JSON query param by the
-    # export link) so the card's below-spec counts MATCH the on-screen header.
-    # Falls back to the seed defaults when absent/malformed.
-    thresholds = None
-    raw_th = request.args.get("thresholds")
-    if raw_th:
-        try:
-            parsed = json.loads(raw_th)
-            if isinstance(parsed, dict):
-                thresholds = parsed
-        except (ValueError, TypeError):
-            thresholds = None
+    # QA F-16: the Diagnostics page's finding set, like the on-screen tile.
+    diag_findings = [f.as_dict() for f in _active_chip_findings(store)] if store else []
+    # QA F-14: the bands are the lab spec the on-screen header scores against
+    # (docs/167) and the card says whose they are with the header's own words.
+    # The export link used to send the tab's whole band set on every download,
+    # so the card claimed "your UI-edited thresholds" when nothing was edited.
+    spec = spec_thresholds.resolve(current_app.instance_path)
+    thresholds = spec["metrics"]
     # Local time with its offset (QA F26 sibling): a UTC stamp dated a
     # 07:49 KST report, and its filename, the day before.
     report = report_card.build_report(engine, chip_name=chip, diag_findings=diag_findings,
                                       thresholds=thresholds,
+                                      thresholds_source=spec["summary"],
                                       generated_at=datetime.now().astimezone())
 
     fmt = (request.args.get("format") or "md").lower()

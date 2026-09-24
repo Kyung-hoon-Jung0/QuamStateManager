@@ -318,6 +318,24 @@ class TestTheClientStoppedOwningIt:
             pytest.skip("jsdom not installed")
         assert r.returncode == 0, (r.stdout + r.stderr)
 
+    def test_both_in_spec_tiles_follow_every_band_change(self):
+        """QA chipstatus-r2-07: Apply, reset-one, reset-all, a refused save and
+        another window's bands each re-score the Overview 'Qubits In Spec'
+        tile together with the Health tile. Drives
+        tests/thresh_tiles_agree_selfcheck.cjs over the real shipped JS."""
+        import shutil
+        import subprocess
+
+        if shutil.which("node") is None:
+            pytest.skip("node not on PATH")
+        r = subprocess.run(
+            ["node", str(_ROOT / "tests" / "thresh_tiles_agree_selfcheck.cjs")],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            cwd=str(_ROOT), timeout=120)
+        if r.returncode == 2 and "jsdom not installed" in (r.stderr or ""):
+            pytest.skip("jsdom not installed")
+        assert r.returncode == 0, (r.stdout + r.stderr)
+
     def test_the_old_key_is_read_exactly_once_to_migrate(self):
         js = self._js()
         assert js.count("localStorage.getItem(THRESH_KEY") == 1

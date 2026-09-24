@@ -819,15 +819,26 @@ window.ChipStatus.mount = function (opts) {
         var irbEpcE = [], irbEpcDiv = null;
         topo.edges.forEach(function(e) {
             if (!e.gate_fidelities) return;
-            var bestF = null, div = null, bestGate = null;
+            // QA F-05: the divisor is the one of the PULSE whose IRB is being
+            // converted -- the winning row's own, else its gate's SRB row.
+            // "The last row that carries one" paired cz_flattop's IRB with
+            // cz_SNZ's divisor on a two-pulse pair. `anyDiv` (any row of the
+            // pair) is kept only for a pulse with no SRB run of its own.
+            var bestF = null, bestGate = null, bestRowDiv = null, divByGate = {}, anyDiv = null;
             e.gate_fidelities.forEach(function(gf) {
+                var gd = typeof gf.average_gates_per_clifford === 'number' ? gf.average_gates_per_clifford : null;
                 if (isIRB(gf.metric)) {
                     var v = typeof gf.value === 'number' ? gf.value
                           : typeof gf.average_gate_fidelity === 'number' ? gf.average_gate_fidelity : null;
-                    if (v != null && (bestF == null || v > bestF)) { bestF = v; bestGate = gf.gate; }
+                    if (v != null && (bestF == null || v > bestF)) { bestF = v; bestGate = gf.gate; bestRowDiv = gd; }
                 }
-                if (typeof gf.average_gates_per_clifford === 'number') div = gf.average_gates_per_clifford;
+                if (gd != null) {
+                    if (divByGate[gf.gate] == null) divByGate[gf.gate] = gd;
+                    anyDiv = gd;
+                }
             });
+            var div = bestRowDiv != null ? bestRowDiv
+                    : (divByGate[bestGate] != null ? divByGate[bestGate] : anyDiv);
             if (bestF == null || !div) return;
             var epc = (1 - bestF) * div;
             // the divisor this tile's own bridge used, for the note below --
@@ -3406,6 +3417,10 @@ window.ChipStatus.mount = function (opts) {
         }).length;
         var diagErr = 0, diagWarn = 0;
         (diagFindings || []).forEach(function(f) {
+            // QA F-16: diagnostics.summarize's rule, the one the toolbar and
+            // top-bar badges count by -- an advisory or acknowledged finding
+            // is listed on /diagnostics, never counted as an issue.
+            if (f.advisory || f.acknowledged) return;
             if (f.severity === 'error') diagErr++; else if (f.severity === 'warning') diagWarn++;
         });
 
@@ -3667,13 +3682,21 @@ window.ChipStatus.mount = function (opts) {
     }
     window._threshMarkDirty = _threshMarkDirty;
 
+    // QA chipstatus-r2-07: every view that judges against `thresholds` is
+    // re-derived together -- the Health tile and the Overview 'Qubits In
+    // Spec' tile walk the same verdicts, so a band change that rebuilt only
+    // one left the two tiles on one page contradicting each other.
+    function _rederiveSpecViews() {
+        buildHealthSummary();
+        buildOverviewTiles();
+    }
     // Back to the bands the server holds (after a refused write): `_labSpec`
     // only ever changes on a server answer, so it IS the last saved state.
     function _revertToSaved(msg, draft) {
         thresholds = _loadThresholds(_defaultThresholds);
         window._chipThresholds = thresholds;
         buildThresholdEditor();
-        buildHealthSummary();
+        _rederiveSpecViews();
         // the typed values stay in their fields, marked as not applied
         var h = document.getElementById('topo-thresh-editor');
         (draft || []).forEach(function (d) {
@@ -3709,7 +3732,7 @@ window.ChipStatus.mount = function (opts) {
         }
         window._chipThresholds = thresholds;
         buildThresholdEditor();   // refresh the default/edited markers + reset state
-        buildHealthSummary();
+        _rederiveSpecViews();
         var st = document.getElementById('thresh-status');
         if (st) { st.textContent = 'saving…'; }
         _postSpec(changed).then(function (res) {
@@ -3719,7 +3742,7 @@ window.ChipStatus.mount = function (opts) {
                 return;
             }
             buildThresholdEditor();
-            buildHealthSummary();
+            _rederiveSpecViews();
             var s2 = document.getElementById('thresh-status');
             if (s2) { s2.textContent = '✓ saved for everyone using this SM';
                       s2.classList.add('applied');
@@ -3747,7 +3770,7 @@ window.ChipStatus.mount = function (opts) {
                 window._chipThresholds = thresholds;
                 var host = document.getElementById('topo-thresh-editor');
                 if (host && !host.hidden) buildThresholdEditor();
-                buildHealthSummary();
+                _rederiveSpecViews();
             })
             .catch(function () {});
     }
@@ -3776,7 +3799,7 @@ window.ChipStatus.mount = function (opts) {
                 thresholds = res.spec ? _loadThresholds(_defaultThresholds)
                                       : JSON.parse(JSON.stringify(_defaultThresholds));
                 window._chipThresholds = thresholds;
-                buildThresholdEditor(); buildHealthSummary();
+                buildThresholdEditor(); _rederiveSpecViews();
             });
     };
     // Reset ONE metric back to its spec default (mirrors applyThresholds' commit
@@ -3796,7 +3819,7 @@ window.ChipStatus.mount = function (opts) {
                 return;
             }
             buildThresholdEditor();
-            buildHealthSummary();
+            _rederiveSpecViews();
         });
     };
 
@@ -3998,13 +4021,15 @@ window.closeJsonPanel = function() {
 
 // Carry the user's live (UI-edited, localStorage) thresholds into the report
 // download URL so the exported card's verdicts match the on-screen header.
+// QA F-14: the report scores against the server's lab spec (the bands this
+// page's header uses since docs/167), so the link carries only the format --
+// sending the tab's whole band set made every card say "your UI-edited
+// thresholds", edited or not.
 window.ChipStatus.reportHref = function (linkEl, fmt) {
     try {
-        var th = window._chipThresholds || {};
-        linkEl.href = '/topology/report?format=' + encodeURIComponent(fmt)
-            + '&thresholds=' + encodeURIComponent(JSON.stringify(th));
+        linkEl.href = '/topology/report?format=' + encodeURIComponent(fmt);
     } catch (e) { /* fall back to the plain href */ }
-    return true;   // allow the default download with the thresholds-carrying href
+    return true;   // allow the default download
 };
 
 // Canonical (sorted-key) serialization of a topology payload: the page embeds

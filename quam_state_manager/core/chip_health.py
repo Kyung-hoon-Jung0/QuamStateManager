@@ -172,8 +172,11 @@ METRIC_META: dict[str, dict[str, Any]] = {
     "gate_fidelity_x90": {"label": "1Q gate fidelity x90", "abbr": "GF x90", "direction": "higher",
                     "blurb": "Single-qubit fidelity for the π/2 (x90) gate. Higher is better."},
     # two-qubit (edge) metrics
-    "cz_fidelity": {"label": "CZ Bell fidelity",    "abbr": "CZ F",  "direction": "higher",
-                    "blurb": "Two-qubit CZ gate quality (best of the pair's candidate gates). Higher is better."},
+    # QA F-11 (docs/138's rename, reaching the label every surface reads): the
+    # number's SOURCE varies by chip -- Bell_State, interleaved RB or the CR
+    # channel -- so it is named for what it measures, never for one source.
+    "cz_fidelity": {"label": "2Q gate fidelity",    "abbr": "2Q F",  "direction": "higher",
+                    "blurb": "Two-qubit gate fidelity of the pair's best candidate gate — from Bell_State, interleaved RB (1 − EPG) or the CR channel, whichever the chip records. Higher is better."},
     "detuning":    {"label": "Detuning",            "abbr": "detuning", "direction": "neutral",
                     "blurb": "Frequency detuning applied to the pair during the two-qubit gate."},
     "coupler_decouple_offset": {"label": "Coupler decouple offset", "abbr": "decouple", "direction": "neutral",

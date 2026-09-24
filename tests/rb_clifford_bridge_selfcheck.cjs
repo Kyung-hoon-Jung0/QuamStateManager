@@ -191,6 +191,48 @@ function byTitle(all, needle) {
     'B7: a hair past it is not — ' + (cliff && cliff.value + ' | ' + cliff.sub));
 }
 
+// ── B8 (QA F-05): a two-pulse pair converts each IRB with ITS pulse's divisor ──
+// The server puts average_gates_per_clifford on each gate's StandardRB row
+// (rb_gate_fidelity.derive_for_edges). The rig chip's q1-2: cz_flattop IRB
+// 0.956958 (SRB run divisor 5.367208) beats cz_SNZ, whose SRB row came LAST
+// with divisor 5.226098. 1-(1-0.956958)*5.367208 = 76.90%; pairing it with
+// SNZ's divisor gave 77.51%.
+{
+  function twoPulse(order) {
+    const rows = {
+      ft_srb: { metric: 'StandardRB', gate: 'cz_flattop', level: 'clifford', value: 0.80,
+                average_gates_per_clifford: 5.367208445040214 },
+      ft_irb: { metric: 'InterleavedRB', gate: 'cz_flattop', level: 'gate', value: 0.956958 },
+      snz_srb: { metric: 'StandardRB', gate: 'cz_SNZ', level: 'clifford', value: 0.78,
+                 average_gates_per_clifford: 5.22609756097561 },
+      snz_irb: { metric: 'InterleavedRB', gate: 'cz_SNZ', level: 'gate', value: 0.9401 },
+    };
+    return chip([{ pair_id: 'q1-q2', source: 'q1', target: 'q2', has_cz: true, gate_kind: 'cz',
+                   directed: false, active: null, best_gate: 'cz_flattop', cz_fidelity: 0.956958,
+                   gate_fidelities: order.map(function (k) { return rows[k]; }) }]);
+  }
+  const want = (1 - (1 - 0.956958) * 5.367208445040214) * 100;   // 76.899...
+  [['ft_srb', 'ft_irb', 'snz_srb', 'snz_irb'],
+   ['snz_srb', 'snz_irb', 'ft_srb', 'ft_irb'],
+   ['ft_irb', 'snz_irb', 'snz_srb', 'ft_srb']].forEach(function (order) {
+    const cliff = byTitle(tiles(makeWorld(), twoPulse(order)), 'Clifford fid. (IRB');
+    ok(cliff && cliff.value.indexOf(want.toFixed(2) + '%') >= 0,
+      'B8 [' + order.join(',') + ']: cz_flattop\'s IRB goes through cz_flattop\'s divisor — want '
+      + want.toFixed(2) + '%, got ' + (cliff && cliff.value));
+  });
+  // a winning pulse with no SRB run of its own still gets the pair's bridge
+  // (coverage unchanged), never silently dropped
+  const lone = chip([{ pair_id: 'q1-q2', source: 'q1', target: 'q2', has_cz: true, gate_kind: 'cz',
+                       directed: false, active: null, best_gate: 'cz_a', cz_fidelity: 0.99,
+                       gate_fidelities: [
+                         { metric: 'InterleavedRB', gate: 'cz_a', level: 'gate', value: 0.99 },
+                         { metric: 'StandardRB', gate: 'cz_b', level: 'clifford', value: 0.9,
+                           average_gates_per_clifford: 5.0 }] }]);
+  const cl2 = byTitle(tiles(makeWorld(), lone), 'Clifford fid. (IRB');
+  ok(cl2 && cl2.value.indexOf('95.00%') >= 0,
+    'B8: a pulse with no SRB run of its own keeps the pair\'s divisor — ' + (cl2 && cl2.value));
+}
+
 console.log(fails ? 'FAILED (' + fails + ')'
   : 'rb_clifford_bridge_selfcheck ok (' + asserts + ' assertions)');
 process.exit(fails ? 1 : 0);

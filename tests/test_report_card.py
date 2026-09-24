@@ -64,16 +64,22 @@ def test_worst_offenders_use_gated_value():
 
 
 def test_custom_thresholds_change_below_spec_and_note():
-    # A stricter gate-fidelity threshold pushes more qubits below spec, and the
-    # card labels the source as the user's edited thresholds (matches the header).
+    # A stricter gate-fidelity threshold pushes more qubits below spec. The
+    # card says whose bands these are only as far as it knows (QA F-14: it
+    # used to call ANY passed set "your UI-edited thresholds", and the export
+    # link passed one on every download); the route names them via
+    # `thresholds_source`, the header's own words.
     eng = _engine()
     default = report_card.build_report(eng, chip_name="t")
     strict = report_card.build_report(eng, chip_name="t", thresholds={
         "gate_fidelity_avg": {"warn": 0.9995, "fail": 0.999, "direction": "higher"},
     })
     assert strict["counts"]["below_spec"] >= default["counts"]["below_spec"]
-    assert strict["thresholds_source"] == "your UI-edited thresholds"
-    assert default["thresholds_source"] == "default spec thresholds"
+    assert strict["thresholds_source"] == "custom thresholds"
+    assert default["thresholds_source"] == "SM's own default bands"
+    named = report_card.build_report(eng, chip_name="t", thresholds={},
+                                      thresholds_source="your lab's bands")
+    assert named["thresholds_source"] == "your lab's bands"
 
 
 def test_renderers_produce_nonempty_output():
@@ -141,3 +147,88 @@ def test_route_names_the_chip_folder_and_dates_locally(tmp_path, monkeypatch):
     body = resp.get_data(as_text=True)
     assert "260907_KRS_5Q" in body.splitlines()[0], body.splitlines()[0]
     assert "2026-09-24T07:49:18+09:00" in body
+
+
+def test_below_spec_pair_rows_carry_the_metric_label_not_bell():
+    """QA F-11: a pair whose only 2Q number is interleaved RB (no Bell_State)
+    was listed as "CZ Bell fidelity" in both the Markdown and HTML Below-spec
+    tables. The rows read the metric's own label, like the qubit rows."""
+    from quam_state_manager.core import chip_health
+
+    st = _state()
+    st["qubit_pairs"]["qA2-qA1"]["macros"] = {
+        "cz_flattop": {"fidelity": {"InterleavedRB": 0.80}}}
+    eng = QueryEngine(QuamStore.from_dicts(st, {"wiring": {"qubits": {}}}))
+    r = report_card.build_report(eng, chip_name="t")
+    assert r["counts"]["cz_below_spec"] == 1, r["counts"]
+    label = chip_health.metric_meta("cz_fidelity")["label"]
+    md = report_card.render_markdown(r)
+    html = report_card.render_html(r)
+    assert f"| qA2-qA1 | {label} |" in md, md
+    assert f"<td>qA2-qA1</td><td>{label}</td>" in html, html
+    assert "Bell" not in md and "Bell" not in html
+
+
+# ── QA F-14: the downloaded card scores against the lab spec and says so ────
+
+def _report_client(tmp_path):
+    import json
+    from quam_state_manager.web.app import create_app
+    chip = tmp_path / "LabA"
+    chip.mkdir()
+    (chip / "state.json").write_text(json.dumps(_state()), encoding="utf-8")
+    (chip / "wiring.json").write_text(json.dumps(
+        {"wiring": {"qubits": {}}, "network": {"host": "1.1.1.1"}}), encoding="utf-8")
+    app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
+    c = app.test_client()
+    c.post("/load", data={"folder": str(chip)})
+    return c
+
+
+def test_route_says_default_bands_when_nothing_was_edited(tmp_path):
+    """The export link used to append the tab's whole band set, so every card
+    said "your UI-edited thresholds". Nothing edited: SM's own default bands,
+    in the header's words -- even if a stale link still carries the param."""
+    import json
+    from quam_state_manager.core import chip_health
+    c = _report_client(tmp_path)
+    q = json.dumps(chip_health.DEFAULT_THRESHOLDS)
+    for url in ("/topology/report?format=md",
+                "/topology/report?format=md&thresholds=" + q):
+        body = c.get(url).get_data(as_text=True)
+        assert "SM's own default bands" in body, body[:400]
+        assert "UI-edited" not in body
+
+
+def test_route_scores_against_the_saved_lab_spec(tmp_path):
+    """After one metric is saved through the threshold editor's door, the card
+    names it as the lab's and its verdicts use the saved band; a thresholds
+    query param is not a second source of truth."""
+    import json
+    c = _report_client(tmp_path)
+    before = c.get("/topology/report?format=csv").get_data(as_text=True)
+    assert "below_spec,qA1," not in before, before
+    r = c.post("/chip-status/spec", data={"metrics": json.dumps(
+        {"gate_fidelity_avg": {"warn": 0.9995, "fail": 0.9991}})})
+    assert r.status_code == 200 and r.get_json()["ok"], r.get_data(as_text=True)
+    md = c.get("/topology/report?format=md").get_data(as_text=True)
+    assert "your lab's bands for 1 of" in md, md[:400]
+    csv_ = c.get("/topology/report?format=csv&thresholds="
+                 + json.dumps({"gate_fidelity_avg": {"warn": 0.5, "fail": 0.4,
+                                                     "direction": "higher"}})
+                 ).get_data(as_text=True)
+    assert "below_spec,qA1," in csv_, csv_      # 0.999 < the saved 0.9991 fail
+
+
+def test_structural_counts_follow_the_badge_rule():
+    """QA F-16: an advisory or acknowledged finding is listed on Diagnostics but
+    never counted as an issue (diagnostics.summarize); the card counted it."""
+    diag = [
+        {"severity": "warning", "category": "x", "advisory": False, "acknowledged": None},
+        {"severity": "warning", "category": "band_edge", "advisory": True, "acknowledged": None},
+        {"severity": "error", "category": "env", "advisory": False,
+         "acknowledged": {"by": "me"}},
+    ]
+    r = report_card.build_report(_engine(), chip_name="t", diag_findings=diag)
+    assert r["counts"]["structural_warnings"] == 1, r["counts"]
+    assert r["counts"]["structural_errors"] == 0, r["counts"]

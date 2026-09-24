@@ -118,3 +118,87 @@ class TestAcknowledgedRowsReadAsSettled:
     def test_unacknowledged_render_carries_none_of_it(self):
         html = _render([self._active("Quam.x")])
         assert "diag-acked-toggle" not in html and "acknowledged" not in html
+
+
+# ── QA F-16: Chip Status counts the finding set Diagnostics counts ──────────
+# Chip Status built its badge / Health tile / verdict from lint_state alone,
+# while /diagnostics and the top-bar badge also run the config lint and the env
+# match: the rig chip read "2 warnings" beside a Diagnostics page with 3 (the
+# extra one: pulses.const_pulse defined but never referenced).
+
+class TestChipStatusCountsWhatDiagnosticsCounts:
+    _CONFIG = {"elements": {}, "pulses": {"const_pulse": {
+        "operation": "control", "length": 100,
+        "waveforms": {"I": "zero_wf", "Q": "zero_wf"}}},
+        "waveforms": {"zero_wf": {"type": "constant", "sample": 0.0}}}
+
+    def _client(self, tmp_path):
+        import json
+        from quam_state_manager.web.app import create_app
+        chip = tmp_path / "chip"
+        chip.mkdir()
+        (chip / "state.json").write_text(json.dumps({"qubits": {
+            "q1": {"id": "q1", "f_01": 5.0e9, "T1": 3.0e-5}}, "qubit_pairs": {}}),
+            encoding="utf-8")
+        (chip / "wiring.json").write_text(json.dumps(
+            {"wiring": {"qubits": {}}, "network": {"host": "1.1.1.1"}}), encoding="utf-8")
+        app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
+        c = app.test_client()
+        c.post("/load", data={"folder": str(chip)})
+        return app, c
+
+    @staticmethod
+    def _page_findings(html):
+        import json
+        m = re.search(r"diagFindings: (\[.*?\]),\s*\n", html, re.S)
+        assert m, "the page does not embed diagFindings"
+        return json.loads(m.group(1))
+
+    def test_the_page_carries_the_config_finding_and_counts_like_the_badge(self, tmp_path):
+        from quam_state_manager.web import routes
+        app, c = self._client(tmp_path)
+        with app.test_request_context("/"):
+            store = routes._store()
+            store.generated_config = self._CONFIG
+            want = summarize(routes._active_chip_findings(store))
+        assert want["warning"] >= 1, want
+        html = c.get("/topology").get_data(as_text=True)
+        page = self._page_findings(html)
+        assert any(f["category"] == "config_orphan_pulse" for f in page), page
+        counted = sum(1 for f in page if f["severity"] == "warning"
+                      and not f.get("advisory") and not f.get("acknowledged"))
+        assert counted == want["warning"], (counted, want)
+        n = want["warning"]
+        assert f"{n} warning{'s' if n != 1 else ''}</a>" in html, "toolbar badge disagrees"
+        # the top-bar badge (/diagnostics/summary) reads the same set
+        top = c.get("/diagnostics/summary").get_data(as_text=True)
+        assert str(n) in top, top
+
+    def test_the_downloaded_card_counts_it_too(self, tmp_path):
+        from quam_state_manager.web import routes
+        app, c = self._client(tmp_path)
+        with app.test_request_context("/"):
+            store = routes._store()
+            store.generated_config = self._CONFIG
+            want = summarize(routes._active_chip_findings(store))
+        md = c.get("/topology/report?format=md").get_data(as_text=True)
+        assert f"{want['error']} error(s), {want['warning']} warning(s)" in md, md
+
+    def test_the_tile_counts_by_summarize_rule(self):
+        """Advisory and acknowledged findings are listed, never counted (the
+        badges' rule) -- under jsdom over the real chip-status.js."""
+        import shutil
+        import subprocess
+        from pathlib import Path
+
+        import pytest
+        if shutil.which("node") is None:
+            pytest.skip("node not on PATH")
+        root = Path(__file__).resolve().parents[1]
+        r = subprocess.run(
+            ["node", str(root / "tests" / "chip_status_diag_count_selfcheck.cjs")],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            cwd=str(root), timeout=120)
+        if r.returncode == 2 and "jsdom not installed" in (r.stderr or ""):
+            pytest.skip("jsdom not installed")
+        assert r.returncode == 0, (r.stdout + r.stderr)
