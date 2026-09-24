@@ -4458,7 +4458,9 @@ document.addEventListener("cellsReverted", function(evt) {
         });
         if (!paths.length) return;
         btn.disabled = true;
-        var label = btn.textContent;
+        // QA F-O: keep the MARKUP, not the text -- restoring textContent after
+        // a failure flattened #tfx-count away, and the count went stale.
+        var label = btn.innerHTML;
         btn.textContent = "Converting…";
         fetch("/type-fix/apply", {
             method: "POST", headers: { "Content-Type": "application/json" },
@@ -4468,7 +4470,7 @@ document.addEventListener("cellsReverted", function(evt) {
         }).then(function (res) {
             var d = res.body || {};
             if (!d.ok) {
-                btn.disabled = false; btn.textContent = label;
+                btn.disabled = false; btn.innerHTML = label;
                 if (errBox) {
                     errBox.hidden = false;
                     errBox.textContent = (d.error || "The repair did not run.")
@@ -4503,7 +4505,7 @@ document.addEventListener("cellsReverted", function(evt) {
             try { window.htmx && window.htmx.trigger(document.body, "diagnostics-changed"); } catch (e) {}
             document.dispatchEvent(new CustomEvent("quam:state-changed"));
         }).catch(function (e) {
-            btn.disabled = false; btn.textContent = label;
+            btn.disabled = false; btn.innerHTML = label;
             if (errBox) { errBox.hidden = false; errBox.textContent = String(e); }
         });
     };
@@ -4778,6 +4780,12 @@ window.TypeAlert = (function () {
     window.envSchemaDismiss = function (btn) {
         var card = btn.closest(".tfx-card");
         if (card) {
+            // QA diagnostics-r2-17: the memo used to change nothing on screen.
+            // On success the types card re-renders (it listens for
+            // diagnostics-changed) and says the set is hidden; a failure says so.
+            var failed = function () {
+                if (window.showToast) window.showToast("Could not hide this set", "error");
+            };
             fetch("/env-schema/dismiss", {
                 method: "POST",
                 headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -4786,7 +4794,10 @@ window.TypeAlert = (function () {
                     to_key: card.getAttribute("data-to") || "",
                     sig: card.getAttribute("data-sig") || ""
                 }).toString()
-            }).catch(function () {});
+            }).then(function (r) {
+                if (!r.ok) { failed(); return; }
+                try { window.htmx && window.htmx.trigger(document.body, "diagnostics-changed"); } catch (e) {}
+            }).catch(failed);
         }
         window.closeEnvSchemaChanges();
     };

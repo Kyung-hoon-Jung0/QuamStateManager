@@ -189,8 +189,11 @@
 
   <div class="tfx-actions">
     {% if plan.rows %}
+    {# QA F-O: .btn-sync is a flex container, so bare text around the count
+       span became separate flex items and lost their spaces
+       ("Convert3field(s)"). One wrapper = one flex item, spaces kept. #}
     <button type="button" class="btn-sync primary" id="tfx-apply"
-            onclick="window.typeFixApply(this)">Convert <span id="tfx-count">{{ plan.rows | length }}</span> field(s)</button>
+            onclick="window.typeFixApply(this)"><span class="tfx-apply-label">Convert <span id="tfx-count">{{ plan.rows | length }}</span> field(s)</span></button>
     {% endif %}
     {% if alert %}
     {# The alternative the user asked for: fix them by hand instead. #}

@@ -602,12 +602,13 @@ def env_transition(instance_path: Any, manifest: dict | None) -> dict | None:
 
 
 def dismiss_transition(instance_path: Any, from_key: str, to_key: str,
-                       sig: str) -> None:
+                       sig: str) -> bool:
     """Memo an env transition as answered (delta-gated: a NEW schema change
     re-raises). Env-scope fact → stored with the baselines, not in the
-    chip-keyed prompt memo."""
+    chip-keyed prompt memo. Returns whether the memo was written (QA
+    diagnostics-r2-17: the route reports a failure instead of a silent 200)."""
     if not (from_key and to_key and sig):
-        return
+        return False
     try:
         with _baseline_lock:
             index = _load_index(instance_path)
@@ -617,5 +618,7 @@ def dismiss_transition(instance_path: Any, from_key: str, to_key: str,
             }
             baseline_dir(instance_path).mkdir(parents=True, exist_ok=True)
             _write_index(instance_path, index)
+        return True
     except Exception:  # noqa: BLE001
         logger.warning("could not memo the env transition", exc_info=True)
+        return False

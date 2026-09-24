@@ -85,7 +85,12 @@
   {% endif %}
 
   <div class="tfx-actions">
-    {% if transition and transition.changed %}
+    {% if transition and transition.changed and transition.dismissed %}
+    {# QA diagnostics-r2-17: reopening a hidden set shows that it was hidden
+       instead of offering the same action again. #}
+    <span class="tfx-note muted envchg-hidden">You hid this set &mdash; a further
+      schema change raises it again.</span>
+    {% elif transition and transition.changed %}
     <button type="button" class="btn-sync outline"
             onclick="window.envSchemaDismiss(this)"
             title="Hide this exact set of schema changes — a further change raises it again">Don&rsquo;t show this again</button>

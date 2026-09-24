@@ -188,6 +188,42 @@ class TestTheDialogIsHonest:
         assert "tfx-type-chip" in html
         assert ">int<" in html and ">real<" in html
 
+    @pytest.mark.parametrize("url", ["/type-fix/plan", "/type-alert"])
+    def test_the_convert_button_is_one_flex_item(self, client, url):
+        """QA F-O: ``.btn-sync`` is ``display:inline-flex``. Bare text beside
+        the count span became separate flex items whose edge spaces the flex
+        layout drops -- the button rendered "Convert3field(s)". The label must
+        be ONE element child of the button, with no bare text beside it."""
+        from html.parser import HTMLParser
+        html = client.get(url, headers={"HX-Request": "true"}).get_data(as_text=True)
+        m = re.search(r'<button[^>]*id="tfx-apply"[^>]*>(.*?)</button>', html, re.S)
+        assert m, "the Convert button is rendered"
+
+        class _Top(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.depth, self.elements, self.bare, self.text = 0, 0, [], []
+
+            def handle_starttag(self, tag, attrs):
+                if self.depth == 0:
+                    self.elements += 1
+                self.depth += 1
+
+            def handle_endtag(self, tag):
+                self.depth -= 1
+
+            def handle_data(self, data):
+                self.text.append(data)
+                if self.depth == 0 and data.strip():
+                    self.bare.append(data)
+
+        top = _Top()
+        top.feed(m.group(1))
+        assert top.bare == [], f"bare text beside the label: {top.bare!r}"
+        assert top.elements == 1, "the label is one element (one flex item)"
+        assert re.fullmatch(r"Convert \d+ field\(s\)",
+                            " ".join("".join(top.text).split()))
+
 
 class TestApply:
     def test_converts_selected_fields_to_real_numbers(self, app, client):

@@ -8601,10 +8601,13 @@ def env_schema_dismiss():
     baselines rather than in the chip-keyed prompt memo — and it is delta-gated:
     a further schema change raises it again."""
     from quam_state_manager.core import state_env_baseline as _seb
-    _seb.dismiss_transition(current_app.instance_path,
-                            (request.form.get("from_key") or "").strip(),
-                            (request.form.get("to_key") or "").strip(),
-                            (request.form.get("sig") or "").strip())
+    # QA diagnostics-r2-17: a memo that was not written is not a 200 -- the
+    # client refreshes the card only on success and says so otherwise.
+    if not _seb.dismiss_transition(current_app.instance_path,
+                                   (request.form.get("from_key") or "").strip(),
+                                   (request.form.get("to_key") or "").strip(),
+                                   (request.form.get("sig") or "").strip()):
+        return "Could not hide this set", 400
     return ""
 
 

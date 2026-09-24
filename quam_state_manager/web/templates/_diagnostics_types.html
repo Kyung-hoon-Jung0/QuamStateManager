@@ -122,6 +122,11 @@
         <strong>{{ types_card.env_change.count }}</strong> schema
         {{ 'items' if types_card.env_change.count != 1 else 'item' }} changed
         since {{ types_card.env_change.from_label }}
+        {# QA diagnostics-r2-17: "Don't show this again" was stored and never
+           read. The fact stays (docs/79: a dismissal never hides it); the
+           card says the set was hidden and stops calling for a review. #}
+        {% if types_card.env_change.dismissed %}<span class="muted diag-env-hidden">
+        &middot; you hid this set; a further change raises it again</span>{% endif %}
         {% else %}
         unchanged since SM last recorded it
         {% endif %}
@@ -130,9 +135,15 @@
       </span>
       <div class="diag-types-actions">
         {% if types_card.env_change and types_card.env_change.changed %}
+        {% if types_card.env_change.dismissed %}
+        <button type="button" class="btn-sm outline"
+                onclick="window.openEnvSchemaChanges && window.openEnvSchemaChanges()"
+                title="You hid this set — open it again to see what the library changed">Review again&hellip;</button>
+        {% else %}
         <button type="button" class="btn-sm"
                 onclick="window.openEnvSchemaChanges && window.openEnvSchemaChanges()"
                 title="See what the library changed, and tell SM which side is right">Review {{ types_card.env_change.count }} schema change{{ 's' if types_card.env_change.count != 1 }}&hellip;</button>
+        {% endif %}
         {% endif %}
         {% if types_card.taught %}
         <button type="button" class="btn-sm outline"

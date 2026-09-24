@@ -191,6 +191,46 @@ class TestDismissal:
         assert r.status_code == 200
         assert seb.env_transition(env["inst"], env["manifest"])["dismissed"] is True
 
+    # QA diagnostics-r2-17: the dismissal was stored and never read -- the
+    # button had no visible effect. The count stays (docs/79: a dismissal
+    # never hides the fact); the card says the set is hidden and stops
+    # calling for a review, and the overlay stops offering the same action.
+    def _dismiss(self, env, sig=None):
+        t = seb.env_transition(env["inst"], env["manifest"])
+        return t, env["client"].post("/env-schema/dismiss", data={
+            "from_key": t["from_key"], "to_key": t["to_key"],
+            "sig": t["sig"] if sig is None else sig})
+
+    def test_the_card_says_the_set_is_hidden_and_keeps_the_count(self, env):
+        t, r = self._dismiss(env)
+        assert r.status_code == 200
+        html = env["client"].get("/diagnostics/types-card").get_data(as_text=True)
+        count = (t["diff"] or {}).get("total")
+        assert f"<strong>{count}</strong> schema" in html     # the fact stays
+        assert "you hid this set" in html
+        assert "Review again" in html and "openEnvSchemaChanges" in html
+        assert f"Review {count} schema change" not in html
+
+    def test_the_overlay_stops_offering_the_same_action(self, env):
+        before = env["client"].get("/env-schema/changes").get_data(as_text=True)
+        assert "envSchemaDismiss" in before and "You hid this set" not in before
+        self._dismiss(env)
+        after = env["client"].get("/env-schema/changes").get_data(as_text=True)
+        assert "envSchemaDismiss" not in after
+        assert "You hid this set" in after
+
+    def test_a_stale_signature_hides_nothing(self, env):
+        t, r = self._dismiss(env, sig="not-the-current-set")
+        assert r.status_code == 200
+        html = env["client"].get("/diagnostics/types-card").get_data(as_text=True)
+        assert "you hid this set" not in html
+        assert f"Review {(t['diff'] or {}).get('total')} schema change" in html
+
+    def test_a_memo_that_was_not_written_is_not_a_200(self, env):
+        r = env["client"].post("/env-schema/dismiss", data={
+            "from_key": "", "to_key": "", "sig": ""})
+        assert r.status_code == 400
+
 
 class TestTheDiagnosticsCardSurfacesIt:
     def test_the_card_offers_the_review_and_the_manage_entry_points(self, env):
@@ -201,3 +241,21 @@ class TestTheDiagnosticsCardSurfacesIt:
             "decision": "override", "use": "grammar", "type": "str"})
         html = env["client"].get("/diagnostics/types-card").get_data(as_text=True)
         assert "openEnvSchemaVerdicts" in html and "taught SM" in html
+
+
+def test_env_dismiss_convert_selfcheck():
+    """QA diagnostics-r2-17 + F-O client halves: a dismissal refreshes the
+    types card (or says it failed), and a failed type-fix apply keeps the live
+    count span (tests/env_dismiss_convert_selfcheck.cjs)."""
+    import shutil
+    import subprocess
+    if shutil.which("node") is None:
+        pytest.skip("node not on PATH")
+    root = Path(__file__).resolve().parent.parent
+    r = subprocess.run(["node", str(root / "tests" / "env_dismiss_convert_selfcheck.cjs")],
+                       capture_output=True, text=True, encoding="utf-8",
+                       cwd=str(root), timeout=120)
+    if r.returncode == 2:
+        pytest.skip("jsdom not installed (run `npm install jsdom`)")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "ALL OK" in r.stdout, r.stdout + r.stderr
