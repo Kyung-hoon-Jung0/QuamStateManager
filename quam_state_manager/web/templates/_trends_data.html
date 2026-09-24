@@ -94,9 +94,14 @@
        PlotHost.resizeWithin finds charts STRUCTURALLY, so it touches only
        the ones that exist. */
     var EAGER = 12;
+    /* QA F6: the boxes are captured NOW, not looked up at render time: the
+       next fragment reuses the same trend-chart-N ids, so a render still
+       queued from this one would draw old data into the new page (and its
+       _trendRendered flag would then block the right chart). */
+    var boxes = trend.series.map(function (_, i) { return document.getElementById('trend-chart-' + i); });
     function renderOne(idx) {
         var s = trend.series[idx];
-        var el = document.getElementById('trend-chart-' + idx);
+        var el = boxes[idx];
         if (!el || el._trendRendered || !s) return;
         el._trendRendered = true;
 
@@ -129,17 +134,33 @@
             hovermode: 'x unified'
         };
 
-        _plotlyRender(el, statTraces.concat([trace]), layout,
-                      { responsive: true, displayModeBar: false });
+        return _plotlyRender(el, statTraces.concat([trace]), layout,
+                             { responsive: true, displayModeBar: false });
     }
 
-    for (var i = 0; i < Math.min(EAGER, trend.series.length); i++) renderOne(i);
+    /* QA F6: ONE chart per task. Every _plotlyRender promise resolves in the
+       same microtask checkpoint once Plotly is loaded, so the twelve eager
+       charts (and every IntersectionObserver burst) landed as ONE long task
+       -- 4-6 s with the page frozen and nothing on screen. The pump yields
+       to the browser between charts; it stops when this fragment is gone. */
+    var queue = [], pumping = false;
+    function pump() {
+        if (!queue.length) { pumping = false; return; }
+        pumping = true;
+        var idx = queue.shift();
+        if (!boxes[idx] || !boxes[idx].isConnected) { queue.length = 0; pumping = false; return; }
+        var next = function () { setTimeout(pump, 0); };
+        Promise.resolve(renderOne(idx)).then(next, next);
+    }
+    function enqueue(idx) { queue.push(idx); if (!pumping) pump(); }
+
+    for (var i = 0; i < Math.min(EAGER, trend.series.length); i++) enqueue(i);
     if (trend.series.length > EAGER && typeof IntersectionObserver !== 'undefined') {
         var io = new IntersectionObserver(function (entries) {
             entries.forEach(function (en) {
                 if (!en.isIntersecting) return;
                 io.unobserve(en.target);
-                renderOne(parseInt(en.target.getAttribute('data-trend-idx'), 10));
+                enqueue(parseInt(en.target.getAttribute('data-trend-idx'), 10));
             });
         }, { rootMargin: '600px 0px' });
         for (var j = EAGER; j < trend.series.length; j++) {
@@ -147,7 +168,7 @@
             if (box) { box.setAttribute('data-trend-idx', String(j)); io.observe(box); }
         }
     } else {
-        for (var k = EAGER; k < trend.series.length; k++) renderOne(k);
+        for (var k = EAGER; k < trend.series.length; k++) enqueue(k);
     }
     // The charts follow their container (docs/122): one observer on the
     // metric-trends section; unobserveWithin's choke-point sweep reclaims it

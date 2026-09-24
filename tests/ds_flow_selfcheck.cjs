@@ -42,12 +42,14 @@ const SERVER_BAND = '<span class="ds-digest-date">2026-08-10</span>'
   + '<span class="ds-digest-item">2 runs</span>'
   + '<button class="ds-help-example ds-digest-bad" data-example="is:failed">1 failed</button>';
 
-function boot(preSort) {
+function boot(preSort, extra) {
+  const x = extra || {};
   const dom = new JSDOM(`<!doctype html><html><body>
       <div class="ds-digest-band">${SERVER_BAND}</div>
       <div class="ds-search-wrap"><input type="search" id="dataset-search"></div>
       <span id="dataset-filter-count"></span>
-      <script id="ds-rows-data" data-now="1000">${JSON.stringify(ROWS)}</script>
+      ${x.html || ''}
+      <script id="ds-rows-data" data-now="1000" data-view="${x.view || 'datasets'}">${JSON.stringify(ROWS)}</script>
       <div id="datasets-scroll" style="height:400px">
         <table><tbody id="datasets-tbody"></tbody></table>
       </div>
@@ -78,7 +80,10 @@ function boot(preSort) {
   w.setInterval = rec; global.setInterval = rec;
   const stub = () => new Promise(() => {});
   w.fetch = stub; global.fetch = stub;
-  w.htmx = { ajax: () => Promise.resolve() }; global.htmx = w.htmx;
+  w.__ajax = [];
+  w.htmx = { ajax: (m, url, o) => { w.__ajax.push({ m: m, url: url, o: o }); return Promise.resolve(); } };
+  global.htmx = w.htmx;
+  if (x.tags) w._selectedTags = new Set(x.tags);
   w.eval(fs.readFileSync(SRC, 'utf8'));
   w.DatasetVirtual.init();
   return w;
@@ -187,6 +192,58 @@ function tick(ms) { return new Promise(r => setTimeout(r, ms || 30)); }
     btn.dispatchEvent(ev);
     ok(!ev.defaultPrevented, 'audit: Enter belongs to the focused control, not the row nav');
     btn.blur();
+  }
+
+  // ── QA datasets-r2-09: "Clear all filters" clears EVERY filter ───────────
+  // A folder chip + a date tab only another folder has = an empty table, and
+  // the empty state's own button left both (and any tag) in place.
+  for (const view of ['datasets', 'collections']) {
+    const html = `<div id="folder-filter-grid">
+        <span class="folder-chip active" data-folder-key="">All</span>
+        <span class="folder-chip" data-folder-key="f1">f1</span>
+        <span class="folder-chip" data-folder-key="kh">kh</span></div>
+      <div id="tag-filter-grid"><span class="tag-chip active" data-tag="">All</span>
+        <span class="tag-chip" data-tag="flagged">flagged</span></div>
+      <input type="hidden" id="ds-active-date" name="date" value="2026-08-10">
+      <div id="datasets-empty" style="display:none">No runs <button>Clear all filters</button></div>`;
+    const w = boot(null, { html: html, view: view });
+    await tick();
+    const doc = w.document;
+    w.DatasetVirtual.toggleFolder('kh');                       // a folder with no runs on this date
+    doc.querySelectorAll('#folder-filter-grid .folder-chip').forEach(c =>
+      c.classList.toggle('active', c.getAttribute('data-folder-key') === 'kh'));
+    ok(doc.getElementById('datasets-empty').style.display === '',
+       `[${view}] fixture: the folder chip empties the table`);
+    w._selectedTags = new Set(['flagged']);
+    const tagSet = w._selectedTags;                           // app.js holds THIS Set
+    doc.querySelectorAll('#tag-filter-grid .tag-chip').forEach(c =>
+      c.classList.toggle('active', c.getAttribute('data-tag') === 'flagged'));
+    w.clearDatasetFilters();
+    ok(w.DatasetVirtual.folderFilterKeys().length === 0,
+       `[${view}] Clear all clears the folder filter (${w.DatasetVirtual.folderFilterKeys()})`);
+    const activeFolders = Array.from(doc.querySelectorAll('#folder-filter-grid .folder-chip.active'))
+      .map(c => c.getAttribute('data-folder-key'));
+    ok(activeFolders.join(',') === '', `[${view}] and only the "All" folder chip is lit (${activeFolders})`);
+    ok(tagSet.size === 0 && w._selectedTags === tagSet,
+       `[${view}] the tag selection is cleared IN PLACE (size ${tagSet.size})`);
+    const activeTags = Array.from(doc.querySelectorAll('#tag-filter-grid .tag-chip.active'))
+      .map(c => c.getAttribute('data-tag'));
+    ok(activeTags.join(',') === '', `[${view}] and only the "All" tag chip is lit (${activeTags})`);
+    ok(doc.getElementById('ds-active-date').value === '', `[${view}] the date tab is cleared`);
+    const want = view === 'collections' ? '/collections' : '/datasets';
+    const a = w.__ajax[w.__ajax.length - 1];
+    ok(w.__ajax.length === 1 && a.m === 'GET' && a.url === want
+       && a.o.target === '#table-pane' && a.o.source === '#table-pane',
+       `[${view}] the page is re-read without the date, no search, on its own view (${JSON.stringify(w.__ajax)})`);
+    ok(doc.getElementById('datasets-empty').style.display === 'none',
+       `[${view}] the rows it holds come back at once`);
+  }
+  {
+    // no date tab active: nothing to re-read, the client-side clear is enough
+    const w = boot(null, { html: '<input type="hidden" id="ds-active-date" value="">' });
+    await tick();
+    w.clearDatasetFilters();
+    ok(w.__ajax.length === 0, 'with no date tab active Clear all issues no request');
   }
 
   process.exit(fails ? 1 : 0);

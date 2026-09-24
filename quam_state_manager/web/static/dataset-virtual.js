@@ -901,7 +901,11 @@
             _digestOrig = band.innerHTML;
             _digestOrigEl = band;
         }
-        if (!_filtersActive()) {
+        var filtered = _filtersActive();
+        // QA F2: the server band describes the PAGE-LOAD rows. Once a delta
+        // poll changed them (a run finished, a new day began) it is stale --
+        // recompute over the rows the table holds, filter or not.
+        if (!filtered && !state.digestLive) {
             if (band.getAttribute('data-filtered') === '1') {
                 band.innerHTML = _digestOrig;
                 band.removeAttribute('data-filtered');
@@ -929,7 +933,8 @@
             }
         }
         while (band.firstChild) band.removeChild(band.firstChild);
-        band.setAttribute('data-filtered', '1');
+        if (filtered) band.setAttribute('data-filtered', '1');
+        else band.removeAttribute('data-filtered');
         function span(cls, text) {
             var el = document.createElement('span');
             el.className = cls; el.textContent = text;
@@ -962,7 +967,7 @@
         // audit: the band summarises the LATEST DAY of the filtered set while
         // the count beside it counts ALL matches — say exactly that, or the
         // two numbers read as a contradiction.
-        band.appendChild(span('ds-digest-filtered muted',
+        if (filtered) band.appendChild(span('ds-digest-filtered muted',
             state.visible.length > total
                 ? '(latest day of ' + state.visible.length + ' filtered runs)'
                 : '(filtered set)'));
@@ -1190,12 +1195,14 @@
         // (pointerdown, no click) keeps pressActive=true and freezes the virtual window
         // until the 1500ms safety timeout, so the user scrolls into blank spacer rows.
         clearPress();
-        // Reaching the top of the list acknowledges APPLIED arrivals — the
+        // Reaching an arrival's ROW acknowledges APPLIED arrivals — the
         // pill's own click performs exactly this scroll, so a user who gets
         // there themselves has seen the same thing (docs/104 #3). Held runs
-        // are NOT acknowledged: they are not in the table yet.
+        // are NOT acknowledged: they are not in the table yet. (QA F2: was
+        // "reaching the top of the list", which is not where new runs sort
+        // once run ids from several folders are mixed.)
         if (state.arrivalUids && state.arrivalUids.size && !state.pendingDelta &&
-            state.scrollEl && listMetrics().top <= ROW_HEIGHT) {
+            state.scrollEl && _arrivalOnScreen()) {
             state.arrivalUids.clear();
             _updateNewPill();
         }
@@ -1643,6 +1650,7 @@
             if (headSmall) headSmall.textContent = headSmall.textContent.replace(/^\(\d+ runs/, '(' + live + ' runs');
         }
         if (changed) {
+            state.digestLive = true;   // QA F2: the server digest band is stale now
             _rebuildFitKeys();     // a delta may introduce a brand-new fit key / qubit
             _rebuildParamFacets(); // …or a brand-new param key/value facet
             applyFilters();        // re-sorts (sm is on the merged rows → in-slot placement)
@@ -1710,7 +1718,7 @@
         el.id = 'ds-new-pill';
         el.className = 'ds-new-pill';
         el.hidden = true;
-        el.title = 'Show the new runs — applies the held update and scrolls to the top';
+        el.title = 'Show the new runs — applies the held update and scrolls to the first of them';
         el.addEventListener('click', _onNewPillClick);
         var page = state.scrollEl.closest ? state.scrollEl.closest('.datasets-page') : null;
         var host = page && (page.querySelector('.ds-digest-band') ||
@@ -1729,11 +1737,58 @@
         el.hidden = false;
     }
 
+    // QA F2: where the first arrival sits in the CURRENT order. The pill
+    // assumed position 0 (id desc = newest first), but run ids are
+    // per-folder: with several folders shown, today's run of a young folder
+    // sorts below an old folder's big ids (and a user sort can put it
+    // anywhere). -1 = no arrival is in the visible (filtered) set.
+    function _firstArrivalPos() {
+        if (!state.arrivalUids || !state.arrivalUids.size) return -1;
+        for (var i = 0; i < state.visible.length; i++) {
+            var r = state.rows[state.visible[i]];
+            if (r && state.arrivalUids.has(r.uid)) return i;
+        }
+        return -1;
+    }
+
+    // Whether any arrival's row is inside the scroller's viewport now.
+    function _arrivalOnScreen() {
+        var m = listMetrics();
+        if (state.scrollEl.clientHeight > 0 && m.viewport <= 0) return false;   // list below the fold
+        var from = Math.floor(m.top / ROW_HEIGHT);
+        var to = Math.min(state.visible.length,
+                          Math.ceil((m.top + Math.max(m.viewport, ROW_HEIGHT)) / ROW_HEIGHT));
+        for (var i = Math.max(0, from); i < to; i++) {
+            var r = state.rows[state.visible[i]];
+            if (r && state.arrivalUids.has(r.uid)) return true;
+        }
+        return false;
+    }
+
+    // Scroll so list position `pos` sits one row below the sticky header.
+    // Measured from the tbody's UNCLAMPED offset (listMetrics clamps at 0,
+    // wrong while the list starts below the fold of the one-scroller pane).
+    // A row already on screen from the very top keeps the old scroll-to-top,
+    // so a single-folder page lands exactly where it always did.
+    function _scrollToListPos(pos) {
+        var el = state.scrollEl, tb = state.tbody;
+        if (!el || !tb) return;
+        var listOff = el.scrollTop + (tb.getBoundingClientRect().top - el.getBoundingClientRect().top);
+        if (listOff + (pos + 1) * ROW_HEIGHT <= el.clientHeight) { el.scrollTop = 0; return; }
+        var thead = tb.parentNode && tb.parentNode.querySelector ? tb.parentNode.querySelector('thead') : null;
+        var headH = thead ? thead.getBoundingClientRect().height : 0;
+        el.scrollTop = Math.max(0, Math.round(listOff + pos * ROW_HEIGHT - headH - ROW_HEIGHT));
+        scheduleRender();
+    }
+
     function _onNewPillClick() {
         flushPendingNow();                 // held runs land NOW (explicit request)
+        var pos = _firstArrivalPos();      // read BEFORE the count clears (QA F2)
         if (state.arrivalUids) state.arrivalUids.clear();
         _updateNewPill();
-        if (state.scrollEl) state.scrollEl.scrollTop = 0;   // where new runs sort (newest-first default)
+        if (!state.scrollEl) return;
+        if (pos < 0) { state.scrollEl.scrollTop = 0; return; }   // filtered out: the old top
+        _scrollToListPos(pos);             // where the new runs ACTUALLY sort
     }
 
     // docs/126 ⑥: Esc or a click anywhere else DISMISSES the announcement
@@ -2289,11 +2344,37 @@
         document.querySelectorAll('#exp-filter-grid .exp-chip').forEach(function (c) {
             c.classList.toggle('active', (c.getAttribute('data-exp') || '') === '');
         });
+        // QA datasets-r2-09: "Clear all" also clears the folder chips, the
+        // tags and the date tab -- a folder + a date only another folder has
+        // was an empty table this button could not recover. Every set is
+        // cleared IN PLACE: the folder set is the swap-surviving
+        // _persistedFolderFilter alias, the tag set is app.js's own Set.
+        if (state.folderFilter) state.folderFilter.clear();
+        document.querySelectorAll('#folder-filter-grid .folder-chip').forEach(function (c) {
+            c.classList.toggle('active', (c.getAttribute('data-folder-key') || '') === '');
+        });
+        if (window._selectedTags instanceof Set) window._selectedTags.clear();
+        document.querySelectorAll('#tag-filter-grid .tag-chip').forEach(function (c) {
+            c.classList.toggle('active', (c.getAttribute('data-tag') || '') === '');
+        });
         _buildQubitPicker();
         _buildPairPicker();
         _buildSortBanner();   // reflect the cleared param facets in the badges
         markInteraction();
         applyFilters();
+        // The date tab is SERVER-side (the payload holds only that day's runs):
+        // re-read this page without it. No `q` (the tab's own link carries the
+        // search this button just cleared), `source` so htmx does not queue it
+        // on <body>, and the path follows the view (a Collections user stays
+        // on Collections).
+        var dateInp = document.getElementById('ds-active-date');
+        if (dateInp && dateInp.value && window.htmx && typeof window.htmx.ajax === 'function') {
+            dateInp.value = '';
+            var dataEl = document.getElementById('ds-rows-data');
+            var view = dataEl ? dataEl.getAttribute('data-view') : '';
+            window.htmx.ajax('GET', view === 'collections' ? '/collections' : '/datasets',
+                             { source: '#table-pane', target: '#table-pane', swap: 'innerHTML' });
+        }
     };
     function _restoreSortCollapsed() {
         // FOLDED by default (customer, 2026-09-11). Absent preference = folded;
@@ -2421,6 +2502,7 @@
         // bookkeeping resets (the old pill node died with the swapped pane).
         state.arrivalUids = new Set();
         state.flashUids = new Map();
+        state.digestLive = false;   // QA F2: a fresh render's band is current
         // Poll interval (docs/104 #3, tightened by docs/132): a run that
         // just finished must appear near-real-time (customer), so the
         // DEFAULT is 5s — a tick is ~3.5ms server-side (docs/103) and

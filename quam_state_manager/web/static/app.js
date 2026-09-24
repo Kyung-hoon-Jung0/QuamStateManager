@@ -1759,8 +1759,16 @@ window.setFontSize = function(size) {
                                  : 'Open the diff of these ' + n + ' runs');
         }
         var trend = document.querySelector('#compare-form .btn-trend');
-        if (trend) trend.textContent = n > 1
-            ? 'Trend Tracker (' + n + ')' : 'Trend Tracker';
+        if (trend) {
+            trend.textContent = n > 1
+                ? 'Trend Tracker (' + n + ')' : 'Trend Tracker';
+            // QA F3: the same floor as Compare Selected -- below two ticks a
+            // press could only be refused (the refusal used to replace the
+            // whole table pane).
+            trend.disabled = n < 2;
+            trend.title = n < 2 ? 'Tick 2–5 runs in the list below to plot them over time'
+                                : 'Plot these ' + n + ' runs over time';
+        }
         var clr = document.getElementById('compare-clear');
         if (clr) clr.hidden = n === 0;
         // docs/161: the "what are these boxes for" line shows only while
@@ -14329,7 +14337,13 @@ window.loadTrendData = function() {
         });
         if (keys.length) url += '&folders=' + encodeURIComponent(keys.join(','));
     }
-    htmx.ajax('GET', url, {target: '#trends-content', swap: 'innerHTML'});
+    // QA F6: the request's SOURCE is the box it fills, so htmx marks THAT box
+    // .htmx-request while it runs (style.css: "Loading trends..."). Without a
+    // source htmx marked <body>, and the old "Select an experiment" text
+    // stayed up for the whole request. htmx's own request lifecycle clears
+    // it -- a promise would not: a second pick while one is in flight is
+    // QUEUED and its promise resolves at once.
+    htmx.ajax('GET', url, {source: '#trends-content', target: '#trends-content', swap: 'innerHTML'});
 };
 
 // Trends folder chips: multi-select among same-chip folders (default single).

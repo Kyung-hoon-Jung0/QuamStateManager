@@ -66,12 +66,22 @@ const ROWS = [{ id: 1, exp: 'test_experiment', date: '2026-08-05', time: '01:00:
                 status: 'successful', dur: 1, note: '', parent: null, hs: false,
                 sm: {}, pm: {}, f: 'fold1' }];
 
-function makeDom() {
-    const dom = new JSDOM(`<!doctype html><html><body>
-        <script id="ds-rows-data" data-now="1000">${JSON.stringify(ROWS)}</script>
+function makeDom(page) {
+    // `page` (QA F2): the real page shape -- #table-pane (the one scroller)
+    // around .datasets-page with a server digest band, and its own rows.
+    const inner = page
+        ? `<div id="table-pane"><div class="datasets-page">
+             <div class="ds-digest-band">${page.band}</div>
+             <script id="ds-rows-data" data-now="1000">${JSON.stringify(page.rows)}</script>
+             <div id="datasets-scroll"><table><thead id="datasets-thead"></thead>
+               <tbody id="datasets-tbody"></tbody></table></div>
+           </div></div>`
+        : `<script id="ds-rows-data" data-now="1000">${JSON.stringify(ROWS)}</script>
         <div id="datasets-scroll" style="height:400px">
           <table><tbody id="datasets-tbody"></tbody></table>
-        </div>
+        </div>`;
+    const dom = new JSDOM(`<!doctype html><html><body>
+        ${inner}
       </body></html>`, { url: 'http://localhost/datasets', pretendToBeVisual: true });
     const w = dom.window;
     w.requestAnimationFrame = w.requestAnimationFrame || function (cb) { return setTimeout(cb, 0); };
@@ -95,8 +105,8 @@ function makeDom() {
  * ``window`` through Node's global scope, so a module that assigns
  * ``window.X = ...`` at top level needs it bound before the eval.
  */
-function boot(fetchImpl, uiConfig) {
-    const dom = makeDom();
+function boot(fetchImpl, uiConfig, page) {
+    const dom = makeDom(page);
     const w = dom.window;
     global.window = w;
     global.document = w.document;
@@ -473,6 +483,120 @@ function jsonResponse(body, status) {
         ok(oldTr != null && !oldTr.classList.contains('ds-row-new'), 'the backfilled row does not flash');
         ok(newTr != null && newTr.classList.contains('ds-row-new'), 'the new row does');
         ok(note.hidden === true, 'a complete scan hides the "still indexing" note');
+    }
+
+    // ------------------------------------------------------------------
+    // 14. QA F2: with several folders the default id sort interleaves them
+    //     -- run ids are per-folder, so a young folder's run from TODAY
+    //     sorts below an old folder's big ids. The pill must scroll to where
+    //     the arrival actually sits (it used to set scrollTop 0), a scroll at
+    //     the top must not acknowledge an arrival that is not on screen, and
+    //     the digest band must follow the applied delta (it stayed on the
+    //     page-load day).
+    //     Geometry is stubbed (jsdom has no layout): #table-pane is 400 px
+    //     high and the list starts 100 px down it.
+    // ------------------------------------------------------------------
+    {
+        const mk = (f, id, date, time) => ({ id, exp: 'rabi', date, time, q: ['q1'], p: [],
+            oc: {}, metric: '', bm: false, tags: [], status: 'successful', dur: 1, note: '',
+            parent: null, hs: false, sm: {}, pm: {}, f });
+        const rows = [];
+        for (let i = 30; i >= 10; i--) rows.push(mk('kh', i, '2026-08-01', '01:00:00'));   // pos 0..20
+        rows.push(mk('kr', 4, '2026-08-02', '02:00:00'));
+        const BAND = '<span class="ds-digest-date">2026-08-02</span>'
+            + '<span class="ds-digest-item">1 run</span><span class="ds-digest-ok">all OK</span>';
+        const NEW_ROW = mk('kr', 5, '2026-08-20', '07:00:00');   // newest by far, id 5 -> pos 21
+        function geometry(w) {
+            const pane = w.document.getElementById('table-pane');
+            const tb = w.document.getElementById('datasets-tbody');
+            const g = { S: 0, writes: [] };
+            Object.defineProperty(pane, 'scrollTop', { configurable: true,
+                get: () => g.S, set: (v) => { g.S = v; g.writes.push(v); } });
+            Object.defineProperty(pane, 'clientHeight', { configurable: true, get: () => 400 });
+            pane.getBoundingClientRect = () => ({ top: 0, bottom: 400, left: 0, right: 900, width: 900, height: 400 });
+            tb.getBoundingClientRect = () => ({ top: 100 - g.S, bottom: 100 - g.S + 736, left: 0, right: 900, width: 900, height: 736 });
+            g.pane = pane; g.tb = tb;
+            return g;
+        }
+
+        // (a) a HELD arrival: the pill click scrolls to it, and it renders
+        {
+            const { w } = boot(() => jsonResponse({ updated: [NEW_ROW], vanished: [], now: 8000 }),
+                               undefined, { rows, band: BAND });
+            const g = geometry(w);
+            g.pane.dispatchEvent(new w.Event('scroll'));   // the user is active -> the delta is held
+            pump(w);
+            await wait(40);
+            const pill = w.document.getElementById('ds-new-pill');
+            ok(pill && pill.hidden === false && w.DatasetVirtual.getRow('kr:5') == null,
+               'F2 fixture: the kr:5 arrival is held and announced');
+            pill.click();
+            // kr:5 sorts at list position 21 (ids 30..10 of kh come first).
+            // One row of headroom: 100 + 21*32 - 32 = 740.
+            ok(g.writes.length > 0 && g.writes[g.writes.length - 1] === 740,
+               `the pill scrolls to where the arrival sorts (scrollTop ${g.writes[g.writes.length - 1]}, want 740 -- 0 was the bug)`);
+            await wait(120);
+            ok(g.tb.querySelector('tr[data-id="kr:5"]') != null,
+               'the arrival row is rendered at the new scroll position');
+        }
+
+        // (b) an IDLE-applied arrival: the top of the list is not where it is
+        {
+            const { w } = boot(() => jsonResponse({ updated: [NEW_ROW], vanished: [], now: 8000 }),
+                               undefined, { rows, band: BAND });
+            const g = geometry(w);
+            pump(w);
+            await wait(40);
+            ok(w.DatasetVirtual.getRow('kr:5') != null, 'F2 fixture: the idle poll applied kr:5');
+            const pill = w.document.getElementById('ds-new-pill');
+            const band = w.document.querySelector('.ds-digest-band');
+            ok(pill && pill.hidden === false, 'the applied arrival is announced');
+            ok(band.querySelector('.ds-digest-date').textContent === '2026-08-20'
+               && band.querySelector('.ds-digest-item').textContent === '1 run',
+               `the digest band follows the applied delta to the new day (got "${band.textContent}")`);
+            ok(!band.querySelector('.ds-digest-filtered') && !band.hasAttribute('data-filtered'),
+               'with no filter the recomputed band carries no "(filtered set)" suffix');
+            g.S = 0;
+            g.pane.dispatchEvent(new w.Event('scroll'));
+            ok(pill.hidden === false,
+               'a scroll at the TOP does not acknowledge an arrival that sorts at row 21');
+            g.S = 740;
+            g.pane.dispatchEvent(new w.Event('scroll'));
+            ok(pill.hidden === true, 'scrolling to the arrival row acknowledges it');
+        }
+
+        // (d) an arrival already on screen from the very top keeps the old
+        //     scroll-to-top (the header, digest and filters stay in view)
+        {
+            const TOP_ROW = mk('kr', 40, '2026-08-20', '08:00:00');   // id 40 > every kh id -> pos 0
+            const { w } = boot(() => jsonResponse({ updated: [TOP_ROW], vanished: [], now: 8000 }),
+                               undefined, { rows, band: BAND });
+            const g = geometry(w);
+            g.S = 500;                                     // the user is down the page
+            g.pane.dispatchEvent(new w.Event('scroll'));   // active -> held
+            pump(w);
+            await wait(40);
+            w.document.getElementById('ds-new-pill').click();
+            ok(g.writes[g.writes.length - 1] === 0,
+               `a row that shows from the top lands at scrollTop 0 (got ${g.writes[g.writes.length - 1]})`);
+        }
+
+        // (c) a filter still gets the FILTERED band (and its suffix)
+        {
+            const { w } = boot(() => jsonResponse({ updated: [NEW_ROW], vanished: [], now: 8000 }),
+                               undefined, { rows, band: BAND });
+            geometry(w);
+            w.DatasetVirtual.toggleFolder('kh');
+            pump(w);
+            await wait(40);
+            const band = w.document.querySelector('.ds-digest-band');
+            ok(band.getAttribute('data-filtered') === '1' && !!band.querySelector('.ds-digest-filtered')
+               && band.querySelector('.ds-digest-date').textContent === '2026-08-01',
+               `a folder filter keeps the filtered digest over ITS rows (got "${band.textContent}")`);
+            w.DatasetVirtual.toggleFolder('');
+            ok(band.querySelector('.ds-digest-date').textContent === '2026-08-20' && !band.hasAttribute('data-filtered'),
+               'clearing it shows the live band, not the stale server one');
+        }
     }
 
     if (failures) {

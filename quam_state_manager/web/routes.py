@@ -19104,6 +19104,17 @@ def _filter_tree(tree: dict, text: str) -> dict:
     return result
 
 
+def _filtered_render_tree(full: dict, text: str) -> dict:
+    """QA datasets-r2-10: the FILTERED tree with every workspace root kept
+    (no match -> ``[]``). ``_filter_tree`` drops a root that has no matching
+    run, so a filter matching nothing rendered "No workspace roots added
+    yet." and took every root's header and x with it (it read as "my folders
+    are gone"). A filter narrows runs; it never makes a folder look removed.
+    """
+    ft = _filter_tree(full, text)
+    return {r: ft.get(r, []) for r in (full or {})}
+
+
 # docs/126 #20 — per-workspace memo for the UNFILTERED nested render model.
 # build_nested_tree over a 2,600-run root costs ~200 ms and the sidebar filter
 # re-renders the whole tree on every keystroke; the unfiltered build (the
@@ -19288,7 +19299,7 @@ def workspace_tree():
             fmemo.pop(fkey); fmemo[fkey] = hit    # LRU touch
             return hit
         html = render_template("_sidebar_tree.html",
-                               **_tree_render_ctx(_filter_tree(ws.tree, name_filter)),
+                               **_tree_render_ctx(_filtered_render_tree(ws.tree, name_filter)),
                                name_filter=name_filter)
         fmemo[fkey] = html
         while len(fmemo) > 32:
@@ -19563,9 +19574,9 @@ def workspace_refresh():
         or request.args.get("name", "").strip()
     tree = ws.tree if ws else {}
     if name_filter:
-        tree = _filter_tree(tree, name_filter)
+        tree = _filtered_render_tree(tree, name_filter)
         return render_template("_sidebar_tree.html",
-                               **_tree_render_ctx(tree))
+                               **_tree_render_ctx(tree), name_filter=name_filter)
     # docs/126 r3: a no-change rescan keeps the version, so the memoized
     # unfiltered HTML is still valid — the Refresh round-trip pays only the
     # scan itself, not a 450 KB re-render of an identical tree.
@@ -20463,12 +20474,23 @@ def chip_compare_diff():
 def trend():
     """Show the trend property picker after selecting experiments."""
     paths_raw = request.form.getlist("paths")
+
+    def _refuse(msg):
+        # QA F3: the button targets #table-pane, so a bare _status render
+        # REPLACED the table (and its x then left an empty pane). Refuse the
+        # way /compare does: keep the pane, say it as a toast.
+        resp = make_response(render_template("_status.html", message=msg, level="warning"))
+        if _is_htmx():
+            resp.headers["HX-Reswap"] = "none"
+            resp.headers["HX-Trigger"] = json.dumps({"sm:toast": {"message": msg, "level": "warning"}})
+        return resp
+
     if len(paths_raw) < 2:
-        return render_template("_status.html", message="Select at least 2 experiments", level="warning")
+        return _refuse("Select at least 2 experiments -- tick two or more runs in the list to trend them.")
 
     stores, _contexts, labels, all_qubit_names = _load_compare_stores(paths_raw)
     if len(stores) < 2:
-        return render_template("_status.html", message="Need at least 2 valid stores", level="warning")
+        return _refuse("Need at least 2 valid stores -- fewer than two of the ticked runs could be read.")
 
     template = "_trend_picker.html" if _is_htmx() else "compare.html"
     return render_template(

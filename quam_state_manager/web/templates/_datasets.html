@@ -34,7 +34,7 @@
 </div>
 {% endif %}
 <div class="table-header-row">
-    <h2 style="white-space:nowrap">{{ page_title }} <small class="muted">({{ total }} runs{% if stats %}, {{ stats.experiment_types }} types, {{ stats.unique_qubits | length }} qubits{% endif %})</small>
+    <h2 class="ds-head-title">{{ page_title }} <small class="muted">({{ total }} runs{% if stats %}, {{ stats.experiment_types }} types, {{ stats.unique_qubits | length }} qubits{% endif %})</small>
         {# docs/126 ⑥ — the times' basis, stated where they are read: SM shows
            the run folders' own timestamps verbatim (the acquisition PC's
            local clock) and never converts them. #}
@@ -44,7 +44,7 @@
            indexed. Say so; dataset-virtual.js hides this on the first delta
            poll that reports a complete scan. #}
         {% if scan_partial %}<small class="muted ds-scan-note" id="ds-scan-note" title="The run index is still being built for this folder — older runs appear as the scan continues. Nothing to do.">&#8987; still indexing runs&hellip;</small>{% endif %}</h2>
-    <div style="display:flex;gap:.5rem;align-items:center;flex:1;min-width:0">
+    <div class="ds-head-controls">
         <div class="table-filter ds-search-wrap" style="flex:1;position:relative">
             {# `data-preset` is the ARRIVAL marker, not a copy of the value: the
                client clears leftover picker/facet ticks only when a swap brings

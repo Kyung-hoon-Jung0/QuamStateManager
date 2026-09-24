@@ -47,7 +47,7 @@ def _js() -> str:
 
 def _screen_shell_block() -> str:
     css = _css()
-    m = re.search(r"@media screen \{\s*body:has\(> \.app-layout\) \{", css)
+    m = re.search(r"@media screen \{\s*body\.app-shell \{", css)
     assert m, "the flex-column app shell block is missing"
     # the block ends at the first line that is a bare closing brace
     end = re.search(r"\n\}", css[m.start():])
@@ -57,7 +57,7 @@ def _screen_shell_block() -> str:
 class TestTheShellCannotOverflow:
     def test_body_is_a_viewport_high_flex_column_that_never_scrolls(self):
         blk = _screen_shell_block()
-        body = blk.split("body:has(> .app-layout) {", 1)[1].split("}", 1)[0]
+        body = blk.split("body.app-shell {", 1)[1].split("}", 1)[0]
         assert "height: 100vh" in body
         assert "overflow: hidden" in body
         assert "display: flex" in body and "flex-direction: column" in body
@@ -65,12 +65,12 @@ class TestTheShellCannotOverflow:
     def test_the_layout_takes_what_is_left(self):
         blk = _screen_shell_block()
         assert re.search(
-            r"body:has\(> \.app-layout\) > \.app-layout \{[^}]*flex: 1 1 auto;[^}]*min-height: 0",
+            r"body\.app-shell > \.app-layout \{[^}]*flex: 1 1 auto;[^}]*min-height: 0",
             blk)
 
     def test_everything_above_the_layout_keeps_its_own_height(self):
         blk = _screen_shell_block()
-        assert re.search(r"body:has\(> \.app-layout\) > :not\(\.app-layout\) \{[^}]*flex: 0 0 auto", blk)
+        assert re.search(r"body\.app-shell > :not\(\.app-layout\) \{[^}]*flex: 0 0 auto", blk)
 
     def test_the_panels_stop_trusting_the_published_number(self):
         """#sidebar / #main still carry ``calc(100vh - var(--topbar-height))``
@@ -78,15 +78,31 @@ class TestTheShellCannotOverflow:
         publish would cap them again."""
         blk = _screen_shell_block()
         assert re.search(
-            r"body:has\(> \.app-layout\) #sidebar,\s*body:has\(> \.app-layout\) #main \{[^}]*max-height: none",
+            r"body\.app-shell #sidebar,\s*body\.app-shell #main \{[^}]*max-height: none",
             blk)
 
     def test_print_is_left_alone(self):
         css = _css()
-        i = css.find("body:has(> .app-layout) {")
+        i = css.find("body.app-shell {")
         head = css[:i]
         assert head.rstrip().endswith("@media screen {"), \
             "the shell must be screen-only: a printed page has to flow"
+
+    def test_the_shell_body_carries_the_class(self):
+        """QA F6: the shell is selected by a class base.html renders, so the
+        rule still reaches exactly the body that holds .app-layout."""
+        base = (_ROOT / "quam_state_manager" / "web" / "templates" / "base.html").read_text(encoding="utf-8")
+        assert re.search(r'<body class="app-shell"', base)
+        assert base.index('<body class="app-shell"') < base.index('<div class="app-layout">')
+
+    def test_the_shell_is_not_selected_by_an_ancestor_has(self):
+        """QA F6: `body:has(> .app-layout)` made every forced layout read a
+        near-full-document style recalc -- choosing a Trends experiment froze
+        the page 5.7-6.2 s (12 Plotly charts, ~21 getBoundingClientRect each),
+        about 1 s with the class selector (real Chrome, 08_qubit_spectroscopy,
+        139 runs)."""
+        assert not re.search(r"(?m)^\s*body:has\(", _css()), \
+            "an ancestor-position body:has() rule is back"
 
 
 class TestTheBarHoldsItsHeight:

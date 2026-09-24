@@ -2160,16 +2160,20 @@ body.exp-list-compact .entry-name wbr { display: none; }
    customer's "the whole screen shakes". Here the layout takes whatever height
    is left, in the same layout pass as the bar, so no scrollbar can ever be
    created. Scoped to screen (a printed page must still flow) and to a body
-   that actually holds the shell. */
+   that actually holds the shell -- base.html's <body class="app-shell">.
+   QA F6: NOT `body:has(> .app-layout)`. A :has() in ancestor position makes
+   every forced layout read (Plotly measures text with getBoundingClientRect
+   ~21 times per chart) a near-full-document style recalc: choosing a Trends
+   experiment froze the page 5.7-6.2 s, ~1 s without it (real Chrome). */
 @media screen {
-    body:has(> .app-layout) {
+    body.app-shell {
         height: 100vh; overflow: hidden;
         display: flex; flex-direction: column;
     }
-    body:has(> .app-layout) > :not(.app-layout) { flex: 0 0 auto; }
-    body:has(> .app-layout) > .app-layout { flex: 1 1 auto; min-height: 0; }
-    body:has(> .app-layout) #sidebar,
-    body:has(> .app-layout) #main { max-height: none; min-height: 0; }
+    body.app-shell > :not(.app-layout) { flex: 0 0 auto; }
+    body.app-shell > .app-layout { flex: 1 1 auto; min-height: 0; }
+    body.app-shell #sidebar,
+    body.app-shell #main { max-height: none; min-height: 0; }
 }
 
 #content-area {
@@ -6217,6 +6221,18 @@ table.h5-vars-table tr.h5-var-selected .btn-sm { background: var(--pico-primary)
 .ds-compare-bar[data-state="ready"] .ds-compare-msg-ready,
 .ds-compare-bar[data-state="over"]  .ds-compare-msg-over   { display: inline; }
 
+/* QA F4: the Datasets title row WRAPS (docs/15: "It wraps on narrow
+   screens") instead of pushing search / ? / Properties / Rescan past the
+   pane. The controls had `flex:1; min-width:0` = a ZERO basis, so flex
+   line-breaking always found "room" beside the nowrap title and squeezed
+   them to ~30 px; a real basis lets them drop to their own full-width line
+   when less than that is free. 24rem still fits beside the title at 1920.
+   The title wraps only BETWEEN its segments (count, tz note, scan note). */
+.ds-head-controls { display: flex; gap: .5rem; align-items: center; flex: 1 1 24rem; min-width: 0; }
+.ds-head-title > small { white-space: nowrap; }
+/* The column menu opens leftward under its button: anchored left it stuck
+   ~30 px out of the pane even while closed (a sideways scrollbar). */
+.ds-colvis .bulk-colvis-menu { left: auto; right: 0; }
 /* Scoped-search help panel — anchored under #dataset-search.
    Opens on first focus per browser session + on ? icon click;
    closes only via the X button (no auto-dismiss on blur). */
@@ -6321,6 +6337,15 @@ table.h5-vars-table tr.h5-var-selected .btn-sm { background: var(--pico-primary)
 .trends-filters select { font-size: 0.88em; padding: 0.2rem 0.4rem; margin: 0; max-width: 280px; }
 .trends-section { margin-bottom: 1.5rem; }
 .trends-section h3 { font-size: 1em; margin-bottom: 0.5rem; }
+/* QA F6: Trends says it is loading (app.js loadTrendData makes this box the
+   request's source, so htmx marks it .htmx-request) -- Pico's spinner, and
+   words, instead of the old placeholder sitting there for seconds. */
+#trends-content.htmx-request { opacity: .6; transition: opacity .15s; }
+#trends-content.htmx-request::before {
+    content: 'Loading trends\2026'; display: block; margin-bottom: .5rem;
+    padding-left: 1.5em; color: var(--pico-muted-color);
+    background: var(--pico-icon-loading) no-repeat 0 50% / 1em auto;
+}
 
 /* Trend chart boxes */
 .trend-chart-box { margin-bottom: 0.75rem; }
