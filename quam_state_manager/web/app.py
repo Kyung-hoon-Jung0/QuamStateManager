@@ -164,6 +164,19 @@ _CSP = (
     "frame-ancestors 'self'"
 )
 
+# docs/206 (customer, 2026-09-25): the /workbench shell asks the Qualibrate
+# address whether anything is listening with a fetch() to ANOTHER localhost
+# port (8001 by default). `connect-src 'self'` forbids exactly that fetch, so
+# the browser rejected it, the shell concluded "Nothing answered at
+# http://127.0.0.1:8001", and the failure panel covered an iframe that had in
+# fact loaded (frame-src already allows localhost ports). Measured in real
+# Chrome with a stub server on 8001. Only the shell gets to connect to local
+# ports; every other page keeps connect-src 'self'.
+_CSP_WORKBENCH = _CSP.replace(
+    "connect-src 'self'; ",
+    "connect-src 'self' http://127.0.0.1:* http://localhost:*; ")
+assert _CSP_WORKBENCH != _CSP, "the connect-src directive moved; the workbench relaxation no longer applies"
+
 
 def _add_security_headers(resp):
     """Defense-in-depth response headers (Phase 4 §3, extended in Phase 5 §3.1).
@@ -178,7 +191,8 @@ def _add_security_headers(resp):
     """
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
     resp.headers.setdefault("Referrer-Policy", "same-origin")
-    resp.headers.setdefault("Content-Security-Policy", _CSP)
+    resp.headers.setdefault("Content-Security-Policy",
+                            _CSP_WORKBENCH if request.path == "/workbench" else _CSP)
     if request.headers.get("HX-Request") == "true":
         # Don't cache HTMX partials. Set, not setdefault — routes that
         # explicitly opt into caching would have to update after this
