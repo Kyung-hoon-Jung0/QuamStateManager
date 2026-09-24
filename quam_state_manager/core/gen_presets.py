@@ -40,6 +40,7 @@ import json
 import logging
 import re
 import threading
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -169,17 +170,40 @@ def _builtin_summary() -> dict:
 
 
 def slugify(name: str) -> str:
-    """Filesystem-safe slug: lowercase, runs of non-alphanumerics → ``-``.
+    """Filesystem-safe slug: NFC, lowercase, runs of non-alphanumerics → ``-``.
 
-    Raises ``ValueError`` when nothing survives (the same intent as
-    /mkdir's name sanitization — no separators, no dot-tricks, no NULs
-    are constructible).
+    Letters and digits of ANY script survive (QA generate-r2-15: an
+    ASCII-only slug refused "표준 설정" outright and stored "QA 프리셋" and
+    "QA 두번째" in one file). ``\\w`` minus ``_`` never matches a separator,
+    ``.``, ``:``, a quote, a wildcard or NUL, so traversal stays
+    unconstructible. Raises ``ValueError`` when nothing survives (the same
+    intent as /mkdir's name sanitization).
     """
-    slug = re.sub(r"[^a-z0-9]+", "-", str(name).lower()).strip("-")
+    name = unicodedata.normalize("NFC", str(name).lower())
+    slug = re.sub(r"[\W_]+", "-", name).strip("-")
     slug = slug[:60].strip("-")
     if not slug:
         raise ValueError("preset name has no usable characters")
     return slug
+
+
+def _ascii_slug(name: str) -> str:
+    """The pre-r2-15 slug (ASCII letters/digits only), or "" — where a preset
+    saved under a mixed name ("한국어 chip" → ``chip.json``) already lives."""
+    slug = re.sub(r"[^a-z0-9]+", "-", str(name).lower()).strip("-")
+    return slug[:60].strip("-")
+
+
+class PresetExists(FileExistsError):
+    """The slug's file exists and ``overwrite`` is false. ``existing_name`` is
+    the name stored IN that file — it can differ from the name being saved
+    ("Lab A" and "lab-a" share one slug), and the confirm must name the
+    preset that would really be replaced."""
+
+    def __init__(self, slug: str, existing_name: str | None = None):
+        super().__init__(slug)
+        self.slug = slug
+        self.existing_name = existing_name
 
 
 def _presets_dir(instance_path) -> Path:
@@ -253,7 +277,9 @@ def list_presets(instance_path) -> list:
             data = json.loads(p.read_text(encoding="utf-8"))
             sections = data.get("sections") or {}
             out.append({
-                "slug": p.stem,
+                # NFC: a filesystem that stores names decomposed (HFS+) must
+                # still pass load/delete's slug == slugify(slug) gate.
+                "slug": unicodedata.normalize("NFC", p.stem),
                 "name": data.get("name") or p.stem,
                 "created_at": data.get("created_at"),
                 "updated_at": data.get("updated_at"),
@@ -287,10 +313,20 @@ def load_preset(instance_path, slug):
         return None
 
 
+def _stored_name(path: Path):
+    """The NFC ``name`` stored in a preset file, or None (absent/corrupt)."""
+    try:
+        stored = json.loads(path.read_text(encoding="utf-8")).get("name")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return unicodedata.normalize("NFC", stored) if isinstance(stored, str) else None
+
+
 def save_preset(instance_path, name, sections, overwrite=False) -> dict:
     """Persist a preset; returns its summary. Raises ``ValueError`` on a
-    validation failure and ``FileExistsError`` when the slug exists and
-    ``overwrite`` is false (the route turns that into a confirm round-trip).
+    validation failure and ``PresetExists`` (a ``FileExistsError``) when the
+    slug exists and ``overwrite`` is false (the route turns that into a
+    confirm round-trip naming the preset stored there).
     """
     errors = validate_preset(name, sections)
     if errors:
@@ -307,10 +343,18 @@ def save_preset(instance_path, name, sections, overwrite=False) -> dict:
         d = _presets_dir(instance_path)
         d.mkdir(parents=True, exist_ok=True)
         path = d / f"{slug}.json"
+        # A preset saved before the Unicode slug under a mixed name lives at
+        # its ASCII slug — the SAME name re-saved keeps that one file rather
+        # than growing a second list entry with the same name.
+        legacy = _ascii_slug(name)
+        if legacy and legacy != slug and legacy != BUILTIN_SLUG:
+            lp = d / f"{legacy}.json"
+            if _stored_name(lp) == unicodedata.normalize("NFC", name.strip()):
+                slug, path = legacy, lp
         created_at = now
         if path.exists():
             if not overwrite:
-                raise FileExistsError(slug)
+                raise PresetExists(slug, _stored_name(path))
             try:
                 created_at = (
                     json.loads(path.read_text(encoding="utf-8")).get("created_at")

@@ -435,6 +435,85 @@ function panelText(win) {
        'D16: 1 and 24 are clean');
   }
 
+  // D17 (QA generate-r2-19): an unparseable commit keeps the stored value.
+  // The keystroke live-write used to leave whatever the last parseable key
+  // wrote — after clear-then-type, NOTHING: RF deleted, and the unit switch's
+  // re-render then showed an empty cell (the red "abc" gone with it).
+  {
+    const win = makeWorld();
+    const G = buildWizard(win);
+    G.QT.setValidateDebounce(0);
+    const pq = function () { return (G.state.spec.populate.qubit || {}).q2 || {}; };
+    let c = cell(win, 'qubit', 'q2', 'RF_freq');
+    setInput(win, c, '5');                                   // 5 GHz committed
+    ok(pq().RF_freq === 5e9, 'D17: 5 GHz stored');
+    // clear, then type, then commit (blur)
+    typeOnly(win, c, '');
+    typeOnly(win, c, 'abc');
+    c.dispatchEvent(new win.Event('change', { bubbles: true }));
+    ok(pq().RF_freq === 5e9,
+       'D17: clear-then-"abc" commit keeps 5 GHz (got ' + pq().RF_freq + ')');
+    ok(flagged(c) === 'err' && c.value === 'abc', 'D17: the typed text stays, flagged');
+    ok(c.title.indexOf('Not saved') >= 0, 'D17: the flag says nothing was saved');
+    setInput(win, freqUnitSelect(win), 'MHz');               // re-render
+    c = cell(win, 'qubit', 'q2', 'RF_freq');
+    ok(c.value === '5000' && flagged(c) === null,
+       'D17: after the unit switch the cell shows the kept 5000 MHz (got "' + c.value + '")');
+    // An UNcommitted typo flushed by the unit switch (captureDomFields).
+    typeOnly(win, c, '');
+    typeOnly(win, c, 'zz');
+    setInput(win, freqUnitSelect(win), 'GHz');
+    c = cell(win, 'qubit', 'q2', 'RF_freq');
+    ok(pq().RF_freq === 5e9 && c.value === '5',
+       'D17: a dirty typo flushed by a unit switch keeps 5 GHz (got ' + pq().RF_freq + ')');
+    // 1e999 is no finite number either.
+    typeOnly(win, c, '1e999');
+    c.dispatchEvent(new win.Event('change', { bubbles: true }));
+    ok(pq().RF_freq === 5e9, 'D17: "1e999" never stores Infinity');
+    // A real value still commits; a genuine clear still clears.
+    setInput(win, c, '4.8');
+    ok(pq().RF_freq === 4.8e9 && flagged(c) === null, 'D17: a valid commit still lands');
+    setInput(win, c, '');
+    ok(!('RF_freq' in pq()), 'D17: an explicit clear still clears');
+  }
+
+  // D18 (QA generate-r2-19): Set-all "abc" changes no row AND says so.
+  {
+    const win = makeWorld();
+    const G = buildWizard(win);
+    G.QT.setValidateDebounce(0);
+    const rf = function () {
+      return ['q1', 'q2', 'q3'].map(function (q) {
+        return ((G.state.spec.populate.qubit || {})[q] || {}).RF_freq;
+      });
+    };
+    setInput(win, cell(win, 'qubit', 'q1', 'RF_freq'), '5');
+    setInput(win, cell(win, 'qubit', 'q2', 'RF_freq'), '5.2');
+    const sa = win.document.querySelector(
+      '#gen-pop-tbl-qubit tr.gen-pop-setall input[aria-label="Set all RF freq"]');
+    ok(!!sa, 'D18: the RF Set-all box renders');
+    const before = JSON.stringify(rf());
+    sa.dispatchEvent(new win.FocusEvent('focusin', { bubbles: true }));
+    setInput(win, sa, 'abc');
+    ok(JSON.stringify(rf()) === before, 'D18: no row changed');
+    ok(flagged(sa) === 'err' && sa.title.indexOf('no row was changed') >= 0,
+       'D18: the Set-all box is flagged (got class="' + sa.className + '")');
+    ok(!!sa.parentNode.querySelector('.gen-cell-flag'), 'D18: with the ⚠ marker');
+    // Ctrl+Z on that commit must NOT replay the box's "" (an empty commit
+    // would clear the whole column).
+    win._wizUndo.tryUndo();
+    ok(JSON.stringify(rf()) === before, 'D18: Ctrl+Z after the typo clears no row');
+    ok(flagged(sa) === null, 'D18: …and the flag is gone');
+    // A valid Set-all clears the flag and fills.
+    setInput(win, sa, 'abc');
+    setInput(win, sa, '6');
+    ok(JSON.stringify(rf()) === '[6000000000,6000000000,6000000000]' && flagged(sa) === null,
+       'D18: a valid Set-all fills every row and clears the flag');
+    // docs/27: an EMPTY Set-all commit still clears the column.
+    setInput(win, sa, '');
+    ok(rf().every(function (v) { return v === undefined; }), 'D18: empty commit clears the column');
+  }
+
   if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
   console.log('generate_validation_selfcheck: all checks passed');
 })().catch(function (e) { console.error(e); process.exit(1); });

@@ -205,5 +205,105 @@ function buildWizard(win, opts) {
   ok(pl.pulses.q1.x180_amplitude === 0.5, 'P5: only-empty keeps the edit');
 })();
 
-if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
-console.log('generate_presets_selfcheck: all checks passed');
+// ---- async pins: a scripted server behind the preset bar -------------------
+function tick(ms) { return new Promise(function (r) { setTimeout(r, ms || 10); }); }
+function scriptFetch(win, handler, log) {
+  win.fetch = function (url, opts) {
+    const method = (opts && opts.method) || 'GET';
+    log.push([method, String(url), opts && opts.body ? JSON.parse(opts.body) : null]);
+    const body = handler(method, String(url), opts);
+    return win.Promise.resolve({ json: function () { return win.Promise.resolve(body); } });
+  };
+}
+const LIST = { ok: true, presets: [
+  { slug: 'builtin-standard', name: 'Standard defaults (built-in)', builtin: true,
+    sections: { pulses: { defaults: 6, overrides: 0 } } },
+  { slug: 'lab-a', name: 'Lab A', sections: { pulses: { defaults: 1, overrides: 0 } } }
+] };
+
+(async function asyncPins() {
+  // P6 (QA F20): the built-in preset's Delete is disabled, and even a forced
+  // click refuses BEFORE any confirm or DELETE; a user preset still deletes.
+  {
+    const win = makeWorld();
+    const log = [], confirms = [];
+    win.confirm = function (m) { confirms.push(String(m)); return true; };
+    scriptFetch(win, function (method) {
+      return method === 'DELETE' ? { ok: true } : LIST;
+    }, log);
+    buildWizard(win);
+    await tick();
+    const doc = win.document;
+    const sel = doc.getElementById('gen-preset-select');
+    const btn = doc.getElementById('gen-preset-delete');
+    const note = doc.getElementById('gen-preset-note');
+    const bOpt = sel.querySelector('option[value="builtin-standard"]');
+    ok(bOpt && bOpt.dataset.builtin === '1', 'P6: the built-in option carries data-builtin');
+    ok(btn.disabled === false, 'P6: Delete enabled while "(none)" is selected');
+    sel.value = 'builtin-standard';
+    sel.dispatchEvent(new win.Event('change', { bubbles: true }));
+    ok(btn.disabled === true, 'P6: Delete disabled on the built-in preset');
+    btn.disabled = false;              // forced — the handler must refuse too
+    btn.click();
+    await tick();
+    ok(confirms.length === 0, 'P6: no "Delete preset …?" confirm for the built-in (got ' +
+       JSON.stringify(confirms) + ')');
+    ok(!log.some(function (c) { return c[0] === 'DELETE'; }), 'P6: no DELETE request sent');
+    ok(!note.hidden && note.textContent.indexOf("can't be deleted") >= 0,
+       'P6: the note says why');
+    ok(btn.disabled === true, 'P6: the button re-disables');
+    sel.value = 'lab-a';
+    sel.dispatchEvent(new win.Event('change', { bubbles: true }));
+    ok(btn.disabled === false, 'P6: Delete re-enabled on a user preset');
+    ok(btn.title === 'Delete the selected preset',
+       'P6: the button keeps its own tooltip (got "' + btn.title + '")');
+    btn.click();
+    await tick();
+    ok(confirms.length === 1 && confirms[0].indexOf('Lab A') >= 0,
+       'P6: a user preset still asks before deleting');
+    ok(log.some(function (c) { return c[0] === 'DELETE' && c[1] === '/generate/presets/lab-a'; }),
+       'P6: …and deletes it');
+  }
+
+  // P7 (QA generate-r2-15): a failed save after a successful one clears the
+  // old 'Preset "…" saved.' note — it must not sit next to the new error.
+  {
+    const win = makeWorld();
+    const log = [];
+    const saves = [{ ok: true, slug: 'lab-a', name: 'Lab A' },
+                   { ok: false, error: 'preset name has no usable characters' }];
+    scriptFetch(win, function (method) {
+      return method === 'POST' ? saves.shift() : LIST;
+    }, log);
+    const G = buildWizard(win);
+    await tick();
+    G.state.spec.populate.pulses = { q1: { x180_amplitude: 0.1 }, q2: { x180_amplitude: 0.1 } };
+    const doc = win.document;
+    const note = doc.getElementById('gen-preset-note');
+    const err = doc.getElementById('gen-preset-err');
+    const sel = doc.getElementById('gen-preset-select');
+    const del = doc.getElementById('gen-preset-delete');
+    sel.value = 'builtin-standard';
+    sel.dispatchEvent(new win.Event('change', { bubbles: true }));
+    ok(del.disabled === true, 'P7: built-in selected → Delete disabled');
+    doc.getElementById('gen-preset-save').click();
+    doc.getElementById('gen-preset-name').value = 'Lab A';
+    doc.getElementById('gen-preset-save-confirm').click();
+    await tick();
+    ok(!note.hidden && note.textContent.indexOf('saved') >= 0, 'P7: first save noted');
+    // loadPresetList selects the saved slug in code (no `change` fires): the
+    // Delete button must follow it (QA F20).
+    ok(sel.value === 'lab-a' && del.disabled === false,
+       'P7: after a save selects the new preset, Delete is enabled again');
+    doc.getElementById('gen-preset-save').click();
+    doc.getElementById('gen-preset-name').value = '!!!';
+    doc.getElementById('gen-preset-save-confirm').click();
+    await tick();
+    ok(err.textContent.indexOf('no usable characters') >= 0, 'P7: the new error shows');
+    ok(note.hidden && note.textContent === '',
+       'P7: the stale "saved" note is cleared (got "' + note.textContent + '")');
+  }
+})().then(function () {
+  if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
+  console.log('generate_presets_selfcheck: all checks passed');
+}).catch(function (e) { console.error(e); process.exit(1); });

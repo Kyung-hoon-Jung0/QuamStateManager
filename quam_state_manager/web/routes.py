@@ -25944,9 +25944,20 @@ def generate_presets_save():
             overwrite=bool(data.get("overwrite")),
         )
     except FileExistsError as exc:
+        # QA generate-r2-15: name the preset really stored under that slug —
+        # "Lab A" and "lab-a" share one file, so the confirm must say which
+        # preset an OK replaces.
+        import unicodedata
+        slug = getattr(exc, "slug", None) or str(exc)
+        existing = getattr(exc, "existing_name", None)
+        new = unicodedata.normalize("NFC", str(name).strip())
+        if existing and existing != new:
+            msg = (f'Saving "{new}" would replace the existing preset '
+                   f'"{existing}" (both are stored as "{slug}").')
+        else:
+            msg = f'A preset named "{new}" already exists.'
         return jsonify({
-            "ok": False, "needs_confirm": True, "slug": str(exc),
-            "error": f'A preset named "{name}" already exists.',
+            "ok": False, "needs_confirm": True, "slug": slug, "error": msg,
         })
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400

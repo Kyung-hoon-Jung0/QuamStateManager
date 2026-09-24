@@ -43,7 +43,12 @@ class TestSlugify:
         ("Lab defaults", "lab-defaults"),
         ("  Lab   A / 5-qubit!! ", "lab-a-5-qubit"),
         ("UPPER_case", "upper-case"),
-        ("한국어 chip", "chip"),          # non-ascii drops, remainder survives
+        # QA generate-r2-15: letters of every script survive (this row read
+        # "chip" -- the ASCII-only slug that refused Korean-only names and
+        # stored names differing only in Korean in one file).
+        ("한국어 chip", "한국어-chip"),
+        ("표준 설정", "표준-설정"),
+        ("QA 프리셋/슬래시", "qa-프리셋-슬래시"),
     ])
     def test_shapes(self, name, slug):
         assert gen_presets.slugify(name) == slug
@@ -263,3 +268,67 @@ class TestBuiltinPreset:
             "name": "builtin standard", "sections": _sections()})
         assert r.status_code == 400
         assert "reserved" in r.get_json()["error"]
+
+
+class TestUnicodeNamesAndHonestCollisions:
+    """QA generate-r2-15: a Korean-only name saved nowhere ("no usable
+    characters"), and names differing only in Korean text shared one file --
+    the second save's confirm named the NEW name, so OK silently replaced
+    the other preset."""
+
+    def test_korean_only_name_saves_loads_lists_deletes(self, client):
+        r = client.post("/generate/presets", json={
+            "name": "표준 설정", "sections": _sections()})
+        body = r.get_json()
+        assert r.status_code == 200 and body["ok"] is True, body
+        assert body["slug"] == "표준-설정"
+        # the wizard GETs encodeURIComponent(slug)
+        from urllib.parse import quote
+        r = client.get("/generate/presets/" + quote("표준-설정"))
+        assert r.status_code == 200 and r.get_json()["name"] == "표준 설정"
+        slugs = [p["slug"] for p in client.get("/generate/presets").get_json()["presets"]]
+        assert "표준-설정" in slugs
+        assert client.delete("/generate/presets/" + quote("표준-설정")).get_json()["ok"]
+        assert client.get("/generate/presets/" + quote("표준-설정")).status_code == 404
+
+    def test_names_differing_only_in_korean_are_two_presets(self, client, app):
+        from pathlib import Path
+        for name in ("QA 프리셋/슬래시", "QA 두번째"):
+            body = client.post("/generate/presets", json={
+                "name": name, "sections": _sections()}).get_json()
+            assert body["ok"] is True and not body.get("needs_confirm"), body
+        names = {json.loads(p.read_text(encoding="utf-8"))["name"]
+                 for p in (Path(app.instance_path) / "gen_presets").glob("*.json")}
+        assert names == {"QA 프리셋/슬래시", "QA 두번째"}
+
+    def test_a_collision_names_the_preset_it_would_replace(self, client):
+        client.post("/generate/presets", json={"name": "Lab A", "sections": _sections()})
+        body = client.post("/generate/presets", json={
+            "name": "lab/a", "sections": _sections()}).get_json()
+        assert body["needs_confirm"] is True and body["slug"] == "lab-a"
+        assert '"Lab A"' in body["error"] and '"lab/a"' in body["error"], body["error"]
+        assert "replace" in body["error"]
+
+    def test_same_name_resave_keeps_the_plain_message(self, client):
+        client.post("/generate/presets", json={"name": "P", "sections": _sections()})
+        body = client.post("/generate/presets", json={
+            "name": "P", "sections": _sections()}).get_json()
+        assert body["error"] == 'A preset named "P" already exists.'
+
+    def test_a_legacy_mixed_name_file_is_reused_not_duplicated(self, tmp_path):
+        # Saved before the Unicode slug: "한국어 chip" lives at chip.json.
+        d = tmp_path / "gen_presets"
+        d.mkdir()
+        (d / "chip.json").write_text(json.dumps({
+            "version": 1, "name": "한국어 chip", "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z", "sections": _sections()}),
+            encoding="utf-8")
+        with pytest.raises(gen_presets.PresetExists) as ei:
+            gen_presets.save_preset(tmp_path, "한국어 chip", _sections())
+        assert ei.value.slug == "chip" and ei.value.existing_name == "한국어 chip"
+        s = gen_presets.save_preset(tmp_path, "한국어 chip", _sections(), overwrite=True)
+        assert s["slug"] == "chip"
+        assert sorted(p.name for p in d.glob("*.json")) == ["chip.json"]
+        # A DIFFERENT name whose ASCII part is "chip" gets its own file.
+        s2 = gen_presets.save_preset(tmp_path, "새 chip", _sections())
+        assert s2["slug"] == "새-chip"

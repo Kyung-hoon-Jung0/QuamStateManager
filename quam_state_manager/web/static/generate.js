@@ -1302,6 +1302,19 @@
     });
   }
 
+  // Step 6's intro names what a BLANK cell means, which differs by mode
+  // (QA regenerate-r2-31): generate → build_quam's defaults; regenerate →
+  // the source chip's value (tier-1 carry, docs/72). Run on every step-6
+  // entry — Start over flips a regen page back to generate mode.
+  function renderPopulateIntro() {
+    var intro = document.getElementById("gen-pop-intro");
+    if (!intro) return;
+    var regen = state.mode === "regenerate";
+    intro.querySelectorAll("[data-intro-mode]").forEach(function (el) {
+      el.hidden = (el.dataset.introMode === "regenerate") !== regen;
+    });
+  }
+
   // Keep the naming block's controls + note in step with state. Module-level
   // (not a bindQubitsStep closure) so renderQubitsStep / hydrateFromSpec can
   // call it.
@@ -2202,6 +2215,14 @@
         if (fl) ln.group = fl;
       }
     });
+    // QA generate-r2-30: the import replaced the whole chip definition, so
+    // every undo entry recorded before it (field edits, board-delete
+    // sentinels, the gen-chip-arch change dispatched just above) belongs to
+    // the replaced chip. Ctrl+Z stops at this barrier and says so; the
+    // board's own delete-undo stack is emptied the same way.
+    _wizStack.length = 0;
+    _wizStack.push({ barrier: "the port-CSV import" });
+    if (window.WiringGrid && window.WiringGrid.clearUndo) window.WiringGrid.clearUndo();
     saveDraft();
     if (typeof renderQubitsStep === "function") renderQubitsStep();
     return true;
@@ -2240,7 +2261,9 @@
     var addTwpa = document.getElementById("gen-add-twpa");
 
     // Port-label CSV import (docs/54): file picker → text → server parse →
-    // applyPortCsv. Confirm before clobbering a non-empty chip definition.
+    // applyPortCsv. Confirm before clobbering a non-empty chip definition —
+    // AFTER the parse (QA F20): the parse route writes nothing, and a CSV that
+    // fails to parse never clobbers anything, so it is refused without asking.
     var csvBtn = document.getElementById("gen-csv-import-btn");
     var csvFile = document.getElementById("gen-csv-file");
     if (csvBtn && csvFile) {
@@ -2249,11 +2272,6 @@
         var f = csvFile.files && csvFile.files[0];
         csvFile.value = "";
         if (!f) return;
-        if (state.spec.qubits.length &&
-            !window.confirm("Importing the CSV replaces the current qubits, "
-                            + "pairs, instruments and port pins. Continue?")) {
-          return;
-        }
         var reader = new FileReader();
         reader.onload = function () {
           fetch("/generate/import-port-csv", {
@@ -2264,6 +2282,11 @@
             if (!payload.ok) {
               window.alert("CSV import failed:\n"
                            + (payload.errors || ["unknown error"]).join("\n"));
+              return;
+            }
+            if (state.spec.qubits.length &&
+                !window.confirm("Importing the CSV replaces the current qubits, "
+                                + "pairs, instruments and port pins. Continue?")) {
               return;
             }
             applyPortCsv(payload);
@@ -4455,6 +4478,16 @@
     }
   }
 
+  // QA generate-r2-19: a non-empty entry in a numeric column that reads as no
+  // finite number ("abc", "1e999"). setPopValue skips such a write, so on a
+  // COMMIT the cell must put back what it held before the edit — the
+  // keystroke live-writes may have deleted it on the way (clear, then type).
+  function popRawUnparseable(col, raw) {
+    raw = (raw == null ? "" : String(raw)).trim();
+    if (raw === "" || col.kind === "text" || col.kind === "select") return false;
+    return !isFinite(parseFloat(window.NumberInput.strip(raw)));
+  }
+
   function setPopValue(bucket, col, raw, group, rid) {
     raw = (raw == null ? "" : String(raw)).trim();
     if (raw === "") {
@@ -4530,6 +4563,13 @@
     // edit never clobbers a hand-typed LO, flips a dBm negative amp, or storms on
     // a big chip. The change handler re-commits + clears dirty on blur.
     input.addEventListener("input", function () {
+      if (input.dataset.dirty !== "1") {
+        // First keystroke of this edit: remember the stored value, so an
+        // unparseable commit can put it back (QA generate-r2-19).
+        var pb = popBucketRead(group, rid);
+        input._preEdit = { has: Object.prototype.hasOwnProperty.call(pb, col.field),
+                           v: pb[col.field] };
+      }
       input.dataset.dirty = "1";
       var bucket = popBucketWrite(group, rid);
       if (bucket) {
@@ -4559,7 +4599,26 @@
       // the achieved value — while still SKIPPING sibling cells that are also
       // dirty (a multi-cell blur-race flush), preserving their typed input.
       input.dataset.dirty = "";
+      var pre = input._preEdit;
+      input._preEdit = null;
       var bucket = popBucketWrite(group, rid);
+      if (bucket && popRawUnparseable(col, input.value)) {
+        // QA generate-r2-19: nothing to store — put back the value from
+        // before this edit (a keystroke may have deleted it) and change
+        // nothing else. The typed text stays, flagged, until corrected; a
+        // re-render then shows the value the spec really holds.
+        if (pre) {
+          if (pre.has) bucket[col.field] = pre.v; else delete bucket[col.field];
+        }
+        popBucketPrune(group, rid);
+        clearTimeout(input._valTimer);
+        validateCellInline(input, group, rid, col);
+        var why = input.classList.contains("gen-cell-err") ? input.title
+          : '"' + String(input.value).trim() + '" is not a number.';
+        setCellFlag(input, { severity: "err", message: why +
+          " Not saved — the value from before this edit is kept." });
+        return;
+      }
       if (bucket) {
         setPopValue(bucket, col, input.value, group, rid);
         markPopulateTouched(group, rid, col.field);   // populate-protect (docs/72)
@@ -4711,6 +4770,17 @@
       window.NumberInput.attach(input);
     }
     input.addEventListener("change", function () {
+      // QA generate-r2-19: a Set-all that reads as no number changes no row —
+      // say so on the box instead of silently doing nothing. Its Ctrl+Z entry
+      // only clears the flag: an undo that replayed the box's "" would be an
+      // empty commit and clear the whole column.
+      if (popRawUnparseable(col, input.value)) {
+        setCellFlag(input, { severity: "err", message: '"' +
+          String(input.value).trim() + '" is not a number — no row was changed.' });
+        input.__wizRestore = function () { setCellFlag(input, null); };
+        return;
+      }
+      setCellFlag(input, null);
       var restoreFill = bulkFillSnapshot(group, rowIds, col);   // QA r2-23
       rowIds.forEach(function (rid) {
         var bucket = popBucketWrite(group, rid);
@@ -5704,6 +5774,9 @@
       var bucket = (pop[input.dataset.group] || {})[input.dataset.rid] || {};
       input.value = (bucket.LO_frequency == null)
         ? "" : toDisplayValue(bucket.LO_frequency, "freq");
+      // regroup commas + re-fit width, like every other programmatic write
+      // (QA F19: MHz showed RF "7,100" beside LO "7275")
+      window.NumberInput.format(input);
     });
   }
 
@@ -7006,6 +7079,20 @@
     el.hidden = !text;
   }
 
+  // QA F20: the built-in preset (the server flags it `builtin`) can't be
+  // deleted, so Delete is disabled while it is selected — never a "Delete
+  // preset …?" confirm the server then refuses.
+  function syncPresetDeleteBtn() {
+    var sel = document.getElementById("gen-preset-select");
+    var btn = document.getElementById("gen-preset-delete");
+    if (!sel || !btn) return;
+    var opt = sel.options[sel.selectedIndex];
+    var builtin = !!(opt && opt.dataset.builtin);
+    if (btn.dataset.baseTitle == null) btn.dataset.baseTitle = btn.title || "";
+    btn.disabled = builtin;
+    btn.title = builtin ? "The built-in preset can't be deleted." : btn.dataset.baseTitle;
+  }
+
   // Fill the preset dropdown from the server. A fetch failure degrades to a
   // disabled "(presets unavailable)" option — never blocks the step.
   function loadPresetList(selectSlug) {
@@ -7023,12 +7110,15 @@
             ? p.name + " (unreadable)"
             : p.name + " (" + count + " section" + (count === 1 ? "" : "s") + ")";
           if (p.corrupt) o.disabled = true;
+          if (p.builtin) o.dataset.builtin = "1";   // QA F20
           sel.appendChild(o);
         });
         if (selectSlug) sel.value = selectSlug;
+        syncPresetDeleteBtn();   // a code-set value fires no `change`
       })
       .catch(function () {
         sel.innerHTML = '<option value="">(presets unavailable)</option>';
+        syncPresetDeleteBtn();
       });
   }
 
@@ -7039,6 +7129,7 @@
     var sel = document.getElementById("gen-preset-select");
     var savebox = document.getElementById("gen-preset-savebox");
     var errEl = document.getElementById("gen-preset-err");
+    if (sel) sel.addEventListener("change", syncPresetDeleteBtn);   // QA F20
 
     function saveErr(msg) { if (errEl) errEl.textContent = msg || ""; }
 
@@ -7095,6 +7186,9 @@
     });
 
     document.getElementById("gen-preset-save-confirm").addEventListener("click", function doSave(ev, overwrite) {
+      // An earlier 'Preset "…" saved.' must not sit next to this attempt's
+      // error (QA generate-r2-15).
+      presetNote("");
       var name = (document.getElementById("gen-preset-name").value || "").trim();
       if (!name) { saveErr("Enter a preset name."); return; }
       var secs = PRESET_SECTIONS.filter(function (sec) {
@@ -7130,7 +7224,13 @@
 
     document.getElementById("gen-preset-delete").addEventListener("click", function () {
       if (!sel || !sel.value) { presetNote("Pick a preset to delete."); return; }
-      var label = sel.options[sel.selectedIndex].textContent;
+      var opt = sel.options[sel.selectedIndex];
+      if (opt && opt.dataset.builtin) {   // QA F20: refuse before asking
+        presetNote("The built-in preset can't be deleted.");
+        syncPresetDeleteBtn();
+        return;
+      }
+      var label = opt.textContent;
       if (!window.confirm('Delete preset "' + label + '"?')) return;
       fetch("/generate/presets/" + encodeURIComponent(sel.value), { method: "DELETE" })
         .then(function (r) { return r.json(); })
@@ -7149,6 +7249,7 @@
   function enterPopulateStep() {
     // Clear any stale live-preview panel from a previous visit to this step.
     if (window.GenPreview && window.GenPreview.reset) window.GenPreview.reset();
+    renderPopulateIntro();   // QA regenerate-r2-31
     bindPresetBar();
     loadPresetList();
     loadPopulateUnits();
@@ -8699,6 +8800,16 @@
       if (!root()) return false;   // wizard not on screen → not ours
       while (_wizStack.length) {
         var entry = _wizStack.pop();
+        // A whole-chip replacement (QA generate-r2-30): nothing before it is
+        // undoable — stay on the stack and say so, never reach past it.
+        if (entry.barrier) {
+          _wizStack.push(entry);
+          if (window.showToast) {
+            window.showToast("Ctrl+Z can't undo " + entry.barrier +
+                " — re-import a CSV or edit the qubits directly.", "info");
+          }
+          return true;
+        }
         // Board-delete sentinel (supercritical: irrecoverable qubit delete):
         // restore the deleted qubit — placement, physics, pairs — via the
         // board's own snapshot stack. A stale sentinel (its delete was already

@@ -386,6 +386,9 @@ window.WiringGrid = (function () {
   }
 
   function hasUndo() { return _undoStack.length > 0; }
+  // A whole-chip replacement (the port-CSV import, QA generate-r2-30): a
+  // snapshot of a pre-replacement qubit must never be restored into it.
+  function clearUndo() { _undoStack.length = 0; }
 
   // Restore the most recently deleted qubit: id at its original position,
   // placement + physics, and every incident pair (only those whose OTHER
@@ -560,6 +563,7 @@ window.WiringGrid = (function () {
     render: render,
     hasUndo: hasUndo,
     undoDelete: undoDelete,
+    clearUndo: clearUndo,
     // exposed for tests
     _cellOf: cellOf, _toggleEdge: toggleEdge, _nextUnplaced: nextUnplaced,
     _occupant: occupant, _removeQubit: removeQubit,

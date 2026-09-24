@@ -234,5 +234,60 @@ const SPEC = {
      'P8: Overwrite ON records the cells touched');
 })();
 
+// ---- P9 (QA regenerate-r2-31): the step-6 intro says what a BLANK cell
+// means in THIS mode — regen: the source chip's value (tier-1 carry), not
+// "build_quam's defaults"; Start over flips it back. -------------------------
+(function () {
+  function introShown(win) {
+    const spans = win.document.querySelectorAll('#gen-pop-intro [data-intro-mode]');
+    const out = {};
+    spans.forEach(function (s) { out[s.dataset.introMode] = !s.hidden; });
+    return out;
+  }
+  const win = makeWorld();
+  const G = win.QuamGen;
+  G.init();
+  G.hydrateFromSpec(JSON.parse(JSON.stringify(SPEC)), { mode: 'regenerate' });
+  G.goToStep(6);
+  let s = introShown(win);
+  ok(s.regenerate === true && s.generate === false,
+     'P9: regen step 6 shows the source-chip sentence only (got ' + JSON.stringify(s) + ')');
+  const txt = win.document.getElementById('gen-pop-intro').textContent;
+  ok(/source\s+chip's value/.test(txt), 'P9: the regen sentence names the source chip');
+  win.document.getElementById('gen-reset').click();     // Start over → generate
+  G.goToStep(6);
+  s = introShown(win);
+  ok(s.generate === true && s.regenerate === false,
+     'P9: after Start over the generate sentence is back (got ' + JSON.stringify(s) + ')');
+  const win2 = makeWorld();
+  win2.QuamGen.init();
+  win2.QuamGen.goToStep(6);
+  s = introShown(win2);
+  ok(s.generate === true && s.regenerate === false, 'P9: a generate mount shows build_quam');
+})();
+
+// ---- P10 (QA F19): an LO cell rewritten by applyLoAssignments is regrouped
+// like every other numeric cell — MHz showed RF "7,100" beside LO "7275". ----
+(function () {
+  const win = makeWorld();
+  const G = win.QuamGen;
+  G.init();
+  const st = G._test.state;
+  st.populateUnits.freq = 'MHz';
+  // A grouping NumberInput.format (the real one groups on blur/format()).
+  win.NumberInput.format = function (el) {
+    const m = /^(-?)(\d+)(\.\d+)?$/.exec(String(el.value));
+    if (m) el.value = m[1] + m[2].replace(/\B(?=(\d{3})+(?!\d))/g, ',') + (m[3] || '');
+  };
+  const inp = win.document.createElement('input');
+  inp.className = 'gen-pop-in';
+  inp.dataset.field = 'LO_frequency';
+  inp.dataset.group = 'qubit';
+  inp.dataset.rid = 'q1';
+  win.document.body.appendChild(inp);
+  G._test.applyLoAssignments({ 'qubit/q1': 7.275e9 });
+  ok(inp.value === '7,275', 'P10: LO shows "7,275" in MHz (got "' + inp.value + '")');
+})();
+
 if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
 console.log('generate_regen_populate_selfcheck: all checks passed');
