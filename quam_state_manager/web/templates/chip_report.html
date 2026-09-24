@@ -380,7 +380,7 @@
     <table class="rep-wide">
         <thead><tr><th>Pair</th><th>Control</th><th>Target</th><th>Active</th>
             <th>Moving</th><th>Best 2Q fidelity</th><th>Source</th><th>Best gate</th>
-            <th>Detuning (MHz)</th><th>Mutual flux bias</th><th>Last cal.</th></tr></thead>
+            <th>Detuning (V)</th><th>Mutual flux bias</th><th>Last cal.</th></tr></thead>
         <tbody>
         {% for p in pairs %}
         {% if p.get('_error') %}
@@ -397,7 +397,7 @@
             <td>{{ pct(e.get('cz_fidelity')) }}</td>
             <td>{{ e.get('fidelity_source') or '-' }}</td>
             <td>{{ e.get('best_gate') or '-' }}</td>
-            <td>{{ e.get('detuning') | qty('detuning') }}</td>
+            <td>{{ e.get('detuning') | qty('pair_detuning') }}</td>
             <td>{% set _mb = e.get('mutual_flux_bias') %}{% if _mb is none %}-{% elif _mb is string or _mb is number %}{{ raw(_mb) }}{% else %}{{ _mb | join(', ') }}{% endif %}</td>
             <td>{{ cal.get(p.id) or '-' }}</td>
         </tr>

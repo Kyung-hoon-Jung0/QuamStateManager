@@ -13463,3 +13463,9 @@ tr.diag-row-collapsed { display: none; }
     background: color-mix(in srgb, var(--pico-del-color, #d35400) 9%, transparent); }
 .thresh-hint.thresh-status-dirty {
     color: var(--pico-del-color, #d35400); font-weight: 600; }
+/* QA chipstatus-r2-08: a band the editor refused to save (fail past warn).
+   [aria-invalid] lifts it over Pico's own invalid-input rule, whose icon tiled
+   across these narrow fields under the dirty-field background shorthand. */
+.thresh-in.thresh-invalid[aria-invalid] {
+    border-color: var(--color-error-text, #c0392b); border-width: 2px;
+    background-image: none; }

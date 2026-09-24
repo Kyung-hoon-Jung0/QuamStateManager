@@ -225,6 +225,65 @@ class TestAFailedWriteIsAnAnswer:
             assert j["ok"] is False and "Permission denied" in j["error"], j
 
 
+class TestAnInvertedBandIsRefused:
+    """QA chipstatus-r2-08: T1 warn 5 us / fail 20 us was saved "for everyone".
+    ``verdict`` reads ``pass if v >= warn else (warn if v >= fail else fail)``,
+    so with fail above warn the WARN band can never be reached -- the metric
+    silently became a two-state split. ORDER is refused; SCALE never is (a
+    negative or a huge band is the lab's call, docs/167)."""
+
+    def test_an_inverted_band_is_refused_and_nothing_is_written(self, inst):
+        spec_thresholds.save(inst, {"T2echo": {"warn": 2.5e-5}})
+        before = spec_thresholds.spec_path(inst).read_text(encoding="utf-8")
+        with pytest.raises(spec_thresholds.SpecBandError) as e:
+            spec_thresholds.save(inst, {"T1": {"warn": 5e-6, "fail": 2e-5}})
+        assert "T1" in str(e.value) and "higher-is-better" in str(e.value)
+        assert spec_thresholds.spec_path(inst).read_text(encoding="utf-8") == before
+
+    def test_it_judges_the_band_the_save_would_leave(self, inst):
+        """One posted bound meets the STORED other one (the editor posts only
+        the bound that was edited): warn 1.5e-5 alone is fine over the default
+        fail 1e-5, but not over a stored fail of 2e-5."""
+        spec_thresholds.save(inst, {"T1": {"warn": 1.5e-5}})
+        spec_thresholds.save(inst, {"T1": {"warn": 3e-5}})
+        spec_thresholds.save(inst, {"T1": {"fail": 2e-5}})
+        with pytest.raises(spec_thresholds.SpecBandError):
+            spec_thresholds.save(inst, {"T1": {"warn": 1.5e-5}})
+        assert spec_thresholds.resolve(inst)["metrics"]["T1"]["fail"] == 2e-5
+        assert spec_thresholds.resolve(inst)["metrics"]["T1"]["warn"] == 3e-5
+
+    def test_equal_negative_and_huge_bands_still_save(self, inst):
+        spec_thresholds.save(inst, {"T1": {"warn": 2e-5, "fail": 2e-5}})       # no warn band
+        spec_thresholds.save(inst, {"T2ramsey": {"warn": -5e-6, "fail": -1e-5}})
+        spec_thresholds.save(inst, {"T2echo": {"warn": 1000.0, "fail": 100.0}})
+        m = spec_thresholds.resolve(inst)["metrics"]
+        assert m["T1"]["warn"] == m["T1"]["fail"] == 2e-5
+        assert m["T2ramsey"]["warn"] == -5e-6 and m["T2echo"]["warn"] == 1000.0
+
+    def test_a_lower_is_better_band_is_judged_the_other_way(self):
+        assert spec_thresholds.band_problem("x", 0.1, 0.2, "lower") is None
+        assert "below" in spec_thresholds.band_problem("x", 0.2, 0.1, "lower")
+        assert spec_thresholds.band_problem("x", 0.2, 0.1, "higher") is None
+        assert "above" in spec_thresholds.band_problem("x", 0.1, 0.2, "higher")
+
+    def test_a_non_finite_bound_is_refused_not_read_as_the_default(self, inst):
+        spec_thresholds.save(inst, {"T1": {"warn": 5e-5}})
+        for bad in (float("nan"), float("inf")):
+            with pytest.raises(spec_thresholds.SpecBandError):
+                spec_thresholds.save(inst, {"T1": {"warn": bad}})
+        assert spec_thresholds.resolve(inst)["metrics"]["T1"]["warn"] == 5e-5
+
+    def test_the_route_answers_400_with_the_reason(self, tmp_path):
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        c = app.test_client()
+        r = c.post("/chip-status/spec",
+                   data={"metrics": json.dumps({"T1": {"warn": 5e-6, "fail": 2e-5}})})
+        assert r.status_code == 400 and r.is_json
+        j = r.get_json()
+        assert j["ok"] is False and "T1" in j["error"] and j["problems"]
+        assert c.get("/chip-status/spec").get_json()["source"] == "default"
+
+
 class TestRoutes:
     @pytest.fixture
     def client(self, tmp_path):
@@ -383,6 +442,14 @@ class TestTheNumbersSayWhoseTheyAre:
         js = self._js()
         assert "shared with everyone using this SM" in js
         assert "saved to this browser" not in js
+        # QA chipstatus-r2-08: the ⚙ Thresholds button's own tooltip lives in
+        # the template, which this pin never read -- so the stale wording
+        # survived docs/167 there.
+        tpl = (_ROOT / "quam_state_manager" / "web" / "templates" / "_wiring.html"
+               ).read_text(encoding="utf-8")
+        assert "saved to this browser" not in tpl
+        btn = tpl[tpl.index('onclick="toggleThresholdEditor()"'):]
+        assert "shared with everyone using this SM" in btn[:btn.index("</button>")]
 
 
 class TestThePageShipsIt:

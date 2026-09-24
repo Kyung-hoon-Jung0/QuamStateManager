@@ -119,6 +119,12 @@ _FIELD_FIXED: dict[str, tuple[str, str]] = {
     "coupler_decouple_offset": ("volt", "V"),
     "coupler_interaction_offset": ("volt", "V"),
     "mutual_flux_bias": ("volt", "V"),
+    # QA F-24: a qubit PAIR's `detuning` is a flux amplitude, not the Hz
+    # `detuning` above (pulses, ZZ drive, XY-detuned channel). quam_builder
+    # FluxTunableTransmonPair, verbatim: "detuning (Optional[float]): Flux
+    # amplitude required to bring the qubits to the same energy in V". Its own
+    # key, because the leaf name alone cannot tell the two apart.
+    "pair_detuning": ("volt", "V"),
     # docs/136: the QDAC-II channel's idle DC bias. Its own key rather than
     # borrowing `z_joint_offset`'s — they are volts for the same reason but
     # not the same field, and a later change to one must not silently move

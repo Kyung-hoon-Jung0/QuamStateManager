@@ -41,8 +41,16 @@
         <span class="diff-badge diff-added" title="Added">+{{ s.diff_summary.added }}</span>
         <span class="diff-badge diff-removed" title="Removed">-{{ s.diff_summary.removed }}</span>
         <span class="diff-badge diff-modified" title="Modified">~{{ s.diff_summary.modified }}</span>
+        {# QA chipstatus-r2-15: every zero-diff row said "(baseline)". Only the
+           chip's FIRST snapshot is one (nothing earlier to diff against); a
+           run row's zeros may mean NOT COMPUTED (bulk backfill, docs/132); any
+           other zero is a real "nothing changed since the previous one". #}
+        {% elif s.timestamp == first_ts %}
+        <span class="muted" title="The chip's first snapshot: nothing earlier to compare against">(baseline)</span>
+        {% elif _k[0] == 'exp' %}
+        <span class="muted" title="No difference was recorded for this run's snapshot (backfilled runs are not diffed)">(no diff recorded)</span>
         {% else %}
-        <span class="muted">(baseline)</span>
+        <span class="muted" title="Identical to the snapshot before it">(no changes)</span>
         {% endif %}
     </div>
     {% if s.new_experiments | length > 0 %}
@@ -90,3 +98,7 @@
 
 <div id="history-detail-area"></div>
 </div>
+{# QA chipstatus-r2-15: the drawer's button count was rendered once with the
+   page, so Take Snapshot (which swaps only #history-content) left it behind.
+   Every drawer render now carries the full total out of band. #}
+<span id="history-count" hx-swap-oob="true">{{ total }}</span>

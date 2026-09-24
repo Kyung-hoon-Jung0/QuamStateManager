@@ -205,6 +205,19 @@ window.ChipStatus.liveDiff = (function () {
     function decorate() {
         var prev = document.querySelectorAll('.topo-changed');
         for (var i = 0; i < prev.length; i++) prev[i].classList.remove('topo-changed');
+        // QA chipstatus-r2-02: the tooltip line used to be appended once and
+        // never taken back, so it outlived an apply that made live match (and
+        // its field count froze). Each element records the exact line it was
+        // given; every decorate takes that line back out before re-marking.
+        var lined = document.querySelectorAll('[data-livediff-line]');
+        for (var j = 0; j < lined.length; j++) {
+            var own = lined[j].getAttribute('data-livediff-line');
+            var kept = (lined[j].getAttribute('title') || '').split('\n')
+                .filter(function (l) { return l !== own; });
+            if (kept.length && kept.join('')) lined[j].setAttribute('title', kept.join('\n'));
+            else lined[j].removeAttribute('title');
+            lined[j].removeAttribute('data-livediff-line');
+        }
         Object.keys(byEntity).forEach(function (id) {
             var n = byEntity[id];
             var _e = (window.CSS && CSS.escape) ? CSS.escape(id) : id;
@@ -219,18 +232,29 @@ window.ChipStatus.liveDiff = (function () {
             ).forEach(function (el) {
                 var target = el.closest('.topo-node-card') || el;
                 target.classList.add('topo-changed');
+                if (target.hasAttribute('data-livediff-line')) return;   // matched twice
+                var line = n + ' field(s) changed vs live — "Review changes" shows before/after';
                 var base = target.getAttribute('title') || '';
-                if (base.indexOf('changed vs live') === -1) {
-                    target.setAttribute('title', (base ? base + '\n' : '')
-                        + n + ' field(s) changed vs live — "Review changes" shows before/after');
-                }
+                target.setAttribute('title', (base ? base + '\n' : '') + line);
+                target.setAttribute('data-livediff-line', line);
             });
         });
     }
-    function refresh() {
+    // QA chipstatus-r2-02: a sequence token, so a slow fetch that read live
+    // mid-apply can never land after (and over) the one that read it settled.
+    var _seq = 0;
+    function refresh(isRetry) {
+        var mine = ++_seq;
         fetch('/state/live-diff', { cache: 'no-store' })
             .then(function (r) { return r.json(); })
             .then(function (d) {
+                if (mine !== _seq) return;
+                // 503 transient = live is being written right now: keep the
+                // marks we have and ask once more, never blank them on a torn read
+                if (d && d.transient) {
+                    if (!isRetry) setTimeout(function () { refresh(true); }, 1500);
+                    return;
+                }
                 byEntity = {};
                 if (d && d.ok && d.entries) {
                     d.entries.forEach(function (e) {
@@ -242,7 +266,26 @@ window.ChipStatus.liveDiff = (function () {
             })
             .catch(function () {});
     }
-    return { refresh: refresh, decorate: decorate };
+    // QA chipstatus-r2-02: nothing re-read live-diff after an apply / pull /
+    // Take live, so the marks stayed up over a chip that now matched. Every
+    // such door already announces itself (doStateSync and the apply-to-live
+    // HX-Trigger fire liveDriftChanged; a restore fires stateRestored on
+    // document). Registered ONCE for the page's life (this module runs once),
+    // and a no-op off Chip Status.
+    var _bound = false, _moveTimer = null;
+    function bind() {
+        if (_bound) return;
+        _bound = true;
+        function onLiveMoved() {
+            clearTimeout(_moveTimer);
+            _moveTimer = setTimeout(function () {
+                if (document.querySelector('.topo-dashboard')) refresh();
+            }, 300);
+        }
+        document.addEventListener('liveDriftChanged', onLiveMoved);
+        document.addEventListener('stateRestored', onLiveMoved);
+    }
+    return { refresh: refresh, decorate: decorate, bind: bind };
 })();
 
 window.ChipStatus.mount = function (opts) {
@@ -289,6 +332,7 @@ window.ChipStatus.mount = function (opts) {
     window.ChipStatus.density.init();   // tile-size control (Phase 1)
     window.ChipStatus.layout.init();    // full/narrow two-rendering breakpoint (Phase 1)
     window.ChipStatus.liveDiff.refresh(); // mark qubits/pairs changed vs live (Phase 4)
+    window.ChipStatus.liveDiff.bind();    // ...and again after every apply / pull (QA chipstatus-r2-02)
 
     // Health layer (Chip Status overhaul): structural findings + spec thresholds.
     // The client owns the live verdict/colour; the in-UI editor mutates
@@ -1682,7 +1726,11 @@ window.ChipStatus.mount = function (opts) {
             }
 
             var parRows = '';
-            if (typeof e.detuning === 'number') parRows += row('detuning', fmt(e.detuning, 'MHz'));
+            // QA F-24: the PAIR's detuning is a flux amplitude in volts, not a
+            // frequency -- quam_builder FluxTunableTransmonPair: "detuning
+            // (Optional[float]): Flux amplitude required to bring the qubits to
+            // the same energy in V". Read as Hz, -0.1659 printed "-0.0 MHz".
+            if (typeof e.detuning === 'number') parRows += row('detuning', e.detuning.toFixed(4) + ' V');
             if (typeof e.mutual_flux_bias === 'number') parRows += row('mutual flux bias', e.mutual_flux_bias);
             if (e.has_coupler && typeof e.coupler_decouple_offset === 'number') {
                 parRows += row('coupler decouple offset', e.coupler_decouple_offset.toFixed(4) + ' V');
@@ -2571,7 +2619,13 @@ window.ChipStatus.mount = function (opts) {
             if (!gates) return;
 
             var rbLabel = rbType === 'StandardRB' ? 'Standard RB' : 'Interleaved RB';
-            html.push('<h5 class="topo-section-title" style="margin-top:0.8rem;font-size:1em">' + rbLabel + '</h5>');
+            // QA F-21: under the section's "2Q Gate Fidelity" headings a
+            // Standard RB number read as a GATE fidelity, but it is 1 - EPC
+            // per CLIFFORD (docs/138). Say which, in the popup's own words.
+            var rbKind = rbType === 'StandardRB' ? 'per Clifford' : 'per gate';
+            html.push('<h5 class="topo-section-title" style="margin-top:0.8rem;font-size:1em">' + rbLabel
+                + ' <span class="topo-popup-kind topo-rb-kind">' + rbKind
+                + (rbType === 'StandardRB' ? ' (1 \u2212 EPC)' : ' (1 \u2212 EPG)') + '</span></h5>');
 
             var gateNames = Object.keys(gates).sort(function(a, b) {
                 return gates[b].length - gates[a].length;  // most results first
@@ -2661,7 +2715,7 @@ window.ChipStatus.mount = function (opts) {
                     var _isOut = scorer && _physOk && scorer.isOutlier(p.value);
                     var _outTip = _isOut ? ' \u00b7 \u26a0 outlier (' + scorer.score(p.value).toFixed(1) + '\u00d7 MAD from chip median ' + (scorer.median * 100).toFixed(2) + '%)' : '';
                     sectionHtml += '<div class="heatmap-cell' + (_isOut ? ' topo-outlier' : '') + '" data-pair="' + pidE + '" data-metric="cz_fidelity" data-heat-v="' + p.value + '" '
-                        + 'title="' + pidE + ' \u2014 ' + gateLabel + ': ' + (p.value * 100).toFixed(2) + '%' + _outTip + ' \u00b7 click to inspect" '
+                        + 'title="' + pidE + ' \u2014 ' + gateLabel + ': ' + (p.value * 100).toFixed(2) + '% ' + rbKind + _outTip + ' \u00b7 click to inspect" '
                         + 'data-heat-t="' + ht.toFixed(6) + '" '
                         + 'style="' + posStyle + 'background-color:' + bg + ';color:' + fg + '">'
                         + '<div class="heatmap-cell-name">' + pidE + '</div>'
@@ -2693,12 +2747,12 @@ window.ChipStatus.mount = function (opts) {
                         textfont: {size: 11},
                         type: 'bar', orientation: 'h',
                         marker: {color: barColors, line: {color: '#fff', width: 1}},
-                        hovertemplate: '%{y}: %{text}%<extra></extra>',
+                        hovertemplate: '%{y}: %{text}% ' + rbKind + '<extra></extra>',
                         cliponaxis: false
                     }],
                     layout: {
                         margin: {l: 80, r: 60, t: 5, b: 28},
-                        xaxis: {title: {text: rbLabel + ' \u2014 ' + gateLabel + ' (%)', font: {size: 10}}, tickfont: {size: 9}},
+                        xaxis: {title: {text: rbLabel + ' \u2014 ' + gateLabel + ', ' + rbKind + ' (%)', font: {size: 10}}, tickfont: {size: 9}},
                         yaxis: {tickfont: {size: 10}, autorange: 'reversed'},
                         plot_bgcolor: 'transparent', paper_bgcolor: 'transparent', bargap: 0.2
                     },
@@ -3197,6 +3251,33 @@ window.ChipStatus.mount = function (opts) {
         }
     }
 
+    // QA chipstatus-r2-15: Take Snapshot (or a run's / another window's
+    // capture, via the drift poll) moved the chip's history, but the Trends
+    // count and this page's sparkline gate were frozen at render. A built
+    // Trends section re-fetches with its current selection; its fragment also
+    // carries the History (N) count. Debounced: one capture announces itself
+    // twice (the response header, then the next drift poll).
+    var _histTimer = null;
+    function _onHistoryChanged() {
+        clearTimeout(_histTimer);
+        _histTimer = setTimeout(function () {
+            if (!document.getElementById('topo-health-tiles')) return;   // not mounted
+            var n = parseInt((document.getElementById('history-count') || {}).textContent, 10);
+            _historyCount = Math.max(_historyCount, isNaN(n) ? 1 : n);   // a capture happened
+            if (_chipSectionBuilt.trends && window.ChipTrends && window.ChipTrends.reload) {
+                window.ChipTrends.reload();
+            }
+        }, 400);
+    }
+    document.addEventListener('stateHistoryChanged', _onHistoryChanged);
+    document.body.addEventListener('htmx:beforeSwap', function _histTeardown(evt) {
+        if (evt.detail && evt.detail.target && evt.detail.target.id === 'table-pane') {
+            clearTimeout(_histTimer);
+            document.removeEventListener('stateHistoryChanged', _onHistoryChanged);
+            document.body.removeEventListener('htmx:beforeSwap', _histTeardown);
+        }
+    });
+
     function _throttle(fn, ms) {
         var last = 0, timer = null;
         return function() {
@@ -3641,7 +3722,10 @@ window.ChipStatus.mount = function (opts) {
             // still holds 60; only a reload revealed it. These thresholds decide
             // the in-spec verdict for everyone, so an uncommitted one has to say
             // so (docs/120: a press means what the presser could see).
-            inp.addEventListener('input', function() { _threshMarkDirty(); });
+            inp.addEventListener('input', function() {
+                inp.classList.remove('thresh-invalid'); inp.removeAttribute('aria-invalid');
+                _threshMarkDirty();
+            });
         });
         // No sweep after a build on purpose: `buildThresholdEditor` replaces the
         // whole innerHTML, so every field comes back with value === data-saved
@@ -3720,7 +3804,6 @@ window.ChipStatus.mount = function (opts) {
             var disp = METRIC_DISPLAY[k] || { scale: 1 };
             var v = parseFloat(inp.value);
             if (isNaN(v) || !thresholds[k]) return;
-            thresholds[k][bound] = v / disp.scale;
             (changed[k] = changed[k] || {})[bound] = v / disp.scale;
             draft.push({ k: k, bound: bound, value: inp.value });
         });
@@ -3730,6 +3813,40 @@ window.ChipStatus.mount = function (opts) {
                 + ' · shared with everyone using this SM';
             return;
         }
+        // QA chipstatus-r2-08: an INVERTED band (fail above warn on a
+        // higher-is-better metric) was saved for everyone and quietly made the
+        // warn band unreachable. Judge the band this press would leave -- the
+        // typed bound with the saved other one -- before anything moves. Order
+        // only, never scale (a lab's T1 is the lab's call); the server holds
+        // the same rule (spec_thresholds.band_problem).
+        var bad = [];
+        host.querySelectorAll('.thresh-invalid').forEach(function (inp) {
+            inp.classList.remove('thresh-invalid'); inp.removeAttribute('aria-invalid');
+        });
+        Object.keys(changed).forEach(function (k) {
+            var th = thresholds[k], disp = METRIC_DISPLAY[k] || { unit: '', scale: 1 };
+            var w = 'warn' in changed[k] ? changed[k].warn : th.warn;
+            var f = 'fail' in changed[k] ? changed[k].fail : th.fail;
+            var lower = th.direction === 'lower';
+            if (isFinite(w) && isFinite(f) && (lower ? f >= w : f <= w)) return;
+            var show = function (x) { return +(x * disp.scale).toPrecision(6) + (disp.unit ? ' ' + disp.unit : ''); };
+            bad.push(metricLabel(k) + ': ' + (!(isFinite(w) && isFinite(f))
+                ? 'warn and fail must be finite numbers'
+                : 'fail (' + show(f) + ') must be ' + (lower ? 'at or above' : 'at or below') + ' warn ('
+                  + show(w) + ') for a ' + (lower ? 'lower' : 'higher') + '-is-better metric'));
+            host.querySelectorAll('.thresh-in[data-metric="' + k + '"]').forEach(function (inp) {
+                inp.classList.add('thresh-invalid'); inp.setAttribute('aria-invalid', 'true');
+            });
+        });
+        if (bad.length) {
+            var sb = document.getElementById('thresh-status');
+            if (sb) { sb.classList.add('thresh-status-dirty');
+                      sb.textContent = '✗ NOT saved — ' + bad.join('; ') + ' · colour bands unchanged'; }
+            return;
+        }
+        Object.keys(changed).forEach(function (k) {
+            Object.keys(changed[k]).forEach(function (b) { thresholds[k][b] = changed[k][b]; });
+        });
         window._chipThresholds = thresholds;
         buildThresholdEditor();   // refresh the default/edited markers + reset state
         _rederiveSpecViews();
@@ -4059,6 +4176,17 @@ window.ChipStatus.liveDetection = function () {
 
     var pollTimer = null, debounceTimer = null;
     var banner = null, dismissed = false;
+    // QA chipstatus-r2-03: a dismiss is for the change the user SAW. Live stays
+    // diverged after a ✕, so `dismissed` never reset and every later external
+    // write was silent for the life of the page. The live mtime pair the route
+    // already returns names the write; a different one prompts again.
+    var lastSig = null, dismissedSig = null, shownSig = null, wasChanged = false;
+    function dismiss() {
+        dismissed = true;
+        dismissedSig = lastSig;
+        clearTimeout(debounceTimer);   // a pending show must not undo the ✕
+        hideBanner();
+    }
 
     function ensureBanner() {
         if (banner) return banner;
@@ -4070,13 +4198,11 @@ window.ChipStatus.liveDetection = function () {
             '<button class="topo-change-banner-btn">Review changes</button>' +
             '<button class="topo-change-banner-dismiss">✕</button>';
         banner.querySelector('.topo-change-banner-btn').addEventListener('click', function() {
-            dismissed = true;
-            hideBanner();
+            dismiss();
             if (window.openReview) window.openReview();
         });
         banner.querySelector('.topo-change-banner-dismiss').addEventListener('click', function() {
-            dismissed = true;
-            hideBanner();
+            dismiss();
         });
         return banner;
     }
@@ -4086,6 +4212,7 @@ window.ChipStatus.liveDetection = function () {
         var b = ensureBanner();
         if (!b.parentNode) dash.insertBefore(b, dash.firstChild);
         b.style.display = '';
+        shownSig = lastSig;
         // mark which qubits/pairs the live change touched (Phase 4 before/after)
         if (window.ChipStatus && window.ChipStatus.liveDiff) window.ChipStatus.liveDiff.refresh();
     }
@@ -4103,16 +4230,28 @@ window.ChipStatus.liveDetection = function () {
             .then(function(r) { return r.ok ? r.json() : null; })
             .then(function(data) {
                 if (!data) return;
+                var sig = data.state_mtime + '|' + data.wiring_mtime;
+                lastSig = sig;
                 if (data.changed) {
-                    if (!dismissed) {
+                    if (dismissed && sig !== dismissedSig) dismissed = false;   // a NEWER write
+                    // once per write: a banner already up for this write is not
+                    // re-shown (each show re-reads live content for the marks)
+                    var up = banner && banner.isConnected && banner.style.display !== 'none';
+                    if (!dismissed && !(up && sig === shownSig)) {
                         clearTimeout(debounceTimer);
                         debounceTimer = setTimeout(showBanner, DEBOUNCE_MS);
                     }
                 } else {
                     dismissed = false;  // a later change should prompt again
+                    dismissedSig = null;
                     clearTimeout(debounceTimer);
                     hideBanner();
+                    // QA chipstatus-r2-02: live settled back to the sync point
+                    // (an apply / pull landed) -- the marks a mid-write read
+                    // left behind come down with the banner
+                    if (wasChanged && window.ChipStatus.liveDiff) window.ChipStatus.liveDiff.refresh();
                 }
+                wasChanged = !!data.changed;
             })
             .catch(function() {})
             .then(function() { poll._inFlight = false; });  // finally
@@ -4810,5 +4949,5 @@ window.ChipTrends = (function () {
         }
     }
     return { toggle: toggle, togglePath: togglePath, setPath: setPath,
-             suggest: suggest, render: render, setCols: setCols };
+             suggest: suggest, render: render, setCols: setCols, reload: _reload };
 })();

@@ -178,7 +178,7 @@ METRIC_META: dict[str, dict[str, Any]] = {
     "cz_fidelity": {"label": "2Q gate fidelity",    "abbr": "2Q F",  "direction": "higher",
                     "blurb": "Two-qubit gate fidelity of the pair's best candidate gate — from Bell_State, interleaved RB (1 − EPG) or the CR channel, whichever the chip records. Higher is better."},
     "detuning":    {"label": "Detuning",            "abbr": "detuning", "direction": "neutral",
-                    "blurb": "Frequency detuning applied to the pair during the two-qubit gate."},
+                    "blurb": "Flux amplitude (V) that brings the pair's two qubits to the same energy for the two-qubit gate."},
     "coupler_decouple_offset": {"label": "Coupler decouple offset", "abbr": "decouple", "direction": "neutral",
                     "blurb": "Coupler bias that turns the qubit-qubit interaction off (idle)."},
     "mutual_flux_bias": {"label": "Mutual flux bias", "abbr": "flux bias", "direction": "neutral",

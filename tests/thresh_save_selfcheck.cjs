@@ -20,6 +20,11 @@
  *  R  reset-one and reset-all failures say NOT reset and change nothing;
  *  O  opening the editor re-reads the server's bands, and a tab coming back
  *     into view never overwrites a value typed and not applied.
+ *  I  (QA chipstatus-r2-08) an INVERTED band -- T1 warn 5 µs over the saved
+ *     fail 10 µs -- is refused before anything is posted or moves, names the
+ *     rule, marks the metric's fields and keeps the typed value; typing clears
+ *     the mark; equal bounds and negative (ordered) bounds still save -- order
+ *     is checked, never scale.
  *
  * Run: node tests/thresh_save_selfcheck.cjs
  *      (driven by tests/test_spec_thresholds.py)
@@ -239,6 +244,44 @@ function settle() { return new Promise(function (r) { setTimeout(r, 30); }); }
     const g = field(win, 'T1', 'fail');
     ok(g && g.value === '15' && g.classList.contains('thresh-dirty'),
       'O4: a tab coming back never overwrites a typed, unapplied value — ' + (g && g.value));
+  }
+
+  /* I: an inverted band is refused before anything moves (QA chipstatus-r2-08) */
+  {
+    const srv = makeServer();
+    const win = world(srv);
+    win.toggleThresholdEditor();
+    await settle();
+    const n0 = srv.posts.length;
+    type(win, 'T1', 'warn', '5');                 // saved fail is 10 µs: fail above warn
+    win.applyThresholds();
+    await settle();
+    ok(srv.posts.length === n0, 'I1: an inverted band is not posted — ' + (srv.posts.length - n0) + ' post(s)');
+    const st = status(win);
+    ok(/NOT saved/.test(st) && /T1/.test(st) && /fail \(10 µs\) must be at or below warn \(5 µs\)/.test(st)
+       && /higher-is-better/.test(st), 'I2: the status names the metric and the rule — ' + st);
+    const w = field(win, 'T1', 'warn'), f = field(win, 'T1', 'fail');
+    ok(w.value === '5' && w.classList.contains('thresh-invalid') && f.classList.contains('thresh-invalid')
+       && w.getAttribute('aria-invalid') === 'true',
+      'I3: the typed value stays and the metric\'s fields are marked invalid');
+    ok(Math.abs(win._chipThresholds.T1.warn - DEFAULTS.T1.warn) < 1e-15,
+      'I4: the bands the verdict uses did not move — ' + win._chipThresholds.T1.warn);
+    ok(!field(win, 'T2echo', 'warn').classList.contains('thresh-invalid'),
+      'I5: another metric is not marked');
+    type(win, 'T1', 'warn', '12');
+    ok(!field(win, 'T1', 'warn').classList.contains('thresh-invalid'),
+      'I6: typing into the field clears its mark');
+    type(win, 'T1', 'warn', '10');                // equal to fail: "no warn band" is allowed
+    win.applyThresholds();
+    await settle();
+    ok(srv.posts.length === n0 + 1 && /✓ saved/.test(status(win)),
+      'I7: warn == fail still saves — ' + status(win));
+    type(win, 'T2echo', 'warn', '-5');            // a negative, ORDERED band: scale is the lab's call
+    type(win, 'T2echo', 'fail', '-10');
+    win.applyThresholds();
+    await settle();
+    ok(srv.posts.length === n0 + 2 && /✓ saved/.test(status(win)),
+      'I8: a negative but ordered band still saves — ' + status(win));
   }
 
   console.log(fails ? ('FAILED (' + fails + ')')

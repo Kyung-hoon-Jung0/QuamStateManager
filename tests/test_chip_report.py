@@ -177,7 +177,9 @@ def _rich_chip(folder: Path) -> Path:
             "q1-q2": {
                 "id": "q1-q2",
                 "qubit_control": "#/qubits/q1", "qubit_target": "#/qubits/q2",
-                "detuning": 1.5e8,
+                # QA F-24: a pair's detuning is a flux amplitude in V (the
+                # rig chip's q1-2 value); it was pinned here as 1.5e8 Hz
+                "detuning": -0.16586175268952874,
                 "confusion": [[0.85, 0.05, 0.06, 0.04],
                               [0.07, 0.79, 0.08, 0.06],
                               [0.06, 0.09, 0.77, 0.08],
@@ -309,8 +311,9 @@ class TestEverythingExtractable:
 
     def test_the_pair_row_names_what_measured_its_fidelity(self, rich_client):
         b = rich_client.get("/chip-status/report").get_data(as_text=True)
-        assert "Best 2Q fidelity" in b and "Detuning (MHz)" in b
-        assert "150.00" in b                     # 1.5e8 Hz -> 150.00 MHz
+        assert "Best 2Q fidelity" in b and "Detuning (V)" in b
+        assert "Detuning (MHz)" not in b
+        assert "-0.1659" in b                    # volts, 4 decimals -- not "-0.00" MHz
         assert "Pair readout confusion (1)" in b
 
     def test_the_ports_each_channel_is_cabled_to_are_printed(self, rich_client):

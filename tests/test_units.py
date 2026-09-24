@@ -57,6 +57,8 @@ def test_format_metric_micro_is_canonical():
     (-2.124e8, "anharmonicity", ("-212.40", "MHz")),
     (-5.0e5, "chi", ("-0.50", "MHz")),
     (3.2e7, "detuning", ("32.00", "MHz")),
+    # QA F-24: a qubit PAIR's detuning is a flux amplitude (V), its own key
+    (-0.16586175268952874, "pair_detuning", ("-0.1659", "V")),
     (40, "x180_length", ("40", "ns")),
     (800, "readout_length", ("800", "ns")),
     (376, "time_of_flight", ("376", "ns")),

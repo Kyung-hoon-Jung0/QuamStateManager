@@ -10296,6 +10296,9 @@ def history_list():
     page = _int_arg("page", 1, minimum=1)
     per_page = _int_arg("per_page", _HISTORY_PANEL_PER_PAGE, minimum=0)  # 0 = All (explicit)
     page_items, total, current_page, total_pages = _paginate(snapshots, page, per_page)
+    # QA chipstatus-r2-15: only the chip's FIRST snapshot is a baseline. From
+    # the FULL newest-first list (not the page), the Versions panel's rule.
+    first_ts = snapshots[-1].timestamp if snapshots else None
 
     # hist_chip_key + active_path power the additive "⇄ Compare…" deep link
     # (docs/49 U1a — the in-panel Compare Selected stays verbatim)
@@ -10312,6 +10315,7 @@ def history_list():
         per_page=per_page,
         hist_chip_key=hist_chip_key,
         active_path=_active_path(),
+        first_ts=first_ts,
     )
 
 
@@ -10326,7 +10330,13 @@ def history_snapshot():
     hm.check_and_snapshot(_active_path(), "manual", force=True, kind="manual",
                           project=_scope_for(_active_path(), _active_ctx()))
 
-    return history_list()
+    # QA chipstatus-r2-15: announce it, so every surface that counts snapshots
+    # (Chip Status Trends, the top-bar Versions chip) catches up now instead of
+    # at the next drift poll. HX-Trigger, not -After-Swap: the button that
+    # sent this lives inside the swapped drawer and would be detached by then.
+    resp = make_response(history_list())
+    resp.headers["HX-Trigger"] = "stateHistoryChanged"
+    return resp
 
 
 @bp.route("/api/history/<timestamp>/diff")
@@ -24776,6 +24786,8 @@ def chip_spec_set():
     # client must be able to read ("NOT saved -- why"), not an HTML 500.
     try:
         spec = spec_thresholds.save(current_app.instance_path, metrics)
+    except spec_thresholds.SpecBandError as exc:   # QA chipstatus-r2-08: nothing written
+        return jsonify(ok=False, error=str(exc), problems=exc.problems), 400
     except OSError as exc:
         return jsonify(ok=False, error=f"could not write the spec file: {exc}"), 500
     return jsonify(ok=True, spec=spec)
