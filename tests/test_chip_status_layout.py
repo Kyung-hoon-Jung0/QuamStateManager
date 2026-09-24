@@ -358,6 +358,26 @@ def test_chip_status_qa3_selfcheck():
     assert r.stdout.count("ok - ") >= 20, r.stdout
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_chip_status_qa4_selfcheck():
+    """QA F-08 / chipstatus-r2-18 / r2-20 / r2-21 / r2-22: a bare load lights
+    Overview, Trends remembers its selection, the popovers and the inspector
+    keep keyboard focus, the JSON sheet follows the inspector, and a hover
+    reaches the next stone through the popup -- against the REAL, mounted
+    chip-status.js."""
+    node = shutil.which("node")
+    try:
+        subprocess.run([node, "-e", "require('jsdom')"], check=True, capture_output=True, timeout=30)
+    except Exception:
+        pytest.skip("jsdom not installed")
+    r = subprocess.run([node, str(ROOT / "tests" / "chip_status_qa4_selfcheck.cjs")],
+                       capture_output=True, text=True, encoding="utf-8", timeout=180, cwd=str(ROOT))
+    if r.returncode == 2:
+        pytest.skip("jsdom not installed")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.count("ok - ") >= 30, r.stdout
+
+
 class TestQaLayoutCss:
     """The CSS halves of the QA round-2 Chip Status fixes (the geometry itself
     was measured in real Chrome; jsdom has no layout)."""
@@ -402,6 +422,20 @@ class TestQaLayoutCss:
         assert "max-height: calc(100vh - 12px)" in rule
         assert "overflow-y: auto" in rule
         assert "overscroll-behavior: contain" in rule
+
+    def test_r2_21_the_json_sheet_leaves_the_sidebar_uncovered(self):
+        """QA chipstatus-r2-21: the full-width sheet (left 0, z 250) covered
+        the sidebar's lower links. Inside the app layout it starts where the
+        sidebar (its own width clamp) and its 6px resizer end; a collapsed
+        sidebar takes no room. Measured in real Chrome: 8/8 links clickable."""
+        side = self._rule("#sidebar")
+        assert "width: var(--sidebar-width); min-width: var(--sidebar-min-width); max-width: var(--sidebar-max-width)" in side
+        assert "width: 6px" in self._rule(".sidebar-resizer")
+        assert ("left: calc(clamp(var(--sidebar-min-width), var(--sidebar-width), "
+                "var(--sidebar-max-width)) + 6px)") in self._rule(".app-layout .json-panel")
+        assert "left: 0" in self._rule(".app-layout.sidebar-collapsed .json-panel")
+        # the base rule (a sheet outside the app layout) is unchanged
+        assert "left: 0; right: 0; z-index: 250" in self._rule(".json-panel")
 
 
 class Test4acGefHonesty:

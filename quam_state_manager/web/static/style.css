@@ -3707,6 +3707,14 @@ input.edit-input {
     box-shadow: 0 -4px 16px rgba(0,0,0,0.1);
     overflow: auto;
 }
+/* QA chipstatus-r2-21: full width, the sheet covered the sidebar's lower links
+   (unclickable). It starts where the sidebar (its own clamp, so a dragged
+   --sidebar-width is followed) and its 6px resizer end; a collapsed sidebar
+   takes no room, so the sheet goes back to the left edge. */
+.app-layout .json-panel {
+    left: calc(clamp(var(--sidebar-min-width), var(--sidebar-width), var(--sidebar-max-width)) + 6px);
+}
+.app-layout.sidebar-collapsed .json-panel { left: 0; }
 .json-panel.hidden { display: none; }
 .json-panel-resizer {
     height: 6px; cursor: ns-resize;
@@ -12864,6 +12872,10 @@ td.vc-cell-takeable:focus-within .vc-take,
 .topo-trend-title .muted { font-family: var(--font-sans, inherit); font-weight: 400; }
 .topo-trend-chart { min-height: 300px; }
 .topo-trend-empty { font-size: .76rem; margin: .6rem 0 .9rem; line-height: 1.4; }
+/* QA chipstatus-r2-17: the families a typed fragment matches, in its slot --
+   the typeahead's rows (.topo-trend-sug), framed like its dropdown. */
+.topo-trend-matches { margin: -.4rem 0 .9rem; max-width: 42rem;
+    border: 1px solid var(--pico-muted-border-color); border-radius: .3rem; overflow: hidden; }
 
 /* docs/121 — a reference cell. The value shown IS the pointer, so it reads as
    code, not as a quantity; a dangling one is warning-tinted because it resolves

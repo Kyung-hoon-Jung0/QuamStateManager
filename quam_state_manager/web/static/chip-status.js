@@ -1330,6 +1330,30 @@ window.ChipStatus.mount = function (opts) {
         if (p) p.remove();
         document.removeEventListener('mousedown', _ovDocClose, true);
     }
+    /* QA chipstatus-r2-20: both popovers are appended to <body>, and opening
+       one left focus on its opener -- so Tab went on to the next tile's ⋮ and
+       a keyboard user could never reach a control inside. Focus moves in on
+       open (Escape hands it back: the F-17 branch in onKey) -- onto the
+       popover itself, not its first control: that is "avg for ALL panels" or,
+       on a computed tile, "Remove panel", and a second Enter must not press
+       it. The next Tab reaches the first control. */
+    function _ovFocusFirst(pop) {
+        if (!pop) return;
+        pop.setAttribute('tabindex', '-1');
+        try { pop.focus({ preventScroll: true }); } catch (e) {}
+    }
+    // ...and an apply that closes the popover and rebuilds the tiles hands
+    // focus to the rebuilt opener (the old one is detached), not to <body>.
+    function _ovRefocusOpener(tileId) {
+        var t = null;
+        if (tileId) {
+            Array.prototype.forEach.call(document.querySelectorAll('.ov-tile-menu[data-tile-id]'), function(b) {
+                if (!t && b.getAttribute('data-tile-id') === tileId) t = b;
+            });
+        }
+        t = t || document.getElementById('ov-add-tile') || document.getElementById('ov-settings-btn');
+        if (t) try { t.focus({ preventScroll: true }); } catch (e) {}
+    }
     window._ovResetTiles = function() {
         _ovSave({ removed: [], stats: {}, added: [] });
         _ovClosePopover();
@@ -1394,7 +1418,26 @@ window.ChipStatus.mount = function (opts) {
             + (_ovCustomized(prefs) ? '' : ' disabled') + '>Reset all</button>'
             + '<span class="muted ov-set-hint">drag a tile to reorder \u00b7 each tile\u2019s \u22ee can remove it \u00b7 \u201c+ Add panel\u201d adds one</span>'
             + '</div>';
-        function applyAnd(fn) { var p2 = _ovLoad(); fn(p2); _ovSave(p2); buildOverviewTiles(); _ovRenderSettingsBody(pop); }
+        /* QA chipstatus-r2-20: every change re-renders this whole body, which
+           dropped a keyboard user's focus to <body> mid-walk. The same control
+           (matched by what it controls, never by DOM index) gets it back. */
+        function rerender() {
+            var a = document.activeElement, had = !!(a && pop.contains(a));
+            var gs = had && a.getAttribute('data-global-stat');
+            var tid = had && a.getAttribute('data-tile-id');
+            var aid = had && a.id;
+            _ovRenderSettingsBody(pop);
+            if (!had) return;
+            var t = null;
+            Array.prototype.forEach.call(pop.querySelectorAll('button, select'), function(el) {
+                if (t || el.disabled) return;
+                if ((gs && el.getAttribute('data-global-stat') === gs)
+                    || (tid && el.getAttribute('data-tile-id') === tid) || (aid && el.id === aid)) t = el;
+            });
+            if (t) { try { t.focus({ preventScroll: true }); } catch (e) {} }
+            else _ovFocusFirst(pop);
+        }
+        function applyAnd(fn) { var p2 = _ovLoad(); fn(p2); _ovSave(p2); buildOverviewTiles(); rerender(); }
         Array.prototype.forEach.call(pop.querySelectorAll('[data-global-stat]'), function(b) {
             b.addEventListener('click', function() {
                 var s = b.getAttribute('data-global-stat');
@@ -1410,7 +1453,7 @@ window.ChipStatus.mount = function (opts) {
         if (rs) rs.addEventListener('click', function() {
             _ovSave({ removed: [], stats: {}, added: [] });
             buildOverviewTiles();
-            _ovRenderSettingsBody(pop);
+            rerender();
         });
     }
     window._ovOpenSettings = function(btn) {
@@ -1425,6 +1468,7 @@ window.ChipStatus.mount = function (opts) {
         var vw = window.innerWidth || 1200, vh = window.innerHeight || 800;
         pop.style.top = Math.max(4, Math.min(r.bottom + 6, vh - (pop.offsetHeight || 320) - 8)) + 'px';
         pop.style.left = Math.max(8, Math.min(r.left, vw - (pop.offsetWidth || 330) - 8)) + 'px';
+        _ovFocusFirst(pop);                 // QA chipstatus-r2-20
         document.addEventListener('mousedown', _ovSetDocClose, true);
     };
 
@@ -1485,7 +1529,11 @@ window.ChipStatus.mount = function (opts) {
         pop.style.top = Math.max(4, Math.min(r.bottom + 4, (window.innerHeight || 800) - (pop.offsetHeight || 120) - 8)) + 'px';
         pop.style.left = Math.max(8, Math.min(r.left, (window.innerWidth || 1200) - (pop.offsetWidth || 240) - 8)) + 'px';
 
-        function apply(fn) { fn(); _ovSave(prefs); _ovClosePopover(); buildOverviewTiles(); }
+        function apply(fn) {
+            var had = pop.contains(document.activeElement);
+            fn(); _ovSave(prefs); _ovClosePopover(); buildOverviewTiles();
+            if (had) _ovRefocusOpener(isAdd ? null : tileId);   // QA chipstatus-r2-20
+        }
         var statSel = pop.querySelector('#ov-pop-stat');
         if (statSel && !isAdd) {
             statSel.addEventListener('change', function() {
@@ -1509,7 +1557,7 @@ window.ChipStatus.mount = function (opts) {
             addBtn.addEventListener('click', function() {
                 var k = keySel ? keySel.value : '';
                 var s = statSel ? statSel.value : 'median';
-                if (!k) { _ovClosePopover(); return; }
+                if (!k) { _ovClosePopover(); _ovRefocusOpener(null); return; }
                 apply(function() { prefs.added.push({ key: k, stat: s }); });
             });
         }
@@ -1535,7 +1583,12 @@ window.ChipStatus.mount = function (opts) {
             });
         }
         var rsBtn = pop.querySelector('#ov-pop-reset');
-        if (rsBtn) rsBtn.addEventListener('click', function() { window._ovResetTiles(); });
+        if (rsBtn) rsBtn.addEventListener('click', function() {
+            var had = pop.contains(document.activeElement);
+            window._ovResetTiles();
+            if (had) _ovRefocusOpener(isAdd ? null : tileId);   // QA chipstatus-r2-20
+        });
+        _ovFocusFirst(pop);                 // QA chipstatus-r2-20
         document.addEventListener('mousedown', _ovDocClose, true);
     }
 
@@ -1819,6 +1872,7 @@ window.ChipStatus.mount = function (opts) {
             openPair: openPairPopup,
             scheduleClose: _scheduleMoreClose,
             cancelClose: function() { clearTimeout(_moreHoverTimer); clearTimeout(_moreLeaveTimer); },
+            current: function() { return activePopup; },   // QA chipstatus-r2-22
         };
     })();
 
@@ -2431,15 +2485,66 @@ window.ChipStatus.mount = function (opts) {
             if (_coarseHero) return;
             var nodesById = {};
             topo.nodes.forEach(function(n) { nodesById[n.id] = n; });
+            var edgesById = {};
+            topo.edges.forEach(function(e) { edgesById[e.pair_id] = e; });
+            /* QA chipstatus-r2-22: the popup opens BESIDE its stone and, at Fit
+               zoom, over the next one -- so moving from q1 to q2 landed on q1's
+               popup and q2's never opened. The popup stays a real surface (it
+               scrolls when taller than the pane, QA F-12, and its rows carry
+               tooltips), so it is not made click-through; instead the pointer
+               resting over another stone THROUGH it is hovering that stone:
+               the same 260 ms intent, then that stone's details replace these.
+               Off the stones the popup is the popup, as before. */
+            var _handTo = null;
+            function _openHero(g) {
+                _handTo = null;
+                var qid = g.getAttribute('data-hero-qubit');
+                if (qid) {
+                    var n = nodesById[qid];
+                    if (n) _sharedQubitPopup.open(n, g, false);
+                } else {
+                    var e = edgesById[g.getAttribute('data-hero-pair')];
+                    if (e && _sharedQubitPopup.openPair) _sharedQubitPopup.openPair(e, g, false);
+                }
+                var pop = _sharedQubitPopup.current && _sharedQubitPopup.current();
+                if (!pop || pop._heroAnchor) return;
+                pop._heroAnchor = g;
+                pop.addEventListener('mousemove', _handOff);
+                pop.addEventListener('mouseleave', function() {
+                    if (_handTo) { _handTo = null; clearTimeout(_heroHoverTimer); }
+                });
+            }
+            function _handOff(ev) {
+                var pop = ev.currentTarget, hit = null;
+                var els = document.elementsFromPoint ? document.elementsFromPoint(ev.clientX, ev.clientY) : [];
+                for (var i = 0; i < els.length; i++) {
+                    if (els[i] === pop || pop.contains(els[i])) continue;
+                    // the first thing UNDER the popup, and only a stone of this map
+                    var h = els[i].closest && els[i].closest('[data-hero-qubit]');
+                    if (h && host.contains(h) && h !== pop._heroAnchor) hit = h;
+                    break;
+                }
+                if (hit === _handTo) return;
+                _handTo = hit;
+                clearTimeout(_heroHoverTimer);
+                if (!hit) return;
+                _heroHoverTimer = setTimeout(function() {
+                    if (_handTo === hit && hit.isConnected) _openHero(hit);
+                }, 260);
+            }
+            // a stone whose popup is already up (just handed off to, or
+            // re-entered from its own popup) keeps it rather than re-opening it
+            function _showing(g) {
+                var cur = _sharedQubitPopup.current && _sharedQubitPopup.current();
+                return !!(cur && cur.isConnected && cur._heroAnchor === g);
+            }
             host.querySelectorAll('[data-hero-qubit]').forEach(function(g) {
                 g.addEventListener('mouseenter', function() {
                     if (!_sharedQubitPopup) return;
                     _sharedQubitPopup.cancelClose();
                     clearTimeout(_heroHoverTimer);
-                    _heroHoverTimer = setTimeout(function() {
-                        var n = nodesById[g.getAttribute('data-hero-qubit')];
-                        if (n) _sharedQubitPopup.open(n, g, false);
-                    }, 260);
+                    if (_showing(g)) return;
+                    _heroHoverTimer = setTimeout(function() { _openHero(g); }, 260);
                 });
                 g.addEventListener('mouseleave', function() {
                     clearTimeout(_heroHoverTimer);
@@ -2447,17 +2552,13 @@ window.ChipStatus.mount = function (opts) {
                 });
             });
             // docs/126 ②: pairs hover too — same singleton popup, pair flavor.
-            var edgesById = {};
-            topo.edges.forEach(function(e) { edgesById[e.pair_id] = e; });
             host.querySelectorAll('[data-hero-pair]').forEach(function(g) {
                 g.addEventListener('mouseenter', function() {
                     if (!_sharedQubitPopup || !_sharedQubitPopup.openPair) return;
                     _sharedQubitPopup.cancelClose();
                     clearTimeout(_heroHoverTimer);
-                    _heroHoverTimer = setTimeout(function() {
-                        var e = edgesById[g.getAttribute('data-hero-pair')];
-                        if (e) _sharedQubitPopup.openPair(e, g, false);
-                    }, 260);
+                    if (_showing(g)) return;
+                    _heroHoverTimer = setTimeout(function() { _openHero(g); }, 260);
                 });
                 g.addEventListener('mouseleave', function() {
                     clearTimeout(_heroHoverTimer);
@@ -3315,7 +3416,9 @@ window.ChipStatus.mount = function (opts) {
                and back never retried. Mark built only on success; a failure
                leaves the section eligible for the next intersection. */
             _chipSectionBuilt[key] = true;
-            var p = htmx.ajax('GET', '/topology/trends',
+            // QA chipstatus-r2-18: F5 / Back replays the remembered selection
+            var p = htmx.ajax('GET', '/topology/trends'
+                              + ((window.ChipTrends && ChipTrends.storedQuery) ? ChipTrends.storedQuery() : ''),
                               { source: '#topo-trends', target: '#topo-trends',
                                 swap: 'outerHTML' });
             if (p && typeof p.then === 'function') {
@@ -3556,7 +3659,7 @@ window.ChipStatus.mount = function (opts) {
         if (!pane) return;
         if (!hs.view) {                        // above the first section
             window.ChipStatus.jumpGuard.cancel();
-            _setActiveTab('topology');
+            _setActiveTab('overview');         // QA F-08: the first section
             pane.scrollTop = hs.top;
             return;
         }
@@ -3614,10 +3717,21 @@ window.ChipStatus.mount = function (opts) {
         return v <= warn ? 'pass' : (v <= fail ? 'warn' : 'fail');
     }
     window._chipThresholds = thresholds;   // Phase D editor mutates this + re-runs the summary
+    /* QA chipstatus-r2-21: the wiring-JSON sheet a double-click opened kept
+       naming the old qubit while the inspector moved on. An open sheet follows
+       the qubit now inspected; it only knows qubit wiring, so a PAIR closes it
+       rather than leave a qubit's wiring beside a pair. Every inspect path
+       (stone click, keyboard Enter, verdict / worst-offender chips) is here. */
+    function _jsonSheetOpen() {
+        var jp = document.getElementById('json-panel');
+        return !!(jp && !jp.classList.contains('hidden'));
+    }
     window._inspectQubit = function(id) {
+        if (_jsonSheetOpen()) showQubitJsonPanel(id, rawWiring);
         if (window.htmx) htmx.ajax('GET', '/qubit/' + encodeURIComponent(id), {source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML'});
     };
     window._inspectPair = function(id) {
+        if (_jsonSheetOpen() && window.closeJsonPanel) window.closeJsonPanel();
         if (window.htmx) htmx.ajax('GET', '/pair/' + encodeURIComponent(id), {source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML'});
     };
     // ONE delegated handler for every "inspect this qubit/pair" chip (verdict
@@ -4069,8 +4183,10 @@ window.ChipStatus.mount = function (opts) {
     _setupScrollSpy();
 
     // A deep-link ?view= (left-nav sub-item or a shared link) scrolls to that
-    // section; a bare /topology load stays at the top (topology), by design — we
-    // do NOT resume the last-used localStorage view. QA F-20: returning to the
+    // section; a bare /topology load stays at the top, by design — we do NOT
+    // resume the last-used localStorage view. QA F-08: the top is Overview since
+    // docs/141 4o put it first; lighting Topology there was a leftover from when
+    // Topology was the first section (a bogus ?view= lands here too). QA F-20: returning to the
     // SAME history entry (Back, forward, reload) is not a fresh load: it goes
     // back to where the user had scrolled to on it (_chipScrollRecord).
     // docs/141 4ac: normalise the alias HERE. 4o kept accepting ?view=gate for
@@ -4090,7 +4206,7 @@ window.ChipStatus.mount = function (opts) {
         // a fresh page with no deep view has no live jump: a jump made on the
         // previous visit must not re-anchor (or light the spy) on this one
         window.ChipStatus.jumpGuard.cancel();
-        _setActiveTab('topology');
+        _setActiveTab('overview');
     }
 
     _setupKeyboardNav();
@@ -4153,6 +4269,25 @@ window.ChipStatus.mount = function (opts) {
             next.focus();
             next.scrollIntoView({ block: 'nearest', inline: 'nearest' });
         }
+        /* QA chipstatus-r2-20: the inspector's × lives inside the pane
+           closeInspector() empties, so closing it dropped focus to <body> (only
+           the grid's own Escape handed it back). Remember the cell that opened
+           the inspector -- a mouse click or Enter's synthetic one -- and give
+           it focus back, but only when focus really was lost: never steal it
+           from a field the user moved to. */
+        var _lastCell = null;
+        dash.addEventListener('click', function(e) {
+            var c = e.target && e.target.closest && e.target.closest(SEL);
+            if (c) _lastCell = c;
+        }, true);
+        function _onInspectorClosed() {
+            var a = document.activeElement;
+            if (!_lastCell || !_lastCell.isConnected || (a && a !== document.body)) return;
+            decorate();                    // a lazily-built panel's cell gets its tabindex
+            cells().forEach(function(c) { c.setAttribute('tabindex', c === _lastCell ? '0' : '-1'); });
+            try { _lastCell.focus({ preventScroll: true }); } catch (err) { /* nothing to hand back */ }
+        }
+        document.body.addEventListener('inspector-closed', _onInspectorClosed);
         // Keep the roving "0" on whatever the user focused.
         dash.addEventListener('focusin', function(e) {
             var cell = e.target.closest && e.target.closest('[data-kbd-cell]');
@@ -4276,6 +4411,7 @@ window.ChipStatus.mount = function (opts) {
         window.ChipStatus._onLeave(dash, function teardown() {
             document.removeEventListener('keydown', onKey);
             document.removeEventListener('click', _reportDocClick, true);
+            document.body.removeEventListener('inspector-closed', _onInspectorClosed);
         });
         decorate();
     }
@@ -4480,11 +4616,43 @@ window.ChipTrends = (function () {
        polls held the body queue, and the chips lit with no chart behind them.
        Sourcing it on the element it targets also gives htmx the per-element
        bookkeeping that stops a fast second toggle racing the first. */
+    /* QA chipstatus-r2-18: the selection (qubit chips, pair badges, the box)
+       lived only in the fragment DOM, so F5 or Back rebuilt the section from a
+       BARE request -- the server's first-visit defaults -- while Columns,
+       palettes, hero metric and zoom all came back. Every change goes through
+       _reload, which now remembers the exact query it sent; the section's
+       first build replays it. Always `metrics=`-led (even empty), so turning
+       every chip off stays a remembered choice and the bare-request defaults
+       stay a first-visit thing. Per browser, like Columns. */
+    var SEL_KEY = 'quam_trends_sel_v1';
+    var SEL_MAX = 4096;
+    /* '?<query>' to replay, or '' (nothing stored, a private window, a value
+       that is not ours). Seeds the badge press order from the stored list,
+       which _params wrote newest first, so the families cap trims the same
+       badge after the reload as before it. */
+    function storedQuery() {
+        var v;
+        try { v = window.localStorage.getItem(SEL_KEY); } catch (e) { return ''; }
+        if (typeof v !== 'string' || v.indexOf('metrics=') !== 0 || v.length > SEL_MAX) return '';
+        if (!_pathOrder.length) {
+            var m = /(?:^|&)paths=([^&]*)/.exec(v);
+            if (m) {
+                try {
+                    decodeURIComponent(m[1]).split(',').forEach(function (s) {
+                        if (s && _pathOrder.indexOf(s) < 0) _pathOrder.push(s);
+                    });
+                } catch (e) { /* a malformed escape: DOM order, as before */ }
+            }
+        }
+        return '?' + v;
+    }
     var _reloadSeq = 0;
     function _reload() {
         if (!window.htmx || !document.getElementById('topo-trends')) return;
         var mine = ++_reloadSeq;
-        var p = htmx.ajax('GET', '/topology/trends?' + _params(),
+        var q = _params();
+        try { window.localStorage.setItem(SEL_KEY, q); } catch (e) { /* private window */ }
+        var p = htmx.ajax('GET', '/topology/trends?' + q,
                           { source: '#topo-trends', target: '#topo-trends',
                             swap: 'outerHTML' });
         // A late response swaps into a target that no longer exists (htmx
@@ -5079,5 +5247,6 @@ window.ChipTrends = (function () {
         }
     }
     return { toggle: toggle, togglePath: togglePath, setPath: setPath,
-             suggest: suggest, render: render, setCols: setCols };
+             suggest: suggest, render: render, setCols: setCols,
+             storedQuery: storedQuery };
 })();

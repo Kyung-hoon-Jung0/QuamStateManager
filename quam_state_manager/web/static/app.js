@@ -9960,9 +9960,10 @@ window.syncSidebarNavActive = function() {
         var hView = null;
         if (q >= 0) { try { hView = new URLSearchParams(href.slice(q)).get("view"); } catch (e) {} }
         // a view-scoped link matches its own view; bare /topology means the
-        // page's first section (the spy moves the subnav highlight later)
+        // page's first section (the spy moves the subnav highlight later) --
+        // Overview since docs/141 4o (QA F-08)
         if (hView && view && hView !== view) return;
-        if (hView && !view && hView !== "topology") return;
+        if (hView && !view && hView !== "overview") return;
         matches.push({ a: a, href: href, sub: !!a.closest(".nav-subitems") });
     });
     // same-href parent+child (Chip Components + Qubits are both /qubits):

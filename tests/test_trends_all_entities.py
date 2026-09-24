@@ -1505,6 +1505,87 @@ class TestNothingOldBroke:
         assert "togglePath: togglePath" in js
 
 
+class TestTypedTextThatNamesNoParameter:
+    """QA chipstatus-r2-17: Enter in the box charted ANY string, and the empty
+    slot promised "Nothing recorded for zzz_not_a_param yet. It appears here
+    once a run or a save writes it." -- for a typo, and for "interleaved" (the
+    placeholder's own example) on a chip that HAS recorded that family. The
+    "yet" belongs only to something that names a parameter."""
+
+    NOTHING = "Nothing recorded for"
+    NONE = "No recorded parameter on this chip matches"
+
+    def _slot(self, body: str) -> str:
+        i = body.find('class="topo-trend-box"')
+        return body[i:body.find("topo-trends-data", i)]
+
+    def test_a_typo_says_nothing_matches_not_yet(self, client, tmp_path):
+        _versions(client, tmp_path / "quam_state", n=2)
+        body = client.get(
+            "/topology/trends?metrics=&path=zzz_not_a_param").get_data(as_text=True)
+        slot = self._slot(body)
+        assert self.NONE in slot and "<code>zzz_not_a_param</code>" in slot, slot
+        assert self.NOTHING not in body, slot
+        charts = _charts(body)
+        assert len(charts) == 1 and charts[0]["unmatched"] is True             and charts[0]["series"] == [] and charts[0]["matches"] == [], charts
+
+    def test_a_typo_in_a_family_path_too(self, client, tmp_path):
+        """`qubits.*.not_a_leaf` has the family SHAPE, so it used to borrow
+        the tail as its title and the promise with it."""
+        _versions(client, tmp_path / "quam_state", n=2)
+        for p in ("qubits.*.not_a_leaf", "qubits.q1.not_a_leaf"):
+            body = client.get("/topology/trends?metrics=&path=" + p).get_data(as_text=True)
+            assert self.NONE in self._slot(body) and self.NOTHING not in body, (p, self._slot(body))
+
+    def test_a_fragment_lists_the_families_it_matches(self, tmp_path):
+        c, _ = _chip_with(tmp_path, "irbfrag", PAIRS, {IRB_TAIL: 0.99, SRB_TAIL: 0.97})
+        body = c.get("/topology/trends?metrics=&path=interleaved").get_data(as_text=True)
+        slot = self._slot(body)
+        assert self.NOTHING not in body, slot
+        assert "is not one parameter" in slot and "matches 1 recorded parameter." in slot, slot
+        fam = "qubit_pairs.*." + IRB_TAIL
+        # the typeahead's own row: same class, same data-path, same press
+        assert ('class="topo-trend-sug" data-path="' + fam + '"') in slot, slot
+        assert "onclick=\"ChipTrends.setPath(this.getAttribute('data-path'))\"" in slot
+        assert "· 3 pairs" in slot, slot
+        assert "StandardRB" not in slot, "only what the text matches is offered"
+        # ...and pressing it charts every pair
+        picked = c.get("/topology/trends?metrics=&path=" + fam).get_data(as_text=True)
+        ch = _charts(picked)
+        assert len(ch) == 1 and len(ch[0]["series"]) == len(PAIRS), ch
+
+    def test_a_real_parameter_with_no_numeric_history_keeps_the_yet(self, tmp_path):
+        """The honest "nothing recorded yet" still belongs to a leaf the chip
+        HAS -- here T2echo, null on every qubit (the real 20-qubit chip's case)."""
+        folder = _chip(tmp_path / "quam_state")
+        doc = json.loads((folder / "state.json").read_text(encoding="utf-8"))
+        for q in doc["qubits"].values():
+            q["T2echo"] = None
+        (folder / "state.json").write_text(json.dumps(doc), encoding="utf-8")
+        app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
+        c = app.test_client()
+        c.post("/load", data={"folder": str(folder)})
+        for p in ("qubits.*.T2echo", "qubits.q2.T2echo"):
+            body = c.get("/topology/trends?metrics=&path=" + p).get_data(as_text=True)
+            slot = self._slot(body)
+            assert self.NOTHING in slot and self.NONE not in slot, (p, slot)
+            assert _charts(body)[0].get("unmatched") in (None, False), _charts(body)
+
+    def test_a_subtree_is_not_a_parameter(self, client, tmp_path):
+        """`qubits.*.xy` exists in state, but it is a dict: nothing will ever
+        chart it, so it is offered the leaves under it instead of a "yet"."""
+        _versions(client, tmp_path / "quam_state", n=2)
+        body = client.get("/topology/trends?metrics=&path=qubits.*.xy").get_data(as_text=True)
+        assert self.NOTHING not in body, self._slot(body)
+
+    def test_a_badge_keeps_its_honest_empty_slot(self, client, tmp_path):
+        """Only the BOX is judged: a `?paths=` badge (the 2Q gate-fidelity
+        template) keeps the by-design "Nothing recorded" slot."""
+        body = client.get("/topology/trends?metrics=&paths=qubit_pairs.*.gate_fidelity"
+                          ).get_data(as_text=True)
+        assert self.NOTHING in body and self.NONE not in body
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
 def test_trends_badges_selfcheck():
     """The section's CLIENT half against the real chip-status.js under jsdom."""
