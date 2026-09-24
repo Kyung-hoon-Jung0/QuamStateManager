@@ -69,6 +69,78 @@ class TestCreate:
             assert r.status_code == 400
             assert r.get_json().get("error_kind") == "policy"
 
+    def _peek(self, client, path):
+        return client.get("/field/peek?dot_path=" + path).get_json()["values"].get(path, "ABSENT")
+
+    @pytest.mark.parametrize("typ,value", [
+        ("list", "5"), ("dict", "[1]"), ("matrix", "[1,2]"), ("matrix", "5")])
+    def test_the_chosen_shape_is_enforced(self, client, typ, value):
+        """jsontree-r2-22: the list/dict branch of the hint parse is plain
+        json.loads and the modifier never sees the hint, so '5' under list
+        was stored as 5 -- the user's choice enforced by nobody."""
+        path = "qubits.qA1.extras.qa_" + typ
+        r = client.post("/field/create", data={
+            "dot_path": path, "value": value, "expect_type": typ})
+        assert r.status_code == 400, r.get_json()
+        assert r.get_json()["error_kind"] == "type_mismatch"
+        assert self._peek(client, path) in ("ABSENT", None)
+        assert "qa_" + typ not in json.dumps(
+            client.get("/field/peek?dot_path=qubits.qA1.extras").get_json()["values"])
+
+    def test_a_ragged_matrix_is_still_a_matrix(self, client):
+        """By design: the grammar's matrix is list<list>, not rectangular."""
+        r = client.post("/field/create", data={
+            "dot_path": "qubits.qA1.extras.rag", "value": "[[1,2],[3]]",
+            "expect_type": "matrix"})
+        assert r.status_code == 200, r.get_json()
+        assert self._peek(client, "qubits.qA1.extras.rag") == [[1, 2], [3]]
+
+    @pytest.mark.parametrize("typ", ["infer", "str", "int", "list"])
+    def test_an_empty_value_creates_null(self, client, typ):
+        """jsontree-r2-22: empty became "" (a schema suggestion's Optional[str]
+        default None was created as a real empty thread name)."""
+        path = "qubits.qA1.extras.e_" + typ
+        r = client.post("/field/create", data={
+            "dot_path": path, "value": "", "expect_type": typ})
+        assert r.status_code == 200, r.get_json()
+        assert self._peek(client, path) is None
+
+    def test_a_quoted_empty_string_is_still_an_empty_string(self, client):
+        r = client.post("/field/create", data={
+            "dot_path": "qubits.qA1.extras.blank", "value": '""'})
+        assert r.status_code == 200, r.get_json()
+        assert self._peek(client, "qubits.qA1.extras.blank") == ""
+
+    def test_a_dotted_key_is_refused_by_name(self, client):
+        """jsontree-r2-24: 'v1.2' was read as nesting -- "Parent key 'v1' not
+        found" in quotes."""
+        r = client.post("/field/create", data={
+            "dot_path": "qubits.qA1.extras.v1.2", "key": "v1.2", "value": "5"})
+        assert r.status_code == 400
+        j = r.get_json()
+        assert j["error_kind"] == "invalid_key" and "cannot contain" in j["error"]
+
+    def test_a_dotted_key_never_lands_inside_an_existing_dict(self, client):
+        """...worse: with a dict 'v1' already there, v1["2"] = 5 was staged
+        silently while the tree showed a flat 'v1.2'."""
+        assert client.post("/field/create", data={
+            "dot_path": "qubits.qA1.extras.v1", "value": '{"a": 1}'}).status_code == 200
+        r = client.post("/field/create", data={
+            "dot_path": "qubits.qA1.extras.v1.2", "key": "v1.2", "value": "5"})
+        assert r.status_code == 400
+        assert self._peek(client, "qubits.qA1.extras.v1") == {"a": 1}
+
+    def test_a_plain_key_with_the_key_field_still_creates(self, client):
+        r = client.post("/field/create", data={
+            "dot_path": "qubits.qA1.extras.plain", "key": "plain", "value": "5"})
+        assert r.status_code == 200, r.get_json()
+
+    def test_missing_parent_message_is_not_a_repr(self, client):
+        r = client.post("/field/create", data={
+            "dot_path": "qubits.qZZ.brand.new", "value": "1"})
+        err = r.get_json()["error"]
+        assert not err.startswith('"') and not err.startswith("'"), err
+
     def test_assign_type_convenience(self, client):
         client.post("/field/create", data={
             "dot_path": "qubits.qA1.extras.count", "value": "3",

@@ -7411,6 +7411,10 @@ def field_edit():
     except (KeyError, TypeError, ValueError, IndexError) as e:
         return jsonify(ok=False, error=str(e)), 400
 
+    # JT-12: a re-point to nowhere lands (docs/190 F27) but is SAID, inline.
+    from quam_state_manager.core.edit_policy import dangling_pointer_warning
+    _warn = dangling_pointer_warning(modifier.store, target_path)
+    _wkw = {"warning": _warn} if _warn else {}
     # Echo what was ACTUALLY committed (the coercer may have kept the old
     # type) so the client can re-render the value with honest type styling.
     try:
@@ -7419,9 +7423,9 @@ def field_edit():
                 committed != committed or committed in (float("inf"), float("-inf"))):
             raise ValueError("non-finite echo would break JSON.parse")
         return jsonify(ok=True, tray_html=_tray_html(),
-                       stored=committed, stored_kind=_kind_of(committed))
+                       stored=committed, stored_kind=_kind_of(committed), **_wkw)
     except Exception:  # noqa: BLE001 — echo is a bonus, never a failure
-        return jsonify(ok=True, tray_html=_tray_html())
+        return jsonify(ok=True, tray_html=_tray_html(), **_wkw)
 
 
 def _fsp_plan_for(store, target_path: str, raw_value) -> dict | None:
@@ -8412,6 +8416,25 @@ def field_type_assign():
         policy = getattr(store, "type_policy", None)
     if policy is not None and not override_env:
         env_exp = policy._env_expected(store.merged, dot_path)
+        try:
+            _same = env_exp is not None and (
+                _tp.format_type(_tp.parse_type(type_expr))
+                == _tp.format_type(env_exp.spec))
+        except ValueError:
+            _same = False
+        if _same:
+            # JT-14: picking the env's OWN type is not an override -- it asked
+            # "Override real with real?". The env type governs again: an
+            # existing override (say str) is dropped, nothing new is stored.
+            removed = _tp.delete_assignment(current_app.instance_path,
+                                            ctx["path"], dot_path)
+            if removed:
+                _attach_type_policy(ctx)
+                policy = getattr(store, "type_policy", None)
+            return jsonify(ok=True, noop=True, removed=removed,
+                           already=_tp.format_type(env_exp.spec),
+                           expected=(policy.annotate(store.merged, dot_path)
+                                     if policy else None))
         if env_exp is not None:
             return jsonify(ok=False, error_kind="env_conflict",
                            error=("the env schema already types this key as "
@@ -8741,9 +8764,11 @@ def field_refs():
 @bp.route("/field/create", methods=["POST"])
 def field_create():
     """Create a brand-new key (scalar or subtree) anywhere a dict parent
-    exists — the Explorer's ＋. ``expect_type`` is a PARSE HINT only (the
-    modifier's type gate is the single enforcement authority — no separate
-    route-level gate, per the one-judge rule)."""
+    exists — the Explorer's ＋. ``expect_type`` is the parse hint, and the
+    value it yields is held to that type by the ONE judge
+    (``state_env_validate.judge``, jsontree-r2-22: the modifier's gate never
+    sees the hint, so a list/dict choice was enforced by nobody). An empty
+    value creates null."""
     from quam_state_manager.core import type_policy as _tp
     ctx = _active_ctx()
     modifier = ctx.get("modifier") if ctx else None
@@ -8760,6 +8785,19 @@ def field_create():
     expect_type = request.form.get("expect_type", "").strip()
     if not dot_path:
         return jsonify(ok=False, error="dot_path required"), 400
+    # jsontree-r2-24: the ＋ panel sends the typed key on its own, because the
+    # joined dot_path cannot tell a typed "." from a separator: 'v1.2' was
+    # read as nesting ("Parent key 'v1' not found"), or -- with an existing
+    # dict 'v1' -- silently written as v1["2"]. A dotted key could never be
+    # addressed again anyway (docs/167). Absent `key` = the old contract.
+    _key = request.form.get("key")
+    if _key is not None and ("." in _key or _BRACKET_SEG_RE.search(_key)
+                             or not (dot_path == _key
+                                     or dot_path.endswith("." + _key))):
+        return jsonify(ok=False, error_kind="invalid_key", error=(
+            "A key cannot contain \".\" (or [n]): fields are addressed by "
+            "dot-path, so it could never be edited or deleted. To nest, use "
+            "＋ on the parent.")), 400
     reason = _crud_policy_reason(modifier.store, dot_path)
     if reason is not None:
         return jsonify(ok=False, error=reason, error_kind="policy"), 400
@@ -8773,9 +8811,33 @@ def field_create():
         return jsonify(ok=False, error=_sr, error_kind="sibling_type"), 400
 
     try:
-        if expect_type and expect_type != "infer":
+        if raw_value.strip() == "":
+            # jsontree-r2-22: an empty value means unset -- null, which is
+            # always writable (docs/56 §3) and is the class default of an
+            # Optional field the schema suggestion picks. It used to become
+            # "" (a real thread name, for XYDriveMW.thread). A literal empty
+            # string is still typed as "".
+            parsed = None
+        elif expect_type and expect_type != "infer":
             hint = _tp.Expected(spec=_tp.parse_type(expect_type), source="user")
             parsed = _tp.parse_with_expected(raw_value, hint)
+            # jsontree-r2-22: the list/dict branch of the hint parse is plain
+            # json.loads, so "5" under list was stored as 5 -- the chosen type
+            # enforced by nobody. The ONE judge decides (a ragged matrix is
+            # still a list of lists, by the grammar's own definition).
+            from quam_state_manager.core.state_env_validate import (
+                EDIT_BLOCKING, judge)
+            _ok, _code, _msg = judge(parsed, hint.spec)
+            if not _ok and _code in EDIT_BLOCKING:
+                _chosen = _tp.format_type(hint.spec)
+                _eg = ('{"key": 5}' if hint.spec.get("base") == "dict"
+                       else "[[1, 2], [3, 4]]" if _chosen.startswith("matrix")
+                       else "[5]" if hint.spec.get("base") == "list" else None)
+                raise _tp.TypeMismatchError(
+                    f"{dot_path}: you chose {_chosen} -- {_msg}. "
+                    + (f"Type it as JSON (e.g. {_eg}) or pick 'infer'."
+                       if _eg else "Pick the type the value has, or 'infer'."),
+                    path=dot_path, expected=hint, got=type(parsed).__name__)
         else:
             parsed = _tp.parse_value(raw_value)
         modifier.create_subtree(dot_path, parsed)
@@ -8783,7 +8845,9 @@ def field_create():
     except _tp.TypeMismatchError as e:
         return jsonify(ok=False, error=str(e), **e.as_json()), 400
     except (KeyError, TypeError, ValueError, IndexError) as e:
-        return jsonify(ok=False, error=str(e)), 400
+        # str(KeyError) is its repr -- the message arrived wrapped in quotes
+        return jsonify(ok=False, error=(str(e.args[0]) if isinstance(e, KeyError)
+                                        and e.args else str(e))), 400
 
     if request.form.get("assign_type") in ("1", "true", "True") and expect_type \
             and expect_type != "infer" and ctx.get("path"):

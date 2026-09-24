@@ -209,6 +209,46 @@ class TestPlainTextNeverBreaksALinkSilently:
         assert edit_policy.pointer_cell_refusal(
             store, "qubits.q1.xy.LO_ref", "6.1e9") is not None
 
+    @pytest.mark.parametrize("typed", ["6.1e9", "null"])
+    def test_a_runtime_self_ref_says_runtime_not_plain_text(self, store, typed):
+        """JT-11: an unresolvable `#./` self-ref is quam's runtime-computed
+        value. The refusal stands, but it called the number "plain text" and
+        sent the user to the Pulses page's pointer editor, which refuses a
+        non-pulse path and offers no unlink for an unresolved pointer."""
+        why = edit_policy.pointer_cell_refusal(store, "qubits.q1.xy.LO_ref", typed)
+        assert why and "runtime" in why, why
+        assert "Pulses" not in why and "plain text" not in why, why
+        assert "#./upconverter_frequency" in why, why
+
+    def test_the_inferred_if_names_what_it_is_computed_from(self):
+        st = _state()
+        st["qubits"]["q1"]["xy"]["intermediate_frequency"] =             "#./inferred_intermediate_frequency"
+        store = QuamStore.from_dicts(st, {"network": {"host": "1.2.3.4"}})
+        why = edit_policy.pointer_cell_refusal(
+            store, "qubits.q1.xy.intermediate_frequency", "50000000")
+        assert why and "RF_frequency - LO_frequency" in why, why
+        assert why.startswith("intermediate_frequency is computed at runtime"), why
+
+    def test_a_resolvable_self_ref_alias_keeps_the_link_message(self, store):
+        """`#./x180_DragCosine` reaches a pulse dict: a real link, so the
+        refusal keeps naming the deliberate way out."""
+        why = edit_policy.pointer_cell_refusal(
+            store, "qubits.q1.xy.operations.x180", "5")
+        assert why and "reference" in why and "Pulses" in why, why
+        assert "runtime" not in why, why
+
+    def test_the_rejection_chip_wraps_instead_of_ellipsising(self):
+        """JT-11: the chip was nowrap + ellipsis at 46em, so a ~300-char
+        refusal was cut to one line. jsdom does not lay out; the browser
+        check is in the QA record, this pins the rule text."""
+        css = (Path(__file__).resolve().parent.parent / "quam_state_manager"
+               / "web" / "static" / "style.css").read_text(encoding="utf-8")
+        i = css.index(".tree-edit-err {")
+        block = css[i:css.index("}", i)]
+        assert "text-overflow: ellipsis" not in block, block
+        assert "white-space: nowrap" not in block, block
+        assert "white-space: normal" in block, block
+
     def test_value_mode_is_never_refused(self, store):
         """A pointer that reaches a real number keeps value-mode: typing a
         number there writes the number AT THE TARGET, which is correct and is
@@ -259,6 +299,33 @@ class TestThroughTheRoutes:
         st = self._state_of(client)
         assert st["qubit_pairs"]["q1-2"]["qubit_control"] == "#/qubits/q2"
         assert isinstance(st["qubits"]["q1"], dict)      # never stringified
+
+    def test_a_resolvable_repoint_carries_no_warning(self, client):
+        r = client.post("/field/edit", data={
+            "dot_path": "qubit_pairs.q1-2.qubit_control", "value": "#/qubits/q2"})
+        assert r.status_code == 200 and "warning" not in r.get_json()
+
+    @pytest.mark.parametrize("ptr", ["#/qubits/qZZ/xy", "#/ports/nowhere/x"])
+    def test_a_repoint_to_nowhere_lands_and_says_so(self, client, ptr):
+        """JT-12: a dangling re-point is ALLOWED (docs/190 F27) but was
+        silent -- only the global issues badge moved. (A `#/ports/` pointer is
+        always hard, as in Diagnostics' _port_findings.)"""
+        r = client.post("/field/edit", data={
+            "dot_path": "qubit_pairs.q1-2.qubit_control", "value": ptr})
+        assert r.status_code == 200, r.get_json()
+        j = r.get_json()
+        assert ptr in j.get("warning", "") and "does not resolve" in j["warning"]
+        st = self._state_of(client)
+        assert st["qubit_pairs"]["q1-2"]["qubit_control"] == ptr
+
+    @pytest.mark.parametrize("ptr", [
+        "#./upconverter_frequency",   # runtime self-ref: never dangling
+        "#/qubits/q2/T1",             # q2 exists, only the optional leaf is absent
+    ])
+    def test_runtime_and_optional_default_pointers_do_not_warn(self, client, ptr):
+        r = client.post("/field/edit", data={
+            "dot_path": "qubit_pairs.q1-2.qubit_control", "value": ptr})
+        assert r.status_code == 200 and "warning" not in r.get_json(), r.get_json()
 
     def test_plain_text_is_refused_by_the_route(self, client):
         r = client.post("/field/edit", data={

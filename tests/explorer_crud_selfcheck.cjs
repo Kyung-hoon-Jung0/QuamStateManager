@@ -213,6 +213,15 @@ function nodeAt(container, p) {
     ok(win._fetchCalls.some(function (x) { return x.url === '/field/delete'; }),
       'C4: /field/delete POSTed');
     ok(!nodeAt(c, 'qubits.qA1.f_01'), 'C4: leaf removed after parent rebuild');
+    // JT-13: the rebuilt parent used to come back COLLAPSED and lazy, so the
+    // check above passed vacuously (no child was in the DOM at all) and the
+    // user lost the branch they were deleting from.
+    const par = nodeAt(c, 'qubits.qA1');
+    ok(!!par && !par.querySelector(':scope > .tree-row > .tree-toggle.collapsed'),
+      'C4: the parent stays open after the delete');
+    ok(!!nodeAt(c, 'qubits.qA1.id'), 'C4: a sibling leaf is still on screen');
+    ok(!!nodeAt(c, 'qubits.qA1.confusion_matrix.0.0'),
+      'C4: an open sibling subtree stays open too');
   }
 
   // C5: type picker 409 env-conflict → confirm → override.
@@ -343,6 +352,203 @@ function nodeAt(container, p) {
     hover(win, leaf);
     ok(!leaf.querySelector('.tree-act-del'), 'C10: no ✕ under a membership top');
     ok(!leaf.querySelector('.tree-act-type'), 'C10: no ⚙ under a membership top');
+  }
+
+  // C11 (JT-12): a re-point to nowhere lands (by design) and is SAID inline.
+  {
+    const win = makeWorld(function (url) {
+      if (url === '/field/edit') return jsonResp({ ok: true, tray_html: '',
+        stored: 6.3e9, stored_kind: 'real',
+        warning: '#/ports/nowhere/x does not resolve on this chip' });
+      return jsonResp({ ok: true, values: {}, expected: {} });
+    });
+    win._toasts = [];
+    win.showToast = function (m, lvl) { win._toasts.push([m, lvl]); };
+    const c = win.document.getElementById('tree');
+    expandAll(c);
+    const val = nodeAt(c, 'qubits.qA1.f_01').querySelector('.tree-val');
+    val.click();
+    await tick(10);
+    const inp = val.querySelector('input');
+    inp.value = '6.3e9';
+    inp.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await tick(30);
+    ok(win._toasts.some(function (t) { return t[1] === 'warning' && /does not resolve/.test(t[0]); }),
+      'C11: the /field/edit warning is shown as a warning toast');
+  }
+
+  // C12 (JT-13): the container JSON editor -- an untouched Save posts
+  //      NOTHING (the server never no-ops), and a real Save keeps the node
+  //      and its open descendants open.
+  {
+    const win = makeWorld(function (url) {
+      if (url === '/field/edit') return jsonResp({ ok: true, tray_html: '' });
+      return jsonResp({ ok: true, values: {}, expected: {} });
+    });
+    const c = win.document.getElementById('tree');
+    expandAll(c);
+    const edits = function () {
+      return win._fetchCalls.filter(function (x) { return x.url === '/field/edit'; }).length;
+    };
+    let cm = nodeAt(c, 'qubits.qA1.confusion_matrix');
+    cm.querySelector(':scope > .tree-row > .tree-json-edit-btn').click();
+    let ed = cm.querySelector(':scope > .tree-json-editor');
+    ok(!!ed, 'C12: the JSON editor opens');
+    ed.querySelector('.tree-json-editor-bar button').click();   // Save
+    await tick(20);
+    ok(edits() === 0, 'C12: Save with nothing changed POSTs nothing (' + edits() + ')');
+    ok(!cm.querySelector(':scope > .tree-json-editor'), 'C12: ...and closes the editor');
+    cm = nodeAt(c, 'qubits.qA1.confusion_matrix');
+    cm.querySelector(':scope > .tree-row > .tree-json-edit-btn').click();
+    ed = cm.querySelector(':scope > .tree-json-editor');
+    const ta = ed.querySelector('textarea');
+    ta.value = '[[0.95,0.05],[0.1,0.9]]';
+    ta.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }));
+    await tick(25);
+    ok(edits() === 1, 'C12: a real edit POSTs once');
+    cm = nodeAt(c, 'qubits.qA1.confusion_matrix');
+    ok(!!cm && !cm.querySelector(':scope > .tree-row > .tree-toggle.collapsed'),
+      'C12: the saved node comes back OPEN');
+    ok(!!nodeAt(c, 'qubits.qA1.confusion_matrix.0.0'),
+      'C12: its open row 0 is open again, showing the new value');
+    const v00 = nodeAt(c, 'qubits.qA1.confusion_matrix.0.0');
+    ok(v00 && /0\.95/.test(v00.textContent), 'C12: ...with the saved value');
+  }
+
+  // C13 (JT-13): a boolean takes the coercer's words -- "1" on true is true,
+  //      so it must not stage a "True -> True" no-op.
+  {
+    const BOOL = { qubits: { qA1: { active: true, other: false } } };
+    const win = makeWorld(function (url) {
+      if (url === '/field/edit') return jsonResp({ ok: true, tray_html: '', stored: false, stored_kind: 'bool' });
+      return jsonResp({ ok: true, values: {}, expected: {} });
+    }, null, BOOL);
+    const c = win.document.getElementById('tree');
+    expandAll(c);
+    const edits = function () {
+      return win._fetchCalls.filter(function (x) { return x.url === '/field/edit'; }).length;
+    };
+    async function type(path, text) {
+      const v = nodeAt(c, path).querySelector('.tree-val');
+      v.click();
+      await tick(10);
+      const inp = v.querySelector('input');
+      inp.value = text;
+      inp.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await tick(25);
+    }
+    await type('qubits.qA1.active', '1');
+    ok(edits() === 0, 'C13: "1" on true posts nothing');
+    await type('qubits.qA1.active', ' YES ');
+    ok(edits() === 0, 'C13: "YES" on true posts nothing');
+    await type('qubits.qA1.other', 'off');
+    ok(edits() === 0, 'C13: "off" on false posts nothing');
+    await type('qubits.qA1.active', '0');
+    ok(edits() === 1, 'C13: "0" on true is a real change and posts');
+  }
+
+  // C14 (JT-14): the type picker -- the env's own type is a no-op reply
+  //      (no confirm), "pick a type" clears on a pick, Esc closes it.
+  {
+    const win = makeWorld(function (url, opts) {
+      if (url.indexOf('/field/peek') === 0) {
+        return jsonResp({ ok: true, values: {}, expected: {
+          'qubits.qA1.f_01': { type: 'real', source: 'env',
+            class_path: 'q.Transmon', field: 'f_01', detail: 'float' } } });
+      }
+      if (url === '/field/type-assign') {
+        return jsonResp({ ok: true, noop: true, removed: false, already: 'real',
+          expected: { type: 'real', source: 'env' } });
+      }
+      return jsonResp({ ok: true, warm: false, missing: [] });
+    });
+    win._toasts = [];
+    win.showToast = function (m, lvl) { win._toasts.push([m, lvl]); };
+    const c = win.document.getElementById('tree');
+    expandAll(c);
+    const leaf = nodeAt(c, 'qubits.qA1.f_01');
+    hover(win, leaf);
+    leaf.querySelector('.tree-act-type').click();
+    await tick(20);
+    let panel = leaf.querySelector('.tree-type-panel');
+    ok(!!panel && panel.contains(win.document.activeElement),
+      'C14: focus starts inside the panel (' + (win.document.activeElement && win.document.activeElement.tagName) + ')');
+    panel.querySelector('.tree-type-assign').click();              // no pick
+    const err = panel.querySelector('.tree-crud-err');
+    ok(/pick a type/.test(err.textContent), 'C14: Assign without a pick asks for one');
+    const real = panel.querySelector('input[value="real"]');
+    real.checked = true;
+    real.dispatchEvent(new win.Event('change', { bubbles: true }));
+    ok(err.textContent === '', 'C14: the stale "pick a type" clears on a pick');
+    panel.querySelector('.tree-type-assign').click();
+    await tick(25);
+    ok(!win._confirmed, 'C14: the env\'s own type asks no "Override real with real?"');
+    ok(!leaf.querySelector('.tree-type-panel'), 'C14: the no-op closes the panel');
+    ok(win._toasts.some(function (t) { return /Already real/.test(t[0]); }),
+      'C14: and says it is already that type');
+    hover(win, leaf);
+    leaf.querySelector('.tree-act-type').click();
+    await tick(20);
+    panel = leaf.querySelector('.tree-type-panel');
+    win.document.activeElement.dispatchEvent(
+      new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    ok(!leaf.querySelector('.tree-type-panel'), 'C14: Esc from the focused panel closes it');
+  }
+
+  // C15 (jsontree-r2-24): a key with "." is refused in the panel, by name;
+  //      a plain key travels on its own (`key=`) for the route's backstop.
+  {
+    const win = makeWorld(function (url) {
+      if (url.indexOf('/schema/missing-keys') === 0) return jsonResp({ ok: true, warm: false, missing: [] });
+      if (url === '/field/create') return jsonResp({ ok: true, tray_html: '' });
+      return jsonResp({ ok: true, values: {}, expected: {} });
+    });
+    const c = win.document.getElementById('tree');
+    expandAll(c);
+    const ex = nodeAt(c, 'qubits.qA1.extras');
+    hover(win, ex);
+    ex.querySelector('.tree-act-add').click();
+    await tick();
+    const panel = ex.querySelector('.tree-crud-panel');
+    panel.querySelector('.tree-crud-key').value = 'v1.2';
+    panel.querySelector('.tree-crud-val').value = '5';
+    panel.querySelector('.tree-crud-ok').click();
+    await tick(20);
+    const creates = function () {
+      return win._fetchCalls.filter(function (x) { return x.url === '/field/create'; });
+    };
+    ok(creates().length === 0, 'C15: a dotted key is never POSTed');
+    ok(/cannot contain/.test(panel.querySelector('.tree-crud-err').textContent),
+      'C15: and the panel says why');
+    panel.querySelector('.tree-crud-key').value = 'v12';
+    panel.querySelector('.tree-crud-ok').click();
+    await tick(20);
+    ok(creates().length === 1 && /(^|&)key=v12(&|$)/.test(creates()[0].opts.body),
+      'C15: a plain key is sent with key= (' + (creates()[0] && creates()[0].opts.body) + ')');
+  }
+
+  // C16 (jsontree-r2-22): a suggestion whose class default is null says an
+  //      empty submit means null.
+  {
+    const win = makeWorld(function (url) {
+      if (url.indexOf('/schema/missing-keys') === 0) {
+        return jsonResp({ ok: true, warm: true, missing: [
+          { key: 'thread', expected_type: 'str', default: null, source_class: 'XYDriveMW' }] });
+      }
+      return jsonResp({ ok: true, values: {}, expected: {} });
+    });
+    const c = win.document.getElementById('tree');
+    expandAll(c);
+    const dictNode = nodeAt(c, 'qubits.qA1');
+    hover(win, dictNode);
+    dictNode.querySelector('.tree-act-add').click();
+    await tick();
+    const panel = dictNode.querySelector('.tree-crud-panel');
+    const keyIn = panel.querySelector('.tree-crud-key');
+    keyIn.value = 'thread';
+    keyIn.dispatchEvent(new win.Event('change', { bubbles: true }));
+    ok(panel.querySelector('.tree-crud-val').placeholder.indexOf('null (class default)') >= 0,
+      'C16: the value box says empty = null for a null default');
   }
 
   if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }

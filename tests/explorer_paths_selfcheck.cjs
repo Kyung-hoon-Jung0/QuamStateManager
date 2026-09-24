@@ -152,6 +152,10 @@ function expandAll(win, container) {
         const chip = node.querySelector('.tree-edit-err');
         ok(!!chip && /expected number/.test(chip.textContent),
           'P5: rejection reason rendered inline (swallowed-error regression pin)');
+        // JT-11: the chip was ellipsised with a title of only "click to
+        // dismiss" -- a long reason could not be read in full anywhere.
+        ok(!!chip && chip.title.indexOf('expected number, got str "abc"') >= 0,
+          'P5: the chip title carries the full reason (' + (chip && chip.title) + ')');
       }
     }
   }

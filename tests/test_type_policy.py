@@ -523,6 +523,45 @@ class TestRoutes:
         j = r.get_json()
         assert j["removed"] is True and j["expected"]["source"] == "env"
 
+    def test_type_assign_same_as_env_is_noop(self, client):
+        """JT-14: picking the env's OWN type asked "Override real with real?"
+        and, confirmed, stored a pointless override_env assignment."""
+        r = client.post("/field/type-assign", data={
+            "dot_path": "qubits.qA1.f_01", "type": "real"})
+        assert r.status_code == 200, r.get_json()
+        j = r.get_json()
+        assert j["noop"] is True and j["removed"] is False and j["already"] == "real"
+        assert j["expected"]["source"] == "env"
+        a = client.get("/field/type-assignments").get_json()["assignments"]
+        assert "qubits.qA1.f_01" not in a
+
+    def test_type_assign_env_type_clears_an_existing_override(self, client):
+        """...and it is how a user gets BACK to the env's type after a str
+        override: the override is dropped, not left in force."""
+        client.post("/field/type-assign", data={
+            "dot_path": "qubits.qA1.f_01", "type": "str", "override_env": "1"})
+        r = client.post("/field/type-assign", data={
+            "dot_path": "qubits.qA1.f_01", "type": "real"})
+        j = r.get_json()
+        assert r.status_code == 200 and j["noop"] is True and j["removed"] is True
+        assert j["expected"]["source"] == "env" and j["expected"]["type"] == "real"
+
+    def test_a_looser_type_is_still_an_override(self, client):
+        """list vs env list<list<real>> loosens the env type: still the 409."""
+        r = client.post("/field/type-assign", data={
+            "dot_path": "qubits.qA1.confusion_matrix", "type": "list"})
+        assert r.status_code == 409 and r.get_json()["error_kind"] == "env_conflict"
+
+    def test_env_detail_is_a_readable_type_not_a_repr(self):
+        """JT-14: the probe stores str(annotation); the picker head read
+        "— <class 'float'>"."""
+        import copy
+        man = copy.deepcopy(MANIFEST)
+        man["classes"]["q.Transmon"]["fields"]["f_01"]["type"]["raw"] = "<class 'float'>"
+        e = tp.TypePolicy(man, {})._env_expected(_state(), "qubits.qA1.f_01")
+        assert e is not None and e.detail == "float", e
+        assert "<class" not in e.as_json()["detail"]
+
     def test_edit_batch_refuses_an_underflow_like_an_overflow(self, client):
         """QA liveedit-r2-25, at the door the grid's Enter uses: '1e-400'
         is a per-row error naming the value, and nothing is written."""

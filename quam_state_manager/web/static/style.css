@@ -5518,10 +5518,12 @@ input.tree-edit-input {
     border-radius: 3px;
     color: var(--color-error-text, #c62828);
     cursor: pointer;
-    white-space: nowrap;
+    /* JT-11: a ~300-char pointer refusal was cut to one ellipsised line; the
+       reason wraps inside the chip now (the row is flex/nowrap, so the text
+       has to wrap, not the row). */
+    white-space: normal;
+    overflow-wrap: anywhere;
     max-width: 46em;
-    overflow: hidden;
-    text-overflow: ellipsis;
     display: inline-block;
     vertical-align: middle;
 }

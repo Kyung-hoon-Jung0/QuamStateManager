@@ -8709,10 +8709,18 @@ window.clearDetailPanelSearch = function(btnEl) {
         var chip = document.createElement("span");
         chip.className = "tree-edit-err";
         chip.textContent = "✗ " + (msg || "edit rejected");
-        chip.title = "click to dismiss";
+        // JT-11: the full reason on hover too, and a long reason (a pointer
+        // refusal runs ~300 chars) gets time to be read: the life scales with
+        // its length and a pointer resting on the chip holds it open.
+        chip.title = (msg || "edit rejected") + " (click to dismiss)";
         chip.onclick = function() { chip.remove(); };
         row.appendChild(chip);
-        setTimeout(function() { chip.remove(); }, 8000);
+        var life = Math.max(8000, 60 * chip.textContent.length);
+        var t = setTimeout(function() { chip.remove(); }, life);
+        chip.onmouseenter = function() { clearTimeout(t); };
+        chip.onmouseleave = function() {
+            clearTimeout(t); t = setTimeout(function() { chip.remove(); }, 4000);
+        };
     }
     window._showEditError = _showEditError;
 
@@ -8736,6 +8744,18 @@ window.clearDetailPanelSearch = function(btnEl) {
             }));
         }
     };
+
+    /* JT-13: the server's boolean vocabulary (modifier._type_coerce and
+       type_policy.parse_with_expected, parity-pinned in
+       tests/test_explorer_crud.py) -> "true" / "false", else null. */
+    var _BOOL_TRUE_WORDS = ["true", "t", "yes", "y", "on", "1"];
+    var _BOOL_FALSE_WORDS = ["false", "f", "no", "n", "off", "0"];
+    function _boolWord(text) {
+        var low = String(text).trim().toLowerCase();
+        if (_BOOL_TRUE_WORDS.indexOf(low) >= 0) return "true";
+        if (_BOOL_FALSE_WORDS.indexOf(low) >= 0) return "false";
+        return null;
+    }
 
     function _makeValueEditable(valEl, dotPath) {
         if (valEl.querySelector("input")) return; // already editing
@@ -8820,6 +8840,10 @@ window.clearDetailPanelSearch = function(btnEl) {
                 catch (e) { /* not a JSON value -- ordinary text, no intent */ }
             }
             if (newVal === editVal && !meansTypeChange) { cancel(); return Promise.resolve(); }
+            // JT-13: a boolean leaf reads the coercer's words, so "1" on a
+            // true is true -- it POSTed and staged a "True -> True" no-op.
+            if (valEl.classList.contains("tree-val-boolean")
+                    && _boolWord(newVal) === editVal) { cancel(); return Promise.resolve(); }
             committed = true;
             valEl.textContent = currentDisplay;
             valEl.classList.remove("tree-val-editing");
@@ -8919,6 +8943,10 @@ window.clearDetailPanelSearch = function(btnEl) {
                     if (_e) _e.remove();
                     valEl.classList.remove("tree-val-error");
                 })();
+                // JT-12: a re-point to a target that does not exist lands (by
+                // design, docs/190 F27) -- and is said here, not only by the
+                // global issues badge. Same idiom as delete's dangling toast.
+                if (data.warning && window.showToast) window.showToast(data.warning, "warning");
                 // r14 honesty: re-render from the COMMITTED value the server
                 // echoes (the coercer may have kept the old type) — the old
                 // raw-text write-back showed "0.13"-the-string as bare 0.13
@@ -9127,9 +9155,39 @@ window.clearDetailPanelSearch = function(btnEl) {
         var _tree = oldNode.closest ? oldNode.closest(".json-tree") : null;
         if (_tree) _keyHelpOn = !!_tree._keyHelp;
         if (_tree && newValue !== _ABSENT) _treeModelSet(_tree, m.path, newValue);
+        var _open = _openTreePaths(oldNode);   // JT-13
         var fresh = _buildNode(m.key, newValue, m.path, m.depth, m.refValue, m.hasDiff, m.valueClick);
         oldNode.parentNode.replaceChild(fresh, oldNode);
+        _reopenTreePaths(fresh, _open);
         return fresh;
+    }
+
+    /* JT-13: every in-place rebuild (JSON-editor Save, delete, paste, add-key)
+       built the node collapsed, so the branch the user had just edited -- or
+       the parent of the key they deleted, with its open siblings -- closed
+       under them. The open set is keyed by data-path, compared with
+       getAttribute (keys are free-form: never a selector). A path the new
+       value no longer has is simply not found. */
+    function _openTreePaths(node) {
+        var open = {};
+        (function walk(n) {
+            var kids = n.querySelector(":scope > .tree-children");
+            if (!kids || kids.style.display === "none") return;
+            open[n.getAttribute("data-path")] = true;
+            for (var i = 0; i < kids.children.length; i++) {
+                if (kids.children[i].classList.contains("tree-node")) walk(kids.children[i]);
+            }
+        })(node);
+        return open;
+    }
+    function _reopenTreePaths(node, open) {
+        if (!open[node.getAttribute("data-path")]) return;
+        var kids = node.querySelector(":scope > .tree-children");
+        if (!kids) return;
+        if (kids.style.display === "none") _toggleNode(node);
+        for (var i = 0; i < kids.children.length; i++) {
+            if (kids.children[i].classList.contains("tree-node")) _reopenTreePaths(kids.children[i], open);
+        }
     }
 
     /** Edit a whole list/dict container as raw JSON. The server re-parses the text
@@ -9150,6 +9208,7 @@ window.clearDetailPanelSearch = function(btnEl) {
         ta.className = "tree-json-textarea";
         ta.spellcheck = false;
         try { ta.value = JSON.stringify(value, null, 2); } catch (e) { ta.value = String(value); }
+        var initialText = ta.value;   // JT-13: Save with nothing changed is a no-op
         ta.rows = Math.min(18, Math.max(3, ta.value.split("\n").length + 1));
 
         var bar = document.createElement("div");
@@ -9176,6 +9235,11 @@ window.clearDetailPanelSearch = function(btnEl) {
 
         function doSave() {
             var txt = ta.value.trim();
+            // JT-13: the inline editor's no-op guard, for this editor too --
+            // the server never no-ops set_value, so an untouched Save staged
+            // an "identical" tray entry. Text identity, never a parsed deep
+            // compare: JSON.parse cannot tell 1 from 1.0 (docs/168's trap).
+            if (txt === initialText.trim()) { close(); return; }
             var parsed;
             try { parsed = JSON.parse(txt); }
             catch (ex) { err.hidden = false; err.textContent = "Invalid JSON: " + ex.message; return; }
@@ -9472,7 +9536,7 @@ window.clearDetailPanelSearch = function(btnEl) {
             '<select class="tree-crud-type">' + _TYPE_CHOICES.map(function (t) {
                 return '<option value="' + t + '">' + (t === "infer" ? "type: infer" : t) + "</option>";
             }).join("") + "</select>" +
-            '<input class="tree-crud-val" placeholder="value (JSON for lists/dicts)">' +
+            '<input class="tree-crud-val" placeholder="value (empty = null; JSON for lists/dicts)">' +
             '<button type="button" class="btn-sm tree-crud-ok">Add</button>' +
             '<button type="button" class="btn-sm outline tree-crud-cancel">Cancel</button>' +
             '<span class="tree-crud-err"></span>';
@@ -9507,15 +9571,28 @@ window.clearDetailPanelSearch = function(btnEl) {
             if (_TYPE_CHOICES.indexOf(t) >= 0) typeSel.value = t;
             if (s.default !== null && s.default !== undefined && valIn.value === "") {
                 valIn.value = typeof s.default === "string" ? s.default : JSON.stringify(s.default);
+            } else if (s.default === null && valIn.value === "") {
+                // jsontree-r2-22: an empty submit creates null = this default
+                valIn.placeholder = "null (class default)";
             }
         });
 
         function submit() {
             var key = keyIn.value.trim();
             if (!key) { err.textContent = "key required"; return; }
+            // jsontree-r2-24: a "." in a typed key was read as nesting ("Parent
+            // key 'v1' not found"), or written into an existing v1 dict. A
+            // dotted key could never be addressed again (docs/167). The route
+            // refuses it too, from the `key` field sent below.
+            if (key.indexOf(".") >= 0 || /\[\d+\]/.test(key)) {
+                err.textContent = 'A key cannot contain "." (or [n]): fields are addressed by ' +
+                    "dot-path, so it could never be edited or deleted. To nest, use ＋ on the parent.";
+                return;
+            }
             var body = new URLSearchParams();
             var dotPath = (m.path ? m.path + "." : "") + key;
             body.append("dot_path", dotPath);
+            body.append("key", key);
             body.append("value", valIn.value);
             body.append("expect_type", typeSel.value);
             body.append("expect_chip", window.__chipToken || "");
@@ -9647,6 +9724,7 @@ window.clearDetailPanelSearch = function(btnEl) {
         function post(override) {
             var sel = panel.querySelector('input[name="tp"]:checked');
             if (!sel) { err.textContent = "pick a type"; return; }
+            err.textContent = "";   // JT-14: a stale reason never outlives the pick
             var body = new URLSearchParams();
             body.append("dot_path", m.path);
             body.append("type", sel.value);
@@ -9664,6 +9742,15 @@ window.clearDetailPanelSearch = function(btnEl) {
                     return;
                 }
                 if (!res.d.ok) { err.textContent = res.d.error || "assign failed"; return; }
+                if (res.d.noop) {
+                    // JT-14: the env's own type -- nothing to override.
+                    var ex = res.d.expected || {};
+                    panel.remove();
+                    if (window.showToast) window.showToast(res.d.removed
+                        ? "Override cleared: " + (ex.type || res.d.already) + " (" + (ex.source || "env") + ") applies"
+                        : "Already " + res.d.already + " by the env schema; nothing assigned", "info");
+                    return;
+                }
                 if (res.d.warning && window.showToast) window.showToast(res.d.warning, "warning");
                 panel.remove();
                 if (window.showToast) window.showToast("Type assigned: " + sel.value, "success");
@@ -9688,6 +9775,12 @@ window.clearDetailPanelSearch = function(btnEl) {
         panel.addEventListener("keydown", function (e) {
             if (e.key === "Escape") panel.remove();
         });
+        // JT-14: a pick clears "pick a type"; focus starts INSIDE the panel
+        // (as the add-key panel's does) so its Escape handler hears Esc --
+        // focus used to stay on the ⚙ button and Esc did nothing.
+        panel.addEventListener("change", function () { err.textContent = ""; });
+        var _r0 = panel.querySelector('input[name="tp"]');
+        if (_r0) _r0.focus();
     }
 
     // The live-diff IIFE's ✓-accept handler repaints a value element this
