@@ -222,6 +222,7 @@ def run_regenerate(
     # without this every Populate edit was silently reverted by the merge.
     protect: set[str] | None = None
     pop_conflicts: list[str] = []
+    changed: list | None = None       # QA F17: the edited CELLS, for the report
     if populate_baseline is not None:
         from . import regen_populate
         pop_view = regen_populate.populate_view(spec)
@@ -318,6 +319,8 @@ def run_regenerate(
     regen_spec.write_spec_sidecar(out_dir, spec, result.merged, new_wiring)
 
     s = result.stats
+    class_groups = regen_merge.class_change_groups(
+        s.class_changed, s.schema_dropped + s.residual_lost, old_state)
     outcome["merge"] = {
         "carried": s.carried,
         "grafted": s.grafted,
@@ -333,9 +336,16 @@ def run_regenerate(
         # The totals ride alongside so the panel can say "200 of N shown".
         "residual_lost": s.residual_lost[:200],
         "residual_lost_total": len(s.residual_lost),
+        # QA F17: the same loss grouped by what it belonged to ("qubit q5,
+        # removed: 142 values"), from the FULL list -- derived, not a new
+        # accounting; the flat list above stays for older panels.
+        "residual_lost_groups": regen_merge.group_lost_paths(
+            s.residual_lost, result.merged,
+            reversed_pairs=dict(s.pairs_reversed)),
         "dangling_grafts": s.dangling_grafts[:200],
         "dangling_grafts_total": len(s.dangling_grafts),
         "pruned_ops": len(s.pruned_ops),
+        "pruned_ops_paths": s.pruned_ops[:20],     # QA F17: name what was cleaned
         "twpa_wiring_carried": twpa_carried,
         "network_carried": net_carried,
         "schema_dropped": len(s.schema_dropped),
@@ -378,8 +388,21 @@ def run_regenerate(
         "class_changed_paths": [
             {"path": p, "old": o, "new": n} for p, o, n in s.class_changed[:80]],
         "class_changed_total": len(s.class_changed),
+        # QA r2-28: grouped over the FULL list, each with how many fields its
+        # re-typed objects actually dropped -- a package move that dropped
+        # nothing is not presented as a loss.
+        "class_changed_groups": class_groups,
+        "class_changed_lossy_total": sum(
+            g["count"] for g in class_groups if g["dropped"]),
         "populate_protected": len(s.populate_protected),
         "populate_protected_paths": s.populate_protected[:80],
+        # QA F17: edited CELLS (one x180 edit protects the whole DragCosine
+        # family) and every protected value, source -> rebuilt.
+        "populate_cells": len(changed) if changed is not None else None,
+        "populate_protected_detail": (
+            regen_populate.protected_detail(
+                s.populate_protected, old_state, result.merged)
+            if changed is not None else []),
         "populate_conflicts": s.populate_conflicts[:20],
     }
     outcome["script"] = script_name   # emitted build recipe filename, or None

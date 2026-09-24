@@ -248,6 +248,12 @@ def test_the_report_names_the_class_substitution_behind_the_drop(tmp_path, monke
     assert m["class_changed_paths"] == [{
         "path": "qubits.q1.resonator.operations.readout",
         "old": lab, "new": stock}]
+    # QA r2-28: the lab class's field really dropped -- measured, so it stays
+    # a (lossy) substitution rather than a harmless re-type.
+    assert m["class_changed_groups"] == [{
+        "old": lab, "new": stock, "count": 1, "dropped": 1,
+        "paths": ["qubits.q1.resonator.operations.readout"]}]
+    assert m["class_changed_lossy_total"] == 1
 
 
 def test_a_rebuild_that_changes_no_class_reports_none(tmp_path, monkeypatch):
@@ -698,3 +704,81 @@ def test_an_in_memory_source_is_merged_instead_of_the_files(tmp_path, monkeypatc
     rec = regenerate.reconstruct_from_folder(
         tmp_path / "old", source=(in_mem, {"wiring": {}, "network": {}}))
     assert rec.spec is not None
+
+
+class TestTheMergeReportReads:
+    """QA F17 / regenerate-r2-28 -- the report names what it counts."""
+
+    @staticmethod
+    def _run(tmp_path, monkeypatch, old_state, fresh, spec=None, **kw):
+        (tmp_path / "old").mkdir()
+        (tmp_path / "old" / "state.json").write_text(json.dumps(old_state))
+        (tmp_path / "old" / "wiring.json").write_text(
+            json.dumps({"wiring": {}, "network": {}}))
+
+        def fake_build(python_path, mode, spec, out_dir, timeout=300):
+            out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "state.json").write_text(json.dumps(fresh))
+            (out_dir / "wiring.json").write_text(
+                json.dumps({"wiring": {}, "network": {}}))
+            return {"ok": True, "status": "ok", "error": None, "result": {}}
+
+        monkeypatch.setattr(regenerate.config_generator, "run_generator", fake_build)
+        return regenerate.run_regenerate("py", tmp_path / "old", spec or {"x": 1},
+                                         tmp_path / "new", **kw)["merge"]
+
+    # "" = the plain builder names; "_DragCosine" = the customer chip's own
+    # (the seed is still the x180 op, not a derived one).
+    @pytest.mark.parametrize("sfx", ["", "_DragCosine"])
+    def test_one_x180_edit_is_one_edit_and_names_the_x90_it_rederived(
+            self, tmp_path, monkeypatch, sfx):
+        D = "qb.DragCosinePulse"
+        old = {"qubits": {"q1": {"xy": {"operations": {
+            "x180" + sfx: {"__class__": D, "amplitude": 0.3, "length": 40},
+            "x90" + sfx: {"__class__": D, "amplitude": 0.15169, "length": 40}}}}}}
+        fresh = {"qubits": {"q1": {"xy": {"operations": {
+            "x180" + sfx: {"__class__": D, "amplitude": 0.25, "length": 40},
+            "x90" + sfx: {"__class__": D, "amplitude": 0.125, "length": 40}}}}}}
+        spec = {"qubits": ["q1"],
+                "populate": {"pulses": {"q1": {"x180_amplitude": 0.25}}}}
+        m = self._run(tmp_path, monkeypatch, old, fresh, spec,
+                      populate_baseline={"pulses": {"q1": {"x180_amplitude": 0.3}}})
+        assert m["populate_protected"] == 2          # leaves, as before
+        assert m["populate_cells"] == 1              # ...from ONE edited cell
+        assert m["populate_protected_detail"] == [
+            {"path": f"qubits.q1.xy.operations.x180{sfx}.amplitude",
+             "old": 0.3, "new": 0.25, "derived_from": None},
+            {"path": f"qubits.q1.xy.operations.x90{sfx}.amplitude",
+             "old": 0.15169, "new": 0.125, "derived_from": "x180"}]
+
+    def test_no_baseline_ships_no_cell_count(self, tmp_path, monkeypatch):
+        m = self._run(tmp_path, monkeypatch, {"qubits": {"q1": {"f": 1}}},
+                      {"qubits": {"q1": {"f": 0}}})
+        assert m["populate_cells"] is None and m["populate_protected_detail"] == []
+
+    def test_a_removed_qubit_is_one_group_and_the_cleaned_op_is_named(
+            self, tmp_path, monkeypatch):
+        old = {"qubits": {"q1": {"f": 1}, "q5": {"f": 5, "T1": 2e-5}}}
+        fresh = {"qubits": {"q1": {"f": 0}}}
+        m = self._run(tmp_path, monkeypatch, old, fresh)
+        assert m["residual_lost_total"] == 2
+        assert m["residual_lost_groups"] == [
+            {"kind": "qubit", "owner": "q5", "present": False, "n": 2,
+             "paths": ["qubits.q5.f", "qubits.q5.T1"]}]
+        assert m["pruned_ops_paths"] == []
+
+    def test_a_package_move_is_measured_lossless(self, tmp_path, monkeypatch):
+        OLDC, NEWC = "quam.pulses.DragCosinePulse", "qb.pulses.DragCosinePulse"
+        old = {"qubits": {f"q{i}": {"xy": {"operations": {
+            "x180": {"__class__": OLDC, "amplitude": 0.1}}}} for i in range(1, 91)},
+            "twpas": {"twpaA": {"pump": {"__class__": "quam.MWChannel", "f": 1}}}}
+        fresh = {"qubits": {f"q{i}": {"xy": {"operations": {
+            "x180": {"__class__": NEWC, "amplitude": 0.0}}}} for i in range(1, 91)},
+            "twpas": {"twpaA": {"pump": {"__class__": "qb.XYDriveMW", "f": 0}}}}
+        m = self._run(tmp_path, monkeypatch, old, fresh)
+        assert m["class_changed_total"] == 91
+        assert len(m["class_changed_paths"]) == 80                 # the page, as before
+        assert [(g["old"], g["count"], g["dropped"])
+                for g in m["class_changed_groups"]] == [
+            (OLDC, 90, 0), ("quam.MWChannel", 1, 0)]                 # past the page
+        assert m["class_changed_lossy_total"] == 0

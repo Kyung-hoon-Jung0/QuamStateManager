@@ -211,6 +211,19 @@ class TestValidateSpecErrors:
         ]
         assert not [e for e in validate_spec(spec) if "qubits: id" in e]
 
+    def test_a_pair_listed_twice_is_refused(self):
+        # QA r2-34: the builder keys a pair by its ORDERED (control, target),
+        # so a duplicate built once while Review counted it twice.
+        spec = _valid_spec()
+        spec["qubit_pairs"] = [["q1", "q2"], ["q1", "q2"]]
+        errs = [e for e in validate_spec(spec) if "duplicate" in e]
+        assert errs == ["qubit_pairs[1]: duplicate of qubit_pairs[0] (q1-q2)"]
+
+    def test_anti_parallel_cr_pairs_are_two_pairs(self):
+        spec = _valid_spec()
+        spec["qubit_pairs"] = [["q1", "q2"], ["q2", "q1"]]
+        assert not [e for e in validate_spec(spec) if "duplicate" in e]
+
     def test_pair_references_unknown_qubit(self):
         spec = _valid_spec()
         spec["qubit_pairs"] = [["q1", "q9"]]

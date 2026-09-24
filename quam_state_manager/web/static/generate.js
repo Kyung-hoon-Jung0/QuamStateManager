@@ -173,6 +173,21 @@
         return !p[0] || !p[1] || p[0] === p[1];
       });
       if (badPair) return "Every qubit pair needs two different qubits.";
+      // QA r2-34: a pair listed twice builds ONCE (the builder keys pairs by
+      // id), so Review counted a pair the chip never got. Ordered for CR
+      // (q1→q2 and q2→q1 are two drives); unordered while CZ roles are
+      // assigned from frequencies (q1–q2 and q2–q1 are one physical pair).
+      var seenPair = {}, dupPair = null, czUnordered = czOrderActive();
+      state.spec.qubit_pairs.some(function (p) {
+        var k = czUnordered ? p.slice().sort().join("|") : p[0] + "|" + p[1];
+        if (seenPair[k]) { dupPair = p; return true; }
+        seenPair[k] = true;
+        return false;
+      });
+      if (dupPair) {
+        return "Qubit pair " + dupPair[0] + (czUnordered ? "–" : "→") +
+          dupPair[1] + " is listed twice — remove the duplicate.";
+      }
       if (state.spec.twpas.some(function (t) { return !t.id; })) {
         return "Every TWPA needs an id.";
       }
@@ -1069,6 +1084,35 @@
     return pairs;
   }
 
+  // QA r2-34: "+ Add pair" always pre-filled [qs[0], qs[1]] -- a duplicate of
+  // row 1 that the builder silently collapsed. Offer the first chain pair not
+  // listed yet (either direction), then any unlisted combination; blank only
+  // when every combination is taken (the step-4 gate refuses a blank pair).
+  function nextFreePair(qs, pairs) {
+    var taken = {};
+    (pairs || []).forEach(function (p) {
+      if (p && p[0] && p[1]) taken[p.slice().sort().join("|")] = true;
+    });
+    var free = function (a, b) { return !taken[[a, b].sort().join("|")]; };
+    var chain = defaultChainPairs(qs || []);
+    for (var i = 0; i < chain.length; i++) {
+      if (free(chain[i][0], chain[i][1])) return chain[i].slice();
+    }
+    for (var a = 0; a < (qs || []).length; a++) {
+      for (var b = a + 1; b < qs.length; b++) {
+        if (free(qs[a], qs[b])) return [qs[a], qs[b]];
+      }
+    }
+    return ["", ""];
+  }
+
+  // QA F15: repaint the chip board (its caption counts pairs, its edges draw
+  // them) after a pair edit made OUTSIDE the board. Guarded -- selfchecks eval
+  // generate.js without wiring-grid.js.
+  function refreshBoard() {
+    if (window.WiringGrid) window.WiringGrid.refresh();
+  }
+
   // Atomic lock-step rename of the qubit set against a single old→new map
   // (extracted from the old renumberContiguous — the highest-blast-radius
   // mutator; a partial rewrite would orphan per-qubit/per-pair data, so it is
@@ -1632,6 +1676,7 @@
         markPairManual(pair);
         regenFollowPairOrientation(pair);
         renderPairs();   // repaint (the manual chip may have just appeared)
+        refreshBoard();  // QA F15: the edge moved
       });
       row.querySelector(".gen-pair-t").addEventListener("change", function (e) {
         pair[1] = e.target.value;
@@ -1639,6 +1684,7 @@
         markPairManual(pair);
         regenFollowPairOrientation(pair);
         renderPairs();
+        refreshBoard();
       });
       row.querySelector(".gen-row-del").addEventListener("click", function () {
         state.pairsTouched = true;
@@ -1646,6 +1692,7 @@
         renderPairs();
         syncLineTypeToggles();   // gate selector depends on pair count
         deriveLines();           // keep spec.lines in sync after removal
+        refreshBoard();          // QA F15: caption + edge now
       });
       list.appendChild(row);
       if (revNote) list.appendChild(revNote);
@@ -2249,6 +2296,12 @@
     if (!payload || !payload.ok) return false;
     state.spec.instruments = payload.instruments ||
       { controllers: [], opx_plus: [], octaves: [] };
+    // QA r2-38: "replaces the ... port pins" -- deriveLines builds its pinned
+    // map from spec.lines, so the previous chip's pins (a Re-generate pins
+    // every line) survived onto instruments that no longer have those slots:
+    // a TWPA pump kept con1/slot 3 and the build failed NotEnoughChannels.
+    // The CSV's own pins are applied after deriveLines below, as before.
+    state.spec.lines = [];
     state.spec.qubits = (payload.qubits || []).slice();
     state.namesTouched = true;      // q0-based ids must survive the scheme gate
     state.spec.qubit_pairs = (payload.qubit_pairs || [])
@@ -2261,6 +2314,22 @@
     });
     var countInput = document.getElementById("gen-qubit-count");
     if (countInput) countInput.value = state.spec.qubits.length;
+    // QA r2-38: TWPAs stay, but only linked to qubits that still exist. A
+    // re-generated spec links them by pointer ("#/qubits/q1"): judged by id.
+    var validQ = {};
+    state.spec.qubits.forEach(function (q) { validQ[q] = true; });
+    (state.spec.twpas || []).forEach(function (tw) {
+      if (tw && typeof tw === "object") {
+        tw.qubits = (tw.qubits || []).filter(function (q) {
+          return validQ[String(q).replace(/^#\/qubits\//, "")];
+        });
+      }
+    });
+    // ...and step 3 shows the imported instruments, not the previous chassis
+    // (hydrateFromSpec repaints the same way).
+    var chCount = document.getElementById("gen-chassis-count");
+    if (chCount) chCount.value = (state.spec.instruments.controllers || []).length;
+    if (typeof renderChassis === "function") renderChassis();
 
     // architecture: the CSV layout IS the shared-port CR chip. State first
     // (deriveLines below must see it even before any UI listener runs), then
@@ -2339,7 +2408,9 @@
         if (!f) return;
         if (state.spec.qubits.length &&
             !window.confirm("Importing the CSV replaces the current qubits, "
-                            + "pairs, instruments and port pins. Continue?")) {
+                            + "pairs, instruments and port pins (TWPAs are "
+                            + "kept, re-allocated on the imported "
+                            + "instruments). Continue?")) {
           return;
         }
         var reader = new FileReader();
@@ -2389,13 +2460,12 @@
     if (addPair) {
       addPair.addEventListener("click", function () {
         state.pairsTouched = true;
-        var qs = state.spec.qubits;
-        state.spec.qubit_pairs.push(
-          qs.length >= 2 ? [qs[0], qs[1]] : ["", ""]
-        );
+        state.spec.qubit_pairs.push(nextFreePair(state.spec.qubits,
+                                                 state.spec.qubit_pairs));
         renderPairs();
         syncLineTypeToggles();   // gate selector depends on pair count
         deriveLines();           // keep spec.lines in sync with the new pair
+        refreshBoard();          // QA F15: caption + edge now, not one click late
       });
     }
     if (addTwpa) {
@@ -2532,6 +2602,7 @@
       var qc = document.getElementById("gen-qubit-count");
       if (qc) qc.value = String(state.spec.qubits.length);
       renderQubitSummary();    // count chip below the board reflects the delete
+      renderNamingUi();        // QA F15: the rename list follows the qubit set
       renderPairs();           // keep the dropdown pair list in sync
       syncLineTypeToggles();   // gate selector depends on pair count
       deriveLines();           // keep spec.lines in sync (respects wiringTouched)
@@ -6318,7 +6389,8 @@
       });
     }
     var cap = document.getElementById("gen-pop-topo-caption");
-    if (cap) cap.textContent = placed + "/" + sp.qubits.length + " placed · " + sp.qubit_pairs.length + " pairs";
+    if (cap) cap.textContent = placed + "/" + sp.qubits.length + " placed · " + sp.qubit_pairs.length +
+      (sp.qubit_pairs.length === 1 ? " pair" : " pairs");
     var leg = document.getElementById("gen-pop-topo-legend");
     if (leg && window.TopoGraph) leg.textContent = window.TopoGraph.legendForGate(state.pairGate);
     if (details.open) renderPopTopoBoard();
@@ -7147,6 +7219,21 @@
    * "Automatic" is the default and is byte-for-byte today's behaviour: the
    * value is only put on the spec when a person picks one.
    */
+  // QA generate-r2-28: every class name a root's `qubits` annotation holds.
+  // Taking the text after the LAST dot turned Dict[str, Union[A, B]] into
+  // "B]" -- the first member dropped, the Union's bracket left behind.
+  function _holdsLabel(t) {
+    var inner = String(t || "")
+      .replace(/^(?:typing\.)?[Dd]ict\[\s*str\s*,\s*/, "").replace(/\]\s*$/, "");
+    var names = [];
+    (inner.match(/[A-Za-z_][\w.]*/g) || []).forEach(function (tok) {
+      var n = tok.split(".").pop();
+      if (/^(Union|Optional|ForwardRef|NoneType|None|typing)$/.test(n)) return;
+      if (names.indexOf(n) < 0) names.push(n);
+    });
+    return names.join(", ");
+  }
+
   function _rootPicker(box, res) {
     var roots = res.roots || [];
     if (!roots.length) return;
@@ -7168,8 +7255,8 @@
     roots.forEach(function (r) {
       var o = document.createElement("option");
       o.value = r.path;
-      var q = String(r.qubits_type || "").replace(/^typing\.Dict\[str, /, "").replace(/\]$/, "");
-      o.textContent = r.path + (q ? "   (holds " + q.split(".").pop() + ")" : "");
+      var q = _holdsLabel(r.qubits_type);
+      o.textContent = r.path + (q ? "   (holds " + q + ")" : "");
       sel.appendChild(o);
     });
     sel.value = (state.spec && state.spec.quam_class) || "";
@@ -7440,9 +7527,10 @@
       el.className = "gen-build-result gen-build-ok";
       var r = res.result;
       var msg = document.createElement("p");
+      var nQ = (r.qubits || []).length, nP = (r.qubit_pairs || []).length;
       msg.textContent = "✓ Generated " +
-        ((r.qubits || []).length) + " qubits and " +
-        ((r.qubit_pairs || []).length) + " pairs into " + outPath;
+        nQ + (nQ === 1 ? " qubit" : " qubits") + " and " +
+        nP + (nP === 1 ? " pair" : " pairs") + " into " + outPath;
       el.appendChild(msg);
       (r.warnings || []).forEach(function (w) {
         var wel = document.createElement("p");
@@ -7507,7 +7595,25 @@
           keptByCls[c.cls] = (keptByCls[c.cls] || 0) + 1;
         });
         var classGroups = [];
+        // QA r2-28: the server groups the FULL list and measures, per group,
+        // how many fields its re-typed objects dropped. Grouping the capped
+        // page under-counted (80 of 126) and hid a whole group past the cap;
+        // a package move that dropped nothing was painted as a loss.
+        var srvClassGroups = Array.isArray(m.class_changed_groups)
+            ? m.class_changed_groups : null;
+        var classLossyN = classChN, classRetypedN = 0;
+        if (srvClassGroups) {
+          classLossyN = 0;
+          srvClassGroups.forEach(function (g) {
+            classGroups.push({ old: g.old, nw: g.new, paths: g.paths || [],
+                               count: g.count || 0, dropped: g.dropped || 0,
+                               measured: true });
+            if (g.dropped) classLossyN += g.count || 0;
+            else classRetypedN += g.count || 0;
+          });
+        }
         (function () {
+          if (srvClassGroups) return;
           var seen = {};
           classCh.forEach(function (c) {
             var key = c.old + " -> " + c.new;
@@ -7519,17 +7625,32 @@
           });
         })();
         var popProtN = m.populate_protected || 0;   // wizard populate edits kept over tier-1
+        // QA F17: the edited CELLS (one x180 edit protects the whole
+        // DragCosine family, so values > cells). Absent on older results.
+        var popCellsN = (m.populate_cells != null) ? m.populate_cells : null;
+        var popDetail = m.populate_protected_detail || [];
         var popConf = m.populate_conflicts || [];
         var mp = document.createElement("div");
         mp.className = "gen-merge-report";
         mp.innerHTML =
           '<span class="gen-merge-h">Values preserved</span>' +
-          '<span class="gen-merge-stat gen-merge-ok">' + m.carried + ' carried</span>' +
-          '<span class="gen-merge-stat gen-merge-graft">' + m.grafted + ' grafted</span>' +
-          (popProtN ? '<span class="gen-merge-stat gen-merge-ok" title="Values you ' +
+          '<span class="gen-merge-stat gen-merge-ok" title="Calibrated values ' +
+            'from the source chip written over the rebuild\'s fresh defaults ' +
+            '(the same place exists in both chips)">' + m.carried + ' carried</span>' +
+          '<span class="gen-merge-stat gen-merge-graft" title="Values only the ' +
+            'source chip had (your added pulses, macros, extras …) copied into ' +
+            'the rebuild whole">' + m.grafted + ' grafted</span>' +
+          (popProtN ? '<span class="gen-merge-stat gen-merge-ok gen-merge-pop" title="Values you ' +
             'changed in the Populate step — kept as edited (the merge no longer ' +
-            'reverts wizard edits to the old chip\'s values)">' + popProtN +
-            ' populate edit' + (popProtN === 1 ? '' : 's') + ' applied</span>' : '') +
+            'reverts wizard edits to the old chip\'s values). Editing an x180 ' +
+            'seed re-derives the whole DragCosine family (x90, -x90, y180 …) ' +
+            'from it — every value this set is listed below.">' +
+            (popCellsN != null && popCellsN > 0
+              ? popCellsN + ' populate edit' + (popCellsN === 1 ? '' : 's') +
+                ' applied' + (popProtN !== popCellsN ? ' (' + popProtN + ' value' +
+                (popProtN === 1 ? '' : 's') + ')' : '')
+              : popProtN + ' populate edit' + (popProtN === 1 ? '' : 's') +
+                ' applied') + '</span>' : '') +
           (supN ? '<span class="gen-merge-stat gen-merge-ok" title="Value preserved — the ' +
             'rebuild references it (e.g. a CZ pulse the old builder stored inline, now on the ' +
             'qubit z line)">' + supN + ' via reference</span>' : '') +
@@ -7566,13 +7687,19 @@
             'stock class the builder wrote, so every field only your class declares ' +
             '(e.g. optimized readout weights) was carried over">' + keptN +
             ' kept as your class' + '</span>' : '') +
-          (classChN ? '<span class="gen-merge-stat gen-merge-warn" title="The rebuild ' +
+          (classLossyN ? '<span class="gen-merge-stat gen-merge-warn" title="The rebuild ' +
             'typed these objects as a different class than the source chip — usually ' +
             "your own subclass replaced by the stock class this env's builder knows. " +
             'Every field only your class declares is gone from the rebuild (they are ' +
             'in the dropped list below). Name the class in the build recipe, or keep ' +
-            'the source chip for those values.">' + classChN +
-            ' class substitution' + (classChN === 1 ? '' : 's') + '</span>' : '') +
+            'the source chip for those values.">' + classLossyN +
+            ' class substitution' + (classLossyN === 1 ? '' : 's') + '</span>' : '') +
+          (classRetypedN ? '<span class="gen-merge-stat gen-merge-muted gen-merge-retyped" ' +
+            'title="The rebuild wrote these objects with a different class path ' +
+            'than the source chip (e.g. a class quam moved into quam_builder), and ' +
+            'every field the source stored was carried — none dropped. Nothing ' +
+            'to do unless your own code checks the class path.">' + classRetypedN +
+            ' re-typed, no fields lost</span>' : '') +
           (dangN ? '<span class="gen-merge-stat gen-merge-warn" title="Grafted legacy content ' +
             'whose reference no longer resolves">' + dangN + ' broken ref</span>' : '') +
           (popConf.length ? '<span class="gen-merge-stat gen-merge-warn" ' +
@@ -7589,9 +7716,14 @@
         if (prunedN) {
           var pn = document.createElement("div");
           pn.className = "gen-merge-muted gen-merge-detail";
+          var prunedP = m.pruned_ops_paths || [];
           pn.textContent = "cleaned " + prunedN +
             " redundant legacy op" + (prunedN === 1 ? "" : "s") +
-            " the rebuild re-expressed (unreferenced, broken pointers)";
+            " the rebuild re-expressed (nothing referenced " +
+            (prunedN === 1 ? "it" : "them") + "; " +
+            (prunedN === 1 ? "its" : "their") + " pointers were broken)" +
+            (prunedP.length ? ": " + prunedP.slice(0, 6).join(", ") +
+              (prunedN > 6 ? ", …" : "") : "");
           el.appendChild(pn);
         }
         // A class substitution is named where the user is already looking —
@@ -7658,15 +7790,55 @@
             (keptByCls[cls] === 1 ? "" : "s") + ", with every field it declares";
           el.appendChild(kl);
         });
+        // QA F17: name every value a Populate edit set, source -> rebuilt.
+        var fmtV = function (v) {
+          if (v == null) return "—";
+          return (typeof v === "number" || typeof v === "string")
+            ? String(v) : JSON.stringify(v);
+        };
+        popDetail.slice(0, 8).forEach(function (d) {
+          var pl = document.createElement("div");
+          pl.className = "gen-merge-muted gen-merge-detail gen-merge-pop-line";
+          pl.textContent = "edited " + d.path + ": " + fmtV(d.old) + " → " +
+            fmtV(d.new) + (d.derived_from ? " (re-derived from the " +
+            d.derived_from + " seed you edited)" : "");
+          el.appendChild(pl);
+        });
+        if (popDetail.length > 8) {
+          var pm = document.createElement("div");
+          pm.className = "gen-merge-muted gen-merge-detail gen-merge-pop-line";
+          pm.textContent = "+ " + (popDetail.length - 8) + " more edited value" +
+            (popDetail.length - 8 === 1 ? "" : "s");
+          el.appendChild(pm);
+        }
         classGroups.slice(0, 6).forEach(function (g) {
           var cg = document.createElement("div");
-          cg.className = "gen-merge-muted gen-merge-detail";
+          var n = g.measured ? g.count : g.paths.length;
+          cg.className = (g.measured && g.dropped)
+            ? "gen-merge-detail gen-merge-warn" : "gen-merge-muted gen-merge-detail";
           cg.textContent = "rebuilt as " + g.nw + " (was " + g.old + ") — " +
-            g.paths.length + " place" + (g.paths.length === 1 ? "" : "s") +
+            n + " place" + (n === 1 ? "" : "s") +
+            (g.measured ? (g.dropped ? ", " + g.dropped + " field" +
+              (g.dropped === 1 ? "" : "s") + " dropped" : ", no fields lost") : "") +
             ": " + g.paths.slice(0, 3).join(", ") +
-            (g.paths.length > 3 ? ", …" : "");
+            (n > 3 ? ", …" : "");
           el.appendChild(cg);
         });
+        if (classGroups.length > 6) {
+          var cmore = document.createElement("div");
+          cmore.className = "gen-merge-muted gen-merge-detail gen-merge-class-more";
+          cmore.textContent = "+ " + (classGroups.length - 6) + " more class " +
+            "change" + (classGroups.length - 6 === 1 ? "" : "s") + " not shown";
+          el.appendChild(cmore);
+        }
+        if (!srvClassGroups && classCh.length && classCh.length < classChN) {
+          // An older result: the groups above count only the listed page.
+          var ccap = document.createElement("div");
+          ccap.className = "gen-merge-muted gen-merge-detail gen-merge-class-more";
+          ccap.textContent = "(first " + classCh.length + " of " + classChN +
+            " re-typed places listed — the counts above cover only those)";
+          el.appendChild(ccap);
+        }
         if (lostN || dangN || schemaDropN) {
           var det = document.createElement("details");
           det.className = "gen-merge-detail";
@@ -7674,16 +7846,55 @@
           sm.textContent = "Not carried / dropped / broken (" +
             (lostN + dangN + schemaDropN) + ") — expand";
           det.appendChild(sm);
-          (m.residual_lost || []).concat(m.dangling_grafts || [])
-            .concat((m.schema_dropped_paths || []).map(function (p) {
-              return p + " — old-stack field this env doesn't know (dropped)";
-            }))
-            .slice(0, 80).forEach(function (p) {
+          // QA F17: grouped by what the values belonged to ("qubit q5 —
+          // removed: 142 values"), each group its own expandable list; a
+          // truncated list says "shown K of N" (docs/118: a cap must never
+          // read as a total). Older results without groups stay flat.
+          var lostGroups = Array.isArray(m.residual_lost_groups)
+              ? m.residual_lost_groups : null;
+          var plural = function (n, w) { return n + " " + w + (n === 1 ? "" : "s"); };
+          var capLine = function (parent, shown, total) {
+            if (shown >= total) return;
+            var cl = document.createElement("div");
+            cl.className = "gen-merge-muted gen-merge-lost-cap";
+            cl.textContent = "shown " + shown + " of " + total;
+            parent.appendChild(cl);
+          };
+          (lostGroups || []).forEach(function (g) {
+            var gd = document.createElement("details");
+            gd.className = "gen-merge-lost-group";
+            var gs = document.createElement("summary");
+            var who = g.kind === "other" ? g.owner : g.kind + " " + g.owner;
+            var gone = g.reversed_as ? " — rebuilt reversed as " + g.reversed_as
+              : g.present === false ? (g.kind === "port"
+                  ? " — not in the rebuild (its line was removed or moved)"
+                  : " — removed")
+              : "";
+            gs.textContent = who + gone + ": " + plural(g.n, "value") +
+              (g.present === true ? " with no place in the rebuild" : "");
+            gd.appendChild(gs);
+            (g.paths || []).forEach(function (p) {
               var line = document.createElement("div");
               line.className = "gen-merge-lost-line";
               line.textContent = p;
-              det.appendChild(line);
+              gd.appendChild(line);
             });
+            capLine(gd, (g.paths || []).length, g.n);
+            det.appendChild(gd);
+          });
+          var flat = (lostGroups ? [] : (m.residual_lost || []))
+            .concat(m.dangling_grafts || [])
+            .concat((m.schema_dropped_paths || []).map(function (p) {
+              return p + " — old-stack field this env doesn't know (dropped)";
+            }));
+          var flatTotal = (lostGroups ? 0 : lostN) + dangN + schemaDropN;
+          flat.slice(0, 80).forEach(function (p) {
+            var line = document.createElement("div");
+            line.className = "gen-merge-lost-line";
+            line.textContent = p;
+            det.appendChild(line);
+          });
+          capLine(det, Math.min(flat.length, 80), flatTotal);
           el.appendChild(det);
         }
       }
@@ -8619,6 +8830,8 @@
       // build-result renderer that has to take TWO blocker shapes.
       renderCapabilityReport: renderCapabilityReport,
       showBuildResult: showBuildResult,
+      holdsLabel: _holdsLabel,          // QA generate-r2-28
+      nextFreePair: nextFreePair,       // QA r2-34
       // r15 CG2/CG3 selfcheck seams (docs/70) — not public API
       openSlotMenu: openSlotMenu,
       hideSlotMenu: hideSlotMenu,

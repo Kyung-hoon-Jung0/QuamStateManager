@@ -203,11 +203,21 @@ def validate_spec(spec) -> list[str]:
 
     # -- qubit_pairs -------------------------------------------------------
     pairs = spec.get("qubit_pairs", []) or []
+    # QA r2-34: the builder keys a pair by its ORDERED (control, target), so a
+    # pair listed twice builds once -- the Review counted a pair the chip
+    # never got. Anti-parallel CR pairs ([q1,q2] + [q2,q1]) are two pairs.
+    first_at: dict = {}
     for i, pair in enumerate(pairs):
         if not (isinstance(pair, (list, tuple)) and len(pair) == 2):
             errors.append(f"qubit_pairs[{i}]: must be a [control, target] pair")
             continue
         control, target = str(pair[0]), str(pair[1])
+        if (control, target) in first_at:
+            errors.append(f"qubit_pairs[{i}]: duplicate of "
+                          f"qubit_pairs[{first_at[(control, target)]}] "
+                          f"({control}-{target})")
+        else:
+            first_at[(control, target)] = i
         if control not in qubit_set:
             errors.append(f"qubit_pairs[{i}]: control '{control}' is not a declared qubit")
         if target not in qubit_set:

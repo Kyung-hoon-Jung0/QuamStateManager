@@ -258,5 +258,98 @@ function buildTo4(win, opts) {
     off.length + ')');
 })();
 
+// L6 (QA F15): the board caption and the rename list follow a pair / qubit
+// edit made OUTSIDE the board at once. jsdom's .click() fires no mouseup, so
+// the document-level mouseup repaint that used to catch up one action later
+// cannot mask a missing refresh here.
+(function captionFollowsEdits() {
+  const win = makeWorld();
+  const G = buildTo4(win);
+  setInput(win, 'gen-qubit-count', '4');
+  const cap = win.document.getElementById('gen-topo-caption');
+  const capPairs = function () {
+    const m = /(\d+) pairs?\b/.exec(cap.textContent);
+    return m ? +m[1] : null;
+  };
+  ok(capPairs() === G.state.spec.qubit_pairs.length,
+    'L6: caption starts in step (got: ' + cap.textContent + ')');
+  win.document.getElementById('gen-add-pair').click();
+  ok(capPairs() === G.state.spec.qubit_pairs.length,
+    'L6: + Add pair updates the caption at once (caption ' + capPairs() +
+    ', pairs ' + G.state.spec.qubit_pairs.length + ')');
+  const dels = win.document.querySelectorAll('#gen-pair-list .gen-row-del');
+  dels[dels.length - 1].click();
+  ok(capPairs() === G.state.spec.qubit_pairs.length,
+    'L6: a row x updates the caption at once (caption ' + capPairs() +
+    ', pairs ' + G.state.spec.qubit_pairs.length + ')');
+  // a Control/Target change moves the edge: the board repaints
+  let refreshed = 0;
+  const realRefresh = win.WiringGrid.refresh;
+  win.WiringGrid.refresh = function () { refreshed++; return realRefresh.apply(this, arguments); };
+  const tSel = win.document.querySelector('#gen-pair-list .gen-pair-t');
+  tSel.value = 'q4';
+  tSel.dispatchEvent(new win.Event('change', { bubbles: true }));
+  win.WiringGrid.refresh = realRefresh;
+  ok(refreshed > 0, 'L6: a Target change repaints the board');
+  // a board delete repaints the rename list
+  win.WiringGrid._removeQubit('q3');
+  const names = Array.prototype.map.call(
+    win.document.querySelectorAll('#gen-qubit-name-list input'),
+    function (i) { return i.value; });
+  ok(names.join(',') === G.state.spec.qubits.join(','),
+    'L6: the rename list follows a board delete (list ' + names.join(',') +
+    ', qubits ' + G.state.spec.qubits.join(',') + ')');
+  // one pair reads "1 pair", never "1 pairs"
+  while (G.state.spec.qubit_pairs.length > 1) {
+    win.document.querySelector('#gen-pair-list .gen-row-del').click();
+  }
+  ok(/ 1 pair$/.test(cap.textContent), 'L6: singular caption (got: ' + cap.textContent + ')');
+})();
+
+// L7 (QA regenerate-r2-34): + Add pair pre-fills a pair not listed yet, and
+// a pair listed twice is refused at the step-4 gate (ordered for CR, where
+// q1->q2 and q2->q1 are two drives; unordered for CZ, where they are one).
+(function noDuplicatePairs() {
+  const win = makeWorld();
+  const G = buildTo4(win);                       // CZ tunable
+  setInput(win, 'gen-qubit-count', '3');         // chain: q1-q2, q2-q3
+  const key = function (p) { return p.slice().sort().join('|'); };
+  const addBtn = win.document.getElementById('gen-add-pair');
+  addBtn.click();
+  const added = G.state.spec.qubit_pairs[G.state.spec.qubit_pairs.length - 1];
+  ok(JSON.stringify(added) === '["q1","q3"]',
+    'L7: the added pair is the first one not listed — got ' + JSON.stringify(added));
+  addBtn.click();                                // every combination is taken
+  const blank = G.state.spec.qubit_pairs[G.state.spec.qubit_pairs.length - 1];
+  ok(!blank[0] && !blank[1], 'L7: blank only when every pair is listed — got ' +
+    JSON.stringify(blank));
+  const T = win.QuamGen._test;
+  ok(JSON.stringify(T.nextFreePair(['q1', 'q2', 'q3', 'q4'], [['q2', 'q1']])) === '["q2","q3"]',
+    'L7: a reversed pair counts as listed — got ' +
+    JSON.stringify(T.nextFreePair(['q1', 'q2', 'q3', 'q4'], [['q2', 'q1']])));
+  // the gate, through the real Next: CZ -- q1-q2 and q2-q1 are one pair
+  const next = function (w, g) {
+    w.document.getElementById('gen-next').click();
+    const m = w.document.getElementById('gen-message');
+    return { step: g.state.step, msg: m.hidden ? '' : m.textContent };
+  };
+  G.state.spec.qubit_pairs = [['q1', 'q2'], ['q2', 'q1']];
+  let r = next(win, G);
+  ok(r.step === 4 && /q2–q1 is listed twice/.test(r.msg),
+    'L7: a CZ pair listed in both orders is refused — got ' + JSON.stringify(r));
+  // CR: anti-parallel pairs are two drives and pass; an exact repeat does not
+  const win2 = makeWorld();
+  const G2 = buildTo4(win2, { mwOnly: true, arch: 'fixed_frequency' });
+  setInput(win2, 'gen-qubit-count', '3');
+  G2.state.spec.qubit_pairs = [['q1', 'q2'], ['q1', 'q2']];
+  r = next(win2, G2);
+  ok(r.step === 4 && /q1→q2 is listed twice/.test(r.msg),
+    'L7: an exact CR repeat is refused — got ' + JSON.stringify(r));
+  G2.state.spec.qubit_pairs = [['q1', 'q2'], ['q2', 'q1']];
+  r = next(win2, G2);
+  ok(!/listed twice/.test(r.msg),
+    'L7: anti-parallel CR pairs are not called duplicates — got ' + JSON.stringify(r));
+})();
+
 if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
 console.log('generate_step4_layout_selfcheck: all checks passed');

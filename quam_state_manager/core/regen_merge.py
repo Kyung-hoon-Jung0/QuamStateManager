@@ -1356,3 +1356,114 @@ def merge_states(old_state: dict, new_state: dict,
     stats.pruned_ops, stats.dangling_grafts = _prune_redundant_graft_ops(merged, dangling)
 
     return MergeResult(merged=merged, stats=stats)
+
+
+# ---------------------------------------------------------------------------
+# Report views over MergeStats (QA F17 / regenerate-r2-28). Derived only: the
+# stats lists above stay exactly as the merge recorded them.
+
+_LOST_KIND_RANK = {"qubit": 0, "pair": 1, "twpa": 2, "port": 3, "other": 4}
+
+
+def _lost_owner(path: str) -> tuple[str, str, list[str]]:
+    """``(kind, owner, owner_segments)`` of one not-carried report line.
+
+    A line may carry a trailing note (``"<path> (the rebuild left it empty;
+    ...)"`` / ``"<path> -> #/qubits/q5 (...)"``) -- the owner is read from the
+    dot-path before the first space."""
+    segs = path.split(" ", 1)[0].split(".")
+    top = segs[0]
+    kinds = {"qubits": "qubit", "qubit_pairs": "pair", "twpas": "twpa"}
+    if top in kinds and len(segs) > 1:
+        return kinds[top], segs[1], segs[:2]
+    if top == "ports" and len(segs) > 3:
+        # ports.<type>.<con>.<fem>.<port>.<leaf> (OPX1000) or
+        # ports.<type>.<con>.<port>.<leaf> (OPX+): the digit run names the port.
+        nums: list[str] = []
+        for s in segs[3:-1]:
+            if not s.isdigit():
+                break
+            nums.append(s)
+        return ("port", f"{segs[1]} {segs[2]}/" + "/".join(nums),
+                segs[:3 + len(nums)])
+    return "other", top, segs[:1]
+
+
+def group_lost_paths(paths: list[str], merged: dict | None = None,
+                     reversed_pairs: dict[str, str] | None = None,
+                     cap: int = 20) -> list[dict]:
+    """Group not-carried report lines by the entity they belonged to.
+
+    One removed qubit fills ``residual_lost`` with hundreds of its own leaves
+    (a port's ``controller_id`` beside a real calibration), which a flat list
+    buries. Each group: ``{"kind", "owner", "n", "paths"}`` (paths capped at
+    ``cap``; ``n`` is the true count) plus ``"present"`` -- whether the owner
+    still exists in ``merged`` (``None`` when unknown / not an entity) -- and
+    ``"reversed_as"`` for a pair the rebuild only has reversed. Ordered
+    qubits, pairs, TWPAs, ports, then the rest; natural order within each."""
+    groups: dict[tuple[str, str], dict] = {}
+    for p in paths:
+        kind, owner, osegs = _lost_owner(p)
+        g = groups.get((kind, owner))
+        if g is None:
+            present = None
+            if merged is not None and kind != "other":
+                node: Any = merged
+                for s in osegs:
+                    node = node.get(s) if isinstance(node, dict) else None
+                present = isinstance(node, dict)
+            g = groups[(kind, owner)] = {"kind": kind, "owner": owner,
+                                         "present": present, "n": 0, "paths": []}
+            if kind == "pair" and reversed_pairs and owner in reversed_pairs:
+                g["reversed_as"] = reversed_pairs[owner]
+        g["n"] += 1
+        if len(g["paths"]) < cap:
+            g["paths"].append(p)
+    return sorted(groups.values(),
+                  key=lambda g: (_LOST_KIND_RANK[g["kind"]], natural_key(g["owner"])))
+
+
+def _nearest_typed_ancestor(root: Any, dot_path: str) -> str | None:
+    """Dot-path of the closest ANCESTOR of ``dot_path`` in ``root`` that
+    carries a ``__class__`` (``"(root)"`` for the root) -- the object whose
+    class schema decided whether that field could stay."""
+    segs = dot_path.split(".")
+    nodes = [root]
+    node = root
+    for s in segs[:-1]:
+        node = node.get(s) if isinstance(node, dict) else None
+        nodes.append(node)
+    for i in range(len(nodes) - 1, -1, -1):
+        n = nodes[i]
+        if isinstance(n, dict) and isinstance(n.get("__class__"), str):
+            return ".".join(segs[:i]) if i else "(root)"
+    return None
+
+
+def class_change_groups(class_changed: list[tuple[str, str, str]],
+                        dropped_paths: list[str], old_state: dict,
+                        sample: int = 3) -> list[dict]:
+    """``class_changed`` grouped by ``(old, new)`` class, first-seen order,
+    over the FULL list (the report ships only 80 paths; grouping that page
+    under-counted every group and hid any group sorted past it -- QA r2-28).
+
+    Each group: ``{"old", "new", "count", "paths" (first ``sample``),
+    "dropped"}`` where ``dropped`` counts the dropped / not-carried fields
+    whose owning object (nearest typed ancestor in the SOURCE chip) is one of
+    the group's re-typed objects. ``dropped == 0`` is a measured "no fields
+    lost" -- e.g. a class quam moved into quam_builder -- not a claim that
+    the two classes behave identically."""
+    owner_of = {p: (o, n) for p, o, n in class_changed}
+    groups: dict[tuple[str, str], dict] = {}
+    for p, o, n in class_changed:
+        g = groups.setdefault((o, n), {"old": o, "new": n, "count": 0,
+                                       "paths": [], "dropped": 0})
+        g["count"] += 1
+        if len(g["paths"]) < sample:
+            g["paths"].append(p)
+    if owner_of:
+        for dp in dropped_paths:
+            anc = _nearest_typed_ancestor(old_state, dp.split(" ", 1)[0])
+            if anc in owner_of:
+                groups[owner_of[anc]]["dropped"] += 1
+    return list(groups.values())

@@ -242,7 +242,8 @@ window.WiringGrid = (function () {
     for (var i = 0; i < qs.length; i++) if (cellOf(qs[i])) placed++;
     var npairs = ((spec() && spec().qubit_pairs) || []).length;
     if (cap) {
-      cap.textContent = placed + "/" + qs.length + " qubits placed · " + npairs + " pairs";
+      cap.textContent = placed + "/" + qs.length + " qubits placed · " + npairs +
+        (npairs === 1 ? " pair" : " pairs");   // QA F15: never "1 pairs"
       // Pre-announce the step-leave gate: partial placement (some but not all)
       // is exactly what the Next-check rejects — tint the progress chip now.
       cap.classList.toggle("gen-topo-caption-warn", placed > 0 && placed < qs.length);

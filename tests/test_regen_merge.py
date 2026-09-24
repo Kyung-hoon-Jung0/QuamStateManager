@@ -1280,3 +1280,86 @@ class TestAReversedPairIsNamed:
         r = merge_states(both, json.loads(json.dumps(both)))
         assert r.stats.pairs_reversed == []
         assert set(r.merged["qubit_pairs"]) == {"q0-4", "q4-0"}
+
+
+# ---------------------------------------------------------------------------
+# QA F17 -- the not-carried list grouped by what it belonged to
+# QA regenerate-r2-28 -- class changes grouped over the FULL list, loss measured
+# ---------------------------------------------------------------------------
+
+class TestTheLossIsGroupedByItsOwner:
+    def test_a_removed_qubit_pair_and_port_are_three_groups(self):
+        from quam_state_manager.core.regen_merge import group_lost_paths
+        paths = ["ports.analog_outputs.con1.5.3.delay",
+                 "ports.analog_outputs.con1.5.3.controller_id",
+                 "qubit_pairs.q4-5.macros.cz.phase_shift_control",
+                 "qubits.q10.T1", "qubits.q5.T1", "qubits.q5.xy.RF_frequency",
+                 "twpas.twpaA.qubits -> #/qubits/q5 (removed qubit; reference dropped)",
+                 "extras.cz_plan"]
+        merged = {"qubits": {"q10": {}}, "qubit_pairs": {},
+                  "twpas": {"twpaA": {}}, "ports": {}}
+        g = group_lost_paths(paths, merged)
+        assert [(x["kind"], x["owner"], x["n"], x["present"]) for x in g] == [
+            ("qubit", "q5", 2, False), ("qubit", "q10", 1, True),   # natural order
+            ("pair", "q4-5", 1, False),
+            ("twpa", "twpaA", 1, True),
+            ("port", "analog_outputs con1/5/3", 2, False),
+            ("other", "extras", 1, None)]
+        assert g[0]["paths"] == ["qubits.q5.T1", "qubits.q5.xy.RF_frequency"]
+
+    def test_the_cap_is_per_group_and_the_count_is_true(self):
+        from quam_state_manager.core.regen_merge import group_lost_paths
+        paths = [f"qubits.q5.x{i}" for i in range(50)]
+        (g,) = group_lost_paths(paths, cap=20)
+        assert g["n"] == 50 and len(g["paths"]) == 20 and g["present"] is None
+
+    def test_a_reversed_pair_is_not_called_removed(self):
+        from quam_state_manager.core.regen_merge import group_lost_paths
+        (g,) = group_lost_paths(["qubit_pairs.q2-3.extras.cz_plan"],
+                                {"qubit_pairs": {"q3-2": {}}},
+                                reversed_pairs={"q2-3": "q3-2"})
+        assert g["reversed_as"] == "q3-2" and g["present"] is False
+
+    def test_an_opx_plus_port_is_named_by_its_digit_run(self):
+        from quam_state_manager.core.regen_merge import group_lost_paths
+        (g,) = group_lost_paths(["ports.analog_outputs.con1.3.offset"])
+        assert g["owner"] == "analog_outputs con1/3"
+
+
+class TestClassChangeGroups:
+    OLDC = "quam.components.pulses.DragCosinePulse"
+    NEWC = "quam_builder.architecture.superconducting.components.pulses.DragCosinePulse"
+
+    def test_groups_cover_the_full_list_not_the_page(self):
+        from quam_state_manager.core.regen_merge import class_change_groups
+        changed = [(f"qubits.q{i}.xy.operations.x180", self.OLDC, self.NEWC)
+                   for i in range(1, 127)]
+        changed += [(f"twpas.twpa{c}.pump", "quam.components.channels.MWChannel",
+                     "qb.XYDriveMW") for c in "ABCDEFGH"]
+        g = class_change_groups(changed, [], {})
+        assert [(x["old"], x["count"], x["dropped"]) for x in g] == [
+            (self.OLDC, 126, 0), ("quam.components.channels.MWChannel", 8, 0)]
+        assert g[0]["paths"] == ["qubits.q1.xy.operations.x180",
+                                 "qubits.q2.xy.operations.x180",
+                                 "qubits.q3.xy.operations.x180"]
+
+    def test_a_drop_counts_against_the_object_whose_schema_decided_it(self):
+        from quam_state_manager.core.regen_merge import class_change_groups
+        old = {"qubits": {"q1": {
+            "__class__": "lab.Transmon",
+            "xy": {"__class__": "qb.XY", "lab_field": 1,
+                   "operations": {"readout": {"__class__": "lab.CW", "w": [1]}}}}}}
+        changed = [("qubits.q1", "lab.Transmon", "qb.Transmon"),
+                   ("qubits.q1.xy.operations.readout", "lab.CW", "qb.Square")]
+        dropped = ["qubits.q1.xy.lab_field",                  # XY decided: not re-typed
+                   "qubits.q1.xy.operations.readout.w"]       # the re-typed CW
+        g = {x["old"]: x["dropped"] for x in
+             class_change_groups(changed, dropped, old)}
+        assert g == {"lab.Transmon": 0, "lab.CW": 1}
+
+    def test_a_note_suffix_and_a_root_retype_are_read(self):
+        from quam_state_manager.core.regen_merge import class_change_groups
+        old = {"__class__": "lab.Quam", "lab_top": 1}
+        (g,) = class_change_groups([("(root)", "lab.Quam", "qb.Quam")],
+                                   ["lab_top (the rebuild left it empty; x)"], old)
+        assert g["dropped"] == 1
