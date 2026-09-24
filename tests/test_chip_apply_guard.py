@@ -143,3 +143,60 @@ def test_a_token_this_context_never_issued_is_still_refused(client):
         "expect_chip": "deadbeefdeadbeef"})
     assert r.status_code == 409
     assert r.get_json()["chip_mismatch"] is True
+
+
+# --- jsontree-r2-29: a refused add / delete says what was refused -----------
+
+@pytest.fixture
+def app_client(tmp_path, folder):
+    app = create_app(testing=True, instance_path=str(tmp_path / "_app2"))
+    c = app.test_client()
+    c.post("/load", data={"folder": str(folder)})
+    return app, c
+
+
+def _loaded_name(app):
+    from quam_state_manager.web import routes
+    with app.test_request_context("/"):
+        return routes._active_chip_identity()["name"]
+
+
+@pytest.mark.parametrize("url, data, act", [
+    ("/field/create", {"dot_path": "qubits.qA1.new_key", "key": "new_key",
+                       "value": "1"}, "add"),
+    ("/field/delete", {"dot_path": "qubits.qA1.T1"}, "delete"),
+    ("/field/type-assign", {"dot_path": "qubits.qA1.T1", "type": "real"},
+     "type assignment"),
+])
+def test_page_token_refusal_names_the_act_and_the_chip(app_client, url, data,
+                                                       act):
+    """The one fixed sentence ("This value came from a different chip")
+    answered an add and a delete too: the wrong subject, no chip named, no
+    way forward. The refusal itself was right and stays."""
+    app, c = app_client
+    name = _loaded_name(app)
+    assert name
+    r = c.post(url, data=dict(data, expect_chip="deadbeefdeadbeef"))
+    assert r.status_code == 409
+    j = r.get_json()
+    assert j["chip_mismatch"] is True
+    assert j["loaded_chip"] == name
+    assert "This value came" not in j["error"]
+    assert f"The {act} was refused" in j["error"]
+    assert f"'{name}'" in j["error"] and "reload this page" in j["error"]
+    st = c.get("/field/peek?dot_path=qubits.qA1.T1"
+               "&dot_path=qubits.qA1.new_key").get_json()["values"]
+    assert st.get("qubits.qA1.T1") == 8000          # nothing deleted
+    assert st.get("qubits.qA1.new_key") is None     # nothing created
+
+
+def test_apply_fit_refusal_keeps_its_sentence(client):
+    """The dataset apply-fit popup appends "Apply anyway?" to this sentence
+    and re-sends with force_chip -- it must NOT start saying "reload"."""
+    r = client.post("/field/edit-batch", json={
+        "updates": [{"dot_path": "qubits.qA1.f_01", "value": 1.0e9}],
+        "expect_chip": "deadbeefdeadbeef"})
+    assert r.status_code == 409
+    assert r.get_json()["error"] == (
+        "This value came from a different chip than the one loaded — "
+        "applying it would write onto the wrong chip.")

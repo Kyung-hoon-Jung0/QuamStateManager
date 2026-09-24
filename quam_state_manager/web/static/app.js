@@ -7860,7 +7860,13 @@ window.clearDetailPanelSearch = function(btnEl) {
             // Edit the WHOLE list/dict as JSON — the only way to enter a list value
             // (the scalar leaf editor can't). Read-only trees (copy / livediff) get
             // no edit affordance. Click is stopped so it never toggles expand.
-            if (valueClick === "edit" && !isAbsent) {
+            // jsontree-r2-25: nor does a container the write door refuses (a
+            // chip-membership array) -- the row says why instead of an editor
+            // that only Save would refuse (docs/120).
+            if (valueClick === "edit" && !isAbsent && _policyReadOnly(path)) {
+                summary.title = _policyReadOnly(path);
+            }
+            if (valueClick === "edit" && !isAbsent && !_policyReadOnly(path)) {
                 var jsonBtn = document.createElement("button");
                 jsonBtn.type = "button";
                 jsonBtn.className = "tree-json-edit-btn";
@@ -7958,7 +7964,7 @@ window.clearDetailPanelSearch = function(btnEl) {
             // offer the SAME multi-line JSON editor as containers so a list / matrix /
             // object can be entered comfortably, not just squeezed into the one-line
             // box. (The one-line editor still works for a scalar.)
-            if (shown === null && valueClick === "edit" && !isAbsent) {
+            if (shown === null && valueClick === "edit" && !isAbsent && !_policyReadOnly(path)) {
                 var nullJsonBtn = document.createElement("button");
                 nullJsonBtn.type = "button";
                 nullJsonBtn.className = "tree-json-edit-btn";
@@ -8721,8 +8727,23 @@ window.clearDetailPanelSearch = function(btnEl) {
         chip.onmouseleave = function() {
             clearTimeout(t); t = setTimeout(function() { chip.remove(); }, 4000);
         };
+        return chip;
     }
     window._showEditError = _showEditError;
+
+    // jsontree-r2-29: a wrong-chip refusal (409 chip_mismatch) is only
+    // answered by a reload -- the page's chip token is render-time -- so the
+    // refusal carries the way forward instead of a dead end.
+    function _appendReloadBtn(el) {
+        if (!el || el.querySelector(".tree-reload-btn")) return;
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "btn-sm outline tree-reload-btn";
+        b.textContent = "Reload page";
+        b.onclick = function (e) { e.stopPropagation(); window.location.reload(); };
+        el.appendChild(document.createTextNode(" "));
+        el.appendChild(b);
+    }
 
     /* jsontree-r2-17: an inline edit that is open (commit-on-blur is 100 ms
        deferred) or in flight when something re-renders the tree from the
@@ -8844,6 +8865,27 @@ window.clearDetailPanelSearch = function(btnEl) {
             // true is true -- it POSTed and staged a "True -> True" no-op.
             if (valEl.classList.contains("tree-val-boolean")
                     && _boolWord(newVal) === editVal) { cancel(); return Promise.resolve(); }
+            // jsontree-r2-26: a number leaf reads its full-digit display
+            // ("0.0000111", "5,000,000,000"), so the same number typed in
+            // another notation (1.11e-05, 5000000000) POSTed and staged a
+            // Delta-0 no-op. Cancel only where the server would store the
+            // identical value: a strict decimal literal on both sides (so
+            // "0x10" / "" still post), equal as IEEE doubles (JS Number and
+            // Python float round alike), and for an integral value neither
+            // side spelled as a float ("7.0" / "4.5e9" over an int is a real
+            // int->float change) nor past 2^53 (Python int is exact there).
+            if (valEl.classList.contains("tree-val-number") && !isStringKind) {
+                var _NUM = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
+                var _na = window.NumberInput.strip(newVal), _nb = window.NumberInput.strip(editVal);
+                if (_NUM.test(_na) && _NUM.test(_nb)) {
+                    var _x = Number(_na), _y = Number(_nb);
+                    if (isFinite(_x) && _x === _y && (!Number.isInteger(_y)
+                            || (!/[.eE]/.test(_na) && !/[.eE]/.test(_nb)
+                                && Number.isSafeInteger(_y)))) {
+                        cancel(); return Promise.resolve();
+                    }
+                }
+            }
             committed = true;
             valEl.textContent = currentDisplay;
             valEl.classList.remove("tree-val-editing");
@@ -9601,7 +9643,11 @@ window.clearDetailPanelSearch = function(btnEl) {
                 body: body.toString() })
             .then(function (r) { return r.json(); })
             .then(function (d) {
-                if (!d.ok) { err.textContent = d.error || "create failed"; return; }
+                if (!d.ok) {
+                    err.textContent = d.error || "create failed";
+                    if (d.chip_mismatch) _appendReloadBtn(err);
+                    return;
+                }
                 // pull the committed value (server truth) and rebuild this node
                 fetch("/field/peek?dot_path=" + encodeURIComponent(dotPath))
                     .then(function (r) { return r.json(); })
@@ -9667,7 +9713,11 @@ window.clearDetailPanelSearch = function(btnEl) {
                 body: body.toString() })
             .then(function (r) { return r.json(); })
             .then(function (d) {
-                if (!d.ok) { _showEditError(row, d.error); actionsSpan.remove(); return; }
+                if (!d.ok) {
+                    var _ec = _showEditError(row, d.error);
+                    if (d.chip_mismatch) _appendReloadBtn(_ec);
+                    actionsSpan.remove(); return;
+                }
                 var parent = _parentInfo(node);
                 if (parent.value && typeof parent.value === "object") {
                     delete parent.value[m.key];
@@ -9741,7 +9791,11 @@ window.clearDetailPanelSearch = function(btnEl) {
                             ". Override it with " + sel.value + "?")) post(true);
                     return;
                 }
-                if (!res.d.ok) { err.textContent = res.d.error || "assign failed"; return; }
+                if (!res.d.ok) {
+                    err.textContent = res.d.error || "assign failed";
+                    if (res.d.chip_mismatch) _appendReloadBtn(err);
+                    return;
+                }
                 if (res.d.noop) {
                     // JT-14: the env's own type -- nothing to override.
                     var ex = res.d.expected || {};

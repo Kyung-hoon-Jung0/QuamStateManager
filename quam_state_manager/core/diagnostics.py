@@ -208,7 +208,7 @@ _CHECK_CATALOG: list[tuple[str, list[tuple[str, str, str]]]] = [
         ("warning", "Readout IF demod floor", "A readout intermediate frequency is above the MW-FEM 5 MHz demodulation floor (|IF| ≤ 5 MHz can't be measured)."),
         ("warning", "Hardware value specs", "Catalogued hardware fields are in range/step: time_of_flight (mult-of-4), pulse length, full_scale_power_dbm (−11..18 dBm), band ∈ {1,2,3}, gain_db, sampling_rate, output/upsampling/lo_mode, Octave LO/gain/enums."),
         ("warning", "Field type consistency", "A field that is numeric on most siblings isn't a stray text value on one."),
-        ("warning", "Numbers stored as text", "No state leaf holds a numeric-looking STRING (\"0.13\") — external regeneration string-ifies values wholesale, and SM edits then keep text unless the type is converted (r14)."),
+        ("warning", "Numbers stored as text", "No state leaf holds a numeric-looking STRING (\"0.13\") — external regeneration string-ifies values wholesale; an SM edit then stores what the field's type says (a schema-typed number converts, an untyped field asks first) (r14)."),
     ]),
     ("physics", [
         ("warning", "T2 within the 2·T1 bound", "A qubit's T2ramsey / T2echo does not exceed 2·T1 — the hard bound coherence obeys by definition. The excess MARGIN is reported, not a verdict: a few percent is inside typical fit uncertainty, a large excess means one of the two fits is wrong. SM never says WHICH, and never drops either value from an average."),
@@ -833,8 +833,9 @@ _STRNUM_CAP = 100
 def numeric_string_leaves(root: dict) -> list[str]:
     """Dot-paths of every STATE leaf whose value is a string that parses as a
     number — the '"0.13" stored as text' anomaly (r14 ⑨/⑩). External state
-    regeneration is the usual culprit; the legacy coercer then preserves the
-    wrong type on every SM edit, so these must be surfaced actively. Skips
+    regeneration is the usual culprit; on a field no schema or assignment
+    types, the legacy coercer would preserve the wrong type on a plain SM
+    edit (the edit asks first), so these must be surfaced actively. Skips
     ``extras`` (user-declared free-form), pointers, and non-state sections.
 
     ``extras`` is skipped at ANY depth, which is where it actually lives on
@@ -885,9 +886,16 @@ def _strnum_findings(root: dict) -> list[Finding]:
     for dp in paths[:_STRNUM_CAP]:
         findings.append(Finding(
             "warning", "value_type_strnum", dp,
-            "stored as TEXT but reads like a number — SM edits keep text "
-            "unless the type is converted (edit the field and choose "
-            "convert, or Explorer ⚙ → real)",
+            # jsontree-r2-27: an edit does not always "keep text" -- the
+            # write follows the field's type (routes._type_fix_offer), so
+            # the warning names all three outcomes instead of promising a
+            # convert choice a schema-typed field never shows.
+            "stored as TEXT but reads like a number — what an edit stores "
+            "follows the field's type: a field the environment schema (or "
+            "your ⚙ type) makes a number becomes a number, one it makes "
+            "text stays text, and an untyped field asks whether to convert. "
+            "Repair them all: Diagnostics → Types & values → Auto-correct "
+            "(or Explorer ⚙ → real for one field)",
             jump_path=dp,
         ))
     if len(paths) > _STRNUM_CAP:

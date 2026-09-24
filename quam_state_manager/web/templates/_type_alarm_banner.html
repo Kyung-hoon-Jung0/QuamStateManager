@@ -10,7 +10,8 @@
     <strong>{{ type_alarm.count }} value{{ 's' if type_alarm.count != 1 }} stored as TEXT</strong>
     but read{{ 's' if type_alarm.count == 1 }} like a number
     (e.g. <code>{{ type_alarm.first }}</code>) — usually an external state
-    regeneration. SM edits keep text until the type is converted.
+    regeneration. An edit stores what the field's type says: a schema-typed
+    number converts, an untyped field asks first.
     {% endif %}
     {% if type_alarm.env and type_alarm.env.count %}
     {% if type_alarm.count %}<br>{% endif %}

@@ -7232,23 +7232,40 @@ def _chip_token_ok(expect_chip: str) -> bool:
     return bool(ctx) and expect_chip in (ctx.get("chip_tokens_seen") or ())
 
 
-def _chip_mismatch_response(expect_chip: str, force_chip: bool):
+def _chip_mismatch_response(expect_chip: str, force_chip: bool, *,
+                            action: str | None = None):
     """409 JSON if *expect_chip* (a run's fingerprint token) doesn't match the
     loaded chip and the caller didn't force it; else None.
 
     The dataset "Apply fitted value" path stamps the run's token here so a fit
     can't be silently written onto a different loaded chip that happens to reuse
-    the same qubit names (audit #1). Other edit callers send no token → no gate.
+    the same qubit names (audit #1). The page-token callers (Json Tree add /
+    delete / type assignment, the grids) stamp ``window.__chipToken``; a caller
+    that sends no token is not gated.
+
+    jsontree-r2-29: *action* names what a page-token caller refused ("add",
+    "delete", ...), so the refusal speaks about THAT act, names the chip now
+    loaded and says how to go on. Without it the apply-fit sentence stays
+    byte-identical -- that popup appends "Apply anyway?" to it and re-sends
+    with force_chip, so it must not start telling the user to reload.
+    ``loaded_chip`` rides every mismatch (additive).
     """
     expect_chip = (expect_chip or "").strip()
     if not expect_chip or force_chip:
         return None
     if not _chip_token_ok(expect_chip):
-        return jsonify(
-            ok=False, chip_mismatch=True,
-            error="This value came from a different chip than the one loaded — "
-                  "applying it would write onto the wrong chip.",
-        ), 409
+        now = (_active_chip_identity() or {}).get("name") or "another chip"
+        if action:
+            msg = (f"Not applied: this app now has '{now}' loaded, not the "
+                   "chip this page was showing (another window or tab may "
+                   f"have opened a different chip). The {action} was refused "
+                   "so it cannot land on the wrong chip — reload this page "
+                   f"to continue on '{now}', or load your chip again first.")
+        else:
+            msg = ("This value came from a different chip than the one "
+                   "loaded — applying it would write onto the wrong chip.")
+        return jsonify(ok=False, chip_mismatch=True, loaded_chip=now,
+                       error=msg), 409
     return None
 
 
@@ -8400,7 +8417,8 @@ def field_type_assign():
         return jsonify(ok=False, error="No active context"), 400
     guard = _chip_mismatch_response(
         request.form.get("expect_chip", ""),
-        request.form.get("force_chip") in ("1", "true", "True"))
+        request.form.get("force_chip") in ("1", "true", "True"),
+        action="type assignment")
     if guard is not None:
         return guard
 
@@ -8776,7 +8794,8 @@ def field_create():
         return jsonify(ok=False, error="No active context"), 400
     guard = _chip_mismatch_response(
         request.form.get("expect_chip", ""),
-        request.form.get("force_chip") in ("1", "true", "True"))
+        request.form.get("force_chip") in ("1", "true", "True"),
+        action="add")
     if guard is not None:
         return guard
 
@@ -8872,7 +8891,8 @@ def field_delete():
         return jsonify(ok=False, error="No active context"), 400
     guard = _chip_mismatch_response(
         request.form.get("expect_chip", ""),
-        request.form.get("force_chip") in ("1", "true", "True"))
+        request.form.get("force_chip") in ("1", "true", "True"),
+        action="delete")
     if guard is not None:
         return guard
 

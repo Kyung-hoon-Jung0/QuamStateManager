@@ -299,6 +299,34 @@ function nodeAt(container, p) {
       'C7: nothing was POSTed to /field/edit');
   }
 
+  // C7b (jsontree-r2-25): the whole-value JSON editor ✎ is a write door too.
+  //      A membership array (and a null membership top / identity leaf) used
+  //      to offer it; the editor opened with the list and only Save refused.
+  //      An ordinary container keeps its ✎ (guards over-refusal, and keeps
+  //      the pin from passing vacuously on a tree with no ✎ at all).
+  {
+    const DATA_7B = {
+      active_qubit_names: ['q1', 'q2'],
+      active_twpa_names: null,
+      qubits: { qA1: { __class__: 'q.Transmon', id: null, f_01: 6.25e9, extras: null } }
+    };
+    const win = makeWorld(function () { return jsonResp({ ok: true }); },
+                          RO_POLICY, DATA_7B);
+    const c = win.document.getElementById('tree');
+    expandAll(c);
+    const btnOf = function (p) {
+      return nodeAt(c, p).querySelector(':scope > .tree-row > .tree-json-edit-btn');
+    };
+    ok(!btnOf('active_qubit_names'), 'C7b: no JSON ✎ on a membership array');
+    ok(/chip-membership array/.test(
+      nodeAt(c, 'active_qubit_names').querySelector(':scope > .tree-row > .tree-summary').title),
+      'C7b: the array row says why instead');
+    ok(!btnOf('active_twpa_names'), 'C7b: no null-leaf ✎ on a null membership top');
+    ok(!btnOf('qubits.qA1.id'), 'C7b: no null-leaf ✎ on a null identity key');
+    ok(!!btnOf('qubits.qA1'), 'C7b: an ordinary container keeps its ✎');
+    ok(!!btnOf('qubits.qA1.extras'), 'C7b: an ordinary null leaf keeps its ✎');
+  }
+
   // C8: an identity key is the same policy, and the reason differs.
   {
     const win = makeWorld(function () { return jsonResp({ ok: true }); },
@@ -549,6 +577,79 @@ function nodeAt(container, p) {
     keyIn.dispatchEvent(new win.Event('change', { bubbles: true }));
     ok(panel.querySelector('.tree-crud-val').placeholder.indexOf('null (class default)') >= 0,
       'C16: the value box says empty = null for a null default');
+  }
+
+  // C17 (jsontree-r2-29): a wrong-chip refusal on ＋ / ✕ carries its way
+  //      forward. Only a reload re-issues the page's chip token, so the
+  //      message alone was a dead end. A NON-chip refusal gets no button.
+  {
+    const MISMATCH = { ok: false, chip_mismatch: true, loaded_chip: 'chipB',
+      error: "Not applied: this app now has 'chipB' loaded ... reload this page" };
+    const win = makeWorld(function (url) {
+      if (url === '/field/create') return jsonResp(MISMATCH, 409);
+      if (url === '/field/delete') return jsonResp(MISMATCH, 409);
+      if (url === '/field/type-assign') return jsonResp(MISMATCH, 409);
+      if (url.indexOf('/field/refs') === 0) return jsonResp({ ok: true, total: 0, refs: [] });
+      if (url.indexOf('/schema/missing-keys') === 0) return jsonResp({ ok: true, warm: false, missing: [] });
+      return jsonResp({ ok: true, values: {}, expected: {} });
+    });
+    const c = win.document.getElementById('tree');
+    expandAll(c);
+    const dictNode = nodeAt(c, 'qubits.qA1');
+    hover(win, dictNode);
+    dictNode.querySelector('.tree-act-add').click();
+    await tick();
+    const panel = dictNode.querySelector('.tree-crud-panel');
+    panel.querySelector('.tree-crud-key').value = 'thing';
+    panel.querySelector('.tree-crud-val').value = '1';
+    panel.querySelector('.tree-crud-ok').click();
+    await tick(25);
+    const err = panel.querySelector('.tree-crud-err');
+    ok(/chipB/.test(err.textContent), 'C17: the add refusal is shown');
+    ok(!!err.querySelector('.tree-reload-btn'), 'C17: the add refusal offers Reload page');
+
+    const leaf = nodeAt(c, 'qubits.qA1.f_01');
+    hover(win, leaf);
+    leaf.querySelector('.tree-act-del').click();
+    await tick(20);
+    leaf.querySelectorAll('.tree-row-actions .tree-act-btn')[0].click();
+    await tick(25);
+    const chip = leaf.querySelector(':scope > .tree-row > .tree-edit-err');
+    ok(!!chip && /chipB/.test(chip.textContent), 'C17: the delete refusal is shown');
+    ok(!!chip && !!chip.querySelector('.tree-reload-btn'), 'C17: the delete refusal offers Reload page');
+    ok(!!nodeAt(c, 'qubits.qA1.f_01'), 'C17: the refused delete left the leaf on screen');
+
+    const note = nodeAt(c, 'qubits.qA1.extras.note');
+    hover(win, note);
+    note.querySelector('.tree-act-type').click();
+    await tick(20);
+    const tpanel = note.querySelector('.tree-type-panel');
+    tpanel.querySelector('input[value="str"]').checked = true;
+    tpanel.querySelector('.tree-type-assign').click();
+    await tick(25);
+    const terr = tpanel.querySelector('.tree-crud-err');
+    ok(/chipB/.test(terr.textContent) && !!terr.querySelector('.tree-reload-btn'),
+      'C17: the type-assignment refusal offers Reload page');
+  }
+  {
+    const win = makeWorld(function (url) {
+      if (url === '/field/create') return jsonResp({ ok: false, error: 'Parent is not a dict' }, 400);
+      if (url.indexOf('/schema/missing-keys') === 0) return jsonResp({ ok: true, warm: false, missing: [] });
+      return jsonResp({ ok: true, values: {}, expected: {} });
+    });
+    const c = win.document.getElementById('tree');
+    expandAll(c);
+    const dictNode = nodeAt(c, 'qubits.qA1');
+    hover(win, dictNode);
+    dictNode.querySelector('.tree-act-add').click();
+    await tick();
+    const panel = dictNode.querySelector('.tree-crud-panel');
+    panel.querySelector('.tree-crud-key').value = 'thing';
+    panel.querySelector('.tree-crud-ok').click();
+    await tick(25);
+    const err = panel.querySelector('.tree-crud-err');
+    ok(/not a dict/.test(err.textContent) && !err.querySelector('.tree-reload-btn'),
+      'C17: an ordinary refusal offers no Reload');
   }
 
   if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }

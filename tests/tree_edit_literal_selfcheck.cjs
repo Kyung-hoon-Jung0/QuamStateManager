@@ -48,6 +48,8 @@ window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
 const d = window.document;
 window.renderJsonTree('explorer-tree-state', {
     qubits: { q1: { gate_shape: 'direct', f_01: 4.5e9, esc: 'a"b',
+                    // jsontree-r2-26: a non-integer number leaf (reads "0.0000111")
+                    T1: 1.11e-05,
                     // the customer's case: a value that should be a number and
                     // is stored as text. SM's own alarm flags it; the fix is to
                     // let the tree editor be the place it gets fixed.
@@ -223,6 +225,39 @@ window.renderJsonTree('explorer-tree-state', {
     ok(window.__fetchLog.filter((f) => f.url.indexOf('/field/edit') === 0).length === beforeE,
        'a differently-spelled literal for the SAME value posts nothing');
 
+    // 7 (jsontree-r2-26). The same NUMBER typed in another notation is not a
+    //    change: the leaf reads its full-digit display, so 1.11e-05 over
+    //    "0.0000111" and 4500000000 over "4,500,000,000" used to POST and
+    //    stage a Delta-0 row. A float spelling over an integral value is a
+    //    real int->float change and must still post, and so must a
+    //    genuinely different number (the pin is not a blanket cancel).
+    const numPosts = () => window.__fetchLog.filter((f) => f.url.indexOf('/field/edit') === 0).length;
+    async function typeInto(p, text) {
+        const v = d.querySelector('.tree-node[data-path="' + p + '"] .tree-val');
+        v.click();
+        await new Promise((r) => setTimeout(r, 30));
+        const inp = v.querySelector('input.tree-edit-input');
+        const shown = inp.value;
+        inp.value = text;
+        inp.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        await new Promise((r) => setTimeout(r, 30));
+        return shown;
+    }
+    let n0 = numPosts();
+    const t1Shown = await typeInto('qubits.q1.T1', '1.11e-05');
+    ok(t1Shown === '0.0000111' && numPosts() === n0,
+       '1.11e-05 over the displayed ' + t1Shown + ' posts nothing');
+    n0 = numPosts();
+    const fShown = await typeInto('qubits.q1.f_01', '4500000000');
+    ok(fShown === '4,500,000,000' && numPosts() === n0,
+       '4500000000 over the displayed ' + fShown + ' posts nothing');
+    n0 = numPosts();
+    await typeInto('qubits.q1.T1', '1.12e-05');
+    ok(numPosts() === n0 + 1, 'a different number still posts');
+    n0 = numPosts();
+    await typeInto('qubits.q1.f_01', '4.5e9');
+    ok(numPosts() === n0 + 1, '4.5e9 over an integral display still posts (int -> float)');
+
     // 2. the overlap fix is a stylesheet contract -- pin the rules
     const css = fs.readFileSync(path.join(STATIC, 'style.css'), 'utf8');
     ok(/\.tree-row:has\(\.tree-val-editing\)[^{]*\.tree-row-actions/.test(css)
@@ -231,6 +266,6 @@ window.renderJsonTree('explorer-tree-state', {
     ok(/\.tree-val-editing \{[^}]*inline-flex/.test(css),
        'the editing value box is inline-flex so the async chip widens it');
 
-    console.log(fails ? ('FAILED: ' + fails) : 'ALL OK (25 assertions)');
+    console.log(fails ? ('FAILED: ' + fails) : 'ALL OK (28 assertions)');
     process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error('FATAL', e && e.message); process.exit(1); });

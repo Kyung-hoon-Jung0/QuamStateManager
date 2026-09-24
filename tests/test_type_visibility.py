@@ -180,6 +180,51 @@ class TestTypeFixOffer:
         assert st["xy"]["operations"]["x180"]["amplitude"] == 0.14
 
 
+class TestStrnumPromiseIsTrue:
+    """jsontree-r2-27: every stored-as-TEXT warning said "SM edits keep text
+    unless the type is converted (edit the field and choose convert…)". A
+    TYPED field (env schema, or the user's own ⚙ assignment) never gets that
+    choice -- the write itself stores a number (routes._type_fix_offer skips
+    an enforced expectation, docs/56). The wording must name what the door
+    actually does, for both kinds of field, on every surface that says it."""
+
+    _FALSE = ("keep text unless", "keep text until")
+
+    def test_the_door_does_both_things(self, env):
+        # the behaviour the new wording describes, measured on the door
+        c, ctx = env["client"], env["ctx"]
+        r = c.post("/field/edit", data={"dot_path": "qubits.q1.xy.operations.x180.amplitude",
+                                        "value": "0.14"})
+        assert r.status_code == 409 and r.get_json()["type_fix"]   # untyped: asks
+        a = c.post("/field/type-assign", data={"dot_path": "qubits.q1.f_01",
+                                               "type": "real"})
+        assert a.status_code == 200
+        r2 = c.post("/field/edit", data={"dot_path": "qubits.q1.f_01",
+                                         "value": "4.85e9"})
+        assert r2.status_code == 200 and r2.get_json()["ok"]      # typed: no choice
+        assert ctx["store"].state["qubits"]["q1"]["f_01"] == 4.85e9
+
+    def test_finding_message_names_both_outcomes(self):
+        msg = diagnostics._strnum_findings({"qubits": {"q": {"v": "1.5"}}})[0].message
+        assert "stored as TEXT" in msg
+        assert not any(f in msg for f in self._FALSE), msg
+        assert "becomes a number" in msg and "asks whether to convert" in msg
+
+    def test_catalog_line_does_not_promise_keep_text(self):
+        desc = [ck["desc"] for dom in diagnostics.check_catalog()
+                for ck in dom["checks"] if ck["title"] == "Numbers stored as text"]
+        assert len(desc) == 1
+        assert not any(f in desc[0] for f in self._FALSE), desc[0]
+        assert "untyped field asks first" in desc[0]
+
+    def test_banner_and_bulk_title_do_not_promise_keep_text(self, env):
+        for url in ("/qubits", "/bulk"):
+            html = env["client"].get(url).data.decode()
+            assert "stored as TEXT" in html, url
+            assert not any(f in html for f in self._FALSE), url
+            assert "untyped field asks first" in html, url
+
+
 class TestHonestDisplays:
     def test_bulk_cells_wear_quotes_and_warning(self, env):
         html = env["client"].get("/bulk").data.decode()
