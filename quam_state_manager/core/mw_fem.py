@@ -233,3 +233,23 @@ def fsp_compensation_plan(merged: dict, resolved_fsp_path: str,
         "clip_count": sum(1 for a in amps if a["clips"]),
         "range_warn": range_warn,
     }
+
+
+_AMP_LEAF_RE = re.compile(r"\.operations\.[^.]+\.amplitude$")
+
+
+def is_fsp_comp_bundle(dot_paths) -> bool:
+    """Is this change group an FSP change bundled with compensated amplitudes?
+
+    QA liveedit-r2-16: an accepted ``fsp_ack=comp`` commits the FSP leaf and
+    the amplitudes :func:`fsp_compensation_plan` rescaled as ONE group, and
+    ``P = FSP + 20*log10|amp|`` only holds for the pair. Taking one member
+    back (the tray ✕) silently changes that pulse's output power, so the
+    group is one unit there too. Decided by CONTENT (an FSP leaf plus an
+    ``.operations.<op>.amplitude`` leaf, the plan's own path shape), never by
+    a gid prefix: /redo and staged journal steps re-mint gids.
+    """
+    paths = [p for p in (dot_paths or []) if isinstance(p, str)]
+    return (len(paths) >= 2
+            and any(p.endswith(_FSP_LEAF) for p in paths)
+            and any(_AMP_LEAF_RE.search(p) for p in paths))

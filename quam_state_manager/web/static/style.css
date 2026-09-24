@@ -2490,8 +2490,18 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
 /* Drawer footer — home of "Save to working state" since it left the topbar. */
 .tray-drawer-foot {
     display: flex; align-items: center; gap: .5rem; flex-wrap: wrap;
-    margin-top: .35rem; padding-top: .35rem;
+    margin-top: 0; padding-top: .35rem;
     border-top: 1px solid var(--pico-muted-border-color);
+    /* QA F12: the drawer is its own 280px scroll box and this footer sat at the
+       END of it -- with ~4+ rows "Save to working state" (the ONLY path to
+       /save) and "Discard all" were scrolled out of view, and a click where
+       they belonged landed on the sidebar behind. Stuck to the bottom edge,
+       opaque (the drawer's own token) so rows scroll under it in both themes. */
+    /* bottom: minus the expanded drawer's own bottom padding, so no row shows
+       through that strip below the footer */
+    position: sticky; bottom: -.25rem; z-index: 1;
+    background: var(--pico-card-background-color);
+    padding-bottom: .25rem;
 }
 .tray-foot-hint { font-size: .78em; }
 

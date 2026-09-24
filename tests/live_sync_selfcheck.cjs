@@ -17,6 +17,13 @@
  *     OK re-posts with its own token, never force=1.
  *  E. liveedit-r2-07 -- the liveConflict signal re-renders the drift banner in
  *     place (auto-apply.js), guarded by the chip token.
+ *  F. liveedit-r2-09 -- a passive window's grid follows a foreign edit (after
+ *     the tray lands, only while idle, through the guarded listener, focus
+ *     kept); its own edit re-GETs nothing.
+ *  G. F8 -- the red "modified" box follows the server's per-path `pending`
+ *     flag after Ctrl+Z / Ctrl+Shift+Z (input, alias and list cells).
+ *  H. F11 -- Escape and an outside click close the Live-Edit pickers and the
+ *     Auto-Sync popover (capture phase; Datasets pickers untouched).
  *
  * Run: node tests/live_sync_selfcheck.cjs   (driven by tests/test_live_sync_client.py)
  */
@@ -371,6 +378,182 @@ function discard(w, detail) {
     S.ajax.length = 0;
     w.document.dispatchEvent(new w.CustomEvent('liveConflict', { detail: { chip: 'CHIP-B', paths: [] } }));
     ok(S.ajax.length === 0, 'E2 a signal for another chip paints nothing');
+}
+
+/* ── F. r2-09: a passive window's grid follows a foreign edit ────────── */
+{
+    const { w, S } = world(bulkHtml('data-change-count="1" data-change-sig="S1" data-edit-seq="E1"'),
+        'http://localhost/bulk', ['app.js', 'grid-virt.js', 'bulk-edit.js']);
+    mountBulk(w);
+    const bulkGets = function () { return S.ajax.filter(function (a) { return a.url === '/bulk'; }).length; };
+    w.__lastUserAct = 0;
+    w._editSeqSeen = 'E1';
+
+    // this window's OWN edit: its tray was swapped to the same edit_seq
+    S.ajax.length = 0; S.stateChanged = 0;
+    ok(w._onDriftEditSeq({ edit_seq: 'E1b' }) === true, 'F0 the poll sees a move');
+    w.document.getElementById('pending-tray').setAttribute('data-edit-seq', 'E2');
+    await sleep(30);
+    S.ajax.length = 0; S.stateChanged = 0;
+    ok(w._onDriftEditSeq({ edit_seq: 'E2' }) === true, 'F1 ...and the next one');
+    await sleep(60);
+    ok(S.ajax.some(function (a) { return a.url === '/state/tray'; }), 'F2 the tray is still refreshed');
+    ok(S.stateChanged === 0 && bulkGets() === 0,
+       'F3 a move this window\'s own tray already shows re-GETs no grid (docs/203)');
+
+    // a lab-mate's edit: the tray does NOT show it
+    S.ajax.length = 0; S.stateChanged = 0;
+    ok(w._onDriftEditSeq({ edit_seq: 'E3' }) === true, 'F4 a foreign move is a signal');
+    await sleep(60);
+    ok(S.stateChanged === 1 && bulkGets() === 1,
+       'F5 an idle window re-reads its grid once the tray has landed (got ' + bulkGets() + ')');
+
+    // a busy window: nothing now, one re-read once it has been idle for 2 s
+    S.ajax.length = 0; S.stateChanged = 0;
+    w.__lastUserAct = Date.now();
+    w._onDriftEditSeq({ edit_seq: 'E4' });
+    await sleep(60);
+    ok(bulkGets() === 0, 'F6 a window with a user in it keeps its grid for now');
+    w.__lastUserAct = Date.now() - 5000;
+    await sleep(2100);
+    ok(bulkGets() === 1, 'F7 ...and follows once idle (retry), not at the next foreign edit');
+
+    // a typed-but-uncommitted cell is never wiped (the listener's own guard)
+    S.ajax.length = 0; S.stateChanged = 0;
+    const q2 = cellOf(w, 'q2', 'T1');
+    q2.value = '9.9e-05';
+    w._onDriftEditSeq({ edit_seq: 'E5' });
+    await sleep(60);
+    ok(S.stateChanged === 1 && bulkGets() === 0, 'F8 typing in a cell keeps the grid (through the guarded listener)');
+    q2.value = q2.getAttribute('data-orig');
+
+    // the focused cell comes back after the swap
+    S.ajax.length = 0;
+    cellOf(w, 'q3', 'T1').focus();
+    w._onDriftEditSeq({ edit_seq: 'E6' });
+    await sleep(60);
+    ok(bulkGets() === 1, 'F9 a focused but clean cell does not freeze the grid');
+    const pane = w.document.getElementById('table-pane');
+    const tb = w.document.querySelector('#bulk-table tbody');
+    tb.innerHTML = bulkRow('q1', '1.3e-05') + bulkRow('q2', '1.2e-05') + bulkRow('q3', '1.05e-05');
+    w.document.activeElement && w.document.activeElement.blur && w.document.activeElement.blur();
+    w.document.dispatchEvent(new w.CustomEvent('htmx:afterSwap', { detail: { target: pane } }));
+    await sleep(120);
+    ok(w.document.activeElement === cellOf(w, 'q3', 'T1'),
+       'F10 the focused cell is focused again after the re-render');
+}
+
+/* ── G. F8: the red box follows the server's per-path pending flag ──── */
+{
+    const { w } = world(bulkHtml('data-change-count="1" data-change-sig="S1"'),
+        'http://localhost/bulk', ['app.js', 'grid-virt.js', 'bulk-edit.js']);
+    mountBulk(w);
+    const reverted = function (entries) {
+        w.document.dispatchEvent(new w.CustomEvent('cellsReverted', { detail: { message: 'Undone', entries: entries } }));
+    };
+    // a list preview span, as the qubit grid renders one (alias + resolved axes)
+    const LP = 'ports.analog_outputs.con1.4.1.exponential_filter';
+    const td = w.document.createElement('td'); td.className = 'bulk-td';
+    td.innerHTML = '<span class="bulk-cell-list bulk-cell-modified" data-path="qubits.q1.z.opx_output.exponential_filter"'
+        + ' data-resolved="' + LP + '">[[0.1,300]]</span>';
+    w.document.querySelector('tr[data-qubit="q1"]').appendChild(td);
+    const span = td.firstChild;
+
+    // partial undo: the undone path's LAST entry went
+    const q2 = cellOf(w, 'q2', 'T1');
+    markModified(q2, '1.2e-05', '1.1627458545397817e-05');
+    reverted([{ dot_path: 'qubits.q2.T1', old_value_disp: '1.1627458545397817e-05', old_value_str: '1.162746e-05',
+                old_kind: 'num', created: false, deleted: false, pending: false }]);
+    ok(q2.value === '1.1627458545397817e-05' && !q2.classList.contains('bulk-cell-modified')
+       && !q2.hasAttribute('data-baseline'),
+       'G1 pending:false -- the reverted cell looks clean although the tray still holds another edit');
+
+    // redo: the value is pending again
+    const q3 = cellOf(w, 'q3', 'T1');
+    reverted([{ dot_path: 'qubits.q3.T1', old_value_disp: '1.2e-05', old_value_str: '1.2e-05', old_kind: 'num',
+                created: false, deleted: false, pending: true, pending_old_disp: '1.1e-05' }]);
+    ok(q3.value === '1.2e-05' && q3.classList.contains('bulk-cell-modified')
+       && q3.getAttribute('data-baseline') === '1.1e-05',
+       'G2 pending:true -- a re-staged value is marked, with the ORIGINAL as its baseline');
+    ok(!q3.classList.contains('dirty'), 'G3 ...and it is committed, not typed (not dirty)');
+
+    // the alias cell is reached by its resolved path; no flag = today's behaviour
+    const a1 = cellOf(w, 'q1', 'x180_amp');
+    markModified(a1, '0.31', '0.3046');
+    reverted([{ dot_path: 'qubits.q1.xy.operations.x180_DragCosine.amplitude', old_value_disp: '0.305',
+                old_value_str: '0.305', old_kind: 'num', created: false, deleted: false }]);
+    ok(a1.value === '0.305' && a1.classList.contains('bulk-cell-modified'),
+       'G4 no flag (a sync/pull patch): the marker is left exactly as before');
+    reverted([{ dot_path: 'qubits.q1.xy.operations.x180_DragCosine.amplitude', old_value_disp: '0.3046',
+                old_value_str: '0.3046', old_kind: 'num', created: false, deleted: false, pending: false }]);
+    ok(!a1.classList.contains('bulk-cell-modified'), 'G5 the alias cell follows the flag by data-resolved');
+
+    // the list span: both directions
+    reverted([{ dot_path: LP, old_value_disp: '[[0.1,300]]', old_kind: 'list', old_value_json: '[[0.1,300]]',
+                created: false, deleted: false, pending: false }]);
+    ok(!span.classList.contains('bulk-cell-modified'), 'G6 a list cell loses a box the log no longer names');
+    reverted([{ dot_path: LP, old_value_disp: '[[0.2,300]]', old_kind: 'list', old_value_json: '[[0.2,300]]',
+                created: false, deleted: false, pending: true, pending_old_disp: '[[0.1, 300]]' }]);
+    ok(span.classList.contains('bulk-cell-modified') && !span.hasAttribute('data-baseline'),
+       'G7 ...and gets it back when re-staged (a list keeps its own baseline rule)');
+}
+
+/* ── H. F11: Escape / an outside click close the Live-Edit popups ────── */
+{
+    const html = '<div id="table-pane"><div class="bulk-panel" id="bulk-panel"><h3 id="le-title">Live State Edit</h3>'
+        + '<details class="bulk-colvis" id="pk-props"><summary>Properties</summary>'
+        + '<div class="bulk-colvis-menu" id="bulk-colvis-menu"><input type="checkbox" id="pk-cb">'
+        + '<details class="bulk-colvis-dyn" open><summary>x180</summary></details></div></details>'
+        + '<details class="bulk-colvis bulk-qubitvis" id="pk-qubits"><summary>Qubits</summary>'
+        + '<div class="bulk-colvis-menu" id="bulk-qubitvis-menu"><button type="button" id="pk-all">All</button></div></details>'
+        + '</div></div>'
+        + '<details class="bulk-colvis" id="ds-picker" open><summary>Datasets columns</summary><div>x</div></details>';
+    const { w } = world(html, 'http://localhost/bulk', ['app.js']);
+    const d = w.document;
+    const esc = function (target) {
+        const e = new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+        (target || d.body).dispatchEvent(e);
+        return e;
+    };
+    const click = function (el) { el.dispatchEvent(new w.MouseEvent('click', { bubbles: true, cancelable: true })); };
+    const props = d.getElementById('pk-props'), qubits = d.getElementById('pk-qubits'), ds = d.getElementById('ds-picker');
+
+    props.open = true;
+    d.getElementById('pk-cb').focus();
+    esc(d.getElementById('pk-cb'));
+    ok(!props.open, 'H1 Escape closes an open Live-Edit picker');
+    ok(d.activeElement === props.querySelector('summary'), 'H2 ...and the keyboard lands on its summary');
+    ok(ds.open, 'H3 a picker outside Live Edit (Datasets) is not touched by Escape');
+
+    // the Qubits menu rebuilds itself inside its own click handler (bulk-edit.js
+    // _buildQubitMenu): the click must not be read as "outside"
+    qubits.open = true;
+    const menu = d.getElementById('bulk-qubitvis-menu');
+    menu.addEventListener('click', function () { menu.innerHTML = '<button type="button" id="pk-all">All</button>'; });
+    click(d.getElementById('pk-all'));
+    ok(qubits.open, 'H4 a click inside a picker whose menu re-renders keeps it open');
+    click(d.getElementById('le-title'));
+    ok(!qubits.open, 'H5 a click elsewhere closes it');
+    ok(ds.open, 'H6 ...and leaves the Datasets picker alone');
+
+    props.open = true; qubits.open = false;
+    click(qubits.querySelector('summary'));
+    ok(!props.open, 'H7 opening another picker closes the first');
+
+    props.open = true;
+    const pe = new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+    pe.preventDefault();
+    d.body.dispatchEvent(pe);
+    ok(props.open, 'H8 an Escape a cell already consumed (preventDefault) leaves the picker open');
+
+    // the Auto-Sync popover, first
+    let closed = 0;
+    w.AutoSync = { close: function () { closed++; const p = d.getElementById('auto-sync-pop'); if (p) p.remove(); } };
+    const pop = d.createElement('div'); pop.id = 'auto-sync-pop'; d.body.appendChild(pop);
+    esc();
+    ok(closed === 1 && props.open, 'H9 Escape closes the Auto-Sync popover first (one popup per press)');
+    esc();
+    ok(!props.open, 'H10 ...and the next Escape the picker');
 }
 
 console.log(fails ? (fails + ' failed') : ('all checks passed (' + asserts + ' assertions)'));

@@ -14,6 +14,11 @@
 - liveedit-r2-07: a declined Auto-Sync pull still answers 204, now carrying a
   ``liveConflict`` signal, and ``GET /state/diverged-banner`` renders the
   "choose which to keep" banner in place.
+- liveedit-r2-09: the drift poll's ``edit_seq`` moves on a round trip that
+  ends on the same change set, and every tray names the one it rendered at.
+- liveedit-r2-17: the applied log lists only pushes that LANDED.
+- F8: /undo, the journal step and /redo say per path whether it is still
+  pending.
 """
 from __future__ import annotations
 
@@ -282,3 +287,165 @@ class TestADeclinedPullPutsTheBannerUpInPlace:
     def test_the_banner_route_is_empty_when_nothing_diverged(self, env):
         r = env["client"].get("/state/diverged-banner")
         assert r.status_code == 200 and r.data.decode().strip() == ""
+
+
+# ── liveedit-r2-09 ──────────────────────────────────────────────────────────
+def _seq(env) -> str:
+    return env["client"].get("/state/drift").get_json()["edit_seq"]
+
+
+class TestAPassiveWindowLearnsARoundTrip:
+    """A window that is only LOOKING follows the drift poll's ``edit_seq``.
+    It was the change-log signature alone, so another window's apply followed
+    by a Ctrl+Z that wrote the chip back (or any round trip ending on the same
+    change set) left it unchanged -- the passive grid kept a value no longer
+    anywhere."""
+
+    def test_the_same_change_set_after_a_write_is_still_a_move(self, env):
+        _edit(env, "qubits.qA1.T1", "2.5e-5")
+        assert env["client"].post("/state/sync", data={
+            "mode": "apply", "seen_changes": "1"}).status_code == 200
+        d1 = _seq(env)
+        _edit(env, "qubits.qA1.T1", "2.0e-5")
+        assert env["client"].post("/state/sync", data={
+            "mode": "apply", "seen_changes": "1"}).status_code == 200
+        assert _live(env)["qubits"]["qA1"]["T1"] == 2.0e-5
+        assert not _ctx(env)["store"].change_log
+        assert _seq(env) != d1, "an empty log before and after hid the round trip"
+
+    def test_a_mere_open_does_not_move_it(self, env):
+        d0 = _seq(env)
+        env["client"].get("/bulk")
+        env["client"].get("/state/tray")
+        assert _seq(env) == d0
+
+    def test_every_tray_names_the_edit_seq_it_was_rendered_at(self, env):
+        import re
+        _edit(env, "qubits.qA1.T1", "2.5e-5")
+        want = _seq(env)
+        for url in ("/state/tray", "/bulk"):
+            html = env["client"].get(url).data.decode()
+            m = re.search(r'data-edit-seq="([^"]*)"', html)
+            assert m and m.group(1) == want, (url, m and m.group(1), want)
+
+
+# ── liveedit-r2-17 ──────────────────────────────────────────────────────────
+def _rows(env) -> list[dict]:
+    with env["app"].app_context():
+        return routes_mod._applied_log_rows()
+
+
+def _node_writes(env, **fields):
+    """An experiment saves the chip: the live file as it is, fields changed."""
+    doc = _live(env)
+    doc["qubits"]["qA1"].update(fields)
+    t = time.time() + 100
+    (env["live"] / "state.json").write_text(json.dumps(doc), encoding="utf-8")
+    os.utime(env["live"] / "state.json", (t, t))
+
+
+class TestTheAppliedLogListsOnlyWhatLanded:
+    def test_a_refused_push_is_not_listed_as_applied(self, env):
+        c = env["client"]
+        assert c.post("/auto-apply/arm").status_code == 200
+        for v in ("1.31e-5", "1.32e-5"):
+            _edit(env, "qubits.qA1.T1", v)
+            assert c.post("/state/apply-to-live").status_code == 200
+        assert _live(env)["qubits"]["qA1"]["T1"] == 1.32e-5
+        _node_writes(env, T1=1.77e-5)
+        _edit(env, "qubits.qA1.T1", "1.34e-5")
+        r = c.post("/state/apply-to-live")
+        assert "autoApplyDisarm" in r.headers.get("HX-Trigger", "")
+        assert _live(env)["qubits"]["qA1"]["T1"] == 1.77e-5, "nothing was written"
+        rows = _rows(env)
+        assert [row["entries"][-1]["new"] for row in rows] == [1.32e-5, 1.31e-5], rows
+        # ...while Ctrl+Z still has the saved edit to walk (docs/107)
+        assert len(_ctx(env)["undo_units"]) == 3
+        # the tray's applied log renders exactly those rows
+        assert c.get("/state/tray").data.decode().count('class="applied-log-row') == 2
+
+    def test_the_merged_write_that_landed_is_the_row(self, env):
+        c = env["client"]
+        assert c.post("/auto-sync/set", data={"pull": "1", "pull_replace": "0",
+                                               "push": "1"}).status_code == 200
+        _edit(env, "qubits.qA1.T1", "1.25e-5")
+        assert c.post("/state/apply-to-live").status_code == 200
+        _node_writes(env, f_01=7.7e9)
+        _edit(env, "qubits.qA1.T1", "1.3e-5")
+        r = c.post("/state/apply-to-live")                 # refused -> merge signal
+        assert "autoSyncMerge" in r.headers.get("HX-Trigger", "")
+        assert c.post("/state/sync", data={"mode": "apply"}).status_code == 200
+        assert _live(env)["qubits"]["qA1"]["T1"] == 1.3e-5
+        assert _live(env)["qubits"]["qA1"]["f_01"] == 7.7e9
+        units = _ctx(env)["undo_units"]
+        rows = _rows(env)
+        assert len(rows) == 2, rows
+        assert rows[0]["id"] == units[-1]["id"], "the landed merge is the row, not the refused flush"
+
+    def test_the_x_says_when_it_only_staged(self, env):
+        c = env["client"]
+        assert c.post("/auto-apply/arm").status_code == 200
+        _edit(env, "qubits.qA1.T1", "1.31e-5")
+        assert c.post("/state/apply-to-live").status_code == 200
+        uid = _rows(env)[0]["id"]
+        assert c.post("/auto-apply/disarm").status_code == 200
+        r = c.post("/auto-apply/revert", data={"unit_id": uid})
+        assert r.status_code == 200
+        msg = _trigger(r)["cellsReverted"]["message"]
+        assert msg.startswith("Reverted (staged") and "Auto-Sync is off" in msg, msg
+        assert _live(env)["qubits"]["qA1"]["T1"] == 1.31e-5, "staged, not written"
+
+
+# ── QA F8: the red box follows the server's per-path pending truth ─────────
+def _reverted(r) -> dict:
+    return {e["dot_path"]: e for e in _trigger(r)["cellsReverted"]["entries"]}
+
+
+class TestUndoRedoSayWhetherAPathIsStillPending:
+    def test_a_partial_undo_says_the_undone_path_is_clean(self, env):
+        c = env["client"]
+        _edit(env, "qubits.qA1.T1", "1.3e-5")
+        _edit(env, "qubits.qA1.T2ramsey", "1.2e-6")
+        r = c.post("/undo")
+        e = _reverted(r)["qubits.qA1.T2ramsey"]
+        assert e["pending"] is False and "pending_old_disp" not in e
+        assert len(_ctx(env)["store"].change_log) == 1       # the tray still says 1
+
+    def test_the_same_path_edited_twice_stays_pending_with_its_first_original(self, env):
+        c = env["client"]
+        _edit(env, "qubits.qA1.T1", "1.3e-5")
+        _edit(env, "qubits.qA1.T1", "1.4e-5")
+        e = _reverted(c.post("/undo"))["qubits.qA1.T1"]
+        assert e["pending"] is True
+        with env["app"].app_context():
+            assert e["pending_old_disp"] == routes_mod._bulk_display(2.0e-5)
+
+    def test_a_redo_re_stages_it_as_pending(self, env):
+        c = env["client"]
+        _edit(env, "qubits.qA1.T1", "1.3e-5")
+        c.post("/undo")
+        e = _reverted(c.post("/redo"))["qubits.qA1.T1"]
+        assert e["pending"] is True
+        with env["app"].app_context():
+            assert e["pending_old_disp"] == routes_mod._bulk_display(2.0e-5)
+
+    def test_a_journal_step_says_where_it_landed(self, env):
+        c = env["client"]
+        _edit(env, "qubits.qA1.T1", "1.3e-5")
+        assert c.post("/state/sync", data={"mode": "apply", "seen_changes": "1"}).status_code == 200
+        r = c.post("/undo")
+        ents = _trigger(r)["cellsReverted"]["entries"]
+        assert ents, _trigger(r)
+        log = {x.dot_path for x in _ctx(env)["store"].change_log}
+        for e in ents:        # staged -> pending; written live -> not
+            assert e["pending"] is (e["dot_path"] in log), (e, log)
+
+    def test_a_staged_journal_step_is_pending(self, env):
+        c = env["client"]
+        assert c.post("/settings/undo-live", data={"enabled": "0"}).get_json()["enabled"] is False
+        _edit(env, "qubits.qA1.T1", "1.3e-5")
+        assert c.post("/state/sync", data={"mode": "apply", "seen_changes": "1"}).status_code == 200
+        r = c.post("/undo")
+        e = _reverted(r)["qubits.qA1.T1"]
+        assert _trigger(r)["cellsReverted"].get("live") is False
+        assert e["pending"] is True, "a staged inverse waits in the tray: it IS pending"

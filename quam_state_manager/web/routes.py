@@ -2457,6 +2457,26 @@ def _journal_commit(ctx, units: list[dict]) -> None:
         logger.warning("undo journal commit failed", exc_info=True)
 
 
+def _journal_mark_landed(ctx, units: list[dict]) -> None:
+    """QA liveedit-r2-17: label an auto-apply flush's units ``src=auto`` once
+    the push LANDED on the chip. The label used to ride the save-time commit,
+    so a push the conflict refused (nothing written) was listed as applied and
+    its ✕ reverted a value the chip never held. A failed stamp leaves the row
+    missing rather than wrong. Advisory: never raises."""
+    if not units or not ctx:
+        return
+    try:
+        path = undo_journal.sidecar_path(current_app.instance_path, ctx["path"])
+        ctx["undo_units"] = undo_journal.mark_units(
+            path, [u.get("id") for u in units], {"src": "auto"})
+        ctx["undo_cursor"] = min(int(ctx.get("undo_cursor") or 0),
+                                 len(ctx["undo_units"]))
+        # our own write: the mirror must not read it back as another window's
+        ctx["undo_sidecar_mtime"] = undo_journal.sidecar_mtime(path)
+    except Exception:
+        logger.warning("undo journal landed-mark failed", exc_info=True)
+
+
 #: docs/160 B: a wholesale load (a staged snapshot applied, a run's state
 #: applied to the chip, a restore) becomes ONE journal unit of leaf changes,
 #: capped -- past this it is recorded as a unit Ctrl+Z names but cannot walk
@@ -3965,6 +3985,11 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         # Ctrl+Z popped a lab-mate's edit exactly as before the fix.
         "change_sig": (_change_log_sig_of(_modifier().get_change_log())
                        if _modifier() else ""),
+        # QA liveedit-r2-09: and the drift poll's edit_seq, same rule
+        "edit_seq": _edit_seq(),
+        # QA liveedit-r2-16: and which ✕ takes an FSP bundle, same rule
+        "fsp_bundle_gids": (_fsp_bundle_gids(_modifier().get_change_log())
+                            if _modifier() else {}),
         "working_dirty": _working_dirty(),
         # ...and the badge's live verdict, for the same reason as `changes`.
         "live_diverged": bool((_active_ctx() or {}).get("live_diverged")),
@@ -6635,6 +6660,18 @@ def _change_log_sig_of(changes) -> str:
     return hashlib.sha1(paths.encode("utf-8")).hexdigest()[:12]
 
 
+def _fsp_bundle_gids(changes) -> dict:
+    """{gid: member count} for every FSP compensation bundle in the log -- the
+    tray ✕ discards those as one unit (QA liveedit-r2-16), and says so."""
+    from quam_state_manager.core import mw_fem
+    groups: dict = {}
+    for c in changes or []:
+        gid = getattr(c, "group_id", None)
+        if gid is not None:
+            groups.setdefault(gid, []).append(c.dot_path)
+    return {g: len(ps) for g, ps in groups.items() if mw_fem.is_fsp_comp_bundle(ps)}
+
+
 def _render_tray(*, oob: bool) -> str:
     """Render ``#pending-tray`` — the single tray renderer for both direct
     target swaps and OOB swaps.
@@ -6655,6 +6692,10 @@ def _render_tray(*, oob: bool) -> str:
         # docs/179: what this screen is SHOWING, so its own Apply button can
         # declare it. A count cannot tell two different change sets apart.
         change_sig=_change_log_sig_of(changes),
+        fsp_bundle_gids=_fsp_bundle_gids(changes),
+        # QA liveedit-r2-09: where the chip was when THIS tray rendered -- the
+        # drift poll's edit_seq equal to it means the move was this window's own
+        edit_seq=_edit_seq(),
         working_dirty=_working_dirty(),
         # The badge's else-branch says "Working state matches the live chip" —
         # a claim about LIVE — while its verdict was built only from LOCAL edit
@@ -6811,6 +6852,33 @@ def _revert_entry_payload(dot_path, value, *, created=False, deleted=False,
         except (TypeError, ValueError):
             out["old_value_json"] = None
     return out
+
+
+def _stamp_pending(entries: list) -> list:
+    """QA F8: say, per reverted path, whether it is STILL an unapplied
+    change-log entry once the operation is done -- the one fact the grids'
+    red "modified" box means (docs/146), and the one the client could not
+    know: a partial Ctrl+Z left the box on a path the log no longer names,
+    and a redo re-staged a value with no box at all. Call it AFTER the
+    operation (and any live flush), or the flag is backwards. A pending path
+    also carries the display of its FIRST original value -- the fresh
+    render's ``data-baseline`` (``_modified_map`` keeps the first). Entries
+    without the flag keep today's behaviour client-side."""
+    try:
+        m = _modified_map()
+    except Exception:  # noqa: BLE001 -- no flag is the safe degrade
+        return entries
+    for e in entries or []:
+        p = e.get("dot_path") if isinstance(e, dict) else None
+        if not p:
+            continue
+        e["pending"] = p in m
+        if e["pending"]:
+            try:
+                e["pending_old_disp"] = _bulk_display(m[p])
+            except Exception:  # noqa: BLE001
+                pass
+    return entries
 
 
 _SYNC_PATCH_CAP = 4000
@@ -14944,11 +15012,11 @@ def undo():
             # RESPONSE is the authoritative what-was-undone signal (a peek-
             # then-undo design would race a concurrent commit), so the
             # navigate-to-owner decision rides these fields.
-            "entries": [
+            "entries": _stamp_pending([   # QA F8: still pending after it?
                 _revert_entry_payload(e.dot_path, e.old_value, created=e.created,
                                       deleted=e.deleted, source_file=e.source_file)
                 for e in entries
-            ],
+            ]),
             # A burst that stopped early says so (review of eaa0f05): the
             # client re-queues `requested - consumed` presses at a journal
             # boundary (each walks the journal on its own, as a single press
@@ -15143,11 +15211,11 @@ def _walk_entries_payload(uents: list, value_of, *, created, deleted) -> dict:
     wholesale grid resync it already has for structural undos."""
     if len(uents) > _HEADER_PATCH_CAP:
         return {"entries": [], "structural": True, "n_entries": len(uents)}
-    return {"entries": [
+    return {"entries": _stamp_pending([   # QA F8: staged => pending, live => not
         _revert_entry_payload(u["path"], value_of(u), created=created(u), deleted=deleted(u),
                               source_file=u.get("source_file", "state"))
         for u in uents
-    ]}
+    ])}
 
 
 def _working_at_sync_point(ctx, store, *, log_was_empty: bool) -> str | None:
@@ -15705,7 +15773,7 @@ def _redo_response(message: str, entries_payload: list[dict], extra: dict | None
     ``live`` (docs/160): the press wrote the chip -- the drift banner and the
     Versions panel must follow, exactly as after an Apply (review m2)."""
     resp = make_response(_tray_html())
-    payload = {"message": message, "entries": entries_payload}
+    payload = {"message": message, "entries": _stamp_pending(entries_payload)}   # QA F8
     if extra:
         payload.update(extra)
     _ctx_ = _active_ctx()
@@ -15749,16 +15817,22 @@ def discard():
     ctx = _active_ctx()
     store = ctx.get("store") if ctx else None
     _redo_begin(ctx, store)   # docs/107: a foreign edit since forks history
+    from quam_state_manager.core import mw_fem
     try:
-        entry = modifier.discard(index, expect_path=expect_path)
+        # QA liveedit-r2-16: a ✕ on any member of an FSP compensation bundle
+        # takes the whole bundle (one gid = one Review bundle = one Ctrl+Z =
+        # one ✕); every other entry is discarded alone, exactly as before.
+        entries = modifier.discard_unit(index, expect_path=expect_path,
+                                        is_unit=mw_fem.is_fsp_comp_bundle)
     except KeyError as exc:
         # e.g. discarding a delete whose key was re-created since, or an edit
         # inside a subtree that a later entry deleted — surface, don't 500.
         _invalidate_engine_cache()
         return render_template("_status.html", message=str(exc), level="error"), 409
     _invalidate_engine_cache()
-    if entry is None:
+    if not entries:
         return render_template("_status.html", message="Change not found", level="warning")
+    entry = entries[0]
     # docs/160 (code-review sweep, F2): the ✕ took the LAST entry of a staged
     # journal step out of the log -- that unit's content is back on the chip
     # as far as the walk is concerned, so the cursor moves back up over it
@@ -15775,10 +15849,34 @@ def discard():
     # The frame keeps its `jrn:` gid exactly when the ✕ moved the cursor
     # (round 2, F3): a redo that re-stages the step must put the cursor back
     # where it was, or the next Ctrl+Z stages that unit's inverse twice.
-    _redo_push_group(ctx, store, [entry], keep_jrn=_last_of_jrn)
+    _redo_push_group(ctx, store, entries, keep_jrn=_last_of_jrn)
     if _last_of_jrn:
         ctx["undo_cursor"] = min(int(ctx.get("undo_cursor") or 0) + 1,
                                  len(ctx.get("undo_units") or []))
+
+    if len(entries) > 1:
+        # the bundle went as one: the grids repaint every member (the same
+        # event a Ctrl+Z of it sends), and the user is told why N went
+        _n_amp = sum(1 for e in entries
+                     if not e.dot_path.endswith(mw_fem._FSP_LEAF))
+        resp = make_response(_tray_html())
+        resp.headers["HX-Trigger"] = json.dumps({
+            "cellsReverted": {
+                "message": (
+                    f"Discarded the full-scale-power change together with its "
+                    f"{_n_amp} compensated amplitude{'s' if _n_amp != 1 else ''}: "
+                    f"they are one unit, so no pulse changes output power "
+                    f"(Ctrl+Shift+Z restores them)"),
+                "entries": _stamp_pending([
+                    _revert_entry_payload(e.dot_path, e.old_value, created=e.created,
+                                          deleted=e.deleted, source_file=e.source_file)
+                    for e in entries
+                ]),
+            },
+            "pulses-changed": True,
+            "diagnostics-changed": True,
+        })
+        return resp
 
     _payload = _revert_entry_payload(
         entry.dot_path, entry.old_value, created=entry.created,
@@ -16455,7 +16553,7 @@ def auto_apply_revert():
                 return render_template(
                     "_status.html", level="warning",
                     message=(f"Not reverted — {e['path']} has changed since "
-                             f"(now {_fmt_val(cur)}, this change wrote "
+                             f"(now {_fmt_val(cur)} in SM, this change wrote "
                              f"{_fmt_val(e.get('new'))}). Nothing was written.")
                 ), 409
 
@@ -16502,7 +16600,12 @@ def auto_apply_revert():
     resp = make_response(_tray_html())
     resp.headers["HX-Trigger"] = json.dumps({
         "cellsReverted": {
-            "message": (f"Reverted: {anchor['path']}"
+            # QA liveedit-r2-17: with the session off the inverse only waits in
+            # the tray -- "Reverted" alone read as if the chip had moved
+            "message": (("Reverted: " if _auto_apply_state(ctx) is not None else
+                         "Reverted (staged — Auto-Sync is off; Apply writes it "
+                         "to the chip): ")
+                        + f"{anchor['path']}"
                         + (f" (+{len(ents) - 1} more)" if len(ents) > 1 else "")),
             "entries": [
                 {"dot_path": e.dot_path, "old_value_str": _fmt_val(e.old_value),
@@ -17063,7 +17166,21 @@ def _edit_seq() -> str:
     # and a passive window must not re-fetch its pane for that. A signature
     # moves exactly when an edit is staged, undone, discarded or applied.
     with store._lock:
-        return f"{_change_log_sig(store)}:{len(store.change_log)}"
+        seq = f"{_change_log_sig(store)}:{len(store.change_log)}"
+    # QA liveedit-r2-09: ...but a round trip that ends on the SAME change set
+    # (another window applies, then Ctrl+Z writes the chip back; a pull) left
+    # the signature where it was, so a passive window never learned the values
+    # moved. Every such round trip writes the working copy, so its files'
+    # mtimes join the signature (two stats; a mere open writes nothing).
+    wc = (_active_ctx() or {}).get("working_copy")
+    folder = getattr(wc, "working_folder", None)
+    if folder is not None:
+        for name in ("state.json", "wiring.json"):
+            try:
+                seq += f":{os.stat(Path(folder) / name).st_mtime_ns}"
+            except OSError:
+                seq += ":-"
+    return seq
 
 
 def _unseen_edit_refusal(ctx) -> dict | None:
@@ -17370,6 +17487,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
     store = ctx["store"]
     wc = ctx["working_copy"]
     saver = ctx["saver"]
+    _auto = _auto_apply_state(ctx)   # QA liveedit-r2-17: label what LANDS
 
     # Re-stash exactly the edits now in the change log, so save()'s clear can't
     # lose them if the apply below hits a fresh conflict. Pin to the CAPTURED ctx
@@ -17466,6 +17584,10 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
     # docs/187 R1: THIS is the door the autoSyncMerge signal presses, and it was
     # the one that never refilled the budget.
     _auto_apply_landed(ctx)
+    # QA liveedit-r2-17: ...and the merged write that DID land is the one the
+    # applied log lists (the refused flush before it is not labelled)
+    if _auto is not None and journal:
+        _journal_mark_landed(ctx, _jrn_units)
     ctx["staged_base"] = False   # the staged content reached live (audit-r10)
     _clear_reapply(ctx)  # edits are on the live chip now — nothing left to re-apply
     ctx["live_diverged"] = False  # live now holds the merged working content
@@ -17561,7 +17683,8 @@ def state_apply_to_live():
         _stash_reapply(_capture_change_log_as_updates(store), ctx)
         _jrn_units = _journal_prepare(          # docs/107: outgoing log
             store, ctx,
-            meta={"src": "auto", "at": time.time(), "actor": _request_actor()} if _auto
+            # QA liveedit-r2-17: "src": "auto" is stamped once the push lands
+            meta={"at": time.time(), "actor": _request_actor()} if _auto
             else {"actor": _request_actor(), "plan_id": request.headers.get("X-SM-Plan") or None})
 
     if store.change_log:
@@ -17722,6 +17845,8 @@ def state_apply_to_live():
 
     _set_working_dirty(False, ctx)
     _auto_apply_landed(ctx)          # docs/187 R1 -- one helper, both doors
+    if _auto is not None:
+        _journal_mark_landed(ctx, _jrn_units)   # QA liveedit-r2-17: it landed
     if ctx.get("staged_base"):
         _journal_wholesale_commit(ctx, _before_tree, "apply-staged", edit_units=_jrn_units)   # docs/160 B
     ctx["staged_base"] = False   # the staged content reached live (audit-r10)

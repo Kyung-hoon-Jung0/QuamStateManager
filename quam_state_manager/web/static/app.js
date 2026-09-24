@@ -1457,6 +1457,26 @@ document.addEventListener('keydown', function(evt) {
         else tool.classList.add(tool.id === 'calc-popover' ? 'calc-hidden' : 'settings-hidden');
         return;
     }
+    // QA F11: 1b. the Auto-Sync popover (the other topbar popup), then 1c. an
+    // open Live-Edit picker (ⓘ / Properties / Qubits / Pairs / a grid's own
+    // Properties) -- both ignored Escape. Before the inspector early return,
+    // which would otherwise swallow them on a page with no inspector.
+    if (document.getElementById('auto-sync-pop') && window.AutoSync && window.AutoSync.close) {
+        evt.preventDefault();
+        window.AutoSync.close();
+        return;
+    }
+    var _picks = document.querySelectorAll('#bulk-panel details.bulk-colvis[open]');
+    if (_picks.length) {
+        evt.preventDefault();
+        Array.prototype.forEach.call(_picks, function (d) {
+            var had = d.contains(document.activeElement);
+            d.open = false;
+            var s = had && d.querySelector('summary');
+            if (s && s.focus) s.focus();            // keep the keyboard user's place
+        });
+        return;
+    }
     // 2. an inline form inside the inspector (rename / duplicate / delete)
     var pane = document.getElementById('inspector-pane');
     if (!pane || !pane.firstElementChild) return;
@@ -1480,6 +1500,23 @@ document.addEventListener('keydown', function(evt) {
           || pane.querySelector('#gcz-root'))) return;
     if (window.closeInspector) { window.closeInspector(); evt.preventDefault(); }
 });
+
+/* QA F11: a click anywhere outside an open Live-Edit picker closes it (the
+   app's own convention, docs/17 / docs/40). CAPTURE phase + composedPath are
+   required, not style: the Qubits / Pairs menus rebuild their own innerHTML
+   inside their click handlers, so by bubble time ev.target is detached and a
+   contains() test would close the menu on every All / None / chip click.
+   A click on another picker's summary is outside this one, so opening one
+   closes the other. Never stops or prevents the click. */
+document.addEventListener('click', function (ev) {
+    var open = document.querySelectorAll('#bulk-panel details.bulk-colvis[open]');
+    if (!open.length) return;
+    var path = ev.composedPath ? ev.composedPath() : [];
+    Array.prototype.forEach.call(open, function (d) {
+        if (path.indexOf(d) >= 0 || d.contains(ev.target)) return;
+        d.open = false;
+    });
+}, true);
 
 /* The f_01↔RF_frequency 🔗 sync preference, shared with the bulk table's toggle
  * (localStorage 'quam_bulk_freqsync'): "1" unless explicitly turned off. The
@@ -3624,18 +3661,62 @@ window.applyEditsToLive = function () {
 
     var _driftPolling = false;
     var _foreignRefreshing = false;
+    /* QA liveedit-r2-09: the Live-Edit grid had no refresher on this path --
+       the tray moved to the lab-mate's change set while the cells kept values
+       that no longer existed (and the red box went with the next tray). Re-GET
+       the grid through the existing resync (whose listener refuses to wipe
+       typed cells), only while nobody is typing: a busy window retries in 2 s.
+       The scroll and a focused cell are carried across the swap. */
+    var _gridFollowTimer = null;
+    function followOnGrid() {
+        if (_gridFollowTimer) { clearTimeout(_gridFollowTimer); _gridFollowTimer = null; }
+        if (!document.getElementById("bulk-table") || !window._scheduleGridResync) return;
+        if ((Date.now() - (window.__lastUserAct || 0)) < 2000) {
+            _gridFollowTimer = setTimeout(followOnGrid, 2000);
+            return;
+        }
+        var a = document.activeElement;
+        var dp = a && a.classList && a.classList.contains("bulk-cell")
+                 && a.getAttribute("data-dot-path");
+        if (typeof _keepPaneScroll === "function") _keepPaneScroll();
+        if (dp) {
+            var once = function (evt) {
+                if (!evt.detail || !evt.detail.target || evt.detail.target.id !== "table-pane") return;
+                document.removeEventListener("htmx:afterSwap", once);
+                // a cold column's cells hydrate only after the scroll returns
+                var tries = 0, refocus = function () {
+                    var c = document.querySelector('#table-pane .bulk-cell[data-dot-path="'
+                        + ((window.CSS && CSS.escape) ? CSS.escape(dp) : dp) + '"]');
+                    if (c && c.focus) { if (document.activeElement === document.body) c.focus({ preventScroll: true }); }
+                    else if (++tries < 15) setTimeout(refocus, 100);
+                };
+                setTimeout(refocus, 50);
+            };
+            document.addEventListener("htmx:afterSwap", once);
+            setTimeout(function () { document.removeEventListener("htmx:afterSwap", once); }, 15000);
+        }
+        window._scheduleGridResync(0);
+    }
+    window._followOnGrid = followOnGrid;
     /* docs/190 F05: another window changed the working copy. Re-render the tray
        (the count and the change signature the docs/179 gate reads) and re-fetch
        the rows/inspector VALUES the reader has on screen. Never a navigation:
        the pane, the search, the scroll and the open pulse all stay. */
-    function refreshAfterForeignEdit() {
+    function refreshAfterForeignEdit(d) {
         if (_foreignRefreshing || !window.htmx) return;
         _foreignRefreshing = true;
+        // QA liveedit-r2-09: a tray that already shows this edit_seq was
+        // swapped by THIS window's own action -- its grid is current. Read
+        // before the tray is re-rendered.
+        var t0 = document.getElementById("pending-tray");
+        var foreign = !(d && d.edit_seq && t0
+                        && t0.getAttribute("data-edit-seq") === d.edit_seq);
         var done = function () { _foreignRefreshing = false; };
+        var after = function () { done(); if (foreign) followOnGrid(); };
         try {
             var p = window.htmx.ajax("GET", "/state/tray",
                                      { target: "#pending-tray", swap: "outerHTML" });
-            if (p && p.then) p.then(done, done); else done();
+            if (p && p.then) p.then(after, done); else after();
         } catch (e) { done(); }
         // the values on screen: the pulses table patches its own rows, the
         // grids and the inspector re-read through their existing refreshers
@@ -3668,7 +3749,7 @@ window.applyEditsToLive = function () {
         var first = window._editSeqSeen === undefined;
         window._editSeqSeen = d.edit_seq;
         if (first) return false;
-        refreshAfterForeignEdit();
+        refreshAfterForeignEdit(d);
         return true;
     }
     window._onDriftEditSeq = onEditSeq;
@@ -4361,6 +4442,8 @@ document.addEventListener("cellsReverted", function(evt) {
         try { document.dispatchEvent(new CustomEvent("stateRestored", { detail: { structural: true, changes: [] } })); } catch (e2) {}
     }
     _repaintGridsForReverted(entries, structural, d.stopped);
+    // QA F8: ...and the red box follows the server's per-path pending truth
+    if (window.PendingMarkers && window.PendingMarkers.followPending) window.PendingMarkers.followPending(entries);
     // docs/160: a refused / rolled-back walk step ("Not undone — …", a too-large
     // skip) arrives as level "warning" -- it must not read as a green success
     if (d.message && window.showToast) window.showToast(d.message,
@@ -16343,6 +16426,31 @@ window.PendingMarkers = (function () {
             });
         });
     }
+    // QA F8: after a Ctrl+Z / Ctrl+Shift+Z the server says, per reverted path,
+    // whether it is STILL pending (`pending`, computed after the operation).
+    // false -> the box goes (a partial undo left it on a path the log no
+    // longer names); true -> the box comes back with the fresh render's
+    // baseline (a redo re-staged a value and left it unmarked). No flag ->
+    // untouched, exactly as before (sync/pull patches send none).
+    function followPending(entries) {
+        var esc = function (p) { return (window.CSS && CSS.escape) ? CSS.escape(p) : p; };
+        var off = [];
+        (entries || []).forEach(function (e) {
+            if (!e || !e.dot_path || typeof e.pending !== 'boolean') return;
+            if (!e.pending) { off.push(e.dot_path); return; }
+            var q = esc(e.dot_path);
+            document.querySelectorAll('.bulk-cell[data-dot-path="' + q + '"], .bulk-cell[data-resolved="' + q + '"], '
+                    + '.bulk-cell-list[data-path="' + q + '"], .bulk-cell-list[data-resolved="' + q + '"]').forEach(function (c) {
+                c.classList.add('bulk-cell-modified');
+                if (c.tagName !== 'INPUT' || e.pending_old_disp == null) return;
+                c.setAttribute('data-baseline', String(e.pending_old_disp));
+                var td = c.closest('.bulk-td');
+                var old = td && td.querySelector('.bulk-ba-old');
+                if (old) old.textContent = String(e.pending_old_disp);
+            });
+        });
+        clearPaths(off);
+    }
     function clearIfTrayClean() {
         var t = document.getElementById('pending-tray');
         if (!t) return false;
@@ -16365,7 +16473,8 @@ window.PendingMarkers = (function () {
         var el = evt.detail && evt.detail.target;
         if (el && el.id === 'pending-tray') clearIfTrayClean();
     });
-    return { clearAll: clearAll, clearPaths: clearPaths, clearIfTrayClean: clearIfTrayClean };
+    return { clearAll: clearAll, clearPaths: clearPaths, followPending: followPending,
+             clearIfTrayClean: clearIfTrayClean };
 })();
 
 (function setupSlowRouteLoader() {

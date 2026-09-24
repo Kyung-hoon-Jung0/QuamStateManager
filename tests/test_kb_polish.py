@@ -30,12 +30,15 @@ class TestTheEscapeLadder:
         import pathlib
         js = pathlib.Path("quam_state_manager/web/static/app.js").read_text(encoding="utf-8")
         i = js.index("ONE Escape ladder")
-        block = js[i:i + 2600]
+        block = js[i:i + 4000]   # QA F11 added two rungs: the window grew
         tool = block.index("settings-dropdown:not(.settings-hidden)")
+        autosync = block.index("getElementById('auto-sync-pop')")
+        picker = block.index("#bulk-panel details.bulk-colvis[open]")
         form = block.index(".pulse-rename-form:not([hidden])")
         slider = block.index("input[type=\"range\"]")
         pane = block.index("closeInspector")
-        assert tool < form < slider < pane, "the ladder must go tool -> form -> slider -> pane"
+        assert tool < autosync < picker < form < slider < pane, (
+            "the ladder must go tool -> Auto-Sync -> Live-Edit picker -> form -> slider -> pane")
 
     def test_the_form_branch_also_clears_the_draft(self):
         import pathlib

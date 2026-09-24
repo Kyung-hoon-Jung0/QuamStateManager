@@ -353,3 +353,89 @@ def test_fsp_edit_selfcheck():
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout + r.stderr
     assert r.stdout.count("ok - ") >= 30, r.stdout
+
+
+# ── QA liveedit-r2-16: the tray ✕ takes an FSP bundle as one unit ──────────
+
+def _commit_comp(env) -> list[str]:
+    """FSP 0 -> -6 on con1/1/1 accepted WITH compensation: FSP + 3 amps, one gid."""
+    c = env["client"]
+    plan = c.post("/field/edit", data={"dot_path": _FSP, "value": "-6"}
+                  ).get_json()["fsp_compensation"]
+    updates = ([{"dot_path": _FSP, "value": "-6"}]
+               + [{"dot_path": a["path"], "value": str(a["new"])} for a in plan["amps"]])
+    r = c.post("/field/edit-batch", json={"updates": updates, "fsp_ack": "comp",
+                                          "expect_chip": ""})
+    assert r.status_code == 200 and r.get_json()["ok"], r.get_json()
+    return [u["dot_path"] for u in updates]
+
+
+def _ro(env, q="qA2"):
+    with env["ctx"]["store"]._lock:
+        st = env["ctx"]["store"].state
+        return (st["ports"]["mw_outputs"]["con1"]["1"]["1"]["full_scale_power_dbm"],
+                st["qubits"][q]["resonator"]["operations"]["readout"]["amplitude"])
+
+
+def _x(env, path):
+    """The tray ✕ exactly as _pending_tray.html posts it: index + expect_path."""
+    log = env["ctx"]["store"].change_log
+    idx = next(i for i, e in enumerate(log) if e.dot_path == path)
+    return env["client"].post("/discard", data={"index": str(idx), "expect_path": path})
+
+
+_AMP = "qubits.qA2.resonator.operations.readout.amplitude"
+
+
+class TestTrayDiscardKeepsTheBundleWhole:
+    def test_detection_is_by_content(self):
+        amp = "qubits.q1.xy.operations.x180_DragCosine.amplitude"
+        assert mw_fem.is_fsp_comp_bundle([_FSP, amp])
+        assert not mw_fem.is_fsp_comp_bundle([_FSP])
+        assert not mw_fem.is_fsp_comp_bundle([amp, "qubits.q1.T1"])
+        assert not mw_fem.is_fsp_comp_bundle([_FSP, "qubits.q1.T1"])
+
+    @pytest.mark.parametrize("clicked", [_AMP, _FSP])
+    def test_a_member_x_discards_the_whole_bundle(self, env, clicked):
+        _commit_comp(env)
+        assert len(env["ctx"]["store"].change_log) == 4
+        r = _x(env, clicked)
+        assert r.status_code == 200
+        assert env["ctx"]["store"].change_log == [], \
+            "one member alone left the port and that pulse 6 dB apart"
+        assert _ro(env) == (0, 0.6)
+        trig = json.loads(r.headers["HX-Trigger"])
+        assert "cellDiscarded" not in trig
+        ents = trig["cellsReverted"]["entries"]
+        assert len(ents) == 4 and {e["dot_path"] for e in ents} >= {_FSP, _AMP}
+        assert "one unit" in trig["cellsReverted"]["message"]
+
+    def test_redo_restores_it_as_one_group_and_one_undo_reverts_it(self, env):
+        c = env["client"]
+        paths = _commit_comp(env)
+        _x(env, _AMP)
+        assert c.post("/redo").status_code == 200
+        log = env["ctx"]["store"].change_log
+        assert sorted(e.dot_path for e in log) == sorted(paths)
+        assert len({e.group_id for e in log}) == 1 and log[0].group_id is not None
+        assert _ro(env)[0] == -6
+        assert c.post("/undo").status_code == 200
+        assert env["ctx"]["store"].change_log == [] and _ro(env) == (0, 0.6)
+
+    def test_any_other_group_still_loses_one_member_only(self, env):
+        c = env["client"]
+        r = c.post("/field/edit-batch", json={"updates": [
+            {"dot_path": "qubits.qA1.xy.operations.x180.length", "value": "48"},
+            {"dot_path": "qubits.qA1.xy.operations.x180.amplitude", "value": "0.45"}],
+            "expect_chip": ""})
+        assert r.status_code == 200 and r.get_json()["ok"]
+        r = _x(env, "qubits.qA1.xy.operations.x180.amplitude")
+        assert "cellDiscarded" in json.loads(r.headers["HX-Trigger"])
+        assert [e.dot_path for e in env["ctx"]["store"].change_log] == [
+            "qubits.qA1.xy.operations.x180.length"]
+
+    def test_the_x_says_it_takes_the_bundle(self, env):
+        _commit_comp(env)
+        for html in (env["client"].get("/state/tray").data.decode(),
+                     env["client"].get("/bulk").data.decode()):
+            assert html.count("with its full-scale-power bundle (4 changes") == 4, html[:200]
