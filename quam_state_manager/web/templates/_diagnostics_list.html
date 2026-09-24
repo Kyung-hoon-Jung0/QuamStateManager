@@ -105,7 +105,10 @@
                 {% else %}<span class="diag-badge diag-{{ f.severity }}">{{ 'suggestion' if f.severity == 'info' else f.severity }}</span>{% endif %}
               {% endif %}
             </td>
-            <td><code class="diag-loc">{{ f.location }}</code></td>
+            {# QA F-Q: break at the dots (<wbr> adds no text, so copy and
+               textContent stay byte-identical), and a floor on the cell -- the
+               nowrap action column squeezed a break-all path to one letter. #}
+            <td class="diag-loc-cell"><code class="diag-loc">{% for seg in (f.location | string).split('.') %}{{ seg }}{% if not loop.last %}.<wbr>{% endif %}{% endfor %}</code></td>
             <td>
               <div class="diag-msg">{{ f.message }}</div>
               {% if f.detail %}<div class="diag-detail muted"><code>{{ f.detail }}</code></div>{% endif %}

@@ -376,6 +376,42 @@ function fakeScroll(el) {
        + JSON.stringify(atRestore) + ')');
 }
 
+// -- 8c. QA F-15: a page you OPEN starts at the top --------------------------
+// #table-pane is persistent, so a new route kept the outgoing page's
+// scrollTop, clamped to its own maximum: Diagnostics opened from a scrolled
+// Chip Status (tile, warnings chip, sidebar) showed its bottom, the title
+// above the fold. Measured live: 860 -> 298 (the Diagnostics maximum).
+{
+    const p0 = pane();              // still carries 8b's browser-rule emulation
+    window.PaneState.clear();
+    swapTo('/topology', '<div id="cs-long">chip status</div>');
+    p0.scrollTop = 860; p0.scrollLeft = 40;             // the user scrolled Chip Status
+    swapTo('/diagnostics', '<div id="diag-page">diagnostics</div>');
+    ok(p0.scrollTop === 0 && p0.scrollLeft === 0,
+       'F-15: a NEW route opens at the top (got ' + p0.scrollTop + '/' + p0.scrollLeft + ')');
+    // a same-route refresh (the findings self-refresh, pagination) keeps its place
+    p0.scrollTop = 200;
+    swapTo('/diagnostics', '<div id="diag-page2">diagnostics again</div>');
+    ok(p0.scrollTop === 200, 'F-15: a same-route refresh keeps its place (got ' + p0.scrollTop + ')');
+    // a POST answering its own page (Datasets' Rescan -> /datasets/rescan)
+    swapTo('/datasets', '<div>datasets</div>');
+    p0.scrollTop = 500;
+    const before = new window.CustomEvent('htmx:beforeSwap', { cancelable: true,
+        detail: { shouldSwap: true, requestConfig: { verb: 'post' },
+                  pathInfo: { finalRequestPath: '/datasets/rescan' } } });
+    Object.defineProperty(before, 'target', { value: pane() });
+    doc.dispatchEvent(before);
+    pane().innerHTML = '<div>rescanned table</div>';
+    const after = new window.CustomEvent('htmx:afterSwap', {
+        detail: { requestConfig: { verb: 'post' },
+                  pathInfo: { finalRequestPath: '/datasets/rescan' } } });
+    Object.defineProperty(after, 'target', { value: pane() });
+    doc.dispatchEvent(after);
+    ok(p0.scrollTop === 500, 'F-15: a POST answering its own page keeps its place (got '
+       + p0.scrollTop + ')');
+    window.PaneState.clear();
+}
+
 // -- 9. Back after a skip-nav: content-route mismatch refetches (docs/139) --
 // Measured live before the fix: the skip pushes URLs htmx has no snapshot
 // for, so Back left /bulk's grid standing under /explorer -- not blank, so

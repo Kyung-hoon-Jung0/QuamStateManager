@@ -154,3 +154,64 @@ class TestAcknowledgedRowsReadAsSettled:
     def test_unacknowledged_render_carries_none_of_it(self):
         html = _render([self._active("Quam.x")])
         assert "diag-acked-toggle" not in html and "acknowledged" not in html
+
+
+_STATIC = __import__("pathlib").Path(__file__).resolve().parent.parent / "quam_state_manager" / "web"
+
+
+def _css_block(css: str, selector: str) -> str:
+    i = css.index(selector + " {")
+    return css[i:css.index("}", i)]
+
+
+class TestLocationColumnReadable:
+    """QA F-Q: ``.diag-loc`` used ``word-break: break-all`` -- a ONE-character
+    min-content -- so the nowrap action column squeezed the path into
+    'qubits. / q2.reso / nator.f / _01' (72 px, four lines). Same mechanism as
+    test_state_versions' quick-diff key column; the detail's unbreakable
+    `path=value` token was the other column that would not give."""
+
+    def test_the_location_cell_has_a_floor(self):
+        css = (_STATIC / "static" / "style.css").read_text(encoding="utf-8")
+        assert "min-width" in _css_block(css, ".diag-loc-cell")
+        assert "break-all" not in _css_block(css, ".diag-loc")
+        # the floor must take its width from a column that can give: the
+        # detail's long `path=value` token breaks, or the table overflows
+        assert "overflow-wrap: anywhere" in _css_block(css, ".diag-detail code")
+        html = _render([Finding("warning", "value_spec", "qubits.q2.resonator.f_01", "m")])
+        assert '<td class="diag-loc-cell"><code class="diag-loc">' in html
+
+    def test_the_path_breaks_at_its_dots_and_copies_unchanged(self):
+        html = _render([Finding("warning", "value_spec", "qubits.q2.resonator.f_01", "m")])
+        m = re.search(r'<code class="diag-loc">(.*?)</code>', html)
+        assert m and m.group(1) == "qubits.<wbr>q2.<wbr>resonator.<wbr>f_01"
+        # <wbr> carries no text: what a copy / textContent gives is the path
+        assert m.group(1).replace("<wbr>", "") == "qubits.q2.resonator.f_01"
+
+    def test_a_path_segment_is_still_escaped(self):
+        html = _render([Finding("warning", "value_spec", "a.<b>.c", "m")])
+        assert "a.<wbr>&lt;b&gt;.<wbr>c" in html
+
+
+class TestWhatIsCheckedDialog:
+    """QA F-P: Pico styles ``<dialog>`` itself as the full-screen overlay
+    (``min-width:100%; min-height:100%; align-items:center``), which beat the
+    card's width/max-height: the dialog filled the viewport (0,0,1600,950),
+    the head shrank to a narrow centred card, and there was no outside to
+    click. Layout needs a real browser; these pin the two halves of the fix."""
+
+    def test_the_card_undoes_picos_overlay_sizing(self):
+        css = (_STATIC / "static" / "style.css").read_text(encoding="utf-8")
+        block = _css_block(css, ".diag-checks-dialog")
+        for decl in ("min-width: 0", "min-height: 0", "align-items: stretch",
+                     "backdrop-filter: none"):
+            assert decl in block, decl
+
+    def test_a_backdrop_click_closes_it(self):
+        src = (_STATIC / "templates" / "_diagnostics_checks.html").read_text(encoding="utf-8")
+        tag = src[src.index('<dialog id="diag-checks-dialog"'):]
+        tag = tag[:tag.index(">")]
+        assert "onclick=" in tag and "event.target === this" in tag and "this.close()" in tag
+        # a text-selection drag that started inside the card must not close it
+        assert "onmousedown=" in tag and "_downOnBackdrop" in tag
+

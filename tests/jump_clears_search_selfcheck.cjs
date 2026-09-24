@@ -202,6 +202,54 @@ async function main() {
   ok(inputs >= 1,
     'J5: clearing fires the box’s own input event, so the chip bar follows');
 
+  // ── J6/J7: QA diagnostics-r2-20 — where the keyboard lands ───────────────
+  // Go to field's own pane swap destroys the button that started the jump, so
+  // focus sits on <body>: a keyboard user restarted 40+ Tab stops from the
+  // top. The jump lands focus on the row — but only when focus was DROPPED.
+  const outside = d.createElement('input');
+  outside.id = 'outside-typing';
+  d.body.appendChild(outside);
+  function focusBody() {
+    if (d.activeElement && d.activeElement !== d.body) d.activeElement.blur();
+  }
+  function rowOf(p) { const n = node(p); return n && n.querySelector(':scope > .tree-row'); }
+
+  render();
+  type('');
+  await sleep(300);
+  focusBody();
+  ok(d.activeElement === d.body, 'fixture: focus starts on <body>, as after the swap');
+  window._jumpToTreePath('explorer-tree-state', TARGET);
+  await sleep(300);
+  const r6 = rowOf(TARGET);
+  ok(!!r6 && d.activeElement === r6,
+    'J6: a jump that found focus on <body> lands it on the target row (got '
+    + (d.activeElement && (d.activeElement.className || d.activeElement.tagName)) + ')');
+  ok(!!r6 && r6.getAttribute('tabindex') === '-1',
+    'J6: …focusable from code only (tabindex=-1 adds no Tab stop)');
+
+  // the search-cleared path re-renders the tree and expands a SECOND time:
+  // the first focused row dies with the old tree, the new one takes over
+  render();
+  type('amplitude');
+  await sleep(300);
+  focusBody();
+  window._jumpToTreePath('explorer-tree-state', TARGET);
+  await sleep(700);
+  const r6b = rowOf(TARGET);
+  ok(!!r6b && r6b.isConnected && d.activeElement === r6b,
+    'J6b: after a cleared search, focus is on the RE-RENDERED target row');
+
+  render();
+  type('');
+  await sleep(300);
+  outside.focus();
+  ok(d.activeElement === outside, 'fixture: focus starts in an outside input');
+  window._jumpToTreePath('explorer-tree-state', TARGET);
+  await sleep(300);
+  ok(d.activeElement === outside,
+    'J7: focus the user kept elsewhere is never stolen by a jump (the docs/75 rule)');
+
   console.log(fails ? 'FAILED (' + fails + ')'
     : 'jump_clears_search_selfcheck ok (' + asserts + ' assertions)');
   process.exit(fails ? 1 : 0);

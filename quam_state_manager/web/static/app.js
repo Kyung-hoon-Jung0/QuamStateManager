@@ -5518,6 +5518,7 @@ window.PaneState = (function () {
     });
     document.addEventListener('htmx:afterSwap', function (evt) {
         if (!evt.target || evt.target.id !== 'table-pane') return;
+        var prevRoute = _cur;
         var route = _routeOf(evt.detail);
         if (route) _cur = route;
         // The content's own route, stamped ON the pane (docs/139 fix 1): a
@@ -5526,7 +5527,22 @@ window.PaneState = (function () {
         // htmx's history snapshot preserves the attribute, so it stays
         // truthful through both machineries.
         evt.target.setAttribute('data-pane-route', _cur);
-        if (!_tryRestore(_cur)) _reapplySoft(_cur);
+        if (!_tryRestore(_cur)) {
+            // QA F-15: a page you OPEN starts at the top (docs/147's rule,
+            // app-wide). The pane is persistent, so a new route kept the
+            // outgoing page's scrollTop clamped to its own maximum --
+            // Diagnostics opened from a scrolled Chip Status showed its
+            // bottom, title above the fold. GET only: a POST answering its
+            // own page (Datasets' Rescan) keeps its place; same-route
+            // refreshes, parked restores (above), the SOFT tier's retries,
+            // _keepPaneScroll's rAF and htmx show: modifiers all run later.
+            var verb = String(((evt.detail && evt.detail.requestConfig) || {}).verb || 'get');
+            if (route && route !== prevRoute && verb.toLowerCase() === 'get') {
+                evt.target.scrollTop = 0;
+                evt.target.scrollLeft = 0;
+            }
+            _reapplySoft(_cur);
+        }
     });
     // A wholesale working-copy replacement invalidates every parked pane;
     // back/forward belongs to htmx's own history machinery -- clear AND
@@ -13792,6 +13808,19 @@ function _expandTreeToPath(containerId, dotPath) {
         // Delay scroll to let DOM settle after expanding nodes, then start dismiss timers after scroll
         setTimeout(function() {
             target.scrollIntoView({behavior: 'smooth', block: 'center'});
+            // QA diagnostics-r2-20: the jump's own pane swap destroyed the
+            // button that started it (Go to field), leaving focus on <body> --
+            // a keyboard user restarted 40+ Tab stops from the top. Land it
+            // on the row, but ONLY when the swap dropped it (the docs/75
+            // rule): focus the user kept elsewhere (the Config Manual, the
+            // undo trail, an inspector input) is never stolen. tabindex=-1
+            // takes focus from code without adding a Tab stop.
+            var fa = document.activeElement;
+            if (row && row.isConnected &&
+                (!fa || fa === document.body || !document.contains(fa))) {
+                if (!row.hasAttribute('tabindex')) row.setAttribute('tabindex', '-1');
+                try { row.focus({ preventScroll: true }); } catch (e) {}
+            }
             // Start dismiss timers after scroll finishes (~600ms for smooth scroll)
             setTimeout(function() {
                 if (popup && popup.parentNode) {
@@ -17413,6 +17442,7 @@ document.addEventListener('click', function(evt) {
         body.append("value", btn.getAttribute("data-value") || "");
         var orig = btn.textContent;
         btn.disabled = true; btn.textContent = "Applying…";
+        _diagFocusAnchor = _diagFocusAnchorFor(btn);
         fetch("/diagnostics/apply-fix", {
             method: "POST",
             headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -17427,15 +17457,78 @@ document.addEventListener('click', function(evt) {
                     window._swapPendingTray(d.tray_html);
                     if (window._restoreTrayState) window._restoreTrayState();
                 }
-                if (window.htmx) htmx.ajax("GET", "/diagnostics", { target: "#table-pane", swap: "innerHTML" });
+                // QA F-S: through the one announcer, not a whole-page GET of
+                // /diagnostics into #table-pane -- that re-rendered every
+                // domain with the server's default open state (a folded
+                // Config sprang open) and yanked the pane back here if the
+                // user had navigated away mid-POST. The #diag-findings slot
+                // re-fetches itself on diagnostics-changed, keeping the
+                // folds (docs/141 4l-review); the button stays disabled on
+                // "Applying..." until that swap replaces its row.
+                if (window._diagChanged) window._diagChanged();
+                if (_diagFocusAnchor) _diagFocusAnchor.until = Date.now() + 4000;
                 if (window._refreshSidebarDiagDots) window._refreshSidebarDiagDots();
             } else {
+                _diagFocusAnchor = null;
                 btn.disabled = false; btn.textContent = orig;
                 alert((d && d.error) || "Convert failed");
             }
         })
-        .catch(function() { btn.disabled = false; btn.textContent = orig; alert("Convert request failed"); });
+        .catch(function() { _diagFocusAnchor = null; btn.disabled = false; btn.textContent = orig; alert("Convert request failed"); });
     };
+    /* QA diagnostics-r2-20: the self-refresh replaces the fixed row -- and the
+       focused button with it -- so focus fell to <body> and a keyboard user
+       restarted from the top of the page. Remember where they were; after
+       the #diag-findings swap focus lands on the finding that took the fixed
+       one's place (then a neighbour, the domain's summary, the page title).
+       Only when the swap DROPPED focus (docs/75): the anchor expires, and a
+       mouse press anywhere cancels it, so a later self-refresh (sync, undo,
+       live drift) never moves focus the user placed. */
+    var _diagFocusAnchor = null;
+    function _diagFocusAnchorFor(btn) {
+        var dt = btn.closest && btn.closest("details.diag-domain[data-domain]");
+        var tr = btn.closest && btn.closest("tr.diag-row");
+        if (!dt || !tr) return null;
+        var rows = Array.prototype.slice.call(dt.querySelectorAll("tr.diag-row"));
+        return { domain: dt.getAttribute("data-domain"), idx: rows.indexOf(tr),
+                 until: Date.now() + 15000 };   // re-armed to 4 s on success
+    }
+    function _restoreDiagFocus() {
+        var a = _diagFocusAnchor;
+        if (!a) return;
+        if (Date.now() > a.until) { _diagFocusAnchor = null; return; }
+        var cur = document.activeElement;
+        if (cur && cur !== document.body && document.contains(cur)) return;
+        function take(el) {
+            if (!el) return false;
+            try { el.focus(); } catch (e) {}
+            return document.activeElement === el;
+        }
+        var dt = null;
+        document.querySelectorAll("#diag-findings details.diag-domain[data-domain]").forEach(function (d2) {
+            if (d2.getAttribute("data-domain") === a.domain) dt = d2;
+        });
+        if (dt && dt.style.display !== "none") {
+            if (dt.open) {
+                var rows = dt.querySelectorAll("tr.diag-row");
+                var order = [], i;
+                for (i = Math.max(a.idx, 0); i < rows.length; i++) order.push(rows[i]);
+                for (i = Math.min(a.idx, rows.length) - 1; i >= 0; i--) order.push(rows[i]);
+                for (i = 0; i < order.length; i++) {
+                    if (order[i].style.display === "none") continue;
+                    if (take(order[i].querySelector("button:not([disabled])"))) return;
+                }
+            }
+            if (take(dt.querySelector(":scope > summary"))) return;
+        }
+        var h = document.querySelector("#table-pane .diag-header-row h2");
+        if (h) {
+            if (!h.hasAttribute("tabindex")) h.setAttribute("tabindex", "-1");
+            take(h);
+        }
+    }
+    window._restoreDiagFocus = _restoreDiagFocus;
+    document.addEventListener("mousedown", function () { _diagFocusAnchor = null; }, true);
     window.togglePreviewIssues = function() {
         var el = document.getElementById("preview-issues");
         if (el) el.classList.toggle("hidden");
@@ -18161,6 +18254,9 @@ document.addEventListener('click', function(evt) {
                 });
             }
             _applyDiagFilter();
+            // QA diagnostics-r2-20: after the filter (a hidden row cannot
+            // take focus) -- a one-click fix's focused button went with it.
+            if (window._restoreDiagFocus) window._restoreDiagFocus();
             return;
         }
         if (evt.detail.target.id !== 'table-pane') return;
