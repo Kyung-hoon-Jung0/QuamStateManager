@@ -240,15 +240,27 @@ try {
     return g.members.some(function (m) { return m.group === 'twpa' && m.rid === 'twpaA'; });
   })[0];
   ok(!!g11 && g11.band === 3, 'T11a: its LO group is band 3 (got ' + (g11 && g11.band) + ')');
-  // (b) a pump sharing an LO pair with a 5 GHz drive is a named conflict
+  // (b) a pump on a port COUPLED to a drive's port (Out4+Out5) is judged by
+  // the coupled-band rule (QA F16 corrected this pin: coupled ports share a
+  // band, not an LO): a 5 GHz band-1 drive beside the band-3 pump is legal
+  // (bands 1 + 3), a 6 GHz band-2 drive is a named conflict.
   st11.allocation = {
     q1: { xy: [{ con: 1, slot: 1, port: 4, io_type: 'output' }] },
     twpaA: { p: [{ con: 1, slot: 1, port: 5, io_type: 'output' }] }
   };
-  var w11b = T11.computeLoAssignments().warnings.filter(function (w) {
-    return (w.members || []).some(function (m) { return m.rid === 'twpaA'; });
-  });
-  ok(w11b.length > 0, 'T11b: a pump sharing Out4+Out5 with a 5 GHz drive warns, naming twpaA');
+  function pumpWarns() {
+    return T11.loBandFindings(T11.computeLoAssignments()).warnings.filter(function (w) {
+      return (w.members || []).some(function (m) { return m.rid === 'twpaA'; });
+    });
+  }
+  ok(pumpWarns().length === 0,
+    'T11b: a band-3 pump coupled to a band-1 drive is legal (got ' +
+    JSON.stringify(pumpWarns().map(function (w) { return w.message; })) + ')');
+  st11.spec.populate.qubit.q1.RF_freq = 6.0e9;
+  var w11b = pumpWarns();
+  ok(w11b.length > 0 && /coupled/.test(w11b[0].message),
+    'T11b: a band-3 pump coupled to a band-2 drive warns, naming twpaA');
+  st11.spec.populate.qubit.q1.RF_freq = 5.0e9;
   // (c) editing the pump RF cell re-solves the LO (the handler keyed RF_freq)
   st11.allocation = {
     q1: { xy: [{ con: 1, slot: 1, port: 2, io_type: 'output' }] },

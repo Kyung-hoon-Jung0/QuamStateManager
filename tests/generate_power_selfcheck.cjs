@@ -195,8 +195,9 @@ function cell(win, group, rid, field) {
   // B9: 1 MHz readability rounding sticks when feasible.
   ok(r.ok && Math.abs(r.lo % 1e6) < 1, 'B9: solved LO rounded to 1 MHz (lo=' + r.lo + ')');
 
-  // B10: xy pair >0.8 GHz apart still reports span (documented v1 limit —
-  // the wizard models one LO per coupled port pair).
+  // B10: two tones >0.8 GHz apart on ONE port still report span — one
+  // upconverter covers ±0.4 GHz (QA F16: the solve is per port; coupled
+  // ports share only a band, so this is no longer hit by two coupled ports).
   r = T.solveLoWindow([
     { rf: 4.0e9, needHole: false }, { rf: 5.0e9, needHole: false }]);
   ok(!r.ok && r.code === 'span', 'B10: wide xy pair -> span code');

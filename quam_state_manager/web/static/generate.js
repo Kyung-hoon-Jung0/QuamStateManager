@@ -569,7 +569,9 @@
     // The user may already be LOOKING at the Wiring step (the /instrument
     // "Modify wiring…" deep link lands there before env probing finishes) —
     // the moment an env exists, deliver the diagram it was waiting for.
-    if (state.step === 5) maybeAutoAllocate();
+    if (state.step === 5 || (state.step === 6 && !state.allocation)) {
+      maybeAutoAllocate();
+    }
   }
 
   function selectEnv(python) {
@@ -2565,10 +2567,11 @@
         // Once the wiring is drag-edited, keep the user's feedline grouping.
         var fnum = Math.floor(idx / muxSize) + 1;
         var group = (state.wiringTouched && groupOf[q]) ? groupOf[q] : "feedline" + fnum;
-        // LO-safe auto-pairing: a MW-FEM has 5 LOs, each shared by a port pair
+        // Coupled-port auto-pairing: the MW-FEM couples fixed port pairs
         // (Out1+In1, Out2+Out3, Out4+Out5, Out6+Out7, Out8+In2 — MW_LO_PAIRS,
-        // this file). Alternating feedlines Out8+In2 / Out1+In1 confines
-        // readout to LO5+LO1, leaving Out2-7 (LO2/3/4) free for drives.
+        // this file), which must share a BAND (QA F16: each port has its own
+        // LO). Alternating feedlines Out8+In2 / Out1+In1 keeps each readout's
+        // in/out on one coupled pair, leaving Out2-7 free for drives.
         // con/slot left to the allocator.
         //
         // The two in_ports used to be TRANSPOSED — Out8+In1 and Out1+In2 —
@@ -2577,7 +2580,10 @@
         // LOs. One LO then had to cover both the readout (≈4.95 GHz) and a
         // drive (≈6.6 GHz), the solver fell back to their midpoint, and the
         // wizard flagged its OWN generated value red. Confirmed against
-        // MW_LO_PAIRS, which is the authority in this file.
+        // MW_LO_PAIRS, which is the authority in this file. (QA F16: that was
+        // the shared-LO premise; with one LO per port the transposed pairing
+        // is legal when the bands agree — a real chip runs it. The pairing is
+        // kept so auto-allocations do not move.)
         var loPair = (fnum % 2 === 1) ? { out_port: 8, in_port: 2 }
                                       : { out_port: 1, in_port: 1 };
         var rch = (state.wiringTouched && pinned[q + "|resonator"])
@@ -3818,6 +3824,11 @@
           // dedicated ports the allocator handed out a moment earlier.
           renderQdacCabling();
           renderWiringDiagram();
+          if (state.step === 6) {   // QA F16: step-6 deep link — now derivable
+            renderPopWiring();
+            reconcileReadoutBanks();
+            recomputeLOs();
+          }
           var warns = res.result.warnings || [];
           if (warns.length) showMessage(warns.join(" "), "warn");
         } else {
@@ -4556,6 +4567,11 @@
       }
       // Only an RF edit re-derives the LOs, so a hand-typed LO sticks.
       if (col.field === loRfField(group)) recomputeLOs();
+      // A band / LO edit changes what the build writes on the port — re-run
+      // the band findings without re-solving (QA r2-07).
+      else if (col.field === "band" || col.field === "LO_frequency") {
+        recomputeLOs({ noApply: true });
+      }
       // A qubit frequency edit may re-orient CZ pairs (higher f = control).
       if (col.field === "RF_freq" && group === "qubit") czOrientAfterFreqEdit();
       // Multiplexed readout shares one MW-FEM port — sync FSP across the group.
@@ -4586,6 +4602,71 @@
       validateCellInline(input, group, rid, col);
     });
     return input;
+  }
+
+  // QA r2-23: a Set-all commit records what it overwrites — every (group, rid,
+  // field) the fill and its knock-on recomputes can write, plus whether the
+  // cell was already populate-touched — so Ctrl+Z puts each row's OWN previous
+  // value back. Undo used to restore the Set-all box's own "" and re-fire its
+  // change, which is an empty commit: the whole column went blank. Returns the
+  // restore function (spec writes + an in-place repaint of those columns).
+  function bulkFillSnapshot(group, rowIds, col) {
+    var cells = [];
+    var qs = state.spec.qubits || [];
+    rowIds.forEach(function (rid) { cells.push([group, rid, col.field]); });
+    if (state.powerMode === "absolute" && col.dim === "amp") {
+      // recomputeXyPower / recomputeReadoutPower rewrite the port's amps + FSP
+      if (group === "pulses") {
+        rowIds.forEach(function (rid) {
+          cells.push(["pulses", rid, "x180_amplitude"],
+                     ["pulses", rid, "saturation_amplitude"],
+                     ["qubit", rid, "full_scale_power_dbm"]);
+        });
+      } else if (group === "resonator") {
+        qs.forEach(function (rid) {
+          cells.push(["resonator", rid, "readout_amplitude"],
+                     ["resonator", rid, "full_scale_power_dbm"]);
+        });
+      }
+    }
+    if (col.field === loRfField(group)) {
+      // an RF fill re-solves LOs across the chip (recomputeLOs)
+      qs.forEach(function (rid) {
+        cells.push(["qubit", rid, "LO_frequency"], ["resonator", rid, "LO_frequency"]);
+      });
+      (state.spec.twpas || []).forEach(function (tw) {
+        var tid = (tw && typeof tw === "object") ? tw.id : tw;
+        if (tid) cells.push(["twpa", tid, "LO_frequency"]);
+      });
+    }
+    var touched = state.regenTouched || {};
+    var snap = cells.map(function (c) {
+      var b = popBucketRead(c[0], c[1]);
+      var has = Object.prototype.hasOwnProperty.call(b, c[2]);
+      return { g: c[0], rid: c[1], f: c[2], has: has, v: has ? b[c[2]] : undefined,
+               wasTouched: !!touched[c[0] + "|" + c[1] + "|" + c[2]] };
+    });
+    return function restoreBulkFill() {
+      var fields = {};
+      snap.forEach(function (e) {
+        fields[e.g + "|" + e.f] = [e.g, e.f];
+        var b = popBucketWrite(e.g, e.rid);
+        if (!b) return;
+        if (e.has) b[e.f] = e.v; else delete b[e.f];
+        popBucketPrune(e.g, e.rid);
+        if (!e.wasTouched && state.regenTouched) {
+          delete state.regenTouched[e.g + "|" + e.rid + "|" + e.f];
+        }
+      });
+      // Repaint every column the restore wrote, in place (a table rebuild
+      // would orphan the older undo entries' cells).
+      Object.keys(fields).forEach(function (k) {
+        var gf = fields[k];
+        popColsOf(gf[0]).forEach(function (c) {
+          if (c.field === gf[1]) refreshColumnCells(gf[0], c);
+        });
+      });
+    };
   }
 
   // The "Set all" cell for one column — on commit, writes its value to every
@@ -4621,6 +4702,8 @@
       input.placeholder = "set all…";
     }
     input.className = "gen-pop-in";
+    // Names the column in the Ctrl+Z toast (QA r2-23).
+    input.setAttribute("aria-label", "Set all " + (col.label || col.field));
     if (col.kind === "text") {
       window.NumberInput.fit(input);
       input.addEventListener("input", function () { window.NumberInput.fit(input); });
@@ -4628,6 +4711,7 @@
       window.NumberInput.attach(input);
     }
     input.addEventListener("change", function () {
+      var restoreFill = bulkFillSnapshot(group, rowIds, col);   // QA r2-23
       rowIds.forEach(function (rid) {
         var bucket = popBucketWrite(group, rid);
         if (!bucket) return;
@@ -4635,6 +4719,16 @@
         markPopulateTouched(group, rid, col.field);   // populate-protect
         popBucketPrune(group, rid);
       });
+      // Read (and cleared) by the wizard undo's change listener: that entry
+      // restores each row's own value instead of replaying this box.
+      input.__wizRestore = function () {
+        restoreFill();
+        // Re-derive, never re-apply: the restored LOs / FSPs ARE the values
+        // from before the fill, so only displays + findings are redone.
+        refreshAmpCells();
+        if (col.field === "RF_freq" && group === "qubit") czOrientAfterFreqEdit();
+        recomputeLOs({ noApply: true });
+      };
       refreshColumnCells(group, col);
       if (col.field === loRfField(group)) recomputeLOs();
       if (col.field === "RF_freq" && group === "qubit") czOrientAfterFreqEdit();
@@ -4928,11 +5022,19 @@
   }
 
   // -- step 6: MW-FEM LO auto-assignment -------------------------------
-  // An MW-FEM has 5 LOs, each shared by a port pair (MW_LO_PAIRS). An LO can
-  // up/down-convert RF only within ±0.4 GHz of itself — a 0.8 GHz IF window.
-  // recomputeLOs() derives each LO from the RF_freq values the user enters,
-  // writes it into every element on that LO's ports, and warns when one LO
-  // cannot cover its port pair. bandOf() mirrors run_build.py's _band_for.
+  // QA F16: every MW-FEM analog port has its OWN LO. QM docs
+  // (Guides/opx1000_fems.md, Upconverters and Downconverters): "Each analog
+  // output port must define either an `upconverter_frequency` field with a
+  // frequency in the port's band, or a `upconverters` field" — and run_build
+  // writes one scalar upconverter_frequency per port. The coupled pairs
+  // (MW_LO_PAIRS) share only a BAND: "Coupled ports must be in the same band,
+  // or in bands `1` and `3`." One upconverter reaches RF within ±0.4 GHz of
+  // itself ('creating "sub-bands" of about 800 MHz around the center
+  // frequency of each DUC'). recomputeLOs() derives each PORT's LO from the
+  // RF_freq values on it, writes it into every element on that port, warns
+  // when one LO cannot cover the port, and checks the coupled-band rule
+  // (loBandFindings).
+  // bandOf() mirrors run_build.py's _band_for.
   function bandOf(freq) {
     freq = parseFloat(freq);
     if (isNaN(freq)) return null;
@@ -4942,6 +5044,8 @@
     return null;
   }
 
+  // The COUPLED port pairs — they must share a band (or be bands 1 + 3); they
+  // do NOT share an LO (QA F16). Mirrors spec_constraints.COUPLED_PORT_PAIRS.
   var MW_LO_PAIRS = [
     [[1, "output"], [1, "input"]],
     [[2, "output"], [3, "output"]],
@@ -5094,6 +5198,22 @@
       return null;
     }
 
+    // QA r2-07: an explicit band must cover this row's LO — the port
+    // frequency Diagnostics judges — band 2 (4.5–7.5 GHz) at a 3.5 GHz LO was
+    // accepted and built. Single-row fact; the coupled-port rule is a panel
+    // finding (loBandFindings).
+    if (col.field === "band") {
+      var rng = BAND_RF_RANGES[base];
+      if (!rng) return null;
+      var brow = ((state.spec.populate || {})[group] || {})[rid] || {};
+      var blo = parseFloat(brow.LO_frequency);
+      if (isFinite(blo) && (blo < rng[0] || blo > rng[1])) {
+        return warn("Band " + base + " covers " + fmtFreq(rng[0]) + "–" +
+          fmtFreq(rng[1]) + "; this row's LO " + fmtFreq(blo) + " is outside it.");
+      }
+      return null;
+    }
+
     if (col.dim === "amp") {
       if (state.powerMode === "absolute") {
         // The cell is an absolute dBm target; committing re-solves the FSP,
@@ -5197,10 +5317,12 @@
 
   // Parse + validate one populate cell against its column, unit-aware: the
   // typed display value is converted to BASE first (15.3 typed in GHz mode
-  // validates as 15.3e9). Selects and text cells are never flagged.
+  // validates as 15.3e9). Text cells and selects are never flagged — except
+  // the band select, which is checked against its row's LO (QA r2-07).
   function validateCellInline(input, group, rid, col) {
     if (!input.isConnected) return;   // table re-rendered before the timer fired
-    if (!col || col.kind === "select" || col.kind === "text") return;
+    if (!col || (col.kind === "select" && col.field !== "band") ||
+        col.kind === "text") return;
     var raw = input.value;
     if (String(raw == null ? "" : raw).trim() === "") {
       setCellFlag(input, null);
@@ -5390,18 +5512,30 @@
            (pair[1][1] === "input" ? "In" : "Out") + pair[1][0];
   }
 
-  // Derive each MW-FEM LO from the RF_freq values on its port pair. Returns:
+  // The "Out2" / "In2" name of one MW-FEM port ([port, io]).
+  function portDesc(pp) {
+    return (pp[1] === "input" ? "In" : "Out") + pp[0];
+  }
+
+  // Derive each MW-FEM PORT's LO from the RF_freq values on that port (QA
+  // F16: one LO per port, not per coupled pair). Returns:
   //   assignments   {"group/rid": loHz}   — output-side LO frequency
+  //   unsolved      {"group/rid": code}   — output-side members whose port
+  //                 has no feasible LO (the solver's legacy midpoint; QA r2-05)
   //   warnings      [{message, members:[{group,rid}]}]  — LO/band conflicts
-  //   groups        [{id, con, slot, pairIdx, loLabel, portPairDesc,
-  //                   members:[{group,rid}], loFreq, band}]  — occupied LOs
+  //   groups        [{id, con, slot, port, pairIdx, loLabel, portPairDesc,
+  //                   members:[{group,rid}], loFreq, solverLo, ok, band}]
+  //                 — occupied OUTPUT ports; loBandFindings() turns loFreq /
+  //                 band into what the build writes
   //   elementGroup  {"group/rid": groupId} — output-side, for cell colouring
+  //   ports         every occupied port, input side too (the band checks)
   function computeLoAssignments() {
-    var result = { assignments: {}, warnings: [], groups: [], elementGroup: {} };
+    var result = { assignments: {}, warnings: [], groups: [], elementGroup: {},
+                   unsolved: {}, ports: [] };
     if (!state.allocation) return result;
     var portMap = collectPortElements();
     var pop = state.spec.populate || {};
-    var inputLo = {};   // "group/rid" -> LO derived from its input-side pair
+    var inputLo = {};   // "group/rid" -> LO derived from its input port
 
     function rfOf(m) {
       var n = parseFloat(((pop[m.group] || {})[m.rid] || {})[loRfField(m.group)]);
@@ -5414,8 +5548,12 @@
         var pre = ctrl.con + "/" + fem.slot + "/";
         var femName = "con" + ctrl.con + " slot" + fem.slot;
         MW_LO_PAIRS.forEach(function (pair, idx) {
-          var members = (portMap[pre + pair[0][0] + "/" + pair[0][1]] || [])
-            .concat(portMap[pre + pair[1][0] + "/" + pair[1][1]] || []);
+         pair.forEach(function (pp) {
+          var members = portMap[pre + pp[0] + "/" + pp[1]] || [];
+          // An input port's downconverter follows its readout's output port
+          // (run_build links it as a pointer), so it only feeds the
+          // output/input divergence check below — no solver warnings twice.
+          var isOut = pp[1] === "output";
           // Keep each member paired with its RF; drop members with no RF.
           var withRf = [];
           members.forEach(function (m) {
@@ -5434,10 +5572,9 @@
           var hi = Math.max.apply(null, rfs);
           var lo = Math.min.apply(null, rfs);
           var loFreq = solved.lo;
-          var groupId = ctrl.con + "/" + fem.slot + "/" + idx;
-          var loName = femName + " LO" + (idx + 1) +
-            " (" + portPairDesc(pair) + ")";
-          // Deduped {group,rid} of every member on this LO that has an RF.
+          var groupId = ctrl.con + "/" + fem.slot + "/" + pp[0] + "/" + pp[1];
+          var loName = femName + " " + portDesc(pp);
+          // Deduped {group,rid} of every member on this port that has an RF.
           var seen = {}, groupMembers = [];
           withRf.forEach(function (x) {
             var key = x.m.group + "/" + x.m.rid;
@@ -5445,20 +5582,30 @@
               seen[key] = 1;
               groupMembers.push({ group: x.m.group, rid: x.m.rid });
             }
-            if ((x.m.ch.io_type || "output") === "output") {
+            if (isOut) {
               result.assignments[key] = loFreq;
               result.elementGroup[key] = groupId;
+              // QA r2-05: an infeasible port's pick is the legacy midpoint —
+              // shown with its warning, never force-written over a real LO.
+              if (!solved.ok) result.unsolved[key] = solved.code;
             } else {
               inputLo[key] = loFreq;
             }
           });
+          result.ports.push({
+            key: groupId, con: ctrl.con, slot: fem.slot, femName: femName,
+            desc: portDesc(pp), loName: loName, isOut: isOut,
+            members: groupMembers, solverLo: loFreq
+          });
+          if (!isOut) return;
           // Each conflict carries the members involved, so recomputeLOs() can
           // ring the offending ports in the wiring diagram.
           if (solved.code === "span") {
             result.warnings.push({
-              message: loName + ": RF values span " + fmtFreq(hi - lo) +
-                " — wider than the 0.8 GHz IF window, so one LO cannot cover " +
-                "them. Move an element to another port pair.",
+              message: loName + ": RF values on this port span " +
+                fmtFreq(hi - lo) + " — wider than one upconverter's " +
+                "±0.4 GHz IF window, so one LO cannot cover them. Move an " +
+                "element to another port.",
               members: groupMembers
             });
           } else if (solved.code === "no_band") {
@@ -5466,7 +5613,7 @@
               message: loName + ": no single MW-FEM band covers RF " +
                 fmtFreq(lo) + "–" + fmtFreq(hi) +
                 " (band 1: 0.05–5.5, band 2: 4.5–7.5, band 3: 6.5–10.5 GHz). " +
-                "Move an element to another port pair.",
+                "Move an element to another port.",
               members: groupMembers
             });
           } else if (solved.code === "band_window") {
@@ -5476,7 +5623,7 @@
                 "the ±0.4 GHz IF window (" + fmtFreq(solved.window[0]) + "–" +
                 fmtFreq(solved.window[1]) + ") — shift the RF values so the " +
                 "window reaches band " + solved.band + "'s LO range, or move " +
-                "an element to another port pair.",
+                "an element to another port.",
               members: groupMembers
             });
           } else if (solved.code === "hole") {
@@ -5497,15 +5644,18 @@
             }
           });
           result.groups.push({
-            id: groupId, con: ctrl.con, slot: fem.slot, pairIdx: idx,
-            loLabel: "LO" + (idx + 1), portPairDesc: portPairDesc(pair),
-            members: groupMembers, loFreq: loFreq, band: bandOf(loFreq)
+            id: groupId, con: ctrl.con, slot: fem.slot, port: pp[0],
+            pairIdx: idx, loLabel: portDesc(pp), portPairDesc: portPairDesc(pair),
+            members: groupMembers, loFreq: loFreq, solverLo: loFreq,
+            ok: solved.ok, band: bandOf(loFreq)
           });
+         });
         });
       });
     });
-    // Under the LO-safe layout a readout's output and input land on different
-    // LO pairs; they should converge. Flag any hand-wired case where they don't.
+    // A readout's output and input ports should converge on one LO (run_build
+    // points the input's downconverter at the output's upconverter). Flag any
+    // hand-wired case where they don't.
     Object.keys(inputLo).forEach(function (key) {
       var out = result.assignments[key];
       if (out != null && Math.abs(out - inputLo[key]) > 1) {
@@ -5527,9 +5677,13 @@
   // (reconstructed into the spec) must not be silently replaced by the
   // solver on every Populate-step entry (docs/72 amplifier fix); a forced
   // re-solve records the changed cells as user-touched for populate-protect.
+  // opts.unsolved {"group/rid": code}: members whose port has NO feasible LO
+  // — even a forced re-solve keeps their stored LO (QA r2-05: it wrote the
+  // infeasible midpoint, |IF| 654-747 MHz, into a built chip).
   function applyLoAssignments(assignments, opts) {
     var o = opts || {};
     var fillOnly = state.mode === "regenerate" && !o.force;
+    var unsolved = o.unsolved || {};
     var pop = state.spec.populate;
     Object.keys(assignments).forEach(function (key) {
       var cut = key.indexOf("/");
@@ -5537,7 +5691,8 @@
       pop[group] = pop[group] || {};
       pop[group][rid] = pop[group][rid] || {};
       var had = pop[group][rid].LO_frequency;
-      if (fillOnly && had != null && had !== "") return;
+      if ((fillOnly || (o.force && unsolved[key])) &&
+          had != null && had !== "") return;
       if (o.force && had !== assignments[key]) {
         markPopulateTouched(group, rid, "LO_frequency");
       }
@@ -5558,6 +5713,111 @@
     if (state.mode !== "regenerate") return;
     if (!state.regenTouched) state.regenTouched = {};
     state.regenTouched[group + "|" + rid + "|" + field] = 1;
+  }
+
+  // What the build WRITES on each port, and the band rules it must satisfy
+  // (QA F16, r2-07). Reads spec.populate only — run after applyLoAssignments
+  // (recomputeLOs) or alone after a band / LO edit (recomputeLOs noApply):
+  //  - a port's LO = its members' LO_frequency (run_build writes each onto
+  //    the port — two values on one port: the last write wins, so warn);
+  //  - a port's band = the members' explicit `band` (run_build's override),
+  //    else bandOf(LO) (run_build's _band_for);
+  //  - an explicit band must cover the member's LO — the port frequency, the
+  //    one Diagnostics' connectivity_freq judges (inclusive, mw_fem.in_band);
+  //  - coupled ports (MW_LO_PAIRS) must share a band or be bands 1 + 3
+  //    (mw_fem.bands_compatible; QM: "Other band combinations are not
+  //    supported").
+  // Appends to calc.warnings; rewrites each output group's loFreq / band to
+  // the built values (the LO map shows those, never an unused solver pick).
+  function loBandFindings(calc) {
+    var pop = state.spec.populate || {};
+    function row(m) { return (pop[m.group] || {})[m.rid] || {}; }
+    function num(v) { var n = parseFloat(v); return isFinite(n) ? n : null; }
+    function explicitBand(m) {
+      var b = parseInt(row(m).band, 10);
+      return (b === 1 || b === 2 || b === 3) ? b : null;
+    }
+    function covers(b, f) {
+      var r = BAND_RF_RANGES[b];
+      return !!r && f >= r[0] && f <= r[1];
+    }
+    function bandSpan(b) {
+      return fmtFreq(BAND_RF_RANGES[b][0]) + "–" + fmtFreq(BAND_RF_RANGES[b][1]);
+    }
+    function who(members) {
+      return members.map(function (m) {
+        return m.rid + (m.group === "resonator" ? ".rr"
+          : m.group === "twpa" ? ".pump" : "");
+      }).join(", ");
+    }
+    function warn(message, members) {
+      calc.warnings.push({ message: message, members: members });
+    }
+    var byId = {};
+    calc.groups.forEach(function (g) { byId[g.id] = g; });
+    var info = {};   // port key -> { band, lo, p }
+    calc.ports.forEach(function (p) {
+      var los = [], bands = [];
+      p.members.forEach(function (m) {
+        var lo = num(row(m).LO_frequency);
+        if (lo != null && !los.some(function (x) { return Math.abs(x - lo) <= 1; })) {
+          los.push(lo);   // 1 Hz: a GHz-typed cell round-trips through floats
+        }
+        var b = explicitBand(m);
+        if (b != null && bands.indexOf(b) < 0) bands.push(b);
+      });
+      var lo = los.length ? los[los.length - 1] : p.solverLo;
+      var band = bands.length ? bands[bands.length - 1] : bandOf(lo);
+      if (p.isOut) {
+        if (los.length > 1) {
+          warn(p.loName + ": its elements carry different LOs (" +
+            los.map(fmtFreq).join(", ") + ") — one port has one upconverter " +
+            "frequency, so the build keeps only the last. Give them one LO.",
+            p.members);
+        }
+        if (bands.length > 1) {
+          warn(p.loName + ": its elements set different bands (" +
+            bands.join(", ") + ") — a port has one band, so the build keeps " +
+            "only the last.", p.members);
+        }
+        p.members.forEach(function (m) {
+          var b = explicitBand(m);
+          if (b == null) return;
+          var mlo = num(row(m).LO_frequency);
+          if (mlo != null && !covers(b, mlo)) {
+            warn(m.rid + ": band " + b + " (" + bandSpan(b) + ") does not " +
+              "cover its LO " + fmtFreq(mlo) + " — the build writes band " + b +
+              " onto " + p.loName + ".", [m]);
+          }
+        });
+        var g = byId[p.key];
+        if (g) { g.loFreq = lo; g.band = band; }
+      }
+      info[p.key] = { band: band, lo: lo, p: p };
+    });
+    var fems = {};
+    calc.ports.forEach(function (p) { fems[p.con + "/" + p.slot] = p.femName; });
+    Object.keys(fems).forEach(function (fk) {
+      MW_LO_PAIRS.forEach(function (pair) {
+        var a = info[fk + "/" + pair[0][0] + "/" + pair[0][1]];
+        var b = info[fk + "/" + pair[1][0] + "/" + pair[1][1]];
+        if (!a || !b || a.band == null || b.band == null) return;
+        if (a.band === b.band ||
+            (a.band === 1 && b.band === 3) || (a.band === 3 && b.band === 1)) return;
+        var fix = [1, 2, 3].filter(function (bb) {
+          return a.lo != null && b.lo != null && covers(bb, a.lo) && covers(bb, b.lo);
+        });
+        warn(fems[fk] + " " + a.p.desc + " (band " + a.band + ": " +
+          who(a.p.members) + ") and " + b.p.desc + " (band " + b.band + ": " +
+          who(b.p.members) + ") are coupled — coupled MW-FEM ports must share " +
+          "a band or be bands 1 and 3." + (fix.length
+            ? " Band " + fix[0] + " (" + bandSpan(fix[0]) + ") covers both " +
+              "LOs — set it on both."
+            : " Move an element to another port."),
+          a.p.members.concat(b.p.members));
+      });
+    });
+    return calc;
   }
 
   // -- step 6: LO-group visualisation ----------------------------------
@@ -5628,7 +5888,7 @@
     var femSet = {};
     calc.groups.forEach(function (g) { femSet[g.con + "/" + g.slot] = 1; });
     var n = calc.groups.length, m = Object.keys(femSet).length;
-    summary.textContent = "LO map — " + n + " LO group" + (n === 1 ? "" : "s") +
+    summary.textContent = "LO map — " + n + " port LO" + (n === 1 ? "" : "s") +
       ", " + m + " MW-FEM" + (m === 1 ? "" : "s");
 
     // Regenerate keeps the chip's REAL LOs (fill-only-empty, docs/72) — the
@@ -5640,7 +5900,8 @@
       rs.className = "btn-sm outline gen-lo-resolve";
       rs.textContent = "Re-solve LOs";
       rs.title = "Replace the chip's stored LO frequencies with the " +
-        "solver's optimal picks (min max|IF| within band windows)";
+        "solver's optimal picks (min max|IF| within band windows); a port " +
+        "no single LO covers keeps its stored LO";
       rs.addEventListener("click", function () {
         recomputeLOs({ force: true });
       });
@@ -5665,7 +5926,9 @@
       row.appendChild(sw);
       var tag = document.createElement("span");
       tag.className = "gen-lo-row-tag";
-      tag.textContent = g.loLabel + " " + g.portPairDesc;
+      tag.textContent = g.loLabel;
+      tag.title = "Own LO; coupled pair " + g.portPairDesc +
+        " shares only the band rule (same band, or bands 1 and 3)";
       row.appendChild(tag);
       var who = document.createElement("span");
       who.className = "gen-lo-row-who";
@@ -5676,8 +5939,13 @@
       row.appendChild(who);
       var freq = document.createElement("span");
       freq.className = "gen-lo-row-freq";
+      // The LO + band the BUILD uses (loBandFindings), not the solver's pick.
       freq.textContent = fmtFreq(g.loFreq) +
         (g.band ? " · band " + g.band : "");
+      if (g.solverLo != null && Math.abs(g.solverLo - g.loFreq) > 0.5) {
+        freq.title = "Solver's pick: " + fmtFreq(g.solverLo) +
+          (g.ok === false ? " (no single LO covers this port)" : "");
+      }
       row.appendChild(freq);
       body.appendChild(row);
     });
@@ -5720,9 +5988,15 @@
   // Recompute + apply the MW-FEM LOs, colour the LO cells and the LO-map
   // panel, then render the conflict panel + diagram rings.
   // computeLoAssignments() returns an empty result with no allocation yet.
+  // opts.noApply: re-derive the findings WITHOUT writing solver LOs — a band
+  // or LO edit (QA r2-07), where a hand-typed LO must stick.
   function recomputeLOs(opts) {
     var calc = computeLoAssignments();
-    applyLoAssignments(calc.assignments, opts);
+    if (!(opts && opts.noApply)) {
+      applyLoAssignments(calc.assignments,
+        { force: !!(opts && opts.force), unsolved: calc.unsolved });
+    }
+    loBandFindings(calc);   // what the build writes, after the apply
     assignGroupColors(calc.groups);
     decorateLoCells(calc);
     decorateReadoutFSPCells(calc);
@@ -6466,7 +6740,10 @@
     var qubitPop = pop.qubit || {};
     var rows = qubits.map(function (qid) {
       var lo = qubitPop[qid] && qubitPop[qid].LO_frequency;
-      var band = bandOf(lo);
+      // run_build derives the delay from the band it WRITES — the explicit
+      // band override when set (QA r2-07), else _band_for(LO).
+      var ob = parseInt(qubitPop[qid] && qubitPop[qid].band, 10);
+      var band = (ob === 1 || ob === 2 || ob === 3) ? ob : bandOf(lo);
       var ns = band ? BAND_TO_DELAY_NS[band] : null;
       var bandStr = band ? ("band " + band) : "no LO yet";
       var nsStr = ns != null ? (ns + " ns") : "—";
@@ -6899,6 +7176,9 @@
         });
       }
     }
+    // QA F16: a deep link straight to step 6 has no wiring allocation yet, so
+    // no LO map and no conflict box — ask for one (the answer re-derives).
+    if (!state.allocation) maybeAutoAllocate();
     renderPopTopo();     // read-only chip-board mirror (toggleable)
     renderPopWiring();   // build the diagram first…
     reconcileReadoutBanks();   // converge any pre-allocation divergent-FSP banks
@@ -7073,6 +7353,16 @@
       if (czCounts.pending) czParts.push(czCounts.pending + " pending frequencies");
       if (czCounts.equal) czParts.push(czCounts.equal + " equal frequencies");
       rows.splice(5, 0, ["CZ pair orientation", czParts.join(", ")]);
+    }
+    // QA r2-07: the step-6 LO / band / power findings reach Review too —
+    // derived fresh from the spec (pure reads; step 6 may never have run).
+    var loCalc = loBandFindings(computeLoAssignments());
+    recomputeAllPowerFindings();
+    var reviewFindings = loCalc.warnings.concat(powerWarningList());
+    if (reviewFindings.length) {
+      rows.push(["LO / band / power conflicts", reviewFindings.length +
+        " (see step 6) — " + reviewFindings[0].message +
+        (reviewFindings.length > 1 ? " …" : "")]);
     }
     el.innerHTML = '<table class="gen-review-table"><tbody>' +
       rows.map(function (r) {
@@ -7544,6 +7834,7 @@
         })();
         var popProtN = m.populate_protected || 0;   // wizard populate edits kept over tier-1
         var popConf = m.populate_conflicts || [];
+        var fspCompN = m.fsp_compensated_total || 0;   // QA regenerate-r2-04 / r2-06
         var mp = document.createElement("div");
         mp.className = "gen-merge-report";
         mp.innerHTML =
@@ -7588,12 +7879,23 @@
             ' class substitution' + (classChN === 1 ? '' : 's') + '</span>' : '') +
           (dangN ? '<span class="gen-merge-stat gen-merge-warn" title="Grafted legacy content ' +
             'whose reference no longer resolves">' + dangN + ' broken ref</span>' : '') +
+          (fspCompN ? '<span class="gen-merge-stat gen-merge-ok gen-merge-fsp">' +
+            fspCompN + ' amplitude' +
+            (fspCompN === 1 ? '' : 's') + ' rescaled to keep power (port FSP ' +
+            'changed)</span>' : '') +
           (popConf.length ? '<span class="gen-merge-stat gen-merge-warn" ' +
-            'title="A derived value (z-port delay) was NOT auto-updated because ' +
-            'the old value looks hand-tuned — verify it matches the new band">' +
-            popConf.length + ' delay kept — verify</span>' : '');
+            'title="Each line below says what to check — a derived value kept ' +
+            'because it looks hand-tuned, or a port power change">' +
+            popConf.length + ' to verify</span>' : '');
         el.appendChild(mp);
-        popConf.slice(0, 5).forEach(function (c) {
+        var fspChip = mp.querySelector(".gen-merge-fsp");
+        if (fspChip) {   // the rescaled amplitudes, old → new (text, never HTML)
+          fspChip.title = (m.fsp_compensated || []).map(function (c) {
+            return c.path + ": " + c.old + " → " + c.new;
+          }).join("\n") +
+            (fspCompN > (m.fsp_compensated || []).length ? "\n…" : "");
+        }
+        popConf.slice(0, 8).forEach(function (c) {
           var cl = document.createElement("div");
           cl.className = "gen-merge-muted gen-merge-detail";
           cl.textContent = c;
@@ -7793,6 +8095,42 @@
     el.appendChild(go);
   }
 
+  // QA regenerate-r2-06: the server found a port whose FSP the wizard changed
+  // and whose calibrated amplitudes would otherwise all move by the FSP delta.
+  // Ask with Live Edit's own offer (window._openFspPopup, app.js): compensate
+  // (keep every pulse's power; edited amplitudes ride along), FSP only, or
+  // cancel the build. The answer is keyed by port + new FSP, so a later FSP
+  // edit asks again; each answered port re-POSTs until none is pending.
+  function askFspCompensation(res) {
+    var plan = res.fsp_compensation;
+    var el = document.getElementById("gen-build-result");
+    if (typeof window._openFspPopup !== "function" || !plan) {
+      showMessage((res.error || "A port's full-scale power changed.") +
+        " Reload the page to answer it.", "error");
+      return;
+    }
+    if (el) {
+      el.hidden = false;
+      el.className = "gen-build-result gen-build-confirm";
+      el.textContent = "⚠ " + (res.error || "") +
+        (res.fsp_pending > 1 ? " (" + res.fsp_pending + " ports)" : "");
+    }
+    window._openFspPopup(plan, function (mode, p) {
+      if (mode !== "comp" && mode !== "solo") {
+        if (el) el.textContent = "Generate cancelled — the full-scale power " +
+          "change on " + (plan.port || "a port") + " was not confirmed.";
+        return;
+      }
+      state.regenFspAck = state.regenFspAck || {};
+      state.regenFspAck[plan.fsp_path] = {
+        mode: mode, fsp_new: plan.fsp_new,
+        amps: (mode === "comp" && window._fspCompUpdates)
+          ? window._fspCompUpdates(p || plan) : []
+      };
+      runBuild();
+    });
+  }
+
   function runBuild(force, ackDegrades) {
     if (!state.env) {
       showMessage("Select an environment in step 1.", "warn");
@@ -7906,12 +8244,21 @@
         populate_touched: state.mode === "regenerate"
           ? Object.keys(state.regenTouched || {}).map(function (k) {
               return k.split("|");
-            }) : null
+            }) : null,
+        // QA regenerate-r2-04 / r2-06: a changed port FSP rescales the port's
+        // carried amplitudes — automatically in absolute mode, else per the
+        // user's answer to the server's offer (askFspCompensation).
+        power_mode: state.mode === "regenerate" ? state.powerMode : null,
+        fsp_ack: state.mode === "regenerate" ? (state.regenFspAck || {}) : null
       })
     })
       .then(function (r) { return r.json(); })
       .then(function (res) {
         if (nextBtn) nextBtn.disabled = false;
+        if (res.needs_confirm && res.confirm_kind === "fsp") {
+          askFspCompensation(res);
+          return;
+        }
         if (res.needs_confirm) {
           showBuildConfirm(res, outPath);
           return;
@@ -8322,6 +8669,10 @@
     if (_wizApplying) return;
     var el = _wizField(evt.target);
     if (!el) return;
+    // A populate "Set all" commit leaves the per-row restore of what it
+    // overwrote (buildBulkCell, QA r2-23) — read it once, here.
+    var restore = el.__wizRestore || null;
+    el.__wizRestore = null;
     var old = el.__wizPrev;
     if (old === undefined) {
       // No focusin snapshot (e.g. programmatic path): a checkbox toggle is
@@ -8331,7 +8682,7 @@
     }
     var now = _wizVal(el);
     if (old === now) { el.__wizPrev = now; return; }
-    _wizStack.push({ el: el, id: el.id || null, old: old });
+    _wizStack.push({ el: el, id: el.id || null, old: old, restore: restore });
     if (_wizStack.length > _WIZ_STACK_CAP) _wizStack.shift();
     el.__wizPrev = now;
   });
@@ -8369,6 +8720,25 @@
         // A step re-render replaced the element and it carries no id —
         // skip to the next undoable entry (documented limitation).
         if (!el || !el.isConnected) continue;
+        if (entry.restore) {
+          // A Set-all: put each row's own value back. Never re-dispatch the
+          // box's change — its "" would read as an empty commit and clear the
+          // whole column (QA r2-23).
+          _wizApplying = true;
+          try {
+            el.value = entry.old;
+            el.__wizPrev = _wizVal(el);
+            entry.restore();
+          } finally { _wizApplying = false; }
+          try { captureDomFields(); saveDraft(); } catch (e) { /* draft best-effort */ }
+          el.classList.add('wiz-undo-flash');
+          setTimeout(function () { el.classList.remove('wiz-undo-flash'); }, 900);
+          if (window.showToast) {
+            window.showToast('Undid: ' + (el.getAttribute('aria-label') || 'Set all') +
+                " — each row's previous value is back", 'success');
+          }
+          return true;
+        }
         _wizApplying = true;
         try {
           if (el.type === 'checkbox') el.checked = !!entry.old;
@@ -8498,6 +8868,7 @@
       state.regenBaselinePopulate = _base;
     } catch (e) { state.regenBaselinePopulate = {}; }
     state.regenTouched = {};
+    state.regenFspAck = {};   // QA regenerate-r2-06: answers belong to one source chip
     repaintFromState();
     // repaintFromState() only syncs the scalar inputs — the Chassis grid, the
     // Qubits pair list, and the chip board render separately. Force them from the
@@ -8538,6 +8909,10 @@
       solvePortFsp: solvePortFsp,
       ampForTarget: ampForTarget,
       computeLoAssignments: computeLoAssignments,
+      loBandFindings: loBandFindings,   // QA F16 / r2-07
+      recomputeLOs: recomputeLOs,
+      runBuild: runBuild,               // QA regenerate-r2-06
+      askFspCompensation: askFspCompensation,
       recomputeReadoutPower: recomputeReadoutPower,
       recomputeXyPower: recomputeXyPower,
       PWR: PWR,

@@ -26659,6 +26659,26 @@ def regenerate_build():
         if guard is not None:
             return jsonify(guard)
 
+    # QA regenerate-r2-06: a port FSP changed in the wizard (manual power
+    # mode) moves every calibrated pulse on that port unless its amplitudes
+    # are rescaled — ask first, one port at a time, exactly like Live Edit's
+    # /field/edit FSP gate (docs/20 r12-B). Absolute mode compensates by
+    # itself (the wizard allocated that FSP from the pulse powers).
+    power_mode = data.get("power_mode")
+    fsp_ack = data.get("fsp_ack")
+    if not isinstance(fsp_ack, dict):
+        fsp_ack = None
+    if power_mode != "absolute":
+        pending = regenerate.pending_fsp_offers(
+            source_folder, spec, populate_baseline, populate_touched, fsp_ack)
+        if pending:
+            return jsonify({
+                "ok": False, "needs_confirm": True, "confirm_kind": "fsp",
+                "fsp_compensation": pending[0], "fsp_pending": len(pending),
+                "error": ("A port's full-scale power changed — choose whether "
+                          "its calibrated amplitudes keep their power."),
+            })
+
     live_note = _regen_source_live_note(src_p)   # judged as the source is read
     outcome = regenerate.run_regenerate(
         python_path, source_folder, spec, Path(output_path), timeout=600,
@@ -26666,6 +26686,8 @@ def regenerate_build():
         populate_touched=populate_touched,
         scripts_dir=scripts_dir,
         instance_path=current_app.instance_path,
+        power_mode=power_mode if isinstance(power_mode, str) else None,
+        fsp_ack=fsp_ack,
     )
     if live_note and isinstance(outcome, dict):
         outcome["source_live_changed"] = True

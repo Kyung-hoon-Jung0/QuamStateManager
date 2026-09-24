@@ -85,6 +85,33 @@ def _source_classes_the_env_holds(python_path, old_state, instance_path=None,
     return keep or None
 
 
+def pending_fsp_offers(old_folder: Path | str, spec: dict,
+                       populate_baseline: dict | None,
+                       populate_touched: list | None,
+                       fsp_ack: dict | None) -> list[dict]:
+    """The FSP-compensation offers a rebuild of ``spec`` raises that ``fsp_ack``
+    has not answered yet (QA regenerate-r2-06).
+
+    Read from the SOURCE chip alone — no build — so /regenerate/build can ask
+    before anything is written, the way Live Edit's /field/edit asks before an
+    FSP edit commits. Never raises: an unreadable source asks nothing (the
+    build then reports the gap in ``populate_conflicts``).
+    """
+    if populate_baseline is None:
+        return []
+    from . import regen_populate
+    try:
+        old_state, old_wiring = safe_io.read_state_wiring(Path(old_folder))
+        pop_view = regen_populate.populate_view(spec)
+        changed = regen_populate.changed_fields(
+            pop_view, populate_baseline, populate_touched)
+        offers = regen_populate.fsp_offers(changed, pop_view, old_state, old_wiring)
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return []
+    return [p for p in offers
+            if p.get("amps") and regen_populate.fsp_ack_mode(p, fsp_ack) is None]
+
+
 def run_regenerate(
     python_path: str,
     old_folder: Path | str,
@@ -96,6 +123,8 @@ def run_regenerate(
     scripts_dir: Path | str | None = None,
     instance_path: Path | str | None = None,
     source_probe=None,
+    power_mode: str | None = None,
+    fsp_ack: dict | None = None,
 ) -> dict:
     """Build ``spec`` fresh into ``out_dir`` then merge the OLD chip's values on.
 
@@ -115,6 +144,14 @@ def run_regenerate(
     (+ ``populate_touched`` ``[group, id, field]`` cells) expands via
     :mod:`regen_populate` into merge ``protect_paths`` so the user's Populate
     edits survive the tier-1 carry. ``None`` ⇒ legacy behavior.
+
+    ``power_mode`` / ``fsp_ack`` (QA regenerate-r2-04 / r2-06): a port FSP the
+    wizard changed would leave every carried amplitude on that port at its old
+    value — each pulse silently off by the FSP delta. ``"absolute"`` (the
+    wizard allocated the FSP from pulse powers) rescales them to keep power;
+    otherwise ``fsp_ack`` ``{fsp_path: {mode: comp|solo, fsp_new, amps}}`` is
+    the user's answer to the offer (:func:`pending_fsp_offers`), and an
+    unanswered port is reported in ``populate_conflicts``, never silent.
 
     ``scripts_dir`` — where to write the editable build-script bundle
     (r16 ⓪-4: the wizard's script-path box). ``None`` keeps the legacy
@@ -188,6 +225,17 @@ def run_regenerate(
                                       new_wiring=new_wiring,
                                       keep_classes=keep_classes)
     result.stats.populate_conflicts.extend(pop_conflicts)
+
+    # QA regenerate-r2-04 / r2-06: rescale the amplitudes carried onto a port
+    # whose FSP the wizard changed (or say so) — see the docstring.
+    fsp_compensated: list = []
+    if populate_baseline is not None:
+        offers = regen_populate.fsp_offers(changed, pop_view, old_state, old_wiring)
+        if offers:
+            fsp_compensated, fsp_conflicts = regen_populate.apply_fsp_compensation(
+                result.merged, offers, protect, new_state, new_wiring,
+                auto=(power_mode == "absolute"), fsp_ack=fsp_ack)
+            result.stats.populate_conflicts.extend(fsp_conflicts)
 
     # TWPAs are grafted back at the state level but the builder made no TWPA
     # wiring/ports — carry those from OLD so the channel resolves and
@@ -280,6 +328,9 @@ def run_regenerate(
         "populate_protected": len(s.populate_protected),
         "populate_protected_paths": s.populate_protected[:80],
         "populate_conflicts": s.populate_conflicts[:20],
+        # QA regenerate-r2-04 / r2-06: amplitudes rescaled to keep power
+        "fsp_compensated": fsp_compensated[:80],
+        "fsp_compensated_total": len(fsp_compensated),
     }
     outcome["script"] = script_name   # emitted build recipe filename, or None
     return outcome
