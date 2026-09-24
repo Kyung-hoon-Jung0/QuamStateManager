@@ -363,7 +363,8 @@ function partial(ts, extra) {
     await tick();
     posted[0].resolve({ json: function () {
         return Promise.resolve({ ok: true, tray_html: '<div id="pending-tray"></div>',
-                                 results: [{ dot_path: 'qubits.q1.f_01', applied: true }] });
+                                 results: [{ dot_path: 'qubits.q1.f_01', applied: true,
+                                             resolved_path: 'qubits.q1.xy.RF_frequency' }] });
     } });
     await tick(); await tick();
     ok(host().querySelector('.review-row').classList.contains('review-accepted'),
@@ -371,63 +372,72 @@ function partial(ts, extra) {
     ok(traySwaps.length === 1,
        'the Review tray is swapped through the single choke point');
 
-    // ---- 12. the RAM undo stack (docs/132 r5) --------------------------
-    // The successful take above recorded {prev: 6200000000.0}. Ctrl+Z must
-    // restore prev with ONE POST, unmark the row, and preempt the global
-    // docs/107 chain; Ctrl+Shift+Z re-applies.
+    // ---- 12. Ctrl+Z on a take is the SERVER's undo (datasets-r2-28) ------
+    // docs/132 r5 kept a RAM tier that posted the PREV value as a NEW edit,
+    // on the premise that its capture listener preempted a "bubble-phase"
+    // docs/107 chain. That chain is ALSO a capture listener, registered
+    // earlier, so one press ran BOTH: /undo popped the take, then the inverse
+    // wrote prev over prev and left a phantom old == new entry in the tray.
+    // The old version of this section could not see it -- no #pending-tray,
+    // so the docs/107 chain bailed, and htmx.ajax was not recorded. Now: the
+    // press reaches ONLY the docs/107 chain (one /undo, zero edits) and the
+    // row mark follows the server's cellsReverted answer, keyed on the
+    // RESOLVED path the take's own response named.
     var overlayEl = document.getElementById('version-diff-overlay');
     overlayEl.style.display = 'flex';
+    document.body.insertAdjacentHTML('beforeend',
+        '<div id="pending-tray" data-change-sig="sig-1"></div>');
+    var ajaxed = [];
+    window.htmx.ajax = function (m, url) { ajaxed.push({ m: m, url: String(url) }); return Promise.resolve(); };
     function ctrlZ(shift) {
         document.body.dispatchEvent(new window.KeyboardEvent('keydown',
             { key: 'z', ctrlKey: true, shiftKey: !!shift, bubbles: true,
               cancelable: true }));
     }
+    function reverted(message, dot) {
+        document.body.dispatchEvent(new window.CustomEvent('cellsReverted', { bubbles: true,
+            detail: { message: message, entries: [{ dot_path: dot, old_value_disp: '6200000000.0' }] } }));
+    }
+    var row12 = function () { return host().querySelector('.review-row'); };
+    var edits = function () { return posted.filter(function (r) { return /field\/edit/.test(r.url || r); }); };
     posted.length = 0;
     ctrlZ(false);
-    await tick();
-    ok(posted.length === 1, 'Ctrl+Z with a recorded take posts once');
-    var ub = JSON.parse(posted[0].opts.body);
-    ok(ub.updates[0].dot_path === 'qubits.q1.f_01'
-        && ub.updates[0].value === 6200000000.0,
-       'undo restores the PREV working value the row itself displayed');
-    posted[0].resolve({ json: function () {
-        return Promise.resolve({ ok: true, tray_html: '<div id="pending-tray"></div>',
-                                 results: [{ dot_path: 'qubits.q1.f_01' }] });
-    } });
     await tick(); await tick();
-    ok(!host().querySelector('.review-row').classList.contains('review-accepted'),
-       'undo un-marks the accepted row');
-    ok(host().querySelector('.sv-take').textContent === '✓ accept',
-       'undo restores the accept label: '
-       + host().querySelector('.sv-take').textContent);
+    ok(ajaxed.filter(function (a) { return /^\/undo/.test(a.url); }).length === 1,
+       'Ctrl+Z after a take issues exactly ONE server /undo: ' + JSON.stringify(ajaxed));
+    ok(edits().length === 0,
+       'and NO second write (the RAM inverse that left old == new in the tray): '
+       + JSON.stringify(edits().map(function (r) { return r.opts && r.opts.body; })));
+    ok(row12().classList.contains('review-accepted'),
+       'the mark waits for the server to say what it undid');
+    reverted('Undone: qubits.q1.f_01 → 6,200,000,000.0', 'qubits.q1.f_01');
+    ok(row12().classList.contains('review-accepted'),
+       'an undo naming another path (the alias, not the resolved write) flips nothing');
+    reverted('Undone: qubits.q1.xy.RF_frequency → 6,200,000,000.0', 'qubits.q1.xy.RF_frequency');
+    ok(!row12().classList.contains('review-accepted'),
+       'the server undo of THIS take un-marks the row');
+    ok(host().querySelector('.sv-take').textContent === '✓ accept'
+        && host().querySelector('.sv-take').disabled === false,
+       'and restores a live accept button: ' + host().querySelector('.sv-take').textContent);
 
+    ajaxed.length = 0;
     posted.length = 0;
     ctrlZ(true);                     // redo
-    await tick();
-    ok(posted.length === 1 && JSON.parse(posted[0].opts.body)
-        .updates[0].value === 6100000000.0,
-       'Ctrl+Shift+Z re-applies the taken value');
-    posted[0].resolve({ json: function () {
-        return Promise.resolve({ ok: true, results: [{}] });
-    } });
     await tick(); await tick();
-    ok(host().querySelector('.review-row').classList.contains('review-accepted'),
-       'redo re-marks the row');
+    ok(ajaxed.filter(function (a) { return /^\/redo/.test(a.url); }).length === 1 && edits().length === 0,
+       'Ctrl+Shift+Z is ONE server /redo and no edit: ' + JSON.stringify(ajaxed));
+    reverted('Redone: qubits.q1.xy.RF_frequency → 6,100,000,000.0', 'qubits.q1.xy.RF_frequency');
+    ok(row12().classList.contains('review-accepted'),
+       'the server redo of it re-marks the row');
 
-    // scope: with the overlay closed and no workbench takes, Ctrl+Z is NOT
-    // consumed here (the docs/107 global chain owns it)
+    // with the overlay closed and no workbench, nothing here writes either
     overlayEl.style.display = 'none';
     posted.length = 0;
     ctrlZ(false);
     await tick();
-    // docs/141 4ac: count the TAKE DOOR, not every request the page makes.
-    // 4p's popup-poll baseline fires ~1.5 s after load, which is about when
-    // this assertion runs, so `posted.length` was a coin flip on an unrelated
-    // background fetch.
-    var strayTakes = posted.filter(function (r) { return /field\/edit/.test(r.url || r); });
-    ok(strayTakes.length === 0,
-       'out of scope, the RAM stack never consumes the press');
+    ok(edits().length === 0, 'Ctrl+Z never posts a take inverse');
     overlayEl.style.display = 'flex';
+    document.getElementById('pending-tray').remove();
 
     // ---- 13. edit-before-accept ---------------------------------------
     var editBtn = host().querySelector('.sv-take-edit');

@@ -597,6 +597,9 @@
         // rebuild inside the flash window (innerHTML makes a fresh <tr>, so
         // the CSS animation restarts); _flashActive expires it after that.
         var cls = 'clickable-row' + (_flashActive(row.uid) ? ' ds-row-new' : '');
+        // datasets-r2-24: the j/k cursor survives every virtual re-render
+        // (a scroll, the Split relayout on close) -- innerHTML used to wipe it.
+        if (_kbIdx >= 0 && String(row.uid != null ? row.uid : row.id) === _kbUid()) cls += ' ds-row-active';
         var html = '<tr class="' + cls + '" data-id="' + row.uid + '" data-folder-key="' + (row.f || '') + '" data-exp="' + escapeHtml(row.exp || '') + '">';
         for (var i = 0; i < cols.length; i++) {
             var c = cols[i];
@@ -773,6 +776,9 @@
         if (!n) return;
         _kbIdx = _kbIdx < 0 ? (dir > 0 ? 0 : n - 1)
                             : Math.max(0, Math.min(n - 1, _kbIdx + dir));
+        _kbReveal();
+    }
+    function _kbReveal() {
         // bring the row into the virtual window
         if (state.scrollEl) {
             var y = _kbIdx * ROW_HEIGHT;
@@ -803,8 +809,38 @@
         if (cb) cb.click();
     }
     function _kbBound() { return !!document.getElementById('datasets-scroll'); }
+    // datasets-r2-24: the cursor FOLLOWS the run open in the inspector -- a
+    // row click, the inspector's up/down, [ ], a tree click -- so closing it
+    // leaves the table on (and marking) the run you ended on, and j continues
+    // from there. A run not in the visible list leaves the cursor alone.
+    var _kbOpenUid = null;
+    function _kbSyncTo(uid) {
+        if (uid == null || !_kbBound()) return;
+        uid = String(uid);
+        for (var k = 0; k < state.visible.length; k++) {
+            var r = state.rows[state.visible[k]];
+            if (r && String(r.uid != null ? r.uid : r.id) === uid) { _kbIdx = k; _kbReveal(); return; }
+        }
+    }
     if (!window._dsKbBound) {
         window._dsKbBound = true;
+        document.addEventListener('htmx:afterSwap', function (e) {
+            var t = e.detail && e.detail.target;
+            if (!t || t.id !== 'inspector-pane' || !_kbBound()) return;   // key first (perf)
+            var root = t.querySelector('#ds-detail-root');   // unprefixed = the current run
+            _kbOpenUid = root ? root.getAttribute('data-uid') : null;   // not a run: forget
+            if (root) _kbSyncTo(_kbOpenUid);
+        });
+        // closeInspector dispatches a NON-bubbling event on <body>: listen in
+        // the capture phase, which every dispatch passes through.
+        document.addEventListener('inspector-closed', function () {
+            var uid = _kbOpenUid;
+            _kbOpenUid = null;
+            if (uid == null) return;
+            // after the Split relayout gives the table its full height back
+            var go = function () { _kbSyncTo(uid); };
+            if (window.requestAnimationFrame) window.requestAnimationFrame(go); else setTimeout(go, 0);
+        }, true);
         document.addEventListener('keydown', function (ev) {
             // KEY FIRST — this fires on every keystroke app-wide; no DOM
             // query may precede knowing the key is one of ours (perf).

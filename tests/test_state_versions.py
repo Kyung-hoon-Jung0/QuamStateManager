@@ -1317,6 +1317,12 @@ class TestEditBeforeAccept:
         block = _app_js_stateversions_block()
         assert "editTake" in block and "editTake: editTake" in block
         assert "_tkUndo" in block and "_tkRedo" in block
-        # capture phase — preempts the bubble-phase docs/107 chain
-        assert "stopImmediatePropagation" in block
-        assert "}, true);" in block
+        # datasets-r2-28: the docs/107 global chain is ALSO a capture listener,
+        # registered earlier -- a take-tier keydown consumer never preempted it,
+        # so one press ran both (/undo + an inverse edit = a phantom old == new
+        # tray entry). The server undo owns the press; the marks follow its
+        # cellsReverted answer. Executed in tests/version_diff_selfcheck.cjs §12.
+        assert "document.addEventListener('keydown'" not in block
+        assert "stopImmediatePropagation" not in block
+        assert "addEventListener('cellsReverted'" in block
+        assert "resolved_path" in block

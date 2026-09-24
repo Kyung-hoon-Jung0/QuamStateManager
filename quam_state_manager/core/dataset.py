@@ -49,7 +49,9 @@ _DATA_JSON_CACHE_MAX = 200
 _COLD_SCAN_BUDGET_S = 3.0
 # docs/171: the persisted store. Version bumps when the payload's shape or
 # meaning changes (a mismatch reads as a miss: one cold scan, then flat).
-_STORE_CACHE_V = 1
+# v2 (F21): key_metric no longer carries a raw "nan" -- a v1 cache would
+# re-serve it on every warm start.
+_STORE_CACHE_V = 2
 # A scan that changed something writes the cache this long after the LAST
 # such scan -- a burst of landing runs is one write, not one per run.
 _STORE_CACHE_DEBOUNCE_S = 3.0
@@ -2608,18 +2610,28 @@ class DatasetStore:
             "readout_amplitude": ("amplitude", "V"),
         }
 
+        # F21: a NaN/inf is not a value (docs/137) and a bool is not a
+        # number -- the table printed a failed fit's NaN as "nan" and True
+        # as "1.0000". The SAME rule _extract_sort_scalars applies below.
+        def _num(v):
+            return type(v) is not bool and isinstance(v, (int, float))
+
         for pattern, (field_name, unit) in metric_map.items():
             if pattern in exp:
                 val = first_qubit_results.get(field_name)
-                if val is not None and isinstance(val, (int, float)):
-                    return _format_metric(val, unit)
+                if _num(val):
+                    # a failed headline fit reads blank ("-"), never some
+                    # unrelated field standing in for it
+                    return _format_metric(val, unit) if math.isfinite(val) else ""
 
-        # Fallback: find first numeric value that isn't "success"
+        # Fallback: the FIRST numeric value that isn't "success" decides --
+        # blank when it is non-finite (skipping on to the next field would
+        # headline a diagnostic like ridge_coverage instead)
         for key, val in first_qubit_results.items():
             if key == "success":
                 continue
-            if isinstance(val, (int, float)):
-                return _format_metric(val, "")
+            if _num(val):
+                return _format_metric(val, "") if math.isfinite(val) else ""
 
         return ""
 

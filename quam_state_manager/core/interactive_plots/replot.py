@@ -185,6 +185,45 @@ def replot_menu(result: dict) -> list[dict]:
              "available": True} for f in figs]
 
 
+def replot_outcome(result: dict) -> dict:
+    """Sort an ``iplot/v1`` result into what the user must be told (datasets-r2-22).
+
+    ``state`` is one of:
+
+    * ``ok`` -- at least one figure came back (any errors are partial failures);
+    * ``failed`` -- no figures and a stage BEFORE the plot loop failed (env,
+      spawn, subprocess, timeout, import, qubits, datasets): the lab code never
+      ran, so nothing may read as "reproduced" or "the code ran";
+    * ``all_plots_failed`` -- no figures, the module loaded, every ``plot_*`` raised;
+    * ``no_plot_fns`` -- no figures and no errors: the module has no ``plot_*``.
+
+    ``fatal`` is the first pre-plot error (``{stage, line}``, ``line`` = the
+    last line of its trace), else ``None``. Figures are keyed first, so a result
+    carrying both figures and a fatal stage (the runner cannot produce one)
+    still reads ``ok``.
+    """
+    figs = result.get("figures") or []
+    errs = [e for e in (result.get("errors") or []) if isinstance(e, dict)]
+
+    def _line(e):
+        lines = [ln for ln in str(e.get("trace") or "").strip().splitlines() if ln.strip()]
+        return lines[-1].strip() if lines else ""
+
+    fatal = next((e for e in errs
+                  if not str(e.get("stage") or "").startswith("plot:")), None)
+    if figs:
+        state = "ok"
+    elif fatal is not None:
+        state = "failed"
+    elif errs:
+        state = "all_plots_failed"
+    else:
+        state = "no_plot_fns"
+    return {"state": state, "n_errors": len(errs),
+            "fatal": ({"stage": str(fatal.get("stage") or ""), "line": _line(fatal)}
+                      if fatal is not None else None)}
+
+
 def replot_figure(result: dict, key: str) -> dict | None:
     """Convert one cached figure to Plotly ``{data, layout, title}``; ``None`` if absent."""
     for f in result.get("figures", []):

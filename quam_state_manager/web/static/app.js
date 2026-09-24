@@ -2495,8 +2495,11 @@ window.dsNavRun = function(dir, btn) {
     // QA r2-01: a run opened from the Datasets TABLE steps through the table's
     // own filtered + sorted rows -- never out of the search to raw id order.
     if (curUid && host === '#inspector-pane' && window._dsNavFromTable === curUid && window.DatasetVirtual
-            && typeof window.DatasetVirtual.navFrom === 'function'
-            && window.DatasetVirtual.navFrom(curUid, dir)) return;
+            && typeof window.DatasetVirtual.navFrom === 'function') {
+        var nf = window.DatasetVirtual.navFrom(curUid, dir);
+        if (nf === 'end') _dsNavEnd(dir, false);   // datasets-r2-25
+        if (nf) return;
+    }
     // r16 ④: server neighbor fallback — a run opened from the Datasets TABLE
     // (or with the tree collapsed / date group closed / filter hiding it) has
     // no visible tree entries, so both nav buttons were silently dead.
@@ -2505,7 +2508,12 @@ window.dsNavRun = function(dir, btn) {
         fetch('/dataset/' + curUid + '/neighbor?dir=' + dir)
             .then(function(r) { return r.json(); })
             .then(function(d) {
-                if (!d || !d.uid) return;   // genuinely at the end
+                if (!d || !d.uid) {
+                    // genuinely at the end -- say so (datasets-r2-25); a
+                    // refused lookup ({ok:false}) is not an end
+                    if (d && d.ok) _dsNavEnd(dir, true);
+                    return;
+                }
                 var target = host;
                 _dsMarkSlowLoad(target, d.run_id);
                 htmx.ajax('GET', '/dataset/' + d.uid,
@@ -2527,7 +2535,7 @@ window.dsNavRun = function(dir, btn) {
     // a single step past the end keeps the server fallback.
     var tgt = idx + dir;
     if (Math.abs(dir) > 1) tgt = Math.max(0, Math.min(entries.length - 1, tgt));
-    if (tgt === idx) return;
+    if (tgt === idx) { _dsNavEnd(dir, false); return; }
     var next = entries[tgt];
     if (!next) { serverNeighbor(); return; }        // tree end — folder may have more
     // A run inside a CLOSED date group (a closed <details> still lays its rows
@@ -2555,6 +2563,23 @@ window.dsNavRun = function(dir, btn) {
     }
     next.click();   // the delegated click handler opens it AND puts the keyboard on it
 };
+
+/* datasets-r2-25: a press past either end used to do nothing at all (no load,
+ * no message, the button still live). Say where the walk stopped -- the
+ * server's neighbor walk is per FOLDER in run-id order (-1 = newer); the
+ * table/tree walks are the list as shown. One toast at a time: holding ] at
+ * the end must not stack them. */
+function _dsNavEnd(dir, folder) {
+    if (!window.showToast) return;
+    var bar = document.getElementById('status-bar');
+    if (!bar) return;
+    bar.querySelectorAll('.toast[data-ds-nav-end]').forEach(function(t) { t.remove(); });
+    window.showToast(folder
+        ? (dir < 0 ? 'Already at the newest run in this folder.' : 'Already at the oldest run in this folder.')
+        : (dir < 0 ? 'Already at the top of the list.' : 'Already at the bottom of the list.'), 'info');
+    var t = bar.lastElementChild;
+    if (t) t.setAttribute('data-ds-nav-end', '1');
+}
 
 /* QA r2-06: a run detail's own controls act on the pane that HOLDS it -- the
  * full-page view (/dataset/<uid>, ⛶) lives in #table-pane, everything else in
@@ -3191,6 +3216,20 @@ window.copyWithFeedback = function(text, el, message) {
     });
 };
 
+/* datasets-r2-31: a value cell's COPY text is its value, never the chrome
+ * around it -- the fit table's "copy-only" badge, an Apply / Go-to-state
+ * button label, an inline tree's <script> source all rode along in
+ * textContent ("success<TAB>true copy-only"). data-copy wins when present;
+ * otherwise a CLONE is stripped of that chrome (the live cell is untouched). */
+function _propCellCopyText(cell) {
+    var v = cell.getAttribute("data-copy");
+    if (v != null) return v;
+    var c = cell.cloneNode(true);
+    var junk = c.querySelectorAll("button, script, style, .fit-copy-only");
+    for (var i = 0; i < junk.length; i++) junk[i].remove();
+    return (c.textContent || "").trim().replace(/\s+/g, " ");
+}
+
 /**
  * Delegated click-to-copy for dataset Property/Parameter tables. One listener
  * for the whole page — the prop-tables are injected via HTMX swaps, so a
@@ -3203,8 +3242,7 @@ document.addEventListener("click", function(e) {
     var cell = e.target.closest(".prop-table td.col-val, .prop-table td.col-prop code");
     if (!cell) return;
     if (e.target.closest("a, button, input, textarea, select, .ds-inline-tree, .json-tree")) return;
-    var text = cell.getAttribute("data-copy");
-    if (text == null) text = (cell.textContent || "").trim();
+    var text = _propCellCopyText(cell);
     if (!text) return;
     window.copyWithFeedback(text, cell);
 });
@@ -3225,8 +3263,7 @@ window.copyPropTable = function(btn, fmt) {
         var valEl = rows[i].querySelector(".col-val");
         if (!keyEl || !valEl) continue;
         var key = (keyEl.textContent || "").trim();
-        var val = valEl.getAttribute("data-copy");
-        if (val == null) val = (valEl.textContent || "").trim().replace(/\s+/g, " ");
+        var val = _propCellCopyText(valEl);   // datasets-r2-31
         if (fmt === "md") {
             lines.push("| " + key + " | " + val + " |");
         } else {
@@ -11788,7 +11825,9 @@ window.loadDatasetReplot = function(runId, panel, force) {
  */
 window.setInteractiveCols = function(n, btn) {
     n = Math.max(1, Math.min(3, parseInt(n, 10) || 2));
-    var scope = (btn && btn.closest && btn.closest('[id$="interactive-container"]'))
+    // datasets-r2-22: a reproduced-figure list's own buttons scope to ITS
+    // container (#ds-replot-container), not the recipe grid beside it.
+    var scope = (btn && btn.closest && btn.closest('[id$="interactive-container"], [id$="replot-container"]'))
              || document.getElementById('ds-interactive-container')
              || document;
     scope.querySelectorAll('.ds-interactive-list').forEach(function(list) {
@@ -12772,10 +12811,12 @@ function _setOldVal(slot, v, err) {
         slot.textContent = err ? '(not set)' : '(null)';
         slot.classList.add('muted');
         slot._rawValue = null;
+        slot.removeAttribute('title');
     } else {
         slot.textContent = String(v);
         slot.classList.remove('muted');
         slot._rawValue = v;         // keep the RAW value for the Δ (docs/76)
+        slot.title = String(v);     // F21: the whole value, whatever the width
     }
     var row = slot.closest ? slot.closest('.plot-apply-row') : null;
     if (row) _updatePlotRowDelta(row);
@@ -20291,16 +20332,18 @@ window.StateVersions = (function () {
             }
         });
     }
-    /* ── the RAM undo stack (docs/132 r5) ────────────────────────────────
-       Manual accepts are rare and few (the user's own read), so each one
-       records {dot_path, prev, taken} in memory — prev being the working
-       value the row itself displayed. Ctrl+Z / Ctrl+Shift+Z then step
-       accepts back and forth with ONE POST each, no server group machinery.
-       Scope: only while the version-diff overlay is open or a workbench
-       with take rows is on screen; an empty stack falls through to the
-       docs/107 global tiers. Takes onto CREATED leaves (no prev) are not
-       RAM-recorded — un-creating is the server tier's job. */
-    var _tkUndo = [], _tkRedo = [], _tkBusy = false;
+    /* ── the row marks follow the server undo (docs/132 r5, datasets-r2-28) ──
+       A take is ONE ungrouped change-log entry, so the docs/107 global
+       Ctrl+Z / Ctrl+Shift+Z chain undoes / redoes it exactly (with its
+       expect_chip + expect_sig guards). The r5 RAM tier posted the PREV
+       value as a second, NEW edit on the same press -- its "capture phase
+       preempts the bubble-phase chain" premise was false (that chain is a
+       capture listener registered earlier), so one press ran BOTH: /undo
+       popped the take, then the inverse wrote prev over prev and left a
+       phantom old == new entry in the tray. Now each successful take only
+       records {resolved path, row}; the cellsReverted answer of the
+       server's own undo / redo flips the row's mark. */
+    var _tkUndo = [], _tkRedo = [];
     function _tkPost(dot, value, create, done) {
         fetch('/field/edit-batch', {
             method: 'POST',
@@ -20316,7 +20359,7 @@ window.StateVersions = (function () {
                 if (ok && d.tray_html && window._swapPendingTray) {
                     window._swapPendingTray(d.tray_html);
                 }
-                done(ok, (res && res.error) || (d && d.error));
+                done(ok, (res && res.error) || (d && d.error), res);
             })
             .catch(function () { done(false, 'network error'); });
     }
@@ -20331,42 +20374,19 @@ window.StateVersions = (function () {
             b.textContent = accepted ? '✓ staged' : rec.origLabel;
         }
     }
-    function takeUndo(redo) {
-        if (_tkBusy) return true;
-        var rec = (redo ? _tkRedo : _tkUndo).pop();
-        if (!rec) return false;             // empty → fall through to global
-        _tkBusy = true;
-        _tkPost(rec.dot, redo ? rec.taken : rec.prev, redo && rec.create,
-            function (ok, err) {
-                _tkBusy = false;
-                if (ok) {
-                    (redo ? _tkUndo : _tkRedo).push(rec);
-                    _tkMark(rec, !!redo);
-                } else {
-                    (redo ? _tkRedo : _tkUndo).push(rec);   // keep the record
-                    if (window.showToast) {
-                        window.showToast((redo ? 'Redo' : 'Undo')
-                            + ' failed: ' + (err || 'unknown'), 'error');
-                    }
-                }
-            });
-        return true;
-    }
-    document.addEventListener('keydown', function (e) {
-        if (!((e.ctrlKey || e.metaKey) && !e.altKey
-              && (e.key === 'z' || e.key === 'Z'))) return;
-        // typing INSIDE the edit input keeps the browser's own text undo
-        if (e.target && e.target.classList
-                && e.target.classList.contains('sv-take-input')) return;
-        var o = _diffOverlay();
-        var scoped = (o && o.style.display !== 'none')
-            || !!document.querySelector('#diff-root [data-dot-path] .sv-take');
-        if (!scoped) return;
-        if (!takeUndo(e.shiftKey)) return;   // empty stack → global tiers
-        // capture phase, so this preempts the bubble-phase docs/107 chain
-        e.preventDefault();
-        e.stopImmediatePropagation();
-    }, true);
+    document.addEventListener('cellsReverted', function (evt) {
+        var d = (evt && evt.detail) || {};
+        var redo = /^Redone|^Redid/i.test(String(d.message || ''));
+        (d.entries || []).forEach(function (en) {
+            var from = redo ? _tkRedo : _tkUndo;
+            var rec = from[from.length - 1];
+            // only the take the server just stepped (LIFO, by resolved path)
+            if (!rec || !en || en.dot_path !== rec.resolved) return;
+            from.pop();
+            (redo ? _tkUndo : _tkRedo).push(rec);
+            _tkMark(rec, redo);
+        });
+    });
     function take(btn) {
         var holder = btn.closest('[data-dot-path]');
         if (!holder || btn.disabled) return;
@@ -20383,21 +20403,16 @@ window.StateVersions = (function () {
         var create = holder.getAttribute('data-create') === '1';
         var origLabel = btn.textContent;
         btn.disabled = true;
-        _tkPost(dot, val, create, function (ok, err) {
+        _tkPost(dot, val, create, function (ok, err, res) {
             if (ok) {
                 var row = btn.closest('.review-row, tr');
                 if (row) row.classList.add('review-accepted');
                 btn.textContent = '✓ staged';
                 btn.classList.add('sv-taken');
-                var prevRaw = holder.getAttribute('data-prev');
-                if (prevRaw !== null) {
-                    var prev;
-                    try { prev = JSON.parse(prevRaw); } catch (e2) { prev = prevRaw; }
-                    _tkUndo.push({ dot: dot, prev: prev, taken: val,
-                                   create: create, holder: row || holder,
-                                   origLabel: origLabel });
-                    _tkRedo.length = 0;
-                }
+                // the change log keys the entry on the RESOLVED write path
+                _tkUndo.push({ dot: dot, resolved: (res && res.resolved_path) || dot,
+                               holder: row || holder, origLabel: origLabel });
+                _tkRedo.length = 0;
             } else {
                 btn.disabled = false;
                 // window.showToast, called THROUGH window: the bare-call

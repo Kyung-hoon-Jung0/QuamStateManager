@@ -51,6 +51,7 @@ function boot(preSort) {
       <div id="datasets-scroll" style="height:400px">
         <table><tbody id="datasets-tbody"></tbody></table>
       </div>
+      <div id="inspector-pane"></div>
     </body></html>`, { url: 'http://localhost/datasets', pretendToBeVisual: true });
   const w = dom.window;
   w.requestAnimationFrame = w.requestAnimationFrame || (cb => setTimeout(cb, 0));
@@ -187,6 +188,50 @@ function tick(ms) { return new Promise(r => setTimeout(r, ms || 30)); }
     btn.dispatchEvent(ev);
     ok(!ev.defaultPrevented, 'audit: Enter belongs to the focused control, not the row nav');
     btn.blur();
+  }
+
+  // ── datasets-r2-24: the cursor follows the run open in the inspector ─────
+  // A run opened from the table (or stepped to with the inspector's up/down,
+  // [ ], a tree click) swaps a #ds-detail-root into #inspector-pane. Closing
+  // the inspector used to leave the table unmarked, and j restarted at the
+  // TOP; a virtual re-render also wiped the mark after any j press.
+  {
+    const w = boot();
+    await tick();
+    const doc = w.document;
+    const pane = doc.getElementById('inspector-pane');
+    const activeId = () => {
+      const a = doc.querySelector('#datasets-tbody tr.ds-row-active');
+      return a ? a.getAttribute('data-id') : null;
+    };
+    pane.innerHTML = '<div id="ds-detail-root" data-uid="f1:2"></div>';
+    pane.dispatchEvent(new w.CustomEvent('htmx:afterSwap',
+      { bubbles: true, detail: { target: pane } }));
+    ok(activeId() === 'f1:2', 'r2-24: the run opened in the inspector is marked in the table: ' + activeId());
+    // a virtual re-render (patch -> scheduleRender -> tbody rebuilt) keeps it
+    w.DatasetVirtual.patchNote('f1:2', 'x');
+    await tick(60);
+    ok(activeId() === 'f1:2', 'r2-24: the mark survives a virtual re-render: ' + activeId());
+    // the cursor is lost meanwhile (Escape / a poll merge resets it) ...
+    key(w, 'Escape');
+    ok(activeId() === null, 'r2-24: (setup) Escape cleared the cursor');
+    // ... and closing the inspector (closeInspector: a NON-bubbling event on
+    // <body>) brings the table back to the run you ended on
+    pane.innerHTML = '';
+    doc.body.dispatchEvent(new w.Event('inspector-closed'));
+    await tick(60);
+    ok(activeId() === 'f1:2', 'r2-24: closing the inspector marks the run you ended on: ' + activeId());
+    key(w, 'j');
+    ok(activeId() === 'f1:1', 'r2-24: j continues from there, not from the top: ' + activeId());
+    // an inspector swap that is not a run forgets it: a later close moves nothing
+    key(w, 'Escape');
+    pane.innerHTML = '<div id="qubit-detail"></div>';
+    pane.dispatchEvent(new w.CustomEvent('htmx:afterSwap',
+      { bubbles: true, detail: { target: pane } }));
+    pane.innerHTML = '';
+    doc.body.dispatchEvent(new w.Event('inspector-closed'));
+    await tick(60);
+    ok(activeId() === null, 'r2-24: a non-run inspector close leaves the cursor alone');
   }
 
   process.exit(fails ? 1 : 0);

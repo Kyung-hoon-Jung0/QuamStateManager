@@ -144,7 +144,7 @@
                         {% for key, val in qresults.items() %}
                         <tr>
                             <td class="col-prop"><code>{{ key }}</code></td>
-                            <td class="col-val"{% if val is number and val is float %} data-copy="{{ val }}"{% endif %}>
+                            <td class="col-val"{% if val is number and val is float %} data-copy="{{ val }}"{% elif val is mapping %} data-copy='{{ val | tojson }}'{% endif %}>
                                 {% if val is none %}
                                     <em class="null-value">not set</em>
                                 {% elif val is sameas true %}
@@ -333,7 +333,7 @@
                 {% for key, val in qresults.items() %}
                 <tr>
                     <td class="col-prop"><code>{{ key }}</code></td>
-                    <td class="col-val"{% if val is number and val is float %} data-copy="{{ val }}"{% endif %}>
+                    <td class="col-val"{% if val is number and val is float %} data-copy="{{ val }}"{% elif val is mapping %} data-copy='{{ val | tojson }}'{% endif %}>
                         {% if val is none %}
                             <em class="null-value">not set</em>
                         {% elif val is sameas true %}

@@ -6,21 +6,39 @@
     <strong>Reproduce unavailable.</strong> {{ reason }}
 </div>
 {% else %}
-<div class="ds-replot-head">
+{# datasets-r2-22: the header, the error list and the empty-state line say what
+   actually happened (replot.replot_outcome). A failure before the plot loop
+   (import/env/timeout...) never reads "Reproduced from" or "the code ran", and
+   the column buttons render only when there are figures to lay out. #}
+{% set o = outcome or {"state": ("ok" if figures else "no_plot_fns"), "fatal": None} %}
+<div class="ds-replot-head" data-replot-state="{{ o.state }}">
+    {% if o.state == "failed" %}
+    <span class="ds-replot-title ds-replot-fail">{% if o.fatal.stage == "import" %}Could not load <code>calibration_utils.{{ util }}</code>{% else %}Reproduce failed at <code>{{ o.fatal.stage }}</code> (<code>calibration_utils.{{ util }}</code>){% endif %}</span>
+    {% elif o.state == "all_plots_failed" %}
+    <span class="ds-replot-title ds-replot-fail"><code>calibration_utils.{{ util }}</code> loaded, but all {{ errors|length }} <code>plot_*</code> function(s) raised</span>
+    {% elif o.state == "no_plot_fns" %}
+    <span class="ds-replot-title"><code>calibration_utils.{{ util }}</code> has no <code>plot_*</code> functions</span>
+    {% else %}
     <span class="ds-replot-title">Reproduced from <code>calibration_utils.{{ util }}</code></span>
+    {% endif %}
     <button type="button" class="btn-sm secondary"
             onclick="loadDatasetReplot('{{ uid }}', this.closest('.dataset-tab-content'), true)"
             title="Re-run the plotting code (picks up edits to analysis.py / plotting.py)">
-        ↻ Regenerate
+        {% if o.state == "ok" %}↻ Regenerate{% else %}↻ Retry{% endif %}
     </button>
+    {% if figures %}
+    <span class="ds-interactive-toolbar-label">Columns</span>
     <div class="ds-interactive-colbtns" role="group" aria-label="Figures per row">
         <button type="button" class="ds-col-btn" data-cols="1" onclick="setInteractiveCols(1, this)">1</button>
         <button type="button" class="ds-col-btn" data-cols="2" onclick="setInteractiveCols(2, this)">2</button>
         <button type="button" class="ds-col-btn" data-cols="3" onclick="setInteractiveCols(3, this)">3</button>
     </div>
+    {% endif %}
 </div>
-{% if errors %}
-<details class="ds-replot-errors">
+{% if o.state == "failed" %}
+<p class="ds-replot-errors ds-replot-fatal" role="alert"><code>{{ o.fatal.stage }}</code>: {{ o.fatal.line }}</p>
+{% elif errors %}
+<details class="ds-replot-errors"{% if o.state == "all_plots_failed" %} open{% endif %}>
     <summary>{{ errors|length }} figure(s) could not be reproduced</summary>
     <ul>
     {% for e in errors %}
@@ -42,7 +60,7 @@
     </div>
     {% endfor %}
 </div>
-{% else %}
+{% elif o.state == "no_plot_fns" %}
 <p class="muted" style="padding:1rem;text-align:center">
     The experiment code ran but produced no reproducible figures.
 </p>

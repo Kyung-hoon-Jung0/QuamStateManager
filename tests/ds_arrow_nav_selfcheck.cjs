@@ -282,7 +282,62 @@ const realAjax = window.htmx.ajax;
 window.htmx.ajax = (m, url) => { loads.push(url); return Promise.reject(); };
 E('u1').click();
 window.htmx.ajax = realAjax;
-setTimeout(() => {
+setTimeout(async () => {
     ok(unhandled.length === 0, 'an aborted run load (rejected htmx.ajax promise) is not an unhandled rejection');
+    await endOfList();
     process.exit(fails ? 1 : 0);
 }, 30);
+
+/* 10. datasets-r2-25: ↑ on the newest run / ↓ on the oldest did NOTHING --
+ * the server answered {ok:true, uid:null} ("honest end-of-folder") and the
+ * client dropped it: no load, no message, the button still live. Now the
+ * press says where the walk stopped, one toast at a time, and still loads
+ * nothing. The PgUp/PgDn clamp at the list's end says so too. */
+async function endOfList() {
+    const flush = () => new Promise((r) => setTimeout(r, 10));
+    doc.body.innerHTML =
+        '<div id="sidebar"><details open><summary>d</summary><ul class="tree-entries">'
+        + entry('u3', 3) + entry('u2', 2) + entry('u1', 1)
+        + '</ul></details></div>'
+        + '<div id="table-pane"></div>'
+        + '<div id="inspector-pane"><div id="ds-detail-root" data-uid="u3"></div></div>'
+        + '<div id="status-bar"></div>';
+    global.fetch = window.fetch = (url) => {
+        fetches.push(String(url));
+        return Promise.resolve({ json: () => Promise.resolve({ ok: true, uid: null, run_id: null }) });
+    };
+    const toasts = () => Array.from(doc.querySelectorAll('#status-bar .toast')).map((t) => t.textContent);
+    const n0 = loads.length;
+    fetches.length = 0;
+    window.dsNavRun(-1);                 // ↑ on the newest run of the folder
+    await flush();
+    ok(fetches.indexOf('/dataset/u3/neighbor?dir=-1') >= 0, '(fixture) past the top the server is asked');
+    ok(toasts().length === 1 && /newest run/.test(toasts()[0]),
+       'r2-25: ↑ on the newest run says so: ' + JSON.stringify(toasts()));
+    ok(loads.length === n0, 'r2-25: and loads nothing');
+    window.dsNavRun(-1);
+    await flush();
+    ok(toasts().length === 1, 'r2-25: a second press replaces the toast, never stacks it');
+    doc.getElementById('ds-detail-root').setAttribute('data-uid', 'u1');
+    window.dsNavRun(1);                  // ↓ on the oldest run
+    await flush();
+    ok(toasts().length === 1 && /oldest run/.test(toasts()[0]),
+       'r2-25: ↓ on the oldest run says so: ' + JSON.stringify(toasts()));
+    ok(loads.length === n0, 'r2-25: and loads nothing either');
+    // the PgDn clamp at the last visible entry
+    fetches.length = 0;
+    window.dsNavRun(10);
+    await flush();
+    ok(fetches.length === 0 && toasts().length === 1 && /bottom of the list/.test(toasts()[0]),
+       'r2-25: PgDn at the last entry says the list ends here: ' + JSON.stringify(toasts()));
+    // a real neighbor still loads, and a failed answer ({ok:false}) stays quiet
+    global.fetch = window.fetch = (url) => {
+        fetches.push(String(url));
+        return Promise.resolve({ json: () => Promise.resolve({ ok: false }) });
+    };
+    doc.getElementById('status-bar').innerHTML = '';
+    doc.getElementById('ds-detail-root').setAttribute('data-uid', 'u3');
+    window.dsNavRun(-1);
+    await flush();
+    ok(toasts().length === 0, 'r2-25: a refused lookup is not called an end');
+}

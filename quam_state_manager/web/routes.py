@@ -25214,7 +25214,7 @@ def dataset_replot(uid):
         return render_template("_status.html",
                                message=f"Run #{run_id} not found", level="error"), 404
     from quam_state_manager.core.interactive_plots.replot import (
-        replot_capability, replot_run, replot_menu)
+        replot_capability, replot_run, replot_menu, replot_outcome)
     cap = replot_capability(run, current_app.instance_path)
     if not cap["available"]:
         return render_template("_dataset_replot.html", uid=uid, run_id=run_id,
@@ -25222,8 +25222,12 @@ def dataset_replot(uid):
                                figures=[], errors=[])
     force = request.args.get("force") == "1"
     result = replot_run(run, current_app.instance_path, force=force)
+    # datasets-r2-22: the driver-side envelopes (env/spawn/subprocess/timeout)
+    # carry no util -- the capability check already derived it.
     return render_template("_dataset_replot.html", uid=uid, run_id=run_id,
-                           available=True, reason="", util=result.get("util", ""),
+                           available=True, reason="",
+                           util=result.get("util") or cap.get("util", ""),
+                           outcome=replot_outcome(result),
                            figures=replot_menu(result), errors=result.get("errors", []))
 
 

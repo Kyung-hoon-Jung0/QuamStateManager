@@ -44,6 +44,7 @@ const dom = new JSDOM(`<!doctype html><html><body>
       <div id="datasets-scroll" style="height:400px"><table><tbody id="datasets-tbody"></tbody></table></div>
     </div>
     <div id="inspector-pane"></div>
+    <div id="status-bar"></div>
   </body></html>`, { url: 'http://localhost/datasets', pretendToBeVisual: true });
 const w = dom.window;
 global.window = w;
@@ -121,6 +122,10 @@ function neighborFetches() { return fetches.filter(u => u.indexOf('/neighbor') !
   key(']');
   ok(loads.length === n && neighborFetches().length === 0,
      'at the end of the filtered list ] opens nothing (never an unrelated run)');
+  // datasets-r2-25: ...and says so, instead of a press that does nothing
+  const toast = doc.querySelector('#status-bar .toast');
+  ok(!!toast && /bottom of the list/.test(toast.textContent),
+     'r2-25: the end of the filtered list is said: ' + (toast && toast.textContent));
   key('[');
   ok(last() === '/dataset/k:3806', '[ walks back up the filtered list');
 
