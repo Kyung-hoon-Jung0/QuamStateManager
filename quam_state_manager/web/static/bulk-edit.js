@@ -234,7 +234,7 @@
         setTimeout(off, CARRY_TTL_MS);
     }
     function _reloadPane() {
-        if (window.htmx) htmx.ajax('GET', '/bulk', { target: '#table-pane', swap: 'innerHTML' });
+        if (window.htmx) return htmx.ajax('GET', '/bulk', { target: '#table-pane', swap: 'innerHTML' });
     }
     // QA liveedit-r2-15: a rendered derived column that the persisted hidden
     // set names -- the page was rendered without ?dynhide.
@@ -441,7 +441,7 @@
                 // A rejected word used to vanish with no word of why (QA
                 // liveedit-r2-26). Say it; on Enter keep the box so the user
                 // can fix it; empty stays silent (that is just dismissing).
-                var why = _patchProblem(t);
+                var why = window._patchProblem ? window._patchProblem(t) : '';   // app.js owns the rule's wording
                 if (why) {
                     if ((keepOnBad || inp._warned !== t) && window.showToast) window.showToast(why, 'warning');
                     inp._warned = t;
@@ -466,15 +466,6 @@
             inp.addEventListener('blur', function () {
                 setTimeout(function () { if (inp.parentNode) commit(); }, 120);
             });
-        }
-        /* Why a typed patch cannot be saved, or '' when it can (or is empty). */
-        function _patchProblem(t) {
-            if (!t || /^[^\s|]{1,40}$/.test(t)) return '';
-            var why = t.indexOf('|') >= 0
-                ? "one word without '|' ('|' means OR in the search box)"
-                : (/\s/.test(t) ? 'one word, no spaces' : 'at most 40 characters');
-            return 'A patch is ' + why + ' — "' + (t.length > 40 ? t.slice(0, 40) + '…' : t)
-                + '" was not saved.';
         }
         function _removeCustom(term) {
             _saveCustom(_customTerms().filter(function (x) { return x !== term; }));
@@ -1863,11 +1854,24 @@
         cells.forEach(function (c) { if (_validateBand(c)) warned = true; });
         return warned;
     }
+    // QA liveedit-r2-14 (review): an issue is a PORT, not a cell. A linked twin
+    // shows the same port twice, and a port's band cell and LO cell both warn
+    // about ONE out-of-band LO -- one typed pump LO read "4 band issues" and
+    // "2 of these edits". Distinct physical ports (the server's data-lo-port),
+    // the resolved leaf for a cell with none, as _dirtyCount already counts.
+    function _bandIssueKeys(cells) {
+        var seen = new Set();
+        Array.prototype.forEach.call(cells, function (c) {
+            if (!c.classList.contains('bulk-band-warn')) return;
+            seen.add(c.getAttribute('data-lo-port') || c.getAttribute('data-resolved') || c);
+        });
+        return seen.size;
+    }
     function _updateBandWarnCount() {
         // every Live-Edit grid (QA liveedit-r2-14): the toolbar count is shared
-        var n = document.querySelectorAll(_LO_GRIDS.map(function (g) {
+        var n = _bandIssueKeys(document.querySelectorAll(_LO_GRIDS.map(function (g) {
             return g + ' .bulk-cell.bulk-band-warn';
-        }).join(', ')).length;
+        }).join(', ')));
         var el = document.getElementById('bulk-band-warn');
         if (el) { el.textContent = n ? ('⚠ ' + n + ' band issue' + (n === 1 ? '' : 's')) : ''; el.hidden = !n; }
     }
@@ -1876,15 +1880,13 @@
     // band conflict at commit time (A10); the project trusts the researcher, so this
     // only appends a line to the existing confirm() dialog.
     function _bandWarnCount(cells) {
-        var n = 0;
-        cells.forEach(function (c) { if (c.classList.contains('bulk-band-warn')) n++; });
-        return n;
+        return _bandIssueKeys(cells);
     }
     function _bandWarnLine(cells) {
         var n = _bandWarnCount(cells);
         if (!n) return '';
-        return '\n\n⚠ ' + n + ' of these edit' + (n === 1 ? '' : 's') +
-            ' create an LO band conflict — apply anyway?';
+        return '\n\n⚠ This leaves ' + n + ' port' + (n === 1 ? '' : 's') +
+            ' with an LO band conflict — apply anyway?';
     }
 
     // ── shared physical-port linking ─────────────────────────────────────────
@@ -3285,6 +3287,7 @@
         try { el.focus({ preventScroll: true }); } catch (e) { try { el.focus(); } catch (e2) {} }
     }
     var BulkEdit = {
+        _focusBack: _focusBack,   // (review) pair-edit.js calls this one, no twin
         mount: function (columns, bandMeta, dynModel, qubitMeta) {
             if (Array.isArray(columns)) COLS = columns;
             // An HTMX swap re-renders the tbody in server (default) order, so the
@@ -3310,7 +3313,16 @@
             // cold-column fetch is made against a grid about to be replaced.
             if (_dynLeaked() && window.htmx && !window._bulkDynReconciled) {
                 window._bulkDynReconciled = true;   // loop guard
-                _reloadPane();
+                // (review) a re-GET that never lands (an error, an abort, a
+                // vetoed swap) must not leave THIS grid unbound -- no editing,
+                // no virtualization, no leave guard. htmx.ajax's promise
+                // settles after the swap: a table still in the page means it
+                // was not replaced, so finish mounting it as rendered.
+                var _args = arguments, _pr = _reloadPane();
+                if (_pr && typeof _pr.then === 'function') {
+                    var _fin = function () { if (t.isConnected) BulkEdit.mount.apply(BulkEdit, _args); };
+                    _pr.then(_fin, _fin);
+                }
                 return;
             }
             window._bulkDynReconciled = false;
@@ -4032,6 +4044,16 @@
 
        The caller decides whether an authoritative refetch still has to follow;
        this function only reports what it could and could not reach. */
+    // QA liveedit-r2-02 (review): the list containers an element path lives
+    // in -- every prefix whose next segment is a list index (a.b.0.1 -> a.b.0,
+    // a.b). ONE rule for both grids: pair-edit.js calls this one.
+    function _listContainersOf(p) {
+        var segs = String(p).split('.'), out = [];
+        for (var i = segs.length - 1; i > 0; i--) {
+            if (/^\d+$/.test(segs[i])) out.push(segs.slice(0, i).join('.'));
+        }
+        return out;
+    }
     function _revertPaths(entries) {
         var t = table();
         if (!t || !entries || !entries.length) return { patched: 0, missing: 0 };
@@ -4096,10 +4118,33 @@
             statKeys[ck] = 1;
             if (FREQ_TWIN[ck]) statKeys[FREQ_TWIN[ck]] = 1;
         };
+        // QA liveedit-r2-02 (review): an ELEMENT of a list (a Flat View / tree
+        // edit of confusion_matrix.0.0) has no cell of its own, but the list
+        // cell showing the whole list -- hot, or in a cold column -- is now
+        // stale. That is FOUND-not-repaintable (uncovered: the caller's honest
+        // resync), never `missing`, which schedules nothing.
+        var listPaths = null;
+        var listHolds = function (p) {
+            if (!listPaths) {
+                listPaths = {};
+                Array.prototype.forEach.call(t.querySelectorAll('.bulk-cell-list'), function (s) {
+                    var a = s.getAttribute('data-path'), b = s.getAttribute('data-resolved');
+                    if (a) listPaths[a] = 1;
+                    if (b) listPaths[b] = 1;
+                });
+            }
+            return _listContainersOf(p).some(function (a) {
+                return listPaths[a] || (_virt && _virt.byPathAll && (_virt.byPathAll[a] || []).length);
+            });
+        };
         entries.forEach(function (e) {
             if (!e || !e.dot_path) return;
             var cs = sel(e.dot_path);
-            if (!cs.length) { missing++; return; }
+            if (!cs.length) {
+                if (listHolds(e.dot_path)) uncovered.push(e.dot_path);
+                else missing++;
+                return;
+            }
             // The grids render group_digits; the server ships that exact
             // string as old_value_disp (docs/124 M-9 — writing _fmt_val's
             // 7-sig-fig form here showed a truncated value AND made it the
@@ -4197,6 +4242,7 @@
         return { patched: patched, missing: missing, covered: covered, uncovered: uncovered };
     }
     BulkEdit.revertPaths = _revertPaths;
+    BulkEdit._listContainersOf = _listContainersOf;   // QA liveedit-r2-02 (review): pair-edit.js shares it
     BulkEdit.recomputeStats = function (onlyKeys) { _recomputeStats(onlyKeys); };   // QA liveedit-r2-02 (+ F9: keyed)
     BulkEdit._virtState = function () {
         return _virt ? { cold: Array.from(_virt.cold), remote: Array.from(_virt.remote),

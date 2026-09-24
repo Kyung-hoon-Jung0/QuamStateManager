@@ -20404,6 +20404,9 @@ window.ExplorerChips = (function () {
         return 'A patch is ' + why + ' — "' + (t.length > 40 ? t.slice(0, 40) + '…' : t)
             + '" was not saved.';
     }
+    // (review) ONE rule + wording: Live Edit's ChipBar (bulk-edit.js, loaded
+    // after this file) calls this same function
+    window._patchProblem = _patchProblem;
     function _input() { return document.getElementById('explorer-search'); }
     function _tokens() {
         var el = _input();

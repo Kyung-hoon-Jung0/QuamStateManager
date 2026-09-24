@@ -135,3 +135,21 @@ def test_the_selection_dock_takes_no_flow_space():
     body = m.group(1)
     assert re.search(r"position:\s*fixed", body), body
     assert re.search(r"\.bulk-sel-dock\[hidden\]\s*\{\s*display:\s*none", css)
+
+
+def test_the_selection_dock_never_hides_the_last_rows():
+    """QA F7 (review): the fixed pill sits over the bottom ~50 px of the
+    pane, so on a chip with more rows than fit, the last rows -- a shift-click
+    target among them -- stayed under it. Once the dock exists the pane
+    gets bottom padding + scroll padding taller than the pill; keyed on the
+    dock EXISTING (not on it being shown) so Escape cannot clamp scrollTop and
+    slide the grid under the pointer, and with :has() so no page is left
+    padded after the dock is swapped out. Real Chrome verified the geometry;
+    this pins the declaration."""
+    import re
+    css = (_ROOT / "quam_state_manager" / "web" / "static" / "style.css").read_text(encoding="utf-8")
+    m = re.search(r"#table-pane:has\(\.bulk-sel-dock\)\s*\{([^}]*)\}", css)
+    assert m, "no #table-pane rule keyed on the .bulk-sel-dock"
+    body = m.group(1)
+    assert re.search(r"(?<!-)padding-bottom:[^;]*3\.5rem", body), body
+    assert re.search(r"scroll-padding-bottom:\s*3\.5rem", body), body

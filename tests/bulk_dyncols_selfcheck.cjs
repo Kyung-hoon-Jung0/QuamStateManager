@@ -449,9 +449,49 @@ async function checkFullLoadLeak() {
      'r2-15: an older page without the rendered set still falls back to localStorage');
 }
 
+// (review) the reconcile re-GET must never leave the grid it returned early
+// on UNBOUND: when the reload does not land (a network error, a 4xx/5xx htmx
+// does not swap, an abort) the table that is still on the page finishes its
+// mount; when it does land, the replaced table is never mounted.
+async function checkFullLoadLeakReloadFails() {
+  const HID = 'dyn__resonator_confusion_matrix';
+  const cases = [
+    ['a network error (the promise rejects)', function () { return Promise.reject(new Error('net')); }, true],
+    ['a 5xx htmx does not swap (resolves, table still there)', function () { return Promise.resolve(); }, true],
+    ['a reload that lands (the table is swapped out)', function (win) {
+      // a real swap: NEW nodes under the same ids -- its own inline mount
+      // owns them; the early-returned call must not mount them again with
+      // the stale (leaked) column model
+      const tp = win.document.getElementById('table-pane');
+      tp.innerHTML = tp.innerHTML;
+      return Promise.resolve();
+    }, false],
+  ];
+  for (const [label, outcome, expectMount] of cases) {
+    const win = makeWorld();
+    const created = [];
+    const realCreate = win.GridVirt.create;
+    win.GridVirt.create = function (o) { created.push(o); return realCreate.call(win.GridVirt, o); };
+    win.localStorage.setItem('quam_bulk_dynhidden', JSON.stringify([HID]));
+    win.htmx = { ajax: function (verb, url, opts) { win._log.ajax.push([verb, url, opts]); return outcome(win); } };
+    win.BulkEdit.mount(COLS, { bands: {} }, DYN, { chip: 'c', chipKey: 'k', qubits: [], dynhide: [] });
+    ok(win._log.ajax.length === 1 && created.length === 0, 'r2-15 review: ' + label + ' -- the reload was asked, nothing mounted yet');
+    await tick(10);
+    ok((created.length === 1) === expectMount,
+       'r2-15 review: ' + label + ' -- ' + (expectMount ? 'the grid on the page finishes its mount'
+         : 'the replaced grid is NOT mounted') + ' (virtualizer built ' + created.length + 'x)');
+    if (expectMount) {
+      ok(win.document.getElementById('bulk-colvis-menu').querySelectorAll('[data-dyn-toggle]').length === 3,
+         'r2-15 review: ' + label + ' -- the column menu is built (the mount really completed)');
+      ok(win._log.ajax.length === 1, 'r2-15 review: ' + label + ' -- and it does not reload again');
+    }
+  }
+}
+
 (async function () {
   await checkJsonModal();
   await checkFullLoadLeak();
+  await checkFullLoadLeakReloadFails();
   await checkSearchHint();
   await checkCuratedHiddenSearch();
   await checkPairGridHook();

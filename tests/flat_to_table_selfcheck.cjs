@@ -43,6 +43,7 @@ const ANH = (q) => 'qubits.' + q + '.anharmonicity';
 const X90A = (q) => 'qubits.' + q + '.xy.operations.x90.amplitude';            // the alias
 const X90R = (q) => 'qubits.' + q + '.xy.operations.x90_DragCosine.amplitude'; // the leaf
 const T1 = (q) => 'qubits.' + q + '.T1';
+const CM = (q) => 'qubits.' + q + '.resonator.confusion_matrix';                // a LIST cell
 const VALS = {
   q1: { anh: '210,000,000', x90: '0.15', t1: '0.0001' },
   q2: { anh: '216,286,684.1857654', x90: '0.1516', t1: '0.000135' },
@@ -54,7 +55,7 @@ function td(key, attrs, cls) {
     + (cls ? ' ' + cls : '') + '" ' + attrs + ' size="14"></td>';
 }
 function tableHtml() {
-  const head = ['anh', 'x90', 't1'].map((k) =>
+  const head = ['anh', 'x90', 't1', 'cm'].map((k) =>
     '<th class="bulk-col-head" data-col-key="' + k + '" data-section="S"><span class="bulk-col-label">'
     + k + '</span><span class="bulk-col-stats" data-col-stats="' + k + '"></span></th>').join('');
   const rows = Object.keys(VALS).map(function (q) {
@@ -68,6 +69,9 @@ function tableHtml() {
       // write cannot keep that promise, so it must stay UNCOVERED
       + td('t1', 'value="' + v.t1 + '" data-orig="' + v.t1 + '" data-str-numeric="1" data-dot-path="'
            + T1(q) + '" data-resolved="' + T1(q) + '"', 'bulk-cell-str')
+      // the docs/159 list preview span: its path is the CONTAINER
+      + '<td class="bulk-td" data-col-key="cm"><span class="bulk-cell-list" data-path="' + CM(q)
+      + '" data-resolved="' + CM(q) + '" tabindex="0">[[0.968,0.032],[0.123,0.…</span></td>'
       + '<td class="bulk-apply-col"><button class="btn-xs bulk-row-apply" disabled></button>'
       + '<span class="bulk-row-error" hidden></span></td></tr>';
   }).join('');
@@ -101,6 +105,7 @@ function flatRows() {
     rows.push([ANH(q), VALS[q].anh, 'scalar', 0]);
     rows.push([X90R(q), VALS[q].x90, 'scalar', 0]);
     rows.push([T1(q), VALS[q].t1, 'scalar', 0]);
+    rows.push([CM(q) + '.0.0', '0.968', 'list', 0]);   // Flat lists matrix ELEMENTS
   });
   return rows;
 }
@@ -160,6 +165,7 @@ function world() {
     { key: 'anh', label: 'anh', section: 'S', unit: '', default_on: true },
     { key: 'x90', label: 'x90', section: 'S', unit: '', default_on: true },
     { key: 't1', label: 't1', section: 'S', unit: '', default_on: true },
+    { key: 'cm', label: 'cm', section: 'S', unit: '', default_on: true },
   ], { bands: {} }, [], { chip: 'chipA', qubits: [] });
   return win;
 }
@@ -259,6 +265,22 @@ function stat(win, key) {
   await tick(30);
   win.AllValues.switchPane('grid');
   ok(win._log.resync.length === 1, 'once: the stale flag is consumed');
+
+  // review follow-up: a list/matrix ELEMENT (Flat's ▦ rows) has no Table cell
+  // of its own, but the Table's list cell shows the whole matrix -- the patch
+  // cannot repaint it, so it must count as uncovered (resync on show), never
+  // as a path no grid holds (which left '[[0.968,…' on screen until F5)
+  win.AllValues.switchPane('allvalues');
+  await tick(30);
+  await flatCommit(win, CM('q2') + '.0.0', '0.5', '0.5');
+  win.AllValues.switchPane('grid');
+  await tick(10);
+  ok(win._log.resync.length === 2, 'a matrix-element Flat edit resyncs the Table on show ('
+     + win._log.resync.length + ')');
+  ok(win.BulkEdit.revertPaths([{ dot_path: CM('q1') + '.1.0', old_value_disp: '0.1' }]).uncovered.length === 1,
+     'and the grid reports the element as uncovered (so an undo repaint resyncs too)');
+  ok(win.BulkEdit.revertPaths([{ dot_path: 'qubits.q1.resonator.depletion_time', old_value_disp: '1' }]).missing === 1,
+     'a path no cell or list holds stays missing (no needless 2.4 s rebuild)');
 
   if (fails === 0) console.log('all checks passed (' + asserts + ' assertions)');
   process.exit(fails ? 1 : 0);

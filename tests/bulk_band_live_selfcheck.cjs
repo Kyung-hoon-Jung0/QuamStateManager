@@ -318,33 +318,61 @@ function type(win, cell, v) {
   ok(tw('twpa2').classList.contains('bulk-band-warn'),
      'F1: a pump LO already outside its band is flagged at mount');
   ok(!tw('twpa1').classList.contains('bulk-band-warn'), 'F2: one inside its band is not');
-  // twpa2's LO and its band cell ("freq ... outside Band 3") both warn
-  ok(counter(win) === '⚠ 2 band issues', 'F3: the shared toolbar count includes it: ' + counter(win));
+  // twpa2's LO and its band cell ("freq ... outside Band 3") both warn -- ONE
+  // port, one issue (review: this pin used to say 2, counting cells)
+  ok(counter(win) === '⚠ 1 band issue', 'F3: the shared toolbar count includes it: ' + counter(win));
   type(win, tw('twpa1'), '11000000000');
   ok(tw('twpa1').classList.contains('bulk-band-warn'), 'F4: typing 11 GHz into band 3 warns');
   const msg = tw('twpa1').closest('td').querySelector('.bulk-band-msg');
   ok(!!msg && !msg.hidden && /Outside Band 3/.test(msg.textContent),
      'F5: with the reason inline: ' + (msg && msg.textContent));
-  ok(twb('twpa1').classList.contains('bulk-band-warn') && counter(win) === '⚠ 4 band issues',
+  // four warning cells, two ports (review: this pin used to say 4)
+  ok(twb('twpa1').classList.contains('bulk-band-warn') && counter(win) === '⚠ 2 band issues',
      'F6: the group is re-judged (its band cell reads the live LO) and the count follows: ' + counter(win));
   win._confirms = [];
   win.confirm = function (m) { win._confirms.push(m); return false; };
   tw('twpa1').dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
-  ok(win._confirms.length === 1 && /LO band conflict/.test(win._confirms[0]),
-     'F7: Enter asks "apply anyway?" before committing (A10): ' + JSON.stringify(win._confirms));
+  ok(win._confirms.length === 1 && /This leaves 1 port with an LO band conflict/.test(win._confirms[0]),
+     'F7: Enter asks "apply anyway?" before committing (A10), naming ONE port for one typed LO: '
+     + JSON.stringify(win._confirms));
   ok(win.fetches === 0, 'F8: and a Cancel commits nothing');
   win._confirms = [];
   win.twpa.applyAll();
   ok(win._confirms.length === 1 && /LO band conflict/.test(win._confirms[0]),
      'F9: Apply all names the conflict too');
   type(win, tw('twpa1'), '9000000000');
-  ok(!tw('twpa1').classList.contains('bulk-band-warn') && counter(win) === '⚠ 2 band issues',
+  ok(!tw('twpa1').classList.contains('bulk-band-warn') && counter(win) === '⚠ 1 band issue',
      'F10: back inside the band, the warning is withdrawn: ' + counter(win));
   // the LO pair lives in THIS grid, so its group lookup must reach it: moving
   // twpa1 to band 1 (0.05-5.5 GHz) puts its 9 GHz LO outside, on the OTHER cell
   type(win, twb('twpa1'), '1');
   ok(tw('twpa1').classList.contains('bulk-band-warn'),
      'F11: a band edit re-judges the LO cell of its own pair in a pair-shaped grid');
+}
+
+// ── G. QA liveedit-r2-14 (review): an issue is a PORT, not a cell ─────────
+// One typed pump LO read "⚠ 4 band issues" and "2 of these edits create an LO
+// band conflict": the count covered the linked twin cell and both band cells.
+{
+  const win = world(true);
+  type(win, freqCell(win, 'q1'), '9000000000');          // outside band 2
+  ok(freqCell(win, 'q1').classList.contains('bulk-band-warn') && warns(win, 'q1'),
+     'G1: fixture -- q1’s LO cell and its band cell both warn');
+  ok(counter(win) === '⚠ 1 band issue', 'G2: ...and that is ONE issue, one port: ' + counter(win));
+  // a linked twin: a second cell on the same port and leaf (the pump_ twin)
+  const twin = freqCell(win, 'q1').cloneNode(true);
+  freqCell(win, 'q1').closest('td').appendChild(twin);
+  type(win, freqCell(win, 'q1'), '9000000000');
+  ok(twin.classList.contains('bulk-band-warn') && counter(win) === '⚠ 1 band issue',
+     'G3: a warning twin adds no issue: ' + counter(win));
+  const line1 = win.BulkEdit._bandWarnLine([freqCell(win, 'q1'), twin]);
+  ok(/This leaves 1 port with an LO band conflict/.test(line1),
+     'G4: the confirm counts the edited port once, not its two cells: ' + JSON.stringify(line1));
+  type(win, freqCell(win, 'q3'), '9000000000');
+  ok(counter(win) === '⚠ 2 band issues', 'G5: a second port is a second issue: ' + counter(win));
+  const line2 = win.BulkEdit._bandWarnLine([freqCell(win, 'q1'), twin, freqCell(win, 'q3')]);
+  ok(/This leaves 2 ports with an LO band conflict/.test(line2), 'G6: and the confirm says so: ' + JSON.stringify(line2));
+  ok(win.BulkEdit._bandWarnLine([bandCell(win, 'q2')]) === '', 'G7: a clean cell adds no line');
 }
 
 if (fails === 0) console.log('all checks passed (' + asserts + ' assertions)');

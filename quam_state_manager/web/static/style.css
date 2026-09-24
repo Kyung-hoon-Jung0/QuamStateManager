@@ -9908,6 +9908,17 @@ a.sidebar-tool-btn { text-decoration: none; color: inherit; }
     max-width: min(92vw, 760px);
 }
 .bulk-sel-dock[hidden] { display: none; }
+/* (review) the pill floats over the pane's bottom strip (~2.75rem with its
+   offset): the last rows (a shift-click target among them) must be able to
+   scroll clear of it, and focus/keyboard scrolling stops short of it. Keyed on
+   the dock EXISTING (made on the first cell click), not on it being shown: a
+   pad that left with the selection made the browser clamp scrollTop on
+   Escape and slid the grid up to 80 px under the pointer -- the F7 hazard.
+   :has(), not a JS class, so a swapped-out dock takes the pad with it. */
+#table-pane:has(.bulk-sel-dock) {
+    padding-bottom: calc(var(--table-pane-pad-v) + 3.5rem);
+    scroll-padding-bottom: 3.5rem;
+}
 .bulk-sel-dock .bulk-sel-hint { opacity: .9; }
 .bulk-sel-dock .bulk-arith-bar { margin-right: 0; }
 .bulk-sel-dock .bulk-arith-go { width: auto; }

@@ -739,15 +739,13 @@
     }
     function _autoFitColWidth(key) { delete _colWidths[key]; _saveColWidths(); _applyColWidthStyle(); }
 
-    /* QA liveedit-r2-21 (twin of bulk-edit.js _focusBack): Apply all disables
-       the pressed button, which drops focus to <body>; when the apply lands,
-       hand it to the cell the user last left, only if nothing else took it. */
+    /* QA liveedit-r2-21: Apply all disables the pressed button, which drops
+       focus to <body>; when the apply lands, hand it to the cell the user last
+       left, only if nothing else took it -- bulk-edit.js's ONE _focusBack
+       (review: this file carried a copy), the _bandWarnLine pattern. */
     var _lastEditCell = null;
     function _focusBack(el) {
-        var a = document.activeElement;
-        if (!el || !el.focus || !document.body.contains(el)) return;
-        if (a && a !== document.body && a !== document.documentElement) return;
-        try { el.focus({ preventScroll: true }); } catch (e) { try { el.focus(); } catch (e2) {} }
+        if (window.BulkEdit && window.BulkEdit._focusBack) window.BulkEdit._focusBack(el);
     }
 
     var BulkPairEdit = {
@@ -1205,6 +1203,25 @@
             var td = c.closest('[data-col-key]');
             if (td) statKeys[td.getAttribute('data-col-key')] = 1;
         };
+        // QA liveedit-r2-02 (review), same as BulkEdit: an ELEMENT edit of a
+        // list whose `▦ N×M` badge this grid shows (hot or cold) leaves that
+        // badge's modified state stale -> uncovered, not `missing`.
+        var listPaths = null;
+        var listHolds = function (p) {
+            if (!listPaths) {
+                listPaths = {};
+                Array.prototype.forEach.call(t.querySelectorAll('.bulk-cell[data-list]'), function (c) {
+                    var a = c.getAttribute('data-dot-path'), b = c.getAttribute('data-resolved');
+                    if (a) listPaths[a] = 1;
+                    if (b) listPaths[b] = 1;
+                });
+            }
+            var conts = (window.BulkEdit && window.BulkEdit._listContainersOf)
+                ? window.BulkEdit._listContainersOf(p) : [];
+            return conts.some(function (a) {
+                return listPaths[a] || (_pvirt && _pgv && _pgv.colsOfPath(a).length);
+            });
+        };
         entries.forEach(function (e) {
             if (!e || !e.dot_path) return;
             // BOTH attributes (docs/124 C-2/M-8, same as BulkEdit): the server
@@ -1215,7 +1232,11 @@
             var q = esc(e.dot_path);
             var cs = t.querySelectorAll('.bulk-cell[data-dot-path="' + q + '"]'
                 + ', .bulk-cell[data-resolved="' + q + '"]');
-            if (!cs.length) { missing++; return; }
+            if (!cs.length) {
+                if (listHolds(e.dot_path)) uncovered.push(e.dot_path);
+                else missing++;
+                return;
+            }
             // group_digits display string first (docs/124 M-9), and coverage
             // is only claimed when the repaint can honestly stand in for a
             // fresh render (docs/124 M-10 + readOnly) — see BulkEdit.

@@ -56,6 +56,12 @@ function bigWorld(nCols, nRows, presearch) {
   for (let r = 0; r < nRows; r++) {
     let tds = '';
     for (let i = 0; i < nCols; i++) {
+      // one LIST cell (the docs/159 preview span) in a far, cold column
+      if (r === 5 && i === 43 && nCols === N_COLS) {
+        tds += '<td class="bulk-td ck-43" data-col-key="c43"><span class="bulk-cell-list"'
+          + ' data-path="qubits.q5.cm" data-resolved="qubits.q5.cm">[[1,0],[0,1]]</span></td>';
+        continue;
+      }
       tds += '<td class="bulk-td ck-' + i + '" data-col-key="c' + i + '">' +
         '<input type="text" class="bulk-cell" value="v' + r + 'c' + i +
         '" data-orig="v' + r + 'c' + i + '" data-dot-path="qubits.q' + r +
@@ -143,6 +149,13 @@ async function main() {
   const coldBefore2 = doc.querySelectorAll('td.bulk-td-cold').length;
   W.win.BulkEdit.revertPaths([{ dot_path: 'qubit_pairs.p1.macros.cz.amp', old_value_str: '1' }]);
   ok(doc.querySelectorAll('td.bulk-td-cold').length === coldBefore2, 'a path in no column hydrates nothing (it is missing by definition)');
+  // QA liveedit-r2-02 (review): an ELEMENT of a list shown in a COLD column
+  // has no cell and no DOM span to find -- the byPathAll claim is what says
+  // the list cell exists, so the element is uncovered (the honest resync)
+  const rpl = W.win.BulkEdit.revertPaths([{ dot_path: 'qubits.q5.cm.0.1', old_value_disp: '0.5', old_kind: 'num' }]);
+  ok(doc.querySelector('tr[data-qubit="q5"] td[data-col-key="c43"]').classList.contains('bulk-td-cold')
+     && rpl.missing === 0 && (rpl.uncovered || []).indexOf('qubits.q5.cm.0.1') >= 0,
+     'a list element in a cold column is uncovered, not missing (' + JSON.stringify(rpl) + ')');
 
   // ── whole-chip search over a cold value (docs/85) ─────────────────────
   const sb = doc.getElementById('bulk-search');

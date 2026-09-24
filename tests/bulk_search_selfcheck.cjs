@@ -73,6 +73,17 @@ const HTML = '<!doctype html><html><body><div id="bulk-panel">' +
 const dom = new JSDOM(HTML, { runScripts: 'outside-only', url: 'http://localhost/' });
 const w = dom.window;
 w.eval(fs.readFileSync(SRC, 'utf8'));
+// (review, QA liveedit-r2-26) ChipBar calls app.js's ONE window._patchProblem
+// (app.js loads first on every page). Bridge the REAL shipped function, cut
+// out of app.js by its brace-balanced body -- never a copy kept here.
+(function () {
+  const app = fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'static', 'app.js'), 'utf8');
+  const i = app.indexOf('function _patchProblem(t) {');
+  if (i < 0) throw new Error('app.js has no _patchProblem');
+  let d = 0, j = app.indexOf('{', i);
+  for (; j < app.length; j++) { if (app[j] === '{') d++; else if (app[j] === '}' && --d === 0) break; }
+  w.eval('window._patchProblem = ' + app.slice(i, j + 1) + ';');
+})();
 
 let failures = 0;
 function check(name, cond, detail) {
