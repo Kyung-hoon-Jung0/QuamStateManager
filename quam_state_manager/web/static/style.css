@@ -4913,6 +4913,9 @@ a.topo-health-tile:hover { background: var(--pico-card-sectioning-background-col
 }
 .ov-hover-id { color: var(--pico-muted-color); min-width: 2.4rem; }
 .ov-hover-val { font-family: monospace; font-weight: 600; margin-left: auto; }
+/* QA F-04: which pulse a pair's number came from (tiles pick per-metric bests). */
+.ov-hover-gate { color: var(--pico-muted-color); font-size: 0.85em; }
+.ov-hover-grid-gate { column-width: 15rem; }
 .ov-hover-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; align-self: center; }
 .ov-hover-dot-na { background: var(--pico-muted-border-color); }
 .ov-hover-more { margin-top: 0.3rem; color: var(--pico-muted-color); }

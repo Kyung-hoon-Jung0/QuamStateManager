@@ -160,6 +160,71 @@ class TestSaveStoresOnlyTheDifference:
         assert spec_thresholds.resolve(inst)["metrics"] == chip_health.DEFAULT_THRESHOLDS
 
 
+class TestSaveMergesInsteadOfReplacing:
+    """QA chipstatus-r2-06: tab B, opened before tab A saved T1, changed only
+    T2 echo -- and A's T1 was gone, because save() rewrote the whole file from
+    B's payload. A save now touches only the bounds it names."""
+
+    def test_two_windows_saving_different_metrics_both_survive(self, inst):
+        spec_thresholds.save(inst, {"T1": {"warn": 4e-5, "fail": 2e-5}})
+        spec_thresholds.save(inst, {"T2echo": {"warn": 2.5e-5}})
+        raw = json.loads(spec_thresholds.spec_path(inst).read_text(encoding="utf-8"))
+        assert raw["thresholds"] == {"T1": {"warn": 4e-5, "fail": 2e-5},
+                                     "T2echo": {"warn": 2.5e-5}}
+
+    def test_two_windows_saving_different_bounds_of_one_metric_both_survive(self, inst):
+        spec_thresholds.save(inst, {"T1": {"warn": 4e-5}})
+        spec_thresholds.save(inst, {"T1": {"fail": 2e-5}})
+        raw = json.loads(spec_thresholds.spec_path(inst).read_text(encoding="utf-8"))
+        assert raw["thresholds"] == {"T1": {"warn": 4e-5, "fail": 2e-5}}
+
+    def test_a_bound_posted_at_the_default_removes_only_that_bound(self, inst):
+        base = chip_health.DEFAULT_THRESHOLDS["T1"]
+        spec_thresholds.save(inst, {"T1": {"warn": 4e-5, "fail": 2e-5},
+                                    "T2echo": {"warn": 2.5e-5}})
+        spec_thresholds.save(inst, {"T1": {"warn": base["warn"]}})
+        raw = json.loads(spec_thresholds.spec_path(inst).read_text(encoding="utf-8"))
+        assert raw["thresholds"] == {"T1": {"fail": 2e-5}, "T2echo": {"warn": 2.5e-5}}
+        spec_thresholds.save(inst, {"T1": {"warn": base["warn"], "fail": base["fail"]}})
+        raw = json.loads(spec_thresholds.spec_path(inst).read_text(encoding="utf-8"))
+        assert raw["thresholds"] == {"T2echo": {"warn": 2.5e-5}}
+
+    def test_over_the_route_too(self, tmp_path):
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        a, b = app.test_client(), app.test_client()
+        a.post("/chip-status/spec",
+               data={"metrics": json.dumps({"T1": {"warn": 4e-5, "fail": 2e-5}})})
+        r = b.post("/chip-status/spec",
+                   data={"metrics": json.dumps({"T2echo": {"warn": 2.5e-5}})})
+        spec = r.get_json()["spec"]
+        # B's answer carries A's band, which is how B's page learns of it
+        assert spec["metrics"]["T1"]["warn"] == 4e-5
+        assert spec["metrics"]["T2echo"]["warn"] == 2.5e-5
+
+
+class TestAFailedWriteIsAnAnswer:
+    """QA chipstatus-r2-05: a disk that refuses the write must reach the client
+    as ``{ok: false, error}`` -- an HTML 500 could only be reported as 'HTTP
+    500', and before the client fix it was reported as 'saved'."""
+
+    def test_save_and_clear_say_why(self, tmp_path, monkeypatch):
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        c = app.test_client()
+
+        def boom(*_a, **_k):
+            raise PermissionError(13, "Permission denied")
+
+        monkeypatch.setattr(spec_thresholds, "save", boom)
+        monkeypatch.setattr(spec_thresholds, "clear", boom)
+        for url, data in (("/chip-status/spec",
+                           {"metrics": json.dumps({"T1": {"warn": 4e-5}})}),
+                          ("/chip-status/spec/clear", {})):
+            r = c.post(url, data=data)
+            assert r.status_code == 500 and r.is_json, url
+            j = r.get_json()
+            assert j["ok"] is False and "Permission denied" in j["error"], j
+
+
 class TestRoutes:
     @pytest.fixture
     def client(self, tmp_path):
@@ -213,18 +278,45 @@ class TestTheClientStoppedOwningIt:
 
     def test_pressing_apply_actually_posts(self):
         """Grepping for the URL is not enough: it lives in _postSpec, which a
-        commit path could simply stop calling. The pin is on the CALL."""
+        commit path could simply stop calling. The pin is on the CALL.
+
+        QA chipstatus-r2-06: the call posts ``changed`` -- only the bounds
+        this press edited -- where it used to post the whole in-memory set,
+        which let a stale tab erase another window's bands. (This pin used to
+        assert ``_postSpec(thresholds)``, the very call that did it.)"""
         js = self._js()
         body = js[js.index("window.applyThresholds = function"):]
         body = body[:body.index("window.toggleThresholdEditor")]
-        assert "_postSpec(thresholds)" in body
+        assert "_postSpec(changed)" in body
+        assert "_postSpec(thresholds)" not in body
         assert "localStorage" not in body
 
     def test_resetting_one_metric_posts_too(self):
+        """...and posts that ONE metric (QA chipstatus-r2-06; the pin used to
+        assert the whole-set ``_postSpec(thresholds)``)."""
         js = self._js()
         body = js[js.index("window.resetMetricThreshold = function"):]
         body = body[:body.index("// ── Cell colour")] if "// ── Cell colour" in body else body[:1200]
-        assert "_postSpec(thresholds)" in body
+        assert "_postSpec(one)" in body
+        assert "_postSpec(thresholds)" not in body
+
+    def test_the_save_paths_are_pinned_under_jsdom(self):
+        """QA chipstatus-r2-05/-06: a failed save says NOT saved and reverts,
+        Apply posts only the edited bound, a success adopts the server's merged
+        answer, and opening the editor re-reads it. Drives
+        tests/thresh_save_selfcheck.cjs over the real shipped JS."""
+        import shutil
+        import subprocess
+
+        if shutil.which("node") is None:
+            pytest.skip("node not on PATH")
+        r = subprocess.run(
+            ["node", str(_ROOT / "tests" / "thresh_save_selfcheck.cjs")],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            cwd=str(_ROOT), timeout=120)
+        if r.returncode == 2 and "jsdom not installed" in (r.stderr or ""):
+            pytest.skip("jsdom not installed")
+        assert r.returncode == 0, (r.stdout + r.stderr)
 
     def test_the_old_key_is_read_exactly_once_to_migrate(self):
         js = self._js()

@@ -60,7 +60,7 @@ win.htmx = { ajax: function () {} };
 // The editor POSTs its bands; hold every request so nothing races the asserts.
 const posts = [];
 win.fetch = function (url, opts) {
-  posts.push({ url: String(url), body: opts && opts.body });
+  posts.push({ url: String(url), body: opts && opts.body, method: opts && opts.method });
   return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve({ ok: true }); } });
 };
 new win.Function(read('app.js') + '\n;\n' + read('topo-graph.js') + '\n;\n'
@@ -107,8 +107,12 @@ ok(/Update colour bands/i.test(status.textContent),
   'B3: …naming the control that would commit it');
 // Count the THRESHOLD door only: app.js polls /state/live-diff in the
 // background, and "any fetch happened" is not the question being asked.
+// WRITES only (QA chipstatus-r2-06): opening the editor now re-reads the
+// server's bands with a GET, which sends nothing.
 const specPosts = function () {
-  return posts.filter(function (p) { return /chip-status\/spec/.test(p.url); });
+  return posts.filter(function (p) {
+    return /chip-status\/spec/.test(p.url) && p.method === 'POST';
+  });
 };
 ok(specPosts().length === 0, 'B4: and nothing was sent — the commit really is explicit');
 

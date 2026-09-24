@@ -114,26 +114,39 @@ def save(instance_path, metrics: dict[str, Any]) -> dict[str, Any]:
     correction to a seed value would never reach a lab that had once pressed
     Apply — the bug where "we use the defaults" quietly means "we use the
     defaults as they were in August".
-    """
-    out: dict[str, dict[str, float]] = {}
-    for key, band in (metrics or {}).items():
-        base = chip_health.DEFAULT_THRESHOLDS.get(key)
-        if not base or not isinstance(band, dict):
-            continue
-        diff: dict[str, float] = {}
-        for bound in _BOUNDS:
-            value = band.get(bound)
-            if not isinstance(value, (int, float)) or isinstance(value, bool):
-                continue
-            if abs(float(value) - float(base[bound])) > 1e-12 * max(1.0, abs(float(base[bound]))):
-                diff[bound] = float(value)
-        if diff:
-            out[key] = diff
 
+    A MERGE, not a replace (QA chipstatus-r2-06). Only the bounds named in
+    ``metrics`` are touched: a posted bound that differs from the default is
+    stored, one equal to the default is removed ("this bound back to SM's
+    seed"), and every bound nobody posted stays as it is. The file is re-read
+    inside the lock, so two windows saving DIFFERENT bands both survive -- a
+    whole-file replace let a tab opened earlier erase another window's bands
+    with its stale copy. Two windows editing the SAME bound are still
+    last-writer-wins; ``clear`` is the one explicit whole-spec reset.
+    """
     path = spec_path(instance_path)
     with _lock:
+        current = _read(path)
+        for key, band in (metrics or {}).items():
+            base = chip_health.DEFAULT_THRESHOLDS.get(key)
+            if not base or not isinstance(band, dict):
+                continue
+            stored = current.get(key)
+            stored = dict(stored) if isinstance(stored, dict) else {}
+            for bound in _BOUNDS:
+                value = band.get(bound)
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    continue
+                if abs(float(value) - float(base[bound])) > 1e-12 * max(1.0, abs(float(base[bound]))):
+                    stored[bound] = float(value)
+                else:
+                    stored.pop(bound, None)
+            if any(b in stored for b in _BOUNDS):
+                current[key] = stored
+            else:
+                current.pop(key, None)
         path.parent.mkdir(parents=True, exist_ok=True)
-        safe_io.atomic_write_json(path, {"version": 1, "thresholds": out})
+        safe_io.atomic_write_json(path, {"version": 1, "thresholds": current})
     return resolve(instance_path)
 
 

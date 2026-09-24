@@ -10123,6 +10123,31 @@ def chip_status_report():
             except (OverflowError, OSError, ValueError):
                 pass
 
+    # QA F-13: a modern chip stores xy.intermediate_frequency as the quam
+    # alias "#./inferred_intermediate_frequency" (a Python property, never
+    # resolved), so the MHz column printed the pointer. The report shows the
+    # NUMBER quam computes (RF - LO), or '-' when it cannot be read. A side
+    # map: the engine-cached qubit dicts -- which the inspector shows as the
+    # editable pointer -- are not touched.
+    def _hz(v):
+        return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+    merged_q = store.merged.get("qubits") or {}
+    xy_freq: dict[str, dict] = {}
+    for q in qubits:
+        qid = q.get("id")
+        rf = if_ = None
+        try:
+            qobj = merged_q.get(qid)
+            rf, if_ = cr_semantics.channel_effective_rf_if(
+                store, qobj.get("xy") if isinstance(qobj, dict) else None,
+                ("qubits", str(qid), "xy"))
+        except Exception as exc:  # noqa: BLE001 -- a cell degrades, never the page
+            logger.warning("report xy frequencies(%r) failed: %s", qid, exc)
+        xy_freq[qid] = {
+            "rf_hz": rf if rf is not None else _hz(q.get("xy_RF_frequency")),
+            "if_hz": if_ if if_ is not None else _hz(q.get("xy_intermediate_frequency")),
+        }
+
     return render_template(
         "chip_report.html",
         has_chip=True,
@@ -10139,6 +10164,7 @@ def chip_status_report():
         gate_params=_report_gate_param_rows(pairs),
         cal=cal,
         qdac_qubits=[q for q in qubits if q.get("has_qdac")],
+        xy_freq=xy_freq,
     )
 
 
@@ -24721,13 +24747,22 @@ def chip_spec_set():
         return jsonify(ok=False, error="metrics must be JSON"), 400
     if not isinstance(metrics, dict):
         return jsonify(ok=False, error="metrics must be an object"), 400
-    return jsonify(ok=True, spec=spec_thresholds.save(
-        current_app.instance_path, metrics))
+    # QA chipstatus-r2-05: a disk that refuses the write is an answer the
+    # client must be able to read ("NOT saved -- why"), not an HTML 500.
+    try:
+        spec = spec_thresholds.save(current_app.instance_path, metrics)
+    except OSError as exc:
+        return jsonify(ok=False, error=f"could not write the spec file: {exc}"), 500
+    return jsonify(ok=True, spec=spec)
 
 
 @bp.route("/chip-status/spec/clear", methods=["POST"])
 def chip_spec_clear():
-    return jsonify(ok=True, spec=spec_thresholds.clear(current_app.instance_path))
+    try:
+        spec = spec_thresholds.clear(current_app.instance_path)
+    except OSError as exc:
+        return jsonify(ok=False, error=f"could not write the spec file: {exc}"), 500
+    return jsonify(ok=True, spec=spec)
 
 
 @bp.route("/notes")

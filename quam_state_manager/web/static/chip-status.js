@@ -248,6 +248,9 @@ window.ChipStatus.liveDiff = (function () {
 window.ChipStatus.mount = function (opts) {
     opts = opts || {};
     var topo = opts.topo || {nodes: [], edges: []};
+    // What this render was built from, so liveDetection's refresh can tell a
+    // real topology change from a mutation that moved nothing on this page.
+    window.ChipStatus._renderedSig = window.ChipStatus._topoSig(topo);
     var rawWiring = opts.rawWiring || {};
     var _defaultThresholds = opts.defaultThresholds || {};
     var diagFindings = opts.diagFindings || [];
@@ -307,14 +310,37 @@ window.ChipStatus.mount = function (opts) {
         Object.keys(t).forEach(function(k) { out[k] = { warn: t[k].warn, fail: t[k].fail }; });
         return out;
     }
+    // QA chipstatus-r2-05: a failed save used to resolve exactly like a
+    // successful one (no r.ok check, `.catch(() => null)`), so Apply printed
+    // "saved for everyone" over bands the server never took. The answer now
+    // SAYS whether the server stored it: {ok:true, spec} or {ok:false, error}.
+    // QA chipstatus-r2-06: `t` is only what this press changed, the server
+    // merges it into the file, and a success adopts the server's MERGED
+    // answer -- so a band another window saved meanwhile shows up here
+    // instead of being erased by this tab's stale copy.
+    function _specAnswer(r) {
+        return r.json().catch(function () { return null; }).then(function (j) {
+            if (!r.ok || !j || j.ok !== true) {
+                return { ok: false, error: (j && j.error) || ('HTTP ' + r.status) };
+            }
+            return j;
+        });
+    }
     function _postSpec(t) {
         var body = new FormData();
         body.append('metrics', JSON.stringify(_specOf(t)));
         return fetch('/chip-status/spec', { method: 'POST', body: body,
                                             headers: { 'X-Requested-With': 'XMLHttpRequest' } })
-            .then(function (r) { return r.json(); })
-            .then(function (j) { if (j && j.spec) _labSpec = j.spec; return j; })
-            .catch(function () { return null; });
+            .then(_specAnswer)
+            .then(function (j) {
+                if (j.ok && j.spec) {
+                    _labSpec = j.spec;
+                    thresholds = _loadThresholds(_defaultThresholds);
+                    window._chipThresholds = thresholds;
+                }
+                return j;
+            })
+            .catch(function () { return { ok: false, error: 'server unreachable' }; });
     }
     function _loadThresholds(defaults) {
         // The server already merged the lab's bands over the defaults, so this
@@ -617,13 +643,16 @@ window.ChipStatus.mount = function (opts) {
             var out = [], dropped = 0;
             topo.edges.forEach(function(e) {
                 if (!e.gate_fidelities) return;
-                var best = null, worst = null;
+                // QA F-04: each tile takes its OWN per-pair best, so two tiles
+                // can quote two different pulses of one pair -- every entry
+                // carries the pulse it came from, and the hover names it.
+                var best = null, worst = null, bestGate = null, worstGate = null;
                 e.gate_fidelities.forEach(function(gf) {
                     if (!match(gf.metric)) return;
                     if (gf.physical === false) dropped++;
                     var v = typeof gf.value === 'number' ? gf.value
                           : typeof gf.average_gate_fidelity === 'number' ? gf.average_gate_fidelity : null;
-                    if (v != null && (best == null || v > best)) best = v;
+                    if (v != null && (best == null || v > best)) { best = v; bestGate = gf.gate; }
                     // the server dropped `value` and kept the number in
                     // `raw_value` (query._gate_fidelity_row) -- a fidelity
                     // outside (0,1]. It is never a candidate for `best`, but
@@ -631,10 +660,10 @@ window.ChipStatus.mount = function (opts) {
                     // is the failure this project keeps fixing (docs/94).
                     var r = typeof gf.raw_value === 'number' ? gf.raw_value
                           : typeof gf.raw_average_gate_fidelity === 'number' ? gf.raw_average_gate_fidelity : null;
-                    if (r != null && (worst == null || Math.abs(r - 1) > Math.abs(worst - 1))) worst = r;
+                    if (r != null && (worst == null || Math.abs(r - 1) > Math.abs(worst - 1))) { worst = r; worstGate = gf.gate; }
                 });
-                if (best != null) out.push({ id: _pairId(e), v: best });
-                else if (worst != null) out.push({ id: _pairId(e), v: worst, bad: true });
+                if (best != null) out.push({ id: _pairId(e), v: best, gate: bestGate });
+                else if (worst != null) out.push({ id: _pairId(e), v: worst, bad: true, gate: worstGate });
             });
             out.excluded = dropped;
             return out;
@@ -665,13 +694,13 @@ window.ChipStatus.mount = function (opts) {
             var out = [];
             topo.edges.forEach(function(e) {
                 if (!e.gate_fidelities) return;
-                var best = null;
+                var best = null, bestGate = null;
                 e.gate_fidelities.forEach(function(gf) {
                     if (!match(gf.metric)) return;
                     var v = typeof gf[field] === 'number' ? gf[field] : null;
-                    if (v != null && (best == null || v > best)) best = v;
+                    if (v != null && (best == null || v > best)) { best = v; bestGate = gf.gate; }
                 });
-                if (best != null) out.push({ id: _pairId(e), v: best });
+                if (best != null) out.push({ id: _pairId(e), v: best, gate: bestGate });
             });
             return out;
         }
@@ -790,12 +819,12 @@ window.ChipStatus.mount = function (opts) {
         var irbEpcE = [], irbEpcDiv = null;
         topo.edges.forEach(function(e) {
             if (!e.gate_fidelities) return;
-            var bestF = null, div = null;
+            var bestF = null, div = null, bestGate = null;
             e.gate_fidelities.forEach(function(gf) {
                 if (isIRB(gf.metric)) {
                     var v = typeof gf.value === 'number' ? gf.value
                           : typeof gf.average_gate_fidelity === 'number' ? gf.average_gate_fidelity : null;
-                    if (v != null && (bestF == null || v > bestF)) bestF = v;
+                    if (v != null && (bestF == null || v > bestF)) { bestF = v; bestGate = gf.gate; }
                 }
                 if (typeof gf.average_gates_per_clifford === 'number') div = gf.average_gates_per_clifford;
             });
@@ -809,8 +838,8 @@ window.ChipStatus.mount = function (opts) {
             // median, min/max and colour scale -- a silently smaller N is the
             // failure this project keeps fixing.
             irbEpcE.push(epc <= IRB_EPC_CEILING + IRB_EPC_EPS
-                ? { id: _pairId(e), v: 1 - epc }
-                : { id: _pairId(e), v: 1 - epc, bad: true });
+                ? { id: _pairId(e), v: 1 - epc, gate: bestGate }
+                : { id: _pairId(e), v: 1 - epc, bad: true, gate: bestGate });
         });
         var irbEpcAgg = aggE(irbEpcE);
         var irbEpcDropped = irbEpcE.filter(function(x) { return x.bad; }).length;
@@ -839,13 +868,13 @@ window.ChipStatus.mount = function (opts) {
         // falling back to the first gate that states one.
         var gateLenE = [];
         topo.edges.forEach(function(e) {
-            var gd = e.gate_details || [], pick = null;
+            var gd = e.gate_details || [], pick = null, pickGate = null;
             gd.forEach(function(g) {
                 if (typeof g.length !== 'number') return;
-                if (e.best_gate && g.name === e.best_gate) pick = g.length;
-                else if (pick == null) pick = g.length;
+                if (e.best_gate && g.name === e.best_gate) { pick = g.length; pickGate = g.name; }
+                else if (pick == null) { pick = g.length; pickGate = g.name; }
             });
-            if (pick != null) gateLenE.push({ id: _pairId(e), v: pick });
+            if (pick != null) gateLenE.push({ id: _pairId(e), v: pick, gate: pickGate });
         });
         var lenAgg = computeAggregates(gateLenE.map(function(x) { return x.v; }));
         function nsF(v) { return (Math.round(v * 10) / 10) + ' ns'; }
@@ -976,7 +1005,7 @@ window.ChipStatus.mount = function (opts) {
             irb:      { kind: 'pair',  fmt: pct, range: fidRange, entries: collect2QE(isIRB) },
             irb_cliff:{ kind: 'pair',  fmt: pct, range: fidRange, entries: irbEpcE },
             gate2q:   { kind: 'pair',  fmt: pct, range: [0.95, 0],
-                        entries: topo.edges.map(function(e) { return { id: _pairId(e), v: e.cz_fidelity }; }) },
+                        entries: topo.edges.map(function(e) { return { id: _pairId(e), v: e.cz_fidelity, gate: e.best_gate }; }) },
             gate2q_len: { kind: 'pair', fmt: nsF, range: null, entries: gateLenE },
             t1:       { kind: 'qubit', fmt: us, range: tRange, entries: nodeEntries('T1') },
             t2ramsey: { kind: 'qubit', fmt: us, range: tRange, entries: nodeEntries('T2ramsey') }
@@ -995,7 +1024,7 @@ window.ChipStatus.mount = function (opts) {
                     kind: a.key === 'cz_fidelity' ? 'pair' : 'qubit',
                     fmt: _ovFmtFor(a.key), range: _ovRangeFor(a.key),
                     entries: a.key === 'cz_fidelity'
-                        ? topo.edges.map(function(e) { return { id: _pairId(e), v: e.cz_fidelity }; })
+                        ? topo.edges.map(function(e) { return { id: _pairId(e), v: e.cz_fidelity, gate: e.best_gate }; })
                         : nodeEntries(a.key)
                 };
             }
@@ -1188,16 +1217,21 @@ window.ChipStatus.mount = function (opts) {
                       : ' title="its source was refused \u2014 the readout confusion'
                         + ' matrix is not a distribution, so no value can be derived'
                         + ' from it; see Diagnostics"';
+            // QA F-04: the pulse this pair's number came from, in its own span
+            // so the value's text stays exactly the formatted number.
+            var gate = (typeof x.gate === 'string' && x.gate)
+                ? '<span class="ov-hover-gate">' + _esc(x.gate) + '</span>' : '';
             return '<span class="ov-hover-item">' + dot
                  + '<span class="ov-hover-id">' + _esc(x.id) + '</span>'
                  + '<span class="ov-hover-val' + vCls + '"' + vTit + '>'
-                 + (num ? d.fmt(x.v) : '\u2014') + '</span></span>';
+                 + (num ? d.fmt(x.v) : '\u2014') + '</span>' + gate + '</span>';
         }).join('');
+        var hasGate = list.slice(0, CAP).some(function(x) { return typeof x.gate === 'string' && x.gate; });
         var pop = document.createElement('div');
         pop.id = 'ov-hover-pop';
         if (list.length > 10) pop.className = 'ov-hover-wide';
         pop.innerHTML = '<div class="ov-hover-title">' + _esc(title) + ' \u00b7 per ' + d.kind + '</div>'
-            + '<div class="ov-hover-grid">' + rows + '</div>'
+            + '<div class="ov-hover-grid' + (hasGate ? ' ov-hover-grid-gate' : '') + '">' + rows + '</div>'
             + (more ? '<div class="ov-hover-more">\u2026and ' + more + ' more</div>' : '');
         document.body.appendChild(pop);
         var r = tileEl.getBoundingClientRect ? tileEl.getBoundingClientRect() : { top: 0, bottom: 0, left: 0 };
@@ -3480,8 +3514,13 @@ window.ChipStatus.mount = function (opts) {
             if (lt) items.push({ id: lt.id, v: us(_mval(lt, 'T1')), t: 'lowest T1',
                                  vr: _verdict(_mval(lt, 'T1'), thresholds.T1), kind: 'q' });
             var lc = lowest(edges, 'cz_fidelity');
+            // QA F-04: "Bell" only when the number IS the Bell-state one
+            // (fidelity_source 'macro'); an interleaved-RB or channel number
+            // is a gate fidelity, and the pulse that won it is named.
             if (lc) items.push({ id: lc.pair_id, v: pct(_mval(lc, 'cz_fidelity')),
-                                 t: 'lowest ' + (((topo.summary || {}).gate_vocab) || 'CZ') + ' Bell',
+                                 t: 'lowest ' + (((topo.summary || {}).gate_vocab) || 'CZ')
+                                    + (lc.fidelity_source === 'macro' ? ' Bell' : ' gate fid.')
+                                    + (lc.best_gate ? ' (' + lc.best_gate + ')' : ''),
                                  vr: _verdict(_mval(lc, 'cz_fidelity'), thresholds.cz_fidelity), kind: 'p' });
             var oq = nodes.filter(function(n) { return n.last_calibrated; });
             if (oq.length) {
@@ -3628,20 +3667,57 @@ window.ChipStatus.mount = function (opts) {
     }
     window._threshMarkDirty = _threshMarkDirty;
 
+    // Back to the bands the server holds (after a refused write): `_labSpec`
+    // only ever changes on a server answer, so it IS the last saved state.
+    function _revertToSaved(msg, draft) {
+        thresholds = _loadThresholds(_defaultThresholds);
+        window._chipThresholds = thresholds;
+        buildThresholdEditor();
+        buildHealthSummary();
+        // the typed values stay in their fields, marked as not applied
+        var h = document.getElementById('topo-thresh-editor');
+        (draft || []).forEach(function (d) {
+            var inp = h && h.querySelector('.thresh-in[data-metric="' + d.k + '"][data-bound="' + d.bound + '"]');
+            if (inp) inp.value = d.value;
+        });
+        _threshMarkDirty();
+        var st = document.getElementById('thresh-status');
+        if (st) { st.classList.add('thresh-status-dirty'); st.textContent = msg; }
+    }
     window.applyThresholds = function() {
         var host = document.getElementById('topo-thresh-editor'); if (!host) return;
+        // QA chipstatus-r2-06: only the bounds this person changed -- the same
+        // typed-vs-saved comparison _threshMarkDirty draws. Re-posting every
+        // field let a tab opened earlier erase another window's saved bands,
+        // and re-rounded every untouched band through its display string.
+        var changed = {}, draft = [];
         host.querySelectorAll('.thresh-in').forEach(function(inp) {
             var k = inp.getAttribute('data-metric'), bound = inp.getAttribute('data-bound');
+            if (String(inp.value) === String(inp.getAttribute('data-saved'))) return;
             var disp = METRIC_DISPLAY[k] || { scale: 1 };
             var v = parseFloat(inp.value);
-            if (!isNaN(v) && thresholds[k]) thresholds[k][bound] = v / disp.scale;
+            if (isNaN(v) || !thresholds[k]) return;
+            thresholds[k][bound] = v / disp.scale;
+            (changed[k] = changed[k] || {})[bound] = v / disp.scale;
+            draft.push({ k: k, bound: bound, value: inp.value });
         });
+        if (!draft.length) {
+            var s0 = document.getElementById('thresh-status');
+            if (s0) s0.textContent = 'nothing changed · ' + ((_labSpec && _labSpec.summary) || 'all at spec default')
+                + ' · shared with everyone using this SM';
+            return;
+        }
         window._chipThresholds = thresholds;
         buildThresholdEditor();   // refresh the default/edited markers + reset state
         buildHealthSummary();
         var st = document.getElementById('thresh-status');
         if (st) { st.textContent = 'saving…'; }
-        _postSpec(thresholds).then(function () {
+        _postSpec(changed).then(function (res) {
+            if (!res || !res.ok) {
+                _revertToSaved('✗ NOT saved — ' + ((res && res.error) || 'no answer')
+                               + ' · colour bands unchanged', draft);
+                return;
+            }
             buildThresholdEditor();
             buildHealthSummary();
             var s2 = document.getElementById('thresh-status');
@@ -3653,17 +3729,55 @@ window.ChipStatus.mount = function (opts) {
     window.toggleThresholdEditor = function() {
         var host = document.getElementById('topo-thresh-editor');
         if (!host) return;
-        if (host.hidden) { buildThresholdEditor(); host.hidden = false; } else { host.hidden = true; }
+        if (host.hidden) { buildThresholdEditor(); host.hidden = false; _refreshSpec(); } else { host.hidden = true; }
     };
+    // QA chipstatus-r2-06: another window may have saved bands since this page
+    // rendered. Opening the editor, and coming back to the tab, re-read the
+    // server's answer -- never over a field typed and not yet applied.
+    function _refreshSpec() {
+        return fetch('/chip-status/spec', { cache: 'no-store',
+                                            headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (j) {
+                if (!j || !j.metrics || !document.getElementById('topo-health-tiles')) return;
+                if (_threshMarkDirty() > 0) return;
+                if (window.ChipStatus._topoSig(j) === window.ChipStatus._topoSig(_labSpec)) return;
+                _labSpec = j;
+                thresholds = _loadThresholds(_defaultThresholds);
+                window._chipThresholds = thresholds;
+                var host = document.getElementById('topo-thresh-editor');
+                if (host && !host.hidden) buildThresholdEditor();
+                buildHealthSummary();
+            })
+            .catch(function () {});
+    }
+    function _specOnVisible() { if (!document.hidden) _refreshSpec(); }
+    document.addEventListener('visibilitychange', _specOnVisible);
+    document.body.addEventListener('htmx:beforeSwap', function _specTeardown(evt) {
+        if (evt.detail && evt.detail.target && evt.detail.target.id === 'table-pane') {
+            document.removeEventListener('visibilitychange', _specOnVisible);
+            document.body.removeEventListener('htmx:beforeSwap', _specTeardown);
+        }
+    });
     window.resetThresholds = function() {
-        thresholds = JSON.parse(JSON.stringify(_defaultThresholds));
-        window._chipThresholds = thresholds;
+        // QA chipstatus-r2-05: a refused clear used to rebuild as if it had
+        // worked. The bands are the defaults only once the server says so.
         fetch('/chip-status/spec/clear', { method: 'POST',
                                            headers: { 'X-Requested-With': 'XMLHttpRequest' } })
-            .then(function (r) { return r.json(); })
-            .then(function (j) { if (j && j.spec) _labSpec = j.spec;
-                                 buildThresholdEditor(); buildHealthSummary(); })
-            .catch(function () { buildThresholdEditor(); buildHealthSummary(); });
+            .then(_specAnswer)
+            .catch(function () { return { ok: false, error: 'server unreachable' }; })
+            .then(function (res) {
+                if (!res.ok) {
+                    _revertToSaved('✗ NOT reset — ' + (res.error || 'no answer')
+                                   + ' · colour bands unchanged');
+                    return;
+                }
+                if (res.spec) _labSpec = res.spec;
+                thresholds = res.spec ? _loadThresholds(_defaultThresholds)
+                                      : JSON.parse(JSON.stringify(_defaultThresholds));
+                window._chipThresholds = thresholds;
+                buildThresholdEditor(); buildHealthSummary();
+            });
     };
     // Reset ONE metric back to its spec default (mirrors applyThresholds' commit
     // order: persist → editor rebuild → summary).
@@ -3673,7 +3787,14 @@ window.ChipStatus.mount = function (opts) {
         thresholds[k].warn = d.warn;
         thresholds[k].fail = d.fail;
         window._chipThresholds = thresholds;
-        _postSpec(thresholds).then(function () {
+        // QA chipstatus-r2-06: this metric only -- never re-post the others.
+        var one = {}; one[k] = { warn: d.warn, fail: d.fail };
+        _postSpec(one).then(function (res) {
+            if (!res || !res.ok) {   // QA chipstatus-r2-05
+                _revertToSaved('✗ NOT reset — ' + ((res && res.error) || 'no answer')
+                               + ' · colour bands unchanged');
+                return;
+            }
             buildThresholdEditor();
             buildHealthSummary();
         });
@@ -3886,6 +4007,22 @@ window.ChipStatus.reportHref = function (linkEl, fmt) {
     return true;   // allow the default download with the thresholds-carrying href
 };
 
+// Canonical (sorted-key) serialization of a topology payload: the page embeds
+// json.dumps(topology) and /api/topology goes through jsonify, which sorts
+// keys, so a plain JSON.stringify would call two equal payloads different.
+window.ChipStatus._topoSig = function (o) {
+    function canon(v) {
+        if (Array.isArray(v)) return v.map(canon);
+        if (v && typeof v === 'object') {
+            var out = {};
+            Object.keys(v).sort().forEach(function (k) { out[k] = canon(v[k]); });
+            return out;
+        }
+        return v;
+    }
+    try { return JSON.stringify(canon(o)); } catch (e) { return String(Math.random()); }
+};
+
 window.ChipStatus.liveDetection = function () {
     var POLL_MS = (UI_CONFIG.topoLivePollInterval || 3) * 1000;
     if (POLL_MS <= 0) return;  // disabled
@@ -3967,17 +4104,31 @@ window.ChipStatus.liveDetection = function () {
     // the app signals a state mutation. Debounced so rapid edits coalesce into one
     // fetch, and guarded on the dashboard still being mounted (the events fire
     // app-wide, including from pages that don't own these tiles).
+    // QA chipstatus-r2-01: this function lives OUTSIDE mount, so the old body
+    // (`topo = data; buildHealthSummary(); ...`) leaked a global `topo` and
+    // threw a swallowed ReferenceError -- nothing ever refreshed, and after a
+    // Ctrl+Z the page showed a value the chip no longer had. Even working, it
+    // re-derived only Health/Overview; the hero, heatmaps and 2Q panels are
+    // one-shot builders over mount's topo. So a real change re-renders the
+    // pane through its one render path (the same builder /api/topology uses),
+    // and a mutation that changed nothing here re-renders nothing. No ?view=:
+    // a deep link would smooth-scroll and fight the scroll restore.
     var metricsRefreshTimer = null;
     function refreshMetrics() {
         if (!document.getElementById('topo-health-tiles')) return;  // not mounted
         fetch('/api/topology', { cache: 'no-store' })
             .then(function(r) { return r.ok ? r.json() : null; })
             .then(function(data) {
-                if (!data || !document.getElementById('topo-health-tiles')) return;
-                topo = data;                       // reassign the closure's topo…
-                buildHealthSummary();              // …then re-derive every consumer
-                buildOverviewTiles();              //    so tiles + graph stay in sync
-                if (window._recolorTopology) window._recolorTopology();
+                if (!data || data.error || !document.getElementById('topo-health-tiles')) return;
+                var sig = window.ChipStatus._topoSig(data);
+                if (sig === window.ChipStatus._renderedSig) return;
+                // a threshold typed and not applied is never wiped by a
+                // re-render; the next mutation (or a reload) catches up
+                if (window._threshMarkDirty && window._threshMarkDirty() > 0) return;
+                window.ChipStatus._renderedSig = sig;   // an undo's second fetch is a no-op
+                if (!window.htmx || !document.getElementById('table-pane')) return;
+                if (typeof window._keepPaneScroll === 'function') window._keepPaneScroll();
+                window.htmx.ajax('GET', '/topology', { target: '#table-pane', swap: 'innerHTML' });
             })
             .catch(function() {});
     }

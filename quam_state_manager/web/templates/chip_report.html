@@ -147,7 +147,9 @@
     <h2>Qubits &mdash; frequencies ({{ qubits | length }})</h2>
     <p class="rep-cap">f&#8321;&#8320; and f&#8321;&#8322; are the qubit transitions;
        &alpha; is the anharmonicity f&#8321;&#8322;&minus;f&#8320;&#8321;, &chi; the
-       dispersive shift. &quot;Last cal.&quot; is the freshest timestamp anywhere
+       dispersive shift. xy IF is RF &minus; LO (the LO read from the drive
+       port), the arithmetic quam itself runs for an IF the file stores as
+       inferred; &ldquo;-&rdquo; where it cannot be read. &quot;Last cal.&quot; is the freshest timestamp anywhere
        in that qubit.</p>
     <table class="rep-wide">
         <thead><tr><th>ID</th><th>Active</th><th>Grid</th>
@@ -164,8 +166,9 @@
             <td>{{ q.f_12 | qty('f_12') }}</td>
             <td>{{ q.anharmonicity | qty('anharmonicity') }}</td>
             <td>{{ q.chi | qty('chi') }}</td>
-            <td>{{ q.xy_RF_frequency | qty('xy_RF_frequency') }}</td>
-            <td>{{ q.xy_intermediate_frequency | qty('xy_intermediate_frequency') }}</td>
+            {% set xf = (xy_freq or {}).get(q.id) or {} %}
+            <td>{{ xf.rf_hz | qty('xy_RF_frequency') }}</td>
+            <td>{{ xf.if_hz | qty('xy_intermediate_frequency') }}</td>
             <td>{{ cal.get(q.id) or '-' }}</td>
         </tr>
         {% endfor %}

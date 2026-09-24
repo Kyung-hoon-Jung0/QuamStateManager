@@ -272,3 +272,38 @@ class TestNoDataIsNotInSpec:
         i = css.index(".topo-verdict-banner.unknown")
         rule = css[i:i + 220]
         assert "success" not in rule
+
+
+def _run_selfcheck(name):
+    """Run one tests/<name> jsdom selfcheck over the shipped JS; skip without
+    node or jsdom, fail on a non-zero exit."""
+    import shutil
+    import subprocess
+
+    import pytest
+
+    if shutil.which("node") is None:
+        pytest.skip("node not on PATH")
+    root = Path(__file__).resolve().parent.parent
+    r = subprocess.run(
+        ["node", str(root / "tests" / name)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        cwd=str(root), timeout=120,
+    )
+    if r.returncode == 2 and "jsdom not installed" in (r.stderr or ""):
+        pytest.skip("jsdom not installed")
+    assert r.returncode == 0, (r.stdout + r.stderr)
+
+
+def test_an_in_app_mutation_rerenders_chip_status():
+    """QA chipstatus-r2-01: an edit, a Ctrl+Z or a Take live must refresh the
+    page. A changed /api/topology re-renders #table-pane via GET /topology, an
+    unchanged one does nothing, and no global `topo` leaks."""
+    _run_selfcheck("chip_status_refresh_selfcheck.cjs")
+
+
+def test_every_2q_overview_number_names_its_pulse():
+    """QA F-04: each pair tile takes its own per-pair best, so the hover names
+    the pulse behind every number, and Health says "Bell" only for a
+    Bell-state number."""
+    _run_selfcheck("chip_status_pulse_attr_selfcheck.cjs")
