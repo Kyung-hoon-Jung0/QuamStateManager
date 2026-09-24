@@ -4115,6 +4115,9 @@ window._patchOrRefreshLiveSurface = _patchOrRefreshLiveSurface;
 
 function _softRefreshLiveSurface() {
     if (!window.htmx) return;
+    // jsontree-r2-17: an open / in-flight tree edit lands BEFORE the re-fetch.
+    var _w = window.TreeInlineEdit && window.TreeInlineEdit.settle(document.getElementById("table-pane"));
+    if (_w) { _w.then(_softRefreshLiveSurface); return; }
     if (document.getElementById("explorer-tree-state")) {
         window.htmx.ajax("GET", "/explorer", {target: "#table-pane", swap: "innerHTML"});
         return;
@@ -7697,6 +7700,9 @@ window.clearDetailPanelSearch = function(btnEl) {
         if (typeof v === "boolean") return v ? "true" : "false";
         if (typeof v === "string") return '"' + v + '"';
         if (typeof v === "number") return _groupDigits(v);
+        // jsontree-r2-08: an array/object echoed into a leaf row read as '1,2'
+        // (a grouped 12, a European 1.2) -- show its JSON literal instead.
+        if (v !== null && typeof v === "object") return JSON.stringify(v);
         return String(v);
     }
 
@@ -8051,6 +8057,66 @@ window.clearDetailPanelSearch = function(btnEl) {
     }
 
     /** Materialise lazy children for a container node (called once on first expand). */
+    /* JT-07: a pending tint follows the TRAY (the server change log -- the
+       single truth docs/146 set for every pending marker), not the render.
+       It was only ever added at the commit sites, so a reload, a soft
+       refresh, a lazily built row or a redo (whose repaint strips it) showed
+       an unapplied value untinted while /bulk still marked it. Explorer trees
+       only; no tray, or one without a numeric count, is no opinion.
+       One pass over the RENDERED rows (hash lookups), never a per-path DOM
+       query. `addOnly` (a freshly built branch) never removes. A row that is
+       an ancestor of a pending path keeps a tint it already has: create-key
+       tints the parent dict row. */
+    var _PENDING_TREES = ["explorer-tree-state", "explorer-tree-wiring"];
+    var _pendingMemo = null;   // {tray, sig, set, anc} -- a tray is replaced whole on every swap
+    function _treeApplyPending(root, addOnly) {
+        var tray = document.getElementById("pending-tray");
+        if (!tray) return false;
+        if (isNaN(parseInt(tray.getAttribute("data-change-count") || "", 10))) return false;
+        var sig = tray.getAttribute("data-change-count") + "|" + (tray.getAttribute("data-change-sig") || "");
+        if (!_pendingMemo || _pendingMemo.tray !== tray || _pendingMemo.sig !== sig) {
+            var st = Object.create(null), an = Object.create(null);
+            var els = tray.querySelectorAll(".tray-change-path[title]");
+            for (var i = 0; i < els.length; i++) {
+                var p = els[i].getAttribute("title");
+                if (!p) continue;
+                st[p] = true;
+                for (var j = p.lastIndexOf("."); j > 0; j = p.lastIndexOf(".", j - 1)) {
+                    var a = p.slice(0, j);
+                    if (an[a]) break;
+                    an[a] = true;
+                }
+            }
+            _pendingMemo = {tray: tray, sig: sig, set: st, anc: an};
+        }
+        var set = _pendingMemo.set, anc = _pendingMemo.anc;
+        var roots = root ? [root] : _PENDING_TREES.map(function (id) { return document.getElementById(id); });
+        roots.forEach(function (c) {
+            if (!c) return;
+            var nodes = c.querySelectorAll(".tree-node[data-path]");
+            for (var k = 0; k < nodes.length; k++) {
+                var row = nodes[k].querySelector(":scope > .tree-row");
+                if (!row) continue;
+                var dp = nodes[k].getAttribute("data-path");
+                if (set[dp]) row.classList.add("tree-row-pending");
+                else if (!addOnly && !anc[dp]) row.classList.remove("tree-row-pending");
+            }
+        });
+        return true;
+    }
+    window._treeApplyPending = _treeApplyPending;
+    function _onTrayLanded(evt) {
+        if (!document.getElementById(_PENDING_TREES[0]) && !document.getElementById(_PENDING_TREES[1])) return;
+        var el = evt && evt.detail && evt.detail.target;
+        if (evt && evt.type !== "sm:tray-swapped"
+                && !(el && (el.id === "pending-tray" || (el.querySelector && el.querySelector("#pending-tray"))))
+                && !(evt.target && evt.target.id === "pending-tray")) return;
+        _treeApplyPending(null, false);
+    }
+    document.addEventListener("sm:tray-swapped", _onTrayLanded);
+    document.addEventListener("htmx:afterSwap", _onTrayLanded);
+    document.addEventListener("htmx:oobAfterSwap", _onTrayLanded);
+
     function _materializeChildren(nodeEl) {
         var d = nodeEl._lazyData;
         if (!d) return; // already materialised
@@ -8087,6 +8153,8 @@ window.clearDetailPanelSearch = function(btnEl) {
         }
 
         delete nodeEl._lazyData; // free memory, prevent double-build
+        // JT-07: a row built on first expand carries its pending tint too.
+        if (_kc && _PENDING_TREES.indexOf(_kc.id) >= 0) _treeApplyPending(children, true);
     }
 
     /* Direct children the SEARCH filtered out. A node the filter kept can sit
@@ -8235,6 +8303,32 @@ window.clearDetailPanelSearch = function(btnEl) {
         return true;
     }
     window._treeModelSet = _treeModelSet;
+
+    /* jsontree-r2-10: paint one committed leaf the way an inline commit paints
+     * its own row -- model first (a never-built branch reads it on expand),
+     * then the row if it is on screen, tinted as an unapplied change. Used for
+     * the OTHER rows a batch wrote (the FSP bundle's compensated amplitudes),
+     * which the single-edit echo handler never knew about. Fails closed: a
+     * path this tree does not hold, or a row not built yet, is skipped. */
+    function _paintTreeLeaf(container, dotPath, v) {
+        if (!container || !dotPath) return false;
+        var inModel = _treeModelSet(container, dotPath, v);
+        var nd = null;
+        try { nd = container.querySelector('.tree-node[data-path="' + dotPath + '"]'); } catch (e) {}
+        var row = nd ? nd.querySelector(":scope > .tree-row") : null;
+        var el = row ? row.querySelector(":scope > .tree-val") : null;
+        if (!el) return inModel;
+        el.textContent = _formatValue(v);
+        el.dataset.editVal = (typeof v === "string") ? v : _formatValue(v);
+        el.className = el.className
+            .replace(/tree-val-(string|number|boolean|null|pointer)/g, "")
+            .trim();
+        el.classList.add("tree-val-" + _typeOf(v));
+        if (_isPointer(v)) el.classList.add("tree-val-pointer");
+        nd._value = v;
+        row.classList.add("tree-row-pending");
+        return true;
+    }
 
     /* The model's container holding dotPath's final key, walked exactly as
      * _treeModelSet walks it, or null when the model does not hold the path. */
@@ -8622,6 +8716,27 @@ window.clearDetailPanelSearch = function(btnEl) {
     }
     window._showEditError = _showEditError;
 
+    /* jsontree-r2-17: an inline edit that is open (commit-on-blur is 100 ms
+       deferred) or in flight when something re-renders the tree from the
+       server. The re-render used to fetch BEFORE the write landed, so the
+       fresh tree showed the old value under a tray that counted the new one.
+       settle(root) commits every open editor under root now and returns a
+       promise for every write still in flight -- or null when there is none,
+       so a caller with nothing to wait for stays synchronous. */
+    var _inflightEdits = new Set();
+    window.TreeInlineEdit = {
+        settle: function (root) {
+            var eds = (root || document).querySelectorAll(".tree-val-editing");
+            for (var i = 0; i < eds.length; i++) {
+                if (typeof eds[i]._flushEdit === "function") eds[i]._flushEdit();
+            }
+            if (!_inflightEdits.size) return null;
+            return Promise.all(Array.from(_inflightEdits).map(function (p) {
+                return p.catch(function () {});
+            }));
+        }
+    };
+
     function _makeValueEditable(valEl, dotPath) {
         if (valEl.querySelector("input")) return; // already editing
         var currentDisplay = valEl.textContent;
@@ -8665,14 +8780,15 @@ window.clearDetailPanelSearch = function(btnEl) {
             }).catch(function () {});
 
         var committed = false;
+        var _myP = null;   // jsontree-r2-17: this editor's in-flight write
 
         function commit() {
-            if (committed) return;
+            if (committed) return _myP || Promise.resolve();
             var newVal = input.value;
             // No-op guard: an unchanged value must NOT POST (the server never
             // no-ops set_value → it would spam the change log / pending tray).
             // This makes commit-on-blur/Tab safe to fire unconditionally.
-            if (newVal === shownVal) { cancel(); return; }
+            if (newVal === shownVal) { cancel(); return Promise.resolve(); }
             // docs/145: unwrap a JSON string literal typed into the editor
             // ("direct" -> direct). Only for a full, valid literal -- anything
             // else goes through unchanged, exactly as before.
@@ -8703,7 +8819,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                 try { meansTypeChange = typeof JSON.parse(newVal) !== "string"; }
                 catch (e) { /* not a JSON value -- ordinary text, no intent */ }
             }
-            if (newVal === editVal && !meansTypeChange) { cancel(); return; }
+            if (newVal === editVal && !meansTypeChange) { cancel(); return Promise.resolve(); }
             committed = true;
             valEl.textContent = currentDisplay;
             valEl.classList.remove("tree-val-editing");
@@ -8730,7 +8846,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                     body: b2.toString()
                 }).then(function(resp) { return resp.json(); });
             };
-            _post(null)
+            _myP = _post(null)
             .then(function handleData(data) {
                 if (!data.ok && data.fsp_compensation) {
                     // r12-B: never silent — the compensation offer first.
@@ -8750,7 +8866,33 @@ window.clearDetailPanelSearch = function(btnEl) {
                                 expect_chip: window.__chipToken || "",
                             })
                         }).then(function(r) { return r.json(); })
-                          .then(handleData);
+                          .then(function (bd) {
+                            // jsontree-r2-10: the batch reply is {results:[...]},
+                            // not the single-edit echo -- the compensated
+                            // amplitude rows were never repainted, and the FSP
+                            // row painted the TYPED text. Paint every other
+                            // applied row from its committed value, lift the
+                            // FSP row into the echo shape, surface a row error.
+                            var res = (bd && Array.isArray(bd.results)) ? bd.results : [];
+                            var tree = valEl.closest ? valEl.closest(".json-tree") : null;
+                            if (bd && bd.ok) {
+                                res.forEach(function (r) {
+                                    if (!r || !r.applied) return;
+                                    if (r.dot_path === dotPath) {
+                                        bd.stored = r.new_value;
+                                        bd.stored_kind = typeof r.new_value;
+                                    } else {
+                                        _paintTreeLeaf(tree, r.resolved_path || r.dot_path, r.new_value);
+                                    }
+                                });
+                            } else if (bd && !bd.error) {
+                                // the row that FAILED, not one rolled back for it
+                                var errs = res.filter(function (r) { return r && r.error; });
+                                var bad = errs.filter(function (r) { return !/^rolled back/.test(r.error); })[0] || errs[0];
+                                if (bad) bd.error = bad.dot_path + ": " + bad.error;
+                            }
+                            return handleData(bd);
+                          });
                     });
                     return;
                 }
@@ -8758,8 +8900,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                     // r14 ⑩: the field is stored as TEXT ("0.13") — the legacy
                     // coercer would keep it text forever. Never silent: ask.
                     var conv = window._confirmTypeFix(data.type_fix);
-                    _post({type_fix: conv ? "convert" : "keep"}).then(handleData);
-                    return;
+                    return _post({type_fix: conv ? "convert" : "keep"}).then(handleData);
                 }
                 if (!data.ok) {
                     valEl.classList.add("tree-val-error");
@@ -8834,7 +8975,12 @@ window.clearDetailPanelSearch = function(btnEl) {
                 valEl.textContent = currentDisplay;
                 valEl.classList.remove("tree-val-editing");
             });
+            var _p = _myP;
+            _inflightEdits.add(_p);
+            _p.then(function () { _inflightEdits.delete(_p); });
+            return _p;
         }
+        valEl._flushEdit = commit;
 
         function cancel() {
             if (committed) return;
@@ -8860,7 +9006,11 @@ window.clearDetailPanelSearch = function(btnEl) {
     // fields that are painful to retype (e.g. copy one qubit's confusion_matrix to
     // all the others). The buffer survives pastes (paste into many) until the user
     // clears it (Esc / ✕) or the tree is fully re-rendered (chip switch).
-    var _treeCopyBuffer = null;   // {key, value, srcPath}
+    // jsontree-r2-07: `json` is a SNAPSHOT taken at copy time. The buffer used
+    // to hold the source node's model object itself, so every paste put that
+    // ONE object at two model paths -- a later edit of the source showed up in
+    // the copy, and the copy's JSON-editor Save wrote it to the server.
+    var _treeCopyBuffer = null;   // {key, json, srcPath}
 
     function _isEmptyVal(v) {
         if (v === null || v === undefined) return true;
@@ -8913,7 +9063,7 @@ window.clearDetailPanelSearch = function(btnEl) {
             if (window.showToast) window.showToast("'" + m.key + "' is empty — nothing to copy", "warning");
             return;
         }
-        _treeCopyBuffer = {key: m.key, value: node._value, srcPath: m.path};
+        _treeCopyBuffer = {key: m.key, json: JSON.stringify(node._value), srcPath: m.path};
         _refreshPasteTargets();
         var n = document.querySelectorAll(".tree-paste-btn").length;
         var pill = document.getElementById("tree-copy-pill");
@@ -8937,10 +9087,13 @@ window.clearDetailPanelSearch = function(btnEl) {
     function _pasteIntoNode(node) {
         if (!_treeCopyBuffer) return;
         var m = node._meta;
-        var val = _treeCopyBuffer.value;
+        // A fresh object per paste (jsontree-r2-07): exactly what the server
+        // is sent, shared with no other model path.
+        var json = _treeCopyBuffer.json;
+        var val = JSON.parse(json);
         var body = new URLSearchParams();
         body.append("dot_path", m.path);
-        body.append("value", JSON.stringify(val));
+        body.append("value", json);
         body.append("expect_chip", window.__chipToken || "");   // wrong-chip 409 gate
         fetch("/field/edit", {
             method: "POST",
@@ -9601,6 +9754,8 @@ window.clearDetailPanelSearch = function(btnEl) {
         } else {
             _expandToDepth(container, defaultDepth);
         }
+        // JT-07: a fresh render (reload, soft refresh, live-diff) reads the tray.
+        if (_PENDING_TREES.indexOf(containerId) >= 0) _treeApplyPending(container, false);
     };
 
     window.jsonTreeExpandToDepth = function(containerId, depth) {

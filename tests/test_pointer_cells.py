@@ -437,3 +437,60 @@ class TestOneAliasedSiblingCannotDisableTheGuard:
         # ...and a number still creates normally.
         assert c.post("/field/create", data={"dot_path": "qubits.q3.T1",
                                              "value": "1.1e-5"}).status_code == 200
+
+
+class TestAMatrixElementTakesItsTypeFromItsSiblings:
+    """jsontree-r2-08 (QA 2026-09-24) — a list element (`confusion_matrix.0.1`)
+    is the same leaf on every sibling qubit, but the sibling walk only
+    descended dicts: it stopped at the list, found no evidence, and a nulled
+    matrix element took '[1,2]' / '"x"' / 'abc' unopposed."""
+
+    @staticmethod
+    def _chip():
+        st = _state()
+        for q in ("q1", "q2", "q3"):
+            st["qubits"].setdefault(q, {"id": q})
+            st["qubits"][q]["resonator"] = {
+                "confusion_matrix": [[0.9, 0.1], [0.1, 0.9]]}
+        st["qubits"]["q4"] = {"id": "q4", "resonator": {
+            "confusion_matrix": [[0.903, None], [0.1, 0.9]]}}
+        return st
+
+    def test_prose_and_a_list_are_refused_into_a_null_element(self):
+        store = QuamStore.from_dicts(self._chip(), {})
+        dp = "qubits.q4.resonator.confusion_matrix.0.1"
+        for bad in ("[1,2]", '"x"', "abc", "true"):
+            why = edit_policy.sibling_type_refusal(store, dp, bad)
+            assert why is not None and "number" in why, (bad, why)
+
+    def test_a_number_and_null_still_pass(self):
+        store = QuamStore.from_dicts(self._chip(), {})
+        dp = "qubits.q4.resonator.confusion_matrix.0.1"
+        assert edit_policy.sibling_type_refusal(store, dp, "0.2") is None
+        assert edit_policy.sibling_type_refusal(store, dp, "null") is None
+
+    def test_an_index_past_the_siblings_end_is_no_evidence(self):
+        st = self._chip()
+        st["qubits"]["q4"]["resonator"]["confusion_matrix"][0].append(None)
+        store = QuamStore.from_dicts(st, {})
+        assert edit_policy.sibling_type_refusal(
+            store, "qubits.q4.resonator.confusion_matrix.0.2", "abc") is None
+
+    def test_the_route_refuses_it_and_the_matrix_stays_numeric(self, tmp_path):
+        folder = tmp_path / "quam_state"
+        folder.mkdir()
+        (folder / "state.json").write_text(json.dumps(self._chip()), encoding="utf-8")
+        (folder / "wiring.json").write_text(
+            json.dumps({"network": {"host": "1.2.3.4"}}), encoding="utf-8")
+        app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
+        c = app.test_client()
+        c.post("/load", data={"folder": str(folder)})
+        dp = "qubits.q4.resonator.confusion_matrix.0.1"
+        r = c.post("/field/edit", data={"dot_path": dp, "value": "[1,2]"})
+        assert r.status_code == 400, r.get_data(as_text=True)
+        assert "is a number on this chip" in (r.get_json() or {}).get("error", "")
+        peek = c.get("/field/peek?dot_path=" + dp).get_json()
+        assert peek["values"][dp] is None
+        # a number still lands
+        assert c.post("/field/edit", data={"dot_path": dp, "value": "0.097"}).status_code == 200
+        assert c.get("/field/peek?dot_path=" + dp).get_json()["values"][dp] == 0.097

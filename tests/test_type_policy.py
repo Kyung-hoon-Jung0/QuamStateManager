@@ -541,3 +541,70 @@ class TestRoutes:
         assert j["ok"] is False
         row = j["results"][0]
         assert row["error_kind"] == "type_mismatch" and row["applied"] is False
+
+
+class TestAWrongTypedTextLeafCanBeRepaired:
+    """jsontree-r2-11 (QA 2026-09-24): after 'Clear override' a field still
+    holding text could never be set back to a number -- the verbatim
+    text-leaf carve-out handed '2.3e-05' back as a str BEFORE the enforced
+    type was consulted, so the judge refused it ('expected float, got str').
+    docs/56: "assignment IS the repair path" -- it has to be completable."""
+
+    @staticmethod
+    def _peek(client, dp):
+        return client.get("/field/peek?dot_path=" + dp).get_json()["values"][dp]
+
+    def test_clear_override_then_a_number_lands(self, client):
+        dp = "qubits.qA1.f_01"
+        assert client.post("/field/type-assign", data={
+            "dot_path": dp, "type": "str", "override_env": "1"}).status_code == 200
+        assert client.post("/field/edit", data={
+            "dot_path": dp, "value": "text"}).status_code == 200
+        assert self._peek(client, dp) == "text"
+        r = client.post("/field/type-unassign", data={"dot_path": dp})
+        assert r.get_json()["expected"]["source"] == "env"
+        r = client.post("/field/edit", data={"dot_path": dp, "value": "2.3e-05"})
+        assert r.status_code == 200, r.get_data(as_text=True)
+        v = self._peek(client, dp)
+        assert isinstance(v, float) and v == 2.3e-05
+
+    def test_the_batch_door_repairs_too(self, client):
+        dp = "qubits.qA1.f_01"
+        client.post("/field/type-assign", data={
+            "dot_path": dp, "type": "str", "override_env": "1"})
+        client.post("/field/edit", data={"dot_path": dp, "value": "text"})
+        client.post("/field/type-unassign", data={"dot_path": dp})
+        j = client.post("/field/edit-batch", json={"updates": [
+            {"dot_path": dp, "value": "6.2e9"}]}).get_json()
+        assert j["ok"] is True, j
+        assert self._peek(client, dp) == 6.2e9
+
+    def test_a_number_type_assigned_over_free_form_text_takes_a_number(self, client):
+        dp = "qubits.qA1.extras.free_form"
+        assert client.post("/field/type-assign", data={
+            "dot_path": dp, "type": "number"}).status_code == 200
+        r = client.post("/field/edit", data={"dot_path": dp, "value": "5"})
+        assert r.status_code == 200, r.get_data(as_text=True)
+        assert self._peek(client, dp) == 5
+
+    def test_prose_is_still_refused_on_the_repaired_path(self, client):
+        dp = "qubits.qA1.f_01"
+        client.post("/field/type-assign", data={
+            "dot_path": dp, "type": "str", "override_env": "1"})
+        client.post("/field/edit", data={"dot_path": dp, "value": "text"})
+        client.post("/field/type-unassign", data={"dot_path": dp})
+        r = client.post("/field/edit", data={"dot_path": dp, "value": "other text"})
+        assert r.status_code == 400
+        assert self._peek(client, dp) == "text"
+
+    def test_a_legal_text_leaf_keeps_the_verbatim_carve_out(self, client):
+        """While the str override is in force the text is legal: '1,0' and
+        '007' stay verbatim (the grid_location / leading-zero rule)."""
+        dp = "qubits.qA1.f_01"
+        client.post("/field/type-assign", data={
+            "dot_path": dp, "type": "str", "override_env": "1"})
+        client.post("/field/edit", data={"dot_path": dp, "value": "text"})
+        for typed in ("1,0", "007"):
+            assert client.post("/field/edit", data={
+                "dot_path": dp, "value": typed}).status_code == 200
+            assert self._peek(client, dp) == typed

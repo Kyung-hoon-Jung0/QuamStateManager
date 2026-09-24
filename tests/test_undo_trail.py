@@ -83,6 +83,14 @@ def test_tree_structural_revert_selfcheck():
     _run("tree_structural_revert_selfcheck.cjs", "all tree structural-revert checks passed")
 
 
+def test_tree_edit_integrity_selfcheck():
+    """jsontree-r2-07 / r2-08 / r2-10 / r2-17 / JT-07: a paste is a copy, a
+    list in a leaf row reads as JSON, the FSP bundle repaints every row it
+    wrote, a re-fetch waits for an open edit, and pending tints follow the
+    tray (render, lazy expand, redo)."""
+    _run("tree_edit_integrity_selfcheck.cjs", "all tree edit-integrity checks passed")
+
+
 def test_pulses_undo_selfcheck():
     _run("pulses_undo_selfcheck.cjs", "ok - undo back to an already-drawn state costs NO synth request (cache)")
 

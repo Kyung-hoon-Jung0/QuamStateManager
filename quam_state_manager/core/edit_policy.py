@@ -264,10 +264,18 @@ def sibling_type_refusal(store: Any, dot_path: str, new_value: Any) -> str | Non
             continue
         cur = node
         for k in leaf:
-            if not isinstance(cur, dict) or k not in cur:
+            # jsontree-r2-08: a list element (`confusion_matrix.0.1`) is the
+            # same leaf on every sibling too; a dict-only walk stopped at the
+            # list, so a nulled matrix element took '[1,2]' / '"x"' unopposed.
+            # Strict-digit segments only (the path grammar's ^\d+$ gate); a
+            # dict is tried first, so number-keyed dicts walk as before.
+            if isinstance(cur, dict) and k in cur:
+                cur = cur[k]
+            elif isinstance(cur, list) and k.isdigit() and int(k) < len(cur):
+                cur = cur[int(k)]
+            else:
                 cur = None
                 break
-            cur = cur[k]
         if cur is None:
             continue
         # docs/120 item 17: a sibling holding a POINTER used to land in `other`,

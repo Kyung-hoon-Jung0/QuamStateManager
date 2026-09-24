@@ -7525,6 +7525,32 @@ def _type_fix_offer(store, target_path: str, raw_value: str,
         return None
 
 
+def _text_violates_enforced(store, target_path: str, current) -> bool:
+    """jsontree-r2-11: True when the leaf's ENFORCED type (env / user /
+    verdict) itself refuses the text the leaf holds now.
+
+    Such a leaf is not a text leaf -- it is a wrong-typed value waiting for
+    repair (a str override was cleared, or a number type was assigned over
+    prose; docs/56: "assignment IS the repair path"). The verbatim carve-out
+    below used to hand the typed number back as a str, so the enforced judge
+    refused it ("expected float, got str '2.3e-05'") and the field could never
+    be set back to a number. No policy / no enforced expectation => False, so
+    every chip without one keeps the carve-out byte-identically.
+    """
+    policy = getattr(store, "type_policy", None)
+    if policy is None:
+        return False
+    try:
+        expected = policy.expected_for(store.merged, target_path, infer=False)
+    except Exception:  # noqa: BLE001 — a policy bug must never brick edits
+        return False
+    if expected is None or not expected.enforced:
+        return False
+    from quam_state_manager.core.state_env_validate import EDIT_BLOCKING, judge
+    ok, code, _ = judge(current, expected.spec)
+    return (not ok) and code in EDIT_BLOCKING
+
+
 def _parse_for_target(store, target_path: str, raw_value: str):
     """Parse typed text against the resolved target's ENFORCED expectation;
     without one this is ``type_policy.parse_value`` byte-identical.
@@ -7571,7 +7597,8 @@ def _parse_for_target(store, target_path: str, raw_value: str):
     # untouched, and nothing about non-string fields changes. `extras` is
     # subsumed (its numeric values were already parsed under the old gate too).
     if (isinstance(current, str) and not is_pointer(current)
-            and (is_free_form_path(target_path) or not _is_numeric_string(current))):
+            and (is_free_form_path(target_path) or not _is_numeric_string(current))
+            and not _text_violates_enforced(store, target_path, current)):
         # VERBATIM means "the characters are the value" — it does NOT mean the
         # three tokens every other write path honours stop existing. Returning
         # raw_value unconditionally broke them, and the red team caught it:
