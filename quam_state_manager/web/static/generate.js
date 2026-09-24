@@ -545,6 +545,11 @@
   // swap (hydrateFromSpec / resetWizard) bumped it, so an answer computed
   // for one session never renders (or re-enables Generate) in the next.
   var _buildRunSeq = 0;
+  // QA review (r2-37 gap): the MODE the running build was sent from. A plain
+  // mount after a Re-generate build (sidebar → Generate Config while it runs:
+  // an htmx swap, no hydrate or Reset on the way) bumps nothing by itself,
+  // so init() reads this to strand a build that is not the mount's own.
+  var _buildMode = null;
   // QA generate-r2-18: python -> the QM packages its probe reported MISSING
   // (a definite verdict; a failed probe is not recorded). Step 1's guard.
   var _envMissing = {};
@@ -7956,6 +7961,35 @@
     el.appendChild(p);
   }
 
+  // QA review (r2-37 / r2-13): a PLAIN build stranded by a Re-generate
+  // hydrate still answered — the plain draft it was saved into (buildPending
+  // at the press) must learn the outcome, or the next Generate Config mount
+  // warns "its outcome was not received" over a build that finished. The
+  // record is the .then path's own (a question / busy refusal is no result),
+  // written straight to storage because saveDraft stands down on the regen
+  // page; a plain wizard back on screen with that same pending build takes
+  // it too (its next saveDraft would otherwise write the stale pending record
+  // back). Never while a plain build of the current session runs — then the
+  // stored pending record is that build's.
+  function recordStrandedOutcome(res, outPath, mode) {
+    if (mode !== "generate" || !res) return;
+    if (_buildInFlight && state.mode === "generate") return;
+    var lastBuild = (res.needs_confirm || res.busy) ? null
+      : { res: trimBuildRes(res), outPath: outPath, at: Date.now() };
+    var d = loadDraft();
+    if (d && d.buildPending && d.buildPending.outPath === outPath) {
+      d.buildPending = null;
+      d.lastBuild = lastBuild;
+      try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify(d)); } catch (e) {}
+    }
+    if (state.mode === "generate" && !onRegenPage() && root() &&
+        state.buildPending && state.buildPending.outPath === outPath) {
+      state.buildPending = null;
+      state.lastBuild = lastBuild;
+      restoreBuildOutcome();
+    }
+  }
+
   function runBuild(force, ackDegrades, ackSource) {
     // QA F3b: a pre-flight refusal answers in the result slot under Generate
     // and REPLACES whatever it held — the previous build's green "Generated"
@@ -8118,6 +8152,8 @@
     }
 
     var myBuild = ++_buildRunSeq;   // QA r2-37: this answer is this session's
+    var buildMode = state.mode;     // QA review: … and this mode's
+    _buildMode = buildMode;
     var buildSource = state.mode === "regenerate"
       ? (state.regenSourceName || state.sourcePath || null) : null;
     fetch(state.buildEndpoint || "/generate/build", {
@@ -8152,9 +8188,13 @@
       .then(function (res) {
         if (myBuild !== _buildRunSeq) {   // QA r2-37: the wizard was re-filled
           noteStrandedBuild(res, outPath, buildSource);
+          recordStrandedOutcome(res, outPath, buildMode);   // QA review
           return;
         }
         setBuildBusy(false);
+        // QA review (r2-13): the slot on screen NOW — a leave-and-return
+        // re-mounted the wizard, and the pre-fetch node is detached.
+        var slot = document.getElementById("gen-build-result");
         // QA r2-13: the outcome rides the draft (a question, or a refusal
         // because another build holds the folder, is not one), so F5 or
         // leaving and coming back shows it again — even when the answer
@@ -8165,22 +8205,34 @@
         saveDraft();
         if (res.needs_confirm) {
           showBuildConfirm(res, outPath);
-          revealResult(resultEl);
+          revealResult(slot);
           return;
         }
         // QA F6: a finished re-generate build holds the session's edits — a
         // later leave must not warn that they are about to be lost.
         if (res.ok && state.mode === "regenerate") regenMarkClean();
         showBuildResult(res, outPath);
-        revealResult(resultEl);
+        revealResult(slot);
       })
       .catch(function () {
         if (myBuild !== _buildRunSeq) return;   // QA r2-37
         setBuildBusy(false);
-        if (resultEl) {
-          resultEl.className = "gen-build-result gen-build-error";
-          resultEl.textContent = "Generate request failed.";
-          revealResult(resultEl);
+        // QA review (r2-13): a failed request is an outcome too — the draft's
+        // pending record closes (a re-mount otherwise kept "still running"
+        // beside a usable Generate, and a reload "outcome not received"), and
+        // the failure is what comes back after a reload. Written to the slot
+        // on screen NOW, not the pre-fetch node a re-mount detached.
+        var failed = "Generate request failed — the build's outcome was not " +
+          "received; check " + outPath + " before generating again.";
+        state.buildPending = null;
+        state.lastBuild = { res: { ok: false, error: failed }, outPath: outPath, at: Date.now() };
+        saveDraft();
+        var slot = document.getElementById("gen-build-result");
+        if (slot) {
+          slot.hidden = false;
+          slot.className = "gen-build-result gen-build-error";
+          slot.textContent = "✗ " + failed;
+          revealResult(slot);
         }
       });
   }
@@ -8518,6 +8570,13 @@
     if (!r || r._quamGenInit) return;
     r._quamGenInit = true;
     installRegenLeaveGuard();   // QA F6 (latched: installs once per page load)
+    // QA review (r2-37 gap): a build sent from a Re-generate session is not
+    // this mount's. Sidebar → Generate Config while it ran was a bare htmx
+    // swap (no hydrate, no Reset), so its answer rendered "Generated 5 qubits
+    // … Load into app" into a 0-qubit plain wizard and the plain draft kept
+    // it as lastBuild. Strand it before the draft is read: the answer is
+    // named (noteStrandedBuild), never rendered or recorded here.
+    if (_buildInFlight && _buildMode === "regenerate") resetBuildRuntime();
 
     // Restore an in-progress draft if one exists, else start fresh.
     // QA F7: the Re-generate page never reads the Generate draft — its
@@ -8634,6 +8693,9 @@
   var REGEN_LEAVE_MSG = "Re-generate keeps no draft — leaving discards the " +
     "edits made in this wizard (coming back re-reads the source chip). " +
     "Leave anyway?";
+  var REGEN_BUILD_LEAVE_MSG = "A Re-generate build is still running — its " +
+    "result reaches only this page (the folder is still written, and a later " +
+    "Re-generate into it offers the report back). Leave anyway?";
   function regenMarkEdited(el) {
     if (state.mode !== "regenerate") return;
     if (el && el.id && REGEN_DURABLE_FIELDS[el.id]) return;
@@ -8666,7 +8728,11 @@
       if (!d || !d.target || d.target.id !== "table-pane") return;
       if (d.shouldSwap === false || state.mode !== "regenerate" || !root()) return;
       captureDomFields();   // flushes a typed-but-uncommitted cell first
-      if (regenDirty() && !window.confirm(REGEN_LEAVE_MSG)) {
+      // QA review (F20's rule, for a swap): a running re-generate build asks
+      // too — its answer reaches only this page.
+      var building = _buildInFlight && state.mode === "regenerate";
+      if ((regenDirty() || building) &&
+          !window.confirm(building ? REGEN_BUILD_LEAVE_MSG : REGEN_LEAVE_MSG)) {
         evt.preventDefault();
         d.shouldSwap = false;
       }

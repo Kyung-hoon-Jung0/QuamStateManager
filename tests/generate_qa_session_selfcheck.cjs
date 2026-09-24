@@ -1162,11 +1162,17 @@ function toStep4(win, G, n) {
       'r2-13: back while the build runs, step 8 says so (got "' + res.textContent + '")');
     ok($(w.win, 'gen-next').disabled && $(w.win, 'gen-next-top').disabled,
       'r2-13: … with Generate busy (a press would be refused)');
+    // review follow-up: the landed answer is brought into view on the slot
+    // that is on screen, not the detached pre-fetch node
+    const seen = [];
+    w.win.Element.prototype.scrollIntoView = function () { seen.push(this.isConnected); };
     w.releases[0]({ ok: true, result: { qubits: ['q1', 'q2'], qubit_pairs: [] } });
     await settle();
     ok(res.textContent.indexOf('Generated 2 qubits and 0 pairs into D:\\x\\run') >= 0,
       'r2-13: the answer lands in the re-mounted wizard');
     ok(!$(w.win, 'gen-next').disabled, 'r2-13: … and Generate comes back');
+    ok(seen.length === 1 && seen[0] === true,
+      'rv: … brought into view on the mounted slot (reveals connected: ' + JSON.stringify(seen) + ')');
   })();
 
   await (async function r13NoDraftNoRecord() {
@@ -1694,6 +1700,160 @@ function toStep4(win, G, n) {
     ok(res.hidden && res.textContent.indexOf('Generate request failed') < 0,
       'r2-37: a pre-Reset build\'s network failure is not reported in the new session (got "' +
       res.textContent + '")');
+  })();
+
+  // ── review follow-ups (r2-37 gap / F6 / r2-13) ──────────────────────────
+  // A Re-generate build in flight, then sidebar → Generate Config: a bare
+  // htmx swap (no hydrate, no Reset). The leave guard asks; the plain mount
+  // is not "Generating…" for a build that is not its own; the answer is
+  // named, never rendered as the plain session's result nor recorded in the
+  // user's own plain draft.
+  await (async function rvRegenBuildThenPlainMount() {
+    const plain = buildWorld({ out: 'D:\\x\\plain_own' });
+    swapAway(plain.win);                       // the user's own plain draft
+    const plainDraft = draftOf(plain.win);
+    ok(!!plainDraft && JSON.parse(plainDraft).step === 8, 'rv harness: a plain draft exists');
+    const w = r37RegenPage();
+    await settle();
+    w.asked = []; w.answer = true;
+    w.win.confirm = function (m) { w.asked.push(m); return w.answer; };
+    w.generateInto('D:\\x\\cross_regen');
+    await settle();
+    ok(w.builds().length === 1 && !w.G.regenDirty(), 'rv harness: the regen build runs, no edit');
+    w.answer = false;
+    let e = swapAway(w.win);
+    ok(w.asked.length === 1 && /build is still running/.test(w.asked[0]) &&
+       e.defaultPrevented && e.detail.shouldSwap === false,
+      'rv: leaving a Re-generate page while its build runs asks first (asked ' +
+      JSON.stringify(w.asked) + ')');
+    w.answer = true;
+    e = swapAway(w.win);
+    ok(!e.defaultPrevented && e.detail.shouldSwap !== false, 'rv: OK lets the swap through');
+    w.win.sessionStorage.setItem(DRAFT_KEY, plainDraft);
+    $(w.win, 'table-pane').innerHTML = HTML;    // plain Generate Config mounts
+    w.G.init();
+    const res = $(w.win, 'gen-build-result');
+    ok(w.G.state.mode === 'generate' && w.G.state.spec.qubits.length === 2 && w.G.state.step === 8,
+      'rv harness: the plain draft is mounted on step 8');
+    ok(res.hidden && !$(w.win, 'gen-next').disabled && !$(w.win, 'gen-next-top').disabled,
+      'rv: the plain mount is not "Generating…" for the regen build, Generate usable (hidden ' +
+      res.hidden + ', text "' + res.textContent + '")');
+    w.releases[0]({ ok: true, merge: { carried: 3 },
+      result: { qubits: ['q1', 'q2', 'q3', 'q4', 'q5'], qubit_pairs: [['q1', 'q2']] } });
+    await settle();
+    ok(res.textContent.indexOf('Generated') < 0 && !r37LoadBtn(res),
+      'rv: the regen answer is not rendered as the plain session\'s result (got "' +
+      res.textContent + '")');
+    ok(/earlier session/.test(res.textContent) && res.textContent.indexOf('D:\\x\\cross_regen') >= 0,
+      'rv: … it is named as the earlier session\'s (got "' + res.textContent + '")');
+    ok(!$(w.win, 'gen-next').disabled, 'rv: … and Generate stays usable');
+    const d = JSON.parse(draftOf(w.win));
+    ok(d.lastBuild == null && d.buildPending == null,
+      'rv: the plain draft records nothing of it (lastBuild ' + JSON.stringify(d.lastBuild) + ')');
+    $(w.win, 'table-pane').innerHTML = HTML;    // F5 / leave and return
+    w.G.init();
+    ok($(w.win, 'gen-build-result').textContent.indexOf('Generated') < 0,
+      'rv: … so a re-mount shows no 5-qubit result over the 2-qubit wizard');
+  })();
+
+  // A plain build's request FAILS after the user left and came back: the
+  // failure lands in the slot on screen (not the detached pre-fetch node),
+  // Generate comes back, the draft closes its pending record, and a reload
+  // shows the failed build — not "still running" / "outcome was not received".
+  await (async function rvFailureAfterRemount() {
+    const w = buildWorld({ out: 'D:\\x\\int_fail2' });
+    let failBuild = null;
+    const f = w.win.fetch;
+    w.win.fetch = function (url, fo) {
+      if (String(url).indexOf('/generate/build') >= 0) {
+        w.log.push({ url: String(url), body: JSON.parse(fo.body) });
+        return new w.win.Promise(function (res, rej) { failBuild = rej; });
+      }
+      return f(url, fo);
+    };
+    w.G.tryNext();
+    await settle();
+    swapAway(w.win);
+    $(w.win, 'table-pane').innerHTML = HTML;
+    w.G.init();
+    const res = $(w.win, 'gen-build-result');
+    ok(!!failBuild && /still running/.test(res.textContent), 'rv harness: back while the build runs');
+    failBuild(new Error('network'));
+    await settle();
+    ok(/request failed/.test(res.textContent) && !/still running/.test(res.textContent) &&
+       res.textContent.indexOf('D:\\x\\int_fail2') >= 0,
+      'rv: the failure lands in the re-mounted slot (got "' + res.textContent + '")');
+    ok(!$(w.win, 'gen-next').disabled && !$(w.win, 'gen-next-top').disabled, 'rv: … with Generate back');
+    const d = JSON.parse(draftOf(w.win));
+    ok(d.buildPending == null && d.lastBuild && d.lastBuild.res.ok === false,
+      'rv: the draft no longer claims a pending build (pending ' + JSON.stringify(d.buildPending) +
+      ', lastBuild ' + JSON.stringify(d.lastBuild) + ')');
+    const w2 = buildWorld({ draft: draftOf(w.win) });
+    const r2 = $(w2.win, 'gen-build-result');
+    ok(r2.textContent.indexOf('✗ Generation failed') >= 0 && /request failed/.test(r2.textContent) &&
+       r2.textContent.indexOf('⚠ A build into') < 0,
+      'rv: a reload shows the failed build (got "' + r2.textContent + '")');
+  })();
+
+  // The reverse direction: a PLAIN build in flight, then sidebar → Re-generate
+  // config (init, then the hydrate strands it). The regen wizard names it; the
+  // plain draft it was saved into learns the outcome, so the next Generate
+  // Config shows the finished build — not "its outcome was not received".
+  await (async function rvPlainBuildStrandedByRegen() {
+    const w = buildWorld({ out: 'D:\\x\\cross_plain' });
+    w.G.tryNext();
+    await settle();
+    swapAway(w.win);
+    ok(w.builds().length === 1 && JSON.parse(draftOf(w.win)).buildPending.outPath === 'D:\\x\\cross_plain',
+      'rv harness: the plain build runs, its draft says pending');
+    $(w.win, 'table-pane').innerHTML = '<div class="regen" id="regen-surface">' + HTML + '</div>';
+    w.G.init();
+    w.G.hydrateFromSpec(srcSpec(2), { mode: 'regenerate', sourcePath: 'D:\\src\\chipA' });
+    w.releases[0]({ ok: true, result: { qubits: ['q1', 'q2'], qubit_pairs: [] } });
+    await settle();
+    const res = $(w.win, 'gen-build-result');
+    ok(/earlier session/.test(res.textContent) && !r37LoadBtn(res),
+      'rv harness: the regen wizard names the stranded build (got "' + res.textContent + '")');
+    const d = JSON.parse(draftOf(w.win));
+    ok(d.buildPending == null && d.lastBuild && d.lastBuild.outPath === 'D:\\x\\cross_plain' &&
+       d.lastBuild.res.ok === true,
+      'rv: the plain draft learns its build\'s outcome (pending ' + JSON.stringify(d.buildPending) +
+      ', lastBuild ' + JSON.stringify(d.lastBuild && d.lastBuild.outPath) + ')');
+    swapAway(w.win);                            // regen: saves nothing
+    $(w.win, 'table-pane').innerHTML = HTML;
+    w.G.init();
+    const r2 = $(w.win, 'gen-build-result');
+    ok(r2.textContent.indexOf('Generated 2 qubits and 0 pairs into D:\\x\\cross_plain') >= 0 &&
+       r2.textContent.indexOf('⚠ A build into') < 0,
+      'rv: the next plain mount shows the finished build (got "' + r2.textContent + '")');
+  })();
+
+  // … and when the user is back on the plain wizard BEFORE the answer lands
+  // (its "⚠ … not received" showing), the plain session's own answer reaches
+  // it, and the draft written afterwards keeps the outcome.
+  await (async function rvPlainBuildStrandedThenBackBeforeAnswer() {
+    const w = buildWorld({ out: 'D:\\x\\cross_plain2' });
+    w.G.tryNext();
+    await settle();
+    swapAway(w.win);
+    $(w.win, 'table-pane').innerHTML = '<div class="regen" id="regen-surface">' + HTML + '</div>';
+    w.G.init();
+    w.G.hydrateFromSpec(srcSpec(2), { mode: 'regenerate', sourcePath: 'D:\\src\\chipA' });
+    swapAway(w.win);
+    $(w.win, 'table-pane').innerHTML = HTML;
+    w.G.init();
+    const res = $(w.win, 'gen-build-result');
+    ok(res.textContent.indexOf('⚠ A build into D:\\x\\cross_plain2') >= 0,
+      'rv harness: back on the plain wizard, the build is pending with no page holding it');
+    w.releases[0]({ ok: true, result: { qubits: ['q1', 'q2'], qubit_pairs: [] } });
+    await settle();
+    ok(res.textContent.indexOf('Generated 2 qubits and 0 pairs into D:\\x\\cross_plain2') >= 0 &&
+       r37LoadBtn(res) && res.textContent.indexOf('⚠ A build into') < 0,
+      'rv: the plain session\'s own answer reaches it (got "' + res.textContent + '")');
+    w.G.goToStep(7);                            // writes the draft from memory
+    const d = JSON.parse(draftOf(w.win));
+    ok(d.buildPending == null && d.lastBuild && d.lastBuild.outPath === 'D:\\x\\cross_plain2',
+      'rv: … and the draft written after it keeps the outcome, not the stale pending record');
   })();
 
   if (fails) {

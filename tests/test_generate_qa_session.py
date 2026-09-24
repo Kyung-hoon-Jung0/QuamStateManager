@@ -15,7 +15,11 @@ says (regenerate-r2-18). Chunk 4: "Load into app" retires the finished draft
 (generate-r2-14), step 1 refuses an env that probed "missing"
 (generate-r2-18), Review flags a relative folder (F21), the user's own
 re-generate hands its report back (F20), and a source changed under the
-wizard is named before the build (regenerate-r2-35).
+wizard is named before the build (regenerate-r2-35). Review follow-ups: a
+Re-generate build is never the next plain mount's own (the swap asks, the
+answer is named, the plain draft records nothing), a failed request lands in
+the slot on screen and closes the draft's pending record, and a plain build
+stranded by a Re-generate hydrate hands its outcome to the plain draft.
 
 Skips when node or jsdom is unavailable (the selfcheck exits 2 for a missing
 jsdom). Install once with ``npm install``.
