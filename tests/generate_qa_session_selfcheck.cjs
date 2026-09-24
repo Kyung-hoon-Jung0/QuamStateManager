@@ -29,6 +29,17 @@
 //        "Generating…" slot and the result brought into view)
 //   r2-18 an unticked scripts export is sent as such; a ticked export with no
 //        folder is refused; the recipe report names where it really went
+//   regenerate-r2-20  Preview config no longer opens the JSON panel over its
+//        own result; "View config JSON" opens it on request
+//   generate-r2-10    the panel is parked when leaving step 8 and comes back
+//        with it (a closed one stays closed; Reset forgets it)
+//   F14  Escape closes the panel (not while typing); a gallery waveform is
+//        brought into view and drawn with the house plot theme
+//   F8   one build at a time: a double press (header, "Generate anyway", or
+//        during the select-env round-trip) POSTs ONE build; "1 pair"
+//   generate-r2-13    the build outcome rides the draft: a reload shows the
+//        result again, or says a started build's answer never arrived; a
+//        re-mount while the build runs says it is still running
 //
 // Run: node tests/generate_qa_session_selfcheck.cjs   (needs jsdom; exit 2 = skip)
 'use strict';
@@ -869,6 +880,304 @@ function toStep4(win, G, n) {
     ok(!w.win.document.querySelector('#gen-build-result b') &&
        $(w.win, 'gen-build-result').textContent.indexOf('<b>evil</b>') >= 0,
       'r2-18: the user-typed folder renders as text, never markup');
+  })();
+
+  // ── r2-20 / r2-10 / F14: the Preview-config JSON panel ─────────────────
+  const PREVIEW_ROUTES = [
+    { match: '/generate/envs', reply: { envs: [] } },
+    { match: '/generate/preview-config', reply: {
+      ok: true, config: { version: 1, elements: { q1: {} } },
+      meta: { qubits: ['q1'], qubit_pairs: [], versions: {}, warnings: [] } } },
+    { match: '/generate/preview-pulse-waveform', reply: {
+      ok: true, element: 'coupler_q1_q2', operation: 'cz', pulse: 'cz_pulse',
+      traces: [{ x: [0, 1, 2], y: [0, 0.1, 0], label: 'I' }] } },
+    { match: '/generate/preview-pulses', reply: {
+      ok: true, ops: [{ element: 'coupler_q1_q2', op_name: 'cz' },
+                      { element: 'coupler_q2_q3', op_name: 'cz' }] } }
+  ];
+  // A wizard on step 8 with a finished build and its preview run.
+  async function previewWorld() {
+    const w = makeWorld({ routes: PREVIEW_ROUTES });
+    w.trees = [];
+    w.win.renderJsonTree = function (id, data, opts) {
+      w.trees.push({ id: id, opts: opts });
+      w.win.document.getElementById(id).textContent = JSON.stringify(data);
+    };
+    w.renders = [];
+    w.win.PlotTheme = { houseLayout: function (l) {
+      return Object.assign({ font: { color: 'rgb(1, 2, 3)' } }, l); } };
+    w.win._plotlyRender = function (el, traces, layout) {
+      w.renders.push({ el: el, layout: layout });
+      return w.win.Promise.resolve(null);
+    };
+    w.G.goToStep(8);
+    w.G._test.showBuildResult({ ok: true, result: { qubits: ['q1'], qubit_pairs: [] } },
+                              'D:\\x\\chipP');
+    const pv = [...w.win.document.querySelectorAll('#gen-build-result button')]
+      .find(b => b.textContent === 'Preview config');
+    click(w.win, pv);
+    await settle();
+    w.panel = $(w.win, 'json-panel');
+    w.jsonBtn = w.win.document.querySelector('#gen-build-result .gen-config-json-btn');
+    return w;
+  }
+
+  await (async function r20PreviewDoesNotCover() {
+    const w = await previewWorld();
+    ok(w.win.document.querySelector('#gen-build-result .gen-config-export'),
+      'r2-20: the preview result rendered (export row)');
+    ok(w.panel.classList.contains('hidden'),
+      'r2-20: Preview config does NOT open the JSON panel over its own result');
+    ok(w.trees.length === 0, 'r2-20: nothing is rendered into the panel until asked');
+    ok(w.jsonBtn && /View config JSON/.test(w.jsonBtn.textContent),
+      'r2-20: a "View config JSON" button sits in the export row');
+    click(w.win, w.jsonBtn);
+    ok(!w.panel.classList.contains('hidden'), 'r2-20: the button opens the panel');
+    ok($(w.win, 'json-panel-title').textContent === 'Generated config — chipP',
+      'r2-20: titled after the built folder (got "' +
+      $(w.win, 'json-panel-title').textContent + '")');
+    ok(w.trees.length === 1 && w.trees[0].id === 'json-panel-tree' &&
+       w.trees[0].opts.valueClick === 'copy' &&
+       $(w.win, 'json-panel-tree').textContent.indexOf('elements') >= 0,
+      'r2-20: the previewed config is drawn read-only (copy mode) into the tree');
+  })();
+
+  await (async function r10PanelParkedOffStep8() {
+    const w = await previewWorld();
+    click(w.win, w.jsonBtn);
+    ok(!w.panel.classList.contains('hidden'), 'r2-10: panel open on step 8');
+    w.G.goToStep(4);                                   // e.g. the stepper '4 Qubits'
+    ok(w.panel.classList.contains('hidden'),
+      'r2-10: leaving step 8 takes the panel off the wizard');
+    ok($(w.win, 'json-panel-tree').textContent.indexOf('elements') >= 0,
+      'r2-10: parked, not cleared — the tree is kept');
+    w.G.goToStep(8);
+    ok(!w.panel.classList.contains('hidden'), 'r2-10: back on step 8 it comes back');
+    w.win.closeJsonPanel();                            // the panel's ×
+    w.G.goToStep(4); w.G.goToStep(8);
+    ok(w.panel.classList.contains('hidden'), 'r2-10: a panel the user closed stays closed');
+    click(w.win, w.jsonBtn);
+    click(w.win, $(w.win, 'gen-reset'));               // confirm() → true
+    ok(w.G.state.step === 1 && w.panel.classList.contains('hidden'),
+      'r2-10: Reset leaves no panel over step 1');
+    w.G.goToStep(8);
+    ok(w.panel.classList.contains('hidden'),
+      'r2-10: after Reset the old chip\'s preview never comes back');
+  })();
+
+  await (async function f14EscapeAndGallery() {
+    const w = await previewWorld();
+    click(w.win, w.jsonBtn);
+    const input = $(w.win, 'gen-output-path');
+    input.dispatchEvent(new w.win.KeyboardEvent('keydown',
+      { key: 'Escape', bubbles: true, cancelable: true }));
+    ok(!w.panel.classList.contains('hidden'),
+      'F14: Escape while typing in a field leaves the panel alone');
+    const esc = new w.win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+    w.jsonBtn.dispatchEvent(esc);
+    ok(w.panel.classList.contains('hidden'), 'F14: Escape closes the JSON panel');
+    ok(esc.defaultPrevented, 'F14: the Escape that closed it is consumed');
+    w.G.goToStep(4); w.G.goToStep(8);
+    ok(w.panel.classList.contains('hidden'), 'F14: closed by Escape = stays closed');
+
+    const btns = w.win.document.querySelectorAll('.gen-preview-pulse-btn');
+    ok(btns.length === 2, 'F14: the gallery rendered (' + btns.length + ' ops)');
+    w.reveals.length = 0;
+    click(w.win, btns[0]);
+    await settle();
+    ok(w.renders.length === 1, 'F14: the waveform was drawn');
+    const lay = (w.renders[0] || {}).layout || {};
+    ok(lay.font && lay.font.color === 'rgb(1, 2, 3)',
+      'F14: the waveform uses the house plot theme (font ' + JSON.stringify(lay.font) + ')');
+    ok(lay.xaxis && lay.xaxis.title === 'time (ns)', 'F14: its own axis titles survive the theme');
+    ok(w.reveals.indexOf('gen-preview-pulses-plot') >= 0,
+      'F14: the waveform is brought into view (reveals ' + JSON.stringify(w.reveals) + ')');
+  })();
+
+  // ── F8: one build at a time ──────────────────────────────────────────────
+  // A wizard on step 8 with a valid spec; the build POST hangs until released.
+  function buildWorld(opts) {
+    const o = opts || {};
+    const w = makeWorld({ routes: [
+      { match: '/generate/envs', reply: { envs: [] } },
+      { match: '/generate/select-env', reply: o.selectEnv || { ok: true } }
+    ], draft: o.draft });
+    const origFetch = w.win.fetch;
+    w.releases = [];
+    w.win.fetch = function (url, fo) {
+      if (String(url).indexOf('/generate/build') >= 0) {
+        w.log.push({ url: String(url), body: JSON.parse(fo.body) });
+        return new w.win.Promise(function (res) {
+          w.releases.push(function (data) { res({ json: () => w.win.Promise.resolve(data) }); });
+        });
+      }
+      return origFetch(url, fo);
+    };
+    if (!o.draft) {
+      toStep4(w.win, w.G, 2);
+      w.G.state.env = 'C:/envs/test/python.exe';
+      w.G.goToStep(7);
+      setInput(w.win, $(w.win, 'gen-output-path'), o.out || 'D:\\x\\dbl');
+      w.G.goToStep(8);
+    }
+    w.builds = () => w.log.filter(e => e.url.indexOf('/generate/build') >= 0);
+    w.selects = () => w.log.filter(e => e.url.indexOf('/generate/select-env') >= 0);
+    return w;
+  }
+
+  await (async function f8DoublePress() {
+    const w = buildWorld();
+    // env not persisted yet: the first press goes through /generate/select-env
+    w.G.tryNext(); w.G.tryNext();          // a double press, before any answer
+    await settle();
+    ok(w.selects().length === 1,
+      'F8: a double press during the select-env round-trip selects ONCE (got ' +
+      w.selects().length + ')');
+    ok(w.builds().length === 1,
+      'F8: … and POSTs ONE build (got ' + w.builds().length + ')');
+    w.G.tryNext();                          // a third press while it runs
+    click(w.win, $(w.win, 'gen-next-top'));
+    await settle();
+    ok(w.builds().length === 1, 'F8: no second build while the first runs (got ' +
+      w.builds().length + ')');
+    ok($(w.win, 'gen-next-top').disabled && $(w.win, 'gen-next').disabled,
+      'F8: both Generate buttons are busy');
+    w.releases[0]({ ok: true, result: { qubits: ['q1'], qubit_pairs: [['q1', 'q2']] } });
+    await settle();
+    ok(!$(w.win, 'gen-next-top').disabled && !$(w.win, 'gen-next').disabled,
+      'F8: the buttons come back with the answer');
+    ok($(w.win, 'gen-build-result').textContent.indexOf('1 qubit and 1 pair into') >= 0,
+      'F8: counts are singular where they are one (got "' +
+      $(w.win, 'gen-build-result').textContent.split('\n')[0] + '")');
+    w.G.tryNext();                          // a NEW press after the answer builds again
+    await settle();
+    ok(w.builds().length === 2, 'F8: the next press after the answer builds again');
+  })();
+
+  await (async function f8ConfirmDoublePress() {
+    const w = buildWorld({ out: 'D:\\x\\full' });
+    w.G.tryNext();
+    await settle();
+    w.releases[0]({ ok: false, needs_confirm: true, conflict_files: ['a.json'],
+                    error: 'The output folder is not empty.' });
+    await settle();
+    const go = [...w.win.document.querySelectorAll('#gen-build-result button')]
+      .find(b => b.textContent === 'Generate anyway');
+    ok(!!go, 'F8: the confirm offers "Generate anyway"');
+    click(w.win, go); click(w.win, go);     // double press on the confirm
+    await settle();
+    ok(w.builds().length === 2 && w.builds()[1].body.force === true,
+      'F8: "Generate anyway" pressed twice POSTs ONE forced build (builds ' +
+      w.builds().length + ')');
+  })();
+
+  await (async function f8SelectEnvFailureDoesNotLatch() {
+    const w = buildWorld({ selectEnv: { ok: false, error: 'env gone' } });
+    w.G.tryNext();
+    await settle();
+    ok(/env gone/.test($(w.win, 'gen-build-result').textContent),
+      'F8: a failed select-env is reported');
+    ok(!$(w.win, 'gen-next').disabled, 'F8: … and leaves Generate usable');
+    w.G.tryNext();
+    await settle();
+    ok(w.selects().length === 2, 'F8: a failed select-env never latches the in-flight flag');
+  })();
+
+  // ── r2-13: the build outcome survives a reload / leave ───────────────────
+  await (async function r13ResultRestored() {
+    const w = buildWorld({ out: 'D:\\x\\kept' });
+    w.G.tryNext();
+    await settle();
+    const pending = JSON.parse(draftOf(w.win));
+    ok(pending.buildPending && pending.buildPending.outPath === 'D:\\x\\kept' &&
+       !pending.lastBuild,
+      'r2-13: the draft records the started build (got ' +
+      JSON.stringify(pending.buildPending) + ')');
+    w.releases[0]({ ok: true, result: { qubits: ['q1', 'q2'], qubit_pairs: [['q1', 'q2']],
+                                        allocation: { big: 'x'.repeat(50) }, warnings: [] } });
+    await settle();
+    const d = JSON.parse(draftOf(w.win));
+    ok(d.lastBuild && d.lastBuild.outPath === 'D:\\x\\kept' && !d.buildPending,
+      'r2-13: the draft records the outcome');
+    ok(d.lastBuild && d.lastBuild.res.result && !('allocation' in d.lastBuild.res.result),
+      'r2-13: the stored outcome is trimmed (no allocation)');
+
+    // F5 / leave and come back: a fresh mount from the same session draft
+    const w2 = makeWorld({ routes: [{ match: '/generate/envs', reply: { envs: [] } }],
+                           draft: draftOf(w.win) });
+    const res = $(w2.win, 'gen-build-result');
+    ok(w2.G.state.step === 8 && !res.hidden &&
+       res.textContent.indexOf('Generated 2 qubits and 1 pair into D:\\x\\kept') >= 0,
+      'r2-13: step 8 shows the finished build again (got "' + res.textContent.slice(0, 120) + '")');
+    ok(!!res.querySelector('.gen-build-restored'),
+      'r2-13: labelled as a restored result (the wizard may have changed since)');
+    ok([...res.querySelectorAll('button')].some(b => b.textContent === 'Load into app'),
+      'r2-13: the restored result still offers Load into app');
+    click(w2.win, $(w2.win, 'gen-reset'));
+    ok(w2.G.state.lastBuild === null && JSON.parse(draftOf(w2.win)).lastBuild === null,
+      'r2-13: Reset forgets the build record');
+  })();
+
+  await (async function r13PendingNotice() {
+    const w = buildWorld({ out: 'D:\\x\\lost' });
+    w.G.tryNext();
+    await settle();
+    // F5 during the build: the answer can never arrive in this page
+    const w2 = makeWorld({ routes: [{ match: '/generate/envs', reply: { envs: [] } }],
+                           draft: draftOf(w.win) });
+    const res = $(w2.win, 'gen-build-result');
+    ok(!res.hidden && res.textContent.indexOf('D:\\x\\lost') >= 0 &&
+       /outcome was not received/.test(res.textContent),
+      'r2-13: a build whose answer never arrived is named (got "' + res.textContent + '")');
+    ok(!$(w2.win, 'gen-next').disabled, 'r2-13: … and Generate stays usable');
+  })();
+
+  await (async function r13RemountWhileRunning() {
+    const w = buildWorld({ out: 'D:\\x\\run' });
+    w.G.tryNext();
+    await settle();
+    // the user leaves (htmx swaps the pane) and comes back before the answer
+    swapAway(w.win);
+    $(w.win, 'table-pane').innerHTML = HTML;
+    w.G.init();
+    const res = $(w.win, 'gen-build-result');
+    ok(!res.hidden && /still running/.test(res.textContent) &&
+       res.textContent.indexOf('D:\\x\\run') >= 0,
+      'r2-13: back while the build runs, step 8 says so (got "' + res.textContent + '")');
+    ok($(w.win, 'gen-next').disabled && $(w.win, 'gen-next-top').disabled,
+      'r2-13: … with Generate busy (a press would be refused)');
+    w.releases[0]({ ok: true, result: { qubits: ['q1', 'q2'], qubit_pairs: [] } });
+    await settle();
+    ok(res.textContent.indexOf('Generated 2 qubits and 0 pairs into D:\\x\\run') >= 0,
+      'r2-13: the answer lands in the re-mounted wizard');
+    ok(!$(w.win, 'gen-next').disabled, 'r2-13: … and Generate comes back');
+  })();
+
+  await (async function r13NoDraftNoRecord() {
+    // a mount with NO draft (lost / discarded) starts with no build record,
+    // even though this page's memory still holds the last one
+    const w = buildWorld({ out: 'D:\\x\\gone' });
+    w.G.tryNext();
+    await settle();
+    w.releases[0]({ ok: true, result: { qubits: ['q1'], qubit_pairs: [] } });
+    await settle();
+    swapAway(w.win);                               // saves the draft on the way out …
+    w.win.sessionStorage.removeItem(DRAFT_KEY);    // … which is then lost
+    $(w.win, 'table-pane').innerHTML = HTML;
+    w.G.init();
+    ok($(w.win, 'gen-build-result').hidden && w.G.state.lastBuild === null,
+      'r2-13: a fresh (draft-less) mount shows no stale build result');
+  })();
+
+  await (async function r13ConfirmIsNotAnOutcome() {
+    const w = buildWorld({ out: 'D:\\x\\q' });
+    w.G.tryNext();
+    await settle();
+    w.releases[0]({ ok: false, needs_confirm: true, conflict_files: [], error: 'x' });
+    await settle();
+    const d = JSON.parse(draftOf(w.win));
+    ok(!d.lastBuild && !d.buildPending,
+      'r2-13: a confirm question is neither a result nor a pending build');
   })();
 
   if (fails) {

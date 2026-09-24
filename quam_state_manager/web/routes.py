@@ -26242,6 +26242,35 @@ def _build_output_guard(output_path: str) -> dict | None:
             "existing_chip": existing_chip, "error": " ".join(parts)}
 
 
+# QA F8 (gen-session): one build per output folder at a time. The empty-folder
+# guard above is check-then-act: two builds into one folder (a double press,
+# or two SM windows) both saw it empty and both wrote it. Non-blocking by
+# design -- a second build must be REFUSED, never queued to overwrite the
+# first. Keyed like every folder identity here (path_match.fs_key).
+_BUILD_OUT_INFLIGHT: set[str] = set()
+_BUILD_OUT_LOCK = threading.Lock()
+
+
+def _claim_build_output(output_path: str) -> str | None:
+    """The claim key, or None when a build into this folder is running."""
+    key = path_match.fs_key(output_path)
+    with _BUILD_OUT_LOCK:
+        if key in _BUILD_OUT_INFLIGHT:
+            return None
+        _BUILD_OUT_INFLIGHT.add(key)
+    return key
+
+
+def _release_build_output(key: str) -> None:
+    with _BUILD_OUT_LOCK:
+        _BUILD_OUT_INFLIGHT.discard(key)
+
+
+_BUILD_BUSY_MSG = ("A build into this folder is already running (a second press, "
+                   "or another State Manager window). Wait for it to finish, "
+                   "then check the folder before generating again.")
+
+
 @bp.route("/generate/build", methods=["POST"])
 def generate_build():
     """Build state.json + wiring.json from a spec into the chosen folder.
@@ -26326,40 +26355,48 @@ def generate_build():
                           "environment and will be skipped or downgraded."),
             })
 
-    # Output-folder guard: QUAM's loader reads *every* .json in a folder, so a
-    # stray file there would corrupt the state.json the build is about to
-    # write. Block on any non-state/wiring .json unless the user forces it.
-    if not bool(data.get("force")):
-        guard = _build_output_guard(output_path)
-        if guard is not None:
-            return jsonify(guard)
+    # QA F8: claimed BEFORE the guard below reads the folder, released after
+    # the build (and its scripts export) wrote it.
+    claim = _claim_build_output(output_path)
+    if claim is None:
+        return jsonify({"ok": False, "busy": True, "error": _BUILD_BUSY_MSG}), 409
+    try:
+        # Output-folder guard: QUAM's loader reads *every* .json in a folder, so a
+        # stray file there would corrupt the state.json the build is about to
+        # write. Block on any non-state/wiring .json unless the user forces it.
+        if not bool(data.get("force")):
+            guard = _build_output_guard(output_path)
+            if guard is not None:
+                return jsonify(guard)
 
-    outcome = config_generator.run_generator(
-        python_path, "build", spec, Path(output_path), timeout=600
-    )
+        outcome = config_generator.run_generator(
+            python_path, "build", spec, Path(output_path), timeout=600
+        )
 
-    # Optional editable-scripts export (customer requirement: "generate/
-    # populate python scripts in a different user-defined folder"). Runs
-    # app-side from the same spec + the build's allocation — pure templating,
-    # no QM stack — and never fails a successful build.
-    if scripts_dir and outcome.get("ok"):
-        try:
-            from quam_state_manager.core import script_emitter
-            result = outcome.get("result") or {}
-            bundle = script_emitter.emit_bundle(
-                spec,
-                result.get("allocation") or {},
-                result.get("versions") or probe.get("versions") or {},
-                chip_name=Path(output_path).name or "chip",
-            )
-            outcome["scripts"] = {
-                "dir": scripts_dir,
-                "files": script_emitter.write_bundle(Path(scripts_dir), bundle),
-            }
-        except Exception as exc:  # noqa: BLE001 — best-effort side artefact
-            logger.warning("script bundle emission failed: %s", exc)
-            outcome["scripts_error"] = str(exc)
-    return jsonify(outcome)
+        # Optional editable-scripts export (customer requirement: "generate/
+        # populate python scripts in a different user-defined folder"). Runs
+        # app-side from the same spec + the build's allocation — pure templating,
+        # no QM stack — and never fails a successful build.
+        if scripts_dir and outcome.get("ok"):
+            try:
+                from quam_state_manager.core import script_emitter
+                result = outcome.get("result") or {}
+                bundle = script_emitter.emit_bundle(
+                    spec,
+                    result.get("allocation") or {},
+                    result.get("versions") or probe.get("versions") or {},
+                    chip_name=Path(output_path).name or "chip",
+                )
+                outcome["scripts"] = {
+                    "dir": scripts_dir,
+                    "files": script_emitter.write_bundle(Path(scripts_dir), bundle),
+                }
+            except Exception as exc:  # noqa: BLE001 — best-effort side artefact
+                logger.warning("script bundle emission failed: %s", exc)
+                outcome["scripts_error"] = str(exc)
+        return jsonify(outcome)
+    finally:
+        _release_build_output(claim)
 
 
 @bp.route("/regenerate/reconstruct", methods=["POST"])
@@ -26654,22 +26691,29 @@ def regenerate_build():
                           "environment and will be skipped or downgraded."),
             })
 
-    # Same stray-.json guard as /generate/build — QUAM's loader reads every
-    # .json in a folder, so a stray file would corrupt the generated state.
-    if not bool(data.get("force")):
-        guard = _build_output_guard(output_path)
-        if guard is not None:
-            return jsonify(guard)
+    # QA F8: one build per output folder at a time (see _claim_build_output).
+    claim = _claim_build_output(output_path)
+    if claim is None:
+        return jsonify({"ok": False, "busy": True, "error": _BUILD_BUSY_MSG}), 409
+    try:
+        # Same stray-.json guard as /generate/build — QUAM's loader reads every
+        # .json in a folder, so a stray file would corrupt the generated state.
+        if not bool(data.get("force")):
+            guard = _build_output_guard(output_path)
+            if guard is not None:
+                return jsonify(guard)
 
-    live_note = _regen_source_live_note(src_p)   # judged as the source is read
-    outcome = regenerate.run_regenerate(
-        python_path, source_folder, spec, Path(output_path), timeout=600,
-        populate_baseline=populate_baseline,
-        populate_touched=populate_touched,
-        scripts_dir=scripts_dir,
-        instance_path=current_app.instance_path,
-        scripts_enabled=scripts_enabled,
-    )
+        live_note = _regen_source_live_note(src_p)   # judged as the source is read
+        outcome = regenerate.run_regenerate(
+            python_path, source_folder, spec, Path(output_path), timeout=600,
+            populate_baseline=populate_baseline,
+            populate_touched=populate_touched,
+            scripts_dir=scripts_dir,
+            instance_path=current_app.instance_path,
+            scripts_enabled=scripts_enabled,
+        )
+    finally:
+        _release_build_output(claim)
     if live_note and isinstance(outcome, dict):
         outcome["source_live_changed"] = True
         res = outcome.get("result")

@@ -9,6 +9,10 @@ regenerate-r2-18   an unticked scripts export writes NO build-script bundle
                    the outcome names the real folder + whether it lies inside
                    the output folder, so the report stops claiming "written to
                    the output folder" for a folder somewhere else.
+F8 (generate)      one build per output folder at a time: /generate/build and
+                   /regenerate/build refuse (409, busy) a second build into a
+                   folder a build is still writing, never queue it, and
+                   release the folder when the build ends (a crash included).
 """
 from __future__ import annotations
 
@@ -170,3 +174,118 @@ class TestBuildRouteCarriesTheCheckbox:
         assert got["scripts_enabled"] is True
         resp = client.post("/regenerate/build", json={**base, "scripts_enabled": True})
         assert got["scripts_enabled"] is True
+
+
+# ── F8 (generate): one build per output folder at a time ──────────────────
+class TestOneBuildPerFolder:
+    """Two builds into one folder both passed the empty-folder guard (check-
+    then-act) and both wrote it: a double press, or two SM windows. The
+    second must be refused while the first runs — never queued behind it."""
+
+    @pytest.fixture(autouse=True)
+    def _all_capabilities(self, monkeypatch):
+        from quam_state_manager.core import config_generator
+        from quam_state_manager.generator.probe_capabilities import CATALOG_IDS
+        manifest = {
+            "ok": True, "cached": False, "error": None, "versions": {},
+            "capabilities": {c: {"available": True, "detail": ""} for c in CATALOG_IDS},
+        }
+        monkeypatch.setattr(config_generator, "probe_capabilities",
+                            lambda *a, **k: manifest)
+
+    @staticmethod
+    def _held_build(monkeypatch, target, attr):
+        """Replace target.attr with a build whose FIRST call blocks until
+        released (later calls return at once)."""
+        import threading
+        entered, release = threading.Event(), threading.Event()
+        calls = []
+
+        def fake(*a, **kw):
+            calls.append(a)
+            if len(calls) == 1:
+                entered.set()
+                assert release.wait(20), "the held build was never released"
+            return {"ok": True, "status": "ok", "error": None,
+                    "result": {"qubits": [], "qubit_pairs": []}, "merge": None}
+        monkeypatch.setattr(target, attr, fake)
+        return entered, release, calls
+
+    def _race(self, client, url, first, second, entered, release):
+        import threading
+        box = {}
+
+        def run():
+            box["first"] = client.post(url, json=first)
+        t = threading.Thread(target=run)
+        t.start()
+        try:
+            assert entered.wait(20), "the first build never started"
+            box["second"] = client.post(url, json=second)
+        finally:
+            release.set()
+            t.join(20)
+        return box["first"], box["second"]
+
+    def test_generate_build_refuses_a_second_build_into_the_same_folder(
+            self, client, tmp_path, monkeypatch):
+        from quam_state_manager.core import config_generator
+        entered, release, calls = self._held_build(
+            monkeypatch, config_generator, "run_generator")
+        client.post("/generate/select-env", json={"python": sys.executable})
+        out = str(tmp_path / "out")
+        body = {"spec": _gen_valid_spec(), "output_path": out}
+        # the second spelling differs only by a trailing separator
+        r1, r2 = self._race(client, "/generate/build", body,
+                            {**body, "output_path": out + "\\" if sys.platform == "win32"
+                             else out + "/"}, entered, release)
+        assert r1.status_code == 200, r1.get_json()
+        assert r2.status_code == 409, r2.get_json()
+        assert r2.get_json().get("busy") is True
+        assert len(calls) == 1, "the second build ran the generator too"
+        # released after the first finished: the folder can be built again
+        again = client.post("/generate/build", json=body)
+        assert again.status_code == 200, again.get_json()
+        assert len(calls) == 2
+
+    def test_another_folder_is_not_held_up(self, client, tmp_path, monkeypatch):
+        from quam_state_manager.core import config_generator
+        entered, release, calls = self._held_build(
+            monkeypatch, config_generator, "run_generator")
+        client.post("/generate/select-env", json={"python": sys.executable})
+        spec = _gen_valid_spec()
+        r1, r2 = self._race(client, "/generate/build",
+                            {"spec": spec, "output_path": str(tmp_path / "a")},
+                            {"spec": spec, "output_path": str(tmp_path / "b")},
+                            entered, release)
+        assert r1.status_code == 200 and r2.status_code == 200, r2.get_json()
+        assert len(calls) == 2
+
+    def test_a_crashed_build_releases_the_folder(self, client, tmp_path, monkeypatch):
+        from quam_state_manager.core import config_generator
+
+        def boom(*a, **kw):
+            raise RuntimeError("generator crashed")
+        monkeypatch.setattr(config_generator, "run_generator", boom)
+        client.application.config["PROPAGATE_EXCEPTIONS"] = False
+        client.post("/generate/select-env", json={"python": sys.executable})
+        body = {"spec": _gen_valid_spec(), "output_path": str(tmp_path / "out")}
+        assert client.post("/generate/build", json=body).status_code == 500
+        ok_build = {"ok": True, "status": "ok", "error": None, "result": {}}
+        monkeypatch.setattr(config_generator, "run_generator", lambda *a, **k: ok_build)
+        assert client.post("/generate/build", json=body).status_code == 200, \
+            "a crashed build left its folder claimed"
+
+    def test_regenerate_build_refuses_a_second_build_into_the_same_folder(
+            self, client, tmp_path, monkeypatch):
+        entered, release, calls = self._held_build(
+            monkeypatch, regenerate, "run_regenerate")
+        client.post("/generate/select-env", json={"python": sys.executable})
+        src = tmp_path / "src"
+        src.mkdir()
+        body = {"spec": _gen_valid_spec(), "output_path": str(tmp_path / "out"),
+                "source_folder": str(src)}
+        r1, r2 = self._race(client, "/regenerate/build", body, body, entered, release)
+        assert r1.status_code == 200, r1.get_json()
+        assert r2.status_code == 409, r2.get_json()
+        assert len(calls) == 1

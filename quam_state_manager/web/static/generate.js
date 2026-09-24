@@ -355,6 +355,7 @@
     if (state.step === 5) enterWiringStep();
     if (state.step === 6) enterPopulateStep();
     if (state.step === 8) enterReviewStep();
+    syncPreviewPanel();   // QA r2-10
 
     focusStep(state.step);
   }
@@ -523,6 +524,11 @@
   // The server knows the current selection (data.selected or a user click).
   // An auto-picked env is client-side only until a build persists it.
   var _envPersisted = false;
+  // QA F8: one build at a time from this wizard — a double press (header or
+  // bottom Generate, "Generate anyway", "Build without these features", or
+  // during the select-env round-trip) used to POST two builds into ONE
+  // folder. Set from the first press until its response lands.
+  var _buildInFlight = false;
 
   function probeEnv(python, statusEl, done) {
     fetch("/generate/probe?python=" + encodeURIComponent(python))
@@ -3139,6 +3145,51 @@
     var p = document.getElementById("json-panel");
     if (p) p.classList.add("hidden");
   };
+
+  // The wizard's OWN #json-panel (Preview config's "View config JSON"). The id
+  // repeats in other partials and window.closeJsonPanel is whichever page
+  // defined it last, so the wizard looks its panel up under #generate-root.
+  function wizJsonPanel() {
+    var r = root();
+    return r ? r.querySelector("#json-panel") : null;
+  }
+  // QA r2-10: the panel is fixed over the lower half of the viewport and
+  // belongs to step 8's preview — on any other step it covered the wizard
+  // and swallowed its clicks (stale title and all). Leaving step 8 PARKS it
+  // (hidden, tree kept); coming back shows it again. Closed = stays closed.
+  var _previewPanelParked = false;
+  function syncPreviewPanel() {
+    var p = wizJsonPanel();
+    if (!p) return;
+    if (state.step !== STEP_COUNT) {
+      if (!p.classList.contains("hidden")) {
+        p.classList.add("hidden");
+        _previewPanelParked = true;
+      }
+    } else if (_previewPanelParked) {
+      _previewPanelParked = false;
+      p.classList.remove("hidden");
+    }
+  }
+  // QA F14: Escape closes it, like the Couplers / Flux pages' panels — it is
+  // the innermost thing on screen once open. Never while typing, during a
+  // wire drag (its own Escape cancels the drag), or under a modal.
+  document.addEventListener("keydown", function (evt) {
+    if (evt.key !== "Escape" || evt.defaultPrevented) return;
+    if (window.smModalOpen && window.smModalOpen()) return;
+    var t = evt.target;
+    var tag = t && t.tagName ? t.tagName.toLowerCase() : "";
+    var typing = (tag === "input" &&
+                  !/^(checkbox|radio|button|submit|reset)$/i.test(t.type || "")) ||
+                 tag === "textarea" || tag === "select" || (t && t.isContentEditable);
+    if (typing) return;
+    if (_wireDrag) return;
+    var p = wizJsonPanel();
+    if (!p || p.classList.contains("hidden")) return;
+    p.classList.add("hidden");
+    _previewPanelParked = false;
+    evt.preventDefault();
+  });
 
   // -- step 5: drag-and-drop port editing -------------------------------
   // Drag a port circle (a line) onto another port. xy/z/coupler move or
@@ -7223,6 +7274,29 @@
           a.textContent = "↓ " + pair[0];
           exp.appendChild(a);
         });
+        // QA regenerate-r2-20: the config tree opens when ASKED. The panel is
+        // fixed over the lower ~55% of the viewport, and opening it by itself
+        // covered this very result — the downloads, the pulse gallery and the
+        // Generate button — until its × was found.
+        var jsonBtn = document.createElement("button");
+        jsonBtn.type = "button";
+        jsonBtn.className = "outline gen-config-export-btn gen-config-json-btn";
+        jsonBtn.textContent = "{ } View config JSON";
+        jsonBtn.addEventListener("click", function () {
+          // Reuse the shared slide-up JSON panel (read-only copy mode — the
+          // default "edit" mode is for live-state trees only).
+          var panel = wizJsonPanel();
+          var treeEl = document.getElementById("json-panel-tree");
+          var title = document.getElementById("json-panel-title");
+          if (panel && treeEl && title && typeof window.renderJsonTree === "function") {
+            title.textContent = "Generated config — " + pathBasename(outPath);
+            treeEl.innerHTML = "";
+            window.renderJsonTree("json-panel-tree", res.config,
+                                  { defaultDepth: 1, valueClick: "copy" });
+            panel.classList.remove("hidden");
+          }
+        });
+        exp.appendChild(jsonBtn);
         out.appendChild(exp);
 
         // 2Q-gate pulse gallery (supercritical feedback): the default-seeded
@@ -7230,19 +7304,6 @@
         // exact waveform this config plays (the config's own sample arrays,
         // the same traces the Config Viewer shows after load).
         renderPreviewPulseGallery(out, outPath);
-
-        // Reuse the shared slide-up JSON panel (read-only copy mode — the
-        // default "edit" mode is for live-state trees only).
-        var panel = document.getElementById("json-panel");
-        var treeEl = document.getElementById("json-panel-tree");
-        var title = document.getElementById("json-panel-title");
-        if (panel && treeEl && title && typeof window.renderJsonTree === "function") {
-          title.textContent = "Generated config — " + pathBasename(outPath);
-          treeEl.innerHTML = "";
-          window.renderJsonTree("json-panel-tree", res.config,
-                                { defaultDepth: 1, valueClick: "copy" });
-          panel.classList.remove("hidden");
-        }
       })
       .catch(function () {
         btn.disabled = false;
@@ -7299,13 +7360,29 @@
                   return { x: t.x, y: t.y, mode: "lines", type: "scatter",
                            name: t.label, line: { width: 2 } };
                 });
-                window._plotlyRender(canvas, traces, {
+                var lay = {
                   margin: { l: 50, r: 10, t: 10, b: 40 },
                   xaxis: { title: "time (ns)" },
                   yaxis: { title: "voltage (V at 50 Ω)" },
                   showlegend: traces.length > 1,
                   legend: { orientation: "h", y: -0.3 },
-                }, { responsive: true, displayModeBar: false });
+                };
+                // QA F14: the house theme (axis text / grid follow the theme
+                // tokens) — Plotly's default #444 ticks were nearly invisible
+                // on the dark result box.
+                if (window.PlotTheme && window.PlotTheme.houseLayout) {
+                  lay = window.PlotTheme.houseLayout(lay);
+                }
+                // QA F14: the plot draws under the whole op list — bring it
+                // into view (clear of the JSON panel when that is open).
+                var jp = wizJsonPanel();
+                plot.style.scrollMarginBottom = (jp && !jp.classList.contains("hidden"))
+                  ? jp.offsetHeight + "px" : "0px";
+                if (typeof plot.scrollIntoView === "function") {
+                  try { plot.scrollIntoView({ block: "nearest" }); } catch (e) { /* old engine */ }
+                }
+                window._plotlyRender(canvas, traces, lay,
+                  { responsive: true, displayModeBar: false });
               })
               .catch(function () { plot.textContent = "waveform request failed"; });
           });
@@ -7316,6 +7393,68 @@
         out.appendChild(box);
       })
       .catch(function () { /* gallery is best-effort */ });
+  }
+
+  // QA r2-13: the fields showBuildResult reads — never result.allocation /
+  // versions, which can be large on a big chip and the draft already holds.
+  function trimBuildRes(res) {
+    var out = {};
+    ["ok", "error", "errors", "capability_blockers", "merge", "script",
+     "script_error", "script_in_output", "scripts", "scripts_error"
+    ].forEach(function (k) { if (res && res[k] != null) out[k] = res[k]; });
+    var r = res && res.result;
+    if (r && typeof r === "object") {
+      out.result = { qubits: r.qubits || [], qubit_pairs: r.qubit_pairs || [],
+                     warnings: r.warnings || [] };
+      if (r.error) out.result.error = r.error;
+    }
+    return out;
+  }
+
+  function hhmm(at) {
+    try {
+      return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    } catch (e) { return ""; }
+  }
+
+  // QA r2-13: on a (re-)mount, step 8 says what became of the last build —
+  // still running (left and came back), its result (reload / leave after it
+  // landed), or started with no answer received (F5 during the build).
+  function restoreBuildOutcome() {
+    var el = document.getElementById("gen-build-result");
+    if (!el) return;
+    if (_buildInFlight) {
+      ["gen-next", "gen-next-top"].forEach(function (id) {
+        var b = document.getElementById(id);
+        if (b) b.disabled = true;
+      });
+      el.hidden = false;
+      el.className = "gen-build-result";
+      el.textContent = "Generating… a build started on this page" +
+        (state.buildPending ? " at " + hhmm(state.buildPending.at) + " into " +
+          state.buildPending.outPath : "") +
+        " is still running — its result appears here when it finishes.";
+      return;
+    }
+    var lb = state.lastBuild;
+    if (lb && lb.res && lb.outPath) {
+      showBuildResult(lb.res, lb.outPath);
+      var note = document.createElement("p");
+      note.className = "muted gen-build-restored";
+      note.textContent = "Result of the build at " + hhmm(lb.at) +
+        " (shown again after the page was reloaded or left — the wizard " +
+        "may have changed since).";
+      el.insertBefore(note, el.firstChild);
+      return;
+    }
+    var bp = state.buildPending;
+    if (bp && bp.outPath) {
+      el.hidden = false;
+      el.className = "gen-build-result gen-build-confirm";
+      el.textContent = "⚠ A build into " + bp.outPath + " was started at " +
+        hhmm(bp.at) + " and its outcome was not received (the page was " +
+        "reloaded or left). Check that folder before generating again.";
+    }
   }
 
   function showBuildResult(res, outPath) {
@@ -7329,9 +7468,10 @@
       el.className = "gen-build-result gen-build-ok";
       var r = res.result;
       var msg = document.createElement("p");
-      msg.textContent = "✓ Generated " +
-        ((r.qubits || []).length) + " qubits and " +
-        ((r.qubit_pairs || []).length) + " pairs into " + outPath;
+      var nQ = (r.qubits || []).length, nP = (r.qubit_pairs || []).length;
+      msg.textContent = "✓ Generated " +   // QA F8 side note: "1 pairs"
+        nQ + (nQ === 1 ? " qubit" : " qubits") + " and " +
+        nP + (nP === 1 ? " pair" : " pairs") + " into " + outPath;
       el.appendChild(msg);
       (r.warnings || []).forEach(function (w) {
         var wel = document.createElement("p");
@@ -7680,6 +7820,17 @@
       if (!el || el.hidden || typeof el.scrollIntoView !== "function") return;
       try { el.scrollIntoView({ block: "nearest" }); } catch (e) { /* old engine */ }
     }
+    // QA F10 + F8: BOTH Generate buttons are busy for the build (only the
+    // bottom one used to be), and the in-flight flag refuses a second press
+    // from any entry point until the first one's response lands.
+    function setBuildBusy(busy) {
+      _buildInFlight = busy;
+      ["gen-next", "gen-next-top"].forEach(function (id) {
+        var b = document.getElementById(id);
+        if (b) b.disabled = busy;
+      });
+    }
+    if (_buildInFlight) return;   // QA F8: a build of this wizard is running
     if (!state.env) {
       refuseBuild("Select an environment in step 1.", "warn");
       return;
@@ -7688,6 +7839,7 @@
     // the explicit act that persists it (the server-side build reads the
     // persisted selection). One round-trip, then re-enter with identical args.
     if (!_envPersisted) {
+      setBuildBusy(true);   // QA F8: a second press during this round-trip
       fetch("/generate/select-env", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -7695,6 +7847,7 @@
       })
         .then(function (r) { return r.json(); })
         .then(function (res) {
+          setBuildBusy(false);
           if (res && res.ok) {
             _envPersisted = true;
             runBuild(force, ackDegrades);
@@ -7705,6 +7858,7 @@
           }
         })
         .catch(function () {
+          setBuildBusy(false);
           refuseBuild(
             "Could not select the build environment — pick one in step 1.",
             "error");
@@ -7787,16 +7941,12 @@
     }
 
     var resultEl = document.getElementById("gen-build-result");
-    // QA F10: BOTH Generate buttons are busy for the build — only the bottom
-    // one used to be, so a header press that looked dead could be pressed
-    // again and POST a second concurrent build.
-    var nextBtns = ["gen-next", "gen-next-top"].map(function (id) {
-      return document.getElementById(id);
-    }).filter(Boolean);
-    function setBuildBusy(busy) {
-      nextBtns.forEach(function (b) { b.disabled = busy; });
-    }
     setBuildBusy(true);
+    // QA r2-13: the draft knows a build was started, so a reload before its
+    // answer lands can say so instead of showing an empty step 8.
+    state.buildPending = { outPath: outPath, at: Date.now() };
+    state.lastBuild = null;
+    saveDraft();
     if (resultEl) {
       resultEl.hidden = false;
       resultEl.className = "gen-build-result";
@@ -7832,6 +7982,14 @@
       .then(function (r) { return r.json(); })
       .then(function (res) {
         setBuildBusy(false);
+        // QA r2-13: the outcome rides the draft (a question, or a refusal
+        // because another build holds the folder, is not one), so F5 or
+        // leaving and coming back shows it again — even when the answer
+        // lands while another page is on screen.
+        state.buildPending = null;
+        state.lastBuild = (res.needs_confirm || res.busy) ? null
+          : { res: trimBuildRes(res), outPath: outPath, at: Date.now() };
+        saveDraft();
         if (res.needs_confirm) {
           showBuildConfirm(res, outPath);
           revealResult(resultEl);
@@ -7938,7 +8096,11 @@
         pairGate: state.pairGate, chipArch: state.chipArch,
         crPortMode: state.crPortMode, zzEnabled: state.zzEnabled,
         topoZone: state.topoZone,
-        autoPresetApplied: state.autoPresetApplied
+        autoPresetApplied: state.autoPresetApplied,
+        // QA r2-13: what became of the last build (trimmed) / one started
+        // whose answer has not landed yet.
+        lastBuild: state.lastBuild || null,
+        buildPending: state.buildPending || null
       }));
     } catch (e) { /* quota / serialisation — non-fatal */ }
   }
@@ -8038,6 +8200,9 @@
     // One-shot standard-defaults auto-apply (per draft): old drafts lack the
     // flag → falsy → the prefill runs once on their next populate-step visit.
     state.autoPresetApplied = !!d.autoPresetApplied;
+    // QA r2-13: optional (older drafts lack them).
+    state.lastBuild = (d.lastBuild && d.lastBuild.res) ? d.lastBuild : null;
+    state.buildPending = (d.buildPending && d.buildPending.outPath) ? d.buildPending : null;
     // 2-qubit gate — default to the tunable-coupler CZ, and migrate the
     // pre-redesign vocabulary (coupler / cross_resonance / zz_drive).
     state.pairGate = d.pairGate || "cz_tunable";
@@ -8133,6 +8298,8 @@
     state.sourcePath = null;
     state.regenLineInventory = null;
     state.regenSourcePairGate = null;
+    state.lastBuild = null;      // QA r2-13: a Reset forgets the build record
+    state.buildPending = null;
     resetAllocRuntime();   // strand any in-flight allocate for the old content
     try {
       localStorage.removeItem("quam_gen_output_path");
@@ -8155,6 +8322,7 @@
     setChassisCount(5);   // re-seed 5 OPX1000 chassis (also renders the grid)
     setQubitCount(0);     // clears qubits / pairs / TWPAs and re-renders
     goToStep(1);
+    _previewPanelParked = false;   // QA r2-10: the old preview never comes back
     if (wasRegen) {
       // From #generate-root, so the listener lives on the page's own
       // #regen-surface and leaves with it on the next swap.
@@ -8193,6 +8361,8 @@
       catch (e) { /* private mode */ }
       var outEl = document.getElementById("gen-output-path");
       if (outEl && state.outputPath) outEl.value = state.outputPath;
+      state.lastBuild = null;      // QA r2-13: no draft, no build record
+      state.buildPending = null;
     }
 
     // Mode is NEVER restored from a draft (regen sessions don't persist one),
@@ -8237,7 +8407,9 @@
     bindWiringStep();
     bindOutputStep();
     if (draft) repaintFromState();
+    _previewPanelParked = false;   // QA r2-10: a fresh mount's panel is empty
     render();
+    restoreBuildOutcome();   // QA r2-13
     loadEnvs();
   }
 
@@ -8545,6 +8717,7 @@
     if (typeof renderChassis === "function") renderChassis();
     if (typeof renderQubitsStep === "function") renderQubitsStep();
     render();
+    _previewPanelParked = false;   // QA r2-10: the old chip's preview stays gone
     // QA F6: the leave guard's clean baseline — exactly what is on screen now.
     if (state.mode === "regenerate") regenMarkClean();
   }
