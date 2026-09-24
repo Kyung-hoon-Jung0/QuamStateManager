@@ -42,7 +42,7 @@
     // The folder the wizard was last filled from (null = the loaded chip) —
     // what a Reset re-reads (QA F8).
     var current = null;
-    function hydrate(folder) {
+    function hydrate(folder, step) {
       say("Reading chip & reconstructing spec…");
       fetch("/regenerate/reconstruct", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -54,10 +54,12 @@
         QuamGen.hydrateFromSpec(res.spec, {
           mode: "regenerate", buildEndpoint: "/regenerate/build",
           sourcePath: res.source_folder,
+          sourceHash: res.source_hash,   // QA regenerate-r2-35
           // r15 CG1 (docs/70): /regenerate?step=5 = the /instrument "Modify
           // wiring…" deep link; hydrateFromSpec has honored opts.step all
-          // along (null → step 1).
-          step: {{ (regen_step if regen_step is defined else None) | tojson }}
+          // along (null → step 1). A reload from the build's "source
+          // changed" question returns to the step it was asked on.
+          step: step || {{ (regen_step if regen_step is defined else None) | tojson }}
         });
         current = folder || null;
         var chip = document.getElementById("regen-chip");
@@ -100,6 +102,11 @@
       var meta = document.getElementById("regen-meta");
       if (meta) meta.textContent = "";
       hydrate(current);
+    });
+    // QA regenerate-r2-35: "Reload the wizard from the chip" after the build
+    // said the source changed since this wizard read it.
+    if (surface) surface.addEventListener("quamgen:rehydrate", function (e) {
+      hydrate(current, e.detail && e.detail.step);
     });
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);

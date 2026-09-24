@@ -26231,15 +26231,29 @@ def _build_output_guard(output_path: str) -> dict | None:
     existing_chip = (out / "state.json").exists()
     if not stray and not existing_chip:
         return None
+    # QA F20: the chip may be the user's OWN re-generate, unchanged since (a
+    # reload mid-build lost its report) -- say so, and hand the report back.
+    own = regenerate.own_build(out) if existing_chip else None
     parts = []
-    if existing_chip:
+    if own is not None:
+        when = (own.get("built_at") or "")[:16].replace("T", " ")
+        src = own.get("source_folder")
+        parts.append("This folder holds the chip State Manager re-generated here"
+                     + (f" at {when}" if when else "")
+                     + (f" from {src}" if src else "")
+                     + ", unchanged since. A new build here REPLACES it "
+                       "with no backup.")
+    elif existing_chip:
         parts.append("This folder already contains a chip (state.json + wiring.json) "
                      "that would be OVERWRITTEN with no backup.")
     if stray:
         parts.append("QUAM's loader reads every .json under a folder recursively, so "
                      "these would corrupt the generated state: " + ", ".join(stray[:20]))
-    return {"ok": False, "needs_confirm": True, "conflict_files": stray,
-            "existing_chip": existing_chip, "error": " ".join(parts)}
+    payload = {"ok": False, "needs_confirm": True, "conflict_files": stray,
+               "existing_chip": existing_chip, "error": " ".join(parts)}
+    if own is not None:
+        payload["own_build"] = own
+    return payload
 
 
 # QA F8 (gen-session): one build per output folder at a time. The empty-folder
@@ -26452,6 +26466,9 @@ def regenerate_reconstruct():
         "info_notes": list(rec.info_notes),
         "flavor": flavor,
         "source_folder": str(folder),
+        # QA regenerate-r2-35: what was read, so the build can ask when the
+        # source changed under the wizard's displayed values.
+        "source_hash": rec.source_hash,
         # QA F9: name the folder that was READ. The loaded chip's name is right
         # only on the default path (whose folder is the working-copy key); an
         # explicit "Load different…" folder used to wear it too, so the bar
@@ -26691,6 +26708,36 @@ def regenerate_build():
                           "environment and will be skipped or downgraded."),
             })
 
+    # QA regenerate-r2-35: the merge reads the source NOW (docs/72: the
+    # working copy wins every cell the user did not edit), so a save made in
+    # another tab since the wizard loaded would be built while the wizard
+    # still shows the old value. Ask first; what is built does not change.
+    # No source_hash (an older client) = the old behaviour.
+    source_hash = str(data.get("source_hash") or "").strip()
+    if (source_hash and populate_baseline is not None
+            and not bool(data.get("ack_source_changed"))):
+        _ctx = _active_ctx()
+        _live = (_ctx or {}).get("path")
+        try:
+            drift = regenerate.source_drift(
+                source_folder, source_hash, populate_baseline, spec=spec,
+                populate_touched=populate_touched,
+                sidecar_dirs=((str(_live),) if _live and str(_live) != source_folder
+                              else ()))
+        except Exception:  # noqa: BLE001 -- the build reads it again and reports
+            logger.warning("source drift check failed on %s", source_folder,
+                           exc_info=True)
+            drift = []
+        if drift:
+            return jsonify({
+                "ok": False, "needs_confirm": True, "confirm_kind": "source_changed",
+                "source_drift": drift[:50], "source_drift_total": len(drift),
+                "error": ("The source chip changed since this wizard read it "
+                          "(saved from another tab or window) — "
+                          + str(len(drift)) + " value(s) shown here differ "
+                          "from the chip now."),
+            })
+
     # QA F8: one build per output folder at a time (see _claim_build_output).
     claim = _claim_build_output(output_path)
     if claim is None:
@@ -26720,6 +26767,12 @@ def regenerate_build():
         if isinstance(res, dict):
             # the result panel prints result.warnings as "⚠ ..." lines
             res["warnings"] = list(res.get("warnings") or []) + [live_note]
+    # QA F20: the report also lands beside the chip (hash-keyed sidecar), so a
+    # page reloaded or left mid-build can get it back -- naming the chip the
+    # user loaded (its live folder), not the working copy it was read from.
+    src_label = next((str(f) for f, role in _regen_protected_folders(src_p)
+                      if role == "source_live"), source_folder)
+    regenerate.record_build_report(output_path, outcome, src_label)
     return jsonify(outcome)
 
 

@@ -11,7 +11,11 @@ Re-generate session asks first (F6), Re-generate never reads or clears the
 Generate draft (F7), Reset on the Re-generate page re-fills from the source
 chip through the page's own script (F8), a header Generate press answers in
 view with both buttons busy (F10), and the scripts export means what the box
-says (regenerate-r2-18).
+says (regenerate-r2-18). Chunk 4: "Load into app" retires the finished draft
+(generate-r2-14), step 1 refuses an env that probed "missing"
+(generate-r2-18), Review flags a relative folder (F21), the user's own
+re-generate hands its report back (F20), and a source changed under the
+wizard is named before the build (regenerate-r2-35).
 
 Skips when node or jsdom is unavailable (the selfcheck exits 2 for a missing
 jsdom). Install once with ``npm install``.

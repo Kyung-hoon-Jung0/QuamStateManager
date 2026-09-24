@@ -44,6 +44,9 @@ def reconstruct_from_folder(
     """
     folder = Path(folder)
     state, wiring = safe_io.read_state_wiring(folder)
+    # QA regenerate-r2-35: stamp WHAT was read (from this one read), so the
+    # build can tell the wizard's displayed values went stale under it.
+    source_hash = regen_spec.content_hash(state, wiring)
     for cand in (folder, *(Path(d) for d in sidecar_dirs)):
         sidecar = regen_spec.load_spec_sidecar(cand, state, wiring)
         if sidecar is not None:
@@ -52,8 +55,89 @@ def reconstruct_from_folder(
             merged = dict(state)
             merged["wiring"] = wiring.get("wiring", {})
             sidecar["populate"] = regen_spec._extract_populate(state, merged)
-            return regen_spec.ReconstructedSpec(spec=sidecar, exact=True)
-    return regen_spec.reconstruct_spec(state, wiring)
+            return regen_spec.ReconstructedSpec(spec=sidecar, exact=True,
+                                                source_hash=source_hash)
+    rec = regen_spec.reconstruct_spec(state, wiring)
+    rec.source_hash = source_hash
+    return rec
+
+
+def source_drift(
+    folder: Path | str,
+    baseline_hash: str,
+    populate_baseline: dict | None,
+    spec: dict | None = None,
+    populate_touched: list | None = None,
+    sidecar_dirs: tuple[Path | str, ...] = (),
+) -> list[dict]:
+    """The Populate cells the wizard DISPLAYS whose source value changed since
+    the wizard read the chip (QA regenerate-r2-35).
+
+    The value-merge reads the source at BUILD time (docs/72: the working copy
+    wins every cell the user did not edit), so a save made in another tab
+    after the wizard loaded was built while the wizard still showed the old
+    value, with no word anywhere. This does not change what is built; it
+    names the difference so the build can ask first.
+
+    ``baseline_hash`` is :attr:`ReconstructedSpec.source_hash` from the
+    wizard's hydrate; ``populate_baseline`` is what the wizard displayed then.
+    Returns ``[]`` when the source is unchanged, or changed only in values the
+    wizard does not show. Each entry: ``{group, id, field, shown, now,
+    yours}`` -- ``yours`` when the user also edited that cell in the wizard,
+    whose value then wins (populate-protect). Raises what the source read
+    raises (the caller decides how to degrade).
+    """
+    from . import regen_populate
+    state, wiring = safe_io.read_state_wiring(Path(folder))
+    if not baseline_hash or regen_spec.content_hash(state, wiring) == baseline_hash:
+        return []
+    baseline = populate_baseline if isinstance(populate_baseline, dict) else {}
+    now_view = regen_populate.populate_view(
+        reconstruct_from_folder(folder, sidecar_dirs=sidecar_dirs).spec)
+    drifted = regen_populate.changed_fields(now_view, baseline, None)
+    yours = set(regen_populate.changed_fields(
+        regen_populate.populate_view(spec or {}), baseline, populate_touched))
+    return [{"group": g, "id": i, "field": f,
+             "shown": baseline[g][i][f], "now": now_view[g][i][f],
+             "yours": (g, i, f) in yours}
+            for g, i, f in drifted]
+
+
+def _trim_build_outcome(outcome: dict) -> dict:
+    """What the wizard's result panel reads, without the bulky allocation /
+    class schemas (the client's trimBuildRes keeps the same keys)."""
+    out = {k: outcome[k] for k in (
+        "ok", "error", "merge", "script", "script_error", "script_in_output",
+        "source_live_changed") if outcome.get(k) is not None}
+    res = outcome.get("result")
+    if isinstance(res, dict):
+        out["result"] = {"qubits": res.get("qubits") or [],
+                         "qubit_pairs": res.get("qubit_pairs") or [],
+                         "warnings": res.get("warnings") or []}
+        if res.get("error"):
+            out["result"]["error"] = res["error"]
+    return out
+
+
+def record_build_report(out_dir: Path | str, outcome: dict,
+                        source_folder: Path | str | None = None) -> None:
+    """Keep a finished re-generate's report beside the chip it built (QA F20),
+    in the hash-keyed ``.regen`` sidecar, so a page reloaded mid-build can get
+    it back. Only a successful merge is recorded. Never raises."""
+    if isinstance(outcome, dict) and outcome.get("ok") and outcome.get("merge"):
+        regen_spec.attach_build_report(out_dir, _trim_build_outcome(outcome),
+                                       source_folder)
+
+
+def own_build(folder: Path | str) -> dict | None:
+    """``{built_at, source_folder, report}`` when *folder* holds a chip State
+    Manager re-generated there and nobody changed since (QA F20); else None.
+    An unreadable pair is simply "not known to be ours"."""
+    try:
+        state, wiring = safe_io.read_state_wiring(Path(folder))
+    except (OSError, ValueError):
+        return None
+    return regen_spec.load_build_report(folder, state, wiring)
 
 
 def _source_classes_the_env_holds(python_path, old_state, instance_path=None,

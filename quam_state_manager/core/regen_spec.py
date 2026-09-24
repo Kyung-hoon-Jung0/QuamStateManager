@@ -31,6 +31,7 @@ import json
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -459,6 +460,9 @@ class ReconstructedSpec:
     # as a warning is how a user ends up hunting for a missing driver.
     info_notes: list[str] = field(default_factory=list)
     exact: bool = False   # True when loaded from an exact spec sidecar (not inferred)
+    # QA regenerate-r2-35: content_hash() of the state+wiring this spec was
+    # read from, so a build can tell that the source changed under the wizard.
+    source_hash: str = ""
 
 
 def content_hash(state: dict, wiring: dict) -> str:
@@ -482,6 +486,51 @@ def write_spec_sidecar(folder: Path | str, spec: dict, state: dict, wiring: dict
             json.dumps(payload, indent=2), encoding="utf-8")
     except OSError:
         pass
+
+
+def attach_build_report(folder: Path | str, report: dict,
+                        source_folder: Path | str | None = None) -> None:
+    """Add a re-generate build's (trimmed) outcome to the sidecar that build
+    just wrote, with when it ran and what it was built from (QA F20: the report
+    lived only in the page that pressed Generate, so a reload lost it and the
+    next Generate called the user's own fresh build "a chip that would be
+    OVERWRITTEN"). The sidecar's content hash is left as written, so
+    :func:`load_build_report` hands the report back only while the chip is
+    byte-for-byte the build's. Best-effort -- never raises."""
+    try:
+        p = Path(folder) / _SIDECAR_DIR / _SIDECAR_FILE
+        payload = json.loads(p.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict) or not payload.get("content_hash"):
+            return
+        payload["built_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+        payload["source_folder"] = str(source_folder) if source_folder else None
+        payload["report"] = report
+        p.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    except (OSError, ValueError, TypeError):
+        pass
+
+
+def load_build_report(folder: Path | str, state: dict, wiring: dict) -> dict | None:
+    """``{"built_at", "source_folder", "report"}`` iff *folder*'s sidecar was
+    written for its CURRENT state+wiring -- the chip is State Manager's own
+    re-generate output, unchanged since. A sidecar from before reports were
+    kept still answers (with ``None`` fields): the chip is still SM's own
+    untouched rebuild. None otherwise (QA F20)."""
+    try:
+        p = Path(folder) / _SIDECAR_DIR / _SIDECAR_FILE
+        if not p.is_file():
+            return None
+        payload = json.loads(p.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            return None
+        if payload.get("content_hash") != content_hash(state, wiring):
+            return None
+        report = payload.get("report")
+        return {"built_at": payload.get("built_at"),
+                "source_folder": payload.get("source_folder"),
+                "report": report if isinstance(report, dict) else None}
+    except (OSError, ValueError):
+        return None
 
 
 def load_spec_sidecar(folder: Path | str, state: dict, wiring: dict) -> dict | None:

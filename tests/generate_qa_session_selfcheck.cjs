@@ -40,6 +40,17 @@
 //   generate-r2-13    the build outcome rides the draft: a reload shows the
 //        result again, or says a started build's answer never arrived; a
 //        re-mount while the build runs says it is still running
+//   generate-r2-14    a successful "Load into app" retires the finished draft
+//        (the next Generate starts a new chip); a failed load and a
+//        Re-generate load leave the Generate draft alone
+//   generate-r2-18    step 1 Next refuses an env whose probe said "missing"
+//        (a failed probe stays fail-open; the click still selects)
+//   F21  Review flags a relative output / scripts folder
+//   F20  the user's own re-generate is named in the overwrite question with
+//        its report one click away; F5 during a re-generate build asks
+//   regenerate-r2-35  a source that changed under the wizard is named at
+//        Generate (what gets built, per value) with "Generate anyway" and
+//        "Reload the wizard from the chip"
 //
 // Run: node tests/generate_qa_session_selfcheck.cjs   (needs jsdom; exit 2 = skip)
 'use strict';
@@ -1178,6 +1189,319 @@ function toStep4(win, G, n) {
     const d = JSON.parse(draftOf(w.win));
     ok(!d.lastBuild && !d.buildPending,
       'r2-13: a confirm question is neither a result nor a pending build');
+  })();
+
+  // ── generate-r2-14: "Load into app" retires the finished Generate draft ──
+  function loadWorld(loadReply, opts) {
+    const o = opts || {};
+    const w = makeWorld({ regen: o.regen, draft: o.draft, routes: [
+      { match: '/generate/envs', reply: { envs: [] } },
+      { match: '/generate/select-env', reply: { ok: true } },
+      { match: '/regenerate/build', reply: { ok: true, result: { qubits: ['q1', 'q2'], qubit_pairs: [] } } },
+      { match: '/generate/build', reply: { ok: true, result: { qubits: ['q1', 'q2'], qubit_pairs: [] } } },
+      { match: '/generate/load', reply: loadReply }
+    ] });
+    if (o.regen) {
+      w.G.hydrateFromSpec(srcSpec(2), { mode: 'regenerate', buildEndpoint: '/regenerate/build',
+                                        sourcePath: 'D:\\wc\\src' });
+    } else {
+      toStep4(w.win, w.G, 2);
+    }
+    w.G.state.env = 'C:/envs/test/python.exe';
+    w.G.goToStep(7);
+    setInput(w.win, $(w.win, 'gen-output-path'), 'D:\\x\\chipA');
+    w.G.goToStep(8);
+    w.loadBtn = () => [...$(w.win, 'gen-build-result').querySelectorAll('button')]
+      .find(b => b.textContent === 'Load into app');
+    return w;
+  }
+
+  await (async function r14LoadRetiresDraft() {
+    const w = loadWorld({ ok: true, redirect: '#loaded' });
+    w.G.tryNext();
+    await settle();
+    ok(!!w.loadBtn() && JSON.parse(draftOf(w.win)).step === 8,
+      'r2-14 harness: built, the draft sits on step 8');
+    click(w.win, w.loadBtn());
+    await settle();
+    ok(w.log.some(e => e.url.indexOf('/generate/load') >= 0), 'r2-14 harness: Load into app posted');
+    ok(draftOf(w.win) === null,
+      'r2-14: a successful Load into app retires the finished Generate draft (got ' +
+      (draftOf(w.win) || '').slice(0, 60) + ')');
+    pagehide(w.win);                       // the navigation's own unload
+    ok(draftOf(w.win) === null, 'r2-14: … and the page leaving never writes it back');
+    const w2 = makeWorld({ routes: [{ match: '/generate/envs', reply: { envs: [] } }],
+                           draft: draftOf(w.win) });
+    ok(w2.G.state.step === 1 && w2.G.state.spec.qubits.length === 0 &&
+       $(w2.win, 'gen-build-result').hidden,
+      'r2-14: the next Generate Config starts a new chip at step 1 (step ' +
+      w2.G.state.step + ', qubits ' + w2.G.state.spec.qubits.length + ')');
+  })();
+
+  await (async function r14FailedLoadKeepsDraft() {
+    const w = loadWorld({ ok: false, error: 'nope' });
+    w.G.tryNext();
+    await settle();
+    click(w.win, w.loadBtn());
+    await settle();
+    ok(draftOf(w.win) !== null && JSON.parse(draftOf(w.win)).step === 8,
+      'r2-14: a FAILED load keeps the draft (the chip is not open anywhere)');
+    pagehide(w.win);
+    ok(draftOf(w.win) !== null, 'r2-14: … and it is still saved on the way out');
+  })();
+
+  await (async function r14RegenLoadLeavesGenerateDraft() {
+    const genDraft = (function () {
+      const g = makeWorld();
+      g.G.goToStep(2);
+      setInput(g.win, $(g.win, 'gen-net-host'), '10.9.9.9');
+      g.G.goToStep(3);
+      return draftOf(g.win);
+    })();
+    const w = loadWorld({ ok: true, redirect: '#loaded' }, { regen: true, draft: genDraft });
+    w.G.tryNext();
+    await settle();
+    ok(!!w.loadBtn(), 'r2-14 harness: the re-generate build offers Load into app');
+    click(w.win, w.loadBtn());
+    await settle();
+    ok(draftOf(w.win) === genDraft,
+      'r2-14: Load into app from Re-generate leaves the Generate draft alone (QA F7)');
+  })();
+
+  // ── generate-r2-18: step 1 does not accept an env that probed "missing" ───
+  await (async function r18MissingEnvBlocksNext() {
+    const w = makeWorld({ routes: [
+      { match: '/generate/envs', reply: { envs: [
+        { name: 'bad', python: 'badpy' }, { name: 'flaky', python: 'flakypy' },
+        { name: 'good', python: 'goodpy' }] } },
+      { match: 'python=badpy', reply: { usable: false, missing: ['quam_builder', 'quam'] } },
+      { match: 'python=flakypy', reply: { usable: false, missing: [], error: 'timeout' } },
+      { match: 'python=goodpy', reply: { usable: true, versions: {} } },
+      { match: '/generate/select-env', reply: { ok: true } }
+    ] });
+    await settle();
+    const row = py => w.win.document.querySelector('.gen-env-row[data-python="' + py + '"]');
+    ok(!!row('badpy') && /missing/.test(row('badpy').textContent),
+      'r2-18 harness: the bad env row says what it is missing');
+    click(w.win, row('badpy'));
+    await settle();
+    ok(w.G.state.env === 'badpy' && row('badpy').classList.contains('selected'),
+      'r2-18: a click still selects a ✗ row (a click is a claim — A15)');
+    w.G.tryNext();
+    ok(w.G.state.step === 1, 'r2-18: Next refuses an env whose probe said missing (step ' +
+      w.G.state.step + ')');
+    ok(/missing quam_builder, quam/.test($(w.win, 'gen-message').textContent),
+      'r2-18: … and names what is missing (got "' + $(w.win, 'gen-message').textContent + '")');
+    click(w.win, row('flakypy'));
+    await settle();
+    w.G.tryNext();
+    ok(w.G.state.step === 2, 'r2-18: a failed probe stays fail-open (step ' + w.G.state.step + ')');
+    w.G.goToStep(1);
+    click(w.win, row('goodpy'));
+    await settle();
+    w.G.tryNext();
+    ok(w.G.state.step === 2, 'r2-18: a ✓ env moves on');
+  })();
+
+  // ── F21: Review flags a relative output / scripts path ───────────────────
+  (function f21ReviewFlagsRelative() {
+    const w = makeWorld();
+    toStep4(w.win, w.G, 2);
+    w.G.goToStep(7);
+    setInput(w.win, $(w.win, 'gen-output-path'), 'gen_out\\rel1');
+    w.G.goToStep(8);                       // a step-rail jump: no step-7 guard
+    const rev = () => $(w.win, 'gen-review').textContent;
+    ok(w.G.state.step === 8, 'F21 harness: the jump reached Review');
+    ok(rev().indexOf('gen_out\\rel1  ⚠ not an absolute path — Generate will refuse it') >= 0,
+      'F21: Review flags the relative output folder (got "' + rev().slice(-260) + '")');
+    const tdOf = label => [...$(w.win, 'gen-review').querySelectorAll('tr')]
+      .find(tr => tr.querySelector('th').textContent === label).querySelector('td');
+    ok(tdOf('Output folder').classList.contains('gen-cap-degrade'), 'F21: … in the warning style');
+    ok(tdOf('Python scripts').textContent.indexOf('not an absolute path') >= 0,
+      'F21: the scripts folder that followed it is flagged too (got "' +
+      tdOf('Python scripts').textContent + '")');
+    w.G.goToStep(7);
+    setInput(w.win, $(w.win, 'gen-output-path'), 'D:\\abs\\out');
+    w.G.goToStep(8);
+    ok(rev().indexOf('not an absolute path') < 0 && tdOf('Output folder').textContent === 'D:\\abs\\out' &&
+       !tdOf('Output folder').classList.contains('gen-cap-degrade'),
+      'F21: an absolute folder is listed plainly');
+  })();
+
+  // ── F20: the user's own re-generate is named, and its report comes back ──
+  await (async function f20OwnBuildReport() {
+    const w = buildWorld({ out: 'D:\\x\\v_f20' });
+    w.G.tryNext();
+    await settle();
+    const report = { ok: true, result: { qubits: ['q1', 'q2'], qubit_pairs: [['q1', 'q2']], warnings: [] },
+                     merge: { carried: 7, grafted: 1, residual_lost: [], residual_lost_total: 0 } };
+    w.releases[0]({ ok: false, needs_confirm: true, existing_chip: true, conflict_files: [],
+                    error: 'This folder holds the chip State Manager re-generated here at 2026-09-24 17:08',
+                    own_build: { built_at: '2026-09-24T17:08:11+09:00', source_folder: 'D:\\wc\\src',
+                                 report: report } });
+    await settle();
+    const res = $(w.win, 'gen-build-result');
+    const btns = () => [...res.querySelectorAll('button')];
+    const show = btns().find(b => b.textContent === "Show that build's report");
+    ok(!!show && btns().some(b => b.textContent === 'Generate anyway'),
+      'F20: the confirm offers the build\'s report beside "Generate anyway"');
+    click(w.win, show);
+    ok(res.textContent.indexOf('Generated 2 qubits and 1 pair into D:\\x\\v_f20') >= 0 &&
+       !!res.querySelector('.gen-build-restored') &&
+       res.querySelector('.gen-build-restored').textContent.indexOf('2026-09-24 17:08') >= 0,
+      'F20: the report is shown again, labelled with its time (got "' +
+      res.textContent.slice(0, 200) + '")');
+    ok(w.builds().length === 1, 'F20: showing the report builds nothing');
+
+    const w2 = buildWorld({ out: 'D:\\x\\other' });
+    w2.G.tryNext();
+    await settle();
+    w2.releases[0]({ ok: false, needs_confirm: true, existing_chip: true, conflict_files: [],
+                     error: 'This folder already contains a chip' });
+    await settle();
+    ok(![...$(w2.win, 'gen-build-result').querySelectorAll('button')]
+         .some(b => /report/.test(b.textContent)),
+      'F20: a foreign chip offers no report');
+  })();
+
+  await (async function f20ReloadMidRegenBuildAsks() {
+    const w = makeWorld({ regen: true, routes: [
+      { match: '/generate/envs', reply: { envs: [] } },
+      { match: '/generate/select-env', reply: { ok: true } }
+    ] });
+    w.G.hydrateFromSpec(srcSpec(2), { mode: 'regenerate', buildEndpoint: '/regenerate/build',
+                                      sourcePath: 'D:\\wc\\src' });
+    w.G.state.env = 'C:/envs/test/python.exe';
+    w.G.goToStep(7);
+    setInput(w.win, $(w.win, 'gen-output-path'), 'D:\\x\\v_f20');
+    w.G.goToStep(8);
+    ok(!unload(w.win).defaultPrevented, 'F20 harness: an untouched session leaves freely');
+    w.G.tryNext();
+    await settle();
+    ok(w.log.some(e => e.url.indexOf('/regenerate/build') >= 0), 'F20 harness: the build is running');
+    ok(unload(w.win).defaultPrevented,
+      'F20: F5 / close during a re-generate build asks first (its report reaches only this page)');
+
+    const g = buildWorld({ out: 'D:\\x\\plain' });
+    g.G.tryNext();
+    await settle();
+    ok(!unload(g.win).defaultPrevented,
+      'F20: plain Generate is unchanged (its draft already says a build never answered)');
+  })();
+
+  // ── regenerate-r2-35: a source changed under the wizard is named first ───
+  await (async function r35SourceChanged() {
+    let recons = 0;
+    const w = makeWorld({ regenPage: true, routes: [
+      { match: '/generate/envs', reply: { envs: [] } },
+      { match: '/generate/select-env', reply: { ok: true } },
+      { match: '/regenerate/reconstruct', reply: function () {
+        recons += 1;
+        return { ok: true, spec: srcSpec(2), source_folder: 'D:\\wc\\key123',
+                 source_hash: 'hash-' + recons,
+                 source_name: 'LOADED_CHIP', notes: [], info_notes: [] };
+      } }
+    ] });
+    const origFetch = w.win.fetch;
+    const releases = [];
+    w.win.fetch = function (url, fo) {
+      if (String(url).indexOf('/regenerate/build') >= 0) {
+        w.log.push({ url: String(url), body: JSON.parse(fo.body) });
+        return new w.win.Promise(function (res) {
+          releases.push(function (data) { res({ json: () => w.win.Promise.resolve(data) }); });
+        });
+      }
+      return origFetch(url, fo);
+    };
+    await settle();
+    ok(w.G.state.regenSourceHash === 'hash-1', 'r2-35: the hydrate keeps the source stamp');
+    w.G.state.env = 'C:/envs/test/python.exe';
+    w.G.goToStep(7);
+    setInput(w.win, $(w.win, 'gen-output-path'), 'D:\\x\\d2_race');
+    w.G.goToStep(8);
+    w.G.tryNext();
+    await settle();
+    const builds = () => w.log.filter(e => e.url.indexOf('/regenerate/build') >= 0);
+    ok(builds().length === 1 && builds()[0].body.source_hash === 'hash-1' &&
+       builds()[0].body.ack_source_changed === false,
+      'r2-35: the build carries the stamp, unacknowledged (got ' +
+      JSON.stringify(builds()[0] && { h: builds()[0].body.source_hash,
+                                      a: builds()[0].body.ack_source_changed }) + ')');
+    releases[0]({ ok: false, needs_confirm: true, confirm_kind: 'source_changed',
+                  error: 'The source chip changed since this wizard read it',
+                  source_drift: [
+                    { group: 'qubit', id: 'q1', field: 'anharmonicity', shown: -200607661.787,
+                      now: -190000000, yours: false },
+                    { group: 'resonator', id: 'q2', field: 'RF_freq', shown: 7.1e9, now: 7.2e9,
+                      yours: true },
+                    { group: 'pairs', id: 'q1-q2', field: 'moving_qubit', shown: 'target',
+                      now: 'control', yours: false }], source_drift_total: 5 });
+    await settle();
+    const res = $(w.win, 'gen-build-result');
+    ok(res.textContent.indexOf('qubit q1 anharmonicity: shown -0.200607661787 GHz → chip now ' +
+       '-0.19 GHz — the chip\'s value is built') >= 0,
+      'r2-35: each drifted value is named, in the Populate step\'s units, with what gets ' +
+      'built (got "' + res.textContent.slice(0, 300) + '")');
+    ok(res.textContent.indexOf('resonator q2 RF_freq: shown 7.1 GHz → chip now 7.2 GHz ' +
+       '— you edited it here, so your value is built') >= 0,
+      'r2-35: a value the user also edited says the wizard value wins');
+    ok(res.textContent.indexOf('pairs q1-q2 moving_qubit: shown target → chip now control') >= 0 &&
+       res.textContent.indexOf('… and 2 more') >= 0,
+      'r2-35: a unitless value reads as is; the list says how many more there are');
+    const btn = t => [...res.querySelectorAll('button')].find(b => b.textContent === t);
+    ok(!!btn('Generate anyway') && !!btn('Reload the wizard from the chip'),
+      'r2-35: the question offers both ways out');
+    click(w.win, btn('Generate anyway'));
+    await settle();
+    ok(builds().length === 2 && builds()[1].body.ack_source_changed === true &&
+       builds()[1].body.source_hash === 'hash-1',
+      'r2-35: "Generate anyway" re-posts with the acknowledgement');
+    releases[1]({ ok: false, needs_confirm: true, conflict_files: [],
+                  error: 'This folder already contains a chip' });
+    await settle();
+    click(w.win, btn('Generate anyway'));
+    await settle();
+    ok(builds().length === 3 && builds()[2].body.ack_source_changed === true &&
+       builds()[2].body.force === true,
+      'r2-35: acking the overwrite keeps the source acknowledgement (two gates, two acks)');
+    releases[2]({ ok: false, needs_confirm: true, confirm_kind: 'source_changed',
+                  error: 'changed', source_drift: [], source_drift_total: 0 });
+    await settle();
+    click(w.win, btn('Reload the wizard from the chip'));
+    await settle();
+    ok(recons === 2 && w.G.state.regenSourceHash === 'hash-2' && w.G.state.step === 8 &&
+       w.G.state.mode === 'regenerate',
+      'r2-35: "Reload the wizard" re-reads the source and returns to step 8 (reconstructs ' +
+      recons + ', hash ' + w.G.state.regenSourceHash + ', step ' + w.G.state.step + ')');
+    ok(res.hidden && !res.querySelector('button'),
+      'r2-35: … and the answered question is gone (no stale "Generate anyway" to ack the new read)');
+    w.G.tryNext();
+    await settle();
+    ok(builds().length === 4 && builds()[3].body.source_hash === 'hash-2' &&
+       builds()[3].body.ack_source_changed === false,
+      'r2-35: after the reload the next build carries the NEW stamp, unacknowledged');
+    releases[3]({ ok: false, needs_confirm: true, confirm_kind: 'source_changed',
+                  error: 'changed', source_drift: [], source_drift_total: 0 });
+    await settle();
+    click(w.win, btn('Generate anyway'));
+    await settle();
+    releases[4]({ ok: true, result: { qubits: ['q1', 'q2'], qubit_pairs: [] } });
+    await settle();
+    w.G.tryNext();
+    await settle();
+    ok(builds().length === 6 && builds()[4].body.ack_source_changed === true &&
+       builds()[5].body.ack_source_changed === false,
+      'r2-35: a finished build consumes the acknowledgement (the next one asks again)');
+    click(w.win, $(w.win, 'gen-reset'));
+    ok(w.G.state.regenSourceHash === null,
+      'r2-35: Reset drops the stamp with the regen mode (got ' + w.G.state.regenSourceHash + ')');
+  })();
+
+  await (async function r35PlainGenerateSendsNoStamp() {
+    const w = buildWorld({ out: 'D:\\x\\plain2' });
+    w.G.tryNext();
+    await settle();
+    ok(w.builds()[0].body.source_hash === null, 'r2-35: plain Generate sends no source stamp');
   })();
 
   if (fails) {

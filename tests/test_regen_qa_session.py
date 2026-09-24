@@ -13,6 +13,12 @@ F8 (generate)      one build per output folder at a time: /generate/build and
                    /regenerate/build refuse (409, busy) a second build into a
                    folder a build is still writing, never queue it, and
                    release the folder when the build ends (a crash included).
+F20                a re-generate's report is kept in the hash-keyed .regen
+                   sidecar, and the overwrite question names the user's own,
+                   unchanged build and hands its report back.
+regenerate-r2-35   the build names the displayed Populate values that changed
+                   in the source since the wizard read it and asks first
+                   (ack builds; no stamp = an older client, unchanged).
 """
 from __future__ import annotations
 
@@ -288,4 +294,199 @@ class TestOneBuildPerFolder:
         r1, r2 = self._race(client, "/regenerate/build", body, body, entered, release)
         assert r1.status_code == 200, r1.get_json()
         assert r2.status_code == 409, r2.get_json()
+        assert len(calls) == 1
+
+
+# ── F20: a re-generate's report is kept beside the chip it built ─────────
+class TestOwnBuildReport:
+    """A reload mid-build lost the report (it lived only in the page), and the
+    next Generate called the user's own fresh build "a chip that would be
+    OVERWRITTEN". The report now rides the hash-keyed .regen sidecar, and the
+    overwrite question names the chip as SM's own, unchanged since."""
+
+    @staticmethod
+    def _built(folder: Path, report=None) -> Path:
+        from quam_state_manager.core import regen_spec
+        chip = _chip(folder)
+        state = json.loads((chip / "state.json").read_text(encoding="utf-8"))
+        wiring = json.loads((chip / "wiring.json").read_text(encoding="utf-8"))
+        regen_spec.write_spec_sidecar(chip, {"qubits": ["qA1"]}, state, wiring)
+        if report is not None:
+            regen_spec.attach_build_report(chip, report, "D:/src/chip")
+        return chip
+
+    def test_report_round_trips_while_the_chip_is_unchanged(self, tmp_path):
+        chip = self._built(tmp_path / "out", {"ok": True, "merge": {"carried": 3}})
+        own = regenerate.own_build(chip)
+        assert own is not None and own["report"] == {"ok": True, "merge": {"carried": 3}}
+        assert own["source_folder"] == "D:/src/chip" and own["built_at"]
+        # the exact-spec sidecar still serves re-generate
+        from quam_state_manager.core import regen_spec
+        state = json.loads((chip / "state.json").read_text(encoding="utf-8"))
+        wiring = json.loads((chip / "wiring.json").read_text(encoding="utf-8"))
+        assert regen_spec.load_spec_sidecar(chip, state, wiring) == {"qubits": ["qA1"]}
+        state["qubits"]["qA1"]["T1"] = 1.5e-5            # edited since the build
+        (chip / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        assert regenerate.own_build(chip) is None
+
+    def test_guard_names_the_users_own_build(self, tmp_path):
+        from quam_state_manager.web.routes import _build_output_guard
+        chip = self._built(tmp_path / "out", {"ok": True, "merge": {"carried": 3}})
+        g = _build_output_guard(str(chip))
+        assert g["needs_confirm"] is True and g["existing_chip"] is True
+        assert g["own_build"]["report"]["merge"] == {"carried": 3}
+        assert "re-generated here" in g["error"] and "D:/src/chip" in g["error"]
+        assert "already contains a chip" not in g["error"]
+
+    def test_guard_stays_generic_for_a_foreign_or_edited_chip(self, tmp_path):
+        from quam_state_manager.web.routes import _build_output_guard
+        foreign = _chip(tmp_path / "foreign")
+        g = _build_output_guard(str(foreign))
+        assert "own_build" not in g and "already contains a chip" in g["error"]
+        edited = self._built(tmp_path / "edited", {"ok": True})
+        state = json.loads((edited / "state.json").read_text(encoding="utf-8"))
+        state["qubits"]["qA1"]["T1"] = 2e-5
+        (edited / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        g2 = _build_output_guard(str(edited))
+        assert "own_build" not in g2 and "already contains a chip" in g2["error"]
+
+    @staticmethod
+    def _fake_build(client, monkeypatch):
+        """A capability-complete env and a run_regenerate that writes a chip +
+        its exact-spec sidecar, like the real one."""
+        from quam_state_manager.core import config_generator, regen_spec
+        from quam_state_manager.generator.probe_capabilities import CATALOG_IDS
+        manifest = {"ok": True, "cached": False, "error": None, "versions": {},
+                    "capabilities": {c: {"available": True, "detail": ""}
+                                     for c in CATALOG_IDS}}
+        monkeypatch.setattr(config_generator, "probe_capabilities",
+                            lambda *a, **k: manifest)
+
+        def fake_run(python, src, spec, out, **kw):
+            chip = _chip(Path(out))
+            st = json.loads((chip / "state.json").read_text(encoding="utf-8"))
+            wi = json.loads((chip / "wiring.json").read_text(encoding="utf-8"))
+            regen_spec.write_spec_sidecar(chip, spec, st, wi)
+            return {"ok": True, "status": "ok", "error": None,
+                    "result": {"qubits": ["qA1"], "qubit_pairs": [],
+                               "allocation": {"big": "x" * 100}, "warnings": []},
+                    "merge": {"carried": 12, "residual_lost": []},
+                    "script": None, "script_in_output": None}
+        monkeypatch.setattr(regenerate, "run_regenerate", fake_run)
+        client.post("/generate/select-env", json={"python": sys.executable})
+
+    def test_the_report_names_the_loaded_chip_not_its_working_copy(
+            self, client, tmp_path, monkeypatch):
+        self._fake_build(client, monkeypatch)
+        loaded = _chip(tmp_path / "loaded_chip")
+        client.post("/load", data={"folder": str(loaded)})
+        wc = client.post("/regenerate/reconstruct", json={}).get_json()["source_folder"]
+        assert Path(wc).name != "loaded_chip", "the default source is the working copy"
+        r = client.post("/regenerate/build", json={
+            "spec": _gen_valid_spec(), "output_path": str(tmp_path / "out"),
+            "source_folder": wc})
+        assert r.status_code == 200 and r.get_json()["ok"], r.get_json()
+        own = regenerate.own_build(tmp_path / "out")
+        assert own["source_folder"] == str(loaded), own["source_folder"]
+
+    def test_regenerate_build_records_the_report_and_offers_it_back(
+            self, client, tmp_path, monkeypatch):
+        self._fake_build(client, monkeypatch)
+        src = _chip(tmp_path / "src")
+        body = {"spec": _gen_valid_spec(), "output_path": str(tmp_path / "out"),
+                "source_folder": str(src)}
+        r1 = client.post("/regenerate/build", json=body)
+        assert r1.status_code == 200 and r1.get_json()["ok"], r1.get_json()
+        side = json.loads((tmp_path / "out" / ".regen" / "generate_spec.json")
+                          .read_text(encoding="utf-8"))
+        assert side["report"]["merge"]["carried"] == 12
+        assert "allocation" not in side["report"]["result"], "the report is trimmed"
+        # the page was reloaded; the user presses Generate again
+        r2 = client.post("/regenerate/build", json=body)
+        g = r2.get_json()
+        assert g["needs_confirm"] is True
+        assert g["own_build"]["report"]["merge"]["carried"] == 12
+        assert g["own_build"]["source_folder"] == str(src)
+
+
+# ── regenerate-r2-35: a source that changed under the wizard asks first ──
+class TestSourceDrift:
+    """The merge reads the source at BUILD time (docs/72), so a save made in
+    another tab after the wizard loaded was built while the wizard still
+    showed the old value, with no notice. The build now names the displayed
+    values that changed and asks; what gets built does not change."""
+
+    @staticmethod
+    def _set(chip: Path, **qa1) -> None:
+        state = json.loads((chip / "state.json").read_text(encoding="utf-8"))
+        state["qubits"]["qA1"].update(qa1)
+        (chip / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    def test_reconstruct_stamps_what_it_read(self, tmp_path):
+        from quam_state_manager.core import regen_spec
+        chip = _chip(tmp_path / "src")
+        rec = regenerate.reconstruct_from_folder(chip)
+        state = json.loads((chip / "state.json").read_text(encoding="utf-8"))
+        wiring = json.loads((chip / "wiring.json").read_text(encoding="utf-8"))
+        assert rec.source_hash == regen_spec.content_hash(state, wiring)
+
+    def test_drift_names_displayed_values_only(self, tmp_path):
+        from quam_state_manager.core import regen_populate
+        chip = _chip(tmp_path / "src")
+        rec = regenerate.reconstruct_from_folder(chip)
+        base = regen_populate.populate_view(rec.spec)
+        assert regenerate.source_drift(chip, rec.source_hash, base) == []
+        self._set(chip, T1=3.3e-5)                 # a value the wizard does not show
+        assert regenerate.source_drift(chip, rec.source_hash, base) == []
+        self._set(chip, anharmonicity=-190e6)      # a displayed one
+        drift = regenerate.source_drift(chip, rec.source_hash, base)
+        assert drift == [{"group": "qubit", "id": "qA1", "field": "anharmonicity",
+                          "shown": -220e6, "now": -190e6, "yours": False}]
+        edited = {"populate": json.loads(json.dumps(rec.spec["populate"]))}
+        edited["populate"]["qubit"]["qA1"]["anharmonicity"] = -205e6
+        drift2 = regenerate.source_drift(chip, rec.source_hash, base, spec=edited)
+        assert drift2[0]["yours"] is True, "the wizard's own edit wins -- and says so"
+
+    def _post(self, client, tmp_path, monkeypatch, **extra):
+        from quam_state_manager.core import config_generator
+        from quam_state_manager.generator.probe_capabilities import CATALOG_IDS
+        manifest = {"ok": True, "cached": False, "error": None, "versions": {},
+                    "capabilities": {c: {"available": True, "detail": ""}
+                                     for c in CATALOG_IDS}}
+        monkeypatch.setattr(config_generator, "probe_capabilities",
+                            lambda *a, **k: manifest)
+        calls = []
+
+        def fake_run(*a, **kw):
+            calls.append(a)
+            return {"ok": True, "status": "ok", "error": None,
+                    "result": {"qubits": [], "qubit_pairs": []}, "merge": None}
+        monkeypatch.setattr(regenerate, "run_regenerate", fake_run)
+        client.post("/generate/select-env", json={"python": sys.executable})
+        src = _chip(tmp_path / "src")
+        rec = client.post("/regenerate/reconstruct", json={"folder": str(src)}).get_json()
+        assert rec["ok"] and rec["source_hash"], rec
+        self._set(src, anharmonicity=-190e6)       # "another tab" saves
+        body = {"spec": _gen_valid_spec(), "output_path": str(tmp_path / "out"),
+                "source_folder": str(src), "populate_baseline": rec["spec"]["populate"],
+                "source_hash": rec["source_hash"], **extra}
+        return client.post("/regenerate/build", json=body), calls
+
+    def test_build_asks_when_a_displayed_value_changed(self, client, tmp_path, monkeypatch):
+        resp, calls = self._post(client, tmp_path, monkeypatch)
+        body = resp.get_json()
+        assert body["needs_confirm"] is True and body["confirm_kind"] == "source_changed"
+        assert body["source_drift"][0]["field"] == "anharmonicity"
+        assert body["source_drift"][0]["now"] == -190e6
+        assert calls == [], "nothing is built before the user answers"
+
+    def test_the_acknowledgement_builds(self, client, tmp_path, monkeypatch):
+        resp, calls = self._post(client, tmp_path, monkeypatch, ack_source_changed=True)
+        assert resp.status_code == 200 and resp.get_json()["ok"], resp.get_json()
+        assert len(calls) == 1
+
+    def test_an_older_client_without_a_stamp_builds_as_before(
+            self, client, tmp_path, monkeypatch):
+        resp, calls = self._post(client, tmp_path, monkeypatch, source_hash=None)
+        assert resp.status_code == 200 and resp.get_json()["ok"], resp.get_json()
         assert len(calls) == 1
