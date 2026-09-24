@@ -361,6 +361,80 @@ function panelText(win) {
     ok(true, 'D13: orphaned-cell timer is harmless');
   }
 
+  // D14 (QA generate-r2-02): a pulse length <= 0 and any negative duration
+  // err on the keystroke — QM refused the built config ("Value out of range:
+  // -3") while the cells stayed clean. A zero depletion / ToF stays clean.
+  {
+    const win = makeWorld();
+    const G = buildWizard(win);
+    G.QT.setValidateDebounce(0);
+    const x = cell(win, 'pulses', 'q1', 'x180_length');
+    typeOnly(win, x, '-3');
+    await tick();
+    ok(flagged(x) === 'err', 'D14: x180 length -3 ns errs');
+    typeOnly(win, x, '0');
+    await tick();
+    ok(flagged(x) === 'err', 'D14: x180 length 0 errs (a pulse needs a length)');
+    typeOnly(win, x, '40');
+    await tick();
+    ok(flagged(x) === null, 'D14: x180 length 40 clean');
+    const r = cell(win, 'resonator', 'q2', 'readout_length');
+    typeOnly(win, r, '0');
+    await tick();
+    ok(flagged(r) === 'err', 'D14: readout length 0 errs');
+    const d = cell(win, 'resonator', 'q1', 'depletion_time');
+    typeOnly(win, d, '0');
+    await tick();
+    ok(flagged(d) === null, 'D14: depletion 0 clean (legitimately zero)');
+    typeOnly(win, d, '-5');
+    await tick();
+    ok(flagged(d) === 'err', 'D14: negative depletion errs');
+    const V = G.QT.validateCellValue;
+    ok(V('twpa', 'twpaA', { field: 'settling_time', unit: 'ns' }, -1, '-1') &&
+       V('twpa', 'twpaA', { field: 'settling_time', unit: 'ns' }, 0, '0') === null,
+       'D14: settling time: negative errs, 0 clean');
+    ok(V('twpa', 'twpaA', { field: 'pump_length', dim: 'time' }, 0, '0'),
+       'D14: TWPA pump length 0 errs');
+    ok(V('qdac', 'q1', { field: 'dwell', unit: 's' }, -2e-6, '-2e-6') &&
+       V('qdac', 'q1', { field: 'dwell', unit: 's' }, 0, '0') === null,
+       'D14: QDAC dwell: negative errs, 0 clean');
+  }
+
+  // D15 (QA generate-r2-02): a TWPA tone scale is QUA amp(): [-2, 2 - 2^-16].
+  {
+    const win = makeWorld();
+    const G = buildWizard(win);
+    const V = G.QT.validateCellValue;
+    const pump = { field: 'pump_amplitude', label: 'pump amp (scale)' };
+    const iso = { field: 'isolation_amplitude', label: 'isolation amp (scale)' };
+    ok((V('twpa', 'twpaA', pump, 5, '5') || {}).severity === 'err',
+       'D15: pump amp 5 errs');
+    ok((V('twpa', 'twpaA', iso, -2.5, '-2.5') || {}).severity === 'err',
+       'D15: isolation amp -2.5 errs');
+    ok((V('twpa', 'twpaA', pump, 2, '2') || {}).severity === 'err',
+       'D15: pump amp 2 errs (amp() stops at 2 - 2^-16)');
+    ok(V('twpa', 'twpaA', pump, 1, '1') === null &&
+       V('twpa', 'twpaA', pump, 1.5, '1.5') === null &&
+       V('twpa', 'twpaA', iso, -2, '-2') === null,
+       'D15: 1, 1.5 and -2 are clean');
+  }
+
+  // D16 (QA generate-r2-07): the QDAC channel range the driver asserts.
+  {
+    const win = makeWorld();
+    const G = buildWizard(win);
+    const V = G.QT.validateCellValue;
+    const ch = { field: 'channel', label: 'channel' };
+    const e30 = V('qdac', 'q1', ch, 30, '30');
+    ok(e30 && e30.severity === 'err' && e30.message.indexOf('1 to 24') >= 0,
+       'D16: channel 30 errs naming 1 to 24');
+    ok((V('qdac', 'q1', ch, 0, '0') || {}).severity === 'err', 'D16: channel 0 errs');
+    ok((V('qdac', 'q1', ch, 2.5, '2.5') || {}).severity === 'err',
+       'D16: a fractional channel errs');
+    ok(V('qdac', 'q1', ch, 1, '1') === null && V('qdac', 'q1', ch, 24, '24') === null,
+       'D16: 1 and 24 are clean');
+  }
+
   if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
   console.log('generate_validation_selfcheck: all checks passed');
 })().catch(function (e) { console.error(e); process.exit(1); });

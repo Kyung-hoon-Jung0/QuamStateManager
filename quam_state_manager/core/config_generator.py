@@ -35,6 +35,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from quam_state_manager.core import safe_io
+from quam_state_manager.core import qdac as _qdac_rules
 from quam_state_manager.core.loader import natural_key
 
 logger = logging.getLogger(__name__)
@@ -268,8 +269,18 @@ def validate_spec(spec) -> list[str]:
             if fields.get("bias_tee"):
                 qdac_tee_ids.add(qid)
             ch = fields.get("channel")
+            ch_lo, ch_hi = _qdac_rules.CHANNEL_RANGE
             if not _is_int(ch) or ch <= 0:
                 errors.append(f"qdac.qubits[{qid!r}].channel: required positive integer")
+            elif not ch_lo <= ch <= ch_hi:
+                # QA generate-r2-07: the same rule Diagnostics flags a built
+                # chip with — building it first only to be told it would crash
+                # a node run is the wrong order.
+                errors.append(
+                    f"qdac.qubits[{qid!r}].channel: {ch} is outside the "
+                    f"QDAC-II's range — it has channels {ch_lo} to {ch_hi} "
+                    "inclusive (the driver refuses anything else)"
+                )
             elif ch in seen_channels:
                 errors.append(
                     f"qdac.qubits[{qid!r}].channel: {ch} is already used by "
@@ -1100,6 +1111,39 @@ def _script_path(filename: str) -> Path:
 GENERATOR_SCRIPT = _script_path("run_build.py")
 CONFIG_PREVIEW_SCRIPT = _script_path("run_generate_config.py")
 CAPABILITY_SCRIPT = _script_path("probe_capabilities.py")
+
+
+def annotate_unplayable(outcome: dict, state: dict, wiring: dict) -> list[str]:
+    """QA F12: say it when a build that reports success wrote a chip whose QM
+    config the QM will reject. Every Populate field is optional (docs/27), so
+    a frequency-less element is never refused -- but "Generated N qubits" was
+    the whole report, and a qubit added with no RF made NO qubit on the chip
+    runnable. Run on the FINAL state (post-build, post-merge: a merge can
+    carry an RF the build spec lacked). Adds ``elements_without_frequency``
+    and one aggregated warning to ``outcome["result"]``; returns the paths.
+    """
+    res = outcome.get("result") if isinstance(outcome, dict) else None
+    if not isinstance(res, dict):
+        return []
+    from quam_state_manager.core import diagnostics   # lazy: it imports config_view
+    root = dict(state or {})
+    root.update(wiring or {})
+    paths = diagnostics.elements_without_frequency(root)
+    res["elements_without_frequency"] = paths
+    if paths:
+        names = [p.split(".", 1)[1] for p in paths]
+        shown = ", ".join(names[:8]) + (f", ... ({len(names)} in all)"
+                                        if len(names) > 8 else "")
+        warnings = res.get("warnings")
+        if not isinstance(warnings, list):
+            warnings = res["warnings"] = []
+        warnings.append(
+            f"{len(paths)} element(s) have no RF/LO frequency ({shown}): their "
+            "intermediate_frequency stays the unresolved "
+            "'#./inferred_intermediate_frequency', so the QM rejects this "
+            "chip's config and NO qubit on it can open a QM until they are "
+            "set (Populate, or Live State Edit).")
+    return paths
 
 
 def _blank_outcome() -> dict:

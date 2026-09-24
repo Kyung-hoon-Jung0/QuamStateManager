@@ -203,6 +203,9 @@ def run_regenerate(
             p for p in result.stats.dangling_grafts if not p.startswith("twpas.")]
 
     safe_io.atomic_write_json(out_dir / "state.json", result.merged)
+    # QA F12: the merged chip, not the build spec, decides -- a merge can
+    # carry an RF the reconstructed spec lacked (a pointer-valued f_01).
+    config_generator.annotate_unplayable(outcome, result.merged, new_wiring)
 
     # Emit the editable build-script bundle alongside the rebuilt state, so the
     # user OWNS the config as Python. script_emitter is the SINGLE maintained

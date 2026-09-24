@@ -93,8 +93,10 @@ const SPEC = {
   G._test.autoApplyStandardDefaults();
   ok(win._fetchCount === before,
      'P2: regen mode never fetches the builtin standard preset');
-  ok(G._test.state.autoPresetApplied !== true,
-     'P2: the one-shot flag is not consumed in regen mode');
+  // QA generate-r2-05: the one-shot flag became a per-row record; regen
+  // mode must not start one either.
+  ok(G._test.state.autoPresetRows == null,
+     'P2: no prefill record is started in regen mode');
 })();
 
 // ---- P3: applyLoAssignments fill-only-empty / force+touched / dirty-skip --
@@ -208,6 +210,28 @@ const SPEC = {
   const deadGone = keys.indexOf('q1-q9') < 0;
   if (!okShort) { console.error('FAIL: P7: short-form pair populate keys deleted'); fails++; }
   if (!deadGone) { console.error('FAIL: P7: dead pair key survived'); fails++; }
+})();
+
+// ---- P8 (QA regenerate-r2-03): fill-empty preset Apply never protects ------
+// A cell the extractor could not read back displays blank although the chip
+// holds a calibration there; protecting the preset's fill made the merge keep
+// 0.1 over the chip's CZ amp. Only Overwrite ON records touched cells.
+(function () {
+  const win = makeWorld();
+  const G = win.QuamGen;
+  G.init();
+  G.hydrateFromSpec(JSON.parse(JSON.stringify(SPEC)), { mode: 'regenerate' });
+  const st = G._test.state;
+  const preset = { sections: { qubit: { defaults: { anharmonicity: 2e8 } } } };
+  const rep = G._test.applyPreset(preset, false);
+  ok(rep.applied === 2 && st.spec.populate.qubit.q2.anharmonicity === 2e8,
+     'P8: fill-empty still writes the blank cells');
+  ok(Object.keys(st.regenTouched || {}).length === 0,
+     'P8: fill-empty preset Apply marks NO cell touched in regen mode');
+  G._test.applyPreset({ sections: { qubit: { defaults: { anharmonicity: 3e8 } } } }, true);
+  ok(st.regenTouched['qubit|q1|anharmonicity'] === 1 &&
+     st.regenTouched['qubit|q2|anharmonicity'] === 1,
+     'P8: Overwrite ON records the cells touched');
 })();
 
 if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }

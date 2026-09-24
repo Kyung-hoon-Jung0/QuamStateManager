@@ -1048,6 +1048,20 @@
       });
       pop.pairs = npairs;
     }
+    // The auto-prefill record follows a rename, so a renamed row is not
+    // mistaken for a new one (QA generate-r2-05).
+    var apr = state.autoPresetRows;
+    if (apr) {
+      var nq = {}, np = {};
+      Object.keys(apr.q || {}).forEach(function (q) { nq[map[q] || q] = 1; });
+      Object.keys(apr.pairs || {}).forEach(function (k) {
+        var seg = k.split("|");
+        np[[map[seg[0]] || seg[0], map[seg[1]] || seg[1]].sort().join("|") +
+           "|" + seg.slice(2).join("|")] = 1;
+      });
+      apr.q = nq;
+      apr.pairs = np;
+    }
     // TWPA qubit lists carry qubit ids too (the old renumber missed these).
     (sp.twpas || []).forEach(function (tw) {
       tw.qubits = (tw.qubits || []).map(function (q) { return map[q] || q; });
@@ -1420,6 +1434,7 @@
   // Drop every populate entry (per-qubit buckets + per-pair keys) whose id/endpoint
   // is no longer a live qubit. `valid` = { qid: true } for the surviving qubits.
   function prunePopulate(valid) {
+    forgetAutoPresetRows(valid);   // a re-created id prefills again (QA generate-r2-05)
     // docs/136: spec.qdac.qubits is keyed by qubit id like every populate
     // bucket, and it was the one map nothing pruned. Lowering the qubit count
     // left an orphan entry, which validate_spec rejects with "is not a
@@ -1816,7 +1831,18 @@
       } else {
         input.type = type;
         if (type === "number" && extra && extra.step) input.step = extra.step;
+        if (extra && extra.min != null) input.min = extra.min;
+        if (extra && extra.max != null) input.max = extra.max;
         input.value = fieldsObj[key] == null ? "" : fieldsObj[key];
+      }
+      // A single-field fact (QA generate-r2-07: the QDAC channel range) is
+      // flagged here too, not only in the step-6 table.
+      function flag() {
+        var m = extra && extra.check ? extra.check(fieldsObj[key]) : null;
+        if (m) { input.setAttribute("aria-invalid", "true"); input.title = m; }
+        else if (extra && extra.check) {
+          input.removeAttribute("aria-invalid"); input.title = "";
+        }
       }
       input.addEventListener("input", function () {
         if (type === "number") {
@@ -1825,12 +1851,16 @@
         } else {
           fieldsObj[key] = input.value === "" ? null : input.value;
         }
+        flag();
       });
+      flag();
       wrap.appendChild(span);
       wrap.appendChild(input);
       container.appendChild(wrap);
     }
-    field("Channel", "channel", "number", { step: "1" });
+    field("Channel", "channel", "number", { step: "1",
+      min: QDAC_CHANNEL_RANGE[0], max: QDAC_CHANNEL_RANGE[1],
+      check: qdacChannelError });
     field("Trigger port", "trigger_port", "select", { options: [
       { value: "", label: "(none)" },
       { value: "ext1", label: "ext1" }, { value: "ext2", label: "ext2" },
@@ -2408,6 +2438,11 @@
       if (kind === "delete" && typeof _wizStack !== "undefined") {
         _wizStack.push({ boardUndo: true });
         if (_wizStack.length > _WIZ_STACK_CAP) _wizStack.shift();
+      }
+      if (kind === "delete") {     // the board dropped the qubit's populate too
+        var liveIds = {};
+        state.spec.qubits.forEach(function (q) { liveIds[q] = true; });
+        forgetAutoPresetRows(liveIds);
       }
       var qc = document.getElementById("gen-qubit-count");
       if (qc) qc.value = String(state.spec.qubits.length);
@@ -4519,8 +4554,8 @@
         markPopulateTouched(group, rid, col.field);   // populate-protect (docs/72)
         popBucketPrune(group, rid);
       }
-      // Only an RF_freq edit re-derives the LOs, so a hand-typed LO sticks.
-      if (col.field === "RF_freq") recomputeLOs();
+      // Only an RF edit re-derives the LOs, so a hand-typed LO sticks.
+      if (col.field === loRfField(group)) recomputeLOs();
       // A qubit frequency edit may re-orient CZ pairs (higher f = control).
       if (col.field === "RF_freq" && group === "qubit") czOrientAfterFreqEdit();
       // Multiplexed readout shares one MW-FEM port — sync FSP across the group.
@@ -4601,7 +4636,7 @@
         popBucketPrune(group, rid);
       });
       refreshColumnCells(group, col);
-      if (col.field === "RF_freq") recomputeLOs();
+      if (col.field === loRfField(group)) recomputeLOs();
       if (col.field === "RF_freq" && group === "qubit") czOrientAfterFreqEdit();
       if (col.field === "full_scale_power_dbm") {
         if (group === "resonator") {
@@ -4983,6 +5018,27 @@
     return sum;
   }
 
+  // The populate fields that ARE a played pulse's length (QA generate-r2-02).
+  var POSITIVE_PULSE_LENGTHS = {
+    x180_length: 1, saturation_length: 1, readout_length: 1, pump_length: 1,
+    cz_interaction_duration: 1, zz_flattop_length: 1
+  };
+
+  // QA generate-r2-07: the QDAC-II has channels 1..24 inclusive — the
+  // customer's driver asserts it. Parity-pinned against core/qdac.py's
+  // CHANNEL_RANGE (the rule Diagnostics and validate_spec apply).
+  var QDAC_CHANNEL_RANGE = [1, 24];
+  function qdacChannelError(ch) {
+    if (ch == null || ch === "") return null;
+    var n = Number(ch);
+    if (!isFinite(n) || n % 1 !== 0 || n < QDAC_CHANNEL_RANGE[0] ||
+        n > QDAC_CHANNEL_RANGE[1]) {
+      return "The QDAC-II has channels " + QDAC_CHANNEL_RANGE[0] + " to " +
+        QDAC_CHANNEL_RANGE[1] + " inclusive (the driver refuses " + ch + ").";
+    }
+    return null;
+  }
+
   // Validate ONE cell's BASE value (SI units / dimensionless amp — unit
   // conversion happens in the caller). Returns null when fine, else
   // { severity: "err" | "warn", message }. Pure derivation, no side effects.
@@ -4990,6 +5046,11 @@
     function err(m) { return { severity: "err", message: m }; }
     function warn(m) { return { severity: "warn", message: m }; }
     if (isNaN(base)) return err('"' + raw + '" is not a number.');
+
+    if (group === "qdac" && col.field === "channel") {
+      var chMsg = qdacChannelError(base);
+      return chMsg ? err(chMsg) : null;
+    }
 
     if (col.dim === "freq" && col.field === "RF_freq") {
       if (base <= 0) return err("Frequency must be positive.");
@@ -5014,7 +5075,7 @@
         var pop = state.spec.populate || {};
         for (var i = 0; i < g.members.length; i++) {
           var m = g.members[i];
-          var rf = parseFloat(((pop[m.group] || {})[m.rid] || {}).RF_freq);
+          var rf = parseFloat(((pop[m.group] || {})[m.rid] || {})[loRfField(m.group)]);
           if (!isFinite(rf)) continue;
           if (Math.abs(rf - base) > LO_IF_HALF_WINDOW) {
             return err(m.rid + "'s RF " + fmtFreq(rf) +
@@ -5073,6 +5134,31 @@
       if (base % 1 !== 0) {
         return warn("FSP uses an integer dB grid — " + base + " will not " +
           "round-trip exactly.");
+      }
+      return null;
+    }
+
+    // QA generate-r2-02: durations (ns; QDAC dwell in s). None is ever
+    // negative, and a PULSE length must be > 0 — QM's config refuses it
+    // ("Value out of range: -3"). Depletion / ToF / a flat part / settle /
+    // dwell may legitimately be 0, so they only get the sign check.
+    if (col.dim === "time" || col.unit === "ns" || col.unit === "s") {
+      if (base < 0) return err("A duration cannot be negative.");
+      if (base === 0 && POSITIVE_PULSE_LENGTHS[col.field]) {
+        return err("A pulse length must be > 0 ns — QM refuses a non-positive " +
+          "pulse length.");
+      }
+      return null;
+    }
+
+    // A TWPA tone's scale is played as QUA amp(scale) (quam_builder
+    // TWPA.initialize → Channel.play(amplitude_scale) → qua.amp), and the QM
+    // docs limit it: "A is limited to the range of -2 to 2 - 2^-16".
+    if (group === "twpa" &&
+        (col.field === "pump_amplitude" || col.field === "isolation_amplitude")) {
+      if (base < -2 || base > 2 - Math.pow(2, -16)) {
+        return err("amplitude scale " + base + " is outside QUA amp()'s range " +
+          "[-2, 2) — the pump cannot be played.");
       }
       return null;
     }
@@ -5255,9 +5341,16 @@
     return "var(" + LO_GROUP_PALETTE[i % LO_GROUP_PALETTE.length] + ")";
   }
 
+  // The populate field that carries a group's tone RF for the LO solve: a
+  // TWPA pump's tone is its pump_frequency (QA generate-r2-03).
+  function loRfField(group) {
+    return group === "twpa" ? "pump_frequency" : "RF_freq";
+  }
+
   // Map each physical port to the elements allocated on it. Returns
   // { "con/slot/port/io": [ {group, rid, ch}, ... ] }, where group is the
-  // populate group — "qubit" for xy drives, "resonator" for readout.
+  // populate group — "qubit" for xy drives, "resonator" for readout, "twpa"
+  // for a TWPA pump.
   function collectPortElements() {
     var portMap = {};
     function add(group, rid, ch) {
@@ -5271,6 +5364,16 @@
       var a = (state.allocation || {})[q] || {};
       (a.xy || []).forEach(function (ch) { add("qubit", q, ch); });
       (a.rr || []).forEach(function (ch) { add("resonator", q, ch); });
+    });
+    // QA generate-r2-03: a TWPA pump is an MW output like an xy drive. Left
+    // out of the solve, it built on the port's default LO (5 GHz, band 1) and
+    // played a 7.95 GHz pump at an impossible 2.95 GHz IF. The isolation line
+    // has no LO field, so only the pump joins.
+    (state.spec.twpas || []).forEach(function (tw) {
+      var tid = (tw && typeof tw === "object") ? tw.id : tw;
+      if (!tid) return;
+      var a = (state.allocation || {})[tid] || {};
+      (a.p || []).forEach(function (ch) { add("twpa", tid, ch); });
     });
     return portMap;
   }
@@ -5301,7 +5404,7 @@
     var inputLo = {};   // "group/rid" -> LO derived from its input-side pair
 
     function rfOf(m) {
-      var n = parseFloat(((pop[m.group] || {})[m.rid] || {}).RF_freq);
+      var n = parseFloat(((pop[m.group] || {})[m.rid] || {})[loRfField(m.group)]);
       return isNaN(n) ? null : n;
     }
 
@@ -5567,7 +5670,8 @@
       var who = document.createElement("span");
       who.className = "gen-lo-row-who";
       who.textContent = g.members.map(function (mem) {
-        return mem.rid + (mem.group === "resonator" ? ".rr" : "");
+        return mem.rid + (mem.group === "resonator" ? ".rr"
+          : mem.group === "twpa" ? ".pump" : "");
       }).join(", ") || "—";
       row.appendChild(who);
       var freq = document.createElement("span");
@@ -6478,7 +6582,9 @@
   // row; overrides only where the id matches (skips reported, never errors);
   // fields not in the chip's current column set (e.g. cr_* on a CZ chip)
   // drop with a note. Returns the report; the caller re-renders + recomputes.
-  function applyPreset(preset, overwrite) {
+  // onlyRows ({q: {qid:1}, pairs: {"qC-qT":1}}, optional) limits the apply to
+  // those rows — the per-row auto-prefill; an explicit Apply passes nothing.
+  function applyPreset(preset, overwrite, onlyRows) {
     var report = { applied: 0, skippedRows: [], hiddenSections: [], droppedFields: [] };
     var sections = (preset && preset.sections) || {};
     var active = presetActiveSections();
@@ -6492,7 +6598,9 @@
       var rowIds = presetRowIds(sec);
       var rowSet = {};
       rowIds.forEach(function (r) { rowSet[r] = true; });
+      var only = onlyRows ? ((sec === "pairs" ? onlyRows.pairs : onlyRows.q) || {}) : null;
       function put(rid, f, v) {
+        if (only && !only[rid]) return;
         if (!keep[f] || skip[f]) {
           if (report.droppedFields.indexOf(f) < 0) report.droppedFields.push(f);
           return;
@@ -6504,7 +6612,11 @@
         // Preset Apply is a user action — its fills are populate-protect
         // touched cells in regen mode (docs/72). autoApplyStandardDefaults
         // never runs there, so this can't taint the baseline with synthetics.
-        markPopulateTouched(sec, rid, f);
+        // Fill-empty (QA regenerate-r2-03) is judged against the CHIP, not the
+        // display: a cell the extractor could not read back looks blank, and
+        // protecting the fill would overwrite the calibration tier-1 carries.
+        // Unprotected, it still lands where the old chip truly lacks the leaf.
+        if (overwrite) markPopulateTouched(sec, rid, f);
         report.applied++;
       }
       var defaults = body.defaults || {};
@@ -6526,32 +6638,86 @@
   }
 
   // Supercritical feedback: pre-fill EVERY empty populate cell with the
-  // built-in standard defaults ONCE per draft — users start from filled-in
-  // values (the same seeds run_build would use on blanks) and modify, instead
-  // of typing every pair/pulse parameter from scratch. Fill-only-empty: a
-  // typed value is never overwritten, and because the one-shot flag persists
-  // in the draft, a cell the user deliberately clears afterwards stays
-  // cleared on the next visit.
+  // built-in standard defaults ONCE per ROW — users start from filled-in
+  // values and modify, instead of typing every pair/pulse parameter from
+  // scratch. (Not the seeds run_build uses on blanks: those are the
+  // builder's own defaults, e.g. x180 amp 0.1 — why a blank row builds a
+  // silently different qubit.) Fill-only-empty: a typed value is never
+  // overwritten, and because the prefilled rows persist in the draft, a cell
+  // the user deliberately clears afterwards stays cleared on the next visit.
+  // QA generate-r2-05: this used to be ONE flag per draft, so a qubit or pair
+  // added after the first visit (5 -> 3 -> 5, 20 -> 200) stayed blank.
+  function autoPresetPairKey(p) {
+    return [String(p[0]), String(p[1])].sort().join("|") + "|" + state.pairGate;
+  }
+  // Rows whose populate the wizard deleted (a qubit removed) must prefill
+  // again if the id comes back. `valid` = { qid: true } for surviving qubits.
+  function forgetAutoPresetRows(valid) {
+    var rec = state.autoPresetRows;
+    if (!rec) return;
+    Object.keys(rec.q || {}).forEach(function (q) { if (!valid[q]) delete rec.q[q]; });
+    Object.keys(rec.pairs || {}).forEach(function (k) {
+      var seg = k.split("|");
+      if (!valid[seg[0]] || !valid[seg[1]]) delete rec.pairs[k];
+    });
+  }
+  // A draft's record of the rows that were prefilled. `all` seeds it with
+  // every current row (an old draft whose one-shot flag was already spent).
+  function autoPresetRecordOf(all) {
+    var rec = { q: {}, pairs: {} };
+    if (all) {
+      state.spec.qubits.forEach(function (q) { rec.q[q] = 1; });
+      (state.spec.qubit_pairs || []).forEach(function (p) {
+        if (p[0] && p[1]) rec.pairs[autoPresetPairKey(p)] = 1;
+      });
+    }
+    return rec;
+  }
   function autoApplyStandardDefaults() {
     // Regenerate shows a REAL chip's values — auto-filling blanks with the
     // synthetic standard preset would present defaults the chip never had
     // (and poison the populate-protect baseline diff, docs/72). The preset
     // bar's explicit Apply stays available (and records touched cells).
     if (state.mode === "regenerate") return;
-    if (state.autoPresetApplied) return;
-    state.autoPresetApplied = true;
-    saveDraft();
+    var rec = state.autoPresetRows || (state.autoPresetRows = autoPresetRecordOf(false));
+    var hadRows = Object.keys(rec.q).length + Object.keys(rec.pairs).length > 0;
+    var liveQ = {}, livePairs = {};
+    var freshQ = {}, freshP = {}, freshPKeys = {}, names = [];
+    state.spec.qubits.forEach(function (q) {
+      liveQ[q] = 1;
+      if (!rec.q[q]) { freshQ[q] = 1; names.push(q); }
+    });
+    (state.spec.qubit_pairs || []).forEach(function (p) {
+      if (!p[0] || !p[1]) return;
+      var k = autoPresetPairKey(p);
+      livePairs[k] = 1;
+      if (!rec.pairs[k]) {
+        freshP[p[0] + "-" + p[1]] = 1; freshPKeys[k] = 1;
+        names.push(p[0] + "-" + p[1]);
+      }
+    });
+    // A pair that is gone now (removed, or the gate switched and its fields
+    // were dropped) prefills again when it comes back.
+    Object.keys(rec.q).forEach(function (q) { if (!liveQ[q]) delete rec.q[q]; });
+    Object.keys(rec.pairs).forEach(function (k) { if (!livePairs[k]) delete rec.pairs[k]; });
+    if (!names.length) return;
     fetch("/generate/presets/builtin-standard")
       .then(function (r) { return r.json(); })
       .then(function (p) {
         if (!p || !p.ok || !p.sections) return;
-        var report = applyPreset(p, false);
+        if (state.autoPresetRows !== rec) return;   // the wizard was reset meanwhile
+        var report = applyPreset(p, false, { q: freshQ, pairs: freshP });
+        // Recorded only once the preset arrived — an offline visit retries.
+        Object.keys(freshQ).forEach(function (q) { rec.q[q] = 1; });
+        Object.keys(freshPKeys).forEach(function (k) { rec.pairs[k] = 1; });
         if (report.applied > 0) {
           renderPopulateTables();
-          presetNote("Pre-filled " + report.applied + " empty cell(s) with the " +
-                     "standard defaults — edit anything you like.");
-          saveDraft();
+          presetNote("Pre-filled " + report.applied + " empty cell(s) " +
+                     (hadRows ? "on " + names.slice(0, 6).join(", ") +
+                      (names.length > 6 ? ", …" : "") + " " : "") +
+                     "with the standard defaults — edit anything you like.");
         }
+        saveDraft();
       })
       .catch(function () { /* offline / route failure — cells stay blank */ });
   }
@@ -7301,6 +7467,12 @@
       msg.textContent = "✓ Generated " +
         ((r.qubits || []).length) + " qubits and " +
         ((r.qubit_pairs || []).length) + " pairs into " + outPath;
+      // QA F12: built, but the QM will reject its config until the named
+      // elements get a frequency (the ⚠ line below names them).
+      if ((r.elements_without_frequency || []).length) {
+        msg.textContent += " — not runnable yet";
+        msg.className = "gen-build-warn-line";
+      }
       el.appendChild(msg);
       (r.warnings || []).forEach(function (w) {
         var wel = document.createElement("p");
@@ -7830,7 +8002,7 @@
         pairGate: state.pairGate, chipArch: state.chipArch,
         crPortMode: state.crPortMode, zzEnabled: state.zzEnabled,
         topoZone: state.topoZone,
-        autoPresetApplied: state.autoPresetApplied
+        autoPresetRows: state.autoPresetRows
       }));
     } catch (e) { /* quota / serialisation — non-fatal */ }
   }
@@ -7915,9 +8087,8 @@
     // Line-type toggles — default true for backward compat with old drafts.
     state.qubitFlux = d.qubitFlux !== false;
     state.couplerFlux = d.couplerFlux !== false;
-    // One-shot standard-defaults auto-apply (per draft): old drafts lack the
-    // flag → falsy → the prefill runs once on their next populate-step visit.
-    state.autoPresetApplied = !!d.autoPresetApplied;
+    // Per-row standard-defaults auto-apply (QA generate-r2-05) — restored
+    // below, once the pair gate its pair keys carry is restored.
     // 2-qubit gate — default to the tunable-coupler CZ, and migrate the
     // pre-redesign vocabulary (coupler / cross_resonance / zz_drive).
     state.pairGate = d.pairGate || "cz_tunable";
@@ -7929,6 +8100,13 @@
       ? d.chipArch
       : (!state.qubitFlux ? "fixed_frequency"
          : (state.pairGate === "cz_fixed" ? "flux_tunable_fixed_coupler" : "flux_tunable_coupler"));
+    // A draft from before the per-row record whose one-shot flag was spent:
+    // every row it has now counts as prefilled (cleared cells stay cleared),
+    // and only rows added from here on prefill. No flag: nothing recorded yet.
+    var dr = d.autoPresetRows;
+    state.autoPresetRows = (dr && typeof dr === "object")
+      ? { q: dr.q || {}, pairs: dr.pairs || {} }
+      : (d.autoPresetApplied ? autoPresetRecordOf(true) : null);
   }
 
   // Paint the steps that render() / the bind functions do not repaint from
@@ -7998,6 +8176,7 @@
     state.sourcePath = null;
     state.regenLineInventory = null;
     state.regenSourcePairGate = null;
+    state.autoPresetRows = null;   // a fresh chip prefills again (QA generate-r2-05)
     resetAllocRuntime();   // strand any in-flight allocate for the old content
     try {
       localStorage.removeItem("quam_gen_output_path");
@@ -8415,6 +8594,7 @@
       prunePopulate: prunePopulate,
       applyLoAssignments: applyLoAssignments,
       autoApplyStandardDefaults: autoApplyStandardDefaults,
+      applyDraft: applyDraft,
       markPopulateTouched: markPopulateTouched,
       autoScriptsPath: autoScriptsPath,
       maybeFollowScriptsPath: maybeFollowScriptsPath,

@@ -317,6 +317,11 @@ def _extract_populate(state: dict, root: dict) -> dict:
             if variant in ("unipolar", "flattop", "bipolar", "SNZ", "flattop_erf"):
                 pairv["cz_variant"] = variant
             fpq = m.get("flux_pulse_qubit")
+            # docs/61: the canonical form is a REFERENCE to the op on the
+            # moving qubit's z line — read it through, or the calibrated
+            # dur/amp display blank and a fill-empty preset overwrites them.
+            if isinstance(fpq, str) and fpq.startswith("#/"):
+                fpq = _resolve_ptr(root, fpq)
             if isinstance(fpq, dict):
                 if _num(fpq.get("length")):
                     pairv["cz_interaction_duration"] = fpq["length"]

@@ -339,6 +339,20 @@ class TestValidateSpecQdac:
         errors = validate_spec(spec)
         assert any("already used by" in e for e in errors)
 
+    def test_channel_outside_the_qdac_range_errors(self):
+        """QA generate-r2-07: channel 30 used to build, and Diagnostics then
+        flagged the fresh chip 'would crash a node run'. One rule, one copy."""
+        from quam_state_manager.core import qdac
+        assert qdac.CHANNEL_RANGE == (1, 24)
+        for ch in (25, 30):
+            errs = validate_spec(self._qdac_spec(channel=ch))
+            assert any("outside the QDAC-II's range" in e and "1 to 24" in e
+                       for e in errs), (ch, errs)
+
+    def test_channel_range_boundaries_are_valid(self):
+        for ch in (1, 24):
+            assert validate_spec(self._qdac_spec(channel=ch)) == [], ch
+
     def test_bad_trigger_port_errors(self):
         spec = self._qdac_spec(trigger_port="ext9")
         assert any("trigger_port" in e for e in validate_spec(spec))

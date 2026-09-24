@@ -1576,6 +1576,64 @@ def _channel_lo_hz(port: dict, comp: Any) -> float | None:
     return None
 
 
+#: quam's class default for an MW / IQ channel's IF: computed as RF - LO when
+#: generate_config() runs.
+_INFERRED_IF = "#./inferred_intermediate_frequency"
+
+
+def elements_without_frequency(root: dict) -> list[str]:
+    """Channels whose QM-config ``intermediate_frequency`` cannot be computed.
+
+    QA F12: an element built with no RF (a qubit added without Populate
+    values) keeps quam's default IF, the pointer ``_INFERRED_IF``. quam's
+    ``inferred_intermediate_frequency`` raises when RF or LO is not a number;
+    quam's reference lookup turns that into a UserWarning and hands the raw
+    pointer string to ``generate_config()``, and the QM schema then rejects
+    the WHOLE config ("Not a valid number") -- no qubit on the chip, not
+    only the new one, can open a QM.
+
+    ``root`` is the merged state+wiring dict. Returns the channel dot-paths
+    (``qubits.q6.xy``), in chip order. Certain cases only, never a guess:
+    the channel's IF is that default (or absent, which is the same default)
+    AND its RF resolves to null / is absent, or it sits on an MW-FEM output
+    port whose LO is null. An RF that resolves to anything else non-numeric
+    (an unfollowable pointer), a multi-upconverter port, or a non-MW-FEM
+    port is skipped.
+    """
+    from quam_state_manager.core.pointer_resolver import resolve_pointer
+    out: list[str] = []
+    for coll in ("qubits", "qubit_pairs", "twpas"):
+        ents = root.get(coll)
+        if not isinstance(ents, dict):
+            continue
+        for eid, ent in ents.items():
+            if not isinstance(ent, dict):
+                continue
+            for key, comp in ent.items():
+                if not isinstance(comp, dict):
+                    continue
+                if "RF_frequency" not in comp and \
+                        comp.get("intermediate_frequency") != _INFERRED_IF:
+                    continue
+                if comp.get("intermediate_frequency", _INFERRED_IF) != _INFERRED_IF:
+                    continue          # a set IF never needs RF/LO
+                rf = comp.get("RF_frequency")
+                if isinstance(rf, str) and rf.startswith("#") \
+                        and not rf.startswith("#./"):
+                    rf = resolve_pointer(root, rf, (coll, eid, key, "RF_frequency"))
+                path = f"{coll}.{eid}.{key}"
+                if rf is None:
+                    out.append(path)
+                    continue
+                if not _isnum(rf):
+                    continue
+                port, _ = _mw_output_port_of(root, comp)
+                if (port is not None and port.get("upconverter_frequency") is None
+                        and not port.get("upconverters")):
+                    out.append(path)
+    return out
+
+
 # (channel key on the qubit, human label, kind, absolute RF range)
 _MW_CARRIER_CHANNELS = [
     ("xy", "qubit drive", "drive", MW_OUTPUT_FREQ_RANGE_HZ),
@@ -2102,11 +2160,8 @@ def _lffem_output_port_of(root: dict, comp: Any) -> dict | None:
     return port
 
 
-#: The QDAC-II has channels 1..24 inclusive. Not a guess — the customer's own
-#: driver asserts exactly this range and says so in the message it raises
-#: (``qdac_2_driver/channel.py``: "The QDAC-II has channels 1 to 24
-#: inclusive, but given was channel number {n}").
-_QDAC_CHANNELS = (1, 24)
+# The QDAC-II channel range lives in ``core/qdac.py`` (``CHANNEL_RANGE``, the
+# driver-sourced 1..24) so the wizard's build gate applies the same rule.
 
 #: The four physical external-trigger BNC inputs, from the customer's own
 #: ``QdacBiasLine.trigger_port`` annotation (``Literal["ext1".."ext4"]``).
@@ -2170,7 +2225,7 @@ def _qdac_findings(root: dict) -> list[Finding]:
                 jump_path="qdac.usb_device"))
 
     # ── per-qubit fields ─────────────────────────────────────────────────
-    lo, hi = _QDAC_CHANNELS
+    lo, hi = _qdac.CHANNEL_RANGE
     by_channel: dict[Any, list[str]] = {}
     # Was a hand-rolled (len, str) shortlex -- right for a uniform "q<N>" naming
     # scheme, wrong the moment a lab mixes widths ("qA1" vs "q10"). The house

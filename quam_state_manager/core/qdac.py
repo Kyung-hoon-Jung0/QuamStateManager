@@ -57,7 +57,16 @@ __all__ = [
     "spec_biased_qubits",
     "spec_bias_tee_qubits",
     "spec_bias_mode",
+    "CHANNEL_RANGE",
 ]
+
+#: The QDAC-II has channels 1..24 inclusive. Not a guess — the customer's own
+#: driver asserts exactly this range and says so in the message it raises
+#: (``qdac_2_driver/channel.py``: "The QDAC-II has channels 1 to 24
+#: inclusive, but given was channel number {n}"). The ONE copy: Diagnostics
+#: flags a built chip with it, ``config_generator.validate_spec`` refuses to
+#: build one, and the wizard's inline check is parity-pinned to it.
+CHANNEL_RANGE = (1, 24)
 
 #: ``QdacBiasLine``'s own fields, in the order a human reads them: what the
 #: channel IS, then what it does when triggered. The single source of truth —

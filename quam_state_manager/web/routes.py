@@ -26337,6 +26337,13 @@ def generate_build():
     outcome = config_generator.run_generator(
         python_path, "build", spec, Path(output_path), timeout=600
     )
+    # QA F12: a success whose QM config the QM would reject says so.
+    if outcome.get("ok"):
+        try:
+            _st, _wr = safe_io.read_state_wiring(Path(output_path))
+            config_generator.annotate_unplayable(outcome, _st, _wr)
+        except (OSError, ValueError) as exc:
+            logger.warning("frequency check skipped: %s", exc)
 
     # Optional editable-scripts export (customer requirement: "generate/
     # populate python scripts in a different user-defined folder"). Runs
