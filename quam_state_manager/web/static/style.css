@@ -731,6 +731,10 @@ html[data-font-size="large"] { --font-size-base: 19px; }
    left the old page fully interactive-looking, so users double-clicked. */
 #table-pane.htmx-request { opacity: 0.6; transition: opacity 0.15s; }
 .clickable-row.htmx-request { opacity: 0.6; pointer-events: none; }
+/* QA chipstatus-r2-19: a Chip Status Trends toggle re-renders only this section
+   (the global loader no longer flashes over it — app.js isSlow), so it gets the
+   same quiet in-flight cue #table-pane has. */
+#topo-trends.htmx-request { opacity: 0.6; transition: opacity 0.15s; }
 .spinner::after { content: " ..."; animation: dots 1s steps(3, end) infinite; }
 @keyframes dots { 0% { content: "."; } 33% { content: ".."; } 66% { content: "..."; } }
 
@@ -4270,6 +4274,11 @@ html.topbar-hidden .topo-subnav {
     stroke: var(--pico-card-background-color, #fff); stroke-width: 3px;
     stroke-linejoin: round;
 }
+/* QA F-26: a label set BESIDE a vertical edge grows away from it. The anchor
+   comes from a class: the rules above set text-anchor, and a stylesheet rule
+   beats a presentation attribute. */
+.topo-hero-svg .topo-hero-lbl-start { text-anchor: start; }
+.topo-hero-svg .topo-hero-lbl-end { text-anchor: end; }
 .topo-hero-node-neutral .topo-hero-id { fill: var(--pico-muted-color); font-size: 13px; }
 .topo-hero-map { position: relative; }
 /* docs/126 ②: the container owns the overflow on BOTH axes — the map renders

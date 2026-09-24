@@ -2242,6 +2242,59 @@ window.ChipStatus.mount = function (opts) {
             var _nById = {};
             topo.nodes.forEach(function(n) { _nById[n.id] = n; });
             var _deltaDone = {};
+            // QA F-26: the printed Δf / edge value used to sit ON its bar (the
+            // bar read through '1.49' as '1:49') and between the C/T markers
+            // ('C95:7%T'), with the chevron over 'Δf'. It now sits BESIDE its
+            // own edge, on the side the shared TopoGraph.pairGlyphs leaves
+            // free: never the chevron's side (+0.16·CELL on the lo→hi normal),
+            // and — only when the value is wide enough to reach them — clear of
+            // the on-line C/T circles and of an M stacked on that side (-rn).
+            // The numbers mirror pairGlyphs(compactRoles) and style.css; both
+            // are pinned against the real output in chip_status_hero_selfcheck.
+            // pairGlyphs itself is untouched (the component maps are pinned).
+            var _lblFs = { edelta: compactMode ? 11 : 8, eval: compactMode ? 19 : 15 };
+            var _roleR = Math.max(3.6, CELL * 0.062);
+            function _heroLabelSide(e, x1, y1, x2, y2) {
+                var dx = x2 - x1, dy = y2 - y1, L = Math.sqrt(dx * dx + dy * dy) || 1;
+                var ux = dx / L, uy = dy / L, rnx = -uy, rny = ux;   // pairGlyphs' rn
+                var fnum = function (n) {
+                    return n && typeof n.f_01 === 'number' && isFinite(n.f_01) ? n.f_01 : null;
+                };
+                var fS = fnum(_nById[e.source]), fT = fnum(_nById[e.target]);
+                var mv = e.moving_qubit === 'control' || e.moving_qubit === 'target';
+                var sx, sy;
+                if (fS != null && fT != null && Math.abs(fS - fT) >= 1e6) {
+                    var sg = fT > fS ? 1 : -1;       // the chevron sits on +sg·rn
+                    sx = -sg * rnx; sy = -sg * rny;
+                } else if (mv) {
+                    sx = rnx; sy = rny;              // M sits on -rn
+                } else {
+                    var flip = Math.abs(dx) >= Math.abs(dy) ? (rny > 0 ? -1 : 1) : (rnx < 0 ? -1 : 1);
+                    sx = flip * rnx; sy = flip * rny;   // above / right
+                }
+                return { sx: sx, sy: sy, ux: ux, uy: uy, L: L,
+                         horiz: Math.abs(dx) >= Math.abs(dy),
+                         mOnSide: mv && (-rnx * sx - rny * sy) > 0 };
+            }
+            // distance from the centre line to the label's near edge
+            function _heroLabelClear(sd, barHalf, hwAlong) {
+                var inner = sd.L / 2 - CELL * 0.30 - _roleR;   // C/T/M inner reach
+                if (hwAlong + 2 < inner) return barHalf + 3;
+                return sd.mOnSide ? 3.1 * _roleR + 3 : Math.max(barHalf, _roleR) + 3;
+            }
+            // {x, y (first baseline), cls} for a label beside its edge
+            function _heroLabelAt(sd, mx, my, barHalf, fs, chars, stackH) {
+                var ax = Math.abs(sd.ux) || 1e-9, ay = Math.abs(sd.uy) || 1e-9;
+                if (sd.horiz) {
+                    var hw = 0.3 * fs * chars;
+                    var gapV = _heroLabelClear(sd, barHalf, hw / ax) / ax + (ay / ax) * hw;
+                    return { x: mx, cls: '',
+                             y: sd.sy < 0 ? my - gapV - stackH : my + gapV + 0.76 * fs };
+                }
+                var gapH = _heroLabelClear(sd, barHalf, 0.5 * fs) / ay + (ax / ay) * 0.4 * fs;
+                return { x: mx + (sd.sx > 0 ? gapH : -gapH), y: my + 0.36 * fs,
+                         cls: sd.sx > 0 ? ' topo-hero-lbl-start' : ' topo-hero-lbl-end' };
+            }
             topo.edges.forEach(function(e) {
                 var a = lay.positions[e.source], b = lay.positions[e.target];
                 if (!a || !b) return;
@@ -2266,19 +2319,26 @@ window.ChipStatus.mount = function (opts) {
                                      : (ad / 1e6).toFixed(1);
                             var dUnit = ad >= 1e9 ? 'GHz' : 'MHz';
                             var dmx = (x1 + x2) / 2, dmy = (y1 + y2) / 2;
+                            // QA F-26: beside the bar (a CR pair's two lines
+                            // sit ±6 off the centre line), never on it
+                            var dSd = _heroLabelSide(e, x1, y1, x2, y2);
+                            var dBar = (_edgePaint(e).width + 3) / 2 + (e.directed ? 6 : 0);
                             if (Math.abs(x2 - x1) >= Math.abs(y2 - y1)) {
                                 // A HORIZONTAL edge has only the stone gap
                                 // to write in, so the label stacks: Δf /
                                 // number / unit on three short lines.
+                                var dAt = _heroLabelAt(dSd, dmx, dmy, dBar, _lblFs.edelta,
+                                    Math.max(mCur.edgeDelta.label.length, dNum.length, dUnit.length), 18);
                                 evalSvg += '<text class="topo-hero-edelta topo-hero-edelta-stack" x="' + dmx
-                                    + '" y="' + (dmy - 6) + '">'
+                                    + '" y="' + dAt.y + '">'
                                     + '<tspan x="' + dmx + '">' + _esc(mCur.edgeDelta.label) + '</tspan>'
                                     + '<tspan x="' + dmx + '" dy="9">' + _esc(dNum) + '</tspan>'
                                     + '<tspan x="' + dmx + '" dy="9">' + _esc(dUnit) + '</tspan>'
                                     + '</text>';
                             } else {
-                                evalSvg += '<text class="topo-hero-edelta" x="' + dmx
-                                    + '" y="' + (dmy + 3) + '">'
+                                var dAtV = _heroLabelAt(dSd, dmx, dmy, dBar, _lblFs.edelta, 0, 0);
+                                evalSvg += '<text class="topo-hero-edelta' + dAtV.cls + '" x="' + dAtV.x
+                                    + '" y="' + dAtV.y + '">'
                                     + _esc(mCur.edgeDelta.label + ' ' + dNum + ' ' + dUnit)
                                     + '</text>';
                             }
@@ -2330,9 +2390,16 @@ window.ChipStatus.mount = function (opts) {
                 // docs/126: the value draws in a TOP layer, after the stones
                 // and the role markers — on the real chip the C/T circles sat
                 // exactly on the midpoint and covered every printed number.
-                if (evTxt != null) {
-                    evalSvg += '<text class="topo-hero-eval" x="' + (mx + pdx * (e.directed ? 15 : 0))
-                        + '" y="' + (my + pdy * (e.directed ? 15 : 0) + 4) + '">'
+                if (evTxt != null && e.directed) {
+                    evalSvg += '<text class="topo-hero-eval" x="' + (mx + pdx * 15)
+                        + '" y="' + (my + pdy * 15 + 4) + '">'
+                        + _esc(evTxt) + '</text>';
+                } else if (evTxt != null) {
+                    // QA F-26: beside the 9px bar, clear of C/T (and M)
+                    var eAt = _heroLabelAt(_heroLabelSide(e, x1, y1, x2, y2), mx, my,
+                                           width / 2, _lblFs.eval, String(evTxt).length, 0);
+                    evalSvg += '<text class="topo-hero-eval' + eAt.cls + '" x="' + eAt.x
+                        + '" y="' + eAt.y + '">'
                         + _esc(evTxt) + '</text>';
                 }
             });

@@ -172,6 +172,29 @@ function fireCancelable(name, path) {
     await sleep(60);
     ok(!loader.classList.contains('visible'), '(and the slow one finishing still does)');
 
+    // 7. QA chipstatus-r2-19: a Chip Status Trends chip/badge toggle (and the
+    //    section's lazy first build) re-renders only #topo-trends through
+    //    /topology/trends -- an in-page refinement, not a page open (docs/158's
+    //    rule), so the "a first open can take a while" popup must not flash
+    //    over the charts. The Chip Status PAGE itself still gets the loader,
+    //    and a toggle finishing must not douse it.
+    fire('htmx:beforeRequest', '/topology/trends?metrics=T1&qubits=q1');
+    await sleep(140);
+    ok(!loader.classList.contains('visible'), 'a Trends toggle (/topology/trends) never shows the loader');
+    fire('htmx:beforeRequest', '/topology?view=trends');
+    await sleep(140);
+    ok(loader.classList.contains('visible'), '(the Chip Status page load still does)');
+    fire('htmx:afterRequest', '/topology/trends?metrics=T1&qubits=q1');
+    d.dispatchEvent(new window.CustomEvent('htmx:afterSettle', { detail: {} }));
+    await sleep(60);
+    ok(loader.classList.contains('visible'), 'a Trends toggle finishing does not douse a page load still pending');
+    fire('htmx:afterRequest', '/topology?view=trends');
+    d.dispatchEvent(new window.CustomEvent('htmx:afterSettle', { detail: {} }));
+    await sleep(60);
+    ok(!loader.classList.contains('visible'), '(and the page load finishing still does)');
+    ok(/#topo-trends\.htmx-request \{[^}]*opacity/.test(fs.readFileSync(path.join(STATIC, 'style.css'), 'utf8')),
+       'the section shows its own quiet in-flight cue instead (#topo-trends.htmx-request)');
+
     // 5. markup + CSS contracts
     const base = fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'templates', 'base.html'), 'utf8');
     ok(base.indexOf('quam-loader-spinner') > -1 && /quam-loader-sub[^>]*>Please wait a moment/.test(base),

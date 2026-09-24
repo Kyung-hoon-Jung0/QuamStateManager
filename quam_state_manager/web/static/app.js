@@ -16338,6 +16338,14 @@ window.PendingMarkers = (function () {
         // both events (before/after), so the pending counter stays paired.
         var elt = detail && detail.elt;
         if (elt && elt.closest && elt.closest('#param-history-filters')) return false;
+        // QA chipstatus-r2-19: a Chip Status Trends chip/badge toggle (and the
+        // section's lazy first build) re-renders only #topo-trends through
+        // /topology/trends — an in-page refinement, not a page open, the same
+        // rule as docs/158. A path check answers identically on beforeRequest
+        // and afterRequest (the source element does not survive its own
+        // outerHTML swap), so the pending counter stays paired. The page
+        // itself (/topology, /topology?view=trends) still shows the loader.
+        if (path.indexOf('/topology/trends') === 0) return false;
         for (var i = 0; i < SLOW_PREFIXES.length; i++) {
             if (path.indexOf(SLOW_PREFIXES[i]) === 0) return true;
         }
