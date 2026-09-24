@@ -76,8 +76,16 @@ w.htmx = {
   ajax: (m, url, opts) => {
     loads.push(url);
     const uid = url.split('/').pop();
-    w.document.getElementById('inspector-pane').innerHTML =
-      '<div id="ds-detail-root" data-uid="' + uid + '" data-run-id="' + uid.split(':')[1] + '"></div>';
+    const html = '<div id="ds-detail-root" data-uid="' + uid + '" data-run-id="' + uid.split(':')[1]
+      + '" data-folder-key="' + uid.split(':')[0] + '"></div>';
+    const pane = w.document.getElementById('inspector-pane');
+    // htmx's own beforeSwap, so app.js's REAL pinned-compare interceptor runs
+    // (it cancels the swap and builds the split itself, or suppresses a
+    // re-click of the pinned run -- the r2-03 branch the review case is about)
+    const ev = new w.CustomEvent('htmx:beforeSwap', { bubbles: true, cancelable: true,
+      detail: { target: pane, shouldSwap: true, serverResponse: html } });
+    pane.dispatchEvent(ev);
+    if (ev.detail.shouldSwap) pane.innerHTML = html;
     return Promise.resolve();
   },
   trigger: () => {}, process: () => {}, on: () => {},
@@ -150,6 +158,42 @@ function neighborFetches() { return fetches.filter(u => u.indexOf('/neighbor') !
   key(']');
   ok(neighborFetches().some(u => u === '/dataset/k:3807/neighbor?dir=1'),
      'a run no longer in the filtered list falls back to the server neighbor');
+
+  // ── datasets-r2-01 (review): Pin & Browse. Re-clicking the PINNED row is a
+  // suppressed swap (r2-03), but openDatasetDetail had already moved the
+  // table-nav marker onto the pinned run -- so the CURRENT column's next ]/[
+  // silently fell back to the tree walk. The interceptor puts the marker back.
+  s.value = 'power_rabi';
+  s.dispatchEvent(new w.Event('input', { bubbles: true }));
+  await tick(300);
+  s.blur();
+  fetches.length = 0;
+  const cur = () => { const r = doc.querySelector('#inspector-pane .inspector-current-col #ds-detail-root');
+                      return r && r.getAttribute('data-uid'); };
+  rowEl('k:3812').click();                 // open #3812 from the table, pin it (shown alone)
+  w.togglePinDataset();
+  ok(w._pinnedRunKey === 'k:3812', '(fixture) #3812 is pinned');
+  rowEl('k:3812').click();                 // re-click the pinned row: the swap is suppressed
+  key(']');
+  ok(last() === '/dataset/k:3808' && cur() === 'k:3808',
+     'pinned alone: after a re-click of the pinned row ] still walks the table (#3808 becomes the current column)');
+  rowEl('k:3812').click();                 // re-click the pinned row again, now in the split
+  ok(cur() === 'k:3808', 'the re-click changes nothing on screen (r2-03)');
+  key(']');
+  ok(last() === '/dataset/k:3807' && cur() === 'k:3807',
+     'r2-01 review: ] after the re-click walks the current column down the FILTERED list (#3807), not the tree');
+  ok(neighborFetches().length === 0, 'no /neighbor fetch escaped the filter');
+  // unpin, open another run, pin THAT one, re-click it: the marker restored is
+  // the one describing the run pinned NOW, never one left over from the split
+  w.unpinDataset();
+  rowEl('k:3806').click();
+  w.togglePinDataset();
+  ok(w._pinnedRunKey === 'k:3806', '(fixture) #3806 is pinned after the earlier split');
+  rowEl('k:3806').click();
+  key(']');
+  ok(last() === '/dataset/k:3270' && cur() === 'k:3270',
+     'a run pinned after an earlier split keeps its own table walk (#3806 -> #3270)');
+  ok(neighborFetches().length === 0, 'still no /neighbor fetch');
 
   process.exit(fails ? 1 : 0);
 })().catch(e => { console.error('HARNESS ERROR:', e && e.stack || e); process.exit(1); });

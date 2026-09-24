@@ -6046,7 +6046,9 @@ input.tree-edit-input {
    min-content, which either keeps the full path on one line (the #prev/#run
    headers fall past a 510 px pinned column) or, with any wrapping rule, wraps
    every path one character per line (measured: a 42 px column, 10 lines). An
-   auto column shares the width and wraps only when the pane is too narrow. */
+   auto column shares the width and wraps only when the pane is too narrow.
+   Intended trade-off (review): in a WIDE single pane the surplus width now
+   goes to the path column, so #prev/#run/Δ sit grouped at the right. */
 .prevdiff-table .col-prop { width: auto; white-space: normal; overflow-wrap: anywhere; }
 .prevdiff-more { padding: .35rem .5rem; font-size: .85em; }
 

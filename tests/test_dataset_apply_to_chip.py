@@ -317,6 +317,14 @@ class TestTheResultLineSaysWhatTheButtonDoes:
                / "templates" / "_dataset_detail.html").read_text(encoding="utf-8")
         assert "stages the pre-apply state" in tpl
         assert "Revert last apply restores the pre-apply state" not in tpl
+        # datasets-r2-19 review: the tooltip promised "Reversible" without
+        # qualification while the result line below says a replaced unsaved
+        # edit is NOT recoverable. The two texts agree now: reversible FOR THE
+        # CHIP, and the replaced edits are named, not brought back.
+        btn = tpl.split(">Apply to chip</button>", 1)[0].rsplit('title="', 1)[1]
+        assert "Reversible for the chip" in btn
+        assert "Unsaved working edits are replaced and named" in btn and "not recoverable" in btn
+        assert "chip. Reversible —" not in btn, "the unqualified promise is gone"
 
 
 class TestReplacedEditsAreNamedHonestly:

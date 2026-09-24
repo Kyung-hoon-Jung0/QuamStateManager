@@ -14771,6 +14771,7 @@ window.togglePinDataset = function() {
     if (!root) return;
     window._pinnedRunId = root.dataset.runId;
     window._pinnedRunKey = _dsRunKey(root);
+    _dsNavMarkerAtBuild = window._dsNavFromTable;   // the marker describing the run pinned alone
 
     // Clone HTML and prefix IDs to avoid duplicates with the live (right) column.
     var clone = source.cloneNode(true);
@@ -14846,6 +14847,14 @@ function _initCompareSplitResizer(pane) {
  * HTMX beforeSwap interceptor: when a run is pinned, intercept the new
  * dataset detail swap and render two-column layout instead.
  */
+// The table-nav marker (window._dsNavFromTable, dataset-virtual.js) as it
+// stood when the CURRENT column was last built or pinned (datasets-r2-01
+// review). A re-click of the pinned run is a suppressed swap below, but the
+// click behind it already moved the marker onto the pinned run while the
+// current column did not change -- the same-run branch puts the marker back,
+// so that column's ]/[ keep walking the list it was opened from instead of
+// falling back to the tree.
+var _dsNavMarkerAtBuild;
 // Registered EARLY (see the top-of-file registration, docs/124 M-2): this
 // must set shouldSwap before the purge/unobserve/_io-teardown listeners look.
 function _pinnedRunSwapInterceptor(evt) {
@@ -14866,6 +14875,7 @@ function _pinnedRunSwapInterceptor(evt) {
     // leave the current layout untouched.
     if (_dsRunKey(newRoot) === window._pinnedRunKey) {
         evt.detail.shouldSwap = false;
+        if (_dsNavMarkerAtBuild !== undefined) window._dsNavFromTable = _dsNavMarkerAtBuild;
         return;
     }
 
@@ -14873,6 +14883,7 @@ function _pinnedRunSwapInterceptor(evt) {
     evt.detail.shouldSwap = false;
 
     // Build two-column layout
+    _dsNavMarkerAtBuild = window._dsNavFromTable;   // describes the column built below
     var pane = document.getElementById('inspector-pane');
     if (pane) {
         // Running FIRST means the choke-point purge listeners will see our
@@ -17057,81 +17068,19 @@ document.addEventListener('click', function(evt) {
                 window.location.href = entry.url;
             }
         } else {
-            // A palette pick is a NAVIGATION, and this line said so while not
-            // doing it: `pushUrl` is not an htmx 2 ajax option, so the pane
-            // changed and the address bar did not -- Back then left the app
-            // instead of returning to the page the user came from. htmx.ajax
-            // resolves when the swap is done, so the history entry is ours to
-            // add, after it.
+            // A palette pick is a NAVIGATION: the main pane changes, so the
+            // address bar, the sidebar highlight and Back follow it. ONE
+            // contract for every main-pane navigation, _navigateTablePane
+            // (QA F16 review): the history entry hangs off the SWAP, never
+            // off the ajax promise (htmx resolves that on a 404 too, and
+            // immediately when Bundles' htmx:confirm cancels the request); a
+            // pick that never swapped releases its listeners; PaneState's skip
+            // path (it pushes its own entry) releases them via paneRestored.
+            // `pushUrl` is not an htmx 2 ajax option (the bundled htmx.min.js
+            // contains the string zero times), which is how this line was
+            // dead in the first place.
             if (window.htmx) {
-                // `source` for hx-sync queueing, and no pushUrl -- htmx 2 has
-                // no such ajax option (the bundled htmx.min.js contains the
-                // string zero times).
-                //
-                // The history entry hangs off the SWAP, not off the ajax
-                // promise. That promise settles the same way whether the pane
-                // changed or not: htmx resolves it on a 404, and resolves it
-                // IMMEDIATELY when Bundles' htmx:confirm handler cancels the
-                // request to wait for a page bundle. Pushing from it moved the
-                // address bar to pages that never loaded. A swap is the event
-                // that means "the pane now shows this URL" -- the same order
-                // htmx's own hx-push-url uses.
-                var _url = entry.url;
-                // No once-guard here: _onSwap removes both listeners BEFORE
-                // it pushes, and DOM dispatch is synchronous, so there is no
-                // second call to guard against. A flag no mutation can reach
-                // is dead code claiming a protection it is not providing --
-                // the sweep for this commit caught exactly that.
-                var _push = function () {
-                    try {
-                        // PaneState's skip path pushes its own {htmx:true}
-                        // entry for a KEEP route synchronously; a second entry
-                        // for the SAME address would make the first Back do
-                        // nothing a person can see.
-                        if (window.location.pathname + window.location.search !== _url) {
-                            window.history.pushState({ htmx: true }, '', _url);
-                        }
-                    } catch (e) { /* file:// */ }
-                    // A raw pushState fires none of the events the sidebar's
-                    // active-item sync listens to (htmx:pushedIntoHistory,
-                    // popstate). PaneState's own skip push calls this for the
-                    // same reason.
-                    if (window.syncSidebarNavActive) window.syncSidebarNavActive();
-                };
-                var _same = function (d) {
-                    var got = (d && d.pathInfo
-                               && (d.pathInfo.finalRequestPath || d.pathInfo.requestPath)) || '';
-                    return !got || got.split('?')[0] === _url.split('?')[0];
-                };
-                var _off = function () {
-                    // `document`, never document.body: app.js is evaluated in
-                    // <head>, and a blanket pin forbids the body form because a
-                    // TOP-LEVEL one would throw against a null body. These are
-                    // added at click time so body exists -- but every htmx event
-                    // bubbles to document anyway, and PaneState's own listeners
-                    // live there, so this is the house spelling.
-                    document.removeEventListener('htmx:afterSwap', _onSwap);
-                    document.removeEventListener('htmx:afterRequest', _onDone);
-                };
-                var _onSwap = function (evt) {
-                    if (!evt.target || evt.target.id !== 'table-pane') return;
-                    if (!_same(evt.detail)) return;
-                    _off();
-                    _push();
-                };
-                var _onDone = function (evt) {
-                    // Cleanup, so a pick that never swapped (404, abort, a
-                    // cancelled request nothing re-issues) cannot leave a
-                    // listener that fires on somebody else's later swap.
-                    if (!evt.target || evt.target.id !== 'table-pane') return;
-                    if (!_same(evt.detail)) return;
-                    if (evt.detail && evt.detail.successful) return;   // the swap decides
-                    _off();
-                };
-                document.addEventListener('htmx:afterSwap', _onSwap);
-                document.addEventListener('htmx:afterRequest', _onDone);
-                htmx.ajax('GET', _url,
-                    {source: '#table-pane', target: '#table-pane', swap: 'innerHTML'});
+                _navigateTablePane(entry.url);
             } else {
                 window.location.href = entry.url;
             }
