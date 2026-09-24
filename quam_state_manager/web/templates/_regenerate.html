@@ -55,6 +55,7 @@
           mode: "regenerate", buildEndpoint: "/regenerate/build",
           sourcePath: res.source_folder,
           sourceHash: res.source_hash,   // QA regenerate-r2-35
+          sourceName: res.source_name,   // QA regenerate-r2-37
           // r15 CG1 (docs/70): /regenerate?step=5 = the /instrument "Modify
           // wiring…" deep link; hydrateFromSpec has honored opts.step all
           // along (null → step 1). A reload from the build's "source

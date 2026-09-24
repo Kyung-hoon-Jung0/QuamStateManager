@@ -540,6 +540,11 @@
   // during the select-env round-trip) used to POST two builds into ONE
   // folder. Set from the first press until its response lands.
   var _buildInFlight = false;
+  // QA regenerate-r2-37: the docs/134 allocate rule, for the build — every
+  // build captures this token and its handlers stand down once a content
+  // swap (hydrateFromSpec / resetWizard) bumped it, so an answer computed
+  // for one session never renders (or re-enables Generate) in the next.
+  var _buildRunSeq = 0;
   // QA generate-r2-18: python -> the QM packages its probe reported MISSING
   // (a definite verdict; a failed probe is not recorded). Step 1's guard.
   var _envMissing = {};
@@ -7915,6 +7920,42 @@
     el.appendChild(go);
   }
 
+  // QA regenerate-r2-37: the wizard's CONTENT was replaced (hydrateFromSpec:
+  // regenerate boot / "Load different…" / Reset's re-fill; resetWizard) — a
+  // build still running belongs to the earlier session (its handlers stand
+  // down on the bumped token), and the new session starts with an empty
+  // result slot, no build record and both Generate buttons usable.
+  function resetBuildRuntime() {
+    _buildRunSeq++;
+    _buildInFlight = false;
+    state.buildPending = null;
+    state.lastBuild = null;
+    var el = document.getElementById("gen-build-result");
+    if (el) { el.hidden = true; el.innerHTML = ""; el.className = "gen-build-result"; }
+    ["gen-next", "gen-next-top"].forEach(function (id) {
+      var b = document.getElementById(id);
+      if (b) b.disabled = false;
+    });
+  }
+
+  // A stranded build that still wrote its folder is named — never shown as
+  // this session's result (no "Load into app") — and only on an idle slot
+  // (never over the new session's own "Generating…", result or question).
+  function noteStrandedBuild(res, outPath, source) {
+    if (!res || !res.ok) return;
+    var el = document.getElementById("gen-build-result");
+    if (!el || !el.hidden) return;
+    el.hidden = false;
+    el.className = "gen-build-result";
+    el.innerHTML = "";
+    var p = document.createElement("p");
+    p.className = "muted gen-build-stranded";
+    p.textContent = "ℹ A build from the earlier session" +
+      (source ? " (source " + source + ")" : "") + " finished into " + outPath +
+      " — not loaded here: this wizard was reset or re-filled while it ran.";
+    el.appendChild(p);
+  }
+
   function runBuild(force, ackDegrades, ackSource) {
     // QA F3b: a pre-flight refusal answers in the result slot under Generate
     // and REPLACES whatever it held — the previous build's green "Generated"
@@ -7957,6 +7998,7 @@
     // persisted selection). One round-trip, then re-enter with identical args.
     if (!_envPersisted) {
       setBuildBusy(true);   // QA F8: a second press during this round-trip
+      var envSeq = _buildRunSeq;   // QA r2-37: a swap strands this press
       fetch("/generate/select-env", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -7964,6 +8006,7 @@
       })
         .then(function (r) { return r.json(); })
         .then(function (res) {
+          if (envSeq !== _buildRunSeq) return;
           setBuildBusy(false);
           if (res && res.ok) {
             _envPersisted = true;
@@ -7975,6 +8018,7 @@
           }
         })
         .catch(function () {
+          if (envSeq !== _buildRunSeq) return;
           setBuildBusy(false);
           refuseBuild(
             "Could not select the build environment — pick one in step 1.",
@@ -8073,6 +8117,9 @@
       revealResult(resultEl);
     }
 
+    var myBuild = ++_buildRunSeq;   // QA r2-37: this answer is this session's
+    var buildSource = state.mode === "regenerate"
+      ? (state.regenSourceName || state.sourcePath || null) : null;
     fetch(state.buildEndpoint || "/generate/build", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -8103,6 +8150,10 @@
     })
       .then(function (r) { return r.json(); })
       .then(function (res) {
+        if (myBuild !== _buildRunSeq) {   // QA r2-37: the wizard was re-filled
+          noteStrandedBuild(res, outPath, buildSource);
+          return;
+        }
         setBuildBusy(false);
         // QA r2-13: the outcome rides the draft (a question, or a refusal
         // because another build holds the folder, is not one), so F5 or
@@ -8124,6 +8175,7 @@
         revealResult(resultEl);
       })
       .catch(function () {
+        if (myBuild !== _buildRunSeq) return;   // QA r2-37
         setBuildBusy(false);
         if (resultEl) {
           resultEl.className = "gen-build-result gen-build-error";
@@ -8428,6 +8480,7 @@
     state.lastBuild = null;      // QA r2-13: a Reset forgets the build record
     state.buildPending = null;
     resetAllocRuntime();   // strand any in-flight allocate for the old content
+    resetBuildRuntime();   // QA r2-37: … and any in-flight build
     try {
       localStorage.removeItem("quam_gen_output_path");
       localStorage.removeItem("quam_gen_scripts_path");
@@ -8775,12 +8828,14 @@
     // line per qubit) before the inventory could be read from them. Read the
     // INCOMING spec, the one surface that is still the reconstruct's truth.
     resetAllocRuntime();   // strand any in-flight allocate for the OLD content
+    resetBuildRuntime();   // QA r2-37: … and any in-flight / finished build
     state.mode = o.mode || "regenerate";
     state.buildEndpoint = o.buildEndpoint || "/regenerate/build";
     state.sourcePath = o.sourcePath || null;
     // QA regenerate-r2-35: what the source read was, so the build can ask
     // when the chip changed under the values this wizard shows.
     state.regenSourceHash = o.sourceHash || null;
+    state.regenSourceName = o.sourceName || null;   // QA r2-37: the Source bar's name
     // The source's 2Q gate — an in-wizard architecture switch away from it is
     // an explicit act the inventory gate must not veto (review [2]).
     state.regenSourcePairGate = pg;

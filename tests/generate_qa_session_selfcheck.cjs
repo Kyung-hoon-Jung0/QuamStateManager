@@ -51,6 +51,11 @@
 //   regenerate-r2-35  a source that changed under the wizard is named at
 //        Generate (what gets built, per value) with "Generate anyway" and
 //        "Reload the wizard from the chip"
+//   regenerate-r2-37  a build answer belongs to the session that asked: after
+//        "Load different…" / Reset the slot and both Generate buttons start
+//        clean, a stranded answer is named (source + folder, no Load into
+//        app) and never re-enables Generate, marks edits built, or re-enters
+//        a build through the env round-trip
 //
 // Run: node tests/generate_qa_session_selfcheck.cjs   (needs jsdom; exit 2 = skip)
 'use strict';
@@ -1502,6 +1507,193 @@ function toStep4(win, G, n) {
     w.G.tryNext();
     await settle();
     ok(w.builds()[0].body.source_hash === null, 'r2-35: plain Generate sends no source stamp');
+  })();
+
+  // ── regenerate-r2-37: a build's answer belongs to the session that asked ──
+  // The real Re-generate page; /regenerate/build hangs until released, and a
+  // "Load different…" folder reconstructs a 4-qubit chip.
+  function r37RegenPage() {
+    const w = makeWorld({ regenPage: true, routes: [
+      { match: '/generate/envs', reply: { envs: [] } },
+      { match: '/generate/select-env', reply: { ok: true } },
+      { match: '/regenerate/reconstruct', reply: function (e) {
+        const other = e.body && e.body.folder;
+        return { ok: true, spec: srcSpec(other ? 4 : 2),
+                 source_folder: other || 'D:\\wc\\key123',
+                 source_name: other ? 'tf_oldgen' : 'LOADED_CHIP', notes: [], info_notes: [] };
+      } }
+    ] });
+    const origFetch = w.win.fetch;
+    w.releases = [];
+    w.win.fetch = function (url, fo) {
+      if (String(url).indexOf('/regenerate/build') >= 0) {
+        w.log.push({ url: String(url), body: JSON.parse(fo.body) });
+        return new w.win.Promise(function (res) {
+          w.releases.push(function (data) { res({ json: () => w.win.Promise.resolve(data) }); });
+        });
+      }
+      return origFetch(url, fo);
+    };
+    w.builds = () => w.log.filter(e => e.url.indexOf('/regenerate/build') >= 0);
+    w.generateInto = function (out) {
+      w.G.state.env = 'C:/envs/test/python.exe';
+      w.G.goToStep(7);
+      setInput(w.win, $(w.win, 'gen-output-path'), out);
+      w.G.goToStep(8);
+      w.G.tryNext();
+    };
+    w.loadDifferent = function (folder) {
+      const src = $(w.win, 'regen-src-input');
+      src.value = folder;
+      src.dispatchEvent(new w.win.Event('change', { bubbles: true }));
+    };
+    return w;
+  }
+  const r37LoadBtn = el => [...el.querySelectorAll('button')].some(b => b.textContent === 'Load into app');
+
+  await (async function r37LoadDifferentMidBuild() {
+    const w = r37RegenPage();
+    await settle();
+    w.generateInto('D:\\x\\int_loaddiff');
+    await settle();
+    ok(w.builds().length === 1, 'r2-37 harness: the build is running');
+    w.loadDifferent('D:\\x\\tf_oldgen');        // within the build: Load different…
+    await settle();
+    ok(w.G.state.sourcePath === 'D:\\x\\tf_oldgen' && w.G.state.spec.qubits.length === 4,
+      'r2-37 harness: Load different… hydrated the other chip');
+    const res = $(w.win, 'gen-build-result');
+    ok(res.hidden && !$(w.win, 'gen-next').disabled && !$(w.win, 'gen-next-top').disabled,
+      'r2-37: the re-filled wizard starts with an empty result slot and Generate usable (hidden ' +
+      res.hidden + ', "' + res.textContent.slice(0, 80) + '")');
+    // an edit in the NEW session before the old answer lands
+    w.G.goToStep(2);
+    editField(w.win, $(w.win, 'gen-net-host'), '10.7.7.7');
+    ok(w.G.regenDirty(), 'r2-37 harness: the new session has an edit');
+    w.releases[0]({ ok: true, result: { qubits: ['q1', 'q2'], qubit_pairs: [['q1', 'q2']] } });
+    await settle();
+    ok(res.textContent.indexOf('Generated 2 qubits') < 0 && !r37LoadBtn(res),
+      'r2-37: the earlier session\'s result is not rendered into the new one (got "' +
+      res.textContent.slice(0, 140) + '")');
+    ok(res.textContent.indexOf('D:\\x\\int_loaddiff') >= 0 &&
+       res.textContent.indexOf('(source LOADED_CHIP)') >= 0 && /not loaded here/.test(res.textContent),
+      'r2-37: … it is named as the earlier session\'s, with its source and folder (got "' +
+      res.textContent + '")');
+    ok(w.G.regenDirty(),
+      'r2-37: the stale answer does not mark the new session\'s edits as built (leave guard kept)');
+
+    // A NEW session build, then another swap: the stranded answer lands while
+    // the newest session's own build runs and must not touch it.
+    w.generateInto('D:\\x\\int_b');
+    await settle();
+    ok(w.builds().length === 2 && /Generating/.test(res.textContent),
+      'r2-37: the re-filled session builds (builds ' + w.builds().length + ')');
+    w.loadDifferent('D:\\x\\third');
+    await settle();
+    w.generateInto('D:\\x\\int_c');
+    await settle();
+    ok(w.builds().length === 3, 'r2-37 harness: the third session builds');
+    w.releases[1]({ ok: true, result: { qubits: ['q1', 'q2', 'q3', 'q4'], qubit_pairs: [] } });
+    await settle();
+    ok(/Generating/.test(res.textContent) && $(w.win, 'gen-next').disabled &&
+       $(w.win, 'gen-next-top').disabled,
+      'r2-37: a stranded answer never re-enables Generate nor overwrites the running build (got "' +
+      res.textContent.slice(0, 80) + '")');
+    w.G.tryNext();
+    await settle();
+    ok(w.builds().length === 3, 'r2-37: … so a press while the newest build runs is still refused');
+    w.releases[2]({ ok: true, result: { qubits: ['q1', 'q2', 'q3', 'q4'], qubit_pairs: [['q1', 'q2']] } });
+    await settle();
+    ok(res.textContent.indexOf('Generated 4 qubits and 1 pair into D:\\x\\int_c') >= 0 && r37LoadBtn(res) &&
+       !$(w.win, 'gen-next').disabled,
+      'r2-37: the current session\'s own answer renders as before (got "' +
+      res.textContent.slice(0, 100) + '")');
+  })();
+
+  await (async function r37FinishedResultClearedOnLoadDifferent() {
+    const w = r37RegenPage();
+    await settle();
+    w.generateInto('D:\\x\\int_done');
+    await settle();
+    w.releases[0]({ ok: true, result: { qubits: ['q1', 'q2'], qubit_pairs: [['q1', 'q2']] } });
+    await settle();
+    const res = $(w.win, 'gen-build-result');
+    ok(r37LoadBtn(res), 'r2-37 harness: the build finished with Load into app');
+    w.loadDifferent('D:\\x\\tf_oldgen');
+    await settle();
+    w.G.goToStep(8);
+    ok(res.hidden && res.textContent === '' && !r37LoadBtn(res),
+      'r2-37: a finished build\'s result does not survive Load different… onto step 8 (got "' +
+      res.textContent.slice(0, 80) + '")');
+  })();
+
+  await (async function r37ResetMidBuild() {
+    const w = buildWorld({ out: 'D:\\x\\int_reset' });
+    w.G.tryNext();
+    await settle();
+    ok(w.builds().length === 1, 'r2-37 harness: the Generate build is running');
+    click(w.win, $(w.win, 'gen-reset'));        // confirm() → true
+    const res = $(w.win, 'gen-build-result');
+    ok(res.hidden && !$(w.win, 'gen-next').disabled && !$(w.win, 'gen-next-top').disabled,
+      'r2-37: Reset mid-build leaves an empty slot and Generate usable');
+    w.releases[0]({ ok: true, result: { qubits: ['q1', 'q2'], qubit_pairs: [] } });
+    await settle();
+    ok(w.G.state.mode === 'generate' && w.G.state.spec.qubits.length === 0,
+      'r2-37 harness: the wizard is the reset one');
+    ok(res.textContent.indexOf('Generated 2 qubits') < 0 && !r37LoadBtn(res),
+      'r2-37: the pre-Reset build\'s result is not rendered after Reset (got "' +
+      res.textContent.slice(0, 120) + '")');
+    const d = draftOf(w.win) ? JSON.parse(draftOf(w.win)) : {};
+    ok(!d.lastBuild && !d.buildPending && w.G.state.lastBuild === null,
+      'r2-37: … nor recorded in the new draft (a reload would bring it back) — got ' +
+      JSON.stringify(d.lastBuild || null));
+  })();
+
+  await (async function r37ResetDuringSelectEnv() {
+    const w = buildWorld({ out: 'D:\\x\\int_sel' });
+    let releaseSel = null;
+    const f = w.win.fetch;
+    w.win.fetch = function (url, fo) {
+      if (String(url).indexOf('/generate/select-env') >= 0) {
+        w.log.push({ url: String(url), body: JSON.parse(fo.body) });
+        return new w.win.Promise(function (res) {
+          releaseSel = function (data) { res({ json: () => w.win.Promise.resolve(data) }); };
+        });
+      }
+      return f(url, fo);
+    };
+    w.G.tryNext();
+    await settle();
+    ok(w.selects().length === 1 && !!releaseSel, 'r2-37 harness: the env round-trip is pending');
+    click(w.win, $(w.win, 'gen-reset'));
+    releaseSel({ ok: true });
+    await settle();
+    const res = $(w.win, 'gen-build-result');
+    ok(w.builds().length === 0 && res.hidden,
+      'r2-37: a press from before the Reset starts nothing in the new session (got "' +
+      res.textContent + '")');
+  })();
+
+  await (async function r37StaleFailureIsSilent() {
+    const w = buildWorld({ out: 'D:\\x\\int_fail' });
+    let failBuild = null;
+    const f = w.win.fetch;
+    w.win.fetch = function (url, fo) {
+      if (String(url).indexOf('/generate/build') >= 0) {
+        w.log.push({ url: String(url), body: JSON.parse(fo.body) });
+        return new w.win.Promise(function (res, rej) { failBuild = rej; });
+      }
+      return f(url, fo);
+    };
+    w.G.tryNext();
+    await settle();
+    ok(!!failBuild, 'r2-37 harness: the build is pending');
+    click(w.win, $(w.win, 'gen-reset'));
+    failBuild(new Error('network'));
+    await settle();
+    const res = $(w.win, 'gen-build-result');
+    ok(res.hidden && res.textContent.indexOf('Generate request failed') < 0,
+      'r2-37: a pre-Reset build\'s network failure is not reported in the new session (got "' +
+      res.textContent + '")');
   })();
 
   if (fails) {
