@@ -8193,7 +8193,10 @@ table.gen-wiring tbody tr.pinned {
     font-size: 0.82em; font-weight: 600;
 }
 .gen-pop-unit select {
-    margin: 0; padding: 0.1rem 0.3rem; width: auto; height: auto;
+    /* padding-right keeps the room Pico's chevron is painted in (1rem wide,
+       0.75rem from the right edge): a narrow select otherwise draws it over
+       the unit text (GHz / ns / V / 0-1). */
+    margin: 0; padding: 0.1rem 1.8rem 0.1rem 0.4rem; width: auto; height: auto;
     font-size: 0.95em;
 }
 /* Bounded scroll box so the sticky header + first column have a scroll context
