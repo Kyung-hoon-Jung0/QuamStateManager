@@ -104,7 +104,7 @@ def test_review_diagnostics_shows_the_errors_a_saved_filter_hid(tmp_path):
     crash banner's "Review diagnostics" landed on a page whose saved filter hid
     the very errors it was about. The banner turns the error bucket back on, and
     any page whose filter hides errors says so next to the pills
-    (diag_filter_entry_selfcheck.cjs, real app.js + real fragments)."""
+    (diag_filter_entry_fragcheck.cjs, real app.js + real fragments)."""
     import shutil
     import subprocess
     from pathlib import Path
@@ -120,13 +120,13 @@ def test_review_diagnostics_shows_the_errors_a_saved_filter_hid(tmp_path):
     bp.write_text(banner, encoding="utf-8")
     dp.write_text(diag, encoding="utf-8")
     root = Path(__file__).resolve().parent.parent
-    r = subprocess.run(["node", str(root / "tests" / "diag_filter_entry_selfcheck.cjs"), str(bp), str(dp)],
+    r = subprocess.run(["node", str(root / "tests" / "diag_filter_entry_fragcheck.cjs"), str(bp), str(dp)],
                        capture_output=True, text=True, encoding="utf-8", errors="replace",
                        cwd=str(root), timeout=180)
     if r.returncode == 2:
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
-    assert "diag_filter_entry_selfcheck ok" in r.stdout
+    assert "diag_filter_entry_fragcheck ok" in r.stdout
 
 
 def test_the_crash_banner_is_not_shown_on_diagnostics_itself():

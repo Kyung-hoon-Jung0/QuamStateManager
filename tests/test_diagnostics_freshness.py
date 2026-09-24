@@ -136,3 +136,31 @@ def test_page_header_badges_follow_the_state(tmp_path):
     html = client.get("/instrument", headers={"HX-Request": "true"}).get_data(as_text=True)
     i = html.index('id="instrument-diagram"')
     assert "data-rerender-on-pull" in html[i:html.index(">", i)]
+
+
+def test_a_passive_window_re_lints_after_a_foreign_edit():
+    """QA F-M: a window that is only LOOKING learns about another window's edit
+    from the drift poll (docs/190 F05), and that path now announces
+    ``diagnostics-changed`` too -- the badge, the crash banner and the findings
+    list re-lint. Pinned in escape_ladder_selfcheck.cjs's F05 block, run HERE.
+
+    Named here on purpose (review of the F-M fix): the orphan scan in
+    test_orphan_selfchecks.py counts any test file that merely MENTIONS a
+    selfcheck as its driver, and test_pulses_filter_persist.py mentions this
+    one in a comment -- so no pytest run executed it, and deleting the F-M
+    line left the gate green."""
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    import pytest
+    if shutil.which("node") is None:
+        pytest.skip("node not available")
+    root = Path(__file__).resolve().parent.parent
+    r = subprocess.run(["node", str(root / "tests" / "escape_ladder_selfcheck.cjs")],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       cwd=str(root), timeout=300)
+    if "Cannot find module 'jsdom'" in (r.stderr or ""):
+        pytest.skip("jsdom not installed")
+    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
+    assert "a foreign edit re-lints diagnostics once" in r.stdout, r.stdout[-3000:]

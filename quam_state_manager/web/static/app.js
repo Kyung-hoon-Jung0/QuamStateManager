@@ -2858,11 +2858,14 @@ document.addEventListener("stateRestored", function(evt) {
     // them. No detail (a bare-string trigger) or structural => the wholesale
     // path below, exactly as before.
     var d = (evt && evt.detail) || {};
-    if (d.structural === false && d.changes && window.LiveSurfacePatch
-            && !_paneNeedsRerender(d)) {
+    if (d.structural === false && d.changes && window.LiveSurfacePatch) {
         window._stateRestoredRefresh = Date.now();
         try {
             window.LiveSurfacePatch.apply(d.changes);
+            // QA diagnostics-r2-10 (review): a pane drawn once from inlined
+            // JSON cannot take the patch, so re-GET THE PANE -- but the
+            // inspector took its patch above and stays open (docs/144).
+            if (_paneNeedsRerender(d)) { _keepJsonPanel(); _keepPaneScroll(); _softRefreshLiveSurface(); }
             return;
         } catch (e) { console.error("stateRestored patch failed", e); }
     }
@@ -4116,6 +4119,23 @@ function _paneNeedsRerender(d) {
               document.querySelector("#table-pane [data-rerender-on-pull]"));
 }
 window._paneNeedsRerender = _paneNeedsRerender;
+/* (review of r2-10) that re-GET also re-renders the pane's own JSON
+   drill-down (#json-panel, hidden in fresh markup). Re-open it on the
+   element it was showing, from the FRESH wiring, instead of dropping what
+   the user was reading. One-shot, like _keepPaneScroll; afterSettle, since
+   the fresh page's inline script publishes window._rawWiring. */
+function _keepJsonPanel() {
+    var jp = document.querySelector("#table-pane #json-panel:not(.hidden)");
+    var elem = jp && jp.getAttribute("data-element");
+    if (!elem) return;
+    var once = function (evt) {
+        if (!evt.detail || !evt.detail.target || evt.detail.target.id !== "table-pane") return;
+        document.removeEventListener("htmx:afterSettle", once);
+        try { _showInstrumentJsonPanel({ element: elem }, window._rawWiring); } catch (e) {}
+    };
+    document.addEventListener("htmx:afterSettle", once);
+    setTimeout(function () { document.removeEventListener("htmx:afterSettle", once); }, 15000);
+}
 
 /* Sync response → in-place patch when the shape is unchanged, wholesale
    refresh (scroll kept) when it is not. */
@@ -4124,6 +4144,7 @@ function _patchOrRefreshLiveSurface(data) {
         window.LiveSurfacePatch.apply(data.changes);
         return "patched";
     }
+    if (_paneNeedsRerender(data)) _keepJsonPanel();
     _keepPaneScroll();
     _softRefreshLiveSurface();
     return "refreshed";
@@ -10909,6 +10930,7 @@ function _showInstrumentJsonPanel(assignment, rawWiring) {
     else if (twpas[elem]) subtree = twpas[elem];
 
     document.getElementById('json-panel-title').textContent = 'Wiring JSON — ' + elem;
+    panel.setAttribute('data-element', elem);   // a pull's re-GET re-opens it (_keepJsonPanel)
     treeEl.innerHTML = '';
     if (subtree) renderJsonTree('json-panel-tree', subtree, {defaultDepth: 2});
     panel.classList.remove('hidden');
@@ -17490,7 +17512,13 @@ document.addEventListener('click', function(evt) {
         var tr = btn.closest && btn.closest("tr.diag-row");
         if (!dt || !tr) return null;
         var rows = Array.prototype.slice.call(dt.querySelectorAll("tr.diag-row"));
-        return { domain: dt.getAttribute("data-domain"), idx: rows.indexOf(tr),
+        // the domains in document order: when the fixed row was its domain's
+        // last, the domain is gone and the nearest finding is in the next one
+        var order = [];
+        document.querySelectorAll("#diag-findings details.diag-domain[data-domain]").forEach(function (d2) {
+            order.push(d2.getAttribute("data-domain"));
+        });
+        return { domain: dt.getAttribute("data-domain"), idx: rows.indexOf(tr), order: order,
                  until: Date.now() + 15000 };   // re-armed to 4 s on success
     }
     function _restoreDiagFocus() {
@@ -17504,10 +17532,14 @@ document.addEventListener('click', function(evt) {
             try { el.focus(); } catch (e) {}
             return document.activeElement === el;
         }
-        var dt = null;
-        document.querySelectorAll("#diag-findings details.diag-domain[data-domain]").forEach(function (d2) {
-            if (d2.getAttribute("data-domain") === a.domain) dt = d2;
-        });
+        function domainNamed(name) {
+            var hit = null;
+            document.querySelectorAll("#diag-findings details.diag-domain[data-domain]").forEach(function (d2) {
+                if (d2.getAttribute("data-domain") === name) hit = d2;
+            });
+            return hit;
+        }
+        var dt = domainNamed(a.domain);
         if (dt && dt.style.display !== "none") {
             if (dt.open) {
                 var rows = dt.querySelectorAll("tr.diag-row");
@@ -17520,6 +17552,24 @@ document.addEventListener('click', function(evt) {
                 }
             }
             if (take(dt.querySelector(":scope > summary"))) return;
+        }
+        // QA diagnostics-r2-20 (review): the domain went with its last row --
+        // the next domain down (its first finding, else its summary), then
+        // the one above (its last finding); the title only when none is left.
+        var names = a.order || [], at = names.indexOf(a.domain);
+        var near = names.slice(at + 1).concat(at > 0 ? names.slice(0, at).reverse() : []);
+        for (var n = 0; n < near.length; n++) {
+            var od = domainNamed(near[n]);
+            if (!od || od === dt || od.style.display === "none") continue;
+            if (od.open) {
+                var orows = Array.prototype.slice.call(od.querySelectorAll("tr.diag-row"));
+                if (n >= names.length - at - 1) orows.reverse();   // a domain above: its LAST finding
+                for (var r = 0; r < orows.length; r++) {
+                    if (orows[r].style.display === "none") continue;
+                    if (take(orows[r].querySelector("button:not([disabled])"))) return;
+                }
+            }
+            if (take(od.querySelector(":scope > summary"))) return;
         }
         var h = document.querySelector("#table-pane .diag-header-row h2");
         if (h) {

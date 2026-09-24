@@ -18,7 +18,10 @@
  *   E5  everything hidden (no errors) -> "Every finding is hidden" + Show all
  *   E6  the pinned ".diag-shown-count" text keeps its "N of M shown" form
  *
- * Run via tests/test_diagnostics_banner_routes.py (needs jsdom).
+ * Run via tests/test_diagnostics_banner_routes.py (needs jsdom). Named
+ * *_fragcheck, not *_selfcheck: it reads the fragments its pytest driver
+ * writes, and `npm run selfcheck` runs every *_selfcheck.cjs with no
+ * arguments (the review of this fix found that runner red on a clean tree).
  */
 'use strict';
 
@@ -32,6 +35,10 @@ try { ({ JSDOM, VirtualConsole } = require('jsdom')); } catch (e) {
 }
 
 const STATIC = path.join(__dirname, '..', 'quam_state_manager', 'web', 'static');
+if (!process.argv[2] || !process.argv[3]) {
+  console.error('FAIL  usage: node <this> <banner-fragment.html> <diagnostics-fragment.html>');
+  process.exit(1);
+}
 const BANNER = fs.readFileSync(process.argv[2], 'utf8');
 const DIAG = fs.readFileSync(process.argv[3], 'utf8');
 const APP = fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8');
@@ -149,5 +156,5 @@ ok(/data-bucket="error"/.test(DIAG), 'preflight: the /diagnostics fragment has e
   ok(rows(w).length > 0 && rows(w).every(visible), 'E5 Show all shows every row');
 }
 
-console.log(fails ? 'FAILED (' + fails + ')' : 'diag_filter_entry_selfcheck ok (' + asserts + ' assertions)');
+console.log(fails ? 'FAILED (' + fails + ')' : 'diag_filter_entry_fragcheck ok (' + asserts + ' assertions)');
 process.exit(fails ? 1 : 0);

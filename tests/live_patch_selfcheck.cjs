@@ -218,10 +218,63 @@ ok(ajax.length === 1 && closed === 1, 'a bare stateRestored (unbracketed route) 
         ok(window._patchOrRefreshLiveSurface({ changes: [], structural: false }) === 'patched'
            && ajax.length === 0, 'r2-10: an EMPTY pull still re-GETs nothing');
         ajax.length = 0; closed = 0;
+        // (review) ...and the inspector beside it is NOT closed: the wholesale
+        // branch's closeInspector() broke docs/144 for a patchable inspector
+        const insp = d.createElement('div');
+        insp.id = 'inspector-pane';
+        insp.innerHTML = '<input class="av-input" data-dot-path="wiring.qubits.q3.xy.opx_output"'
+            + ' value="#/ports/mw_outputs/con1/3/3">';
+        d.body.appendChild(insp);
         d.dispatchEvent(new window.CustomEvent('stateRestored', { detail: { structural: false, changes: pull } }));
         ok(ajax.length === 1 && ajax[0] === '/instrument',
            'r2-10: an auto-sync pull (stateRestored patch detail) re-GETs a marked pane too (got '
            + JSON.stringify(ajax) + ')');
+        ok(closed === 0, 'r2-10 (review): that pull keeps the inspector open (closeInspector calls: '
+           + closed + ')');
+        ok(insp.querySelector('.av-input').value === '#/ports/mw_outputs/con1/3/4',
+           'r2-10 (review): and patches its value in place (got '
+           + insp.querySelector('.av-input').value + ')');
+        insp.remove();
+        // (review) the pane's own JSON drill-down was open on q3 when the pull
+        // landed: the re-GET's fresh markup has it hidden -- it must come back
+        // on q3, showing the FRESH wiring, not vanish.
+        const panelHtml = (open) => '<div id="instrument-diagram" data-rerender-on-pull><svg></svg></div>'
+            + '<div id="json-panel" class="json-panel' + (open ? '' : ' hidden') + '"'
+            + (open ? ' data-element="q3"' : '') + '><div class="json-panel-header">'
+            + '<span id="json-panel-title">Wiring JSON' + (open ? ' — q3' : '') + '</span></div>'
+            + '<div id="json-panel-tree" class="json-tree">' + (open ? 'con1/3/3' : '') + '</div></div>';
+        // the Node-realm eval rule (docs/125): app.js calls renderJsonTree bare
+        global.renderJsonTree = window.renderJsonTree;
+        tp.innerHTML = panelHtml(true);
+        ajax.length = 0; closed = 0;
+        d.dispatchEvent(new window.CustomEvent('stateRestored', { detail: { structural: false, changes: pull } }));
+        ok(ajax.length === 1 && ajax[0] === '/instrument', 'r2-10 (review): fixture -- the marked pane is re-GET');
+        tp.innerHTML = panelHtml(false);                       // what the re-GET swaps in
+        window._rawWiring = { wiring: { qubits: { q3: { xy: { opx_output: '#/ports/mw_outputs/con1/3/4' } } } } };
+        tp.dispatchEvent(new window.CustomEvent('htmx:afterSettle', { bubbles: true, detail: { target: tp } }));
+        const jp = d.getElementById('json-panel');
+        ok(jp && !jp.classList.contains('hidden') && jp.getAttribute('data-element') === 'q3',
+           'r2-10 (review): the JSON drill-down open before the pull is open again after the re-GET');
+        ok(/con1\/3\/4/.test(d.getElementById('json-panel-tree').textContent)
+           && d.getElementById('json-panel-title').textContent.indexOf('q3') >= 0,
+           'r2-10 (review): ...on the same element, from the fresh wiring (got '
+           + JSON.stringify(d.getElementById('json-panel-tree').textContent.slice(0, 120)) + ')');
+        // a closed panel stays closed
+        tp.innerHTML = panelHtml(false);
+        d.dispatchEvent(new window.CustomEvent('stateRestored', { detail: { structural: false, changes: pull } }));
+        tp.innerHTML = panelHtml(false);
+        tp.dispatchEvent(new window.CustomEvent('htmx:afterSettle', { bubbles: true, detail: { target: tp } }));
+        ok(d.getElementById('json-panel').classList.contains('hidden'),
+           'r2-10 (review): a drill-down that was closed stays closed');
+        // ...and the same through Take live / Pull (doStateSync's helper)
+        tp.innerHTML = panelHtml(true);
+        ajax.length = 0;
+        ok(window._patchOrRefreshLiveSurface({ changes: pull, structural: false }) === 'refreshed',
+           'r2-10 (review): fixture -- Take live re-GETs the marked pane');
+        tp.innerHTML = panelHtml(false);
+        tp.dispatchEvent(new window.CustomEvent('htmx:afterSettle', { bubbles: true, detail: { target: tp } }));
+        ok(!d.getElementById('json-panel').classList.contains('hidden'),
+           'r2-10 (review): Take live keeps the open drill-down too');
         // unmarked pane on the same route: the docs/144 patch stands
         tp.innerHTML = '<div id="instrument-diagram"><svg></svg></div>';
         ajax.length = 0;

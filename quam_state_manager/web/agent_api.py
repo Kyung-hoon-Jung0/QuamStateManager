@@ -110,9 +110,10 @@ def _lock_for(kind: str) -> threading.Lock:
 
 def _live_flag() -> bool:
     """Have the live files moved outside SM? Answered FRESH for the agent:
-    the page's refresher is throttled (30 s) and skips a dirty working copy
-    (docs/87 -- a human with staged edits gets the banner, not a pull), which
-    is exactly when an agent that just ran a node would read stale values.
+    the page's refresher is throttled (30 s) and raise-only on a dirty working
+    copy (QA diagnostics-r2-12 -- a human with staged edits gets the banner,
+    not a pull), which is exactly when an agent that just ran a node would
+    read stale values.
     One hash of two files per agent read is the price."""
     r = _r()
     ctx = r._active_ctx()

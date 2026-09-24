@@ -81,3 +81,20 @@ def test_pane_state_client_selfcheck():
         ["node", str(_SELFCHECK)], capture_output=True, text=True,
         cwd=str(_ROOT), timeout=120)
     assert proc.returncode == 0, f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_back_never_leaves_the_loader_standing():
+    """QA diagnostics-r2-07's other half: Back restores htmx's snapshot of the
+    page the user left, taken with the slow-route loader already visible, and
+    nothing in flight would ever hide it. loader_selfcheck.cjs section 7 pins
+    the historyRestore hide. Driven HERE, beside the stale-seq pins it belongs
+    with, rather than only through the orphan scan (test_orphan_selfchecks.py),
+    which a comment elsewhere that names the file silently switches off."""
+    proc = subprocess.run(
+        ["node", str(_ROOT / "tests" / "loader_selfcheck.cjs")], capture_output=True,
+        text=True, encoding="utf-8", errors="replace", cwd=str(_ROOT), timeout=120)
+    if "Cannot find module 'jsdom'" in (proc.stderr or ""):
+        pytest.skip("jsdom not installed")
+    assert proc.returncode == 0, f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+    assert "a history restore never leaves the please-wait loader standing" in proc.stdout

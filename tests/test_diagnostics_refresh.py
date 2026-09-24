@@ -87,13 +87,13 @@ def test_the_slot_does_not_leak_its_select_and_swap_to_its_links(client):
 def test_the_config_viewer_link_keeps_the_pane_under_real_htmx(client, tmp_path):
     """Behaviour, not markup: the real bundled htmx clicks the real fragment's
     link against a local server; a control run without the disinherit must
-    reproduce the loss (diag_findings_disinherit_selfcheck.cjs)."""
+    reproduce the loss (diag_findings_disinherit_fragcheck.cjs)."""
     import subprocess
     html = client.get("/diagnostics", headers={"HX-Request": "true"}).get_data(as_text=True)
     frag = tmp_path / "diag_fragment.html"
     frag.write_text(html, encoding="utf-8")
     proc = subprocess.run(
-        ["node", str(_ROOT / "tests" / "diag_findings_disinherit_selfcheck.cjs"), str(frag)],
+        ["node", str(_ROOT / "tests" / "diag_findings_disinherit_fragcheck.cjs"), str(frag)],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
         cwd=str(_ROOT), timeout=120)
     if proc.returncode == 2 and "jsdom not installed" in (proc.stdout + proc.stderr):

@@ -16884,7 +16884,8 @@ def state_drift():
     # poll, so an OPEN page's pill can stop reading "Synced" (app.js re-renders
     # the tray when it does) instead of waiting for the next full render. A
     # CLEAN context only: that is where this poll keeps the flag current both
-    # ways (on a dirty one the refresh returns early -- test_sync_badge's pin).
+    # ways (on a dirty one the refresh is raise-only, QA diagnostics-r2-12,
+    # so the flag can outlive the drift there -- test_sync_badge's pin).
     ld = bool(ctx and ctx.get("live_diverged") and not _quam_ctx_dirty(ctx))
     # docs/132 — two riders on the poll every page already pays for:
     #  * hist_seq: one os.stat of the chip's history dir, so an OPEN Versions
@@ -16894,8 +16895,9 @@ def state_drift():
     #    a Datasets page is open, so a qualibrate run finishing while SM sits
     #    on any other page would go un-ingested until the next backfill. A
     #    MOVEMENT of the live pair's mtimes is the "something wrote state"
-    #    moment (works on a dirty working copy too, where live_diverged
-    #    deliberately never escalates — docs/87); the edge enqueues ONE
+    #    moment (works on a dirty working copy too, where live_diverged is
+    #    raise-only -- QA diagnostics-r2-12 -- so a flag already up says
+    #    nothing about a LATER write); the edge enqueues ONE
     #    debounced scan REQUEST that the worker executes off-request with a
     #    budget. This poll pays two os.stat for it, nothing else.
     hist_seq = 0
@@ -24310,7 +24312,9 @@ def _note_live_write_for_ingest(ctx: dict | None) -> None:
     detector — it re-ran a full unbudgeted rescan on the REQUEST thread
     every 10s for as long as divergence persisted (5.7ms poll → 535ms
     measured), and (b) dead whenever the working copy held any pending edit
-    (live_diverged deliberately never escalates on a dirty ctx, docs/87).
+    (live_diverged then never escalated on a dirty ctx, docs/87; it is
+    raise-only there since QA diagnostics-r2-12, so a flag already up still
+    says nothing about a LATER write).
     So: watch the live files' mtimes directly — a write is a write, dirty
     working copy or not — and on movement enqueue ONE debounced scan
     REQUEST that the worker executes off-request with fast=True + a

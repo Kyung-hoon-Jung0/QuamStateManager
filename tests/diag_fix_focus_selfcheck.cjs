@@ -16,7 +16,11 @@
  *   F1  focus lands on the finding that took the fixed one's place
  *   F2  focus the user moved meanwhile is never stolen (the docs/75 rule)
  *   F3  a mouse press cancels the pending restore
- *   F4  the fixed row was its domain's last: focus falls back to the page title
+ *   F4  the fixed row was the LAST domain's last: the domain above takes focus
+ *       on its nearest (last) finding -- not the page title (review)
+ *   F5  a MIDDLE domain's last row: the next domain down, its first finding
+ *   F6  ...and when that next domain is folded, its summary
+ *   F7  the very last finding on the page: focus falls back to the page title
  *
  * Run: node tests/diag_fix_focus_selfcheck.cjs   (needs jsdom; driven by
  *      tests/test_diag_fix_focus.py)
@@ -64,8 +68,8 @@ window.Element.prototype.scrollIntoView = function () {};
 // (every domain holding a warning renders `open`, as _diagnostics_list.html
 // does -- which is exactly what re-opened the user's fold)
 let findings;
-function reset() {
-  findings = {
+function reset(over) {
+  findings = over || {
     config: ['config.a', 'config.b'],
     values: ['qubits.q1.f_01', 'qubits.q2.f_01', 'qubits.q3.f_01'],
     wiring: ['wiring.only'],
@@ -159,8 +163,8 @@ if (!window._swapPendingTray && typeof global._swapPendingTray === 'function') {
 }
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
-function build() {
-  reset();
+function build(over) {
+  reset(over);
   ajaxCalls.length = 0; triggers.length = 0;
   d.body.innerHTML = '<div id="pending-tray" data-seq="1"></div>'
     + '<input id="elsewhere"><div id="table-pane">' + pageHtml() + '</div>';
@@ -224,16 +228,54 @@ async function main() {
   ok(d.activeElement === d.body,
     'F3: after a mouse press the refresh moves nothing (got ' + desc(d.activeElement) + ')');
 
-  // ── F4: the domain's last finding: the page title takes focus ────────────
+  // ── F4: the LAST domain's last finding: the domain above, nearest row ────
+  // (review: this used to land on the page title while findings remained)
   build();
   b = fixBtn('wiring.only');
   b.focus();
   window.applyDiagFix(b);
   await sleep(SETTLE);
-  const h2 = d.querySelector('.diag-header-row h2');
   ok(!dom_('wiring'), 'fixture: fixing the only wiring finding removes the domain');
+  const above = d.querySelector('button.diag-goto[data-jump-path="qubits.q3.f_01"]');
+  ok(!!above && d.activeElement === above,
+    'F4: with the last domain gone, focus lands on the nearest finding above it (got '
+    + desc(d.activeElement) + ')');
+
+  // ── F5: a MIDDLE domain's only finding: the next domain down ─────────────
+  const mid = { values: ['qubits.q4.f_01'], config: ['pulses.const_pulse', 'config.b'] };
+  build({ values: mid.values.slice(), config: mid.config.slice() });
+  b = fixBtn('qubits.q4.f_01');
+  b.focus();
+  window.applyDiagFix(b);
+  await sleep(SETTLE);
+  ok(!dom_('values'), 'fixture: fixing the only values finding removes the domain');
+  const below = d.querySelector('button.diag-goto[data-jump-path="pulses.const_pulse"]');
+  ok(!!below && d.activeElement === below,
+    'F5: focus lands on the first finding of the next domain, not the page title (got '
+    + desc(d.activeElement) + ')');
+
+  // ── F6: ...and a folded next domain gives its summary ────────────────────
+  build({ values: mid.values.slice(), config: mid.config.slice() });
+  dom_('config').open = false;
+  b = fixBtn('qubits.q4.f_01');
+  b.focus();
+  window.applyDiagFix(b);
+  await sleep(SETTLE);
+  const sum = dom_('config') && dom_('config').querySelector(':scope > summary');
+  ok(dom_('config') && dom_('config').open === false, 'fixture: the folded domain stays folded');
+  ok(!!sum && d.activeElement === sum,
+    'F6: a folded next domain takes focus on its summary (got ' + desc(d.activeElement) + ')');
+
+  // ── F7: the very last finding: the page title takes focus ────────────────
+  build({ wiring: ['wiring.only'] });
+  b = fixBtn('wiring.only');
+  b.focus();
+  window.applyDiagFix(b);
+  await sleep(SETTLE);
+  const h2 = d.querySelector('.diag-header-row h2');
+  ok(!d.querySelector('#diag-findings details.diag-domain'), 'fixture: no domain is left');
   ok(d.activeElement === h2 && h2.getAttribute('tabindex') === '-1',
-    'F4: with the domain gone, focus falls back to the page title (got '
+    'F7: with no finding left, focus falls back to the page title (got '
     + desc(d.activeElement) + ')');
 
   console.log(fails ? 'FAILED (' + fails + ')'

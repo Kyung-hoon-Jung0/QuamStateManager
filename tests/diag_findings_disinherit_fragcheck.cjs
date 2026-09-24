@@ -14,6 +14,10 @@
  * REAL server-rendered /diagnostics fragment (written by the pytest driver,
  * argv[2]). A CONTROL run strips the slot's hx-disinherit and must reproduce
  * the loss, so the fixed-side assertions cannot pass vacuously.
+ *
+ * Named *_fragcheck, not *_selfcheck: `npm run selfcheck` runs every
+ * *_selfcheck.cjs with no arguments, and this one needs the fragment its
+ * driver (tests/test_diagnostics_refresh.py) writes.
  */
 'use strict';
 
