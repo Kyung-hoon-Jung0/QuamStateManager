@@ -72,8 +72,24 @@ def _is_int(v) -> bool:
     return isinstance(v, int) and not isinstance(v, bool)
 
 
-def _validate_channel(channel, ctx: str) -> list[str]:
-    """Validate a single ``channel`` (port-pin) object. Returns error strings."""
+# OPX1000 FEM analog port counts -- QM docs (docs/Guides/opx1000_fems.md):
+# "The LF-FEM module features 8 analog outputs at a sampling rate of 2 GSa/s,
+# 2 analog inputs at a sampling rate of 2 GSa/s" and "The MW-FEM module
+# features 8 analog outputs ... 2 analog inputs at a sampling rate of 1 GSa/s".
+_FEM_OUT_PORTS = frozenset(range(1, 9))
+_FEM_IN_PORTS = frozenset(range(1, 3))
+_FEM_NAME = {"mw_fem": "MW-FEM", "lf_fem": "LF-FEM"}
+
+
+def _validate_channel(channel, ctx: str, label: str | None = None) -> list[str]:
+    """Validate a single ``channel`` (port-pin) object. Returns error strings.
+
+    An OPX1000 FEM pin (``mw_fem`` / ``lf_fem``) is also range-checked: a port
+    or slot that does not exist on the hardware is a static fact, not an
+    allocation-feasibility question (QA generate-r2-11: ``1/1/99`` used to reach
+    the allocator and come back as "not enough channels"). ``opx`` / ``octave``
+    pins are type-checked only.
+    """
     if not isinstance(channel, dict):
         return [f"{ctx}: must be an object"]
 
@@ -87,7 +103,52 @@ def _validate_channel(channel, ctx: str) -> list[str]:
         value = channel.get(field)
         if value is not None and not _is_int(value):
             errors.append(f"{ctx}.{field}: must be an integer")
+    if errors or kind not in _FEM_NAME:
+        return errors
+    who = label or ctx
+    fem = _FEM_NAME[kind]
+    fix = "Fix the Pin in step 5 (Wiring)."
+    con = channel.get("con")
+    if con is not None and con < 1:
+        errors.append(f"{who}: pinned controller con{con} does not exist "
+                      f"(controllers are numbered from 1). {fix}")
+    for field in ("slot", "in_slot", "out_slot"):
+        value = channel.get(field)
+        if value is not None and value not in OPX1000_SLOTS:
+            errors.append(f"{who}: pinned slot {value} does not exist — an OPX1000 "
+                          f"chassis has slots 1–8. {fix}")
+    for field in ("out_port", "port"):
+        value = channel.get(field)
+        if value is not None and value not in _FEM_OUT_PORTS:
+            errors.append(f"{who}: pinned output port {value} does not exist — "
+                          f"an {fem} has analog outputs 1–8. {fix}")
+    value = channel.get("in_port")
+    if value is not None and value not in _FEM_IN_PORTS:
+        errors.append(f"{who}: pinned input port {value} does not exist — "
+                      f"an {fem} has analog inputs 1–2. {fix}")
     return errors
+
+
+def _pinned_fem_slots(channel) -> list:
+    """The (con, slot) a FEM pin names, read exactly as ``run_build.
+    _make_constraint`` hands it to the allocator (an lf pin's ``in_slot`` /
+    ``out_slot`` fall back to ``slot`` only when the key is absent). A partial
+    pin (no con or no slot) is a legal "any" constraint and names nothing."""
+    if not isinstance(channel, dict):
+        return []
+    con = channel.get("con")
+    if not _is_int(con):
+        return []
+    kind = channel.get("kind")
+    if kind == "mw_fem":
+        slots = [channel.get("slot")]
+    elif kind == "lf_fem":
+        slots = [channel.get("out_slot", channel.get("slot"))]
+        if channel.get("in_port") is not None or channel.get("in_slot") is not None:
+            slots.append(channel.get("in_slot", channel.get("slot")))
+    else:
+        return []
+    return sorted({(con, s) for s in slots if _is_int(s) and s in OPX1000_SLOTS})
 
 
 def validate_spec(spec) -> list[str]:
@@ -130,6 +191,7 @@ def validate_spec(spec) -> list[str]:
         controllers = []
 
     occupied_slots: set = set()
+    fem_kind: dict = {}   # (con, slot) -> "mw" | "lf" (stale-pin check below)
     for i, ctrl in enumerate(controllers):
         if not isinstance(ctrl, dict):
             errors.append(f"instruments.controllers[{i}]: must be an object")
@@ -154,6 +216,7 @@ def validate_spec(spec) -> list[str]:
             if key in occupied_slots:
                 errors.append(f"controller {con} slot {slot}: two FEMs in the same slot")
             occupied_slots.add(key)
+            fem_kind.setdefault(key, fem.get("fem"))
 
     for i, opx in enumerate(opx_plus):
         con = opx.get("con") if isinstance(opx, dict) else opx
@@ -301,6 +364,11 @@ def validate_spec(spec) -> list[str]:
     if not isinstance(lines, list):
         errors.append("lines: must be a list")
         lines = []
+    # QA regenerate-r2-13: a pin naming a slot the chassis step no longer
+    # declares (a module deleted or moved in step 3) reached the allocator and
+    # came back as "not enough channels ... add a FEM" -- with the FEM right
+    # there, one slot over. Collected per (con, slot, kind) and named once.
+    stale_pins: dict = {}
     for i, line in enumerate(lines):
         if not isinstance(line, dict):
             errors.append(f"lines[{i}]: must be an object")
@@ -355,7 +423,32 @@ def validate_spec(spec) -> list[str]:
 
         channel = line.get("channel")
         if channel is not None:
-            errors.extend(_validate_channel(channel, f"lines[{i}].channel"))
+            ch_errors = _validate_channel(
+                channel, f"lines[{i}].channel", f"lines[{i}] ({element} {line_type})")
+            errors.extend(ch_errors)
+            want = {"mw_fem": "mw", "lf_fem": "lf"}.get(
+                channel.get("kind") if isinstance(channel, dict) else None)
+            # Only against a declared OPX1000 chassis: an OPX+/Octave-only rack
+            # has no FEM slots to be stale against (its own checks cover it).
+            if want and not ch_errors and controllers:
+                for key in _pinned_fem_slots(channel):
+                    if fem_kind.get(key) != want:
+                        stale_pins.setdefault(key + (want,), []).append(
+                            f"{element} {line_type}")
+
+    for (con, slot, want), who in sorted(stale_pins.items()):
+        have = fem_kind.get((con, slot))
+        fem = "MW-FEM" if want == "mw" else "LF-FEM"
+        shown = ", ".join(who[:6]) + (", …" if len(who) > 6 else "")
+        errors.append(
+            f"{len(who)} pinned line{'s' if len(who) != 1 else ''} ({shown}) "
+            f"name{'' if len(who) != 1 else 's'} con{con} slot {slot}, "
+            + (f"which holds an {'LF-FEM' if have == 'lf' else 'MW-FEM'}, not an "
+               f"{fem} (chassis, step 3) — change the module there"
+               if have else
+               f"which has no {fem} in the chassis (step 3) — put the module back there")
+            + ", or re-pin or clear those pins in step 5 (Wiring) so they auto-allocate."
+        )
 
     # -- bias tee, the other way round --------------------------------------
     # `bias_tee` is a claim about TWO components, so it is checked from both

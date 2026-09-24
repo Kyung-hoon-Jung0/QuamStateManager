@@ -232,6 +232,92 @@ class TestValidateSpecErrors:
         assert any("qubit" in e for e in errors)
 
 
+class TestPinnedPortsNameRealHardware:
+    """QA generate-r2-11 / regenerate-r2-13: a pin was type-checked only.
+
+    ``1/1/99`` (a port an FEM does not have) and a pin left on a slot the
+    chassis step no longer holds (a module deleted or moved in step 3) both
+    reached the allocator and came back as "not enough channels ... add a
+    FEM" -- the wrong cause, with the FEM sitting one slot over. Both are
+    static facts, refused here with the line named and where to fix it.
+    """
+
+    @staticmethod
+    def _pin(spec, idx, channel):
+        spec["lines"][idx]["channel"] = channel
+        return validate_spec(spec)
+
+    def test_out_of_range_output_port_is_named(self):
+        errs = self._pin(_valid_spec(), 1,
+                         {"kind": "mw_fem", "con": 1, "slot": 1, "out_port": 99})
+        assert any("lines[1] (q1 drive)" in e and "output port 99 does not exist" in e
+                   and "step 5" in e for e in errs), errs
+
+    def test_mw_input_port_3_does_not_exist(self):
+        errs = self._pin(_valid_spec(), 0,
+                         {"kind": "mw_fem", "con": 1, "slot": 1, "out_port": 1, "in_port": 3})
+        assert any("input port 3 does not exist" in e and "MW-FEM" in e for e in errs), errs
+
+    def test_slot_9_and_con_0_are_refused(self):
+        errs = self._pin(_valid_spec(), 2,
+                         {"kind": "lf_fem", "con": 0, "out_slot": 9, "out_port": 1})
+        assert any("con0 does not exist" in e for e in errs), errs
+        assert any("slot 9 does not exist" in e for e in errs), errs
+
+    def test_in_range_pins_stay_clean(self):
+        spec = _valid_spec()
+        spec["lines"][0]["channel"] = {"kind": "mw_fem", "con": 1, "slot": 1,
+                                       "out_port": 8, "in_port": 2}
+        spec["lines"][1]["channel"] = {"kind": "mw_fem", "con": 1, "slot": 1, "out_port": 2}
+        spec["lines"][2]["channel"] = {"kind": "lf_fem", "con": 1, "out_slot": 5, "out_port": 8}
+        spec["lines"][3]["channel"] = {"kind": "lf_fem", "con": 1, "slot": 5, "out_port": 1}
+        assert validate_spec(spec) == []
+
+    def test_opx_kind_is_not_range_checked(self):
+        # an OPX+ has 10 analog outputs -- the FEM rule must not reach it
+        spec = _valid_spec()
+        spec["instruments"]["opx_plus"] = [{"con": 2}]
+        assert self._pin(spec, 1, {"kind": "opx", "con": 2, "out_port": 10}) == []
+
+    def test_a_pin_on_a_slot_the_chassis_does_not_hold_is_named(self):
+        # the r2-13 move: MW-FEM slot 3 deleted, re-added at slot 4, pins left on 3
+        spec = _valid_spec()
+        spec["instruments"]["controllers"][0]["fems"] = [
+            {"slot": 4, "fem": "mw"}, {"slot": 5, "fem": "lf"}]
+        spec["lines"][0]["channel"] = {"kind": "mw_fem", "con": 1, "slot": 3,
+                                       "out_port": 1, "in_port": 1}
+        spec["lines"][1]["channel"] = {"kind": "mw_fem", "con": 1, "slot": 3, "out_port": 2}
+        errs = validate_spec(spec)
+        stale = [e for e in errs if "con1 slot 3" in e]
+        assert len(stale) == 1, errs                      # one message per slot, not per line
+        assert "2 pinned lines (q1 resonator, q1 drive)" in stale[0]
+        assert "no MW-FEM" in stale[0] and "step 3" in stale[0] and "step 5" in stale[0]
+
+    def test_a_pin_on_the_wrong_module_kind_is_named(self):
+        errs = self._pin(_valid_spec(), 1,
+                         {"kind": "mw_fem", "con": 1, "slot": 5, "out_port": 2})
+        assert any("con1 slot 5" in e and "holds an LF-FEM, not an MW-FEM" in e
+                   for e in errs), errs
+
+    def test_lf_pin_spelled_with_slot_reads_like_make_constraint(self):
+        # regen_spec writes lf pins as {"slot": s}; run_build reads out_slot/in_slot
+        # falling back to slot -- the check must too, or it false-positives
+        spec = _valid_spec()
+        assert self._pin(spec, 2, {"kind": "lf_fem", "con": 1, "slot": 5, "out_port": 3}) == []
+        errs = self._pin(_valid_spec(), 2, {"kind": "lf_fem", "con": 1, "slot": 6, "out_port": 3})
+        assert any("con1 slot 6" in e and "no LF-FEM" in e for e in errs), errs
+
+    def test_partial_pins_stay_legal(self):
+        # con-only / slot-less pins are "any subset" constraints, never stale
+        spec = _valid_spec()
+        spec["instruments"]["controllers"][0]["fems"] = [
+            {"slot": 4, "fem": "mw"}, {"slot": 5, "fem": "lf"}]
+        spec["lines"][0]["channel"] = {"kind": "mw_fem", "con": 1}
+        spec["lines"][1]["channel"] = {"kind": "mw_fem", "out_port": 8, "in_port": 2}
+        spec["lines"][2]["channel"] = {"kind": "lf_fem", "con": 1}
+        assert validate_spec(spec) == []
+
+
 class TestQdacBlocksNothingUntilItIsUsed:
     """An untouched QDAC section failed EVERY build.
 

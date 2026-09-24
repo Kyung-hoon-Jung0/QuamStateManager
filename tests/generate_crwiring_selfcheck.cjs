@@ -77,6 +77,13 @@ ok(T.pinToChannel('1/2/3', 'cross_resonance').out_port === 3,
   ok(r3 && r3.out_port === 3 && !('in_port' in r3),
      'F6: an output with no input LO partner leaves in_port to the allocator');
   ok(T.pinToChannel('1//1', 'resonator') === null, 'F6: a blank segment is still refused');
+  // QA generate-r2-11: a pin names real hardware -- con >= 1, slot 1-8, port 1-8,
+  // whole numbers only (parseInt read '1.5' and '1e999' as 1)
+  ['1/1/99', '1/1/0', '1/9/1', '0/1/1', '1.5/1/1', '1e999/1/1', '1/1/-1', 'x9', '1/1/8a'].forEach(function (p) {
+    ok(T.pinToChannel(p, 'drive') === null, 'r2-11: "' + p + '" is not a pin');
+  });
+  const sp = T.pinToChannel('  2 / 8 / 8  ', 'flux');
+  ok(sp && sp.con === 2 && sp.out_slot === 8 && sp.out_port === 8, 'r2-11: spaced, in-range pins still parse');
   // channelToPin: a partial LO-safe pre-pin is not "//8"
   ok(T.channelToPin({ kind: 'mw_fem', out_port: 8, in_port: 2 }) === '',
      'F6: a partial channel renders as an empty pin box, not "//8"');
@@ -166,6 +173,35 @@ ok(q1again && q1again.channel && q1again.channel.out_port === 3,
    'CSV pins survive deriveLines');
 ok(T.applyPortCsv({ ok: false, errors: ['x'] }) === false,
    'rejected payloads are not applied');
+
+// --- QA F11: pair lines are "q1-q2" in the spec, "q1-2" in the allocation ----
+// allocText/syncSpecChannels looked the spec element up verbatim, so EVERY
+// coupler / CR / ZZ row read "—" and a dragged coupler never reached its pin.
+(function () {
+  state.allocation = {
+    'q1': { xy: [{ instrument_id: 'mw-fem', con: 1, slot: 1, port: 2 }] },
+    'q1-2': { c: [{ instrument_id: 'lf-fem', con: 1, slot: 3, port: 6 }] },
+    'q0-1': { cr: [{ instrument_id: 'mw-fem', con: 1, slot: 1, port: 5 }],
+              zz: [{ instrument_id: 'mw-fem', con: 1, slot: 1, port: 6 }] }
+  };
+  ok(T.allocText('q1-q2', 'coupler') === 'lf-fem con1 s3 p6',
+     'F11: the coupler row shows its allocated port (got ' + T.allocText('q1-q2', 'coupler') + ')');
+  ok(T.allocText('q0-q1', 'cross_resonance') === 'mw-fem con1 s1 p5',
+     'F11: the CR row shows its allocated port (got ' + T.allocText('q0-q1', 'cross_resonance') + ')');
+  ok(T.allocText('q0-q1', 'zz_drive') === 'mw-fem con1 s1 p6', 'F11: the ZZ row too');
+  ok(T.allocText('q1-2', 'coupler') === 'lf-fem con1 s3 p6', 'F11: a short-form spec id still hits');
+  ok(T.allocText('q1', 'drive') === 'mw-fem con1 s1 p2', 'F11: a qubit row is unchanged');
+  ok(T.allocText('q2-q3', 'coupler') === '—', 'F11: an unallocated pair still reads "—"');
+  // a drag moved the coupler to port 7: syncSpecChannels must pin the LINE
+  state.spec.qubits = ['q1', 'q2'];
+  state.spec.lines = [{ element: 'q1-q2', line: 'coupler', channel: null }];
+  state.allocation['q1-2'].c[0].port = 7;
+  T.syncSpecChannels();
+  const cl = state.spec.lines[0].channel;
+  ok(cl && cl.kind === 'lf_fem' && cl.con === 1 && cl.out_slot === 3 && cl.out_port === 7,
+     'F11: a dragged coupler port reaches its spec pin (got ' + JSON.stringify(cl) + ')');
+  state.allocation = null;
+})();
 
 if (fails) {
   console.error(fails + ' failure(s)');

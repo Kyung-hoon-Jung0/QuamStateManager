@@ -268,9 +268,15 @@ window.WiringGrid = (function () {
       // Persistent recovery affordance: stays until undone or superseded, so an
       // accidental delete is never a wizard restart.
       var last = _undoStack[_undoStack.length - 1];
-      el.innerHTML = esc(last.qid) + " deleted — " +
+      var html = esc(last.qid) + " deleted — " +
         '<button type="button" class="gen-topo-undo" ' +
         'onclick="WiringGrid.undoDelete()">Undo</button> <span class="muted">(or Ctrl+Z)</span>';
+      // Same row already showing: keep its button node, so a re-render between
+      // press and release cannot swallow the click (QA regenerate-r2-22).
+      if (el.getAttribute("data-undo-html") !== html || !el.querySelector(".gen-topo-undo")) {
+        el.innerHTML = html;
+        el.setAttribute("data-undo-html", html);
+      }
       el.className = "gen-topo-status gen-topo-status--undo";
     } else {
       el.textContent = "";
@@ -345,7 +351,10 @@ window.WiringGrid = (function () {
       if (_sel) { setCell(_sel, c.col, c.row); _sel = null; _armed = null; }
       else { var nx = nextUnplaced(); if (nx) setCell(nx, c.col, c.row); }
       commit("place");
-    } else { _armed = null; _sel = null; render(); }
+    } else if (_armed || _sel) { _armed = null; _sel = null; render(); }
+    // QA regenerate-r2-22: with nothing to clear, do NOT re-render -- this
+    // handler is page-wide, and render() rewrote the status row, replacing
+    // its Undo button between mouseup and click (the click never fired).
   }
 
   // Remove a qubit entirely (creates an id gap; the step-4 gate enforces a

@@ -458,6 +458,44 @@ function stone(win, qid) {
     ok(w.QuamGen.state.spec.qubits.length === 0, 'r2-01: an explicit 0 still clears');
   }
 
+  // QA regenerate-r2-22: the status row's "q3 deleted -- Undo" button did
+  // nothing when clicked. The board's mouseup handler is page-wide, and its
+  // empty-click branch re-rendered the board -- rewriting the status row and
+  // replacing the Undo button between mouseup and click, so no click fired.
+  {
+    const w = freshChip();
+    w.WiringGrid.preset('chain');
+    w.WiringGrid._removeQubit('q3');
+    const btn = w.document.querySelector('#gen-topo-status .gen-topo-undo');
+    ok(!!btn, 'r2-22: the delete shows the status-row Undo button');
+    // layer 1: a page mouseup with nothing armed/selected does not rebuild the board
+    const cell0 = w.document.querySelector('.gen-topo-cell');
+    w.document.body.dispatchEvent(new w.MouseEvent('mouseup', { bubbles: true, clientX: 0, clientY: 0 }));
+    ok(cell0 && cell0.isConnected, 'r2-22: an idle page mouseup leaves the board DOM alone');
+    // layer 2: any other re-render (e.g. a field's change firing as focus moves)
+    // keeps the SAME button node while the row says the same thing
+    w.WiringGrid.refresh();
+    ok(btn && btn.isConnected, 'r2-22: a board re-render keeps the Undo button node');
+    if (btn) {
+      btn.dispatchEvent(new w.MouseEvent('mousedown', { bubbles: true, clientX: 0, clientY: 0 }));
+      btn.dispatchEvent(new w.MouseEvent('mouseup', { bubbles: true, clientX: 0, clientY: 0 }));
+      ok(btn.isConnected, 'r2-22: the pressed Undo button survives its own mouseup (the click can fire)');
+      // jsdom (runScripts outside-only) does not run inline handlers: run the
+      // button's own onclick on the node that survived, as the browser would.
+      if (btn.isConnected) new w.Function(btn.getAttribute('onclick')).call(btn);
+      const qs = w.QuamGen.state.spec.qubits;
+      ok(qs.indexOf('q3') >= 0 && qs.length === 6, 'r2-22: clicking Undo restores q3 (got ' + JSON.stringify(qs) + ')');
+      ok(w.QuamGen.state.spec.qubit_pairs.some(p => p.indexOf('q3') >= 0), 'r2-22: ...with its pairs');
+    }
+    // A click on the page with nothing armed/selected re-renders nothing; with a
+    // stone selected it still deselects (click-away behaviour kept).
+    clickEl(w, stone(w, 'q2'));
+    const st = w.document.getElementById('gen-topo-status');
+    ok(/q2 armed/.test(st.textContent), 'r2-22: status says q2 armed (got "' + st.textContent + '")');
+    clickEl(w, w.document.getElementById('gen-topo-status'));
+    ok(!/armed|selected/.test(st.textContent), 'r2-22: a click away still disarms (got "' + st.textContent + '")');
+  }
+
   if (fails) { console.error(fails + ' check(s) FAILED'); process.exit(1); }
   console.log('generate_topoboard_selfcheck: all checks passed');
 })();
