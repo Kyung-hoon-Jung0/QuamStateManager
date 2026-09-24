@@ -117,3 +117,13 @@ class TestExplicitMovingRole:
         # hand-edit a spec key only — it names the Populate step's order column.
         w = self.mod._cz_order_warning("q1-2", _pair(4.8e9, 5.2e9), {})
         assert "Populate" in w and "'manual'" in w
+
+    def test_the_warning_claims_no_orientation_the_rebuild_never_did(self):
+        # QA review of F15: a pair ADDED in Re-generate reaches the build with
+        # no moving qubit, and Re-generate never orients pairs -- "the wizard
+        # orients CZ pairs control = higher-frequency qubit" was false there.
+        # It points at the choice that decides the physics: the moving qubit.
+        w = self.mod._cz_order_warning("q2-1", _pair(3.401e9, 4.895e9), {})
+        assert "wizard orients" not in w
+        assert "'moving qubit'" in w and "moving_qubit" in w
+        assert "(the target)" in w       # which qubit the default moves

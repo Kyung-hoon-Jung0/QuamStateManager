@@ -141,8 +141,11 @@ ok(doc.getElementById('gen-line-flux-source').hidden === false,
 const optOpx = sel.querySelector('option[value="opx"]');
 const optTee = sel.querySelector('option[value="tee"]');
 const optQdac = sel.querySelector('option[value="qdac"]');
-ok(optOpx.disabled === true && optTee.disabled === true,
-  'F1: LF-FEM and bias tee need a z line to play pulses on');
+// QA review of F9: "opx" with no z line IS "None (no DC bias)" -- always
+// buildable, and the way back the step-4 guard names. Only the bias tee
+// (pulses on a z line) is disabled. (This pin used to require both disabled.)
+ok(optTee.disabled === true && optOpx.disabled === false,
+  'F1: the bias tee needs a z line to play pulses on; "None" is always offered');
 ok(!!optTee.title, 'F1: and say why, rather than being silently inert');
 ok(optQdac.disabled === false, 'F1: the QDAC is available on any architecture');
 ok(optOpx.textContent.indexOf('None') === 0,
@@ -459,8 +462,8 @@ arch.value = 'fixed_frequency';
 arch.dispatchEvent(new win.Event('change'));
 const aOpx = selA.querySelector('option[value="opx"]');
 const aTee = selA.querySelector('option[value="tee"]');
-ok(aOpx.disabled === true && aTee.disabled === true,
-  'QF9: after the switch to fixed-frequency, LF-FEM and bias tee are disabled');
+ok(aOpx.disabled === false && aTee.disabled === true,
+  'QF9: after the switch to fixed-frequency, bias tee is disabled and None is not');
 ok(aOpx.textContent.indexOf('None') === 0,
   'QF9: and the first option relabels itself "None (no DC bias)" -- got ' + aOpx.textContent);
 let r = nextFrom4();
@@ -470,15 +473,33 @@ ok(r.step === 4 && /bias tee/.test(r.msg) && /no qubit flux/.test(r.msg),
 
 // a revisit of step 4 repaints the row from state (render(), not by hand)
 arch = archWorld(SPEC);
-aOpx.textContent = 'stale'; aOpx.disabled = false;
+aOpx.textContent = 'stale'; aOpx.disabled = true; aTee.disabled = false;
 // a fixed-frequency chip whose row was painted stale (a draft restore, or
 // the arch changed while step 4 was not on screen)
 G.state.chipArch = 'fixed_frequency';
 G.state.pairGate = 'cr';
 G.state.qubitFlux = false;
 G.goToStep(4);
-ok(aOpx.disabled === true && aOpx.textContent.indexOf('None') === 0,
+ok(aOpx.disabled === false && aTee.disabled === true &&
+   aOpx.textContent.indexOf('None') === 0,
   'QF9: goToStep(4) repaints the Flux source row -- got ' + aOpx.textContent);
+
+// QA review of F9: the guard's advice is reachable -- choose None on the top
+// selector (a real change event), and Next goes through.
+arch = archWorld(SPEC);
+T.applyFluxSource('tee');
+arch.value = 'fixed_frequency';
+arch.dispatchEvent(new win.Event('change'));
+r = nextFrom4();
+ok(r.step === 4 && /QDAC-II or None/.test(r.msg), 'QF9: precondition -- tee is refused');
+ok(!aOpx.disabled, 'QF9: the None the message names is selectable');
+selA.value = 'opx';
+selA.dispatchEvent(new win.Event('change', { bubbles: true }));
+ok(G.state.spec.qubits.every(function (q) {
+     return !((G.state.spec.qdac || {}).qubits || {})[q]; }) &&
+   selA.value === 'opx', 'QF9: None applied to every qubit -- got ' + selA.value);
+r = nextFrom4();
+ok(r.step === 5, 'QF9: after None, step 4 lets the chip through -- got ' + JSON.stringify(r));
 
 // the same chip set to QDAC-II (a QdacBiasedFixedFrequencyTransmon) passes
 arch = archWorld(SPEC);

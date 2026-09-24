@@ -1345,14 +1345,15 @@ def _cz_order_warning(quam_id, pair, vals):
     except (TypeError, ValueError):
         return None
     if fc and ft and ft > fc:
+        # No "the wizard orients" claim: Re-generate never re-orients a pair
+        # (QA review of F15). What decides the physics is the moving qubit.
         return (
             f"pair {quam_id}: target f_01 ({ft / 1e9:.4g} GHz) is higher than "
-            f"control ({fc / 1e9:.4g} GHz) — the wizard orients CZ pairs "
-            "control = higher-frequency qubit. No moving qubit is named, so "
-            "the flux pulse plays on the higher-frequency qubit; set this "
-            "pair's 'order' to 'manual' on the Populate step "
-            f"(populate.pairs['{quam_id}'].cz_order) to keep this order "
-            "silently."
+            f"control ({fc / 1e9:.4g} GHz). No moving qubit is named, so the "
+            "flux pulse plays on the higher-frequency qubit (the target); to "
+            "choose which qubit moves, set this pair's 'moving qubit' on the "
+            f"Populate step (populate.pairs['{quam_id}'].moving_qubit), or set "
+            "its 'order' to 'manual' (cz_order) to keep this order silently."
         )
     return None
 

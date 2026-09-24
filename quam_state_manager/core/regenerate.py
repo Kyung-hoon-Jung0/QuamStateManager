@@ -282,7 +282,10 @@ def run_regenerate(
     # QA regenerate-r2-17: wiring.network keys the wizard does not edit (a
     # custom/cloud QMM) -- the build writes host/cluster/port only. Before the
     # sidecar write: its hash covers this wiring.
-    net_carried = regen_merge.graft_network_settings(old_wiring, new_wiring)
+    net_held: list[str] = []        # ...unless step 2 moved the chip (review)
+    net_carried = regen_merge.graft_network_settings(
+        old_wiring, new_wiring, held=net_held,
+        requested=(spec or {}).get("network") if isinstance(spec, dict) else None)
     if net_carried:
         safe_io.atomic_write_json(out_dir / "wiring.json", new_wiring)
 
@@ -348,6 +351,7 @@ def run_regenerate(
         "pruned_ops_paths": s.pruned_ops[:20],     # QA F17: name what was cleaned
         "twpa_wiring_carried": twpa_carried,
         "network_carried": net_carried,
+        "network_held": net_held,
         "schema_dropped": len(s.schema_dropped),
         "schema_dropped_paths": s.schema_dropped[:200],
         "schema_dropped_paths_total": len(s.schema_dropped),
@@ -368,6 +372,10 @@ def run_regenerate(
         "ports_moved_total": len(s.ports_moved),
         "ports_fresh": [{"port": n, "was": w, "now": v}
                         for n, w, v in s.ports_fresh[:80]],
+        # ...and ports kept by port number from a line the rebuild removed
+        # (a removed / renamed qubit's port, now another line's).
+        "ports_inherited": [{"port": n, "was": w, "now": v}
+                            for n, w, v in s.ports_inherited[:80]],
         # QA r2-09: a pair the rebuild has only reversed -- named, with how
         # many of its values did not carry.
         "pairs_reversed": [
@@ -381,6 +389,9 @@ def run_regenerate(
              "lost": sum(1 for p in s.residual_lost
                          if p.startswith(f"twpas.{t}."))}
             for t in s.twpas_removed[:20]],
+        # ...and the ones only renamed there: one device, its calibration
+        # carried under the new id (QA review of r2-10).
+        "twpas_renamed": [{"old": o, "new": n} for o, n in s.twpas_renamed[:20]],
         "class_kept": len(s.class_kept),
         "class_kept_paths": [{"path": p, "cls": c} for p, c in s.class_kept[:80]],
         "class_kept_total": len(s.class_kept),

@@ -266,6 +266,49 @@ class TestGraftNetworkSettings:
             "use_custom_qmm"]
         assert new["network"] == {"use_custom_qmm": True}
 
+    # QA review of r2-17: the routing keys go only to the SAME place.
+    def test_a_chip_moved_on_step_2_does_not_keep_the_cloud_routing(self):
+        for moved in ({"host": "192.168.0.9", "cluster_name": "c_old"},
+                      {"host": "10.1.1.6", "cluster_name": "lab_local"}):
+            new = {"network": {"host": moved["host"],
+                               "cluster_name": moved["cluster_name"], "port": 9510}}
+            held: list = []
+            got = graft_network_settings(self.OLD, new, held=held, requested=moved)
+            assert got == [], moved
+            assert held == ["qmm_class", "qmm_settings", "quantum_computer_backend",
+                            "use_custom_qmm"], moved
+            assert "use_custom_qmm" not in new["network"]
+            assert "qmm_class" not in new["network"]
+
+    def test_the_same_place_still_carries(self):
+        new = {"network": {"host": "10.1.1.6", "cluster_name": "c_old", "port": None}}
+        held: list = []
+        got = graft_network_settings(
+            self.OLD, new, held=held,
+            requested={"host": " 10.1.1.6 ", "cluster_name": "c_old", "port": None})
+        assert got == ["qmm_class", "qmm_settings", "quantum_computer_backend",
+                       "use_custom_qmm"] and held == []
+
+    def test_a_blank_host_is_not_a_move(self):
+        # the build writes 0.0.0.0 / "Cluster" for a blank step-2 field; the
+        # SPEC is what is compared, and None / "" are the same blank.
+        old = {"network": {"cluster_name": None, "use_custom_qmm": True}}
+        new = {"network": {"host": "0.0.0.0", "cluster_name": "Cluster"}}
+        assert graft_network_settings(
+            old, new, held=[], requested={"host": "", "cluster_name": ""}) == [
+            "use_custom_qmm"]
+
+    def test_a_value_typed_where_the_source_had_none_is_not_a_move(self):
+        # step 2 REQUIRES a cluster name; a source with none was not "moved"
+        # by the user typing one.
+        old = {"network": {"host": "10.1.1.6", "use_custom_qmm": True}}
+        new = {"network": {"host": "10.1.1.6", "cluster_name": "Cluster"}}
+        held: list = []
+        assert graft_network_settings(
+            old, new, held=held,
+            requested={"host": "10.1.1.6", "cluster_name": "Cluster"}) == [
+            "use_custom_qmm"] and held == []
+
 
 # --- real-data parity with the P2 probe (auto-skip when absent) -------------
 _OLD = Path("<quam-states>/gen_2x3_cz_tunable/state.json")
@@ -1074,6 +1117,39 @@ class TestAPortMovesWithItsOwner:
         r = merge_states(old, new, old_wiring=ow, new_wiring=nw)
         assert r.merged["ports"]["analog_outputs"]["con1"]["5"]["1"]["delay"] == 37
         assert r.stats.ports_fresh == []
+        # ...but it is NAMED, never silent (QA review of F1)
+        assert r.stats.ports_inherited == [
+            ("ports.analog_outputs.con1.5.1", "q1.z", "qA.z")]
+
+    def test_a_removed_qubits_port_taken_by_a_new_one_is_named(self):
+        # QA review of F1: q2 removed, q6 added onto the freed port 2. The
+        # port-number carry stands (a rename must keep it), but the report
+        # says whose calibration q6 got.
+        old, ow = self._old()
+        new, nw = self._new({"q1": 1, "q6": 2})
+        r = merge_states(old, new, old_wiring=ow, new_wiring=nw)
+        lf = r.merged["ports"]["analog_outputs"]["con1"]["5"]
+        assert lf["2"]["delay"] == 34 and lf["2"]["feedforward_filter"] == [0.2] * 48
+        assert r.stats.ports_moved == [] and r.stats.ports_fresh == []
+        assert r.stats.ports_inherited == [
+            ("ports.analog_outputs.con1.5.2", "q2.z", "q6.z")]
+
+    def test_a_line_the_same_qubit_still_has_is_not_inherited(self):
+        # q1 is still on the chip; only the path its line is written at
+        # changed (a builder generation) -- not "someone else's calibration".
+        old, ow = self._old()
+        new, nw = self._new({"q1": 1, "q2": 2})
+        new["qubits"]["q1"]["flux"] = new["qubits"]["q1"].pop("z")
+        r = merge_states(old, new, old_wiring=ow, new_wiring=nw)
+        assert r.stats.ports_inherited == []
+
+    def test_nothing_is_inherited_on_an_unchanged_move_or_swap(self):
+        old, ow = self._old()
+        for z in ({"q1": 1, "q2": 2}, {"q1": 6, "q2": 2}, {"q1": 2, "q2": 1},
+                  {"q1": 6, "q2": 2, "q6": 1}):
+            new, nw = self._new(z)
+            r = merge_states(old, new, old_wiring=ow, new_wiring=nw)
+            assert r.stats.ports_inherited == [], z
 
     def test_pair_id_drift_with_an_unmoved_coupler_port_is_identity(self):
         def chip(pid, wid, delay):
@@ -1134,19 +1210,76 @@ class TestATwpaTheSpecNoLongerCarries:
             "opx_output": "#/ports/mw_outputs/con1/3/7"}}}}}
         return state, wiring
 
+    def _new(self, nid="twpaMain", port=7):
+        new = {"twpas": {nid: {"id": nid, "settling_time": 0,
+                               "pump": {"opx_output": f"#/wiring/twpas/{nid}/p/opx_output"}}},
+               "ports": {"mw_outputs": {"con1": {"3": {str(port): {
+                   "port_id": port, "band": 1, "__class__": _MW}}}}}}
+        nw = {"wiring": {"twpas": {nid: {"p": {
+            "opx_output": f"#/ports/mw_outputs/con1/3/{port}"}}}}}
+        return new, nw
+
     def test_a_rename_builds_one_twpa_not_two(self):
         old, ow = self._old()
-        new = {"twpas": {"twpaMain": {"id": "twpaMain", "settling_time": 0}},
-               "ports": {"mw_outputs": {"con1": {"3": {"7": {
-                   "port_id": 7, "band": 1, "__class__": _MW}}}}}}
-        nw = {"wiring": {"twpas": {"twpaMain": {"p": {
-            "opx_output": "#/ports/mw_outputs/con1/3/7"}}}}}
+        new, nw = self._new()
         r = merge_states(old, new, old_wiring=ow, new_wiring=nw,
                          twpa_ids=["twpaMain"])
         assert set(r.merged["twpas"]) == {"twpaMain"}
-        assert "twpas.twpa1.settling_time" in r.stats.residual_lost
-        assert r.stats.twpas_removed == ["twpa1"]
         assert graft_twpa_wiring(r.merged, old, ow, nw) == 0
+
+    def test_a_rename_on_the_same_line_keeps_the_calibration(self):
+        # QA review of r2-10: twpa1 -> twpaMain on the same pump port is ONE
+        # TWPA -- its calibration carries under the new id (the review's rig
+        # lost pump amplitude 1 -> 0.5, sticky 200 -> 100 on a pure rename).
+        old, ow = self._old()
+        tw = old["twpas"]["twpa1"]
+        tw["pump"].update({"core": "twpa1_core",
+                           "operations": {"pump": {"amplitude": 1, "length": 20000}},
+                           "sticky": {"duration": 200, "enabled": True}})
+        tw["qubits"] = ["#/qubits/q1"]
+        tw["extras"] = {"note": "#/twpas/twpa1/pump/core"}      # a self pointer
+        old["qubits"] = {"q1": {}}
+        new, nw = self._new()
+        n = new["twpas"]["twpaMain"]
+        n["pump"].update({"core": None,
+                          "operations": {"pump": {"amplitude": 0.5, "length": 20000}},
+                          "sticky": {"duration": 100, "enabled": True}})
+        n["qubits"] = None
+        new["qubits"] = {"q1": {}}
+        r = merge_states(old, new, old_wiring=ow, new_wiring=nw,
+                         twpa_ids=["twpaMain"])
+        m = r.merged["twpas"]
+        assert set(m) == {"twpaMain"}
+        t = m["twpaMain"]
+        assert t["pump"]["operations"]["pump"]["amplitude"] == 1
+        assert t["pump"]["sticky"]["duration"] == 200
+        assert t["settling_time"] == 40 and t["qubits"] == ["#/qubits/q1"]
+        assert t["id"] == "twpaMain", "tier-1 carried the old name back"
+        assert t["pump"]["opx_output"] == "#/wiring/twpas/twpaMain/p/opx_output"
+        assert t["extras"]["note"] == "#/twpas/twpaMain/pump/core"
+        assert r.stats.twpas_renamed == [("twpa1", "twpaMain")]
+        assert r.stats.twpas_removed == []
+        assert not any(p.startswith("twpas.") for p in r.stats.residual_lost),             r.stats.residual_lost
+
+    def test_a_new_twpa_on_other_ports_is_not_a_rename(self):
+        old, ow = self._old()
+        new, nw = self._new("twpaB", port=8)
+        r = merge_states(old, new, old_wiring=ow, new_wiring=nw,
+                         twpa_ids=["twpaB"])
+        assert set(r.merged["twpas"]) == {"twpaB"}
+        assert r.merged["twpas"]["twpaB"]["settling_time"] == 0
+        assert r.stats.twpas_renamed == [] and r.stats.twpas_removed == ["twpa1"]
+        assert "twpas.twpa1.settling_time" in r.stats.residual_lost
+
+    def test_two_candidates_on_the_line_are_not_a_rename(self):
+        old, ow = self._old()
+        new, nw = self._new("twpaB")
+        new2, nw2 = self._new("twpaC")
+        new["twpas"].update(new2["twpas"])
+        nw["wiring"]["twpas"].update(nw2["wiring"]["twpas"])
+        r = merge_states(old, new, old_wiring=ow, new_wiring=nw,
+                         twpa_ids=["twpaB", "twpaC"])
+        assert r.stats.twpas_renamed == [] and r.stats.twpas_removed == ["twpa1"]
 
     def test_a_deleted_twpa_is_not_resurrected(self):
         old, ow = self._old()

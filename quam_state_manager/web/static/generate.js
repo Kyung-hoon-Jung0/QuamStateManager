@@ -175,13 +175,21 @@
       if (badPair) return "Every qubit pair needs two different qubits.";
       // QA r2-34: a pair listed twice builds ONCE (the builder keys pairs by
       // id), so Review counted a pair the chip never got. Ordered for CR
-      // (q1→q2 and q2→q1 are two drives); unordered while CZ roles are
-      // assigned from frequencies (q1–q2 and q2–q1 are one physical pair).
-      var seenPair = {}, dupPair = null, czUnordered = czOrderActive();
+      // (q1→q2 and q2→q1 are two drives); unordered for a CZ gate (q1–q2 and
+      // q2–q1 are one physical pair) -- in Re-generate too, where roles are
+      // not auto-assigned but the coupler is still one (review of r2-34).
+      // A source chip that itself lists both orders keeps them.
+      var seenPair = {}, dupPair = null,
+          czUnordered = state.pairGate === "cz_fixed" || state.pairGate === "cz_tunable";
       state.spec.qubit_pairs.some(function (p) {
         var k = czUnordered ? p.slice().sort().join("|") : p[0] + "|" + p[1];
-        if (seenPair[k]) { dupPair = p; return true; }
-        seenPair[k] = true;
+        var o = p[0] + "|" + p[1];
+        var srcBoth = czUnordered && state.mode === "regenerate" &&
+          regenPairOrient && (regenPairOrient[k] || {}).both;
+        if (seenPair[k] && !(srcBoth && seenPair[k] !== o)) {
+          dupPair = p; return true;
+        }
+        seenPair[k] = seenPair[k] || o;
         return false;
       });
       if (dupPair) {
@@ -1626,13 +1634,15 @@
     }
     var popPairs = (state.spec.populate || {}).pairs || {};
     state.spec.qubit_pairs.forEach(function (pair, idx) {
+      // QA r2-09 review: every path that changes a row (its selects, x then
+      // + Add pair, a board edge, Ctrl+Z) re-renders here -- follow it once.
+      regenFollowPairOrientation(pair);
       var row = document.createElement("div");
       row.className = "gen-pair-row";
       // Surface the (previously invisible) manual orientation pin.
       var isManual = cz && pair[0] && pair[1] &&
         (popPairs[pair[0] + "-" + pair[1]] || {}).cz_order === "manual";
-      var srcOrient = state.mode === "regenerate" && regenPairOrient &&
-        regenPairOrient.get(pair);
+      var srcOrient = regenPairRec(pair);
       var isReversed = !!(srcOrient && pair[0] === srcOrient.src[1] &&
                           pair[1] === srcOrient.src[0]);
       row.innerHTML =
@@ -1674,7 +1684,6 @@
         pair[0] = e.target.value;
         state.pairsTouched = true;
         markPairManual(pair);
-        regenFollowPairOrientation(pair);
         renderPairs();   // repaint (the manual chip may have just appeared)
         refreshBoard();  // QA F15: the edge moved
       });
@@ -1682,8 +1691,7 @@
         pair[1] = e.target.value;
         state.pairsTouched = true;
         markPairManual(pair);
-        regenFollowPairOrientation(pair);
-        renderPairs();
+        renderPairs();   // ...which follows a reversal (regenFollowPairOrientation)
         refreshBoard();
       });
       row.querySelector(".gen-row-del").addEventListener("click", function () {
@@ -1705,19 +1713,82 @@
   // "control" then meant the OTHER qubit, and the flux pulse silently moved
   // to it at the default amplitude. The reversal now drags the bucket, the
   // role, the pins and the allocation along exactly as czAutoOrient's flip
-  // does (flipPairOrder), tracked per ROW (the pair array) against the
-  // orientation its bucket currently has; the row also says it is reversed.
-  var regenPairOrient = null;   // WeakMap pair-array -> {src, cur}; set by hydrate
+  // does (flipPairOrder), tracked per PAIR MEMBERSHIP (review: a row deleted
+  // and re-added, or re-drawn on the board, is a new array but the same
+  // coupler) against the orientation its bucket currently has; the row also
+  // says it is reversed.
+  var regenPairOrient = null;   // {"qa|qb": {src, cur}}; set by hydrate
+
+  function regenPairRec(pair) {
+    if (state.mode !== "regenerate" || !regenPairOrient || !pair ||
+        !pair[0] || !pair[1] || pair[0] === pair[1]) return null;
+    var rec = regenPairOrient[[pair[0], pair[1]].sort().join("|")];
+    // A source chip listing BOTH orientations has two real pairs here --
+    // neither is a reversal of the other.
+    return (rec && !rec.both) ? rec : null;
+  }
 
   function regenFollowPairOrientation(pair) {
-    if (state.mode !== "regenerate" || !regenPairOrient) return;
-    var rec = regenPairOrient.get(pair);
-    if (!rec || !pair[0] || !pair[1]) return;
-    if (pair[0] === rec.cur[1] && pair[1] === rec.cur[0]) {
-      pair[0] = rec.cur[0]; pair[1] = rec.cur[1];   // back to the bucket's order,
-      flipPairOrder(pair);                           // then flip WITH everything
-      rec.cur = [pair[0], pair[1]];
+    var rec = regenPairRec(pair);
+    if (!rec) return;
+    // Listed twice (both orders) is a duplicate step 4 refuses -- never move
+    // the bucket between the two rows.
+    var k = [pair[0], pair[1]].sort().join("|");
+    if (state.spec.qubit_pairs.filter(function (p) {
+      return p && p[0] && p[1] && [p[0], p[1]].sort().join("|") === k;
+    }).length > 1) return;
+    // The bucket's own key says which order it is in now (an undo may have
+    // restored either); the last recorded order when there is no bucket.
+    var pp = (state.spec.populate || {}).pairs || {};
+    var cur = pp[pair[0] + "-" + pair[1]] ? [pair[0], pair[1]]
+            : pp[pair[1] + "-" + pair[0]] ? [pair[1], pair[0]] : rec.cur;
+    if (pair[0] === cur[1] && pair[1] === cur[0]) {
+      pair[0] = cur[0]; pair[1] = cur[1];   // back to the bucket's order,
+      flipPairOrder(pair);                  // then flip WITH everything
     }
+    rec.cur = [pair[0], pair[1]];
+  }
+
+  // QA review of r2-10: the source chip's TWPAs and the ports their pinned
+  // lines use (set by hydrate). A source TWPA missing from step 4 carries as
+  // a RENAME when a new row's pins share a port with it -- the merge's own
+  // rule (regen_merge._twpas_the_spec_renamed); otherwise it is removed.
+  var regenTwpaSrc = null;   // {id: {"con/slot/port": true}}
+
+  // The output ports a TWPA's lines use: its pins, plus the step-5
+  // allocation (a new TWPA has no pin until it is allocated).
+  function twpaPinKeys(id) {
+    var keys = {};
+    var add = function (ch) {
+      if (!ch || (ch.io_type && ch.io_type !== "output")) return;
+      var p = ch.out_port != null ? ch.out_port : ch.port;
+      if (p != null) keys[[ch.con, ch.slot, p].join("/")] = true;
+    };
+    (state.spec.lines || []).forEach(function (ln) {
+      if (ln && ln.element === id && /^twpa_/.test(ln.line || "")) add(ln.channel);
+    });
+    var al = (state.allocation || {})[id] || {};
+    Object.keys(al).forEach(function (k) { (al[k] || []).forEach(add); });
+    return keys;
+  }
+
+  // [{id, renamed: new id | null, known: the source had pins}] -- Review.
+  function regenTwpaChanges() {
+    if (state.mode !== "regenerate" || !regenTwpaSrc) return [];
+    var cur = {};
+    (state.spec.twpas || []).forEach(function (t) { if (t && t.id) cur[t.id] = true; });
+    return Object.keys(regenTwpaSrc).filter(function (sid) {
+      return !cur[sid];
+    }).map(function (sid) {
+      var src = Object.keys(regenTwpaSrc[sid]);
+      var to = Object.keys(cur).filter(function (nid) {
+        if (regenTwpaSrc[nid]) return false;
+        var k = twpaPinKeys(nid);
+        return src.some(function (x) { return k[x]; });
+      });
+      return { id: sid, renamed: to.length === 1 ? to[0] : null,
+               known: src.length > 0 };
+    });
   }
 
   function nextTwpaId() {
@@ -1890,12 +1961,15 @@
       if (opt) opt.hidden = (mode !== "mixed");
       Array.prototype.forEach.call(sel.options, function (o) {
         if (o.value !== "opx" && o.value !== "tee") return;
-        // Both play PULSES on an OPX port, so both need a z line to play them
-        // on. Disabled with the reason, never hidden — the option is real,
-        // the architecture just does not have it yet.
-        o.disabled = !lfOk;
-        o.title = lfOk ? ""
-          : "needs a flux-tunable architecture with an LF-FEM (steps 3-4)";
+        // A bias tee plays PULSES on an OPX port, so it needs a z line to
+        // play them on. Disabled with the reason, never hidden — the option
+        // is real, the architecture just does not have it yet. "opx" with no
+        // z line is "None (no DC bias)", always buildable, and the way back
+        // the step-4 guard names (QA review of F9) — never disabled.
+        var off = !lfOk && o.value === "tee";
+        o.disabled = off;
+        o.title = off
+          ? "needs a flux-tunable architecture with an LF-FEM (steps 3-4)" : "";
       });
       // With no OPX z line, "opx" does not mean "biased from an LF-FEM" — it
       // means this qubit has no QDAC entry, i.e. no DC bias at all. Say that.
@@ -7110,7 +7184,7 @@
     // orientation-dependent calibration -- say so BEFORE the build.
     if (state.mode === "regenerate" && regenPairOrient) {
       var reversed = sp.qubit_pairs.filter(function (p) {
-        var r = regenPairOrient.get(p);
+        var r = regenPairRec(p);
         return r && p[0] === r.src[1] && p[1] === r.src[0];
       }).map(function (p) {
         return p[1] + " → " + p[0] + " is now " + p[0] + " → " + p[1];
@@ -7121,6 +7195,22 @@
           "confusion) will NOT carry; the flux pulse stays on the same qubit. " +
           "Set the order back on step 4 to keep it."]);
       }
+    }
+    // QA review of r2-10: a source TWPA renamed or removed on step 4.
+    var twCh = regenTwpaChanges();
+    if (twCh.length) {
+      rows.push([twCh.some(function (c) { return !c.renamed; })
+        ? "⚠ TWPAs changed" : "TWPAs renamed",
+        twCh.map(function (c) {
+          return c.renamed
+            ? c.id + " → " + c.renamed + " (renamed on the same line — its " +
+              "calibration carries)"
+            : c.known
+              ? c.id + " removed — its calibration (pump, isolation) will " +
+                "NOT carry; add it back on step 4 to keep it"
+              : c.id + " is not in the list — carried only if a rebuilt TWPA " +
+                "uses its pump port";
+        }).join("; ")]);
     }
     el.innerHTML = '<table class="gen-review-table"><tbody>' +
       rows.map(function (r) {
@@ -7736,6 +7826,16 @@
           nl.textContent = "carried network: " + netCarried.join(", ");
           el.appendChild(nl);
         }
+        // QA review of r2-17: ...but not to a chip step 2 moved elsewhere.
+        if ((m.network_held || []).length) {
+          var nh = document.createElement("div");
+          nh.className = "gen-merge-detail gen-merge-warn gen-merge-net-held";
+          nh.textContent = "⚠ network not carried: " + m.network_held.join(", ") +
+            " — the source's QM connection settings (e.g. a custom / cloud " +
+            "QMM), and step 2 changed the host or cluster; add them to " +
+            "wiring.json only if the new host needs them";
+          el.appendChild(nh);
+        }
         (m.ports_carried || []).slice(0, 6).forEach(function (p) {
           var pl = document.createElement("div");
           pl.className = "gen-merge-muted gen-merge-detail gen-merge-port-line";
@@ -7764,6 +7864,16 @@
             (f.was || "another line") + "'s and moved with it";
           el.appendChild(fl);
         });
+        // QA review of F1: kept by port number from a line that is gone.
+        (m.ports_inherited || []).slice(0, 6).forEach(function (f) {
+          var il = document.createElement("div");
+          il.className = "gen-merge-detail gen-merge-warn gen-merge-port-inherited";
+          il.textContent = "⚠ " + f.now + " on " + portLabel(f.port) +
+            ": kept that port's calibration (delay, filters, band / power) by " +
+            "port number — it was " + (f.was || "another line") + "'s, which " +
+            "is not in the rebuild; clear it if " + f.now + "'s cable differs";
+          el.appendChild(il);
+        });
         // QA r2-09 / r2-10: say WHOSE values the not-carried list holds.
         (m.pairs_reversed || []).forEach(function (r) {
           var rl = document.createElement("div");
@@ -7778,10 +7888,18 @@
           var tl = document.createElement("div");
           tl.className = "gen-merge-detail gen-merge-warn gen-merge-twpa-removed";
           tl.textContent = "TWPA " + t.id + " is not in this build's TWPA " +
-            "list (renamed or removed on step 4) — not rebuilt; its " + t.lost +
-            " value" + (t.lost === 1 ? "" : "s") + " are listed below " +
-            "(a rename keeps the Populate values you saw)";
+            "list (removed on step 4, or renamed onto other ports) — not " +
+            "rebuilt; its " + t.lost + " value" + (t.lost === 1 ? "" : "s") +
+            " are listed below";
           el.appendChild(tl);
+        });
+        // QA review of r2-10: a rename on the same line is ONE TWPA.
+        (m.twpas_renamed || []).forEach(function (t) {
+          var rn = document.createElement("div");
+          rn.className = "gen-merge-muted gen-merge-detail gen-merge-twpa-renamed";
+          rn.textContent = "TWPA " + t.old + " renamed " + t["new"] +
+            " — same line, its calibration carried under the new name";
+          el.appendChild(rn);
         });
         Object.keys(keptByCls).slice(0, 6).forEach(function (cls) {
           var kl = document.createElement("div");
@@ -7800,8 +7918,18 @@
           var pl = document.createElement("div");
           pl.className = "gen-merge-muted gen-merge-detail gen-merge-pop-line";
           pl.textContent = "edited " + d.path + ": " + fmtV(d.old) + " → " +
-            fmtV(d.new) + (d.derived_from ? " (re-derived from the " +
-            d.derived_from + " seed you edited)" : "");
+            fmtV(d.new);
+          // docs/76: the Δ is the one ValueDelta implementation's (the
+          // review of F17) -- blank where a Δ means nothing.
+          var dl = document.createElement("span");
+          if (window.ValueDelta && window.ValueDelta.paint(dl, d.old, d.new)) {
+            pl.appendChild(document.createTextNode(" "));
+            pl.appendChild(dl);
+          }
+          if (d.derived_from) {
+            pl.appendChild(document.createTextNode(" (re-derived from the " +
+              d.derived_from + " seed you edited)"));
+          }
           el.appendChild(pl);
         });
         if (popDetail.length > 8) {
@@ -8721,12 +8849,18 @@
       namesTouched: true
     });
     applyChipArch(state.chipArch);            // sync qubitFlux / couplerFlux / pairGate
-    // QA regenerate-r2-09: each source pair's orientation, per row.
-    regenPairOrient = (typeof WeakMap === "function") ? new WeakMap() : null;
+    // QA regenerate-r2-09: each source pair's orientation, by membership.
+    regenPairOrient = {};
     (state.spec.qubit_pairs || []).forEach(function (p) {
-      if (regenPairOrient && p && p[0] && p[1]) {
-        regenPairOrient.set(p, { src: [p[0], p[1]], cur: [p[0], p[1]] });
-      }
+      if (!p || !p[0] || !p[1] || p[0] === p[1]) return;
+      var k = [p[0], p[1]].sort().join("|");
+      if (regenPairOrient[k]) regenPairOrient[k].both = true;
+      else regenPairOrient[k] = { src: [p[0], p[1]], cur: [p[0], p[1]] };
+    });
+    // QA review of r2-10: each source TWPA's pinned ports (Review).
+    regenTwpaSrc = {};
+    (state.spec.twpas || []).forEach(function (t) {
+      if (t && t.id) regenTwpaSrc[t.id] = twpaPinKeys(t.id);
     });
     // Populate-protect baseline (docs/72): snapshot EXACTLY what this wizard
     // session displays. The build POST ships it back verbatim; the server

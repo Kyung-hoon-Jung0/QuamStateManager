@@ -53,6 +53,12 @@ win.armPlainResize = function () {};
 win.renderInstrumentWiring = function () {};
 win.WiringGrid = null;
 win.fetch = function () { return new win.Promise(function () {}); };
+// The ONE Δ implementation (docs/76), taken from the shipped app.js -- the
+// page loads it before generate.js (QA review of F17).
+const APP_JS = fs.readFileSync(
+  path.join(ROOT, 'quam_state_manager', 'web', 'static', 'app.js'), 'utf8');
+const VD_AT = APP_JS.indexOf('window.ValueDelta = (function () {');
+new win.Function(APP_JS.slice(VD_AT, APP_JS.indexOf('\n})();', VD_AT) + 6)).call(win);
 new win.Function(GEN_JS).call(win);
 
 const T = win.QuamGen._test;
@@ -305,9 +311,18 @@ ok(chipText() === null && classLines().length === 0,
     (pop && pop.textContent));
   const popLines = Array.prototype.map.call(fel.querySelectorAll('.gen-merge-pop-line'),
     function (d) { return d.textContent; });
+  const x90d = win.ValueDelta.compute(0.15169, 0.125).text;
   ok2(popLines.length === 2 &&
-      /x90\.amplitude: 0\.15169 → 0\.125 \(re-derived from the x180 seed/.test(popLines[1]),
+      popLines[1].indexOf('x90.amplitude: 0.15169 → 0.125 ' + x90d) >= 0 &&
+      /\(re-derived from the x180 seed/.test(popLines[1]),
     'F17: the re-derived x90 is named, old → new — got ' + JSON.stringify(popLines));
+  // QA review of F17: the Δ is ValueDelta's own chip, not a second renderer
+  const popEls = fel.querySelectorAll('.gen-merge-pop-line');
+  const chip0 = popEls[0] && popEls[0].querySelector('.val-delta');
+  ok2(chip0 && chip0.textContent.indexOf(win.ValueDelta.compute(0.3, 0.25).text) === 0 &&
+      chip0.classList.contains('delta-down'),
+    'F17: each edited value carries the ValueDelta chip — got ' +
+    (popEls[0] && popEls[0].innerHTML));
   ok2(/cleaned 1 redundant legacy op .*: qubits\.q1\.z\.operations\.cz_old/.test(fel.textContent),
     'F17: the cleaned op is named');
   const groupsEl = Array.prototype.map.call(fel.querySelectorAll('.gen-merge-lost-group > summary'),

@@ -549,6 +549,21 @@ class TestTheQaRegenerateFixesEndToEnd:
             return {"ok": True, "status": "ok", "error": None, "result": result or {}}
         return fake_build
 
+    def test_a_port_kept_by_number_from_a_gone_line_is_reported(
+            self, tmp_path, monkeypatch):
+        # QA review of F1: q1 renamed qA on the same flux port -- the values
+        # stay (port-number identity) and the report says whose they were.
+        self._write(tmp_path / "old", *self._flux_chip(1, 37, [0.1] * 48))
+        st, w = self._flux_chip(1, 141, None)
+        st, w = (json.loads(json.dumps(x).replace("q1", "qA")) for x in (st, w))
+        monkeypatch.setattr(regenerate.config_generator, "run_generator",
+                            self._fake(st, w))
+        out = regenerate.run_regenerate("py", tmp_path / "old", {"x": 1},
+                                        tmp_path / "new",
+                                        source_probe=lambda *a, **k: {"ok": False})
+        assert out["merge"]["ports_inherited"] == [
+            {"port": "ports.analog_outputs.con1.5.1", "was": "q1.z", "now": "qA.z"}]
+
     def test_a_moved_flux_line_takes_its_filters_and_the_report_names_it(
             self, tmp_path, monkeypatch):
         self._write(tmp_path / "old", *self._flux_chip(1, 37, [0.1] * 48))
@@ -582,9 +597,14 @@ class TestTheQaRegenerateFixesEndToEnd:
             tmp_path / "new", source_probe=lambda *a, **k: {"ok": False})
         m = out["merge"]
         assert m["twpa_wiring_carried"] == 0
-        assert m["twpas_removed"] == [{"id": "twpa1", "lost": 2}]   # id + settling_time
+        # QA review of r2-10: same pump port -> a RENAME, calibration carried
+        assert m["twpas_removed"] == []
+        assert m["twpas_renamed"] == [{"old": "twpa1", "new": "twpaMain"}]
         merged = json.loads((tmp_path / "new" / "state.json").read_text())
         assert set(merged["twpas"]) == {"twpaMain"}
+        assert merged["twpas"]["twpaMain"]["settling_time"] == 40
+        assert merged["twpas"]["twpaMain"]["id"] == "twpaMain"
+        assert not any(p.startswith("twpas.") for p in m["residual_lost"])
 
     def test_a_spec_without_twpas_keeps_the_graft_all_fallback(self):
         assert regenerate._spec_twpa_ids({"x": 1}) is None
@@ -669,6 +689,42 @@ def test_the_network_block_keeps_its_custom_qmm_settings(tmp_path, monkeypatch):
     # finds the exact spec
     rec = regenerate.reconstruct_from_folder(tmp_path / "new")
     assert rec.exact is True and rec.spec["_marker"] == "net-1"
+
+
+def test_a_moved_chip_does_not_keep_the_cloud_routing(tmp_path, monkeypatch):
+    """QA review of r2-17: step 2 moved the chip to a local QOP (another
+    host) -- the source's cloud-QMM keys are held back and NAMED; with the
+    same host they still carry."""
+    old_net = {"host": "10.1.1.6", "cluster_name": "c",
+               "qmm_class": "iqcc_cloud_client.CloudQuantumMachinesManager",
+               "qmm_settings": {"backend": "arbel"}, "use_custom_qmm": True}
+    (tmp_path / "old").mkdir()
+    (tmp_path / "old" / "state.json").write_text(json.dumps({"qubits": {"q1": {}}}))
+    (tmp_path / "old" / "wiring.json").write_text(json.dumps(
+        {"wiring": {}, "network": old_net}))
+
+    def fake_build(python_path, mode, spec, out_dir, timeout=300):
+        out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "state.json").write_text(json.dumps({"qubits": {"q1": {}}}))
+        (out_dir / "wiring.json").write_text(json.dumps(
+            {"wiring": {}, "network": dict(spec["network"], port=None)}))
+        return {"ok": True, "status": "ok", "error": None, "result": {}}
+
+    monkeypatch.setattr(regenerate.config_generator, "run_generator", fake_build)
+    moved = {"qubits": ["q1"], "network": {"host": "192.168.0.9", "cluster_name": "c"}}
+    out = regenerate.run_regenerate("py", tmp_path / "old", moved, tmp_path / "new",
+                                    source_probe=lambda *a, **k: {"ok": False})
+    assert out["merge"]["network_carried"] == []
+    assert out["merge"]["network_held"] == ["qmm_class", "qmm_settings", "use_custom_qmm"]
+    net = json.loads((tmp_path / "new" / "wiring.json").read_text())["network"]
+    assert "use_custom_qmm" not in net and net["host"] == "192.168.0.9"
+
+    same = {"qubits": ["q1"], "network": {"host": "10.1.1.6", "cluster_name": "c"}}
+    out = regenerate.run_regenerate("py", tmp_path / "old", same, tmp_path / "new2",
+                                    source_probe=lambda *a, **k: {"ok": False})
+    assert out["merge"]["network_carried"] == ["qmm_class", "qmm_settings",
+                                               "use_custom_qmm"]
+    assert out["merge"]["network_held"] == []
 
 
 def test_an_in_memory_source_is_merged_instead_of_the_files(tmp_path, monkeypatch):
