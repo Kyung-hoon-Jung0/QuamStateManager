@@ -20,7 +20,7 @@
       <progress class="diag-env-progress"></progress>
     {% elif env_card.warm %}
       <span class="muted">checked against
-        {% if env_card.env_name %}<code class="diag-env-name" title="{{ env_card.selected }}">{{ env_card.env_name }}</code>{% endif %}
+        {% if env_card.env_name %}<code class="diag-env-name" title="{{ env_card.env_path or env_card.selected }}">{{ env_card.env_name }}</code>{% endif %}
         {% for k in ("quam", "quam_builder") %}{% if env_card.versions.get(k) %}
           <code>{{ k }} {{ env_card.versions[k] }}</code>{% endif %}{% endfor %}
         · <a href="/diagnostics" hx-get="/diagnostics" hx-target="#table-pane"

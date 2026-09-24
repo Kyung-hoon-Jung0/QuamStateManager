@@ -5933,10 +5933,18 @@ window.Bundles = (function () {
    edited. A document CAPTURE listener runs before htmx's own listener on the
    anchor; stopping the event there keeps htmx out of it WITHOUT touching the
    default, so the browser does what it does with any link. An href="#" anchor
-   has no page of its own and stays htmx's; Alt+click is left to htmx too. */
+   has no page of its own and stays htmx's; Alt+click is left to htmx too.
+   Cmd (metaKey) is the tab gesture on a Mac ONLY: on Windows/Linux Win/Super+
+   click opens no tab, so claiming it just traded htmx's swap for a full
+   reload of the same tab (review) -- there it stays htmx's, like a plain click. */
 window.NavModifiedClick = (function () {
+    function isMac() {
+        var n = window.navigator || {};
+        var p = (n.userAgentData && n.userAgentData.platform) || n.platform || "";
+        return /mac|iphone|ipad|ipod/i.test(p);
+    }
     function onClick(evt) {
-        if (!evt || evt.button !== 0 || !(evt.ctrlKey || evt.metaKey || evt.shiftKey)) return;
+        if (!evt || evt.button !== 0 || !(evt.ctrlKey || evt.shiftKey || (evt.metaKey && isMac()))) return;
         var t = evt.target;
         if (t && t.nodeType !== 1) t = t.parentElement;
         var a = t && t.closest ? t.closest("a[href][hx-get]") : null;

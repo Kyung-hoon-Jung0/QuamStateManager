@@ -209,6 +209,22 @@ print("SCHEMA_OK")
 """
 
 
+def _xy_port(state: dict, wiring: dict, qubit: str) -> dict:
+    """The port dict *qubit*'s xy drives, following ``#/...`` pointers through
+    the merged state + wiring documents (QUAM splits one tree over both)."""
+    doc = {**state, **wiring}
+    node = doc["qubits"][qubit]["xy"]["opx_output"]
+    for _ in range(8):
+        if not (isinstance(node, str) and node.startswith("#/")):
+            break
+        cur = doc
+        for part in node[2:].split("/"):
+            cur = cur[part] if isinstance(cur, dict) else cur[int(part)]
+        node = cur
+    assert isinstance(node, dict), node
+    return node
+
+
 class TestSharedXyConfigValid:
     """generate-r2-01: a shared_xy CR build must produce a config the OPX
     accepts. quam_builder>=0.4 XYDriveMW.upconverter_frequency reads only
@@ -217,7 +233,10 @@ class TestSharedXyConfigValid:
     CR-control xy IF ships as the literal '#./inferred_intermediate_frequency'
     and every chained CR target reads 'CR target frequency unknown'.
     Gated on the shared-port capabilities only (NOT cr.flavor_rf_pointer), so
-    it runs in the released-quam_builder envs where the defect lives."""
+    it runs in the released-quam_builder envs where the defect lives. It
+    discriminates only in an env whose XYDriveMW reads the port SCALAR (the
+    first capable env found; mutation-checked red there without the LO pin):
+    one that still reads upconverters[n] passes with or without the fix."""
 
     def test_shared_xy_build_generates_a_valid_config(self, tmp_path):
         import subprocess
@@ -234,8 +253,17 @@ class TestSharedXyConfigValid:
         warns = (outcome.get("result") or {}).get("warnings") or []
         assert not [w for w in warns if "CR target frequency unknown" in w], warns
 
-        # the dual-upconverter layout really was installed (else the pin is moot)
-        state = json.loads((out_dir / "state.json").read_text())
+        # the PREMISE, asserted directly: q2 (a CR control) really got the
+        # dual-upconverter port -- an `upconverters` dict and NO scalar
+        # upconverter_frequency. Without it there is nothing for the LO pin to
+        # rescue and every check below would pass with or without the fix.
+        state = json.loads((out_dir / "state.json").read_text(encoding="utf-8"))
+        wiring = json.loads((out_dir / "wiring.json").read_text(encoding="utf-8"))
+        port = _xy_port(state, wiring, "q2")
+        ups = port.get("upconverters")
+        assert isinstance(ups, dict) and {"1", "2"} <= {str(k) for k in ups}, port
+        assert port.get("upconverter_frequency") is None, port
+        # the FIX: the control's own xy LO is pinned to its upconverter 1
         assert state["qubits"]["q2"]["xy"]["LO_frequency"].endswith(
             "/opx_output/upconverters/1/frequency")
 

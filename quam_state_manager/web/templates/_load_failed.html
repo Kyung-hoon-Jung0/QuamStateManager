@@ -15,7 +15,7 @@
   <div class="load-failed-candidates">
     {% for c in candidates %}
     <button class="btn-sm" hx-post="/load" hx-vals='{{ {"folder": c} | tojson }}'
-            hx-target="#table-pane" hx-swap="innerHTML"
+            hx-target="{{ candidate_target or '#table-pane' }}" hx-swap="innerHTML"
             title="Load {{ c }}">&#128193; {{ c }}</button>
     {% endfor %}
   </div>

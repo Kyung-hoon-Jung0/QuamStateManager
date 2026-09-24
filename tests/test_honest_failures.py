@@ -131,6 +131,42 @@ class TestSidebarLoadFailedSlotFits:
         assert r.status_code == 400
         assert "load-failed-close" in r.data.decode("utf-8")
 
+    @staticmethod
+    def _candidate_targets(html: str) -> list[str]:
+        import re
+        block = html.split("load-failed-candidates", 1)[1]
+        return re.findall(r'hx-post="/load"[^>]*?hx-target="([^"]*)"', block)
+
+    def test_a_sidebar_panel_keeps_its_candidates_in_the_sidebar(self, client, tmp_path):
+        """F17 review: a candidate that ALSO fails re-renders the panel into
+        the candidate's target. From the sidebar slot that target was
+        #table-pane, so a subfolder with a broken state.json replaced the open
+        main surface (Generate wizard, Qubits grid) -- the very thing the slot
+        exists to prevent."""
+        parent = tmp_path / "gen_out"
+        bad = parent / "sub"
+        bad.mkdir(parents=True)
+        (bad / "state.json").write_text("{", encoding="utf-8")   # offered, then fails
+        r = client.post("/load", data={"folder": str(parent)},
+                        headers={"HX-Request": "true", "HX-Target": "load-failed-slot"})
+        assert r.status_code == 400
+        targets = self._candidate_targets(r.data.decode("utf-8"))
+        assert targets == ["#load-failed-slot"], targets
+        # ...and pressing that candidate (it fails too) keeps answering there
+        r2 = client.post("/load", data={"folder": str(bad)},
+                         headers={"HX-Request": "true", "HX-Target": "load-failed-slot"})
+        assert r2.status_code == 400 and "load-failed-panel" in r2.data.decode("utf-8")
+
+    def test_a_main_pane_panel_keeps_its_candidates_in_the_main_pane(self, client, tmp_path):
+        """The landing's own load form posts into #table-pane: its panel IS the
+        main surface, so its candidates stay there (unchanged)."""
+        parent = tmp_path / "exp"
+        _write_chip(parent / "quam_state", _state())
+        for hdr in ({"HX-Request": "true", "HX-Target": "table-pane"}, {}):
+            r = client.post("/load", data={"folder": str(parent)}, headers=hdr)
+            assert r.status_code == 400
+            assert self._candidate_targets(r.data.decode("utf-8")) == ["#table-pane"], hdr
+
 
 class TestDanglingPointerHonesty:
     def test_inspector_says_dangling_not_resolves_to_itself(self, client, tmp_path):

@@ -183,3 +183,73 @@ class TestOneBuildPerOutputFolder:
         t.join(10)
         assert box["resp"].status_code == 200, box["resp"].get_json()
         assert len(blocking.calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# Review of generate-r2-09: the lock above was ONE process's. Two SM windows
+# are two processes sharing one instance dir (docs/80); the second one's build
+# must meet the first one's lock too -- driven here against a REAL second
+# process that takes the lock the way a second SM server would.
+# ---------------------------------------------------------------------------
+
+_HOLDER = """
+import sys
+from quam_state_manager.core import path_match
+from quam_state_manager.web import routes
+taken, fd = routes._gen_out_xlock(sys.argv[1], path_match.fs_key(sys.argv[2]))
+print("HELD" if taken else "BUSY", flush=True)
+sys.stdin.read()
+routes._gen_out_xunlock(fd)
+"""
+
+
+def _holder(app, out):
+    import os
+    import subprocess
+    from pathlib import Path
+
+    from quam_state_manager.web.routes import _ingest_abs_path
+    root = str(Path(__file__).resolve().parents[1])
+    env = dict(os.environ, PYTHONPATH=root + os.pathsep + os.environ.get("PYTHONPATH", ""))
+    path, err = _ingest_abs_path(str(out))
+    assert not err, err
+    proc = subprocess.Popen(
+        [sys.executable, "-c", _HOLDER, app.instance_path, path],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, cwd=root, env=env)
+    line = proc.stdout.readline().strip()
+    if line != "HELD":
+        proc.kill()
+        pytest.fail("holder could not take the lock: " + line + proc.stderr.read())
+    return proc
+
+
+class TestOneBuildPerOutputFolderAcrossProcesses:
+    def test_a_build_held_by_another_sm_process_is_refused_busy(
+            self, app, blocking, tmp_path):
+        out = tmp_path / "gen_out" / "two_windows"
+        proc = _holder(app, out)
+        try:
+            second = _post_gen(app, out)          # window B's server, while A builds
+            assert second.status_code == 409, second.get_json()
+            body = second.get_json()
+            assert body.get("busy") is True and "already running" in body["error"]
+            assert blocking.calls == []           # B never started a build
+            assert not out.exists(), "nothing may be written into the user's folder"
+        finally:
+            proc.stdin.close()
+            proc.wait(30)
+        blocking.release.set()
+        after = _post_gen(app, out)               # A finished: B builds
+        assert after.status_code == 200 and after.get_json()["ok"], after.get_json()
+
+    def test_a_window_that_dies_mid_build_never_wedges_the_folder(
+            self, app, blocking, tmp_path):
+        """No PID bookkeeping to go stale: the OS drops a dead holder's lock."""
+        out = tmp_path / "gen_out" / "crashed_window"
+        proc = _holder(app, out)
+        proc.kill()                               # a hard kill, no cleanup runs
+        proc.wait(30)
+        blocking.release.set()
+        r = _post_gen(app, out)
+        assert r.status_code == 200 and r.get_json()["ok"], r.get_json()

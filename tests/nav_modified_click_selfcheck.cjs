@@ -16,6 +16,8 @@
  *   N4 href="#"          -> no page of its own: still htmx's, even with Ctrl
  *   N5 alt / right-button -> left to htmx / untouched
  *   N6 a plain anchor with no hx-get is untouched either way
+ *   N7 Cmd is the tab gesture on a Mac only: Win/Super+click on Windows or
+ *      Linux opens no tab, so it stays htmx's (review of generate-r2-22)
  * Mutation: delete the listener and N2/N3 go red (the control N1 stays green).
  */
 'use strict';
@@ -92,6 +94,11 @@ function press(id, mods) {
   return { toHtmx: issued.length > 0, prevented: ev.defaultPrevented };
 }
 
+// navigator.platform decides whether Cmd is a tab gesture; jsdom reports ''
+function setPlatform(p) {
+  Object.defineProperty(w.navigator, 'platform', { get: () => p, configurable: true });
+}
+
 w.document.addEventListener('DOMContentLoaded', () => w.setTimeout(run, 0));
 
 function run() {
@@ -101,7 +108,8 @@ function run() {
   check('N1 CONTROL: a plain click goes to htmx (the pane swaps)', plain.toHtmx, JSON.stringify(plain));
   check('N1b CONTROL: htmx cancels the plain click default', plain.prevented, JSON.stringify(plain));
 
-  [['ctrlKey', 'Ctrl'], ['metaKey', 'Cmd'], ['shiftKey', 'Shift']].forEach(([k, name]) => {
+  setPlatform('MacIntel');
+  [['ctrlKey', 'Ctrl'], ['metaKey', 'Cmd (Mac)'], ['shiftKey', 'Shift']].forEach(([k, name]) => {
     const r = press('nav', { [k]: true });
     check('N2 ' + name + '+click never reaches htmx (this page stays)', !r.toHtmx, JSON.stringify(r));
     check('N2b ' + name + '+click keeps the browser default (a tab/window opens)', !r.prevented, JSON.stringify(r));
@@ -124,6 +132,17 @@ function run() {
 
   const help = press('plain', { ctrlKey: true });
   check('N6 a plain link (no hx-get) keeps its default', !help.toHtmx && !help.prevented, JSON.stringify(help));
+
+  ['Win32', 'Linux x86_64'].forEach((plat) => {
+    setPlatform(plat);
+    const win = press('nav', { metaKey: true });
+    check('N7 ' + plat + ': Win/Super+click is no tab gesture -- htmx swaps as for a plain click', win.toHtmx && win.prevented, JSON.stringify(win));
+    const ctl = press('nav', { ctrlKey: true });
+    check('N7b ' + plat + ': Ctrl+click still opens a tab', !ctl.toHtmx && !ctl.prevented, JSON.stringify(ctl));
+  });
+  setPlatform('MacIntel');
+  const mac = press('nav', { metaKey: true });
+  check('N7c MacIntel: Cmd+click opens a tab', !mac.toHtmx && !mac.prevented, JSON.stringify(mac));
 
   if (failures) { console.error(failures + ' check(s) failed'); process.exit(1); }
   console.log('all checks passed (' + asserts + ' assertions)');
