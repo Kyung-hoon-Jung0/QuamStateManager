@@ -224,6 +224,36 @@ class TestDiagnosticsIntegration:
         # no selected env in tests → 204 or the no-env copy
         assert r.status_code in (200, 204)
 
+    def test_the_probe_poll_announces_its_finish_once(self, client, monkeypatch):
+        """QA F-L: after Re-probe the Types card kept the pre-probe count until
+        a reload -- nothing told it the schema had changed. The probe's own
+        poll (?poll=1) now says diagnostics-changed when it finds the probe
+        done; a plain GET never does (no loop), nor does a poll mid-probe."""
+        from quam_state_manager.web import routes
+        done = client.get("/diagnostics/env-card?poll=1")
+        assert done.status_code == 200
+        assert done.headers.get("HX-Trigger") == "diagnostics-changed"
+        assert "HX-Trigger" not in client.get("/diagnostics/env-card").headers
+        real = routes._env_card_state
+        monkeypatch.setattr(routes, "_env_card_state",
+                            lambda store: {**real(store), "probing": True})
+        busy = client.get("/diagnostics/env-card?poll=1")
+        assert "HX-Trigger" not in busy.headers
+        # ...and the self-poll it renders mid-probe is the announcing one
+        assert 'hx-get="/diagnostics/env-card?poll=1"' in busy.get_data(as_text=True)
+
+    def test_same_quam_version_reads_as_such(self, client):
+        from flask import render_template
+        app = client.application
+        with app.test_request_context():
+            html = render_template("_env_schema_changes.html", transition={
+                "changed": True, "first": False, "from_label": "quam 0.6.0 · qm 1.3.1",
+                "to_label": "quam 0.6.0 · qm 1.4.1", "distance": "same",
+                "diff": {"total": 1, "truncated": False, "rows": []}, "sig": "x",
+                "from_key": "a", "to_key": "b"}, verdicts={}, rows=[])
+        assert "same quam version" in html
+        assert "same version step" not in html
+
     def test_env_probe_requires_selected_env(self, client):
         r = client.post("/diagnostics/env-probe")
         assert r.status_code == 400

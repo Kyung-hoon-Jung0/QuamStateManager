@@ -37,10 +37,17 @@
         left alone (reason shown){% endif %}{% endif %}
       </span>
       <div class="diag-types-actions">
-        {% if types_card.editable %}
+        {% if types_card.editable and types_card.strnum.fixable %}
         <button type="button" class="btn-sm primary"
                 title="Show what SM would store instead for every value stored as text, then convert the ones you confirm"
                 onclick="window.openTypeFixPlan && window.openTypeFixPlan()">Auto-correct {{ types_card.strnum.fixable }} value{{ 's' if types_card.strnum.fixable != 1 }}&hellip;</button>
+        {% elif types_card.editable %}
+        {# QA F-G: nothing SM will convert -- no primary "Auto-correct 0". #}
+        <span class="muted diag-types-hand">SM won&rsquo;t convert {{ 'these' if types_card.strnum.count != 1 else 'this one' }}
+          automatically{% if types_card.strnum.hand_fixable %} &mdash; to change one, type the number in the Json Tree View{% endif %}.</span>
+        <button type="button" class="btn-sm outline"
+                title="Why SM leaves these alone"
+                onclick="window.openTypeFixPlan && window.openTypeFixPlan()">See why&hellip;</button>
         {% else %}
         <span class="muted">read-only archive — open the live chip to repair</span>
         {% endif %}

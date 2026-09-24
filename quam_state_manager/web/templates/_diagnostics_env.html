@@ -3,7 +3,7 @@
    through the normal diagnostics list (domain "Environment match"); this card
    carries only the status line + actions. Self-polls while a probe runs. #}
 <div id="diag-env-card" class="diag-env-card"
-     {% if env_card.probing %}hx-get="/diagnostics/env-card" hx-trigger="every 2s"
+     {% if env_card.probing %}hx-get="/diagnostics/env-card?poll=1" hx-trigger="every 2s"
      hx-swap="outerHTML"{% endif %}>
   <div class="diag-env-head">
     <strong>Environment match</strong>
@@ -72,7 +72,8 @@
       body: "force=" + force
     }).then(function (r) { return r.json(); }).then(function (d) {
       if (!d.ok) { window.showToast && window.showToast(d.error || "probe failed", "warning"); btn.disabled = false; return; }
-      if (window.htmx) htmx.ajax("GET", "/diagnostics/env-card", {target: "#diag-env-card", swap: "outerHTML"});
+      // ?poll=1: the finishing render announces diagnostics-changed (QA F-L)
+      if (window.htmx) htmx.ajax("GET", "/diagnostics/env-card?poll=1", {target: "#diag-env-card", swap: "outerHTML"});
     }).catch(function () { btn.disabled = false; });
   };
 </script>

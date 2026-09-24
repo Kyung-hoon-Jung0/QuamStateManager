@@ -611,7 +611,10 @@ def build_preflight(ctx: dict) -> dict:
     ``target_quam_state``, ``calibrations_folder``, ``effective_config`` (dict),
     ``editable_install_path``, ``align_result`` (history.align outcome),
     ``env_usable`` (bool|None), ``env_missing`` (list), ``chip_clean`` (bool),
-    ``dataset_roots`` (list), ``workspace_roots`` (list).
+    ``dataset_roots`` (list), ``workspace_roots`` (list),
+    ``diagnostics_errors`` (int|None -- the crash-class count the red
+    Diagnostics banner shows; None = not computed) and
+    ``diagnostics_examples`` (list[str] -- their locations).
 
     Returns ``{"ok": bool, "checks": [{key,label,status,detail}, ...]}`` where
     ``ok`` is True iff no check is ``"fail"``. Status ∈ pass|fail|warn|skip.
@@ -736,6 +739,27 @@ def build_preflight(ctx: dict) -> dict:
         checks.append(_check("storage", "Results folder is indexed by Datasets", "warn",
                              f"No runs found under {loc} yet; the dataset root is auto-registered "
                              f"after the first run."))
+
+    # 9. QA diagnostics-r2-05: the values the red Diagnostics banner says
+    #    "would crash a node run" (same count, same filter). Blocking like the
+    #    other Strict checks -- the user can still Start ANYWAY (force). None
+    #    means it could not be computed (no chip, lint failed): skip, never a
+    #    guess in either direction.
+    n_err = ctx.get("diagnostics_errors")
+    diag_label = "No crash-class Diagnostics errors"
+    if n_err is None:
+        checks.append(_check("diagnostics", diag_label, "skip",
+                             "Diagnostics were not computed for this chip."))
+    elif int(n_err) <= 0:
+        checks.append(_check("diagnostics", diag_label, "pass", ""))
+    else:
+        n_err = int(n_err)
+        ex = [str(e) for e in (ctx.get("diagnostics_examples") or []) if e][:3]
+        checks.append(_check(
+            "diagnostics", diag_label, "fail",
+            f"{n_err} value{'s' if n_err != 1 else ''} on the open chip would "
+            f"crash a node run" + (f" (e.g. {', '.join(ex)})" if ex else "")
+            + ". Fix before running an experiment — see Diagnostics."))
 
     ok = all(c["status"] != "fail" for c in checks)
     return {"ok": ok, "checks": checks}

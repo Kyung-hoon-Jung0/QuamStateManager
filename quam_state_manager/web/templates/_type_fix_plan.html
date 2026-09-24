@@ -44,7 +44,17 @@
       the number itself never changes.{% endif %}
     </p>
     {% endif %}
-    {% if alert.env.count %}
+    {% if alert.env.count and alert.strnum.count
+          and alert.env.restated_text == alert.env.count %}
+    {# QA F-F: every env finding here is about the same text values listed
+       above (the field is typed as a number) -- not a second problem, and
+       not one "SM will not change": storing the number fixes both. #}
+    <p class="tfx-alert-line tfx-alert-env">
+      The selected environment&rsquo;s schema expects a number there too, so
+      storing {{ 'them' if alert.strnum.count != 1 else 'it' }} as
+      {{ 'numbers' if alert.strnum.count != 1 else 'a number' }} fixes that as well.
+    </p>
+    {% elif alert.env.count %}
     {# docs/136 — a class the env cannot import is NOT a field, and the
        findings are aggregated, so the finding count is not the place count.
        Both were saying something false on the customer's QDAC chip. #}
@@ -144,11 +154,14 @@
   </div>
   {% else %}
   <p class="tfx-lead">SM found values stored as text, but none of them can be
-     converted safely. They are listed below with the reason.</p>
+     converted safely. They are listed below with the reason.{% if plan.skipped | selectattr('hand_fixable') | list %}
+     To change one yourself, open it in the Json Tree View and type the number
+     &mdash; that edit stores a real number.{% endif %}</p>
   {% endif %}
 
   {% if plan.skipped %}
-  <details class="tfx-skipped">
+  {# QA F-G: with nothing to convert, the reasons ARE the answer -- open. #}
+  <details class="tfx-skipped"{% if not plan.rows %} open{% endif %}>
     <summary>{{ plan.skipped | length }} value{{ 's' if plan.skipped | length != 1 }}
       left alone &mdash; SM will not guess at {{ 'these' if plan.skipped | length != 1 else 'this one' }}</summary>
     <table class="ch-table tfx-table tfx-table-skip">
@@ -158,6 +171,11 @@
           <td class="tfx-path"><code>{{ s.path }}</code></td>
           <td class="tfx-old"><code class="tfx-text">{{ s.current_display }}</code></td>
           <td class="tfx-why muted">{{ s.reason }}</td>
+          <td>{% if s.hand_fixable %}
+            <button type="button" class="btn-xs" data-goto="{{ s.path }}"
+                    onclick="window.TypeAlert && window.TypeAlert.manual(this.getAttribute('data-goto'))"
+                    title="Close this and open the Json Tree View at this field — type the number there">Go to field</button>
+            {% endif %}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -186,9 +204,13 @@
             title="Hide this exact set — any NEW anomaly raises it again">Don&rsquo;t show this again</button>
     {% endif %}
     <button type="button" class="btn-sync outline" onclick="window.closeTypeFixPlan()">Cancel</button>
+    {# QA F-G: the staging sentence describes the Convert button -- say it
+       only when there is one. #}
+    {% if alert or plan.rows %}
     <span class="tfx-note muted">{% if alert %}Nothing is written until you
-      choose. {% endif %}Staged into the working copy — review in the
-      tray, then Save / Apply to live as usual.</span>
+      choose. {% endif %}{% if plan.rows %}Staged into the working copy — review in the
+      tray, then Save / Apply to live as usual.{% endif %}</span>
+    {% endif %}
   </div>
   <div class="tfx-error" hidden></div>
 </div>

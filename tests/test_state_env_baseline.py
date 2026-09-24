@@ -196,3 +196,89 @@ class TestTheTransition:
 
     def test_no_manifest_means_no_answer(self, tmp_path):
         assert seb.env_transition(tmp_path, None) is None
+
+
+# ---------------------------------------------------------------------------
+# QA F-L: one environment, one answer
+# ---------------------------------------------------------------------------
+
+class TestOneEnvOneAnswer:
+    """The same env gave 25 schema changes after a Re-probe and 11 after Take
+    live: the manifest carries the builder commit on the cached path and none
+    on the fresh-probe path, the key hashed it, and "previous" flipped with it.
+    """
+
+    @staticmethod
+    def _with(manifest, **versions):
+        m = copy.deepcopy(manifest)
+        m["versions"] = {**(m.get("versions") or {}), **versions}
+        return m
+
+    def test_the_commit_never_moves_the_baseline_key(self, modern):
+        bare = self._with(modern)
+        pinned = self._with(modern, quam_builder_commit="fedc89cb70")
+        assert seb.stable_env_key(bare["versions"]) \
+            == seb.stable_env_key(pinned["versions"])
+
+    def test_both_attach_paths_see_the_same_transition(self, tmp_path, modern):
+        # env A = qm 1.3.1 (recorded first), env B = qm 1.4.1 (current)
+        a = self._with(modern, qm="1.3.1")
+        b_fresh = self._with(modern, qm="1.4.1")                 # probe path
+        b_cached = self._with(b_fresh, quam_builder_commit="fedc89cb70")
+        seb.record_baseline(tmp_path, a)
+        seb.record_baseline(tmp_path, b_fresh)
+        t1 = seb.env_transition(tmp_path, b_fresh)
+        t2 = seb.env_transition(tmp_path, b_cached)
+        assert t1["from_key"] == t2["from_key"] == seb.stable_env_key(a["versions"])
+        assert t1["to_key"] == t2["to_key"]
+        assert t1["sig"] == t2["sig"]
+
+    def test_a_legacy_commit_keyed_record_of_this_env_is_never_previous(
+            self, tmp_path, modern):
+        a = self._with(modern, qm="1.3.1")
+        b = self._with(modern, qm="1.4.1")
+        seb.record_baseline(tmp_path, a)
+        # what the pre-fix code wrote for the SAME env through the cached path
+        legacy = seb.env_key({**b["versions"], "quam_builder_commit": "fedc89cb70"})
+        body = seb.project_manifest(b)
+        body.update({"version": 1, "key": legacy, "label": seb.env_label(b["versions"]),
+                     "recorded_at": "2099-01-01T00:00:00+00:00"})
+        (seb.baseline_dir(tmp_path) / f"{legacy}.json").write_text(
+            json.dumps(body), encoding="utf-8")
+        index = json.loads((seb.baseline_dir(tmp_path) / seb.INDEX_FILENAME)
+                           .read_text(encoding="utf-8"))
+        index["entries"].append({"key": legacy, "label": body["label"],
+                                 "versions": {**b["versions"], "quam_builder_commit": "fedc89cb70"},
+                                 "first_seen": "2099-01-01T00:00:00+00:00",
+                                 "last_seen": "2099-01-01T00:00:00+00:00"})
+        (seb.baseline_dir(tmp_path) / seb.INDEX_FILENAME).write_text(
+            json.dumps(index), encoding="utf-8")
+        prev = seb.previous_baseline(tmp_path, seb.stable_env_key(b["versions"]))
+        assert prev["key"] == seb.stable_env_key(a["versions"])
+
+    def test_a_class_only_one_side_probed_is_not_a_library_change(self, modern):
+        # two chips' class inventories, one library: nothing changed
+        paths = list(modern["classes"])
+        left, right = copy.deepcopy(modern), copy.deepcopy(modern)
+        only_left, only_right = paths[0], paths[1]
+        right["classes"].pop(only_left)
+        left["classes"].pop(only_right)
+        diff = seb.diff_manifests(left, right)
+        assert diff["rows"] == []
+        assert {only_left, only_right} <= set(diff["unprobed"])
+
+    def test_the_label_names_the_version_that_moved(self, tmp_path, modern):
+        a = self._with(modern, qm="1.3.1")
+        b = self._with(modern, qm="1.4.1")
+        b["classes"] = copy.deepcopy(b["classes"])
+        cls = next(c for c, e in b["classes"].items() if e.get("fields"))
+        b["classes"][cls]["fields"]["brand_new_field"] = {
+            "type": {"base": "float"}, "optional": True, "has_default": True}
+        seb.record_baseline(tmp_path, a)
+        seb.record_baseline(tmp_path, b)
+        t = seb.env_transition(tmp_path, b)
+        assert t["changed"] and t["distance"] == "same"
+        assert t["from_label"] != t["to_label"]
+        assert t["from_label"].endswith("qm 1.3.1")
+        assert t["to_label"].endswith("qm 1.4.1")
+        assert "commit" not in t["from_label"] + t["to_label"]

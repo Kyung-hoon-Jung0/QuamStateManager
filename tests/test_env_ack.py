@@ -308,7 +308,7 @@ class TestTheKeySurvivesARestart:
     def test_the_commit_does_not_change_the_ack_key(self):
         from quam_state_manager.core import state_env_baseline as seb
         assert seb.ack_env_key(self.V_NONE) == seb.ack_env_key(self.V_HASH)
-        assert seb.env_key(self.V_NONE) != seb.env_key(self.V_HASH)  # baselines still differ
+        assert seb.env_key(self.V_NONE) != seb.env_key(self.V_HASH)  # env_key hashes it (verdicts); baselines use stable_env_key (QA F-L)
         assert seb.ack_env_key(self.V_NONE) == seb.env_key(self.V_NONE)  # commit-less records resolve as-is
 
     def test_legacy_commit_keyed_acks_still_resolve(self, tmp_path):

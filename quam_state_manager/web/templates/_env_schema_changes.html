@@ -37,7 +37,8 @@
   <p class="tfx-lead">
     The environment changed from <strong>{{ transition.from_label }}</strong>
     to <strong>{{ transition.to_label }}</strong>
-    ({{ transition.distance }} version step) and
+    {# QA F-L: "(same version step)" read as nonsense when quam did not move #}
+    ({% if transition.distance == 'same' %}same quam version{% else %}{{ transition.distance }} version step{% endif %}) and
     <strong>{{ transition.diff.total }}</strong> schema
     {{ 'items' if transition.diff.total != 1 else 'item' }} moved with it.
     SM changes <em>nothing</em> in your state because of this — tell it which

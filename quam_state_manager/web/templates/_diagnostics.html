@@ -30,6 +30,16 @@
   Config reference checks run once you generate a config in the
   <a href="/config" hx-get="/config" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">Config Viewer</a>.
 </p>
+{% elif config_stale and config_needs_save %}
+{# QA diagnostics-r2-09: Regenerate reads the SAVED working copy, so while the
+   edits are unsaved it can never catch up -- say so instead of looping. #}
+<p class="diag-hint config-stale-note">
+  &#9888; The config checks below ran against a generated config that predates
+  your unsaved edits. Regenerate reads the saved working copy, so save them first
+  (&#9660; Review &rsaquo; Save to working state) or apply them to live, then
+  <a href="/config" hx-get="/config" hx-target="#table-pane"
+     hx-push-url="true">Regenerate in the Config Viewer</a>.
+</p>
 {% elif config_stale %}
 <p class="diag-hint config-stale-note">
   &#9888; The config checks below ran against a generated config that predates

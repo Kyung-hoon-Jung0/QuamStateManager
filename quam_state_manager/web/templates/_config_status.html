@@ -30,7 +30,7 @@
            title="Download the raw QM config dict as config.json (json.load &rarr; qmm.open_qm)">&#x2193; config.json</a>
         <a class="btn-sync outline config-export-btn" href="/config/export?format=py" download
            title="Download a standalone config.py (import config &rarr; qmm.open_qm); no QUAM needed">&#x2193; config.py</a>
-        <small class="config-export-hint muted">feed straight to <code>qmm.open_qm()</code>{% if config_stale is defined and config_stale %} &middot; exports the last generated config &mdash; Regenerate for recent edits{% endif %}</small>
+        <small class="config-export-hint muted">feed straight to <code>qmm.open_qm()</code>{% if config_stale is defined and config_stale %} &middot; exports the last generated config &mdash; {% if config_needs_save %}save your edits, then Regenerate{% else %}Regenerate for recent edits{% endif %}{% endif %}</small>
     </div>
     {% endif %}
 
@@ -40,7 +40,14 @@
         <span class="config-note-body">
             <span class="config-note-lead">Config may be stale.</span>
             <small class="config-note-text">
-                {% if meta and meta.unsaved_at_generate %}
+                {# QA diagnostics-r2-09: the previewer reads the SAVED working
+                   copy, so while edits are unsaved a Regenerate stays stale --
+                   say what actually gets them in, instead of looping. #}
+                {% if config_needs_save %}
+                Your unsaved edits are not in this preview &mdash; Regenerate reads the
+                saved working copy. Save them first (&#9660; Review &rsaquo; Save to working
+                state) or apply them to live, then Regenerate.
+                {% elif meta and meta.unsaved_at_generate %}
                 This preview predates the unsaved edits you had at generate time &mdash; Regenerate to include them.
                 {% else %}
                 The state changed after this config was generated &mdash; Regenerate to refresh.

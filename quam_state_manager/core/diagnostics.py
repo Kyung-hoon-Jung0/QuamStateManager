@@ -293,9 +293,18 @@ def _lint_state_uncached(store) -> list[Finding]:
 
     findings.extend(_port_findings(root))
     findings.extend(_dangling_pointer_findings(store))
-    findings.extend(_value_findings(root, "qubits"))
-    findings.extend(_value_findings(root, "qubit_pairs"))
-    findings.extend(_strnum_findings(root))
+    # QA F-F: a numeric-looking TEXT value fired BOTH the sibling vote
+    # (value_type, "numeric on N other qubits") and the stored-as-text row
+    # (value_type_strnum) -- one mistyped value, two rows, two badge counts.
+    # The strnum row states it more precisely (and carries the repair), so the
+    # sibling vote keeps only what strnum cannot see: non-numeric text ("oops").
+    strnum = _strnum_findings(root)
+    shown_text = {f.jump_path for f in strnum if f.jump_path}
+    for section in ("qubits", "qubit_pairs"):
+        findings.extend(f for f in _value_findings(root, section)
+                        if not (f.category == "value_type"
+                                and f.location in shown_text))
+    findings.extend(strnum)
     findings.extend(_frequency_consistency_findings(store))
     findings.extend(_downconverter_findings(root))
     findings.extend(_spec_findings(root))
@@ -2437,6 +2446,32 @@ def _downconverter_spacing_findings(root: dict) -> list[Finding]:
 # QM config linter
 # ---------------------------------------------------------------------------
 
+# QA diagnostics-r2-08: quam's own config template. QuamRoot.generate_config()
+# starts from deepcopy(qua_config_template), which always carries this pulse,
+# and nothing in quam ever references it -- so every quam-generated config had
+# a permanent "never referenced" warning no user could fix or acknowledge.
+# Verbatim from quam/core/qua_config_template.py (quam 0.6.0):
+#     "pulses": {
+#         "const_pulse": {
+#             "operation": "control",
+#             "length": 1000,
+#             "waveforms": {"I": "const_wf", "Q": "zero_wf"},
+#         }
+#     },
+# Matched on name AND content: a hand-written config that uses the name for
+# anything else still warns, and a future quam that changes the template
+# fails safe (the warning comes back). Not imported -- SM never imports the
+# QM stack in-process; tests/test_diagnostics.py pins the copy against the
+# installed quam when one is importable.
+_QUAM_TEMPLATE_PULSES = {
+    "const_pulse": {
+        "operation": "control",
+        "length": 1000,
+        "waveforms": {"I": "const_wf", "Q": "zero_wf"},
+    },
+}
+
+
 def lint_config(config: dict) -> list[Finding]:
     """Lint a QM config dict (from ``generate_config()`` or a dropped config.json).
 
@@ -2520,7 +2555,7 @@ def lint_config(config: dict) -> list[Finding]:
     # --- Orphans (warnings) ------------------------------------------------
     ref_pulses = set(config_view._pulse_names_referenced_by(elements, list(elements.keys())))
     for pk in pulses:
-        if pk not in ref_pulses:
+        if pk not in ref_pulses and pulses.get(pk) != _QUAM_TEMPLATE_PULSES.get(pk):
             findings.append(Finding(
                 "warning", "config_orphan_pulse", f"pulses.{pk}",
                 "pulse is defined but never referenced by any element"))

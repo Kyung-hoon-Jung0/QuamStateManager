@@ -517,7 +517,10 @@ class TestTheAlertPayload:
         assert payload["strnum"]["skipped"] >= 1      # id / grid_location / slot
         assert payload["editable"] is True
         assert "env" in payload and "entries" in payload["env"]
-        assert payload["total"] == payload["strnum"]["count"] + payload["env"]["count"]
+        # QA F-F: an env finding that only restates the text values is not a
+        # second problem (was: strnum.count + env.count, which double-counted)
+        assert payload["total"] == (payload["strnum"]["count"] + payload["env"]["count"]
+                                    - payload["env"]["restated_text"])
 
     def test_the_dismiss_signature_formula_is_unchanged(self, app, client):
         """r14 dismissals already on disk must keep working — the signature is
@@ -530,6 +533,69 @@ class TestTheAlertPayload:
         legacy = hashlib.sha1(
             "\n".join(sorted(memo["paths"])).encode("utf-8")).hexdigest()[:16]
         assert payload["sig"] == legacy
+
+    # --- QA F-F: one mistyped value is one value -------------------------
+
+    @staticmethod
+    def _rec(paths, count=None, code="type_mismatch", field="T1"):
+        return {"kind": "type_mismatch", "severity": "error",
+                "class": "quam_builder.FluxTunableTransmon", "field": field,
+                "code": code, "count": len(paths) if count is None else count,
+                "example_paths": list(paths), "detail": "expected float, got str"}
+
+    def test_a_text_value_the_env_also_flags_counts_once(self):
+        p = ["qubits.q4.T1"]
+        s = type_fix.alert_summary(None, [self._rec(p)], p)
+        assert s["total"] == 1
+        assert s["env"]["restated_text"] == 1
+        assert s["env"]["count"] == 1              # the report itself is kept
+
+    def test_two_text_values_on_one_field_are_two(self):
+        p = ["qubits.q3.T1", "qubits.q4.T1"]
+        assert type_fix.alert_summary(None, [self._rec(p)], p)["total"] == 2
+
+    def test_four_fields_four_values(self):
+        p = ["qubits.q4.T1", "qubits.q4.T2", "qubits.q4.f_01", "qubits.q4.anharmonicity"]
+        recs = [self._rec([x], field=x.rsplit(".", 1)[-1]) for x in p]
+        assert type_fix.alert_summary(None, recs, p)["total"] == 4
+
+    def test_a_real_mismatch_is_still_counted(self):
+        text = ["qubits.q4.T1"]
+        other = self._rec(["qubits.q4.id"], field="id")          # not a text value
+        s = type_fix.alert_summary(None, [self._rec(text), other], text)
+        assert s["total"] == 2 and s["env"]["restated_text"] == 1
+        enum = self._rec(text, code="enum_miss")                  # another code
+        assert type_fix.alert_summary(None, [enum], text)["total"] == 2
+
+    def test_a_finding_with_unlisted_places_is_counted_once(self):
+        p = [f"qubits.q{i}.T1" for i in range(1, 8)]              # 7 places
+        rec = self._rec(p[:5], count=7)                          # examples cap 5
+        assert type_fix.alert_summary(None, [rec], p)["total"] == 7 + 1
+
+    def test_the_popup_does_not_call_a_restatement_a_second_problem(self, app):
+        """QA F-F: the env finding about the same text value is not "SM will
+        not change these -- the library may have changed"; storing the number
+        fixes it. A real env mismatch keeps that sentence."""
+        from flask import render_template
+        p = ["qubits.q4.T1"]
+        plan = {"rows": [{"path": p[0], "current_display": '"2e-05"',
+                          "proposed_display": "2e-05", "proposed_type": "real"}],
+                "skipped": [], "total": 1, "sig": "s"}
+        with app.test_request_context():
+            alert = type_fix.alert_summary(plan, [self._rec(p)], p)
+            alert.update(sig="s", env_sig="e", token="t", first=p[0])
+            html = re.sub(r"\s+", " ", render_template(
+                "_type_fix_plan.html", plan=plan, alert=alert))
+            assert "<strong>1 value</strong> on this chip has a type problem" in html
+            assert "expects a number there too" in html
+            assert "SM will not change these" not in html
+            other = self._rec(["qubits.q4.id"], field="id")
+            alert = type_fix.alert_summary(plan, [self._rec(p), other], p)
+            alert.update(sig="s", env_sig="e", token="t", first=p[0])
+            html = re.sub(r"\s+", " ", render_template(
+                "_type_fix_plan.html", plan=plan, alert=alert))
+            assert "<strong>2 values</strong> on this chip have a type problem" in html
+            assert "SM will not change these" in html
 
     def test_the_env_signature_ignores_instance_counts(self):
         """One more qubit with the SAME defect is not a new thing to say."""
@@ -682,7 +748,46 @@ class TestTheDiagnosticsCard:
         assert client.post("/type-fix/apply",
                            json={"paths": paths, "sig": sig}).status_code == 200
         html = client.get("/diagnostics/types-card").get_data(as_text=True)
-        assert "Auto-correct 0 values" in html
+        # QA F-G: this pin used to assert the bug ("Auto-correct 0 values" as a
+        # PRIMARY button) against its own docstring -- no offer for nothing
+        assert "Auto-correct" not in html
+        assert "type the number in the Json Tree View" in html
+        assert "See why" in html
+
+    # --- QA F-G: the offer counts what SM WILL convert ---------------------
+
+    def test_the_banner_offers_only_the_convertible_count(self, client):
+        html = client.get("/type-alarm/banner").get_data(as_text=True)
+        # 7 text values, 3 convertible: "Fix 3", never "Fix 7"
+        assert f"Fix {len(_CONVERTIBLE)} values" in html
+        assert "Fix 7 value" not in html
+
+    def test_the_banner_has_no_primary_fix_once_only_refusals_remain(self, client):
+        _, paths, sig = _plan(client)
+        assert client.post("/type-fix/apply",
+                           json={"paths": paths, "sig": sig}).status_code == 200
+        html = client.get("/type-alarm/banner").get_data(as_text=True)
+        assert "stored as TEXT" in html                  # still reported...
+        assert not re.search(r"Fix \d+ value", html)    # ...but not offered
+        assert "type the number in the Json Tree View" in html
+        assert "Why not" in html
+
+    def test_a_plan_with_nothing_to_convert_opens_its_reasons(self, client):
+        _, paths, sig = _plan(client)
+        client.post("/type-fix/apply", json={"paths": paths, "sig": sig})
+        html = client.get("/type-fix/plan").get_data(as_text=True)
+        assert "none of them can be converted safely" in re.sub(r"\s+", " ", html)
+        assert re.search(r'<details class="tfx-skipped"\s+open', html)
+        assert "Staged into the working copy" not in html
+        assert "type the number" in html
+        # a per-row way there, only for the ones typing can fix
+        go = re.findall(r'data-goto="([^"]+)"', html)
+        assert set(go) == {"qubits.q1.slot", "qubits.q1.slot0", "qubits.q1.grouped"}
+
+    def test_a_plan_with_rows_keeps_its_staging_note_and_closed_list(self, client):
+        html, _, _ = _plan(client)
+        assert "Staged into the working copy" in html
+        assert not re.search(r'<details class="tfx-skipped"\s+open', html)
 
     def test_a_chip_with_no_anomalies_says_so(self, tmp_path):
         clean = tmp_path / "clean"

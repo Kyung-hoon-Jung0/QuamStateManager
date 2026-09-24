@@ -4661,7 +4661,70 @@ class TestConfigStaleness:
         # The preview was generated from files that lack the edit → honest stale.
         data = loaded_client.get("/qubit/qA1/waveform/const_z").get_json()
         assert data["stale"] is True
-        assert "predates the unsaved edits" in resp.data.decode()
+        # QA diagnostics-r2-09: the edits are STILL unsaved, so "Regenerate to
+        # include them" was a loop -- the note now says to save first.
+        html = resp.data.decode()
+        assert "Save them first" in html
+        assert "Regenerate to include them" not in html
+
+    # --- QA diagnostics-r2-09: the stale note must not loop ----------------
+
+    def test_regenerating_twice_with_unsaved_edits_still_says_save_first(
+        self, loaded_client, monkeypatch,
+    ):
+        self._mock_previewer(monkeypatch)
+        loaded_client.post(
+            "/field/edit", data={"dot_path": "qubits.qA1.f_01", "value": "9.99e9"},
+        )
+        for _ in range(2):
+            html = loaded_client.post("/config/regenerate").data.decode()
+            assert "config-stale-note" in html
+            assert "Save them first" in html
+            # the export hint says the same thing, not "Regenerate for recent edits"
+            assert "Regenerate for recent edits" not in html
+        page = loaded_client.get("/config", headers={"HX-Request": "true"}).data.decode()
+        assert "Save them first" in page
+
+    def test_save_then_regenerate_clears_the_note(self, loaded_client, monkeypatch):
+        self._mock_previewer(monkeypatch)
+        loaded_client.post(
+            "/field/edit", data={"dot_path": "qubits.qA1.f_01", "value": "9.99e9"},
+        )
+        assert loaded_client.post("/save").status_code == 200
+        html = loaded_client.post("/config/regenerate").data.decode()
+        assert "config-stale-note" not in html
+
+    def test_saved_but_not_regenerated_keeps_the_regenerate_wording(
+        self, loaded_client, monkeypatch,
+    ):
+        # once saved, a Regenerate WOULD include them -- the old sentence is
+        # right again
+        self._mock_previewer(monkeypatch)
+        loaded_client.post(
+            "/field/edit", data={"dot_path": "qubits.qA1.f_01", "value": "9.99e9"},
+        )
+        loaded_client.post("/config/regenerate")
+        loaded_client.post("/save")
+        page = loaded_client.get("/config", headers={"HX-Request": "true"}).data.decode()
+        assert "Regenerate to include them" in page
+        assert "Save them first" not in page
+
+    def test_diagnostics_note_says_save_first_only_while_unsaved(
+        self, loaded_client, monkeypatch,
+    ):
+        self._mock_previewer(monkeypatch)
+        loaded_client.post("/config/regenerate")
+        loaded_client.post(
+            "/field/edit", data={"dot_path": "qubits.qA1.f_01", "value": "9.99e9"},
+        )
+        html = loaded_client.get("/diagnostics", headers={"HX-Request": "true"}).data.decode()
+        assert "your unsaved edits" in html
+        assert "Save to working state" in html
+        loaded_client.post("/save")
+        html = loaded_client.get("/diagnostics", headers={"HX-Request": "true"}).data.decode()
+        assert "config-stale-note" in html                 # still stale, but...
+        assert "your unsaved edits" not in html            # ...Regenerate fixes it now
+        assert "for current results" in html
 
     def test_legacy_meta_without_basis_reads_stale(self, loaded_client):
         _seed_config_cache(loaded_client)

@@ -27081,6 +27081,18 @@ def _config_stale(store: QuamStore) -> bool:
     return _config_state_hash(store) != basis
 
 
+def _config_needs_save(store: QuamStore) -> bool:
+    """QA diagnostics-r2-09: stale AND a Regenerate right now still could not
+    fix it -- the edits are unsaved, and the previewer reads the working-copy
+    FILES (docs/30), so pressing Regenerate again stays stale forever. The
+    notes then have to say "save first", not "Regenerate". The same "unsaved"
+    test config_regenerate records as ``unsaved_at_generate``."""
+    if not _config_stale(store):
+        return False
+    with store._lock:
+        return bool(store.change_log)
+
+
 @bp.route("/config", methods=["GET"])
 def config_browser():
     """Top-level Config Viewer page (Surface C)."""
@@ -27099,6 +27111,7 @@ def config_browser():
             meta=store.generated_config_meta,
             top_level_keys=top_keys,
             config_stale=_config_stale(store),
+            config_needs_save=_config_needs_save(store),
             env_selected=env_selected,
         ),
     )
@@ -27487,6 +27500,7 @@ def diagnostics_view():
             # that so a stale config doesn't pass off old findings as current
             # (the one staleness primitive, shared with the Config Viewer).
             config_stale=_config_stale(store),
+            config_needs_save=_config_needs_save(store),
         ),
     )
 
@@ -27548,8 +27562,16 @@ def diagnostics_env_card():
     store = _store()
     if not store:
         return ("", 204)
-    return render_template("_diagnostics_env.html",
-                           env_card=_env_card_state(store), oob=False)
+    env_card = _env_card_state(store)
+    resp = make_response(render_template("_diagnostics_env.html",
+                                          env_card=env_card, oob=False))
+    # QA F-L: the probe's own poll (?poll=1) announces the finish ONCE, so the
+    # Types card / findings / pill re-read the new schema through their
+    # existing diagnostics-changed listeners -- they kept the pre-probe count
+    # until a reload. A plain GET never triggers (no loop, no new poller).
+    if request.args.get("poll") == "1" and not env_card.get("probing"):
+        resp.headers["HX-Trigger"] = "diagnostics-changed"
+    return resp
 
 
 @bp.route("/diagnostics/summary")
@@ -27981,6 +28003,7 @@ def config_regenerate():
             meta=store.generated_config_meta,
             error=None,
             config_stale=_config_stale(store),
+            config_needs_save=_config_needs_save(store),
         ))
         # Lets the per-qubit/pair Generated Config sections re-GET themselves.
         resp.headers["HX-Trigger"] = "configRegenerated"
@@ -28001,6 +28024,7 @@ def config_regenerate():
         # Keep the export row's stale hint honest even when the refresh failed —
         # the last-good config the buttons export may predate current edits.
         config_stale=_config_stale(store),
+        config_needs_save=_config_needs_save(store),
     ), 502
 
 
@@ -28354,6 +28378,24 @@ def _gather_preflight(inst: str, data: dict) -> dict:
     dataset_roots = scheduler.find_dataset_roots(cfg.get("storage_location"))
     workspace_roots = [str(p) for p in _ws().root_folders]
 
+    # QA diagnostics-r2-05: the red banner's own crash-class count -- the same
+    # findings and the same summarize() error tier -- so the pre-flight can
+    # never read "ready to run" under a banner that says the chip would crash
+    # a node run. None when it cannot be computed (skip, never a guess).
+    diag_errors, diag_examples = None, []
+    diag_store = _store() if ctx_type == "quam" else None
+    if diag_store is not None:
+        try:
+            diag_findings = _active_chip_findings(diag_store)
+            diag_errors = int(diagnostics.summarize(diag_findings).get("error") or 0)
+            diag_examples = [f.location for f in diag_findings
+                             if f.severity == "error"
+                             and not getattr(f, "acknowledged", None)
+                             and not getattr(f, "advisory", False)]
+        except Exception:  # noqa: BLE001 -- a lint bug must never break a gate
+            logger.warning("pre-flight diagnostics count failed", exc_info=True)
+            diag_errors, diag_examples = None, []
+
     result = scheduler.build_preflight({
         "chip_open": open_folder is not None,
         "chip_type": ctx_type,
@@ -28368,6 +28410,8 @@ def _gather_preflight(inst: str, data: dict) -> dict:
         "chip_clean": chip_clean,
         "dataset_roots": dataset_roots,
         "workspace_roots": workspace_roots,
+        "diagnostics_errors": diag_errors,
+        "diagnostics_examples": diag_examples,
     })
     result["effective_config"] = cfg
     result["editable_install"] = eff.get("editable_install")

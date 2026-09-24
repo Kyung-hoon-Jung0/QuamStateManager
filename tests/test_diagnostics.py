@@ -285,6 +285,21 @@ class TestLintState:
         f = cats["value_type"][0]
         assert f.severity == "warning" and f.location == "qubits.q4.f_01"
 
+    def test_numeric_text_is_one_row_not_two(self):
+        # QA F-F: "2e-05" among numeric siblings fired the sibling vote AND the
+        # stored-as-TEXT row for the same leaf -- one value, two badge counts
+        s = _healthy_state()
+        s["qubits"]["q3"] = {"id": "q3", "T1": 1.2e-5}
+        s["qubits"]["q4"] = {"id": "q4", "T1": "2e-05"}
+        found = diagnostics.lint_state(_store(state=s))
+        at = [f.category for f in found if f.location == "qubits.q4.T1"]
+        assert at == ["value_type_strnum"], at
+        # ...while non-numeric text (strnum cannot see it) keeps the vote
+        s["qubits"]["q4"]["f_01"] = "oops"
+        s["qubits"]["q3"]["f_01"] = 5.2e9
+        cats = _cats(diagnostics.lint_state(_store(state=s)))
+        assert [f.location for f in cats["value_type"]] == ["qubits.q4.f_01"]
+
     def test_downconverter_literal_info(self):
         s = _healthy_state()
         s["ports"]["mw_inputs"]["con1"]["1"]["1"]["downconverter_frequency"] = 6.0e9
@@ -337,6 +352,31 @@ class TestLintConfig:
         cats = _cats(diagnostics.lint_config(cfg))
         assert "config_orphan_pulse" in cats
         assert cats["config_orphan_pulse"][0].severity == "warning"
+
+    # QA diagnostics-r2-08: quam's own template pulse is not the user's orphan
+    @staticmethod
+    def _with_quam_template(cfg: dict) -> dict:
+        cfg["pulses"]["const_pulse"] = {"operation": "control", "length": 1000,
+                                        "waveforms": {"I": "const_wf", "Q": "zero_wf"}}
+        cfg["waveforms"]["zero_wf"] = {"type": "constant", "sample": 0.0}
+        cfg["waveforms"]["const_wf"] = {"type": "constant", "sample": 0.1}
+        return cfg
+
+    def test_quam_template_pulse_is_not_an_orphan(self):
+        cats = _cats(diagnostics.lint_config(self._with_quam_template(_healthy_config())))
+        assert not [c for c in cats if c.startswith("config_orphan_")], cats
+
+    def test_a_changed_const_pulse_still_warns(self):
+        for mutate in (lambda p: p.__setitem__("length", 2000),
+                       lambda p: p["waveforms"].__setitem__("I", "wf_i")):
+            cfg = self._with_quam_template(_healthy_config())
+            mutate(cfg["pulses"]["const_pulse"])
+            cats = _cats(diagnostics.lint_config(cfg))
+            assert [f.location for f in cats.get("config_orphan_pulse", [])]                 == ["pulses.const_pulse"]
+
+    def test_the_copy_matches_the_installed_quam_template(self):
+        tpl = pytest.importorskip("quam.core.qua_config_template")
+        assert diagnostics._QUAM_TEMPLATE_PULSES == tpl.qua_config_template["pulses"]
 
     def test_no_version_is_not_flagged(self):
         # A missing top-level 'version' key is no longer flagged — the in-house
