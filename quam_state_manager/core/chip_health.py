@@ -122,7 +122,7 @@ METRIC_META: dict[str, dict[str, Any]] = {
     "f_12":        {"label": "f₁₂ transition",      "abbr": "f₁₂",  "direction": "neutral",
                     "blurb": "1→2 transition frequency; f₀₁−f₁₂ gives the anharmonicity."},
     "anharmonicity": {"label": "Anharmonicity",     "abbr": "anharm", "direction": "neutral",
-                    "blurb": "Spacing between the 0→1 and 1→2 transitions — keeps the qubit a two-level system. Typically negative."},
+                    "blurb": "Spacing between the 0→1 and 1→2 transitions — keeps the qubit a two-level system. Stored as a positive magnitude, f₀₁−f₁₂."},
     "chi":         {"label": "Dispersive shift χ",  "abbr": "χ",     "direction": "neutral",
                     "blurb": "Qubit-state-dependent shift of the readout resonator — sets readout contrast."},
     "readout_frequency": {"label": "Readout frequency", "abbr": "f_ro", "direction": "neutral",

@@ -213,6 +213,36 @@ def test_unnormalized_confusion_matrix_yields_no_readout_fidelity():
     assert q._cm_diag([[98, 2], [5, 95]], 0) is None
 
 
+def _stochastic(diag):
+    """A row-stochastic matrix with the given diagonal (off-diagonals split)."""
+    n = len(diag)
+    return [[d if i == j else (1 - d) / (n - 1) for j in range(n)]
+            for i, d in enumerate(diag)]
+
+
+def test_equal_decimal_readout_fidelities_are_one_double():
+    """QA F-25: q2 [[0.903,..],[..,0.8665]] and q5 [[0.9105,..],[..,0.859]] on
+    the customer chip copy both average to 0.88475 in decimal, but the binary
+    float mean gave 0.88475 and 0.8847499999999999 -- the Overview printed
+    88.48 % and 88.47 %. Equal decimal means are ONE double, on the qubit dict
+    (GE and GEF alike) and on the Compare hub's own copy of the formula."""
+    from quam_state_manager.core import compare as C
+    from quam_state_manager.core import query as q
+    q2 = _stochastic([0.903, 0.8665])
+    q5 = _stochastic([0.9105, 0.859])
+    assert q._assignment_fidelity(q2) == q._assignment_fidelity(q5) == 0.88475
+    # a three-state mean that is not a finite decimal still lands on one double
+    g1 = _stochastic([0.862, 0.903, 0.906])
+    g2 = _stochastic([0.844, 0.8935, 0.9335])
+    assert q._assignment_fidelity_n(g1) == q._assignment_fidelity_n(g2)
+    # the Compare hub derives the same number the qubit dict does
+    store = QuamStore.from_dicts({"qubits": {
+        "q2": {"resonator": {"confusion_matrix": q2}},
+        "q5": {"resonator": {"confusion_matrix": q5}},
+    }}, {})
+    assert C._readout_fidelity(store, "q2") == C._readout_fidelity(store, "q5") == 0.88475
+
+
 class TestNoDataIsNotInSpec:
     """The chip announced "✓ Chip looks healthy — all 20 qubits in spec" over a
     chip with NO coherence or fidelity data at all.

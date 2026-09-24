@@ -2645,6 +2645,12 @@ window.ChipStatus.mount = function (opts) {
                 if (agg.count === 0) return;
 
                 var range = agg.max - agg.min || 1;
+                // QA F-19b: ONE scale position per value, shared by the tile and
+                // its bar. A lone value has no place on a chip-relative ramp: the
+                // tile sat it mid-scale (t=0.5) while its bar computed
+                // (v-min)/range = 0, the LOW end, and then flipped to mid-scale on
+                // the first bar-palette switch (recolorBarCharts reads the tile's t).
+                var _tOf = function (v) { return agg.count > 1 ? (v - agg.min) / range : 0.5; };
                 var scorer = outlierScorer(_physCz, {   // robust MAD flag (this gate),
                     // spec-gated: an in-spec fidelity is never branded
                     verdict: function(v) { return _verdict(v, thresholds['cz_fidelity']); },
@@ -2705,12 +2711,8 @@ window.ChipStatus.mount = function (opts) {
                             + '<div class="heatmap-cell-value">—</div></div>';
                         return;
                     }
-                    var bg, fg, ht;
-                    if (agg.count > 1) {
-                        ht = (p.value - agg.min) / range;
-                        bg = interpolateColor(ht, stops);
-                        fg = textColorForBg(bg);
-                    } else { ht = 0.5; bg = stops[2]; fg = textColorForBg(stops[2]); }
+                    var ht = _tOf(p.value);
+                    var bg = interpolateColor(ht, stops), fg = textColorForBg(bg);
                     var _physOk = p.value > 0 && p.value <= 1.0000001;
                     var _isOut = scorer && _physOk && scorer.isOutlier(p.value);
                     var _outTip = _isOut ? ' \u00b7 \u26a0 outlier (' + scorer.score(p.value).toFixed(1) + '\u00d7 MAD from chip median ' + (scorer.median * 100).toFixed(2) + '%)' : '';
@@ -2733,7 +2735,7 @@ window.ChipStatus.mount = function (opts) {
                 // grid's offsetHeight, only measurable after the single write.
                 var sorted = pairs.slice().sort(function(a, b) { return (b.value || 0) - (a.value || 0); });
                 var barColors = sorted.map(function(p) {
-                    return interpolateColor((p.value - agg.min) / range, _barColorScale);
+                    return interpolateColor(_tOf(p.value), _barColorScale);
                 });
                 var displayVals = sorted.map(function(p) { return p.value * 100; });
 
@@ -2994,7 +2996,10 @@ window.ChipStatus.mount = function (opts) {
 
             if (sorted.length > 0) {
                 var barColors = sorted.map(function(n) {
-                    var t = (_mv(n, def.key) - agg.min) / range;
+                    // QA F-19b: a lone value sits mid-scale -- the colour
+                    // recolorBarCharts gives it (its tile carries no t), so a
+                    // bar-palette switch no longer moves it off the low end.
+                    var t = agg.count > 1 ? (_mv(n, def.key) - agg.min) / range : 0.5;
                     return interpolateColor(t, _barColorScale);
                 });
 

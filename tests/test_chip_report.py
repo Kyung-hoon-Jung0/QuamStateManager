@@ -336,6 +336,22 @@ class TestEverythingExtractable:
         assert "P(RO) (dBm)" in b
         assert "-20.0 dBm" in b                  # 0 dBm FSP, amplitude 0.1
 
+    def test_the_anharmonicity_caption_matches_the_stored_sign(self, rich_client):
+        """QA F-25: the caption defined alpha as f12 - f01 (and spelt f01 as
+        f10) over a column of POSITIVE anharmonicities. SM's convention
+        (docs/162, chip_health's f_12 blurb) is a positive magnitude,
+        f01 - f12; caption and the metric blurb now say the same."""
+        import html as _html
+        from quam_state_manager.core import chip_health
+        b = _html.unescape(rich_client.get("/chip-status/report").get_data(as_text=True))
+        i = b.index("Qubits — frequencies")
+        cap = b[i:b.index("</p>", i)]
+        assert "anharmonicity f₀₁−f₁₂" in cap, cap
+        assert "f₁₂−f₀₁" not in cap, cap
+        assert "f₁₀" not in cap, cap
+        blurb = chip_health.METRIC_META["anharmonicity"]["blurb"]
+        assert "negative" not in blurb and "f₀₁−f₁₂" in blurb, blurb
+
     def test_a_small_number_keeps_its_precision(self, rich_client):
         """The report must not invent a second number renderer: a %.4f pass
         rounded a 4.4588e-04 readout threshold to "0.0004"."""
