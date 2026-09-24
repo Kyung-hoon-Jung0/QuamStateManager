@@ -4394,8 +4394,7 @@ window.ChipTrends = (function () {
                 // Trends it was clicked from, and its header's x
                 // (closeInspector) clears #inspector-pane -- so the x did
                 // nothing and the only way back was the sidebar.
-                window.htmx.ajax('GET', url, { source: '#inspector-pane',
-                                               target: '#inspector-pane',
+                window.htmx.ajax('GET', url, { source: '#inspector-pane', target: '#inspector-pane',
                                                swap: 'innerHTML' });
             } else {
                 window.location.href = url;
