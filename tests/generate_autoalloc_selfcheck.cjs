@@ -535,6 +535,20 @@ function statusText(win) {
     // an unchanged box (blur) does nothing
     tr.querySelector('.gen-wiring-pin').dispatchEvent(new win.Event('blur'));
     ok(allocCalls(log).length === 2, 'A20: an unchanged pin does not re-allocate');
+    // review of F6: a readout pin retyped in the box keeps the input its line
+    // is cabled to (here in 2 with out 1 -- not the pair the wizard derives)
+    win.document.activeElement.blur();   // (the focused box would commit its stale text)
+    G.state.spec.lines.find(l => l.element === 'q1' && l.line === 'resonator').channel =
+      { kind: 'mw_fem', con: 1, slot: 1, out_port: 1, in_port: 2 };
+    G.state.wiringTouched = true;   // a drag / CSV / re-generate made it (deriveLines keeps it)
+    G.goToStep(4); G.goToStep(5); await settle();
+    const rrBox = rowOf(win, G, 'q1', 'resonator').querySelector('.gen-wiring-pin');
+    rrBox.value = '1/1/3';
+    rrBox.dispatchEvent(new win.Event('change', { bubbles: true }));
+    const rrNow = G.state.spec.lines.find(l => l.element === 'q1' && l.line === 'resonator').channel;
+    ok(rrNow && rrNow.out_port === 3 && rrNow.in_port === 2,
+      'A20/F6: the typed readout pin keeps its input cable (got ' + JSON.stringify(rrNow) + ')');
+    await settle();
 
     // a pin typed while a request is in flight runs once more when it answers
     let release;
@@ -597,6 +611,11 @@ function statusText(win) {
     ok(G3.state.step === 5 &&
        w3.win.document.getElementById('gen-message').textContent.indexOf('changed since the last allocation') >= 0,
       'A20: Next refuses a stale allocation');
+    // review of F7/F5: #gen-message is below the fold on step 5 -- the
+    // refusal is said beside the step's own Next too
+    const st3 = w3.win.document.getElementById('gen-allocate-status').textContent;
+    ok(st3.indexOf('changed since the last allocation') >= 0,
+      'A20: the refusal is also at the Auto-allocate row (got "' + st3 + '")');
   })();
 
   // ── A21 (QA generate-r2-06): an xy-only drag must not freeze the feedlines ──
@@ -983,9 +1002,20 @@ function statusText(win) {
     G.goToStep(4);
     ok(G.state.chipArch === 'flux_tunable_coupler', 'A24: starts as the default CZ chip');
     G.state.spec.populate.pairs = { 'q1-q2': { cz_interaction_duration: 4.8e-8 } };
+    // review of r2-12: the LINE PINS of a held architecture come back too --
+    // deriveLines used to drop the flux/coupler pins with their lines, so the
+    // allocator re-chose every z port after the module returned.
+    G.goToStep(5);
+    const lineOf = (el, lt) => G.state.spec.lines.find(l => l.element === el && l.line === lt);
+    const pinOf = (el, lt) => { const l = lineOf(el, lt); return l && l.channel ? G._test.channelToPin(l.channel) : (l ? 'auto' : 'none'); };
+    lineOf('q1', 'flux').channel = { kind: 'lf_fem', con: 1, out_slot: 2, out_port: 8 };
+    lineOf('q1-q2', 'coupler').channel = { kind: 'lf_fem', con: 1, out_slot: 2, out_port: 7 };
     setFems([MW]);
     ok(G.state.chipArch === 'fixed_frequency' && G.state.heldChipArch === 'flux_tunable_coupler',
       'A24: no LF-FEM -> builds fixed-frequency, CZ held');
+    G.goToStep(5); G.goToStep(4);   // the fallback's lines are derived: no z / coupler
+    ok(pinOf('q1', 'flux') === 'none' && pinOf('q1-q2', 'coupler') === 'none',
+      'A24: on hold the flux / coupler lines are gone (' + pinOf('q1', 'flux') + ')');
     ok(note().classList.contains('gen-arch-held') &&
        /Flux-tunable qubits \+ tunable coupler is on hold: it needs an LF-FEM/.test(note().textContent),
       'A24: the note says what is on hold and why (got "' + note().textContent + '")');
@@ -997,12 +1027,21 @@ function statusText(win) {
     G.goToStep(4);
     delete win.document.getElementById('generate-root')._quamGenInit;
     G.state.heldChipArch = null;   // a fresh page starts with nothing in memory
+    G.state.heldPins = {};
     G.init();
     ok(G.state.heldChipArch === 'flux_tunable_coupler', 'A24: the hold survives a draft reload');
     setFems([MW, LF]);
     ok(G.state.chipArch === 'flux_tunable_coupler' && G.state.pairGate === 'cz_tunable' &&
        G.state.qubitFlux === true && G.state.heldChipArch === null,
       'A24: the LF-FEM back -> the CZ architecture is back (got ' + G.state.chipArch + '/' + G.state.pairGate + ')');
+    G.goToStep(5);
+    ok(pinOf('q1', 'flux') === '1/2/8' && pinOf('q1-q2', 'coupler') === '1/2/7',
+      'A24: ...with the flux and coupler pins it had, through a draft reload (q1 flux ' +
+      pinOf('q1', 'flux') + ', coupler ' + pinOf('q1-q2', 'coupler') + ')');
+    ok(pinOf('q2', 'flux') === 'auto' && Object.keys(G.state.heldPins).length === 0,
+      'A24: an unpinned line stays auto, and nothing is left on hold (' + JSON.stringify(G.state.heldPins) + ')');
+    lineOf('q2', 'drive').channel = { kind: 'mw_fem', con: 1, slot: 1, out_port: 5 };
+    G.goToStep(4);
     ok(!note().classList.contains('gen-arch-held') && !/on hold/.test(note().textContent),
       'A24: ...and the note stops saying "on hold"');
     // CR through an MW-FEM remove / re-add
@@ -1013,9 +1052,20 @@ function statusText(win) {
     setFems([LF]);
     ok(G.state.heldChipArch === 'fixed_frequency' && G.state.pairGate !== 'cr',
       'A24: no MW-FEM -> CR held');
+    G.goToStep(5); G.goToStep(4);
+    ok(pinOf('q2', 'drive') === 'none', 'A24: with no MW-FEM the drive lines are gone');
+    // a held pin whose element is gone (q9: removed while on hold) is dropped,
+    // so a later qubit of that name never inherits it
+    G.state.heldPins['q9|drive'] = { channel: { kind: 'mw_fem', con: 1, slot: 1, out_port: 6 }, group: null };
+    G.goToStep(5); G.goToStep(4);
+    ok(!('q9|drive' in G.state.heldPins) && 'q2|drive' in G.state.heldPins,
+      'A24: a held pin of an element that is gone is dropped (' + Object.keys(G.state.heldPins).join(',') + ')');
     setFems([MW, LF]);
     ok(G.state.chipArch === 'fixed_frequency' && G.state.pairGate === 'cr' && G.state.qubitFlux === false,
       'A24: the MW-FEM back -> CR is back (got ' + G.state.chipArch + '/' + G.state.pairGate + ')');
+    G.goToStep(5);
+    ok(pinOf('q2', 'drive') === '1/1/5', 'A24: ...and q2 drive has its pin back (got ' + pinOf('q2', 'drive') + ')');
+    G.goToStep(4);
     // an explicit pick while on hold replaces the hold
     arch.value = 'flux_tunable_fixed_coupler';
     arch.dispatchEvent(new win.Event('change', { bubbles: true }));
@@ -1027,6 +1077,15 @@ function statusText(win) {
     ok(G.state.heldChipArch === null, 'A24: an explicit pick clears the hold');
     setFems([MW, LF]);
     ok(G.state.chipArch === 'fixed_frequency', 'A24: ...so adding the LF-FEM changes nothing');
+    // review of r2-12: an EMPTY rack builds no fallback either -- the note
+    // names both modules and claims no "building as" chip
+    arch.value = 'flux_tunable_coupler';
+    arch.dispatchEvent(new win.Event('change', { bubbles: true }));
+    setFems([]);
+    ok(note().classList.contains('gen-arch-held') && /no FEM yet/.test(note().textContent) &&
+       /MW-FEM/.test(note().textContent) && /LF-FEM/.test(note().textContent) &&
+       !/Building as/.test(note().textContent),
+      'A24: an empty rack names both modules, no fallback build (got "' + note().textContent + '")');
   })();
 
   // ── A8: a step-4 topology edit re-allocates on the next Wiring entry ─────

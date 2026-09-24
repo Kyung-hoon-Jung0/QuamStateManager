@@ -91,6 +91,9 @@
     // the fallback meanwhile and gives this back once the module returns; an
     // explicit pick (applyChipArch) replaces it. null = nothing on hold.
     heldChipArch: null,
+    // The pins of lines the rack cannot carry meanwhile (deriveLines), keyed
+    // "element|line" -> {channel, group}; given back when the module returns.
+    heldPins: {},
 
     // Re-generate mode — set by QuamGen.hydrateFromSpec() when the wizard is
     // re-opened pre-filled from an existing chip. "generate" builds fresh;
@@ -396,6 +399,10 @@
     var err = guard ? guard() : null;
     if (err) {
       showMessage(err, "warn");
+      // Step 5's Next sits on the Auto-allocate row, and #gen-message is below
+      // the fold there: say it beside the button too (QA review of F7/F5).
+      var st = state.step === 5 && document.getElementById("gen-allocate-status");
+      if (st) st.textContent = "✗ " + err;
       return;
     }
     if (state.step < STEP_COUNT) {
@@ -2136,10 +2143,15 @@
     if (archNote && held) {
       // The visible notice for every removal path (Delete, the slot menu,
       // M/L keys, arrow cycling) -- not a confirm on one of them.
-      archNote.textContent = ARCH_LABEL[held] + " is on hold: it needs " +
+      archNote.textContent = (!mw && !lf)
+        // an empty rack builds no fallback either (QA review of r2-12)
+        ? ARCH_LABEL[held] + " is on hold: step 3 has no FEM yet — add an MW-FEM " +
+          "(readout, drive)" + (held === "fixed_frequency" ? "" : " and an LF-FEM (flux)") +
+          " there. Nothing can be built until then; it comes back on its own."
+        : ARCH_LABEL[held] + " is on hold: it needs " +
         (held === "fixed_frequency" ? "an MW-FEM" : "an LF-FEM") + ", and step 3 has none. " +
         "Building as " + ARCH_LABEL[state.chipArch].toLowerCase() + " until you add one — " +
-        "it comes back on its own; picking an architecture here replaces it.";
+        "it comes back on its own, line pins too; picking an architecture here replaces it.";
     } else if (archNote) {
       if (state.chipArch === "fixed_frequency") {
         archNote.textContent = !mw
@@ -2619,6 +2631,21 @@
       if (ln.channel) pinned[ln.element + "|" + ln.line] = ln.channel;
       if (ln.line === "resonator" && ln.group) groupOf[ln.element] = ln.group;
     });
+    // QA review of regenerate-r2-12: a line the step-3 rack cannot carry right
+    // now (no LF-FEM: flux / coupler; no MW-FEM: readout / drive / CR / ZZ /
+    // TWPA) took its pin with it, so a module removed and re-added came back
+    // with those lines on "auto" and the allocator re-chose their ports. The
+    // pins (and feedline) of such lines are held aside below and given back
+    // here when the line returns; a pin the line itself carries wins.
+    var heldPins = state.heldPins || {};
+    Object.keys(heldPins).forEach(function (k) {
+      var h = heldPins[k], cut = k.lastIndexOf("|");
+      if (!h) return;
+      if (!pinned[k] && h.channel) pinned[k] = h.channel;
+      if (h.group && k.slice(cut + 1) === "resonator" && !groupOf[k.slice(0, cut)]) {
+        groupOf[k.slice(0, cut)] = h.group;
+      }
+    });
 
     // docs/134: a re-generated chip's OPTIONAL line inventory (qubit z, pair
     // coupler/CR) is the SOURCE CHIP's truth, not a per-element derivation —
@@ -2753,6 +2780,23 @@
         }
       });
     }
+    // Hold the pins this derive dropped for want of a module, for elements that
+    // still exist; a line derived again, or an element gone, leaves the hold.
+    var emitted = {}, alive = {}, nextHeld = {};
+    lines.forEach(function (ln) { emitted[ln.element + "|" + ln.line] = true; });
+    state.spec.qubits.forEach(function (q) { alive[q] = true; });
+    state.spec.qubit_pairs.forEach(function (p) { if (p[0] && p[1]) alive[p[0] + "-" + p[1]] = true; });
+    (state.spec.twpas || []).forEach(function (tw) {
+      var tid = (tw && typeof tw === "object") ? tw.id : tw;
+      if (tid) alive[tid] = true;
+    });
+    Object.keys(pinned).forEach(function (k) {
+      var cut = k.lastIndexOf("|"), el = k.slice(0, cut), lt = k.slice(cut + 1);
+      if (emitted[k] || !alive[el]) return;
+      if ((lt === "flux" || lt === "coupler") ? lf : mw) return;   // dropped for another reason
+      nextHeld[k] = { channel: pinned[k], group: lt === "resonator" ? (groupOf[el] || null) : null };
+    });
+    state.heldPins = nextHeld;
     state.spec.lines = lines;
     // CR drive port mode (docs/54): 'shared_xy' = the customer's dual-
     // upconverter layout (CR/ZZ ride the control's xy port, LO 2).
@@ -2784,7 +2828,20 @@
     return null;
   }
 
-  function pinToChannel(str, lineType) {
+  // The readout INPUT a retyped resonator pin keeps (QA review of F6): the
+  // input is a cable of its own, and retyping the OUTPUT pin does not move it
+  // -- real chips read out on (out 1, in 2) or (out 8, in 1), and deriving
+  // the input from the new output silently rewired it. Kept when the line
+  // already names one on real hardware; null (derive the LO partner) when
+  // there is none, when it is only the wizard's partial LO-safe pre-pin, or
+  // when a Generate pin's input is exactly the LO partner the wizard derived.
+  function keptReadoutInput(prev) {
+    if (!prev || prev.in_port == null || !channelToPin(prev)) return null;
+    if (state.mode !== "regenerate" && prev.in_port === loPairedInput(prev.out_port)) return null;
+    return prev.in_port;
+  }
+
+  function pinToChannel(str, lineType, prev) {
     // QA generate-r2-11: parseInt accepted '1.5' (-> 1), '1e999' (-> 1) and any
     // range, so '1/1/99' pinned output 99 and the allocator answered "not
     // enough channels". A pin is three whole numbers naming real hardware:
@@ -2801,7 +2858,8 @@
       // inputs 1-2 only, so '1/1/8' could never allocate. The input follows the
       // output's LO partner; an output with no input partner leaves it free.
       var rch = { kind: "mw_fem", con: con, slot: slot, out_port: port };
-      var inp = loPairedInput(port);
+      var inp = keptReadoutInput(prev);
+      if (inp == null) inp = loPairedInput(port);
       if (inp != null) rch.in_port = inp;
       return rch;
     }
@@ -2995,6 +3053,14 @@
     }).join(", ");
   }
 
+  // A pin box's id is its line's (QA review of F5/F7): a typed pin now
+  // re-allocates and the answer re-renders this table, so the wizard Ctrl+Z
+  // entry for an id-less box was stale ("Nothing to undo in the wizard.").
+  // With an id, tryUndo finds the re-rendered box and its change re-allocates.
+  function pinBoxId(ln) {
+    return "gen-pin-" + String(ln.element + "--" + ln.line).replace(/\s/g, "_");
+  }
+
   function renderWiringTable() {
     var host = document.getElementById("gen-wiring-table");
     if (!host) return;
@@ -3003,7 +3069,7 @@
     var ae = document.activeElement, keep = null;
     if (ae && ae.classList && ae.classList.contains("gen-wiring-pin") && host.contains(ae)) {
       keep = { idx: ae.closest("tr").dataset.idx, value: ae.value,
-               s: ae.selectionStart, e: ae.selectionEnd };
+               s: ae.selectionStart, e: ae.selectionEnd, prev: ae.__wizPrev };
     }
     if (!state.spec.lines.length) {
       host.innerHTML = '<p class="muted">Add qubits in step 4 first.</p>';
@@ -3042,7 +3108,9 @@
         "<td>" + ln.line +
         (ln.group ? ' <span class="muted">· ' + ln.group + "</span>" : "") + "</td>" +
         '<td class="gen-wiring-alloc">' + allocText(ln.element, ln.line) + "</td>" +
-        '<td><input type="text" class="gen-wiring-pin' + (why ? ' gen-wiring-pin-invalid" aria-invalid="true" title="' +
+        '<td><input type="text" id="' + escapeAttr(pinBoxId(ln)) + '" aria-label="' +
+        escapeAttr(ln.element + " " + ln.line + " pin") + '" class="gen-wiring-pin' +
+        (why ? ' gen-wiring-pin-invalid" aria-invalid="true" title="' +
         escapeAttr(why) : "") + '" placeholder="' + ph + '" value="' +
         escapeAttr(pin) + '"></td></tr>';
     }).join("");
@@ -3067,6 +3135,9 @@
         again.value = keep.value;
         window.NumberInput.fit(again);
         again.focus();
+        // focus() re-snapshots the Ctrl+Z "before" value from the half-typed
+        // text; the box's committed value is what an undo must go back to.
+        if (keep.prev !== undefined) again.__wizPrev = keep.prev;
         try { again.setSelectionRange(keep.s, keep.e); } catch (e) {}
       }
     }
@@ -3090,7 +3161,7 @@
     }
     if (v && _pinBad[key] === v) return;          // the same non-pin again (change + blur)
     var before = JSON.stringify(ln.channel || null);
-    ln.channel = v ? pinToChannel(v, ln.line) : null;
+    ln.channel = v ? pinToChannel(v, ln.line, ln.channel) : null;
     // QA generate-r2-11: typed text that is not a pin is flagged where it was
     // typed (and in the issues panel), never silently read as "auto".
     if (v && !ln.channel) _pinBad[key] = v; else delete _pinBad[key];
@@ -8487,7 +8558,7 @@
         scriptsEnabled: state.scriptsEnabled, scriptsPath: state.scriptsPath,
         qubitFlux: state.qubitFlux, couplerFlux: state.couplerFlux,
         pairGate: state.pairGate, chipArch: state.chipArch,
-        heldChipArch: state.heldChipArch,
+        heldChipArch: state.heldChipArch, heldPins: state.heldPins,
         crPortMode: state.crPortMode, zzEnabled: state.zzEnabled,
         topoZone: state.topoZone,
         autoPresetApplied: state.autoPresetApplied
@@ -8593,6 +8664,7 @@
          : (state.pairGate === "cz_fixed" ? "flux_tunable_fixed_coupler" : "flux_tunable_coupler"));
     // a reload between a step-3 remove and re-add keeps the hold (QA r2-12)
     state.heldChipArch = (d.heldChipArch && CHIP_ARCH[d.heldChipArch]) ? d.heldChipArch : null;
+    state.heldPins = (d.heldPins && typeof d.heldPins === "object") ? d.heldPins : {};
   }
 
   // Paint the steps that render() / the bind functions do not repaint from
@@ -8649,6 +8721,7 @@
     // CR chip by accident.
     state.chipArch = "flux_tunable_coupler";
     state.heldChipArch = null;
+    state.heldPins = {};
     state.pairGate = "cz_tunable";
     state.muxSize = 6;
     state.outputPath = "";
@@ -8700,6 +8773,7 @@
     } else {
       state.step = 1;
       state.spec = freshSpec();
+      state.heldPins = {};   // a fresh spec holds nothing of an earlier one
       state.env = null;
       state.allocation = null;
       state.pairsTouched = false;
@@ -9064,6 +9138,9 @@
       applyPortCsv: applyPortCsv,
       pinToChannel: pinToChannel,
       channelToPin: channelToPin,
+      femKindAt: femKindAt,                     // pin-rule parity with validate_spec
+      stalePinGroups: stalePinGroups,
+      pinCollisionGroups: pinCollisionGroups,
       allocEntry: allocEntry,
       allocText: allocText,
       deriveLines: deriveLines,

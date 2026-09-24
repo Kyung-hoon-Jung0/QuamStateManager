@@ -1,6 +1,7 @@
 """Drives tests/generate_wizundo_struct_selfcheck.cjs under node + jsdom: the
 wizard's Ctrl+Z undoes STRUCTURAL edits (QA regenerate-r2-30) -- a step-4 pair
-Control/Target pick, + Add pair, the pair x, and a step-5 wiring drag -- in
+Control/Target pick, + Add pair, the pair x, a step-5 wiring drag and a typed
+step-5 Pin whose re-allocation re-rendered its box -- in
 LIFO order with field edits, and never replays a snapshot that no longer
 describes the wizard (a content swap, a re-allocation). Skips without node +
 jsdom.

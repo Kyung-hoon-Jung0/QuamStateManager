@@ -6,6 +6,8 @@
 // "+ Add pair", the pair × and a step-5 wiring drag never fire `change` at
 // all -- Ctrl+Z answered "Nothing to undo in the wizard." (or silently undid
 // an OLDER, unrelated field) and the change stayed.
+// U6: a typed step-5 Pin re-allocates and the answer re-renders the table --
+// the undo entry must still find its (re-rendered) box.
 //
 // Drives the real _generate.html + generate.js; Ctrl+Z is window._wizUndo
 // .tryUndo(), the call app.js's global handler makes while the wizard is
@@ -67,7 +69,9 @@ function makeWorld() {
   win.fetch = function (url, opts) {
     log.push(String(url));
     if (String(url).indexOf('/generate/allocate') >= 0) {
-      return win.Promise.resolve({ json: () => win.Promise.resolve({ ok: true, result: { allocation: ALLOC() } }) });
+      const res = win.__allocFail ? { ok: false, error: 'NotEnoughChannelsException' }
+                                  : { ok: true, result: { allocation: ALLOC() } };
+      return win.Promise.resolve({ json: () => win.Promise.resolve(res) });
     }
     return new win.Promise(function () {});
   };
@@ -243,6 +247,70 @@ const undo = win => win._wizUndo.tryUndo();
     undo(win);
     ok(G.state.allocation === fresh && !toasts.slice(nToasts).some(t => /wiring drag/.test(t)),
       'U5: after a re-allocation the old drag snapshot is not replayed (got ' + JSON.stringify(toasts.slice(nToasts)) + ')');
+  }
+
+  // ── U6 (review of F5/F7): a typed step-5 Pin is undone after it re-allocates ─
+  // A changed pin re-allocates and the answer (success or failure) re-renders
+  // the wiring table, detaching the box the undo entry recorded -- Ctrl+Z said
+  // "Nothing to undo in the wizard." and the pin stayed.
+  for (const fail of [false, true]) {
+    const tag = 'U6' + (fail ? '/failed' : '') + ': ';
+    const { win, toasts, log } = makeWorld();
+    const G = buildWizard(win);
+    G.state.env = 'C:/envs/test/python.exe';
+    G.goToStep(5); await settle();
+    const di = G.state.spec.lines.findIndex(l => l.element === 'q2' && l.line === 'drive');
+    G.state.spec.lines[di].channel = { kind: 'mw_fem', con: 1, slot: 1, out_port: 3 };
+    G.goToStep(4); G.goToStep(5); await settle();
+    const box = () => win.document.querySelector('#gen-wiring-table tr[data-idx="' + di + '"] .gen-wiring-pin');
+    const first = box();
+    ok(first && first.value === '1/1/3', tag + 'the q2 drive box shows its pin (' + (first && first.value) + ')');
+    const nAlloc = () => log.filter(u => u.indexOf('/generate/allocate') >= 0).length;
+    const n0 = nAlloc();
+    win.__allocFail = fail;
+    typeField(win, first, '1/1/8');
+    await settle();
+    ok(nAlloc() === n0 + 1, tag + 'the typed pin re-allocated (' + (nAlloc() - n0) + ' calls)');
+    ok(!first.isConnected && box() && box().value === '1/1/8',
+      tag + 'the answer re-rendered the table (the typed box is detached, new box ' + (box() && box().value) + ')');
+    win.__allocFail = false;
+    ok(undo(win) === true, tag + 'Ctrl+Z is consumed');
+    await settle();
+    ok(box() && box().value === '1/1/3', tag + 'Ctrl+Z puts the box back to 1/1/3 (got ' + (box() && box().value) + ')');
+    ok(G.state.spec.lines[di].channel && G.state.spec.lines[di].channel.out_port === 3,
+      tag + '...and the pin (' + JSON.stringify(G.state.spec.lines[di].channel) + ')');
+    ok(nAlloc() === n0 + 2, tag + '...and re-allocates for it (' + (nAlloc() - n0) + ' calls)');
+    ok(!toasts.some(t => /Nothing to undo/.test(t)) && /q2 drive pin/.test(toasts.slice(-1)[0] || ''),
+      tag + 'the toast names the pin (got ' + JSON.stringify(toasts.slice(-1)) + ')');
+  }
+
+  // ── U6b: a re-render WHILE the box is being typed in keeps the undo target ──
+  // The re-rendered box is re-focused with the half-typed text, and focus()
+  // re-snapshotted THAT as the value Ctrl+Z goes back to.
+  {
+    const { win, toasts } = makeWorld();
+    const G = buildWizard(win);
+    G.state.env = 'C:/envs/test/python.exe';
+    G.goToStep(5); await settle();
+    const di = G.state.spec.lines.findIndex(l => l.element === 'q2' && l.line === 'drive');
+    G.state.spec.lines[di].channel = { kind: 'mw_fem', con: 1, slot: 1, out_port: 3 };
+    G.goToStep(4); G.goToStep(5); await settle();
+    const box = () => win.document.querySelector('#gen-wiring-table tr[data-idx="' + di + '"] .gen-wiring-pin');
+    box().focus();
+    box().value = '1/1/';
+    box().dispatchEvent(new win.Event('input', { bubbles: true }));
+    win.document.getElementById('gen-allocate-btn').dispatchEvent(new win.Event('click', { bubbles: true }));
+    await settle();
+    ok(win.document.activeElement === box() && box().value === '1/1/',
+      'U6b: the re-rendered box keeps focus and the half-typed text (' + box().value + ')');
+    setInput(win, box(), '1/1/8');
+    ok(G.state.spec.lines[di].channel.out_port === 8, 'U6b: the finished pin is committed');
+    await settle();
+    undo(win);
+    await settle();
+    ok(box().value === '1/1/3' && G.state.spec.lines[di].channel.out_port === 3,
+      'U6b: Ctrl+Z goes back to the committed 1/1/3, not the half-typed text (got ' + box().value +
+      ', ' + JSON.stringify(toasts.slice(-1)) + ')');
   }
 
   if (fails) {

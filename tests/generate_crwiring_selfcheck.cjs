@@ -77,6 +77,32 @@ ok(T.pinToChannel('1/2/3', 'cross_resonance').out_port === 3,
   ok(r3 && r3.out_port === 3 && !('in_port' in r3),
      'F6: an output with no input LO partner leaves in_port to the allocator');
   ok(T.pinToChannel('1//1', 'resonator') === null, 'F6: a blank segment is still refused');
+  // QA review of F6: the readout INPUT is its own cable -- retyping the output
+  // pin must not rewire it. Real chips read out on (out 1, in 2) (KRS_5Q) and
+  // (out 8, in 1); deriving the input from the new output rewired them.
+  const was = state.mode;
+  state.mode = 'regenerate';
+  const krs = { kind: 'mw_fem', con: 1, slot: 3, out_port: 1, in_port: 2 };
+  const moved = T.pinToChannel('1/4/1', 'resonator', krs);
+  ok(moved && moved.slot === 4 && moved.out_port === 1 && moved.in_port === 2,
+     'F6 review: a pin retyped over (out 1, in 2) keeps in 2 (got ' + JSON.stringify(moved) + ')');
+  const r81 = T.pinToChannel('1/1/1', 'resonator', { kind: 'mw_fem', con: 1, slot: 1, out_port: 8, in_port: 1 });
+  ok(r81 && r81.out_port === 1 && r81.in_port === 1, 'F6 review: (out 8, in 1) retyped to out 1 keeps in 1');
+  const r11 = T.pinToChannel('1/1/8', 'resonator', { kind: 'mw_fem', con: 1, slot: 1, out_port: 1, in_port: 1 });
+  ok(r11 && r11.out_port === 8 && r11.in_port === 1,
+     'F6 review: a source chip\'s (out 1, in 1) retyped to out 8 keeps in 1 (got ' + JSON.stringify(r11) + ')');
+  // a partial LO-safe pre-pin is the wizard's guess, not a cable: derive
+  const part = T.pinToChannel('1/1/1', 'resonator', { kind: 'mw_fem', out_port: 8, in_port: 2 });
+  ok(part && part.in_port === 1, 'F6 review: over a partial pre-pin the input is derived (got ' + JSON.stringify(part) + ')');
+  ok(T.pinToChannel('1/1/8', 'resonator', null).in_port === 2, 'F6 review: no previous pin -> derived');
+  state.mode = 'generate';
+  // Generate: an input that IS the LO partner the wizard derived is re-derived
+  const g = T.pinToChannel('1/1/1', 'resonator', { kind: 'mw_fem', con: 1, slot: 1, out_port: 8, in_port: 2 });
+  ok(g && g.in_port === 1, 'F6 review: Generate re-derives its own LO-partner input (got ' + JSON.stringify(g) + ')');
+  // ...but one it did not derive (a drag, a CSV) is a cable and stays
+  const gk = T.pinToChannel('1/1/3', 'resonator', { kind: 'mw_fem', con: 1, slot: 1, out_port: 1, in_port: 2 });
+  ok(gk && gk.in_port === 2, 'F6 review: Generate keeps an input it did not derive (got ' + JSON.stringify(gk) + ')');
+  state.mode = was;
   // QA generate-r2-11: a pin names real hardware -- con >= 1, slot 1-8, port 1-8,
   // whole numbers only (parseInt read '1.5' and '1e999' as 1)
   ['1/1/99', '1/1/0', '1/9/1', '0/1/1', '1.5/1/1', '1e999/1/1', '1/1/-1', 'x9', '1/1/8a'].forEach(function (p) {
