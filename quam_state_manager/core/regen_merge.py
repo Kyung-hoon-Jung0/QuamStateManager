@@ -136,6 +136,8 @@ class MergeStats:
     ports_carried: list[str] = field(default_factory=list)  # declared ports nothing referenced, carried onto a FEM the rebuild still uses (docs/202 §17)
     populate_protected: list[str] = field(default_factory=list)  # user populate edits kept as NEW over tier-1 (docs/72)
     populate_conflicts: list[str] = field(default_factory=list)  # hand-tuned OLD values kept where a populate edit implied a derived change (z delay)
+    deferred_grafted: list[str] = field(default_factory=list)  # OLD typed objects grafted over a NEW null -- judged in merge_states
+    rebuild_removed: list[tuple[str, str]] = field(default_factory=list)  # (path, why) an OLD typed object the rebuild left null, NOT grafted back
 
 
 @dataclass
@@ -317,12 +319,23 @@ def _merge(old: Any, new: Any, path: str, stats: MergeStats,
             if (legal is not None and schemas and isinstance(ov, dict)
                     and isinstance(ov.get("__class__"), str)
                     and ov["__class__"] not in schemas):
+                if k in deferred:
+                    # QA review of r2-14: the FIELD is known; the rebuild left
+                    # it empty and writes no such object anywhere -- not an
+                    # "old-stack field this env doesn't know".
+                    cls = ov["__class__"].rsplit(".", 1)[-1]
+                    stats.rebuild_removed.append((
+                        f"{path}.{k}" if path else k,
+                        f"old {cls} not put back — this build writes no {cls}"))
+                    continue
                 stats.schema_dropped.append(f"{path}.{k}" if path else k)
                 continue
             out[k] = copy.deepcopy(ov)
             n = _count_leaves(ov)
             stats.grafted += n
             stats.graft_subtrees.append((f"{path}.{k}" if path else k, n))
+            if k in deferred:
+                stats.deferred_grafted.append(f"{path}.{k}" if path else k)
         return out
     # leaves ---------------------------------------------------------------
     if is_pointer(new) or is_pointer(old):              # structure/pointer -> NEW
@@ -814,6 +827,55 @@ def _prune_removed_entity_refs(merged: dict, old_state: dict) -> list[str]:
     return dropped
 
 
+def _ungraft_unlanded(merged: dict, stats: MergeStats,
+                      new_wiring: dict | None) -> None:
+    """Put the NEW null back where an OLD typed object grafted over it points
+    at something the rebuild does not have (QA review of regenerate-r2-14).
+
+    The class gate only catches a class the rebuild writes NOWHERE. A rebuild
+    that drops one qubit's flux line while the others keep theirs still
+    writes FluxLine, so the old line was grafted back pointing at wiring the
+    rebuild never made -- reported as dangling, shipped anyway, and
+    ``generate_config()`` crashed with the build reporting success. The
+    rebuild removed it: an absolute pointer inside it that does not land in
+    the rebuilt chip means the NEW null stands and the object is reported in
+    ``stats.rebuild_removed``. A ``#/wiring`` / ``#/network`` pointer is
+    judged only when the new wiring is known, and ``twpas`` is left alone
+    (:func:`graft_twpa_wiring` carries its wiring after the merge). A graft
+    with every pointer landing is kept: a user-added object on a field the
+    builder leaves empty. Mutates ``merged`` and ``stats``.
+    """
+    for sub in stats.deferred_grafted:
+        segs = sub.split(".")
+        if segs[0] == "twpas":
+            continue
+        parent: Any = merged
+        for s in segs[:-1]:
+            parent = parent.get(s) if isinstance(parent, dict) else None
+        obj = parent.get(segs[-1]) if isinstance(parent, dict) else None
+        if not isinstance(obj, dict):
+            continue
+        miss = None
+        for _, v in _iter_leaves(obj):
+            if not (isinstance(v, str) and v.startswith("#/")):
+                continue
+            wiring_side = v[2:].split("/", 1)[0] in ("wiring", "network")
+            if wiring_side and new_wiring is None:
+                continue
+            if not _resolves(new_wiring if wiring_side else merged, v):
+                miss = v
+                break
+        if miss is None:
+            continue
+        parent[segs[-1]] = None
+        n = _count_leaves(obj)
+        stats.grafted -= n
+        stats.graft_subtrees = [g for g in stats.graft_subtrees if g != (sub, n)]
+        cls = str(obj.get("__class__") or "object").rsplit(".", 1)[-1]
+        stats.rebuild_removed.append(
+            (sub, f"old {cls} not put back — {miss} is not in the rebuild"))
+
+
 def merge_states(old_state: dict, new_state: dict,
                  class_schemas: dict[str, list[str]] | None = None,
                  protect_paths: set[str] | None = None,
@@ -859,6 +921,7 @@ def merge_states(old_state: dict, new_state: dict,
     carry_ports = _carryable_ports(old_state, new_state, old_wiring, new_wiring)
     merged = _merge(old_state, new_state, "", stats, class_schemas, protect_paths,
                     keep_classes, carry_ports)
+    _ungraft_unlanded(merged, stats, new_wiring)
     # A removed qubit/pair is still NAMED inside a list another object carried
     # (a TWPA's `qubits`); the list survives as a leaf, so drop the reference
     # visibly here (reported with the residual loss) rather than ship it broken.
@@ -891,6 +954,9 @@ def merge_states(old_state: dict, new_state: dict,
         # prefix-match its leaves.
         if any(p == dp or p.startswith(dp + ".") for dp in stats.schema_dropped):
             continue
+        # ...and an object the rebuild left empty is ONE line below, not its leaves
+        if any(p == rp or p.startswith(rp + ".") for rp, _ in stats.rebuild_removed):
+            continue
         # A path is SUPERSEDED (not lost) when the NEW structure replaced an OLD
         # inline subtree with a POINTER — the value lives at the pointer's target
         # (e.g. a CZ pulse the old builder stored inline in the macro, the current
@@ -903,7 +969,9 @@ def merge_states(old_state: dict, new_state: dict,
     # First, not sorted in: the panel shows only the first 80 of a list a
     # removed qubit fills with hundreds of its own leaves, and a changed
     # association is the line a reader could not have predicted.
-    stats.residual_lost[:0] = sorted(ref_drops, key=natural_key)
+    stats.residual_lost[:0] = sorted(
+        ref_drops + [f"{p} (the rebuild left it empty; {why})"
+                     for p, why in stats.rebuild_removed], key=natural_key)
 
     grafted_prefixes = [p for p, _ in stats.graft_subtrees]
     dangling: list[str] = []

@@ -1497,7 +1497,10 @@ class TestRegenMergeRefusesAnUntypeableGraft:
         new = {"qubits": {"q1": {"__class__": "lab.FixedFrequencyTransmon",
                                  "id": "q1", "z": None}}}
         res = self._merge(old, new)
-        assert "qubits.q1.z" in res.stats.schema_dropped
+        # QA review: reported as what it is -- the rebuild left `z` empty --
+        # not as an "old-stack field this env doesn't know" (schema_dropped).
+        assert [p for p, _ in res.stats.rebuild_removed] == ["qubits.q1.z"]
+        assert "qubits.q1.z" not in res.stats.schema_dropped
         assert res.merged["qubits"]["q1"]["z"] is None
 
     def test_a_user_added_pulse_still_grafts(self):

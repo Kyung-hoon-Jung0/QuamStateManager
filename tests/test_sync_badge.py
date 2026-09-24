@@ -202,8 +202,17 @@ class TestWhatWasDeliberatelyLeftOut:
         routes = (_ROOT / "quam_state_manager" / "web" / "routes.py").read_text(
             encoding="utf-8")
         drift = routes[routes.index("def state_drift("):][:5200]
-        assert '"live_diverged":' not in drift, sorted(
-            set(re.findall(r'"[a-z_]+":', drift)))
+        # QA review of regenerate-r2-36 argued for the key: an open page's pill
+        # kept reading "Synced" above a Re-generate note saying the live chip
+        # had moved. It rides the payload ONLY for a clean context -- where the
+        # poll does keep the flag current both ways (escalate + self-heal) --
+        # and its one reader (app.js onLiveDiverged) never renders from it: it
+        # re-requests the server-rendered tray while the pill claims Synced.
+        # No chip announces it (the first assertion above).
+        ld = re.search(r"^    ld = (.+)$", drift, re.M)
+        assert ld and "_quam_ctx_dirty" in ld.group(1), (
+            "the payload flag must be gated on a clean context", ld and ld.group(1))
+        assert drift.count("live_diverged=ld") + drift.count('"live_diverged": ld') == 4
 
     def test_needs_human_is_not_announced(self):
         """The engine flag is level-triggered with no clearing path, so the

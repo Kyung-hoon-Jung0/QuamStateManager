@@ -612,9 +612,23 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
 
     # Long-cache static assets (they're fingerprinted by asset_url below, so a
     # stale copy can't linger past an edit). HTMX partials stay no-store via
-    # _add_security_headers. NOTE every send_file inherits this too -- a
-    # dynamic download must opt out (routes._send_download).
+    # _add_security_headers. ONLY /static/* gets the year (QA review of
+    # regenerate-r2-19): Flask's send_file asks app.get_send_file_max_age for
+    # every file it sends, so the Chip Status report, the CSV export and the
+    # refit figures went out "public, max-age=31536000" under URLs that name
+    # no chip or version -- the browser served the previous chip's report.
+    # Any other send_file answers None ("no-cache": revalidate every time)
+    # unless its route passes a max_age of its own.
     app.config["SEND_FILE_MAX_AGE_DEFAULT"] = timedelta(days=365)
+    _static_max_age = app.get_send_file_max_age
+
+    def _send_file_max_age(filename):
+        ep = request.endpoint or ""
+        if ep == "static" or ep.endswith(".static"):
+            return _static_max_age(filename)
+        return None
+
+    app.get_send_file_max_age = _send_file_max_age
 
     # `asset_url(filename)` — like url_for('static', ...) but appends ?v=<mtime>
     # so editing a JS/CSS file changes its URL and busts the year-long cache,

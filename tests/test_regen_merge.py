@@ -850,11 +850,62 @@ def _cr_rebuild_of_a_flux_chip():
 
 class TestAnObjectNeverMeetsANullAsAScalar:
     def test_a_typed_object_over_a_new_null_goes_through_the_schema_gate(self):
+        # QA review: this pin used to assert `qubits.q1.z in schema_dropped`,
+        # which the panel prints as "old-stack field this env doesn't know" --
+        # but `z` IS a field the env knows; the rebuild left it empty. It is
+        # now ONE residual line saying so, and still no per-leaf loss.
         old, new = _cr_rebuild_of_a_flux_chip()
         r = merge_states(old, new, class_schemas={FLUX_Q: ["id", "z"]})
         assert r.merged["qubits"]["q1"]["z"] is None
-        assert "qubits.q1.z" in r.stats.schema_dropped
-        assert r.stats.residual_lost == []
+        assert r.stats.schema_dropped == []
+        assert [p for p, _ in r.stats.rebuild_removed] == ["qubits.q1.z"]
+        assert r.stats.residual_lost == [
+            "qubits.q1.z (the rebuild left it empty; old FluxLine not put "
+            "back — this build writes no FluxLine)"]
+
+    def test_one_qubits_removed_flux_line_is_not_put_back(self):
+        """QA review of r2-14: the class gate only catches a class the rebuild
+        writes NOWHERE. Drop q1's flux line while q2 keeps its own and
+        FluxLine is in the schemas -- the old q1 line was grafted back
+        pointing at wiring the rebuild never made (reported dangling, shipped
+        anyway, generate_config() crash)."""
+        line = lambda q, off: {"__class__": FLUX_LINE, "joint_offset": off,  # noqa: E731
+                               "opx_output": f"#/wiring/qubits/{q}/z/opx_output"}
+        old = {"qubits": {"q1": {"__class__": FLUX_Q, "z": line("q1", 0.12)},
+                          "q2": {"__class__": FLUX_Q, "z": line("q2", 0.34)}}}
+        new = {"qubits": {"q1": {"__class__": FLUX_Q, "z": None},
+                          "q2": {"__class__": FLUX_Q, "z": line("q2", 0.0)}}}
+        new_wiring = {"wiring": {"qubits": {"q2": {"z": {"opx_output": "#/ports/x"}}}}}
+        schemas = {FLUX_Q: ["z"], FLUX_LINE: ["joint_offset", "opx_output"]}
+        r = merge_states(old, new, class_schemas=schemas,
+                         old_wiring={"wiring": {"qubits": {
+                             "q1": {"z": {}}, "q2": {"z": {}}}}},
+                         new_wiring=new_wiring)
+        assert r.merged["qubits"]["q1"]["z"] is None
+        assert r.merged["qubits"]["q2"]["z"]["joint_offset"] == 0.34   # tier-1
+        assert r.stats.dangling_grafts == []
+        assert all(p != "qubits.q1.z" for p, _ in r.stats.graft_subtrees)
+        assert r.stats.grafted == 0
+        assert r.stats.residual_lost == [
+            "qubits.q1.z (the rebuild left it empty; old FluxLine not put back "
+            "— #/wiring/qubits/q1/z/opx_output is not in the rebuild)"]
+
+    def test_a_graft_whose_pointers_all_land_is_kept(self):
+        # control: a user-added object on a field the builder leaves empty
+        # (its wiring exists in the rebuild) still grafts, as docs/72 wants;
+        # and a STATE-side pointer is judged even with no wiring given.
+        obj = {"__class__": FLUX_LINE, "joint_offset": 0.5,
+               "opx_output": "#/wiring/qubits/q1/z/opx_output"}
+        old = {"qubits": {"q1": {"__class__": FLUX_Q, "z": obj}}}
+        new = {"qubits": {"q1": {"__class__": FLUX_Q, "z": None}}}
+        r = merge_states(old, new, new_wiring={"wiring": {"qubits": {"q1": {
+            "z": {"opx_output": "#/ports/x"}}}}})
+        assert r.merged["qubits"]["q1"]["z"] == obj
+        assert r.stats.rebuild_removed == []
+        gone = dict(obj, opx_output="#/ports/mw_outputs/con1/9/1")
+        r = merge_states({"qubits": {"q1": {"__class__": FLUX_Q, "z": gone}}}, new)
+        assert r.merged["qubits"]["q1"]["z"] is None
+        assert [p for p, _ in r.stats.rebuild_removed] == ["qubits.q1.z"]
 
     def test_without_schemas_it_grafts_and_its_pointer_is_checked(self):
         old, new = _cr_rebuild_of_a_flux_chip()
@@ -868,7 +919,8 @@ class TestAnObjectNeverMeetsANullAsAScalar:
         r = merge_states(old, new, class_schemas={FLUX_Q: ["id", "z"]})
         cr = r.merged["qubit_pairs"]["q1-2"]["cross_resonance"]
         assert cr == new["qubit_pairs"]["q1-2"]["cross_resonance"]
-        assert r.stats.residual_lost == []
+        # the OLD null is no loss (the one line is q1's removed flux line)
+        assert not any("cross_resonance" in x for x in r.stats.residual_lost)
 
     def test_a_scalar_over_a_null_still_carries(self):
         # tier-1 unchanged where neither side is an object

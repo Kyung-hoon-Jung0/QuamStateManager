@@ -831,8 +831,11 @@ def _refresh_live_diverged(ctx) -> None:
     if not lock.acquire(blocking=False):
         return
     try:
-        ctx["_live_hash_checked_mt"] = live_mt
         verdict = working_copy.live_diverged_now(wc)
+        if verdict is not None:
+            # only a JUDGED move counts as checked: an unreadable / torn live
+            # (None) is re-hashed on the next poll, not after the 30 s throttle
+            ctx["_live_hash_checked_mt"] = live_mt
         if verdict:
             ctx["live_diverged"] = True
             # docs/116: this escalation carries no count of its own, and a
@@ -16872,6 +16875,12 @@ def state_drift():
     # session is armed — so an idle chip pays two `os.stat` calls, exactly as
     # this route did before.
     _refresh_live_diverged(ctx)
+    # QA review of r2-36: the flag this refresh may just have raised rides the
+    # poll, so an OPEN page's pill can stop reading "Synced" (app.js re-renders
+    # the tray when it does) instead of waiting for the next full render. A
+    # CLEAN context only: that is where this poll keeps the flag current both
+    # ways (on a dirty one the refresh returns early -- test_sync_badge's pin).
+    ld = bool(ctx and ctx.get("live_diverged") and not _quam_ctx_dirty(ctx))
     # docs/132 — two riders on the poll every page already pays for:
     #  * hist_seq: one os.stat of the chip's history dir, so an OPEN Versions
     #    panel can follow captures made by another process / the background
@@ -16901,16 +16910,19 @@ def state_drift():
         logger.debug("live-write ingest edge failed", exc_info=True)
     if not _drift_tracked(ctx):
         return jsonify(ok=True, tracked=False, count=0, auto_pull=auto_pull,
-                       hist_seq=hist_seq, edit_seq=_edit_seq())
+                       hist_seq=hist_seq, edit_seq=_edit_seq(),
+                       live_diverged=ld)
     try:
         info = _compute_drift(ctx)
     except Exception:   # noqa: BLE001 — a poll must never 500
         logger.debug("drift compute failed", exc_info=True)
         return jsonify(ok=True, tracked=True, count=0, auto_pull=auto_pull,
-                       hist_seq=hist_seq, edit_seq=_edit_seq())
+                       hist_seq=hist_seq, edit_seq=_edit_seq(),
+                       live_diverged=ld)
     if info is None:
         return jsonify(ok=True, tracked=False, count=0, auto_pull=auto_pull,
-                       hist_seq=hist_seq, edit_seq=_edit_seq())
+                       hist_seq=hist_seq, edit_seq=_edit_seq(),
+                       live_diverged=ld)
     # (docs/87) ``auto_pulled`` used to ride along here as a one-shot so the
     # silent clean auto-pull became a visible toast. The user-facing path no
     # longer pulls without asking, so there is nothing to announce after the
@@ -16918,7 +16930,7 @@ def state_drift():
     return jsonify({"ok": True, "tracked": True, "count": info["count"],
                     "baseline_utc": info["baseline_utc"],
                     "auto_pull": auto_pull, "hist_seq": hist_seq,
-                    "edit_seq": _edit_seq()})
+                    "edit_seq": _edit_seq(), "live_diverged": ld})
 
 
 @bp.route("/state/drift/view")
@@ -17881,10 +17893,11 @@ def export_report():
 
     from pathlib import Path
     from quam_state_manager.core import report_card
-    from quam_state_manager.core.history import chip_name_for
 
     path = _active_path()
-    chip = chip_name_for(Path(path)) if path else "chip"
+    # The chip header's rule, like the config exports (QA regenerate-r2-33):
+    # chip_name_for named a flat chip folder after its PARENT ("chip").
+    chip = _chip_display_name(path) if path else "chip"
     diag_findings = [f.as_dict() for f in diagnostics.lint_state(store)] if store else []
     # Honour the user's UI-edited thresholds (sent as a JSON query param by the
     # export link) so the card's below-spec counts MATCH the on-screen header.
@@ -17898,8 +17911,11 @@ def export_report():
                 thresholds = parsed
         except (ValueError, TypeError):
             thresholds = None
+    # Local time with its offset (QA F26 sibling): a UTC stamp dated a
+    # 07:49 KST report, and its filename, the day before.
     report = report_card.build_report(engine, chip_name=chip, diag_findings=diag_findings,
-                                      thresholds=thresholds)
+                                      thresholds=thresholds,
+                                      generated_at=datetime.now().astimezone())
 
     fmt = (request.args.get("format") or "md").lower()
     if fmt == "csv":
@@ -26137,20 +26153,38 @@ def _ingest_abs_path(raw: str) -> tuple[str, str | None]:
     return str(p), None
 
 
-def _output_folder_problem(path: str) -> str | None:
+def _new_folder_hint(f: Path) -> Path | None:
+    """A folder to suggest in place of the FILE *f* for a chip build: its
+    parent -- unless that folder already holds a chip (``.../chip/state.json``
+    names one: the advice led straight to the OVERWRITTEN confirm, or to the
+    must-differ refusal for the loaded chip), then a sibling of it that does
+    not exist yet. None when there is no such folder to name. Never raises."""
+    try:
+        ex = f.parent
+        if (ex / "state.json").exists():
+            ex = next((c for c in (ex.with_name(f"{ex.name}_new{i or ''}")
+                                   for i in range(10)) if not c.exists()), None)
+        return ex
+    except (OSError, ValueError):
+        return None
+
+
+def _output_folder_problem(path: str, chip: bool = True) -> str | None:
     """Why a folder cannot be created at absolute *path*, in plain words, or
     None when it can (a missing tail under an existing folder is fine -- the
     build's ``mkdir(parents=True)`` makes it). Checked before a build starts:
     without it a file path or a missing drive reached ``mkdir`` inside the
     build and surfaced as the raw ``[WinError 183]`` / ``[WinError 3]`` text.
+    ``chip=False`` for the Scripts folder (.py files may live in a chip).
     Write permission is deliberately NOT judged here (docs/114: os.access is
     optimistic under NTFS ACLs). Never raises."""
     try:
         p = Path(path)
         if p.exists():
             if not p.is_dir():
-                return (f"'{p}' is a file, not a folder. Pick a folder, "
-                        f"for example '{p.parent}'.")
+                hint = _new_folder_hint(p) if chip else p.parent
+                return (f"'{p}' is a file, not a folder. Pick a folder"
+                        + (f", for example '{hint}'." if hint else "."))
             return None
         anc = p.parent
         while not anc.exists():
@@ -26222,9 +26256,21 @@ def generate_build():
         return jsonify({"ok": False, "error": f"Output folder: {path_err}"}), 400
     if scripts_dir:
         scripts_dir, path_err = _ingest_abs_path(scripts_dir)
+        if not path_err:
+            path_err = _output_folder_problem(scripts_dir, chip=False)
         if path_err:
             return jsonify({"ok": False,
                             "error": f"Scripts folder: {path_err}"}), 400
+    # QA review of F2: a fresh build under a chip SM has open (the loaded one
+    # included) is loaded AS that chip (QUAM rglob()s it) -- refused before
+    # `force`, like re-generate.
+    above = _open_chip_under(Path(output_path))
+    if above is not None:
+        return jsonify({"ok": False, "error": (
+            f"Output folder is inside a chip open in State Manager ({above}). "
+            "QUAM loads every .json under a chip folder, sub-folders included, "
+            "so that chip would load this new design instead of its own. "
+            "Choose a folder outside it.")}), 400
 
     python_path = config_generator.get_selected_env(current_app.instance_path)
     if not python_path:
@@ -26359,8 +26405,9 @@ def regenerate_reconstruct():
     })
 
 
-def _regen_protected_folders(src_p: Path) -> list[Path]:
-    """The chip folders a re-generate must never write into, nor under.
+def _regen_protected_folders(src_p: Path) -> list[tuple[Path, str]]:
+    """The chip folders a re-generate must never write into, nor under, as
+    ``(folder, role)`` -- role ``"source"``, ``"source_live"`` or ``"loaded"``.
 
     The merge source AND, when that source is a working copy (the default:
     reconstruct/build prefer ``_ctx_path()``), the LIVE chip folder it
@@ -26368,8 +26415,12 @@ def _regen_protected_folders(src_p: Path) -> list[Path]:
     folder the user actually loaded, so "output = the loaded chip" slipped
     past the must-differ refusal. A working copy of a chip that is no longer
     the active one (a stale tab) names its live folder in its meta sidecar.
+    And ALWAYS the chip loaded right now (QA review of F2/F3): a stale tab
+    posting chip A's working copy after another window loaded chip B got
+    only the generic OVERWRITTEN confirm for "output = B", and `force` then
+    wrote B's live files.
     """
-    folders = [src_p]
+    folders = [(src_p, "source")]
     ctx = _active_ctx() or {}
     wc = ctx.get("working_copy")
     live = None
@@ -26385,7 +26436,13 @@ def _regen_protected_folders(src_p: Path) -> list[Path]:
             except (OSError, ValueError):
                 live = None
     if isinstance(live, (str, Path)) and str(live):
-        folders.append(Path(live))
+        folders.append((Path(live), "source_live"))
+    loaded = (ctx.get("live_path") or ctx.get("path")
+              or getattr(wc, "live_folder", None))
+    if (isinstance(loaded, (str, Path)) and str(loaded)
+            and not any(path_match.fs_key(f) == path_match.fs_key(Path(loaded))
+                        for f, _ in folders)):
+        folders.append((Path(loaded), "loaded"))
     return folders
 
 
@@ -26403,12 +26460,17 @@ def _regen_source_live_note(src_p: Path) -> str | None:
             return None
         if working_copy.live_diverged_now(wc) is not True:
             return None
+        dirty = _quam_ctx_dirty(ctx)
     except Exception:   # noqa: BLE001 — a note never blocks a build
         return None
+    # With unapplied edits, ↓ Take live would discard them (its own confirm
+    # says so); the docs/97 merge action keeps both (QA review, r2-36).
+    how = ("merge them in (⇄ Pull & apply, in Review) — ↓ Take live would "
+           "discard your unapplied edits — and re-generate." if dirty else
+           "take live (↓ Take live) and re-generate.")
     return ("Built from State Manager's working copy of this chip: the live "
             "chip's files changed on disk after SM last synced them, so "
-            "those changes are NOT in this rebuild. To include them, take "
-            "live (↓ Take live) and re-generate.")
+            "those changes are NOT in this rebuild. To include them, " + how)
 
 
 def _output_within_chip(out: Path, chip: Path) -> bool:
@@ -26422,6 +26484,30 @@ def _output_within_chip(out: Path, chip: Path) -> bool:
     if len(o) < len(c) or o[:len(c)] != c:
         return False
     return not any(part.startswith(".") for part in o[len(c):])
+
+
+def _open_chip_under(out: Path) -> Path | None:
+    """The folder of a chip State Manager has OPEN (any quam context's live
+    folder or working copy) that *out* lies strictly under, per
+    :func:`_output_within_chip`; None when there is none (QA review of F2:
+    ``/generate/build`` had no containment check, and re-generate knew only
+    the chips its own request named). Only open chips, never "any folder
+    above that holds a state.json": the rig machine's D: drive root holds a
+    stray chip pair, and that rule refused every build on the drive."""
+    with _quam_cache_lock:                   # the LRU of open chips + the active
+        ctxs = list(_quam_cache.values())
+    ctxs += list((current_app.config.get("contexts") or {}).values())
+    for ctx in ctxs:
+        if not isinstance(ctx, dict) or ctx.get("type") != "quam":
+            continue
+        wc = ctx.get("working_copy")
+        for f in (ctx.get("live_path") or ctx.get("path"),
+                  getattr(wc, "working_folder", None)):
+            if (isinstance(f, (str, Path)) and str(f)
+                    and _output_within_chip(out, Path(f))
+                    and path_match.fs_key(out) != path_match.fs_key(Path(f))):
+                return Path(f)
+    return None
 
 
 @bp.route("/regenerate/build", methods=["POST"])
@@ -26463,6 +26549,8 @@ def regenerate_build():
         return jsonify({"ok": False, "error": f"Source folder: {path_err}"}), 400
     if scripts_dir:
         scripts_dir, path_err = _ingest_abs_path(scripts_dir)
+        if not path_err:
+            path_err = _output_folder_problem(scripts_dir, chip=False)
         if path_err:
             return jsonify({"ok": False,
                             "error": f"Scripts folder: {path_err}"}), 400
@@ -26479,19 +26567,32 @@ def regenerate_build():
         }), 400
     # Never INTO the loaded chip's live folder, nor UNDER it or the source:
     # both refusals come before `force`, so no confirm can bypass them.
-    for chip in _regen_protected_folders(src_p):
+    for chip, role in _regen_protected_folders(src_p):
         if not _output_within_chip(out_p, chip):
             continue
         if path_match.fs_key(out_p) == path_match.fs_key(chip):
             msg = "Output folder must differ from the source chip folder."
-            if chip is not src_p:
+            if role == "source_live":
                 msg = msg[:-1] + f" — it is the loaded chip's own folder ({chip})."
+            elif role == "loaded":
+                msg = (f"Output folder is the chip loaded in State Manager "
+                       f"right now ({chip}). A re-generate never writes over "
+                       "the loaded chip. Choose another folder.")
         else:
-            msg = (f"Output folder is inside the source chip folder ({chip}). "
+            where = ("the chip loaded in State Manager" if role == "loaded"
+                     else "the source chip folder")
+            msg = (f"Output folder is inside {where} ({chip}). "
                    "QUAM loads every .json under a chip folder, sub-folders "
                    "included, so that chip would load the rebuilt design "
                    "instead of its own. Choose a folder outside it.")
         return jsonify({"ok": False, "error": msg}), 400
+    above = _open_chip_under(out_p)         # any other chip SM has open
+    if above is not None:
+        return jsonify({"ok": False, "error": (
+            f"Output folder is inside a chip open in State Manager ({above}). "
+            "QUAM loads every .json under a chip folder, sub-folders included, "
+            "so that chip would load the rebuilt design instead of its own. "
+            "Choose a folder outside it.")}), 400
 
     python_path = config_generator.get_selected_env(current_app.instance_path)
     if not python_path:
@@ -26697,9 +26798,10 @@ def generate_preview_pulse_waveform():
 
 def _send_download(mem, *, mimetype, download_name):
     """A dynamic attachment, never cached. SEND_FILE_MAX_AGE_DEFAULT (365 d,
-    meant for the fingerprinted /static assets) is inherited by EVERY
-    send_file, and these URLs name only a folder + format -- a rebuild into
-    the same folder downloaded the OLD config from the browser cache."""
+    meant for the fingerprinted /static assets) was inherited by every
+    send_file (app.py now scopes it to /static), and these URLs name only a
+    folder + format -- a rebuild into the same folder downloaded the OLD
+    config from the browser cache. no-store: not even kept for revalidation."""
     resp = send_file(mem, mimetype=mimetype, as_attachment=True,
                      download_name=download_name, max_age=0)
     resp.headers["Cache-Control"] = "no-store"

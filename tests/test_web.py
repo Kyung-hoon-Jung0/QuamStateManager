@@ -3822,9 +3822,94 @@ class TestGenerate:
         warns = body["result"]["warnings"]
         assert warns[0] == "w0" and len(warns) == 2
         assert "changed on disk" in warns[1] and "NOT in this rebuild" in warns[1]
+        # QA review: with unapplied edits, Take live would discard them (its own
+        # confirm says so) -- the note names the docs/97 merge action instead
+        app = loaded_client.application
+        app.config["contexts"][app.config["active_context"]]["working_dirty"] = True
+        warns = build()["result"]["warnings"]
+        assert "Pull & apply" in warns[1], warns[1]
+        assert "(↓ Take live) and re-generate" not in warns[1], warns[1]
 
-    # --- QA F28: an output that cannot be a folder is refused on step 7, in
-    # plain words, before anything builds. It used to reach mkdir inside the
+    # --- QA review of F2/F3: the chip loaded NOW is protected whichever chip
+    # the posting tab reconstructed, and no build lands under a chip SM has open.
+    def test_regenerate_build_stale_tab_never_writes_the_chip_loaded_now(
+            self, loaded_client, synth_folder, monkeypatch, tmp_path_factory):
+        # A tab hydrated chip A; another window has since loaded chip B. "Output
+        # = B" got only the generic OVERWRITTEN confirm, and force wrote B.
+        import shutil
+        calls, wc_a = self._regen_rig(loaded_client, monkeypatch)
+        chip_b = tmp_path_factory.mktemp("chip_b_now")
+        for name in ("state.json", "wiring.json"):
+            shutil.copy(synth_folder / name, chip_b / name)
+        loaded_client.post("/load", data={"folder": str(chip_b)})
+        for out, words in ((chip_b, "chip loaded in State Manager right now"),
+                           (chip_b / "nested", "inside the chip loaded in State Manager")):
+            resp = loaded_client.post("/regenerate/build", json={
+                "spec": _gen_valid_spec(), "source_folder": wc_a,
+                "output_path": str(out), "force": True})
+            assert resp.status_code == 400, (out, resp.get_json())
+            body = resp.get_json()
+            assert words in body["error"], body["error"]
+            assert not body.get("needs_confirm")
+        assert calls == []
+
+    @pytest.mark.parametrize("route", ["/generate/build", "/regenerate/build"])
+    def test_no_build_lands_under_an_open_chip(
+            self, loaded_client, synth_folder, monkeypatch, tmp_path_factory, route):
+        # QUAM's folder load rglob()s every .json not under a dot-folder, so a
+        # build in <chip>/sub is loaded AS that chip. /generate/build had no
+        # containment check at all; /regenerate/build knew only its own chips.
+        import shutil
+        from collections import OrderedDict
+
+        from quam_state_manager.core import config_generator
+        from quam_state_manager.web import routes
+        # the open-chip LRU is process-global: contexts earlier tests left
+        # dirty are pinned in it and would evict this test's clean chips
+        monkeypatch.setattr(routes, "_quam_cache", OrderedDict())
+        loaded_client.post("/load", data={"folder": str(synth_folder)})
+        calls, wc = self._regen_rig(loaded_client, monkeypatch)
+        monkeypatch.setattr(
+            config_generator, "run_generator",
+            lambda py, mode, spec, out, **k: calls.append(out)
+            or {"ok": True, "status": "ok"})
+        chip_c = tmp_path_factory.mktemp("chip_c_open")
+        chip_d = tmp_path_factory.mktemp("chip_d_open")
+        for chip in (chip_d, chip_c):
+            for name in ("state.json", "wiring.json"):
+                shutil.copy(synth_folder / name, chip / name)
+            # synth, then D stay open (the LRU); C ends up the loaded chip
+            loaded_client.post("/load", data={"folder": str(chip)})
+        # a chip State Manager does NOT have open is not judged: the rig
+        # machine's D: drive root holds a stray chip pair, and a "any folder
+        # above holds a state.json" rule refused every build on the drive
+        stray = tmp_path_factory.mktemp("stray_chip")
+        (stray / "state.json").write_text("{}", encoding="utf-8")
+
+        def post(out):
+            return loaded_client.post(route, json={
+                "spec": _gen_valid_spec(), "source_folder": wc,
+                "output_path": str(out), "force": True})
+
+        for out in (chip_c / "sub", chip_c / "a" / "b", synth_folder / "nested",
+                    chip_d / "sub"):          # D: neither the source nor loaded
+            resp = post(out)
+            assert resp.status_code == 400, (out, resp.get_json())
+            err = resp.get_json()["error"]
+            assert "Output folder is inside" in err and "Choose a folder outside" in err, err
+        assert calls == []
+        # a dot-folder is skipped by QUAM's load; a plain sibling and a folder
+        # under a chip nobody has open are fine
+        ok_outs = [chip_c / ".hidden" / "x", tmp_path_factory.mktemp("free") / "out",
+                   stray / "sub"]
+        for out in ok_outs:
+            resp = post(out)
+            assert resp.status_code == 200, (out, resp.get_json())
+        assert [Path(c) for c in calls] == ok_outs
+
+    # --- QA F28: an output that cannot be a folder is refused in plain words
+    # before anything builds (the server answers the Generate press; the
+    # wizard shows it in its result panel). It used to reach mkdir inside the
     # build and show the raw "[WinError 183] Cannot create a file when that
     # file already exists" / "[WinError 3] ... 'Q:\\'" text.
     @staticmethod
@@ -3859,10 +3944,10 @@ class TestGenerate:
         a_file.parent.mkdir()
         a_file.write_text("{}", encoding="utf-8")
 
-        def post(out):
+        def post(out, **extra):
             return client.post(route, json={
                 "spec": _gen_valid_spec(), "output_path": str(out),
-                "source_folder": str(src), "force": True})
+                "source_folder": str(src), "force": True, **extra})
 
         refusals = [(a_file, "is a file, not a folder"),
                     (a_file / "sub", "is a file, so no folder can be created")]
@@ -3874,6 +3959,28 @@ class TestGenerate:
             err = resp.get_json()["error"]
             assert err.startswith("Output folder: ") and words in err, err
             assert "WinError" not in err and "Errno" not in err
+        assert calls == []
+        # QA review: the example is never a folder that is itself a chip
+        # (`gen_out/state.json` names one) -- following that advice led to the
+        # OVERWRITTEN confirm; a not-yet-existing sibling is named instead
+        err = post(a_file).get_json()["error"]
+        assert f"'{a_file.parent}'" not in err, err
+        assert f"'{a_file.parent}_new'" in err, err
+        notes = tmp_path / "plain" / "notes.txt"
+        notes.parent.mkdir()
+        notes.write_text("x", encoding="utf-8")
+        err = post(notes).get_json()["error"]
+        assert f"for example '{notes.parent}'" in err, err
+        # ...and the Scripts folder box is checked the same way, before a build
+        ok_out = tmp_path / "ok_out"
+        bad_scripts = [(notes, "is a file, not a folder")]
+        if sys.platform == "win32" and self._unused_drive():
+            bad_scripts.append((self._unused_drive(), "does not exist"))
+        for sd, words in bad_scripts:
+            resp = post(ok_out, scripts_dir=str(sd))
+            assert resp.status_code == 400, (sd, resp.get_json())
+            err = resp.get_json()["error"]
+            assert err.startswith("Scripts folder: ") and words in err, err
         assert calls == []
         # a missing tail under an existing folder is still created by the build
         resp = post(tmp_path / "new" / "deeper")
@@ -4605,6 +4712,25 @@ class TestConfigExportDownload:
             cc = loaded_client.get(f"/config/export?format={fmt}").headers.get(
                 "Cache-Control", "")
             assert cc == "no-store", cc
+
+    def test_no_dynamic_download_inherits_the_static_year(self, loaded_client):
+        # QA review of regenerate-r2-19: every send_file inherited the 365-day
+        # static max-age; the Chip Status report and the CSV export (URLs that
+        # name no chip) served the PREVIOUS chip's file from the browser cache.
+        app = loaded_client.application
+        fig = Path(app.instance_path) / "autofit" / "diagnose" / "u1" / "f.png"
+        fig.parent.mkdir(parents=True)
+        fig.write_bytes(bytes([137, 80, 78, 71, 13, 10]))   # a PNG signature
+        for url in ("/export", "/topology/report?format=md",
+                    "/topology/report?format=csv",
+                    "/dataset/u1/autofit-diagnose-fig/f.png"):
+            resp = loaded_client.get(url)
+            assert resp.status_code == 200, url
+            cc = resp.headers.get("Cache-Control", "")
+            assert "max-age=31536000" not in cc and "public" not in cc, (url, cc)
+        # the fingerprinted static assets keep their year
+        assert "max-age=31536000" in loaded_client.get(
+            "/static/app.js").headers.get("Cache-Control", "")
 
     def test_filename_stem_from_chip(self, loaded_client):
         _seed_config_cache(loaded_client)

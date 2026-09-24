@@ -100,3 +100,44 @@ def test_route_serves_all_formats(tmp_path):
         assert resp.mimetype == mime
         assert "attachment" in resp.headers.get("Content-Disposition", "")
         assert len(resp.get_data()) > 0
+
+
+def test_route_names_the_chip_folder_and_dates_locally(tmp_path, monkeypatch):
+    """QA review of regenerate-r2-33 (+ its F26 sibling): the report was named
+    after the chip folder's PARENT (a customer chip in ``chip/260907_KRS_5Q``
+    downloaded as ``chip_report_chip_...``) and stamped in UTC, so a 07:49 KST
+    report was dated the day before. It follows the chip header's name now,
+    and a local stamp that carries its offset."""
+    import json
+    from datetime import timedelta
+
+    from quam_state_manager.web import routes
+    from quam_state_manager.web.app import create_app
+
+    kst = timezone(timedelta(hours=9))
+
+    class _KstMorning(datetime):          # 2026-09-24 07:49 KST = 09-23 in UTC
+        @classmethod
+        def now(cls, tz=None):
+            t = cls(2026, 9, 24, 7, 49, 18, tzinfo=kst)
+            return t if tz is None else t.astimezone(tz)
+
+        def astimezone(self, tz=None):    # "the machine's local zone" = KST here
+            return self if tz is None else datetime.astimezone(self, tz)
+
+    chip = tmp_path / "chip" / "260907_KRS_5Q"
+    chip.mkdir(parents=True)
+    (chip / "state.json").write_text(json.dumps(_state()), encoding="utf-8")
+    (chip / "wiring.json").write_text(json.dumps(
+        {"wiring": {"qubits": {}}, "network": {"host": "1.1.1.1"}}), encoding="utf-8")
+    app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
+    c = app.test_client()
+    c.post("/load", data={"folder": str(chip)})
+    monkeypatch.setattr(routes, "datetime", _KstMorning)
+    resp = c.get("/topology/report?format=md")
+    assert resp.status_code == 200
+    cd = resp.headers.get("Content-Disposition", "")
+    assert "chip_report_260907_KRS_5Q_2026-09-24.md" in cd, cd
+    body = resp.get_data(as_text=True)
+    assert "260907_KRS_5Q" in body.splitlines()[0], body.splitlines()[0]
+    assert "2026-09-24T07:49:18+09:00" in body
