@@ -693,7 +693,15 @@ def discover_uv_venvs() -> list[dict]:
         if not calib:
             continue
         try:
-            node = Path(calib)
+            # QA generate-r2-29: a qualibrate folder can be drive-less rooted
+            # (``\work\...``); the stat below already resolves it against
+            # the current drive, so spell that drive out — the row's python
+            # then equals what resolve_python_interpreter returns for the
+            # same folder typed with its drive (the Custom path), and a row
+            # click never persists a drive-relative interpreter. absolute(),
+            # not resolve(): a POSIX .venv/bin/python is a symlink to the
+            # base interpreter.
+            node = Path(calib).absolute()
             for _ in range(5):                    # itself + ≤4 ancestors
                 venv = node / ".venv"
                 if (venv / "pyvenv.cfg").is_file():

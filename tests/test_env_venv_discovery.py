@@ -145,6 +145,33 @@ class TestDiscoverUvVenvs:
                                 [_proj("x", str(calib))]))
         assert cg.discover_uv_venvs() == []
 
+    @pytest.mark.skipif(__import__("os").name != "nt",
+                        reason="drive-less rooted paths are a Windows form")
+    def test_drive_less_folder_gets_the_drive_custom_path_gets(
+            self, tmp_path, monkeypatch):
+        # QA generate-r2-29: a real ~/.qualibrate project carried
+        # folder = "\work\tests\...\calibrations" (rooted, no drive).
+        # The row's python came back drive-less, so choosing the same .venv
+        # through Custom (resolved WITH its drive) highlighted no row.
+        repo = tmp_path / "qualibration_graphs" / "superconducting"
+        _mk_interp(repo / ".venv", "win")
+        (repo / ".venv" / "pyvenv.cfg").write_text("uv", encoding="utf-8")
+        calib = repo / "calibrations"
+        calib.mkdir(parents=True)
+        monkeypatch.chdir(tmp_path)                 # current drive = tmp's
+        drive_less = str(calib)[len(calib.drive):]  # "\Users\...\calibrations"
+        assert drive_less.startswith("\\") and ":" not in drive_less
+        from quam_state_manager.core import qualibrate_config
+        monkeypatch.setattr(qualibrate_config, "list_projects",
+                            lambda *a, **k: _fake_projects(
+                                [_proj("2Q", drive_less, active=True)]))
+        got = cg.discover_uv_venvs()
+        assert len(got) == 1
+        custom = cg.resolve_python_interpreter(str(repo / ".venv"))
+        assert got[0]["python"] == custom
+        assert got[0]["python"].startswith(calib.drive)
+        assert got[0]["path"] == str(repo / ".venv")
+
 
 class TestDiscoverEnvsCarriesUv:
     def test_uv_entries_appended_and_kind_tagged(self, monkeypatch, tmp_path):

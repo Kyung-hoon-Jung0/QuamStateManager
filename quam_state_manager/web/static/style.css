@@ -8011,6 +8011,9 @@ button.recents-item:focus {
     width: 26px; height: 26px; padding: 0; line-height: 1; margin: 0;
     border-radius: 0.3rem; font-size: 0.95em;
 }
+/* QA F27: the x keeps its fixed 26px box — as a shrinkable flex item it was
+   squeezed to glyph width whenever the row ran out of room. */
+.gen-pair-row .gen-row-del { flex: none; }
 
 /* step 5 — wiring */
 .gen-wiring-table { margin-top: 0.6rem; overflow-x: auto; }
@@ -8323,7 +8326,10 @@ button.gen-mini-btn:hover {
    container is narrow (flex-wrap — house idiom, no media query). */
 .gen-layout-row { display: flex; flex-wrap: wrap; gap: 0.4rem 1.4rem; align-items: flex-start; }
 .gen-layout-row .gen-topo { flex: 1.5 1 420px; min-width: 0; margin: 0; }
-.gen-pairs-rail { flex: 1 1 240px; min-width: 0; max-height: 56vh; overflow: auto; }
+/* QA F27: a rem basis — the pair rows inside are rem-sized (2 x 6rem selects +
+   gaps + arrow + the 26px x), so a px basis fell 1px short at Pico's 21px root
+   (1600 wide) and scrolled sideways; 16rem covers the row at every root 16-21px. */
+.gen-pairs-rail { flex: 1 1 16rem; min-width: 0; max-height: 56vh; overflow: auto; }
 .gen-pairs-rail-head { display: flex; align-items: center; gap: 0.7rem; margin: 0 0 0.3rem; }
 .gen-pairs-rail-head button { margin: 0; }
 /* Board empty state (count 0 — clicks would be inert; say so) */
