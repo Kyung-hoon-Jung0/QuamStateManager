@@ -254,6 +254,51 @@ class TestDiagnosticsIntegration:
         assert "same quam version" in html
         assert "same version step" not in html
 
+    def test_env_findings_follow_the_selected_env(self, client, tmp_path):
+        """QA diagnostics-r2-16: the findings (list, findings.json, Types card)
+        are verdicts against the env the manifest was probed FROM. Once that
+        env is no longer selected, or its interpreter is gone, they are
+        withdrawn -- the card already said "no longer exists" beside them --
+        and the card links to where the env is reselected."""
+        from quam_state_manager.core import config_generator
+        app = client.application
+        inst = app.instance_path
+        py = tmp_path / "envs" / "lab" / "python.exe"
+        py.parent.mkdir(parents=True)
+        py.write_text("", encoding="utf-8")
+        with app.app_context():
+            store = app.config["contexts"][app.config["active_context"]]["store"]
+        store._type_manifest_env = str(py)       # what every production writer sets
+
+        def flat():
+            return json.dumps(client.get("/diagnostics/findings.json").get_json())
+
+        def card():
+            return client.get("/diagnostics/types-card").get_data(as_text=True)
+
+        # selected + present: the verdicts stand
+        config_generator.set_selected_env(inst, str(py))
+        assert "env_unknown_field" in flat()
+        mismatch = card()
+        assert "match" in mismatch
+        # the interpreter is gone (conda env remove / rename): withdrawn
+        py.unlink()
+        assert "env_unknown_field" not in flat()
+        assert "duration_qubit" not in card()
+        env_card = client.get("/diagnostics/env-card").get_data(as_text=True)
+        assert "no longer exists" in env_card and 'hx-get="/generate"' in env_card
+        # a different env selected (settings edited outside SM): withdrawn too
+        other = tmp_path / "envs" / "other" / "python.exe"
+        other.parent.mkdir(parents=True)
+        other.write_text("", encoding="utf-8")
+        config_generator.set_selected_env(inst, str(other))
+        assert "env_unknown_field" not in flat()
+        # back to the probed env: they return (no mutation needed)
+        py.write_text("", encoding="utf-8")
+        config_generator.set_selected_env(inst, str(py))
+        assert "env_unknown_field" in flat()
+        assert "duration_qubit" in card()
+
     def test_env_probe_requires_selected_env(self, client):
         r = client.post("/diagnostics/env-probe")
         assert r.status_code == 400

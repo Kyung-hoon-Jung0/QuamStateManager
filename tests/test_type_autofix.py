@@ -230,6 +230,24 @@ class TestApply:
         assert store.get_value("qubits.q1.T1") == "8834"
         assert store.get_value("qubits.q1.xy.operations.saturation.amplitude") == "0.13"
 
+    def test_undoing_the_repair_leaves_the_tray_synced(self, app, client):
+        """QA diagnostics-r2-14: the repair lives in the change log only, so
+        Ctrl+Z must return the tray to "Synced" -- raising working_dirty made
+        it read "Working state · not applied" with nothing differing from live."""
+        ctx = _ctx(app)
+        assert not ctx.get("working_dirty")                  # the premise
+        _, paths, sig = _plan(client)
+        client.post("/type-fix/apply", json={"paths": paths, "sig": sig})
+        assert ctx["store"].change_log                       # pending, in the log
+        assert not ctx.get("working_dirty")
+        client.post("/undo")
+        assert ctx["store"].change_log == []
+        assert not ctx.get("working_dirty")
+        tray = client.get("/state/tray").get_data(as_text=True)
+        assert 'data-working-dirty="0"' in tray
+        assert "not applied" not in tray
+        assert "state-status-synced" in tray
+
     def test_the_type_sticks_for_later_edits(self, app, client):
         _, paths, sig = _plan(client)
         client.post("/type-fix/apply", json={"paths": paths, "sig": sig})
@@ -596,6 +614,38 @@ class TestTheAlertPayload:
                 "_type_fix_plan.html", plan=plan, alert=alert))
             assert "<strong>2 values</strong> on this chip have a type problem" in html
             assert "SM will not change these" in html
+
+    def test_an_env_only_alert_is_not_called_a_type_problem(self, app):
+        """QA F-N: an unknown field (or an unimportable class) is a disagreement
+        with the environment's schema, not "1 value ... has a type problem"."""
+        from flask import render_template
+        rec = {"kind": "unknown_field", "severity": "error",
+               "class": "quam_builder.FluxTunableTransmon", "field": "lab_calib_note",
+               "code": "unknown_field", "count": 1,
+               "example_paths": ["qubits.q1.lab_calib_note"],
+               "detail": "the environment's class does not declare this field"}
+        with app.test_request_context():
+            alert = type_fix.alert_summary(None, [rec], [])
+            assert alert["type_problems"] == 0 and alert["total"] == 1
+            alert.update(sig="", env_sig="e", token="t", first="",
+                         reason_label="this chip was opened")
+            html = re.sub(r"\s+", " ", render_template(
+                "_type_fix_plan.html", plan={"rows": [], "skipped": [], "sig": "s"},
+                alert=alert))
+            assert "type problem" not in html
+            assert "1 value" not in html
+            assert "does not match the selected environment" in html
+            assert "disagrees with the selected environment" in html
+            assert "found when this chip was opened" in html
+            assert "lab_calib_note" in html             # the env line still names it
+            # a text value alongside it is still "1 value", the env line explains the rest
+            alert = type_fix.alert_summary(None, [rec], ["qubits.q2.T1"])
+            alert.update(sig="s", env_sig="e", token="t", first="qubits.q2.T1")
+            html = re.sub(r"\s+", " ", render_template(
+                "_type_fix_plan.html", plan={"rows": [], "skipped": [], "sig": "s"},
+                alert=alert))
+            assert "Values arrived with a type problem" in html
+            assert "<strong>1 value</strong> on this chip has a type problem" in html
 
     def test_the_env_signature_ignores_instance_counts(self):
         """One more qubit with the SAME defect is not a new thing to say."""

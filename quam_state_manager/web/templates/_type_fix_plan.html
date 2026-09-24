@@ -15,7 +15,8 @@
      data-alert-first="{{ alert.first }}"{% endif %}>
   <div class="ch-head">
     <span class="ch-title" id="tfx-title">
-      {% if alert %}Values arrived with a type problem{% else %}Fix values stored as text{% endif %}
+      {# QA F-N: an unknown field / unimportable class is not a mistyped value #}
+      {% if alert %}{% if alert.type_problems %}Values arrived with a type problem{% else %}The chip does not match the selected environment{% endif %}{% else %}Fix values stored as text{% endif %}
     </span>
     <button type="button" class="ch-close" title="Close (Esc)"
             onclick="window.closeTypeFixPlan()">&times;</button>
@@ -28,8 +29,10 @@
   {% if alert %}
   <div class="tfx-alert">
     <p class="tfx-alert-head">
-      <strong>{{ alert.total }} value{{ 's' if alert.total != 1 }}</strong>
-      on this chip {{ 'have' if alert.total != 1 else 'has' }} a type problem{% if alert.reason_label %},
+      {% if alert.type_problems %}
+      <strong>{{ alert.type_problems }} value{{ 's' if alert.type_problems != 1 }}</strong>
+      on this chip {{ 'have' if alert.type_problems != 1 else 'has' }} a type problem{% else %}
+      This chip disagrees with the selected environment&rsquo;s schema{% endif %}{% if alert.reason_label %},
       found when {{ alert.reason_label }}{% endif %}.
     </p>
     {% if alert.strnum.count %}

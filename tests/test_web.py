@@ -7159,6 +7159,50 @@ class TestBatchUndoAtomic:
         u = loaded_client.post("/undo")
         assert "cellsReverted" in u.headers.get("HX-Trigger", "")
 
+    # QA diagnostics-r2-15: the grids' Apply all posts one atomic batch PER
+    # ROW; a fill-down leaves one cell per row, so every row used to be its
+    # own ungrouped entry and undoing one Apply all took one Ctrl+Z per qubit.
+    # `group` joins the rows into ONE group (docs/20: one Review bundle, one
+    # Ctrl+Z) -- only while that group is still the top of the log.
+    def test_rows_of_one_apply_all_join_one_group(self, loaded_client):
+        store = _store_of(loaded_client)
+        r1 = loaded_client.post("/field/edit-batch", json={"group": "new", "updates": [
+            {"dot_path": "qubits.qA1.T1", "value": "9001"}]}).get_json()
+        assert r1["ok"] and r1["group_id"]                  # minted for ONE field
+        r2 = loaded_client.post("/field/edit-batch", json={"group": r1["group_id"], "updates": [
+            {"dot_path": "qubits.qA1.T2ramsey", "value": "1.6e-6"}]}).get_json()
+        assert r2["ok"] and r2["group_id"] == r1["group_id"]
+        assert len(store.change_log) == 2
+        loaded_client.post("/undo")
+        assert store.change_log == []                       # ONE undo, both rows
+
+    def test_a_group_no_longer_on_top_is_not_joined(self, loaded_client):
+        store = _store_of(loaded_client)
+        g = loaded_client.post("/field/edit-batch", json={"group": "new", "updates": [
+            {"dot_path": "qubits.qA1.T1", "value": "9001"}]}).get_json()["group_id"]
+        # another window's edit lands in between
+        loaded_client.post("/field/edit-batch", json={"updates": [
+            {"dot_path": "qubits.qA1.chi", "value": "-5.3e6"}]})
+        r = loaded_client.post("/field/edit-batch", json={"group": g, "updates": [
+            {"dot_path": "qubits.qA1.T2ramsey", "value": "1.6e-6"}]}).get_json()
+        assert r["ok"] and r["group_id"] and r["group_id"] != g
+        loaded_client.post("/undo")
+        assert len(store.change_log) == 2                   # only the last row
+
+    def test_a_journal_step_is_never_joined(self, loaded_client):
+        store = _store_of(loaded_client)
+        loaded_client.post("/field/edit-batch", json={"updates": [
+            {"dot_path": "qubits.qA1.T1", "value": "9001"}]})
+        store.change_log[-1].group_id = "jrn:u1"
+        r = loaded_client.post("/field/edit-batch", json={"group": "jrn:u1", "updates": [
+            {"dot_path": "qubits.qA1.T2ramsey", "value": "1.6e-6"}]}).get_json()
+        assert r["ok"] and r["group_id"] and not r["group_id"].startswith("jrn:")
+
+    def test_no_group_keeps_the_old_rule(self, loaded_client):
+        r = loaded_client.post("/field/edit-batch", json={"updates": [
+            {"dot_path": "qubits.qA1.T1", "value": "9001"}]}).get_json()
+        assert r["ok"] and r["group_id"] is None
+
 
 # ---------------------------------------------------------------------------
 # Cross-platform audit: select-env .exe-on-POSIX refusal + read-only dataset

@@ -111,3 +111,40 @@ class TestApplyFixSetValue:
         assert 'data-action="set_value"' in body
         assert "Update f_01" in body
         assert "data-confirm-text" in body
+
+    # QA diagnostics-r2-13: a read-only dataset archive is told what is wrong
+    # (the Types card already says "open the live chip to repair") -- it must
+    # not be offered, nor accept, a one-click state fix it could never apply.
+    def _as_archive(self, app):
+        name = app.config["active_context"]
+        app.config["contexts"][name]["origin"] = "dataset_archive"
+
+    def test_archive_refuses_set_value_fix(self, loaded):
+        self._as_archive(loaded["app"])
+        store = self._store(loaded["app"])
+        before = store.merged["qubits"]["q1"]["f_01"]
+        r = loaded["client"].post("/diagnostics/apply-fix", data={
+            "action": "set_value", "dot_path": "qubits.q1.f_01",
+            "value": repr(5.0e9)})
+        assert r.status_code == 409
+        assert r.get_json()["error_kind"] == "archive_read_only"
+        assert "read-only" in r.get_json()["error"]
+        assert store.change_log == []
+        assert store.merged["qubits"]["q1"]["f_01"] == before
+
+    def test_archive_refuses_set_pointer_fix(self, loaded):
+        self._as_archive(loaded["app"])
+        r = loaded["client"].post("/diagnostics/apply-fix", data={
+            "action": "set_pointer",
+            "dot_path": "ports.mw_inputs.con1.1.1.downconverter_frequency",
+            "pointer": "#/ports/mw_outputs/con1/1/1/upconverter_frequency"})
+        assert r.status_code == 409
+        assert r.get_json()["error_kind"] == "archive_read_only"
+        assert self._store(loaded["app"]).change_log == []
+
+    def test_archive_page_offers_no_fix_button(self, loaded):
+        self._as_archive(loaded["app"])
+        body = loaded["client"].get(
+            "/diagnostics", headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert "diag-fix" not in body and "Update f_01" not in body
+        assert "Go to field" in body          # navigation stays

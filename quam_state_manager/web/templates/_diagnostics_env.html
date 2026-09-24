@@ -7,14 +7,21 @@
      hx-swap="outerHTML"{% endif %}>
   <div class="diag-env-head">
     <strong>Environment match</strong>
+    {# QA diagnostics-r2-16: with no env / a gone interpreter the env findings
+       are withdrawn (_live_env_manifest) -- the card says so, and links. #}
     {% if not env_card.selected %}
       <span class="muted">— no python environment selected.
         <a href="/generate" hx-get="/generate" hx-target="#table-pane"
            hx-push-url="true">Pick one in Generate Config</a> to validate this
-        state against its quam/quam-builder.</span>
+        state against its quam/quam-builder. No environment findings are
+        listed until one is selected.</span>
     {% elif not env_card.selected_exists %}
-      <span class="diag-env-err">selected interpreter no longer exists —
-        reselect the environment in Generate Config.</span>
+      <span class="diag-env-err">selected interpreter
+        <code>{{ env_card.selected }}</code> no longer exists —
+        <a href="/generate" hx-get="/generate" hx-target="#table-pane"
+           hx-sync="#table-pane:replace" hx-push-url="true">reselect the
+        environment in Generate Config</a>. Environment findings are withdrawn
+        until it is back.</span>
     {% elif env_card.probing %}
       <span class="muted">probing the environment&hellip;</span>
       <progress class="diag-env-progress"></progress>
@@ -40,13 +47,15 @@
     </button>
     {% endif %}
     {% if env_card.warm %}
+    {# QA F-R: deep=1 -> /config/regenerate answers with a verdict line
+       (_diagnostics_env_deep.html), not the Config Viewer's controls #}
     <button type="button" class="btn-sm outline"
-            hx-post="/config/regenerate" hx-target="#diag-env-deep"
-            hx-swap="innerHTML" hx-indicator="#diag-env-deep-busy"
+            hx-post="/config/regenerate" hx-vals='{"deep": "1"}' hx-target="#diag-env-deep"
+            hx-swap="innerHTML" hx-indicator="#diag-env-deep-busy" hx-disabled-elt="this"
             title="The acid test: actually Quam.load() + generate_config() this state inside the selected environment">
       Validate deeply (Quam.load)
     </button>
-    <span id="diag-env-deep-busy" class="htmx-indicator muted">running in the env&hellip;</span>
+    <span id="diag-env-deep-busy" class="htmx-indicator muted">running Quam.load() + generate_config() in the env&hellip; (~20 s)</span>
     {% endif %}
   </div>
   {# QA diagnostics-r2-03: config-status-host joins the /config/regenerate

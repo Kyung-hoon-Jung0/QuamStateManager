@@ -217,6 +217,12 @@ def alert_summary(plan: dict | None, env_findings: list[dict] | None,
                 and all(p in text_paths for p in ex))
 
     env_restated = sum(1 for f in env_findings if _restates_text(f))
+    # QA F-N: what the popup may call "a value with a type problem" -- the text
+    # values plus env findings that ARE a value of the wrong type. An unknown
+    # field, a class the env cannot import or a missing required field is a
+    # disagreement with the environment's schema, not a mistyped value.
+    env_typed = sum(1 for f in env_findings
+                    if f.get("kind") == "type_mismatch" and not _restates_text(f))
     return {
         "strnum": {
             "count": strnum_count,
@@ -241,6 +247,7 @@ def alert_summary(plan: dict | None, env_findings: list[dict] | None,
             "restated_text": env_restated,
         },
         "total": strnum_count + len(env_findings) - env_restated,
+        "type_problems": strnum_count + env_typed,
     }
 
 

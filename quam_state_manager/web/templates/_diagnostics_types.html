@@ -99,8 +99,11 @@
   </div>
   {% elif types_card and not types_card.env.warm %}
   <p class="diag-types-caption muted">
-    The environment's schema has not been probed yet, so type mismatches
-    against it are unknown — use "Probe environment" above.
+    {# QA diagnostics-r2-16: also shown while no env is selected or the
+       selected interpreter is gone -- not only before a probe #}
+    The selected environment's schema is not available (not probed yet, or no
+    environment is selected), so type mismatches against it are unknown &mdash;
+    see Environment match above.
   </p>
   {% endif %}
 

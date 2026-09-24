@@ -1593,7 +1593,9 @@
         }
     }
 
-    function _applyCells(cells, tr, silent, seenGlobal) {
+    // QA diagnostics-r2-15: `grp` ({id}) makes several requests ONE server
+    // change group -- applyAll passes one per gesture (one Ctrl+Z, one bundle).
+    function _applyCells(cells, tr, silent, seenGlobal, grp) {
         var errSlot = tr ? tr.querySelector('.bulk-row-error') : null;
         if (errSlot) { errSlot.hidden = true; errSlot.textContent = ''; }
         // Dedup by physical write-target: linked cells (qA1..qA6 on one shared port)
@@ -1627,6 +1629,7 @@
             var payload = { updates: ups, expect_chip: window.__chipToken || '' };
             if (fspAck) payload.fsp_ack = fspAck;
             if (typeFix) payload.type_fix = typeFix;
+            if (grp) payload.group = grp.id || 'new';
             return fetch('/field/edit-batch', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -1663,6 +1666,7 @@
                 var byPath = {};
                 (r.body && r.body.results || []).forEach(function (res) { byPath[res.dot_path] = res; });
                 if (r.body && r.body.ok) {
+                    if (grp && r.body.group_id) grp.id = r.body.group_id;
                     // Commit succeeded → only now claim these physical nodes in the
                     // cross-row dedup, so a failed row never strands a shared sibling (A11).
                     if (seenGlobal) batchKeys.forEach(function (k) { seenGlobal[k] = true; });
@@ -3652,6 +3656,7 @@
                 ? _lastEditCell : _cells(rows[0]).filter(_isDirty)[0];   // QA liveedit-r2-21
             var i = 0, failures = 0, succeeded = 0, lastTray = null, firstFailRow = null;
             var seenGlobal = {};   // dedup a shared-port node across rows → written once
+            var grp = { id: null };   // QA diagnostics-r2-15: one group for the whole Apply all
             function next() {
                 if (i >= rows.length) {
                     // Swap the pending tray + unsaved-changes banner ONCE, with the
@@ -3690,7 +3695,7 @@
                 var tr = rows[i++];
                 // Per-row atomic batch, ALL silent: the tray is swapped exactly once at
                 // the end (above) with the final HTML, never N times mid-loop.
-                _applyCells(_cells(tr).filter(_isDirty), tr, true, seenGlobal).then(function (res) {
+                _applyCells(_cells(tr).filter(_isDirty), tr, true, seenGlobal, grp).then(function (res) {
                     if (!res.ok) { failures++; if (!firstFailRow) firstFailRow = tr; }
                     else { succeeded++; if (res.tray_html) lastTray = res.tray_html; }
                     _refreshRow(tr); next();

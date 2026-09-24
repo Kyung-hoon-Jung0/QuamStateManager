@@ -1,16 +1,20 @@
 {# Auto-popped diagnostics error banner. Lazily fetched into #diagnostics-banner-slot
    on every full page load (so it pops on chip load / switch) and on the
    `diagnostics-changed` event. The route only returns this markup when the active
-   chip has >=1 error-severity finding — a value the QUA compiler /
-   machine.generate_config() provably rejects (waveform sample out of DAC range,
-   missing/colliding port, NaN), i.e. a value that would crash the next node run.
-   Load is never blocked; this is a non-modal, dismissible alert. #}
+   chip has >=1 error-severity finding — something the QUA compiler /
+   machine.generate_config() / Quam.load() provably rejects (waveform sample out
+   of DAC range, missing/colliding port, NaN, a field the env does not know),
+   i.e. something that would crash the next node run. QA F-N: it counts ERRORS
+   (one edited amplitude two pulses read is two), and its example is the first
+   of them, not a fixed waveform line. Load is never blocked; this is a
+   non-modal, dismissible alert. #}
 <div class="topo-change-banner diag-error-banner" id="diagnostics-banner" role="alert"
      data-diag-sig="{{ diag_sig or (diag_summary.error ~ ':' ~ (active_name or 'this chip')) }}">
     <span class="topo-change-banner-text">
         &#9888;&#65039; <b>{{ diag_summary.error }}</b>
-        value{{ 's' if diag_summary.error != 1 }} on <b>{{ active_name or "this chip" }}</b>
-        would crash a node run (e.g. a waveform sample outside the DAC range).
+        error{{ 's' if diag_summary.error != 1 }} on <b>{{ active_name or "this chip" }}</b>
+        would crash a node run{% if first_error %} (e.g. <code>{{ first_error.location }}</code>:
+        {{ first_error.message | truncate(140) }}){% endif %}.
         Fix before running an experiment.
     </span>
     <button type="button" class="topo-change-banner-btn"

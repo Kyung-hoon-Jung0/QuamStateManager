@@ -58,7 +58,7 @@ def test_crash_class_errors_block_the_run(tmp_path):
     c = _check(r, "diagnostics")
     assert c["status"] == "fail"
     assert r["ok"] is False
-    assert "4 values" in c["detail"]
+    assert "4 errors" in c["detail"]      # QA F-N: findings are errors, not values
     assert "would crash a node run" in c["detail"]
     assert "Fix before running an experiment" in c["detail"]
     # at most three examples, never the whole list
@@ -69,7 +69,7 @@ def test_one_error_reads_singular(tmp_path):
     ctx = _good_ctx(tmp_path)
     ctx["diagnostics_errors"] = 1
     c = _check(scheduler.build_preflight(ctx), "diagnostics")
-    assert c["detail"].startswith("1 value on the open chip")
+    assert c["detail"].startswith("1 error on the open chip")
 
 
 def test_zero_errors_passes(tmp_path):
@@ -133,9 +133,9 @@ def test_preflight_route_reports_the_banners_count(tmp_path):
     c = _check(body, "diagnostics")
     assert c["status"] == "fail"
     assert body["ok"] is False
-    n = int(re.match(r"(\d+) value", c["detail"]).group(1))
-    # the banner's own number ("<b>N</b> value(s) on ... would crash")
-    banner_n = int(re.search(r"<b>(\d+)</b>\s*value", banner).group(1))
+    n = int(re.match(r"(\d+) error", c["detail"]).group(1))
+    # the banner's own number ("<b>N</b> error(s) on ... would crash", QA F-N)
+    banner_n = int(re.search(r"<b>(\d+)</b>\s*error", banner).group(1))
     assert n == banner_n >= 1
 
 

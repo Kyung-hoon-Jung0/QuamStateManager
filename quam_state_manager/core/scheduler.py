@@ -757,7 +757,7 @@ def build_preflight(ctx: dict) -> dict:
         ex = [str(e) for e in (ctx.get("diagnostics_examples") or []) if e][:3]
         checks.append(_check(
             "diagnostics", diag_label, "fail",
-            f"{n_err} value{'s' if n_err != 1 else ''} on the open chip would "
+            f"{n_err} error{'s' if n_err != 1 else ''} on the open chip would "
             f"crash a node run" + (f" (e.g. {', '.join(ex)})" if ex else "")
             + ". Fix before running an experiment — see Diagnostics."))
 

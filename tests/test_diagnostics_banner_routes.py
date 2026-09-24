@@ -144,3 +144,45 @@ def test_waveform_finding_in_explorer_feed(tmp_path):
     cats = [f["category"] for f in feed["value_spec"]]
     assert "waveform_range" in cats
     assert any(f["jump_path"].endswith("readout.amplitude") for f in feed["value_spec"])
+
+
+# QA F-N: the banner counts ERROR FINDINGS -- one edited amplitude that two
+# pulses read is two errors, not "2 values" -- and its example is the first of
+# THOSE errors, never the fixed "(e.g. a waveform sample outside the DAC
+# range)" whatever the error kind (an unknown field, a missing port, ...).
+_FIXED_EXAMPLE = "(e.g. a waveform sample outside the DAC range)"
+
+
+def _client_for(tmp_path, st, wi):
+    (tmp_path / "state.json").write_text(json.dumps(st), encoding="utf-8")
+    (tmp_path / "wiring.json").write_text(json.dumps(wi), encoding="utf-8")
+    app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+    client = app.test_client()
+    client.post("/load", data={"folder": str(tmp_path)})
+    return client
+
+
+def test_banner_counts_errors_not_values_for_one_shared_amplitude(tmp_path):
+    import re
+    st = _state(1.5)
+    ops = st["qubits"]["q1"]["resonator"]["operations"]
+    ops["readout2"] = dict(ops["readout"], amplitude="#../readout/amplitude")
+    body = _client_for(tmp_path, st, _wiring()).get("/diagnostics/banner").get_data(as_text=True)
+    text = re.sub(r"\s+", " ", body)
+    assert "<b>2</b> errors on" in text, text[:400]
+    assert " values on" not in text
+    assert _FIXED_EXAMPLE not in text
+    # the example names one of the counted errors
+    assert "<code>qubits.q1.resonator.operations.readout" in text
+
+
+def test_banner_example_follows_the_error_kind(tmp_path):
+    import re
+    wi = _wiring()
+    wi["wiring"]["qubits"]["q1"]["rr"]["opx_output"] = "#/ports/mw_outputs/con1/1/7"
+    body = _client_for(tmp_path, _state(0.3), wi).get("/diagnostics/banner").get_data(as_text=True)
+    text = re.sub(r"\s+", " ", body)
+    assert "<b>1</b> error on" in text, text[:400]
+    assert "would crash a node run" in text
+    assert "DAC range" not in text and "waveform" not in text
+    assert "port 7" in text           # the missing port is what it names
