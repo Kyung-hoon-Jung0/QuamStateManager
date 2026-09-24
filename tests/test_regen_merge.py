@@ -927,3 +927,312 @@ class TestAnObjectNeverMeetsANullAsAScalar:
         r = merge_states({"q": {"T1": 4.2e-5, "arr": [1, 2]}},
                          {"q": {"T1": None, "arr": None}})
         assert r.merged["q"] == {"T1": 4.2e-5, "arr": [1, 2]}
+
+
+# ---------------------------------------------------------------------------
+# QA F1 -- a port's calibration follows the line that owns it
+# ---------------------------------------------------------------------------
+
+_LF = "quam.components.ports.analog_outputs.LFFEMAnalogOutputPort"
+_MW = "quam.components.ports.analog_outputs.MWFEMAnalogOutputPort"
+
+
+def _lf(port, delay, ff=None, exp=None):
+    return {"controller_id": "con1", "fem_id": 5, "port_id": port,
+            "delay": delay, "feedforward_filter": ff,
+            "exponential_filter": exp, "__class__": _LF}
+
+
+def _chip(z_ports, extra_ports=None):
+    """A chip whose qubit z lines point through wiring at LF ports
+    (``{qubit: port number}``), the modern two-hop shape."""
+    qubits = {q: {"z": {"opx_output": f"#/wiring/qubits/{q}/z/opx_output",
+                        "__class__": "qb.FluxLine"}}
+              for q in z_ports}
+    wiring = {"wiring": {"qubits": {
+        q: {"z": {"opx_output": f"#/ports/analog_outputs/con1/5/{p}"}}
+        for q, p in z_ports.items()}}, "network": {}}
+    ports = {str(p): None for p in z_ports.values()}
+    ports.update(extra_ports or {})
+    return qubits, wiring, ports
+
+
+class TestAPortMovesWithItsOwner:
+    """QA F1: moving q1's flux line from out1 to out6 must take q1's measured
+    delay + predistortion filters to out6 -- and a qubit that lands on out1
+    must NOT inherit them."""
+
+    FF, EXP = [0.1] * 48, [[0.1, 20.0]] * 5
+
+    def _old(self):
+        q, w, _ = _chip({"q1": 1, "q2": 2})
+        ports = {"analog_outputs": {"con1": {"5": {
+            "1": _lf(1, 37, self.FF, self.EXP),
+            "2": _lf(2, 34, [0.2] * 48, [[0.2, 30.0]])}}}}
+        return {"qubits": q, "ports": ports}, w
+
+    def _new(self, z_ports):
+        q, w, _ = _chip(z_ports)
+        ports = {"analog_outputs": {"con1": {"5": {
+            str(p): _lf(p, 141) for p in z_ports.values()}}}}
+        return {"qubits": q, "ports": ports}, w
+
+    def test_move_only_carries_filters_and_delay_to_the_new_port(self):
+        old, ow = self._old()
+        new, nw = self._new({"q1": 6, "q2": 2})
+        r = merge_states(old, new, old_wiring=ow, new_wiring=nw)
+        p6 = r.merged["ports"]["analog_outputs"]["con1"]["5"]["6"]
+        assert p6["delay"] == 37
+        assert p6["feedforward_filter"] == self.FF
+        assert p6["exponential_filter"] == self.EXP
+        # identity stays the NEW port's: never programmed back as port 1
+        assert p6["port_id"] == 6 and p6["fem_id"] == 5
+        assert "1" not in r.merged["ports"]["analog_outputs"]["con1"]["5"]
+        assert not any(p.startswith("ports.analog_outputs.con1.5.1.")
+                       for p in r.stats.residual_lost)
+        assert r.stats.ports_moved == [("ports.analog_outputs.con1.5.1",
+                                        "ports.analog_outputs.con1.5.6", "q1.z")]
+        # the unmoved line is untouched
+        assert r.merged["ports"]["analog_outputs"]["con1"]["5"]["2"]["delay"] == 34
+
+    def test_a_new_qubit_on_the_old_port_gets_fresh_values_not_q1s(self):
+        old, ow = self._old()
+        new, nw = self._new({"q1": 6, "q2": 2, "q6": 1})
+        r = merge_states(old, new, old_wiring=ow, new_wiring=nw)
+        lf = r.merged["ports"]["analog_outputs"]["con1"]["5"]
+        assert lf["6"]["delay"] == 37 and lf["6"]["feedforward_filter"] == self.FF
+        assert lf["1"]["delay"] == 141, "q6 inherited q1's delay"
+        assert lf["1"]["feedforward_filter"] is None, "q6 inherited q1's FIR"
+        assert lf["1"]["exponential_filter"] is None
+        assert r.stats.ports_fresh == [("ports.analog_outputs.con1.5.1", "q1.z", "q6.z")]
+
+    def test_a_swap_swaps_the_calibration(self):
+        old, ow = self._old()
+        new, nw = self._new({"q1": 2, "q2": 1})
+        r = merge_states(old, new, old_wiring=ow, new_wiring=nw)
+        lf = r.merged["ports"]["analog_outputs"]["con1"]["5"]
+        assert lf["2"]["delay"] == 37 and lf["2"]["port_id"] == 2
+        assert lf["1"]["delay"] == 34 and lf["1"]["port_id"] == 1
+        assert r.stats.residual_lost == []
+
+    def test_an_unchanged_chip_moves_nothing(self):
+        old, ow = self._old()
+        new, nw = self._new({"q1": 1, "q2": 2})
+        r = merge_states(old, new, old_wiring=ow, new_wiring=nw)
+        assert r.stats.ports_moved == [] and r.stats.ports_fresh == []
+        assert r.merged["ports"]["analog_outputs"]["con1"]["5"]["1"]["delay"] == 37
+
+    def test_a_renamed_qubit_keeps_the_port_number_identity(self):
+        # No owner in common -> nothing is known to have moved: today's
+        # port-number carry stands (never wiped to fresh on a guess).
+        old, ow = self._old()
+        new, nw = self._new({"qA": 1, "q2": 2})
+        r = merge_states(old, new, old_wiring=ow, new_wiring=nw)
+        assert r.merged["ports"]["analog_outputs"]["con1"]["5"]["1"]["delay"] == 37
+        assert r.stats.ports_fresh == []
+
+    def test_pair_id_drift_with_an_unmoved_coupler_port_is_identity(self):
+        def chip(pid, wid, delay):
+            st = {"qubits": {"qA1": {}, "qA2": {}},
+                  "qubit_pairs": {pid: {
+                      "qubit_control": "#/qubits/qA2", "qubit_target": "#/qubits/qA1",
+                      "coupler": {"opx_output": f"#/wiring/qubit_pairs/{wid}/c/opx_output",
+                                  "__class__": "qb.TunableCoupler"}}},
+                  "ports": {"analog_outputs": {"con1": {"5": {"3": _lf(3, delay)}}}}}
+            w = {"wiring": {"qubit_pairs": {wid: {"c": {
+                "opx_output": "#/ports/analog_outputs/con1/5/3"}}}}}
+            return st, w
+        old, ow = chip("qA2-qA1", "qA2-qA1", 33)
+        new, nw = chip("qA2-A1", "qA2-A1", 141)
+        r = merge_states(old, new, old_wiring=ow, new_wiring=nw)
+        assert r.stats.ports_moved == [] and r.stats.ports_fresh == []
+        assert r.merged["ports"]["analog_outputs"]["con1"]["5"]["3"]["delay"] == 33
+
+    def test_a_shared_feedline_whose_lines_all_moved_is_remapped(self):
+        def chip(port, fsp):
+            st = {"qubits": {q: {"resonator": {
+                "opx_output": f"#/wiring/qubits/{q}/rr/opx_output",
+                "__class__": "qb.ReadoutResonatorMW"}} for q in ("q1", "q2")},
+                "ports": {"mw_outputs": {"con1": {"1": {str(port): {
+                    "controller_id": "con1", "fem_id": 1, "port_id": port,
+                    "band": 3, "full_scale_power_dbm": fsp, "__class__": _MW}}}}}}
+            w = {"wiring": {"qubits": {q: {"rr": {
+                "opx_output": f"#/ports/mw_outputs/con1/1/{port}"}} for q in ("q1", "q2")}}}
+            return st, w
+        old, ow = chip(1, -11)
+        new, nw = chip(5, 10)
+        r = merge_states(old, new, old_wiring=ow, new_wiring=nw)
+        p5 = r.merged["ports"]["mw_outputs"]["con1"]["1"]["5"]
+        assert p5["full_scale_power_dbm"] == -11 and p5["port_id"] == 5
+        assert r.stats.ports_moved[0][2] == "q1.resonator (+1)"
+
+    def test_owners_from_two_old_ports_keep_the_identity(self):
+        # q1 (was port 1) and q2 (was port 2) now share port 2: owners
+        # disagree on a source -> no remap, the port-number carry stands.
+        old, ow = self._old()
+        new, nw = self._new({"q1": 2, "q2": 2})
+        r = merge_states(old, new, old_wiring=ow, new_wiring=nw)
+        assert r.merged["ports"]["analog_outputs"]["con1"]["5"]["2"]["delay"] == 34
+        assert r.stats.ports_moved == []
+
+
+# ---------------------------------------------------------------------------
+# QA regenerate-r2-10 -- a TWPA renamed / deleted on step 4 is not resurrected
+# ---------------------------------------------------------------------------
+
+class TestATwpaTheSpecNoLongerCarries:
+    def _old(self):
+        state = {"twpas": {"twpa1": {"id": "twpa1", "settling_time": 40,
+                                     "pump": {"opx_output": "#/wiring/twpas/twpa1/p/opx_output"}}},
+                 "ports": {"mw_outputs": {"con1": {"3": {"7": {
+                     "port_id": 7, "band": 3, "__class__": _MW}}}}}}
+        wiring = {"wiring": {"twpas": {"twpa1": {"p": {
+            "opx_output": "#/ports/mw_outputs/con1/3/7"}}}}}
+        return state, wiring
+
+    def test_a_rename_builds_one_twpa_not_two(self):
+        old, ow = self._old()
+        new = {"twpas": {"twpaMain": {"id": "twpaMain", "settling_time": 0}},
+               "ports": {"mw_outputs": {"con1": {"3": {"7": {
+                   "port_id": 7, "band": 1, "__class__": _MW}}}}}}
+        nw = {"wiring": {"twpas": {"twpaMain": {"p": {
+            "opx_output": "#/ports/mw_outputs/con1/3/7"}}}}}
+        r = merge_states(old, new, old_wiring=ow, new_wiring=nw,
+                         twpa_ids=["twpaMain"])
+        assert set(r.merged["twpas"]) == {"twpaMain"}
+        assert "twpas.twpa1.settling_time" in r.stats.residual_lost
+        assert r.stats.twpas_removed == ["twpa1"]
+        assert graft_twpa_wiring(r.merged, old, ow, nw) == 0
+
+    def test_a_deleted_twpa_is_not_resurrected(self):
+        old, ow = self._old()
+        r = merge_states(old, {"twpas": {}}, old_wiring=ow,
+                         new_wiring={"wiring": {}}, twpa_ids=[])
+        assert r.merged["twpas"] == {}
+        assert r.stats.twpas_removed == ["twpa1"]
+
+    def test_a_builder_gap_still_grafts_the_requested_twpa(self):
+        # quam_builder 0.2.0 builds no TWPA: the spec still asks for twpa1.
+        old, ow = self._old()
+        nw = {"wiring": {}}
+        r = merge_states(old, {"twpas": {}}, old_wiring=ow, new_wiring=nw,
+                         twpa_ids=["twpa1"])
+        assert "twpa1" in r.merged["twpas"]
+        assert graft_twpa_wiring(r.merged, old, ow, nw) == 1
+
+    def test_prefix_drift_is_the_same_twpa(self):
+        old, ow = self._old()
+        r = merge_states(old, {"twpas": {}}, old_wiring=ow,
+                         new_wiring={"wiring": {}}, twpa_ids=["1"])
+        assert "twpa1" in r.merged["twpas"]
+
+    def test_a_state_only_twpa_had_no_row_to_remove(self):
+        old, _ = self._old()
+        r = merge_states(old, {"twpas": {}}, old_wiring={"wiring": {}},
+                         new_wiring={"wiring": {}}, twpa_ids=[])
+        assert "twpa1" in r.merged["twpas"]
+
+    def test_no_spec_information_is_the_legacy_graft_all(self):
+        old, ow = self._old()
+        r = merge_states(old, {"twpas": {}}, old_wiring=ow,
+                         new_wiring={"wiring": {}})
+        assert "twpa1" in r.merged["twpas"] and r.stats.twpas_removed == []
+
+
+# ---------------------------------------------------------------------------
+# QA regenerate-r2-15 -- every graft is gated at every depth by the build env
+# ---------------------------------------------------------------------------
+
+class TestAGraftIsGatedAtEveryDepth:
+    XY = "qb.XYDriveMW"
+    TWPA = "qb.TWPA"
+    DRAG = "qb04.pulses.DragCosinePulse"
+    LAB = "lab.WeirdPulse"
+
+    def _old(self):
+        return {"twpas": {"twpa1": {
+            "__class__": self.TWPA, "id": "twpa1", "settling_time": 40,
+            "pump": {"__class__": self.XY, "RF_frequency": 8.2e9, "extras": {}}}},
+            "qubits": {"q1": {"xy": {"__class__": self.XY, "operations": {
+                "EF_x180": {"__class__": self.DRAG, "amplitude": 0.2, "axis_angle": 0.0},
+                "mine": {"__class__": self.LAB, "amplitude": 0.3, "new_knob": 1}}}}}}
+
+    def _new(self):
+        return {"twpas": {}, "qubits": {"q1": {"xy": {
+            "__class__": self.XY, "operations": {}}}}}
+
+    ENV = {"qb.XYDriveMW": ["RF_frequency", "operations"],     # no `extras`
+           "qb.TWPA": ["id", "pump"],                          # no settling_time
+           "qb04.pulses.DragCosinePulse": None,                # env cannot import
+           "lab.WeirdPulse": ["amplitude"]}                    # importable, fewer fields
+
+    def test_a_nested_field_the_env_does_not_know_is_dropped(self):
+        r = merge_states(self._old(), self._new(), env_fields=self.ENV)
+        tw = r.merged["twpas"]["twpa1"]
+        assert "extras" not in tw["pump"] and tw["pump"]["RF_frequency"] == 8.2e9
+        assert "settling_time" not in tw
+        assert "twpas.twpa1.pump.extras" in r.stats.schema_dropped
+        assert "twpas.twpa1.settling_time" in r.stats.schema_dropped
+
+    def test_an_object_of_an_unimportable_class_is_dropped_and_named(self):
+        r = merge_states(self._old(), self._new(), env_fields=self.ENV)
+        ops = r.merged["qubits"]["q1"]["xy"]["operations"]
+        assert "EF_x180" not in ops
+        assert "qubits.q1.xy.operations.EF_x180" in r.stats.schema_dropped
+        assert not any(p.startswith("qubits.q1.xy.operations.EF_x180")
+                       for p in r.stats.residual_lost)
+
+    def test_an_importable_lab_class_keeps_its_known_fields(self):
+        r = merge_states(self._old(), self._new(), env_fields=self.ENV)
+        mine = r.merged["qubits"]["q1"]["xy"]["operations"]["mine"]
+        assert mine == {"__class__": self.LAB, "amplitude": 0.3}
+
+    def test_no_env_answer_is_the_legacy_graft_bit_for_bit(self):
+        r = merge_states(self._old(), self._new())
+        assert r.merged["twpas"]["twpa1"] == self._old()["twpas"]["twpa1"]
+        assert r.merged["qubits"]["q1"]["xy"]["operations"] == \
+            self._old()["qubits"]["q1"]["xy"]["operations"]
+
+    def test_the_twpa_port_copy_is_gated_too(self):
+        old = {"twpas": {"twpa1": {}}, "ports": {"mw_outputs": {"con1": {"3": {"7": {
+            "__class__": "qb.MWPort", "port_id": 7, "band": 3, "lo_mode": "x"}}}}}}
+        ow = {"wiring": {"twpas": {"twpa1": {"p": {
+            "opx_output": "#/ports/mw_outputs/con1/3/7"}}}}}
+        merged, nw = {"twpas": {"twpa1": {}}}, {"wiring": {}}
+        from quam_state_manager.core.regen_merge import MergeStats
+        st = MergeStats()
+        graft_twpa_wiring(merged, old, ow, nw, env_fields={"qb.MWPort": ["port_id", "band"]},
+                          stats=st)
+        assert merged["ports"]["mw_outputs"]["con1"]["3"]["7"] == {
+            "__class__": "qb.MWPort", "port_id": 7, "band": 3}
+        assert st.schema_dropped == ["ports.mw_outputs.con1.3.7.lo_mode"]
+
+
+# ---------------------------------------------------------------------------
+# QA regenerate-r2-09 -- a reversed pair is named, never merged across orientations
+# ---------------------------------------------------------------------------
+
+class TestAReversedPairIsNamed:
+    @staticmethod
+    def _pair(c, t, **kw):
+        return {"qubit_control": f"#/qubits/{c}", "qubit_target": f"#/qubits/{t}", **kw}
+
+    def test_a_reversed_pair_is_reported_and_not_carried(self):
+        old = {"qubits": {"q2": {}, "q3": {}},
+               "qubit_pairs": {"q2-3": self._pair("q2", "q3", moving_qubit="control",
+                                                   extras={"cz_plan": 1})}}
+        new = {"qubits": {"q2": {}, "q3": {}},
+               "qubit_pairs": {"q3-2": self._pair("q3", "q2", moving_qubit="target")}}
+        r = merge_states(old, new)
+        assert r.stats.pairs_reversed == [("q2-3", "q3-2")]
+        assert "q2-3" not in r.merged["qubit_pairs"]
+        assert r.merged["qubit_pairs"]["q3-2"]["moving_qubit"] == "target"
+        assert "qubit_pairs.q2-3.extras.cz_plan" in r.stats.residual_lost
+
+    def test_a_cr_chips_two_directions_are_not_a_reversal(self):
+        both = {"qubits": {"q0": {}, "q4": {}},
+                "qubit_pairs": {"q0-4": self._pair("q0", "q4"),
+                                "q4-0": self._pair("q4", "q0")}}
+        r = merge_states(both, json.loads(json.dumps(both)))
+        assert r.stats.pairs_reversed == []
+        assert set(r.merged["qubit_pairs"]) == {"q0-4", "q4-0"}

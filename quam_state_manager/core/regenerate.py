@@ -85,6 +85,51 @@ def _source_classes_the_env_holds(python_path, old_state, instance_path=None,
     return keep or None
 
 
+def _source_class_env_view(python_path, old_state, instance_path=None,
+                           probe=None) -> dict | None:
+    """``{class: [field, ...] | None}`` for the SOURCE chip's classes, as the
+    build env itself answers (QA regenerate-r2-15): a field list for every
+    dataclass it imports, ``None`` for every class it reports it cannot
+    import. The merge gates every grafted subtree by it (an old-stack field
+    or an unimportable lab class would make ``Quam.load()`` fail in that
+    env). Same cached probe as :func:`_source_classes_the_env_holds`; never
+    raises; ``None`` (probe failed) means the legacy graft."""
+    try:
+        from . import state_env_schema
+        classes = state_env_schema.harvest_classes(old_state)
+        if not classes:
+            return None
+        res = (probe or state_env_schema.probe_state_schema)(
+            python_path, classes, instance_path)
+    except Exception:  # noqa: BLE001 -- an optional gate never fails a rebuild
+        return None
+    if not isinstance(res, dict) or not res.get("ok"):
+        return None
+    view: dict = {}
+    for cls, rec in (res.get("classes") or {}).items():
+        if not isinstance(rec, dict):
+            continue
+        if not rec.get("importable"):
+            view[cls] = None
+        elif rec.get("is_dataclass") and isinstance(rec.get("fields"), dict):
+            view[cls] = list(rec["fields"])
+    return view or None
+
+
+def _spec_twpa_ids(spec: dict) -> list[str] | None:
+    """The TWPA ids the build spec asks for (entries are ``{"id": ...}``
+    objects or, in old sidecars, bare strings); ``None`` when the spec says
+    nothing about TWPAs, which keeps the merge's graft-all fallback."""
+    if not isinstance(spec, dict) or "twpas" not in spec:
+        return None
+    out = []
+    for t in spec.get("twpas") or ():
+        tid = t.get("id") if isinstance(t, dict) else t
+        if isinstance(tid, str) and tid.strip():
+            out.append(tid.strip())
+    return out
+
+
 def run_regenerate(
     python_path: str,
     old_folder: Path | str,
@@ -178,22 +223,42 @@ def run_regenerate(
     # hold -- the merge keeps a lab subclass the builder replaced with its
     # stock base, so the lab's own fields (its optimized readout weights on
     # one customer chip) survive a rebuild instead of dropping out.
+    # One probe answers both questions (keep_classes, and the r2-15 gate view)
+    # -- memoized here so an uncached env is not probed twice.
+    _probed: dict = {}
+
+    def _probe_once(pp, classes, ip):
+        key = (pp, tuple(classes))
+        if key not in _probed:
+            if source_probe is not None:
+                _probed[key] = source_probe(pp, classes, ip)
+            else:
+                from . import state_env_schema
+                _probed[key] = state_env_schema.probe_state_schema(pp, classes, ip)
+        return _probed[key]
+
     keep_classes = _source_classes_the_env_holds(
-        python_path, old_state, instance_path, source_probe)
+        python_path, old_state, instance_path, _probe_once)
+    env_fields = _source_class_env_view(
+        python_path, old_state, instance_path, _probe_once)
 
     result = regen_merge.merge_states(old_state, new_state,
                                       class_schemas=class_schemas,
                                       protect_paths=protect,
                                       old_wiring=old_wiring,
                                       new_wiring=new_wiring,
-                                      keep_classes=keep_classes)
+                                      keep_classes=keep_classes,
+                                      twpa_ids=_spec_twpa_ids(spec),
+                                      env_fields=env_fields)
     result.stats.populate_conflicts.extend(pop_conflicts)
 
     # TWPAs are grafted back at the state level but the builder made no TWPA
     # wiring/ports — carry those from OLD so the channel resolves and
     # generate_config() doesn't crash. This also un-dangles the TWPA pointers.
     twpa_carried = regen_merge.graft_twpa_wiring(
-        result.merged, old_state, old_wiring, new_wiring)
+        result.merged, old_state, old_wiring, new_wiring,
+        env_fields=env_fields, schemas=class_schemas, stats=result.stats)
+    result.stats.schema_dropped.sort(key=regen_merge.natural_key)
     if twpa_carried:
         safe_io.atomic_write_json(out_dir / "wiring.json", new_wiring)
         # the TWPA channel pointers now resolve against the carried wiring, so
@@ -267,6 +332,26 @@ def run_regenerate(
         # docs/202 §17: declared ports nothing referenced, carried.
         "ports_carried": s.ports_carried[:80],
         "ports_carried_total": len(s.ports_carried),
+        # QA F1: port calibration that followed its line to another port, and
+        # ports whose old values left with their line (rebuild defaults kept).
+        "ports_moved": [{"from": o, "to": n, "owner": w}
+                        for o, n, w in s.ports_moved[:80]],
+        "ports_moved_total": len(s.ports_moved),
+        "ports_fresh": [{"port": n, "was": w, "now": v}
+                        for n, w, v in s.ports_fresh[:80]],
+        # QA r2-09: a pair the rebuild has only reversed -- named, with how
+        # many of its values did not carry.
+        "pairs_reversed": [
+            {"old": o, "new": n,
+             "lost": sum(1 for p in s.residual_lost
+                         if p.startswith(f"qubit_pairs.{o}."))}
+            for o, n in s.pairs_reversed[:20]],
+        # QA r2-10: TWPAs taken off step 4 (renamed / removed), not grafted back.
+        "twpas_removed": [
+            {"id": t,
+             "lost": sum(1 for p in s.residual_lost
+                         if p.startswith(f"twpas.{t}."))}
+            for t in s.twpas_removed[:20]],
         "class_kept": len(s.class_kept),
         "class_kept_paths": [{"path": p, "cls": c} for p, c in s.class_kept[:80]],
         "class_kept_total": len(s.class_kept),

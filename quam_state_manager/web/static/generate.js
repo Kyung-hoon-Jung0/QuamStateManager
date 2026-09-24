@@ -1536,6 +1536,10 @@
       // Surface the (previously invisible) manual orientation pin.
       var isManual = cz && pair[0] && pair[1] &&
         (popPairs[pair[0] + "-" + pair[1]] || {}).cz_order === "manual";
+      var srcOrient = state.mode === "regenerate" && regenPairOrient &&
+        regenPairOrient.get(pair);
+      var isReversed = !!(srcOrient && pair[0] === srcOrient.src[1] &&
+                          pair[1] === srcOrient.src[0]);
       row.innerHTML =
         '<select class="gen-pair-c"><option value="">—</option>' +
         qubitOptions(pair[0]) + "</select>" +
@@ -1554,16 +1558,35 @@
           row.querySelector("." + cls).classList.add("gen-pair-missing");
         }
       });
+      var revNote = null;
+      if (isReversed) {
+        // Its own line UNDER the row: the pairs column is narrow, and an
+        // inline chip pushed the row's x out of view.
+        revNote = document.createElement("div");
+        revNote.className = "gen-pair-reversed-chip";
+        revNote.textContent = "⚠ reversed vs the source chip — its CZ " +
+          "calibration will not carry";
+        revNote.title =
+          "The source chip has this pair as " + srcOrient.src[0] + " → " +
+          srcOrient.src[1] + ". Its orientation-dependent calibration (CZ " +
+          "macros, phase shifts, confusion matrix, bench history) will NOT " +
+          "be carried to " + pair[0] + " → " + pair[1] + " — the build " +
+          "report lists it as not carried. The flux pulse stays on the same " +
+          "physical qubit, seeded from the source's CZ values. Set the order " +
+          "back to keep the calibration.";
+      }
       row.querySelector(".gen-pair-c").addEventListener("change", function (e) {
         pair[0] = e.target.value;
         state.pairsTouched = true;
         markPairManual(pair);
+        regenFollowPairOrientation(pair);
         renderPairs();   // repaint (the manual chip may have just appeared)
       });
       row.querySelector(".gen-pair-t").addEventListener("change", function (e) {
         pair[1] = e.target.value;
         state.pairsTouched = true;
         markPairManual(pair);
+        regenFollowPairOrientation(pair);
         renderPairs();
       });
       row.querySelector(".gen-row-del").addEventListener("click", function () {
@@ -1574,7 +1597,29 @@
         deriveLines();           // keep spec.lines in sync after removal
       });
       list.appendChild(row);
+      if (revNote) list.appendChild(revNote);
     });
+  }
+
+  // QA regenerate-r2-09 -- Re-generate only. A source pair's populate bucket
+  // (its moving_qubit ROLE, its pinned line) describes the orientation it is
+  // keyed under. Reversing Control/Target by hand left the role unswapped:
+  // "control" then meant the OTHER qubit, and the flux pulse silently moved
+  // to it at the default amplitude. The reversal now drags the bucket, the
+  // role, the pins and the allocation along exactly as czAutoOrient's flip
+  // does (flipPairOrder), tracked per ROW (the pair array) against the
+  // orientation its bucket currently has; the row also says it is reversed.
+  var regenPairOrient = null;   // WeakMap pair-array -> {src, cur}; set by hydrate
+
+  function regenFollowPairOrientation(pair) {
+    if (state.mode !== "regenerate" || !regenPairOrient) return;
+    var rec = regenPairOrient.get(pair);
+    if (!rec || !pair[0] || !pair[1]) return;
+    if (pair[0] === rec.cur[1] && pair[1] === rec.cur[0]) {
+      pair[0] = rec.cur[0]; pair[1] = rec.cur[1];   // back to the bucket's order,
+      flipPairOrder(pair);                           // then flip WITH everything
+      rec.cur = [pair[0], pair[1]];
+    }
   }
 
   function nextTwpaId() {
@@ -1596,17 +1641,37 @@
       input.type = "text";
       input.value = twpa.id || "";
       input.placeholder = "twpaA";
+      // The key this row's populate bucket and pinned lines live under. A
+      // rename that passes through an EMPTY id (select-all + Delete, then
+      // type) used to compare against '' and orphan the bucket under the old
+      // id: every step-6 cell of the renamed TWPA went blank and it built
+      // uncalibrated (QA regenerate-r2-10). Also re-keys its pins, so the
+      // renamed TWPA keeps its pump port and its isolation line.
+      var popKey = twpa.id || "";
       input.addEventListener("input", function () {
-        var oldId = twpa.id, newId = input.value.trim();
+        var newId = input.value.trim();
         twpa.id = newId;
+        if (!newId || newId === popKey) return;
         // populate.twpa is keyed by TWPA id (not qubit id — so it is
         // deliberately NOT in applyQubitIdMap's / prunePopulate's lists,
         // which would delete every TWPA bucket). Follow a rename.
         var pt = (state.spec.populate || {}).twpa;
-        if (pt && oldId && newId && oldId !== newId && pt[oldId] && !pt[newId]) {
-          pt[newId] = pt[oldId];
-          delete pt[oldId];
+        var lines = state.spec.lines || [];
+        var taken = (pt && pt[newId]) || lines.some(function (ln) {
+          return ln.element === newId;
+        });
+        if (taken) return;   // another TWPA's key — keep ours until it differs
+        if (pt && popKey && pt[popKey]) {
+          pt[newId] = pt[popKey];
+          delete pt[popKey];
         }
+        lines.forEach(function (ln) {
+          if (popKey && ln.element === popKey &&
+              (ln.line === "twpa_pump" || ln.line === "twpa_isolation")) {
+            ln.element = newId;
+          }
+        });
+        popKey = newId;
       });
       var del = document.createElement("button");
       del.type = "button";
@@ -1614,7 +1679,7 @@
       del.textContent = "×";
       del.addEventListener("click", function () {
         var pt = (state.spec.populate || {}).twpa;
-        if (pt) delete pt[twpa.id];
+        if (pt) delete pt[popKey || twpa.id];
         state.spec.twpas.splice(idx, 1);
         renderTwpas();
       });
@@ -2338,27 +2403,27 @@
     var qdIp = document.getElementById("gen-qdac-ip");
     var qdPort = document.getElementById("gen-qdac-port");
     var qdUsb = document.getElementById("gen-qdac-usb");
-    var qd = (state.spec.qdac = state.spec.qdac || qdacInstrumentDefaults());
+    function curQd() { return (state.spec.qdac = state.spec.qdac || qdacInstrumentDefaults()); }
     if (qdComm) {
       qdComm.addEventListener("change", function () {
-        qd.communication_type = qdComm.value;
+        curQd().communication_type = qdComm.value;
         renderQdacInstrument();
       });
     }
-    if (qdIp) qdIp.addEventListener("input", function () { qd.ip_address = qdIp.value.trim(); });
+    if (qdIp) qdIp.addEventListener("input", function () { curQd().ip_address = qdIp.value.trim(); });
     if (qdPort) {
       qdPort.addEventListener("input", function () {
         // An empty field falls back to the 5025 default rather than an
         // explicit null — Python's qdac.get("port", 5025) only substitutes
         // the default when the key is ABSENT, not when it's None.
         var v = parseInt(qdPort.value, 10);
-        qd.port = isNaN(v) ? 5025 : v;
+        curQd().port = isNaN(v) ? 5025 : v;
       });
     }
     if (qdUsb) {
       qdUsb.addEventListener("input", function () {
         var v = parseInt(qdUsb.value, 10);
-        qd.usb_device = isNaN(v) ? null : v;
+        curQd().usb_device = isNaN(v) ? null : v;
       });
     }
 
@@ -6908,6 +6973,22 @@
       if (czCounts.equal) czParts.push(czCounts.equal + " equal frequencies");
       rows.splice(5, 0, ["CZ pair orientation", czParts.join(", ")]);
     }
+    // QA regenerate-r2-09: a source pair reversed by hand loses its
+    // orientation-dependent calibration -- say so BEFORE the build.
+    if (state.mode === "regenerate" && regenPairOrient) {
+      var reversed = sp.qubit_pairs.filter(function (p) {
+        var r = regenPairOrient.get(p);
+        return r && p[0] === r.src[1] && p[1] === r.src[0];
+      }).map(function (p) {
+        return p[1] + " → " + p[0] + " is now " + p[0] + " → " + p[1];
+      });
+      if (reversed.length) {
+        rows.push(["⚠ Reversed pairs", reversed.join("; ") + " — the source " +
+          "pair's orientation-dependent calibration (CZ macros, phase shifts, " +
+          "confusion) will NOT carry; the flux pulse stays on the same qubit. " +
+          "Set the order back on step 4 to keep it."]);
+      }
+    }
     el.innerHTML = '<table class="gen-review-table"><tbody>' +
       rows.map(function (r) {
         return "<tr><th>" + r[0] + "</th><td></td></tr>";
@@ -7354,6 +7435,9 @@
         // carried onto a FEM the rebuild still uses.
         var portsN = (m.ports_carried_total != null)
             ? m.ports_carried_total : (m.ports_carried || []).length;
+        // QA F1 -- port calibration that followed its line to another port.
+        var portsMovedN = (m.ports_moved_total != null)
+            ? m.ports_moved_total : (m.ports_moved || []).length;
         var keptByCls = {};
         (m.class_kept_paths || []).forEach(function (c) {
           keptByCls[c.cls] = (keptByCls[c.cls] || 0) + 1;
@@ -7391,6 +7475,12 @@
             'rebuild still uses. A port something DID use is never brought back ' +
             '— that is how a removed qubit stays removed.">' + portsN +
             ' unused port' + (portsN === 1 ? '' : 's') + ' carried</span>' : '') +
+          (portsMovedN ? '<span class="gen-merge-stat gen-merge-ok gen-merge-ports-moved" ' +
+            'title="A line you moved to another port took its port calibration ' +
+            'with it (delay, predistortion filters, band / LO / power) — ' +
+            'listed below. Clear them on the new port if the cable is different.">' +
+            portsMovedN + ' port calibration' + (portsMovedN === 1 ? '' : 's') +
+            ' moved with its line</span>' : '') +
           (twpaN ? '<span class="gen-merge-stat gen-merge-ok" title="TWPAs the builder ' +
             "can't rebuild, carried whole (state + wiring + ports) so the config still " +
             'compiles">' + twpaN + ' TWPA carried</span>' : '') +
@@ -7444,6 +7534,47 @@
           pl.className = "gen-merge-muted gen-merge-detail gen-merge-port-line";
           pl.textContent = "carried " + p + " — declared, used by nothing in the source";
           el.appendChild(pl);
+        });
+        // QA F1: name the LINE, not 15 anonymous port paths. "ports.analog_
+        // outputs.con1.5.6" reads as "analog_outputs con1/5/6".
+        var portLabel = function (p) {
+          var sg = String(p).split(".");
+          return sg.length > 2 ? sg[1] + " " + sg.slice(2).join("/") : String(p);
+        };
+        (m.ports_moved || []).slice(0, 6).forEach(function (mv) {
+          var ml = document.createElement("div");
+          ml.className = "gen-merge-muted gen-merge-detail gen-merge-port-moved";
+          ml.textContent = mv.owner + ": " + portLabel(mv.from) + " → " +
+            portLabel(mv.to) + " — its port calibration (delay, filters, " +
+            "band / LO / power) moved with it";
+          el.appendChild(ml);
+        });
+        (m.ports_fresh || []).slice(0, 6).forEach(function (f) {
+          var fl = document.createElement("div");
+          fl.className = "gen-merge-detail gen-merge-warn gen-merge-port-fresh";
+          fl.textContent = "⚠ " + f.now + " on " + portLabel(f.port) +
+            ": fresh defaults — that port's calibration was " +
+            (f.was || "another line") + "'s and moved with it";
+          el.appendChild(fl);
+        });
+        // QA r2-09 / r2-10: say WHOSE values the not-carried list holds.
+        (m.pairs_reversed || []).forEach(function (r) {
+          var rl = document.createElement("div");
+          rl.className = "gen-merge-detail gen-merge-warn gen-merge-pair-reversed";
+          rl.textContent = "⚠ pair " + r.old + " was rebuilt reversed as " +
+            r.new + " — " + r.lost + " orientation-dependent value" +
+            (r.lost === 1 ? "" : "s") + " of " + r.old +
+            " not carried (listed below)";
+          el.appendChild(rl);
+        });
+        (m.twpas_removed || []).forEach(function (t) {
+          var tl = document.createElement("div");
+          tl.className = "gen-merge-detail gen-merge-warn gen-merge-twpa-removed";
+          tl.textContent = "TWPA " + t.id + " is not in this build's TWPA " +
+            "list (renamed or removed on step 4) — not rebuilt; its " + t.lost +
+            " value" + (t.lost === 1 ? "" : "s") + " are listed below " +
+            "(a rename keeps the Populate values you saw)";
+          el.appendChild(tl);
         });
         Object.keys(keptByCls).slice(0, 6).forEach(function (cls) {
           var kl = document.createElement("div");
@@ -7998,6 +8129,7 @@
     state.sourcePath = null;
     state.regenLineInventory = null;
     state.regenSourcePairGate = null;
+    regenPairOrient = null;
     resetAllocRuntime();   // strand any in-flight allocate for the old content
     try {
       localStorage.removeItem("quam_gen_output_path");
@@ -8059,6 +8191,7 @@
     state.sourcePath = null;
     state.regenLineInventory = null;
     state.regenSourcePairGate = null;
+    regenPairOrient = null;
 
     // Bottom nav + the top header mirror share the same handlers.
     ["gen-back", "gen-back-top"].forEach(function (id) {
@@ -8302,6 +8435,13 @@
       namesTouched: true
     });
     applyChipArch(state.chipArch);            // sync qubitFlux / couplerFlux / pairGate
+    // QA regenerate-r2-09: each source pair's orientation, per row.
+    regenPairOrient = (typeof WeakMap === "function") ? new WeakMap() : null;
+    (state.spec.qubit_pairs || []).forEach(function (p) {
+      if (regenPairOrient && p && p[0] && p[1]) {
+        regenPairOrient.set(p, { src: [p[0], p[1]], cur: [p[0], p[1]] });
+      }
+    });
     // Populate-protect baseline (docs/72): snapshot EXACTLY what this wizard
     // session displays. The build POST ships it back verbatim; the server
     // diffs it against the edited populate so only the user's in-wizard edits

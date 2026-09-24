@@ -8339,6 +8339,13 @@ button.gen-mini-btn:hover {
     border: 1px solid var(--pico-muted-border-color);
     color: var(--pico-muted-color); line-height: 1.5; user-select: none;
 }
+/* Re-generate: a source pair reversed by hand (QA regenerate-r2-09) -- a
+   line under its row, so the narrow pairs column never pushes the row's x
+   out of view. */
+.gen-pair-reversed-chip {
+    font-size: 0.8em; line-height: 1.3; color: var(--color-warning-text);
+    margin-top: -0.15rem; cursor: help; user-select: none;
+}
 /* Step-4 readability bump: muted captions + the CZ pair hint at 13.5px, the
    naming scheme select compact (it rendered outsized + over-wide). */
 .gen-panel[data-step="4"] .muted { font-size: 0.9em; }

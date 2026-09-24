@@ -317,6 +317,11 @@ def _extract_populate(state: dict, root: dict) -> dict:
             if variant in ("unipolar", "flattop", "bipolar", "SNZ", "flattop_erf"):
                 pairv["cz_variant"] = variant
             fpq = m.get("flux_pulse_qubit")
+            if isinstance(fpq, str):
+                # QA regenerate-r2-09: a modern chip keeps the pulse on the
+                # moving qubit's z and the macro POINTS at it. Unread, a
+                # re-oriented pair was seeded at the default amplitude.
+                fpq = _resolve_ptr(root, fpq)
             if isinstance(fpq, dict):
                 if _num(fpq.get("length")):
                     pairv["cz_interaction_duration"] = fpq["length"]

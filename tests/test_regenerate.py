@@ -512,3 +512,113 @@ def test_scripts_dir_param_replaces_hardcoded_folder(tmp_path, monkeypatch):
         assert (scripts / "02_build_machine.py").exists()
         assert not (tmp_path / "new" / "build_scripts").exists()
         assert out["script"] == str(scripts)
+
+
+class TestTheQaRegenerateFixesEndToEnd:
+    """QA F1 / r2-09 / r2-10 / r2-15 through run_regenerate (build mocked):
+    what the merge learned must reach the report the panel reads."""
+
+    LF = "quam.components.ports.analog_outputs.LFFEMAnalogOutputPort"
+
+    def _write(self, folder, state, wiring):
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "state.json").write_text(json.dumps(state))
+        (folder / "wiring.json").write_text(json.dumps(wiring))
+
+    def _flux_chip(self, port, delay, ff):
+        state = {"qubits": {"q1": {"z": {
+            "opx_output": "#/wiring/qubits/q1/z/opx_output", "__class__": "qb.FluxLine"}}},
+            "ports": {"analog_outputs": {"con1": {"5": {str(port): {
+                "controller_id": "con1", "fem_id": 5, "port_id": port,
+                "delay": delay, "feedforward_filter": ff, "__class__": self.LF}}}}}}
+        wiring = {"wiring": {"qubits": {"q1": {"z": {
+            "opx_output": f"#/ports/analog_outputs/con1/5/{port}"}}}}, "network": {}}
+        return state, wiring
+
+    def _fake(self, state, wiring, result=None, seen=None):
+        def fake_build(python_path, mode, spec, out_dir, timeout=300):
+            if seen is not None:
+                seen.append(spec)
+            self._write(Path(out_dir), state, wiring)
+            return {"ok": True, "status": "ok", "error": None, "result": result or {}}
+        return fake_build
+
+    def test_a_moved_flux_line_takes_its_filters_and_the_report_names_it(
+            self, tmp_path, monkeypatch):
+        self._write(tmp_path / "old", *self._flux_chip(1, 37, [0.1] * 48))
+        monkeypatch.setattr(regenerate.config_generator, "run_generator",
+                            self._fake(*self._flux_chip(6, 141, None)))
+        out = regenerate.run_regenerate("py", tmp_path / "old", {"x": 1},
+                                        tmp_path / "new",
+                                        source_probe=lambda *a, **k: {"ok": False})
+        m = out["merge"]
+        assert m["ports_moved"] == [{"from": "ports.analog_outputs.con1.5.1",
+                                     "to": "ports.analog_outputs.con1.5.6",
+                                     "owner": "q1.z"}]
+        assert m["ports_moved_total"] == 1 and m["residual_lost"] == []
+        merged = json.loads((tmp_path / "new" / "state.json").read_text())
+        p6 = merged["ports"]["analog_outputs"]["con1"]["5"]["6"]
+        assert p6["delay"] == 37 and p6["feedforward_filter"] == [0.1] * 48
+
+    def test_the_spec_twpa_list_reaches_the_merge(self, tmp_path, monkeypatch):
+        old_state = {"twpas": {"twpa1": {"id": "twpa1", "settling_time": 40,
+                     "pump": {"opx_output": "#/wiring/twpas/twpa1/p/opx_output"}}}}
+        old_wiring = {"wiring": {"twpas": {"twpa1": {"p": {
+            "opx_output": "#/ports/mw_outputs/con1/3/7"}}}}, "network": {}}
+        self._write(tmp_path / "old", old_state, old_wiring)
+        new_state = {"twpas": {"twpaMain": {"id": "twpaMain", "settling_time": 0}}}
+        new_wiring = {"wiring": {"twpas": {"twpaMain": {"p": {
+            "opx_output": "#/ports/mw_outputs/con1/3/7"}}}}, "network": {}}
+        monkeypatch.setattr(regenerate.config_generator, "run_generator",
+                            self._fake(new_state, new_wiring))
+        out = regenerate.run_regenerate(
+            "py", tmp_path / "old", {"twpas": [{"id": "twpaMain", "qubits": []}]},
+            tmp_path / "new", source_probe=lambda *a, **k: {"ok": False})
+        m = out["merge"]
+        assert m["twpa_wiring_carried"] == 0
+        assert m["twpas_removed"] == [{"id": "twpa1", "lost": 2}]   # id + settling_time
+        merged = json.loads((tmp_path / "new" / "state.json").read_text())
+        assert set(merged["twpas"]) == {"twpaMain"}
+
+    def test_a_spec_without_twpas_keeps_the_graft_all_fallback(self):
+        assert regenerate._spec_twpa_ids({"x": 1}) is None
+        assert regenerate._spec_twpa_ids({"twpas": ["twpa1", {"id": " B "}, {"id": ""}]}) \
+            == ["twpa1", "B"]
+
+    def test_the_env_view_gates_the_graft(self, tmp_path, monkeypatch):
+        drag = "qb04.pulses.DragCosinePulse"
+        xy = "qb.XYDriveMW"
+        old_state = {"qubits": {"q1": {"xy": {"__class__": xy, "operations": {
+            "EF_x180": {"__class__": drag, "amplitude": 0.2}}}}}}
+        self._write(tmp_path / "old", old_state, {"wiring": {}, "network": {}})
+        new_state = {"qubits": {"q1": {"xy": {"__class__": xy, "operations": {}}}}}
+        monkeypatch.setattr(regenerate.config_generator, "run_generator",
+                            self._fake(new_state, {"wiring": {}, "network": {}}))
+        calls = []
+
+        def probe(python_path, class_paths, instance_path=None):
+            calls.append(tuple(class_paths))
+            return {"ok": True, "classes": {
+                xy: {"importable": True, "is_dataclass": True, "bases": [],
+                     "fields": {"operations": {}}},
+                drag: {"importable": False, "is_dataclass": False, "fields": None}}}
+        out = regenerate.run_regenerate("py", tmp_path / "old", {"x": 1},
+                                        tmp_path / "new", source_probe=probe)
+        assert len(calls) == 1, "one probe answers keep_classes AND the gate"
+        assert out["merge"]["schema_dropped_paths"] == ["qubits.q1.xy.operations.EF_x180"]
+        merged = json.loads((tmp_path / "new" / "state.json").read_text())
+        assert merged["qubits"]["q1"]["xy"]["operations"] == {}
+
+    def test_a_reversed_pair_is_named_with_its_loss(self, tmp_path, monkeypatch):
+        def pair(c, t, **kw):
+            return {"qubit_control": f"#/qubits/{c}", "qubit_target": f"#/qubits/{t}", **kw}
+        self._write(tmp_path / "old", {"qubits": {"q2": {}, "q3": {}}, "qubit_pairs": {
+            "q2-3": pair("q2", "q3", extras={"cz_plan": 1, "bench": 2})}},
+            {"wiring": {}, "network": {}})
+        monkeypatch.setattr(regenerate.config_generator, "run_generator", self._fake(
+            {"qubits": {"q2": {}, "q3": {}}, "qubit_pairs": {"q3-2": pair("q3", "q2")}},
+            {"wiring": {}, "network": {}}))
+        out = regenerate.run_regenerate("py", tmp_path / "old", {"x": 1},
+                                        tmp_path / "new",
+                                        source_probe=lambda *a, **k: {"ok": False})
+        assert out["merge"]["pairs_reversed"] == [{"old": "q2-3", "new": "q3-2", "lost": 2}]
