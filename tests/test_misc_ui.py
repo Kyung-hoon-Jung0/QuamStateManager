@@ -156,6 +156,20 @@ class TestRunJump:
         assert "window.prevDiffJump" in js
         assert "window.dsJumpRun" not in js
 
+    def test_the_box_refuses_what_is_not_a_run_number(self):
+        """datasets-r2-15: '12.5' silently compared against #125 and 'abc' did
+        nothing at all -- pinned against the real app.js under jsdom."""
+        import shutil
+        import subprocess
+        if shutil.which("node") is None:
+            pytest.skip("node not available")
+        proc = subprocess.run(
+            ["node", str(_ROOT / "tests" / "prevdiff_jump_selfcheck.cjs")],
+            capture_output=True, text=True, cwd=str(_ROOT), timeout=120)
+        if proc.returncode == 2 and "jsdom not installed" in (proc.stderr or ""):
+            pytest.skip("jsdom not installed")
+        assert proc.returncode == 0, f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+
 
 class TestPillDismiss:
     def test_escape_and_click_away_are_bound(self):

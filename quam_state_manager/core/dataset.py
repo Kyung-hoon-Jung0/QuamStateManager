@@ -1722,6 +1722,40 @@ class DatasetStore:
     # Figure serving
     # ------------------------------------------------------------------
 
+    def run_file_health(self, run_id: int) -> dict:
+        """datasets-r2-20: what the run detail must SAY instead of an empty
+        state or a broken image. Called by the detail route only (get_run has
+        16 callers and stays read-free):
+
+        - ``unreadable``: node.json / data.json present but unparsable -- read
+          only when the run is flagged ``incomplete``, so a healthy run pays
+          nothing;
+        - ``files_on_disk``: with data.json unreadable, the image files that
+          ARE in the run folder (the rule ``_diff_run_figures`` uses);
+        - ``missing_figures``: declared figures whose file is gone (one stat
+          each, the same resolution the /fig route serves).
+        """
+        out: dict = {"unreadable": [], "files_on_disk": [], "missing_figures": []}
+        run = self.runs.get(run_id)
+        if not run:
+            return out
+        if run.incomplete:
+            for fname in ("node.json", "data.json"):
+                p = run.folder_path / fname
+                if p.exists() and safe_io.scan_json(p) is None:
+                    out["unreadable"].append(fname)
+            if "data.json" in out["unreadable"]:
+                try:
+                    out["files_on_disk"] = sorted(
+                        f.name for f in run.folder_path.iterdir()
+                        if f.is_file() and f.suffix.lower() in (".png", ".jpg", ".jpeg", ".svg"))
+                except OSError:
+                    pass
+        for name in run.figure_names:
+            if self.get_figure_path(run_id, name) is None:
+                out["missing_figures"].append(name)
+        return out
+
     def get_figure_path(self, run_id: int, figure_name: str) -> Path | None:
         """Return absolute path to a figure PNG file (path-traversal safe)."""
         run = self.runs.get(run_id)
@@ -2480,11 +2514,38 @@ class DatasetStore:
                 raise
             return list(tags_dict.get(rid_str, []))
 
-    def set_note(self, run_id: int, note: str):
-        """Set a note on a run."""
+    class NoteConflict(Exception):
+        """datasets-r2-12: the note changed since the editor rendered it (another
+        tab or window saved one). ``current`` is the note that is stored now."""
+
+        def __init__(self, current: str):
+            super().__init__("note changed since it was opened")
+            self.current = current
+
+    def set_note(self, run_id: int, note: str, expected: str | None = None):
+        """Set a note on a run.
+
+        ``expected`` (datasets-r2-12) is the note the editor last saw. When
+        given, a stored note that differs from it AND from ``note`` raises
+        :class:`NoteConflict` instead of silently replacing another window's
+        text; ``None`` keeps last-write-wins for every other caller.
+        """
         with self._tags_lock:
             notes = self._tags_data.setdefault("notes", {})
             rid_str = str(run_id)
+            if expected is not None:
+                def _nl(s):
+                    return (s or "").replace("\r\n", "\n").replace("\r", "\n")
+                on_disk = (safe_io.scan_json(self._tags_path)
+                           if self._tags_path.exists() else None)
+                if isinstance(on_disk, dict) and isinstance(on_disk.get("notes"), dict):
+                    current = on_disk["notes"].get(rid_str) or ""
+                else:
+                    current = notes.get(rid_str) or ""
+                if not isinstance(current, str):
+                    current = str(current)
+                if _nl(current) != _nl(expected) and _nl(current) != _nl(note):
+                    raise DatasetStore.NoteConflict(current)
             previous = notes.get(rid_str)
             if note:
                 notes[rid_str] = note

@@ -25003,7 +25003,9 @@ def dataset_detail(uid):
                            fit_targets=resolve_fit_targets(run),
                            uid=uid, folder_key=uid.split(":")[0],
                            run_chip_token=chip_token, run_chip_name=chip_name,
-                           folder_label=folder_label, folder_path=str(ds.folder_path))
+                           folder_label=folder_label, folder_path=str(ds.folder_path),
+                           # datasets-r2-20: an unreadable file / a missing figure is SAID
+                           file_health=ds.run_file_health(run_id))
 
 
 @bp.route("/dataset/<uid>/fig/<name>")
@@ -25390,6 +25392,47 @@ def dataset_neighbor(uid):
                    run_id=nid)
 
 
+def _replaced_edits_note(entries: list, saved_unapplied: bool) -> str:
+    """datasets-r2-19: the result-line clause for what an Apply-to-chip press
+    replaced (docs/126 ⑤: applied over without asking, but NAMED).
+
+    ``entries`` is the change log captured BEFORE the working copy was
+    replaced. Those edits were on neither the chip nor any snapshot, so the
+    clause names each field + value and says plainly that ↺ Revert last apply
+    cannot bring them back (docs/187's rule for the replace-pull: never point
+    at a way back that does not hold the value). The literal prefix
+    "Replaced N unsaved edit" is kept.
+    """
+    def _short(e):
+        if getattr(e, "deleted", False):
+            return "(deleted)"
+        v = getattr(e, "new_value", None)
+        if isinstance(v, (dict, list)):
+            return "(new subtree)" if getattr(e, "created", False) else "{…}"
+        s = "null" if v is None else str(v)
+        return s if len(s) <= 40 else s[:39] + "…"
+
+    n = len(entries)
+    if not n:
+        return (" (Replaced saved-but-unapplied working changes.)"
+                if saved_unapplied else "")
+    last: dict = {}
+    for e in entries:                     # the last write to a path wins
+        last.pop(e.dot_path, None)
+        last[e.dot_path] = _short(e)
+    items = [f"{p} = {v}" for p, v in last.items()]
+    shown = "; ".join(items[:5]) + (f"; +{len(items) - 5} more" if len(items) > 5 else "")
+    one = n == 1
+    return (f" (Replaced {n} unsaved edit{'' if one else 's'}: {shown}. "
+            f"{'It was' if one else 'They were'} never on the chip or in any "
+            f"snapshot, so ↺ Revert last apply cannot bring "
+            f"{'it' if one else 'them'} back — re-enter {'it' if one else 'them'}"
+            f" if still wanted."
+            + (" Saved-but-unapplied working changes were replaced as well."
+               if saved_unapplied else "")
+            + ")")
+
+
 @bp.route("/dataset/<uid>/load-state", methods=["POST"])
 def dataset_load_state(uid):
     """Bring a run's frozen quam_state INTO the open chip (r11 feedback).
@@ -25499,6 +25542,8 @@ def dataset_load_state(uid):
     store = ctx["store"]
     with store._lock:
         replaced_edits = len(store.change_log)
+        # datasets-r2-19: WHAT is replaced, captured before the reload clears it
+        replaced_entries = list(store.change_log)
         has_pending = (bool(store.change_log) or bool(ctx.get("pending_reapply"))
                        or bool(ctx.get("working_dirty")))
     if (has_pending and not apply_req
@@ -25517,10 +25562,9 @@ def dataset_load_state(uid):
         ), 409
     replaced_note = ""
     if apply_req and has_pending:
-        replaced_note = (f" (Replaced {replaced_edits} unsaved edit"
-                         f"{'' if replaced_edits == 1 else 's'}.)"
-                         if replaced_edits
-                         else " (Replaced saved-but-unapplied working changes.)")
+        replaced_note = _replaced_edits_note(
+            replaced_entries,
+            bool(ctx.get("pending_reapply")) or bool(ctx.get("working_dirty")))
 
     try:
         state, wiring = safe_io.read_state_wiring(Path(state_path))
@@ -25575,7 +25619,11 @@ def dataset_load_state(uid):
                          # following Apply, not on this press. Saying
                          # "restores" made a correct staging read as a
                          # dead button when this was driven for real.
-                         + " Reversible — ↺ Revert last apply (top bar) "
+                         # datasets-r2-19: with unsaved edits replaced, the
+                         # reversibility covers the CHIP, not those edits
+                         + (" The chip's previous state is reversible"
+                            if replaced_edits else " Reversible")
+                         + " — ↺ Revert last apply (top bar) "
                            "stages the pre-apply state; Apply puts it "
                            "back on the chip."),
                 level="success")
@@ -25885,8 +25933,16 @@ def dataset_set_note(uid):
         return jsonify({"error": "No dataset loaded"}), 400
     ds, run_id, _ = resolved
     note = request.json.get("note", "") if request.is_json else request.form.get("note", "")
+    # datasets-r2-12: the note the editor last saw -- a stale tab never
+    # silently replaces another window's note (compare-and-swap, as entity notes)
+    expected = request.json.get("expected") if request.is_json else None
+    if not isinstance(expected, str):
+        expected = None
     try:
-        ds.set_note(run_id, note)
+        ds.set_note(run_id, note, expected=expected)
+    except DatasetStore.NoteConflict as exc:
+        return jsonify({"note_conflict": True, "current": exc.current,
+                        "error": "Somebody else changed this note since you opened it."}), 409
     except OSError as exc:
         return jsonify({"error": f"dataset folder is read-only ({exc})"}), 400
     return jsonify({"note": note, "run_id": run_id, "uid": uid})

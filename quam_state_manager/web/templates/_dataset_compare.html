@@ -2,6 +2,9 @@
 {% set inspector_type = "dataset" %}
 {% set inspector_label = "Comparing " ~ runs|length ~ " runs" %}
 {% set inspector_sub = labels | join(" vs ") %}
+{# datasets-r2-05: several runs, so the single-run buttons (up/down, vs prev,
+   full page, pin) have no run to act on -- the header omits them #}
+{% set inspector_compare = true %}
 {% include '_inspector_header.html' %}
 
 <nav class="dataset-tabs">

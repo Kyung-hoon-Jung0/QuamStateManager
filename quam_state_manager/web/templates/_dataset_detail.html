@@ -22,10 +22,22 @@
 </div>
 {% endif %}
 
+{# datasets-r2-20: a run file that is present but cannot be parsed (truncated,
+   or still being written) blanks whatever it carries -- say so, once, here. #}
+{% set _fh = file_health if file_health is defined and file_health else {} %}
+{% if _fh.unreadable %}
+<p class="ds-file-health-note" role="status">&#9888; {{ _fh.unreadable | join(" and ") }}
+    could not be read (truncated, or still being written) &mdash; what
+    {{ "they carry is" if _fh.unreadable|length > 1 else "it carries is" }} not shown below.</p>
+{% endif %}
+
 {# Note (collapsible) — a small "Note" badge sits above Tags; clicking it reveals
    a tight, auto-growing editor (one line, grows only on real wraps/newlines).
    Always starts collapsed; the badge wears .has-note (filled dot + the note as a
-   hover title) when a note exists. Persistence unchanged: saveDatasetNote on blur.
+   hover title) when a note exists. Persistence: saveDatasetNote on blur (and
+   Escape), plus a keepalive flush on pagehide; data-saved is the stored note
+   the editor started from (datasets-r2-12: F5 lost typed text, a stale tab
+   overwrote another tab's note).
    Always-collapsed means the textarea is only sized on click (toggleNoteEditor),
    so there's no hidden->scrollHeight=0 or pinned-mode load-sizing problem. #}
 {% set _has_note = (run.note or '') | trim | length > 0 %}
@@ -38,7 +50,8 @@
         <span class="ds-note-dot" aria-hidden="true"></span>
     </button>
     <textarea class="ds-note-input ds-note-textarea" rows="1" placeholder="Add a note…"
-              hidden oninput="autoGrowNote(this)"
+              hidden oninput="autoGrowNote(this)" data-uid="{{ uid }}" data-saved="{{ run.note or '' }}"
+              onkeydown="if (event.key === 'Escape') this.blur();"
               onblur="saveDatasetNote('{{ uid }}', this.value, this)">{{ run.note or '' }}</textarea>
 </div>
 
@@ -166,6 +179,8 @@
                 </details>
                 {% endfor %}
             </details>
+            {% elif 'data.json' in (_fh.unreadable or []) %}
+            <p class="muted" style="padding:.5rem">Fit results unknown: data.json could not be read.</p>
             {% else %}
             <p class="muted" style="padding:.5rem">No fit results.</p>
             {% endif %}
@@ -205,14 +220,25 @@
                 </span>
                 {% endif %}
             </div>
+            {% if fig_name in (_fh.missing_figures or []) %}
+            {# datasets-r2-20: data.json names it, the file is gone -- text, not a broken image #}
+            <p class="muted figure-missing">figure file missing: <code>{{ fig_name }}</code></p>
+            {% else %}
             <img src="/dataset/{{ uid }}/fig/{{ fig_name }}"
                  alt="{{ fig_name }}"
                  loading="lazy"
                  onclick="toggleFigureZoom(this)"
+                 onerror="this.onerror=null; var p=document.createElement('p'); p.className='muted figure-missing'; p.textContent='figure file missing: ' + this.alt; this.replaceWith(p);"
                  title="Click to zoom">
+            {% endif %}
         </div>
         {% endfor %}
     </div>
+    {% elif 'data.json' in (_fh.unreadable or []) %}
+        <p class="muted" style="padding:1rem;text-align:center">data.json could not be read
+            (truncated, or still being written), so this run's figures cannot be listed.
+            {% if _fh.files_on_disk %}<br>In the run folder:
+            {% for f in _fh.files_on_disk %}<code>{{ f }}</code>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</p>
     {% else %}
         <p class="muted" style="padding:1rem;text-align:center">No figures saved for this run.</p>
     {% endif %}
@@ -352,6 +378,9 @@
             </table>
         </details>
         {% endfor %}
+    {% elif 'data.json' in (_fh.unreadable or []) %}
+        <p class="muted" style="padding:1rem;text-align:center">data.json could not be read
+            (truncated, or still being written), so this run's fit results cannot be shown.</p>
     {% else %}
         <p class="muted" style="padding:1rem;text-align:center">No fit results available for this run.</p>
     {% endif %}

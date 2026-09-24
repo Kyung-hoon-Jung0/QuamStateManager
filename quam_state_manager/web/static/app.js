@@ -2434,8 +2434,12 @@ document.addEventListener('click', function(evt) {
         // the request on the TARGET, not document.body. Without it every dataset
         // load shares body's single (timeout-0) queue, so one slow/stalled load
         // wedges every later click → the intermittent "Datasets frozen" dead-clicks.
-        htmx.ajax('GET', '/dataset/' + uid,
+        // F20: an overlapping load aborted by the pane's hx-sync:replace
+        // rejects this promise (htmx 2 p.onabort) -- the abort is intended and
+        // still fires htmx:sendAbort; only the unhandled rejection goes.
+        var p = htmx.ajax('GET', '/dataset/' + uid,
                   {source: target, target: target, swap: 'innerHTML'});
+        if (p && typeof p.catch === 'function') p.catch(function() {});
     }
 });
 
@@ -2506,7 +2510,7 @@ window.dsNavRun = function(dir, btn) {
                 _dsMarkSlowLoad(target, d.run_id);
                 htmx.ajax('GET', '/dataset/' + d.uid,
                           {source: target, target: target, swap: 'innerHTML'})
-                    .then(function() { _dsSyncFullPageUrl(target); });
+                    .then(function() { _dsSyncFullPageUrl(target); }, function() {});   // F20: an hx-sync abort is not an error
             }).catch(function() {});
     }
     var entries = Array.prototype.filter.call(
@@ -2546,7 +2550,7 @@ window.dsNavRun = function(dir, btn) {
         _dsMarkSlowLoad(host, next.getAttribute('data-run-id'));
         htmx.ajax('GET', '/dataset/' + next.getAttribute('data-uid'),
                   {source: host, target: host, swap: 'innerHTML'})
-            .then(function() { _dsSyncFullPageUrl(host); });
+            .then(function() { _dsSyncFullPageUrl(host); }, function() {});   // F20
         return;
     }
     next.click();   // the delegated click handler opens it AND puts the keyboard on it
@@ -2591,9 +2595,30 @@ document.addEventListener('htmx:afterSwap', function(evt) {
  * run against exactly that run. A number with no saved state renders the
  * route's honest fallback note in the same pane. */
 window.prevDiffJump = function(inp, uid, compact) {
-    var n = parseInt((inp && inp.value || '').replace(/[^0-9]/g, ''), 10);
-    if (!isFinite(n)) return;
-    window.loadPrevDiff(inp, uid, n, compact);
+    if (!inp) return;
+    // datasets-r2-15: a leading '#' / spaces are fine (the box sits after a
+    // literal '#'); anything else that is not a whole run number is REFUSED
+    // and said so -- stripping every non-digit turned '12.5' into #125 and
+    // left 'abc' silently beside a table that still named the old run.
+    var typed = (inp.value || '').trim();
+    var raw = typed.replace(/^#\s*/, '');
+    if (!/^\d+$/.test(raw)) {
+        var bar = inp.closest('.prevdiff-bar');
+        var note = bar && bar.querySelector('.prevdiff-note');
+        if (bar && !note) {
+            note = document.createElement('p');
+            note.className = 'muted prevdiff-note';
+            bar.insertBefore(note, bar.querySelector('.prevdiff-badges'));
+        }
+        if (note) note.textContent = '\u201c' + typed + '\u201d is not a run number \u2014 type a whole run number (e.g. '
+            + inp.defaultValue + '). Still comparing against #' + inp.defaultValue + '.';
+        // (no aria-invalid: the box holds the valid run again, and Pico's
+        // invalid icon would cover the number in this narrow box)
+        inp.value = inp.defaultValue;     // the box agrees with the table header again
+        if (typeof inp.select === 'function') inp.select();
+        return;
+    }
+    window.loadPrevDiff(inp, uid, parseInt(raw, 10), compact);
 };
 
 // Enter/Space open a keyboard-focused tree run entry (they're tabindex=0 now).
@@ -2895,8 +2920,26 @@ window.closeInspector = function() {
             try { Plotly.purge(plots[i]); } catch (e) {}
         }
     }
+    // F20: blanking the pane destroys the focused control (the x button) and
+    // drops the keyboard to <body>. When the focus was IN the pane and the pane
+    // held a run, hand it back to that run's visible tree entry (docs/192: a
+    // close returns focus to what opened it). A close from elsewhere never
+    // moves focus.
+    var act = document.activeElement;
+    var hadFocus = !!(act && act !== document.body && pane.contains(act));
+    var dsRoot = pane.querySelector("#ds-detail-root");
+    var openUid = dsRoot ? dsRoot.getAttribute("data-uid") : null;
     pane.innerHTML = "";
     document.body.dispatchEvent(new Event("inspector-closed"));
+    if (hadFocus && openUid) {
+        var ents = document.querySelectorAll(".tree-entry-click[data-uid]");
+        for (var j = 0; j < ents.length; j++) {
+            if (ents[j].getAttribute("data-uid") === openUid && ents[j].offsetParent !== null) {
+                try { ents[j].focus({preventScroll: true}); } catch (e) { ents[j].focus(); }
+                break;
+            }
+        }
+    }
 };
 
 /* A State History stage/restore replaces the working copy (and live, in Mode 2)
@@ -14317,12 +14360,42 @@ window.promptAddTag = function(runId, btnEl) {
  * Save a note on a dataset run. Shows brief ✓ confirmation.
  */
 window.saveDatasetNote = function(runId, note, el) {
+    // datasets-r2-12: data-saved is the stored note this editor started from.
+    // Nothing changed -> nothing sent; otherwise the server is told what we
+    // saw (a stale tab gets a 409, never a silent overwrite), and keepalive
+    // lets a save started by a reload / close still land.
+    var saved = el && el.dataset ? el.dataset.saved : undefined;
+    if (saved !== undefined && note === saved) return;
+    if (el && el.dataset) el.dataset.inflight = note;
     fetch('/dataset/' + runId + '/note', {
         method: 'POST',
+        keepalive: (note || '').length < 60000,
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({note: note})
+        body: JSON.stringify({note: note, expected: saved})
     })
-    .then(function() {
+    .then(function(r) {
+        return r.json().catch(function() { return {}; })
+            .then(function(d) { return {r: r, d: d || {}}; });
+    })
+    .then(function(res) {
+        var r = res.r, d = res.d;
+        if (el && el.dataset && el.dataset.inflight === note) delete el.dataset.inflight;
+        if (!r.ok) {
+            var bad = el || document.querySelector('.ds-note-textarea');
+            if (bad) bad.style.borderColor = '#c0392b';
+            if (r.status === 409 && d.note_conflict) {
+                // keep the typed text; the next leave is an informed overwrite
+                // (a leave, never an unload: the flush below skips it)
+                if (el && el.dataset) { el.dataset.saved = d.current || ''; el.dataset.conflict = '1'; }
+                if (window.showToast) window.showToast('This note was changed in another window: "'
+                    + (d.current || '') + '". Your text is kept here and was NOT saved;'
+                    + ' leave the box again to overwrite it.', 'error');
+            } else if (window.showToast) {
+                window.showToast('Note not saved: ' + (d.error || ('HTTP ' + r.status)), 'error');
+            }
+            return;
+        }
+        if (el && el.dataset) { el.dataset.saved = note; delete el.dataset.conflict; }
         if (window.TagVocab) TagVocab.load(true);    // docs/191 N04: the person's own words just changed
         // Brief ✓ feedback on the edited textarea (el is passed from onblur so it
         // targets the right one in split/pinned view; falls back to the first).
@@ -14340,8 +14413,27 @@ window.saveDatasetNote = function(runId, note, el) {
                 else btn.removeAttribute('title');
             }
         }
+    }).catch(function() {
+        if (el && el.dataset && el.dataset.inflight === note) delete el.dataset.inflight;
     });
 };
+/* datasets-r2-12: F5 / close with the caret still in a note fires no blur, so
+ * the typed text used to vanish. Flush every note that differs from what is
+ * stored (keepalive outlives the page) -- one not already on its way, and never
+ * one that just met another window's text (overwriting that takes a leave).
+ * beforeunload first: it runs BEFORE the reload's own request, so the page that
+ * comes back already shows the note; pagehide covers exits that skip it. */
+function _flushDirtyNotes() {
+    var tas = document.querySelectorAll('.ds-note-textarea[data-uid]');
+    for (var i = 0; i < tas.length; i++) {
+        var ta = tas[i];
+        if (ta.dataset.conflict || ta.value === ta.dataset.saved
+                || ta.value === ta.dataset.inflight) continue;
+        window.saveDatasetNote(ta.getAttribute('data-uid'), ta.value, ta);
+    }
+}
+window.addEventListener('beforeunload', _flushDirtyNotes);
+window.addEventListener('pagehide', _flushDirtyNotes);
 
 /**
  * Resize the note <textarea> to fit its content: one line by default, taller

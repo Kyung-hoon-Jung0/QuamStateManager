@@ -317,3 +317,73 @@ class TestTheResultLineSaysWhatTheButtonDoes:
                / "templates" / "_dataset_detail.html").read_text(encoding="utf-8")
         assert "stages the pre-apply state" in tpl
         assert "Revert last apply restores the pre-apply state" not in tpl
+
+
+class TestReplacedEditsAreNamedHonestly:
+    """datasets-r2-19: "Apply to chip" over an unsaved Live-State edit said only
+    "(Replaced 1 unsaved edit.)" and then "Reversible -- Revert last apply".
+    The edit was on neither the chip nor any snapshot, so Revert can never
+    bring it back: the line now NAMES each replaced field + value and says so
+    (docs/187's rule: never point at a way back that does not hold the value).
+    """
+
+    def _press_over_an_edit(self, env, rid=71):
+        c = env["client"]
+        root = env["tmp"] / "data"
+        _seed_run(root, rid, _state(off_a=0.071))
+        uid = _uid(env, root, rid)
+        r = c.post("/field/edit-batch", json={
+            "updates": [{"dot_path": "qubits.qA1.f_01", "value": "5.01e9"}],
+            "expect_chip": ""})
+        assert r.status_code == 200 and r.get_json()["ok"]
+        r = c.post(f"/dataset/{uid}/load-state?apply=1")
+        assert r.status_code == 200
+        return _result_message(r.data.decode())
+
+    def test_the_line_names_the_field_and_the_value(self, env):
+        msg = self._press_over_an_edit(env)
+        assert "Replaced 1 unsaved edit" in msg          # the pinned prefix stays
+        assert "qubits.qA1.f_01 = 5010000000" in msg
+        assert _live_off(env) == 0.071
+
+    def test_it_does_not_offer_revert_as_the_way_back_for_the_edit(self, env):
+        msg = self._press_over_an_edit(env)
+        assert "cannot bring it back" in msg
+        # the chip's own pre-apply state IS reversible -- and says it is the chip
+        assert "The chip&#39;s previous state is reversible" in msg \
+            or "The chip's previous state is reversible" in msg
+        assert "stages the pre-apply state" in msg
+        assert ". Reversible —" not in msg and ".) Reversible" not in msg
+
+    def test_a_clean_press_keeps_the_plain_wording(self, env):
+        c = env["client"]
+        root = env["tmp"] / "data"
+        _seed_run(root, 72, _state(off_a=0.072))
+        uid = _uid(env, root, 72)
+        msg = _result_message(c.post(f"/dataset/{uid}/load-state?apply=1").data.decode())
+        assert "Replaced" not in msg and "cannot bring" not in msg
+        assert " Reversible — ↺ Revert last apply" in msg
+
+
+def test_replaced_edits_note_shapes():
+    """The pure clause builder: last write per path wins, deletes/subtrees are
+    words not dumps, long values and long lists are capped, and saved-but-
+    unapplied changes are named alongside -- a count never pretends to be the
+    whole loss (docs/187 R7)."""
+    from quam_state_manager.core.loader import ChangeEntry
+    f = routes_mod._replaced_edits_note
+    E = lambda p, v, **kw: ChangeEntry(dot_path=p, old_value=None, new_value=v,
+                                       source_file="state", **kw)
+    assert f([], False) == ""
+    assert f([], True) == " (Replaced saved-but-unapplied working changes.)"
+    two = f([E("q.a", 1), E("q.a", 2)], False)
+    assert two.startswith(" (Replaced 2 unsaved edits: q.a = 2.")
+    assert "q.a = 1" not in two and "cannot bring them back" in two
+    assert "(deleted)" in f([E("q.gone", None, deleted=True)], False)
+    assert "q.new = (new subtree)" in f([E("q.new", {"x": 1}, created=True)], False)
+    assert "…" in f([E("q.s", "x" * 80)], False)
+    many = f([E(f"q.p{i}", i) for i in range(8)], False)
+    assert "q.p4 = 4" in many and "q.p5" not in many and "+3 more" in many
+    both = f([E("q.a", 1)], True)
+    assert "Replaced 1 unsaved edit" in both
+    assert "Saved-but-unapplied working changes were replaced as well." in both
