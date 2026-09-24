@@ -20,6 +20,9 @@
             <tbody>
             {% for p in section.props %}
             {% set is_modified = p.dot_path and p.dot_path in modified_map %}
+            {# QA F-24: the key a unit is looked up by -- the pair's own
+               `detuning` is volts (units.pair_field_key), not Hz #}
+            {% set _ukey = p.unit_key or p.key %}
             <tr class="{% if p.is_pointer %}row-pointer{% elif p.is_self_ref %}row-selfref{% endif %}">
                 <td class="col-prop">
                     {% if p.dot_path %}
@@ -34,7 +37,7 @@
                     {% if p.is_self_ref %}
                         <em class="selfref-value">{{ p.raw }} <span class="tag-runtime">(runtime)</span></em>
                     {% elif p.editable %}
-                        {% set _stored = p.key | unit_hint %}
+                        {% set _stored = _ukey | unit_hint %}
                         <form class="inline-edit fh-host" hx-post="/pair/{{ pair_name }}/edit" hx-target="#inspector-pane" hx-swap="innerHTML"
                               {# docs/183: NOT hx-vals='js:…' — htmx compiles those with
                                  new Function, which this app's CSP forbids, and htmx
@@ -54,7 +57,7 @@
                                     title="Config Manual — this key (F1)"
                                     data-help-path="{{ p.dot_path }}">?</button>
                         </form>
-                        {% set _human = p.value | qty(p.key, 'full') %}
+                        {% set _human = p.value | qty(_ukey, 'full') %}
                         {% if _human %}<span class="unit-preview muted"{% if _stored %} title="stored raw in {{ _stored }}"{% endif %}>{{ _human }}</span>{% endif %}
                         {# docs/109: the TRUE physical output for amplitudes —
                            MW: dBm (FSP + 20·log10|amp|), flux: volts. Blank
@@ -76,7 +79,7 @@
                         {% else %}<small class="muted">[{{ p.value | length }} items]</small>{% endif %}
                     {% elif p.value is number and p.value is float and (p.value|abs >= 1e6 or (0 < p.value|abs < 1e-3)) %}
                         {{ "%.6e" | format(p.value) }}
-                        {% set _human = p.value | qty(p.key, 'full') %}
+                        {% set _human = p.value | qty(_ukey, 'full') %}
                         {% if _human %}<span class="unit-preview muted">{{ _human }}</span>{% endif %}
                         {% if p.is_pointer %}<span class="ptr-inline pointer-badge" title="{{ p.raw }}">{{ p.raw }}</span>{% endif %}
                     {% else %}

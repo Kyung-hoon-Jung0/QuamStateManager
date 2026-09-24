@@ -16382,6 +16382,23 @@ window.PendingMarkers = (function () {
         if (evt.defaultPrevented) return;
         if (!isSlow(evt.detail)) return;
         pending++;
+        // QA chipstatus-r2-01 (review): htmx fires afterRequest on the element
+        // that ISSUED the request. When a re-render swaps that element out
+        // mid-flight (Chip Status re-rendering its pane while a Trends fetch
+        // sourced on #topo-trends is out), the event never reaches this
+        // document listener, `pending` never came back down and the popup sat
+        // over a finished page until SAFETY_HIDE_MS (measured in real Chrome:
+        // still up 8 s later, the fetch long done). The request's own XHR
+        // always ends; its loadend settles the count when afterRequest could
+        // not, and afterRequest (which runs first, inside htmx's onload)
+        // marks it settled so nothing is counted twice.
+        var xhr = evt.detail && evt.detail.xhr;
+        if (xhr && typeof xhr.addEventListener === 'function') {
+            xhr._smSlowOpen = true;
+            xhr.addEventListener('loadend', function () {
+                if (xhr._smSlowOpen) { xhr._smSlowOpen = false; slowDone(); }
+            });
+        }
         if (timer) clearTimeout(timer);
         timer = setTimeout(show, SHOW_AFTER_MS);
         if (safety) clearTimeout(safety);
@@ -16396,7 +16413,14 @@ window.PendingMarkers = (function () {
     // old global hide let any concurrent poll response (datasets 5 s, tray)
     // turn it off mid-wait, which is why the customer never saw it.
     document.addEventListener('htmx:afterRequest', function(evt) {
-        if (!isSlow(evt.detail) || pending === 0) return;
+        if (!isSlow(evt.detail)) return;
+        var xhr = evt.detail && evt.detail.xhr;
+        if (xhr && xhr._smSlowOpen === false) return;    // its loadend already counted it
+        if (xhr) xhr._smSlowOpen = false;
+        slowDone();
+    });
+    function slowDone() {
+        if (pending === 0) return;
         pending--;
         if (pending > 0) return;
         var settled = false;
@@ -16435,7 +16459,7 @@ window.PendingMarkers = (function () {
         document.addEventListener('htmx:afterSettle', onSettle);
         // an aborted/failed swap never settles — don't strand the loader
         setTimeout(finish, 4000);
-    });
+    }
     document.addEventListener('htmx:responseError', hide);
     document.addEventListener('htmx:sendError', hide);
     document.addEventListener('htmx:swapError', hide);

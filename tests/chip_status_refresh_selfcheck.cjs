@@ -15,7 +15,10 @@
  *     one render path: htmx GET /topology into #table-pane, without ?view=;
  *  C  an undo's second, identical fetch does not re-render twice;
  *  D  no global `topo` leaks at any point;
- *  E  a threshold typed and not applied is never wiped by that re-render.
+ *  E  a threshold typed and not applied is never wiped by that re-render;
+ *     E3 (review): but a value typed and then CLOSED away (the ⚙ toggle) holds
+ *     nothing back -- reopening rebuilds every field from the saved bands, and
+ *     it used to leave the page silently stale for every later mutation.
  *
  * Run: node tests/chip_status_refresh_selfcheck.cjs
  *      (driven by tests/test_chip_status.py)
@@ -148,6 +151,20 @@ function settle() { return new Promise(function (r) { setTimeout(r, 450); }); }
   mutate();
   await settle();
   ok(ajaxCalls.length === 3, 'E2: …and the next mutation catches up once it is gone — ' + ajaxCalls.length);
+
+  /* E3: typed, then the editor closed without applying */
+  f.value = String(parseFloat(saved) + 20);
+  f.dispatchEvent(new win.Event('input', { bubbles: true }));
+  win.toggleThresholdEditor();                       // the ⚙ button: close
+  const host = win.document.getElementById('topo-thresh-editor');
+  ok(host.hidden === true, 'E3 setup: the editor is closed with a typed value in it');
+  ok(win._threshMarkDirty() === 0,
+    'E3: a closed editor holds no draft — dirty count ' + win._threshMarkDirty());
+  served = T0;
+  mutate();
+  await settle();
+  ok(ajaxCalls.length === 4,
+    'E3: …so the next mutation re-renders the page — ' + ajaxCalls.length + ' ajax');
 
   console.log(fails ? ('FAILED (' + fails + ')')
     : ('chip_status_refresh_selfcheck ok (' + asserts + ' assertions)'));

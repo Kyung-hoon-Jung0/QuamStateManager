@@ -145,6 +145,61 @@ window.ChipStatus.jumpGuard = (function () {
     };
 })();
 
+/* PaneResume (QA chipstatus-r2-01, review) -- a refresh of THIS page keeps the
+   reader's place. An edit, a Ctrl+Z or a Take live re-renders the whole pane
+   through GET /topology (the page's one render path), and the fresh mount came
+   up as a first visit: every lazily built section back to its 0-51 px
+   placeholder, the absolute scrollTop put back against that shrunken pane
+   (measured in real Chrome: reading Coherence at 7796 px, left on Read. Fid.
+   at 6677, or on Topology at 1793) and the tab row reset to Topology. The old
+   mount hands over what the reader had -- the tab, the section at the pane
+   top and how far into it, the sections it had built -- as its pane is swapped
+   out; the new mount builds those back, puts that section at the same offset
+   and keeps the tab. Only for a PROGRAMMATIC re-render of /topology itself
+   (htmx.ajax with no source, so the requesting element is <body>): the
+   sidebar's Chip Status link is a navigation and still lands at the top. */
+window.ChipStatus.paneResume = (function () {
+    var held = null, WINDOW_MS = 5000, armedPane = null, movedAt = 0;
+    function isRefresh(detail) {
+        if (!detail || !detail.target || detail.target.id !== 'table-pane') return false;
+        // requestConfig.elt is the element that ISSUED the request (htmx sets
+        // it on configRequest); detail.elt here is only the swap target.
+        var rc = detail.requestConfig || {};
+        if (detail.shouldSwap === false || !document.body || rc.elt !== document.body) return false;
+        return /^\/topology(\?|$)/.test(String(rc.path || ''))
+            && String(rc.verb || 'get').toLowerCase() === 'get';
+    }
+    return {
+        isRefresh: isRefresh,
+        hold: function (r) {
+            if (!r) return;
+            r.at = Date.now(); held = r;
+            // the new mount takes it DURING this swap; whatever it did not
+            // take (the answer was not Chip Status) is stale after it
+            document.addEventListener('htmx:afterSwap', function drop(evt) {
+                if (!evt.detail || !evt.detail.target || evt.detail.target.id !== 'table-pane') return;
+                document.removeEventListener('htmx:afterSwap', drop);
+                if (held === r) held = null;
+            });
+        },
+        take: function () {                       // one-shot: the swap that captured it
+            var r = held; held = null;
+            return (r && Date.now() - r.at < WINDOW_MS) ? r : null;
+        },
+        // a wheel, touch, key or press on the pane (a scrollbar drag, a tab
+        // click) is the reader moving on: a later re-put (Trends landing above
+        // the section) must not pull them back
+        arm: function (pane) {
+            if (!pane || armedPane === pane) return;
+            armedPane = pane;
+            ['wheel', 'touchstart', 'keydown', 'mousedown'].forEach(function (t) {
+                pane.addEventListener(t, function () { movedAt = Date.now(); }, { passive: true });
+            });
+        },
+        movedSince: function (t) { return movedAt >= t; }
+    };
+})();
+
 /* LayoutController (Phase 1) — the two-stable-renderings rule. A single debounced
    ResizeObserver on #table-pane toggles ONE class .is-narrow on .topo-dashboard at
    a fixed threshold; CSS does the rest (bar chart stacks below the grid). No JS
@@ -3250,7 +3305,8 @@ window.ChipStatus.mount = function (opts) {
                     }
                     // the charts just pushed everything below them down: a
                     // jump made a moment ago goes back to where it pointed
-                    requestAnimationFrame(function () { _jump.reanchor(); });
+                    // (and a refresh's resumed place, first -- PaneResume)
+                    requestAnimationFrame(function () { if (!_resumeAgain()) _jump.reanchor(); });
                 }, function () { _chipSectionBuilt[key] = false; });
             }
         }
@@ -3746,7 +3802,11 @@ window.ChipStatus.mount = function (opts) {
        comparison against what was SAVED, never a flag that can drift. */
     function _threshMarkDirty() {
         var host = document.getElementById('topo-thresh-editor');
-        if (!host) return 0;
+        // QA chipstatus-r2-01 (review): a CLOSED editor holds no draft --
+        // opening it rebuilds every field from the saved bands -- so a value
+        // typed and then closed away must not hold back the page refresh (or
+        // the spec re-read) for good, with the only line saying why hidden too.
+        if (!host || host.hidden) return 0;
         var n = 0;
         host.querySelectorAll('.thresh-in').forEach(function(inp) {
             var saved = inp.getAttribute('data-saved');
@@ -3980,6 +4040,77 @@ window.ChipStatus.mount = function (opts) {
     _setupLazyBuild();
     _setupScrollSpy();
 
+    // QA chipstatus-r2-01 (review): hand the reader's place to the next mount
+    // when this pane is re-rendered in place (PaneResume, top of file).
+    var _resumePending = null;   // taken by this mount, not put back yet
+    var _resumeHeld = null;      // put back; re-put once when Trends lands
+    function _readerPlace() {
+        if (_resumePending) return _resumePending;    // a second refresh before the first landed
+        var pane = _scrollPane();
+        if (!pane) return null;
+        var paneTop = pane.getBoundingClientRect().top;
+        var anchor = null, at = -Infinity;
+        Object.keys(TAB_SPEC).forEach(function (v) {
+            var el = document.querySelector(TAB_SPEC[v].sel);
+            if (!el) return;
+            var r = el.getBoundingClientRect();
+            if (!r.width && !r.height) return;             // not laid out
+            var t = r.top - paneTop;
+            if (t <= 1 && t > at) { at = t; anchor = v; }   // the section the pane top sits in
+        });
+        var act = document.querySelector('.topo-subnav-btn.active');
+        return { view: act ? act.getAttribute('data-view') : null,
+                 anchor: anchor, offset: anchor ? -at : 0, top: pane.scrollTop,
+                 built: Object.keys(_chipSectionBuilt).filter(function (k) { return _chipSectionBuilt[k]; }) };
+    }
+    document.body.addEventListener('htmx:beforeSwap', function _resumeCapture(evt) {
+        if (!evt.detail || !evt.detail.target || evt.detail.target.id !== 'table-pane') return;
+        if (evt.detail.shouldSwap === false) return;       // this pane stays
+        document.body.removeEventListener('htmx:beforeSwap', _resumeCapture);
+        if (window.ChipStatus.paneResume.isRefresh(evt.detail)) {
+            window.ChipStatus.paneResume.hold(_readerPlace());
+        }
+    });
+    function _resumePlace(r) {
+        _resumePending = r;
+        window.ChipStatus.jumpGuard.cancel();     // an older jump must not pull the pane after this
+        _ensureSectionBuilt(r.built || []);       // what the reader had, before anything is measured
+        var view = TAB_SPEC[r.view] ? r.view : 'topology';
+        _setActiveTab(view);
+        // the swap's own scroll events (the pane shrank before the builds
+        // landed) must not let the spy re-pick the tab before put() runs
+        _suppressSpyUntil = Date.now() + 800;
+        var pane = _scrollPane();
+        window.ChipStatus.paneResume.arm(pane);
+        var put = function () {
+            if (!pane || !pane.isConnected) return;
+            var el = r.anchor && TAB_SPEC[r.anchor] && document.querySelector(TAB_SPEC[r.anchor].sel);
+            if (el) pane.scrollTop += el.getBoundingClientRect().top - pane.getBoundingClientRect().top + r.offset;
+            else pane.scrollTop = r.top;
+            _setActiveTab(view);
+            _suppressSpyUntil = Date.now() + 800;
+        };
+        // app.js's _keepPaneScroll puts the ABSOLUTE scrollTop back in a frame
+        // it asks for on this swap's afterSwap; it registered before this mount
+        // ran, so this listener and its frame come second and have the last word.
+        document.addEventListener('htmx:afterSwap', function _resumeOnce(evt) {
+            if (!evt.detail || !evt.detail.target || evt.detail.target.id !== 'table-pane') return;
+            document.removeEventListener('htmx:afterSwap', _resumeOnce);
+            requestAnimationFrame(function () {
+                put();
+                _resumePending = null;
+                _resumeHeld = { put: put, at: Date.now() };
+            });
+        });
+    }
+    function _resumeAgain() {
+        var h = _resumeHeld;
+        _resumeHeld = null;
+        if (!h || Date.now() - h.at > 8000 || window.ChipStatus.paneResume.movedSince(h.at)) return false;
+        h.put();
+        return true;
+    }
+
     // A deep-link ?view= (left-nav sub-item or a shared link) scrolls to that
     // section; a bare /topology load stays at the top (topology), by design — we
     // do NOT resume the last-used localStorage view.
@@ -3991,7 +4122,11 @@ window.ChipStatus.mount = function (opts) {
     // ignored.
     var _deepView = (_serverChipView === 'gate' || _serverChipView === 'fidelity')
         ? 'fidelity2q' : _serverChipView;
-    if (_deepView && TAB_SPEC[_deepView]) {
+    // a refresh of this page resumes the reader's place (PaneResume), ?view= or not
+    var _resume = window.ChipStatus.paneResume.take();
+    if (_resume) {
+        _resumePlace(_resume);
+    } else if (_deepView && TAB_SPEC[_deepView]) {
         window.setChipStatusView(_deepView, null, true);
     } else {
         _setActiveTab('topology');

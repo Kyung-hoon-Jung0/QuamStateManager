@@ -1,3 +1,4 @@
+{% from '_snapshot_zero_label.html' import zero_diff_label %}
 <div id="history-list">
 {% if snapshots | length > 0 %}
 <div class="history-toolbar">
@@ -41,16 +42,10 @@
         <span class="diff-badge diff-added" title="Added">+{{ s.diff_summary.added }}</span>
         <span class="diff-badge diff-removed" title="Removed">-{{ s.diff_summary.removed }}</span>
         <span class="diff-badge diff-modified" title="Modified">~{{ s.diff_summary.modified }}</span>
-        {# QA chipstatus-r2-15: every zero-diff row said "(baseline)". Only the
-           chip's FIRST snapshot is one (nothing earlier to diff against); a
-           run row's zeros may mean NOT COMPUTED (bulk backfill, docs/132); any
-           other zero is a real "nothing changed since the previous one". #}
-        {% elif s.timestamp == first_ts %}
-        <span class="muted" title="The chip's first snapshot: nothing earlier to compare against">(baseline)</span>
-        {% elif _k[0] == 'exp' %}
-        <span class="muted" title="No difference was recorded for this run's snapshot (backfilled runs are not diffed)">(no diff recorded)</span>
+        {# QA chipstatus-r2-15: every zero-diff row said "(baseline)"; the
+           rule is shared with the State History page (_snapshot_zero_label). #}
         {% else %}
-        <span class="muted" title="Identical to the snapshot before it">(no changes)</span>
+        {{ zero_diff_label(s, first_ts, _k[0]) }}
         {% endif %}
     </div>
     {% if s.new_experiments | length > 0 %}

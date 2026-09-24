@@ -130,6 +130,44 @@ class TestZeroDiffRowsSayWhatTheyAre:
         assert 'class="diff-badge diff-modified"' in html
 
 
+def _sh_labels(html: str) -> list[str]:
+    """The zero-diff label of each State History page row, newest first."""
+    out = []
+    for row in re.split(r'<div class="sh-entry[" ]', html)[1:]:
+        row = row.split('<div class="sh-attribution">', 1)[0]
+        m = re.search(r'<span class="muted"[^>]*>\((baseline|no changes|no diff recorded)\)</span>', row)
+        out.append(m.group(1) if m else "")
+    return out
+
+
+class TestTheStateHistoryPageSaysTheSame:
+    """Review follow-up: the drawer said "(no changes)" for a row the State
+    History page still called "(baseline)". Both now render one macro
+    (_snapshot_zero_label.html) over the same first-snapshot rule."""
+
+    def test_only_the_first_snapshot_is_the_baseline(self, client):
+        client.post("/api/history/snapshot")
+        client.post("/api/history/snapshot")
+        html = client.get("/state-history?body=1").get_data(as_text=True)
+        assert _sh_labels(html) == ["no changes", "baseline"]
+        # the drawer reads the same rows the same way
+        assert _labels(client.get("/api/history").get_data(as_text=True)) == _sh_labels(html)
+
+    def test_the_baseline_is_the_chips_first_even_on_another_page(self, client):
+        client.post("/api/history/snapshot")
+        client.post("/api/history/snapshot")
+        p1 = client.get("/state-history?body=1&page=1&per_page=1").get_data(as_text=True)
+        p2 = client.get("/state-history?body=1&page=2&per_page=1").get_data(as_text=True)
+        assert _sh_labels(p1) == ["no changes"]
+        assert _sh_labels(p2) == ["baseline"]
+
+    def test_the_full_page_says_it_too(self, client):
+        client.post("/api/history/snapshot")
+        client.post("/api/history/snapshot")
+        html = client.get("/state-history").get_data(as_text=True)
+        assert _sh_labels(html) == ["no changes", "baseline"]
+
+
 def test_chip_status_refreshes_trends_on_a_capture():
     """The page side: stateHistoryChanged re-fetches a BUILT Trends section
     (once per burst, same selection), opens the sparkline gate, and is torn

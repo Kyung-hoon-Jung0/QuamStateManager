@@ -114,7 +114,7 @@ from quam_state_manager.core.saver import Saver
 from quam_state_manager.core.scanner import Workspace
 from quam_state_manager.core.search_index import SearchIndex
 from quam_state_manager.core.story import node_label
-from quam_state_manager.core.units import group_digits
+from quam_state_manager.core.units import group_digits, pair_field_key
 
 logger = logging.getLogger(__name__)
 
@@ -4475,6 +4475,10 @@ def _build_pair_sections(name: str, pair_data: dict[str, Any], store: QuamStore)
             "dangling": dangling,
             "editable": editable,
             "ptr_name": _ptr_entity_name(store, raw_value, dot_path, resolved_value),
+            # QA F-24: the unit a field held directly on the pair is shown in
+            # (its `detuning` is volts, not the Hz of every other `detuning`)
+            "unit_key": (pair_field_key(key)
+                         if dot_path == f"qubit_pairs.{name}.{key}" else key),
         })
 
     # Drop static sections whose every property is absent (None) — so a CR pair
@@ -10417,6 +10421,9 @@ def state_history():
     page = _int_arg("page", 1, minimum=1)
     per_page = _int_arg("per_page", _STATE_HISTORY_PER_PAGE, minimum=1)
     page_items, total, page, total_pages = _paginate(snapshots, page, per_page)
+    # QA chipstatus-r2-15: the drawer's zero-diff rule -- only the chip's FIRST
+    # snapshot (of the full newest-first list, not the page) is a baseline.
+    first_ts = snapshots[-1].timestamp if snapshots else None
     try:
         hist_chip_key = _history()._key_for(Path(_active_path()))
     except Exception:
@@ -10437,6 +10444,7 @@ def state_history():
         chip_origin=_active_origin(),
         hist_chip_key=hist_chip_key,
         disk_stats=disk_stats,
+        first_ts=first_ts,
     )
     # body=1 → just the timeline inner (toolbar + entries + pagination), for the
     # stateRestored auto-refresh that re-fetches it into #state-history-body

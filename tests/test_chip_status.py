@@ -332,6 +332,16 @@ def test_an_in_app_mutation_rerenders_chip_status():
     _run_selfcheck("chip_status_refresh_selfcheck.cjs")
 
 
+def test_a_refresh_keeps_the_readers_place():
+    """QA chipstatus-r2-01 (review): that re-render came up as a first visit --
+    lazily built sections collapsed, the absolute scrollTop clamped against the
+    shrunken pane, the tab reset to Topology. A programmatic re-render of
+    /topology now keeps the tab, rebuilds what the reader had built and puts the
+    section at the pane top back at its offset (again when Trends lands, unless
+    the reader moved); the sidebar link still lands on Topology."""
+    _run_selfcheck("chip_status_resume_selfcheck.cjs")
+
+
 def test_every_2q_overview_number_names_its_pulse():
     """QA F-04: each pair tile takes its own per-pair best, so the hover names
     the pulse behind every number, and Health says "Bell" only for a
