@@ -247,12 +247,7 @@
             // and THROWS — uncaught on the cached-cube path (this sits before the
             // try). Only siFormat real numbers; show string scalars as their text
             // (the server took care to ship them) instead of throwing or '—'.
-            var sval = (typeof cube.scalar === 'number')
-                ? window.PlotTheme.siFormat(cube.scalar, cube.units)
-                : esc(String(cube.scalar));
-            plotEl.innerHTML = '<div class="ndv-scalar"><span>' + esc(cube.var) +
-                '</span><strong>' + sval + '</strong></div>';
-            return;
+            return renderScalarCard(plotEl, cube, cube.scalar, cube.units);
         }
         try { renderPlot(plotEl, cube); }
         catch (e) {
@@ -260,6 +255,20 @@
             renderFallback({ error: 'Could not render this view (' + e.message + ').',
                              fallback: null });
         }
+    }
+
+    /* One value, one card: the 0-d scalar AND a cube whose every dim is size 1
+     * (a per-qubit fit scalar of a single-qubit run is shaped (qubit=1), so it
+     * never reaches the 0-d branch). Purges a previous variable's figure first. */
+    function renderScalarCard(plotEl, cube, value, units) {
+        try { window.Plotly && window.Plotly.purge(plotEl); } catch (e) {}
+        var sval = (typeof value === 'number')
+            ? window.PlotTheme.siFormat(value, units)
+            : esc(String(value));
+        var ent = cube.dims && cube.dims.length ? entityValue(cube) : null;
+        plotEl.innerHTML = '<div class="ndv-scalar"><span>' + esc(cube.var) +
+            (ent ? ' <small class="muted">' + esc(ent) + '</small>' : '') +
+            '</span><strong>' + sval + '</strong></div>';
     }
 
     function renderPlot(plotEl, cube) {
@@ -299,6 +308,15 @@
                 traces.push({ type: 'bar', x: xs, y: extract1D(fx, eI, fixedE) });
                 layout = T.houseLayout({ xaxis: { title: { text: v.entity } },
                                          yaxis: { title: { text: valueLabel(cube, state.comp) } } });
+            } else if (fx.flat.length === 1) {
+                // QA F12: a single value (all dims size 1) -- show it, never
+                // "No plottable axis". A string leaf is shown as its text.
+                var leaf = cube.data;
+                while (Array.isArray(leaf)) leaf = leaf[0];
+                var base = !state.comp || state.comp === 'base';
+                return renderScalarCard(plotEl, cube,
+                    (base && typeof leaf === 'string') ? leaf : fx.flat[0],
+                    base ? cube.units : null);
             } else {
                 return renderFallback({ error: 'No plottable axis in this variable.',
                                         fallback: cube.fallback });

@@ -71,7 +71,7 @@
         onclick="openReview()"
         title="{% if _archive %}Opened from a dataset run archive (read-only) — load the live folder to edit/apply{% elif _dirty %}Local edits live in the working state — click to review and apply to the live chip{% elif _drifted %}The live chip changed on disk since your working state was synced — click to review and choose which side wins{% else %}Working state matches the live chip — click to review{% endif %}{% if not _archive %}{% if auto_apply %}{{ ' · Auto-Sync is ON: leaving an edited field writes it straight to the live chip. Every change is listed below and revertible with its ✕, or the whole session with ↺ Revert this session.' }}{% else %}{{ ' · How this works: edits stay in your working state (a private copy) until you press Apply to live — reversible with ↺ Revert last apply.' }}{% endif %}{% endif %}">
     <span class="state-status-dot" aria-hidden="true">&#9679;</span>
-    {% if _archive %}Archive (read-only)
+    {% if _archive %}Archive (read-only){% set _ai = archive_info() %}{% if _ai and _ai.run_label %} · run {{ _ai.run_label }}{% endif %}
     {% elif change_count > 0 %}Working state · {{ change_count }} unsaved
     {% elif working_dirty %}Working state · not applied
     {% elif _drifted %}Live chip moved
@@ -80,6 +80,15 @@
        folder name (the button's own title explains the status instead). #}
     {% if active_name %}<span class="state-status-name" title="{{ active_name }}">{{ active_name }}</span>{% endif %}
 </button>
+{# QA F13: a run archive names the way back to the chip it replaced. #}
+{% if _archive and _ai is defined and _ai and _ai.return_path %}
+<button type="button" class="btn-sm outline tray-archive-back" hx-post="/load"
+        hx-vals='{{ {"folder": _ai.return_path} | tojson }}' hx-target="#table-pane" hx-swap="innerHTML"
+        title="Leave this read-only run archive and re-open {{ _ai.return_path }} — its working state and edits are as you left them">&larr; Back to {{ _ai.return_name }}</button>
+{% elif _archive %}
+<span class="muted tray-archive-hint"
+      title="A dataset run's frozen quam_state. Load a chip folder (State Load) to edit or apply.">Read-only run archive — load a chip folder to edit</span>
+{% endif %}
 {% endif %}
 {# docs/115's always-on "How this works" banner is GONE (customer,
    2026-08-22: "사람들 실제로 안읽는다") — the same teaching now lives in the

@@ -200,7 +200,7 @@
                 {% if run.qubits %}
                 <span class="figure-qubit-actions">
                     {% for q in run.qubits %}
-                    <button class="btn-sm outline" onclick="event.stopPropagation(); (function(){ var m = _resolveExperimentPath('{{ run.experiment_name }}', '{{ q }}'); _navigateToExplorerPath(m ? m[0].path : 'qubits.{{ q }}'); })()" title="Edit {{ q }}">{{ q }}</button>
+                    <button class="btn-sm outline" onclick="event.stopPropagation(); goToQubitState('{{ run.experiment_name }}', '{{ q }}')" title="Edit {{ q }}">{{ q }}</button>
                     {% endfor %}
                 </span>
                 {% endif %}
@@ -431,7 +431,7 @@
         <button hx-post="/dataset/{{ uid }}/load-state?mode=archive"
                 hx-target="#ds-load-state-result" hx-swap="innerHTML"
                 class="btn-sm ds-load-archive-btn"
-                title="Open this run's frozen quam_state as a separate READ-ONLY context — does not touch the open chip">Open read-only</button>
+                title="Switch SM to this run's frozen quam_state, read-only. Your chip's files and working state are untouched — the status badge offers the way back.">Open read-only</button>
     </div>
     <div id="ds-load-state-result" aria-live="polite"></div>
     {% endif %}
@@ -439,12 +439,12 @@
     {# File sub-tabs #}
     <div class="tree-file-tabs" id="ds-state-file-tabs">
         {% if run.has_quam_state %}
-        <span class="tree-file-tab active" onclick="switchDatasetStateTab('state')">state.json</span>
-        <span class="tree-file-tab" onclick="switchDatasetStateTab('wiring')">wiring.json</span>
+        <span class="tree-file-tab active" onclick="switchDatasetStateTab('state', this)">state.json</span>
+        <span class="tree-file-tab" onclick="switchDatasetStateTab('wiring', this)">wiring.json</span>
         {% endif %}
         <span class="tree-file-tab{% if not run.has_quam_state %} active{% endif %}"
-              onclick="switchDatasetStateTab('node')">node.json</span>
-        <span class="tree-file-tab" onclick="switchDatasetStateTab('data')">data.json</span>
+              onclick="switchDatasetStateTab('node', this)">node.json</span>
+        <span class="tree-file-tab" onclick="switchDatasetStateTab('data', this)">data.json</span>
     </div>
 
     {# Toolbar: search + depth controls (reuses existing .tree-toolbar CSS) #}
@@ -452,14 +452,14 @@
         <span class="tree-search-icon">&#128269;</span>
         <input type="text" class="tree-search" id="ds-state-search"
                placeholder="{{ search_hint() }}" title="{{ search_title() }}"
-               oninput="jsonTreeSearch(_dsStateActiveId(), this.value)" autocomplete="off">
+               oninput="jsonTreeSearch(_dsStateActiveId(this), this.value)" autocomplete="off">
         <div class="tree-depth-group">
             <span class="tree-depth-label">Depth:</span>
-            <button class="btn-sm outline" onclick="jsonTreeCollapseAll(_dsStateActiveId())">0</button>
-            <button class="btn-sm outline" onclick="jsonTreeExpandToDepth(_dsStateActiveId(),1)">1</button>
-            <button class="btn-sm outline" onclick="jsonTreeExpandToDepth(_dsStateActiveId(),2)">2</button>
-            <button class="btn-sm outline" onclick="jsonTreeExpandToDepth(_dsStateActiveId(),3)">3</button>
-            <button class="btn-sm outline" onclick="jsonTreeExpandAll(_dsStateActiveId())">All</button>
+            <button class="btn-sm outline" onclick="jsonTreeCollapseAll(_dsStateActiveId(this))">0</button>
+            <button class="btn-sm outline" onclick="jsonTreeExpandToDepth(_dsStateActiveId(this),1)">1</button>
+            <button class="btn-sm outline" onclick="jsonTreeExpandToDepth(_dsStateActiveId(this),2)">2</button>
+            <button class="btn-sm outline" onclick="jsonTreeExpandToDepth(_dsStateActiveId(this),3)">3</button>
+            <button class="btn-sm outline" onclick="jsonTreeExpandAll(_dsStateActiveId(this))">All</button>
         </div>
     </div>
 
@@ -476,13 +476,22 @@
         var runId = '{{ uid }}';
         var hasState = {{ 'true' if run.has_quam_state else 'false' }};
         var _loaded = {};
+        // QA r2-08: THIS run's State tab. In Pin & Browse the pinned clone's ids
+        // are "pinned-"-prefixed and both columns' scripts run; everything below
+        // acts inside its own tab (suffix-matched ids), never on the global ids,
+        // which in the split name the OTHER column.
+        var cs = document.currentScript;
+        var tab = (cs && cs.closest && cs.closest('[id$="ds-tab-state"]'))
+                  || document.getElementById('ds-tab-state');
+        if (!tab) return;
+        function _tree(n) { return tab.querySelector('[id$="ds-state-tree-' + n + '"]'); }
 
         function _loadStateFile(which) {
             if (_loaded[which]) return;
             _loaded[which] = true;
-            var cid = 'ds-state-tree-' + which;
-            var el = document.getElementById(cid);
+            var el = _tree(which);
             if (!el) return;
+            var cid = el.id;
             el.innerHTML = '<p class="muted" style="padding:.5rem">Loading\u2026</p>';
             fetch('/dataset/' + runId + '/json?file=' + which)
                 .then(function(r){ return r.json(); })
@@ -499,27 +508,42 @@
                 });
         }
 
-        window.switchDatasetStateTab = function(which) {
-            document.querySelectorAll('#ds-state-file-tabs .tree-file-tab').forEach(function(t) {
+        tab._dsStateSwitch = function(which) {
+            tab.querySelectorAll('[id$="ds-state-file-tabs"] .tree-file-tab').forEach(function(t) {
                 t.classList.toggle('active', t.textContent.trim() === which + '.json');
             });
             // Query by ID, not class — renderJsonTree clobbers className with "json-tree"
             ['state', 'wiring', 'node', 'data'].forEach(function(name) {
-                var el = document.getElementById('ds-state-tree-' + name);
+                var el = _tree(name);
                 if (el) el.style.display = (name === which) ? '' : 'none';
             });
             _loadStateFile(which);
-            var s = document.getElementById('ds-state-search');
-            if (s && s.value) jsonTreeSearch('ds-state-tree-' + which, s.value);
+            var s = tab.querySelector('[id$="ds-state-search"]'), t = _tree(which);
+            if (s && s.value && t) jsonTreeSearch(t.id, s.value);
         };
 
-        window._dsStateActiveId = function() {
-            var a = document.querySelector('#ds-state-file-tabs .tree-file-tab.active');
-            return a ? 'ds-state-tree-' + a.textContent.trim().replace('.json','') : 'ds-state-tree-node';
+        // Stateless dispatchers: the pressed element names its own tab; no
+        // element (the sticky restore) means the unprefixed, browsed run.
+        function _tabOf(el) {
+            return (el && el.closest && el.closest('[id$="ds-tab-state"]'))
+                || document.getElementById('ds-tab-state');
+        }
+        window.switchDatasetStateTab = function(which, el) {
+            var t = _tabOf(el);
+            if (t && t._dsStateSwitch) t._dsStateSwitch(which);
+        };
+        window._dsStateActiveId = function(el) {
+            var t = _tabOf(el);
+            var a = t && t.querySelector('[id$="ds-state-file-tabs"] .tree-file-tab.active');
+            var n = a ? a.textContent.trim().replace('.json', '') : 'node';
+            var tr = t && t.querySelector('[id$="ds-state-tree-' + n + '"]');
+            return tr ? tr.id : 'ds-state-tree-' + n;
         };
 
-        // Load first visible tab immediately
-        _loadStateFile(hasState ? 'state' : 'node');
+        // Load the tab this markup shows (a pinned clone keeps the one it was
+        // pinned on) — first visible tab on a fresh render.
+        var a0 = tab.querySelector('[id$="ds-state-file-tabs"] .tree-file-tab.active');
+        _loadStateFile(a0 ? a0.textContent.trim().replace('.json', '') : (hasState ? 'state' : 'node'));
     })();
     </script>
 </div>

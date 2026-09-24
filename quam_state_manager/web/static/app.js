@@ -12160,8 +12160,8 @@ function _fetchAndRenderPlot(container, runId, which, varName, qubitIdx) {
 
 // ── Plot click → copy x,y → navigate to Explorer ───────────────────
 
-function _getRunQubits() {
-    var root = document.getElementById('ds-detail-root');
+function _getRunQubits(root) {
+    root = root || document.getElementById('ds-detail-root');
     return root ? (root.getAttribute('data-qubits') || '').split(',').filter(Boolean) : [];
 }
 
@@ -12281,8 +12281,9 @@ function _fetchApplyVerdict(qubitName, compute) {
     if (!slot) return;
     slot.hidden = true;
     slot.innerHTML = '';
+    var pop = document.getElementById('plot-apply-popup');
     var root = document.getElementById('ds-detail-root');
-    var uid = root ? root.getAttribute('data-uid') : '';
+    var uid = (pop && pop.dataset.runUid) || (root ? root.getAttribute('data-uid') : '');
     if (!uid || !qubitName) return;   // no run context / no qubit → no badge
     var gen = (window.__pavGen = (window.__pavGen || 0) + 1);
     slot.hidden = false;
@@ -12330,7 +12331,7 @@ function _showPlotApplyPopup(mappings, pt, expName, qubitName) {
 /* Open the editable parameter-apply popup for pre-computed {dot_path, value}
    updates. Shared by the Data tab (axis→path mappings) and the Interactive tab
    (recipe `clickable` spec). Activates the loaded state first so edits target it. */
-function _openPlotApplyPopup(updates, expName, qubitName, contextRows, chipExpect) {
+function _openPlotApplyPopup(updates, expName, qubitName, contextRows, chipExpect, runUid) {
     if (!updates || !updates.length) return;
     // chipExpect = {token, name} for a dataset fit-apply: the run's OWN chip
     // identity. We carry it into every Apply so the server refuses (409) to
@@ -12339,7 +12340,7 @@ function _openPlotApplyPopup(updates, expName, qubitName, contextRows, chipExpec
     function render() {
         // Even if activation failed, still render — the popup shows real
         // per-row errors when Apply is clicked.
-        _renderPlotApplyPopup(updates, expName, qubitName, contextRows, expect);
+        _renderPlotApplyPopup(updates, expName, qubitName, contextRows, expect, runUid);
         _fetchPlotApplyOldValues(updates);
     }
     // Cross-chip pre-check: warn BEFORE the popup if the loaded chip isn't
@@ -12401,10 +12402,10 @@ function applyFitValue(btn) {
     var value = btn.getAttribute('data-fit-value');  // keep as string → full precision
     if (!path || value == null) return;
     var qubit = btn.getAttribute('data-fit-qubit') || null;
-    var root = document.getElementById('ds-detail-root');
+    var root = _dsRootFor(btn);
     var expName = root ? root.getAttribute('data-experiment') : '';
     window._openPlotApplyPopup([{dot_path: path, value: value}], expName, qubit, [],
-                               _runChipExpect(root));
+                               _runChipExpect(root), _dsRunUidOf(root));
 }
 window.applyFitValue = applyFitValue;
 
@@ -12416,6 +12417,16 @@ function _runChipExpect(root) {
     if (!token) return null;  // run has no bundled quam_state → can't gate
     return {token: token, name: root.getAttribute('data-chip-name') || ''};
 }
+/* QA r2-07: the run a control BELONGS to. In Pin & Browse the pinned column's
+   ids are "pinned-"-prefixed, so the global #ds-detail-root is always the
+   OTHER (current) column -- its chip token let a pinned run's fit through the
+   cross-chip gate. The suffix match finds either column's own root; an element
+   outside any detail (or a fake one with no .closest) keeps the global. */
+function _dsRootFor(el) {
+    return (el && el.closest && el.closest('[id$="ds-detail-root"]'))
+        || document.getElementById('ds-detail-root');
+}
+function _dsRunUidOf(root) { return root ? (root.getAttribute('data-uid') || '') : ''; }
 
 /* Dataset Results tab → "Go to state": jump to the exact state field the fitted value
    would update, shown in the Explorer (raw JSON tree) in the TOP pane while the dataset
@@ -12425,7 +12436,7 @@ function goToFitState(btn) {
     if (!btn) return;
     var path = btn.getAttribute('data-fit-path');
     if (!path) return;
-    var expect = _runChipExpect(document.getElementById('ds-detail-root'));
+    var expect = _runChipExpect(_dsRootFor(btn));
     function navigate() {
         if (window._applySplitPreset) window._applySplitPreset('collapsed');
         window._navigateToExplorerPath(path);
@@ -12444,6 +12455,16 @@ function goToFitState(btn) {
 }
 window.goToFitState = goToFitState;
 
+/* QA F16: a figure's per-qubit "Edit qN" button -- the same jump as Go to
+   state: collapse the run below first so the Explorer on top is not a sliver
+   (a run opened at the expanded preset left it ~113 px), then navigate. */
+function goToQubitState(expName, q) {
+    var m = _resolveExperimentPath(expName, q);
+    if (window._applySplitPreset) window._applySplitPreset('collapsed');
+    window._navigateToExplorerPath(m ? m[0].path : 'qubits.' + q);
+}
+window.goToQubitState = goToQubitState;
+
 /* "Apply all mapped" for one fit-results section: collect every per-row Apply
    button in the section into one multi-row popup (the popup's Apply-All handles
    the atomic batch). */
@@ -12458,9 +12479,10 @@ function applyAllFitValues(sectionBtn) {
         qubit = qubit || b.getAttribute('data-fit-qubit');
     });
     if (!updates.length) return;
-    var root = document.getElementById('ds-detail-root');
+    var root = _dsRootFor(sec);
     expName = root ? root.getAttribute('data-experiment') : '';
-    window._openPlotApplyPopup(updates, expName, qubit, [], _runChipExpect(root));
+    window._openPlotApplyPopup(updates, expName, qubit, [], _runChipExpect(root),
+                               _dsRunUidOf(root));
 }
 window.applyAllFitValues = applyAllFitValues;
 
@@ -12474,8 +12496,9 @@ function _attachInteractivePlotClickHandler(plotDiv, clickable, runId) {
         if (!ev || !ev.points || !ev.points.length) return;
         var pt = ev.points[0];
 
+        var root = _dsRootFor(plotDiv);   // QA r2-07: the column this tile is in
         var q = clickable.qubit || (pt.customdata != null ? String(pt.customdata).trim() : null);
-        if (!q) { var qs = _getRunQubits(); if (qs.length === 1) q = qs[0]; }
+        if (!q) { var qs = _getRunQubits(root); if (qs.length === 1) q = qs[0]; }
 
         var updates = [];
         clickable.targets.forEach(function(t) {
@@ -12542,14 +12565,14 @@ function _attachInteractivePlotClickHandler(plotDiv, clickable, runId) {
             contextRows.push({label: c.label || '', value: disp, unit: c.unit || ''});
         });
 
-        var root = document.getElementById('ds-detail-root');
         var expName = root ? root.getAttribute('data-experiment') : '';
         var toastVal = (clickable.axis === 'y') ? pt.y : pt.x;
         _showPlotClickToast((clickable.axis === 'y' ? 'y=' : 'x=') + toastVal, q, updates[0].dot_path);
         // Carry the run's own chip identity so the server 409s a cross-chip
         // write (same gate as the Results-tab apply path) — without it a run's
         // CZ amp could silently land on a different chip reusing pair names.
-        _openPlotApplyPopup(updates, expName, q, contextRows, _runChipExpect(root));
+        _openPlotApplyPopup(updates, expName, q, contextRows, _runChipExpect(root),
+                            _dsRunUidOf(root));
     });
 }
 window._attachInteractivePlotClickHandler = _attachInteractivePlotClickHandler;
@@ -12583,11 +12606,13 @@ function _updatePlotRowDomainWarning(row) {
     else { box.textContent = ''; box.hidden = true; }
 }
 
-function _renderPlotApplyPopup(updates, expName, qubitName, contextRows, chipExpect) {
+function _renderPlotApplyPopup(updates, expName, qubitName, contextRows, chipExpect, runUid) {
     var rowsBox = document.getElementById('plot-apply-rows');
     var ctxBox = document.getElementById('plot-apply-context');
     var popup = document.getElementById('plot-apply-popup');
     if (!rowsBox || !popup) return;
+    // QA r2-07: the run the verdict badge audits (a pinned column's own run)
+    if (runUid) popup.dataset.runUid = runUid; else delete popup.dataset.runUid;
     // Stash the run's chip token so the Apply / Apply-All requests carry it
     // (server 409s a cross-chip write unless force-overridden).
     if (chipExpect && chipExpect.token) {
@@ -13661,7 +13686,7 @@ function _navigateToExplorerPath(dotPath) {
                 });
             return;
         }
-        htmx.ajax('GET', '/explorer', {target: '#table-pane', swap: 'innerHTML'}).then(function() {
+        _navigateTablePane('/explorer').then(function() {
             var attempts = 0;
             var maxAttempts = 15;
             function tryExpand() {
@@ -13703,6 +13728,48 @@ function _navigateToExplorerPath(dotPath) {
         })
         .catch(openExplorer);   // probe failure \u2192 fail open (Explorer shows its own state)
 }
+/* QA F16: a jump into the Explorer is a NAVIGATION -- the main pane changes,
+ * so the address bar, the sidebar highlight and Back must follow it (it used to
+ * stay on /datasets, and Back left the app). The history entry hangs off the
+ * SWAP, never off the ajax promise (htmx resolves that on a 404 too); a request
+ * that fails releases the listeners, and PaneState's skip path (a parked fresh
+ * /explorer: it pushes the entry itself and fires no afterSwap) releases them
+ * via paneRestored. Same contract as the command palette's navigation. */
+function _navigateTablePane(url) {
+    var bare = url.split('?')[0];
+    var same = function (d) {
+        var got = (d && d.pathInfo && (d.pathInfo.finalRequestPath || d.pathInfo.requestPath)) || '';
+        return !got || got.split('?')[0] === bare;
+    };
+    var off = function () {
+        document.removeEventListener('htmx:afterSwap', onSwap);
+        document.removeEventListener('htmx:afterRequest', onDone);
+        document.removeEventListener('paneRestored', onRestored);
+    };
+    var onSwap = function (evt) {
+        if (!evt.target || evt.target.id !== 'table-pane' || !same(evt.detail)) return;
+        off();
+        try {
+            if (window.location.pathname + window.location.search !== url) {
+                window.history.pushState({ htmx: true }, '', url);
+            }
+        } catch (e) { /* file:// */ }
+        if (window.syncSidebarNavActive) window.syncSidebarNavActive();
+    };
+    var onDone = function (evt) {
+        if (!evt.target || evt.target.id !== 'table-pane' || !same(evt.detail)) return;
+        if (evt.detail && evt.detail.successful) return;   // the swap decides
+        off();
+    };
+    var onRestored = function (evt) {
+        if (evt.detail && evt.detail.route === bare) off();
+    };
+    document.addEventListener('htmx:afterSwap', onSwap);
+    document.addEventListener('htmx:afterRequest', onDone);
+    document.addEventListener('paneRestored', onRestored);
+    return htmx.ajax('GET', url, {source: '#table-pane', target: '#table-pane', swap: 'innerHTML'});
+}
+window._navigateTablePane = _navigateTablePane;
 // Explicit window binding: the guarded callers (value-history Data links,
 // UndoNav) reference window._navigateToExplorerPath \u2014 a classic <script>
 // hoists top-level declarations onto window, but eval'd/bundled contexts

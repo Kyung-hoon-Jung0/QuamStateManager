@@ -2014,6 +2014,31 @@ def _active_chip_identity() -> dict | None:
     }
 
 
+@bp.app_template_global("archive_info")
+def _archive_info() -> dict | None:
+    """QA F13: what a read-only run archive IS and where it came from, for
+    the tray badge and the review modal (a template global, so both tray
+    renderers see it without stamping yet another field).
+
+    ``run_label`` is the run (``#3822``) -- the badge's chip-level ``name``
+    stays the chip folder on purpose (the mutation guards key on it). The
+    way back is the chip that was active when the archive was opened
+    (``archive_return``, set by ``dataset_load_state``); None when nothing
+    editable was open. None when the active chip is not an archive."""
+    ctx = _active_ctx()
+    if not ctx or ctx.get("type") != "quam" or ctx.get("origin") != "dataset_archive":
+        return None
+    path = ctx.get("path")
+    m = re.match(r"#?(\d+)_", Path(path).parent.name) if path else None
+    ret = ctx.get("archive_return")
+    return {
+        "run_label": f"#{m.group(1)}" if m else None,
+        "uid": ctx.get("archive_uid"),
+        "return_path": str(ret) if ret else None,
+        "return_name": _chip_display_name(ret) if ret else None,
+    }
+
+
 def _agent_edit_lock_refusal(ctx: dict | None):
     """docs/173 S5: while the agent's node runs, the working copy is what its
     writes will be diffed against -- a human edit meanwhile would be silently
@@ -25414,14 +25439,22 @@ def dataset_load_state(uid):
                  and (ctx.get("origin") or "live") == "live"
                  and request.values.get("mode") != "archive")
     if not can_stage:
+        # QA F13: the chip being left is the archive's way back (an archive
+        # opened from an archive keeps the first one's).
+        back = None
+        if ctx is not None and ctx.get("type") == "quam":
+            back = (ctx.get("path") if (ctx.get("origin") or "live") == "live"
+                    else ctx.get("archive_return"))
         try:
             # A dataset run's quam_state is a FROZEN archive — open it
             # read-only so save/apply routes refuse to overwrite the record.
-            _activate_quam(state_path, origin="dataset_archive")
+            actx = _activate_quam(state_path, origin="dataset_archive")
         except Exception as e:  # noqa: BLE001
             return render_template("_status.html",
                                    message=f"Failed to load state: {e}",
                                    level="error")
+        actx["archive_return"] = back
+        actx["archive_uid"] = uid
         resp = make_response()
         resp.headers["HX-Redirect"] = "/qubits"
         return resp
