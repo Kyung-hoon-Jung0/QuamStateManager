@@ -186,3 +186,32 @@ def test_banner_example_follows_the_error_kind(tmp_path):
     assert "would crash a node run" in text
     assert "DAC range" not in text and "waveform" not in text
     assert "port 7" in text           # the missing port is what it names
+    # QA F-N (review): an env finding's message opens with its own
+    # "<Class>.<field>: " (state_env_validate composes it so), the same text
+    # the banner prints as the location -- it read "FluxTunableTransmon.T1:
+    # FluxTunableTransmon.T1: expected float ...". Once, also when the
+    # aggregated location carries its " (N×)" suffix.
+    from quam_state_manager.core import type_policy as tp
+    from tests.test_type_policy import MANIFEST, _state as _env_state
+
+    def _env_banner(tag, st):
+        d = tmp_path / tag
+        d.mkdir()
+        c = _client_for(d, st, {"wiring": {}})
+        app = c.application
+        with app.app_context():
+            ctx = app.config["contexts"][app.config["active_context"]]
+            ctx["store"].type_policy = tp.TypePolicy(MANIFEST, {})
+        return re.sub(r"\s+", " ", c.get("/diagnostics/banner").get_data(as_text=True))
+
+    st = _env_state()
+    del st["custom"]                            # the type mismatch is the only error
+    st["qubits"]["qA1"]["f_01"] = "6.25e9"      # str in a float field: Quam.load() raises
+    text = _env_banner("env1", st)
+    assert "<b>1</b> error on" in text, text[:400]
+    assert "<code>Transmon.f_01</code>: expected float, got str" in text, text[:400]
+    assert text.count("Transmon.f_01") == 1, text[:400]
+    st["qubits"]["qA2"] = dict(st["qubits"]["qA1"])
+    text = _env_banner("env2", st)
+    assert "<code>Transmon.f_01 (2×)</code>: expected float, got str" in text, text[:400]
+    assert text.count("Transmon.f_01") == 1, text[:400]

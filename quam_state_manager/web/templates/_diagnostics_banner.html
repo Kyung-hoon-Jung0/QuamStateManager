@@ -14,7 +14,7 @@
         &#9888;&#65039; <b>{{ diag_summary.error }}</b>
         error{{ 's' if diag_summary.error != 1 }} on <b>{{ active_name or "this chip" }}</b>
         would crash a node run{% if first_error %} (e.g. <code>{{ first_error.location }}</code>:
-        {{ first_error.message | truncate(140) }}){% endif %}.
+        {{ first_error_msg | truncate(140) }}){% endif %}.
         Fix before running an experiment.
     </span>
     <button type="button" class="topo-change-banner-btn"

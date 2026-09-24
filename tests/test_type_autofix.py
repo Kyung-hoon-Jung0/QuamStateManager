@@ -651,6 +651,51 @@ class TestTheAlertPayload:
             assert "<strong>2 values</strong> on this chip have a type problem" in html
             assert "SM will not change these" in html
 
+    def test_the_banner_and_the_card_do_not_call_a_restatement_a_second_problem(self, app):
+        """QA F-F (review): the popup learned that an env finding restating a
+        text value is fixed by storing the number -- the chip-open banner and
+        the Types card still said "SM does not change these" about the very
+        value the Fix button converts. A real env mismatch keeps that line."""
+        from flask import render_template
+        p = ["qubits.q4.T1"]
+        plan = {"rows": [{"path": p[0], "current_display": '"2e-05"',
+                          "proposed_display": "2e-05", "proposed_type": "real"}],
+                "skipped": [], "total": 1, "sig": "s"}
+
+        def _payload(env):
+            a = type_fix.alert_summary(plan, env, p)
+            a.update(sig="s", env_sig="e", token="t", first=p[0], paths=p,
+                     editable=True, count=len(p), env_change=None, taught=0)
+            a["strnum"]["first"] = p[0]
+            a["env"].update(acknowledged=0, warm=True)
+            return a
+
+        with app.test_request_context():
+            restated = _payload([self._rec(p)])
+            banner = re.sub(r"\s+", " ", render_template(
+                "_type_alarm_banner.html", type_alarm=restated))
+            assert "1 value stored as TEXT" in banner
+            assert "expects a number there too" in banner
+            assert "does not change these" not in banner
+            assert "match the selected environment" not in banner
+            assert "Fix 1 value" in banner            # the repair is still offered
+            card = re.sub(r"\s+", " ", render_template(
+                "_diagnostics_types.html", types_card=restated))
+            assert "This restates the text value above" in card
+            assert "converting it clears this too" in card
+            assert "SM will not change these" not in card
+            # a real mismatch alongside it keeps the honest refusal
+            real = _payload([self._rec(p), self._rec(["qubits.q4.id"], field="id")])
+            banner = re.sub(r"\s+", " ", render_template(
+                "_type_alarm_banner.html", type_alarm=real))
+            assert "match the selected environment" in banner
+            assert "does not change these" in banner
+            assert "expects a number there too" not in banner
+            card = re.sub(r"\s+", " ", render_template(
+                "_diagnostics_types.html", types_card=real))
+            assert "SM will not change these" in card
+            assert "restates the text value" not in card
+
     def test_an_env_only_alert_is_not_called_a_type_problem(self, app):
         """QA F-N: an unknown field (or an unimportable class) is a disagreement
         with the environment's schema, not "1 value ... has a type problem"."""

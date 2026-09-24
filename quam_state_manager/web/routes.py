@@ -27676,9 +27676,19 @@ def diagnostics_banner():
                         hashlib.sha1("\n".join(ids).encode("utf-8")).hexdigest()[:12])
     # QA F-N: the example is one of THESE errors (same filter as the count),
     # never a fixed "waveform sample" line whatever the error kind.
+    first = errs[0] if errs else None
+    # QA F-N (review): an env finding's message already opens with the same
+    # "<Class>.<field>: " the banner prints as its location (state_env_validate
+    # composes it so; the location may carry a " (N×)" suffix) -- strip it, or
+    # the banner reads "FluxTunableTransmon.T1: FluxTunableTransmon.T1: ...".
+    first_msg = first.message if first else ""
+    if first:
+        _loc = str(first.location).split(" (")[0]
+        if first_msg.startswith(_loc + ": "):
+            first_msg = first_msg[len(_loc) + 2:]
     return render_template("_diagnostics_banner.html", diag_summary=summary,
                            active_name=name, diag_sig=sig,
-                           first_error=errs[0] if errs else None)
+                           first_error=first, first_error_msg=first_msg)
 
 
 @bp.route("/diagnostics/findings.json")

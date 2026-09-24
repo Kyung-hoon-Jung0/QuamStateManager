@@ -14,11 +14,21 @@
     {% endif %}
     {% if type_alarm.env and type_alarm.env.count %}
     {% if type_alarm.count %}<br>{% endif %}
+    {% if type_alarm.count and type_alarm.env.restated_text == type_alarm.env.count %}
+    {# QA F-F (review): every env finding here restates a text value listed
+       above -- the field is typed as a number -- so it is not a second
+       problem, and not one "SM does not change": the Fix button repairs it.
+       The popup already says so; the banner said the opposite. #}
+    The selected environment's schema expects a number there too, so storing
+    {{ 'them' if type_alarm.count != 1 else 'it' }} as
+    {{ 'numbers' if type_alarm.count != 1 else 'a number' }} fixes that as well.
+    {% else %}
     <strong>{{ type_alarm.env.count }} field{{ 's' if type_alarm.env.count != 1 }}</strong>
     {{ "don't" if type_alarm.env.count != 1 else "doesn't" }} match the selected
     environment's schema{% if type_alarm.env.entries %}
     (e.g. <code>{{ type_alarm.env.entries[0].location }}</code>){% endif %} —
     SM does not change these; review them on Diagnostics.
+    {% endif %}
     {% endif %}
   </span>
   {# docs/77: the repair itself, one click away — SM shows what it proposes

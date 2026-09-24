@@ -65,8 +65,21 @@
     <div class="diag-types-label">Environment-schema mismatches</div>
     <div class="diag-types-body">
       <p class="diag-types-caption muted">
+        {% if types_card.strnum.count and types_card.env.restated_text == types_card.env.count %}
+        {# QA F-F (review): the same text values as the row above -- the
+           schema expects numbers there, so converting them clears these too;
+           "SM will not change these" was false for a value the Auto-correct
+           button does change. #}
+        {{ 'These restate' if types_card.env.count != 1 else 'This restates' }} the
+        text value{{ 's' if types_card.strnum.count != 1 }} above — the selected
+        environment's schema expects
+        {{ 'numbers' if types_card.strnum.count != 1 else 'a number' }} there, so
+        converting {{ 'them' if types_card.strnum.count != 1 else 'it' }} clears
+        {{ 'these' if types_card.env.count != 1 else 'this' }} too.
+        {% else %}
         SM will not change these — this chip and the selected environment's
         schema disagree. Decide which is right.
+        {% endif %}
         {% if types_card.env.acknowledged %}<span class="muted">{{ types_card.env.acknowledged }} acknowledged &mdash; listed, revocable, under Environment match below.</span>{% endif %}
       </p>
       <ul class="diag-types-envlist">
