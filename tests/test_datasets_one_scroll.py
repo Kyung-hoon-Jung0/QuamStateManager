@@ -162,3 +162,57 @@ def test_dataset_selfchecks_still_pass():
         if r.returncode == 2:
             pytest.skip("jsdom not installed")
         assert r.returncode == 0, (name, r.stdout + r.stderr)
+
+
+class TestNarrowPinnedColumn:
+    """datasets-r2-29: the pinned compare at 1366x768 (real Chrome, measured).
+
+    Each split column is 510 px. Before: the eight-tab row ran to x=983 past
+    the column edge at 836, four labels broke mid-word ("Full / View",
+    "Prev / State"), and the column scrolled sideways (scrollWidth 657 vs
+    clientWidth 495) with Raw Data / State hidden behind that scrollbar. The
+    Prev State table kept every dot-path on one line and pushed the #prev /
+    #run headers past the column, and the run header's 1rem bleed (sized for
+    the single pane's padding) ran 0.5rem past each 0.5rem-padded column.
+    After: two tab rows, no broken label, paths on one line at 264 px, the
+    headers inside the column, and no sideways scroll on either column.
+
+    The reviewer's own rule (keep the global 1% hug, add overflow-wrap:
+    anywhere) was tried and rejected in the same browser: a percent column is
+    assigned exactly its min-content, so it wrapped every path one character
+    per line (42 px column, 10 lines). Hence `width: auto` here, and the
+    global `.col-prop` hug left alone for the qubit/pair prop tables.
+
+    jsdom has no layout, so these pin the declarations; the geometry above is
+    the real-Chrome record they stand for.
+    """
+
+    def test_whole_tabs_wrap_and_a_label_never_breaks(self):
+        css = _css()
+        ul = _rule(css, ".dataset-tabs ul")
+        assert "display: flex" in ul and "flex-wrap: wrap" in ul
+        assert "white-space: nowrap" in _rule(css, ".dataset-tabs a")
+
+    def test_the_prev_state_path_column_shares_the_width(self):
+        css = _css()
+        block = _rule(css, ".prevdiff-table .col-prop")
+        assert "width: auto" in block
+        assert "white-space: normal" in block
+        # break-word keeps min-content at the full path; only anywhere lets it shrink
+        assert "overflow-wrap: anywhere" in block and "break-word" not in block
+        # ...and the qubit/pair prop tables keep their 1% key-column hug.
+        glob = re.search(r"^\.col-prop \{([^}]*)\}", css, re.M)
+        assert glob, "global .col-prop rule"
+        assert "width: var(--prop-col-width)" in glob.group(1)
+        assert "white-space: nowrap" in glob.group(1)
+
+    def test_the_split_header_bleeds_exactly_the_column_padding(self):
+        css = _strip_css_comments(_css())
+        cols = re.search(r"\.inspector-pinned-col,\s*\.inspector-current-col \{([^}]*)\}", css)
+        assert cols, "split column rule"
+        pad = re.search(r"padding:\s*0 ([0-9.]+rem)", cols.group(1))
+        assert pad, cols.group(1)
+        side = pad.group(1)
+        hdr = _rule(css, ".inspector-split .inspector-header-dataset")
+        assert f"margin-left: -{side}" in hdr and f"margin-right: -{side}" in hdr
+        assert f"padding-left: {side}" in hdr and f"padding-right: {side}" in hdr
