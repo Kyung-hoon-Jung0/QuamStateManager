@@ -162,6 +162,41 @@ class TestTheHonestyRule:
         assert Verdict().may_pull_silently is True
 
 
+class TestAStashWithItsOriginals:
+    """QA liveedit-r2-05 (review): a stash path whose pre-edit value was
+    recorded when it was stashed is judged like a change-log edit, so the
+    same-field gate can run on the doors that replay a stash."""
+
+    def test_only_i_moved_it_is_not_a_conflict(self):
+        # saved working copy holds mine (2.0); live still has the original 1.0
+        v = classify(live_by_path={"a.x": 1.0}, reapply_paths=["a.x"],
+                     reapply_originals={"a.x": 1.0}, working_dirty=True)
+        assert v.conflicts == ()
+
+    def test_the_chip_moved_it_too_is_a_conflict(self):
+        v = classify(live_by_path={"a.x": 7.0}, reapply_paths=["a.x"],
+                     reapply_originals={"a.x": 1.0}, working_dirty=True)
+        assert v.conflicts == ("a.x",)
+
+    def test_the_stash_original_beats_a_later_log_one(self):
+        # saved (log cleared), edited again: the log's original is MY saved
+        # value, the sync point is the stash's
+        v = classify(live_by_path={"a.x": 1.0},
+                     change_log=[_Entry("a.x", 2.0)],
+                     reapply_paths=["a.x"], reapply_originals={"a.x": 1.0})
+        assert v.conflicts == ()
+
+    def test_without_an_original_the_old_rule_stands(self):
+        v = classify(live_by_path={"a.x": 1.0}, reapply_paths=["a.x"],
+                     reapply_originals={"b.y": 1.0})
+        assert v.conflicts == ("a.x",)
+
+    def test_the_honesty_rule_is_unchanged(self):
+        v = classify(live_by_path={"b.y": 1.0}, reapply_paths=["a.x"],
+                     reapply_originals={"a.x": 1.0}, working_dirty=True)
+        assert v.may_pull_silently is False and "saved edits" in v.unaccounted
+
+
 class TestTheReport:
     def test_paths_are_sorted_so_a_message_reads_the_same_twice(self):
         v = classify(

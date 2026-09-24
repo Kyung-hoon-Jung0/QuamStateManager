@@ -714,7 +714,9 @@ class TestTheMergeIsPinnedToItsChip:
         i = js.index("window.doStateSync = function(")
         head = js[i:i + 200]
         assert "expectChip" in head, head
-        blk = js[i:i + 4000]
+        # the whole function (a fixed 4000-char window stopped reaching the
+        # fetch once the QA liveedit-r2-06 press queue grew the head)
+        blk = js[i:js.index("\n};", i)]
         assert 'expect_chip=" + encodeURIComponent(expectChip)' in blk
 
 

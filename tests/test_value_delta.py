@@ -119,6 +119,39 @@ class TestExactDecimalArithmetic:
         # what an editable field hands back
         assert compute("5,100,000,000", "5,200,000,000")["text"] == "+100,000,000"
 
+    def test_every_shape_group_digits_emits_still_diffs(self):
+        # QA F15 tightened the grouping gate to well-formed 3-digit groups;
+        # everything units.group_digits can render must still read as a number.
+        from quam_state_manager.core.units import group_digits
+        for a, b in [(5_075_187_484.52453, 5_075_187_500.0), (-1234.5, -1234.0),
+                     (1000, 1001), (12_345, 12_346), (-4_333_001_000, -4_333_000_000)]:
+            ga, gb = group_digits(a), group_digits(b)
+            assert "," in ga and "," in gb
+            assert compute(ga, gb)["text"] == compute(a, b)["text"], (ga, gb)
+
+
+class TestACoordinateIsNotANumber:
+    """QA F15: the tray read ``grid_location  0,0 → 0,1  +1`` -- a text
+    coordinate stripped of its comma into the number 1. Only the shape
+    group_digits emits (well-formed thousands groups) is grouping; docs/76:
+    plain strings render nothing."""
+
+    @pytest.mark.parametrize("old,new", [
+        ("0,0", "0,1"), ("1,0", "1,1"), ("0,5", "0,50"), ("4,0", "3,0"),
+        ("12,34", "12,35"), ("1,0000", "1,0001"), (",5", "5"),
+    ])
+    def test_a_comma_that_is_not_grouping_gets_no_delta(self, old, new):
+        assert compute(old, new) is None
+        assert "Δ" not in describe(old, new)
+
+    def test_the_tray_row_carries_no_chip(self, app):
+        with app.app_context():
+            from flask import render_template_string
+            out = render_template_string(
+                "{% from '_delta_macros.html' import delta_chip %}"
+                "{{ delta_chip('0,0', '0,1') }}")
+        assert out.strip() == ""
+
 
 class TestPercent:
     def test_no_percentage_of_nothing(self):
@@ -185,6 +218,9 @@ _PARITY_CASES = [
     [4.998e9, 5.002e9], [16, 20], [0.0001, 0.0002], [1e-7, 3e-7],
     [123456789012345.0, 123456789012350.0], [2.5, -2.5], ["", 5], ["abc", 5],
     [1000, 1001], [0.9999999, 1.0], [141, 161], [-3.5, -3.5],
+    # QA F15: a text coordinate is not a grouped number -- both sides render nothing
+    ["0,0", "0,1"], ["1,0", "1,1"], ["0,5", "0,50"], ["12,34", "12,35"],
+    ["-1,234.5", "-1,234.0"], ["+12,345.67", "12,345.68"],
 ]
 
 

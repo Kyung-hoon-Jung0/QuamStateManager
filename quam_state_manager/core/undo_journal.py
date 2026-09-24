@@ -108,7 +108,9 @@ def make_unit(entries: list[ChangeEntry], ts: float | None = None,
     docs/117: `meta` is an OPTIONAL, additive dict describing how the unit
     came to be (``{"src": "auto"}`` for an auto-apply flush).  It is what
     lets the applied-log show only the changes that actually reached the
-    live chip, without a second store beside this one.  Nothing reads it
+    live chip, without a second store beside this one -- which is why
+    ``src=auto`` is stamped by :func:`mark_units` only once the push LANDED
+    (QA liveedit-r2-17), never at save time.  Nothing reads it
     except that log, `JOURNAL_VERSION` is unchanged, and a sidecar written
     by an older build simply has no meta.
     """
@@ -271,6 +273,35 @@ def mark_unit(path: str | Path, unit_id: str, patch: dict) -> list[dict]:
                 u["meta"] = meta
                 hit = True
                 break
+        if not hit:
+            return units
+        try:
+            safe_io.atomic_write_json(p, {"version": JOURNAL_VERSION,
+                                          "units": units, "cursor": cursor})
+        except Exception:
+            logger.warning("undo journal mark failed: %s", p, exc_info=True)
+        return units
+
+
+def mark_units(path: str | Path, unit_ids, patch: dict) -> list[dict]:
+    """:func:`mark_unit` for several units in ONE load-merge-write.
+
+    QA liveedit-r2-17: an auto-apply flush's units are committed at save time
+    (Ctrl+Z needs them) but labelled ``src=auto`` only once the push LANDED,
+    so a push the conflict refused never shows in the applied log. Advisory
+    like every other writer here; the persisted cursor is kept.
+    """
+    ids = {str(i) for i in (unit_ids or []) if i}
+    p = Path(path)
+    with _lock:
+        units, cursor = load_state(p)
+        hit = False
+        for u in units:
+            if u.get("id") in ids:
+                meta = dict(u.get("meta") or {})
+                meta.update(patch)
+                u["meta"] = meta
+                hit = True
         if not hit:
             return units
         try:

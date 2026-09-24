@@ -21,7 +21,9 @@
          archive (the server 409s it anyway). #}
       <span class="review-sync-edits"{% if unsaved == 0 %} hidden{% endif %}>
         {% if not _archive %}
-        <button class="btn-sync primary" onclick="doStateSync('apply')"
+        {# informed (QA liveedit-r2-05): this screen shows the live values, so
+           the one-click same-field collision question is not asked again #}
+        <button class="btn-sync primary" onclick="doStateSync('apply', false, false, null, {informed: true})"
                 title="Merge — pull the live state, re-apply your edits on top, and write the merged result straight to the live chip in one step.">
           &#8644; Pull &amp; apply <span class="sync-btn-sub">(merge)</span></button>
         {% endif %}

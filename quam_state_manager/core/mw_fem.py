@@ -211,6 +211,44 @@ def fsp_compensation_plan(merged: dict, resolved_fsp_path: str,
                 "clips": abs(new_amp) > 1.0,
             })
 
+    # QA F18: a pointer amplitude whose target is compensated in THIS plan is
+    # not "not compensated" -- it follows its target, with no write of its
+    # own (e.g. -x90_DragCosine -> x90_DragCosine.amplitude). Checked after
+    # the loop: natural order meets "-x90..." before "x90...". The row stays
+    # in `skipped` (payload shape unchanged) and gains `follows`. Pointers to
+    # anything else (another port, a literal elsewhere, a dead end) keep the
+    # old reason. Never raises: a raise here makes _fsp_plan_for return None,
+    # and the FSP would commit with no offer at all.
+    if skipped and amps:
+        from quam_state_manager.core.pointer_path import resolve_field_target
+
+        def _leaf_of(path):
+            # A hop's TARGET is walked without following an alias op met on
+            # the way (`#../x180/amplitude` with x180 = "#./x180_DragCosine"
+            # dead-ends at the first hop), but the same path given as INPUT is
+            # followed segment by segment -- so re-resolve from the last hop.
+            for _ in range(4):
+                tgt = resolve_field_target(merged, path)
+                if tgt.get("resolvable"):
+                    return tgt.get("resolved_path")
+                chain = tgt.get("chain") or []
+                if not chain or chain[-1].get("to_path") in (None, path):
+                    return None
+                path = chain[-1]["to_path"]
+            return None
+
+        comp = {a["path"] for a in amps}
+        for row in skipped:
+            if row.get("reason") != "amplitude is a pointer — edit its target":
+                continue
+            try:
+                leaf = _leaf_of(row["path"])
+                if leaf in comp:
+                    row["follows"] = leaf
+                    row["reason"] = "pointer to a compensated amplitude — follows it, no separate write"
+            except Exception:  # noqa: BLE001 -- the row keeps its old reason
+                pass
+
     range_warn = None
     try:
         from quam_state_manager.core.spec_constraints import (
@@ -233,3 +271,37 @@ def fsp_compensation_plan(merged: dict, resolved_fsp_path: str,
         "clip_count": sum(1 for a in amps if a["clips"]),
         "range_warn": range_warn,
     }
+
+
+_AMP_LEAF_RE = re.compile(r"\.operations\.[^.]+\.amplitude$")
+
+
+def is_fsp_comp_bundle(dot_paths) -> bool:
+    """Is this change group an FSP change bundled with compensated amplitudes?
+
+    QA liveedit-r2-16: an accepted ``fsp_ack=comp`` commits the FSP leaf and
+    the amplitudes :func:`fsp_compensation_plan` rescaled as ONE group, and
+    ``P = FSP + 20*log10|amp|`` only holds for the pair. Taking one member
+    back (the tray ✕) silently changes that pulse's output power, so the
+    group is one unit there too. Decided by CONTENT (an FSP leaf plus an
+    ``.operations.<op>.amplitude`` leaf, the plan's own path shape), never by
+    a gid prefix: /redo and staged journal steps re-mint gids.
+    """
+    return bool(fsp_comp_bundle_members(dot_paths))
+
+
+def fsp_comp_bundle_members(dot_paths) -> list:
+    """The members of a change group that ARE the FSP compensation unit: its
+    FSP leaves plus its ``.operations.<op>.amplitude`` leaves (the plan's own
+    path shape), in log order -- or ``[]`` when the group is no such bundle.
+
+    Anything else committed in the same group (a T1 typed into the same row
+    commit, another leaf of a staged journal step) is NOT part of the unit:
+    its ✕ takes it alone, and a member's ✕ leaves it in the tray (QA
+    liveedit-r2-16 review)."""
+    paths = [p for p in (dot_paths or []) if isinstance(p, str)]
+    fsp = [p for p in paths if p.endswith(_FSP_LEAF)]
+    amps = [p for p in paths if _AMP_LEAF_RE.search(p)]
+    if not fsp or not amps:
+        return []
+    return [p for p in paths if p.endswith(_FSP_LEAF) or _AMP_LEAF_RE.search(p)]

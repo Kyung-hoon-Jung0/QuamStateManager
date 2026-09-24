@@ -8,6 +8,7 @@
         gate refuses on a set that no longer matches — including one that
         happens to be the same SIZE. #}
      data-change-sig="{{ change_sig | default('') }}"
+     data-edit-seq="{{ edit_seq | default('') }}"
      data-working-dirty="{{ '1' if working_dirty else '0' }}"
      {# docs/110 #10-A: the store's mutation_seq — PaneState's freshness beacon.
         The tray renders on every page AND OOB-swaps on every mutation, so the
@@ -117,7 +118,7 @@
         hx-post="/state-history/{{ last_apply.pre_ts }}/stage?from=tray"
         hx-target="#status-bar" hx-swap="innerHTML"
         hx-confirm="Load the state as it was BEFORE your last Apply back into the working copy? You review it first — Apply to live completes the revert."
-        title="{% if auto_apply %}Revert the whole auto-apply session — stages the state as it was when you turned auto-apply ON{% else %}Revert last apply (done {{ last_apply.at }}) — stages the pre-apply state for review; nothing touches the live chip until you Apply{% endif %}.">
+        title="{% if auto_apply %}Revert the whole auto-apply session — stages the state as it was when you turned auto-apply ON{% else %}Revert last apply (done {{ (last_apply.at or '') | replace('T', ' ') }} local time) — stages the pre-apply state for review; nothing touches the live chip until you Apply{% endif %}.">
   {# docs/117: under an armed session the anchor IS the session (one snapshot,
      taken at the first flush), so the label must not promise "the last one" —
      per-change revert is the applied log's ✕. #}
@@ -244,7 +245,9 @@
                   hx-swap="outerHTML"
                   hx-vals='{"index": "{{ loop.index0 }}", "expect_path": {{ c.dot_path | tojson }}}'
                   aria-label="Discard pending change to {{ c.dot_path }}"
-                  title="Discard this change (Ctrl+Shift+Z restores it)">&#10005;</button>
+                  {# QA liveedit-r2-16: an FSP bundle's ✕ takes the whole bundle #}
+                  {% set _fb = (fsp_bundle_gids | default({})).get(c.group_id) if c.group_id else none %}
+                  title="{% if _fb and c.dot_path in _fb.paths %}Discard this change with its full-scale-power bundle ({{ _fb.n }} changes, one unit: no pulse changes output power). Ctrl+Shift+Z restores them{% else %}Discard this change (Ctrl+Shift+Z restores it){% endif %}">&#10005;</button>
         </div>
       </div>
       {% endfor %}

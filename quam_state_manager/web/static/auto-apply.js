@@ -255,6 +255,20 @@
                   + 'press \u21c4 Pull & apply to finish it.', 'warning');
         });
     });
+    /* QA liveedit-r2-07: a declined pull ("asks before replacing") answered
+       with a bare 204, and the banner that asks lives in #live-diverged-slot,
+       which only a full page render filled -- so the open page never asked
+       until F5. The server now says so; re-render the slot in place. The
+       chip guard is docs/187 R2's: a stale window must not paint another
+       chip's banner. Not hooked to liveDriftChanged -- that fires on every
+       count change, including the silent docs/195 Case-A merge. */
+    document.addEventListener('liveConflict', function (e) {
+        var d = (e && e.detail) || {};
+        if (d.chip && window.__chipToken && d.chip !== window.__chipToken) return;
+        if (!window.htmx || !document.getElementById('live-diverged-slot')) return;
+        window.htmx.ajax('GET', '/state/diverged-banner',
+                         { target: '#live-diverged-slot', swap: 'innerHTML' });
+    });
     // htmx fires a plain (detail-less) event for string triggers too
     document.addEventListener('autoApplyApplied', function () { applyLogState(); });
 

@@ -109,6 +109,7 @@ def classify(
     dom_paths: Iterable[str] = (),
     reapply_paths: Iterable[str] = (),
     working_dirty: bool = False,
+    reapply_originals: Mapping[str, Any] | None = None,
 ) -> Verdict:
     """Decide what Auto-Sync may do.
 
@@ -125,11 +126,23 @@ def classify(
     ``working_dirty`` (saved-but-unapplied) and ``reapply_paths`` (a stash
     mid-merge) are dirt whose originals this module does not have, so they make
     the verdict unaccounted rather than silently trusted.
+
+    ``reapply_originals`` (QA liveedit-r2-05 review) is the value each stashed
+    leaf held before the user's first edit, recorded when it was stashed. A
+    stash path that has one is judged exactly like a change-log edit -- a
+    conflict only when the live chip moved away from it -- and that original
+    wins over a later change-log one (a save cleared the log in between, so
+    the log's is the user's own saved value). A stash path without one keeps
+    the old any-difference rule. ``unaccounted`` is unchanged: an automatic
+    pull over a stash still asks.
     """
     originals = originals_from_change_log(change_log)
     subtrees = _subtree_paths(change_log)
     dom = {str(p) for p in dom_paths if p}
     stash = {str(p) for p in reapply_paths if p}
+    stash_orig = {p: v for p, v in (reapply_originals or {}).items() if p in stash}
+    log_had_originals = bool(originals)
+    originals.update(stash_orig)
 
     mine = set(originals) | dom | stash
     conflicts: set[str] = set()
@@ -153,6 +166,8 @@ def classify(
             conflicts.add(path)
 
     for path in stash:
+        if path in stash_orig:
+            continue                             # judged against its original above
         if path in live_by_path:
             conflicts.add(path)
 
@@ -160,7 +175,7 @@ def classify(
         covers(m, p) or covers(p, m) for m in mine)}
 
     unaccounted = None
-    if working_dirty and not originals:
+    if working_dirty and not log_had_originals:
         # Saved-but-unapplied: the save journalled and cleared the change log,
         # so the originals are gone from memory. Refuse to guess.
         unaccounted = ("there are saved edits whose original values SM no "

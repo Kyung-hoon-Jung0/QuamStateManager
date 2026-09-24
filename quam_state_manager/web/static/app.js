@@ -1457,6 +1457,26 @@ document.addEventListener('keydown', function(evt) {
         else tool.classList.add(tool.id === 'calc-popover' ? 'calc-hidden' : 'settings-hidden');
         return;
     }
+    // QA F11: 1b. the Auto-Sync popover (the other topbar popup), then 1c. an
+    // open Live-Edit picker (ⓘ / Properties / Qubits / Pairs / a grid's own
+    // Properties) -- both ignored Escape. Before the inspector early return,
+    // which would otherwise swallow them on a page with no inspector.
+    if (document.getElementById('auto-sync-pop') && window.AutoSync && window.AutoSync.close) {
+        evt.preventDefault();
+        window.AutoSync.close();
+        return;
+    }
+    var _picks = document.querySelectorAll('#bulk-panel details.bulk-colvis[open]');
+    if (_picks.length) {
+        evt.preventDefault();
+        Array.prototype.forEach.call(_picks, function (d) {
+            var had = d.contains(document.activeElement);
+            d.open = false;
+            var s = had && d.querySelector('summary');
+            if (s && s.focus) s.focus();            // keep the keyboard user's place
+        });
+        return;
+    }
     // 2. an inline form inside the inspector (rename / duplicate / delete)
     var pane = document.getElementById('inspector-pane');
     if (!pane || !pane.firstElementChild) return;
@@ -1480,6 +1500,23 @@ document.addEventListener('keydown', function(evt) {
           || pane.querySelector('#gcz-root'))) return;
     if (window.closeInspector) { window.closeInspector(); evt.preventDefault(); }
 });
+
+/* QA F11: a click anywhere outside an open Live-Edit picker closes it (the
+   app's own convention, docs/17 / docs/40). CAPTURE phase + composedPath are
+   required, not style: the Qubits / Pairs menus rebuild their own innerHTML
+   inside their click handlers, so by bubble time ev.target is detached and a
+   contains() test would close the menu on every All / None / chip click.
+   A click on another picker's summary is outside this one, so opening one
+   closes the other. Never stops or prevents the click. */
+document.addEventListener('click', function (ev) {
+    var open = document.querySelectorAll('#bulk-panel details.bulk-colvis[open]');
+    if (!open.length) return;
+    var path = ev.composedPath ? ev.composedPath() : [];
+    Array.prototype.forEach.call(open, function (d) {
+        if (path.indexOf(d) >= 0 || d.contains(ev.target)) return;
+        d.open = false;
+    });
+}, true);
 
 /* The f_01↔RF_frequency 🔗 sync preference, shared with the bulk table's toggle
  * (localStorage 'quam_bulk_freqsync'): "1" unless explicitly turned off. The
@@ -3199,12 +3236,126 @@ function _failedPathsSummary(failed) {
     return " Affected: " + shown + ".";
 }
 
-window.doStateSync = function(mode, forced, ackUnseen, expectChip) {
+/* QA liveedit-r2-06: a grid row commit that is still in flight. Pressing the
+   tray's Apply blurs the typed cell first, and that click-away commit adds a
+   change-log entry AFTER doStateSync has declared what the tray showed -- so
+   the docs/179 gate refused the user's own edit as "another window's" (or,
+   if the apply won the race, applied without it). The grids register the
+   commit here; doStateSync waits for it, then declares the tray as it is. */
+window._pendingGridCommits = window._pendingGridCommits || [];
+window._trackGridCommit = function (p) {
+    if (!p || typeof p.then !== "function") return p;
+    var list = window._pendingGridCommits;
+    list.push(p);
+    var drop = function () { var i = list.indexOf(p); if (i >= 0) list.splice(i, 1); };
+    p.then(drop, drop);            // a settled commit never blocks a later apply
+    return p;
+};
+
+/* QA liveedit-r2-06 (review): a human press lasts 40-200 ms, and on a fast
+   server the click-away commit's response re-renders #pending-tray (outerHTML)
+   inside that window. The pressed button is then detached, the browser fires
+   no click at all, and the Apply (or Save, or ✕) was swallowed without a
+   word. Remember what was pressed; when the tray was swapped under it and the
+   release lands inside the new tray, press the SAME button there (identical
+   markup, so the same action) -- once, and only if no click reached it. A
+   release outside the tray is the user letting go of the press: nothing. */
+(function () {
+    var pressed = null;
+    document.addEventListener("pointerdown", function (e) {
+        var b = e.button === 0 && e.target && e.target.closest
+                && e.target.closest("#pending-tray button");
+        pressed = b ? { el: b, html: b.outerHTML } : null;
+    }, true);
+    document.addEventListener("pointerup", function (e) {
+        var p = pressed;
+        pressed = null;
+        if (!p || p.el.isConnected) return;          // no swap: the browser clicks
+        var tray = document.getElementById("pending-tray");
+        if (!tray || !e.target || !tray.contains(e.target)) return;
+        var bs = tray.querySelectorAll("button"), t = null;
+        for (var i = 0; i < bs.length; i++) if (bs[i].outerHTML === p.html) { t = bs[i]; break; }
+        if (!t) {
+            // not the same action any more: never pressed on the user's
+            // behalf, and never swallowed without a word either
+            if (window.showToast) window.showToast("The tray changed while you "
+                + "were pressing it, so nothing was pressed. Check it and press "
+                + "again.", "warning");
+            return;
+        }
+        var clicked = false;
+        var saw = function (ev) { if (ev.target && t.contains(ev.target)) clicked = true; };
+        document.addEventListener("click", saw, true);
+        setTimeout(function () {
+            document.removeEventListener("click", saw, true);
+            if (!clicked && t.isConnected && !t.disabled) t.click();
+        }, 0);
+    }, true);
+})();
+
+/* ...and a press that arrives while a commit is awaited (the FSP popup can
+   hold one open) waits its turn instead of being dropped: the queued presses
+   run in order after the commits settle, each once the apply latch is free.
+   A press identical to one already waiting is the double press, and waits
+   once. Bounded: a press that still cannot run after ~10 s says so. */
+function _runSyncPressesInTurn(calls) {
+    var i = 0, tries = 0;
+    (function next() {
+        if (i >= calls.length) return;
+        if (window._applyInFlight) {
+            if (++tries > 200) {
+                if (window.showToast) window.showToast("A sync you pressed did not run -- "
+                    + "another write was still in flight. Press it again.", "warning");
+                return;
+            }
+            setTimeout(next, 50);
+            return;
+        }
+        tries = 0;
+        window.doStateSync.apply(null, calls[i++]);
+        setTimeout(next, 0);
+    })();
+}
+
+window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
     // docs/187 R2: `expectChip` is optional and only the automatic
     // merge passes it -- the chip the server said conflicted, carried on
     // the autoSyncMerge signal. Every existing caller passes nothing and
     // is judged exactly as before (no token, no gate).
+    // `opts` (QA liveedit-r2-05): {informed} -- the presser is looking at the
+    // live values (the review modal), so no same-field collision check;
+    // {ackCollision} -- the user answered THAT question (its own token).
     mode = mode || "discard";
+    var _pendCommits = (window._pendingGridCommits || []).slice();
+    if (_pendCommits.length) {
+        var _args = [mode, forced, ackUnseen, expectChip, opts];
+        var _key = JSON.stringify([mode, !!forced, !!ackUnseen, expectChip || "", opts || {}]);
+        var _wait = window._awaitingGridCommit;
+        if (_wait) {                                 // a double press waits once;
+            if (_wait.keys.indexOf(_key) < 0) {      // any other press waits too
+                _wait.keys.push(_key);
+                _wait.calls.push(_args);
+            }
+            return;
+        }
+        _wait = window._awaitingGridCommit = { keys: [_key], calls: [_args] };
+        Promise.all(_pendCommits.map(function (p) {
+            return p.then(null, function () { return { ok: false }; });
+        })).then(function (rs) {
+            window._awaitingGridCommit = false;
+            var calls = _wait.calls;
+            // applyAll's rule: push to the chip only if every edit committed
+            if (rs.some(function (r) { return r && r.ok === false; })) {
+                if (calls.some(function (a) { return a[0] === "apply"; })
+                        && window.showToast) window.showToast("Your typed edit was not "
+                    + "committed, so nothing was applied. Fix the marked cell "
+                    + "and press Apply again.", "warning");
+                calls = calls.filter(function (a) { return a[0] !== "apply"; });
+            }
+            _runSyncPressesInTurn(calls);
+        });
+        return;
+    }
     // Double-submit guard: a second click (or a grid ⚡ + tray button double-fire)
     // while one apply/sync is in flight used to queue a second /state/sync that
     // races the first's store.reload() — the "clicked twice, stuttered" report.
@@ -3242,6 +3393,8 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip) {
               + (_seen !== null ? "&seen_changes=" + encodeURIComponent(_seen) : "")
               + (_seenSig ? "&seen_sig=" + encodeURIComponent(_seenSig) : "")
               + (expectChip ? "&expect_chip=" + encodeURIComponent(expectChip) : "")
+              + (mode === "apply" && !(opts && opts.informed) ? "&check_collisions=1" : "")
+              + (opts && opts.ackCollision ? "&ack_collision=1" : "")
     })
         .then(function(r) { return r.json(); })
         .then(function(data) {
@@ -3273,7 +3426,7 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip) {
                         // `ackUnseen`, never `forced`: force=1 answers the
                         // STALENESS question and must not double as consent to
                         // another window's edits.
-                        window.doStateSync(mode, false, true, expectChip);
+                        window.doStateSync(mode, false, true, expectChip, opts);
                     }, 0);
                 } else {
                     // Refresh the tray so this screen stops lying, then show it.
@@ -3288,6 +3441,41 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip) {
                 }
                 return;
             }
+            if (data.status === "collision") {
+                // QA liveedit-r2-05: the chip changed a field the user also
+                // edited, and this press would have replaced the chip's value
+                // without a word. Nothing was written. The automatic merge
+                // (expectChip) never answers for the user: it puts the banner
+                // up. A person is asked once; OK re-posts with its own token.
+                var _banner = function () {
+                    if (window.htmx && document.getElementById("live-diverged-slot"))
+                        window.htmx.ajax("GET", "/state/diverged-banner",
+                        {target: "#live-diverged-slot", swap: "innerHTML"});
+                };
+                // (review) the automatic merge's conflict tray stops saying
+                // Auto-Sync is resolving this: the server hands it back
+                if (data.tray_html) {
+                    window._bulkSelfEdit = true;
+                    try { _swapPendingTray(data.tray_html); }
+                    finally { window._bulkSelfEdit = false; }
+                }
+                if (expectChip) { _banner(); return; }
+                var clines = (data.paths || []).slice(0, 6).join("\n  ");
+                if (window.confirm((data.message || "") + "\n\n  " + clines
+                        + "\n\nOK = keep YOUR value and overwrite the chip's."
+                        + "\nCancel = write nothing and decide from the banner.")) {
+                    setTimeout(function () {
+                        window._applyInFlight = false;
+                        window.doStateSync(mode, forced, ackUnseen, expectChip,
+                            Object.assign({}, opts || {}, { ackCollision: true }));
+                    }, 0);
+                } else {
+                    _banner();
+                    if (window.showToast) window.showToast("Nothing was applied — "
+                        + "the banner names the field the chip changed too.", "info");
+                }
+                return;
+            }
             if (data.status === "needs_confirm") {
                 // docs/65: the working state holds staged/saved content that a
                 // pull would destroy — the server refuses until confirmed. The
@@ -3296,7 +3484,7 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip) {
                 if (window.confirm((data.message || "Overwrite the working state?")
                                    + "\n\nContinue and discard it?")) {
                     setTimeout(function() {
-                        window.doStateSync(mode, true, false, expectChip);
+                        window.doStateSync(mode, true, false, expectChip, opts);
                     }, 0);
                 } else if (window.showToast) {
                     // r16 ⑥: a declined confirm used to end SILENTLY — the
@@ -3569,6 +3757,41 @@ window.applyEditsToLive = function () {
     }
 };
 
+/* QA F14: the grids' ⚡ confirm counted only the cells typed on this screen, but
+ * applyEditsToLive (above) pushes the WHOLE tray -- an edit committed earlier
+ * went to the chip under "Apply 1 edit across 1 qubit". This names what else the
+ * push carries: the tray's pending paths the typed set does not already cover
+ * (scoped to the pending drawer -- `.tray-change-path` is reused by the
+ * applied log inside the same tray), plus the saved-but-unapplied working state,
+ * which is stated WITHOUT a number (docs/187 R7: a number only when it is the
+ * whole thing). '' when the push carries nothing beyond what was typed. */
+window.livePushExtrasLine = function (typedPaths) {
+    var tray = document.getElementById("pending-tray");
+    if (!tray) return "";
+    var skip = {};
+    (typedPaths || []).forEach(function (p) { if (p) skip[p] = true; });
+    var seen = {}, extra = [];
+    Array.prototype.forEach.call(
+        tray.querySelectorAll("#tray-drawer .tray-change-item .tray-change-path"),
+        function (el) {
+            var p = el.getAttribute("title") || el.textContent || "";
+            if (!p || skip[p] || seen[p]) return;
+            seen[p] = true; extra.push(p);
+        });
+    var dirty = tray.getAttribute("data-working-dirty") === "1";
+    if (!extra.length && !dirty) return "";
+    var s = "\n\n";
+    if (extra.length) {
+        var shown = extra.slice(0, 5).join(", ");
+        if (extra.length > 5) shown += ", +" + (extra.length - 5) + " more";
+        s += "The push also carries " + extra.length + " edit" + (extra.length === 1 ? "" : "s") +
+             " already in the tray: " + shown + ".";
+        if (dirty) s += "\n";
+    }
+    if (dirty) s += "It also pushes the saved, not-yet-applied working state.";
+    return s;
+};
+
 /* ------------------------------------------------------------------ */
 /* Live-drift tracking — accumulating "Live changes since baseline"    */
 /* ------------------------------------------------------------------ */
@@ -3592,18 +3815,66 @@ window.applyEditsToLive = function () {
 
     var _driftPolling = false;
     var _foreignRefreshing = false;
+    /* QA liveedit-r2-09: the Live-Edit grid had no refresher on this path --
+       the tray moved to the lab-mate's change set while the cells kept values
+       that no longer existed (and the red box went with the next tray). Re-GET
+       the grid through the existing resync (whose listener refuses to wipe
+       typed cells), only while nobody is typing: a busy window retries in 2 s.
+       The scroll and a focused cell are carried across the swap. */
+    var _gridFollowTimer = null;
+    function followOnGrid() {
+        if (_gridFollowTimer) { clearTimeout(_gridFollowTimer); _gridFollowTimer = null; }
+        if (!document.getElementById("bulk-table") || !window._scheduleGridResync) return;
+        if ((Date.now() - (window.__lastUserAct || 0)) < 2000) {
+            _gridFollowTimer = setTimeout(followOnGrid, 2000);
+            return;
+        }
+        var a = document.activeElement;
+        var dp = a && a.classList && a.classList.contains("bulk-cell")
+                 && a.getAttribute("data-dot-path");
+        if (typeof _keepPaneScroll === "function") _keepPaneScroll();
+        if (dp) {
+            var once = function (evt) {
+                if (!evt.detail || !evt.detail.target || evt.detail.target.id !== "table-pane") return;
+                document.removeEventListener("htmx:afterSwap", once);
+                // a cold column's cells hydrate only after the scroll returns
+                var tries = 0, refocus = function () {
+                    var c = document.querySelector('#table-pane .bulk-cell[data-dot-path="'
+                        + ((window.CSS && CSS.escape) ? CSS.escape(dp) : dp) + '"]');
+                    if (c && c.focus) { if (document.activeElement === document.body) c.focus({ preventScroll: true }); }
+                    else if (++tries < 15) setTimeout(refocus, 100);
+                };
+                setTimeout(refocus, 50);
+            };
+            document.addEventListener("htmx:afterSwap", once);
+            setTimeout(function () { document.removeEventListener("htmx:afterSwap", once); }, 15000);
+        }
+        window._scheduleGridResync(0);
+    }
+    window._followOnGrid = followOnGrid;
     /* docs/190 F05: another window changed the working copy. Re-render the tray
        (the count and the change signature the docs/179 gate reads) and re-fetch
        the rows/inspector VALUES the reader has on screen. Never a navigation:
        the pane, the search, the scroll and the open pulse all stay. */
-    function refreshAfterForeignEdit() {
+    function refreshAfterForeignEdit(d) {
         if (_foreignRefreshing || !window.htmx) return;
         _foreignRefreshing = true;
+        // QA liveedit-r2-09: a tray that already shows this edit_seq was
+        // swapped by THIS window's own action -- its grid is current. Read
+        // before the tray is re-rendered.
+        var t0 = document.getElementById("pending-tray");
+        var foreign = !(d && d.edit_seq && t0
+                        && t0.getAttribute("data-edit-seq") === d.edit_seq);
+        // (review) ...and then there is nothing to refresh: the tray is the
+        // one rendered at this edit_seq. Re-GETting it anyway swapped a
+        // refused push's conflict tray for the plain one within seconds.
+        if (!foreign) { _foreignRefreshing = false; return; }
         var done = function () { _foreignRefreshing = false; };
+        var after = function () { done(); if (foreign) followOnGrid(); };
         try {
             var p = window.htmx.ajax("GET", "/state/tray",
                                      { target: "#pending-tray", swap: "outerHTML" });
-            if (p && p.then) p.then(done, done); else done();
+            if (p && p.then) p.then(after, done); else after();
         } catch (e) { done(); }
         // the values on screen: the pulses table patches its own rows, the
         // grids and the inspector re-read through their existing refreshers
@@ -3631,12 +3902,27 @@ window.applyEditsToLive = function () {
     /* The poll's own decision, as a function a test can drive: the FIRST
        payload only records where the chip is (a window that just opened has
        nothing stale on screen); every later change is a foreign edit. */
-    function onEditSeq(d) {
+    /* QA liveedit-r2-09 (review): THIS window is mid-write (an apply, a row
+       commit, a Ctrl+Z, a tray button's request), or its tray was re-rendered
+       after the poll was sent. The poll's edit_seq may then be a step of this
+       window's own write that the tray will show once it lands -- judging it
+       now called the window's own apply "foreign" and re-GET the grid. Leave
+       the move unconsumed; the next poll judges it against the landed tray. */
+    function ownWritePending(trayAtIssue) {
+        if (window._applyInFlight || window._awaitingGridCommit
+                || (window._pendingGridCommits || []).length) return true;
+        if (window.UndoQueue && window.UndoQueue.busy && window.UndoQueue.busy()) return true;
+        if (document.querySelector("#pending-tray.htmx-request, #pending-tray .htmx-request,"
+                                   + " #undo-sync-src.htmx-request")) return true;
+        return !!(trayAtIssue && trayAtIssue !== document.getElementById("pending-tray"));
+    }
+    function onEditSeq(d, trayAtIssue) {
         if (!d || !d.edit_seq || d.edit_seq === window._editSeqSeen) return false;
+        if (ownWritePending(trayAtIssue)) return false;
         var first = window._editSeqSeen === undefined;
         window._editSeqSeen = d.edit_seq;
         if (first) return false;
-        refreshAfterForeignEdit();
+        refreshAfterForeignEdit(d);
         return true;
     }
     window._onDriftEditSeq = onEditSeq;
@@ -3674,6 +3960,7 @@ window.applyEditsToLive = function () {
         // request, and don't poll while the window is hidden/backgrounded.
         if (_driftPolling || document.hidden) return;
         _driftPolling = true;
+        var _trayAtIssue = document.getElementById("pending-tray");
         fetch("/state/drift", { cache: "no-store" })
             .then(function (r) { return r.ok ? r.json() : null; })
             .then(function (d) {
@@ -3689,7 +3976,7 @@ window.applyEditsToLive = function () {
                 // moved (another window edited, applied, undid, pulled), refresh
                 // THIS window's tray and the values on screen -- in place, never
                 // swapping what the reader is looking at (docs/87/144).
-                onEditSeq(d);
+                onEditSeq(d, _trayAtIssue);
                 onLiveDiverged(d);
                 if (d && d.hist_seq && d.hist_seq !== window._histSeqSeen) {
                     var first = window._histSeqSeen === undefined;
@@ -4066,7 +4353,7 @@ window.LiveSurfacePatch = (function () {
     function apply(changes) {
         var res = { patched: 0, tree: 0, inputs: 0 };
         if (!changes || !changes.length) return res;
-        var grids = [window.BulkEdit, window.BulkPairEdit];
+        var grids = _liveEditGrids();   // QA liveedit-r2-08: + the entity/wiring grids
         grids.forEach(function (g) {
             if (g && typeof g.revertPaths === "function") {
                 try { var r = g.revertPaths(changes); res.patched += (r && r.patched) || 0; } catch (err) { console.error("grid patch failed", err); }
@@ -4237,7 +4524,20 @@ window.StateHistory = (function () {
 
 document.addEventListener("cellDiscarded", function(evt) {
     var d = evt.detail || {};
-    _revertCell(d.dot_path, d.old_value_str != null ? d.old_value_str : "");
+    // QA F3: the tray ✕ reverts the store, and the grids render their own
+    // cells -- _revertCell never reaches them, so the discarded value stayed on
+    // screen (and, once the tray emptied, looked clean). Same value choice and
+    // the same grid repaint as cellsReverted below; one entry, never a
+    // synthetic cellsReverted (its other listeners record undo steps + toast).
+    var v = d.old_kind === 'list' && d.old_value_json != null ? d.old_value_json
+          : d.old_value_disp != null ? d.old_value_disp
+          : (d.old_value_str != null ? d.old_value_str : "");
+    _revertCell(d.dot_path, String(v));
+    if (d.dot_path) _repaintGridsForReverted([d], !!(d.created || d.deleted));
+    // ...and the red box: the ✕ took the path's LAST log entry out, so the
+    // cell is no longer pending (a second entry for the same path keeps it).
+    if (d.still_pending === false && d.dot_path && window.PendingMarkers
+        && window.PendingMarkers.clearPaths) window.PendingMarkers.clearPaths([d.dot_path]);
 });
 
 // Ctrl+Z undo: the server reverts one user action (a batch/rename undoes as a
@@ -4266,6 +4566,44 @@ function _scheduleGridResync(ms) {
     }, ms == null ? 900 : ms);
 }
 window._scheduleGridResync = _scheduleGridResync;
+
+/* QA liveedit-r2-08: every Live-Edit grid ON SCREEN -- the qubit + pair grids
+   AND the discovered-collection grids (window.EntityGrids: TWPAs on the state
+   doc, every w_* grid on ?doc=wiring). The repaint lists used to name only
+   the first two, so a Ctrl+Z / pull on a wiring cell left the undone value
+   standing. The table-presence filter matters: an EntityGrids instance
+   outlives the htmx swap that removed its table. */
+function _liveEditGrids() {
+    var a = [window.BulkEdit, window.BulkPairEdit];
+    var E = window.EntityGrids || {};
+    Object.keys(E).forEach(function (k) {
+        if (E[k] && document.getElementById("bulk-" + k + "-table")) a.push(E[k]);
+    });
+    return a;
+}
+window._liveEditGrids = _liveEditGrids;
+
+/* Repaint the grids for a list of reverted entries, then decide whether the
+   debounced whole-grid rebuild still has to follow (see cellsReverted). */
+function _repaintGridsForReverted(entries, structural, stopped) {
+    var gridOnScreen = !!(document.getElementById('bulk-table')
+                          || document.getElementById('bulk-pair-table'));
+    var uncovered = 0;
+    try {
+        // Night session 2026-08-28: only a cell a grid FOUND but could not
+        // repaint honestly (kind/decoration mismatch) needs the whole-grid
+        // re-GET. A path with no cell on either grid is not stale here -- it is
+        // simply not a column (a pulse leaf undone from the inspector, a tree
+        // edit) -- and it used to count as uncovered, i.e. the 2.4 s rebuild on
+        // exactly the Ctrl+Z presses that touched nothing on the grid.
+        _liveEditGrids().forEach(function (api) {
+            if (!api || !api.revertPaths) return;
+            var res = api.revertPaths(entries) || {};
+            uncovered += (res.uncovered || []).length;
+        });
+    } catch (err) { uncovered = entries.length; }   // never trust a half repaint
+    if (gridOnScreen && (structural || uncovered > 0 || stopped === "error")) _scheduleGridResync();
+}
 
 document.addEventListener("cellsReverted", function(evt) {
     var d = evt.detail || {};
@@ -4301,23 +4639,9 @@ document.addEventListener("cellsReverted", function(evt) {
     if (d.structural && !entries.length) {
         try { document.dispatchEvent(new CustomEvent("stateRestored", { detail: { structural: true, changes: [] } })); } catch (e2) {}
     }
-    var gridOnScreen = !!(document.getElementById('bulk-table')
-                          || document.getElementById('bulk-pair-table'));
-    var uncovered = 0;
-    try {
-        // Night session 2026-08-28: only a cell a grid FOUND but could not
-        // repaint honestly (kind/decoration mismatch) needs the whole-grid
-        // re-GET. A path with no cell on either grid is not stale here -- it is
-        // simply not a column (a pulse leaf undone from the inspector, a tree
-        // edit) -- and it used to count as uncovered, i.e. the 2.4 s rebuild on
-        // exactly the Ctrl+Z presses that touched nothing on the grid.
-        [window.BulkEdit, window.BulkPairEdit].forEach(function (api) {
-            if (!api || !api.revertPaths) return;
-            var res = api.revertPaths(entries) || {};
-            uncovered += (res.uncovered || []).length;
-        });
-    } catch (err) { uncovered = entries.length; }   // never trust a half repaint
-    if (gridOnScreen && (structural || uncovered > 0 || d.stopped === "error")) _scheduleGridResync();
+    _repaintGridsForReverted(entries, structural, d.stopped);
+    // QA F8: ...and the red box follows the server's per-path pending truth
+    if (window.PendingMarkers && window.PendingMarkers.followPending) window.PendingMarkers.followPending(entries);
     // docs/160: a refused / rolled-back walk step ("Not undone — …", a too-large
     // skip) arrives as level "warning" -- it must not read as a green success
     if (d.message && window.showToast) window.showToast(d.message,
@@ -5633,7 +5957,9 @@ window.smOpenStateFolder = function () {
    are parsed from their shortest round-tripping decimal spelling, so the
    answer reads 0.1 — the number a physicist would have written down. */
 window.ValueDelta = (function () {
-    var GROUPED = /^[+-]?\d[\d,]*(\.\d+)?$/;
+    // well-formed thousands groups only -- "0,1" is a coordinate, not 1 (QA F15;
+    // mirrors value_delta._GROUPED character for character)
+    var GROUPED = /^[+-]?[1-9]\d{0,2}(,\d{3})+(\.\d+)?$/;
     var DECIMAL = /^([+-]?)(\d+)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/;
     var SCI_HIGH_EXP = 16;    // |v| >= 1e15  (mirrors _SCI_HIGH)
     var SCI_LOW_EXP = -6;     // |v| <  1e-6  (mirrors _SCI_LOW)
@@ -13257,9 +13583,23 @@ window._openFspPopup = (function () {
         table.appendChild(tbody);
         wrap.appendChild(table);
         card.appendChild(wrap);
-        if ((plan.skipped || []).length) {
+        // QA F18: a pointer amplitude whose target is in the table above is
+        // not "not compensated" -- it follows that row (the server marks it
+        // `follows`). Said neutrally: an overridden target row moves it too.
+        var _skFollow = (plan.skipped || []).filter(function (s) { return s.follows; });
+        var _skRest = (plan.skipped || []).filter(function (s) { return !s.follows; });
+        if (_skFollow.length) {
+            var _AMP = /^(.*)\.operations\.([^.]+)\.amplitude$/;
+            card.appendChild(_el("p", "fsp-skipped",
+                "Follow their target (pointers, no separate write): " + _skFollow.map(function (s) {
+                    var m = _AMP.exec(s.path), t = _AMP.exec(s.follows);
+                    return (m && t && m[1] === t[1]) ? (m[2] + " \u2192 " + t[2])
+                                                    : (s.path + " \u2192 " + s.follows);
+                }).join("; ")));
+        }
+        if (_skRest.length) {
             var sk = _el("p", "fsp-skipped",
-                "Not compensated: " + plan.skipped.map(function (s) {
+                "Not compensated: " + _skRest.map(function (s) {
                     return s.path + " (" + s.reason + ")";
                 }).join("; "));
             card.appendChild(sk);
@@ -16289,6 +16629,47 @@ window.PendingMarkers = (function () {
             r.classList.remove('av-row-dirty');
         });
     }
+    // QA F3: one path's marker, when the server says its LAST log entry went
+    // (the tray ✕). Same per-cell body as clearAll; both grid axes.
+    function clearPaths(paths) {
+        var esc = function (p) { return (window.CSS && CSS.escape) ? CSS.escape(p) : p; };
+        (paths || []).forEach(function (p) {
+            if (!p) return;
+            document.querySelectorAll('.bulk-cell-modified[data-dot-path="' + esc(p) + '"], '
+                    + '.bulk-cell-modified[data-resolved="' + esc(p) + '"]').forEach(function (c) {
+                c.classList.remove('bulk-cell-modified');
+                c.removeAttribute('data-baseline');
+                var td = c.closest('.bulk-td');
+                var old = td && td.querySelector('.bulk-ba-old');
+                if (old) old.textContent = '';
+            });
+        });
+    }
+    // QA F8: after a Ctrl+Z / Ctrl+Shift+Z the server says, per reverted path,
+    // whether it is STILL pending (`pending`, computed after the operation).
+    // false -> the box goes (a partial undo left it on a path the log no
+    // longer names); true -> the box comes back with the fresh render's
+    // baseline (a redo re-staged a value and left it unmarked). No flag ->
+    // untouched, exactly as before (sync/pull patches send none).
+    function followPending(entries) {
+        var esc = function (p) { return (window.CSS && CSS.escape) ? CSS.escape(p) : p; };
+        var off = [];
+        (entries || []).forEach(function (e) {
+            if (!e || !e.dot_path || typeof e.pending !== 'boolean') return;
+            if (!e.pending) { off.push(e.dot_path); return; }
+            var q = esc(e.dot_path);
+            document.querySelectorAll('.bulk-cell[data-dot-path="' + q + '"], .bulk-cell[data-resolved="' + q + '"], '
+                    + '.bulk-cell-list[data-path="' + q + '"], .bulk-cell-list[data-resolved="' + q + '"]').forEach(function (c) {
+                c.classList.add('bulk-cell-modified');
+                if (c.tagName !== 'INPUT' || e.pending_old_disp == null) return;
+                c.setAttribute('data-baseline', String(e.pending_old_disp));
+                var td = c.closest('.bulk-td');
+                var old = td && td.querySelector('.bulk-ba-old');
+                if (old) old.textContent = String(e.pending_old_disp);
+            });
+        });
+        clearPaths(off);
+    }
     function clearIfTrayClean() {
         var t = document.getElementById('pending-tray');
         if (!t) return false;
@@ -16311,7 +16692,8 @@ window.PendingMarkers = (function () {
         var el = evt.detail && evt.detail.target;
         if (el && el.id === 'pending-tray') clearIfTrayClean();
     });
-    return { clearAll: clearAll, clearIfTrayClean: clearIfTrayClean };
+    return { clearAll: clearAll, clearPaths: clearPaths, followPending: followPending,
+             clearIfTrayClean: clearIfTrayClean };
 })();
 
 (function setupSlowRouteLoader() {

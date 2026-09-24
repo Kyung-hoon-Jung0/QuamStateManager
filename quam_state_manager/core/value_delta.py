@@ -31,10 +31,14 @@ import re
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 
-# Mirrors type_policy._PLAIN_GROUPED_NUMBER: a display-form number may carry
-# thousands commas (that is how group_digits renders it, and what an editable
-# field hands back), and stripping them must round-trip exactly.
-_GROUPED = re.compile(r"^[+-]?\d[\d,]*(\.\d+)?$")
+# A display-form number may carry thousands commas (that is how group_digits
+# renders it, and what an editable field hands back), and stripping them must
+# round-trip exactly. Only the shape group_digits EMITS -- well-formed 3-digit
+# groups -- counts as grouping here: a text coordinate like "0,1" is not the
+# number 1 (QA F15), so it gets no delta, as docs/76 requires of plain strings.
+# type_policy's loose INPUT gate (typed "7,662,072100") is deliberately not
+# mirrored: that one parses what a user types, this one reads stored values.
+_GROUPED = re.compile(r"^[+-]?[1-9]\d{0,2}(,\d{3})+(\.\d+)?$")
 
 # Fixed-point is readable up to a point; past these the digits stop being
 # informative and exponential is the honest form. Mirrored in JS.

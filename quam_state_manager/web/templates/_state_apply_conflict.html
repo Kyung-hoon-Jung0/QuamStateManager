@@ -17,6 +17,7 @@
      data-change-count="{{ change_count }}"
      data-change-sig="{{ change_sig | default('') }}"
      data-working-dirty="{{ '1' if working_dirty else '0' }}"
+     data-edit-seq="{{ edit_seq | default('') }}"
      data-seq="{{ mutation_seq | default('') }}">
   <div class="tray-bar">
     <span class="tray-indicator tray-indicator-warn">

@@ -519,7 +519,11 @@
             var onToolbar = (state.toolbarPressTs && (Date.now() - state.toolbarPressTs) < 1000)
                 || (to && to.closest && to.closest('#av-apply, #av-apply-sync, #av-reset'));
             var path = e.target.getAttribute('data-dot-path');
-            if (!onToolbar && path && state.dirty.has(path)) applyOne(path, e.target);
+            // QA liveedit-r2-06: an Apply press elsewhere (the tray) waits for it
+            if (!onToolbar && path && state.dirty.has(path)) {
+                var _p = applyOne(path, e.target);
+                if (window._trackGridCommit) window._trackGridCommit(_p);
+            }
             scheduleRender();                 // catch up the window deferred during the edit
         }
     }
@@ -659,9 +663,12 @@
         state.dirty.forEach(function (d, path) { updates.push({ dot_path: path, value: d.value }); });
         // Always confirm the ⚡ live-push (matches the qubit/pair grids, which always
         // confirm); for the plain working-state apply, only confirm past the big-batch gate.
+        // QA F14: the ⚡ push carries the whole tray -- name what else rides along
+        var ex = (syncAfter && typeof window.livePushExtrasLine === 'function')
+            ? window.livePushExtrasLine(updates.map(function (u) { return u.dot_path; })) : '';
         if ((syncAfter || updates.length > CONFIRM_OVER)
             && !window.confirm('Apply ' + updates.length +
-                (syncAfter ? ' edits and push to the live chip?' : ' edits to the working state?'))) return;
+                (syncAfter ? ' edits and push to the live chip?' : ' edits to the working state?') + ex)) return;
         state._syncAfter = !!syncAfter;
         setApplying(true);
         applyChunks(updates, 0);
@@ -778,7 +785,7 @@
                         expect_chip: window.__chipToken || '' };
         if (fspAck) payload.fsp_ack = fspAck;
         if (typeFix) payload.type_fix = typeFix;
-        fetch('/field/edit-batch', {
+        return fetch('/field/edit-batch', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         }).then(function (r) { return r.json(); }).then(function (jb) {
@@ -802,7 +809,7 @@
                          conv ? 'convert' : 'keep');
                 return;
             }
-            if (!jb.ok) { applyError(jb); return; }
+            if (!jb.ok) { applyError(jb); return { ok: false }; }
             reconcile(jb.results);
             if (jb.tray_html && window._swapPendingTray) {
                 window._bulkSelfEdit = true; try { window._swapPendingTray(jb.tray_html); } finally { window._bulkSelfEdit = false; }
@@ -813,7 +820,7 @@
             var row = inputEl && inputEl.closest ? inputEl.closest('tr') : null;
             if (row) row.classList.remove('av-row-dirty');   // applied → no longer pending in-session
             toast('Applied to the working state — review in the tray, then apply to live.');
-        }).catch(function (err) { toast('Apply failed: ' + err); })
+        }).catch(function (err) { toast('Apply failed: ' + err); return { ok: false }; })
           .finally(function () { state.applying = false; });
     }
     function onTbodyKeydown(e) {

@@ -99,7 +99,15 @@
     function _isDirty(c) { return c.value !== c.getAttribute('data-orig'); }
     function _rowOf(c) { return c.closest('tr'); }
     function _grp(v) { return (window._groupDigits ? window._groupDigits(v) : String(v)); }
-    function _num(s) { var n = parseFloat(String(s).replace(/,/g, '')); return isFinite(n) ? n : null; }
+    // well-formed thousands groups only: a text coordinate "4,0" is not 40 (QA F15)
+    function _num(s) {
+        s = String(s).trim();
+        if (s.indexOf(',') >= 0) {
+            if (!/^[+-]?[1-9]\d{0,2}(,\d{3})+(\.\d+)?$/.test(s)) return null;
+            s = s.replace(/,/g, '');
+        }
+        var n = parseFloat(s); return isFinite(n) ? n : null;
+    }
     function _esc(s) {
         return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
             .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -870,7 +878,11 @@
                 if (BulkPairEdit._toolbarPressTs && (Date.now() - BulkPairEdit._toolbarPressTs) < 1000) return;
                 if (to && to.closest && to.closest('#' + P + '-apply-all, #' + P + '-apply-sync, #' + P + '-reset')) return;
                 var b = row && row.querySelector('.bulk-row-apply');
-                if (b && !b.disabled) BulkPairEdit.applyRow(b);
+                // QA liveedit-r2-06: an Apply press elsewhere (the tray) waits for it
+                if (b && !b.disabled) {
+                    var _rp = BulkPairEdit.applyRow(b);
+                    if (window._trackGridCommit) window._trackGridCommit(_rp);
+                }
             });
             t.addEventListener('mouseover', function (e) { _hoverBA(e, true); });
             t.addEventListener('mouseout', function (e) { _hoverBA(e, false); });
@@ -938,10 +950,12 @@
             var bw = _bandWarnLine(dirty);
             if (bw && !window.confirm('Apply this edit?' + bw)) return;
             btn.disabled = true; btn.textContent = '…';
-            _applyCells(dirty, tr, false).then(function (res) {
+            // returned (QA liveedit-r2-06) so a click-away commit can be awaited
+            return _applyCells(dirty, tr, false).then(function (res) {
                 btn.textContent = res.ok ? '✓' : 'Apply';
                 if (res.ok) setTimeout(function () { btn.textContent = 'Apply'; }, 900);
                 _refreshRow(tr); _refreshGlobal(); _recomputeStats();
+                return res;
             });
         },
 
@@ -952,10 +966,20 @@
             var rows = _rows().filter(function (tr) { return _cells(tr).some(_isDirty); });
             if (!rows.length) return;
             var n = _dirtyCount(t);
+            // QA F14: the ⚡ push carries the whole tray -- name what else rides along
+            var ex = '';
+            if (syncAfter && typeof window.livePushExtrasLine === 'function') {
+                var typed = [];
+                _cells(t).filter(_isDirty).forEach(function (c) {
+                    typed.push(c.getAttribute('data-dot-path'));
+                    if (c.getAttribute('data-resolved')) typed.push(c.getAttribute('data-resolved'));
+                });
+                ex = window.livePushExtrasLine(typed);
+            }
             if (!window.confirm('Apply ' + n + ' ' + cfg.noun + ' edit' + (n === 1 ? '' : 's')
                 + ' across ' + rows.length + ' ' + cfg.noun + (rows.length === 1 ? '' : 's') +
                 (syncAfter ? ' and push to the live chip?' : ' to the working state?')
-                + _bandWarnLine(_cells(t).filter(_isDirty)))) return;
+                + _bandWarnLine(_cells(t).filter(_isDirty)) + ex)) return;
             var all = document.getElementById(P + '-apply-all');
             if (all) { all.disabled = true; all.textContent = 'Applying…'; }
             var apsBtn = document.getElementById(P + '-apply-sync'); if (apsBtn) apsBtn.disabled = true;
