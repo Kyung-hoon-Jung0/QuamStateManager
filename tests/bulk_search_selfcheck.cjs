@@ -73,6 +73,17 @@ const HTML = '<!doctype html><html><body><div id="bulk-panel">' +
 const dom = new JSDOM(HTML, { runScripts: 'outside-only', url: 'http://localhost/' });
 const w = dom.window;
 w.eval(fs.readFileSync(SRC, 'utf8'));
+// (review, QA liveedit-r2-26) ChipBar calls app.js's ONE window._patchProblem
+// (app.js loads first on every page). Bridge the REAL shipped function, cut
+// out of app.js by its brace-balanced body -- never a copy kept here.
+(function () {
+  const app = fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'static', 'app.js'), 'utf8');
+  const i = app.indexOf('function _patchProblem(t) {');
+  if (i < 0) throw new Error('app.js has no _patchProblem');
+  let d = 0, j = app.indexOf('{', i);
+  for (; j < app.length; j++) { if (app[j] === '{') d++; else if (app[j] === '}' && --d === 0) break; }
+  w.eval('window._patchProblem = ' + app.slice(i, j + 1) + ';');
+})();
 
 let failures = 0;
 function check(name, cond, detail) {
@@ -199,6 +210,37 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
         !w.document.querySelector('th[data-col-key="f_01"]').classList.contains('bulk-search-hidden'),
         'value=' + JSON.stringify(search.value)
         + ' style=' + JSON.stringify((w.document.getElementById('bulk-search-hide-style') || {}).textContent));
+
+  // F10-F14 (QA liveedit-r2-26): a word the patch rule refuses used to vanish
+  // with no word of why. It now says why, and Enter keeps the box to fix it.
+  const toasts = [];
+  w.showToast = function (m, lvl) { toasts.push({ m: String(m), lvl: lvl }); };
+  const storeBefore = w.localStorage.getItem('quam_bulk_custom_chips');
+  barEl.querySelector('.bulk-chip-add').dispatchEvent(new w.Event('click', { bubbles: true }));
+  let badInp = barEl.querySelector('.bulk-chip-add-input');
+  badInp.value = 'a b';
+  badInp.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  check('F10 "a b" + Enter says why (one word, no spaces)',
+        toasts.length === 1 && /no spaces/.test(toasts[0].m) && toasts[0].lvl === 'warning',
+        JSON.stringify(toasts));
+  check('F11 ...and keeps the box open with the text to fix',
+        barEl.querySelector('.bulk-chip-add-input') === badInp && badInp.value === 'a b');
+  badInp.value = 'x|y';
+  badInp.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  check("F12 \"x|y\" + Enter names the '|' rule",
+        toasts.length === 2 && /'\|'/.test(toasts[1].m), JSON.stringify(toasts));
+  badInp.dispatchEvent(new w.Event('blur'));
+  await sleep(200);
+  check('F13 leaving the box drops it without a second toast, nothing saved',
+        !barEl.querySelector('.bulk-chip-add-input') && toasts.length === 2
+        && w.localStorage.getItem('quam_bulk_custom_chips') === storeBefore,
+        'toasts=' + toasts.length + ' store=' + w.localStorage.getItem('quam_bulk_custom_chips'));
+  barEl.querySelector('.bulk-chip-add').dispatchEvent(new w.Event('click', { bubbles: true }));
+  badInp = barEl.querySelector('.bulk-chip-add-input');
+  badInp.dispatchEvent(new w.Event('blur'));
+  await sleep(200);
+  check('F14 an EMPTY box dismissed stays silent',
+        !barEl.querySelector('.bulk-chip-add-input') && toasts.length === 2, JSON.stringify(toasts));
 
   // Night session 2026-08-28: hidden columns are addressed by CLASS (`td.ck-N`,
   // stamped on th+td by the template) -- Chrome indexes rules by class name,

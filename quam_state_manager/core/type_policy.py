@@ -453,6 +453,9 @@ def parse_value(raw: str):
         return raw
     if not math.isfinite(f):
         raise ValueError(f"{raw!r} is not a finite number")
+    if _underflowed(candidate, f):     # QA liveedit-r2-25
+        raise ValueError(f"{raw!r} is too small to store as a number "
+                         f"(it would become 0) - type 0 if zero is meant")
     return f
 
 
@@ -501,6 +504,9 @@ def parse_with_expected(raw: str, expected: Expected | None) -> Any:
             raise ValueError(f"expected a number, got {raw!r}") from exc
         if not math.isfinite(f):
             raise ValueError(f"non-finite {raw!r} cannot be stored in state.json")
+        if _underflowed(cleaned, f):   # QA liveedit-r2-25
+            raise ValueError(f"{raw!r} is too small to store in state.json "
+                             f"(it would become 0) - type 0 if zero is meant")
         return f
     if base in ("list", "dict", "component", "union"):
         try:
@@ -515,6 +521,21 @@ def parse_with_expected(raw: str, expected: Expected | None) -> Any:
 
 def _GROUPED_NUMBER_OK(s: str) -> bool:
     return bool(re.fullmatch(r"[+-]?\d[\d,]*(\.\d+)?([eE][+-]?\d+)?", s))
+
+
+def _underflowed(text: str, f: float) -> bool:
+    """QA liveedit-r2-25: True when a literal with a NONZERO value parsed to
+    exactly 0.0 (IEEE-754 double underflow, |x| below ~2.47e-324). '1e400'
+    was refused as non-finite while '1e-400' was stored as 0.0 with no word --
+    the typed value silently replaced. Exact zeros ('0', '-0.0', '0e-400')
+    and subnormals ('5e-324') are unaffected: Decimal compares exactly."""
+    if f != 0.0:
+        return False
+    import decimal
+    try:
+        return decimal.Decimal(text) != 0
+    except (decimal.InvalidOperation, ValueError):
+        return False
 
 
 # ---------------------------------------------------------------------------

@@ -1531,6 +1531,42 @@ window._anchorPopover = function (pop, btn) {
     pop.style.top = Math.round(top) + "px";
 };
 
+/* QA liveedit-r2-30: a `.bulk-colvis` dropdown hangs left-aligned under its
+ * summary (style.css), so a picker the wrapping toolbar put near the right edge
+ * (Qubits at 800 px, Pairs at 911 px) ran past #table-pane's clip -- which can
+ * never scroll it into view, the toolbar being translateX-pinned. On open,
+ * nudge it left by exactly its overflow (never past the clip's left edge);
+ * a close drops the nudge so the next open measures afresh. Same rule as
+ * _anchorPopover above, for the in-flow menus. */
+window._clampColvisMenu = function (menu) {
+    if (!menu || !menu.getBoundingClientRect) return;
+    menu.style.left = "";
+    var r = menu.getBoundingClientRect();
+    var clipL = 0, clipR = document.documentElement.clientWidth || window.innerWidth;
+    for (var p = menu.parentElement; p && p !== document.body; p = p.parentElement) {
+        var cs = getComputedStyle(p);
+        if (cs.overflowX === "visible" && cs.overflowY === "visible") continue;
+        var pr = p.getBoundingClientRect();
+        clipL = Math.max(clipL, pr.left + p.clientLeft);
+        clipR = Math.min(clipR, pr.left + p.clientLeft + p.clientWidth);
+    }
+    var pad = 6;
+    var over = r.right - (clipR - pad);
+    if (over <= 0) return;
+    var shift = Math.min(over, Math.max(0, r.left - (clipL + pad)));
+    if (shift <= 0) return;
+    var base = parseFloat(getComputedStyle(menu).left) || 0;
+    menu.style.left = Math.round(base - shift) + "px";
+};
+document.addEventListener("toggle", function (e) {
+    var d = e.target;
+    if (!d || !d.classList || !d.classList.contains("bulk-colvis")) return;
+    var menu = d.querySelector(":scope > .bulk-colvis-menu");
+    if (!menu) return;
+    if (d.open) window._clampColvisMenu(menu);
+    else menu.style.left = "";
+}, true);
+
 /* The VISIBLE trigger for a tool: the sidebar row normally, the topbar
  * fallback while the sidebar is collapsed. Decided from the collapsed class
  * rather than from layout (`offsetParent`/rects) — that is the actual
@@ -5451,6 +5487,11 @@ window.PaneState = (function () {
     });
     document.addEventListener('htmx:beforeSwap', function (evt) {
         if (!evt.target || evt.target.id !== 'table-pane') return;
+        // A swap an upstream listener VETOED (the Live-Edit leave guard's
+        // Cancel calls preventDefault on body, first) never replaces the DOM:
+        // htmx aborts right after this event, afterSwap never runs, so a park
+        // here would strand the pane blank with the grid detached.
+        if (evt.defaultPrevented) return;
         if (evt.detail && evt.detail.shouldSwap === false) return;
         var inRoute = _routeOf(evt.detail);
         // park the OUTGOING route (htmx's history snapshot is already taken);
@@ -20378,6 +20419,18 @@ window.ExplorerChips = (function () {
     function _saveCustom(list) {
         try { localStorage.setItem(CUSTOM_KEY, JSON.stringify(list)); } catch (e) {}
     }
+    /* Why a typed patch cannot be saved, or '' when it can (or is empty). */
+    function _patchProblem(t) {
+        if (!t || /^[^\s|]{1,40}$/.test(t)) return '';
+        var why = t.indexOf('|') >= 0
+            ? "one word without '|' ('|' means OR in the search box)"
+            : (/\s/.test(t) ? 'one word, no spaces' : 'at most 40 characters');
+        return 'A patch is ' + why + ' — "' + (t.length > 40 ? t.slice(0, 40) + '…' : t)
+            + '" was not saved.';
+    }
+    // (review) ONE rule + wording: Live Edit's ChipBar (bulk-edit.js, loaded
+    // after this file) calls this same function
+    window._patchProblem = _patchProblem;
     function _input() { return document.getElementById('explorer-search'); }
     function _tokens() {
         var el = _input();
@@ -20468,8 +20521,16 @@ window.ExplorerChips = (function () {
                     inp.setAttribute('aria-label', 'New filter patch');
                     bar.insertBefore(inp, t);
                     inp.focus();
-                    var commit = function () {
+                    var commit = function (keepOnBad) {
                         var v = inp.value.trim().toLowerCase();
+                        // QA liveedit-r2-26: a rejected word says why (same
+                        // rule and wording as the Live Edit chip bar).
+                        var why = _patchProblem(v);
+                        if (why) {
+                            if ((keepOnBad || inp._warned !== v) && window.showToast) window.showToast(why, 'warning');
+                            inp._warned = v;
+                            if (keepOnBad && inp.parentNode) { inp.select(); return; }
+                        }
                         if (inp.parentNode) inp.parentNode.removeChild(inp);
                         if (!/^[^\s|]{1,40}$/.test(v)) return;
                         var cur = _custom();
@@ -20481,7 +20542,7 @@ window.ExplorerChips = (function () {
                         _paint(bar);
                     };
                     inp.addEventListener('keydown', function (ke) {
-                        if (ke.key === 'Enter') { ke.preventDefault(); commit(); }
+                        if (ke.key === 'Enter') { ke.preventDefault(); commit(true); }
                         else if (ke.key === 'Escape') {
                             if (inp.parentNode) inp.parentNode.removeChild(inp);
                         }

@@ -389,6 +389,18 @@ class TestParse:
         with pytest.raises(ValueError):
             tp.parse_with_expected("1e999", self._exp("number"))
 
+    def test_underflow_is_refused_not_stored_as_zero(self):
+        """QA liveedit-r2-25: '1e400' was refused as non-finite while
+        '1e-400' underflowed to 0.0 and was committed with no word."""
+        for bad in ("1e-400", "-1e-400", "2.5e-330"):
+            with pytest.raises(ValueError, match="too small"):
+                tp.parse_with_expected(bad, self._exp("number"))
+        for zero in ("0", "0.0", "-0.0", "0e-400", "0.000e-500"):
+            assert tp.parse_with_expected(zero, self._exp("number")) == 0
+        # a subnormal is representable: it is kept, never refused
+        assert tp.parse_with_expected("5e-324", self._exp("number")) == 5e-324
+        assert tp.parse_with_expected("1e-320", self._exp("number")) == 1e-320
+
     def test_bool_whitelist(self):
         assert tp.parse_with_expected("on", self._exp("bool")) is True
         with pytest.raises(ValueError):
@@ -510,6 +522,18 @@ class TestRoutes:
         r = client.post("/field/type-unassign", data={"dot_path": "qubits.qA1.f_01"})
         j = r.get_json()
         assert j["removed"] is True and j["expected"]["source"] == "env"
+
+    def test_edit_batch_refuses_an_underflow_like_an_overflow(self, client):
+        """QA liveedit-r2-25, at the door the grid's Enter uses: '1e-400'
+        is a per-row error naming the value, and nothing is written."""
+        before = client.get("/field/peek?dot_path=qubits.qA1.f_01").get_json()["values"]
+        j = client.post("/field/edit-batch", json={"updates": [
+            {"dot_path": "qubits.qA1.f_01", "value": "1e-400"}]}).get_json()
+        assert j["ok"] is False
+        row = j["results"][0]
+        assert row["applied"] is False and "too small" in row["error"], row
+        after = client.get("/field/peek?dot_path=qubits.qA1.f_01").get_json()["values"]
+        assert after == before and after["qubits.qA1.f_01"] != 0.0
 
     def test_edit_batch_per_row_type_error(self, client):
         j = client.post("/field/edit-batch", json={"updates": [

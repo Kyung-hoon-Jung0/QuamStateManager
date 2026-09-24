@@ -400,8 +400,98 @@ async function checkPairGridHook() {
   ok(hint.hidden, 'no pair module → no hint, no crash');
 }
 
+// QA liveedit-r2-15: a FULL page load of /bulk carries no ?dynhide (only htmx
+// GETs pass configRequest), so a derived column the user hid was rendered
+// anyway -- and its cold-column fetch then named the CURRENT hidden set, a
+// different grid that does not have it: 400, "1 column could not be loaded".
+async function checkFullLoadLeak() {
+  const HID = 'dyn__resonator_confusion_matrix';        // rendered in COLS
+  const win = makeWorld();
+  const doc = win.document;
+  const created = [];
+  const realCreate = win.GridVirt.create;
+  win.GridVirt.create = function (o) { created.push(o); return realCreate.call(win.GridVirt, o); };
+  win.localStorage.setItem('quam_bulk_dynhidden', JSON.stringify([HID]));
+  // the full-page render: rendered with NO dynhide, so the hidden column is in COLS
+  win.BulkEdit.mount(COLS, { bands: {} }, DYN, { chip: 'c', chipKey: 'k', qubits: [], dynhide: [] });
+  ok(win._log.ajax.length === 1 && win._log.ajax[0][0] === 'GET' && win._log.ajax[0][1] === '/bulk'
+     && win._log.ajax[0][2].target === '#table-pane',
+     'r2-15: a render that shows a HIDDEN derived column re-GETs the pane once (got '
+     + JSON.stringify(win._log.ajax.map(function (a) { return a[1]; })) + ')');
+  ok(created.length === 0, 'r2-15: and makes no cold-column fetch against the grid being replaced');
+  // loop guard: the same leak again (a server that ignored dynhide) must not reload forever
+  win.BulkEdit.mount(COLS, { bands: {} }, DYN, { chip: 'c', chipKey: 'k', qubits: [], dynhide: [] });
+  ok(win._log.ajax.length === 1, 'r2-15: a second leaked mount does not reload again (loop guard)');
+  ok(doc.getElementById('bulk-colvis-menu').querySelectorAll('[data-dyn-toggle]').length === 3,
+     'r2-15: and that mount completes normally');
+  // Part 2: the cold fetch names the set the page was RENDERED with, never
+  // what localStorage holds now.
+  ok(created.length === 1, 'r2-15: the completed mount built the virtualizer');
+  const q = created.length ? created[0].urlParams() : '';
+  ok(q.indexOf('dynhide') < 0,
+     'r2-15: a page rendered with no hidden set asks /bulk/cells for that same grid (got ' + q + ')');
+  // a clean render resets the guard, so the next leak is reconciled again
+  const COLS_CLEAN = COLS.filter(function (c) { return c.key !== HID; });
+  win.BulkEdit.mount(COLS_CLEAN, { bands: {} }, DYN, { chip: 'c', chipKey: 'k', qubits: [], dynhide: [HID] });
+  ok(win._log.ajax.length === 1, 'r2-15: a render that honoured the hidden set never reloads');
+  const q2 = created[0].urlParams();
+  ok(q2.indexOf('&dynhide=' + encodeURIComponent(HID)) >= 0,
+     'r2-15: and its cold fetch names the set it was rendered with (got ' + q2 + ')');
+  win.localStorage.setItem('quam_bulk_dynhidden', JSON.stringify([HID, 'dyn__other_window']));
+  ok(created[0].urlParams() === q2,
+     'r2-15: a hidden set changed later (another window) does not change the cold fetch');
+  win.localStorage.setItem('quam_bulk_dynhidden', JSON.stringify([HID]));
+  win.BulkEdit.mount(COLS, { bands: {} }, DYN, { chip: 'c', chipKey: 'k', qubits: [], dynhide: [] });
+  ok(win._log.ajax.length === 2, 'r2-15: after a clean render the guard is re-armed');
+  // an older page (no dynhide in its meta) keeps the old behaviour
+  win.BulkEdit.mount(COLS_CLEAN, { bands: {} }, DYN, { chip: 'c', chipKey: 'k', qubits: [] });
+  ok(created[0].urlParams().indexOf('&dynhide=' + encodeURIComponent(HID)) >= 0,
+     'r2-15: an older page without the rendered set still falls back to localStorage');
+}
+
+// (review) the reconcile re-GET must never leave the grid it returned early
+// on UNBOUND: when the reload does not land (a network error, a 4xx/5xx htmx
+// does not swap, an abort) the table that is still on the page finishes its
+// mount; when it does land, the replaced table is never mounted.
+async function checkFullLoadLeakReloadFails() {
+  const HID = 'dyn__resonator_confusion_matrix';
+  const cases = [
+    ['a network error (the promise rejects)', function () { return Promise.reject(new Error('net')); }, true],
+    ['a 5xx htmx does not swap (resolves, table still there)', function () { return Promise.resolve(); }, true],
+    ['a reload that lands (the table is swapped out)', function (win) {
+      // a real swap: NEW nodes under the same ids -- its own inline mount
+      // owns them; the early-returned call must not mount them again with
+      // the stale (leaked) column model
+      const tp = win.document.getElementById('table-pane');
+      tp.innerHTML = tp.innerHTML;
+      return Promise.resolve();
+    }, false],
+  ];
+  for (const [label, outcome, expectMount] of cases) {
+    const win = makeWorld();
+    const created = [];
+    const realCreate = win.GridVirt.create;
+    win.GridVirt.create = function (o) { created.push(o); return realCreate.call(win.GridVirt, o); };
+    win.localStorage.setItem('quam_bulk_dynhidden', JSON.stringify([HID]));
+    win.htmx = { ajax: function (verb, url, opts) { win._log.ajax.push([verb, url, opts]); return outcome(win); } };
+    win.BulkEdit.mount(COLS, { bands: {} }, DYN, { chip: 'c', chipKey: 'k', qubits: [], dynhide: [] });
+    ok(win._log.ajax.length === 1 && created.length === 0, 'r2-15 review: ' + label + ' -- the reload was asked, nothing mounted yet');
+    await tick(10);
+    ok((created.length === 1) === expectMount,
+       'r2-15 review: ' + label + ' -- ' + (expectMount ? 'the grid on the page finishes its mount'
+         : 'the replaced grid is NOT mounted') + ' (virtualizer built ' + created.length + 'x)');
+    if (expectMount) {
+      ok(win.document.getElementById('bulk-colvis-menu').querySelectorAll('[data-dyn-toggle]').length === 3,
+         'r2-15 review: ' + label + ' -- the column menu is built (the mount really completed)');
+      ok(win._log.ajax.length === 1, 'r2-15 review: ' + label + ' -- and it does not reload again');
+    }
+  }
+}
+
 (async function () {
   await checkJsonModal();
+  await checkFullLoadLeak();
+  await checkFullLoadLeakReloadFails();
   await checkSearchHint();
   await checkCuratedHiddenSearch();
   await checkPairGridHook();

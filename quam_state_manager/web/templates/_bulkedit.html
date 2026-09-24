@@ -388,7 +388,7 @@
 {%- endif %}
 <script>
     window.__bulkChipKey = {{ ((active_chip_key if active_chip_key is defined else '') or '') | tojson }};
-    if (window.BulkEdit && BulkEdit.mount) BulkEdit.mount({{ columns | script_json }}, {{ band_meta | script_json }}, {{ (dyn_cols or []) | script_json }}, {{ {'chip': active_name or '', 'chipKey': (active_chip_key if active_chip_key is defined else '') or '', 'qubits': qubit_meta or []} | script_json }});
+    if (window.BulkEdit && BulkEdit.mount) BulkEdit.mount({{ columns | script_json }}, {{ band_meta | script_json }}, {{ (dyn_cols or []) | script_json }}, {{ {'chip': active_name or '', 'chipKey': (active_chip_key if active_chip_key is defined else '') or '', 'qubits': qubit_meta or [], 'dynhide': (bulk_dynhide if bulk_dynhide is defined else [])} | script_json }});
     {% for eg in (extra_grids or []) %}
     if (window.makeEntityGrid) {
         var _g{{ loop.index0 }} = window.makeEntityGrid({{ eg.key | tojson }}, {{ eg.label | tojson }});

@@ -48,6 +48,24 @@ def test_cellbtn_docking_selfcheck():
 
 
 @pytest.mark.skipif(_node() is None, reason="node not available")
+def test_cellbtn_follows_a_commit_echo_selfcheck():
+    """QA liveedit-r2-22: an Enter commit's server echo ('1700' -> '1,700')
+    rewrites the focused cell with no `input` event, so the 🕘 stayed at the
+    typed text's tail -- on top of the last digit. Both grids now re-dock it
+    when (and only when) the echo changed the focused cell's text."""
+    try:
+        subprocess.run([_node(), "-e", "require('jsdom')"],
+                       check=True, capture_output=True, timeout=30)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        pytest.skip("jsdom not installed for node")
+    res = subprocess.run(
+        [_node(), str(_ROOT / "tests" / "cellbtn_commit_selfcheck.cjs")],
+        capture_output=True, text=True, encoding="utf-8", timeout=120)
+    assert res.returncode == 0, f"cellbtn commit selfcheck failed:\n{res.stdout}\n{res.stderr}"
+    assert "all checks passed (15 assertions)" in res.stdout, res.stdout
+
+
+@pytest.mark.skipif(_node() is None, reason="node not available")
 def test_tab_focus_selfcheck():
     try:
         subprocess.run([_node(), "-e", "require('jsdom')"],

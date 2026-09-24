@@ -132,6 +132,25 @@ Object.defineProperty(window.navigator, 'clipboard',
      && input.value.indexOf('joint') === -1,
      '× removes the patch from store, bar and search');
 
+  // QA liveedit-r2-26: a word the patch rule refuses says why (was silent)
+  const toasts = [];
+  window.showToast = function (m, lvl) { toasts.push({ m: String(m), lvl: lvl }); };
+  const storeBefore = MEM['quam_bulk_custom_chips'];
+  bar.querySelector('.bulk-chip-add').dispatchEvent(new window.Event('click', { bubbles: true }));
+  const badInp = bar.querySelector('.bulk-chip-add-input');
+  badInp.value = 'a b';
+  badInp.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  ok(toasts.length === 1 && /no spaces/.test(toasts[0].m) && toasts[0].lvl === 'warning'
+     && bar.querySelector('.bulk-chip-add-input') === badInp,
+     'an invalid patch ("a b") + Enter says why and keeps the box (' + JSON.stringify(toasts) + ')');
+  badInp.value = 'x|y';
+  badInp.dispatchEvent(new window.Event('blur'));
+  await settle(200);
+  ok(toasts.length === 2 && /'\|'/.test(toasts[1].m)
+     && !bar.querySelector('.bulk-chip-add-input')
+     && MEM['quam_bulk_custom_chips'] === storeBefore,
+     'blurring away "x|y" names the | rule, drops the box, saves nothing');
+
   // ── 4: port owner chip ─────────────────────────────────────────────────
   window._treePortOwners = { 'ports.analog_outputs.con1.4.1': 'q2 · z' };
   window.renderJsonTree('tree', {

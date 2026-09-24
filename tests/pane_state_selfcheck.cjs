@@ -116,6 +116,34 @@ ok(window.PaneState._cur() === '/explorer', 'the current route tracks the swap')
        'shouldSwap=false (error path) never parks — the pane stays intact');
 }
 
+// ── 2b. a swap VETOED upstream never parks (QA F1) ─────────────────────────
+// The Live-Edit leave guard listens on document.body and, on Cancel, calls
+// ONLY preventDefault. htmx then aborts the swap (no afterSwap ever comes), so
+// parking here detached the grid and left the pane blank under /bulk. The
+// event must be dispatched ON the pane so body-before-document order is real
+// (swapTo() dispatches on document and would skip the body listener).
+{
+    const kidsBefore = pane().children.length;
+    const stashBefore = Object.keys(window.PaneState._stash()).sort().join(',');
+    const veto = (ev) => {
+        if (ev.detail && ev.detail.target && ev.detail.target.id === 'table-pane') ev.preventDefault();
+    };
+    doc.body.addEventListener('htmx:beforeSwap', veto);
+    const before = new window.CustomEvent('htmx:beforeSwap', {
+        bubbles: true, cancelable: true,
+        detail: { shouldSwap: true, target: pane(), pathInfo: { finalRequestPath: '/help' } },
+    });
+    const proceed = pane().dispatchEvent(before);
+    doc.body.removeEventListener('htmx:beforeSwap', veto);
+    ok(proceed === false, 'fixture: the body guard really vetoed the swap');
+    ok(pane().children.length === kidsBefore && kidsBefore > 0
+       && !!doc.getElementById('explorer-search'),
+       'a vetoed swap never parks — the pane keeps its content');
+    ok(Object.keys(window.PaneState._stash()).sort().join(',') === stashBefore,
+       'a vetoed swap leaves the stash untouched');
+    ok(window.PaneState._cur() === '/explorer', 'a vetoed swap keeps the current route');
+}
+
 // ── 3. stale seq ⇒ the fresh swap WINS + SOFT re-applies the query ─────────
 swapTo('/bulk', '<div id="bulk-stub">bulk</div>');        // park explorer (seq 7)
 doc.getElementById('pending-tray').setAttribute('data-seq', '9');   // an edit

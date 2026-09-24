@@ -226,4 +226,66 @@ ok(shown() === 1, 'I6: AND of an operation and a property still matches it');
 click(x180); click(chip('amp'));
 ok(q() === '', 'I7: releasing both empties the box');
 
+/* ── J. a chip press never opens the search typeahead ────────────────
+   QA liveedit-r2-13. _write dispatches 'input' on the box so the pair grid
+   refilters; the shared typeahead (sidebar-typeahead.js) listens to every
+   input on #bulk-search and opened its column-word panel under the box --
+   over the chip row, where the next chip's click landed on a completion and
+   rewrote the query instead. The typeahead reads its vocabulary from
+   `#table-pane th.bulk-col-head`, so the panel goes inside a #table-pane. */
+{
+  const tp = doc.createElement('div'); tp.id = 'table-pane';
+  const panel = doc.getElementById('bulk-panel');
+  panel.parentNode.insertBefore(tp, panel); tp.appendChild(panel);
+  window.eval(fs.readFileSync(path.join(STATIC, 'sidebar-typeahead.js'), 'utf8'));
+  const ta = () => doc.getElementById('sm-typeahead');
+  const taOpen = () => !!ta() && ta().hidden === false && box.getAttribute('aria-expanded') === 'true';
+  typeBox('');
+  if (modeBtn().textContent === 'OR') click(modeBtn());
+  typeBox('x18');
+  ok(taOpen(), 'J0: fixture -- TYPING a column word opens the typeahead ('
+     + (ta() && ta().textContent) + ')');
+  typeBox('');
+  ok(!taOpen(), 'J0b: fixture -- and an emptied box closes it');
+  click(chip('x180'));
+  ok(q() === 'x180', 'J1: the chip wrote its term');
+  ok(!taOpen(), 'J2: ...and did NOT open the typeahead over the chip row');
+  click(chip('x180'));
+  typeBox('x18');
+  ok(taOpen(), 'J3: fixture -- typed text opens it again');
+  click(chip('amp'));
+  ok(/amp/.test(q()) && !taOpen(), 'J4: a chip press closes a panel left open by typing ('
+     + q() + ')');
+  typeBox('');
+}
+
+/* ── K. the mode button follows a HAND-TYPED operator ────────────────
+   QA liveedit-r2-32. Typing 'readout | flux' in AND mode lit both chips
+   under an AND button while the grid showed the union; the next chip press
+   then re-joined the lit chips with ' ' and the user's OR became an AND. */
+typeBox('');
+if (modeBtn().textContent === 'OR') click(modeBtn());
+ok(modeBtn().textContent === 'AND', 'K0: fixture -- the chosen mode is AND');
+typeBox('readout | flux');
+ok(pressed('readout') && pressed('flux'), 'K1: both typed chips light');
+ok(modeBtn().textContent === 'OR' && modeBtn().getAttribute('data-mode') === 'or',
+   'K2: and the mode button reads OR, as the box does (got ' + modeBtn().textContent + ')');
+click(chip('amp'));
+ok(q() === 'readout | flux | amp', 'K4: the next chip press keeps the OR ('
+   + JSON.stringify(q()) + ')');
+click(chip('amp'));
+ok(q() === 'readout | flux' && shown() === 2,
+   'K5: releasing it gives the typed union back (' + JSON.stringify(q()) + ', ' + shown() + ')');
+typeBox('readout flux');
+ok(modeBtn().textContent === 'AND', 'K6: a typed AND reads AND again');
+typeBox('q1 readout | flux');
+ok(modeBtn().textContent === 'OR', 'K7: free text beside an OR pair does not change the read');
+typeBox('readout | flux amp');
+ok(modeBtn().textContent === 'AND', 'K8: a query that mixes both claims nothing: the chosen mode (AND) again');
+typeBox('');
+ok(modeBtn().textContent === 'AND', 'K9: an emptied box shows the chosen mode, not the last typed one');
+typeBox('readout | flux');
+click(chip('flux')); click(chip('readout'));
+ok(q() === '' && modeBtn().textContent === 'AND', 'K10: releasing the typed chips hands the mode back (' + modeBtn().textContent + ')');
+
 process.exit(fails ? 1 : 0);

@@ -262,7 +262,7 @@ class TestTransport:
         e1 = client.get("/bulk/all-values").headers["ETag"]
         # v2 salt (policy attached on /load): chip-<mutation_seq>-<len(change_log)>-
         # v2-<n_assignments>-<manifest_tag> — 6 components
-        assert "-v2-" in e1
+        assert "-v3-" in e1   # QA F17: payload semantics bumped the salt
         assert e1.strip('"').count("-") == 5
         client.post("/field/edit-batch", json={"updates": [
             {"dot_path": "qubits.qA1.resonator.time_of_flight", "value": "284"}]})

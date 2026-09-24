@@ -337,6 +337,33 @@ class TestCellsRoute:
         wide.get("/bulk/cells?cols=f_01&dynhide=dyn__extras_calibration_leaf_00")
         assert len(calls) == n0 + 2
 
+    def test_the_page_publishes_the_hidden_set_it_rendered_with(self, wide):
+        """QA liveedit-r2-15: a full-page load of /bulk carries no ?dynhide, so
+        the hidden set in localStorage and the set the page was RENDERED with
+        differ. /bulk/cells builds its grid from the ?dynhide it is sent; a
+        different set is a different grid, and a column it dropped is a 400
+        ("could not be loaded"). The page therefore names the set it used, and
+        the client's cold fetch repeats it (bulk_dyncols_selfcheck.cjs)."""
+        hid = "dyn__extras_calibration_leaf_00"
+
+        def published(html):
+            m = re.search(r"BulkEdit\.mount\(.*", html)
+            assert m, "the mount call is on the page"
+            d = re.search(r'"dynhide":\s*(\[[^\]]*\])', m.group(0))
+            assert d, "the mount's qubit meta names the rendered hidden set"
+            return json.loads(d.group(1))
+
+        plain = wide.get("/bulk?vw=800").get_data(as_text=True)
+        assert published(plain) == []
+        assert f'data-col-key="{hid}"' in plain, "rendered: nothing was hidden"
+        # the repeat of the rendered (empty) set knows the column ...
+        assert wide.get(f"/bulk/cells?cols={hid}").status_code == 200
+        # ... and naming the CURRENT localStorage set instead is the reported 400
+        assert wide.get(f"/bulk/cells?cols={hid}&dynhide={hid}").status_code == 400
+        hidden = wide.get(f"/bulk?vw=800&dynhide={hid},dyn__not_on_this_chip").get_data(as_text=True)
+        assert published(hidden) == sorted([hid, "dyn__not_on_this_chip"])
+        assert f'data-col-key="{hid}"' not in hidden
+
     def test_gzip_when_asked(self, wide):
         wide.get("/bulk?vw=800")
         r = wide.get("/bulk/cells?cols=f_01", headers={"Accept-Encoding": "gzip"})

@@ -174,6 +174,22 @@ function settle() {
      && win['_bulkNavGuard_bulk-e_twpas'] === true,
      'C2: ...and so does the unapplied-edits nav guard');
 
+  /* QA F1: the guard's Cancel must tell every downstream teardown listener,
+     and they all gate on shouldSwap (app.js) -- preventDefault alone left
+     PaneState parking (blanking) the pane htmx was about to keep. */
+  const cell = win.document.querySelector('#bulk-e_twpas-table .bulk-cell');
+  cell.value = '2';
+  let asked = 0;
+  win.confirm = function () { asked++; return false; };
+  const tp = win.document.getElementById('table-pane');
+  const sw = new win.CustomEvent('htmx:beforeSwap', { bubbles: true, cancelable: true,
+    detail: { shouldSwap: true, target: tp } });
+  tp.dispatchEvent(sw);
+  ok(asked === 1, 'C3: fixture -- a dirty cell makes the guard ask (' + asked + ')');
+  ok(sw.defaultPrevented && sw.detail.shouldSwap === false,
+     'C4: Cancel vetoes the swap for htmx AND for the shouldSwap-gated listeners');
+  cell.value = '1';
+
   if (fails === 0) console.log('all checks passed (' + asserts + ' assertions)');
   process.exit(fails ? 1 : 0);
 })().catch(function (e) {

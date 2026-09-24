@@ -79,7 +79,9 @@ class TestMarkup:
 class TestClient:
     def test_the_qubit_grid_matches_the_span_on_both_axes_and_repaints_a_list(self):
         i = _BULK_JS.index("function _revertPaths(entries)")
-        seg = _BULK_JS[i:i + 6000]
+        # the whole function, not a fixed 6,000-char window: QA F9's keyed
+        # header-stats bookkeeping pushed the list branch past that window
+        seg = _BULK_JS[i:_BULK_JS.index("BulkEdit.revertPaths = _revertPaths", i)]
         assert ".bulk-cell-list[data-path=" in seg and ".bulk-cell-list[data-resolved=" in seg
         assert "if (c.classList.contains('bulk-cell-list')) {" in seg
         assert "if (e.old_kind !== 'list') return;" in seg

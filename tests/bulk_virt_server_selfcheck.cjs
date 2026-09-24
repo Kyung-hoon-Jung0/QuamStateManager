@@ -80,7 +80,11 @@ function cellHtml(r, i, v, src) {
     + '" data-resolved="qubits.q' + r + '.f' + i + '" data-linkable="1" data-orig="' + v + '"' + (src ? ' data-src="' + src + '"' : '')
     + ' title="qubits.q' + r + '.f' + i + '">';
 }
-function build() {
+// opts.alias (QA F4): column c2's cells become a pointer ALIAS of the leaf the
+// server-cold column c5 holds (data-dot-path its own, data-resolved = c5's
+// path) -- the curated x90-amp-over-dyn-DragCosine shape, two columns, one leaf
+function build(opts) {
+  opts = opts || {};
   let head = '';
   for (let i = 0; i < COLS.length; i++) {
     head += '<th class="bulk-col-head ck-' + i + '" data-col-key="c' + i + '" data-section="S" data-maxlen="' + (i < N_HOT ? 12 : 20) + '">'
@@ -92,7 +96,11 @@ function build() {
     map.rows.push('q' + r);
     let tds = '';
     for (let i = 0; i < COLS.length; i++) {
-      if (i < N_HOT) {
+      if (i < N_HOT && opts.alias && i === 2) {
+        tds += '<td class="bulk-td ck-' + i + '" data-col-key="c' + i + '">'
+          + cellHtml(r, i, coldVal(r, 5)).replace('data-resolved="qubits.q' + r + '.f2"', 'data-resolved="qubits.q' + r + '.f5"')
+          + '</td>';
+      } else if (i < N_HOT) {
         tds += '<td class="bulk-td ck-' + i + '" data-col-key="c' + i + '">' + cellHtml(r, i, String((r + 1) * 100 + i)) + '</td>';
       } else {
         tds += '<td class="bulk-td ck-' + i + ' bulk-td-cold" data-col-key="c' + i + '"></td>';
@@ -121,12 +129,12 @@ function world(opts) {
   // .fontSize and no data-font-size attribute here: neither exists in the app
   // either, which is exactly why the old inline-only read could never see 21.
   const dom = new JSDOM('<!DOCTYPE html><html><head><style>html{font-size:21px}</style></head><body>'
-    + build() + '</body></html>',
+    + build(opts) + '</body></html>',
     { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/' });
   const win = dom.window;
   global.window = win; global.document = win.document;
   win.__geomReads = 0;
-  Object.defineProperty(win.screen, 'availWidth', { value: 1200, configurable: true });
+  Object.defineProperty(win.screen, 'availWidth', { value: opts.availWidth || 1200, configurable: true });
   Object.defineProperty(win, 'innerWidth', { get: function () { win.__geomReads++; return 1200; }, configurable: true });
   win.document.querySelectorAll('th.bulk-col-head').forEach(function (h, i) {
     Object.defineProperty(h, 'offsetLeft', { get: function () { win.__geomReads++; return 60 + i * 400; } });
@@ -460,6 +468,65 @@ async function main() {
      'an undo naming a server-cold path is "missing" (no cell, no fetch, no rebuild) — the column arrives reverted');
   const rp2 = win.BulkEdit.revertPaths([{ dot_path: 'qubits.q1.f1', old_value_str: '9' }]);
   ok(rp2 && rp2.patched === 1, 'a hot path is repainted as before');
+
+  /* ── QA F4: an undo reaches EVERY cold twin of a leaf ────────────── */
+  // c2 is a LOCAL-cold alias of c5's leaf (a narrow screen puts it past the
+  // edge) and c5 is server-cold and comes later, so byPath's last writer
+  // named only c5: the undo patched c5's search text and c2 later hydrated
+  // its page-load fragment -- the old value, looking committed.
+  W = world({ alias: true, availWidth: 100 }); doc = W.doc; win = W.win; await tick(40);
+  {
+    const st = win.BulkEdit._virtState();
+    ok(st && st.cold.indexOf('c2') >= 0 && st.remote.indexOf('c2') < 0 && st.remote.indexOf('c5') >= 0,
+       'fixture: the alias column c2 is local-cold and its twin c5 server-cold ('
+       + JSON.stringify(st && { cold: st.cold, remote: st.remote }) + ')');
+    ok(!doc.querySelector('tr[data-qubit="q1"] td[data-col-key="c2"] .bulk-cell'),
+       'fixture: the alias cell is detached before the undo');
+    const sb = doc.getElementById('bulk-search');
+    const shownA = () => Array.prototype.filter.call(
+      doc.querySelectorAll('tr[data-qubit]'), (r) => !r.classList.contains('bulk-row-hidden')
+    ).map((r) => r.getAttribute('data-qubit'));
+    sb.value = coldVal(1, 5); sb.dispatchEvent(new win.Event('input', { bubbles: true }));
+    await tick(250);
+    ok(shownA().join(',') === 'q1', 'fixture: before the undo the old value finds q1 (' + shownA().join(',') + ')');
+    sb.value = ''; sb.dispatchEvent(new win.Event('input', { bubbles: true }));
+    await tick(250);
+    win._log.fetches.length = 0;
+    const rpA = win.BulkEdit.revertPaths([{ dot_path: 'qubits.q1.f5', old_value_disp: '4242' }]);
+    const aq1 = doc.querySelector('tr[data-qubit="q1"] td[data-col-key="c2"] .bulk-cell');
+    ok(!!aq1 && aq1.value === '4242' && aq1.getAttribute('data-orig') === '4242'
+       && !aq1.classList.contains('bulk-cell-modified'),
+       'the local-cold alias twin is hydrated and repainted, clean ('
+       + (aq1 && aq1.value) + ' / ' + (aq1 && aq1.getAttribute('data-orig')) + ')');
+    ok(rpA && rpA.patched === 1 && rpA.missing === 0 && win._log.fetches.length === 0,
+       'the entry counts as covered, with no /bulk/cells round trip ('
+       + JSON.stringify(rpA) + ', ' + win._log.fetches.length + ')');
+    const aq2 = doc.querySelector('tr[data-qubit="q2"] td[data-col-key="c2"] .bulk-cell');
+    ok(!!aq2 && aq2.value === coldVal(2, 5), 'the other rows keep their own value');
+    // the remote twin's search text was repaired too
+    sb.value = coldVal(1, 5); sb.dispatchEvent(new win.Event('input', { bubbles: true }));
+    await tick(250);
+    ok(shownA().indexOf('q1') < 0,
+       'the replaced value no longer matches q1 in either twin (' + shownA().join(',') + ')');
+    sb.value = ''; sb.dispatchEvent(new win.Event('input', { bubbles: true }));
+    await tick(250);
+  }
+  // the mirror: the twin is HOT (the alias is on screen) -- a hot twin used
+  // to skip the cold one entirely
+  W = world({ alias: true, availWidth: 100 }); doc = W.doc; win = W.win; await tick(40);
+  {
+    // a HOT cell in c1 now also names c5's leaf: the path has a hot twin,
+    // a local-cold twin (c2) and a server-cold one (c5)
+    const c1q1 = doc.querySelector('tr[data-qubit="q1"] td[data-col-key="c1"] .bulk-cell');
+    c1q1.setAttribute('data-resolved', 'qubits.q1.f5');
+    win._log.fetches.length = 0;
+    win.BulkEdit.revertPaths([{ dot_path: 'qubits.q1.f5', old_value_disp: '4343' }]);
+    const aq1 = doc.querySelector('tr[data-qubit="q1"] td[data-col-key="c2"] .bulk-cell');
+    ok(c1q1.value === '4343' && !!aq1 && aq1.value === '4343' && aq1.getAttribute('data-orig') === '4343',
+       'a hot twin no longer hides a cold one: both land the value ('
+       + c1q1.value + ' / ' + (aq1 && aq1.value) + ')');
+    ok(win._log.fetches.length === 0, 'and still no round trip');
+  }
 
   /* ── an apply's cross-table sync never fetches a server-cold column ── */
   W = world(); doc = W.doc; win = W.win; await tick(40);

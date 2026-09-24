@@ -234,7 +234,14 @@
         setTimeout(off, CARRY_TTL_MS);
     }
     function _reloadPane() {
-        if (window.htmx) htmx.ajax('GET', '/bulk', { target: '#table-pane', swap: 'innerHTML' });
+        if (window.htmx) return htmx.ajax('GET', '/bulk', { target: '#table-pane', swap: 'innerHTML' });
+    }
+    // QA liveedit-r2-15: a rendered derived column that the persisted hidden
+    // set names -- the page was rendered without ?dynhide.
+    function _dynLeaked() {
+        var dh = {};
+        _dynHidden().forEach(function (k) { dh[k] = 1; });
+        return COLS.some(function (c) { return c && c.dyn && dh[c.key]; });
     }
 
     /* ── docs/120 item 4: the quick-filter chip bar ────────────────────────
@@ -429,8 +436,17 @@
             inp.setAttribute('aria-label', 'New filter patch');
             scroll.insertBefore(inp, scroll.querySelector('.bulk-chip-add'));
             inp.focus();
-            function commit() {
+            function commit(keepOnBad) {
                 var t = inp.value.trim().toLowerCase();
+                // A rejected word used to vanish with no word of why (QA
+                // liveedit-r2-26). Say it; on Enter keep the box so the user
+                // can fix it; empty stays silent (that is just dismissing).
+                var why = window._patchProblem ? window._patchProblem(t) : '';   // app.js owns the rule's wording
+                if (why) {
+                    if ((keepOnBad || inp._warned !== t) && window.showToast) window.showToast(why, 'warning');
+                    inp._warned = t;
+                    if (keepOnBad && inp.parentNode) { inp.select(); return; }
+                }
                 if (inp.parentNode) inp.parentNode.removeChild(inp);
                 if (!/^[^\s|]{1,40}$/.test(t)) return;   // one token, no pipes
                 var cur = _customTerms();
@@ -442,7 +458,7 @@
                 _write();
             }
             inp.addEventListener('keydown', function (e) {
-                if (e.key === 'Enter') { e.preventDefault(); commit(); }
+                if (e.key === 'Enter') { e.preventDefault(); commit(true); }
                 else if (e.key === 'Escape') {
                     if (inp.parentNode) inp.parentNode.removeChild(inp);
                 }
@@ -477,10 +493,33 @@
             // pair grid, that reshuffle fed straight back into the next write.
             var seen = {};
             active = [];
-            toks.forEach(function (t) {
-                if (terms.indexOf(t) >= 0 && !seen[t]) { seen[t] = 1; active.push(t); }
+            var at = [];   // token index of each lit chip
+            toks.forEach(function (t, i) {
+                if (terms.indexOf(t) >= 0 && !seen[t]) { seen[t] = 1; active.push(t); at.push(i); }
             });
+            // QA liveedit-r2-32: the mode is part of the box's truth too. A
+            // hand-typed 'readout | flux' lit both chips under an AND button,
+            // and the next chip press re-joined them with ' ' -- the user's OR
+            // silently became an AND (union -> nothing).
+            // Where the box says nothing (under two lit chips, a mixed query)
+            // the mode is the user's own last choice again.
+            mode = _queryMode(toks, at) || _readMode();
             _paint();
+        }
+        /* 'or' when every lit chip sits in ONE `|` group of the query (docs/96
+           tight-binding grammar), 'and' when each sits in a group of its own;
+           null when fewer than two chips are lit, the query mixes both, or the
+           grammar module is absent. */
+        function _queryMode(toks, at) {
+            if (at.length < 2 || !window.SearchQuery || !window.SearchQuery.groupBy) return null;
+            var idx = toks.map(function (t, i) { return i; });
+            var gOf = {};
+            window.SearchQuery.groupBy(idx, function (i) { return toks[i]; })
+                .forEach(function (g, gi) { g.forEach(function (i) { gOf[i] = gi; }); });
+            var groups = {};
+            at.forEach(function (i) { groups[gOf[i]] = 1; });
+            var n = Object.keys(groups).length;
+            return n === 1 ? 'or' : (n === at.length ? 'and' : null);
         }
         function mount() {
             var b = bar(); if (!b) return;
@@ -1627,6 +1666,13 @@
                     // Commit succeeded → only now claim these physical nodes in the
                     // cross-row dedup, so a failed row never strands a shared sibling (A11).
                     if (seenGlobal) batchKeys.forEach(function (k) { seenGlobal[k] = true; });
+                    // QA liveedit-r2-22: the echo below rewrites the value
+                    // programmatically (no `input` event), so the docked 🕘
+                    // stayed at the TYPED text's tail -- '1700' became
+                    // '1,700' and the icon sat on the last digit. Remember
+                    // the focused cell's text; re-dock only if it changed
+                    // (one layout read per Enter, never per row of an apply-all).
+                    var _fAe = document.activeElement, _fAeVal = _fAe ? _fAe.value : undefined;
                     cells.forEach(function (c) {
                         var res = byPath[c.getAttribute('data-dot-path')] || {};
                         // before/after baseline: remember the pre-edit value the FIRST
@@ -1646,6 +1692,7 @@
                     // other rows) from the same server echo — so editing+applying one
                     // shared-port cell updates them all.
                     _syncAppliedAcrossTable(r.body.results);
+                    if (_fAe && _fAe.value !== _fAeVal && window.__cellBtnInvalidate) window.__cellBtnInvalidate();
                     if (!silent && r.body.tray_html && window._swapPendingTray) {
                         window._bulkSelfEdit = true;            // suppress our own cross-surface refresh
                         try { window._swapPendingTray(r.body.tray_html); }
@@ -1728,12 +1775,18 @@
     }
     // Every cell of one LO pair: this port's band and frequency, and the peer
     // port's. At most four, and they are what the verdict is ABOUT.
+    // QA liveedit-r2-14: PAGE-wide, not this table only -- a TWPA pump / pair
+    // port lives in a pair-shaped grid (table.bulk-pair-table), and the group
+    // key (con/fem/kind:port) is the same in every grid, so a peer in another
+    // grid is judged by its live value too. #bulk-table stays explicit (a bare
+    // qubit table carries no class).
+    var _LO_GRIDS = ['#bulk-table', 'table.bulk-pair-table'];
     function _loCellsIn(group) {
-        var t = table();
-        if (!group || !t) return [];
+        if (!group) return [];
         var esc = (window.CSS && CSS.escape) ? CSS.escape(group) : group;
-        return Array.prototype.slice.call(
-            t.querySelectorAll('.bulk-cell[data-lo-group="' + esc + '"]'));
+        return Array.prototype.slice.call(document.querySelectorAll(_LO_GRIDS.map(function (g) {
+            return g + ' .bulk-cell[data-lo-group="' + esc + '"]';
+        }).join(', ')));
     }
     // The LIVE value of one LO field, read from the cell that owns it.
     // `data-band` / `data-freq` / `data-peer-band` are what the SERVER rendered
@@ -1801,9 +1854,24 @@
         cells.forEach(function (c) { if (_validateBand(c)) warned = true; });
         return warned;
     }
+    // QA liveedit-r2-14 (review): an issue is a PORT, not a cell. A linked twin
+    // shows the same port twice, and a port's band cell and LO cell both warn
+    // about ONE out-of-band LO -- one typed pump LO read "4 band issues" and
+    // "2 of these edits". Distinct physical ports (the server's data-lo-port),
+    // the resolved leaf for a cell with none, as _dirtyCount already counts.
+    function _bandIssueKeys(cells) {
+        var seen = new Set();
+        Array.prototype.forEach.call(cells, function (c) {
+            if (!c.classList.contains('bulk-band-warn')) return;
+            seen.add(c.getAttribute('data-lo-port') || c.getAttribute('data-resolved') || c);
+        });
+        return seen.size;
+    }
     function _updateBandWarnCount() {
-        var t = table(); if (!t) return;
-        var n = t.querySelectorAll('.bulk-cell.bulk-band-warn').length;
+        // every Live-Edit grid (QA liveedit-r2-14): the toolbar count is shared
+        var n = _bandIssueKeys(document.querySelectorAll(_LO_GRIDS.map(function (g) {
+            return g + ' .bulk-cell.bulk-band-warn';
+        }).join(', ')));
         var el = document.getElementById('bulk-band-warn');
         if (el) { el.textContent = n ? ('⚠ ' + n + ' band issue' + (n === 1 ? '' : 's')) : ''; el.hidden = !n; }
     }
@@ -1812,15 +1880,13 @@
     // band conflict at commit time (A10); the project trusts the researcher, so this
     // only appends a line to the existing confirm() dialog.
     function _bandWarnCount(cells) {
-        var n = 0;
-        cells.forEach(function (c) { if (c.classList.contains('bulk-band-warn')) n++; });
-        return n;
+        return _bandIssueKeys(cells);
     }
     function _bandWarnLine(cells) {
         var n = _bandWarnCount(cells);
         if (!n) return '';
-        return '\n\n⚠ ' + n + ' of these edit' + (n === 1 ? '' : 's') +
-            ' create an LO band conflict — apply anyway?';
+        return '\n\n⚠ This leaves ' + n + ' port' + (n === 1 ? '' : 's') +
+            ' with an LO band conflict — apply anyway?';
     }
 
     // ── shared physical-port linking ─────────────────────────────────────────
@@ -2088,7 +2154,11 @@
             colWidths: function () { return _colWidths; },
             urlParams: function () {
                 var q = '';
-                var dh = _dynHidden();
+                // QA liveedit-r2-15: name the hidden set the page was RENDERED
+                // with, not what localStorage holds now (another window, or a
+                // full-page load) -- a different set is a different grid, and a
+                // column it dropped came back as a 400 "could not be loaded".
+                var dh = (QMETA && Array.isArray(QMETA.dynhide)) ? QMETA.dynhide : _dynHidden();
                 if (dh.length) q += '&dynhide=' + encodeURIComponent(dh.join(','));
                 // the path-folded token when the page shipped one, else the
                 // display name (an older page); the route accepts both (4ac)
@@ -2230,7 +2300,25 @@
             el = document.createElement('span');
             el.id = 'bulk-sel-hint';
             el.className = 'bulk-sel-hint';
-            host.parentNode.insertBefore(el, host);
+            // QA F7: the hint + the arithmetic bar used to sit IN the toolbar's
+            // wrapping flex row, so the first shift-click wrapped it and pushed
+            // the whole grid down (70 px at 1366) -- the next click landed on a
+            // header and re-sorted. They live in a floating dock now (the
+            // #ds-basket-bar pattern): position:fixed takes no flow space. It
+            // is the toolbar's SIBLING, not its child: the toolbar carries the
+            // translateX(scrollLeft) of _pinBars, and a transformed ancestor
+            // would make `fixed` mean "fixed to the toolbar".
+            var bar = host.closest ? host.closest('.bulk-toolbar') : null;
+            if (bar && bar.parentNode) {
+                var dock = document.createElement('div');
+                dock.id = 'bulk-sel-dock';
+                dock.className = 'bulk-sel-dock';
+                dock.hidden = true;
+                dock.appendChild(el);
+                bar.parentNode.insertBefore(dock, bar.nextSibling);
+            } else {
+                host.parentNode.insertBefore(el, host);
+            }
         }
         return el;
     }
@@ -2240,6 +2328,7 @@
         el.textContent = n
             ? (n + ' cell' + (n === 1 ? '' : 's') + ' selected — Ctrl+D fills from the anchor · Esc clears · or scale them:')
             : '';
+        if (el.parentNode && el.parentNode.id === 'bulk-sel-dock') el.parentNode.hidden = !n;   // QA F7
         var t = table();
         if (t) {
             t.querySelectorAll('td.bulk-sel-anchor').forEach(function (td) {
@@ -2523,17 +2612,27 @@
 
         var rows = [], skipped = [], unchanged = [], anyFloat = false;
         _selCells().forEach(function (td) {
-            var label = (td.getAttribute('data-dot-path') || td.getAttribute('data-col-key') || '?');
-            function skip(reason) { skipped.push({ label: label, reason: reason }); }
-            // Always through _editableIn: it hydrates a virtualized cold cell.
+            // Always through _editableIn: it hydrates a virtualized cold cell --
+            // so it runs FIRST, before anything is read from inside the td.
             var c = _editableIn(td);
+            // QA liveedit-r2-10: the dot-path and the per-cell flags live on the
+            // cell element, never on the <td> (which carries only data-col-key),
+            // so every row used to read the column key ('x180_amplitude' five
+            // times) and the not-set / reference reasons never fired. Name the
+            // qubit; the full dot-path rides the row's tooltip.
+            var inner = c || td.querySelector('[data-dot-path], [data-path]');
+            var path = inner ? (inner.getAttribute('data-dot-path') || inner.getAttribute('data-path') || '') : '';
+            var trq = td.closest('tr');
+            var rid = trq && trq.getAttribute('data-qubit');
+            var label = (rid ? rid + ' · ' : '') + (td.getAttribute('data-col-key') || path || '?');
+            function skip(reason) { skipped.push({ label: label, path: path, reason: reason }); }
             if (!c || c.readOnly) return skip('read-only');
-            if (td.getAttribute('data-missing') === '1') {
+            if (c.getAttribute('data-missing') === '1') {
                 return skip('not set — there is no value to scale');
             }
             var cur = window.ValueDelta && window.ValueDelta.parse(c.value);
             if (!cur) {
-                return skip(td.getAttribute('data-is-pointer') === '1'
+                return skip(c.getAttribute('data-is-pointer') === '1'
                     ? 'holds a reference, not a number — edit its target'
                     : 'not a number');
             }
@@ -2550,7 +2649,7 @@
                      === same.mant * _pow10(Math.max(0, cur.scale - same.scale))) {
                 return unchanged.push({ label: label, now: c.value });
             }
-            rows.push({ cell: c, td: td, label: label, now: c.value,
+            rows.push({ cell: c, td: td, label: label, path: path, now: c.value,
                         text: out.text, exact: out.exact });
         });
         return { rows: rows, skipped: skipped, unchanged: unchanged,
@@ -2666,7 +2765,7 @@
             body += '<table class="ch-table"><thead><tr><th>Cell</th><th>Now</th>'
                  + '<th></th><th>New</th></tr></thead><tbody>'
                  + plan.rows.map(function (r) {
-                     return '<tr><td>' + esc(r.label) + '</td><td>' + esc(r.now)
+                     return '<tr><td title="' + esc(r.path || '') + '">' + esc(r.label) + '</td><td>' + esc(r.now)
                           + '</td><td>→</td><td>' + esc(r.text)
                           + (r.exact ? '' : ' <span class="muted">≈</span>')
                           + '</td></tr>';
@@ -2682,7 +2781,7 @@
             body += '<p class="muted bulk-arith-note">Skipped ' + plan.skipped.length
                  + ':</p><table class="ch-table"><tbody>'
                  + plan.skipped.map(function (k) {
-                     return '<tr><td>' + esc(k.label) + '</td><td class="muted">'
+                     return '<tr><td title="' + esc(k.path || '') + '">' + esc(k.label) + '</td><td class="muted">'
                           + esc(k.reason) + '</td></tr>';
                  }).join('') + '</tbody></table>';
         }
@@ -2813,7 +2912,7 @@
         // reset
         t.querySelectorAll('.bulk-col-pinned').forEach(function (el) {
             el.classList.remove('bulk-col-pinned');
-            el.style.left = ''; el.style.position = '';
+            el.style.left = ''; el.style.right = ''; el.style.position = '';
         });
         var pins = _pinnedCols().filter(function (k) {
             return t.querySelector('th.bulk-col-head[data-col-key="' + _cssEsc(k) + '"]');
@@ -2828,10 +2927,30 @@
         // the row-header (qubit id) column is the base offset
         var rowHead = t.querySelector('tbody th.bulk-rowhead, tbody tr > th');
         var left = rowHead ? rowHead.offsetWidth : 0;
-        pins.forEach(function (k) {
+        // QA F16: a left inset alone only engages once the column's own place
+        // has scrolled past it, so a pin far to the right sat off-screen at
+        // scrollLeft 0 ("stays visible while scrolling" was false). A RIGHT
+        // inset too -- stacked from the Apply column, the mirror of the left
+        // stack -- makes it stick to whichever edge it would leave by.
+        // Widths first (each pinned cold column hydrated before measuring).
+        var ws = pins.map(function (k) {
             _virtEnsureTd(t.querySelector('td[data-col-key="' + _cssEsc(k) + '"]'));
-            var th = t.querySelector('th.bulk-col-head[data-col-key="' + _cssEsc(k) + '"]');
-            var w = th ? th.offsetWidth : 0;
+            var h = t.querySelector('th.bulk-col-head[data-col-key="' + _cssEsc(k) + '"]');
+            return h ? h.offsetWidth : 0;
+        });
+        var applyHead = t.querySelector('thead th.bulk-apply-col');
+        // The row head and the Apply column stick at MINUS the pane's padding
+        // (flush with its edge, style.css) while an inset counts from the
+        // padding edge -- so a pin abutting them sits one padding nearer than
+        // their width, or scrolled columns show through a padding-wide gap.
+        var sc = _scrollerOf(t);
+        var scs = (sc && window.getComputedStyle) ? window.getComputedStyle(sc) : null;
+        if (rowHead) left = Math.max(0, left - (scs ? (parseFloat(scs.paddingLeft) || 0) : 0));
+        var right = (applyHead ? Math.max(0, applyHead.offsetWidth - (scs ? (parseFloat(scs.paddingRight) || 0) : 0)) : 0)
+            + ws.reduce(function (a, b) { return a + b; }, 0);
+        pins.forEach(function (k, i) {
+            var w = ws[i];
+            right -= w;
             // audit F4: the CELLS and the header only — the resize-handle span
             // inside the th also carries data-col-key, and an inline
             // position:sticky killed its absolute anchoring (drag-resize and
@@ -2843,6 +2962,7 @@
                 el.classList.add('bulk-col-pinned');
                 el.style.position = 'sticky';
                 el.style.left = left + 'px';
+                el.style.right = right + 'px';
             });
             left += w;
         });
@@ -2851,15 +2971,35 @@
         var t = table(); if (!t) return;
         var tb = t.querySelector('tbody'); if (!tb) return;
         var pins = _pinnedRows();
+        var unpinned = 0;
         t.querySelectorAll('tr.bulk-row-pinned').forEach(function (tr) {
             tr.classList.remove('bulk-row-pinned');
+            if (pins.indexOf(tr.getAttribute('data-qubit')) < 0) unpinned++;
         });
+        if (unpinned) _restoreRowOrder(tb);   // QA F16
         if (!pins.length) return;
         // float pinned rows to the top, preserving pin order
         for (var i = pins.length - 1; i >= 0; i--) {
             var tr = tb.querySelector('tr[data-qubit="' + _cssEsc(pins[i]) + '"]');
             if (tr) { tr.classList.add('bulk-row-pinned'); tb.insertBefore(tr, tb.firstChild); }
         }
+    }
+    // QA F16: floating a pinned row moved it in the DOM and nothing ever moved
+    // it back -- an unpinned row stayed first until a reload. Put every row
+    // back in server order (stamped once per fresh tbody by _injectPinGlyphs),
+    // then re-apply the active sort. sort() TOGGLES the direction of the key
+    // it is already sorted by, so flip first and let it flip back.
+    function _restoreRowOrder(tb) {
+        var rows = _rows();
+        var nat = function (r, i) {
+            var v = r.getAttribute('data-nat-idx');
+            return v === null ? 1e9 + i : +v;
+        };
+        var idx = rows.map(nat);
+        rows.map(function (r, i) { return { r: r, n: idx[i] }; })
+            .sort(function (a, b) { return a.n - b.n; })
+            .forEach(function (o) { tb.appendChild(o.r); });
+        if (sortKey) { sortDir = -sortDir; sort(sortKey); }
     }
     // audit F11: the sticky insets are a px snapshot — anything that changes
     // real widths (font scale, drag-resize, curated column show/hide) must
@@ -2910,9 +3050,10 @@
             });
             th.appendChild(b);
         });
-        t.querySelectorAll('tbody tr[data-qubit]').forEach(function (tr) {
+        t.querySelectorAll('tbody tr[data-qubit]').forEach(function (tr, i) {
             var head = tr.querySelector('th');
             if (!head || head.querySelector('.bulk-pin-row')) return;
+            tr.setAttribute('data-nat-idx', String(i));   // QA F16: the server order
             var b = document.createElement('button');
             b.type = 'button';
             b.className = 'bulk-pin bulk-pin-row';
@@ -2997,6 +3138,30 @@
         }
     }
 
+    // QA F9 + F10: Escape put the committed value back, so what was DERIVED
+    // from the value it threw away goes too -- the row's error message (it
+    // described that value; nothing else would ever clear it, the row is clean
+    // now) and the column's header min/max + extreme colouring (a failed commit
+    // recomputed them without the cell). Keyed to the one column: the input
+    // path never recomputes stats (a full pass costs 34-70 ms on a wide chip).
+    // The Escape branch serves every .bulk-cell grid, so a pair / entity grid's
+    // cell is recomputed by the grid that owns it.
+    function _escapeSettle(cell) {
+        var tr = _rowOf(cell);
+        var slot = tr && tr.querySelector('.bulk-row-error');
+        if (slot && !_cells(tr).some(_isDirty)) { slot.hidden = true; slot.textContent = ''; }
+        var k = _colKeyOf(cell); if (!k) return;
+        var keys = {}; keys[k] = 1;
+        if (FREQ_TWIN[k]) keys[FREQ_TWIN[k]] = 1;
+        var t = table();
+        if (t && t.contains(cell)) { _recomputeStats(keys); return; }
+        var grids = [window.BulkPairEdit], eg = window.EntityGrids || {};
+        Object.keys(eg).forEach(function (n) { if (grids.indexOf(eg[n]) < 0) grids.push(eg[n]); });
+        grids.forEach(function (g) {
+            if (g && typeof g.recomputeStats === 'function') { try { g.recomputeStats(keys); } catch (e) {} }
+        });
+    }
+
     function _bindGridEditing() {
         var t = table(); if (!t || t._geBound) return;
         t._geBound = true;
@@ -3043,6 +3208,12 @@
                 // untouched, so Escape with nothing being typed still clears.
                 if (ev.key === 'Escape') {
                     var _ae = document.activeElement;
+                    // QA liveedit-r2-11: this listener runs in the CAPTURE
+                    // phase, before the arith box's own handler, so its
+                    // stopPropagation came too late and one Escape in the box
+                    // cleared the selection it describes. The box owns its
+                    // Escape (it blurs itself); the selection stays.
+                    if (_ae && _ae.id === 'bulk-arith-expr') return;
                     if (_ae && _ae.classList
                             && _ae.classList.contains('bulk-cell')
                             && !_ae.readOnly && _isDirty(_ae)) {
@@ -3050,6 +3221,7 @@
                         ev.stopPropagation();       // don't also close a popover
                         _ae.value = _ae.getAttribute('data-orig');
                         _ae.dispatchEvent(new Event('input', { bubbles: true }));
+                        _escapeSettle(_ae);          // QA F9 + F10
                         _ae.select();
                         return;
                     }
@@ -3102,7 +3274,20 @@
         if (label !== 'start') (window.__bulkMountTimings = window.__bulkMountTimings || []).push([label, Math.round(now - _mountT0)]);
         _mountT0 = now;
     }
+    /* QA liveedit-r2-21: Apply all / Apply to live disables the pressed button,
+       and a focused control that turns disabled drops focus to <body> (it also
+       stays disabled after a clean apply, so it cannot take focus back). When
+       the apply lands, hand focus to the cell the user last left -- only if it
+       is still sitting on <body>, never away from somewhere the user went. */
+    var _lastEditCell = null;
+    function _focusBack(el) {
+        var a = document.activeElement;
+        if (!el || !el.focus || !document.body.contains(el)) return;
+        if (a && a !== document.body && a !== document.documentElement) return;
+        try { el.focus({ preventScroll: true }); } catch (e) { try { el.focus(); } catch (e2) {} }
+    }
     var BulkEdit = {
+        _focusBack: _focusBack,   // (review) pair-edit.js calls this one, no twin
         mount: function (columns, bandMeta, dynModel, qubitMeta) {
             if (Array.isArray(columns)) COLS = columns;
             // An HTMX swap re-renders the tbody in server (default) order, so the
@@ -3114,10 +3299,33 @@
             if (qubitMeta && typeof qubitMeta === 'object') {
                 QMETA = { chip: String(qubitMeta.chip || ''),
                           chipKey: String(qubitMeta.chipKey || ''),
-                          qubits: Array.isArray(qubitMeta.qubits) ? qubitMeta.qubits : [] };
+                          qubits: Array.isArray(qubitMeta.qubits) ? qubitMeta.qubits : [],
+                          // QA liveedit-r2-15: the hidden dyn set this page was
+                          // RENDERED with (null on an older page)
+                          dynhide: Array.isArray(qubitMeta.dynhide) ? qubitMeta.dynhide.map(String) : null };
             }
             var t = table();
             if (!t) return;
+            // QA liveedit-r2-15: only htmx GETs pass configRequest, so a FULL
+            // page load of /bulk (F5, a typed URL, a new window) rendered every
+            // derived column -- including the ones the user hid. Re-GET the
+            // pane once through the path that carries ?dynhide, before any
+            // cold-column fetch is made against a grid about to be replaced.
+            if (_dynLeaked() && window.htmx && !window._bulkDynReconciled) {
+                window._bulkDynReconciled = true;   // loop guard
+                // (review) a re-GET that never lands (an error, an abort, a
+                // vetoed swap) must not leave THIS grid unbound -- no editing,
+                // no virtualization, no leave guard. htmx.ajax's promise
+                // settles after the swap: a table still in the page means it
+                // was not replaced, so finish mounting it as rendered.
+                var _args = arguments, _pr = _reloadPane();
+                if (_pr && typeof _pr.then === 'function') {
+                    var _fin = function () { if (t.isConnected) BulkEdit.mount.apply(BulkEdit, _args); };
+                    _pr.then(_fin, _fin);
+                }
+                return;
+            }
+            window._bulkDynReconciled = false;
             // Restore the persisted search/filter before applySearch runs below.
             var sb0 = document.getElementById('bulk-search');
             if (sb0) { try { sb0.value = localStorage.getItem(SEARCH_KEY) || ''; } catch (e) {} }
@@ -3264,6 +3472,7 @@
             t.addEventListener('focusout', function (e) {
                 var cell = e.target.closest && e.target.closest('.bulk-cell');
                 if (!cell) return;
+                _lastEditCell = cell;   // QA liveedit-r2-21: Apply all hands focus back here
                 if (FREQ_TWIN[_colKeyOf(cell)]) _freqBlur(cell);
                 // Tab / click-away COMMITS the row (like Enter). Only when focus
                 // leaves the row entirely — moving between cells in the SAME row
@@ -3377,6 +3586,8 @@
                             && Date.now() - window._dynReloadAt < CARRY_TTL_MS) return;
                         if (!window.confirm('You have unapplied edits in Live State Edit. Leave and discard them?')) {
                             ev.preventDefault();
+                            // every teardown listener gates on shouldSwap (app.js)
+                            if (ev.detail) ev.detail.shouldSwap = false;
                         }
                     }
                 });
@@ -3437,6 +3648,8 @@
             var all = document.getElementById('bulk-apply-all');
             if (all) { all.disabled = true; all.textContent = 'Applying…'; }
             var apsBtn = document.getElementById('bulk-apply-sync'); if (apsBtn) apsBtn.disabled = true;
+            var backCell = (_lastEditCell && rows.indexOf(_rowOf(_lastEditCell)) >= 0)
+                ? _lastEditCell : _cells(rows[0]).filter(_isDirty)[0];   // QA liveedit-r2-21
             var i = 0, failures = 0, succeeded = 0, lastTray = null, firstFailRow = null;
             var seenGlobal = {};   // dedup a shared-port node across rows → written once
             function next() {
@@ -3456,6 +3669,7 @@
                     }
                     if (all) all.textContent = failures ? ('Apply all (' + failures + ' failed)') : 'Apply all';
                     _refreshGlobal(); _recomputeStats();
+                    _focusBack(backCell);
                     // On a tall table the tiny "(N failed)" label + off-screen red rows
                     // are easy to miss. Surface a status-bar toast and scroll the first
                     // failing row into view so the failure can't be silently overlooked (A16).
@@ -3487,8 +3701,9 @@
 
         resetDirty: function () {
             var t = table(); if (!t) return;
+            var statKeys = {};   // QA F9: a restored column's header follows it
             _cells(t).forEach(function (c) {
-                if (_isDirty(c)) c.value = c.getAttribute('data-orig');
+                if (_isDirty(c)) { c.value = c.getAttribute('data-orig'); statKeys[_colKeyOf(c)] = 1; }
                 c.classList.remove('dirty', 'bulk-cell-bad');
             });
             // Clear any leftover per-row error from a previous failed Apply
@@ -3499,6 +3714,7 @@
             });
             _rows().forEach(_refreshRow);
             _refreshGlobal();
+            if (Object.keys(statKeys).length) _recomputeStats(statKeys);
         },
 
         // docs/120 item 8 — the way out of a value search that hid exactly the
@@ -3564,7 +3780,17 @@
                 + '</div></div>';
             document.body.appendChild(ov);
             var ta = ov.querySelector('.bulk-json-ta');
-            function close() { if (ov.parentNode) ov.parentNode.removeChild(ov); }
+            // QA liveedit-r2-21: removing the overlay took the focused textarea
+            // with it, so focus fell to <body>; give it back to the opener (the
+            // ✎ stays in place across a save -- the cell is patched in place).
+            function close() {
+                if (ov.parentNode) ov.parentNode.removeChild(ov);
+                var a = document.activeElement;
+                if (btn && btn.focus && document.body.contains(btn)
+                        && (!a || a === document.body || a === document.documentElement)) {
+                    try { btn.focus({ preventScroll: true }); } catch (e) { try { btn.focus(); } catch (e2) {} }
+                }
+            }
             function showErr(msg) {
                 var el = ov.querySelector('.bulk-json-err');
                 el.textContent = msg; el.hidden = false;
@@ -3818,6 +4044,16 @@
 
        The caller decides whether an authoritative refetch still has to follow;
        this function only reports what it could and could not reach. */
+    // QA liveedit-r2-02 (review): the list containers an element path lives
+    // in -- every prefix whose next segment is a list index (a.b.0.1 -> a.b.0,
+    // a.b). ONE rule for both grids: pair-edit.js calls this one.
+    function _listContainersOf(p) {
+        var segs = String(p).split('.'), out = [];
+        for (var i = segs.length - 1; i > 0; i--) {
+            if (/^\d+$/.test(segs[i])) out.push(segs.slice(0, i).join('.'));
+        }
+        return out;
+    }
     function _revertPaths(entries) {
         var t = table();
         if (!t || !entries || !entries.length) return { patched: 0, missing: 0 };
@@ -3846,38 +4082,69 @@
                 + ', .bulk-cell-list[data-resolved="' + q + '"]');
         };
         // A cold column (docs/105) has no .bulk-cell to land in — the same trap
-        // _consumeEditCarry hit. Hydrate once if any named path is absent.
-        var absent = entries.some(function (e) {
-            return e && e.dot_path && !sel(e.dot_path).length;
-        });
+        // _consumeEditCarry hit. Hydrate the cold columns that claim a path.
         _virtPatchColdValue.flushHay = false;
         // docs/141 4l-review: hydrate only the cold columns the named paths
         // live in (the byPath map _virtInit built) -- an undo of a pair-grid
         // or hidden-column path used to un-virtualize the whole grid; a path
         // in no column is `missing` by definition and costs no hydration
-        if (absent && _virt) {
+        // QA F4: EVERY column claiming the path, not byPath's last writer --
+        // the curated x90 amp alias and its dyn DragCosine twin both claim
+        // the resolved leaf, and the twin used to win, so the alias stayed a
+        // stale page-load fragment (and a hot twin hid a cold one entirely).
+        if (_virt && _virt.byPathAll) {
             var dueKeys = [];
             entries.forEach(function (e) {
-                if (!e || !e.dot_path || sel(e.dot_path).length) return;
-                var ck = _virt.byPath && _virt.byPath[e.dot_path];
-                // a server-cold column needs no repaint: it is rendered from
-                // the (already reverted) working copy when it is fetched --
-                // but its SEARCH TEXT is the cold map, which nothing else
-                // updates, so patch that one cell (docs/141 4ac).
-                if (ck && _virt.remote.has(ck)) {
-                    _virtPatchColdValue(e.dot_path,
-                        e.old_value_disp != null ? e.old_value_disp : e.old_value_str);
-                    return;
-                }
-                if (ck && dueKeys.indexOf(ck) < 0) dueKeys.push(ck);
+                if (!e || !e.dot_path) return;
+                var remoteHit = false;
+                (_virt.byPathAll[e.dot_path] || []).forEach(function (ck) {
+                    if (!_virt.cold.has(ck)) return;
+                    // a server-cold column needs no repaint: it is rendered from
+                    // the (already reverted) working copy when it is fetched --
+                    // but its SEARCH TEXT is the cold map, which nothing else
+                    // updates, so patch that cell (docs/141 4ac).
+                    if (_virt.remote.has(ck)) { remoteHit = true; return; }
+                    if (dueKeys.indexOf(ck) < 0) dueKeys.push(ck);
+                });
+                if (remoteHit) _virtPatchColdValue(e.dot_path,
+                    e.old_value_disp != null ? e.old_value_disp : e.old_value_str);
             });
             if (dueKeys.length) _virtHydrateCols(dueKeys);
         }
         var patched = 0, missing = 0, rows = [], covered = [], uncovered = [];
+        var statKeys = {};   // QA F9: the columns whose header min/max must follow
+        var noteStat = function (c) {
+            var ck = _colKeyOf(c); if (!ck) return;
+            statKeys[ck] = 1;
+            if (FREQ_TWIN[ck]) statKeys[FREQ_TWIN[ck]] = 1;
+        };
+        // QA liveedit-r2-02 (review): an ELEMENT of a list (a Flat View / tree
+        // edit of confusion_matrix.0.0) has no cell of its own, but the list
+        // cell showing the whole list -- hot, or in a cold column -- is now
+        // stale. That is FOUND-not-repaintable (uncovered: the caller's honest
+        // resync), never `missing`, which schedules nothing.
+        var listPaths = null;
+        var listHolds = function (p) {
+            if (!listPaths) {
+                listPaths = {};
+                Array.prototype.forEach.call(t.querySelectorAll('.bulk-cell-list'), function (s) {
+                    var a = s.getAttribute('data-path'), b = s.getAttribute('data-resolved');
+                    if (a) listPaths[a] = 1;
+                    if (b) listPaths[b] = 1;
+                });
+            }
+            return _listContainersOf(p).some(function (a) {
+                return listPaths[a] || (_virt && _virt.byPathAll && (_virt.byPathAll[a] || []).length);
+            });
+        };
         entries.forEach(function (e) {
             if (!e || !e.dot_path) return;
             var cs = sel(e.dot_path);
-            if (!cs.length) { missing++; return; }
+            if (!cs.length) {
+                if (listHolds(e.dot_path)) uncovered.push(e.dot_path);
+                else missing++;
+                return;
+            }
             // The grids render group_digits; the server ships that exact
             // string as old_value_disp (docs/124 M-9 — writing _fmt_val's
             // 7-sig-fig form here showed a truncated value AND made it the
@@ -3922,6 +4189,7 @@
                     if (trl && rows.indexOf(trl) < 0) rows.push(trl);
                     patched++;
                     wrote++;
+                    noteStat(c);
                     return;
                 }
                 // A readonly cell (a runtime column) is FOUND but cannot be
@@ -3956,13 +4224,17 @@
                 if (tr && rows.indexOf(tr) < 0) rows.push(tr);
                 patched++;
                 wrote++;
+                noteStat(c);
             });
             if (wrote && honest) covered.push(e.dot_path);
             else uncovered.push(e.dot_path);   // found (cs.length > 0) but not honestly repainted
         });
         rows.forEach(_refreshRow);
         if (_virtPatchColdValue.flushHay) { _hayCache = null; _virtPatchColdValue.flushHay = false; }
-        if (patched) _refreshGlobal();
+        // QA F9: an undo / Revert-last-apply / sync-pull repaint landed new
+        // values, so the header min/max + extremes follow -- only for the
+        // columns it touched (the repaint is a 55 ms path, docs/122).
+        if (patched) { _refreshGlobal(); try { _recomputeStats(statKeys); } catch (e) {} }
         // `covered` (not a missing COUNT) is what the caller needs: with both
         // grids on screen a qubit leaf is legitimately absent from the pair
         // grid, so summing each surface's misses would demand a full rebuild
@@ -3970,6 +4242,8 @@
         return { patched: patched, missing: missing, covered: covered, uncovered: uncovered };
     }
     BulkEdit.revertPaths = _revertPaths;
+    BulkEdit._listContainersOf = _listContainersOf;   // QA liveedit-r2-02 (review): pair-edit.js shares it
+    BulkEdit.recomputeStats = function (onlyKeys) { _recomputeStats(onlyKeys); };   // QA liveedit-r2-02 (+ F9: keyed)
     BulkEdit._virtState = function () {
         return _virt ? { cold: Array.from(_virt.cold), remote: Array.from(_virt.remote),
                          inflight: Array.from(_virt.inflight.keys()), failed: _virt.failed || 0 } : null;
@@ -3986,6 +4260,14 @@
     BulkEdit._virtHydrateCols = _virtHydrateCols;
     BulkEdit._setCarry = function (c) { _editCarry = c; };
     BulkEdit._syncApplied = _syncAppliedAcrossTable;
+    // QA liveedit-r2-14: the LO band advisory, for the pair-shaped grids
+    // (pair-edit.js makeGrid: qubit pairs, TWPAs, every discovered collection)
+    BulkEdit._bandEdit = function (cell) { _validateBandGroup(cell); _updateBandWarnCount(); };
+    BulkEdit._bandScan = function (root) {
+        Array.prototype.slice.call(root.querySelectorAll('.bulk-cell[data-lo-field]')).forEach(_validateBand);
+        _updateBandWarnCount();
+    };
+    BulkEdit._bandWarnLine = _bandWarnLine;
 
     // docs/111 test hooks (jsdom selfcheck drives the internals directly)
     BulkEdit._ge = {

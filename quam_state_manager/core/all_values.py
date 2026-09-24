@@ -29,6 +29,7 @@ from typing import Any, Iterable
 from quam_state_manager.core import units
 from quam_state_manager.core.leaf_classify import (
     ALL_KINDS,
+    KIND_LIST,
     KIND_SCALAR,
     KIND_XREF,
     classify_leaf,
@@ -134,10 +135,16 @@ def build_all_values_rows(
     ``summary`` — ``{total, editable, readonly, by_kind, arrays, empties}``.
     ``total == len(loader.flatten(merged))`` (leaves only); container rows count
     into ``arrays``/``empties`` so ``len(rows) == total + arrays + empties``.
+    ``editable`` counts exactly the rows the client edits in place — a scalar,
+    a list element, or a RESOLVABLE cross-ref (all-values.js ``isEditableRow``);
+    a dangling cross-ref stays read-only. QA F17: it used to count scalars
+    only (the v1 rule), so the coverage line said 1,604 editable while the
+    group badges beside it summed to ~29.7k on the same chip.
     """
     modified_set = set(modified or ())
     counts = {k: 0 for k in ALL_KINDS}
     n_arrays = n_empties = 0
+    n_editable = 0
     rows: list[list[Any]] = []
     # The whole build stays under the store lock: xref resolution walks `merged`,
     # so resolving outside the walk's lock could chase a concurrently-mutated
@@ -167,14 +174,18 @@ def build_all_values_rows(
                 # the RAW text and let the client render it read-only.
                 resolved = store.resolve_pointer(value, tuple(path.split(".")))
                 dangling = 1 if is_pointer(resolved) else 0
+                if not dangling:
+                    n_editable += 1
                 rows.append([path, value if dangling else _display(resolved),
                              kind, 0, {"p": value, "d": dangling}])
             else:
+                if kind in (KIND_SCALAR, KIND_LIST):
+                    n_editable += 1
                 is_mod = 1 if (kind == KIND_SCALAR and path in modified_set) else 0
                 rows.append([path, _display(value), kind, is_mod])
 
     total = sum(counts.values())
-    editable = counts[KIND_SCALAR]
+    editable = n_editable
     summary = {
         "total": total,
         "editable": editable,

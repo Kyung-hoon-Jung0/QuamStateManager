@@ -270,6 +270,29 @@ function cell(win, sel) { return win.document.querySelector(sel); }
     ok((rp2.uncovered || []).indexOf('qubit_pairs.p2.macros.cz.filters') >= 0
        && pcell.value.indexOf('…') < 0 && (pcell.getAttribute('data-orig') || '').indexOf('…') < 0,
        'F-LIST-TRUNC (pair): a list restored into a scalar pair cell is uncovered, never truncated');
+    // QA liveedit-r2-02 (review): a list/matrix ELEMENT (a Flat View or tree
+    // edit, and its Ctrl+Z) has no cell of its own -- but the list cell that
+    // shows the whole list is stale after it, so it is FOUND-not-repaintable
+    // (uncovered -> the honest resync), never `missing` (which schedules
+    // nothing and left the old matrix on screen until F5). Matched on the
+    // RESOLVED container too (the span above carries the port leaf).
+    const re = win.BulkEdit.revertPaths([{
+        dot_path: 'ports.analog_outputs.con1.4.1.exponential_filter.0.1', old_value_disp: '98', old_kind: 'num',
+    }]);
+    ok(re.missing === 0 && (re.uncovered || []).indexOf('ports.analog_outputs.con1.4.1.exponential_filter.0.1') >= 0
+       && span.textContent === '[[0.5,123.0]]',
+       'list element (qubit): an element of a shown list is uncovered, the span is not rewritten with the element');
+    const rpe = win.BulkPairEdit.revertPaths([{
+        dot_path: 'qubit_pairs.p1.macros.cz.filters.0.1', old_value_disp: '2', old_kind: 'num',
+    }]);
+    ok(rpe.missing === 0 && (rpe.uncovered || []).indexOf('qubit_pairs.p1.macros.cz.filters.0.1') >= 0
+       && badge.value === '▦ 1×2',
+       'list element (pair): an element of a ▦ badge list is uncovered, the badge untouched');
+    const rno = win.BulkPairEdit.revertPaths([{
+        dot_path: 'qubit_pairs.p9.macros.cz.filters.0.1', old_value_disp: '2', old_kind: 'num',
+    }]);
+    ok(rno.missing === 1 && !(rno.uncovered || []).length,
+       'list element (pair): an element of a list NO cell shows stays missing');
 }
 
 // ── M-8: the pair grid's alias twin gets value AND baseline, no phantom dirty

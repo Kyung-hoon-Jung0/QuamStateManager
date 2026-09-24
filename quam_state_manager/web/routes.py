@@ -6058,6 +6058,9 @@ def bulk_edit():
                                             pair_rows=pair_rows, filter_chips=filter_chips,
                                             dyn_truncated=dyn_truncated,
                                             active_chip_key=_bulk_chip_gate_token() or "",
+                                            # QA liveedit-r2-15: the hidden set this
+                                            # render used, for /bulk/cells to repeat
+                                            bulk_dynhide=sorted(_dyn_hidden),
                                             cold_keys=cold_keys, cold_map=cold_map,
                                             pair_cold_keys=pair_cold_keys,
                                             pair_cold_map=pair_cold_map,
@@ -6213,6 +6216,8 @@ def bulk_all_values():
     policy = getattr(store, "type_policy", None)
     ctx = _active_ctx() or {}
     chip_tag = hashlib.sha1(str(ctx.get("path", "")).encode("utf-8")).hexdigest()[:12]
+    # QA F17: v3 -- summary.editable now counts list elements + resolvable xrefs,
+    # so a browser-cached v2 body must not revalidate (304) into the old count.
     # v2 salt: payload-shape version + the policy inputs the ty chips derive from
     # (assignment count + manifest versions), so a type-assign or env manifest
     # warm can't 304 a client into stale chips.
@@ -6220,9 +6225,9 @@ def bulk_all_values():
         man_tag = (hashlib.sha1(repr(policy.manifest.get("versions") or {})
                                 .encode("utf-8")).hexdigest()[:8]
                    if policy.manifest is not None else "0")
-        etag = f'"{chip_tag}-{mseq}-{mver}-v2-{len(policy.assignments)}-{man_tag}"'
+        etag = f'"{chip_tag}-{mseq}-{mver}-v3-{len(policy.assignments)}-{man_tag}"'
     else:
-        etag = f'"{chip_tag}-{mseq}-{mver}-v2"'
+        etag = f'"{chip_tag}-{mseq}-{mver}-v3"'
     if request.headers.get("If-None-Match") == etag:
         r = make_response("", 304)
         r.headers["ETag"] = etag
@@ -6401,7 +6406,15 @@ def _search_text(col: dict) -> str:
     tmpl_words = tmpl.replace("{name}", " ").replace(".", " ").replace("_", " ")
     extra = search_synonyms.augment(
         col.get("label"), col.get("key"), col.get("section"), base, tmpl)
-    return " ".join(p for p in (base, tmpl_words, extra) if p)
+    # QA liveedit-r2-24: the header says `Qubit f₀₁`, and nobody types
+    # subscripts -- 'f01' found only two extras columns and 'f12' nothing.
+    # NFKC is an exact Unicode equivalence (f₀₁ IS f01), not a fuzzy match;
+    # added only where it changes the label, so ASCII haystacks are unchanged.
+    import unicodedata
+    label = str(col.get("label") or "")
+    label_fold = unicodedata.normalize("NFKC", label)
+    label_fold = label_fold if label_fold != label else ""
+    return " ".join(p for p in (base, tmpl_words, extra, label_fold) if p)
 
 
 def _pair_bulk_grid(store: QuamStore, modified: dict
